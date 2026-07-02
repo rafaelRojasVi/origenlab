@@ -12,6 +12,9 @@ from origenlab_api.schemas.cases import (
 from origenlab_api.services.warm_case_output_normalize import normalize_warm_case_items
 
 
+THIS_IS_A_SUPPLIER_DOMAIN = "southamerican@hinotek.com"
+
+
 def test_warm_cases_meta_exposes_category_taxonomy_for_cli_clients() -> None:
     meta = WarmCasesMeta()
 
@@ -27,7 +30,7 @@ def test_legacy_warm_category_filter_matches_normalized_category() -> None:
     item = WarmCaseItem(
         case_id="case-1",
         last_email_id=1,
-        contact_email="supplier@example.com",
+        contact_email=THIS_IS_A_SUPPLIER_DOMAIN,
         subject="Re: cotizacion",
         category="supplier_reply",
         status="new",
