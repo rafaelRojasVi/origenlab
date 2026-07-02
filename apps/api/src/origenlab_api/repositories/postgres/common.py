@@ -16,6 +16,11 @@ else:
     _PSYCOPG_IMPORT_ERROR = None
 
 
+class PostgresBackendUnavailableError(RuntimeError):
+    """Postgres read-model dependency is unavailable or failed safely."""
+
+
+
 def normalize_postgres_url(url: str) -> str:
     u = url.strip()
     for prefix in ("postgresql+psycopg://", "postgresql+psycopg2://"):
@@ -26,11 +31,15 @@ def normalize_postgres_url(url: str) -> str:
 
 def require_psycopg() -> Any:
     if psycopg is None:
-        raise RuntimeError(
-            f"psycopg is required for postgres backend (uv sync --group postgres). "
-            f"({_PSYCOPG_IMPORT_ERROR})"
-        )
+        raise PostgresBackendUnavailableError(
+            "Postgres driver unavailable; install the postgres dependency group."
+        ) from _PSYCOPG_IMPORT_ERROR
     return psycopg
+
+
+def _is_psycopg_error(pg: Any, exc: BaseException) -> bool:
+    error_cls = getattr(pg, "Error", None)
+    return isinstance(error_cls, type) and isinstance(exc, error_cls)
 
 
 @contextmanager
@@ -39,9 +48,18 @@ def postgres_connection(settings: Settings) -> Iterator[Any]:
     url = settings.require_postgres_url()
     timeout_ms = settings.postgres_statement_timeout_ms
     options = f"-c statement_timeout={timeout_ms}"
-    with pg.connect(
-        normalize_postgres_url(url),
-        connect_timeout=10,
-        options=options,
-    ) as conn:
-        yield conn
+    try:
+        with pg.connect(
+            normalize_postgres_url(url),
+            connect_timeout=10,
+            options=options,
+        ) as conn:
+            yield conn
+    except PostgresBackendUnavailableError:
+        raise
+    except Exception as exc:
+        if _is_psycopg_error(pg, exc):
+            raise PostgresBackendUnavailableError(
+                "Postgres read model unavailable."
+            ) from exc
+        raise
