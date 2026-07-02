@@ -127,11 +127,25 @@ _SENSITIVE_PREVIEW_PATTERNS: tuple[re.Pattern[str], ...] = (
 _RESPONSE_SYSTEM_NOISE_EMAILS: frozenset[str] = frozenset(
     {
         "no-reply@reports.tidioreply.com",
+        "no-reply@tidio.net",
     }
 )
 _RESPONSE_SYSTEM_REPORT_SUBJECT_MARKERS: tuple[str, ...] = (
     "tu semana con tidio",
     "tidio weekly report",
+    "lyro ha respondido",
+    "mejora tu plan de tidio",
+)
+_RESPONSE_SYSTEM_PRODUCT_UPDATE_EMAILS: frozenset[str] = frozenset(
+    {
+        "workspace-noreply@google.com",
+    }
+)
+_RESPONSE_SYSTEM_PRODUCT_UPDATE_MARKERS: tuple[str, ...] = (
+    "nuevas herramientas de ia",
+    "crear videos",
+    "impulsa la creatividad",
+    "productividad",
 )
 _RESPONSE_SUPPLIER_DOMAINS: frozenset[str] = frozenset(
     {
@@ -221,7 +235,11 @@ def _looks_like_response_system_report(item: WarmCaseItem) -> bool:
     if contact in _RESPONSE_SYSTEM_NOISE_EMAILS:
         return True
     hay = _item_haystack(item)
-    return any(marker in hay for marker in _RESPONSE_SYSTEM_REPORT_SUBJECT_MARKERS)
+    if any(marker in hay for marker in _RESPONSE_SYSTEM_REPORT_SUBJECT_MARKERS):
+        return True
+    if contact in _RESPONSE_SYSTEM_PRODUCT_UPDATE_EMAILS:
+        return any(marker in hay for marker in _RESPONSE_SYSTEM_PRODUCT_UPDATE_MARKERS)
+    return False
 
 
 def _response_supplier_domain(item: WarmCaseItem) -> str:

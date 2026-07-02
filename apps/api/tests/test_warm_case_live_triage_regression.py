@@ -53,6 +53,36 @@ def test_tidio_weekly_report_hidden_from_default_warm_queue() -> None:
     assert shown.status == "problem"
 
 
+def test_tidio_tooling_notification_hidden_from_default_warm_queue() -> None:
+    raw = _item(
+        contact_email="no-reply@tidio.net",
+        subject="Lyro ha respondido con éxito la primera pregunta",
+        snippet="TIDIO Lyro ha respondido con éxito la primera consulta de un cliente.",
+    )
+
+    assert resolve_normalized_category(raw) == "system_noise"
+    assert normalize_warm_case_item(raw, include_noise=False) is None
+
+    shown = normalize_warm_case_item(raw, include_noise=True)
+    assert shown is not None
+    assert shown.category == "system_noise"
+
+
+def test_google_workspace_product_update_hidden_from_default_warm_queue() -> None:
+    raw = _item(
+        contact_email="workspace-noreply@google.com",
+        subject="Nuevas herramientas de IA para crear videos y mucho más",
+        snippet="Impulsa la creatividad y la productividad con nuevas herramientas de Google Workspace.",
+    )
+
+    assert resolve_normalized_category(raw) == "system_noise"
+    assert normalize_warm_case_item(raw, include_noise=False) is None
+
+    shown = normalize_warm_case_item(raw, include_noise=True)
+    assert shown is not None
+    assert shown.category == "system_noise"
+
+
 def test_hinotek_offer_is_supplier_quote_not_client_response() -> None:
     raw = _item(
         contact_email="southamerican@hinotek.com",
