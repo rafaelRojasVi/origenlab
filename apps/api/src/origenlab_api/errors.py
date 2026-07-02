@@ -10,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from origenlab_api.repositories.postgres.common import PostgresBackendUnavailableError
 from origenlab_api.schemas.errors import ApiErrorBody, ApiErrorResponse
 from origenlab_api.request_id import attach_request_id_header, get_request_id
 
@@ -173,6 +174,19 @@ def _validation_details(exc: RequestValidationError) -> dict[str, Any]:
 
 
 def register_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(PostgresBackendUnavailableError)
+    async def postgres_backend_unavailable_handler(
+        request: Request,
+        exc: PostgresBackendUnavailableError,
+    ) -> JSONResponse:
+        return json_error_response(
+            503,
+            code="backend_unavailable",
+            message=str(exc) or "Postgres read model unavailable.",
+            details={"backend": "postgres"},
+            request_id=get_request_id(request),
+        )
+
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(
         request: Request,
