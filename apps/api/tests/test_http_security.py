@@ -105,6 +105,7 @@ def test_cors_get_health_includes_allow_credentials(monkeypatch: pytest.MonkeyPa
     assert r.status_code == 200
     assert r.headers.get("access-control-allow-origin") == "https://dashboard.origenlab.cl"
     assert r.headers.get("access-control-allow-credentials") == "true"
+    assert "x-request-id" in (r.headers.get("access-control-expose-headers") or "").lower()
 
 
 def test_cors_get_operator_status_includes_allow_credentials(
