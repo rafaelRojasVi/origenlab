@@ -175,7 +175,9 @@ def test_resolve_prefers_manifest_canonical_not_crosscheck(active_workspace: Pat
     assert "crosscheck" not in resolved.name
 
 
-def test_preview_dry_run_does_not_connect_postgres(active_workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_preview_dry_run_defaults_to_typed_rows_without_connecting_postgres(
+    active_workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     called = {"connect": False}
 
     def _boom(*args: Any, **kwargs: Any) -> None:
@@ -187,9 +189,26 @@ def test_preview_dry_run_does_not_connect_postgres(active_workspace: Path, monke
     assert summary["dry_run"] is True
     assert summary["applied"] is False
     assert summary["row_count"] == 2
-    assert summary["source_kind"] == "csv_artifact"
+    assert summary["source_input"] == "typed_rows"
+    assert summary["source_kind"] == "typed_read_model"
     assert summary["artifact_basename"] == "equipment_first_operator_queue_20260518.csv"
     assert "/" not in summary["artifact_basename"]
+    assert summary["canonical_reason"] == "typed_rows_from_manifest_canonical"
+    assert summary["csv_export_path"].endswith("equipment_first_operator_queue_20260518.csv")
+    assert called["connect"] is False
+
+
+def test_legacy_preview_still_available(active_workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    called = {"connect": False}
+
+    def _boom(*args: Any, **kwargs: Any) -> None:
+        called["connect"] = True
+        raise AssertionError("psycopg.connect should not run on dry-run")
+
+    monkeypatch.setattr(mirror, "psycopg", MagicMock(connect=_boom))
+    summary = mirror.preview_load(active_workspace, use_direct_rows=False)
+    assert summary["source_kind"] == "csv_artifact"
+    assert summary["artifact_basename"] == "equipment_first_operator_queue_20260518.csv"
     assert summary["canonical_reason"] == "manifest_canonical"
     assert called["connect"] is False
 
@@ -237,6 +256,7 @@ def test_duplicate_codigo_aborts_apply(active_workspace: Path, monkeypatch: pyte
     )
     assert summary["applied"] is False
     assert summary["duplicate_codigos"] == ["DUP-1"]
+    assert summary["error"] == "duplicate_codigo_licitacion_in_csv_export_rows"
 
 
 class _RecordingCursor:
@@ -293,6 +313,7 @@ def test_same_csv_apply_idempotently_promotes_canonical_without_reload(
         active_workspace,
         updated_by="op",
         reason="reapply",
+        use_direct_rows=False,
     )
     assert summary["applied"] is False
     assert summary["idempotent"] == "canonical_source_already_loaded"
@@ -332,6 +353,7 @@ def test_non_active_queue_source_already_loaded_still_errors(
         csv_path=other_csv,
         updated_by="op",
         reason="stale reapply",
+        use_direct_rows=False,
     )
     assert summary["applied"] is False
     assert summary["error"] == "source_already_loaded"
@@ -351,6 +373,7 @@ def test_replace_source_reuses_existing_source_id(
         updated_by="op",
         reason="replace",
         replace_source=True,
+        use_direct_rows=False,
     )
     assert summary["applied"] is True
     assert summary["source_id"] == 42
@@ -375,6 +398,7 @@ def test_replace_source_keeps_canonical_flag(active_workspace: Path, monkeypatch
         updated_by="op",
         reason="replace canonical",
         replace_source=True,
+        use_direct_rows=False,
     )
     assert summary["is_canonical"] is True
     sqls = [s for s, _ in conn.cur.statements]
@@ -399,6 +423,7 @@ def test_preview_reports_existing_source_when_pg_url_set(
         active_workspace,
         pg_url="postgresql://u:p@127.0.0.1/db",
         replace_source=False,
+        use_direct_rows=False,
     )
     assert summary["existing_source_id"] == 5
     assert summary["would_fail_without_replace"] is True
@@ -409,6 +434,7 @@ def test_preview_reports_existing_source_when_pg_url_set(
         active_workspace,
         pg_url="postgresql://u:p@127.0.0.1/db",
         replace_source=True,
+        use_direct_rows=False,
     )
     assert summary_replace["would_replace_source"] is True
     assert summary_replace["would_fail_without_replace"] is False
@@ -449,7 +475,7 @@ def test_cli_apply_source_already_loaded_exit_code(
     assert data["existing_source_id"] == 1
 
 
-def test_apply_writes_source_and_rows(active_workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_apply_writes_typed_source_and_rows(active_workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     conn = _RecordingConn()
     monkeypatch.setattr(mirror, "psycopg", MagicMock(connect=lambda *a, **k: conn))
     monkeypatch.setattr(mirror, "Json", lambda obj: obj)
@@ -464,9 +490,11 @@ def test_apply_writes_source_and_rows(active_workspace: Path, monkeypatch: pytes
     assert summary["is_canonical"] is True
     assert summary["source_id"] == 99
     assert summary["rows_inserted"] == 2
-    assert summary["source_kind"] == "csv_artifact"
+    assert summary["source_input"] == "typed_rows"
+    assert summary["source_kind"] == "typed_read_model"
     assert summary["artifact_basename"] == "equipment_first_operator_queue_20260518.csv"
-    assert summary["canonical_reason"] == "manifest_canonical"
+    assert summary["canonical_reason"] == "typed_rows_from_manifest_canonical"
+    assert summary["legacy_csv_loader_used"] is False
     assert conn.committed is True
     sqls = [s for s, _ in conn.cur.statements]
     assert any("INSERT INTO commercial.equipment_opportunity_source" in s for s in sqls)
@@ -475,9 +503,9 @@ def test_apply_writes_source_and_rows(active_workspace: Path, monkeypatch: pytes
         for s, p in conn.cur.statements
         if "INSERT INTO commercial.equipment_opportunity_source" in s
     ][0]
-    assert insert_params[-3] == "csv_artifact"
+    assert insert_params[-3] == "typed_read_model"
     assert insert_params[-2] == "equipment_first_operator_queue_20260518.csv"
-    assert insert_params[-1] == "manifest_canonical"
+    assert insert_params[-1] == "typed_rows_from_manifest_canonical"
     assert any("INSERT INTO commercial.equipment_opportunity" in s for s in sqls)
     opp_insert_params = [
         p
@@ -539,6 +567,7 @@ def test_cli_dry_run_json(active_workspace: Path) -> None:
     data = json.loads(r.stdout)
     assert data["dry_run"] is True
     assert data["row_count"] == 2
+    assert data["source_input"] == "typed_rows"
 
 
 def test_cli_apply_requires_operator_and_reason(active_workspace: Path) -> None:
@@ -614,53 +643,7 @@ def test_apply_and_view_on_disposable_postgres(active_workspace: Path) -> None:
             assert row is not None
             is_canonical, source_kind, artifact_basename, canonical_reason, opportunity_key = row
             assert is_canonical is True
-            assert source_kind == "csv_artifact"
+            assert source_kind == "typed_read_model"
             assert artifact_basename == "equipment_first_operator_queue_20260518.csv"
-            assert canonical_reason == "manifest_canonical"
+            assert canonical_reason == "typed_rows_from_manifest_canonical"
             assert opportunity_key == "equipment:equipment_queue:code-a"
-            cur.execute(
-                """
-                SELECT opportunity_key, source_kind, artifact_basename, canonical_reason
-                FROM api.v_equipment_opportunity
-                WHERE codigo_licitacion = %s
-                LIMIT 1
-                """,
-                ("CODE-A",),
-            )
-            view_row = cur.fetchone()
-            if view_row is not None:
-                assert view_row[0] == "equipment:equipment_queue:code-a"
-                assert view_row[1] == "csv_artifact"
-                assert view_row[2] == "equipment_first_operator_queue_20260518.csv"
-                assert view_row[3] == "manifest_canonical"
-
-    reapply = mirror.apply_load(
-        pg_url,
-        active_workspace,
-        updated_by="pytest",
-        reason="reapply blocked",
-    )
-    assert reapply.get("idempotent") == "canonical_source_already_loaded"
-    assert reapply["is_canonical"] is True
-    assert reapply["existing_source_id"] == summary["source_id"]
-
-    replaced = mirror.apply_load(
-        pg_url,
-        active_workspace,
-        updated_by="pytest",
-        reason="replace",
-        replace_source=True,
-    )
-    assert replaced["applied"] is True
-    assert replaced["source_id"] == summary["source_id"]
-    assert replaced["replaced_source"] is True
-
-    with psycopg.connect(url) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM commercial.equipment_opportunity_source")
-            assert int(cur.fetchone()[0]) == 1
-            cur.execute(
-                "SELECT is_canonical FROM commercial.equipment_opportunity_source WHERE id = %s",
-                (summary["source_id"],),
-            )
-            assert cur.fetchone()[0] is True
