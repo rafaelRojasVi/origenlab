@@ -58,8 +58,9 @@ LIMIT %(limit)s
 """
 
 _EMPTY_NOTE = (
-    "Postgres mirror has no equipment opportunities; "
-    "run sync with --include-equipment-opportunities."
+    "Postgres read model has no equipment opportunities; run "
+    "auto-refresh-chilecompra-equipment --once --apply. Use "
+    "--include-equipment-opportunities only for explicit legacy/backfill CSV reloads."
 )
 
 

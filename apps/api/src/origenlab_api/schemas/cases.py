@@ -23,7 +23,7 @@ WarmCaseCategory = Literal[
     "campaign_outreach",
     "waiting_campaign_reply",
     "auto_acknowledgement",
-    # Legacy aliases (mirror/promotion rows until fully migrated)
+    # Legacy aliases accepted as inputs and from old mirror/promotion rows.
     "client_reply",
     "supplier_reply",
     "bounce",
@@ -34,31 +34,36 @@ WarmCaseCategory = Literal[
 
 WarmCaseStatus = Literal["new", "open", "waiting", "quoted", "problem"]
 
+CANONICAL_WARM_CASE_CATEGORIES: tuple[str, ...] = (
+    "client_opportunity",
+    "client_response",
+    "supplier_quote_received",
+    "supplier_followup",
+    "payment_admin",
+    "logistics_admin",
+    "internal_admin",
+    "system_noise",
+    "bounce_problem",
+    "deal_evidence_candidate",
+    "quote_sent",
+    "waiting_supplier",
+    "waiting_client",
+    "campaign_outreach",
+    "waiting_campaign_reply",
+    "auto_acknowledgement",
+)
+
+LEGACY_WARM_CASE_CATEGORY_ALIASES: dict[str, str] = {
+    "vendor_logistics": "logistics_admin",
+    "auto_reply": "system_noise",
+    "bounce": "bounce_problem",
+    "client_reply": "client_response",
+    "supplier_reply": "supplier_followup",
+    "opportunity": "client_opportunity",
+}
+
 WARM_CASE_CATEGORIES: frozenset[str] = frozenset(
-    {
-        "client_opportunity",
-        "client_response",
-        "supplier_quote_received",
-        "supplier_followup",
-        "payment_admin",
-        "logistics_admin",
-        "internal_admin",
-        "system_noise",
-        "bounce_problem",
-        "deal_evidence_candidate",
-        "quote_sent",
-        "waiting_supplier",
-        "waiting_client",
-        "campaign_outreach",
-        "waiting_campaign_reply",
-        "auto_acknowledgement",
-        "client_reply",
-        "supplier_reply",
-        "bounce",
-        "opportunity",
-        "auto_reply",
-        "vendor_logistics",
-    }
+    {*CANONICAL_WARM_CASE_CATEGORIES, *LEGACY_WARM_CASE_CATEGORY_ALIASES.keys()}
 )
 
 
@@ -69,6 +74,12 @@ class WarmCasesMeta(BaseModel):
     count: int = 0
     enrichment_available: bool = False
     note: str = ""
+    canonical_categories: list[str] = Field(
+        default_factory=lambda: list(CANONICAL_WARM_CASE_CATEGORIES)
+    )
+    legacy_category_aliases: dict[str, str] = Field(
+        default_factory=lambda: dict(LEGACY_WARM_CASE_CATEGORY_ALIASES)
+    )
 
 
 class WarmCaseItem(BaseModel):

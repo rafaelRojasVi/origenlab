@@ -18,7 +18,10 @@ def cases_warm(
     limit: int = Query(50, ge=1, le=200),
     category: str | None = Query(
         None,
-        description="Filter by category (client_reply, supplier_reply, quote_sent, …)",
+        description=(
+            "Filter by canonical category. Legacy aliases are accepted and normalized; "
+            "see meta.canonical_categories and meta.legacy_category_aliases."
+        ),
     ),
     positive_signal_only: bool = Query(
         False,

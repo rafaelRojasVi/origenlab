@@ -69,12 +69,14 @@ Routes may add **documented** meta fields (e.g. `reduced_mode`, `campaign_mode`,
 | `meta.read_only` | `true` |
 | `meta.enrichment_available` | `true` |
 | `meta.count` | Integer equal to `len(items)` |
+| `meta.canonical_categories` | Array of canonical category strings for CLI/display grouping |
+| `meta.legacy_category_aliases` | Object mapping accepted legacy filter aliases to canonical category names |
 | Item identity | Each item has non-empty string `case_id` |
 | Item typing | `last_email_id` is int; `category` and `status` are non-empty strings |
 | Internal fields | Must **not** appear in JSON: `body_snippet`, `source_file`, `recipients_preview`, `sender_preview` (schema `exclude=True`; audit enforces absence) |
 | Path leaks | Raw `/home/` or `/mnt/` paths forbidden anywhere in the response body |
 
-SQLite dev fallback may return `meta.data_source: "sqlite"` locally; production contract is locked via `PostgresWarmCaseRepository` → `api.v_warm_case` and `scripts/remote_response_audit.py` (`require_warm_cases_contract`).
+SQLite dev fallback may return `meta.data_source: "sqlite"` locally; production contract is locked via `PostgresWarmCaseRepository` → `api.v_warm_case` and `scripts/remote_response_audit.py` (`require_warm_cases_contract`). Legacy category filters remain accepted, but clients should prefer `meta.canonical_categories` and normalize via `meta.legacy_category_aliases`.
 
 **`GET /emails/recent` (production Postgres read model):**
 
@@ -298,6 +300,8 @@ Raw absolute paths (`/home/…`, `/mnt/…`, parent directories) must **not** ap
 
 | Date | Change |
 |------|--------|
+| 2026-07 | `GET /cases/warm`: additive `meta.canonical_categories` and `meta.legacy_category_aliases` for CLI clients; legacy category filters remain accepted and normalized. |
+| 2026-07 | `GET /opportunities/equipment`: empty Postgres read-model note now points to `auto-refresh-chilecompra-equipment --once --apply`; CSV reload is documented as legacy/backfill only. |
 | 2026-06 | Operator responses redact filesystem paths: legacy fields are basename-only; `sqlite_path_info`, `source_path_info`, `active_current_dir_info`, and nested `path_info` carry `{ redacted, basename, kind }`. Contract audit fails on `/home/` and `/mnt/` in JSON. |
 | 2026-06 | `GET /operator/automation-status`: additive `active_current_dir_info`, `path_redaction_applied`, and nested `path_info` redacted path companions; legacy absolute path fields retained for dashboard compatibility. |
 | 2026-06 | `X-Request-ID` middleware: header on all responses; `error.request_id` populated on errors. |
@@ -309,6 +313,7 @@ Raw absolute paths (`/home/…`, `/mnt/…`, parent directories) must **not** ap
 
 - [ ] Parse success bodies as objects; never assume a top-level array.
 - [ ] For lists, read `meta.count` and `items`.
+- [ ] Use `meta.canonical_categories` and `meta.legacy_category_aliases` when displaying or filtering warm cases.
 - [ ] Branch on HTTP status first; then `error.code`; use `error.request_id` / `X-Request-ID` for support correlation.
 - [ ] Treat unknown JSON keys as optional (forward-compatible).
 - [ ] Do not log full error bodies in production if they might contain user input; our API should not echo secrets.
