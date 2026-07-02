@@ -25,6 +25,7 @@ AUTOMATION_STATUS_KEYS = frozenset(
         "mail_auto_refresh",
         "dashboard_auto_mirror",
         "chilecompra_equipment_auto_refresh",
+        "ndr_pending_review",
         "cron",
         "recommended_action",
         "warnings",
