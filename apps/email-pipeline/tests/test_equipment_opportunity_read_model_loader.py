@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterator
 from contextlib import contextmanager
+from typing import Any, Iterator
 from unittest.mock import MagicMock
 
 from origenlab_email_pipeline import equipment_opportunity_mirror as mirror
@@ -83,6 +83,7 @@ def _install_fake_pg(monkeypatch: Any, conn: _RecordingConn) -> None:
 
     fake_pg = MagicMock(connect=_connect)
     monkeypatch.setattr(direct, "psycopg", fake_pg)
+    monkeypatch.setattr(mirror, "psycopg", fake_pg)
     monkeypatch.setattr(mirror, "Json", lambda obj: obj)
 
 
