@@ -1,4 +1,4 @@
-"""Resolve and load canonical equipment-first operator queue CSV (read-only)."""
+"""Resolve and load canonical equipment-first operator queue artifact (read-only local fallback)."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ _OPERATOR_QUEUE_PREFIX = "equipment_first_operator_queue_"
 _STALE_CROSSCHECK_FRAGMENT = "buyer_opportunity_crosscheck"
 _ACCOUNT_INTEL_SAFE = frozenset({"account_intelligence_only"})
 _ACCOUNT_INTEL_ACTIONS = frozenset({"account_intelligence_only", "skip_consumables"})
+_LOCAL_CSV_SOURCE_KIND = "csv_artifact"
+_LOCAL_CSV_CANONICAL_REASON = "active_current_csv_fallback"
 
 
 def load_manifest(active_current: Path) -> dict[str, Any]:
@@ -120,6 +122,9 @@ def fetch_equipment_opportunities(
             read_only=True,
             count=0,
             source_path="",
+            source_kind="csv_artifact",
+            artifact_basename="",
+            canonical_reason="missing_active_current_queue",
             campaign_mode=campaign_mode,
             reduced_mode=True,
             note="Canonical equipment_first_operator_queue_*.csv not found under active/current.",
@@ -155,6 +160,9 @@ def fetch_equipment_opportunities(
             read_only=True,
             count=len(items),
             source_path=str(csv_path),
+            source_kind=_LOCAL_CSV_SOURCE_KIND,
+            artifact_basename=csv_path.name,
+            canonical_reason=_LOCAL_CSV_CANONICAL_REASON,
             campaign_mode=campaign_mode,
             reduced_mode=False,
             note="",
