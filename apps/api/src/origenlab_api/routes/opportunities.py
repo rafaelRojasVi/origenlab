@@ -1,4 +1,4 @@
-"""Equipment-first opportunities (read-only workspace CSV)."""
+"""Equipment-first opportunities (read-only read model)."""
 
 from __future__ import annotations
 
