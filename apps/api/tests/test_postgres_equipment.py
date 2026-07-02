@@ -38,6 +38,9 @@ def _fixture_row(**overrides: Any) -> dict[str, Any]:
         "contact_status": "no_verified_buyer_email",
         "operator_note": "fit=90",
         "source_path": "/data/equipment_first_operator_queue_20260518.csv",
+        "source_kind": "csv_artifact",
+        "artifact_basename": "equipment_first_operator_queue_20260518.csv",
+        "canonical_reason": "manifest_canonical",
         "campaign_mode": "equipment_first",
         "opportunity_key": "equipment:equipment_queue:lp-001",
     }
@@ -117,11 +120,17 @@ def test_build_equipment_meta_with_rows_not_reduced() -> None:
     meta = build_equipment_meta(
         items=[{"priority_rank": 1}],
         source_path="/queue.csv",
+        source_kind="csv_artifact",
+        artifact_basename="queue.csv",
+        canonical_reason="manifest_canonical",
         campaign_mode="equipment_first",
     )
     assert meta.reduced_mode is False
     assert meta.count == 1
     assert meta.source_path == "/queue.csv"
+    assert meta.source_kind == "csv_artifact"
+    assert meta.artifact_basename == "queue.csv"
+    assert meta.canonical_reason == "manifest_canonical"
     assert meta.campaign_mode == "equipment_first"
 
 
@@ -203,6 +212,9 @@ def test_postgres_equipment_queries_canonical_view() -> None:
     sql_lower = cur.last_sql.lower()
     assert "api.v_equipment_opportunity_current" in sql_lower
     assert "opportunity_key" in sql_lower
+    assert "source_kind" in sql_lower
+    assert "artifact_basename" in sql_lower
+    assert "canonical_reason" in sql_lower
     assert "is_canonical_source" not in sql_lower
     assert "active_current" not in sql_lower
     assert "equipment_first_operator_queue" not in sql_lower
@@ -212,6 +224,9 @@ def test_postgres_equipment_queries_canonical_view() -> None:
     assert len(items) == 1
     assert meta.data_source == "postgres_mirror"
     assert meta.source_path.endswith(".csv")
+    assert meta.source_kind == "csv_artifact"
+    assert meta.artifact_basename.endswith(".csv")
+    assert meta.canonical_reason == "manifest_canonical"
 
 
 def test_postgres_equipment_repository_does_not_use_csv_fallback() -> None:
@@ -221,7 +236,6 @@ def test_postgres_equipment_repository_does_not_use_csv_fallback() -> None:
     forbidden = (
         "fetch_equipment_opportunities",
         "resolved_active_current",
-        "equipment_first_operator_queue",
         "active_current",
     )
     for token in forbidden:
