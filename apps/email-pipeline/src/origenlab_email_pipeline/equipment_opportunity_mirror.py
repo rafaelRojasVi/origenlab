@@ -1,4 +1,10 @@
-"""Load equipment_first_operator_queue CSV into Postgres commercial.* tables (DB-2A)."""
+"""Load equipment operator rows into Postgres commercial.* tables (DB-2A).
+
+The public entrypoints keep accepting the canonical active/current queue CSV for
+compatibility, but the default write path now converts that export into typed rows
+and delegates to ``equipment_opportunity_read_model_loader``. The legacy CSV SQL
+loader remains available with ``use_direct_rows=False`` as a rollback path.
+"""
 
 from __future__ import annotations
 
@@ -226,6 +232,39 @@ def derive_source_artifact_metadata(
     }
 
 
+def _typed_rows_canonical_reason(artifact_reason: str | None) -> str:
+    if artifact_reason:
+        return f"typed_rows_from_{artifact_reason}"
+    return "typed_rows_from_queue_export"
+
+
+def _sync_direct_loader_module() -> Any:
+    """Import direct loader after this module is initialized; keep monkeypatches in sync."""
+    from origenlab_email_pipeline import equipment_opportunity_read_model_loader as direct_loader
+
+    direct_loader.psycopg = psycopg
+    return direct_loader
+
+
+def _merge_export_metadata(
+    summary: dict[str, Any],
+    *,
+    resolved: Path,
+    manifest: dict[str, Any],
+    active_current: Path,
+) -> dict[str, Any]:
+    summary = dict(summary)
+    summary["csv_export_path"] = str(resolved)
+    summary["legacy_csv_loader_used"] = False
+    summary["file_sha256"] = file_sha256(resolved)
+    summary["file_mtime"] = file_mtime_utc(resolved).isoformat()
+    summary["is_manifest_canonical"] = is_manifest_canonical_queue(manifest, resolved, active_current)
+    summary["should_promote_canonical"] = should_promote_equipment_source_as_canonical(
+        manifest, resolved, active_current
+    )
+    return summary
+
+
 def resolve_load_context(
     active_current: Path,
     *,
@@ -325,11 +364,34 @@ def preview_load(
     csv_path: Path | None = None,
     pg_url: str | None = None,
     replace_source: bool = False,
+    use_direct_rows: bool = True,
 ) -> dict[str, Any]:
     resolved, manifest, manifest_path, date_suffix = resolve_load_context(
         active_current, csv_path=csv_path
     )
     rows = _load_csv(resolved)
+    if use_direct_rows:
+        artifact = derive_source_artifact_metadata(manifest, resolved, active_current)
+        direct_loader = _sync_direct_loader_module()
+        summary = direct_loader.preview_direct_rows_load(
+            rows,
+            source_key=str(resolved),
+            manifest_path=manifest_path,
+            date_suffix=date_suffix,
+            campaign_mode=(manifest.get("campaign_mode") if isinstance(manifest.get("campaign_mode"), str) else None),
+            artifact_basename=artifact["artifact_basename"],
+            canonical_reason=_typed_rows_canonical_reason(artifact["canonical_reason"]),
+            pg_url=pg_url,
+            replace_source=replace_source
+            or should_promote_equipment_source_as_canonical(manifest, resolved, active_current),
+        )
+        return _merge_export_metadata(
+            summary,
+            resolved=resolved,
+            manifest=manifest,
+            active_current=active_current,
+        )
+
     summary = _base_summary_fields(
         resolved=resolved,
         manifest=manifest,
@@ -439,6 +501,7 @@ def apply_load(
     reason: str,
     sync_run_id: int | None = None,
     replace_source: bool = False,
+    use_direct_rows: bool = True,
 ) -> dict[str, Any]:
     _require_psycopg()
     assert psycopg is not None and Json is not None
@@ -447,6 +510,36 @@ def apply_load(
         active_current, csv_path=csv_path
     )
     rows = _load_csv(resolved)
+
+    if use_direct_rows:
+        artifact = derive_source_artifact_metadata(manifest, resolved, active_current)
+        direct_loader = _sync_direct_loader_module()
+        summary = direct_loader.apply_direct_rows_load(
+            pg_url,
+            rows,
+            source_key=str(resolved),
+            manifest_path=manifest_path,
+            date_suffix=date_suffix,
+            campaign_mode=(manifest.get("campaign_mode") if isinstance(manifest.get("campaign_mode"), str) else None),
+            updated_by=updated_by,
+            reason=reason,
+            sync_run_id=sync_run_id,
+            replace_source=replace_source
+            or should_promote_equipment_source_as_canonical(manifest, resolved, active_current),
+            artifact_basename=artifact["artifact_basename"],
+            canonical_reason=_typed_rows_canonical_reason(artifact["canonical_reason"]),
+        )
+        if summary.get("error") == "duplicate_codigo_licitacion_in_rows":
+            summary["error"] = "duplicate_codigo_licitacion_in_csv_export_rows"
+        if summary.get("warning") == "empty_rows":
+            summary["warning"] = "empty_csv_export_rows"
+        return _merge_export_metadata(
+            summary,
+            resolved=resolved,
+            manifest=manifest,
+            active_current=active_current,
+        )
+
     summary = _base_summary_fields(
         resolved=resolved,
         manifest=manifest,
@@ -465,6 +558,7 @@ def apply_load(
             "rows_inserted": 0,
             "is_canonical": False,
             "replaced_source": False,
+            "legacy_csv_loader_used": True,
         }
     )
 
