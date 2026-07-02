@@ -1,4 +1,4 @@
-"""Operator-safe ChileCompra equipment queue refresh into canonical dashboard CSV."""
+"""Operator-safe ChileCompra equipment queue refresh into canonical dashboard CSV/read model."""
 
 from __future__ import annotations
 
@@ -26,12 +26,18 @@ from origenlab_email_pipeline.equipment_first_chilecompra_queue import (
     write_candidate_audit_csv,
     write_chilecompra_api_queue_outputs,
 )
+from origenlab_email_pipeline.equipment_first_chilecompra_read_model import (
+    apply_chilecompra_equipment_read_model,
+    record_chilecompra_read_model_sync,
+)
+from origenlab_email_pipeline.mart_core_postgres_migrate import resolve_postgres_url
 from origenlab_email_pipeline.operator_cli.mail_auto_refresh import (
     acquire_lock,
     active_current_dir,
     read_lock,
     release_lock,
 )
+from origenlab_email_pipeline.operator_cli.mirror import postgres_url_configured
 
 STATE_FILENAME = "chilecompra_equipment_auto_refresh_state.json"
 LOCK_FILENAME = "chilecompra_equipment_auto_refresh.lock"
@@ -43,6 +49,7 @@ DEFAULT_DETAIL_SLEEP_SECONDS = 3.0
 
 BuildQueueFn = Callable[..., tuple[list[dict[str, str]], dict[str, Any], list[dict[str, str]]]]
 PublishQueueFn = Callable[..., dict[str, Any]]
+ReadModelPublishFn = Callable[..., dict[str, Any]]
 NowFn = Callable[[], datetime]
 
 
@@ -57,6 +64,7 @@ class ChilecompraEquipmentAutoRefreshOptions:
     detail_cache_dir: Path | None = None
     write_candidate_audit: bool = True
     publish: bool = True
+    publish_read_model: bool = True
     force: bool = False
     cooldown_seconds: int = DEFAULT_COOLDOWN_SECONDS
 
@@ -69,6 +77,7 @@ class ChilecompraEquipmentAutoRefreshState:
     last_run_finished_at: str | None = None
     last_successful_refresh_at: str | None = None
     last_successful_publish_at: str | None = None
+    last_successful_read_model_publish_at: str | None = None
     consecutive_failures: int = 0
     last_error: str | None = None
     fetched_summaries: int | None = None
@@ -79,6 +88,10 @@ class ChilecompraEquipmentAutoRefreshState:
     detail_error_count: int | None = None
     output_rows: int | None = None
     published_rows: int | None = None
+    read_model_rows: int | None = None
+    read_model_result: str | None = None
+    read_model_source_kind: str | None = None
+    read_model_source_id: int | None = None
     published_queue: str | None = None
     candidate_audit: str | None = None
     next_recommended_run_at: str | None = None
@@ -234,12 +247,45 @@ def _update_state_counts_from_manifest(
     state.candidate_audit = candidate_audit_path
 
 
+def _read_model_result(summary: dict[str, Any] | None, *, skipped_reason: str = "") -> str:
+    if summary is None:
+        return skipped_reason or "skipped"
+    if summary.get("applied"):
+        return "applied"
+    if summary.get("error"):
+        return str(summary["error"])
+    if summary.get("warning"):
+        return str(summary["warning"])
+    return "not_applied"
+
+
+def _update_state_from_read_model_summary(
+    state: ChilecompraEquipmentAutoRefreshState,
+    summary: dict[str, Any] | None,
+    *,
+    result: str,
+) -> None:
+    state.read_model_result = result
+    if summary is None:
+        return
+    row_count = summary.get("rows_inserted")
+    if row_count is None:
+        row_count = summary.get("row_count")
+    if row_count is not None:
+        state.read_model_rows = int(row_count)
+    if summary.get("source_kind") is not None:
+        state.read_model_source_kind = str(summary["source_kind"])
+    if summary.get("source_id") is not None:
+        state.read_model_source_id = int(summary["source_id"])
+
+
 def run_chilecompra_equipment_auto_refresh(
     options: ChilecompraEquipmentAutoRefreshOptions,
     *,
     reports_dir: Path | None = None,
     build_fn: BuildQueueFn | None = None,
     publish_fn: PublishQueueFn | None = None,
+    read_model_publish_fn: ReadModelPublishFn | None = None,
     now_fn: NowFn | None = None,
 ) -> int:
     if not options.once:
@@ -361,6 +407,8 @@ def run_chilecompra_equipment_auto_refresh(
             published_rows = 0
             published_queue = ""
             publish_stats: dict[str, Any] = {}
+            read_model_summary: dict[str, Any] | None = None
+            read_model_result = "skipped"
             if options.publish:
                 canonical_csv = default_canonical_operator_queue_path(reports_base, now=now)
                 publisher = publish_fn or publish_chilecompra_equipment_queue_for_dashboard
@@ -376,6 +424,73 @@ def run_chilecompra_equipment_auto_refresh(
                 state.last_successful_publish_at = _iso_now(
                     (now_fn or (lambda: datetime.now(timezone.utc)))()
                 )
+
+                if options.publish_read_model:
+                    if read_model_publish_fn is not None or postgres_url_configured():
+                        try:
+                            pg_url = (
+                                "postgresql://mock/direct-read-model"
+                                if read_model_publish_fn is not None
+                                else resolve_postgres_url(None)
+                            )
+                            read_model_publisher = (
+                                read_model_publish_fn or apply_chilecompra_equipment_read_model
+                            )
+                            read_model_summary = read_model_publisher(
+                                pg_url,
+                                rows,
+                                source_manifest=Path(build_stats["manifest_path"]),
+                                export_csv_path=canonical_csv,
+                                now=now,
+                                updated_by="auto_chilecompra_equipment",
+                                reason="auto_chilecompra_equipment_refresh",
+                                replace_source=True,
+                            )
+                            read_model_result = _read_model_result(read_model_summary)
+                            if read_model_summary.get("error"):
+                                raise RuntimeError(str(read_model_summary["error"]))
+                            record_chilecompra_read_model_sync(
+                                active_current_dir(reports_dir), read_model_summary
+                            )
+                            state.last_successful_read_model_publish_at = _iso_now(
+                                (now_fn or (lambda: datetime.now(timezone.utc)))()
+                            )
+                        except Exception as exc:
+                            finished = (now_fn or (lambda: datetime.now(timezone.utc)))()
+                            state.last_run_finished_at = _iso_now(finished)
+                            state.last_result = "read_model_failed"
+                            state.last_error = str(exc)
+                            state.consecutive_failures += 1
+                            _update_state_counts_from_manifest(
+                                state,
+                                manifest,
+                                api_queue_path=str(api_queue_csv),
+                                candidate_audit_path=candidate_audit_path,
+                            )
+                            state.published_rows = published_rows
+                            _update_state_from_read_model_summary(
+                                state,
+                                read_model_summary,
+                                result=read_model_result,
+                            )
+                            save_state(state_file, state)
+                            result = ChilecompraEquipmentAutoRefreshResult(
+                                apply=options.apply,
+                                reason="read_model_failed",
+                                should_run=False,
+                                ran_refresh=True,
+                                published=True,
+                                cooldown_seconds=options.cooldown_seconds,
+                                force=options.force,
+                                extra={"last_error": state.last_error or ""},
+                            )
+                            for line in result.output_lines():
+                                print(line)
+                            return 1
+                    else:
+                        read_model_result = "postgres_not_configured"
+                else:
+                    read_model_result = "disabled"
 
             finished = (now_fn or (lambda: datetime.now(timezone.utc)))()
             state.last_run_finished_at = _iso_now(finished)
@@ -395,6 +510,11 @@ def run_chilecompra_equipment_auto_refresh(
             )
             if published_queue:
                 state.published_queue = published_queue
+            _update_state_from_read_model_summary(
+                state,
+                read_model_summary,
+                result=read_model_result,
+            )
             save_state(state_file, state)
 
             result = ChilecompraEquipmentAutoRefreshResult(
@@ -408,6 +528,9 @@ def run_chilecompra_equipment_auto_refresh(
                 extra={
                     "output_rows": str(state.output_rows or 0),
                     "published_rows": str(published_rows),
+                    "read_model_result": read_model_result,
+                    "read_model_rows": str(state.read_model_rows or 0),
+                    "read_model_source_kind": state.read_model_source_kind or "",
                     "detail_requests": str(state.detail_requests or 0),
                     "detail_cache_hits": str(state.detail_cache_hits or 0),
                     "detail_error_count": str(state.detail_error_count or 0),
@@ -461,6 +584,12 @@ def parse_chilecompra_equipment_auto_refresh_args(
         default=True,
         help="Publish canonical dashboard CSV when --apply (default: true)",
     )
+    parser.add_argument(
+        "--publish-read-model",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Publish typed Postgres equipment read model directly from ChileCompra rows (default: true)",
+    )
     parser.add_argument("--force", action="store_true", help="Bypass cooldown gate")
     parser.add_argument("--cooldown-seconds", type=int, default=DEFAULT_COOLDOWN_SECONDS)
     ns = parser.parse_args(argv)
@@ -476,6 +605,7 @@ def parse_chilecompra_equipment_auto_refresh_args(
         detail_cache_dir=ns.detail_cache_dir,
         write_candidate_audit=ns.write_candidate_audit,
         publish=ns.publish,
+        publish_read_model=ns.publish_read_model,
         force=ns.force,
         cooldown_seconds=ns.cooldown_seconds,
     )
@@ -486,7 +616,7 @@ def print_chilecompra_equipment_auto_refresh_help() -> None:
         "auto-refresh-chilecompra-equipment — operator ChileCompra equipment queue refresh\n\n"
         "  uv run origenlab auto-refresh-chilecompra-equipment --once\n"
         "  uv run origenlab auto-refresh-chilecompra-equipment --once --apply\n\n"
-        "Writes API queue CSV, optional candidate audit, and canonical dashboard CSV. "
-        "Does not call auto-mirror-dashboard; mirror reacts to dashboard input fingerprint. "
-        "See docs/operator/CHILECOMPRA_EQUIPMENT_REFRESH.md.\n"
+        "Writes API queue CSV, optional candidate audit, canonical dashboard CSV, "
+        "and typed Postgres equipment read model when Postgres is configured. "
+        "Does not send email or mutate SQLite. See docs/operator/CHILECOMPRA_EQUIPMENT_REFRESH.md.\n"
     )
