@@ -32,6 +32,9 @@ SELECT
   operator_note,
   extra_json,
   source_path,
+  source_kind,
+  artifact_basename,
+  canonical_reason,
   campaign_mode
 FROM api.v_equipment_opportunity_current
 WHERE (%(priority)s::int IS NULL OR priority_rank = %(priority)s)
@@ -92,6 +95,9 @@ def build_equipment_meta(
     items: list[dict[str, Any]],
     source_path: str | None,
     campaign_mode: str | None,
+    source_kind: str | None = None,
+    artifact_basename: str | None = None,
+    canonical_reason: str | None = None,
 ) -> EquipmentOpportunitiesMeta:
     if items:
         return EquipmentOpportunitiesMeta(
@@ -99,6 +105,9 @@ def build_equipment_meta(
             read_only=True,
             count=len(items),
             source_path=(source_path or "").strip(),
+            source_kind=(source_kind or "").strip(),
+            artifact_basename=(artifact_basename or "").strip(),
+            canonical_reason=(canonical_reason or "").strip(),
             campaign_mode=campaign_mode,
             reduced_mode=False,
             note="",
@@ -108,6 +117,9 @@ def build_equipment_meta(
         read_only=True,
         count=0,
         source_path=(source_path or "").strip(),
+        source_kind=(source_kind or "").strip(),
+        artifact_basename=(artifact_basename or "").strip(),
+        canonical_reason=(canonical_reason or "").strip(),
         campaign_mode=campaign_mode,
         reduced_mode=True,
         note=_EMPTY_NOTE,
@@ -166,6 +178,9 @@ class PostgresEquipmentOpportunityRepository:
 
         rows: list[dict[str, Any]] = []
         source_path: str | None = None
+        source_kind: str | None = None
+        artifact_basename: str | None = None
+        canonical_reason: str | None = None
         campaign_mode: str | None = None
 
         pg = require_psycopg()
@@ -176,6 +191,12 @@ class PostgresEquipmentOpportunityRepository:
                     row = dict(raw)
                     if source_path is None:
                         source_path = _str_field(row.get("source_path")) or None
+                    if source_kind is None:
+                        source_kind = _str_field(row.get("source_kind")) or None
+                    if artifact_basename is None:
+                        artifact_basename = _str_field(row.get("artifact_basename")) or None
+                    if canonical_reason is None:
+                        canonical_reason = _str_field(row.get("canonical_reason")) or None
                     if campaign_mode is None:
                         campaign_mode = _normalize_campaign_mode(row.get("campaign_mode"))
                     rows.append(map_equipment_row(row))
@@ -183,6 +204,9 @@ class PostgresEquipmentOpportunityRepository:
         meta = build_equipment_meta(
             items=rows,
             source_path=source_path,
+            source_kind=source_kind,
+            artifact_basename=artifact_basename,
+            canonical_reason=canonical_reason,
             campaign_mode=campaign_mode,
         )
         return rows, meta
