@@ -1,4 +1,4 @@
-"""Equipment-first operator opportunities (read-only CSV)."""
+"""Equipment-first operator opportunities (read-only read model)."""
 
 from __future__ import annotations
 
@@ -13,6 +13,9 @@ class EquipmentOpportunitiesMeta(BaseModel):
     count: int = 0
     source_path: str = ""
     source_path_info: dict[str, Any] | None = None
+    source_kind: str = ""
+    artifact_basename: str = ""
+    canonical_reason: str = ""
     campaign_mode: str | None = None
     reduced_mode: bool = False
     note: str = ""
