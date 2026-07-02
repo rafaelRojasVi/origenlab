@@ -23,6 +23,7 @@ class OperatorAutomationStatusResponse(BaseModel):
     mail_auto_refresh: dict[str, Any] = Field(default_factory=dict)
     dashboard_auto_mirror: dict[str, Any] = Field(default_factory=dict)
     chilecompra_equipment_auto_refresh: dict[str, Any] = Field(default_factory=dict)
+    ndr_pending_review: dict[str, Any] = Field(default_factory=dict)
     cron: CronNote = Field(default_factory=lambda: CronNote(note="not inspected by this command"))
     recommended_action: str
     warnings: list[str] = Field(default_factory=list)
