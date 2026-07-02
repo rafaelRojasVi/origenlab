@@ -121,6 +121,44 @@ _SENSITIVE_PREVIEW_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b\d{10,}\b"),
 )
 
+# Response-time corrections for live Gmail findings observed after mirror promotion.
+# These stay read-only: they only affect API/dashboard labels until the next mart rebuild
+# promotes the refined role category into Postgres.
+_RESPONSE_SYSTEM_NOISE_EMAILS: frozenset[str] = frozenset(
+    {
+        "no-reply@reports.tidioreply.com",
+    }
+)
+_RESPONSE_SYSTEM_REPORT_SUBJECT_MARKERS: tuple[str, ...] = (
+    "tu semana con tidio",
+    "tidio weekly report",
+)
+_RESPONSE_SUPPLIER_DOMAINS: frozenset[str] = frozenset(
+    {
+        "aurorabiomed.com",
+        "hinotek.com",
+    }
+)
+_RESPONSE_SUPPLIER_QUOTE_MARKERS: tuple[str, ...] = (
+    "please kindly review the offer",
+    "review the offer",
+    "proforma invoice",
+    "attached pi",
+    " pi_",
+)
+_RESPONSE_SUPPLIER_PRODUCT_MARKERS: tuple[str, ...] = (
+    "amr-100",
+    "amr-100t",
+    "hg302",
+    "microplate",
+    "aurora",
+    "analiticos",
+    "analiticos y automatizacion",
+    "analíticos",
+    "automatizacion",
+    "automatización",
+)
+
 
 def redact_sensitive_preview(value: str) -> str:
     out = value
@@ -153,6 +191,62 @@ def _item_to_classifier_row(item: WarmCaseItem) -> dict[str, object]:
     return row
 
 
+def _domain_from_email(email: str | None) -> str:
+    candidate = (email or "").strip().lower()
+    if "@" not in candidate:
+        return ""
+    return candidate.rsplit("@", 1)[-1]
+
+
+def _is_sent_folder(source_file: str | None) -> bool:
+    source = (source_file or "").lower()
+    return "enviados" in source or "sent mail" in source or "/sent" in source
+
+
+def _item_haystack(item: WarmCaseItem) -> str:
+    return " ".join(
+        [
+            item.contact_email or "",
+            item.sender_preview or "",
+            item.subject or "",
+            item.snippet or "",
+            item.body_snippet or "",
+            item.account_name or "",
+        ]
+    ).lower()
+
+
+def _looks_like_response_system_report(item: WarmCaseItem) -> bool:
+    contact = (item.contact_email or "").strip().lower()
+    if contact in _RESPONSE_SYSTEM_NOISE_EMAILS:
+        return True
+    hay = _item_haystack(item)
+    return any(marker in hay for marker in _RESPONSE_SYSTEM_REPORT_SUBJECT_MARKERS)
+
+
+def _response_supplier_domain(item: WarmCaseItem) -> str:
+    return _domain_from_email(item.contact_email) or _domain_from_email(item.sender_preview)
+
+
+def _looks_like_response_supplier_thread(item: WarmCaseItem) -> bool:
+    return _response_supplier_domain(item) in _RESPONSE_SUPPLIER_DOMAINS
+
+
+def _looks_like_response_supplier_quote(item: WarmCaseItem) -> bool:
+    hay = _item_haystack(item)
+    has_quote_marker = any(marker in hay for marker in _RESPONSE_SUPPLIER_QUOTE_MARKERS)
+    has_product_marker = any(marker in hay for marker in _RESPONSE_SUPPLIER_PRODUCT_MARKERS)
+    return has_quote_marker and has_product_marker
+
+
+def _response_supplier_category(item: WarmCaseItem) -> WarmCaseCategory:
+    if _is_sent_folder(item.source_file):
+        return "waiting_supplier"
+    if _looks_like_response_supplier_quote(item):
+        return "supplier_quote_received"
+    return "supplier_followup"
+
+
 def resolve_normalized_category(item: WarmCaseItem) -> WarmCaseCategory:
     """Role-level category from shared pipeline classifier."""
     if looks_like_cyberday_bulk_campaign_subject(item.subject):
@@ -165,6 +259,12 @@ def resolve_normalized_category(item: WarmCaseItem) -> WarmCaseCategory:
     subject = item.subject
     snippet = item.snippet
     sender = item.sender_preview or item.contact_email
+
+    if _looks_like_response_system_report(item):
+        return _canonical_category("system_noise")
+
+    if _looks_like_response_supplier_thread(item):
+        return _canonical_category(_response_supplier_category(item))
 
     if looks_like_internal_admin_thread(
         contact_email,
