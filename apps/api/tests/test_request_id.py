@@ -87,6 +87,7 @@ def test_host_allowlist_forbidden_request_id_matches_header(
     monkeypatch.setenv("ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/db")
     monkeypatch.setenv("ORIGENLAB_API_CORS_ORIGINS", "https://dashboard.origenlab.cl")
     monkeypatch.setenv("ORIGENLAB_API_ALLOWED_HOSTS", "api.origenlab.cl")
+    monkeypatch.setenv("ORIGENLAB_API_AUTH_TOKEN", "test-token")
     get_settings.cache_clear()
     client = TestClient(create_app())
     response = client.get(

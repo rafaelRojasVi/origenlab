@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     api_disable_docs: bool = False
     """Set to production|prod to enable production defaults (docs off, stricter validation)."""
     env: str | None = None
+    """Bearer/API-key token required for non-public routes when ORIGENLAB_ENV=production."""
+    api_auth_token: str | None = None
 
     def production_mode(self) -> bool:
         return (self.env or "").strip().lower() in ("production", "prod")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 from collections.abc import Awaitable, Callable
 
 from fastapi import FastAPI, Request, Response
@@ -14,6 +15,9 @@ from origenlab_api.settings import Settings
 
 _OPERATOR_CACHE_CONTROL = "no-store, private"
 _HOST_REJECT_STATUS = 403
+_UNAUTHORIZED_STATUS = 401
+_PUBLIC_PATHS = frozenset({"/health"})
+_API_KEY_HEADER = "X-OriginLab-API-Key"
 _SECURITY_RESPONSE_HEADERS: dict[str, str] = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "strict-origin-when-cross-origin",
@@ -48,6 +52,62 @@ def request_host_allowed(request: Request, settings: Settings) -> bool:
     if host is None:
         return False
     return host in allowed
+
+
+def api_auth_enabled(settings: Settings) -> bool:
+    return settings.production_mode() and bool((settings.api_auth_token or "").strip())
+
+
+def is_public_route(request: Request) -> bool:
+    if request.method == "OPTIONS":
+        return True
+    return request.url.path in _PUBLIC_PATHS
+
+
+def extract_api_token(request: Request) -> str | None:
+    auth = (request.headers.get("Authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        token = auth[7:].strip()
+        if token:
+            return token
+    api_key = (request.headers.get(_API_KEY_HEADER) or "").strip()
+    return api_key or None
+
+
+def api_token_is_valid(provided: str | None, expected: str) -> bool:
+    if not provided:
+        return False
+    return secrets.compare_digest(provided, expected)
+
+
+class ApiTokenAuthMiddleware(BaseHTTPMiddleware):
+    """Require bearer/API-key auth for non-public routes in production."""
+
+    def __init__(self, app, settings: Settings) -> None:
+        super().__init__(app)
+        self._expected_token = (settings.api_auth_token or "").strip()
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        resolve_request_id(request)
+        if is_public_route(request):
+            return await call_next(request)
+        provided = extract_api_token(request)
+        if api_token_is_valid(provided, self._expected_token):
+            return await call_next(request)
+        request_id = get_request_id(request)
+        response = json_error_response(
+            _UNAUTHORIZED_STATUS,
+            code="unauthorized",
+            message="Unauthorized",
+            request_id=request_id,
+        )
+        response.headers["WWW-Authenticate"] = "Bearer"
+        response.headers["Cache-Control"] = _OPERATOR_CACHE_CONTROL
+        return response
 
 
 class AllowedHostMiddleware(BaseHTTPMiddleware):
@@ -125,6 +185,8 @@ def configure_http_security(app: FastAPI, settings: Settings) -> None:
     validate_http_security_settings(settings)
     if host_allowlist_enabled(settings):
         app.add_middleware(AllowedHostMiddleware, settings=settings)
+    if api_auth_enabled(settings):
+        app.add_middleware(ApiTokenAuthMiddleware, settings=settings)
     app.add_middleware(OperatorSecurityHeadersMiddleware)
     origins = settings.parsed_cors_origins()
     if not origins:

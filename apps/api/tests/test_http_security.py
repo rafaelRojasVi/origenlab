@@ -9,12 +9,15 @@ import pytest
 
 from origenlab_api.backends.factory import validate_api_settings
 from origenlab_api.http_security import (
+    api_auth_enabled,
     host_allowlist_enabled,
     normalize_host_header,
     openapi_docs_enabled,
 )
 from origenlab_api.main import create_app
 from origenlab_api.settings import Settings, get_settings
+
+_PRODUCTION_AUTH_TOKEN = "test-token"
 
 
 def _clear_settings_cache() -> None:
@@ -39,6 +42,19 @@ def test_production_requires_postgres_backend_and_cors(
     monkeypatch.delenv("ORIGENLAB_API_CORS_ORIGINS", raising=False)
     _clear_settings_cache()
     with pytest.raises(ValueError, match="ORIGENLAB_ENV=production requires ORIGENLAB_API_BACKEND=postgres"):
+        create_app()
+
+
+def test_production_fails_fast_if_auth_token_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ORIGENLAB_ENV", "production")
+    monkeypatch.setenv("ORIGENLAB_API_BACKEND", "postgres")
+    monkeypatch.setenv("ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/db")
+    monkeypatch.setenv("ORIGENLAB_API_CORS_ORIGINS", "https://dashboard.origenlab.cl")
+    monkeypatch.delenv("ORIGENLAB_API_AUTH_TOKEN", raising=False)
+    _clear_settings_cache()
+    with pytest.raises(ValueError, match="ORIGENLAB_ENV=production requires ORIGENLAB_API_AUTH_TOKEN"):
         create_app()
 
 
@@ -168,8 +184,13 @@ def _production_client(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/db")
     monkeypatch.setenv("ORIGENLAB_API_CORS_ORIGINS", "https://dashboard.origenlab.cl")
     monkeypatch.setenv("ORIGENLAB_API_ALLOWED_HOSTS", "api.origenlab.cl")
+    monkeypatch.setenv("ORIGENLAB_API_AUTH_TOKEN", _PRODUCTION_AUTH_TOKEN)
     _clear_settings_cache()
     return TestClient(create_app())
+
+
+def _production_auth_headers(*, token: str = _PRODUCTION_AUTH_TOKEN) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
 
 
 def test_production_allowed_host_permits_health(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -221,9 +242,76 @@ def test_production_hides_docs_routes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ORIGENLAB_API_BACKEND", "postgres")
     monkeypatch.setenv("ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/db")
     monkeypatch.setenv("ORIGENLAB_API_CORS_ORIGINS", "https://dashboard.origenlab.cl")
+    monkeypatch.setenv("ORIGENLAB_API_AUTH_TOKEN", _PRODUCTION_AUTH_TOKEN)
     monkeypatch.delenv("ORIGENLAB_API_ALLOWED_HOSTS", raising=False)
     _clear_settings_cache()
     client = TestClient(create_app())
-    assert client.get("/docs").status_code == 404
-    assert client.get("/openapi.json").status_code == 404
+    assert client.get("/docs", headers=_production_auth_headers()).status_code == 404
+    assert client.get("/openapi.json", headers=_production_auth_headers()).status_code == 404
     assert client.get("/health").status_code == 200
+
+
+def test_api_auth_enabled_only_in_production() -> None:
+    assert api_auth_enabled(Settings(env="production", api_auth_token="secret")) is True
+    assert api_auth_enabled(Settings(env="production", api_auth_token=None)) is False
+    assert api_auth_enabled(Settings(env="development", api_auth_token="secret")) is False
+
+
+def test_production_health_works_without_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _production_client(monkeypatch)
+    r = client.get("/health", headers={"Host": "api.origenlab.cl"})
+    assert r.status_code == 200
+
+
+def test_production_operator_status_without_auth_returns_401(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _production_client(monkeypatch)
+    r = client.get("/operator/status", headers={"Host": "api.origenlab.cl"})
+    assert r.status_code == 401
+    body = r.json()
+    assert body["error"]["code"] == "unauthorized"
+    assert body["error"]["message"] == "Unauthorized"
+    assert r.headers.get("www-authenticate") == "Bearer"
+    assert r.headers.get("X-Request-ID") == body["error"]["request_id"]
+
+
+def test_production_emails_recent_without_auth_returns_401(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _production_client(monkeypatch)
+    r = client.get("/emails/recent", headers={"Host": "api.origenlab.cl"})
+    assert r.status_code == 401
+    assert r.json()["error"]["code"] == "unauthorized"
+
+
+def test_production_invalid_bearer_returns_401(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _production_client(monkeypatch)
+    r = client.get(
+        "/operator/status",
+        headers={"Host": "api.origenlab.cl", "Authorization": "Bearer wrong-token"},
+    )
+    assert r.status_code == 401
+    assert r.json()["error"]["code"] == "unauthorized"
+
+
+def test_production_valid_bearer_not_unauthorized(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _production_client(monkeypatch)
+    r = client.get(
+        "/operator/status",
+        headers={"Host": "api.origenlab.cl", **_production_auth_headers()},
+    )
+    assert r.status_code != 401
+
+
+def test_production_options_preflight_without_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _production_client(monkeypatch)
+    r = client.options(
+        "/operator/status",
+        headers={
+            "Host": "api.origenlab.cl",
+            "Origin": "https://dashboard.origenlab.cl",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert r.status_code != 401

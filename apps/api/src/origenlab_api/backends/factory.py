@@ -53,6 +53,10 @@ def validate_api_settings(settings: Settings) -> None:
             "ORIGENLAB_ENV=production requires ORIGENLAB_API_CORS_ORIGINS "
             "(explicit dashboard origin, no wildcard)"
         )
+    if settings.production_mode() and not (settings.api_auth_token or "").strip():
+        raise ValueError(
+            "ORIGENLAB_ENV=production requires ORIGENLAB_API_AUTH_TOKEN"
+        )
 
 
 def get_repository_bundle(settings: Settings) -> RepositoryBundle:
