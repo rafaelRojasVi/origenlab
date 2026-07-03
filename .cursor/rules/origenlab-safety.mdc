@@ -1,0 +1,117 @@
+---
+description: OrigenLab safety, API, Gmail, and data-boundary rules
+globs:
+  - "**/*"
+alwaysApply: true
+---
+
+# OrigenLab Safety Rules
+
+This repository contains OrigenLab production-adjacent code for:
+
+- `apps/email-pipeline`
+- `apps/api`
+- `apps/dashboard`
+- `apps/web`
+
+Follow these rules for all coding, review, and automation work.
+
+## Core Data Boundaries
+
+- SQLite and Gmail Sent are the send-truth / safety-truth.
+- Postgres is a read model / reporting mirror.
+- API and dashboard are read-only visibility layers.
+- Email-pipeline scripts remain the mutation path.
+- Do not change these boundaries without explicit human approval.
+
+## API Rules
+
+- Do not add `POST`, `PUT`, `PATCH`, or `DELETE` routes unless explicitly requested.
+- Public API routes must stay read-only.
+- Every public route should have a Pydantic `response_model`.
+- Success responses should be JSON objects.
+- List endpoints should use `meta` + `items`.
+- Error responses should use the unified `error` envelope.
+- Preserve `X-Request-ID` behavior.
+- Do not leak stack traces, raw SQL, DSNs, env vars, tokens, Gmail secrets, or local absolute paths.
+
+## Gmail / Email Safety
+
+- Do not send emails.
+- Do not create drafts.
+- Do not archive, delete, label, or modify Gmail messages.
+- Do not auto-apply NDR suppressions.
+- Do not change outreach state or suppression state unless explicitly requested.
+- Read-only Gmail inspection is allowed only when the task clearly requires it.
+
+## Files and Secrets
+
+Never commit or expose:
+
+- `.env` files
+- API tickets
+- Gmail credentials or OAuth tokens
+- SQLite databases
+- Postgres URLs
+- private exports
+- `reports/out`
+- local absolute paths such as `/home/...` or `/mnt/...`
+
+## Testing Rules
+
+- Add or update tests for behavior changes.
+- Prefer focused tests first, then broader validation.
+- Keep tests deterministic and isolated.
+- Do not weaken tests to make a PR pass.
+- Do not skip or xfail tests unless the reason is explicit and narrow.
+
+For `apps/api`, prefer:
+
+```bash
+cd apps/api
+uv run pytest -q
+./scripts/validate.sh
+```
+
+For API contract/security changes, prefer:
+
+```bash
+cd apps/api
+uv run pytest \
+  tests/test_api_response_contract.py \
+  tests/test_response_model_coverage.py \
+  tests/test_http_security.py \
+  tests/test_no_write_policy.py \
+  -q
+```
+
+## PR Rules
+
+- Keep PRs small and focused.
+- Prefer additive API changes.
+- Do not remove legacy fields without migration notes and tests.
+- PR bodies should include:
+  - what changed
+  - why it is safe
+  - commands run
+  - test results
+  - any remaining risk
+
+## OrigenLab Recent Context
+
+Recent API polish added:
+
+- Warm-case metadata:
+  - `meta.canonical_categories`
+  - `meta.legacy_category_aliases`
+- Equipment empty-state note:
+  - use `auto-refresh-chilecompra-equipment --once --apply`
+  - `--include-equipment-opportunities` is legacy/backfill only
+- `/operator/automation-status` exposes:
+  - `ndr_pending_review`
+- CORS exposes:
+  - `X-Request-ID`
+- Postgres read-model failures map to:
+  - `503 backend_unavailable`
+
+Do not regress these behaviors.
