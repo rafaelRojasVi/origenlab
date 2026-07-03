@@ -2,7 +2,7 @@
 name = "origenlab-email-pipeline"
 version = "0.1.0"
 description = "PST → mbox → SQLite → JSONL; optional ML embeddings (WSL + CUDA)"
-readme = "README.md"
+readme = { text = "OrigenLab email pipeline package used by the read-only API and local operator tooling.", content-type = "text/markdown" }
 requires-python = ">=3.12"
 dependencies = [
     "orjson>=3.9",
