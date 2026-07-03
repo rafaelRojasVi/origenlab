@@ -131,10 +131,20 @@ Small **stable objects** are allowed when documented and covered by tests.
 |-------|-------|-------|
 | `GET /health` | `{ ok, service, mode, backend, postgres_configured }` | Liveness; no `meta` wrapper. |
 | `GET /operator/status` | `OperatorStatusResponse` | Flat operator verdict + warnings. |
-| `GET /operator/automation-status` | `OperatorAutomationStatusResponse` | Automation health snapshot. |
+| `GET /operator/automation-status` | `OperatorAutomationStatusResponse` | Automation health snapshot; includes additive `ndr_pending_review` (see below). |
 | `GET /mirror/health/dependencies` | `HealthDependenciesResponse` | Postgres/SQLite reachability (redacted URL fields only). |
 
 Keys on these endpoints must not change casually; update `tests/test_health.py` and this table together.
+
+**`GET /operator/automation-status` — `ndr_pending_review` (additive):**
+
+| Rule | Requirement |
+|------|-------------|
+| Field | Top-level `ndr_pending_review` object (default `{}` when absent in source snapshot). |
+| Purpose | Pending NDR review counts, paths, and status for operator visibility. |
+| Sources | Populated from filesystem `active/current` or Postgres automation snapshot when present. |
+| Path safety | Nested path-like fields are **basename-redacted** like other automation sections (`path_info` companions). |
+| Compatibility | Additive; existing clients may ignore until needed. |
 
 ---
 
@@ -178,6 +188,18 @@ Every API response includes an **`X-Request-ID`** header.
 
 Implemented in `origenlab_api.request_id.RequestIdMiddleware` (outermost middleware). Host allowlist 403 responses also resolve the id before returning.
 
+### Browser clients (CORS)
+
+When `ORIGENLAB_API_CORS_ORIGINS` is configured, credentialed dashboard/browser origins receive:
+
+| Header | Value |
+|--------|-------|
+| `Access-Control-Expose-Headers` | `X-Request-ID` |
+
+Browser JavaScript on allowed origins can read the request/correlation id from response headers (including error responses). CORS methods remain read-only: **`GET`**, **`HEAD`**, **`OPTIONS`** only.
+
+Implemented in `origenlab_api.http_security.configure_http_security`.
+
 ### Standard `code` values
 
 | `code` | HTTP | When |
@@ -186,7 +208,7 @@ Implemented in `origenlab_api.request_id.RequestIdMiddleware` (outermost middlew
 | `validation_error` | 422 | FastAPI/Pydantic query or path validation. |
 | `not_found` | 404 | Resource missing or unknown path. |
 | `forbidden` | 403 | Host allowlist or policy rejection. |
-| `backend_unavailable` | 503 | Postgres mirror unreachable. |
+| `backend_unavailable` | 503 | Postgres read-model connection or driver failure (mirror unreachable). Response is sanitized: no DSNs, passwords, SQL, or tracebacks in `message` or `details`. |
 | `mirror_not_configured` | 503 | Mirror route without `ORIGENLAB_POSTGRES_URL`. |
 | `internal_error` | 500 | Unexpected failure (no traceback in body). |
 
@@ -300,6 +322,9 @@ Raw absolute paths (`/home/…`, `/mnt/…`, parent directories) must **not** ap
 
 | Date | Change |
 |------|--------|
+| 2026-07 | `GET /operator/automation-status`: additive `ndr_pending_review` (pending NDR review counts/paths/status); nested paths basename-redacted like other automation sections. |
+| 2026-07 | CORS: `Access-Control-Expose-Headers: X-Request-ID` for configured dashboard origins; methods remain `GET` / `HEAD` / `OPTIONS`. |
+| 2026-07 | Postgres read-model failures map to **503** `backend_unavailable` without leaking DSNs, passwords, SQL, or tracebacks. |
 | 2026-07 | `GET /cases/warm`: additive `meta.canonical_categories` and `meta.legacy_category_aliases` for CLI clients; legacy category filters remain accepted and normalized. |
 | 2026-07 | `GET /opportunities/equipment`: empty Postgres read-model note now points to `auto-refresh-chilecompra-equipment --once --apply`; CSV reload is documented as legacy/backfill only. |
 | 2026-06 | Operator responses redact filesystem paths: legacy fields are basename-only; `sqlite_path_info`, `source_path_info`, `active_current_dir_info`, and nested `path_info` carry `{ redacted, basename, kind }`. Contract audit fails on `/home/` and `/mnt/` in JSON. |
@@ -314,7 +339,8 @@ Raw absolute paths (`/home/…`, `/mnt/…`, parent directories) must **not** ap
 - [ ] Parse success bodies as objects; never assume a top-level array.
 - [ ] For lists, read `meta.count` and `items`.
 - [ ] Use `meta.canonical_categories` and `meta.legacy_category_aliases` when displaying or filtering warm cases.
-- [ ] Branch on HTTP status first; then `error.code`; use `error.request_id` / `X-Request-ID` for support correlation.
+- [ ] Branch on HTTP status first; then `error.code`; use `error.request_id` / `X-Request-ID` for support correlation (browser clients on allowed CORS origins can read the header via `Access-Control-Expose-Headers`).
+- [ ] On `GET /operator/automation-status`, treat `ndr_pending_review` as optional additive context.
 - [ ] Treat unknown JSON keys as optional (forward-compatible).
 - [ ] Do not log full error bodies in production if they might contain user input; our API should not echo secrets.
 
