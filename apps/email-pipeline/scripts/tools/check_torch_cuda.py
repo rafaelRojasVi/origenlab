@@ -13,7 +13,7 @@ def main() -> None:
     except ImportError as e:
         print("torch_import:", False)
         print("error:", repr(e))
-        print("Install: uv pip install torch==2.8.0 ... --index-url https://download.pytorch.org/whl/cu129")
+        print("Install: uv sync --group ml  # torch 2.12.1+cu129 via pyproject pytorch-cu129 index")
         sys.exit(1)
 
     print("torch_version:", torch.__version__)

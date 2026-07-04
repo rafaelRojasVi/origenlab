@@ -632,9 +632,9 @@ ml = [
     { name = "python-dotenv", specifier = "==1.2.2" },
     { name = "scikit-learn", specifier = ">=1.5" },
     { name = "sentence-transformers", specifier = "==5.3.0" },
-    { name = "torch", specifier = "==2.8.0", index = "https://download.pytorch.org/whl/cu129" },
-    { name = "torchaudio", specifier = "==2.8.0", index = "https://download.pytorch.org/whl/cu129" },
-    { name = "torchvision", specifier = "==0.23.0", index = "https://download.pytorch.org/whl/cu129" },
+    { name = "torch", specifier = "==2.12.1", index = "https://download.pytorch.org/whl/cu129" },
+    { name = "torchaudio", specifier = "==2.11.0", index = "https://download.pytorch.org/whl/cu129" },
+    { name = "torchvision", specifier = "==0.27.1", index = "https://download.pytorch.org/whl/cu129" },
     { name = "tqdm", specifier = "==4.67.3" },
 ]
 postgres = [
