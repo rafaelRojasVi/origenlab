@@ -12,12 +12,16 @@
 |-------|--------------|-------------------------|
 | **Cloudflare Access** (edge) | SSO / session cookies for `dashboard.origenlab.cl` | Origin API bearer auth |
 | **`credentials: "include"`** (browser fetch) | Forwards Cloudflare Access session cookies on same-origin `/api/*` calls | Send `ORIGENLAB_API_AUTH_TOKEN` to the browser |
-| **Dashboard Worker proxy** (`/api/*`) | GET-only allowlist; injects `X-OriginLab-API-Key` upstream | Replace operator Access login |
-| **`ORIGENLAB_API_AUTH_TOKEN`** (Worker secret + API origin) | Protects private API routes when `ORIGENLAB_ENV=production` | Belong in `VITE_*` or static JS |
+| **Dashboard Worker proxy** (`/api/*`) | GET-only allowlist; injects upstream auth (see below) | Replace operator Access login |
+| **`ORIGENLAB_API_AUTH_TOKEN`** (Worker secret + API origin) | `X-OriginLab-API-Key` on private API routes | Belong in `VITE_*` or static JS |
+| **`CF_ACCESS_*`** (Worker secrets) | Cloudflare Access **service token** to reach Access-protected upstream | Replace operator dashboard login |
 
 When production API token auth is enabled, **private routes return 401** unless the caller presents `Authorization: Bearer <token>` or `X-OriginLab-API-Key: <token>`.
 
-The dashboard browser uses **`fetch(..., { credentials: "include" })`** only — **no** bearer/API-key headers in client code. The **Worker** adds `X-OriginLab-API-Key` when forwarding to `apps/api`.
+The dashboard browser uses **`fetch(..., { credentials: "include" })`** only — **no** bearer/API-key headers in client code. The **Worker** adds upstream headers when forwarding to `apps/api`:
+
+1. **`CF-Access-Client-Id` / `CF-Access-Client-Secret`** — required for production upstream `https://api.origenlab.cl` (Cloudflare Access). Without these, upstream returns **302/403** (Access login HTML), even for `/health`.
+2. **`X-OriginLab-API-Key`** — always required when API origin token auth is enabled. Without it, private routes return **401** JSON after Access succeeds.
 
 See also: [`apps/api/docs/PRODUCTION_AUTH.md`](../../api/docs/PRODUCTION_AUTH.md).
 
@@ -26,11 +30,11 @@ See also: [`apps/api/docs/PRODUCTION_AUTH.md`](../../api/docs/PRODUCTION_AUTH.md
 ## Production layout (recommended)
 
 ```
-Browser → https://dashboard.origenlab.cl/api/operator/status  (same origin)
+Browser → https://dashboard.origenlab.cl/api/operator/status  (same origin; operator Access cookie)
        → Cloudflare Worker (apps/dashboard-proxy)
        → https://api.origenlab.cl/operator/status
-          + X-OriginLab-API-Key (Worker secret)
-          + optional CF-Access-Client-* (Worker secrets, if upstream API uses Access)
+          + CF-Access-Client-Id / CF-Access-Client-Secret  (Worker secrets — required for api.origenlab.cl)
+          + X-OriginLab-API-Key                            (Worker secret ORIGENLAB_API_AUTH_TOKEN)
 ```
 
 Dashboard build:
@@ -72,8 +76,9 @@ fetch(url, {
 
 | Symptom | Typical cause |
 |------|----------------|
-| **302 / 403** at edge (HTML) | Cloudflare Access — operator not logged in |
-| **401** JSON from `/api/*` | Worker missing/invalid `ORIGENLAB_API_AUTH_TOKEN` secret, or upstream API token mismatch |
+| **302 / 403** HTML from `/api/*` (Access login page) | Worker missing/wrong **`CF_ACCESS_CLIENT_ID`** / **`CF_ACCESS_CLIENT_SECRET`** — upstream `api.origenlab.cl` is behind Cloudflare Access |
+| **302 / 403** at dashboard host (not `/api`) | Operator not logged into Cloudflare Access on `dashboard.origenlab.cl` |
+| **401** JSON from `/api/*` | Worker missing/wrong **`ORIGENLAB_API_AUTH_TOKEN`** — Access passed but API origin rejected the request |
 | **403** `path_not_allowed` from Worker | Route not on dashboard read allowlist |
 | **405** from Worker | Mutating HTTP method (not supported) |
 

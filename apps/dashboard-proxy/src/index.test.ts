@@ -17,13 +17,33 @@ const TEST_ENV: ProxyEnv = {
 };
 
 describe("buildUpstreamHeaders", () => {
-  it("injects API key and optional Cloudflare Access service-token headers", () => {
+  it("injects API key and Cloudflare Access service-token headers when both CF secrets are set", () => {
     const incoming = new Headers({ Accept: "application/json", "X-Request-ID": "req-abc" });
     const headers = buildUpstreamHeaders(TEST_ENV, incoming);
     expect(headers.get(API_AUTH_HEADER)).toBe("server-only-token");
     expect(headers.get(CF_ACCESS_CLIENT_ID_HEADER)).toBe("cf-client-id");
     expect(headers.get(CF_ACCESS_CLIENT_SECRET_HEADER)).toBe("cf-client-secret");
     expect(headers.get("X-Request-ID")).toBe("req-abc");
+  });
+
+  it("does not send partial Cloudflare Access headers when only client id is set", () => {
+    const headers = buildUpstreamHeaders(
+      { ...TEST_ENV, CF_ACCESS_CLIENT_SECRET: "" },
+      new Headers({ Accept: "application/json" }),
+    );
+    expect(headers.get(API_AUTH_HEADER)).toBe("server-only-token");
+    expect(headers.get(CF_ACCESS_CLIENT_ID_HEADER)).toBeNull();
+    expect(headers.get(CF_ACCESS_CLIENT_SECRET_HEADER)).toBeNull();
+  });
+
+  it("does not send partial Cloudflare Access headers when only client secret is set", () => {
+    const headers = buildUpstreamHeaders(
+      { ...TEST_ENV, CF_ACCESS_CLIENT_ID: "" },
+      new Headers({ Accept: "application/json" }),
+    );
+    expect(headers.get(API_AUTH_HEADER)).toBe("server-only-token");
+    expect(headers.get(CF_ACCESS_CLIENT_ID_HEADER)).toBeNull();
+    expect(headers.get(CF_ACCESS_CLIENT_SECRET_HEADER)).toBeNull();
   });
 });
 
@@ -65,11 +85,14 @@ describe("handleRequest", () => {
     expect(captured[0]?.url).toBe("https://api.origenlab.cl/operator/status");
     expect(captured[0]?.method).toBe("GET");
     expect(captured[0]?.headers.get(API_AUTH_HEADER)).toBe("server-only-token");
+    expect(captured[0]?.headers.get(CF_ACCESS_CLIENT_ID_HEADER)).toBe("cf-client-id");
+    expect(captured[0]?.headers.get(CF_ACCESS_CLIENT_SECRET_HEADER)).toBe("cf-client-secret");
     expect(response.headers.get("X-Request-ID")).toBe("upstream-req-1");
 
     const bodyText = await response.text();
     expect(bodyText).not.toContain("server-only-token");
     expect(bodyText).not.toContain("cf-client-secret");
+    expect(bodyText).not.toContain("cf-client-id");
   });
 
   it("POST is rejected with 405", async () => {

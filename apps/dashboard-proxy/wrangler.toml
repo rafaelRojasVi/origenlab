@@ -7,9 +7,9 @@ compatibility_date = "2025-04-01"
 ORIGENLAB_API_UPSTREAM = "https://api.origenlab.cl"
 
 # Secrets (wrangler secret put — never commit):
-#   ORIGENLAB_API_AUTH_TOKEN
-#   CF_ACCESS_CLIENT_ID      (optional — upstream API behind Cloudflare Access)
-#   CF_ACCESS_CLIENT_SECRET  (optional)
+#   ORIGENLAB_API_AUTH_TOKEN   (always required)
+#   CF_ACCESS_CLIENT_ID        (required when upstream is behind Cloudflare Access — production api.origenlab.cl)
+#   CF_ACCESS_CLIENT_SECRET    (required when upstream is behind Cloudflare Access — production api.origenlab.cl)
 
 # Route in Cloudflare dashboard or uncomment after zone access:
 # [[routes]]

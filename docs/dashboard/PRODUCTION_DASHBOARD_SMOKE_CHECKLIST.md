@@ -121,7 +121,7 @@ The script does **not** print response bodies, DB paths, Postgres URLs, or crede
 | Equipment `meta.source_path` set | API must not expose CSV paths to browser |
 | HTTP 403 on all routes | Set `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`, or use local `:8001` |
 | HTTP 401 on private routes (CLI smoke) | Set `ORIGENLAB_API_AUTH_TOKEN` in smoke env (see API auth doc) |
-| HTTP 401 in dashboard UI but CLI smoke PASS | Check Worker `ORIGENLAB_API_AUTH_TOKEN` secret and `/api` route; do **not** add `VITE_*` auth token |
+| HTTP 401 in dashboard UI but CLI smoke PASS | Check Worker **`ORIGENLAB_API_AUTH_TOKEN`** secret (401 JSON) or **`CF_ACCESS_*`** secrets (302/403 HTML from `/api/*`); do **not** add `VITE_*` auth token |
 
 ## Related
 
