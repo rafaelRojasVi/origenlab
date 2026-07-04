@@ -57,9 +57,52 @@ CI: `tests/test_no_write_policy.py` checks GET-only routes and scans `apps/api/s
 | `ORIGENLAB_POSTGRES_URL` | Cloud Postgres DSN |
 | `ORIGENLAB_API_CORS_ORIGINS` | `https://dashboard.origenlab.cl` (no `*`) |
 | `ORIGENLAB_API_ALLOWED_HOSTS` | `api.origenlab.cl` (rejects raw `*.onrender.com` Host in production) |
+| `ORIGENLAB_API_AUTH_TOKEN` | Long random secret — **required** when `ORIGENLAB_ENV=production` (see [docs/PRODUCTION_AUTH.md](docs/PRODUCTION_AUTH.md)) |
 | `ORIGENLAB_API_DISABLE_DOCS` | `true` (optional; docs also off when `ORIGENLAB_ENV=production`) |
 
-CORS middleware allows **GET, HEAD, OPTIONS** only. See [`../email-pipeline/docs/PHASE1_CLOUD_READ_PATH.md`](../email-pipeline/docs/PHASE1_CLOUD_READ_PATH.md) and [`.env.production.example`](.env.production.example).
+**CORS is not authentication.** `ORIGENLAB_API_CORS_ORIGINS` allows browser cross-origin reads from the dashboard origin; private routes still require `Authorization: Bearer` (or `X-OriginLab-API-Key`) in production. Public unauthenticated routes: **`GET /health`** and **`OPTIONS`** preflight only.
+
+CORS middleware allows **GET, HEAD, OPTIONS** only. See [`../email-pipeline/docs/PHASE1_CLOUD_READ_PATH.md`](../email-pipeline/docs/PHASE1_CLOUD_READ_PATH.md) and [docs/PRODUCTION_AUTH.md](docs/PRODUCTION_AUTH.md) (env checklist and deployment runbook).
+
+### Production authentication
+
+When `ORIGENLAB_ENV=production`, startup fails without `ORIGENLAB_API_AUTH_TOKEN`. Private read routes require:
+
+```http
+Authorization: Bearer <token>
+```
+
+Optional: `X-OriginLab-API-Key: <token>`. **`GET /health`** remains public for load balancers.
+
+**Local production-like auth test:**
+
+```bash
+cd apps/api
+uv run pytest tests/test_http_security.py -q -k "production and auth"
+```
+
+**Manual curl (after starting uvicorn with production env vars):**
+
+```bash
+curl -sS http://127.0.0.1:8001/health          # 200 without token
+curl -sS http://127.0.0.1:8001/operator/status   # 401 without token
+TOKEN="local-dev-placeholder-not-for-production"
+curl -sS -H "X-OriginLab-API-Key: ${TOKEN}" http://127.0.0.1:8001/operator/status
+```
+
+Use placeholder tokens locally only; never commit production secrets. Full checklist: [docs/PRODUCTION_AUTH.md](docs/PRODUCTION_AUTH.md).
+
+### FastAPI Cloud
+
+| Setting | Notes |
+|---------|--------|
+| Application directory | `apps/api` |
+| Entrypoint | `main.py` → `origenlab_api.main:app` |
+| `ORIGENLAB_ENV` | `production` |
+| `ORIGENLAB_API_AUTH_TOKEN` | Platform secret (required) |
+| Postgres + CORS | Same as Render checklist above |
+
+Public `*.fastapicloud.dev` URLs rely on API token auth for private routes (no Cloudflare Access at edge).
 
 ## Endpoints
 
@@ -107,7 +150,9 @@ curl -sS 'http://127.0.0.1:8001/emails/recent?limit=5' | jq '.total_returned, (.
 curl -sS 'http://127.0.0.1:8001/contacts/buyer%40example.cl' | jq '.contact.email'
 ```
 
-Production (`https://api.origenlab.cl`) sits behind **Cloudflare Access**. Unauthenticated requests often get **HTTP 302** to the Access login — that is expected. Use a service token or run [`scripts/remote_smoke.sh`](scripts/remote_smoke.sh) / the remote audit scripts with `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET`.
+Production (`https://api.origenlab.cl`) may sit behind **Cloudflare Access** (browser SSO) **and** requires **`ORIGENLAB_API_AUTH_TOKEN`** on private routes when `ORIGENLAB_ENV=production`. CORS allowlisting is separate from auth — see [docs/PRODUCTION_AUTH.md](docs/PRODUCTION_AUTH.md).
+
+Unauthenticated `GET /health` may return **HTTP 302** to Cloudflare Access on the custom domain, or **401** on private routes without a bearer token. Use Cloudflare service tokens **plus** `Authorization: Bearer` for remote smokes when both layers are enabled. Run [`scripts/remote_smoke.sh`](scripts/remote_smoke.sh) / the remote audit scripts with `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, and `ORIGENLAB_API_AUTH_TOKEN` as needed.
 
 ### OpenAPI / interactive docs
 

@@ -31,6 +31,8 @@ services:
         value: https://dashboard.origenlab.cl
       - key: ORIGENLAB_API_ALLOWED_HOSTS
         value: api.origenlab.cl
+      - key: ORIGENLAB_API_AUTH_TOKEN
+        sync: false
       - key: ORIGENLAB_POSTGRES_URL
         fromDatabase:
           name: origenlab-dashboard-db

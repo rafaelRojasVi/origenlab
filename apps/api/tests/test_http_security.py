@@ -9,8 +9,10 @@ import pytest
 
 from origenlab_api.backends.factory import validate_api_settings
 from origenlab_api.http_security import (
+    _PUBLIC_PATHS,
     api_auth_enabled,
     host_allowlist_enabled,
+    is_public_route,
     normalize_host_header,
     openapi_docs_enabled,
 )
@@ -53,6 +55,7 @@ def test_production_fails_fast_if_auth_token_missing(
     monkeypatch.setenv("ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/db")
     monkeypatch.setenv("ORIGENLAB_API_CORS_ORIGINS", "https://dashboard.origenlab.cl")
     monkeypatch.delenv("ORIGENLAB_API_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("ORIGENLAB_API_AUTH_TOKEN", "")
     _clear_settings_cache()
     with pytest.raises(ValueError, match="ORIGENLAB_ENV=production requires ORIGENLAB_API_AUTH_TOKEN"):
         create_app()
@@ -259,6 +262,26 @@ def test_api_auth_enabled_only_in_production() -> None:
     assert api_auth_enabled(Settings(env="production", api_auth_token="secret")) is True
     assert api_auth_enabled(Settings(env="production", api_auth_token=None)) is False
     assert api_auth_enabled(Settings(env="development", api_auth_token="secret")) is False
+
+
+def test_public_unauthenticated_paths_are_health_and_options_only() -> None:
+    """Lock production auth surface: only /health and OPTIONS bypass bearer auth."""
+    assert _PUBLIC_PATHS == frozenset({"/health"})
+
+    pytest.importorskip("starlette.requests")
+    from starlette.requests import Request
+
+    def _request(method: str, path: str) -> Request:
+        return Request({"type": "http", "method": method, "path": path, "headers": []})
+
+    assert is_public_route(_request("GET", "/health")) is True
+    assert is_public_route(_request("OPTIONS", "/operator/status")) is True
+    assert is_public_route(_request("OPTIONS", "/mirror/dashboard/summary")) is True
+    assert is_public_route(_request("GET", "/operator/status")) is False
+    assert is_public_route(_request("GET", "/emails/recent")) is False
+    assert is_public_route(_request("GET", "/mirror/contacts")) is False
+    # Any method on /health bypasses auth (load balancers may use GET or HEAD).
+    assert is_public_route(_request("HEAD", "/health")) is True
 
 
 def test_production_health_works_without_auth(monkeypatch: pytest.MonkeyPatch) -> None:

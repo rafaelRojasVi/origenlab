@@ -147,18 +147,27 @@ uv run python scripts/qa/verify_dashboard_postgres_mirror.py
 | `ORIGENLAB_ENV` | `production` | Enables production guards |
 | `ORIGENLAB_API_BACKEND` | `postgres` | **Required** in production (not SQLite) |
 | `ORIGENLAB_POSTGRES_URL` | Cloud DSN | From managed Postgres |
-| `ORIGENLAB_API_CORS_ORIGINS` | `https://dashboard.origenlab.cl` | Comma-separated; **no `*`** |
+| `ORIGENLAB_API_CORS_ORIGINS` | `https://dashboard.origenlab.cl` | Comma-separated; **no `*`**; **not auth** |
+| `ORIGENLAB_API_AUTH_TOKEN` | Long random secret | **Required** in production; bearer on private routes |
+| `ORIGENLAB_API_ALLOWED_HOSTS` | `api.origenlab.cl` | Rejects raw `*.onrender.com` Host |
 | `ORIGENLAB_API_DISABLE_DOCS` | `true` | Optional; docs also off when `ORIGENLAB_ENV=production` |
 
 **Do not set** `ORIGENLAB_SQLITE_PATH` on cloud API.
 
-Template: [`apps/api/.env.production.example`](../../api/.env.production.example)
+Env template and deployment checklist: [`apps/api/docs/PRODUCTION_AUTH.md`](../../api/docs/PRODUCTION_AUTH.md#environment-checklist).
 
 ### CORS (implemented in code)
 
 - Middleware: **GET, HEAD, OPTIONS** only.
 - Startup fails if `ORIGENLAB_ENV=production` without CORS origins or with `postgres` backend missing.
+- **CORS allowlists browser origins; it does not authenticate callers.** See [`apps/api/docs/PRODUCTION_AUTH.md`](../../api/docs/PRODUCTION_AUTH.md).
 - See [`apps/api/src/origenlab_api/http_security.py`](../../api/src/origenlab_api/http_security.py).
+
+### Production API token auth
+
+When `ORIGENLAB_ENV=production`, `ORIGENLAB_API_AUTH_TOKEN` is **required**. Private routes need `Authorization: Bearer <token>`. Public: `GET /health` and `OPTIONS` only.
+
+Full runbook: [`apps/api/docs/PRODUCTION_AUTH.md`](../../api/docs/PRODUCTION_AUTH.md).
 
 ### Render example
 
@@ -209,15 +218,17 @@ Enable HTTPS at provider (automatic on Render/Railway).
 
 ---
 
-## 7. Auth options (Phase 1 — pick one)
+## 7. Auth (production)
 
-| Option | Pros | Notes |
-|--------|------|--------|
-| **Cloudflare Access** | SSO, audit, no app code | Protect both `dashboard.*` and `api.*` |
-| **Render password / IP allowlist** | Quick | Dashboard static + optional API |
-| **VPN / private Postgres + internal API URL** | Strong network boundary | Sync still needs external DB URL from worker |
+| Layer | Role |
+|-------|------|
+| **`ORIGENLAB_API_AUTH_TOKEN`** | Origin bearer auth on private read routes (required when `ORIGENLAB_ENV=production`) |
+| **Cloudflare Access** (recommended for custom domains) | Edge SSO / service tokens for `dashboard.*` and `api.*` |
+| **CORS** | Browser cross-origin policy only — **not** authentication |
 
-API has **no** built-in login in Phase 1; rely on edge auth.
+API has no built-in operator login UI. Combine edge auth (Access) with API bearer token for defense in depth. FastAPI Cloud public URLs rely primarily on API token auth.
+
+Runbook: [`apps/api/docs/PRODUCTION_AUTH.md`](../../api/docs/PRODUCTION_AUTH.md) · Cloudflare: [`docs/CLOUDFLARE_ACCESS_DASHBOARD_SECURITY.md`](../../../docs/CLOUDFLARE_ACCESS_DASHBOARD_SECURITY.md).
 
 ---
 
@@ -254,6 +265,7 @@ export ORIGENLAB_ENV=production
 export ORIGENLAB_API_BACKEND=postgres
 export ORIGENLAB_POSTGRES_URL='postgresql+psycopg://…local or cloud…'
 export ORIGENLAB_API_CORS_ORIGINS=https://dashboard.origenlab.cl
+export ORIGENLAB_API_AUTH_TOKEN=test-token
 cd apps/api && uv run pytest tests/test_http_security.py -q
 ```
 
@@ -276,7 +288,7 @@ Before first production traffic:
 - [ ] `apps/api` full suite green (**200 passed** on readiness date)  
 - [ ] Cloud Postgres created; `alembic upgrade head` OK  
 - [ ] Manual cloud sync OK; verify script expectations met  
-- [ ] API env: `postgres` + CORS + docs disabled  
+- [ ] API env: `postgres` + CORS + **`ORIGENLAB_API_AUTH_TOKEN`** + docs disabled  
 - [ ] Dashboard built with correct `VITE_ORIGENLAB_API_BASE_URL`  
 - [ ] Auth layer chosen and configured  
 - [ ] Post-deploy smokes planned  
