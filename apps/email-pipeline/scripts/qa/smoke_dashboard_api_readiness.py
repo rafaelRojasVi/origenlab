@@ -7,9 +7,10 @@ Local (no Cloudflare Access):
   uv run python scripts/qa/smoke_dashboard_api_readiness.py \\
     --api-base http://127.0.0.1:8001
 
-Production (Cloudflare Access service token via env — preferred):
+Production (Cloudflare Access service token + API origin token via env — preferred):
   export CF_ACCESS_CLIENT_ID=...
   export CF_ACCESS_CLIENT_SECRET=...
+  export ORIGENLAB_API_AUTH_TOKEN=...   # from secret store only
   uv run python scripts/qa/smoke_dashboard_api_readiness.py \\
     --api-base https://api.origenlab.cl
 """
@@ -27,6 +28,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from origenlab_email_pipeline.qa.dashboard_api_readiness import (  # noqa: E402
+    resolve_api_auth_token,
     resolve_cf_access_credentials,
     run_dashboard_api_smoke,
 )
@@ -67,10 +69,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
+    api_auth_token = resolve_api_auth_token()
     report = run_dashboard_api_smoke(
         args.api_base,
         timeout=args.timeout,
         cf_access=cf_access,
+        api_auth_token=api_auth_token,
     )
     for line in report.summary_lines():
         print(line)
@@ -80,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
             "api_base": report.api_base,
             "passed": report.passed,
             "cloudflare_access_configured": cf_access is not None and cf_access.is_configured,
+            "api_auth_configured": api_auth_token is not None,
             "checks": [
                 {"name": c.name, "ok": c.ok, "detail": c.detail} for c in report.checks
             ],

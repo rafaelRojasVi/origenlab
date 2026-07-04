@@ -28,7 +28,7 @@ uv run python scripts/qa/smoke_dashboard_api_readiness.py \
   --api-base http://127.0.0.1:8001
 ```
 
-No service token headers are sent unless you set the env vars below.
+No service token or API auth headers are sent unless you set the env vars below.
 
 ### Production API (Cloudflare Access + bearer token)
 
@@ -43,6 +43,8 @@ export ORIGENLAB_API_AUTH_TOKEN='your-api-token'   # from secret store only
 uv run python scripts/qa/smoke_dashboard_api_readiness.py \
   --api-base https://api.origenlab.cl
 ```
+
+When `ORIGENLAB_API_AUTH_TOKEN` is set, the smoke script sends `X-OriginLab-API-Key` on every GET (never printed). Cloudflare Access headers are unchanged.
 
 Without tokens, smoke may return **HTTP 403** (Access) or **401** (API bearer). See [`apps/api/docs/PRODUCTION_AUTH.md`](../../apps/api/docs/PRODUCTION_AUTH.md).
 

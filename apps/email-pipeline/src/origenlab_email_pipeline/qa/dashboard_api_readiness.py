@@ -55,10 +55,19 @@ FetchJsonFn = Callable[[str, dict[str, str | int]], tuple[int, dict[str, Any] | 
 
 CF_ACCESS_CLIENT_ID_HEADER = "CF-Access-Client-Id"
 CF_ACCESS_CLIENT_SECRET_HEADER = "CF-Access-Client-Secret"
+API_AUTH_TOKEN_HEADER = "X-OriginLab-API-Key"
 
 CF_ACCESS_403_HINT = (
     "HTTP 403: API is probably protected by Cloudflare Access. "
     "Provide CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET or run against local API."
+)
+API_AUTH_401_HINT = (
+    "HTTP 401: API origin requires ORIGENLAB_API_AUTH_TOKEN. "
+    "Export the token from your secret store — the smoke script sends "
+    f"{API_AUTH_TOKEN_HEADER} automatically when the env var is set."
+)
+API_AUTH_401_INVALID_HINT = (
+    "HTTP 401: unauthorized at API origin — ORIGENLAB_API_AUTH_TOKEN may be missing or invalid."
 )
 
 
@@ -106,15 +115,41 @@ def resolve_cf_access_credentials(
     return CloudflareAccessConfig(client_id=client_id, client_secret=client_secret)
 
 
+def resolve_api_auth_token() -> str | None:
+    """Load API origin token from ORIGENLAB_API_AUTH_TOKEN (optional for local smoke)."""
+    token = os.environ.get("ORIGENLAB_API_AUTH_TOKEN", "").strip()
+    return token or None
+
+
+def build_smoke_request_headers(
+    *,
+    cf_access: CloudflareAccessConfig | None = None,
+    api_auth_token: str | None = None,
+) -> dict[str, str]:
+    """Merge optional Cloudflare Access and API origin auth headers for smoke GETs."""
+    headers: dict[str, str] = {}
+    if cf_access is not None and cf_access.is_configured:
+        headers.update(cf_access.request_headers())
+    token = (api_auth_token or "").strip()
+    if token:
+        headers[API_AUTH_TOKEN_HEADER] = token
+    return headers
+
+
 def format_http_status_detail(
     status: int,
     err: str,
     *,
     expected: int = 200,
     cf_access_configured: bool = False,
+    api_auth_configured: bool = False,
 ) -> str:
     if status == 403 and not cf_access_configured:
         return CF_ACCESS_403_HINT
+    if status == 401:
+        if not api_auth_configured:
+            return API_AUTH_401_HINT
+        return API_AUTH_401_INVALID_HINT
     hint = err or "no body"
     return f"HTTP {status} (expected {expected}) — {hint[:120]}"
 
@@ -238,6 +273,7 @@ def _expect_status(
     *,
     expected: int = 200,
     cf_access_configured: bool = False,
+    api_auth_configured: bool = False,
 ) -> EndpointCheck:
     if status != expected:
         return EndpointCheck(
@@ -248,6 +284,7 @@ def _expect_status(
                 err,
                 expected=expected,
                 cf_access_configured=cf_access_configured,
+                api_auth_configured=api_auth_configured,
             ),
         )
     if body is None:
@@ -258,10 +295,20 @@ def _expect_status(
     return EndpointCheck(name, True, f"HTTP {status}")
 
 
-def _check_health(fetch: FetchJsonFn, *, cf_access_configured: bool = False) -> EndpointCheck:
+def _check_health(
+    fetch: FetchJsonFn,
+    *,
+    cf_access_configured: bool = False,
+    api_auth_configured: bool = False,
+) -> EndpointCheck:
     status, body, err = fetch("/health", {})
     check = _expect_status(
-        "GET /health", status, body, err, cf_access_configured=cf_access_configured
+        "GET /health",
+        status,
+        body,
+        err,
+        cf_access_configured=cf_access_configured,
+        api_auth_configured=api_auth_configured,
     )
     if not check.ok or body is None:
         return check
@@ -272,10 +319,20 @@ def _check_health(fetch: FetchJsonFn, *, cf_access_configured: bool = False) -> 
     return EndpointCheck("GET /health", True, f"ok service={body.get('service')}")
 
 
-def _check_operator_status(fetch: FetchJsonFn, *, cf_access_configured: bool = False) -> EndpointCheck:
+def _check_operator_status(
+    fetch: FetchJsonFn,
+    *,
+    cf_access_configured: bool = False,
+    api_auth_configured: bool = False,
+) -> EndpointCheck:
     status, body, err = fetch("/operator/status", {})
     check = _expect_status(
-        "GET /operator/status", status, body, err, cf_access_configured=cf_access_configured
+        "GET /operator/status",
+        status,
+        body,
+        err,
+        cf_access_configured=cf_access_configured,
+        api_auth_configured=api_auth_configured,
     )
     if not check.ok or body is None:
         return check
@@ -287,10 +344,20 @@ def _check_operator_status(fetch: FetchJsonFn, *, cf_access_configured: bool = F
     return EndpointCheck("GET /operator/status", True, f"verdict={verdict}")
 
 
-def _check_commercial_deals(fetch: FetchJsonFn, *, cf_access_configured: bool = False) -> EndpointCheck:
+def _check_commercial_deals(
+    fetch: FetchJsonFn,
+    *,
+    cf_access_configured: bool = False,
+    api_auth_configured: bool = False,
+) -> EndpointCheck:
     status, body, err = fetch("/mirror/commercial/deals", {"limit": 20})
     check = _expect_status(
-        "GET /mirror/commercial/deals", status, body, err, cf_access_configured=cf_access_configured
+        "GET /mirror/commercial/deals",
+        status,
+        body,
+        err,
+        cf_access_configured=cf_access_configured,
+        api_auth_configured=api_auth_configured,
     )
     if not check.ok or body is None:
         return check
@@ -318,10 +385,20 @@ def _check_commercial_deals(fetch: FetchJsonFn, *, cf_access_configured: bool = 
     )
 
 
-def _check_catalog_products(fetch: FetchJsonFn, *, cf_access_configured: bool = False) -> EndpointCheck:
+def _check_catalog_products(
+    fetch: FetchJsonFn,
+    *,
+    cf_access_configured: bool = False,
+    api_auth_configured: bool = False,
+) -> EndpointCheck:
     status, body, err = fetch("/mirror/catalog/products", {"limit": 100})
     check = _expect_status(
-        "GET /mirror/catalog/products", status, body, err, cf_access_configured=cf_access_configured
+        "GET /mirror/catalog/products",
+        status,
+        body,
+        err,
+        cf_access_configured=cf_access_configured,
+        api_auth_configured=api_auth_configured,
     )
     if not check.ok or body is None:
         return check
@@ -357,11 +434,19 @@ def _check_catalog_detail(
     expect_eur: str,
     expect_clp: int,
     cf_access_configured: bool = False,
+    api_auth_configured: bool = False,
 ) -> EndpointCheck:
     path = f"/mirror/catalog/products/{product_key}"
     status, body, err = fetch(path, {})
     name = f"GET {path}"
-    check = _expect_status(name, status, body, err, cf_access_configured=cf_access_configured)
+    check = _expect_status(
+        name,
+        status,
+        body,
+        err,
+        cf_access_configured=cf_access_configured,
+        api_auth_configured=api_auth_configured,
+    )
     if not check.ok or body is None:
         return check
     product = body.get("product")
@@ -384,9 +469,21 @@ def _check_catalog_detail(
     return EndpointCheck(name, True, f"{label} commercial_history reference amounts present")
 
 
-def _check_warm_cases(fetch: FetchJsonFn, *, cf_access_configured: bool = False) -> EndpointCheck:
+def _check_warm_cases(
+    fetch: FetchJsonFn,
+    *,
+    cf_access_configured: bool = False,
+    api_auth_configured: bool = False,
+) -> EndpointCheck:
     status, body, err = fetch("/cases/warm", {"limit": 20, "include_noise": "false"})
-    check = _expect_status("GET /cases/warm", status, body, err, cf_access_configured=cf_access_configured)
+    check = _expect_status(
+        "GET /cases/warm",
+        status,
+        body,
+        err,
+        cf_access_configured=cf_access_configured,
+        api_auth_configured=api_auth_configured,
+    )
     if not check.ok or body is None:
         return check
     meta = body.get("meta")
@@ -405,13 +502,23 @@ def _check_warm_cases(fetch: FetchJsonFn, *, cf_access_configured: bool = False)
     )
 
 
-def _check_equipment(fetch: FetchJsonFn, *, cf_access_configured: bool = False) -> EndpointCheck:
+def _check_equipment(
+    fetch: FetchJsonFn,
+    *,
+    cf_access_configured: bool = False,
+    api_auth_configured: bool = False,
+) -> EndpointCheck:
     status, body, err = fetch(
         "/opportunities/equipment",
         {"limit": 20, "include_account_intelligence": "false"},
     )
     check = _expect_status(
-        "GET /opportunities/equipment", status, body, err, cf_access_configured=cf_access_configured
+        "GET /opportunities/equipment",
+        status,
+        body,
+        err,
+        cf_access_configured=cf_access_configured,
+        api_auth_configured=api_auth_configured,
     )
     if not check.ok or body is None:
         return check
@@ -445,6 +552,7 @@ def run_dashboard_api_smoke(
     timeout: float = 30.0,
     fetch: FetchJsonFn | None = None,
     cf_access: CloudflareAccessConfig | None = None,
+    api_auth_token: str | None = None,
 ) -> SmokeReport:
     """Run all read-only smoke checks against the operator API base URL."""
     base = api_base.strip().rstrip("/")
@@ -452,7 +560,11 @@ def run_dashboard_api_smoke(
         raise ValueError("api_base must start with http:// or https://")
 
     cf_configured = cf_access is not None and cf_access.is_configured
-    extra_headers = cf_access.request_headers() if cf_configured else None
+    api_auth_configured = bool((api_auth_token or "").strip())
+    extra_headers = build_smoke_request_headers(
+        cf_access=cf_access,
+        api_auth_token=api_auth_token,
+    ) or None
 
     def bound_fetch(path: str, params: dict[str, str | int]) -> tuple[int, dict[str, Any] | None, str]:
         if fetch is not None:
@@ -461,7 +573,10 @@ def run_dashboard_api_smoke(
             base, path, params, timeout=timeout, extra_headers=extra_headers
         )
 
-    cf_kw = {"cf_access_configured": cf_configured}
+    cf_kw = {
+        "cf_access_configured": cf_configured,
+        "api_auth_configured": api_auth_configured,
+    }
     report = SmokeReport(api_base=base)
     report.checks = [
         _check_health(bound_fetch, **cf_kw),
