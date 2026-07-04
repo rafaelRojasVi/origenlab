@@ -35,9 +35,11 @@ Runbook and **production record** for protecting **dashboard.origenlab.cl** and 
 
 | Component | Setting |
 |-----------|---------|
-| Dashboard API base | `VITE_ORIGENLAB_API_BASE_URL=https://api.origenlab.cl` |
+| Dashboard API base (production) | `VITE_ORIGENLAB_API_BASE_URL=https://dashboard.origenlab.cl/api` (same-origin Worker proxy) |
+| Dashboard read-only proxy | Cloudflare Worker — [`apps/dashboard-proxy`](../apps/dashboard-proxy/README.md) on `dashboard.origenlab.cl/api*` |
+| API upstream (Worker secret) | `ORIGENLAB_API_UPSTREAM=https://api.origenlab.cl` |
 | API CORS | `ORIGENLAB_API_CORS_ORIGINS` includes `https://dashboard.origenlab.cl` |
-| API bearer auth | `ORIGENLAB_API_AUTH_TOKEN` set on Render / FastAPI Cloud (production required) |
+| API bearer auth | `ORIGENLAB_API_AUTH_TOKEN` on Render API **and** Worker secret (same value) |
 | API Host allowlist | `ORIGENLAB_API_ALLOWED_HOSTS=api.origenlab.cl` |
 
 ### Verification (production)
@@ -108,7 +110,7 @@ Authorization: Bearer <token>
 
 **Smoke / curl:** When Access and API token auth are both enabled, send Cloudflare service-token headers **and** an API token header (`X-OriginLab-API-Key` in shell examples). See [`apps/api/docs/PRODUCTION_AUTH.md`](../apps/api/docs/PRODUCTION_AUTH.md).
 
-**Dashboard browser:** `credentials: include` carries Cloudflare cookies only. Production dashboard builds that call a token-protected API need a follow-up to attach the bearer token (server-side proxy or build-time secret) — CORS alone is insufficient.
+**Dashboard browser:** `credentials: include` carries Cloudflare cookies on same-origin `/api/*` calls. The **Cloudflare Worker** (`apps/dashboard-proxy`) injects `X-OriginLab-API-Key` upstream — never expose the token in `VITE_*` or client JS. See [`apps/dashboard/docs/PRODUCTION_API_AUTH.md`](../apps/dashboard/docs/PRODUCTION_API_AUTH.md).
 
 ## Remaining hardening (follow-up)
 
@@ -140,7 +142,7 @@ Authorization: Bearer <token>
 
 ### CORS reminder
 
-The dashboard calls `https://api.origenlab.cl` after Access login. Production must keep `ORIGENLAB_API_CORS_ORIGINS` including `https://dashboard.origenlab.cl` (not `*`).
+The dashboard calls **`https://dashboard.origenlab.cl/api/*`** (same origin) after Access login; the Worker forwards to `https://api.origenlab.cl` with origin token auth. Production must keep `ORIGENLAB_API_CORS_ORIGINS` including `https://dashboard.origenlab.cl` for any direct API calls (smoke/CLI).
 
 **CORS is not authentication.** Private routes also require `ORIGENLAB_API_AUTH_TOKEN` when `ORIGENLAB_ENV=production`.
 
@@ -164,10 +166,10 @@ If only **dashboard.origenlab.cl** is behind Access, **api.origenlab.cl** (and a
 | Step | Expected |
 |------|----------|
 | Open `https://dashboard.origenlab.cl` in incognito | Redirect to Cloudflare Access / login |
-| Log in with **allowed** email | Dashboard loads; API calls succeed (no CORS errors) |
+| Log in with **allowed** email | Dashboard loads; same-origin `/api/*` calls succeed via Worker proxy |
 | Log in with **disallowed** email | Blocked by Access |
 | `curl -i https://api.origenlab.cl/health` (no session) | **302** to Access login |
-| Dashboard → network tab after login | Requests to `api.origenlab.cl` succeed |
+| Dashboard → network tab after login | Requests to `dashboard.origenlab.cl/api/*` return 200 (not cross-origin to `api.origenlab.cl`) |
 | `GET /health` after login | **200** (not HEAD unless API adds HEAD) |
 | Raw Render URLs | Confirm blocked or mitigated (see **Remaining hardening**) |
 
@@ -184,7 +186,8 @@ If only **dashboard.origenlab.cl** is behind Access, **api.origenlab.cl** (and a
 |-------------|--------|
 | Cloudflare Access policies / DNS on zone | Cloudflare UI only |
 | API CORS env | Redeploy **origenlab-api** on Render |
-| Dashboard `VITE_ORIGENLAB_API_BASE_URL` | Redeploy **origenlab-dashboard** |
+| Dashboard `VITE_ORIGENLAB_API_BASE_URL` | Redeploy **origenlab-dashboard** (use `https://dashboard.origenlab.cl/api`) |
+| Dashboard Worker proxy | Deploy **`apps/dashboard-proxy`** via Wrangler; route `dashboard.origenlab.cl/api*` |
 | Postgres mirror | **Not** required for Access |
 
 **Access itself does not require** a Render redeploy, DB changes, sends, or Postgres sync.

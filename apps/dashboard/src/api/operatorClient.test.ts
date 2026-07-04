@@ -7,6 +7,7 @@ import {
   fetchHealth,
   fetchOperatorStatus,
   getOperatorApiBaseUrl,
+  joinApiBaseUrl,
   operatorApiUrl,
   parseHealthResponse,
   parseOperatorAutomationStatus,
@@ -39,6 +40,27 @@ describe("operator API client", () => {
     vi.stubEnv("MODE", "development");
     vi.stubEnv("VITE_ORIGENLAB_API_BASE_URL", "http://api.example.com/");
     expect(getOperatorApiBaseUrl()).toBe("http://api.example.com");
+  });
+
+  it("joinApiBaseUrl preserves /api path prefix in production proxy base", () => {
+    expect(joinApiBaseUrl("https://dashboard.origenlab.cl/api", "/operator/status")).toBe(
+      "https://dashboard.origenlab.cl/api/operator/status",
+    );
+    expect(joinApiBaseUrl("https://dashboard.origenlab.cl/api/", "/health")).toBe(
+      "https://dashboard.origenlab.cl/api/health",
+    );
+    expect(joinApiBaseUrl("https://api.example.com", "/operator/status")).toBe(
+      "https://api.example.com/operator/status",
+    );
+  });
+
+  it("operatorApiUrl preserves /api path prefix when env includes proxy segment", () => {
+    vi.stubEnv("MODE", "production");
+    vi.stubEnv("VITE_ORIGENLAB_API_BASE_URL", "https://dashboard.origenlab.cl/api");
+    expect(operatorApiUrl("/operator/status")).toBe("https://dashboard.origenlab.cl/api/operator/status");
+    expect(operatorApiUrl("/mirror/catalog/products")).toBe(
+      "https://dashboard.origenlab.cl/api/mirror/catalog/products",
+    );
   });
 
   it("getOperatorApiBaseUrl is empty in dev when env unset (vite proxy)", () => {

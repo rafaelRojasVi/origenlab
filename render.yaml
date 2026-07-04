@@ -44,12 +44,12 @@ services:
     buildCommand: >-
       cd apps/dashboard &&
       npm ci &&
-      VITE_ORIGENLAB_API_BASE_URL=https://api.origenlab.cl npm run build
+      VITE_ORIGENLAB_API_BASE_URL=https://dashboard.origenlab.cl/api npm run build
     staticPublishPath: apps/dashboard/dist
     pullRequestPreviewsEnabled: false
     envVars:
       - key: VITE_ORIGENLAB_API_BASE_URL
-        value: https://api.origenlab.cl
+        value: https://dashboard.origenlab.cl/api
     routes:
       - type: headers
         source: /*

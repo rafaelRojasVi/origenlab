@@ -61,21 +61,40 @@ export function getOperatorApiBaseUrl(): string {
   return "";
 }
 
+/** Join configured API base (may include path prefix like /api) with a route path. */
+export function joinApiBaseUrl(base: string, path: string): string {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const trimmedBase = base.trim().replace(/\/$/, "");
+  if (!trimmedBase) {
+    return normalizedPath;
+  }
+  try {
+    const baseUrl = new URL(`${trimmedBase}/`);
+    const relativePath = normalizedPath.startsWith("/") ? normalizedPath.slice(1) : normalizedPath;
+    return new URL(relativePath, baseUrl).toString();
+  } catch {
+    throw new OperatorApiConfigError(`Invalid VITE_ORIGENLAB_API_BASE_URL: ${base}`);
+  }
+}
+
 export function operatorApiUrl(
   path: string,
   params?: Record<string, string | number | boolean>,
 ): string {
   const base = getOperatorApiBaseUrl();
-  const origin =
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const urlStr =
     base ||
     (typeof window !== "undefined"
-      ? window.location.origin
+      ? new URL(normalizedPath, `${window.location.origin}/`).toString()
       : (() => {
           throw new OperatorApiConfigError(
             "Cannot resolve API URL without window. Set VITE_ORIGENLAB_API_BASE_URL or run via npm run dev.",
           );
         })());
-  const url = new URL(path.startsWith("/") ? path : `/${path}`, `${origin}/`);
+
+  const resolved = base ? joinApiBaseUrl(base, normalizedPath) : urlStr;
+  const url = new URL(resolved);
   if (params) {
     for (const [key, value] of Object.entries(params)) {
       url.searchParams.set(key, String(value));
