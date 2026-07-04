@@ -48,11 +48,11 @@ Copy [`.env.example`](.env.example) to `.env` if needed — **do not** copy a `:
 | **`npm run dev`** | **Leave unset** (recommended) | Browser uses same-origin requests; Vite proxies `/health`, `/operator`, `/cases`, `/opportunities`, `/contacts` to `http://127.0.0.1:8001` |
 | **`npm run dev`** | Set to a **wrong** API port (e.g. old legacy port) | **Wrong** — bypasses proxy → “Failed to fetch”. UI may show a dev warning; unset `VITE_ORIGENLAB_API_BASE_URL` and **restart** `npm run dev`. |
 | **`npm run dev`** | Set to `http://127.0.0.1:8001` | Works but unnecessary; prefer unset + proxy. |
-| **`npm run build`** / production | **Required** | Set to your deployed `apps/api` host (e.g. `https://api.example.com`), no trailing slash |
+| **`npm run build`** / production | **Required** | Set to same-origin proxy base, e.g. `https://dashboard.origenlab.cl/api` (Cloudflare Worker — see [`apps/dashboard-proxy/README.md`](../dashboard-proxy/README.md)), or direct API host if not using proxy |
 
 Production builds **throw at runtime** if `VITE_ORIGENLAB_API_BASE_URL` is missing (no silent localhost fallback).
 
-**Production auth gap:** When `apps/api` runs with `ORIGENLAB_ENV=production`, private routes require `ORIGENLAB_API_AUTH_TOKEN` at origin. The dashboard browser client sends Cloudflare Access cookies (`credentials: "include"`) only — **not** bearer/API-key headers. Deploying dashboard + token-protected API without a follow-up (same-origin read-only proxy/BFF or API-side Cloudflare Access JWT validation) will yield **401** on private routes. Do **not** put API tokens in `VITE_*` env vars. See [docs/PRODUCTION_API_AUTH.md](docs/PRODUCTION_API_AUTH.md).
+**Production auth:** Private API routes require origin token auth. The browser must **not** embed `ORIGENLAB_API_AUTH_TOKEN` in `VITE_*`. Production uses the same-origin Worker proxy at `/api` — set `VITE_ORIGENLAB_API_BASE_URL=https://dashboard.origenlab.cl/api` after deploying [`apps/dashboard-proxy`](../dashboard-proxy/README.md). See [docs/PRODUCTION_API_AUTH.md](docs/PRODUCTION_API_AUTH.md).
 
 **After changing `.env`, restart `npm run dev`** — Vite only reads env at startup.
 

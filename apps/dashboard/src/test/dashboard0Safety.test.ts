@@ -293,6 +293,6 @@ describe("Production API auth gap (docs/tests guard)", () => {
     expect(docSource).toContain("credentials: \"include\"");
     expect(docSource).toContain("VITE_ORIGENLAB_API_AUTH_TOKEN");
     expect(docSource).toMatch(/401/);
-    expect(docSource).toMatch(/proxy|BFF|JWT/i);
+    expect(docSource).toMatch(/proxy|BFF|JWT|dashboard-proxy/i);
   });
 });

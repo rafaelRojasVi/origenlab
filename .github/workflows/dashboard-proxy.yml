@@ -1,0 +1,31 @@
+name: dashboard-proxy
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "apps/dashboard-proxy/**"
+      - ".github/workflows/dashboard-proxy.yml"
+  pull_request:
+    paths:
+      - "apps/dashboard-proxy/**"
+      - ".github/workflows/dashboard-proxy.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/dashboard-proxy
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: apps/web/.nvmrc
+          cache: npm
+          cache-dependency-path: apps/dashboard-proxy/package-lock.json
+      - run: npm ci
+      - run: npm run validate

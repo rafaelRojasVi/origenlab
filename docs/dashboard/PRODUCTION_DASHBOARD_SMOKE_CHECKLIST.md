@@ -55,7 +55,7 @@ Without tokens, smoke may return **HTTP 403** (Access) or **401** (API bearer). 
 | **302 / 403** (HTML or Access page) | **Cloudflare Access** (edge) | Missing/invalid Access session or service token |
 | **401** JSON (`error.code`: `unauthorized`) | **API origin** (`ORIGENLAB_API_AUTH_TOKEN`) | Request reached the API but no bearer/API-key header |
 
-The production **dashboard browser** sends Access cookies only; it does **not** send the API token. UI 401s with a passing CLI smoke (tokens in env) mean the gap documented in [`apps/dashboard/docs/PRODUCTION_API_AUTH.md`](../../apps/dashboard/docs/PRODUCTION_API_AUTH.md) — needs proxy/JWT follow-up, not a `VITE_*` token.
+The production **dashboard browser** calls same-origin `/api/*` via the Worker proxy; it does **not** send the API token. UI 401s with a passing CLI smoke (tokens in env) mean Worker secrets or route allowlist — see [`apps/dashboard/docs/PRODUCTION_API_AUTH.md`](../../apps/dashboard/docs/PRODUCTION_API_AUTH.md) and [`apps/dashboard-proxy/README.md`](../../apps/dashboard-proxy/README.md).
 
 Alternate env names (same values): `ORIGENLAB_CF_ACCESS_CLIENT_ID` / `ORIGENLAB_CF_ACCESS_CLIENT_SECRET`.
 
@@ -121,12 +121,13 @@ The script does **not** print response bodies, DB paths, Postgres URLs, or crede
 | Equipment `meta.source_path` set | API must not expose CSV paths to browser |
 | HTTP 403 on all routes | Set `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`, or use local `:8001` |
 | HTTP 401 on private routes (CLI smoke) | Set `ORIGENLAB_API_AUTH_TOKEN` in smoke env (see API auth doc) |
-| HTTP 401 in dashboard UI but CLI smoke PASS | Browser lacks API token — implement BFF/proxy or API JWT validation; do **not** add `VITE_*` auth token |
+| HTTP 401 in dashboard UI but CLI smoke PASS | Check Worker **`ORIGENLAB_API_AUTH_TOKEN`** secret (401 JSON) or **`CF_ACCESS_*`** secrets (302/403 HTML from `/api/*`); do **not** add `VITE_*` auth token |
 
 ## Related
 
 - Refresh runbook: [`apps/email-pipeline/docs/REFRESH_RENDER_DASHBOARD_ONCE.md`](../../apps/email-pipeline/docs/REFRESH_RENDER_DASHBOARD_ONCE.md)
-- Dashboard production API auth gap: [`apps/dashboard/docs/PRODUCTION_API_AUTH.md`](../../apps/dashboard/docs/PRODUCTION_API_AUTH.md)
+- Dashboard production API auth: [`apps/dashboard/docs/PRODUCTION_API_AUTH.md`](../../apps/dashboard/docs/PRODUCTION_API_AUTH.md)
+- Dashboard read-only Worker proxy: [`apps/dashboard-proxy/README.md`](../../apps/dashboard-proxy/README.md)
 - Truth audit: [`DASHBOARD_TRUTH_AUDIT_2026-05-28.md`](./DASHBOARD_TRUTH_AUDIT_2026-05-28.md)
 - API mirror smoke (narrower): [`apps/api/scripts/mirror_parity_smoke.py`](../../apps/api/scripts/mirror_parity_smoke.py)
 
