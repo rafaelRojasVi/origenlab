@@ -81,6 +81,8 @@ See also: [`TATIANA_LAB_BOUNDARY.md`](TATIANA_LAB_BOUNDARY.md).
 
 **Note:** `ml` uses the explicit PyTorch **CUDA** index (`pytorch-cu129`) in `pyproject.toml`. Avoid raw `pip install -U torch` without that index — see [`README.md`](../README.md#ml-environment-setup-wsl-project-local-venv-only).
 
+**Security (Dependabot / CVE):** The `ml` group is optional lab-only (`uv sync --group ml`); not installed by CI or production API. Pinned trio (2026-07): `torch==2.12.1`, `torchvision==0.27.1`, `torchaudio==2.11.0` on `pytorch-cu129` remediates **CVE-2025-2999** (≥2.9.1) and **CVE-2025-3001** (≥2.10.0). **CVE-2025-3000** (`torch.jit.script`) had no `first_patched_version` in GitHub’s advisory (range `<= 2.12.0`); 2.12.1+cu129 is the current cu129 pin. ML scripts do not use `torch.jit.script`. If alert #31 remains open, dismiss as risk-accepted for optional ML or re-check when PyTorch publishes an explicit fix.
+
 ### `gmail`
 
 | | |
