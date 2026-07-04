@@ -55,6 +55,20 @@ const viteConfigSource = import.meta.glob("../../vite.config.ts", {
   eager: true,
 })["../../vite.config.ts"] as string;
 
+const viteEnvSource = import.meta.glob("../vite-env.d.ts", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+})["../vite-env.d.ts"] as string;
+
+const activeApiClientSources = Object.entries(
+  import.meta.glob("../api/{operatorClient,mirrorCommercialClient,mirrorCatalogClient,mirrorLeadIntelClient,mirrorAuditClient}.ts", {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  }),
+).map(([, src]) => src as string);
+
 const DASHBOARD_V1_API_PATHS = [
   "/health",
   "/operator/status",
@@ -246,5 +260,39 @@ describe("Dashboard-2 safety (mounted Today)", () => {
     ].join("\n");
     expect(blob).not.toMatch(/\/mirror\/commercial\/purchase-events/);
     expect(blob).not.toMatch(/fetchPurchase|purchase-events["']/);
+  });
+});
+
+describe("Production API auth gap (docs/tests guard)", () => {
+  it("active API clients send credentials include for Cloudflare Access cookies", () => {
+    for (const source of activeApiClientSources) {
+      expect(source, "credentials include").toMatch(/credentials:\s*["']include["']/);
+    }
+  });
+
+  it("active API clients do not inject Authorization or X-OriginLab-API-Key headers", () => {
+    const blob = activeApiClientSources.join("\n");
+    expect(blob).not.toMatch(/Authorization\s*:/);
+    expect(blob).not.toMatch(/X-OriginLab-API-Key/);
+    expect(blob).not.toMatch(/Bearer\s+/);
+    expect(blob).not.toMatch(/import\.meta\.env\.VITE_[A-Z0-9_]*TOKEN/i);
+    expect(blob).not.toMatch(/import\.meta\.env\.VITE_[A-Z0-9_]*AUTH/i);
+  });
+
+  it("vite-env.d.ts does not declare VITE auth token env vars", () => {
+    expect(viteEnvSource).toContain("VITE_ORIGENLAB_API_BASE_URL");
+    expect(viteEnvSource).not.toMatch(/VITE_[A-Z0-9_]*(AUTH|TOKEN)/);
+  });
+
+  it("dashboard safety doc exists and forbids VITE auth tokens", () => {
+    const docSource = import.meta.glob("../../docs/PRODUCTION_API_AUTH.md", {
+      query: "?raw",
+      import: "default",
+      eager: true,
+    })["../../docs/PRODUCTION_API_AUTH.md"] as string;
+    expect(docSource).toContain("credentials: \"include\"");
+    expect(docSource).toContain("VITE_ORIGENLAB_API_AUTH_TOKEN");
+    expect(docSource).toMatch(/401/);
+    expect(docSource).toMatch(/proxy|BFF|JWT/i);
   });
 });

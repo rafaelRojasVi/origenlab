@@ -52,6 +52,8 @@ Copy [`.env.example`](.env.example) to `.env` if needed — **do not** copy a `:
 
 Production builds **throw at runtime** if `VITE_ORIGENLAB_API_BASE_URL` is missing (no silent localhost fallback).
 
+**Production auth gap:** When `apps/api` runs with `ORIGENLAB_ENV=production`, private routes require `ORIGENLAB_API_AUTH_TOKEN` at origin. The dashboard browser client sends Cloudflare Access cookies (`credentials: "include"`) only — **not** bearer/API-key headers. Deploying dashboard + token-protected API without a follow-up (same-origin read-only proxy/BFF or API-side Cloudflare Access JWT validation) will yield **401** on private routes. Do **not** put API tokens in `VITE_*` env vars. See [docs/PRODUCTION_API_AUTH.md](docs/PRODUCTION_API_AUTH.md).
+
 **After changing `.env`, restart `npm run dev`** — Vite only reads env at startup.
 
 ## Read-only scope
