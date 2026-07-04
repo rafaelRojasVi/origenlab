@@ -2,7 +2,9 @@
 
 **Date:** 2026-05-18  
 **Scope:** `apps/api` (FastAPI on Render `origenlab-api`), `apps/dashboard` (Vite/React static on `origenlab-dashboard`), Render Postgres mirror, planned Cloudflare Access.  
-**Verdict:** **Needs changes before production** — read-only API design is sound, but **no authentication** and **raw `*.onrender.com` bypass** leave commercial data public until Access (and preferably API JWT/host guards) are live.
+**Verdict (2026-05-18):** **Needs changes before production** — read-only API design is sound, but **no authentication** and **raw `*.onrender.com` bypass** leave commercial data public until Access (and preferably API JWT/host guards) are live.
+
+**Update (2026-07):** Production **bearer token auth** (`ORIGENLAB_API_AUTH_TOKEN`) and host allowlist are implemented in `apps/api`. See [`apps/api/docs/PRODUCTION_AUTH.md`](../apps/api/docs/PRODUCTION_AUTH.md). Cloudflare Access remains recommended for custom domains; CORS is not authentication.
 
 ---
 
@@ -12,7 +14,7 @@
 |------|--------|
 | Mutation-free API surface | **Pass** — GET/HEAD/OPTIONS only; no ingest/send/sync imports in `apps/api` |
 | Production CORS / docs / Postgres backend | **Pass** (when `render.yaml` env applied) |
-| Authentication | **Fail** — all routes public until Cloudflare Access |
+| Authentication | **Partial (2026-07)** — production bearer token on private routes; Cloudflare Access still recommended at edge |
 | Raw Render URL bypass | **High** — custom domain protection does not cover `origenlab.onrender.com` |
 | Sensitive data minimization | **Mostly pass** — preview schemas; mirror sync excludes `archive.emails` bodies |
 | HTTP security headers | **Improved** — API middleware + dashboard static headers (this audit) |

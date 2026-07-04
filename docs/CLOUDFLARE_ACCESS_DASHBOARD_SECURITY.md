@@ -37,6 +37,7 @@ Runbook and **production record** for protecting **dashboard.origenlab.cl** and 
 |-----------|---------|
 | Dashboard API base | `VITE_ORIGENLAB_API_BASE_URL=https://api.origenlab.cl` |
 | API CORS | `ORIGENLAB_API_CORS_ORIGINS` includes `https://dashboard.origenlab.cl` |
+| API bearer auth | `ORIGENLAB_API_AUTH_TOKEN` set on Render / FastAPI Cloud (production required) |
 | API Host allowlist | `ORIGENLAB_API_ALLOWED_HOSTS=api.origenlab.cl` |
 
 ### Verification (production)
@@ -85,6 +86,30 @@ curl -i https://origenlab.onrender.com/health
 
 Implementation: `apps/api/src/origenlab_api/http_security.py` (`AllowedHostMiddleware`).
 
+## API bearer token (production origin auth)
+
+Since 2026-07, `ORIGENLAB_ENV=production` requires **`ORIGENLAB_API_AUTH_TOKEN`**. Private API routes (`/operator/*`, `/cases/*`, `/mirror/*`, etc.) return **401** without:
+
+```http
+Authorization: Bearer <token>
+```
+
+(or `X-OriginLab-API-Key`).
+
+| Layer | Protects | Does **not** replace |
+|-------|----------|----------------------|
+| **Cloudflare Access** | Custom domains (`api.origenlab.cl`, `dashboard.origenlab.cl`) | API bearer token on the origin |
+| **CORS** | Browser cross-origin policy for dashboard origin | Authentication |
+| **`ORIGENLAB_API_AUTH_TOKEN`** | Every private read route at the FastAPI app | Cloudflare SSO for operators |
+
+**Public without token:** `GET /health`, `OPTIONS` preflight.
+
+**FastAPI Cloud** (`*.fastapicloud.dev`) has no Cloudflare Access edge — rely on API token auth for private routes.
+
+**Smoke / curl:** When Access and API token auth are both enabled, send Cloudflare service-token headers **and** an API token header (`X-OriginLab-API-Key` in shell examples). See [`apps/api/docs/PRODUCTION_AUTH.md`](../apps/api/docs/PRODUCTION_AUTH.md).
+
+**Dashboard browser:** `credentials: include` carries Cloudflare cookies only. Production dashboard builds that call a token-protected API need a follow-up to attach the bearer token (server-side proxy or build-time secret) — CORS alone is insufficient.
+
 ## Remaining hardening (follow-up)
 
 | URL | Mitigation |
@@ -116,6 +141,8 @@ Implementation: `apps/api/src/origenlab_api/http_security.py` (`AllowedHostMiddl
 ### CORS reminder
 
 The dashboard calls `https://api.origenlab.cl` after Access login. Production must keep `ORIGENLAB_API_CORS_ORIGINS` including `https://dashboard.origenlab.cl` (not `*`).
+
+**CORS is not authentication.** Private routes also require `ORIGENLAB_API_AUTH_TOKEN` when `ORIGENLAB_ENV=production`.
 
 ## Cloudflare Access setup (reference)
 

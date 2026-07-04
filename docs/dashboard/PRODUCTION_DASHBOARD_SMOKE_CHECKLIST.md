@@ -30,17 +30,21 @@ uv run python scripts/qa/smoke_dashboard_api_readiness.py \
 
 No service token headers are sent unless you set the env vars below.
 
-### Production API (Cloudflare Access)
+### Production API (Cloudflare Access + bearer token)
 
-`https://api.origenlab.cl` is behind **Cloudflare Access**. Use a **service token** (read-only smoke) via environment variables — **do not** paste secrets into chat or commit them.
+`https://api.origenlab.cl` may use **Cloudflare Access** (edge) and **`ORIGENLAB_API_AUTH_TOKEN`** (origin) when `ORIGENLAB_ENV=production`. CORS is not auth.
+
+Configure **both** when applicable:
 
 ```bash
-cd apps/email-pipeline
 export CF_ACCESS_CLIENT_ID='your-client-id'
 export CF_ACCESS_CLIENT_SECRET='your-client-secret'
+export ORIGENLAB_API_AUTH_TOKEN='your-api-token'   # from secret store only
 uv run python scripts/qa/smoke_dashboard_api_readiness.py \
   --api-base https://api.origenlab.cl
 ```
+
+Without tokens, smoke may return **HTTP 403** (Access) or **401** (API bearer). See [`apps/api/docs/PRODUCTION_AUTH.md`](../../api/docs/PRODUCTION_AUTH.md).
 
 Alternate env names (same values): `ORIGENLAB_CF_ACCESS_CLIENT_ID` / `ORIGENLAB_CF_ACCESS_CLIENT_SECRET`.
 
@@ -53,9 +57,7 @@ uv run python scripts/qa/smoke_dashboard_api_readiness.py \
   --cf-access-client-secret "$CF_ACCESS_CLIENT_SECRET"
 ```
 
-If smoke returns **HTTP 403** without tokens configured, the script prints:
-
-> HTTP 403: API is probably protected by Cloudflare Access. Provide CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET or run against local API.
+If smoke returns **HTTP 403** without Cloudflare tokens, or **401** without `ORIGENLAB_API_AUTH_TOKEN`, the script prints guidance — configure the missing layer or run against local API.
 
 ### Machine-readable report (no secrets in output)
 

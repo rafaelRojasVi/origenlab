@@ -15,6 +15,7 @@
 |------|--------|
 | **Active API** | This app on port **8001** only. Legacy email-pipeline FastAPI on **:8000** was **removed** (API-3 Phase 6). |
 | **GET only** | No write/send/ingest/migrate endpoints. |
+| **Production auth** | `ORIGENLAB_API_AUTH_TOKEN` required when `ORIGENLAB_ENV=production`; public routes: `/health` + `OPTIONS` only — see [docs/PRODUCTION_AUTH.md](docs/PRODUCTION_AUTH.md). |
 | **No pipeline writes** | Do not import or invoke Gmail ingest, DNR refresh, mirror sync, or send scripts from this package. |
 | **Mirror ≠ send truth** | Postgres / future Supabase mirror responses are not outbound approval. |
 

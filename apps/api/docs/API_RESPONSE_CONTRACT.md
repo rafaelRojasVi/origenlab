@@ -198,7 +198,22 @@ When `ORIGENLAB_API_CORS_ORIGINS` is configured, credentialed dashboard/browser 
 
 Browser JavaScript on allowed origins can read the request/correlation id from response headers (including error responses). CORS methods remain read-only: **`GET`**, **`HEAD`**, **`OPTIONS`** only.
 
+**CORS is not authentication.** Allowed origins may send credentialed browser requests; private routes still require production bearer auth (below).
+
 Implemented in `origenlab_api.http_security.configure_http_security`.
+
+### Production bearer auth (`ORIGENLAB_ENV=production`)
+
+When `ORIGENLAB_API_AUTH_TOKEN` is set (required in production):
+
+| Access | Routes |
+|--------|--------|
+| **No token** | `GET /health`, `OPTIONS` (any path) |
+| **Bearer / API key required** | All other routes |
+
+Clients send `Authorization: Bearer <token>` or `X-OriginLab-API-Key: <token>`. Failures: **401**, `error.code`: `unauthorized`, `WWW-Authenticate: Bearer`, `X-Request-ID`.
+
+Runbook: [`PRODUCTION_AUTH.md`](PRODUCTION_AUTH.md).
 
 ### Standard `code` values
 
@@ -208,6 +223,7 @@ Implemented in `origenlab_api.http_security.configure_http_security`.
 | `validation_error` | 422 | FastAPI/Pydantic query or path validation. |
 | `not_found` | 404 | Resource missing or unknown path. |
 | `forbidden` | 403 | Host allowlist or policy rejection. |
+| `unauthorized` | 401 | Missing or invalid bearer/API-key token (production). |
 | `backend_unavailable` | 503 | Postgres read-model connection or driver failure (mirror unreachable). Response is sanitized: no DSNs, passwords, SQL, or tracebacks in `message` or `details`. |
 | `mirror_not_configured` | 503 | Mirror route without `ORIGENLAB_POSTGRES_URL`. |
 | `internal_error` | 500 | Unexpected failure (no traceback in body). |
@@ -323,6 +339,7 @@ Raw absolute paths (`/home/…`, `/mnt/…`, parent directories) must **not** ap
 | Date | Change |
 |------|--------|
 | 2026-07 | `GET /operator/automation-status`: additive `ndr_pending_review` (pending NDR review counts/paths/status); nested paths basename-redacted like other automation sections. |
+| 2026-07 | Production bearer auth: `ORIGENLAB_API_AUTH_TOKEN` required when `ORIGENLAB_ENV=production`; public routes are `GET /health` and `OPTIONS` only. |
 | 2026-07 | CORS: `Access-Control-Expose-Headers: X-Request-ID` for configured dashboard origins; methods remain `GET` / `HEAD` / `OPTIONS`. |
 | 2026-07 | Postgres read-model failures map to **503** `backend_unavailable` without leaking DSNs, passwords, SQL, or tracebacks. |
 | 2026-07 | `GET /cases/warm`: additive `meta.canonical_categories` and `meta.legacy_category_aliases` for CLI clients; legacy category filters remain accepted and normalized. |
