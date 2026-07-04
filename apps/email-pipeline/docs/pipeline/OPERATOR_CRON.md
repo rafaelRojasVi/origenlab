@@ -8,6 +8,22 @@ Related: [`MAIL_AUTO_REFRESH.md`](MAIL_AUTO_REFRESH.md) · [`DASHBOARD_AUTO_MIRR
 
 Tracked wrapper scripts live under `scripts/operator/`. They are thin schedulers only — safety gates remain inside `origenlab auto-refresh-mail` and `origenlab auto-mirror-dashboard`.
 
+**Dependency groups:** cron wrappers pin optional `uv` groups so a minimal venv sync does not miss imports:
+
+| Wrapper | `uv run` group | Why |
+|---------|----------------|-----|
+| `run_auto_refresh_mail.sh` | `--group gmail` | IMAP probe imports `google-auth` |
+| `run_auto_mirror_dashboard.sh` | `--group postgres` | mirror sync uses Alembic/psycopg |
+| `run_auto_refresh_chilecompra_equipment.sh` | *(default only)* | ChileCompra refresh uses core deps |
+
+If mail auto-refresh cron logs `ModuleNotFoundError: No module named 'google'`, resync with the gmail group:
+
+```bash
+cd apps/email-pipeline
+uv sync --group dev --group data-tools --group postgres --group lab --group gmail --frozen
+uv run --group gmail python -c "from google.auth.transport.requests import Request; print('gmail deps ok')"
+```
+
 ---
 
 ## Two loops

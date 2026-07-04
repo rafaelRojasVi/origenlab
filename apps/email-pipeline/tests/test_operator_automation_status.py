@@ -527,10 +527,13 @@ def test_read_user_crontab_mocked_no_real_subprocess(
 def test_tracked_cron_wrapper_scripts_exist_and_contain_commands() -> None:
     mail_script = _REPO_ROOT / "scripts/operator/run_auto_refresh_mail.sh"
     mirror_script = _REPO_ROOT / "scripts/operator/run_auto_mirror_dashboard.sh"
+    chilecompra_script = _REPO_ROOT / "scripts/operator/run_auto_refresh_chilecompra_equipment.sh"
     assert mail_script.is_file()
     assert mirror_script.is_file()
+    assert chilecompra_script.is_file()
     mail_text = mail_script.read_text(encoding="utf-8")
     mirror_text = mirror_script.read_text(encoding="utf-8")
+    chilecompra_text = chilecompra_script.read_text(encoding="utf-8")
     assert "auto-refresh-mail --once --apply" in mail_text
     assert "auto-mirror-dashboard" in mirror_text
     assert "--once" in mirror_text
@@ -538,6 +541,14 @@ def test_tracked_cron_wrapper_scripts_exist_and_contain_commands() -> None:
     assert "--allow-non-scratch-postgres" in mirror_text
     assert "ORIGENLAB_UV_BIN" in mail_text
     assert "ORIGENLAB_OPERATOR_NAME" in mirror_text
+    assert "run --group gmail" in mail_text
+    assert "run --group postgres" in mirror_text
+    assert "auto-refresh-chilecompra-equipment --once --apply" in chilecompra_text
+    assert "--group gmail" not in chilecompra_text
+    assert "--group postgres" not in chilecompra_text
+    for text in (mail_text, mirror_text, chilecompra_text):
+        assert "ORIGENLAB_API_AUTH_TOKEN" not in text
+        assert "client_secret" not in text.lower()
 
 
 def test_healthy_report_includes_chilecompra_section_in_json(active_current: Path) -> None:

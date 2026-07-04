@@ -16,10 +16,19 @@ From `apps/email-pipeline/`:
 
 ```bash
 # Dry-run / status (default) — probes mailbox, updates state, prints counters
-uv run origenlab auto-refresh-mail --once
+uv run --group gmail origenlab auto-refresh-mail --once
 
 # Run daily-core when quiet + cooldown gates pass
-uv run origenlab auto-refresh-mail --once --apply
+uv run --group gmail origenlab auto-refresh-mail --once --apply
+```
+
+Gmail IMAP probe imports `google-auth` (optional **`gmail`** dependency group). Cron wrapper `scripts/operator/run_auto_refresh_mail.sh` uses `uv run --group gmail`; manual runs should too unless your venv already includes the group.
+
+If cron logs `ModuleNotFoundError: No module named 'google'`:
+
+```bash
+cd apps/email-pipeline
+uv sync --group dev --group data-tools --group postgres --group lab --group gmail --frozen
 ```
 
 `--daemon` is **not implemented** yet. Use an external scheduler that invokes `--once` on an interval.
@@ -46,8 +55,8 @@ Stable stdout counters: `mail_auto_refresh`, `apply=`, `changed=`, `dirty=`, `re
 Example **systemd timer** or **cron** every **2–5 minutes** on the operator host:
 
 ```bash
-# cron example (every 3 minutes)
-*/3 * * * * cd /path/to/apps/email-pipeline && uv run origenlab auto-refresh-mail --once --apply >> /var/log/origenlab-auto-refresh.log 2>&1
+# cron example (every 3 minutes) — use tracked wrapper (includes --group gmail)
+*/3 * * * * /path/to/apps/email-pipeline/scripts/operator/run_auto_refresh_mail.sh >> /var/log/origenlab-auto-refresh.log 2>&1
 ```
 
 Pause during manual maintenance:
