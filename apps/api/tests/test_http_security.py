@@ -175,6 +175,10 @@ def test_normalize_host_strips_port() -> None:
     assert normalize_host_header("API.OrigenLab.CL") == "api.origenlab.cl"
 
 
+def test_normalize_host_uses_first_forwarded_value() -> None:
+    assert normalize_host_header("api.origenlab.cl, origenlab.onrender.com") == "api.origenlab.cl"
+
+
 def _production_client(monkeypatch: pytest.MonkeyPatch):
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
@@ -302,6 +306,35 @@ def test_production_valid_bearer_not_unauthorized(monkeypatch: pytest.MonkeyPatc
         headers={"Host": "api.origenlab.cl", **_production_auth_headers()},
     )
     assert r.status_code != 401
+
+
+def test_production_valid_api_key_header_not_unauthorized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _production_client(monkeypatch)
+    r = client.get(
+        "/operator/status",
+        headers={
+            "Host": "api.origenlab.cl",
+            "X-OriginLab-API-Key": _PRODUCTION_AUTH_TOKEN,
+        },
+    )
+    assert r.status_code != 401
+
+
+def test_production_invalid_api_key_header_returns_401(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _production_client(monkeypatch)
+    r = client.get(
+        "/operator/status",
+        headers={
+            "Host": "api.origenlab.cl",
+            "X-OriginLab-API-Key": "wrong-token",
+        },
+    )
+    assert r.status_code == 401
+    assert r.json()["error"]["code"] == "unauthorized"
 
 
 def test_production_options_preflight_without_auth(monkeypatch: pytest.MonkeyPatch) -> None:
