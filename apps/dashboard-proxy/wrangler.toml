@@ -2,16 +2,9 @@ name = "origenlab-dashboard-proxy"
 main = "src/index.ts"
 compatibility_date = "2025-04-01"
 
-# Public upstream API base (no trailing slash). Worker injects X-OriginLab-API-Key from secret.
 [vars]
 ORIGENLAB_API_UPSTREAM = "https://api.origenlab.cl"
 
-# Secrets (wrangler secret put — never commit):
-#   ORIGENLAB_API_AUTH_TOKEN   (always required)
-#   CF_ACCESS_CLIENT_ID        (required when upstream is behind Cloudflare Access — production api.origenlab.cl)
-#   CF_ACCESS_CLIENT_SECRET    (required when upstream is behind Cloudflare Access — production api.origenlab.cl)
-
-# Route in Cloudflare dashboard or uncomment after zone access:
-# [[routes]]
-# pattern = "dashboard.origenlab.cl/api*"
-# zone_name = "origenlab.cl"
+[[routes]]
+pattern = "dashboard.origenlab.cl/api*"
+zone_name = "origenlab.cl"
