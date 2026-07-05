@@ -281,4 +281,117 @@ describe("handleRequest", () => {
     expect(response.status).toBe(204);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("upstream 302 is converted to 502 JSON with code upstream_redirect_blocked", async () => {
+    const redirectLocation = "https://api.origenlab.cl/cdn-cgi/access/login?redirect_url=%2Fhealth";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        return new Response("<html>Cloudflare Access login</html>", {
+          status: 302,
+          headers: {
+            Location: redirectLocation,
+            "Content-Type": "text/html",
+          },
+        });
+      }),
+    );
+
+    const response = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get("Content-Type")).toContain("application/json");
+    expect(response.headers.get("Cache-Control")).toBe("no-store, private");
+    expect(response.headers.get("X-OriginLab-Proxy")).toBe("dashboard-proxy");
+    expect(response.headers.get("X-OriginLab-Upstream-Status")).toBe("302");
+
+    const body = (await response.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("upstream_redirect_blocked");
+  });
+
+  it("upstream redirect response includes Access-Control-Allow-Origin for allowed Origin", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        return new Response("", {
+          status: 302,
+          headers: { Location: "https://api.origenlab.cl/cdn-cgi/access/login" },
+        });
+      }),
+    );
+
+    const response = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
+    expect(response.headers.get("Access-Control-Allow-Origin")).not.toBe("*");
+    expect(response.headers.get("Access-Control-Allow-Credentials")).toBe("true");
+  });
+
+  it("upstream redirect response does not include Location header", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        return new Response("", {
+          status: 302,
+          headers: { Location: "https://api.origenlab.cl/cdn-cgi/access/login" },
+        });
+      }),
+    );
+
+    const response = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
+      TEST_ENV,
+    );
+
+    expect(response.headers.get("Location")).toBeNull();
+  });
+
+  it("upstream redirect response body does not leak secrets or upstream Location", async () => {
+    const redirectLocation = "https://api.origenlab.cl/cdn-cgi/access/login?token=secret";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        return new Response(`redirect to ${redirectLocation}`, {
+          status: 302,
+          headers: { Location: redirectLocation },
+        });
+      }),
+    );
+
+    const response = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
+      TEST_ENV,
+    );
+
+    const bodyText = await response.text();
+    expect(bodyText).not.toContain(TEST_ENV.ORIGENLAB_API_AUTH_TOKEN);
+    expect(bodyText).not.toContain(TEST_ENV.CF_ACCESS_CLIENT_ID);
+    expect(bodyText).not.toContain(TEST_ENV.CF_ACCESS_CLIENT_SECRET);
+    expect(bodyText).not.toContain(redirectLocation);
+    expect(bodyText).not.toContain("cdn-cgi/access/login");
+    expect(response.headers.get(API_AUTH_HEADER)).toBeNull();
+    expect(response.headers.get(CF_ACCESS_CLIENT_ID_HEADER)).toBeNull();
+    expect(response.headers.get(CF_ACCESS_CLIENT_SECRET_HEADER)).toBeNull();
+  });
+
+  it("normal 200 response still includes CORS and proxy diagnostics", async () => {
+    stubUpstreamFetch(JSON.stringify({ status: "ok" }));
+
+    const response = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
+    expect(response.headers.get("X-OriginLab-Proxy")).toBe("dashboard-proxy");
+    expect(response.headers.get("X-OriginLab-Upstream-Status")).toBe("200");
+  });
 });
