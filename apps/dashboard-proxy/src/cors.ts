@@ -1,0 +1,45 @@
+/** Browser origins allowed to call the dashboard read-only API proxy. */
+
+export const ALLOWED_ORIGINS = new Set([
+  "https://dashboard.origenlab.cl",
+  "http://localhost:5173",
+]);
+
+export function isAllowedOrigin(origin: string | null): origin is string {
+  return origin !== null && ALLOWED_ORIGINS.has(origin);
+}
+
+const UPSTREAM_CORS_HEADERS = [
+  "Access-Control-Allow-Origin",
+  "Access-Control-Allow-Credentials",
+  "Access-Control-Allow-Methods",
+  "Access-Control-Allow-Headers",
+  "Access-Control-Expose-Headers",
+  "Access-Control-Max-Age",
+] as const;
+
+/** Remove upstream CORS headers before applying Worker policy. */
+export function stripUpstreamCorsHeaders(headers: Headers): void {
+  for (const name of UPSTREAM_CORS_HEADERS) {
+    headers.delete(name);
+  }
+}
+
+/**
+ * Apply dashboard CORS policy. With credentials: "include", Allow-Origin must be
+ * the specific request Origin (never "*").
+ */
+export function applyCorsHeaders(request: Request, headers: Headers): void {
+  headers.set("Vary", "Origin");
+
+  const origin = request.headers.get("Origin");
+  if (!isAllowedOrigin(origin)) {
+    return;
+  }
+
+  headers.set("Access-Control-Allow-Origin", origin);
+  headers.set("Access-Control-Allow-Credentials", "true");
+  headers.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  headers.set("Access-Control-Allow-Headers", "Accept, Content-Type, X-Request-ID");
+  headers.set("Access-Control-Expose-Headers", "X-Request-ID");
+}
