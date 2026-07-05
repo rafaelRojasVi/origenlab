@@ -103,6 +103,8 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
 
   const responseHeaders = new Headers(upstreamResponse.headers);
   responseHeaders.delete(API_AUTH_HEADER);
+  responseHeaders.delete("Set-Cookie");
+  responseHeaders.delete("Set-Cookie2");
   stripUpstreamCorsHeaders(responseHeaders);
 
   const requestId = upstreamResponse.headers.get("X-Request-ID");

@@ -394,4 +394,102 @@ describe("handleRequest", () => {
     expect(response.headers.get("X-OriginLab-Proxy")).toBe("dashboard-proxy");
     expect(response.headers.get("X-OriginLab-Upstream-Status")).toBe("200");
   });
+
+  it("normal upstream 200 with Set-Cookie does not forward Set-Cookie", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        return new Response(JSON.stringify({ status: "ok" }), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+            "Set-Cookie": "CF_Authorization=upstream-api-token; Path=/; HttpOnly; Secure",
+          },
+        });
+      }),
+    );
+
+    const response = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Set-Cookie")).toBeNull();
+    expect(response.headers.get("Set-Cookie2")).toBeNull();
+    expect(response.headers.getSetCookie?.() ?? []).toEqual([]);
+  });
+
+  it("upstream 200 with Set-Cookie still includes Access-Control-Allow-Origin for allowed Origin", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        return new Response(JSON.stringify({ status: "ok" }), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+            "Set-Cookie": "CF_Authorization=upstream-api-token; Path=/; HttpOnly; Secure",
+          },
+        });
+      }),
+    );
+
+    const response = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
+      TEST_ENV,
+    );
+
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
+    expect(response.headers.get("Access-Control-Allow-Origin")).not.toBe("*");
+    expect(response.headers.get("Access-Control-Allow-Credentials")).toBe("true");
+  });
+
+  it("upstream 200 with Set-Cookie still includes proxy diagnostic headers", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        return new Response(JSON.stringify({ status: "ok" }), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+            "Set-Cookie": "CF_Authorization=upstream-api-token; Path=/; HttpOnly; Secure",
+          },
+        });
+      }),
+    );
+
+    const response = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
+      TEST_ENV,
+    );
+
+    expect(response.headers.get("X-OriginLab-Proxy")).toBe("dashboard-proxy");
+    expect(response.headers.get("X-OriginLab-Upstream-Status")).toBe("200");
+  });
+
+  it("upstream redirect blocked response does not include Location or Set-Cookie", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        return new Response("", {
+          status: 302,
+          headers: {
+            Location: "https://api.origenlab.cl/cdn-cgi/access/login",
+            "Set-Cookie": "CF_Authorization=upstream-api-token; Path=/; HttpOnly; Secure",
+          },
+        });
+      }),
+    );
+
+    const response = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get("Location")).toBeNull();
+    expect(response.headers.get("Set-Cookie")).toBeNull();
+    expect(response.headers.get("Set-Cookie2")).toBeNull();
+    expect(response.headers.get("Access-Control-Allow-Origin")).not.toBe("*");
+  });
 });
