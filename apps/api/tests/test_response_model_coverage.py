@@ -83,7 +83,7 @@ def parse_public_get_paths_from_contract() -> frozenset[str]:
         section = section[:end]
     paths: set[str] = set()
     for line in section.splitlines():
-        if not line.startswith("| GET |"):
+        if not re.match(r"^\|\s*GET\s*\|", line):
             continue
         match = re.search(r"`(/[^`]+)`", line)
         if match:
