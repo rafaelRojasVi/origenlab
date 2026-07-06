@@ -3,6 +3,7 @@ import type { WarmCaseItem } from "../api/commercialTypes";
 import {
   buildWarmCaseDetailView,
   formatWarmCaseNextAction,
+  parseAllowedHttpUrl,
   sanitizeOperatorPreview,
 } from "./warmCaseDetailStrategy";
 
@@ -61,6 +62,25 @@ describe("warmCaseDetailStrategy (español)", () => {
       "See https://mail.google.com/x and cuenta 12345678901234",
     );
     expect(text).not.toMatch(/https?:\/\//);
+    expect(text).toContain("[oculto]");
+  });
+
+  it("parseAllowedHttpUrl allows https and rejects dangerous schemes", () => {
+    expect(parseAllowedHttpUrl("https://example.com/path")?.href).toBe("https://example.com/path");
+    expect(parseAllowedHttpUrl("http://example.com")).not.toBeNull();
+    expect(parseAllowedHttpUrl("javascript:alert(1)")).toBeNull();
+    expect(parseAllowedHttpUrl("data:text/html,hi")).toBeNull();
+    expect(parseAllowedHttpUrl("blob:https://example.com/uuid")).toBeNull();
+    expect(parseAllowedHttpUrl("file:///etc/passwd")).toBeNull();
+    expect(parseAllowedHttpUrl("//evil.example")).toBeNull();
+    expect(parseAllowedHttpUrl(" https://evil.com")).toBeNull();
+    expect(parseAllowedHttpUrl("https://evil.com\r\nSet-Cookie: x")).toBeNull();
+  });
+
+  it("sanitizeOperatorPreview redacts javascript and data URLs via parser", () => {
+    const text = sanitizeOperatorPreview("click javascript:alert(1) or data:text/html,x");
+    expect(text).not.toContain("javascript:");
+    expect(text).not.toContain("data:text");
     expect(text).toContain("[oculto]");
   });
 

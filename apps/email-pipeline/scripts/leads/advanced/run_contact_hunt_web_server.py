@@ -29,6 +29,30 @@ from urllib.parse import unquote, urlparse
 DEFAULT_LEGACY_PASSWORD = "leads123"
 
 CSV_RE = re.compile(r"^leads_.*\.csv$", re.IGNORECASE)
+_HEADER_VALUE_UNSAFE_RE = re.compile(r"[\r\n]")
+
+
+def sanitize_header_value(value: str) -> str:
+    """Reject CR/LF in header values to prevent response splitting."""
+    if _HEADER_VALUE_UNSAFE_RE.search(value):
+        raise ValueError("header value must not contain CR or LF")
+    return value
+
+
+def safe_download_basename(filename: str) -> str:
+    """Return a single-path-segment filename safe for Content-Disposition."""
+    base = Path(filename).name
+    slug = re.sub(r"[^\w.\-]", "_", base).strip("._")
+    if not slug or slug in {".", ".."}:
+        return "download.csv"
+    if not CSV_RE.match(slug):
+        return "download.csv"
+    return slug
+
+
+def content_disposition_attachment(filename: str) -> str:
+    safe_name = safe_download_basename(filename)
+    return f'attachment; filename="{sanitize_header_value(safe_name)}"'
 
 
 def _auth_ok(req_handler: SimpleHTTPRequestHandler, expected_user: str, expected_pass: str) -> bool:
@@ -141,8 +165,8 @@ class LeadsRequestHandler(SimpleHTTPRequestHandler):
         if not ctype:
             ctype = "text/csv; charset=utf-8"
         self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Type", sanitize_header_value(ctype))
+        self.send_header("Content-Disposition", content_disposition_attachment(filename))
         self.end_headers()
         with target.open("rb") as f:
             self.wfile.write(f.read())

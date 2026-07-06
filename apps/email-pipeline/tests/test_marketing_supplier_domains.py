@@ -23,7 +23,7 @@ def test_supplier_email_domains_reads_domain_norm() -> None:
         """
     )
     d = supplier_email_domains(conn)
-    assert "ohaus.com" in d
+    assert d == frozenset({"ohaus.com"})
 
 
 def test_is_supplier_email_domain_subdomain() -> None:

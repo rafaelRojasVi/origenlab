@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from domain_fixture import assert_domain_in_collection
+
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "qa" / "export_supplier_domain_false_positive_audit.py"
 
@@ -127,7 +129,7 @@ def test_include_zero_lead_domains(tmp_path: Path) -> None:
     assert run.returncode == 0, run.stderr + run.stdout
     rows = _rows(out)
     by_dom = {r["domain_norm"]: r for r in rows}
-    assert "orphan-supplier.com" in by_dom
+    assert_domain_in_collection("orphan-supplier.com", frozenset(by_dom.keys()))
     assert by_dom["orphan-supplier.com"]["recommended_action"] == "no_matching_leads"
 
 

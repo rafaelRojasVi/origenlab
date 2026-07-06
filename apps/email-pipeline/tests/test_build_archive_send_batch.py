@@ -11,6 +11,7 @@ _TDIR = Path(__file__).resolve().parent
 if str(_TDIR) not in sys.path:
     sys.path.insert(0, str(_TDIR))
 
+from domain_fixture import assert_domain_in_collection
 from gmail_sent_history_seed import (
     seed_minimal_sent_history_for_preflight,
     seed_minimal_sent_history_for_preflight_extended_emails,
@@ -1271,7 +1272,10 @@ def test_build_archive_send_batch_manual_suppress_domain_omits_from_outputs(tmp_
     assert "x@blocked.com" not in emails_out
     summary = json.loads((out_dir / BUILD_SUMMARY_JSON_NAME).read_text(encoding="utf-8"))
     assert summary["manual_suppressed_rows"] >= 1
-    assert "blocked.com" in set(summary.get("manual_suppress_domains", []))
+    assert_domain_in_collection(
+        "blocked.com",
+        frozenset(summary.get("manual_suppress_domains", [])),
+    )
 
 
 def test_build_archive_send_batch_audit_only_writes_audit_files(tmp_path: Path) -> None:

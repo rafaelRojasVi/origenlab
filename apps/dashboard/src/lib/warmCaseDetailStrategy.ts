@@ -19,8 +19,47 @@ export interface WarmCaseDetailView {
   equipmentSignal: string;
 }
 
+const URL_TOKEN_RE = /\bhttps?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+/gi;
+const DANGEROUS_SCHEME_RE = /\b(?:javascript|data|blob|file):[^\s<>"']+/gi;
+const BLOCKED_URL_PROTOCOLS = new Set(["javascript:", "data:", "blob:", "file:"]);
+
+/** Parse http(s) URLs only; reject dangerous or malformed schemes. */
+export function parseAllowedHttpUrl(raw: string): URL | null {
+  const trimmed = raw.trim();
+  if (!trimmed || raw !== raw.trimStart() || /[\r\n]/.test(raw) || trimmed.startsWith("//")) {
+    return null;
+  }
+  const candidate = /^www\./i.test(trimmed) ? `https://${trimmed}` : trimmed;
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    return null;
+  }
+  const proto = parsed.protocol.toLowerCase();
+  if (proto !== "http:" && proto !== "https:") {
+    return null;
+  }
+  if (BLOCKED_URL_PROTOCOLS.has(proto)) {
+    return null;
+  }
+  return parsed;
+}
+
+function redactUrlsInText(text: string): string {
+  const withoutDangerous = text.replace(DANGEROUS_SCHEME_RE, "[oculto]");
+  return withoutDangerous.replace(URL_TOKEN_RE, () => "[oculto]");
+}
+
+function emailDomain(email: string): string {
+  const at = email.lastIndexOf("@");
+  if (at < 0) {
+    return "";
+  }
+  return email.slice(at + 1).toLowerCase();
+}
+
 const SENSITIVE_PATTERNS: RegExp[] = [
-  /https?:\/\/[^\s]+/gi,
   /mailto:[^\s]+/gi,
   /gmail\.com\/[^\s]+/gi,
   /\b\d{1,2}\.\d{3}\.\d{3}-[\dkK]\b/g,
@@ -33,6 +72,7 @@ const SENSITIVE_PATTERNS: RegExp[] = [
 /** Oculta URLs, IDs y datos bancarios en vistas previas. */
 export function sanitizeOperatorPreview(text: string, maxLen = 280): string {
   let cleaned = safePreviewText(text, maxLen + 40);
+  cleaned = redactUrlsInText(cleaned);
   for (const pattern of SENSITIVE_PATTERNS) {
     cleaned = cleaned.replace(pattern, "[oculto]");
   }
@@ -231,7 +271,7 @@ function strategyOverrideForKnownCases(
     };
   }
   if (
-    sender.includes("crtopmachine.com") ||
+    emailDomain(sender) === "crtopmachine.com" ||
     subject.includes("crtop") ||
     subject.includes("olt-hp-5l") ||
     subject.includes("inquiry about our reactor")

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from domain_fixture import assert_domain_in_collection
 from origenlab_email_pipeline.warm_case_classification import infer_warm_case_category
 from origenlab_email_pipeline.warm_case_role_classification import infer_warm_case_role_category
 from origenlab_email_pipeline.warm_case_sender_rules import (
@@ -220,10 +221,10 @@ def test_internal_forwarded_quote_request_detected_as_client_forward() -> None:
 
 
 def test_public_domain_constants_non_empty() -> None:
-    assert "origenlab.cl" in INTERNAL_OPERATOR_DOMAINS
+    assert_domain_in_collection("origenlab.cl", INTERNAL_OPERATOR_DOMAINS)
     assert "contacto@origenlab.cl" in INTERNAL_OPERATOR_EMAILS
-    assert "ceaf.cl" in REAL_CLIENT_DOMAINS
-    assert "eppendorf.com" in SUPPLIER_VENDOR_DOMAINS
+    assert_domain_in_collection("ceaf.cl", REAL_CLIENT_DOMAINS)
+    assert_domain_in_collection("eppendorf.com", SUPPLIER_VENDOR_DOMAINS)
     assert "datos bancarios" in PAYMENT_ADMIN_TEXT_MARKERS
     assert "remite oc" in CLIENT_OC_POST_SALE_MARKERS
 
