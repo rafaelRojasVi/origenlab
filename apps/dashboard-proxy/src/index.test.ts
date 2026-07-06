@@ -190,6 +190,78 @@ describe("handleRequest", () => {
     expect(response.headers.get("Vary")).toBe("Origin");
   });
 
+  it("upstream CORS headers cannot override dashboard CORS policy for allowed Origin", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        return new Response(JSON.stringify({ status: "ok" }), {
+          status: 200,
+          headers: {
+            "Access-Control-Allow-Origin": "https://evil.example.com",
+            "Access-Control-Allow-Credentials": "false",
+            "Access-Control-Allow-Methods": "GET, POST, DELETE",
+            "Access-Control-Allow-Headers": "Authorization, X-OriginLab-API-Key",
+            "Access-Control-Expose-Headers": "Server-Timing, X-OriginLab-API-Key",
+            "Access-Control-Max-Age": "86400",
+            "Content-Type": "application/json",
+          },
+        });
+      }),
+    );
+
+    const response = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
+    expect(response.headers.get("Access-Control-Allow-Credentials")).toBe("true");
+    expect(response.headers.get("Access-Control-Allow-Methods")).toBe("GET, HEAD, OPTIONS");
+    expect(response.headers.get("Access-Control-Allow-Headers")).toBe(
+      "Accept, Content-Type, X-Request-ID",
+    );
+    expect(response.headers.get("Access-Control-Expose-Headers")).toBe("X-Request-ID");
+    expect(response.headers.get("Access-Control-Max-Age")).toBeNull();
+  });
+
+  it("upstream CORS headers cannot grant access to disallowed Origin", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        return new Response(JSON.stringify({ status: "ok" }), {
+          status: 200,
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "GET, POST, DELETE",
+            "Access-Control-Allow-Headers": "Authorization, X-OriginLab-API-Key",
+            "Access-Control-Expose-Headers": "Server-Timing, X-OriginLab-API-Key",
+            "Access-Control-Max-Age": "86400",
+            "Content-Type": "application/json",
+          },
+        });
+      }),
+    );
+
+    const response = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/health", {
+        method: "GET",
+        origin: "https://evil.example.com",
+      }),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
+    expect(response.headers.get("Access-Control-Allow-Credentials")).toBeNull();
+    expect(response.headers.get("Access-Control-Allow-Methods")).toBeNull();
+    expect(response.headers.get("Access-Control-Allow-Headers")).toBeNull();
+    expect(response.headers.get("Access-Control-Expose-Headers")).toBeNull();
+    expect(response.headers.get("Access-Control-Max-Age")).toBeNull();
+    expect(response.headers.get("Vary")).toBe("Origin");
+  });
+
   it("Access-Control-Allow-Origin is never * on success or error responses", async () => {
     stubUpstreamFetch();
 
