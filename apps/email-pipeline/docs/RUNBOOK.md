@@ -553,15 +553,23 @@ Options:
 - `--out DIR` — fixed output directory instead of `reports/out/full_YYYYMMDD_HHMMSS`
 - `--fast` — skip full domain scan in client report
 - `--embeddings` — ML embeddings + clusters (GPU/CUDA + ML deps)
-- `--dedupe` — dedupe by Message-ID inside the run
+- `--dedupe` — run a canonical Gmail Message-ID dedupe dry-run preview inside the run (no writes)
 
 Typical outputs: `unique_emails.csv`, `index.html`, `summary.json`, `ALCANCE_INFORME.md`, `business_filter_summary.json`, `business_only_sample.json`, `category_counts.csv`, `sender_domain_by_view.csv`.
 
-### Deduplicate (recommended first, or use `--dedupe` above)
+### Deduplicate canonical Gmail rows (break-glass)
+
+Default is a dry-run preview:
 
 ```bash
 cd apps/email-pipeline
-uv run python scripts/tools/dedupe_emails_by_message_id.py
+uv run python scripts/maintenance/dedupe_canonical_gmail_messages.py
+```
+
+To delete duplicate canonical Gmail rows, first take the printed SQLite backup, then re-run with explicit break-glass flags:
+
+```bash
+uv run python scripts/maintenance/dedupe_canonical_gmail_messages.py --apply --ack-sqlite-backup
 ```
 
 ### Reports à la carte
@@ -590,7 +598,7 @@ uv run python scripts/reports/generate_client_report.py --fast --out reports/out
 
 ```bash
 cd apps/email-pipeline && \
-uv run python scripts/tools/dedupe_emails_by_message_id.py && \
+uv run python scripts/maintenance/dedupe_canonical_gmail_messages.py && \
 uv run python scripts/tools/export_unique_emails_csv.py --out reports/out/unique_emails.csv && \
 uv run python scripts/reports/generate_business_filter_report.py --out reports/out/bf_full
 ```
