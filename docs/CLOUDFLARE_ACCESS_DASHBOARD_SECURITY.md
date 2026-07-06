@@ -4,6 +4,27 @@ Runbook and **production record** for protecting **dashboard.origenlab.cl** and 
 
 **Status (2026-05-26):** Access is **enabled in production**. Operators must authenticate before reaching the dashboard or API on the custom domains.
 
+## Production update (2026-07)
+
+The dashboard **read-only Worker proxy** is live at `dashboard.origenlab.cl/api*` ([`apps/dashboard-proxy`](../apps/dashboard-proxy/README.md)). Merged hardening:
+
+| PR | Behavior |
+|----|----------|
+| #342 | Worker GET-only allowlist; upstream auth injection |
+| #345 | Credentialed CORS for `https://dashboard.origenlab.cl` |
+| #347 | Upstream 3xx → 502 JSON `upstream_redirect_blocked`; `X-OriginLab-Proxy` / `X-OriginLab-Upstream-Status` |
+| #348 | Strip upstream `Set-Cookie` / `Set-Cookie2` (prevents API Access cookies overwriting dashboard session) |
+| #349 | Strip upstream CORS headers (Worker policy wins) |
+
+**Secrets:** Cloudflare Access service tokens and `ORIGENLAB_API_AUTH_TOKEN` were **rotated after accidental exposure** (2026-07). Store only in Render / Wrangler secrets — never in git, chat, or `VITE_*`.
+
+**Two-layer auth (unchanged):**
+
+1. **Cloudflare Access** — operator SSO on `dashboard.origenlab.cl` and `api.origenlab.cl`.
+2. **`ORIGENLAB_API_AUTH_TOKEN`** — API origin auth; Worker injects `X-OriginLab-API-Key` upstream.
+
+**Production smoke (2026-07-06):** 8/8 GET routes via `https://dashboard.origenlab.cl/api` returned HTTP 200 JSON with expected CORS and proxy diagnostic headers. See [`docs/dashboard/PRODUCTION_DASHBOARD_SMOKE_CHECKLIST.md`](dashboard/PRODUCTION_DASHBOARD_SMOKE_CHECKLIST.md).
+
 ## Production result (2026-05-26)
 
 ### Cloudflare zone

@@ -117,7 +117,7 @@ Full chain (Gmail ingest → mirror sync → API checks → React Today): email-
 After ingest, run `sync_dashboard_postgres_mirror.py`, then verify mirror freshness:
 
 - Preferred: `GET /mirror/meta/dashboard-sync` and `GET /mirror/classification/summary` on **`apps/api` :8001**
-- Mirror reporting uses **`GET /mirror/*`** on **:8001** only (not used by Dashboard v1 Today).
+- Active dashboard tabs also use **`GET /mirror/*`** for Catálogo, Negocio, leads, audit, and commercial views (via Worker in production).
 
 Use unset `VITE_ORIGENLAB_API_BASE_URL` + Vite proxy to **:8001** for local dev.
 
