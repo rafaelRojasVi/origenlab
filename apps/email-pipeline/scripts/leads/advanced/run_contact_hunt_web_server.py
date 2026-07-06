@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import mimetypes
 import os
 import re
 import socketserver
@@ -30,6 +29,8 @@ DEFAULT_LEGACY_PASSWORD = "leads123"
 
 CSV_RE = re.compile(r"^leads_.*\.csv$", re.IGNORECASE)
 _HEADER_VALUE_UNSAFE_RE = re.compile(r"[\r\n]")
+DOWNLOAD_CONTENT_TYPE = "text/csv; charset=utf-8"
+DOWNLOAD_CONTENT_DISPOSITION = 'attachment; filename="leads.csv"'
 
 
 def sanitize_header_value(value: str) -> str:
@@ -39,20 +40,19 @@ def sanitize_header_value(value: str) -> str:
     return value
 
 
-def safe_download_basename(filename: str) -> str:
-    """Return a single-path-segment filename safe for Content-Disposition."""
+def safe_csv_basename(filename: str) -> str | None:
+    """Return basename when it matches leads_*.csv; otherwise None."""
     base = Path(filename).name
-    slug = re.sub(r"[^\w.\-]", "_", base).strip("._")
-    if not slug or slug in {".", ".."}:
-        return "download.csv"
-    if not CSV_RE.match(slug):
-        return "download.csv"
-    return slug
+    if not base or base in {".", ".."}:
+        return None
+    if not CSV_RE.match(base):
+        return None
+    return base
 
 
-def content_disposition_attachment(filename: str) -> str:
-    safe_name = safe_download_basename(filename)
-    return f'attachment; filename="{sanitize_header_value(safe_name)}"'
+def download_content_disposition() -> str:
+    """Constant Content-Disposition — never derived from request input."""
+    return DOWNLOAD_CONTENT_DISPOSITION
 
 
 def _auth_ok(req_handler: SimpleHTTPRequestHandler, expected_user: str, expected_pass: str) -> bool:
@@ -141,15 +141,16 @@ class LeadsRequestHandler(SimpleHTTPRequestHandler):
         self.wfile.write(html.encode("utf-8"))
 
     def _serve_csv(self, filename: str) -> None:
-        if not filename or not CSV_RE.match(filename):
+        safe_name = safe_csv_basename(filename)
+        if safe_name is None:
             self.send_response(HTTPStatus.NOT_FOUND)
             self.end_headers()
             self.wfile.write(b"Not found")
             return
 
-        target = (self.reports_dir / filename).resolve()
+        target = (self.reports_dir / safe_name).resolve()
         # Ensure it stays within reports_dir even if weird paths were passed.
-        if self.reports_dir.resolve() not in target.parents and target != self.reports_dir / filename:
+        if self.reports_dir.resolve() not in target.parents and target != self.reports_dir / safe_name:
             self.send_response(HTTPStatus.FORBIDDEN)
             self.end_headers()
             self.wfile.write(b"Forbidden")
@@ -161,12 +162,9 @@ class LeadsRequestHandler(SimpleHTTPRequestHandler):
             self.wfile.write(b"Not found")
             return
 
-        ctype, _ = mimetypes.guess_type(str(target))
-        if not ctype:
-            ctype = "text/csv; charset=utf-8"
         self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", sanitize_header_value(ctype))
-        self.send_header("Content-Disposition", content_disposition_attachment(filename))
+        self.send_header("Content-Type", sanitize_header_value(DOWNLOAD_CONTENT_TYPE))
+        self.send_header("Content-Disposition", sanitize_header_value(download_content_disposition()))
         self.end_headers()
         with target.open("rb") as f:
             self.wfile.write(f.read())

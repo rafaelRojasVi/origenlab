@@ -182,7 +182,6 @@ def render_audit_report(
     *,
     trusted_domain_count: int,
     sample_limit: int,
-    include_sensitive_samples: bool,
 ) -> str:
     lines: list[str] = []
     lines.append(f"Rows scanned: {stats.rows_scanned:,}")
@@ -218,21 +217,13 @@ def render_audit_report(
             lines.append(f"    {dom}: {c:,}")
     lines.append("")
     if stats.sender_samples_t:
-        label = "redacted" if not include_sensitive_samples else "raw"
-        lines.append(f"Sample From headers mentioning Tatiana (up to {sample_limit}, {label}):")
+        lines.append(f"Sample From headers mentioning Tatiana (up to {sample_limit}, redacted):")
         for s in stats.sender_samples_t[:sample_limit]:
-            if include_sensitive_samples:
-                lines.append(f"  {s!r}")
-            else:
-                lines.append(f"  {format_redacted_sender_sample(s)}")
+            lines.append(f"  {format_redacted_sender_sample(s)}")
     if stats.sender_samples_v:
-        label = "redacted" if not include_sensitive_samples else "raw"
-        lines.append(f"Sample From headers mentioning Vivanco (up to {sample_limit}, {label}):")
+        lines.append(f"Sample From headers mentioning Vivanco (up to {sample_limit}, redacted):")
         for s in stats.sender_samples_v[:sample_limit]:
-            if include_sensitive_samples:
-                lines.append(f"  {s!r}")
-            else:
-                lines.append(f"  {format_redacted_sender_sample(s)}")
+            lines.append(f"  {format_redacted_sender_sample(s)}")
     lines.append("")
     lines.append(
         "Note: client replies often say “Hola Tatiana” in body; those usually have "
@@ -243,25 +234,8 @@ def render_audit_report(
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--sample", type=int, default=8, help="examples per category (stdout)")
-    ap.add_argument(
-        "--include-sensitive-samples",
-        action="store_true",
-        help="print raw From header samples (requires --ack-sensitive-output)",
-    )
-    ap.add_argument(
-        "--ack-sensitive-output",
-        action="store_true",
-        help="acknowledge raw identity samples may appear on stdout",
-    )
+    ap.add_argument("--sample", type=int, default=8, help="redacted examples per category (stdout)")
     args = ap.parse_args()
-
-    if args.include_sensitive_samples and not args.ack_sensitive_output:
-        print(
-            "Refusing to print raw identity samples without --ack-sensitive-output.",
-            file=sys.stderr,
-        )
-        sys.exit(2)
 
     settings = load_settings()
     db_path = settings.resolved_sqlite_path()
@@ -278,13 +252,11 @@ def main() -> None:
     finally:
         conn.close()
 
-    print(f"DB: {db_path.name}")
     print(
         render_audit_report(
             stats,
             trusted_domain_count=len(trusted),
             sample_limit=args.sample,
-            include_sensitive_samples=args.include_sensitive_samples,
         )
     )
 

@@ -23,6 +23,14 @@ def _load_script():
     return mod
 
 
+def test_cli_has_no_raw_sensitive_output_flags() -> None:
+    mod = _load_script()
+    ap = mod.argparse.ArgumentParser(description=mod.__doc__)
+    ap.add_argument("--sample", type=int, default=8, help="redacted examples per category (stdout)")
+    option_dests = {action.dest for action in ap._actions if action.dest not in {"help"}}
+    assert option_dests == {"sample"}
+
+
 def test_default_report_redacts_sender_samples_and_omits_raw_subjects() -> None:
     mod = _load_script()
     stats = mod.TatianaAuditStats(
@@ -50,25 +58,14 @@ def test_default_report_redacts_sender_samples_and_omits_raw_subjects() -> None:
         stats,
         trusted_domain_count=3,
         sample_limit=8,
-        include_sensitive_samples=False,
     )
     assert "tatiana.secret@client.example" not in report
+    assert "Tatiana Vivanco" not in report
     assert "Solicitud confidencial de cotización" not in report
     assert "from-domain=client.example" in report
     assert "Trusted sender domain count" in report
     assert "origenlab.cl: 1" in report
-
-
-def test_sensitive_samples_require_ack_flag(monkeypatch: pytest.MonkeyPatch) -> None:
-    mod = _load_script()
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["audit_tatiana_identity_signals.py", "--include-sensitive-samples"],
-    )
-    with pytest.raises(SystemExit) as exc:
-        mod.main()
-    assert exc.value.code == 2
+    assert ", redacted)" in report
 
 
 def test_redact_identity_text_strips_emails() -> None:
@@ -78,33 +75,9 @@ def test_redact_identity_text_strips_emails() -> None:
     assert "<email:redacted>" in redacted
 
 
-def test_include_sensitive_samples_prints_raw_only_with_ack(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_render_audit_report_signature_has_no_sensitive_flag() -> None:
     mod = _load_script()
-    stats = mod.TatianaAuditStats(
-        rows_scanned=1,
-        hit_sender_t=1,
-        hit_sender_v=0,
-        hit_subj_t=0,
-        hit_subj_v=0,
-        hit_full_t=0,
-        hit_full_v=0,
-        hit_top_t=0,
-        hit_top_v=0,
-        hit_any_t=1,
-        hit_any_v=0,
-        hit_trusted_identity_in_from_or_body=0,
-        domain_trusted_identity=Counter(),
-        domain_tatiana_in_from=Counter(),
-        domain_vivanco_in_from=Counter(),
-        sender_samples_t=['Tatiana <raw@example.com>'],
-        sender_samples_v=[],
-    )
-    report = mod.render_audit_report(
-        stats,
-        trusted_domain_count=1,
-        sample_limit=8,
-        include_sensitive_samples=True,
-    )
-    assert "raw@example.com" in report
+    import inspect
+
+    params = inspect.signature(mod.render_audit_report).parameters
+    assert "include_sensitive_samples" not in params

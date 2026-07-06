@@ -201,16 +201,62 @@ def test_sanitize_header_value_rejects_crlf() -> None:
         mod.sanitize_header_value("evil\r\nSet-Cookie: x")
 
 
-def test_content_disposition_strips_crlf_and_quotes_safe_basename() -> None:
+def test_download_content_disposition_is_constant() -> None:
     mod = _load_script()
-    header = mod.content_disposition_attachment('evil\r\nSet-Cookie: x"; leads_ok.csv')
-    assert "\r" not in header
-    assert "\n" not in header
-    assert "Set-Cookie" not in header
-    assert 'filename="leads_ok.csv"' in header or 'filename="download.csv"' in header
+    assert mod.download_content_disposition() == 'attachment; filename="leads.csv"'
+    assert mod.download_content_disposition() == mod.DOWNLOAD_CONTENT_DISPOSITION
+    evil = 'evil\r\nSet-Cookie: x"; leads_ok.csv'
+    assert mod.download_content_disposition() == mod.download_content_disposition()
+    assert evil not in mod.download_content_disposition()
 
 
-def test_safe_download_basename_rejects_path_traversal() -> None:
+def test_safe_csv_basename_rejects_path_traversal_and_non_leads_names() -> None:
     mod = _load_script()
-    assert mod.safe_download_basename("../../etc/passwd") == "download.csv"
-    assert mod.safe_download_basename("leads_shortlist.csv") == "leads_shortlist.csv"
+    assert mod.safe_csv_basename("../../etc/passwd") is None
+    assert mod.safe_csv_basename("not_leads.csv") is None
+    assert mod.safe_csv_basename("leads_shortlist.csv") == "leads_shortlist.csv"
+    assert mod.safe_csv_basename('evil\r\nSet-Cookie: x"; leads_ok.csv') is None
+
+
+def test_serve_csv_uses_constant_headers(tmp_path: Path) -> None:
+    mod = _load_script()
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir()
+    csv_path = reports_dir / "leads_shortlist.csv"
+    csv_path.write_text("id_lead\n1\n", encoding="utf-8")
+
+    handler = mod.LeadsRequestHandler.__new__(mod.LeadsRequestHandler)
+    handler.reports_dir = reports_dir
+
+    sent_headers: list[tuple[str, str]] = []
+    handler.send_response = lambda code: None  # type: ignore[method-assign]
+    handler.send_header = lambda name, value: sent_headers.append((name, value))  # type: ignore[method-assign]
+    handler.end_headers = lambda: None  # type: ignore[method-assign]
+    handler.wfile = type("W", (), {"write": staticmethod(lambda *_: None)})()  # type: ignore[method-assign]
+
+    handler._serve_csv("leads_shortlist.csv")
+
+    header_map = dict(sent_headers)
+    assert header_map["Content-Disposition"] == 'attachment; filename="leads.csv"'
+    assert header_map["Content-Type"] == mod.DOWNLOAD_CONTENT_TYPE
+    assert "leads_shortlist.csv" not in header_map["Content-Disposition"]
+
+
+def test_serve_csv_crlf_filename_does_not_emit_headers(tmp_path: Path) -> None:
+    mod = _load_script()
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir()
+    (reports_dir / "leads_shortlist.csv").write_text("id_lead\n1\n", encoding="utf-8")
+
+    handler = mod.LeadsRequestHandler.__new__(mod.LeadsRequestHandler)
+    handler.reports_dir = reports_dir
+
+    sent_headers: list[tuple[str, str]] = []
+    handler.send_response = lambda code: None  # type: ignore[method-assign]
+    handler.send_header = lambda name, value: sent_headers.append((name, value))  # type: ignore[method-assign]
+    handler.end_headers = lambda: None  # type: ignore[method-assign]
+    handler.wfile = type("W", (), {"write": staticmethod(lambda *_: None)})()  # type: ignore[method-assign]
+
+    handler._serve_csv('evil\r\nSet-Cookie: x"; leads_shortlist.csv')
+
+    assert sent_headers == []
