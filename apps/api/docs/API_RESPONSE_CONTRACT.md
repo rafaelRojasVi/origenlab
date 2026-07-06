@@ -10,14 +10,14 @@
 
 ## Principles
 
-| Principle | Rule |
-|-----------|------|
-| Predictable | Success and error bodies use documented top-level keys. |
-| Consistent | List endpoints share `meta` + `items`; errors share the unified `error` envelope. |
+| Principle        | Rule                                                                                     |
+| ---------------- | ---------------------------------------------------------------------------------------- |
+| Predictable      | Success and error bodies use documented top-level keys.                                  |
+| Consistent       | List endpoints share `meta` + `items`; errors share the unified `error` envelope.        |
 | Machine-readable | Stable string `code` values for errors; typed OpenAPI `response_model` on public routes. |
-| Human-debuggable | Short `message` for operators; optional safe `details` for UI hints. |
-| Safe | No stack traces, secrets, raw env vars, DSNs, Gmail tokens, or full email bodies. |
-| Stable | Prefer **additive** changes. Renames/removals require tests + this doc in the same PR. |
+| Human-debuggable | Short `message` for operators; optional safe `details` for UI hints.                     |
+| Safe             | No stack traces, secrets, raw env vars, DSNs, Gmail tokens, or full email bodies.        |
+| Stable           | Prefer **additive** changes. Renames/removals require tests + this doc in the same PR.   |
 
 ---
 
@@ -45,62 +45,62 @@ Collection routes return:
 }
 ```
 
-| `meta` field | Required | Notes |
-|--------------|----------|-------|
-| `count` | **Yes** (target) | Number of items returned (may be `0`). |
-| `data_source` | Optional | e.g. `sqlite`, `postgres_mirror`, `active_current_csv`. |
-| `read_only` | Optional | Should be `true` for operator read routes. |
-| `note` | Optional | Human context when `reduced_mode` or empty data. |
+| `meta` field  | Required         | Notes                                                   |
+| ------------- | ---------------- | ------------------------------------------------------- |
+| `count`       | **Yes** (target) | Number of items returned (may be `0`).                  |
+| `data_source` | Optional         | e.g. `sqlite`, `postgres_mirror`, `active_current_csv`. |
+| `read_only`   | Optional         | Should be `true` for operator read routes.              |
+| `note`        | Optional         | Human context when `reduced_mode` or empty data.        |
 
 Routes may add **documented** meta fields (e.g. `reduced_mode`, `campaign_mode`, `enrichment_available`). Clients should ignore unknown meta keys.
 
 **Examples (shipped):**
 
-| Route | Response model |
-|-------|----------------|
-| `GET /cases/warm` | `WarmCasesResponse` — `meta` + `items` |
+| Route                          | Response model                                      |
+| ------------------------------ | --------------------------------------------------- |
+| `GET /cases/warm`              | `WarmCasesResponse` — `meta` + `items`              |
 | `GET /opportunities/equipment` | `EquipmentOpportunitiesResponse` — `meta` + `items` |
 
 **`GET /cases/warm` (production Postgres read model):**
 
-| Rule | Requirement |
-|------|-------------|
-| `meta.data_source` | `postgres_mirror` when `ORIGENLAB_API_BACKEND=postgres` |
-| `meta.read_only` | `true` |
-| `meta.enrichment_available` | `true` |
-| `meta.count` | Integer equal to `len(items)` |
-| `meta.canonical_categories` | Array of canonical category strings for CLI/display grouping |
-| `meta.legacy_category_aliases` | Object mapping accepted legacy filter aliases to canonical category names |
-| Item identity | Each item has non-empty string `case_id` |
-| Item typing | `last_email_id` is int; `category` and `status` are non-empty strings |
-| Internal fields | Must **not** appear in JSON: `body_snippet`, `source_file`, `recipients_preview`, `sender_preview` (schema `exclude=True`; audit enforces absence) |
-| Path leaks | Raw `/home/` or `/mnt/` paths forbidden anywhere in the response body |
+| Rule                           | Requirement                                                                                                                                        |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `meta.data_source`             | `postgres_mirror` when `ORIGENLAB_API_BACKEND=postgres`                                                                                            |
+| `meta.read_only`               | `true`                                                                                                                                             |
+| `meta.enrichment_available`    | `true`                                                                                                                                             |
+| `meta.count`                   | Integer equal to `len(items)`                                                                                                                      |
+| `meta.canonical_categories`    | Array of canonical category strings for CLI/display grouping                                                                                       |
+| `meta.legacy_category_aliases` | Object mapping accepted legacy filter aliases to canonical category names                                                                          |
+| Item identity                  | Each item has non-empty string `case_id`                                                                                                           |
+| Item typing                    | `last_email_id` is int; `category` and `status` are non-empty strings                                                                              |
+| Internal fields                | Must **not** appear in JSON: `body_snippet`, `source_file`, `recipients_preview`, `sender_preview` (schema `exclude=True`; audit enforces absence) |
+| Path leaks                     | Raw `/home/` or `/mnt/` paths forbidden anywhere in the response body                                                                              |
 
 SQLite dev fallback may return `meta.data_source: "sqlite"` locally; production contract is locked via `PostgresWarmCaseRepository` → `api.v_warm_case` and `scripts/remote_response_audit.py` (`require_warm_cases_contract`). Legacy category filters remain accepted, but clients should prefer `meta.canonical_categories` and normalize via `meta.legacy_category_aliases`.
 
 **`GET /emails/recent` (production Postgres read model):**
 
-| Rule | Requirement |
-|------|-------------|
-| `meta.data_source` | `postgres_mirror` when `ORIGENLAB_API_BACKEND=postgres` |
-| `total_returned` | Integer equal to `len(items)` |
-| `enrichment_available` | Boolean |
-| `reduced_mode` | Boolean |
-| `days_window` | Integer (echo of `days` query param) |
-| Item identity | Each item has int `email_id` |
-| `source_file` | Optional public field on `EmailRecentRow`: `null` or a safe logical mailbox/source string (e.g. `gmail:…`, `imap:…`); must **not** be an absolute filesystem path |
-| Internal fields | Must **not** appear in JSON items: `body`, `raw_body`, `headers`, `recipients_raw` |
-| Item values | Public fields are JSON-safe scalars (no nested objects in item payloads) |
-| Path leaks | Raw `/home/` or `/mnt/` paths forbidden anywhere in the response body (including unsafe `source_file` values) |
+| Rule                   | Requirement                                                                                                                                                       |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `meta.data_source`     | `postgres_mirror` when `ORIGENLAB_API_BACKEND=postgres`                                                                                                           |
+| `total_returned`       | Integer equal to `len(items)`                                                                                                                                     |
+| `enrichment_available` | Boolean                                                                                                                                                           |
+| `reduced_mode`         | Boolean                                                                                                                                                           |
+| `days_window`          | Integer (echo of `days` query param)                                                                                                                              |
+| Item identity          | Each item has int `email_id`                                                                                                                                      |
+| `source_file`          | Optional public field on `EmailRecentRow`: `null` or a safe logical mailbox/source string (e.g. `gmail:…`, `imap:…`); must **not** be an absolute filesystem path |
+| Internal fields        | Must **not** appear in JSON items: `body`, `raw_body`, `headers`, `recipients_raw`                                                                                |
+| Item values            | Public fields are JSON-safe scalars (no nested objects in item payloads)                                                                                          |
+| Path leaks             | Raw `/home/` or `/mnt/` paths forbidden anywhere in the response body (including unsafe `source_file` values)                                                     |
 
 Production reads `api.v_recent_email` through `PostgresEmailRecentRepository` when Postgres is configured. Remote contract: `scripts/remote_response_audit.py` (`require_recent_emails_contract`).
 
 `EquipmentOpportunityItem` includes **`opportunity_key`** (stable cross-source correlation id: `equipment:<source_slug>:<codigo>`). Additive; clients may ignore until needed.
 
-| Route | Response model |
-|-------|----------------|
-| `GET /emails/recent` | `EmailsRecentResponse` — `meta` + `items` (+ extra top-level counters documented in schema) |
-| `GET /mirror/*` list routes | Pipeline mirror schemas — `meta` + `items` (or paginated variants) |
+| Route                       | Response model                                                                              |
+| --------------------------- | ------------------------------------------------------------------------------------------- |
+| `GET /emails/recent`        | `EmailsRecentResponse` — `meta` + `items` (+ extra top-level counters documented in schema) |
+| `GET /mirror/*` list routes | Pipeline mirror schemas — `meta` + `items` (or paginated variants)                          |
 
 ### Single-resource endpoints (`meta` + resource key)
 
@@ -115,11 +115,11 @@ Prefer:
 
 **Stable exceptions (do not rename without migration):**
 
-| Route | Shape | Resource key |
-|-------|-------|--------------|
-| `GET /contacts/{email}` | `ContactDetailResponse` | `contact` (not `item`) |
+| Route                                        | Shape                          | Resource key              |
+| -------------------------------------------- | ------------------------------ | ------------------------- |
+| `GET /contacts/{email}`                      | `ContactDetailResponse`        | `contact` (not `item`)    |
 | `GET /mirror/catalog/products/{product_key}` | `CatalogProductDetailResponse` | product nested per schema |
-| `GET /mirror/commercial/deals/{deal_key}` | `CommercialDealDetailResponse` | `deal` |
+| `GET /mirror/commercial/deals/{deal_key}`    | `CommercialDealDetailResponse` | `deal`                    |
 
 New single-resource routes SHOULD use `meta` + `item` unless mirroring an existing nested name.
 
@@ -127,24 +127,24 @@ New single-resource routes SHOULD use `meta` + `item` unless mirroring an existi
 
 Small **stable objects** are allowed when documented and covered by tests.
 
-| Route | Shape | Notes |
-|-------|-------|-------|
-| `GET /health` | `{ ok, service, mode, backend, postgres_configured }` | Liveness; no `meta` wrapper. |
-| `GET /operator/status` | `OperatorStatusResponse` | Flat operator verdict + warnings. |
-| `GET /operator/automation-status` | `OperatorAutomationStatusResponse` | Automation health snapshot; includes additive `ndr_pending_review` (see below). |
-| `GET /mirror/health/dependencies` | `HealthDependenciesResponse` | Postgres/SQLite reachability (redacted URL fields only). |
+| Route                             | Shape                                                 | Notes                                                                           |
+| --------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `GET /health`                     | `{ ok, service, mode, backend, postgres_configured }` | Liveness; no `meta` wrapper.                                                    |
+| `GET /operator/status`            | `OperatorStatusResponse`                              | Flat operator verdict + warnings.                                               |
+| `GET /operator/automation-status` | `OperatorAutomationStatusResponse`                    | Automation health snapshot; includes additive `ndr_pending_review` (see below). |
+| `GET /mirror/health/dependencies` | `HealthDependenciesResponse`                          | Postgres/SQLite reachability (redacted URL fields only).                        |
 
 Keys on these endpoints must not change casually; update `tests/test_health.py` and this table together.
 
 **`GET /operator/automation-status` — `ndr_pending_review` (additive):**
 
-| Rule | Requirement |
-|------|-------------|
-| Field | Top-level `ndr_pending_review` object (default `{}` when absent in source snapshot). |
-| Purpose | Pending NDR review counts, paths, and status for operator visibility. |
-| Sources | Populated from filesystem `active/current` or Postgres automation snapshot when present. |
-| Path safety | Nested path-like fields are **basename-redacted** like other automation sections (`path_info` companions). |
-| Compatibility | Additive; existing clients may ignore until needed. |
+| Rule          | Requirement                                                                                                |
+| ------------- | ---------------------------------------------------------------------------------------------------------- |
+| Field         | Top-level `ndr_pending_review` object (default `{}` when absent in source snapshot).                       |
+| Purpose       | Pending NDR review counts, paths, and status for operator visibility.                                      |
+| Sources       | Populated from filesystem `active/current` or Postgres automation snapshot when present.                   |
+| Path safety   | Nested path-like fields are **basename-redacted** like other automation sections (`path_info` companions). |
+| Compatibility | Additive; existing clients may ignore until needed.                                                        |
 
 ---
 
@@ -167,24 +167,17 @@ Errors use a unified envelope:
 
 Implemented via centralized handlers in `origenlab_api.errors` (registered from `create_app()`). Host allowlist rejections in `http_security` use the same shape.
 
-| Field | Type | Purpose |
-|-------|------|---------|
-| `code` | string | Stable machine code for client branching. |
-| `message` | string | Operator-facing summary (no secrets). |
-| `details` | object | Safe structured context (field names, allowed values). |
-| `request_id` | string \| null | Correlation id; matches the `X-Request-ID` response header on errors. |
-
 ### Request correlation (`X-Request-ID`)
 
 Every API response includes an **`X-Request-ID`** header.
 
-| Behavior | Rule |
-|----------|------|
-| Incoming header | If `X-Request-ID` is present and **safe** (letters, digits, `_`, `-`, `.`, `:`, max 128 chars), it is reused. |
-| Missing / unsafe | A new `uuid4().hex` value is generated. Unsafe values (URLs, secrets, spaces, etc.) are **never echoed**. |
-| Storage | Resolved id is stored on `request.state.request_id`. |
-| Errors | `error.request_id` matches the response `X-Request-ID` header. |
-| Success | Header is set; success JSON bodies do not duplicate the id (use the header). |
+| Behavior         | Rule                                                                                                          |
+| ---------------- | ------------------------------------------------------------------------------------------------------------- |
+| Incoming header  | If `X-Request-ID` is present and **safe** (letters, digits, `_`, `-`, `.`, `:`, max 128 chars), it is reused. |
+| Missing / unsafe | A new `uuid4().hex` value is generated. Unsafe values (URLs, secrets, spaces, etc.) are **never echoed**.     |
+| Storage          | Resolved id is stored on `request.state.request_id`.                                                          |
+| Errors           | `error.request_id` matches the response `X-Request-ID` header.                                                |
+| Success          | Header is set; success JSON bodies do not duplicate the id (use the header).                                  |
 
 Implemented in `origenlab_api.request_id.RequestIdMiddleware` (outermost middleware). Host allowlist 403 responses also resolve the id before returning.
 
@@ -192,8 +185,8 @@ Implemented in `origenlab_api.request_id.RequestIdMiddleware` (outermost middlew
 
 When `ORIGENLAB_API_CORS_ORIGINS` is configured, credentialed dashboard/browser origins receive:
 
-| Header | Value |
-|--------|-------|
+| Header                          | Value          |
+| ------------------------------- | -------------- |
 | `Access-Control-Expose-Headers` | `X-Request-ID` |
 
 Browser JavaScript on allowed origins can read the request/correlation id from response headers (including error responses). CORS methods remain read-only: **`GET`**, **`HEAD`**, **`OPTIONS`** only.
@@ -206,10 +199,10 @@ Implemented in `origenlab_api.http_security.configure_http_security`.
 
 When `ORIGENLAB_API_AUTH_TOKEN` is set (required in production):
 
-| Access | Routes |
-|--------|--------|
-| **No token** | `GET /health`, `OPTIONS` (any path) |
-| **Bearer / API key required** | All other routes |
+| Access                        | Routes                              |
+| ----------------------------- | ----------------------------------- |
+| **No token**                  | `GET /health`, `OPTIONS` (any path) |
+| **Bearer / API key required** | All other routes                    |
 
 Clients send `Authorization: Bearer <token>` or `X-OriginLab-API-Key: <token>`. Failures: **401**, `error.code`: `unauthorized`, `WWW-Authenticate: Bearer`, `X-Request-ID`.
 
@@ -217,16 +210,16 @@ Runbook: [`PRODUCTION_AUTH.md`](PRODUCTION_AUTH.md).
 
 ### Standard `code` values
 
-| `code` | HTTP | When |
-|--------|------|------|
-| `invalid_query_param` | 422 | Unknown enum/filter (e.g. invalid warm `category`). |
-| `validation_error` | 422 | FastAPI/Pydantic query or path validation. |
-| `not_found` | 404 | Resource missing or unknown path. |
-| `forbidden` | 403 | Host allowlist or policy rejection. |
-| `unauthorized` | 401 | Missing or invalid bearer/API-key token (production). |
-| `backend_unavailable` | 503 | Postgres read-model connection or driver failure (mirror unreachable). Response is sanitized: no DSNs, passwords, SQL, or tracebacks in `message` or `details`. |
-| `mirror_not_configured` | 503 | Mirror route without `ORIGENLAB_POSTGRES_URL`. |
-| `internal_error` | 500 | Unexpected failure (no traceback in body). |
+| `code`                  | HTTP | When                                                                                                                                                            |
+| ----------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invalid_query_param`   | 422  | Unknown enum/filter (e.g. invalid warm `category`).                                                                                                             |
+| `validation_error`      | 422  | FastAPI/Pydantic query or path validation.                                                                                                                      |
+| `not_found`             | 404  | Resource missing or unknown path.                                                                                                                               |
+| `forbidden`             | 403  | Host allowlist or policy rejection.                                                                                                                             |
+| `unauthorized`          | 401  | Missing or invalid bearer/API-key token (production).                                                                                                           |
+| `backend_unavailable`   | 503  | Postgres read-model connection or driver failure (mirror unreachable). Response is sanitized: no DSNs, passwords, SQL, or tracebacks in `message` or `details`. |
+| `mirror_not_configured` | 503  | Mirror route without `ORIGENLAB_POSTGRES_URL`.                                                                                                                  |
+| `internal_error`        | 500  | Unexpected failure (no traceback in body).                                                                                                                      |
 
 **Examples (shipped):**
 
@@ -265,41 +258,41 @@ Redacted placeholders (`<redacted>`, `<unset>`) are OK when explicitly documente
 
 Operator plane (SQLite / active CSV):
 
-| Method | Path |
-|--------|------|
-| GET | `/health` |
-| GET | `/operator/status` |
-| GET | `/operator/automation-status` |
-| GET | `/emails/recent` |
-| GET | `/cases/warm` |
-| GET | `/opportunities/equipment` |
-| GET | `/contacts/{email}` |
+| Method | Path                          |
+| ------ | ----------------------------- |
+| GET    | `/health`                     |
+| GET    | `/operator/status`            |
+| GET    | `/operator/automation-status` |
+| GET    | `/emails/recent`              |
+| GET    | `/cases/warm`                 |
+| GET    | `/opportunities/equipment`    |
+| GET    | `/contacts/{email}`           |
 
 Postgres mirror (`/mirror/*`, read-only reporting):
 
-| Method | Path |
-|--------|------|
-| GET | `/mirror/health/dependencies` |
-| GET | `/mirror/meta/dashboard-sync` |
-| GET | `/mirror/audits/gmail-interactions` |
-| GET | `/mirror/dashboard/summary` |
-| GET | `/mirror/classification/summary` |
-| GET | `/mirror/classification/recent` |
-| GET | `/mirror/classification/actions` |
-| GET | `/mirror/commercial/purchase-events` |
-| GET | `/mirror/commercial/purchase-events/{event_id}` |
-| GET | `/mirror/commercial/deals` |
-| GET | `/mirror/commercial/deals/{deal_key}` |
-| GET | `/mirror/catalog/products` |
-| GET | `/mirror/catalog/products/{product_key}` |
-| GET | `/mirror/leads/prospects` |
-| GET | `/mirror/leads/prospects/{prospect_key}` |
-| GET | `/mirror/leads/summary` |
-| GET | `/mirror/contacts` |
-| GET | `/mirror/organizations` |
-| GET | `/mirror/outbound/suppressions/emails` |
-| GET | `/mirror/outbound/contact-state` |
-| GET | `/mirror/outbound/readiness` |
+| Method | Path                                            |
+| ------ | ----------------------------------------------- |
+| GET    | `/mirror/health/dependencies`                   |
+| GET    | `/mirror/meta/dashboard-sync`                   |
+| GET    | `/mirror/audits/gmail-interactions`             |
+| GET    | `/mirror/dashboard/summary`                     |
+| GET    | `/mirror/classification/summary`                |
+| GET    | `/mirror/classification/recent`                 |
+| GET    | `/mirror/classification/actions`                |
+| GET    | `/mirror/commercial/purchase-events`            |
+| GET    | `/mirror/commercial/purchase-events/{event_id}` |
+| GET    | `/mirror/commercial/deals`                      |
+| GET    | `/mirror/commercial/deals/{deal_key}`           |
+| GET    | `/mirror/catalog/products`                      |
+| GET    | `/mirror/catalog/products/{product_key}`        |
+| GET    | `/mirror/leads/prospects`                       |
+| GET    | `/mirror/leads/prospects/{prospect_key}`        |
+| GET    | `/mirror/leads/summary`                         |
+| GET    | `/mirror/contacts`                              |
+| GET    | `/mirror/organizations`                         |
+| GET    | `/mirror/outbound/suppressions/emails`          |
+| GET    | `/mirror/outbound/contact-state`                |
+| GET    | `/mirror/outbound/readiness`                    |
 
 ---
 
@@ -319,16 +312,15 @@ Flat objects are intentional for liveness and operator verdict routes (see table
 
 Besides `meta` + `items`, includes `total_returned`, `days_window`, `scope_note`, etc. Documented in `schemas/emails.py`; clients should treat unknown keys as optional.
 
-
 ### 4. Operator-facing filesystem paths are basename-only
 
 `GET /operator/status`, `GET /operator/automation-status`, and `GET /opportunities/equipment` expose filesystem locations using **basename-only** legacy string fields for dashboard compatibility, plus structured `*_info` / `path_info` companions.
 
-| Endpoint | Legacy field (basename only) | Companion metadata |
-|----------|------------------------------|--------------------|
-| `GET /operator/status` | `sqlite_path` | `sqlite_path_info` → `{ redacted, basename, kind }` |
-| `GET /operator/automation-status` | `active_current_dir`, nested queue/audit paths | `active_current_dir_info`, section `path_info` |
-| `GET /opportunities/equipment` | `meta.source_path` | `meta.source_path_info` |
+| Endpoint                          | Legacy field (basename only)                   | Companion metadata                                  |
+| --------------------------------- | ---------------------------------------------- | --------------------------------------------------- |
+| `GET /operator/status`            | `sqlite_path`                                  | `sqlite_path_info` → `{ redacted, basename, kind }` |
+| `GET /operator/automation-status` | `active_current_dir`, nested queue/audit paths | `active_current_dir_info`, section `path_info`      |
+| `GET /opportunities/equipment`    | `meta.source_path`                             | `meta.source_path_info`                             |
 
 Raw absolute paths (`/home/…`, `/mnt/…`, parent directories) must **not** appear in JSON responses. `scripts/audit_response_contract.py` fails on `/home/` and `/mnt/` anywhere in audited payloads.
 
@@ -336,18 +328,18 @@ Raw absolute paths (`/home/…`, `/mnt/…`, parent directories) must **not** ap
 
 ## Resolved (changelog)
 
-| Date | Change |
-|------|--------|
-| 2026-07 | `GET /operator/automation-status`: additive `ndr_pending_review` (pending NDR review counts/paths/status); nested paths basename-redacted like other automation sections. |
-| 2026-07 | Production bearer auth: `ORIGENLAB_API_AUTH_TOKEN` required when `ORIGENLAB_ENV=production`; public routes are `GET /health` and `OPTIONS` only. |
-| 2026-07 | CORS: `Access-Control-Expose-Headers: X-Request-ID` for configured dashboard origins; methods remain `GET` / `HEAD` / `OPTIONS`. |
-| 2026-07 | Postgres read-model failures map to **503** `backend_unavailable` without leaking DSNs, passwords, SQL, or tracebacks. |
-| 2026-07 | `GET /cases/warm`: additive `meta.canonical_categories` and `meta.legacy_category_aliases` for CLI clients; legacy category filters remain accepted and normalized. |
-| 2026-07 | `GET /opportunities/equipment`: empty Postgres read-model note now points to `auto-refresh-chilecompra-equipment --once --apply`; CSV reload is documented as legacy/backfill only. |
+| Date    | Change                                                                                                                                                                                                                                                             |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-07 | `GET /operator/automation-status`: additive `ndr_pending_review` (pending NDR review counts/paths/status); nested paths basename-redacted like other automation sections.                                                                                          |
+| 2026-07 | Production bearer auth: `ORIGENLAB_API_AUTH_TOKEN` required when `ORIGENLAB_ENV=production`; public routes are `GET /health` and `OPTIONS` only.                                                                                                                   |
+| 2026-07 | CORS: `Access-Control-Expose-Headers: X-Request-ID` for configured dashboard origins; methods remain `GET` / `HEAD` / `OPTIONS`.                                                                                                                                   |
+| 2026-07 | Postgres read-model failures map to **503** `backend_unavailable` without leaking DSNs, passwords, SQL, or tracebacks.                                                                                                                                             |
+| 2026-07 | `GET /cases/warm`: additive `meta.canonical_categories` and `meta.legacy_category_aliases` for CLI clients; legacy category filters remain accepted and normalized.                                                                                                |
+| 2026-07 | `GET /opportunities/equipment`: empty Postgres read-model note now points to `auto-refresh-chilecompra-equipment --once --apply`; CSV reload is documented as legacy/backfill only.                                                                                |
 | 2026-06 | Operator responses redact filesystem paths: legacy fields are basename-only; `sqlite_path_info`, `source_path_info`, `active_current_dir_info`, and nested `path_info` carry `{ redacted, basename, kind }`. Contract audit fails on `/home/` and `/mnt/` in JSON. |
-| 2026-06 | `GET /operator/automation-status`: additive `active_current_dir_info`, `path_redaction_applied`, and nested `path_info` redacted path companions; legacy absolute path fields retained for dashboard compatibility. |
-| 2026-06 | `X-Request-ID` middleware: header on all responses; `error.request_id` populated on errors. |
-| 2026-06 | Unified `error` envelope via `origenlab_api.errors` handlers; replaced FastAPI `detail` responses for HTTP 4xx/5xx, validation errors, and host allowlist 403. |
+| 2026-06 | `GET /operator/automation-status`: additive `active_current_dir_info`, `path_redaction_applied`, and nested `path_info` redacted path companions; legacy absolute path fields retained for dashboard compatibility.                                                |
+| 2026-06 | `X-Request-ID` middleware: header on all responses; `error.request_id` populated on errors.                                                                                                                                                                        |
+| 2026-06 | Unified `error` envelope via `origenlab_api.errors` handlers; replaced FastAPI `detail` responses for HTTP 4xx/5xx, validation errors, and host allowlist 403.                                                                                                     |
 
 ---
 
