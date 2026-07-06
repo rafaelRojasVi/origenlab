@@ -59,3 +59,18 @@ cd apps/api && uv run pytest \
 ```
 
 **Optional post-merge:** confirm GitHub Security CodeQL alerts #4, #9–#12, #14–#16 close after workflow rerun on `main`.
+
+---
+
+## Follow-up (2026-07-06) — alerts #18/#19 after PR #353
+
+PR #353 left two open CodeQL findings that required stricter remediation:
+
+| Alert | Severity | File | Follow-up fix |
+|-------|----------|------|---------------|
+| #19 | High | `audit_tatiana_identity_signals.py` | Removed raw-sensitive-output path entirely (`--include-sensitive-samples`, `--ack-sensitive-output`, raw `!r` samples). Output is always redacted `from-domain=<domain> id=<hash>` plus aggregates. No DB path on stdout. |
+| #18 | Medium | `run_contact_hunt_web_server.py` | `Content-Disposition` is now the constant `attachment; filename="leads.csv"` — never derived from the requested filename. `Content-Type` is constant for downloads. `safe_csv_basename()` validates which file to serve only. |
+
+**Branch:** `fix/codeql-followup-no-sensitive-output`
+
+**Post-merge check:** wait for CodeQL on `main`, then verify GitHub Security → Code scanning → `is:open branch:main` shows **0** alerts.
