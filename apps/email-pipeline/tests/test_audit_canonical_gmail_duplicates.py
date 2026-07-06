@@ -9,6 +9,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "qa" / "audit_canonical_gmail_duplicates.py"
 DEDUPE = REPO / "scripts" / "maintenance" / "dedupe_canonical_gmail_messages.py"
+LEGACY_DEDUPE = REPO / "scripts" / "tools" / "dedupe_emails_by_message_id.py"
 
 
 def _seed(path: Path) -> None:
@@ -64,6 +65,14 @@ def _seed(path: Path) -> None:
     conn.close()
 
 
+def _email_count(path: Path) -> int:
+    conn = sqlite3.connect(path)
+    try:
+        return int(conn.execute("SELECT COUNT(*) FROM emails").fetchone()[0])
+    finally:
+        conn.close()
+
+
 def test_audit_canonical_gmail_duplicates_json(tmp_path: Path) -> None:
     db = tmp_path / "d.sqlite"
     _seed(db)
@@ -95,6 +104,38 @@ def test_dedupe_dry_run_does_not_delete(tmp_path: Path) -> None:
     assert cp.returncode == 0, cp.stderr
     after = sqlite3.connect(db).execute("SELECT COUNT(*) FROM emails").fetchone()[0]
     assert before == after == 3
+
+
+def test_legacy_dedupe_wrapper_dry_run_does_not_delete(tmp_path: Path) -> None:
+    db = tmp_path / "legacy.sqlite"
+    _seed(db)
+    before = _email_count(db)
+    cp = subprocess.run(
+        [sys.executable, str(LEGACY_DEDUPE), "--db", str(db)],
+        cwd=str(REPO),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert cp.returncode == 0, cp.stderr
+    assert "Compatibility wrapper" in cp.stderr
+    assert "Dry-run only" in cp.stderr
+    assert _email_count(db) == before == 3
+
+
+def test_legacy_dedupe_wrapper_apply_requires_backup_ack(tmp_path: Path) -> None:
+    db = tmp_path / "legacy-apply.sqlite"
+    _seed(db)
+    cp = subprocess.run(
+        [sys.executable, str(LEGACY_DEDUPE), "--db", str(db), "--apply"],
+        cwd=str(REPO),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert cp.returncode == 2
+    assert "--apply requires --ack-sqlite-backup" in cp.stderr
+    assert _email_count(db) == 3
 
 
 def test_dedupe_apply_only_canonical_gmail(tmp_path: Path) -> None:

@@ -16,6 +16,7 @@ Generates:
   uv run python scripts/reports/run_all_reports.py
   uv run python scripts/reports/run_all_reports.py --fast          # skip full domain scan (faster, fewer stats)
   uv run python scripts/reports/run_all_reports.py --embeddings   # add ML clusters (needs GPU/CUDA)
+  uv run python scripts/reports/run_all_reports.py --dedupe       # safe dedupe dry-run preview
 """
 from __future__ import annotations
 
@@ -60,7 +61,11 @@ def main() -> None:
     ap.add_argument(
         "--dedupe",
         action="store_true",
-        help="Run dedupe by Message-ID before reports (if not already done)",
+        help=(
+            "Run canonical Gmail Message-ID dedupe dry-run before reports (no writes). "
+            "Use scripts/maintenance/dedupe_canonical_gmail_messages.py with "
+            "--apply --ack-sqlite-backup for break-glass deletes."
+        ),
     )
     args = ap.parse_args()
 
@@ -92,7 +97,7 @@ def main() -> None:
         return True
 
     if args.dedupe:
-        if not run("tools/dedupe_emails_by_message_id.py", []):
+        if not run("maintenance/dedupe_canonical_gmail_messages.py", []):
             sys.exit(1)
 
     if not run(
