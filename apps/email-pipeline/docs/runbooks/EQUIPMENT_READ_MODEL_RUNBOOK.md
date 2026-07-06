@@ -1,6 +1,6 @@
 # Equipment opportunities — Postgres read model (operator runbook)
 
-**Status:** canonical operator workflow (2026-06)  
+**Status:** canonical operator workflow (2026-07)
 **Audience:** operators and developers verifying equipment mirror + API read path  
 **Related:** [`../architecture/EQUIPMENT_READ_MODEL_BOUNDARY.md`](../architecture/EQUIPMENT_READ_MODEL_BOUNDARY.md) · [`../pipeline/POSTGRES_MIRROR_REFRESH.md`](../pipeline/POSTGRES_MIRROR_REFRESH.md) · [`../../../api/README.md`](../../../api/README.md)
 
@@ -21,11 +21,11 @@ This runbook is **read-only verification**. It does not approve sends, mutate Gm
 
 ## Data flow
 
-```
-equipment_first_operator_queue_*.csv   (active/current artifact — provenance input)
+```text
+ChileCompra API/detail builder rows
         │
         ▼
-load_equipment_opportunity_mirror.py
+auto-refresh-chilecompra-equipment --once --apply
         │
         ▼
 commercial.equipment_opportunity_source   (source load + artifact metadata)
@@ -45,13 +45,15 @@ apps/api  PostgresEquipmentOpportunityRepository
 GET /opportunities/equipment  (production: meta.data_source = postgres_mirror)
 ```
 
+The command also writes `equipment_first_operator_queue_*.csv` and the canonical dashboard CSV under `reports/out/active/current` for audit/debugging. Those CSV artifacts are no longer the normal live writer bridge; `mirror-dashboard --live -- --include-equipment-opportunities` is reserved for explicit legacy/backfill CSV reloads.
+
 ---
 
 ## Source/provenance vs current API truth
 
 | Layer | What it is | Used by public API? |
 |-------|------------|---------------------|
-| CSV queue file under `reports/out/active/current` | Operator artifact + mirror **input** | **No** (dev/SQLite fallback only) |
+| CSV queue file under `reports/out/active/current` | Operator artifact + legacy/backfill mirror input | **No** (dev/SQLite fallback only) |
 | `commercial.equipment_opportunity_source` | Load provenance (`csv_path`, `file_sha256`, `source_kind`, `artifact_basename`, `canonical_reason`) | Indirectly via views |
 | `commercial.equipment_opportunity` | All mirrored rows; same `opportunity_key` may repeat across `source_id` loads | **No** (base table) |
 | `api.v_equipment_opportunity` | Canonical-source rows from the current load | Internal base view |
@@ -73,6 +75,7 @@ Load from `apps/email-pipeline/.env` when working locally (`set -a && source .en
 | `ALEMBIC_DATABASE_URL` | Alembic migrations (`alembic upgrade head`) — usually same target as `ORIGENLAB_POSTGRES_URL` |
 | `CF_ACCESS_CLIENT_ID` | Remote API audit / manual curl behind Cloudflare Access |
 | `CF_ACCESS_CLIENT_SECRET` | Remote API audit / manual curl behind Cloudflare Access |
+| `ORIGENLAB_API_AUTH_TOKEN` | Production private-route smoke / manual curl (`X-OriginLab-API-Key`) |
 | `ORIGENLAB_REMOTE_AUDIT_TIMEOUT_SECONDS` | Per-request timeout for `remote_response_audit.py` (default `30`; use `90` on cold Render) |
 | `ORIGENLAB_REMOTE_AUDIT_RETRIES` | Network retries only (default `2`) |
 | `ORIGENLAB_REMOTE_AUDIT_RETRY_BACKOFF_SECONDS` | Sleep between network retries (default `2.0`) |
@@ -158,15 +161,26 @@ PY
 
 ---
 
-## 4. Remote API audit (authenticated)
+## 4. Production API smoke (origin-token aware)
 
 ```bash
-cd apps/api
-CF_ACCESS_CLIENT_ID=... CF_ACCESS_CLIENT_SECRET=... \
-  uv run python scripts/remote_response_audit.py
+cd apps/email-pipeline
+CF_ACCESS_CLIENT_ID=... \
+CF_ACCESS_CLIENT_SECRET=... \
+ORIGENLAB_API_AUTH_TOKEN=... \
+  uv run python scripts/qa/smoke_dashboard_api_readiness.py \
+  --api-base https://api.origenlab.cl
 ```
 
-Cold Render / Cloudflare start (longer per-request timeout):
+The smoke script sends Cloudflare Access service-token headers when provided and sends `X-OriginLab-API-Key` when `ORIGENLAB_API_AUTH_TOKEN` is set. It does not print secrets or response bodies.
+
+**Healthy:** exits `0`; equipment check validates:
+
+- `GET /opportunities/equipment` is reachable as JSON
+- `meta.data_source` is a known read source (`postgres_mirror` in production)
+- no item-level `source_path` / raw path leak
+
+Optional narrower response contract audit (Cloudflare Access only):
 
 ```bash
 cd apps/api
@@ -175,9 +189,9 @@ ORIGENLAB_REMOTE_AUDIT_TIMEOUT_SECONDS=90 \
   uv run python scripts/remote_response_audit.py
 ```
 
-The script retries **network** failures (`TimeoutError`, `URLError`, `OSError`) only. Contract failures are **not** retried.
+`remote_response_audit.py` retries **network** failures (`TimeoutError`, `URLError`, `OSError`) only. Contract failures are **not** retried. Current limitation: it does **not** send `ORIGENLAB_API_AUTH_TOKEN`, so use it only when the target does not require origin token auth on private routes, or after an origin-token-aware smoke has already passed.
 
-**Healthy:** exits `0` with `ok: remote production responses passed response audit`. Equipment check validates:
+When applicable, a healthy remote response audit exits `0` with `ok: remote production responses passed response audit`. Equipment check validates:
 
 - `meta.data_source == postgres_mirror`
 - `meta.count == len(items)`
@@ -195,6 +209,7 @@ Skips with exit `0` when Cloudflare credentials are unset (CI without secrets).
 curl -sS \
   -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
   -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
+  -H "X-OriginLab-API-Key: ${ORIGENLAB_API_AUTH_TOKEN}" \
   -H "Accept: application/json" \
   "https://api.origenlab.cl/opportunities/equipment?limit=10"
 ```

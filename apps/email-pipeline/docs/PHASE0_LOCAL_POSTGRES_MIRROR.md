@@ -38,10 +38,8 @@ uv run alembic -c alembic.ini upgrade head
 Uses **existing** mart state; does not ingest Gmail or `--rebuild` marts.
 
 ```bash
-uv run python scripts/sync/sync_dashboard_postgres_mirror.py \
-  --include-equipment-opportunities \
-  --include-warm-cases \
-  --updated-by phase0-local \
+uv run origenlab mirror-dashboard --live --apply \
+  --operator phase0-local \
   --reason "Phase 0 local postgres mirror proof-of-life"
 ```
 
@@ -53,7 +51,7 @@ uv run python scripts/qa/verify_dashboard_postgres_mirror.py
 
 Expect `archive.emails` count **0** on a lightweight mirror (mart + outbound sidecars + commercial tables only; no full archive replica). Warm cases via `api.v_warm_case` and `commercial.warm_case`.
 
-**Equipment canonical source:** `sync_dashboard_postgres_mirror.py --include-equipment-opportunities` marks the resolved `active/current` `equipment_first_operator_queue_*.csv` as canonical automatically (manifest `canonical_files` or newest operator queue). Re-running sync without `--replace-source` idempotently re-promotes the same source. Verify `equipment_source_canonical` shows `(id, True)` and `api_v_equipment_opportunity` count matches `equipment_opportunity`.
+**Equipment canonical source:** normal live equipment refresh is direct-published by `uv run origenlab auto-refresh-chilecompra-equipment --once --apply` when Postgres is configured. Use `mirror-dashboard --live -- --include-equipment-opportunities` only for an explicit legacy/backfill CSV reload of the resolved `active/current` equipment queue.
 
 ## 5. Next: Phase 1 cloud
 

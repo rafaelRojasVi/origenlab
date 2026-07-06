@@ -116,7 +116,7 @@ curl -sS -H "X-OriginLab-API-Key: ${TOKEN}" \
 
 Production HTTP clients may also use `Authorization: Bearer <token>`; see **Accepted credentials** above.
 
-**Dashboard browser clients:** `credentials: include` forwards Cloudflare session cookies but **does not** send the API bearer token. Production dashboard builds that call a token-protected API need a follow-up (e.g. server-side proxy or a build-time secret injected into fetch headers). CORS allowlisting alone is insufficient.
+**Dashboard browser clients:** production builds call same-origin `/api/*` through [`apps/dashboard-proxy`](../../dashboard-proxy/README.md). The browser uses `credentials: include` for the dashboard host but **never** receives or sends `ORIGENLAB_API_AUTH_TOKEN`; the Worker reads that value from a Worker secret and forwards it upstream as `X-OriginLab-API-Key` (plus Cloudflare Access service-token headers when the API origin is Access-protected). Do **not** inject API tokens into `VITE_*`, static JS, or build-time browser env.
 
 See also: [`docs/CLOUDFLARE_ACCESS_DASHBOARD_SECURITY.md`](../../../docs/CLOUDFLARE_ACCESS_DASHBOARD_SECURITY.md).
 

@@ -15,7 +15,7 @@
 
 ```text
 Operator browser (:5173)
-  → Vite proxy (dev) or VITE_ORIGENLAB_API_BASE_URL (prod build)
+  → Vite proxy (dev) or same-origin Worker proxy at /api (prod build)
   → apps/api (:8001)  GET only
        ├─ backend=sqlite  → SQLite file (ORIGENLAB_SQLITE_PATH) + active/current CSV manifest
        └─ backend=postgres → api.v_* views on disposable/synced Postgres mirror
@@ -212,7 +212,7 @@ export ORIGENLAB_TEST_POSTGRES_URL='postgresql://origenlab:origenlab@127.0.0.1:5
 export ORIGENLAB_POSTGRES_URL="$ORIGENLAB_TEST_POSTGRES_URL"
 ```
 
-Create the empty database, then **from email-pipeline** (writes mirror tables only):
+Create the empty database, then **from email-pipeline** (writes mirror/read-model tables only):
 
 ```bash
 cd apps/email-pipeline
@@ -220,16 +220,12 @@ uv sync --group postgres --group api
 export ORIGENLAB_POSTGRES_URL="$ORIGENLAB_TEST_POSTGRES_URL"
 export ORIGENLAB_SQLITE_PATH="$HOME/data/origenlab-email/sqlite/emails.sqlite"
 
-uv run alembic -c alembic.ini upgrade head
-
-uv run python scripts/sync/sync_dashboard_postgres_mirror.py \
-  --include-equipment-opportunities \
-  --include-warm-cases \
-  --updated-by v1-freeze-validation \
+uv run origenlab mirror-dashboard --alembic --live --apply \
+  --operator v1-freeze-validation \
   --reason "dashboard v1 postgres matrix"
 ```
 
-This sync **writes Postgres mirror tables** from SQLite — it does **not** send email and does **not** replace SQLite send truth.
+This sync **writes Postgres mirror tables** from SQLite — it does **not** send email and does **not** replace SQLite send truth. `--live` covers warm cases, commercial deals, and operator snapshots. Equipment opportunities are now direct-published by `uv run origenlab auto-refresh-chilecompra-equipment --once --apply` when Postgres is configured; use `mirror-dashboard --live -- --include-equipment-opportunities` only for an explicit legacy/backfill CSV reload.
 
 ### 2. API on postgres backend
 
@@ -259,7 +255,8 @@ npm run dev -- --host 127.0.0.1
 | `GET /health` → `mode` | `operator-postgres-mirror-readonly` |
 | Dashboard chip | **Postgres mirror** |
 | Banner | includes **“Postgres mirror is not send/outreach truth.”** |
-| Warm/equipment `meta.data_source` | `postgres_mirror` when mirror populated |
+| Warm `meta.data_source` | `postgres_mirror` when mirror populated |
+| Equipment `meta.data_source` | `postgres_mirror` when the direct ChileCompra refresh or explicit legacy/backfill populated the equipment read model; otherwise expect the documented empty-state note |
 
 ### Smoke
 
@@ -370,7 +367,7 @@ Fails early if URL is unset or unreachable. See **Mode 2** above for sync/migrat
 |------|------------------|
 | API tests | `cd apps/api && uv run pytest tests -q` |
 | Dashboard tests | `cd apps/dashboard && npm test` |
-| Dashboard production build | `VITE_ORIGENLAB_API_BASE_URL=https://api.example.com npm run build` |
+| Dashboard production build | `VITE_ORIGENLAB_API_BASE_URL=https://dashboard.origenlab.cl/api npm run build` |
 | Dashboard sqlite smoke | `npm run smoke:sqlite` (API on :8001) |
 | Dashboard proxy smoke | `npm run smoke:proxy` (dev server on :5173) |
 

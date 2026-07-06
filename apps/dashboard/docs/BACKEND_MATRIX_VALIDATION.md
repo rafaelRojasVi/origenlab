@@ -123,7 +123,7 @@ export ORIGENLAB_TEST_POSTGRES_URL='postgresql://origenlab:origenlab@127.0.0.1:5
 export ORIGENLAB_POSTGRES_URL="$ORIGENLAB_TEST_POSTGRES_URL"
 ```
 
-Create empty DB, then from **email-pipeline** (writes mirror only — not Gmail, not production SQLite):
+Create empty DB, then from **email-pipeline** (writes mirror/read-model tables only — not Gmail, not production SQLite):
 
 ```bash
 cd apps/email-pipeline
@@ -131,16 +131,12 @@ uv sync --group postgres --group api
 export ORIGENLAB_POSTGRES_URL="$ORIGENLAB_TEST_POSTGRES_URL"
 export ORIGENLAB_SQLITE_PATH="$HOME/data/origenlab-email/sqlite/emails.sqlite"
 
-uv run alembic -c alembic.ini upgrade head
-
-uv run python scripts/sync/sync_dashboard_postgres_mirror.py \
-  --include-equipment-opportunities \
-  --include-warm-cases \
-  --updated-by matrix-validation \
+uv run origenlab mirror-dashboard --alembic --live --apply \
+  --operator matrix-validation \
   --reason "dashboard backend matrix smoke"
 ```
 
-Requires operator approval in production workflows; safe on disposable DB.
+Requires operator approval in production workflows; safe on disposable DB. `--live` covers warm cases, commercial deals, and operator snapshots. Equipment opportunities are direct-published by `uv run origenlab auto-refresh-chilecompra-equipment --once --apply` when Postgres is configured; use `mirror-dashboard --live -- --include-equipment-opportunities` only for explicit legacy/backfill CSV reloads.
 
 ### 2. Start `apps/api` on postgres backend
 
@@ -165,7 +161,7 @@ npm run dev -- --host 127.0.0.1
 
 - Backend chip: **Postgres mirror** (read-only)
 - Banner includes: **“Postgres mirror is not send/outreach truth.”**
-- Warm/equipment tables load (or empty with `reduced_mode` + note if mirror sync skipped DB-2 flags)
+- Warm table loads when the warm mirror is populated. Equipment table loads when the direct ChileCompra refresh or explicit legacy/backfill populated the equipment read model; otherwise it shows the documented empty-state note.
 - Contact drilldown: side panel **read-only**; **“Postgres mirror is not send/outreach truth.”** visible; `GET /contacts/{email}` via proxy returns **200**
 
 **Smoke**
