@@ -167,6 +167,13 @@ Errors use a unified envelope:
 
 Implemented via centralized handlers in `origenlab_api.errors` (registered from `create_app()`). Host allowlist rejections in `http_security` use the same shape.
 
+| Field        | Type           | Purpose                                                               |
+| ------------ | -------------- | --------------------------------------------------------------------- |
+| `code`       | string         | Stable machine code for client branching.                             |
+| `message`    | string         | Operator-facing summary (no secrets).                                 |
+| `details`    | object         | Safe structured context (field names, allowed values).                |
+| `request_id` | string \| null | Correlation id; matches the `X-Request-ID` response header on errors. |
+
 ### Request correlation (`X-Request-ID`)
 
 Every API response includes an **`X-Request-ID`** header.
