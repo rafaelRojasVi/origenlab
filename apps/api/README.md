@@ -48,21 +48,21 @@ CI: `tests/test_no_write_policy.py` checks GET-only routes and scans `apps/api/s
 
 ## CORS and production mode
 
-**Dashboard v1** uses the **Vite proxy** in dev (no CORS needed). Production static dashboard calls the API directly — set:
+**Dashboard v1** uses the **Vite proxy** in dev (no CORS needed). Production dashboard builds call the same-origin Worker proxy at `https://dashboard.origenlab.cl/api`; the browser sends no API token, and the Worker injects upstream auth headers. Configure the API origin for production:
 
 | Variable | Production example |
 |----------|-------------------|
 | `ORIGENLAB_ENV` | `production` |
 | `ORIGENLAB_API_BACKEND` | `postgres` |
 | `ORIGENLAB_POSTGRES_URL` | Cloud Postgres DSN |
-| `ORIGENLAB_API_CORS_ORIGINS` | `https://dashboard.origenlab.cl` (no `*`) |
+| `ORIGENLAB_API_CORS_ORIGINS` | `https://dashboard.origenlab.cl` (no `*`; still useful for direct API-origin smokes/clients) |
 | `ORIGENLAB_API_ALLOWED_HOSTS` | `api.origenlab.cl` (rejects raw `*.onrender.com` Host in production) |
 | `ORIGENLAB_API_AUTH_TOKEN` | Long random secret — **required** when `ORIGENLAB_ENV=production` (see [docs/PRODUCTION_AUTH.md](docs/PRODUCTION_AUTH.md)) |
 | `ORIGENLAB_API_DISABLE_DOCS` | `true` (optional; docs also off when `ORIGENLAB_ENV=production`) |
 
-**CORS is not authentication.** `ORIGENLAB_API_CORS_ORIGINS` allows browser cross-origin reads from the dashboard origin; private routes still require `Authorization: Bearer` (or `X-OriginLab-API-Key`) in production. Public unauthenticated routes: **`GET /health`** and **`OPTIONS`** preflight only.
+**CORS is not authentication.** `ORIGENLAB_API_CORS_ORIGINS` is a browser policy for allowed origins; private routes still require `Authorization: Bearer` (or `X-OriginLab-API-Key`) in production. Public unauthenticated routes: **`GET /health`** and **`OPTIONS`** preflight only.
 
-CORS middleware allows **GET, HEAD, OPTIONS** only. See [`../email-pipeline/docs/PHASE1_CLOUD_READ_PATH.md`](../email-pipeline/docs/PHASE1_CLOUD_READ_PATH.md) and [docs/PRODUCTION_AUTH.md](docs/PRODUCTION_AUTH.md) (env checklist and deployment runbook).
+CORS middleware allows **GET, HEAD, OPTIONS** only. For the production dashboard, deploy [`../dashboard-proxy`](../dashboard-proxy/README.md) and set the dashboard build base to `https://dashboard.origenlab.cl/api`; do not place `ORIGENLAB_API_AUTH_TOKEN` in any `VITE_*` value. See [`../email-pipeline/docs/PHASE1_CLOUD_READ_PATH.md`](../email-pipeline/docs/PHASE1_CLOUD_READ_PATH.md) and [docs/PRODUCTION_AUTH.md](docs/PRODUCTION_AUTH.md) (env checklist and deployment runbook).
 
 ### Production authentication
 
@@ -152,7 +152,7 @@ curl -sS 'http://127.0.0.1:8001/contacts/buyer%40example.cl' | jq '.contact.emai
 
 Production (`https://api.origenlab.cl`) may sit behind **Cloudflare Access** (browser SSO) **and** requires **`ORIGENLAB_API_AUTH_TOKEN`** on private routes when `ORIGENLAB_ENV=production`. CORS allowlisting is separate from auth — see [docs/PRODUCTION_AUTH.md](docs/PRODUCTION_AUTH.md).
 
-Unauthenticated `GET /health` may return **HTTP 302** to Cloudflare Access on the custom domain, or **401** on private routes without a bearer token. Use Cloudflare service tokens **plus** `Authorization: Bearer` for remote smokes when both layers are enabled. Run [`scripts/remote_smoke.sh`](scripts/remote_smoke.sh) / the remote audit scripts with `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, and `ORIGENLAB_API_AUTH_TOKEN` as needed.
+Unauthenticated `GET /health` may return **HTTP 302** to Cloudflare Access on the custom domain, or **401** on private routes without a bearer/API-key token. Use Cloudflare service tokens **plus** API origin auth for production private-route smokes. The email-pipeline smoke (`uv run python scripts/qa/smoke_dashboard_api_readiness.py`) sends `X-OriginLab-API-Key` when `ORIGENLAB_API_AUTH_TOKEN` is set. The local `scripts/remote_smoke.sh` and the remote audit scripts are Cloudflare-service-token checks only; they do not inject the origin token and should not be treated as full production private-route readiness when token auth is enabled.
 
 ### OpenAPI / interactive docs
 
@@ -214,7 +214,7 @@ uv run python scripts/audit_response_contract.py
 
 The audit fails on contract violations including forbidden secret/path leaks (`/home/`, `/mnt/`, database URLs, etc.) anywhere in audited JSON responses. See [docs/API_RESPONSE_CONTRACT.md](docs/API_RESPONSE_CONTRACT.md).
 
-Authenticated remote production audit (live API behind Cloudflare Access; skips with exit 0 when service token env vars are unset):
+Remote response audit (live API behind Cloudflare Access; skips with exit 0 when service token env vars are unset):
 
 ```bash
 cd apps/api
@@ -230,7 +230,7 @@ Optional env for cold Render / Cloudflare starts (network timeouts and connectio
 | `ORIGENLAB_REMOTE_AUDIT_RETRIES` | `2` | Retries after `TimeoutError` / `URLError` / `OSError` only |
 | `ORIGENLAB_REMOTE_AUDIT_RETRY_BACKOFF_SECONDS` | `2.0` | Sleep between network retries |
 
-Uses the same response contract checks as the local audit (`x-request-id`, JSON envelopes, list `meta`/`items`, warm-cases, recent-emails, and equipment current-view contracts, forbidden path/secret leaks). Not part of `./scripts/validate.sh` (requires network + secrets).
+Uses the same response contract checks as the local audit (`x-request-id`, JSON envelopes, list `meta`/`items`, warm-cases, recent-emails, and equipment current-view contracts, forbidden path/secret leaks). **Current limitation:** this script sends Cloudflare Access service-token headers only, not `ORIGENLAB_API_AUTH_TOKEN`; for production private routes protected by origin token auth, use `apps/email-pipeline/scripts/qa/smoke_dashboard_api_readiness.py` with `ORIGENLAB_API_AUTH_TOKEN` set. Not part of `./scripts/validate.sh` (requires network + secrets).
 
 **Remote latency audit** (read-only GET timing; warm-run budgets; skips with exit 0 without CF credentials):
 
@@ -249,7 +249,7 @@ CF_ACCESS_CLIENT_ID=... CF_ACCESS_CLIENT_SECRET=... \
 
 The first (cold) probe is advisory: timeouts and non-200 responses print a stderr warning and the script continues to warm runs. Warm runs enforce HTTP 200 and the warm latency budget. With `ORIGENLAB_REMOTE_LATENCY_RUNS=0`, only the cold probe runs and must return HTTP 200.
 
-Prints per-endpoint `status`, `first_ms`, warm `min_ms` / `avg_ms` / `max_ms`, and `request_id`. Does not print response bodies except short safe error snippets on failure. Not part of `./scripts/validate.sh`.
+Prints per-endpoint `status`, `first_ms`, warm `min_ms` / `avg_ms` / `max_ms`, and `request_id`. It has the same Cloudflare-only auth limitation as `remote_response_audit.py`; use the email-pipeline readiness smoke when origin token auth must be validated. Does not print response bodies except short safe error snippets on failure. Not part of `./scripts/validate.sh`.
 
 GitHub Actions workflow: [`.github/workflows/api.yml`](../../.github/workflows/api.yml) runs `./scripts/validate.sh` for `apps/api` changes and `apps/email-pipeline` dependency changes.
 
@@ -265,7 +265,7 @@ CI `./scripts/validate.sh` mirrors the build step with a no-dev import smoke bef
 
 ### Remote production smoke
 
-`./scripts/remote_smoke.sh` checks a deployed API (default `https://api.origenlab.cl`) behind Cloudflare Access.
+`./scripts/remote_smoke.sh` checks a deployed API (default `https://api.origenlab.cl`) behind Cloudflare Access. It does not send `ORIGENLAB_API_AUTH_TOKEN`; use it for Access/protection checks, not full token-auth private-route readiness.
 
 Unauthenticated `GET /health` often returns **HTTP 302** to `cloudflareaccess.com` when Access is enabled — that is expected protection, not an API outage. Authenticated checks use Cloudflare **service tokens** (`CF-Access-Client-Id` / `CF-Access-Client-Secret` headers). Configure a **Service Auth** policy in Cloudflare Access for the token used by this script.
 

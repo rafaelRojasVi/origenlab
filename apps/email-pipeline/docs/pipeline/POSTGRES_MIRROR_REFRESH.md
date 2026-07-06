@@ -27,7 +27,7 @@ Give operators a single, copy-paste workflow for:
 |-------|------|
 | **`daily-core --apply`** | Refreshes **SQLite** operational truth and safety exports under `reports/out/`. **Never** runs Postgres mirror. |
 | **`mirror-dashboard --apply`** | Copies refreshed SQLite-side state into the **Postgres mirror** for reporting and the React dashboard (core loaders only). |
-| **`mirror-dashboard --live --apply`** | Same as above **plus** warm cases, equipment opportunities, and commercial deals — the dashboard people actually see. |
+| **`mirror-dashboard --live --apply`** | Same as above **plus** warm cases, commercial deals, and operator snapshots — the dashboard people actually see. Equipment opportunities are direct-published by the ChileCompra refresh path. |
 | **Dashboard / API (`apps/api` :8001)** | **Read-only visibility** over SQLite (operator routes) and Postgres (`/mirror/*`). |
 | **Postgres mirror** | **Not send approval.** LISTO / READY / mirror success does **not** mean an outbound batch may be sent. |
 
@@ -106,15 +106,15 @@ test -n "${ORIGENLAB_POSTGRES_URL:-${ALEMBIC_DATABASE_URL:-${ORIGENLAB_CLOUD_POS
 
 ## Live dashboard refresh (preferred)
 
-For the **live React dashboard** and deployed API counts (warm cases, equipment opportunities, commercial deals), use the **`--live`** preset instead of remembering passthrough flags.
+For the **live React dashboard** and deployed API counts (warm cases, commercial deals, operator snapshots), use the **`--live`** preset instead of remembering passthrough flags. Equipment opportunities are refreshed by the direct ChileCompra path: `uv run origenlab auto-refresh-chilecompra-equipment --once --apply`.
 
 **`--live`** includes:
 
 - warm cases (`--include-warm-cases`) with the same default window as **Hoy**: **14 days / 100 warm cases** (`--warm-days 14 --warm-limit 100`)
 - stale generated **`warm_queue_promotion`** cases missing from the current snapshot are **closed** in Postgres (`--close-missing-warm-cases`) so `api.v_warm_case` matches the live dashboard; this does **not** delete emails and does **not** approve sends
 - precise warm-case **role categories** are stored in `commercial.warm_case.role_category` and exposed via `api.v_warm_case` (legacy `category` remains for CHECK compatibility)
-- equipment opportunities (`--include-equipment-opportunities`)
 - commercial deals (`--include-commercial-deals`)
+- operator snapshots (`--include-operator-snapshots`)
 
 Override the warm-case window via passthrough when needed:
 
@@ -123,6 +123,15 @@ uv run origenlab mirror-dashboard --live -- --warm-days 30 --warm-limit 200
 ```
 
 **`mirror-dashboard --apply`** without **`--live`** refreshes **core mirror pieces only** (mart, outbound, canonical, purchase events). Use that when you intentionally skip optional dashboard loaders.
+
+`--include-equipment-opportunities` is no longer part of the normal live mirror loop. Pass it after `--` only for explicit legacy/backfill CSV reloads, for example:
+
+```bash
+uv run origenlab mirror-dashboard --live --apply \
+  --operator rafael \
+  --reason "Legacy equipment CSV backfill" \
+  -- --include-equipment-opportunities
+```
 
 **Daily core intentionally never includes mirror.**
 

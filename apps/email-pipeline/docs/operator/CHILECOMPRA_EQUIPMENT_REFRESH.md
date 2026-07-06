@@ -92,9 +92,9 @@ Keep `max-details` conservative (50 or lower) to respect API quotas.
 
 ## Dashboard mirror relationship
 
-This command **does not** call `auto-mirror-dashboard` or write to Postgres directly.
+With `--apply` and Postgres configured, this command direct-publishes the typed equipment read model to Postgres (`commercial.equipment_opportunity_source` / `commercial.equipment_opportunity`, exposed by `api.v_equipment_opportunity_current`).
 
-After publish with manifest update, `auto-mirror-dashboard` detects the dashboard input fingerprint change (`manifest.json` + canonical equipment queue) and mirrors to Postgres on its own schedule.
+It still publishes the dashboard CSV/manifest artifacts for audit and compatibility, but `auto-mirror-dashboard` / `mirror-dashboard --live` no longer reloads equipment from the CSV by default. Use `mirror-dashboard --live -- --include-equipment-opportunities` only for an explicit legacy/backfill CSV reload.
 
 ## Safety
 

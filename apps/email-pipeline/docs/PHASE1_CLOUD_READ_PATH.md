@@ -1,8 +1,8 @@
 # Phase 1 — Cloud read path (OrigenLab Today)
 
 **Status:** deployment readiness checklist (do not run until operator approves)  
-**Prerequisite:** [Phase 0 local Postgres mirror proof](PHASE0_LOCAL_POSTGRES_MIRROR.md) — **green** (`apps/api` **200 passed**, equipment canonical auto-promotion, `api.v_equipment_opportunity` returns rows after sync).  
-**Scope:** Cloud Postgres read model + cloud GET-only API + static dashboard. **Manual mirror sync only** (no cron in Phase 1).
+**Prerequisite:** [Phase 0 local Postgres mirror proof](PHASE0_LOCAL_POSTGRES_MIRROR.md) — **green** (`apps/api` **200 passed**; equipment rows require direct ChileCompra refresh or explicit legacy/backfill reload).
+**Scope:** Cloud Postgres read model + cloud GET-only API + static dashboard behind the read-only Worker proxy. **Manual mirror sync only** (no cron in Phase 1).
 
 ---
 
@@ -11,9 +11,9 @@
 | Allowed | Forbidden in Phase 1 |
 |---------|----------------------|
 | Read-only SQLite on **local worker** during sync | Uploading/copying the ~128GB `emails.sqlite` to cloud |
-| `sync_dashboard_postgres_mirror.py` → **cloud Postgres only** | Gmail ingest (`05_workspace_gmail_imap_to_sqlite.py`) |
+| `mirror-dashboard` / `sync_dashboard_postgres_mirror.py` → **cloud Postgres only** | Gmail ingest (`05_workspace_gmail_imap_to_sqlite.py`) |
 | `alembic upgrade head` on cloud Postgres | `build_business_mart.py --rebuild` |
-| Deploy GET-only `apps/api` + static `apps/dashboard` | Gmail mutation, sends, outreach writes |
+| Deploy GET-only `apps/api` + static `apps/dashboard` + read-only dashboard proxy | Gmail mutation, sends, outreach writes |
 | DNS for `api.*` / `dashboard.*` subdomains | Changes to HostGator marketing site (`apps/web`) |
 
 **Truth model:** Postgres mirror is for **dashboard reads only**. Send/outreach approval remains **local SQLite** + operator scripts.
@@ -27,12 +27,13 @@
 ```text
 Local worker (unchanged)
   ORIGENLAB_SQLITE_PATH → read-only
-  sync_dashboard_postgres_mirror.py --allow-non-scratch-postgres
+  mirror-dashboard --live --apply -- --allow-non-scratch-postgres
   → Cloud Postgres (mart, outbound sidecars, commercial, reporting; NOT full archive)
 
 Operator browser
   → https://dashboard.<domain>  (static SPA)
-  → https://api.<domain>        (FastAPI, ORIGENLAB_API_BACKEND=postgres)
+  → https://dashboard.<domain>/api  (Worker injects upstream auth)
+  → https://api.<domain>            (FastAPI, ORIGENLAB_API_BACKEND=postgres)
 
 origenlab.cl (HostGator) → public marketing only — separate from dashboard
 ```
@@ -106,14 +107,11 @@ cd apps/email-pipeline
 export ORIGENLAB_SQLITE_PATH="$HOME/data/origenlab-email/sqlite/emails.sqlite"
 export ORIGENLAB_POSTGRES_URL="$ORIGENLAB_CLOUD_POSTGRES_URL"
 
-uv run alembic -c alembic.ini upgrade head
-
-uv run python scripts/sync/sync_dashboard_postgres_mirror.py \
-  --allow-non-scratch-postgres \
-  --include-equipment-opportunities \
-  --include-warm-cases \
-  --updated-by "<operator-id>" \
+uv run origenlab mirror-dashboard --alembic --live --apply \
+  --operator "<operator-id>" \
   --reason "Phase 1 initial cloud mirror" \
+  -- \
+  --allow-non-scratch-postgres \
   --json-out /tmp/phase1_cloud_mirror_sync.json
 
 uv run python scripts/qa/verify_dashboard_postgres_mirror.py
@@ -125,10 +123,10 @@ uv run python scripts/qa/verify_dashboard_postgres_mirror.py
 |-------|----------|
 | `archive.emails` | **0** (lightweight mirror; no full archive replica) |
 | `commercial.warm_case` | **> 0** |
-| `api.v_equipment_opportunity` | **> 0** (equipment source `is_canonical = true` — no manual SQL) |
+| `api.v_equipment_opportunity_current` | **> 0** only after direct ChileCompra refresh or explicit legacy/backfill equipment reload |
 | `reporting.dashboard_sync_run` | Latest row `status = success` |
 
-**Equipment canonical behavior:** Active/current `equipment_first_operator_queue_*.csv` is promoted automatically; re-sync is idempotent (`canonical_source_already_loaded`).
+**Equipment canonical behavior:** the normal live path is `uv run origenlab auto-refresh-chilecompra-equipment --once --apply`, which publishes typed ChileCompra rows directly to the Postgres equipment read model when Postgres is configured. The CSV mirror flag `--include-equipment-opportunities` is legacy/backfill only.
 
 ---
 
@@ -184,7 +182,7 @@ Full runbook: [`apps/api/docs/PRODUCTION_AUTH.md`](../../api/docs/PRODUCTION_AUT
 ```bash
 cd apps/dashboard
 npm ci
-VITE_ORIGENLAB_API_BASE_URL=https://api.origenlab.cl npm run build
+VITE_ORIGENLAB_API_BASE_URL=https://dashboard.origenlab.cl/api npm run build
 ```
 
 Publish directory: `apps/dashboard/dist` (static files only).
@@ -194,7 +192,7 @@ Template: [`apps/dashboard/.env.production.example`](../../dashboard/.env.produc
 ### Render example
 
 - Static site `origenlab-dashboard` in [`render.yaml`](../../../render.yaml).
-- Build env: `VITE_ORIGENLAB_API_BASE_URL=https://api.origenlab.cl`
+- Build env: `VITE_ORIGENLAB_API_BASE_URL=https://dashboard.origenlab.cl/api`
 - SPA rewrite: `/*` → `/index.html`
 - Custom domain: `dashboard.origenlab.cl`
 

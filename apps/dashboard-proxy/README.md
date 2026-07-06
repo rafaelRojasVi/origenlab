@@ -30,6 +30,17 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 
 Mutating methods (`POST`, `PUT`, `PATCH`, `DELETE`) return **405**.
 
+## Response hardening
+
+The Worker is deliberately stricter than a generic pass-through proxy:
+
+- Upstream **3xx** responses are not forwarded to the browser. They become **502** JSON: `{ "error": { "code": "upstream_redirect_blocked" } }`.
+- Upstream `Location`, `Set-Cookie`, `Set-Cookie2`, and upstream CORS headers are stripped before the dashboard sees the response.
+- Allowed dashboard origins receive credentialed CORS headers and `Access-Control-Expose-Headers: X-Request-ID`.
+- Responses include `X-OriginLab-Proxy: dashboard-proxy`; forwarded upstream responses also include `X-OriginLab-Upstream-Status`.
+
+This keeps Cloudflare Access redirects/cookies and upstream CORS policy from leaking through `/api/*`.
+
 ## Environment
 
 | Name | Where | Required |
@@ -59,6 +70,7 @@ Route in Cloudflare: `dashboard.origenlab.cl/api*` → this Worker (see `wrangle
 | Symptom | Likely cause |
 |---------|----------------|
 | **302 / 403** (HTML Access page) | Worker missing/wrong `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` for Access-protected upstream |
+| **502** JSON (`upstream_redirect_blocked`) | Upstream returned a redirect (often Cloudflare Access login); fix Worker Access service-token secrets |
 | **401** JSON (`unauthorized`) | Worker missing/wrong `ORIGENLAB_API_AUTH_TOKEN` (request passed Access but failed API origin auth) |
 | **403** `path_not_allowed` | Route not on dashboard read allowlist |
 | **405** | Mutating HTTP method |
