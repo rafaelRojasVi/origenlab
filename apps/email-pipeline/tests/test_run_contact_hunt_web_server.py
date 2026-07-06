@@ -193,3 +193,24 @@ def test_password_not_printed_in_startup_output(tmp_path: Path, monkeypatch: pyt
     combined = stdout + stderr
     assert secret not in combined
     assert "leads123" not in combined
+
+
+def test_sanitize_header_value_rejects_crlf() -> None:
+    mod = _load_script()
+    with pytest.raises(ValueError, match="CR or LF"):
+        mod.sanitize_header_value("evil\r\nSet-Cookie: x")
+
+
+def test_content_disposition_strips_crlf_and_quotes_safe_basename() -> None:
+    mod = _load_script()
+    header = mod.content_disposition_attachment('evil\r\nSet-Cookie: x"; leads_ok.csv')
+    assert "\r" not in header
+    assert "\n" not in header
+    assert "Set-Cookie" not in header
+    assert 'filename="leads_ok.csv"' in header or 'filename="download.csv"' in header
+
+
+def test_safe_download_basename_rejects_path_traversal() -> None:
+    mod = _load_script()
+    assert mod.safe_download_basename("../../etc/passwd") == "download.csv"
+    assert mod.safe_download_basename("leads_shortlist.csv") == "leads_shortlist.csv"
