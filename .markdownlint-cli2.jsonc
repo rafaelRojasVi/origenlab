@@ -1,0 +1,21 @@
+{
+  // Ignore generated or environment paths.
+  "ignores": [
+    ".venv/**",
+    "**/.venv/**",
+    "node_modules/**",
+    "**/node_modules/**",
+    "docs/sources/kraken-llms.txt"
+  ],
+  "config": {
+    // Reasonable prose limit; code blocks and tables are excluded because
+    // commands, URLs, route paths, and markdown tables are often intentionally long.
+    "MD013": {
+      "line_length": 120,
+      "code_blocks": false,
+      "tables": false
+    },
+    // Generated/link-index style docs may intentionally contain bare URLs.
+    "MD034": false
+  }
+}
