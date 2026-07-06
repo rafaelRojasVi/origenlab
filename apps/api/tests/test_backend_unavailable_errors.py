@@ -74,3 +74,55 @@ def test_postgres_backend_unavailable_returns_safe_503_json(
     assert "postgresql://" not in text
     assert "password" not in text.lower()
     assert "traceback" not in text.lower()
+
+
+def _postgres_route_client(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from origenlab_api.main import create_app
+
+    monkeypatch.delenv("ORIGENLAB_ENV", raising=False)
+    monkeypatch.delenv("ORIGENLAB_API_BACKEND", raising=False)
+    get_settings.cache_clear()
+
+    app = create_app()
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        api_backend="postgres",
+        postgres_url="postgresql://user:password@127.0.0.1:5432/origenlab",
+        sqlite_path=tmp_path / "unused.sqlite",
+        active_current=tmp_path / "current",
+    )
+    return TestClient(app, raise_server_exceptions=False)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/cases/warm",
+        "/opportunities/equipment",
+        "/operator/status",
+    ],
+)
+def test_postgres_backed_routes_return_safe_503_when_read_model_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    path: str,
+) -> None:
+    monkeypatch.setattr(pg_common, "psycopg", _FakePsycopg)
+    client = _postgres_route_client(monkeypatch, tmp_path)
+
+    response = client.get(path, headers={"X-Request-ID": "test-pg-down"})
+
+    assert response.status_code == 503
+    assert response.headers.get("X-Request-ID") == "test-pg-down"
+    body = response.json()
+    assert body["error"]["code"] == "backend_unavailable"
+    assert body["error"]["message"] == "Postgres read model unavailable."
+    assert body["error"]["details"] == {"backend": "postgres"}
+    assert body["error"]["request_id"] == "test-pg-down"
+
+    text = json.dumps(body)
+    assert "postgresql://" not in text
+    assert "password" not in text.lower()
+    assert "127.0.0.1" not in text
+    assert "traceback" not in text.lower()
