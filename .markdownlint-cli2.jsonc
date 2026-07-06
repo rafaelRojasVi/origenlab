@@ -3,6 +3,8 @@
   "ignores": [
     ".venv/**",
     "**/.venv/**",
+    "node_modules/**",
+    "**/node_modules/**",
     "docs/sources/kraken-llms.txt"
   ],
   "config": {
