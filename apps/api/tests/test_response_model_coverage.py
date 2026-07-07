@@ -37,6 +37,7 @@ EXPECTED_PUBLIC_GET_PATHS: frozenset[str] = frozenset(
         "/mirror/catalog/products",
         "/mirror/catalog/products/{product_key}",
         "/mirror/leads/prospects",
+        "/mirror/leads/prospects/export.csv",
         "/mirror/leads/prospects/{prospect_key}",
         "/mirror/leads/summary",
         "/mirror/contacts",
@@ -65,7 +66,11 @@ PUBLIC_GET_PATH_PREFIXES: tuple[str, ...] = (
 )
 
 # Routes allowed without response_model — must be documented in API_RESPONSE_CONTRACT.md.
-RESPONSE_MODEL_ALLOWLIST: frozenset[str] = frozenset()
+RESPONSE_MODEL_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "/mirror/leads/prospects/export.csv",
+    }
+)
 
 
 def _contract_doc_path() -> Path:

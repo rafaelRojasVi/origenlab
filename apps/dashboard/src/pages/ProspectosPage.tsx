@@ -2,11 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   LeadProspectDetailResponseUi,
   LeadProspectListItemUi,
+  LeadProspectsExportQuery,
   LeadProspectsListQuery,
   LeadResearchSummaryUi,
+  ProspectExportQueue,
   ProspectOriginFilter,
 } from "../api/leadIntelTypes";
 import {
+  downloadLeadProspectsExportCsv,
   fetchLeadProspectDetailMirror,
   fetchLeadProspectsMirror,
   fetchLeadResearchSummaryMirror,
@@ -159,6 +162,18 @@ export function ProspectosPage() {
     ],
   );
 
+  const handleExport = useCallback(
+    (exportQueue: ProspectExportQueue) => {
+      const query: LeadProspectsExportQuery = { ...buildQuery(), export_queue: exportQueue };
+      void downloadLeadProspectsExportCsv(query).catch((e) => {
+        const formatted = formatLoadError("No se pudo exportar prospectos", e);
+        setListError(formatted.message);
+        setListErrorDetail(formatted.detail);
+      });
+    },
+    [buildQuery],
+  );
+
   return (
     <div className="space-y-6" data-testid="prospectos-page">
       <header>
@@ -265,6 +280,71 @@ export function ProspectosPage() {
           >
             Aplicar filtros
           </button>
+        </div>
+        <p
+          className="mt-3 text-xs text-[var(--color-muted)]"
+          data-testid="prospectos-legacy-empty-hint"
+        >
+          Si Base antigua 2016–2019 aparece vacía, probablemente ese archivo histórico no está cargado
+          en el espejo actual. Importar PST/cPanel/archivo antiguo antes de esperar resultados.
+        </p>
+        <div
+          className="mt-4 border-t border-[var(--color-border)] pt-4"
+          data-testid="prospectos-export-panel"
+        >
+          <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+            Reportes / Exportar
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => handleExport("ready_to_contact")}
+              className="rounded-md border border-[var(--color-border)] bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+              data-testid="prospectos-export-ready"
+            >
+              Exportar listos para contactar
+            </button>
+            <button
+              type="button"
+              onClick={() => handleExport("needs_email_enrichment")}
+              className="rounded-md border border-[var(--color-border)] bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+              data-testid="prospectos-export-needs-email"
+            >
+              Exportar falta email / enriquecer
+            </button>
+            <button
+              type="button"
+              onClick={() => handleExport("tender_opportunity")}
+              className="rounded-md border border-[var(--color-border)] bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+              data-testid="prospectos-export-tender"
+            >
+              Exportar licitaciones
+            </button>
+            <button
+              type="button"
+              onClick={() => handleExport("review_history")}
+              className="rounded-md border border-[var(--color-border)] bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+              data-testid="prospectos-export-review-history"
+            >
+              Exportar revisar historial
+            </button>
+            <button
+              type="button"
+              onClick={() => handleExport("already_contacted_followup_review")}
+              className="rounded-md border border-[var(--color-border)] bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+              data-testid="prospectos-export-followup"
+            >
+              Exportar follow-up a revisar
+            </button>
+            <button
+              type="button"
+              onClick={() => handleExport("all_visible")}
+              className="rounded-md border border-[var(--color-border)] bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+              data-testid="prospectos-export-filtered"
+            >
+              Exportar vista filtrada
+            </button>
+          </div>
         </div>
       </section>
 

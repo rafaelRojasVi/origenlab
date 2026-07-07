@@ -16,12 +16,16 @@ vi.mock("../api/mirrorLeadIntelClient", () => ({
   fetchLeadProspectsMirror: vi.fn(),
   fetchLeadProspectDetailMirror: vi.fn(),
   fetchLeadResearchSummaryMirror: vi.fn(),
+  downloadLeadProspectsExportCsv: vi.fn(),
+  mirrorLeadProspectsExportUrl: vi.fn(),
 }));
 
 import {
+  downloadLeadProspectsExportCsv,
   fetchLeadProspectDetailMirror,
   fetchLeadProspectsMirror,
   fetchLeadResearchSummaryMirror,
+  mirrorLeadProspectsExportUrl,
 } from "../api/mirrorLeadIntelClient";
 import { OperatorApiError } from "../api/operatorClient";
 
@@ -29,6 +33,11 @@ describe("ProspectosPage", () => {
   beforeEach(() => {
     vi.mocked(fetchLeadResearchSummaryMirror).mockResolvedValue(leadSummaryFixture());
     vi.mocked(fetchLeadProspectsMirror).mockResolvedValue(leadListFixture());
+    vi.mocked(downloadLeadProspectsExportCsv).mockResolvedValue(undefined);
+    vi.mocked(mirrorLeadProspectsExportUrl).mockImplementation(
+      (query) =>
+        `https://api.example.test/mirror/leads/prospects/export.csv?export_queue=${query.export_queue}`,
+    );
     vi.mocked(fetchLeadProspectDetailMirror).mockImplementation(async (key: string) => {
       if (key === "blocked") return leadBlockedDetailFixture();
       if (key === "same" || key === "5m") return lead5mSameDomainDetailFixture();
@@ -267,5 +276,43 @@ describe("ProspectosPage", () => {
       expect(screen.getByTestId("prospect-message-section").textContent).toMatch(/equivalencia técnica/i);
     });
     expect(screen.queryByTestId("prospect-message-preview")).toBeNull();
+  });
+
+  it("renders export buttons and legacy empty-bucket helper text", async () => {
+    render(<ProspectosPage />);
+    await waitFor(() => expect(screen.getByTestId("prospectos-export-panel")).toBeTruthy());
+    expect(screen.getByTestId("prospectos-export-ready")).toBeTruthy();
+    expect(screen.getByTestId("prospectos-export-needs-email")).toBeTruthy();
+    expect(screen.getByTestId("prospectos-export-tender")).toBeTruthy();
+    expect(screen.getByTestId("prospectos-export-review-history")).toBeTruthy();
+    expect(screen.getByTestId("prospectos-export-followup")).toBeTruthy();
+    expect(screen.getByTestId("prospectos-export-filtered")).toBeTruthy();
+    expect(screen.getByTestId("prospectos-legacy-empty-hint").textContent).toMatch(
+      /Base antigua 2016–2019 aparece vacía/i,
+    );
+    expect(screen.queryByRole("button", { name: /enviar/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /compose/i })).toBeNull();
+  });
+
+  it("export button downloads CSV with current filters", async () => {
+    render(<ProspectosPage />);
+    await waitFor(() => expect(screen.getByTestId("prospectos-origin-filter")).toBeTruthy());
+    fireEvent.change(screen.getByTestId("prospectos-origin-filter"), {
+      target: { value: "gmail_historico" },
+    });
+    await waitFor(() => {
+      expect(vi.mocked(fetchLeadProspectsMirror)).toHaveBeenCalledWith(
+        expect.objectContaining({ source_type: "gmail_historico" }),
+      );
+    });
+    fireEvent.click(screen.getByTestId("prospectos-export-ready"));
+    await waitFor(() => {
+      expect(vi.mocked(downloadLeadProspectsExportCsv)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          export_queue: "ready_to_contact",
+          source_type: "gmail_historico",
+        }),
+      );
+    });
   });
 });
