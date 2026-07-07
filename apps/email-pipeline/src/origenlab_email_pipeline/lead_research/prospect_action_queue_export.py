@@ -65,6 +65,8 @@ EXPORT_QUEUE_FILENAMES: dict[str, str] = {
     EXPORT_QUEUE_FOLLOWUP_REVIEW: "prospectos-followup-review.csv",
 }
 
+CSV_UTF8_BOM: Final = "\ufeff"
+
 
 _CSV_FORMULA_PREFIXES: frozenset[str] = frozenset({"=", "+", "-", "@", "\t", "\r"})
 
@@ -131,7 +133,7 @@ def render_prospects_csv(rows: list[dict[str, str]]) -> str:
     writer = csv.DictWriter(buffer, fieldnames=list(EXPORT_FIELDNAMES))
     writer.writeheader()
     writer.writerows(rows)
-    return buffer.getvalue()
+    return f"{CSV_UTF8_BOM}{buffer.getvalue()}"
 
 
 def export_filename_for_queue(export_queue: str) -> str:
