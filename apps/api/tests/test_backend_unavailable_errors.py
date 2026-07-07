@@ -6,6 +6,8 @@ import json
 
 import pytest
 
+from origenlab_email_pipeline.postgres_dashboard_api import db as mirror_db
+
 from origenlab_api.repositories.postgres import common as pg_common
 from origenlab_api.repositories.postgres.common import (
     PostgresBackendUnavailableError,
@@ -101,6 +103,7 @@ def _postgres_route_client(monkeypatch: pytest.MonkeyPatch, tmp_path):
         "/cases/warm",
         "/opportunities/equipment",
         "/operator/status",
+        "/operator/automation-status",
     ],
 )
 def test_postgres_backed_routes_return_safe_503_when_read_model_unavailable(
@@ -120,6 +123,39 @@ def test_postgres_backed_routes_return_safe_503_when_read_model_unavailable(
     assert body["error"]["message"] == "Postgres read model unavailable."
     assert body["error"]["details"] == {"backend": "postgres"}
     assert body["error"]["request_id"] == "test-pg-down"
+
+    text = json.dumps(body)
+    assert "postgresql://" not in text
+    assert "password" not in text.lower()
+    assert "127.0.0.1" not in text
+    assert "traceback" not in text.lower()
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/mirror/catalog/products",
+        "/mirror/leads/summary",
+        "/mirror/leads/prospects",
+        "/mirror/audits/gmail-interactions",
+        "/mirror/commercial/deals",
+    ],
+)
+def test_mirror_routes_return_safe_503_when_postgres_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    path: str,
+) -> None:
+    monkeypatch.setattr(mirror_db, "psycopg", _FakePsycopg)
+    client = _postgres_route_client(monkeypatch, tmp_path)
+
+    response = client.get(path, headers={"X-Request-ID": "test-mirror-pg-down"})
+
+    assert response.status_code == 503
+    assert response.headers.get("X-Request-ID") == "test-mirror-pg-down"
+    body = response.json()
+    assert body["error"]["code"] == "backend_unavailable"
+    assert body["error"]["request_id"] == "test-mirror-pg-down"
 
     text = json.dumps(body)
     assert "postgresql://" not in text

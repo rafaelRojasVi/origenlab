@@ -4,6 +4,17 @@ import { isAllowedUpstreamPath, stripApiPrefix } from "../src/allowlist";
 import { buildUpstreamUrl } from "../src/proxy";
 
 describe("allowlist", () => {
+  const PRODUCTION_SMOKE_PATHS = [
+    "/health",
+    "/operator/status",
+    "/operator/automation-status",
+    "/mirror/catalog/products",
+    "/mirror/leads/summary",
+    "/mirror/leads/prospects",
+    "/mirror/audits/gmail-interactions",
+    "/mirror/commercial/deals",
+  ];
+
   it("stripApiPrefix maps /api/* to upstream paths", () => {
     expect(stripApiPrefix("/api/health")).toBe("/health");
     expect(stripApiPrefix("/api/operator/status")).toBe("/operator/status");
@@ -24,6 +35,17 @@ describe("allowlist", () => {
     expect(isAllowedUpstreamPath("/mirror/commercial/deals")).toBe(true);
     expect(isAllowedUpstreamPath("/emails")).toBe(false);
     expect(isAllowedUpstreamPath("/operator/send")).toBe(false);
+  });
+
+  it.each(PRODUCTION_SMOKE_PATHS)("allows production smoke path %s", (path) => {
+    expect(isAllowedUpstreamPath(path)).toBe(true);
+    expect(isAllowedUpstreamPath(`${path}?limit=20`)).toBe(true);
+  });
+
+  it("keeps representative write and non-dashboard paths blocked", () => {
+    expect(isAllowedUpstreamPath("/emails")).toBe(false);
+    expect(isAllowedUpstreamPath("/operator/send")).toBe(false);
+    expect(isAllowedUpstreamPath("/api/operator/status")).toBe(false);
   });
 });
 

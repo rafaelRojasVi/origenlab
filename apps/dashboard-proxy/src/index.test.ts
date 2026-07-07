@@ -341,6 +341,44 @@ describe("handleRequest", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("missing upstream configuration returns JSON error without fetching", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/operator/status", { method: "GET" }),
+      { ...TEST_ENV, ORIGENLAB_API_UPSTREAM: "" },
+    );
+
+    expect(response.status).toBe(500);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(response.headers.get("Content-Type")).toContain("application/json");
+    expect(response.headers.get("Cache-Control")).toBe("no-store, private");
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
+
+    const body = (await response.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("upstream_not_configured");
+  });
+
+  it("missing API auth token returns JSON error without fetching", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/operator/status", { method: "GET" }),
+      { ...TEST_ENV, ORIGENLAB_API_AUTH_TOKEN: " " },
+    );
+
+    expect(response.status).toBe(500);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(response.headers.get("Content-Type")).toContain("application/json");
+    expect(response.headers.get("Cache-Control")).toBe("no-store, private");
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
+
+    const body = (await response.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("auth_token_not_configured");
+  });
+
   it("OPTIONS returns 204 without upstream fetch", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
