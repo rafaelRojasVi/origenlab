@@ -9,8 +9,16 @@ from psycopg import Connection
 from origenlab_email_pipeline.postgres_dashboard_api.db import fetch_all, fetch_one, table_exists
 from origenlab_email_pipeline.postgres_dashboard_api.outbound_lists import DEFAULT_MAX_LIMIT
 from origenlab_email_pipeline.lead_research.commercial_action_buckets import (
+    COMMERCIAL_ACTION_BUCKETS,
     enrich_prospect_for_dashboard,
     summarize_commercial_action_buckets,
+)
+from origenlab_email_pipeline.lead_research.prospect_action_queue_export import (
+    EXPORT_QUEUES,
+    EXPORT_QUEUE_ALL_VISIBLE,
+    export_filename_for_queue,
+    filter_prospects_for_export,
+    render_prospects_csv,
 )
 from origenlab_email_pipeline.lead_research.lead_research_operational_overlay import (
     apply_operational_overlay_to_prospect,
@@ -208,7 +216,7 @@ def contact_scope_sql_params(
     return []
 
 
-def list_lead_prospects(
+def _prospect_list_where(
     conn: Connection,
     *,
     q: str | None = None,
@@ -222,14 +230,7 @@ def list_lead_prospects(
     min_score: int | None = None,
     include_blocked: bool = False,
     contact_scope: str | None = None,
-    limit: int = 50,
-) -> LeadProspectsListResponse:
-    if not _table_available(conn):
-        return LeadProspectsListResponse(
-            table_available=False,
-            disclaimer=LEAD_RESEARCH_DISCLAIMER,
-        )
-
+) -> tuple[str, list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
     scope = (contact_scope or "").strip().lower() or None
@@ -277,6 +278,45 @@ def list_lead_prospects(
         params.extend([like, like, like, like])
 
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return where, params
+
+
+def list_lead_prospects(
+    conn: Connection,
+    *,
+    q: str | None = None,
+    classification: str | None = None,
+    source_type: str | None = None,
+    blocked_only: bool = False,
+    sector: str | None = None,
+    region: str | None = None,
+    buyer_type: str | None = None,
+    campaign_bucket: str | None = None,
+    min_score: int | None = None,
+    include_blocked: bool = False,
+    contact_scope: str | None = None,
+    limit: int = 50,
+) -> LeadProspectsListResponse:
+    if not _table_available(conn):
+        return LeadProspectsListResponse(
+            table_available=False,
+            disclaimer=LEAD_RESEARCH_DISCLAIMER,
+        )
+
+    where, params = _prospect_list_where(
+        conn,
+        q=q,
+        classification=classification,
+        source_type=source_type,
+        blocked_only=blocked_only,
+        sector=sector,
+        region=region,
+        buyer_type=buyer_type,
+        campaign_bucket=campaign_bucket,
+        min_score=min_score,
+        include_blocked=include_blocked,
+        contact_scope=contact_scope,
+    )
     lim = _clamp_limit(limit)
 
     count_row = fetch_one(conn, f"SELECT COUNT(*) AS c FROM lead_intel.prospect {where}", params)
@@ -380,6 +420,69 @@ def get_lead_prospect(conn: Connection, *, prospect_key: str) -> LeadProspectDet
         block_reasons=[LeadProspectBlockReasonRow.model_validate(dict(r)) for r in block_rows],
         disclaimer=LEAD_RESEARCH_DISCLAIMER,
     )
+
+
+def export_lead_prospects_csv(
+    conn: Connection,
+    *,
+    q: str | None = None,
+    classification: str | None = None,
+    source_type: str | None = None,
+    blocked_only: bool = False,
+    sector: str | None = None,
+    region: str | None = None,
+    buyer_type: str | None = None,
+    campaign_bucket: str | None = None,
+    min_score: int | None = None,
+    include_blocked: bool = False,
+    contact_scope: str | None = None,
+    commercial_action_bucket: str | None = None,
+    export_queue: str = EXPORT_QUEUE_ALL_VISIBLE,
+) -> tuple[str, str]:
+    """Return (csv_text, attachment_filename) for a read-only Prospectos export."""
+    queue = (export_queue or EXPORT_QUEUE_ALL_VISIBLE).strip()
+    if queue not in EXPORT_QUEUES:
+        raise ValueError(f"invalid export_queue: {export_queue}")
+    bucket_filter = (commercial_action_bucket or "").strip() or None
+    if bucket_filter and bucket_filter not in COMMERCIAL_ACTION_BUCKETS:
+        raise ValueError(f"invalid commercial_action_bucket: {commercial_action_bucket}")
+
+    filename = export_filename_for_queue(queue)
+    if not _table_available(conn):
+        return render_prospects_csv([]), filename
+
+    where, params = _prospect_list_where(
+        conn,
+        q=q,
+        classification=classification,
+        source_type=source_type,
+        blocked_only=blocked_only,
+        sector=sector,
+        region=region,
+        buyer_type=buyer_type,
+        campaign_bucket=campaign_bucket,
+        min_score=min_score,
+        include_blocked=include_blocked,
+        contact_scope=contact_scope,
+    )
+    lim = DEFAULT_MAX_LIMIT
+
+    rows = fetch_all(
+        conn,
+        f"{_LIST_SELECT} {where} ORDER BY final_score DESC, organization_name LIMIT %s",
+        [*params, lim],
+    )
+    indexes = load_operational_indexes_from_postgres(conn)
+    overlaid = [
+        enrich_prospect_for_dashboard(apply_operational_overlay_to_prospect(dict(r), indexes))
+        for r in rows
+    ]
+    csv_rows = filter_prospects_for_export(
+        overlaid,
+        export_queue=queue,
+        commercial_action_bucket=bucket_filter,
+    )
+    return render_prospects_csv(csv_rows), filename
 
 
 def get_lead_research_summary(conn: Connection) -> LeadResearchSummaryResponse:

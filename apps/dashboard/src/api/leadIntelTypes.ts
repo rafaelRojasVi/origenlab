@@ -165,3 +165,16 @@ export interface LeadProspectsListQuery {
   contact_scope?: ContactScope;
   limit?: number;
 }
+
+export type ProspectExportQueue =
+  | "all_visible"
+  | "ready_to_contact"
+  | "needs_email_enrichment"
+  | "tender_opportunity"
+  | "review_history"
+  | "already_contacted_followup_review";
+
+export interface LeadProspectsExportQuery extends LeadProspectsListQuery {
+  export_queue: ProspectExportQueue;
+  commercial_action_bucket?: string;
+}

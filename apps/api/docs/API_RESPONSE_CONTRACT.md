@@ -293,6 +293,7 @@ Postgres mirror (`/mirror/*`, read-only reporting):
 | GET    | `/mirror/catalog/products`                      |
 | GET    | `/mirror/catalog/products/{product_key}`        |
 | GET    | `/mirror/leads/prospects`                       |
+| GET    | `/mirror/leads/prospects/export.csv`            |
 | GET    | `/mirror/leads/prospects/{prospect_key}`        |
 | GET    | `/mirror/leads/summary`                         |
 | GET    | `/mirror/contacts`                              |

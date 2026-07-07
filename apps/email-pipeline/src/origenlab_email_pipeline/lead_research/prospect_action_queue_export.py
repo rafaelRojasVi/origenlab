@@ -1,13 +1,10 @@
-"""Export Prospectos commercial action queues from the lead research mirror."""
+"""CSV export helpers for Prospectos commercial action queues (read-only mirror)."""
 
 from __future__ import annotations
 
 import csv
-import json
-from dataclasses import dataclass
-from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any, Callable
+import io
+from typing import Any, Final
 
 from origenlab_email_pipeline.lead_research.commercial_action_buckets import (
     BUCKET_ALREADY_CONTACTED,
@@ -18,14 +15,9 @@ from origenlab_email_pipeline.lead_research.commercial_action_buckets import (
     enrich_prospect_for_dashboard,
     is_followup_eligible,
 )
-from origenlab_email_pipeline.lead_research.lead_research_mirror_read_model import (
-    load_lead_research_mirror_payload,
-)
 from origenlab_email_pipeline.lead_research.lead_research_mirror_safety import (
     assert_mirror_row_safe,
 )
-
-DEFAULT_OUTPUT_DIR = Path("reports/out/active/current/prospect_action_queues")
 
 EXPORT_FIELDNAMES: tuple[str, ...] = (
     "organization_name",
@@ -46,37 +38,32 @@ EXPORT_FIELDNAMES: tuple[str, ...] = (
     "recommended_next_action",
 )
 
-SUMMARY_FILENAME = "prospect_action_queues_summary.json"
+EXPORT_QUEUE_ALL_VISIBLE: Final = "all_visible"
+EXPORT_QUEUE_READY_TO_CONTACT: Final = "ready_to_contact"
+EXPORT_QUEUE_NEEDS_EMAIL_ENRICHMENT: Final = "needs_email_enrichment"
+EXPORT_QUEUE_TENDER_OPPORTUNITY: Final = "tender_opportunity"
+EXPORT_QUEUE_REVIEW_HISTORY: Final = "review_history"
+EXPORT_QUEUE_FOLLOWUP_REVIEW: Final = "already_contacted_followup_review"
 
-
-@dataclass(frozen=True)
-class QueueExportSpec:
-    filename: str
-    predicate: Callable[[dict[str, Any]], bool]
-
-
-QUEUE_EXPORT_SPECS: tuple[QueueExportSpec, ...] = (
-    QueueExportSpec(
-        "ready_to_contact.csv",
-        lambda p: p.get("commercial_action_bucket") == BUCKET_READY_TO_CONTACT,
-    ),
-    QueueExportSpec(
-        "needs_email_enrichment.csv",
-        lambda p: p.get("commercial_action_bucket") == BUCKET_NEEDS_EMAIL_ENRICHMENT,
-    ),
-    QueueExportSpec(
-        "tender_opportunities.csv",
-        lambda p: p.get("commercial_action_bucket") == BUCKET_TENDER_OPPORTUNITY,
-    ),
-    QueueExportSpec(
-        "review_history.csv",
-        lambda p: p.get("commercial_action_bucket") == BUCKET_REVIEW_HISTORY,
-    ),
-    QueueExportSpec(
-        "already_contacted_followup_review.csv",
-        lambda p: is_followup_eligible(p),
-    ),
+EXPORT_QUEUES: frozenset[str] = frozenset(
+    {
+        EXPORT_QUEUE_ALL_VISIBLE,
+        EXPORT_QUEUE_READY_TO_CONTACT,
+        EXPORT_QUEUE_NEEDS_EMAIL_ENRICHMENT,
+        EXPORT_QUEUE_TENDER_OPPORTUNITY,
+        EXPORT_QUEUE_REVIEW_HISTORY,
+        EXPORT_QUEUE_FOLLOWUP_REVIEW,
+    }
 )
+
+EXPORT_QUEUE_FILENAMES: dict[str, str] = {
+    EXPORT_QUEUE_ALL_VISIBLE: "prospectos-filtered-export.csv",
+    EXPORT_QUEUE_READY_TO_CONTACT: "prospectos-ready-to-contact.csv",
+    EXPORT_QUEUE_NEEDS_EMAIL_ENRICHMENT: "prospectos-needs-email-enrichment.csv",
+    EXPORT_QUEUE_TENDER_OPPORTUNITY: "prospectos-tender-opportunities.csv",
+    EXPORT_QUEUE_REVIEW_HISTORY: "prospectos-review-history.csv",
+    EXPORT_QUEUE_FOLLOWUP_REVIEW: "prospectos-followup-review.csv",
+}
 
 
 def _scalar(value: object) -> str:
@@ -92,81 +79,52 @@ def prospect_to_export_row(prospect: dict[str, Any]) -> dict[str, str]:
     return row
 
 
-def prepare_enriched_prospects(prospects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def matches_export_queue(prospect: dict[str, Any], export_queue: str) -> bool:
+    queue = (export_queue or EXPORT_QUEUE_ALL_VISIBLE).strip()
+    if queue == EXPORT_QUEUE_ALL_VISIBLE:
+        return True
+    if queue == EXPORT_QUEUE_READY_TO_CONTACT:
+        return prospect.get("commercial_action_bucket") == BUCKET_READY_TO_CONTACT
+    if queue == EXPORT_QUEUE_NEEDS_EMAIL_ENRICHMENT:
+        return prospect.get("commercial_action_bucket") == BUCKET_NEEDS_EMAIL_ENRICHMENT
+    if queue == EXPORT_QUEUE_TENDER_OPPORTUNITY:
+        return prospect.get("commercial_action_bucket") == BUCKET_TENDER_OPPORTUNITY
+    if queue == EXPORT_QUEUE_REVIEW_HISTORY:
+        return prospect.get("commercial_action_bucket") == BUCKET_REVIEW_HISTORY
+    if queue == EXPORT_QUEUE_FOLLOWUP_REVIEW:
+        return is_followup_eligible(prospect)
+    return False
+
+
+def filter_prospects_for_export(
+    prospects: list[dict[str, Any]],
+    *,
+    export_queue: str = EXPORT_QUEUE_ALL_VISIBLE,
+    commercial_action_bucket: str | None = None,
+) -> list[dict[str, str]]:
     enriched = [enrich_prospect_for_dashboard(dict(p)) for p in prospects]
     enriched.sort(
         key=lambda p: (-int(p.get("final_score") or 0), str(p.get("organization_name") or "")),
     )
-    return enriched
+    bucket_filter = (commercial_action_bucket or "").strip() or None
+    rows: list[dict[str, str]] = []
+    for prospect in enriched:
+        if bucket_filter and prospect.get("commercial_action_bucket") != bucket_filter:
+            continue
+        if not matches_export_queue(prospect, export_queue):
+            continue
+        rows.append(prospect_to_export_row(prospect))
+    return rows
 
 
-def partition_prospect_queues(
-    prospects: list[dict[str, Any]],
-) -> dict[str, list[dict[str, str]]]:
-    enriched = prepare_enriched_prospects(prospects)
-    partitioned: dict[str, list[dict[str, str]]] = {}
-    for spec in QUEUE_EXPORT_SPECS:
-        rows = [prospect_to_export_row(p) for p in enriched if spec.predicate(p)]
-        partitioned[spec.filename] = rows
-    return partitioned
+def render_prospects_csv(rows: list[dict[str, str]]) -> str:
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=list(EXPORT_FIELDNAMES))
+    writer.writeheader()
+    writer.writerows(rows)
+    return buffer.getvalue()
 
 
-def write_queue_csv(path: Path, rows: list[dict[str, str]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(EXPORT_FIELDNAMES))
-        writer.writeheader()
-        writer.writerows(rows)
-
-
-def build_summary(
-    *,
-    total_active_prospects: int,
-    exports: dict[str, list[dict[str, str]]],
-    output_dir: Path,
-) -> dict[str, Any]:
-    return {
-        "read_only": True,
-        "data_source": "sqlite_lead_research_mirror",
-        "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-        "output_dir": str(output_dir),
-        "total_active_prospects": total_active_prospects,
-        "exports": {filename: len(rows) for filename, rows in exports.items()},
-    }
-
-
-def export_prospect_action_queues_from_prospects(
-    prospects: list[dict[str, Any]],
-    *,
-    output_dir: Path,
-    dry_run: bool = False,
-) -> dict[str, Any]:
-    partitioned = partition_prospect_queues(prospects)
-    summary = build_summary(
-        total_active_prospects=len(prospects),
-        exports=partitioned,
-        output_dir=output_dir,
-    )
-    if dry_run:
-        return summary
-
-    for filename, rows in partitioned.items():
-        write_queue_csv(output_dir / filename, rows)
-    summary_path = output_dir / SUMMARY_FILENAME
-    summary_path.parent.mkdir(parents=True, exist_ok=True)
-    summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    return summary
-
-
-def export_prospect_action_queues(
-    conn: Any,
-    *,
-    output_dir: Path,
-    dry_run: bool = False,
-) -> dict[str, Any]:
-    payload = load_lead_research_mirror_payload(conn)
-    return export_prospect_action_queues_from_prospects(
-        payload["prospects"],
-        output_dir=output_dir,
-        dry_run=dry_run,
-    )
+def export_filename_for_queue(export_queue: str) -> str:
+    queue = (export_queue or EXPORT_QUEUE_ALL_VISIBLE).strip()
+    return EXPORT_QUEUE_FILENAMES.get(queue, EXPORT_QUEUE_FILENAMES[EXPORT_QUEUE_ALL_VISIBLE])
