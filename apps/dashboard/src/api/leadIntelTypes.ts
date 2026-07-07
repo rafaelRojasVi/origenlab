@@ -26,6 +26,8 @@ export interface LeadProspectListItemUi {
   gmail_sent_count: number | null;
   gmail_received_count: number | null;
   gmail_latest_subject_safe: string | null;
+  commercial_action_bucket: string | null;
+  operational_next_action: string | null;
 }
 
 export interface LeadProspectEvidenceUi {
@@ -82,6 +84,8 @@ export interface LeadProspectDetailUi {
   gmail_sent_count: number | null;
   gmail_received_count: number | null;
   gmail_latest_subject_safe: string | null;
+  commercial_action_bucket: string | null;
+  operational_next_action: string | null;
 }
 
 export interface LeadProspectsListUi {
@@ -116,6 +120,12 @@ export interface LeadResearchSummaryUi {
   public_tender_review: number;
   same_domain_review: number;
   research_needed: number;
+  ready_to_contact: number;
+  already_contacted: number;
+  needs_email_enrichment: number;
+  tender_opportunity: number;
+  review_history: number;
+  followup_eligible: number;
   data_source: string;
   read_only: boolean;
   disclaimer: string;

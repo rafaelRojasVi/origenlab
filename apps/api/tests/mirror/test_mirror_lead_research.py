@@ -78,8 +78,8 @@ def test_mirror_list_prospects_shape(lead_mirror_client: TestClient) -> None:
     assert body["data_source"] == "postgres_mirror"
     _assert_lead_disclaimer_spacing(body["disclaimer"])
     assert "revisión humana" in body["disclaimer"].lower()
-    assert body["total"] == 12
-    assert len(body["items"]) == 12
+    assert body["total"] == 13
+    assert len(body["items"]) == 13
     keys: set[str] = set()
     _collect_keys(body, keys)
     assert not (_FORBIDDEN_RESPONSE_KEYS & keys)
@@ -124,12 +124,45 @@ def test_summary_counts(lead_mirror_client: TestClient) -> None:
     r = lead_mirror_client.get("/mirror/leads/summary")
     assert r.status_code == 200
     body = r.json()
-    assert body["total"] == 13
+    assert body["total"] == 14
     assert body["net_new_safe"] == 3
     assert body["gmail_historico"] == 2
     assert body["followup_antiguo"] == 1
     assert body["caso_activo"] == 1
     assert body["blocked_count"] == 1
+    assert body["ready_to_contact"] >= 1
+    assert body["already_contacted"] >= 1
+    assert body["needs_email_enrichment"] >= 0
+    assert body["tender_opportunity"] >= 0
+    assert body["review_history"] >= 0
+    assert (
+        body["ready_to_contact"]
+        + body["needs_email_enrichment"]
+        + body["tender_opportunity"]
+        + body["review_history"]
+        + body["already_contacted"]
+        + body["blocked_count"]
+        == body["total"]
+    )
+
+
+def test_list_prospects_include_commercial_action_bucket(lead_mirror_client: TestClient) -> None:
+    r = lead_mirror_client.get("/mirror/leads/prospects", params={"limit": 5})
+    assert r.status_code == 200
+    item = r.json()["items"][0]
+    assert item["commercial_action_bucket"]
+    assert item["operational_next_action"]
+
+
+def test_summary_review_history_counts_no_email_same_domain_prospect(
+    lead_mirror_client: TestClient,
+) -> None:
+    """Regression: summary overlay needs domain for empty-email same-domain rows."""
+    body = lead_mirror_client.get("/mirror/leads/summary").json()
+    assert body["table_available"] is True
+    # institutional-empty-cl is the only raw research_only row; domain overlay → review_history.
+    assert body["needs_email_enrichment"] == 0
+    assert body["review_history"] >= 2
 
 
 def test_gmail_historico_not_in_net_new_filter(lead_mirror_client: TestClient) -> None:
@@ -227,8 +260,10 @@ def test_contact_scope_contacted_includes_institutional_domain_match(
     )
     assert r.status_code == 200
     items = r.json()["items"]
-    assert len(items) == 1
-    assert items[0]["email"] == "new@institutional.cl"
+    assert len(items) == 2
+    emails = {i["email"] for i in items}
+    assert "new@institutional.cl" in emails
+    assert None in emails or "" in emails
     assert (items[0].get("gmail_sent_count") or 0) == 0
 
 

@@ -319,3 +319,35 @@ export function decisionBannerClassName(tone: ProspectDecisionTone): string {
       return "border-amber-200 bg-amber-50 text-amber-950";
   }
 }
+
+export function prospectOperationalNextAction(row: LeadProspectListItemUi): string {
+  if (row.operational_next_action?.trim()) {
+    return row.operational_next_action.trim();
+  }
+  if (row.recommended_next_action?.trim()) {
+    return row.recommended_next_action.trim();
+  }
+  return "—";
+}
+
+export function prospectGmailHistoryCell(row: LeadProspectListItemUi): string {
+  const sent = row.gmail_sent_count ?? 0;
+  const received = row.gmail_received_count ?? 0;
+  const lastContacted = row.gmail_last_contacted_at?.trim();
+  const subject = row.gmail_latest_subject_safe?.trim();
+  if (!sent && !received && !lastContacted && !subject) {
+    return "—";
+  }
+  const counts: string[] = [];
+  if (sent > 0) counts.push(`↑${sent}`);
+  if (received > 0) counts.push(`↓${received}`);
+  const countLabel = counts.join(" ");
+  if (subject) {
+    const clipped = subject.length > 48 ? `${subject.slice(0, 45)}…` : subject;
+    return countLabel ? `${countLabel} · ${clipped}` : clipped;
+  }
+  if (lastContacted) {
+    return countLabel ? `${countLabel} · ${lastContacted}` : lastContacted;
+  }
+  return countLabel || "—";
+}

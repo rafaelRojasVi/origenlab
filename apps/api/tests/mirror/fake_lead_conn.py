@@ -353,6 +353,38 @@ class LeadFakeConn(MirrorFakeConn):
                 "gmail_latest_subject_safe": None,
             },
             {
+                "prospect_key": "institutional-empty-cl",
+                "organization_name": "Institutional Empty Email",
+                "contact_name": None,
+                "email": None,
+                "domain": "institutional.cl",
+                "sector": "Salud",
+                "region": "RM",
+                "buyer_type": "hospital_privado",
+                "likely_need": None,
+                "product_angle": "equipos",
+                "evidence_url": None,
+                "evidence_note": None,
+                "source": "deepsearch",
+                "final_score": 68,
+                "confidence": "media",
+                "classification": "research_only_contact_needed",
+                "spanish_message_angle": "Equipos",
+                "risk_flags": "sin_email_publico",
+                "block_or_review_reason": "falta_contacto",
+                "recommended_next_action": "Investigar contacto público",
+                "status": "research_needed",
+                "campaign_bucket": "hospital",
+                "is_blocked": False,
+                "source_type": "deepsearch",
+                "dataset_label": "phase10b_deepsearch",
+                "gmail_first_contacted_at": None,
+                "gmail_last_contacted_at": None,
+                "gmail_sent_count": None,
+                "gmail_received_count": None,
+                "gmail_latest_subject_safe": None,
+            },
+            {
                 "prospect_key": "freemail-domain-cl",
                 "organization_name": "Freemail Consumer",
                 "contact_name": None,
@@ -752,6 +784,7 @@ class LeadFakeConn(MirrorFakeConn):
             "prospect_key, classification, status, is_blocked, source_type, email"
             in s
             and "from lead_intel.prospect" in s
+            and "count(*)" not in s
         ):
             return _FakeCursor(
                 [
@@ -762,6 +795,10 @@ class LeadFakeConn(MirrorFakeConn):
                         "is_blocked": r["is_blocked"],
                         "source_type": r.get("source_type"),
                         "email": r.get("email"),
+                        "domain": r.get("domain"),
+                        "gmail_sent_count": r.get("gmail_sent_count"),
+                        "gmail_received_count": r.get("gmail_received_count"),
+                        "gmail_last_contacted_at": r.get("gmail_last_contacted_at"),
                     }
                     for r in self.prospects
                 ]

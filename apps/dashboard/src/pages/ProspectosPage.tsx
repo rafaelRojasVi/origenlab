@@ -21,6 +21,8 @@ import { TablePaginationBar } from "../components/commercial/TablePaginationBar"
 import {
   prospectContactCell,
   prospectClassificationLabel,
+  prospectGmailHistoryCell,
+  prospectOperationalNextAction,
   prospectOriginChip,
   prospectTableBadge,
 } from "../lib/prospectLabels";
@@ -170,14 +172,14 @@ export function ProspectosPage() {
 
       {summary?.table_available ? (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" data-testid="prospectos-kpis">
-          <KpiCard label="En revisión total" value={summary.review_count} />
-          <KpiCard label="Nuevos investigados" value={summary.net_new_safe} />
-          <KpiCard label="Gmail histórico" value={summary.gmail_historico} />
-          <KpiCard label="Follow-up antiguo" value={summary.followup_antiguo} />
-          <KpiCard label="Mismo dominio" value={summary.same_domain_review} />
-          <KpiCard label="Falta email" value={summary.research_needed} />
-          <KpiCard label="Licitaciones" value={summary.public_tender_review} />
+          <KpiCard label="Total prospectos" value={summary.total} />
+          <KpiCard label="Listos para contactar" value={summary.ready_to_contact} />
+          <KpiCard label="Ya contactados" value={summary.already_contacted} />
+          <KpiCard label="Falta email / enriquecer" value={summary.needs_email_enrichment} />
+          <KpiCard label="Licitaciones" value={summary.tender_opportunity} />
+          <KpiCard label="Revisar historial" value={summary.review_history} />
           <KpiCard label="Bloqueados" value={summary.blocked_count} />
+          <KpiCard label="Follow-up a revisar" value={summary.followup_eligible} />
         </div>
       ) : null}
 
@@ -282,6 +284,7 @@ export function ProspectosPage() {
               <th className="px-4 py-3">Contacto</th>
               <th className="px-4 py-3">Estado</th>
               <th className="px-4 py-3">Score</th>
+              <th className="px-4 py-3">Historial Gmail</th>
               <th className="px-4 py-3">Sector</th>
               <th className="px-4 py-3">Próxima acción</th>
             </tr>
@@ -318,8 +321,11 @@ export function ProspectosPage() {
                     )}
                   </td>
                   <td className="px-4 py-3">{row.final_score}</td>
+                  <td className="px-4 py-3 max-w-[12rem] truncate text-xs text-[var(--color-muted)]">
+                    {prospectGmailHistoryCell(row)}
+                  </td>
                   <td className="px-4 py-3 max-w-[10rem] truncate">{row.sector ?? "—"}</td>
-                  <td className="px-4 py-3 max-w-[14rem] truncate">{row.recommended_next_action ?? "—"}</td>
+                  <td className="px-4 py-3 max-w-[16rem] truncate">{prospectOperationalNextAction(row)}</td>
                 </tr>
               );
             })}

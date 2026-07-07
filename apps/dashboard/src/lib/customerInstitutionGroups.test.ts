@@ -34,6 +34,8 @@ function row(partial: Partial<LeadProspectListItemUi> & Pick<LeadProspectListIte
     gmail_sent_count: null,
     gmail_received_count: null,
     gmail_latest_subject_safe: null,
+    commercial_action_bucket: null,
+    operational_next_action: null,
     ...partial,
   };
 }

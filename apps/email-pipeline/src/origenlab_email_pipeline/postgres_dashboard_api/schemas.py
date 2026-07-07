@@ -663,6 +663,8 @@ class LeadProspectListItem(BaseModel):
     gmail_sent_count: int | None = None
     gmail_received_count: int | None = None
     gmail_latest_subject_safe: str | None = None
+    commercial_action_bucket: str | None = None
+    operational_next_action: str | None = None
 
 
 class LeadProspectEvidenceRow(BaseModel):
@@ -719,6 +721,8 @@ class LeadProspectDetail(BaseModel):
     gmail_sent_count: int | None = None
     gmail_received_count: int | None = None
     gmail_latest_subject_safe: str | None = None
+    commercial_action_bucket: str | None = None
+    operational_next_action: str | None = None
 
 
 class LeadProspectsListResponse(BaseModel):
@@ -763,6 +767,12 @@ class LeadResearchSummaryResponse(BaseModel):
     public_tender_review: int = 0
     same_domain_review: int = 0
     research_needed: int = 0
+    ready_to_contact: int = 0
+    already_contacted: int = 0
+    needs_email_enrichment: int = 0
+    tender_opportunity: int = 0
+    review_history: int = 0
+    followup_eligible: int = 0
     last_batch_row_count: int | None = None
     data_source: Literal["postgres_mirror"] = "postgres_mirror"
     read_only: bool = True

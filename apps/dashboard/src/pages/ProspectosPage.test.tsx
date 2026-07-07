@@ -81,8 +81,8 @@ describe("ProspectosPage", () => {
     render(<ProspectosPage />);
     await waitFor(() => {
       const kpis = screen.getByTestId("prospectos-kpis");
-      expect(within(kpis).getByText("Nuevos investigados")).toBeTruthy();
-      expect(within(kpis).getByText("Gmail histórico")).toBeTruthy();
+      expect(within(kpis).getByText("Listos para contactar")).toBeTruthy();
+      expect(within(kpis).getByText("Ya contactados")).toBeTruthy();
       expect(screen.getByText("Acme Labs")).toBeTruthy();
     });
     expect(screen.getByTestId("prospectos-page")).toBeTruthy();
@@ -159,7 +159,7 @@ describe("ProspectosPage", () => {
     });
     render(<ProspectosPage />);
     await waitFor(() => expect(screen.getByText("INIA La Platina")).toBeTruthy());
-    expect(screen.getByText("Revisar historial")).toBeTruthy();
+    expect(screen.getAllByText("Revisar historial").length).toBeGreaterThan(0);
     expect(screen.getByText(/Contactado por dominio — sin email en fila/i)).toBeTruthy();
     const row = screen.getByText("INIA La Platina").closest("tr");
     expect(row?.textContent).not.toMatch(/Falta email/);
@@ -181,7 +181,7 @@ describe("ProspectosPage", () => {
     });
     render(<ProspectosPage />);
     await waitFor(() => expect(screen.getByText("5M S.A.")).toBeTruthy());
-    expect(screen.getByText("Revisar historial")).toBeTruthy();
+    expect(screen.getAllByText("Revisar historial").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByText("5M S.A."));
     await waitFor(() => {
       expect(screen.getByTestId("prospect-decision-banner").textContent).toMatch(
