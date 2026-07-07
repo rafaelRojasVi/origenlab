@@ -66,15 +66,24 @@ EXPORT_QUEUE_FILENAMES: dict[str, str] = {
 }
 
 
-def _scalar(value: object) -> str:
+_CSV_FORMULA_PREFIXES: frozenset[str] = frozenset({"=", "+", "-", "@", "\t", "\r"})
+
+
+def sanitize_csv_cell(value: object) -> str:
+    """Escape spreadsheet formula injection triggers for operator CSV exports."""
     if value is None:
         return ""
-    return str(value)
+    text = str(value)
+    if not text:
+        return ""
+    if text[0] in _CSV_FORMULA_PREFIXES:
+        return f"'{text}"
+    return text
 
 
 def prospect_to_export_row(prospect: dict[str, Any]) -> dict[str, str]:
     enriched = enrich_prospect_for_dashboard(prospect)
-    row = {field: _scalar(enriched.get(field)) for field in EXPORT_FIELDNAMES}
+    row = {field: sanitize_csv_cell(enriched.get(field)) for field in EXPORT_FIELDNAMES}
     assert_mirror_row_safe(row, table="prospect")
     return row
 

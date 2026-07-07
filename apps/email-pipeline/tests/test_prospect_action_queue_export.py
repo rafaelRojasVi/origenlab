@@ -5,6 +5,8 @@ from __future__ import annotations
 import csv
 import io
 
+import pytest
+
 from origenlab_email_pipeline.lead_research.prospect_action_queue_export import (
     EXPORT_FIELDNAMES,
     EXPORT_QUEUE_READY_TO_CONTACT,
@@ -12,7 +14,9 @@ from origenlab_email_pipeline.lead_research.prospect_action_queue_export import 
     export_filename_for_queue,
     filter_prospects_for_export,
     matches_export_queue,
+    prospect_to_export_row,
     render_prospects_csv,
+    sanitize_csv_cell,
 )
 
 
@@ -117,3 +121,38 @@ def test_export_filename_for_queue_is_constant() -> None:
 def test_matches_export_queue_all_visible() -> None:
     prospect = _fixture_prospects()[0]
     assert matches_export_queue(prospect, "all_visible") is True
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ('=HYPERLINK("https://evil.example","click")', '\'=HYPERLINK("https://evil.example","click")'),
+        ("+SUM(1,1)", "'+SUM(1,1)"),
+        ("-1+2", "'-1+2"),
+        ("@cmd", "'@cmd"),
+        ("Acme Labs", "Acme Labs"),
+        ("contacto@acme.cl", "contacto@acme.cl"),
+        ("https://www.acme.cl/", "https://www.acme.cl/"),
+        (None, ""),
+    ],
+)
+def test_sanitize_csv_cell_formula_prefixes(raw: object, expected: str) -> None:
+    assert sanitize_csv_cell(raw) == expected
+
+
+def test_exported_csv_does_not_contain_unescaped_formula_cell() -> None:
+    malicious = {
+        **_fixture_prospects()[0],
+        "organization_name": '=HYPERLINK("https://evil.example","click")',
+        "contact_name": "+SUM(1,1)",
+        "recommended_next_action": "-open portal",
+    }
+    row = prospect_to_export_row(malicious)
+    text = render_prospects_csv([row])
+    reader = csv.DictReader(io.StringIO(text))
+    parsed = next(reader)
+    assert parsed["organization_name"].startswith("'=")
+    assert parsed["contact_name"].startswith("'+")
+    assert parsed["recommended_next_action"].startswith("'-")
+    assert ',=HYPERLINK("https://evil.example","click")' not in text
+    assert ",+SUM(1,1)" not in text

@@ -78,8 +78,8 @@ def test_mirror_list_prospects_shape(lead_mirror_client: TestClient) -> None:
     assert body["data_source"] == "postgres_mirror"
     _assert_lead_disclaimer_spacing(body["disclaimer"])
     assert "revisión humana" in body["disclaimer"].lower()
-    assert body["total"] == 13
-    assert len(body["items"]) == 13
+    assert body["total"] == 14
+    assert len(body["items"]) == 14
     keys: set[str] = set()
     _collect_keys(body, keys)
     assert not (_FORBIDDEN_RESPONSE_KEYS & keys)
@@ -102,7 +102,7 @@ def test_filter_classification_and_search(lead_mirror_client: TestClient) -> Non
     )
     assert r.status_code == 200
     items = r.json()["items"]
-    assert len(items) == 6
+    assert len(items) == 7
     assert any(i["organization_name"] == "Acme Labs" for i in items)
 
     r2 = lead_mirror_client.get("/mirror/leads/prospects", params={"q": "Hospital", "limit": 50})
@@ -124,8 +124,8 @@ def test_summary_counts(lead_mirror_client: TestClient) -> None:
     r = lead_mirror_client.get("/mirror/leads/summary")
     assert r.status_code == 200
     body = r.json()
-    assert body["total"] == 14
-    assert body["net_new_safe"] == 3
+    assert body["total"] == 15
+    assert body["net_new_safe"] == 4
     assert body["gmail_historico"] == 2
     assert body["followup_antiguo"] == 1
     assert body["caso_activo"] == 1
@@ -413,3 +413,18 @@ def test_mirror_export_csv_safe_constant_filename(lead_mirror_client: TestClient
     assert disposition == 'attachment; filename="prospectos-ready-to-contact.csv"'
     assert "pwned" not in disposition
     assert "passwd" not in disposition
+
+
+def test_mirror_export_csv_sanitizes_formula_injection(lead_mirror_client: TestClient) -> None:
+    r = lead_mirror_client.get(
+        "/mirror/leads/prospects/export.csv",
+        params={"export_queue": "ready_to_contact", "q": "formula-evil", "limit": 100},
+    )
+    assert r.status_code == 200
+    _, rows = _parse_csv_rows(r.text)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["organization_name"].startswith("'=")
+    assert row["contact_name"].startswith("'+")
+    assert ',=HYPERLINK("https://evil.example","click")' not in r.text
+    assert ",+SUM(1,1)" not in r.text
