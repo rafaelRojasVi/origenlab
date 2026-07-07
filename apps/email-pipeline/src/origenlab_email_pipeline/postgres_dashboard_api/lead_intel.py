@@ -389,7 +389,7 @@ def get_lead_research_summary(conn: Connection) -> LeadResearchSummaryResponse:
     rows = fetch_all(
         conn,
         """
-        SELECT prospect_key, classification, status, is_blocked, source_type, email,
+        SELECT prospect_key, classification, status, is_blocked, source_type, email, domain,
                gmail_sent_count, gmail_received_count, gmail_last_contacted_at
         FROM lead_intel.prospect
         """,
