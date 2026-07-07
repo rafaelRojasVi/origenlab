@@ -8,6 +8,7 @@ import io
 import pytest
 
 from origenlab_email_pipeline.lead_research.prospect_action_queue_export import (
+    CSV_UTF8_BOM,
     EXPORT_FIELDNAMES,
     EXPORT_QUEUE_READY_TO_CONTACT,
     EXPORT_QUEUE_FOLLOWUP_REVIEW,
@@ -79,6 +80,11 @@ def _fixture_prospects() -> list[dict]:
     ]
 
 
+def _parse_csv_text(text: str) -> csv.DictReader:
+    normalized = text.encode("utf-8").decode("utf-8-sig")
+    return csv.DictReader(io.StringIO(normalized))
+
+
 def test_filter_ready_to_contact_queue() -> None:
     rows = filter_prospects_for_export(
         _fixture_prospects(),
@@ -105,7 +111,7 @@ def test_render_prospects_csv_header_and_columns() -> None:
         export_queue=EXPORT_QUEUE_READY_TO_CONTACT,
     )
     text = render_prospects_csv(rows)
-    reader = csv.DictReader(io.StringIO(text))
+    reader = _parse_csv_text(text)
     assert list(reader.fieldnames) == list(EXPORT_FIELDNAMES)
     parsed = list(reader)
     assert parsed
@@ -149,10 +155,35 @@ def test_exported_csv_does_not_contain_unescaped_formula_cell() -> None:
     }
     row = prospect_to_export_row(malicious)
     text = render_prospects_csv([row])
-    reader = csv.DictReader(io.StringIO(text))
+    reader = _parse_csv_text(text)
     parsed = next(reader)
     assert parsed["organization_name"].startswith("'=")
     assert parsed["contact_name"].startswith("'+")
     assert parsed["recommended_next_action"].startswith("'-")
     assert ',=HYPERLINK("https://evil.example","click")' not in text
     assert ",+SUM(1,1)" not in text
+
+
+def test_render_prospects_csv_includes_utf8_bom() -> None:
+    text = render_prospects_csv([])
+    assert text.startswith(CSV_UTF8_BOM)
+    assert text.encode("utf-8").startswith(b"\xef\xbb\xbf")
+
+
+def test_render_prospects_csv_preserves_spanish_accents() -> None:
+    accented = {
+        **_fixture_prospects()[0],
+        "organization_name": "Laboratorio Peña",
+        "contact_name": "María",
+        "region": "Región Metropolitana",
+        "sector": "Biobío",
+        "product_angle": "centrífugas",
+    }
+    text = render_prospects_csv([prospect_to_export_row(accented)])
+    assert text.startswith(CSV_UTF8_BOM)
+    parsed = next(_parse_csv_text(text))
+    assert parsed["organization_name"] == "Laboratorio Peña"
+    assert parsed["region"] == "Región Metropolitana"
+    assert parsed["sector"] == "Biobío"
+    assert "PeÃ±a" not in text
+    assert "RegiÃ³n" not in text

@@ -346,7 +346,8 @@ def _parse_csv_rows(text: str) -> tuple[list[str], list[dict[str, str]]]:
     import csv
     import io
 
-    reader = csv.DictReader(io.StringIO(text))
+    normalized = text.encode("utf-8").decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(normalized))
     fieldnames = list(reader.fieldnames or [])
     return fieldnames, [dict(row) for row in reader]
 
@@ -421,6 +422,7 @@ def test_mirror_export_csv_sanitizes_formula_injection(lead_mirror_client: TestC
         params={"export_queue": "ready_to_contact", "q": "formula-evil", "limit": 100},
     )
     assert r.status_code == 200
+    assert r.content.startswith(b"\xef\xbb\xbf")
     _, rows = _parse_csv_rows(r.text)
     assert len(rows) == 1
     row = rows[0]
@@ -428,3 +430,27 @@ def test_mirror_export_csv_sanitizes_formula_injection(lead_mirror_client: TestC
     assert row["contact_name"].startswith("'+")
     assert ',=HYPERLINK("https://evil.example","click")' not in r.text
     assert ",+SUM(1,1)" not in r.text
+
+
+def test_mirror_export_csv_starts_with_utf8_bom(lead_mirror_client: TestClient) -> None:
+    r = lead_mirror_client.get(
+        "/mirror/leads/prospects/export.csv",
+        params={"export_queue": "all_visible"},
+    )
+    assert r.status_code == 200
+    assert r.content.startswith(b"\xef\xbb\xbf")
+
+
+def test_mirror_export_csv_preserves_spanish_accents(lead_mirror_client: TestClient) -> None:
+    r = lead_mirror_client.get(
+        "/mirror/leads/prospects/export.csv",
+        params={"export_queue": "all_visible", "q": "Hospital", "limit": 100},
+    )
+    assert r.status_code == 200
+    assert r.content.startswith(b"\xef\xbb\xbf")
+    _, rows = _parse_csv_rows(r.text)
+    assert len(rows) == 1
+    assert rows[0]["organization_name"] == "Hospital Demo"
+    assert rows[0]["region"] == "Valparaíso"
+    assert "Valparaíso" in r.text
+    assert "ValparaÃ" not in r.text
