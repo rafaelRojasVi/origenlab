@@ -312,6 +312,23 @@ def test_production_emails_recent_without_auth_returns_401(
     assert r.json()["error"]["code"] == "unauthorized"
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/mirror/catalog/products",
+        "/mirror/leads/summary",
+    ],
+)
+def test_production_mirror_routes_without_auth_return_401(
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+) -> None:
+    client = _production_client(monkeypatch)
+    r = client.get(path, headers={"Host": "api.origenlab.cl"})
+    assert r.status_code == 401
+    assert r.json()["error"]["code"] == "unauthorized"
+
+
 def test_production_invalid_bearer_returns_401(monkeypatch: pytest.MonkeyPatch) -> None:
     client = _production_client(monkeypatch)
     r = client.get(
@@ -326,6 +343,17 @@ def test_production_valid_bearer_not_unauthorized(monkeypatch: pytest.MonkeyPatc
     client = _production_client(monkeypatch)
     r = client.get(
         "/operator/status",
+        headers={"Host": "api.origenlab.cl", **_production_auth_headers()},
+    )
+    assert r.status_code != 401
+
+
+def test_production_valid_bearer_reaches_mirror_route_auth_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _production_client(monkeypatch)
+    r = client.get(
+        "/mirror/catalog/products",
         headers={"Host": "api.origenlab.cl", **_production_auth_headers()},
     )
     assert r.status_code != 401
