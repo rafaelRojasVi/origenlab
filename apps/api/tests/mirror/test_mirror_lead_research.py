@@ -130,6 +130,28 @@ def test_summary_counts(lead_mirror_client: TestClient) -> None:
     assert body["followup_antiguo"] == 1
     assert body["caso_activo"] == 1
     assert body["blocked_count"] == 1
+    assert body["ready_to_contact"] >= 1
+    assert body["already_contacted"] >= 1
+    assert body["needs_email_enrichment"] >= 0
+    assert body["tender_opportunity"] >= 0
+    assert body["review_history"] >= 0
+    assert (
+        body["ready_to_contact"]
+        + body["needs_email_enrichment"]
+        + body["tender_opportunity"]
+        + body["review_history"]
+        + body["already_contacted"]
+        + body["blocked_count"]
+        == body["total"]
+    )
+
+
+def test_list_prospects_include_commercial_action_bucket(lead_mirror_client: TestClient) -> None:
+    r = lead_mirror_client.get("/mirror/leads/prospects", params={"limit": 5})
+    assert r.status_code == 200
+    item = r.json()["items"][0]
+    assert item["commercial_action_bucket"]
+    assert item["operational_next_action"]
 
 
 def test_gmail_historico_not_in_net_new_filter(lead_mirror_client: TestClient) -> None:

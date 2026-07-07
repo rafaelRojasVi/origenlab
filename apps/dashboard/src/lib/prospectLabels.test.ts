@@ -6,6 +6,8 @@ import {
   prospectClassificationLabel,
   prospectContactCell,
   prospectEmptyEmailDisplayHint,
+  prospectGmailHistoryCell,
+  prospectOperationalNextAction,
 } from "./prospectLabels";
 import { buildPorQueImporta, buildMessagePreview } from "./prospectMessaging";
 import type { LeadProspectDetailUi } from "../api/leadIntelTypes";
@@ -37,6 +39,40 @@ describe("prospectLabels", () => {
     expect(prospectEmptyEmailDisplayHint("same_domain_contacted_review")).toMatch(
       /mismo dominio/i,
     );
+  });
+
+  it("formats gmail history cell with counts and subject", () => {
+    expect(
+      prospectGmailHistoryCell({
+        ...defaultLeadOriginFields,
+        prospect_key: "g",
+        organization_name: "G",
+        classification: "old_gmail_prospect_review",
+        status: "revision_individual",
+        is_blocked: false,
+        gmail_sent_count: 4,
+        gmail_received_count: 1,
+        gmail_latest_subject_safe: "Consulta equipos",
+        commercial_action_bucket: "already_contacted",
+        operational_next_action: null,
+      } as never),
+    ).toBe("↑4 ↓1 · Consulta equipos");
+  });
+
+  it("prefers operational next action over legacy recommendation", () => {
+    expect(
+      prospectOperationalNextAction({
+        ...defaultLeadOriginFields,
+        prospect_key: "x",
+        organization_name: "X",
+        classification: "manual_outreach_sent",
+        status: "manual_outreach_contacted",
+        is_blocked: false,
+        recommended_next_action: "Redactar correo",
+        operational_next_action: "Esperar respuesta; revisar follow-up después (no reenviar)",
+        commercial_action_bucket: "already_contacted",
+      } as never),
+    ).toMatch(/no reenviar/i);
   });
 
   it("translates risk flags to chips", () => {

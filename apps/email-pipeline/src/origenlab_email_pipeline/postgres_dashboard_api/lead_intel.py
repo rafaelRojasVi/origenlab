@@ -8,6 +8,10 @@ from psycopg import Connection
 
 from origenlab_email_pipeline.postgres_dashboard_api.db import fetch_all, fetch_one, table_exists
 from origenlab_email_pipeline.postgres_dashboard_api.outbound_lists import DEFAULT_MAX_LIMIT
+from origenlab_email_pipeline.lead_research.commercial_action_buckets import (
+    enrich_prospect_for_dashboard,
+    summarize_commercial_action_buckets,
+)
 from origenlab_email_pipeline.lead_research.lead_research_operational_overlay import (
     apply_operational_overlay_to_prospect,
     load_operational_indexes_from_postgres,
@@ -287,7 +291,9 @@ def list_lead_prospects(
     indexes = load_operational_indexes_from_postgres(conn, emails=emails)
     items = [
         LeadProspectListItem.model_validate(
-            apply_operational_overlay_to_prospect(dict(r), indexes),
+            enrich_prospect_for_dashboard(
+                apply_operational_overlay_to_prospect(dict(r), indexes),
+            ),
         )
         for r in rows
     ]
@@ -328,7 +334,9 @@ def get_lead_prospect(conn: Connection, *, prospect_key: str) -> LeadProspectDet
         conn,
         emails=[str(row.get("email") or "")],
     )
-    row = apply_operational_overlay_to_prospect(dict(row), indexes)
+    row = enrich_prospect_for_dashboard(
+        apply_operational_overlay_to_prospect(dict(row), indexes),
+    )
 
     evidence_rows = fetch_all(
         conn,
@@ -381,7 +389,8 @@ def get_lead_research_summary(conn: Connection) -> LeadResearchSummaryResponse:
     rows = fetch_all(
         conn,
         """
-        SELECT prospect_key, classification, status, is_blocked, source_type, email
+        SELECT prospect_key, classification, status, is_blocked, source_type, email,
+               gmail_sent_count, gmail_received_count, gmail_last_contacted_at
         FROM lead_intel.prospect
         """,
         [],
@@ -392,6 +401,7 @@ def get_lead_research_summary(conn: Connection) -> LeadResearchSummaryResponse:
     indexes = load_operational_indexes_from_postgres(conn)
     overlaid = [apply_operational_overlay_to_prospect(dict(r), indexes) for r in rows]
     agg = summarize_prospects_for_dashboard(overlaid)
+    commercial = summarize_commercial_action_buckets(overlaid)
 
     return LeadResearchSummaryResponse(
         table_available=True,
@@ -405,5 +415,11 @@ def get_lead_research_summary(conn: Connection) -> LeadResearchSummaryResponse:
         public_tender_review=int(agg["public_tender_review"]),
         same_domain_review=int(agg["same_domain_review"]),
         research_needed=int(agg["research_needed"]),
+        ready_to_contact=int(commercial["ready_to_contact"]),
+        already_contacted=int(commercial["already_contacted"]),
+        needs_email_enrichment=int(commercial["needs_email_enrichment"]),
+        tender_opportunity=int(commercial["tender_opportunity"]),
+        review_history=int(commercial["review_history"]),
+        followup_eligible=int(commercial["followup_eligible"]),
         disclaimer=LEAD_RESEARCH_DISCLAIMER,
     )

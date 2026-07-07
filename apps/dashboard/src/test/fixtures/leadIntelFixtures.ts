@@ -14,6 +14,8 @@ export const defaultLeadOriginFields: Pick<
   | "gmail_sent_count"
   | "gmail_received_count"
   | "gmail_latest_subject_safe"
+  | "commercial_action_bucket"
+  | "operational_next_action"
 > = {
   source_type: "deepsearch",
   dataset_label: "Investigación DeepSearch",
@@ -22,6 +24,8 @@ export const defaultLeadOriginFields: Pick<
   gmail_sent_count: null,
   gmail_received_count: null,
   gmail_latest_subject_safe: null,
+  commercial_action_bucket: null,
+  operational_next_action: null,
 };
 
 export function leadSummaryFixture(): LeadResearchSummaryUi {
@@ -37,6 +41,12 @@ export function leadSummaryFixture(): LeadResearchSummaryUi {
     public_tender_review: 1,
     same_domain_review: 1,
     research_needed: 0,
+    ready_to_contact: 1,
+    already_contacted: 1,
+    needs_email_enrichment: 0,
+    tender_opportunity: 1,
+    review_history: 1,
+    followup_eligible: 0,
     data_source: "postgres_mirror",
     read_only: true,
     disclaimer:
@@ -79,6 +89,8 @@ export function leadListFixture(): LeadProspectsListUi {
         gmail_sent_count: null,
         gmail_received_count: null,
         gmail_latest_subject_safe: null,
+        commercial_action_bucket: "ready_to_contact",
+        operational_next_action: "Listo para contacto inicial tras revisión humana",
       },
       {
         prospect_key: "gmail-hist",
@@ -106,6 +118,8 @@ export function leadListFixture(): LeadProspectsListUi {
         gmail_sent_count: 4,
         gmail_received_count: 1,
         gmail_latest_subject_safe: "Consulta equipos",
+        commercial_action_bucket: "already_contacted",
+        operational_next_action: "Esperar respuesta; revisar follow-up después (no reenviar)",
       },
       {
         prospect_key: "blocked",
@@ -133,6 +147,8 @@ export function leadListFixture(): LeadProspectsListUi {
         gmail_sent_count: null,
         gmail_received_count: null,
         gmail_latest_subject_safe: null,
+        commercial_action_bucket: "blocked",
+        operational_next_action: "No contactar",
       },
     ],
   };
@@ -145,6 +161,7 @@ export function leadGmailHistoricoDetailFixture(): LeadProspectDetailResponseUi 
     read_only: true,
     disclaimer: "",
     prospect: {
+      ...defaultLeadOriginFields,
       prospect_key: "gmail-hist",
       organization_name: "Gmail Hist Co",
       contact_name: "Ana",
