@@ -8,13 +8,8 @@
     "docs/sources/kraken-llms.txt"
   ],
   "config": {
-    // Reasonable prose limit; code blocks and tables are excluded because
-    // commands, URLs, route paths, and markdown tables are often intentionally long.
-    "MD013": {
-      "line_length": 120,
-      "code_blocks": false,
-      "tables": false
-    },
+    // Long API paths, commands, URLs, and audit prose are intentionally unwrapped.
+    "MD013": false,
     // Generated/link-index style docs may intentionally contain bare URLs.
     "MD034": false
   }

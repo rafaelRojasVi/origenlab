@@ -8,11 +8,11 @@
 
 ## Summary
 
-| Layer | Purpose | Not a substitute for |
-|-------|---------|----------------------|
-| **`ORIGENLAB_API_AUTH_TOKEN`** | Application bearer/API-key auth on private routes when `ORIGENLAB_ENV=production` | Login UI, OAuth, or outbound safety |
-| **`ORIGENLAB_API_CORS_ORIGINS`** | Browser cross-origin **policy** for allowed dashboard origins | Authentication |
-| **Cloudflare Access** (optional edge) | SSO / service-token gate on `api.origenlab.cl` and `dashboard.origenlab.cl` | API bearer token when production token auth is enabled |
+| Layer                                 | Purpose                                                                           | Not a substitute for                                   |
+| ------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| **`ORIGENLAB_API_AUTH_TOKEN`**        | Application bearer/API-key auth on private routes when `ORIGENLAB_ENV=production` | Login UI, OAuth, or outbound safety                    |
+| **`ORIGENLAB_API_CORS_ORIGINS`**      | Browser cross-origin **policy** for allowed dashboard origins                     | Authentication                                         |
+| **Cloudflare Access** (optional edge) | SSO / service-token gate on `api.origenlab.cl` and `dashboard.origenlab.cl`       | API bearer token when production token auth is enabled |
 
 When `ORIGENLAB_ENV=production`, startup **requires** `ORIGENLAB_API_AUTH_TOKEN`. Without it, `create_app()` fails fast.
 
@@ -22,9 +22,9 @@ Implementation: `origenlab_api.http_security.ApiTokenAuthMiddleware`.
 
 ## Public vs protected routes
 
-| Access | Routes / methods |
-|--------|------------------|
-| **No token** | `GET /health` (and `HEAD /health` for probes), `OPTIONS` on any path (CORS preflight) |
+| Access             | Routes / methods                                                                                               |
+| ------------------ | -------------------------------------------------------------------------------------------------------------- |
+| **No token**       | `GET /health` (and `HEAD /health` for probes), `OPTIONS` on any path (CORS preflight)                          |
 | **Token required** | All other routes: `/operator/*`, `/emails/*`, `/cases/*`, `/contacts/*`, `/opportunities/*`, `/mirror/*`, etc. |
 
 Unauthorized callers receive **401** with the unified error envelope (`error.code`: `unauthorized`, `WWW-Authenticate: Bearer`, `X-Request-ID`).
@@ -55,15 +55,15 @@ Use `secrets.compare_digest` at the server; never log or echo the expected token
 
 ### Required in production (`ORIGENLAB_ENV=production`)
 
-| Variable | Example / notes |
-|----------|-----------------|
-| `ORIGENLAB_ENV` | `production` |
-| `ORIGENLAB_API_BACKEND` | `postgres` |
-| `ORIGENLAB_POSTGRES_URL` | Managed Postgres DSN (secret) |
-| `ORIGENLAB_API_CORS_ORIGINS` | `https://dashboard.origenlab.cl` (no `*`) |
-| `ORIGENLAB_API_AUTH_TOKEN` | Long random secret — **required** |
+| Variable                      | Example / notes                                                |
+| ----------------------------- | -------------------------------------------------------------- |
+| `ORIGENLAB_ENV`               | `production`                                                   |
+| `ORIGENLAB_API_BACKEND`       | `postgres`                                                     |
+| `ORIGENLAB_POSTGRES_URL`      | Managed Postgres DSN (secret)                                  |
+| `ORIGENLAB_API_CORS_ORIGINS`  | `https://dashboard.origenlab.cl` (no `*`)                      |
+| `ORIGENLAB_API_AUTH_TOKEN`    | Long random secret — **required**                              |
 | `ORIGENLAB_API_ALLOWED_HOSTS` | `api.origenlab.cl` (recommended on Render; see host allowlist) |
-| `ORIGENLAB_API_DISABLE_DOCS` | `true` (optional; docs also off in production) |
+| `ORIGENLAB_API_DISABLE_DOCS`  | `true` (optional; docs also off in production)                 |
 
 Example Render / FastAPI Cloud env (set in platform dashboard; never commit real secrets):
 
@@ -80,13 +80,13 @@ ORIGENLAB_API_AUTH_TOKEN=<generate-with-openssl-rand-hex-32>
 
 ### FastAPI Cloud
 
-| Setting | Value |
-|---------|--------|
-| Application directory | `apps/api` |
-| Entrypoint | `main.py` (shim → `origenlab_api.main:app`) |
-| `ORIGENLAB_ENV` | `production` |
+| Setting                    | Value                                                                                    |
+| -------------------------- | ---------------------------------------------------------------------------------------- |
+| Application directory      | `apps/api`                                                                               |
+| Entrypoint                 | `main.py` (shim → `origenlab_api.main:app`)                                              |
+| `ORIGENLAB_ENV`            | `production`                                                                             |
 | `ORIGENLAB_API_AUTH_TOKEN` | Set in platform secrets (generate locally; do not reuse Render token unless intentional) |
-| Postgres + CORS | Same as Render checklist |
+| Postgres + CORS            | Same as Render checklist                                                                 |
 
 Public URLs (e.g. `*.fastapicloud.dev`) are reachable without Cloudflare Access — **token auth is the primary gate** on private routes.
 

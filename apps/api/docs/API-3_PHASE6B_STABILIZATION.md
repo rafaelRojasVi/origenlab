@@ -6,12 +6,12 @@
 
 ## Current architecture (operator truth)
 
-| Component | Role |
-|-----------|------|
-| **`apps/api`** (:8001) | **Only** FastAPI app — operator Dashboard routes + Postgres **`GET /mirror/*`** |
-| **`apps/email-pipeline`** | Ingest, SQLite OLTP, Streamlit, sync CLI — **no** FastAPI package |
-| **`apps/dashboard` Today** | Read-only operator UI — **`/health`**, `/operator/*`, `/cases/warm`, `/opportunities/equipment`, `/contacts/{email}`, `/emails/recent` — **not** `/mirror/*` |
-| **`origenlab_email_pipeline/postgres_dashboard_api/`** | Shared SQL used by mirror routers in `apps/api` |
+| Component                                              | Role                                                                                                                                                         |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **`apps/api`** (:8001)                                 | **Only** FastAPI app — operator Dashboard routes + Postgres **`GET /mirror/*`**                                                                              |
+| **`apps/email-pipeline`**                              | Ingest, SQLite OLTP, Streamlit, sync CLI — **no** FastAPI package                                                                                            |
+| **`apps/dashboard` Today**                             | Read-only operator UI — **`/health`**, `/operator/*`, `/cases/warm`, `/opportunities/equipment`, `/contacts/{email}`, `/emails/recent` — **not** `/mirror/*` |
+| **`origenlab_email_pipeline/postgres_dashboard_api/`** | Shared SQL used by mirror routers in `apps/api`                                                                                                              |
 
 ---
 
