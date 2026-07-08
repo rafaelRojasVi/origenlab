@@ -6,6 +6,22 @@ import {
 } from "./mirrorLeadIntelClient";
 import { OperatorApiError } from "./operatorClient";
 
+const originalCreateObjectURL = URL.createObjectURL;
+const originalRevokeObjectURL = URL.revokeObjectURL;
+
+function stubBlobUrlMethods(
+  createObjectURL: typeof URL.createObjectURL,
+  revokeObjectURL: typeof URL.revokeObjectURL,
+): void {
+  Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+}
+
+function restoreBlobUrlMethods(): void {
+  Object.defineProperty(URL, "createObjectURL", { configurable: true, value: originalCreateObjectURL });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: originalRevokeObjectURL });
+}
+
 describe("mirrorLeadProspectsExportUrl", () => {
   beforeEach(() => {
     vi.stubEnv("VITE_OPERATOR_API_BASE_URL", "https://api.example.test");
@@ -38,6 +54,7 @@ describe("downloadLeadProspectsExportCsv", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    restoreBlobUrlMethods();
     vi.restoreAllMocks();
   });
 
@@ -54,7 +71,7 @@ describe("downloadLeadProspectsExportCsv", () => {
     const revokeObjectURL = vi.fn();
     const clickedDownloads: string[] = [];
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
+    stubBlobUrlMethods(createObjectURL, revokeObjectURL);
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
       this: HTMLAnchorElement,
     ) {
@@ -88,7 +105,7 @@ describe("downloadLeadProspectsExportCsv", () => {
     const createObjectURL = vi.fn(() => "blob:should-not-happen");
     const revokeObjectURL = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
+    stubBlobUrlMethods(createObjectURL, revokeObjectURL);
 
     await expect(
       downloadLeadProspectsExportCsv({ export_queue: "ready_to_contact" }),
