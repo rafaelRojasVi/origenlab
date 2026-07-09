@@ -68,7 +68,7 @@ describe("downloadLeadProspectsExportCsv", () => {
   });
 
   function stubObjectUrlApis() {
-    const createObjectURL = vi.fn(() => "blob:prospects-export");
+    const createObjectURL = vi.fn((_: Blob) => "blob:prospects-export");
     const revokeObjectURL = vi.fn();
     Object.defineProperty(URL, "createObjectURL", {
       configurable: true,
@@ -93,11 +93,13 @@ describe("downloadLeadProspectsExportCsv", () => {
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function () {
-      expect(this.href).toBe("blob:prospects-export");
-      expect(this.download).toBe("prospectos-ready.csv");
-      expect(this.isConnected).toBe(true);
-    });
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        expect(this.href).toBe("blob:prospects-export");
+        expect(this.download).toBe("prospectos-ready.csv");
+        expect(this.isConnected).toBe(true);
+      });
 
     await downloadLeadProspectsExportCsv({
       export_queue: "ready_to_contact",
@@ -111,9 +113,9 @@ describe("downloadLeadProspectsExportCsv", () => {
     );
     expect(fetchMock.mock.calls[0][0]).toContain("export_queue=ready_to_contact");
     expect(fetchMock.mock.calls[0][0]).toContain("q=Acme");
-    const downloadedBlob = createObjectURL.mock.calls[0][0] as Blob;
-    expect(downloadedBlob.size).toBe(18);
-    expect(downloadedBlob.type).toBe("text/csv;charset=utf-8");
+    const downloadedBlob = createObjectURL.mock.calls[0]?.[0];
+    expect(downloadedBlob?.size).toBe(18);
+    expect(downloadedBlob?.type).toBe("text/csv;charset=utf-8");
     expect(clickSpy).toHaveBeenCalledTimes(1);
     expect(document.querySelector('a[download="prospectos-ready.csv"]')).toBeNull();
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:prospects-export");
@@ -125,11 +127,13 @@ describe("downloadLeadProspectsExportCsv", () => {
       "fetch",
       vi.fn().mockResolvedValue(new Response("rut,nombre\n1,Acme\n", { status: 200 })),
     );
-    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function () {
-      expect(this.download).toBe("prospectos-export.csv");
-    });
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        expect(this.download).toBe("prospectos-export.csv");
+      });
 
-    await downloadLeadProspectsExportCsv({ export_queue: "follow_up" });
+    await downloadLeadProspectsExportCsv({ export_queue: "all_visible" });
 
     expect(clickSpy).toHaveBeenCalledTimes(1);
   });
