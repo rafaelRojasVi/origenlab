@@ -111,7 +111,9 @@ describe("downloadLeadProspectsExportCsv", () => {
     );
     expect(fetchMock.mock.calls[0][0]).toContain("export_queue=ready_to_contact");
     expect(fetchMock.mock.calls[0][0]).toContain("q=Acme");
-    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+    const downloadedBlob = createObjectURL.mock.calls[0][0] as Blob;
+    expect(downloadedBlob.size).toBe(18);
+    expect(downloadedBlob.type).toBe("text/csv;charset=utf-8");
     expect(clickSpy).toHaveBeenCalledTimes(1);
     expect(document.querySelector('a[download="prospectos-ready.csv"]')).toBeNull();
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:prospects-export");
