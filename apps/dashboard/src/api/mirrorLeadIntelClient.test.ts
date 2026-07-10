@@ -103,7 +103,7 @@ describe("mirrorLeadProspectsExportUrl", () => {
       clickedAnchors.push(this);
     });
 
-    await downloadLeadProspectsExportCsv({ export_queue: "filtered" });
+    await downloadLeadProspectsExportCsv({ export_queue: "all_visible" });
 
     expect(clickedAnchors[0].download).toBe("prospectos-export.csv");
   });
