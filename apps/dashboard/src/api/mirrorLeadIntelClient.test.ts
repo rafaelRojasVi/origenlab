@@ -17,6 +17,7 @@ describe("mirrorLeadProspectsExportUrl", () => {
       sector: "Salud",
       min_score: 50,
       include_blocked: true,
+      commercial_action_bucket: "review_history",
       limit: 100,
     });
     expect(url).toContain(MIRROR_LEADS_PROSPECTS_EXPORT_PATH);
@@ -26,5 +27,6 @@ describe("mirrorLeadProspectsExportUrl", () => {
     expect(url).toContain("sector=Salud");
     expect(url).toContain("min_score=50");
     expect(url).toContain("include_blocked=true");
+    expect(url).toContain("commercial_action_bucket=review_history");
   });
 });
