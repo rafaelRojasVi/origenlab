@@ -1,0 +1,20 @@
+---
+description: Preserve OrigenLab feature-branch topology with merge commits
+globs:
+  - "**/*"
+alwaysApply: true
+---
+
+# OrigenLab Git workflow (Cursor)
+
+Follow the root [`AGENTS.md`](../../AGENTS.md) section **Git and pull-request workflow**. That section is the cross-agent canonical source.
+
+## Enforce
+
+- Non-trivial work: up-to-date `main` → descriptive **feature branch** (never commit non-trivial work on `main`).
+- Open a GitHub **pull request**.
+- Merge with GitHub **“Create a merge commit”** only.
+- Do **not** squash-merge, rebase-merge, or fast-forward the feature branch onto `main` unless Rafael explicitly requests it.
+- Do **not** force-push or rewrite published history unless Rafael explicitly approves.
+- After merge: `git switch main` → `git pull --ff-only origin main` → delete the local feature branch; delete the remote branch only after merge + post-merge verification succeed.
+- Explicit user instructions override these defaults.

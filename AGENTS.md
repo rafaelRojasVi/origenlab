@@ -37,6 +37,29 @@ For **operator API** or **dashboard** work, read **[`apps/api/AGENTS.md`](apps/a
 - Do not run destructive git operations without explicit approval.
 - Prefer read-only investigation before mutating production data.
 
+## Git and pull-request workflow
+
+This policy intentionally preserves the colored branch-and-merge graph in Cursor and GitHub (visible topology via merge commits, not a linear squash history).
+
+- For every **non-trivial** change, start from an up-to-date `main` and create a descriptive feature branch. Do **not** commit non-trivial work directly to `main`.
+- Keep commits **logical and intentionally named** so the branch history remains understandable.
+- Push the feature branch and open a GitHub pull request.
+- Merge PRs with GitHub’s **“Create a merge commit”** method so branch ancestry stays visible.
+- Do **not** use “Squash and merge,” “Rebase and merge,” or a fast-forward feature-branch merge unless Rafael **explicitly** requests that strategy.
+- Do **not** rewrite published branch history or force-push unless Rafael **explicitly** approves it.
+- After a PR is merged:
+
+  ```bash
+  git switch main
+  git pull --ff-only origin main
+  git branch -d <feature-branch>
+  ```
+
+- Delete the **remote** feature branch only after the merge and post-merge verification succeed. Deleting a merged branch is safe because the merge commit preserves its ancestry and visible graph.
+- Explicit user instructions override this default workflow.
+
+Cursor agents: also see [`.cursor/rules/origenlab-git-workflow.mdc`](.cursor/rules/origenlab-git-workflow.mdc) (pointer; this section is canonical for all agents).
+
 ## Email-pipeline reminder
 
 Outbound and archive work lives under **`apps/email-pipeline/`**. Agents must **not** send email, mutate Gmail, or run Postgres migrations without explicit user approval. Read **`apps/email-pipeline/docs/EXPERIMENTAL_PARKED.md`** before Postgres/API/Tatiana/ML work; do not use **LEGACY_DO_NOT_USE** scripts for current operator tasks. Start with **`operator_status.py`** and **`reports/out/active/current/manifest.json`** when checking operational state.
