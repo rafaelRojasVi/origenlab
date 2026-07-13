@@ -15,6 +15,7 @@ REPO = Path(__file__).resolve().parents[1]
         "scripts/mart/build_business_mart.py",
         "scripts/commercial/build_commercial_intel_v1.py",
         "scripts/qa/audit_canonical_gmail_duplicates.py",
+        "scripts/qa/audit_sqlite_storage.py",
         "scripts/maintenance/dedupe_canonical_gmail_messages.py",
         "scripts/qa/publish_gate.py",
         "scripts/qa/check_outbound_readiness.py",
