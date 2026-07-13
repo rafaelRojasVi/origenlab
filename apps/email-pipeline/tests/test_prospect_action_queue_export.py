@@ -10,6 +10,7 @@ import pytest
 from origenlab_email_pipeline.lead_research.prospect_action_queue_export import (
     CSV_UTF8_BOM,
     EXPORT_FIELDNAMES,
+    EXPORT_QUEUE_ALL_VISIBLE,
     EXPORT_QUEUE_READY_TO_CONTACT,
     EXPORT_QUEUE_FOLLOWUP_REVIEW,
     export_filename_for_queue,
@@ -105,6 +106,34 @@ def test_filter_followup_queue() -> None:
     assert {row["organization_name"] for row in rows} == {"RedSalud"}
 
 
+def test_filter_export_applies_commercial_action_bucket_filter() -> None:
+    rows = filter_prospects_for_export(
+        _fixture_prospects(),
+        export_queue=EXPORT_QUEUE_ALL_VISIBLE,
+        commercial_action_bucket="tender_opportunity",
+    )
+    assert rows
+    assert all(row["commercial_action_bucket"] == "tender_opportunity" for row in rows)
+    assert {row["organization_name"] for row in rows} == {"Hospital Demo"}
+
+
+def test_filter_bucket_export_preserves_score_then_name_priority() -> None:
+    base = _fixture_prospects()[0]
+    prospects = [
+        {**base, "organization_name": "Zulu Labs", "final_score": 50},
+        {**base, "organization_name": "Alpha Labs", "final_score": 50},
+        {**base, "organization_name": "Beta Labs", "final_score": 90},
+        _fixture_prospects()[1],
+    ]
+    rows = filter_prospects_for_export(
+        prospects,
+        export_queue=EXPORT_QUEUE_ALL_VISIBLE,
+        commercial_action_bucket="ready_to_contact",
+    )
+    assert [row["organization_name"] for row in rows] == ["Beta Labs", "Alpha Labs", "Zulu Labs"]
+    assert all(row["commercial_action_bucket"] == "ready_to_contact" for row in rows)
+
+
 def test_render_prospects_csv_header_and_columns() -> None:
     rows = filter_prospects_for_export(
         _fixture_prospects(),
@@ -136,6 +165,8 @@ def test_matches_export_queue_all_visible() -> None:
         ("+SUM(1,1)", "'+SUM(1,1)"),
         ("-1+2", "'-1+2"),
         ("@cmd", "'@cmd"),
+        ("\t=cmd", "'\t=cmd"),
+        ("\r=cmd", "'\r=cmd"),
         ("Acme Labs", "Acme Labs"),
         ("contacto@acme.cl", "contacto@acme.cl"),
         ("https://www.acme.cl/", "https://www.acme.cl/"),
