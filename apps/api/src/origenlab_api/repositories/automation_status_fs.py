@@ -15,7 +15,7 @@ from origenlab_api.settings import Settings
 def get_automation_status_from_active_current(
     settings: Settings,
     *,
-    mirror_cooldown_seconds: int = 900,
+    mirror_cooldown_seconds: int = 60,
 ) -> dict[str, Any]:
     active_current = settings.resolved_active_current()
     reports_dir = active_current.parent.parent

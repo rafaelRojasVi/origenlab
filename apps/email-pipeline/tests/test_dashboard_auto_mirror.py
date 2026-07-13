@@ -193,15 +193,68 @@ def test_already_mirrored_no_run(active_current: Path, capsys: pytest.CaptureFix
 def test_cooldown_prevents_repeated_mirror(active_current: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _ready_fixture(active_current)
     mirror_state = DashboardAutoMirrorState(
-        last_successful_mirror_at=(_T0 - timedelta(seconds=60)).isoformat(),
+        last_successful_mirror_at=(_T0 - timedelta(seconds=30)).isoformat(),
     )
     state_file = state_path(active_current.parent.parent)
     state_file.write_text(json.dumps(mirror_state.to_dict()), encoding="utf-8")
 
-    run_dashboard_auto_mirror(_opts(apply=True, allow_non_scratch_postgres=True), reports_dir=active_current.parent.parent, now_fn=lambda: _T0)
+    run_dashboard_auto_mirror(
+        _opts(apply=True, allow_non_scratch_postgres=True, cooldown_seconds=60),
+        reports_dir=active_current.parent.parent,
+        now_fn=lambda: _T0,
+    )
     out = _parse_output(capsys.readouterr().out)
     assert out["reason"] == "cooldown"
     assert out["should_run"] == "false"
+
+
+def test_post_daily_core_ready_after_default_60s_cooldown(
+    active_current: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Mirror finished; newer daily-core a few minutes later; next 1-min tick with cooldown=60 is ready."""
+    older_core = "2026-06-10T14:00:00+00:00"
+    newer_core = "2026-06-10T14:55:00+00:00"
+    mirror_finished = datetime(2026, 6, 10, 14, 52, 0, tzinfo=timezone.utc)
+    eval_at = datetime(2026, 6, 10, 14, 56, 30, tzinfo=timezone.utc)  # ~4.5 min after mirror
+
+    _write_daily_core_manifest(active_current, generated_at=newer_core)
+    _write_mail_state(active_current, dirty=False)
+    reports = active_current.parent.parent
+    fingerprint = compute_dashboard_input_fingerprint(reports)
+    mirror_state = DashboardAutoMirrorState(
+        last_successful_mirror_at=mirror_finished.isoformat(),
+        last_mirrored_daily_core_generated_at=older_core,
+        last_mirrored_dashboard_input_fingerprint="stale-fingerprint",
+    )
+    state_path(reports).write_text(json.dumps(mirror_state.to_dict()), encoding="utf-8")
+
+    # Cooldown elapsed (>60s) and daily-core is newer → ready (dry-run).
+    run_dashboard_auto_mirror(
+        _opts(apply=False, cooldown_seconds=60),
+        reports_dir=reports,
+        now_fn=lambda: eval_at,
+    )
+    out = _parse_output(capsys.readouterr().out)
+    assert out["reason"] == "dry_run"
+    assert out["should_run"] == "true"
+    assert out["daily_core_generated_at"] == newer_core
+
+    # already_mirrored still wins when fingerprint + daily-core match.
+    mirrored = DashboardAutoMirrorState(
+        last_successful_mirror_at=mirror_finished.isoformat(),
+        last_mirrored_daily_core_generated_at=newer_core,
+        last_mirrored_dashboard_input_fingerprint=fingerprint,
+    )
+    state_path(reports).write_text(json.dumps(mirrored.to_dict()), encoding="utf-8")
+    run_dashboard_auto_mirror(
+        _opts(apply=False, cooldown_seconds=60),
+        reports_dir=reports,
+        now_fn=lambda: eval_at,
+    )
+    out2 = _parse_output(capsys.readouterr().out)
+    assert out2["reason"] == "already_mirrored"
+    assert out2["should_run"] == "false"
 
 
 def test_dry_run_gates_passing_should_run_true(active_current: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -361,7 +414,8 @@ def test_evaluate_unit_missing_manifest() -> None:
 def test_docs_mention_separate_cron() -> None:
     doc = Path(__file__).resolve().parents[1] / "docs" / "pipeline" / "DASHBOARD_AUTO_MIRROR.md"
     text = doc.read_text(encoding="utf-8")
-    assert "15 minutes" in text.lower() or "15 minute" in text.lower()
+    assert "every minute" in text.lower() or "one-minute" in text.lower() or "1 minute" in text.lower()
+    assert "60" in text
     assert "auto-refresh-mail" in text
     assert "not send approval" in text.lower()
 

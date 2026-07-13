@@ -38,7 +38,7 @@ ACTIVE_MANIFEST_FILENAME = "manifest.json"
 EQUIPMENT_OPERATOR_QUEUE_GLOB = "equipment_first_operator_queue_*.csv"
 MAX_DASHBOARD_INPUT_CONTENT_HASH_BYTES = 256 * 1024
 
-DEFAULT_COOLDOWN_SECONDS = 900
+DEFAULT_COOLDOWN_SECONDS = 60
 DEFAULT_OPERATOR = "rafael"
 DEFAULT_REASON = "Automated dashboard mirror after successful daily-core"
 
@@ -399,7 +399,7 @@ def run_dashboard_auto_mirror(
     if options.daemon:
         raise ValueError(
             "auto-mirror-dashboard --daemon is not implemented yet; use --once with an external scheduler "
-            "(cron/systemd timer every ~15 minutes)."
+            "(cron/systemd timer every minute; default cooldown 60s)."
         )
     if not options.once:
         raise ValueError("auto-mirror-dashboard requires --once (daemon mode not implemented yet).")

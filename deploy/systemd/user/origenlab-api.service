@@ -1,0 +1,18 @@
+[Unit]
+Description=OrigenLab operator API (read-only FastAPI on 127.0.0.1:8001)
+Documentation=file://%h/dev/freelance/origenlab/apps/api/docs/LOCAL_SYSTEMD.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/dev/freelance/origenlab/apps/api
+EnvironmentFile=-%h/dev/freelance/origenlab/apps/api/.env
+ExecStart=%h/.local/bin/uv run --frozen uvicorn origenlab_api.main:app --host 127.0.0.1 --port 8001
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+# Do not send email, mutate Gmail, or write Postgres from this unit.
+
+[Install]
+WantedBy=default.target

@@ -29,7 +29,7 @@ def operator_status(
 @router.get("/automation-status", response_model=OperatorAutomationStatusResponse)
 def operator_automation_status(
     settings: Settings = Depends(get_settings),
-    cooldown_seconds: int = Query(900, ge=60, le=86400, alias="cooldown-seconds"),
+    cooldown_seconds: int = Query(60, ge=60, le=86400, alias="cooldown-seconds"),
 ) -> OperatorAutomationStatusResponse:
     return build_operator_automation_status_response(
         settings,

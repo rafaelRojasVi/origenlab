@@ -91,7 +91,7 @@ Map proxy-specific env names if present: `CF_ACCESS_CLIENT_ID=${CF_ACCESS_CLIENT
 |-------|
 | `/health` |
 | `/operator/status?max_staleness_days=14` |
-| `/operator/automation-status?cooldown-seconds=900` |
+| `/operator/automation-status?cooldown-seconds=60` |
 | `/mirror/catalog/products?limit=100` |
 | `/mirror/leads/summary` |
 | `/mirror/leads/prospects?limit=20&include_blocked=false` |

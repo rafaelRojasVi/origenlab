@@ -64,7 +64,7 @@ flowchart LR
 | API / dashboard | Read-only operator surfaces; mirror data is **not** send approval |
 | `apps/web` | Public marketing site (separate from operator stack) |
 
-Two debounced cron loops keep ingest and publish separate: Gmail → SQLite (~3 min) and SQLite → Postgres/dashboard (~15 min). Runbook: [`apps/email-pipeline/docs/pipeline/OPERATOR_CRON.md`](apps/email-pipeline/docs/pipeline/OPERATOR_CRON.md)
+Two debounced cron loops keep ingest and publish separate: Gmail → SQLite (~3 min) and SQLite → Postgres/dashboard (every minute; default 60s cooldown). Runbook: [`apps/email-pipeline/docs/pipeline/OPERATOR_CRON.md`](apps/email-pipeline/docs/pipeline/OPERATOR_CRON.md)
 
 ## Applications
 

@@ -14,7 +14,7 @@ class OperatorStatusRepository(Protocol):
     def get_status(self, *, max_staleness_days: float = 14.0) -> dict[str, Any]:
         """Return a dict compatible with ``OperatorStatusResponse`` fields."""
 
-    def get_automation_status(self, *, mirror_cooldown_seconds: int = 900) -> dict[str, Any]:
+    def get_automation_status(self, *, mirror_cooldown_seconds: int = 60) -> dict[str, Any]:
         """Return a dict compatible with ``OperatorAutomationStatusResponse`` fields."""
 
 

@@ -293,21 +293,56 @@ def build_operator_status_report(
                 )
 
             pred = sql_predicate_contacto_gmail_source()
-            sent_row = sqlite_conn.execute(
-                f"""
-                SELECT COUNT(*), MAX(date_iso) FROM emails
-                WHERE {pred}
+            sent_where = f"""
+                {pred}
                   AND (
                     source_file LIKE '%Enviados%'
                     OR source_file LIKE '%Sent%'
                   )
+            """
+            sent_row = sqlite_conn.execute(
+                f"""
+                SELECT COUNT(*), MAX(date_iso) FROM emails
+                WHERE {sent_where}
                 """,
             ).fetchone()
+            email_cols = {
+                str(r[1])
+                for r in sqlite_conn.execute("PRAGMA table_info(emails)").fetchall()
+            }
+            distinct_mid_count: int | None = None
+            missing_mid_count: int | None = None
+            if "message_id" in email_cols:
+                distinct_mid_row = sqlite_conn.execute(
+                    f"""
+                    SELECT COUNT(DISTINCT lower(trim(message_id)))
+                    FROM emails
+                    WHERE {sent_where}
+                      AND message_id IS NOT NULL AND trim(message_id) != ''
+                    """,
+                ).fetchone()
+                missing_mid_row = sqlite_conn.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM emails
+                    WHERE {sent_where}
+                      AND (message_id IS NULL OR trim(message_id) = '')
+                    """,
+                ).fetchone()
+                distinct_mid_count = int(distinct_mid_row[0] or 0) if distinct_mid_row else 0
+                missing_mid_count = int(missing_mid_row[0] or 0) if missing_mid_row else 0
             sent_info = {
                 "gmail_user": gmail_user,
                 "sent_folders_config": list(sent_folders),
                 "canonical_sent_row_count": int(sent_row[0] or 0) if sent_row else 0,
                 "canonical_sent_max_date_iso": sent_row[1] if sent_row else None,
+                "canonical_sent_distinct_message_id_count": distinct_mid_count,
+                "canonical_sent_missing_message_id_count": missing_mid_count,
+                "comparison_note": (
+                    "Stored canonical Sent history may exceed Gmail's current Sent label count "
+                    "(duplicates, missing message_id, or retained historical rows). "
+                    "Do not assume equality with live Gmail Sent."
+                ),
             }
 
             try:
@@ -393,8 +428,11 @@ def build_operator_status_report(
         daily_core_run=daily_core_run,
         postgres=probe_postgres_status(),
         api={
-            "status": "parked",
-            "detail": "FastAPI/React dashboard is optional; not required for DNR or equipment-first ops.",
+            "status": "active",
+            "detail": (
+                "FastAPI/React is the active read-only operator dashboard; "
+                "outbound readiness remains SQLite-based and independent."
+            ),
         },
         outbound_readiness=readiness_obj,
         warnings=warnings,
@@ -417,7 +455,7 @@ def format_human_report(report: OperatorStatusReport) -> str:
             f"  emails MAX(date_iso) global: {report.emails_global_max_date_iso}",
             f"  emails MAX(date_iso) 2026: {report.emails_2026_max_date_iso}",
             "",
-            "Gmail Sent (canonical):",
+            "Gmail Sent (stored canonical history):",
         ]
     )
     for k, v in report.sent.items():

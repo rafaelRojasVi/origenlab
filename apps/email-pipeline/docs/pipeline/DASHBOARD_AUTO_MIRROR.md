@@ -2,13 +2,13 @@
 
 Status: canonical (operator contract)  
 Owner: email-pipeline-maintainers  
-Last reviewed: 2026-06-10
+Last reviewed: 2026-07-13
 
-Related: [`MAIL_AUTO_REFRESH.md`](MAIL_AUTO_REFRESH.md) · [`DAILY_CORE.md`](DAILY_CORE.md) · [`POSTGRES_MIRROR_REFRESH.md`](POSTGRES_MIRROR_REFRESH.md) · [`DAILY_CORE_FAST_REFRESH_SPLIT.md`](DAILY_CORE_FAST_REFRESH_SPLIT.md)
+Related: [`MAIL_AUTO_REFRESH.md`](MAIL_AUTO_REFRESH.md) · [`DAILY_CORE.md`](DAILY_CORE.md) · [`POSTGRES_MIRROR_REFRESH.md`](POSTGRES_MIRROR_REFRESH.md) · [`DAILY_CORE_FAST_REFRESH_SPLIT.md`](DAILY_CORE_FAST_REFRESH_SPLIT.md) · [`OPERATOR_CRON.md`](OPERATOR_CRON.md)
 
 **See also:** `uv run origenlab operator-automation-status` — read-only health for both automation loops (mail + mirror + user crontab). Also visible on dashboard Today via `GET /operator/automation-status` (apps/api; cron not inspected by API). Cron wrappers: [`OPERATOR_CRON.md`](OPERATOR_CRON.md).
 
-Separate **publishing loop** that mirrors SQLite operational truth to Postgres/dashboard **after** a successful `daily-core` run and **clean** mail auto-refresh state. This is **not** part of the 3-minute mail watcher.
+Mail refresh and dashboard mirror are **separate ordered loops**. After Gmail/`daily-core` completes successfully and mail state is clean, the one-minute mirror evaluation can start within about one minute (subject to the 60-second cooldown). Do **not** embed the mirror inside `daily-core`.
 
 ---
 
@@ -25,7 +25,7 @@ uv run origenlab auto-mirror-dashboard --once --apply \
   --allow-non-scratch-postgres
 ```
 
-Optional flags: `--cooldown-seconds 900`, `--operator rafael`, `--reason "…"`.
+Optional flags: `--cooldown-seconds 60` (default), `--operator rafael`, `--reason "…"`. Custom cooldown values remain supported.
 
 `--daemon` is **not implemented** — use an external scheduler with `--once`.
 
@@ -36,7 +36,9 @@ Optional flags: `--cooldown-seconds 900`, `--operator rafael`, `--reason "…"`.
 | Loop | Cadence | Purpose |
 |------|---------|---------|
 | `auto-refresh-mail` | ~3 minutes | Gmail → SQLite via `daily-core` when mail changes |
-| `auto-mirror-dashboard` | ~15 minutes | SQLite → Postgres/dashboard via `mirror-dashboard --live --apply` |
+| `auto-mirror-dashboard` | every minute | SQLite → Postgres/dashboard via `mirror-dashboard --live --apply` |
+
+Repeated one-minute evaluations are cheap when locks/fingerprints/cooldown gates no-op (`already_mirrored`, `cooldown`, lock held). Overlap prevention (mirror lock) still applies when a mirror takes longer than one minute.
 
 Do **not** put `mirror-dashboard` inside the mail watcher cron.
 
@@ -48,8 +50,8 @@ Do **not** put `mirror-dashboard` inside the mail watcher cron.
 2. `mail_auto_refresh_state.json` exists with `dirty=false` and all `pending_*` null
 3. `auto_refresh.lock` not held by a live process (mail refresh not running)
 4. `dashboard_auto_mirror.lock` not held by a live process
-5. Latest daily-core timestamp not already mirrored
-6. Cooldown elapsed since last successful mirror (default **900s**)
+5. Latest daily-core timestamp / dashboard-input fingerprint not already mirrored
+6. Cooldown elapsed since last successful mirror (default **60s**)
 7. `--apply` present to actually run mirror
 8. `--allow-non-scratch-postgres` present with `--apply` (explicit non-scratch consent)
 
@@ -76,7 +78,12 @@ uv run origenlab mirror-dashboard --live --apply \
   - `dashboard_gmail_interaction_audit_v1` — compact per-domain Gmail/SQLite interaction counts (subjects only; no bodies)
   - `operator_automation_status_snapshot_v1` — redacted automation health from local `active/current` (no filesystem paths)
 
-These snapshots are **read-only dashboard evidence**. They do **not** authorize sending, export, or outreach. Production API reads them from Postgres; local dev may still fall back to filesystem `active/current`.
+These snapshots are **read-only dashboard evidence**. They do **not** authorize sending, export, or outreach.
+
+**Source selection for `GET /operator/automation-status`:**
+
+- Local **SQLite** API (`ORIGENLAB_API_BACKEND=sqlite`) reads live `filesystem_active_current` even when Postgres has a published automation snapshot (mirror sync metadata may still come from Postgres).
+- Production **Postgres** API prefers the published Postgres automation snapshot, with filesystem fallback when unavailable.
 
 Postgres mirror and dashboard LISTO are **not send approval**.
 
@@ -105,8 +112,8 @@ rm reports/out/active/current/dashboard_auto_mirror_paused   # resume
 ## Recommended cron (not installed by repo)
 
 ```bash
-# every 15 minutes
-*/15 * * * * cd /path/to/apps/email-pipeline && uv run origenlab auto-mirror-dashboard --once --apply --allow-non-scratch-postgres >> reports/out/active/current/auto_mirror_cron.log 2>&1
+# every minute — gates make most ticks cheap no-ops
+* * * * * cd /path/to/apps/email-pipeline && uv run origenlab auto-mirror-dashboard --once --apply --allow-non-scratch-postgres --cooldown-seconds 60 >/dev/null 2>> reports/out/active/current/auto_mirror_cron.err.log
 ```
 
 ---
@@ -116,6 +123,7 @@ rm reports/out/active/current/dashboard_auto_mirror_paused   # resume
 - **API smoke / bad Postgres env** — mirror sync and API health are separate; fix `ORIGENLAB_POSTGRES_URL` / `ORIGENLAB_CLOUD_POSTGRES_URL` before expecting `/mirror/*` routes to work.
 - **`allow_non_scratch_required`** — pass `--allow-non-scratch-postgres` explicitly with `--apply`.
 - **`mail_dirty` / `mail_pending`** — wait for mail auto-refresh to finish debouncing and complete `daily-core`.
-- **`already_mirrored`** — current daily-core manifest timestamp was already published.
+- **`already_mirrored`** — current daily-core manifest timestamp / dashboard-input fingerprint was already published.
+- **Stale automation on local SQLite API** — ensure `ORIGENLAB_API_BACKEND=sqlite` so status comes from live `active/current`, not a prior Postgres snapshot.
 
 Stable stdout counters: `dashboard_auto_mirror`, `apply=`, `reason=`, `daily_core_status=`, `mail_dirty=`, `should_run=`, `ran_mirror=`, `allow_non_scratch_postgres=`, etc.
