@@ -2,11 +2,10 @@
 Description=Restart OrigenLab API after health-check failure
 Documentation=file://%h/dev/freelance/origenlab/apps/api/docs/LOCAL_SYSTEMD.md
 After=origenlab-api.service
-# Keep restarts bounded: StartLimit* prevents unbounded thrashing.
+# Keep recover restarts bounded: StartLimit* belongs in [Unit], not [Service].
+StartLimitIntervalSec=120
+StartLimitBurst=3
 
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/systemctl --user restart origenlab-api.service
-# If recover itself fails repeatedly, stop trying for a while.
-StartLimitIntervalSec=120
-StartLimitBurst=3

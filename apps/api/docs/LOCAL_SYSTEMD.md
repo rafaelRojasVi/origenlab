@@ -12,10 +12,16 @@ Related: mail/mirror cron [`OPERATOR_CRON.md`](../../email-pipeline/docs/pipelin
 
 | Unit | Role |
 |------|------|
-| `origenlab-api.service` | `uv run --frozen uvicorn … --port 8001` |
-| `origenlab-api-health.service` | `curl --fail` against `http://127.0.0.1:8001/health` |
+| `origenlab-api.service` | `uv run --frozen uvicorn … --port 8001` (`Restart=always`; `[Unit]` StartLimitBurst=10 / 120s) |
+| `origenlab-api-health.service` | `curl --fail` against `http://127.0.0.1:8001/health`; `[Unit]` `OnFailure=` → recover |
 | `origenlab-api-health.timer` | Every **30 seconds** |
-| `origenlab-api-recover.service` | `systemctl --user restart origenlab-api.service` on health failure |
+| `origenlab-api-recover.service` | `systemctl --user restart origenlab-api.service` on health failure (`[Unit]` StartLimitBurst=3 / 120s) |
+
+`OnFailure=` and `StartLimitIntervalSec` / `StartLimitBurst` must live under **`[Unit]`**, not `[Service]`. Verify with:
+
+```bash
+systemd-analyze verify deploy/systemd/user/*.service deploy/systemd/user/*.timer
+```
 
 Paths use `%h` (user home) rather than committing a machine-specific home directory.
 
