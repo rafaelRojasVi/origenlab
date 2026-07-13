@@ -1,12 +1,22 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  downloadLeadProspectsExportCsv,
   mirrorLeadProspectsExportUrl,
   MIRROR_LEADS_PROSPECTS_EXPORT_PATH,
 } from "./mirrorLeadIntelClient";
+import { OperatorApiError } from "./operatorClient";
+
+const originalCreateObjectURL = URL.createObjectURL;
+const originalRevokeObjectURL = URL.revokeObjectURL;
 
 describe("mirrorLeadProspectsExportUrl", () => {
   beforeEach(() => {
-    vi.stubEnv("VITE_OPERATOR_API_BASE_URL", "https://api.example.test");
+    vi.stubEnv("VITE_ORIGENLAB_API_BASE_URL", "https://api.example.test");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
   });
 
   it("includes export queue and current list filters", () => {
@@ -17,6 +27,7 @@ describe("mirrorLeadProspectsExportUrl", () => {
       sector: "Salud",
       min_score: 50,
       include_blocked: true,
+      commercial_action_bucket: "review_history",
       limit: 100,
     });
     expect(url).toContain(MIRROR_LEADS_PROSPECTS_EXPORT_PATH);
@@ -26,5 +37,118 @@ describe("mirrorLeadProspectsExportUrl", () => {
     expect(url).toContain("sector=Salud");
     expect(url).toContain("min_score=50");
     expect(url).toContain("include_blocked=true");
+    expect(url).toContain("commercial_action_bucket=review_history");
+  });
+});
+
+describe("downloadLeadProspectsExportCsv", () => {
+  beforeEach(() => {
+    vi.stubEnv("VITE_ORIGENLAB_API_BASE_URL", "https://api.example.test");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: originalCreateObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: originalRevokeObjectURL,
+    });
+    document.body.innerHTML = "";
+  });
+
+  function stubObjectUrlApis() {
+    const createObjectURL = vi.fn((_: Blob) => "blob:prospects-export");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: revokeObjectURL,
+    });
+    return { createObjectURL, revokeObjectURL };
+  }
+
+  it("downloads CSV with credentials, response filename, click, and URL cleanup", async () => {
+    const { createObjectURL, revokeObjectURL } = stubObjectUrlApis();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response("rut,nombre\n1,Acme\n", {
+        status: 200,
+        headers: {
+          "Content-Disposition": 'attachment; filename="prospectos-ready.csv"',
+          "Content-Type": "text/csv; charset=utf-8",
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        expect(this.href).toBe("blob:prospects-export");
+        expect(this.download).toBe("prospectos-ready.csv");
+        expect(this.isConnected).toBe(true);
+      });
+
+    await downloadLeadProspectsExportCsv({
+      export_queue: "ready_to_contact",
+      q: "Acme",
+      limit: 100,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/mirror/leads/prospects/export.csv"),
+      expect.objectContaining({ method: "GET", credentials: "include" }),
+    );
+    expect(fetchMock.mock.calls[0][0]).toContain("export_queue=ready_to_contact");
+    expect(fetchMock.mock.calls[0][0]).toContain("q=Acme");
+    const downloadedBlob = createObjectURL.mock.calls[0]?.[0];
+    expect(downloadedBlob?.size).toBe(18);
+    expect(downloadedBlob?.type).toMatch(/^text\/csv/);
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('a[download="prospectos-ready.csv"]')).toBeNull();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:prospects-export");
+  });
+
+  it("falls back to the default export filename when the API omits one", async () => {
+    stubObjectUrlApis();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("rut,nombre\n1,Acme\n", { status: 200 })),
+    );
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        expect(this.download).toBe("prospectos-export.csv");
+      });
+
+    await downloadLeadProspectsExportCsv({ export_queue: "all_visible" });
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws OperatorApiError on non-2xx responses without creating a download", async () => {
+    const { createObjectURL, revokeObjectURL } = stubObjectUrlApis();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("backend unavailable", { status: 503 })),
+    );
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    await expect(
+      downloadLeadProspectsExportCsv({ export_queue: "ready_to_contact" }),
+    ).rejects.toMatchObject({
+      name: "OperatorApiError",
+      status: 503,
+      message: "backend unavailable",
+    } satisfies Partial<OperatorApiError>);
+
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(clickSpy).not.toHaveBeenCalled();
+    expect(revokeObjectURL).not.toHaveBeenCalled();
   });
 });
