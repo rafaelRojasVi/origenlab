@@ -179,7 +179,7 @@ def _build_parser() -> argparse.ArgumentParser:
             p.add_argument(
                 "--cooldown-seconds",
                 type=int,
-                default=900,
+                default=60,
                 help="Dashboard mirror cooldown for remaining-seconds calculation",
             )
             continue
@@ -196,7 +196,7 @@ def _build_parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help="Loop mode (not implemented — use external scheduler with --once)",
             )
-            p.add_argument("--cooldown-seconds", type=int, default=900)
+            p.add_argument("--cooldown-seconds", type=int, default=60)
             p.add_argument("--operator", default="rafael")
             p.add_argument(
                 "--reason",

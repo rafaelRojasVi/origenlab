@@ -21,6 +21,10 @@ uv run uvicorn origenlab_api.main:app --host 127.0.0.1 --port 8001
 
 `tests/conftest.py` prepends `apps/api/src` to `sys.path`. `tests/test_import_guard.py` asserts `origenlab_api.main` loads from **`apps/api/src`**.
 
+## Local systemd (optional)
+
+User-unit templates + install notes: [`docs/LOCAL_SYSTEMD.md`](docs/LOCAL_SYSTEMD.md) · tracked units under [`deploy/systemd/user/`](../../deploy/systemd/user/).
+
 ## Runtime truth
 
 | Layer | Role |

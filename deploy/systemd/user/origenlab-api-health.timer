@@ -1,0 +1,13 @@
+[Unit]
+Description=OrigenLab API health check every 30 seconds
+Documentation=file://%h/dev/freelance/origenlab/apps/api/docs/LOCAL_SYSTEMD.md
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=30
+AccuracySec=5
+Unit=origenlab-api-health.service
+Persistent=false
+
+[Install]
+WantedBy=timers.target

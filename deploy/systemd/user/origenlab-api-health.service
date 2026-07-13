@@ -1,0 +1,10 @@
+[Unit]
+Description=OrigenLab API health check (curl /health)
+Documentation=file://%h/dev/freelance/origenlab/apps/api/docs/LOCAL_SYSTEMD.md
+After=origenlab-api.service
+# On failure, invoke the recover unit (restart API). Bound rate-limiting via timer + API StartLimit.
+OnFailure=origenlab-api-recover.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8001/health

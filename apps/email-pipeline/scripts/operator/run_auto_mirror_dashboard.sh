@@ -9,6 +9,7 @@ OPERATOR="${ORIGENLAB_OPERATOR_NAME:-rafael}"
 "$UV_BIN" run --group postgres origenlab auto-mirror-dashboard \
   --once \
   --apply \
+  --cooldown-seconds 60 \
   --operator "$OPERATOR" \
   --reason auto_dashboard_mirror_after_successful_daily_core \
   --allow-non-scratch-postgres

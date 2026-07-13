@@ -152,6 +152,8 @@ def test_human_report_includes_daily_core_last_run(tmp_path: Path) -> None:
     )
     text = format_human_report(report)
     assert "Daily core last run:" in text
+    assert "Gmail Sent (stored canonical history):" in text
+    assert "API: active" in text
     assert "exists: True" in text
     assert "status: success" in text
     assert "send_approval: False" in text

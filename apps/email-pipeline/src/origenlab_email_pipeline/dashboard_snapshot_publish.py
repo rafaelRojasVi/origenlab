@@ -82,7 +82,7 @@ def redact_automation_status_for_publish(status: dict[str, Any]) -> dict[str, An
 def build_operator_automation_status_snapshot(
     active_current_dir: Path,
     *,
-    mirror_cooldown_seconds: int = 900,
+    mirror_cooldown_seconds: int = 60,
 ) -> dict[str, Any]:
     # active_current_dir is …/reports/out/active/current → reports_dir is …/reports/out
     raw = build_operator_automation_status(

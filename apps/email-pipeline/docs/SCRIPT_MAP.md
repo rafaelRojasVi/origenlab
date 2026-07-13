@@ -357,6 +357,7 @@ Research automation prompt templates: `prompts/deep_research_netnew_chile_market
 | `scripts/qa/audit_canonical_contacto_gmail.py` | OPS_AUDIT | Read-only: canonical Gmail vs legacy labdelivery vs other `emails` metrics |
 | `scripts/qa/audit_email_classification_quality.py` | OPS_AUDIT | Read-only: heuristic commercial-type QA on canonical Gmail (keyword audit; not production labels) |
 | `scripts/qa/audit_canonical_gmail_duplicates.py` | OPS_AUDIT | Read-only: duplicate `message_id` analysis within canonical Gmail rows |
+| `scripts/qa/audit_sqlite_storage.py` | OPS_AUDIT | Read-only: SQLite size/freelist/Sent diagnostics; optional expensive `--include-dbstat`; **never VACUUM** |
 | `scripts/maintenance/dedupe_canonical_gmail_messages.py` | **BREAK_GLASS** | **DELETE** duplicate canonical Gmail `emails` — dry-run default; `--apply --ack-sqlite-backup` |
 | `scripts/qa/publish_gate.py` | OPS_AUDIT | Publication / trust gate (broader than outbound) |
 | `scripts/qa/run_daily_health_report.py` | OPS_AUDIT | **Read-only** combined health snapshot (NDR dry-run, drift, mirror JSON hints); verdict READY / REVIEW_NEEDED / BLOCKED; output `daily_health_report_*` under `active/current/` |

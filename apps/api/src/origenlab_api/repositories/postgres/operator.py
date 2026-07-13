@@ -95,7 +95,7 @@ class PostgresOperatorStatusRepository:
             }
         return map_operator_status_row(dict(row))
 
-    def get_automation_status(self, *, mirror_cooldown_seconds: int = 900) -> dict[str, Any]:
+    def get_automation_status(self, *, mirror_cooldown_seconds: int = 60) -> dict[str, Any]:
         return get_automation_status_from_active_current(
             self._settings,
             mirror_cooldown_seconds=mirror_cooldown_seconds,

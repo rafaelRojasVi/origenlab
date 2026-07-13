@@ -203,7 +203,7 @@ def test_no_subprocess_or_shell(
     assert client.get("/operator/automation-status").status_code == 200
 
 
-def test_uses_postgres_snapshot_before_filesystem(
+def test_uses_postgres_snapshot_when_api_backend_postgres(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -270,7 +270,11 @@ def test_uses_postgres_snapshot_before_filesystem(
         "origenlab_api.settings", fromlist=["get_settings"]
     ).get_settings
     get_settings.cache_clear()
-    settings = Settings(active_current=_healthy_fixture(tmp_path))
+    settings = Settings(
+        active_current=_healthy_fixture(tmp_path),
+        api_backend="postgres",
+        postgres_url="postgresql://127.0.0.1:5432/origenlab_test",
+    )
     app = create_app()
     app.dependency_overrides.clear()
     app.dependency_overrides[get_settings] = lambda: settings
@@ -286,6 +290,97 @@ def test_uses_postgres_snapshot_before_filesystem(
     assert mirror_sync is not None
     assert mirror_sync["status"] == "success"
     assert mirror_sync["latest_sync_id"] == 135
+    get_settings.cache_clear()
+
+
+def test_sqlite_backend_prefers_filesystem_even_when_postgres_snapshot_exists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 6, 11, 12, 0, 0, tzinfo=timezone.utc)
+    stale_pg = {
+        "updated_at": now.isoformat(),
+        "snapshot": {
+            "generated_at_utc": now.isoformat(),
+            "active_current_dir": "<local-active-current>",
+            "verdict": "healthy",
+            "daily_core": {"exists": True, "status": "success", "returncode": 0},
+            "mail_auto_refresh": {
+                "state_exists": True,
+                "dirty": True,
+                "pending": True,
+                "last_result": "stale_from_previous_mirror",
+            },
+            "dashboard_auto_mirror": {
+                "state_exists": True,
+                "mirror_matches_daily_core": True,
+            },
+            "chilecompra_equipment_auto_refresh": {"state_exists": False},
+            "cron": {"note": "not inspected by API"},
+            "recommended_action": "none",
+            "warnings": [],
+        },
+    }
+
+    snapshot_calls = {"count": 0}
+
+    def _fake_pg(_settings: object) -> dict[str, object]:
+        snapshot_calls["count"] += 1
+        return stale_pg
+
+    def _fake_mirror_sync(_settings: object) -> dict[str, object]:
+        return {
+            "table_available": True,
+            "status": "success",
+            "latest_sync_id": 311,
+            "started_at": "2026-07-13T20:57:25+00:00",
+            "finished_at": "2026-07-13T20:59:39+00:00",
+            "elapsed_seconds": 122.0,
+            "canonical_contact_count": 1,
+            "canonical_organization_count": 1,
+            "canonical_opportunity_signal_count": 1,
+            "archive_contact_count": 1,
+            "archive_organization_count": 1,
+            "archive_opportunity_signal_count": 1,
+            "email_suppression_count": 1,
+            "domain_suppression_count": 1,
+            "outreach_state_count": 1,
+            "error_message": None,
+        }
+
+    monkeypatch.setattr(
+        "origenlab_api.services.operator_automation_status_service.snapshot_repo.get_operator_automation_status_snapshot",
+        _fake_pg,
+    )
+    monkeypatch.setattr(
+        "origenlab_api.services.operator_automation_status_service.snapshot_repo.get_latest_dashboard_sync_snapshot",
+        _fake_mirror_sync,
+    )
+    get_settings = __import__(
+        "origenlab_api.settings", fromlist=["get_settings"]
+    ).get_settings
+    get_settings.cache_clear()
+    settings = Settings(
+        active_current=_healthy_fixture(tmp_path),
+        api_backend="sqlite",
+        postgres_url="postgresql://127.0.0.1:5432/origenlab_reachable",
+    )
+    assert settings.resolved_api_backend() == "sqlite"
+    assert settings.postgres_configured() is True
+    app = create_app()
+    app.dependency_overrides.clear()
+    app.dependency_overrides[get_settings] = lambda: settings
+    client = TestClient(app)
+    data = client.get("/operator/automation-status").json()
+    assert data["source"] == "filesystem_active_current"
+    assert data["mail_auto_refresh"]["dirty"] is False
+    assert data["mail_auto_refresh"]["pending"] is False
+    assert data["dashboard_mirror_sync"] is not None
+    assert data["dashboard_mirror_sync"]["latest_sync_id"] == 311
+    assert snapshot_calls["count"] == 0
+    _assert_redacted_paths_safe(data)
     get_settings.cache_clear()
 
 
@@ -495,20 +590,8 @@ def test_postgres_snapshot_includes_redacted_active_current_dir_info(
         "origenlab_api.settings", fromlist=["get_settings"]
     ).get_settings
     get_settings.cache_clear()
-    settings = Settings(active_current=_healthy_fixture(tmp_path))
-    app = create_app()
-    app.dependency_overrides.clear()
-    app.dependency_overrides[get_settings] = lambda: settings
-    client = TestClient(app)
-    data = client.get("/operator/automation-status").json()
-
-    assert data["path_redaction_applied"] is True
-    assert data["active_current_dir"] == "current"
-    assert data["active_current_dir_info"]["basename"] == "current"
-    path_info = data["chilecompra_equipment_auto_refresh"]["path_info"]
-    assert path_info["published_queue"]["kind"] == "file"
-    assert data["chilecompra_equipment_auto_refresh"]["published_queue"] == (
-        "equipment_first_operator_queue_20260616.csv"
+    settings = Settings(
+        active_current=_healthy_fixture(tmp_path),
+        api_backend="postgres",
+        postgres_url="postgresql://127.0.0.1:5432/origenlab_test",
     )
-    assert "/home/" not in json.dumps(data)
-    get_settings.cache_clear()

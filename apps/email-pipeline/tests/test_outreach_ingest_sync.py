@@ -86,10 +86,11 @@ def test_scan_batch_finds_bounce_mention(tmp_path) -> None:
         ) VALUES (
           'gmail:contacto@origenlab.cl/INBOX', 'INBOX', '<ndr1>', 'Undeliverable',
           'Mail Delivery Subsystem <mailer-daemon@googlemail.com>', 'contacto@origenlab.cl',
-          '', '2026-04-10T12:00:00Z',
+          '', ?,
           '550 5.1.1 baduser@lab.cl does not exist', 0, 0
         )
-        """
+        """,
+        (_utc_iso_days_ago(5),),
     )
     conn.commit()
 

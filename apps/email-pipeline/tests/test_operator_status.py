@@ -169,6 +169,8 @@ def test_build_operator_status_report_minimal_sqlite(tmp_path: Path) -> None:
     )
     assert report.sqlite_exists
     assert report.sent.get("canonical_sent_row_count") == 1
+    assert "comparison_note" in report.sent
+    assert "canonical_sent_distinct_message_id_count" in report.sent
     assert "test warning from manifest" in report.warnings
     assert report.auxiliary_files["do_not_repeat_master.csv"]["exists"] is True
     assert report.verdict in ("READY", "CAUTION", "BLOCKED")
@@ -271,7 +273,7 @@ def test_operator_status_against_repo_manifest() -> None:
         sent_folders=("[Gmail]/Enviados",),
     )
     assert report.postgres.get("status") in ("parked", "available")
-    assert report.api.get("status") == "parked"
+    assert report.api.get("status") == "active"
     fastlab_warnings = [w for w in report.warnings if "fastlab" in w.lower()]
     assert len(fastlab_warnings) == 1
     assert "corrected to not_contacted" in fastlab_warnings[0]
