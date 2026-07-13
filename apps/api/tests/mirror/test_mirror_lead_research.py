@@ -416,6 +416,28 @@ def test_mirror_export_csv_safe_constant_filename(lead_mirror_client: TestClient
     assert "passwd" not in disposition
 
 
+@pytest.mark.parametrize(
+    ("params", "message_fragment"),
+    [
+        ({"export_queue": "../../etc/passwd"}, "invalid export_queue"),
+        (
+            {"export_queue": "all_visible", "commercial_action_bucket": "../../etc/passwd"},
+            "invalid commercial_action_bucket",
+        ),
+    ],
+)
+def test_mirror_export_csv_rejects_invalid_export_filters(
+    lead_mirror_client: TestClient,
+    params: dict[str, str],
+    message_fragment: str,
+) -> None:
+    r = lead_mirror_client.get("/mirror/leads/prospects/export.csv", params=params)
+    assert r.status_code == 422
+    body = r.json()
+    assert body["error"]["code"] == "validation_error"
+    assert message_fragment in body["error"]["message"]
+
+
 def test_mirror_export_csv_sanitizes_formula_injection(lead_mirror_client: TestClient) -> None:
     r = lead_mirror_client.get(
         "/mirror/leads/prospects/export.csv",
