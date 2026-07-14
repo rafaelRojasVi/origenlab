@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Scan emails.sqlite for Tatiana/Vivanco signals (headers + bodies) — discovery, not a label."""
+"""Scan emails.sqlite for Tatiana/Vivanco signals (headers + bodies) — discovery, not a label.
+
+Stdout is aggregate-only: counts and From-address *domain* tallies. Raw email
+addresses, display names, message bodies, subjects, and hashed identifiers are
+never printed (CodeQL alert #20 / py/clear-text-logging-sensitive-data).
+"""
 
 from __future__ import annotations
 
 import argparse
-import hashlib
-import re
 import sqlite3
 import sys
 from collections import Counter
@@ -28,26 +31,6 @@ from origenlab_email_pipeline.tatiana_voice_cohort import (
     trusted_domains_for_identity_mentions,
 )
 
-_EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\w")
-
-
-def _short_hash(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:10]
-
-
-def redact_identity_text(text: str, *, max_len: int = 120) -> str:
-    """Remove raw emails and truncate for safe stdout."""
-    redacted = _EMAIL_RE.sub("<email:redacted>", text)
-    if len(redacted) > max_len:
-        return redacted[: max_len - 1] + "…"
-    return redacted
-
-
-def format_redacted_sender_sample(sender: str) -> str:
-    pe = primary_sender_email(sender)
-    domain = domain_of(pe or "") or "(no-address)"
-    return f"from-domain={domain} id={_short_hash(sender)}"
-
 
 @dataclass
 class TatianaAuditStats:
@@ -66,8 +49,6 @@ class TatianaAuditStats:
     domain_trusted_identity: Counter[str]
     domain_tatiana_in_from: Counter[str]
     domain_vivanco_in_from: Counter[str]
-    sender_samples_t: list[str]
-    sender_samples_v: list[str]
 
 
 def scan_tatiana_identity_signals(conn: sqlite3.Connection) -> TatianaAuditStats:
@@ -94,8 +75,6 @@ def scan_tatiana_identity_signals(conn: sqlite3.Connection) -> TatianaAuditStats
     domain_trusted_identity: Counter[str] = Counter()
     domain_tatiana_in_from: Counter[str] = Counter()
     domain_vivanco_in_from: Counter[str] = Counter()
-    sender_samples_t: list[str] = []
-    sender_samples_v: list[str] = []
 
     for batch in iter_sqlite_email_batches_with_progress(
         conn, cur, desc="Audit Tatiana/Vivanco signals"
@@ -121,15 +100,11 @@ def scan_tatiana_identity_signals(conn: sqlite3.Connection) -> TatianaAuditStats
                 pe = primary_sender_email(sender)
                 dtf = domain_of(pe or "") or "(no address)"
                 domain_tatiana_in_from[dtf] += 1
-                if len(sender_samples_t) < 8:
-                    sender_samples_t.append(sender)
             if v_in_s:
                 hit_sender_v += 1
                 pev = primary_sender_email(sender)
                 dvf = domain_of(pev or "") or "(no address)"
                 domain_vivanco_in_from[dvf] += 1
-                if len(sender_samples_v) < 8:
-                    sender_samples_v.append(sender)
             if t_in_sub:
                 hit_subj_t += 1
             if v_in_sub:
@@ -172,8 +147,6 @@ def scan_tatiana_identity_signals(conn: sqlite3.Connection) -> TatianaAuditStats
         domain_trusted_identity=domain_trusted_identity,
         domain_tatiana_in_from=domain_tatiana_in_from,
         domain_vivanco_in_from=domain_vivanco_in_from,
-        sender_samples_t=sender_samples_t,
-        sender_samples_v=sender_samples_v,
     )
 
 
@@ -181,8 +154,8 @@ def render_audit_report(
     stats: TatianaAuditStats,
     *,
     trusted_domain_count: int,
-    sample_limit: int,
 ) -> str:
+    """Build an aggregate-only stdout report (no per-message identity samples)."""
     lines: list[str] = []
     lines.append(f"Rows scanned: {stats.rows_scanned:,}")
     lines.append(f"Trusted sender domain count (internal ∪ voice): {trusted_domain_count}")
@@ -216,26 +189,27 @@ def render_audit_report(
         for dom, c in stats.domain_trusted_identity.most_common(15):
             lines.append(f"    {dom}: {c:,}")
     lines.append("")
-    if stats.sender_samples_t:
-        lines.append(f"Sample From headers mentioning Tatiana (up to {sample_limit}, redacted):")
-        for s in stats.sender_samples_t[:sample_limit]:
-            lines.append(f"  {format_redacted_sender_sample(s)}")
-    if stats.sender_samples_v:
-        lines.append(f"Sample From headers mentioning Vivanco (up to {sample_limit}, redacted):")
-        for s in stats.sender_samples_v[:sample_limit]:
-            lines.append(f"  {format_redacted_sender_sample(s)}")
-    lines.append("")
     lines.append(
         "Note: client replies often say “Hola Tatiana” in body; those usually have "
         "external From domains and are not counted as trusted-domain signature hits."
+    )
+    lines.append(
+        "Privacy: stdout reports aggregate counts and domains only; "
+        "raw From headers, subjects, bodies, and hashed identifiers are never printed."
     )
     return "\n".join(lines)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--sample", type=int, default=8, help="redacted examples per category (stdout)")
+    ap.add_argument(
+        "--sample",
+        type=int,
+        default=8,
+        help="ignored (identity samples are never printed; kept for CLI compatibility)",
+    )
     args = ap.parse_args()
+    _ = args.sample  # accepted, unused
 
     settings = load_settings()
     db_path = settings.resolved_sqlite_path()
@@ -256,7 +230,6 @@ def main() -> None:
         render_audit_report(
             stats,
             trusted_domain_count=len(trusted),
-            sample_limit=args.sample,
         )
     )
 
