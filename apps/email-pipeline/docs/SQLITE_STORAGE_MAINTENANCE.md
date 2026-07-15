@@ -20,13 +20,33 @@ A freelist on the order of tens of GiB can accumulate after large rebuilds, feat
 
 ## 3. Why the live database should not be VACUUMed now
 
-`VACUUM` rewrites the database and can require approximately as much temporary free disk as the live file size (standard VACUUM), while also taking exclusive access and interrupting operator workloads. With a ~127.5 GiB file and roughly 208 GiB free disk, a live VACUUM is an unnecessary production risk relative to the benefit of reclaiming freelist space that SQLite can already reuse.
+SQLite documents that a **standard** `VACUUM` may require temporary free disk
+space **up to twice the original database-file size** while rewriting the file,
+and it takes exclusive access that interrupts operator workloads.
 
-**Never** run `VACUUM`, `VACUUM INTO`, `incremental_vacuum`, `REINDEX`, `ANALYZE`, `dbstat` scans against production, `wal_checkpoint`, or schema/page-size changes without an explicit offline plan.
+For the current production baseline of **127.4941 GiB**, that conservative
+temporary-space figure is about **254.99 GiB** *before* any additional safety
+margin. Observed free space around **207.25 GiB** is **below** that bound, so a
+live VACUUM is unsafe even before considering runtime disruption. Freelist
+space remains reusable inside the file without compaction.
 
-## 4. Standard VACUUM headroom risk
+**Never** run `VACUUM`, `VACUUM INTO`, `incremental_vacuum`, `REINDEX`, `ANALYZE`,
+`dbstat` scans against production, `wal_checkpoint`, or schema/page-size changes
+without an explicit offline plan. Live VACUUM is hard-prohibited under current
+capacity.
 
-Classic `VACUUM` builds a rewritten copy. Operators should assume they need **free headroom on the order of the database size** (plus safety margin) before attempting compaction on any copy or cutover candidate. Insufficient headroom is a hard stop.
+## 4. Standard VACUUM headroom vs `VACUUM INTO` destination capacity
+
+Classic (standard) `VACUUM` rewrites in place and may need **up to ~2× the live
+database file size** as temporary free space on the same volume (see §3). That
+temporary headroom requirement is distinct from `VACUUM INTO`, which writes a
+compacted result to an **approved destination** on (usually) separate storage
+and therefore needs destination capacity sized for the compacted output plus
+safety margin—not the same “twice the live file as scratch space on the live
+volume” rule.
+
+Insufficient standard-VACUUM temporary headroom is a hard stop. Do not confuse
+that with destination sizing for a future `VACUUM INTO` of a verified copy.
 
 ## 5. `auto_vacuum` limits on an existing database
 
