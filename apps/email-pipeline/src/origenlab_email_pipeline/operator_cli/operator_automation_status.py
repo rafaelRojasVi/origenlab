@@ -476,6 +476,15 @@ def build_operator_automation_status(
         "lock_age_seconds": chilecompra_lock_age,
         "last_result": chilecompra_state.last_result if chilecompra_state else None,
         "last_successful_refresh_at": chilecompra_last_successful_refresh_at,
+        "last_successful_refresh_started_at": (
+            chilecompra_state.last_successful_refresh_started_at if chilecompra_state else None
+        ),
+        "last_successful_scheduled_slot_at": (
+            chilecompra_state.last_successful_scheduled_slot_at if chilecompra_state else None
+        ),
+        "cadence_anchor_kind": (
+            chilecompra_state.cadence_anchor_kind if chilecompra_state else None
+        ),
         "last_successful_publish_at": (
             chilecompra_state.last_successful_publish_at if chilecompra_state else None
         ),
@@ -740,6 +749,9 @@ def format_operator_automation_status_text(report: dict[str, Any]) -> str:
         "lock_age_seconds",
         "last_result",
         "last_successful_refresh_at",
+        "last_successful_refresh_started_at",
+        "last_successful_scheduled_slot_at",
+        "cadence_anchor_kind",
         "last_successful_publish_at",
         "last_run_started_at",
         "last_run_finished_at",

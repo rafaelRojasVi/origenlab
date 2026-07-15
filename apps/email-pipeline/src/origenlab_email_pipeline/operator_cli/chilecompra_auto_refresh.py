@@ -5,9 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 from origenlab_email_pipeline.chilecompra_api import (
     ChileCompraTicketMissingError,
@@ -41,11 +42,24 @@ from origenlab_email_pipeline.operator_cli.mirror import postgres_url_configured
 
 STATE_FILENAME = "chilecompra_equipment_auto_refresh_state.json"
 LOCK_FILENAME = "chilecompra_equipment_auto_refresh.lock"
-STATE_SCHEMA_VERSION = 1
+STATE_SCHEMA_VERSION = 2
 STALE_LOCK_SECONDS = 2 * 60 * 60
 DEFAULT_COOLDOWN_SECONDS = 7200
 DEFAULT_MAX_DETAILS = 50
 DEFAULT_DETAIL_SLEEP_SECONDS = 3.0
+
+# Canonical daytime cron slots (host crontab: ``12 8-20/2 * * *``).
+CHILECOMPRA_SCHEDULE_TZ = ZoneInfo("America/Santiago")
+CHILECOMPRA_SCHEDULE_HOURS = (8, 10, 12, 14, 16, 18, 20)
+CHILECOMPRA_SCHEDULE_MINUTE = 12
+# Cron/process may start up to this many seconds after :12 and still snap to that slot.
+# With this tolerance, actual start-to-start spacing can be up to five minutes shorter
+# than the nominal ``cooldown_seconds`` slot interval.
+CHILECOMPRA_SLOT_START_TOLERANCE_SECONDS = 300
+CHILECOMPRA_SLOT_PREEMPT_TOLERANCE_SECONDS = 60
+
+CADENCE_KIND_SCHEDULED_SLOT = "scheduled_slot"
+CADENCE_KIND_WALL_CLOCK = "wall_clock"
 
 BuildQueueFn = Callable[..., tuple[list[dict[str, str]], dict[str, Any], list[dict[str, str]]]]
 PublishQueueFn = Callable[..., dict[str, Any]]
@@ -76,6 +90,9 @@ class ChilecompraEquipmentAutoRefreshState:
     last_run_started_at: str | None = None
     last_run_finished_at: str | None = None
     last_successful_refresh_at: str | None = None
+    last_successful_refresh_started_at: str | None = None
+    last_successful_scheduled_slot_at: str | None = None
+    cadence_anchor_kind: str | None = None
     last_successful_publish_at: str | None = None
     last_successful_read_model_publish_at: str | None = None
     consecutive_failures: int = 0
@@ -162,6 +179,115 @@ def _parse_iso(ts: str | None) -> datetime | None:
     return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
 
+def _ensure_aware_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _to_schedule_local(dt: datetime) -> datetime:
+    return _ensure_aware_utc(dt).astimezone(CHILECOMPRA_SCHEDULE_TZ)
+
+
+def _local_slot(day: date, hour: int) -> datetime:
+    """Build a Santiago-local canonical slot (DST-safe via ZoneInfo)."""
+    return datetime(
+        day.year,
+        day.month,
+        day.day,
+        hour,
+        CHILECOMPRA_SCHEDULE_MINUTE,
+        tzinfo=CHILECOMPRA_SCHEDULE_TZ,
+    )
+
+
+def chilecompra_scheduled_slots_for_local_day(day: date) -> list[datetime]:
+    return [_local_slot(day, hour) for hour in CHILECOMPRA_SCHEDULE_HOURS]
+
+
+def next_chilecompra_scheduled_slot(at: datetime) -> datetime:
+    """Return the first canonical slot at or after ``at``, as UTC."""
+    local = _to_schedule_local(at)
+    day = local.date()
+    for _ in range(0, 4):  # today .. +3 days covers weekend edge cases
+        for slot_local in chilecompra_scheduled_slots_for_local_day(day):
+            if slot_local >= local:
+                return slot_local.astimezone(timezone.utc)
+        day = day + timedelta(days=1)
+    raise RuntimeError("unable to resolve next ChileCompra scheduled slot")
+
+
+def previous_chilecompra_scheduled_slot_at_or_before(at: datetime) -> datetime | None:
+    """Return the latest canonical slot at or before ``at``, as UTC (or None)."""
+    local = _to_schedule_local(at)
+    day = local.date()
+    for _ in range(0, 4):
+        slots = chilecompra_scheduled_slots_for_local_day(day)
+        for slot_local in reversed(slots):
+            if slot_local <= local:
+                return slot_local.astimezone(timezone.utc)
+        day = day - timedelta(days=1)
+    return None
+
+
+def resolve_chilecompra_cadence_anchor(
+    started_at: datetime,
+) -> tuple[datetime, str, datetime | None]:
+    """Snap a successful start to a canonical slot when within cron startup tolerance.
+
+    Returns ``(cadence_anchor_utc, cadence_kind, scheduled_slot_utc_or_none)``.
+    """
+    started_utc = _ensure_aware_utc(started_at)
+    # Candidate: previous/equal slot if we started slightly after :12.
+    prior = previous_chilecompra_scheduled_slot_at_or_before(started_utc)
+    if prior is not None:
+        lag = (started_utc - prior).total_seconds()
+        if 0 <= lag <= CHILECOMPRA_SLOT_START_TOLERANCE_SECONDS:
+            return prior, CADENCE_KIND_SCHEDULED_SLOT, prior
+    # Candidate: next slot if we started slightly early (clock skew).
+    upcoming = next_chilecompra_scheduled_slot(started_utc)
+    lead = (upcoming - started_utc).total_seconds()
+    if 0 < lead <= CHILECOMPRA_SLOT_PREEMPT_TOLERANCE_SECONDS:
+        return upcoming, CADENCE_KIND_SCHEDULED_SLOT, upcoming
+    return started_utc, CADENCE_KIND_WALL_CLOCK, None
+
+
+def compute_chilecompra_next_recommended_run_at(
+    *,
+    cadence_anchor: datetime,
+    finished_at: datetime,
+    cooldown_seconds: int,
+) -> datetime:
+    """First canonical slot at or after max(anchor+cooldown, finish)."""
+    anchor = _ensure_aware_utc(cadence_anchor)
+    finished = _ensure_aware_utc(finished_at)
+    earliest = max(anchor + timedelta(seconds=int(cooldown_seconds)), finished)
+    return next_chilecompra_scheduled_slot(earliest)
+
+
+def apply_successful_chilecompra_cadence(
+    state: ChilecompraEquipmentAutoRefreshState,
+    *,
+    started_at: datetime,
+    finished_at: datetime,
+    cooldown_seconds: int,
+) -> None:
+    """Update success cadence fields after a successful refresh (mutates ``state``)."""
+    anchor, kind, slot = resolve_chilecompra_cadence_anchor(started_at)
+    state.schema_version = STATE_SCHEMA_VERSION
+    state.last_successful_refresh_at = _iso_now(finished_at)
+    state.last_successful_refresh_started_at = _iso_now(started_at)
+    state.last_successful_scheduled_slot_at = _iso_now(slot) if slot is not None else None
+    state.cadence_anchor_kind = kind
+    state.next_recommended_run_at = _iso_now(
+        compute_chilecompra_next_recommended_run_at(
+            cadence_anchor=anchor,
+            finished_at=finished_at,
+            cooldown_seconds=cooldown_seconds,
+        )
+    )
+
+
 def _seconds_since(ts: str | None, now: datetime) -> float | None:
     parsed = _parse_iso(ts)
     if parsed is None:
@@ -211,15 +337,30 @@ def evaluate_chilecompra_equipment_auto_refresh(
         )
 
     if not options.force:
-        elapsed = _seconds_since(state.last_successful_refresh_at, now)
-        if elapsed is not None and elapsed < options.cooldown_seconds:
-            remaining = int(options.cooldown_seconds - elapsed)
-            return ChilecompraEquipmentAutoRefreshResult(
-                reason="cooldown",
-                should_run=False,
-                extra={"cooldown_remaining_seconds": str(remaining)},
-                **base,
-            )
+        now_utc = _ensure_aware_utc(now)
+        next_due = _parse_iso(state.next_recommended_run_at)
+        if next_due is not None:
+            next_due_utc = _ensure_aware_utc(next_due)
+            # Exact due timestamp is eligible (now >= next_due → ready).
+            if now_utc < next_due_utc:
+                remaining = max(0, int((next_due_utc - now_utc).total_seconds()))
+                return ChilecompraEquipmentAutoRefreshResult(
+                    reason="cooldown",
+                    should_run=False,
+                    extra={"cooldown_remaining_seconds": str(remaining)},
+                    **base,
+                )
+        else:
+            # Legacy fallback for older state files that only store completion time.
+            elapsed = _seconds_since(state.last_successful_refresh_at, now_utc)
+            if elapsed is not None and elapsed < options.cooldown_seconds:
+                remaining = int(options.cooldown_seconds - elapsed)
+                return ChilecompraEquipmentAutoRefreshResult(
+                    reason="cooldown",
+                    should_run=False,
+                    extra={"cooldown_remaining_seconds": str(remaining)},
+                    **base,
+                )
 
     return ChilecompraEquipmentAutoRefreshResult(
         reason="ready",
@@ -494,9 +635,12 @@ def run_chilecompra_equipment_auto_refresh(
 
             finished = (now_fn or (lambda: datetime.now(timezone.utc)))()
             state.last_run_finished_at = _iso_now(finished)
-            state.last_successful_refresh_at = state.last_run_finished_at
-            state.next_recommended_run_at = _iso_now(
-                finished + timedelta(seconds=options.cooldown_seconds)
+            started = _parse_iso(state.last_run_started_at) or now
+            apply_successful_chilecompra_cadence(
+                state,
+                started_at=started,
+                finished_at=finished,
+                cooldown_seconds=options.cooldown_seconds,
             )
             state.consecutive_failures = 0
             state.last_result = "refreshed"
@@ -590,8 +734,22 @@ def parse_chilecompra_equipment_auto_refresh_args(
         default=True,
         help="Publish typed Postgres equipment read model directly from ChileCompra rows (default: true)",
     )
-    parser.add_argument("--force", action="store_true", help="Bypass cooldown gate")
-    parser.add_argument("--cooldown-seconds", type=int, default=DEFAULT_COOLDOWN_SECONDS)
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Bypass the scheduled-slot cadence / cooldown gate",
+    )
+    parser.add_argument(
+        "--cooldown-seconds",
+        type=int,
+        default=DEFAULT_COOLDOWN_SECONDS,
+        help=(
+            "Nominal scheduled-slot interval in seconds used when computing the next "
+            "canonical slot after a successful apply (default: 7200). With the "
+            f"{CHILECOMPRA_SLOT_START_TOLERANCE_SECONDS}s startup snap tolerance, "
+            "actual start-to-start spacing may be up to five minutes shorter."
+        ),
+    )
     ns = parser.parse_args(argv)
     if not ns.once:
         parser.error("--once is required")
