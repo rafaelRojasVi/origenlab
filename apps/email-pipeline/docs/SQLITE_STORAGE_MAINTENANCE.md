@@ -84,20 +84,21 @@ Planned operator destination directory (create only when ready to back up; this 
 
 Behavior of `backup_sqlite_online.py`:
 
-- Default is **preflight only** (reports basenames, sizes, free capacity, FS separation, planned batch settings). No lock/partial/backup/manifest.
+- Default is **preflight only**: `stat` + read-only SQLite **header parse** (no `sqlite3.connect()` on the live source). Reports page size/count from the header; freelist/schema/table metadata are `not_assessed_until_apply`. No lock directory, no destination artifacts, and no source WAL/SHM creation from preflight.
 - `--apply` required to create lock, `.partial`, backup, or completed manifest
 - Uses `sqlite3.Connection.backup()` only — **never** plain `cp` / `rsync` of a live WAL database
-- Opens source with URI `mode=ro`
+- Opens source with URI `mode=ro` only under `--apply`
 - Requires explicit `--source` and `--destination`; destination must not already exist
 - Writes via script-owned `.partial` (+ companions cleaned on failure); file fsync mandatory
-- Completion = final DB **and** completed final `.manifest.json` (manifest rename is the completion marker)
-- Crash window: final DB without final completed manifest is an **orphan** — next run refuses overwrite; cleanup must be explicit (never silently treated as completed)
-- Directory fsync may be unsupported on some mounts (e.g. `/mnt/d` 9p); recorded as a durability warning, not a reason to delete a verified backup
+- **Publication** is same-filesystem hard-link no-clobber (`os.link(partial, final)` → `unlink(partial)`); fails safely on `EEXIST` so neither final DB nor final manifest can overwrite a path created after preflight. Equivalent for the manifest. If the destination FS cannot hard-link, `--apply` fails **before** the long copy rather than weakening overwrite protection.
+- Completion = final DB **and** completed final `.manifest.json` (manifest hard-link publish is the completion marker)
+- Crash window: final DB without final completed manifest is an **orphan** — next run refuses overwrite; cleanup must be explicit (never silently treated as completed). Partial artifacts from a failed run are cleaned; a pre-existing final left by a race is left for operator review (orphan policy).
+- Directory open/fsync may be unsupported on some mounts (e.g. `/mnt/d` 9p / DrvFS); recorded as a durability warning (including post-publish warnings surfaced on the return value / stderr). File fsync remains mandatory.
 - Refuses source/destination aliases (`samefile` / resolve)
 - By default refuses same-filesystem destinations (`--allow-same-filesystem` for tests/emergencies only)
 - Checks destination free space (source size + conservative margin) before starting
 - Default `--pages-per-batch 4096` (positive/configurable); time-based progress + guaranteed final 100%
-- Concurrent backup lock; SIGINT/SIGTERM abort never publishes an incomplete completed pair
+- Concurrent backup lock (lock FD closed on every flock `OSError`); SIGINT/SIGTERM abort never publishes an incomplete completed pair
 - Writes a sanitized JSON `.manifest.json` (basenames only; no mailbox content / absolute paths)
 - Cheap destination verification only (header, `query_only`, page/freelist/schema inventory)
 - Does **not** run `integrity_check`, `dbstat`, duplicate analysis, `VACUUM`, or the deep audit

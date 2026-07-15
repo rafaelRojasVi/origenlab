@@ -182,14 +182,45 @@ def required_capacity_bytes(
 
 
 def assert_sqlite_header(path: Path) -> None:
-    if not path.is_file() or path.stat().st_size < 16:
-        raise BackupError(f"source is not a readable SQLite file: {sanitize_path_for_log(path)}")
+    parse_sqlite_header_meta(path)  # raises BackupError if invalid
+
+
+def parse_sqlite_header_meta(path: Path) -> dict[str, Any]:
+    """
+    Read-only SQLite header parse (no sqlite3.connect).
+
+    Page size / page count come from the DB header. Freelist/schema/table
+    fields are marked not_assessed_until_apply.
+    """
+    if not path.is_file() or path.stat().st_size < 100:
+        raise BackupError(
+            f"source is not a readable SQLite file: {sanitize_path_for_log(path)}"
+        )
     with path.open("rb") as handle:
-        magic = handle.read(16)
-    if not magic.startswith(b"SQLite format 3\x00"):
+        header = handle.read(100)
+    if not header.startswith(b"SQLite format 3\x00"):
         raise BackupError(
             f"source header is not SQLite format 3: {sanitize_path_for_log(path)}"
         )
+    page_size_raw = int.from_bytes(header[16:18], "big")
+    page_size = 65536 if page_size_raw == 1 else page_size_raw
+    if page_size < 512 or (page_size & (page_size - 1)) != 0:
+        raise BackupError(
+            f"invalid SQLite header page_size for {sanitize_path_for_log(path)}"
+        )
+    page_count = int.from_bytes(header[28:32], "big")
+    return {
+        "page_size": page_size,
+        "page_count": page_count,
+        "allocated_bytes_estimate": page_size * page_count,
+        "freelist_count": "not_assessed_until_apply",
+        "schema_version": "not_assessed_until_apply",
+        "user_version": "not_assessed_until_apply",
+        "journal_mode": "not_assessed_until_apply",
+        "table_count": "not_assessed_until_apply",
+        "tables": "not_assessed_until_apply",
+        "assessment": "sqlite_header_only",
+    }
 
 
 def connect_source_readonly(path: Path, *, busy_timeout_ms: int) -> sqlite3.Connection:
@@ -350,16 +381,23 @@ class BackupLock:
         self._fh = open(self.path, "a+", encoding="utf-8")
         try:
             fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            # Close handle before raising so lock-contention leaves no leaked FD/handler state.
+        except OSError as exc:
+            # Close handle for every flock OSError (Busy + other failures).
             try:
                 self._fh.close()
             finally:
                 self._fh = None
+            if isinstance(exc, BlockingIOError) or getattr(exc, "errno", None) in {
+                errno.EWOULDBLOCK,
+                errno.EAGAIN,
+            }:
+                raise BackupError(
+                    "another sqlite online backup appears to be running "
+                    f"(lock={sanitize_path_for_log(self.path)})"
+                ) from None
             raise BackupError(
-                "another sqlite online backup appears to be running "
-                f"(lock={sanitize_path_for_log(self.path)})"
-            ) from exc
+                f"failed to acquire backup lock (errno={getattr(exc, 'errno', None)})"
+            ) from None
         self.acquired = True
         self._fh.seek(0)
         self._fh.truncate()
@@ -385,15 +423,31 @@ def fsync_file(path: Path) -> None:
 
 def fsync_directory(path: Path, *, dir_fsync: Callable[[int], None] | None = None) -> dict[str, Any]:
     """
-    Attempt directory fsync. EINVAL/ENOTSUP (e.g. some 9p mounts) become durability warnings.
+    Attempt directory fsync. Unsupported open/fsync (DrvFS/9p EINVAL/ENOTSUP) → warning.
     """
     fn = dir_fsync or os.fsync
-    dir_fd = os.open(str(path), os.O_RDONLY)
+    unsupported = {
+        errno.EINVAL,
+        errno.ENOTSUP,
+        getattr(errno, "EOPNOTSUPP", errno.ENOTSUP),
+    }
+    try:
+        dir_fd = os.open(str(path), os.O_RDONLY)
+    except OSError as exc:
+        if exc.errno in unsupported:
+            return {
+                "directory_fsync_supported": False,
+                "directory_fsync_warning": (
+                    f"directory open/fsync unsupported on this filesystem "
+                    f"(errno={exc.errno}); file fsync still required and performed"
+                ),
+            }
+        raise BackupError(f"directory open for fsync failed: errno={exc.errno}") from None
     try:
         fn(dir_fd)
         return {"directory_fsync_supported": True, "directory_fsync_warning": None}
     except OSError as exc:
-        if exc.errno in {errno.EINVAL, errno.ENOTSUP, getattr(errno, "EOPNOTSUPP", errno.ENOTSUP)}:
+        if exc.errno in unsupported:
             return {
                 "directory_fsync_supported": False,
                 "directory_fsync_warning": (
@@ -404,6 +458,78 @@ def fsync_directory(path: Path, *, dir_fsync: Callable[[int], None] | None = Non
         raise BackupError(f"directory fsync failed: errno={exc.errno}") from None
     finally:
         os.close(dir_fd)
+
+
+def probe_hardlink_no_clobber_supported(dest_parent: Path) -> None:
+    """Fail before a long backup if destination FS cannot hard-link publish."""
+    stamp = f"{os.getpid()}_{time.time_ns()}"
+    probe_a = dest_parent / f".origenlab_hl_probe_{stamp}.a"
+    probe_b = dest_parent / f".origenlab_hl_probe_{stamp}.b"
+    try:
+        fd = os.open(str(probe_a), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            os.write(fd, b"x")
+        finally:
+            os.close(fd)
+        os.link(probe_a, probe_b)
+    except OSError as exc:
+        raise BackupError(
+            "destination filesystem does not support atomic hard-link no-clobber "
+            f"publication (errno={getattr(exc, 'errno', None)}); refusing to weaken "
+            "overwrite protection"
+        ) from None
+    finally:
+        for path in (probe_b, probe_a):
+            try:
+                if path.exists():
+                    path.unlink()
+            except OSError:
+                pass
+
+
+def publish_no_clobber(src: Path, dest: Path) -> None:
+    """
+    Atomically publish ``src`` to ``dest`` without replacing an existing destination.
+
+    Same-filesystem hard-link: os.link(src, dest) then unlink(src).
+    Fails safely with EEXIST if ``dest`` already exists.
+    """
+    try:
+        os.link(src, dest)
+    except FileExistsError:
+        raise BackupError(
+            f"no-clobber publication refused: destination already exists "
+            f"({sanitize_path_for_log(dest)})"
+        ) from None
+    except OSError as exc:
+        if exc.errno == errno.EEXIST:
+            raise BackupError(
+                f"no-clobber publication refused: destination already exists "
+                f"({sanitize_path_for_log(dest)})"
+            ) from None
+        if exc.errno in {
+            errno.EPERM,
+            errno.EACCES,
+            errno.EXDEV,
+            errno.ENOSYS,
+            errno.ENOTSUP,
+            getattr(errno, "EOPNOTSUPP", errno.ENOTSUP),
+        }:
+            raise BackupError(
+                "destination filesystem rejected hard-link no-clobber publication "
+                f"(errno={exc.errno})"
+            ) from None
+        raise BackupError(
+            f"hard-link publication failed (errno={getattr(exc, 'errno', None)})"
+        ) from None
+    try:
+        src.unlink()
+    except OSError as exc:
+        # Dest is published (extra link). Leaving src name is undesirable but dest is safe.
+        raise BackupError(
+            f"published destination but failed to unlink partial name "
+            f"(errno={getattr(exc, 'errno', None)}); remove leftover partial explicitly"
+        ) from None
 
 
 def validate_backup_options(options: BackupOptions) -> None:
@@ -478,7 +604,12 @@ def validate_backup_options(options: BackupOptions) -> None:
 
 
 def build_preflight_report(options: BackupOptions) -> dict[str, Any]:
-    """Read-only preflight; performs zero writes (no lock/partial/manifest)."""
+    """
+    Truly zero-write preflight: stat + SQLite header parse only.
+
+    Does not call sqlite3.connect(), create locks, or write destination artifacts.
+    Must not create source WAL/SHM or mutate source metadata.
+    """
     validate_backup_options(options)
     source = options.source
     destination = options.destination
@@ -490,17 +621,13 @@ def build_preflight_report(options: BackupOptions) -> dict[str, Any]:
         margin_min_bytes=options.capacity_margin_min_bytes,
     )
     same_fs = same_filesystem(source, destination)
-    source_meta: dict[str, Any] | None = None
-    conn = connect_source_readonly(source, busy_timeout_ms=min(5_000, options.busy_timeout_ms))
-    try:
-        source_meta = read_cheap_sqlite_meta(conn)
-    finally:
-        conn.close()
+    source_meta = parse_sqlite_header_meta(source)
     return {
         "mode": "preflight",
         "apply": False,
         "completed": False,
         "writes_performed": False,
+        "source_opened_with_sqlite3": False,
         "source_basename": source.name,
         "destination_basename": destination.name,
         "source_size_bytes": source_size,
@@ -512,22 +639,14 @@ def build_preflight_report(options: BackupOptions) -> dict[str, Any]:
         "pages_per_batch": options.pages_per_batch,
         "busy_timeout_ms": options.busy_timeout_ms,
         "progress_interval_seconds": options.progress_interval_seconds,
-        "source_meta": {
-            k: source_meta[k]
-            for k in (
-                "page_size",
-                "page_count",
-                "freelist_count",
-                "schema_version",
-                "user_version",
-                "journal_mode",
-                "table_count",
-            )
-        },
+        "source_meta": source_meta,
         "notes": [
             "Preflight only: no lock, partial, backup, or manifest created.",
+            "Preflight does not call sqlite3.connect(); header parse + filesystem checks only.",
+            "Freelist/schema/table metadata are not_assessed_until_apply.",
             "Re-run with --apply to execute the Online Backup API snapshot.",
             "Completion requires both final DB and completed final manifest.",
+            "Publication uses hard-link no-clobber (EEXIST-safe); never rewrite-replace.",
         ],
     }
 
@@ -599,6 +718,9 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
     try:
         lock.acquire()
         try:
+            # Fail early if dest FS cannot hard-link publish (before multi-hour copy).
+            probe_hardlink_no_clobber_supported(destination.parent)
+
             src_conn = connect_source_readonly(source, busy_timeout_ms=options.busy_timeout_ms)
             source_meta = read_cheap_sqlite_meta(src_conn)
             page_size = int(source_meta["page_size"])
@@ -677,7 +799,7 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
             elapsed = options.clock() - t0
             assert source_meta is not None
             warnings: list[str] = []
-            # Directory fsync of parent (may be unsupported on 9p) — recorded, not fatal.
+            # Directory fsync of parent (may be unsupported on 9p/DrvFS) — recorded, not fatal.
             dir_fsync_info = fsync_directory(
                 partial.parent, dir_fsync=options.dir_fsync
             )
@@ -700,6 +822,7 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
                 "allow_same_filesystem": options.allow_same_filesystem,
                 "python_version": sys.version.split()[0],
                 "sqlite_version": sqlite3.sqlite_version,
+                "publication_method": "hardlink_no_clobber",
                 "directory_fsync_supported": dir_fsync_info.get("directory_fsync_supported"),
                 "warnings": warnings,
                 "source_meta": {
@@ -736,6 +859,7 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
                 "notes": [
                     "Online Backup API snapshot; not a plain cp/rsync of a live WAL database.",
                     "Completed only when final DB and completed final manifest both exist.",
+                    "Publication uses hard-link no-clobber (fails safely on EEXIST).",
                     "Crash window: final DB without final manifest is an orphan requiring explicit cleanup.",
                     "Cheap verification only; integrity_check/dbstat/deep-audit not run.",
                     "Utility opens source with URI mode=ro; concurrent writers may still change source.",
@@ -745,7 +869,7 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
             if privacy:
                 raise BackupError(f"manifest privacy violation: {privacy[:3]}")
 
-            # Write+fsync manifest.partial BEFORE entering finalization rename sequence.
+            # Write+fsync manifest.partial BEFORE entering finalization publish sequence.
             payload = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
             if options.manifest_write_hook is not None:
                 options.manifest_write_hook(manifest_partial, payload)
@@ -753,16 +877,30 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
                 manifest_partial.write_text(payload, encoding="utf-8")
             fsync_file(manifest_partial)
 
-            # --- Finalization: DB rename then manifest rename (completion marker) ---
-            os.rename(partial, destination)
-            published = True  # DB published; crash before manifest rename => orphan
-            os.rename(manifest_partial, manifest_path)
+            # --- Finalization: no-clobber hard-link publish DB, then manifest ---
+            publish_no_clobber(partial, destination)
+            published = True  # DB published; crash before manifest publish => orphan
+            publish_no_clobber(manifest_partial, manifest_path)
 
-            # Best-effort directory fsync after renames; unsupported FS => warning only.
-            post_rename = fsync_directory(destination.parent, dir_fsync=options.dir_fsync)
-            if post_rename.get("directory_fsync_warning"):
-                # Manifest already published; do not rewrite it. Warning already possible earlier.
-                pass
+            # Post-publish directory fsync; unsupported FS warnings must not be discarded.
+            post_publish = fsync_directory(destination.parent, dir_fsync=options.dir_fsync)
+            post_publish_warnings: list[str] = []
+            if post_publish.get("directory_fsync_warning"):
+                post_publish_warnings.append(str(post_publish["directory_fsync_warning"]))
+            if post_publish_warnings:
+                for warning in post_publish_warnings:
+                    sink = options.progress_sink or (lambda s: print(s, file=sys.stderr))
+                    sink(f"post-publish durability warning: {warning}")
+                # Surface on returned object (on-disk manifest already sealed as completion marker).
+                manifest = {
+                    **manifest,
+                    "warnings": [*warnings, *post_publish_warnings],
+                    "post_publish_warnings": post_publish_warnings,
+                    "directory_fsync_supported": (
+                        bool(dir_fsync_info.get("directory_fsync_supported"))
+                        and bool(post_publish.get("directory_fsync_supported"))
+                    ),
+                }
 
             return manifest
         finally:

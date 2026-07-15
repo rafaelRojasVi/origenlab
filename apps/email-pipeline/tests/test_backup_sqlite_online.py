@@ -28,7 +28,9 @@ from origenlab_email_pipeline.qa.sqlite_online_backup import (
     lock_path_for,
     manifest_partial_path_for,
     manifest_path_for,
+    parse_sqlite_header_meta,
     partial_path_for,
+    publish_no_clobber,
     required_capacity_bytes,
     run_online_backup,
     sanitize_error_message,
@@ -126,23 +128,40 @@ def test_preflight_default_performs_zero_writes(synth_dirs: tuple[Path, Path, Pa
     _build_wal_db(source, rows=30)
     before_entries = set(dst_dir.iterdir())
     lock_before = set(lock_dir.iterdir()) if lock_dir.exists() else set()
+    fp_before = fingerprint_file(source)
+    src_names_before = {p.name for p in src_dir.iterdir()}
+    header_meta = parse_sqlite_header_meta(source)
 
-    report = run_online_backup(_opts(source, dest, lock_dir=lock_dir, apply=False))
+    with patch(
+        "origenlab_email_pipeline.qa.sqlite_online_backup.connect_source_readonly",
+        side_effect=AssertionError("preflight must not sqlite3.connect source"),
+    ):
+        report = run_online_backup(_opts(source, dest, lock_dir=lock_dir, apply=False))
 
     assert report["mode"] == "preflight"
     assert report["writes_performed"] is False
+    assert report["source_opened_with_sqlite3"] is False
     assert report["completed"] is False
     assert report["source_basename"] == "source.sqlite"
     assert report["destination_basename"] == "copy.sqlite"
     assert report["source_size_bytes"] > 0
     assert report["destination_free_bytes"] > 0
     assert report["filesystem_separated"] is False  # same tmp FS with allow override path
+    assert report["source_meta"]["page_size"] == header_meta["page_size"]
+    assert report["source_meta"]["page_count"] == header_meta["page_count"]
+    assert report["source_meta"]["freelist_count"] == "not_assessed_until_apply"
+    assert report["source_meta"]["schema_version"] == "not_assessed_until_apply"
+    assert report["source_meta"]["table_count"] == "not_assessed_until_apply"
     assert not dest.exists()
     assert not partial_path_for(dest).exists()
     assert not manifest_path_for(dest).exists()
     assert not manifest_partial_path_for(dest).exists()
     assert set(dst_dir.iterdir()) == before_entries
     assert (set(lock_dir.iterdir()) if lock_dir.exists() else set()) == lock_before
+    assert fingerprint_file(source) == fp_before
+    assert {p.name for p in src_dir.iterdir()} == src_names_before
+    assert not (src_dir / "source.sqlite-wal").exists() or "source.sqlite-wal" in src_names_before
+    assert not (src_dir / "source.sqlite-shm").exists() or "source.sqlite-shm" in src_names_before
 
 
 def test_apply_required_for_execution_cli(synth_dirs: tuple[Path, Path, Path]) -> None:
@@ -202,10 +221,12 @@ def test_successful_consistent_backup(synth_dirs: tuple[Path, Path, Path]) -> No
     assert manifest["completed"] is True
     assert manifest["source_mutated_by_utility"] is False
     assert manifest["completion_marker"] == "final_manifest"
+    assert manifest["publication_method"] == "hardlink_no_clobber"
     assert _count_items(dest) == 250
     assert fingerprint_file(source) == before
     man = json.loads(manifest_path_for(dest).read_text(encoding="utf-8"))
     assert man["completed"] is True
+    assert man["publication_method"] == "hardlink_no_clobber"
     assert not scan_manifest_privacy(man)
     assert PRODUCTION_SQLITE.as_posix() not in json.dumps(man)
 
@@ -396,7 +417,7 @@ def test_malformed_non_sqlite_source(synth_dirs: tuple[Path, Path, Path]) -> Non
     src_dir, dst_dir, lock_dir = synth_dirs
     source = src_dir / "notdb.sqlite"
     dest = dst_dir / "copy.sqlite"
-    source.write_bytes(b"this is not sqlite")
+    source.write_bytes(b"this is not sqlite" + (b"\0" * 100))
     with patch(
         "origenlab_email_pipeline.qa.sqlite_online_backup.same_filesystem",
         return_value=False,
@@ -445,6 +466,19 @@ def test_lock_acquisition_failure_closes_fd(synth_dirs: tuple[Path, Path, Path])
         assert contender.acquired is False
     finally:
         holder.release()
+
+
+def test_lock_any_flock_oserror_closes_fd(synth_dirs: tuple[Path, Path, Path]) -> None:
+    src_dir, _dst, lock_dir = synth_dirs
+    source = src_dir / "source.sqlite"
+    _build_wal_db(source, rows=5)
+    path = lock_path_for(source, lock_dir)
+    lock = BackupLock(path)
+    with patch("fcntl.flock", side_effect=OSError(errno.EINVAL, "Invalid argument")):
+        with pytest.raises(BackupError, match="failed to acquire backup lock"):
+            lock.acquire()
+    assert lock._fh is None
+    assert lock.acquired is False
 
 
 def test_fingerprint_policy_failure_before_publication(
@@ -592,6 +626,7 @@ def test_unsupported_directory_fsync_warning(synth_dirs: tuple[Path, Path, Path]
     source = src_dir / "source.sqlite"
     dest = dst_dir / "copy.sqlite"
     _build_wal_db(source, rows=25)
+    progress: list[str] = []
 
     def bad_fsync(_fd: int) -> None:
         raise OSError(errno.EINVAL, "Invalid argument")
@@ -607,11 +642,107 @@ def test_unsupported_directory_fsync_warning(synth_dirs: tuple[Path, Path, Path]
                 lock_dir=lock_dir,
                 allow_same_filesystem=False,
                 dir_fsync=bad_fsync,
+                progress_sink=progress.append,
             )
         )
     assert backup_is_completed(dest)
     assert manifest["directory_fsync_supported"] is False
     assert any("directory fsync unsupported" in w for w in manifest["warnings"])
+    assert manifest.get("post_publish_warnings")
+    assert any(
+        "post-publish durability warning" in line for line in progress
+    )
+
+
+def test_directory_open_unsupported_recorded_as_warning(tmp_path: Path) -> None:
+    with patch(
+        "os.open",
+        side_effect=OSError(errno.ENOTSUP, "Operation not supported"),
+    ):
+        info = fsync_directory(tmp_path)
+    assert info["directory_fsync_supported"] is False
+    assert "directory open/fsync unsupported" in str(info["directory_fsync_warning"])
+
+
+def test_publish_no_clobber_refuses_existing(tmp_path: Path) -> None:
+    src = tmp_path / "partial"
+    dest = tmp_path / "final"
+    src.write_bytes(b"new-bytes")
+    dest.write_bytes(b"keep-me")
+    with pytest.raises(BackupError, match="no-clobber publication refused"):
+        publish_no_clobber(src, dest)
+    assert dest.read_bytes() == b"keep-me"
+    assert src.read_bytes() == b"new-bytes"
+
+
+def test_no_clobber_when_final_appears_after_copy(
+    synth_dirs: tuple[Path, Path, Path],
+) -> None:
+    """Race: final destination created during post_copy_hook must not be overwritten."""
+    src_dir, dst_dir, lock_dir = synth_dirs
+    source = src_dir / "source.sqlite"
+    dest = dst_dir / "copy.sqlite"
+    _build_wal_db(source, rows=40)
+    preexisting = b"EXISTING-FINAL-MUST-NOT-CHANGE"
+
+    def create_final_during_publish() -> None:
+        dest.write_bytes(preexisting)
+
+    with patch(
+        "origenlab_email_pipeline.qa.sqlite_online_backup.same_filesystem",
+        return_value=False,
+    ):
+        with pytest.raises(BackupError, match="no-clobber|already exists"):
+            run_online_backup(
+                _opts(
+                    source,
+                    dest,
+                    lock_dir=lock_dir,
+                    allow_same_filesystem=False,
+                    post_copy_hook=create_final_during_publish,
+                )
+            )
+
+    assert dest.read_bytes() == preexisting
+    assert backup_is_completed(dest) is False
+    assert not manifest_path_for(dest).is_file()
+    assert not manifest_partial_path_for(dest).exists()
+    assert not partial_path_for(dest).exists()
+    # Orphan policy: final DB without completed manifest is refused for overwrite.
+    assert detect_orphan_destination(dest)
+    with patch(
+        "origenlab_email_pipeline.qa.sqlite_online_backup.same_filesystem",
+        return_value=False,
+    ):
+        with pytest.raises(BackupError, match="orphan"):
+            validate_backup_options(
+                _opts(source, dest, lock_dir=lock_dir, allow_same_filesystem=False)
+            )
+
+
+def test_hardlink_probe_fails_before_long_copy(
+    synth_dirs: tuple[Path, Path, Path],
+) -> None:
+    src_dir, dst_dir, lock_dir = synth_dirs
+    source = src_dir / "source.sqlite"
+    dest = dst_dir / "copy.sqlite"
+    _build_wal_db(source, rows=20)
+    with patch(
+        "origenlab_email_pipeline.qa.sqlite_online_backup.same_filesystem",
+        return_value=False,
+    ), patch(
+        "origenlab_email_pipeline.qa.sqlite_online_backup.probe_hardlink_no_clobber_supported",
+        side_effect=BackupError(
+            "destination filesystem does not support atomic hard-link no-clobber "
+            "publication (errno=1); refusing to weaken overwrite protection"
+        ),
+    ):
+        with pytest.raises(BackupError, match="hard-link no-clobber"):
+            run_online_backup(
+                _opts(source, dest, lock_dir=lock_dir, allow_same_filesystem=False)
+            )
+    assert not dest.exists()
+    assert not partial_path_for(dest).exists()
 
 
 def test_supported_directory_fsync(synth_dirs: tuple[Path, Path, Path]) -> None:
