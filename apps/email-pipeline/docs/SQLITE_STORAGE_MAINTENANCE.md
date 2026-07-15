@@ -54,22 +54,54 @@ that with destination sizing for a future `VACUUM INTO` of a verified copy.
 
 ## 6. Prefer Online Backup API for future snapshots
 
-For future maintenance snapshots, prefer SQLite’s **Online Backup API** (or an approved filesystem-consistent cold copy under downtime) over ad-hoc copies while writers are active. Observation tooling in this repo never creates such backups by itself.
+For maintenance snapshots, prefer SQLite’s **Online Backup API** over ad-hoc copies while writers are active.
+
+Operator tool (does **not** run a backup by itself until explicitly invoked):
+
+```bash
+cd apps/email-pipeline
+uv run python scripts/maintenance/backup_sqlite_online.py \
+  --source /path/to/emails.sqlite \
+  --destination /mnt/d/origenlab-sqlite-offline/emails_offline_YYYYMMDDTHHMMSSZ.sqlite
+```
+
+Planned operator destination directory (create only when ready to back up; this doc does not create it):
+
+`/mnt/d/origenlab-sqlite-offline`
+
+Behavior of `backup_sqlite_online.py`:
+
+- Uses `sqlite3.Connection.backup()` only — **never** plain `cp` / `rsync` of a live WAL database
+- Opens source with URI `mode=ro`
+- Requires explicit `--source` and `--destination`; destination must not already exist
+- Writes via a script-owned `.partial` file, then fsync + atomic rename
+- Refuses source/destination aliases (`samefile` / resolve)
+- By default refuses same-filesystem destinations (`--allow-same-filesystem` for tests/emergencies only)
+- Checks destination free space (source size + conservative margin) before starting
+- Positive page batches with periodic progress; busy retries without `pages=0`
+- Concurrent backup lock; SIGINT/errors never publish a partial as completed
+- Writes a sanitized JSON `.manifest.json` (basenames only; no mailbox content)
+- Cheap destination verification only (header, `query_only`, page/freelist/schema inventory)
+- Does **not** run `integrity_check`, `dbstat`, duplicate analysis, `VACUUM`, or the deep audit
+
+**Old same-volume clones** under `~/data/origenlab-email/sqlite/` (including `backups/`) must **not** be deleted until a **current** Online Backup API copy on separate storage has completed and passed the deep forensic audit.
 
 ## 7. `VACUUM INTO` only against approved destinations
 
 If compaction is ever approved, prefer `VACUUM INTO` (or equivalent rewrite) **only** into an approved destination on separate storage with verified capacity. Never rewrite the live path in place as the first experiment.
 
-## 8. Proposed future controlled procedure (not implemented here)
+**Explicit prohibitions:** live plain-file copying of the active WAL database (`cp`/`rsync`) and live `VACUUM` / `VACUUM INTO` against production.
+
+## 8. Proposed future controlled procedure (not implemented as automatic)
 
 1. Observe storage trends for **14–30 days** via daily aggregate telemetry.
-2. Obtain **separate** storage with ample headroom.
-3. Create a **verified** backup/snapshot (Online Backup API or controlled downtime copy).
-4. Run heavy diagnostics (`dbstat`, count audits) **only against a copy**.
+2. Obtain **separate** storage with ample headroom (planned: `/mnt/d/origenlab-sqlite-offline`).
+3. Create a **verified** backup/snapshot with `backup_sqlite_online.py` (Online Backup API).
+4. Run heavy diagnostics (`dbstat`, deep audit) **only against that copy** with `--confirm-offline-copy`.
 5. Compact the **copy**, not production.
 6. Validate schema, row counts, and Sent/history audits on the compacted copy.
 7. Schedule controlled downtime and an **atomic swap** only after validation.
-8. Keep an explicit **rollback** plan (retain prior file until post-cutover confidence).
+8. Keep an explicit **rollback** plan (retain prior file until post-cutover confidence). Only then consider reclaiming stale same-volume clones.
 
 ## 9. Observation-only statement
 
