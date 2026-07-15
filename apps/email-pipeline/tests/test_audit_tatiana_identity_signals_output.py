@@ -1,4 +1,4 @@
-"""Regression tests: Tatiana identity audit never prints personal identifiers."""
+"""Regression tests: Tatiana identity audit never prints sender-derived strings."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import io
 import logging
 import sqlite3
 import sys
-from collections import Counter
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -26,13 +25,24 @@ _SENSITIVE_BODY = (
     f"Hola Tatiana, confírmame a {_SENSITIVE_EMAIL} el presupuesto. "
     "Token=sk_live_fixture_do_not_log."
 )
+_DOMAIN_FIXTURES = (
+    "client.example",
+    "origenlab.cl",
+)
 _SENSITIVE_MARKERS = (
     _SENSITIVE_EMAIL,
     _SENSITIVE_DISPLAY,
     "sk_live_fixture_do_not_log",
     "cotización fixture-XYZ",
+    *_DOMAIN_FIXTURES,
     hashlib.sha256(_SENSITIVE_SENDER.encode("utf-8")).hexdigest()[:10],
     hashlib.sha256(_SENSITIVE_EMAIL.encode("utf-8")).hexdigest()[:10],
+)
+_FORBIDDEN_LABELS = (
+    "Sender domains",
+    "parsed From-address domain",
+    "from-domain=",
+    "Sample From headers",
 )
 
 
@@ -51,8 +61,9 @@ def _assert_no_sensitive(text: str) -> None:
     for marker in _SENSITIVE_MARKERS:
         assert marker not in text, f"sensitive marker leaked: {marker!r}"
         assert marker.lower() not in lower, f"sensitive marker leaked (casefold): {marker!r}"
+    for label in _FORBIDDEN_LABELS:
+        assert label not in text, f"forbidden label leaked: {label!r}"
     assert "@client.example" not in text
-    assert "from-domain=" not in text  # former hashed-sample format removed
 
 
 def test_cli_has_no_raw_sensitive_output_flags() -> None:
@@ -69,7 +80,7 @@ def test_cli_has_no_raw_sensitive_output_flags() -> None:
     assert "include_sensitive" not in (mod.__doc__ or "").lower()
 
 
-def test_render_audit_report_exposes_counts_without_identity_samples() -> None:
+def test_render_audit_report_exposes_numeric_aggregates_only() -> None:
     mod = _load_script()
     stats = mod.TatianaAuditStats(
         rows_scanned=2,
@@ -84,19 +95,18 @@ def test_render_audit_report_exposes_counts_without_identity_samples() -> None:
         hit_any_t=1,
         hit_any_v=0,
         hit_trusted_identity_in_from_or_body=1,
-        domain_trusted_identity=Counter({"origenlab.cl": 1}),
-        domain_tatiana_in_from=Counter({"client.example": 1}),
-        domain_vivanco_in_from=Counter(),
     )
     report = mod.render_audit_report(stats, trusted_domain_count=3)
     _assert_no_sensitive(report)
     assert "Rows scanned: 2" in report
-    assert "Trusted sender domain count" in report
+    assert "Trusted sender domain count (internal ∪ voice): 3" in report
     assert "From header contains 'Tatiana': 1" in report
-    assert "client.example: 1" in report
-    assert "origenlab.cl: 1" in report
-    assert "Sample From headers" not in report
+    assert "Subject contains 'Tatiana': 1" in report
+    assert "full_body_clean contains 'Tatiana': 1" in report
+    assert "Any field above — Tatiana: 1" in report
+    assert "cohort-style signal): 1" in report
     assert "Privacy:" in report
+    assert "numeric aggregates and static labels only" in report
     assert "id=" not in report
 
 
@@ -110,11 +120,12 @@ def test_render_audit_report_signature_has_no_sensitive_or_sample_params() -> No
     assert set(params) == {"stats", "trusted_domain_count"}
 
 
-def test_stats_dataclass_does_not_retain_sender_sample_lists() -> None:
+def test_stats_dataclass_has_no_domain_or_sample_fields() -> None:
     mod = _load_script()
     fields = {f.name for f in mod.TatianaAuditStats.__dataclass_fields__.values()}
     assert "sender_samples_t" not in fields
     assert "sender_samples_v" not in fields
+    assert not any(name.startswith("domain_") for name in fields)
 
 
 def test_scan_and_report_omit_sensitive_fixtures_from_stdout_stderr_and_logs(
@@ -156,9 +167,13 @@ def test_scan_and_report_omit_sensitive_fixtures_from_stdout_stderr_and_logs(
     assert stats.rows_scanned == 1
     assert stats.hit_sender_t >= 1
     assert stats.hit_any_t >= 1
-    assert "client.example" in out  # domain tally is allowed
+    assert "client.example" not in out
+    assert "origenlab.cl" not in out
     _assert_no_sensitive(out)
     _assert_no_sensitive(err)
     _assert_no_sensitive(log_blob)
     assert "Rows scanned: 1" in out
+    assert "From header contains 'Tatiana':" in out
     assert "Sample From" not in out
+    assert "Sender domains" not in out
+    assert "parsed From-address domain" not in out
