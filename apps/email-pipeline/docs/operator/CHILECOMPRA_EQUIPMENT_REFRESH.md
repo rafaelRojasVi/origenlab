@@ -34,8 +34,33 @@ Useful flags:
 - `--detail-sleep-seconds 3` — pause between detail lookups
 - `--detail-cache-dir reports/out/active/current/chilecompra_detail_cache`
 - `--no-publish` — build API queue only; skip canonical dashboard publish
-- `--force` — bypass cooldown
-- `--cooldown-seconds 7200` — default daytime cooldown between successful applies
+- `--force` — bypass cadence / cooldown gate
+- `--cooldown-seconds 7200` — minimum spacing used when computing the next canonical slot after a successful apply
+
+## Cadence model (scheduled slots)
+
+Cadence is **slot-based**; queue **freshness** remains **completion-based**.
+
+| Concern | Field / rule |
+|--------|----------------|
+| Freshness | `last_successful_refresh_at` = finish time of the last successful apply |
+| Cadence anchor | Successful starts near a canonical slot snap to that slot (`cadence_anchor_kind=scheduled_slot`) |
+| Off-slot / manual | Anchor is the actual start (`cadence_anchor_kind=wall_clock`); no false snap |
+| Next due | `next_recommended_run_at` = first canonical slot at or after `max(anchor + cooldown, finish)` |
+
+Canonical slots (`America/Santiago`):
+
+- Minute **:12**
+- Hours **08, 10, 12, 14, 16, 18, 20**
+
+Examples (cooldown = 7200s):
+
+- Start `08:12:03`, finish `08:14` → next **`10:12`** (same day)
+- Start `20:12`, finish `20:14` → next day **`08:12`**
+- Long run finishing `10:30` after an `08:12` slot → next **`12:12`**
+- Off-slot manual success at `09:00` → next slot at or after `11:00` → **`12:12`**
+
+`--force` still bypasses the gate. Cooldown skips and failures do **not** advance successful cadence anchors. `operator-automation-status` uses stored `next_recommended_run_at` for `next_run_due` / `chilecompra_refresh_due` — between valid slots and overnight this stays healthy; a missed scheduled slot still becomes attention.
 
 ## Recommended cron timing
 
@@ -69,7 +94,8 @@ Complete these steps **in order** before installing cron:
 
 ### Recommended crontab block
 
-Every 2 hours during daytime (08:00–20:00), offset from dashboard mirror jobs:
+Every 2 hours during daytime (08:00–20:00 Santiago), offset from dashboard mirror jobs.
+The tracked cron line is unchanged; the in-process gate now aligns to these slots so a finish a few minutes after `:12` does **not** skip the next `:12` tick.
 
 ```cron
 12 8-20/2 * * * /home/rafael/dev/freelance/origenlab/apps/email-pipeline/scripts/operator/run_auto_refresh_chilecompra_equipment.sh >> /home/rafael/dev/freelance/origenlab/apps/email-pipeline/reports/out/active/current/auto_chilecompra_cron.log 2>&1
@@ -79,8 +105,9 @@ Every 2 hours during daytime (08:00–20:00), offset from dashboard mirror jobs:
 
 Suggested starting point for daytime operations:
 
-- Every **2–4 hours** during business hours, **not** on the same minute as `auto-mirror-dashboard`.
+- Hit each canonical slot at **:12** during business hours, **not** on the same minute as `auto-mirror-dashboard`.
 - Example pattern: refresh ChileCompra at `:12`, mirror dashboard at `:35` every 2 hours.
+- Prefer host timezone `America/Santiago` (or an equivalent cron TZ) so the tracked line matches the in-process schedule.
 
 Keep `max-details` conservative (50 or lower) to respect API quotas.
 

@@ -663,6 +663,77 @@ def test_due_chilecompra_refresh_recommends_run_without_breaking_mail_mirror(act
     assert report["chilecompra_equipment_auto_refresh"]["next_run_due"] is True
 
 
+
+def test_chilecompra_between_slots_remains_healthy(active_current: Path) -> None:
+    """Between valid daytime slots, next_run_due must stay false (no false attention)."""
+    reports = _healthy_fixture(active_current)
+    now = datetime(2026, 6, 15, 15, 0, 0, tzinfo=timezone.utc)  # 11:00 Santiago winter
+    _write_chilecompra_state(
+        active_current,
+        last_successful_refresh_at=datetime(2026, 6, 15, 12, 14, 0, tzinfo=timezone.utc).isoformat(),
+        last_successful_refresh_started_at=datetime(2026, 6, 15, 12, 12, 3, tzinfo=timezone.utc).isoformat(),
+        last_successful_scheduled_slot_at=datetime(2026, 6, 15, 12, 12, 0, tzinfo=timezone.utc).isoformat(),
+        cadence_anchor_kind="scheduled_slot",
+        next_recommended_run_at=datetime(2026, 6, 15, 16, 12, 0, tzinfo=timezone.utc).isoformat(),  # 12:12 Santiago
+    )
+    report = build_operator_automation_status(
+        reports_dir=reports,
+        now=now,
+        read_crontab=_healthy_tracked_crontab_with_chilecompra,
+    )
+    chilecompra = report["chilecompra_equipment_auto_refresh"]
+    assert chilecompra["next_run_due"] is False
+    assert chilecompra["cadence_anchor_kind"] == "scheduled_slot"
+    assert chilecompra["last_successful_scheduled_slot_at"] is not None
+    assert chilecompra["last_successful_refresh_started_at"] is not None
+    assert report["verdict"] == "healthy"
+    assert "chilecompra_refresh_due" not in report["warnings"]
+
+
+def test_chilecompra_overnight_before_0812_remains_healthy(active_current: Path) -> None:
+    reports = _healthy_fixture(active_current)
+    # After 20:12 success, next is next-day 08:12; overnight 02:00 local must stay healthy.
+    now = datetime(2026, 6, 16, 6, 0, 0, tzinfo=timezone.utc)  # 02:00 Santiago
+    _write_chilecompra_state(
+        active_current,
+        last_successful_refresh_at=datetime(2026, 6, 16, 0, 14, 0, tzinfo=timezone.utc).isoformat(),
+        last_successful_refresh_started_at=datetime(2026, 6, 16, 0, 12, 0, tzinfo=timezone.utc).isoformat(),
+        last_successful_scheduled_slot_at=datetime(2026, 6, 16, 0, 12, 0, tzinfo=timezone.utc).isoformat(),
+        cadence_anchor_kind="scheduled_slot",
+        next_recommended_run_at=datetime(2026, 6, 16, 12, 12, 0, tzinfo=timezone.utc).isoformat(),  # 08:12
+    )
+    report = build_operator_automation_status(
+        reports_dir=reports,
+        now=now,
+        read_crontab=_healthy_tracked_crontab_with_chilecompra,
+    )
+    assert report["chilecompra_equipment_auto_refresh"]["next_run_due"] is False
+    assert report["verdict"] == "healthy"
+    assert "chilecompra_refresh_due" not in report["warnings"]
+
+
+def test_missed_chilecompra_scheduled_slot_still_attention(active_current: Path) -> None:
+    reports = _healthy_fixture(active_current)
+    now = datetime(2026, 6, 15, 16, 30, 0, tzinfo=timezone.utc)  # past 12:12 Santiago
+    _write_chilecompra_state(
+        active_current,
+        last_successful_refresh_at=datetime(2026, 6, 15, 12, 14, 0, tzinfo=timezone.utc).isoformat(),
+        last_successful_refresh_started_at=datetime(2026, 6, 15, 12, 12, 3, tzinfo=timezone.utc).isoformat(),
+        last_successful_scheduled_slot_at=datetime(2026, 6, 15, 12, 12, 0, tzinfo=timezone.utc).isoformat(),
+        cadence_anchor_kind="scheduled_slot",
+        next_recommended_run_at=datetime(2026, 6, 15, 16, 12, 0, tzinfo=timezone.utc).isoformat(),
+    )
+    report = build_operator_automation_status(
+        reports_dir=reports,
+        now=now,
+        read_crontab=_healthy_tracked_crontab_with_chilecompra,
+    )
+    assert report["verdict"] == "attention"
+    assert report["recommended_action"] == "run_auto_refresh_chilecompra_equipment"
+    assert "chilecompra_refresh_due" in report["warnings"]
+    assert report["chilecompra_equipment_auto_refresh"]["next_run_due"] is True
+
+
 def test_missing_chilecompra_state_remains_non_blocking(active_current: Path) -> None:
     reports = _healthy_fixture(active_current)
     report = build_operator_automation_status(
