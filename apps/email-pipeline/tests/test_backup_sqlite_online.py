@@ -23,6 +23,7 @@ from origenlab_email_pipeline.qa.sqlite_online_backup import (
     backup_is_completed,
     cleanup_script_owned_artifacts,
     detect_orphan_destination,
+    ensure_no_partial_sidecars_before_publish,
     fingerprint_file,
     fsync_directory,
     lock_path_for,
@@ -31,12 +32,14 @@ from origenlab_email_pipeline.qa.sqlite_online_backup import (
     parse_sqlite_header_meta,
     partial_path_for,
     publish_no_clobber,
+    read_header_journal_format,
     required_capacity_bytes,
     run_online_backup,
     sanitize_error_message,
     sanitize_path_for_log,
     scan_manifest_privacy,
     validate_backup_options,
+    verify_destination_cheap,
 )
 
 REPO = Path(__file__).resolve().parents[1]
@@ -56,6 +59,20 @@ def _build_wal_db(path: Path, *, rows: int = 200) -> None:
     )
     conn.commit()
     conn.close()
+
+
+def _companion_paths(db_path: Path) -> list[Path]:
+    return [
+        Path(str(db_path) + "-wal"),
+        Path(str(db_path) + "-shm"),
+        Path(str(db_path) + "-journal"),
+    ]
+
+
+def _assert_no_sqlite_companions(*db_paths: Path) -> None:
+    for db_path in db_paths:
+        for companion in _companion_paths(db_path):
+            assert not companion.exists(), f"unexpected companion {companion.name}"
 
 
 def _count_items(path: Path) -> int:
@@ -218,10 +235,13 @@ def test_successful_consistent_backup(synth_dirs: tuple[Path, Path, Path]) -> No
     assert backup_is_completed(dest) is True
     assert not partial_path_for(dest).exists()
     assert not manifest_partial_path_for(dest).exists()
+    _assert_no_sqlite_companions(dest, partial_path_for(dest))
     assert manifest["completed"] is True
     assert manifest["source_mutated_by_utility"] is False
     assert manifest["completion_marker"] == "final_manifest"
     assert manifest["publication_method"] == "hardlink_no_clobber"
+    assert manifest["destination_verification"] == "mode=ro&immutable=1"
+    assert manifest["destination_meta"]["journal_mode_source"] == "sqlite_header"
     assert _count_items(dest) == 250
     assert fingerprint_file(source) == before
     man = json.loads(manifest_path_for(dest).read_text(encoding="utf-8"))
@@ -229,6 +249,94 @@ def test_successful_consistent_backup(synth_dirs: tuple[Path, Path, Path]) -> No
     assert man["publication_method"] == "hardlink_no_clobber"
     assert not scan_manifest_privacy(man)
     assert PRODUCTION_SQLITE.as_posix() not in json.dumps(man)
+
+
+def test_wal_source_immutable_verify_leaves_no_sidecars(
+    synth_dirs: tuple[Path, Path, Path],
+) -> None:
+    """WAL source: backup + immutable verify succeed with no dest/partial companions."""
+    src_dir, dst_dir, lock_dir = synth_dirs
+    source = src_dir / "wal_source.sqlite"
+    dest = dst_dir / "wal_copy.sqlite"
+    _build_wal_db(source, rows=180)
+    # Leave source as a live-shaped WAL DB (companions often present after close).
+    assert (src_dir / "wal_source.sqlite").is_file()
+    source_header = read_header_journal_format(source)
+    assert source_header["header_journal_format"] == "wal"
+    before = fingerprint_file(source)
+    expected_rows = _count_items(source)
+
+    with patch(
+        "origenlab_email_pipeline.qa.sqlite_online_backup.same_filesystem",
+        return_value=False,
+    ):
+        manifest = run_online_backup(
+            _opts(
+                source,
+                dest,
+                lock_dir=lock_dir,
+                allow_same_filesystem=False,
+                pages_per_batch=3,
+            )
+        )
+
+    assert backup_is_completed(dest) is True
+    assert dest.is_file()
+    assert manifest_path_for(dest).is_file()
+    assert not partial_path_for(dest).exists()
+    assert not manifest_partial_path_for(dest).exists()
+    _assert_no_sqlite_companions(dest, partial_path_for(dest))
+    assert _count_items(dest) == expected_rows
+    assert fingerprint_file(source) == before
+    assert manifest["source_meta"]["journal_mode"] == "wal"
+    assert manifest["source_meta"]["journal_mode_source"] == "pragma"
+    assert manifest["destination_meta"]["journal_mode_source"] == "sqlite_header"
+    assert manifest["destination_meta"]["journal_mode"] == manifest["destination_meta"][
+        "header_journal_format"
+    ]
+    # Destination journal_mode must not silently take a misleading immutable pragma.
+    assert (
+        manifest["destination_meta"].get(
+            "journal_mode_pragma_non_authoritative_under_immutable"
+        )
+        is not None
+    )
+
+
+def test_immutable_verify_creates_no_sidecars(tmp_path: Path) -> None:
+    db = tmp_path / "closed.sqlite"
+    _build_wal_db(db, rows=40)
+    # Produce a closed standalone copy via Online Backup API into a delete-mode file.
+    partial = tmp_path / "copy.sqlite.partial"
+    src = sqlite3.connect(f"file:{db.resolve().as_posix()}?mode=ro", uri=True)
+    dest_conn = sqlite3.connect(str(partial))
+    try:
+        src.backup(dest_conn)
+        dest_conn.commit()
+    finally:
+        dest_conn.close()
+        src.close()
+    for companion in _companion_paths(partial):
+        if companion.exists():
+            companion.unlink()
+    before = {p.name for p in tmp_path.iterdir()}
+    meta = verify_destination_cheap(partial)
+    after = {p.name for p in tmp_path.iterdir()}
+    assert after == before
+    _assert_no_sqlite_companions(partial)
+    assert meta["journal_mode_source"] == "sqlite_header"
+    assert meta["journal_mode"] == meta["header_journal_format"]
+    ensure_no_partial_sidecars_before_publish(partial)
+
+
+def test_nonempty_partial_wal_blocks_publication(tmp_path: Path) -> None:
+    partial = tmp_path / "copy.sqlite.partial"
+    partial.write_bytes(b"SQLite format 3\x00" + b"\0" * 84)
+    wal = Path(str(partial) + "-wal")
+    wal.write_bytes(b"non-empty-wal")
+    with pytest.raises(BackupError, match="non-empty WAL|unexpected partial sidecars"):
+        ensure_no_partial_sidecars_before_publish(partial)
+    assert wal.exists()
 
 
 def test_progress_batching_emits_time_based_and_final(

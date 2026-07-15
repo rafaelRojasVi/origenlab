@@ -100,7 +100,7 @@ Behavior of `backup_sqlite_online.py`:
 - Default `--pages-per-batch 4096` (positive/configurable); time-based progress + guaranteed final 100%
 - Concurrent backup lock (lock FD closed on every flock `OSError`); SIGINT/SIGTERM abort never publishes an incomplete completed pair
 - Writes a sanitized JSON `.manifest.json` (basenames only; no mailbox content / absolute paths)
-- Cheap destination verification only (header, `query_only`, page/freelist/schema inventory)
+- Cheap destination verification only (`mode=ro&immutable=1` header + page/freelist/schema inventory; no sidecar creation; journal format from header bytes 18/19)
 - Does **not** run `integrity_check`, `dbstat`, duplicate analysis, `VACUUM`, or the deep audit
 
 **Old same-volume clones** under `~/data/origenlab-email/sqlite/` (including `backups/`) must **not** be deleted until a **current** Online Backup API copy on separate storage has completed and passed the deep forensic audit.

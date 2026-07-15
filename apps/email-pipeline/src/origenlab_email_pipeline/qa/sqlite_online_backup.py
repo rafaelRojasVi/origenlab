@@ -209,6 +209,7 @@ def parse_sqlite_header_meta(path: Path) -> dict[str, Any]:
             f"invalid SQLite header page_size for {sanitize_path_for_log(path)}"
         )
     page_count = int.from_bytes(header[28:32], "big")
+    journal_fields = header_journal_format_fields(header)
     return {
         "page_size": page_size,
         "page_count": page_count,
@@ -220,10 +221,44 @@ def parse_sqlite_header_meta(path: Path) -> dict[str, Any]:
         "table_count": "not_assessed_until_apply",
         "tables": "not_assessed_until_apply",
         "assessment": "sqlite_header_only",
+        **journal_fields,
     }
 
 
+def header_journal_format_fields(header: bytes) -> dict[str, Any]:
+    """
+    Journal format from SQLite header bytes 18/19 (not PRAGMA journal_mode).
+
+    1 = legacy rollback (delete) journal; 2 = WAL format.
+    Under immutable opens, PRAGMA journal_mode may falsely report ``delete``.
+    """
+    write_version = int(header[18])
+    read_version = int(header[19])
+    if write_version == 2:
+        fmt = "wal"
+    elif write_version == 1:
+        fmt = "delete"
+    else:
+        fmt = f"unknown_{write_version}"
+    return {
+        "header_write_version": write_version,
+        "header_read_version": read_version,
+        "header_journal_format": fmt,
+    }
+
+
+def read_header_journal_format(path: Path) -> dict[str, Any]:
+    with path.open("rb") as handle:
+        header = handle.read(100)
+    if len(header) < 100 or not header.startswith(b"SQLite format 3\x00"):
+        raise BackupError(
+            f"cannot parse journal header for {sanitize_path_for_log(path)}"
+        )
+    return header_journal_format_fields(header)
+
+
 def connect_source_readonly(path: Path, *, busy_timeout_ms: int) -> sqlite3.Connection:
+    """Live source: mode=ro only — never immutable=1 (must observe live WAL)."""
     uri = f"file:{path.resolve().as_posix()}?mode=ro"
     conn = sqlite3.connect(uri, uri=True, timeout=max(1.0, busy_timeout_ms / 1000.0))
     conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
@@ -232,18 +267,46 @@ def connect_source_readonly(path: Path, *, busy_timeout_ms: int) -> sqlite3.Conn
 
 
 def connect_destination(path: Path, *, busy_timeout_ms: int) -> sqlite3.Connection:
+    """Writable destination for Online Backup API (script-owned partial)."""
     conn = sqlite3.connect(str(path), timeout=max(1.0, busy_timeout_ms / 1000.0))
     conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
+    # Keep partial companions out of the publish path: prefer rollback journal deleted on close.
+    conn.execute("PRAGMA journal_mode=DELETE")
     return conn
 
 
-def read_cheap_sqlite_meta(conn: sqlite3.Connection) -> dict[str, Any]:
+def connect_destination_immutable_readonly(
+    path: Path, *, busy_timeout_ms: int = 5_000
+) -> sqlite3.Connection:
+    """
+    Verify a closed, fsynced, script-owned partial with no sidecar creation.
+
+    Uses mode=ro&immutable=1. Never use immutable=1 on the live production source.
+    """
+    uri = f"file:{path.resolve().as_posix()}?mode=ro&immutable=1"
+    conn = sqlite3.connect(uri, uri=True, timeout=max(1.0, busy_timeout_ms / 1000.0))
+    conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
+    conn.execute("PRAGMA query_only=ON")
+    return conn
+
+
+def read_cheap_sqlite_meta(
+    conn: sqlite3.Connection,
+    *,
+    path: Path | None = None,
+    journal_reporting: str = "pragma",
+) -> dict[str, Any]:
+    """
+    Cheap inventory. ``journal_reporting``:
+      - ``pragma``: live source — PRAGMA journal_mode is authoritative operational mode
+      - ``header``: immutable destination — use header bytes 18/19; do not trust pragma
+    """
     page_size = int(conn.execute("PRAGMA page_size").fetchone()[0])
     page_count = int(conn.execute("PRAGMA page_count").fetchone()[0])
     freelist_count = int(conn.execute("PRAGMA freelist_count").fetchone()[0])
     schema_version = int(conn.execute("PRAGMA schema_version").fetchone()[0])
     user_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
-    journal_mode = str(conn.execute("PRAGMA journal_mode").fetchone()[0])
+    pragma_journal = str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower()
     tables = [
         str(r[0])
         for r in conn.execute(
@@ -251,7 +314,7 @@ def read_cheap_sqlite_meta(conn: sqlite3.Connection) -> dict[str, Any]:
             "ORDER BY name"
         ).fetchall()
     ]
-    return {
+    meta: dict[str, Any] = {
         "page_size": page_size,
         "page_count": page_count,
         "freelist_count": freelist_count,
@@ -259,21 +322,84 @@ def read_cheap_sqlite_meta(conn: sqlite3.Connection) -> dict[str, Any]:
         "freelist_bytes": page_size * freelist_count,
         "schema_version": schema_version,
         "user_version": user_version,
-        "journal_mode": journal_mode,
         "table_count": len(tables),
         "tables": tables,
+        "journal_mode_pragma": pragma_journal,
     }
+    if journal_reporting == "header":
+        if path is None:
+            raise BackupError("header journal reporting requires path")
+        journal_fields = read_header_journal_format(path)
+        meta.update(journal_fields)
+        # Authoritative for static/immutable verification: header format, not pragma.
+        meta["journal_mode"] = journal_fields["header_journal_format"]
+        meta["journal_mode_source"] = "sqlite_header"
+        meta["journal_mode_pragma_non_authoritative_under_immutable"] = pragma_journal
+    else:
+        if path is not None:
+            meta.update(read_header_journal_format(path))
+        meta["journal_mode"] = pragma_journal
+        meta["journal_mode_source"] = "pragma"
+    return meta
 
 
 def verify_destination_cheap(path: Path) -> dict[str, Any]:
+    """Immutable RO verification of a closed partial — must not create WAL/SHM/journal."""
     assert_sqlite_header(path)
-    conn = connect_source_readonly(path, busy_timeout_ms=5_000)
+    conn = connect_destination_immutable_readonly(path, busy_timeout_ms=5_000)
     try:
-        conn.execute("PRAGMA query_only=ON")
-        meta = read_cheap_sqlite_meta(conn)
+        meta = read_cheap_sqlite_meta(conn, path=path, journal_reporting="header")
     finally:
         conn.close()
     return meta
+
+
+def partial_sidecar_paths(partial: Path) -> list[Path]:
+    return [
+        Path(str(partial) + "-journal"),
+        Path(str(partial) + "-wal"),
+        Path(str(partial) + "-shm"),
+    ]
+
+
+def ensure_no_partial_sidecars_before_publish(partial: Path) -> list[str]:
+    """
+    Before final publication, assert no ``-wal``/``-shm``/``-journal`` companions.
+
+    Non-empty WAL is a verification failure. Zero-byte script-owned verification
+    artifacts may be removed when demonstrably empty/safe; non-empty leftovers fail.
+    """
+    cleaned: list[str] = []
+    failures: list[str] = []
+    for path in partial_sidecar_paths(partial):
+        if not path.exists():
+            continue
+        try:
+            size = int(path.stat().st_size)
+        except OSError as exc:
+            raise BackupError(
+                f"cannot stat unexpected partial sidecar "
+                f"{sanitize_path_for_log(path)} (errno={getattr(exc, 'errno', None)})"
+            ) from None
+        label = sanitize_path_for_log(path)
+        if size == 0:
+            try:
+                path.unlink()
+                cleaned.append(label)
+            except OSError as exc:
+                failures.append(f"{label}: empty but unlink failed errno={getattr(exc, 'errno', None)}")
+            continue
+        if path.name.endswith("-wal"):
+            failures.append(f"{label}: non-empty WAL ({size} bytes) — verification failure")
+        else:
+            failures.append(f"{label}: unexpected non-empty sidecar ({size} bytes)")
+    remaining = [sanitize_path_for_log(p) for p in partial_sidecar_paths(partial) if p.exists()]
+    if failures or remaining:
+        raise BackupError(
+            "unexpected partial sidecars before publish; refusing publication until "
+            f"understood: failures={failures or remaining}"
+        )
+    return cleaned
 
 
 def partial_path_for(destination: Path) -> Path:
@@ -722,7 +848,9 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
             probe_hardlink_no_clobber_supported(destination.parent)
 
             src_conn = connect_source_readonly(source, busy_timeout_ms=options.busy_timeout_ms)
-            source_meta = read_cheap_sqlite_meta(src_conn)
+            source_meta = read_cheap_sqlite_meta(
+                src_conn, path=source, journal_reporting="pragma"
+            )
             page_size = int(source_meta["page_size"])
 
             flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
@@ -785,8 +913,10 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
             # Mandatory file fsync of partial DB before verification/publish.
             fsync_file(partial)
 
-            # --- Pre-publication: verify, fingerprint policy, build+scan manifest ---
+            # --- Pre-publication: immutable verify, fingerprint policy, sidecars ---
             dest_meta = verify_destination_cheap(partial)
+            # Sidecar invariant after verification closed: no -wal/-shm/-journal.
+            ensure_no_partial_sidecars_before_publish(partial)
 
             source_fp_after = fingerprint_file(source)
             source_changed = source_fp_before != source_fp_after
@@ -823,6 +953,7 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
                 "python_version": sys.version.split()[0],
                 "sqlite_version": sqlite3.sqlite_version,
                 "publication_method": "hardlink_no_clobber",
+                "destination_verification": "mode=ro&immutable=1",
                 "directory_fsync_supported": dir_fsync_info.get("directory_fsync_supported"),
                 "warnings": warnings,
                 "source_meta": {
@@ -834,8 +965,13 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
                         "schema_version",
                         "user_version",
                         "journal_mode",
+                        "journal_mode_source",
+                        "header_journal_format",
+                        "header_write_version",
+                        "header_read_version",
                         "table_count",
                     )
+                    if k in source_meta
                 },
                 "destination_meta": {
                     k: dest_meta[k]
@@ -846,8 +982,14 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
                         "schema_version",
                         "user_version",
                         "journal_mode",
+                        "journal_mode_source",
+                        "header_journal_format",
+                        "header_write_version",
+                        "header_read_version",
+                        "journal_mode_pragma_non_authoritative_under_immutable",
                         "table_count",
                     )
+                    if k in dest_meta
                 },
                 "source_fingerprint_before": source_fp_before.to_dict(),
                 "source_fingerprint_after": source_fp_after.to_dict(),
@@ -860,9 +1002,11 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
                     "Online Backup API snapshot; not a plain cp/rsync of a live WAL database.",
                     "Completed only when final DB and completed final manifest both exist.",
                     "Publication uses hard-link no-clobber (fails safely on EEXIST).",
+                    "Destination verification uses mode=ro&immutable=1 (no sidecar creation).",
+                    "Destination journal_mode comes from header bytes 18/19; pragma under immutable is non-authoritative.",
                     "Crash window: final DB without final manifest is an orphan requiring explicit cleanup.",
                     "Cheap verification only; integrity_check/dbstat/deep-audit not run.",
-                    "Utility opens source with URI mode=ro; concurrent writers may still change source.",
+                    "Utility opens source with URI mode=ro (not immutable); concurrent writers may still change source.",
                 ],
             }
             privacy = scan_manifest_privacy(manifest)
