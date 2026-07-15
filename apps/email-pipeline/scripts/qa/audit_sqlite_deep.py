@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """Read-only SQLite deep forensic audit (offline copy only for heavy phases).
 
-Opens SQLite with URI ``mode=ro`` and ``PRAGMA query_only=ON``. Never runs VACUUM,
-ANALYZE, REINDEX, wal_checkpoint, or any DML/DDL.
+Opens SQLite with URI ``mode=ro`` and ``PRAGMA query_only=ON``. Confirmed offline
+copies (``--confirm-offline-copy``, not production, no ``-wal``/``-shm``/``-journal``)
+additionally use ``immutable=1`` so a WAL-format header without sidecars does not
+create companions or trip the frozen fingerprint check. Never uses immutable against
+the configured production database. Never runs VACUUM, ANALYZE, REINDEX,
+wal_checkpoint, or any DML/DDL.
 
 Production-safe ``--light-only`` performs constant-time storage PRAGMAs and
-sqlite_master schema inventory only.
+sqlite_master schema inventory only (ordinary ``mode=ro``).
 
 Offline phases (``quick_check``, ``foreign_key_check``, table COUNT scans, dbstat,
 column-byte profiling, duplicate/usefulness analysis, optional full
 ``integrity_check``) require ``--confirm-offline-copy`` and refuse the configured
-production SQLite path even when confirmed.
+production SQLite path even when confirmed. A non-empty WAL blocks immutable
+offline opens because committed WAL frames would be ignored.
 
 Synthetic / verified offline copies only for heavy work. See
 ``docs/SQLITE_STORAGE_MAINTENANCE.md``.
@@ -63,8 +68,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--confirm-offline-copy",
         action="store_true",
         help=(
-            "Acknowledge --db is a verified offline/backup copy (required for structural_quick "
-            "and all heavy offline phases)"
+            "Acknowledge --db is a verified frozen offline/backup copy (required for "
+            "structural_quick and all heavy offline phases). Enables mode=ro&immutable=1 "
+            "only when the path is not production and has no -wal/-shm/-journal companions."
         ),
     )
     parser.add_argument(

@@ -1,4 +1,12 @@
-"""Read-only, privacy-safe SQLite deep forensic audit (offline copy only for heavy phases)."""
+"""Read-only, privacy-safe SQLite deep forensic audit (offline copy only for heavy phases).
+
+Connection policy:
+- Confirmed offline copy (``--confirm-offline-copy``, not production, no sidecars):
+  URI ``mode=ro&immutable=1`` so WAL-format headers without companions do not create
+  ``-wal``/``-shm``.
+- Production / light-only / unconfirmed paths: ordinary ``mode=ro``; never immutable.
+- Offline is never inferred from the filename alone.
+"""
 
 from __future__ import annotations
 
@@ -235,8 +243,25 @@ def assert_sql_allowed(sql: str) -> None:
             raise ValueError(f"blocked SQL pattern in statement: {sql[:120]}")
 
 
-def connect_readonly(db: Path, *, timeout: float = 120.0) -> sqlite3.Connection:
-    uri = f"file:{db.resolve().as_posix()}?mode=ro"
+def connect_readonly(
+    db: Path,
+    *,
+    timeout: float = 120.0,
+    immutable: bool = False,
+) -> sqlite3.Connection:
+    """
+    Open SQLite read-only.
+
+    - ``immutable=False`` (default): URI ``mode=ro`` — use for production / light-only /
+      live or WAL-sidecar databases. Never infer offline from the filename.
+    - ``immutable=True``: URI ``mode=ro&immutable=1`` — only for a confirmed offline
+      copy that already passed the immutable safety gate (no sidecars). Never use
+      against the configured production database.
+    """
+    if immutable:
+        uri = f"file:{db.resolve().as_posix()}?mode=ro&immutable=1"
+    else:
+        uri = f"file:{db.resolve().as_posix()}?mode=ro"
     conn = sqlite3.connect(uri, uri=True, timeout=timeout)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA query_only=ON")
@@ -264,6 +289,83 @@ def fingerprints_equal(
     after: dict[str, FileFingerprint | None],
 ) -> bool:
     return before == after
+
+
+def sqlite_sidecar_paths(db: Path) -> dict[str, Path]:
+    return {
+        "wal": Path(str(db) + "-wal"),
+        "shm": Path(str(db) + "-shm"),
+        "journal": Path(str(db) + "-journal"),
+    }
+
+
+def should_open_immutable(options: AuditOptions) -> bool:
+    """
+    Immutable opens require explicit --confirm-offline-copy and a non-production path.
+
+    Never infer offline from filename alone. Production/light-only always returns False.
+    """
+    if not options.confirm_offline_copy:
+        return False
+    if is_configured_production_db(options.db, options.settings):
+        return False
+    return True
+
+
+def validate_immutable_offline_gate(options: AuditOptions) -> str | None:
+    """
+    Safety gate before ``mode=ro&immutable=1``.
+
+    - Requires ``--confirm-offline-copy``
+    - Refuses configured production DB / alias / samefile
+    - Requires absence of ``-wal``, ``-shm``, and ``-journal`` companions
+    - Explicitly refuses a non-empty WAL (immutable would ignore committed WAL content)
+    - Never deletes sidecars
+    """
+    if not options.confirm_offline_copy:
+        return (
+            "immutable offline open requires --confirm-offline-copy acknowledging a "
+            "verified frozen offline/backup copy."
+        )
+    if is_configured_production_db(options.db, options.settings):
+        return (
+            "immutable offline open refused: --db resolves to the configured production "
+            "SQLite path (including samefile/device+inode aliases). Never use immutable "
+            "against live production."
+        )
+    for label, path in sqlite_sidecar_paths(options.db).items():
+        if not path.exists():
+            continue
+        try:
+            size = int(path.stat().st_size)
+        except OSError:
+            return (
+                f"immutable offline open refused: cannot inspect companion {label} beside "
+                f"{options.db.name}; remove sidecars only after operator review (tool never deletes them)."
+            )
+        if label == "wal" and size > 0:
+            return (
+                f"immutable offline open refused: non-empty WAL companion present "
+                f"({options.db.name}-wal, {size} bytes). Immutable mode would ignore "
+                "committed WAL content. Use a completed Online Backup API copy (or checkpoint "
+                "and re-copy) with no sidecars; this tool never deletes WAL/SHM/journal files."
+            )
+        return (
+            f"immutable offline open refused: companion {label} present beside "
+            f"{options.db.name}. Offline immutable audits require a closed copy with no "
+            "-wal/-shm/-journal sidecars (Online Backup snapshots often retain a WAL-format "
+            "header with zero companions). This tool never deletes sidecars."
+        )
+    return None
+
+
+def assert_no_audit_created_sidecars(db: Path) -> None:
+    present = [label for label, path in sqlite_sidecar_paths(db).items() if path.exists()]
+    if present:
+        raise RuntimeError(
+            "audit created or observed unexpected SQLite sidecars during immutable offline "
+            f"open: {present}. Fingerprint/sidecar invariant violated."
+        )
 
 
 def _offline_phases_requested(options: AuditOptions) -> frozenset[str]:
@@ -1364,8 +1466,31 @@ def run_audit(
         "phase_order": ordered_phases(options.phases, full_integrity_check=options.full_integrity_check),
     }
 
-    conn = connect_readonly(options.db)
+    use_immutable = should_open_immutable(options)
+    if use_immutable:
+        gate_err = validate_immutable_offline_gate(options)
+        if gate_err:
+            raise PermissionError(gate_err)
+
+    report["immutable_open"] = use_immutable
+    report["sqlite_open_uri"] = "mode=ro&immutable=1" if use_immutable else "mode=ro"
+
+    # Freeze is already captured; re-assert identity immediately before open.
+    if not fingerprints_equal(before_fp, fingerprint_db_files(options.db)):
+        raise RuntimeError(
+            "database file fingerprint changed before open (database/WAL/SHM mismatch)"
+        )
+
+    conn = connect_readonly(options.db, immutable=use_immutable)
     try:
+        if use_immutable:
+            assert_no_audit_created_sidecars(options.db)
+            after_open_fp = fingerprint_db_files(options.db)
+            if not fingerprints_equal(before_fp, after_open_fp):
+                raise RuntimeError(
+                    "database file fingerprint changed during immutable open "
+                    "(database/WAL/SHM mismatch)"
+                )
         for phase_name in report["phase_order"]:
             if phase_name in completed_phases:
                 continue
@@ -1374,6 +1499,8 @@ def run_audit(
                 raise RuntimeError(
                     "database file fingerprint changed during audit (database/WAL/SHM mismatch)"
                 )
+            if use_immutable:
+                assert_no_audit_created_sidecars(options.db)
             started = clock()
             try:
                 if phase_name == "structural_light":
@@ -1435,6 +1562,8 @@ def run_audit(
     }
     if not fingerprints_equal(before_fp, after_fp):
         raise RuntimeError("database file mutation detected (size/mtime changed)")
+    if use_immutable:
+        assert_no_audit_created_sidecars(options.db)
 
     violations = scan_for_pii_leaks(report)
     if violations:
