@@ -52,7 +52,9 @@ DEFAULT_DETAIL_SLEEP_SECONDS = 3.0
 CHILECOMPRA_SCHEDULE_TZ = ZoneInfo("America/Santiago")
 CHILECOMPRA_SCHEDULE_HOURS = (8, 10, 12, 14, 16, 18, 20)
 CHILECOMPRA_SCHEDULE_MINUTE = 12
-# Cron/process may start seconds/minutes after :12; still snap to that slot.
+# Cron/process may start up to this many seconds after :12 and still snap to that slot.
+# With this tolerance, actual start-to-start spacing can be up to five minutes shorter
+# than the nominal ``cooldown_seconds`` slot interval.
 CHILECOMPRA_SLOT_START_TOLERANCE_SECONDS = 300
 CHILECOMPRA_SLOT_PREEMPT_TOLERANCE_SECONDS = 60
 
@@ -338,9 +340,10 @@ def evaluate_chilecompra_equipment_auto_refresh(
         now_utc = _ensure_aware_utc(now)
         next_due = _parse_iso(state.next_recommended_run_at)
         if next_due is not None:
+            next_due_utc = _ensure_aware_utc(next_due)
             # Exact due timestamp is eligible (now >= next_due → ready).
-            if now_utc < next_due.astimezone(timezone.utc):
-                remaining = max(0, int((next_due - now_utc).total_seconds()))
+            if now_utc < next_due_utc:
+                remaining = max(0, int((next_due_utc - now_utc).total_seconds()))
                 return ChilecompraEquipmentAutoRefreshResult(
                     reason="cooldown",
                     should_run=False,
@@ -731,8 +734,22 @@ def parse_chilecompra_equipment_auto_refresh_args(
         default=True,
         help="Publish typed Postgres equipment read model directly from ChileCompra rows (default: true)",
     )
-    parser.add_argument("--force", action="store_true", help="Bypass cooldown gate")
-    parser.add_argument("--cooldown-seconds", type=int, default=DEFAULT_COOLDOWN_SECONDS)
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Bypass the scheduled-slot cadence / cooldown gate",
+    )
+    parser.add_argument(
+        "--cooldown-seconds",
+        type=int,
+        default=DEFAULT_COOLDOWN_SECONDS,
+        help=(
+            "Nominal scheduled-slot interval in seconds used when computing the next "
+            "canonical slot after a successful apply (default: 7200). With the "
+            f"{CHILECOMPRA_SLOT_START_TOLERANCE_SECONDS}s startup snap tolerance, "
+            "actual start-to-start spacing may be up to five minutes shorter."
+        ),
+    )
     ns = parser.parse_args(argv)
     if not ns.once:
         parser.error("--once is required")

@@ -35,7 +35,7 @@ Useful flags:
 - `--detail-cache-dir reports/out/active/current/chilecompra_detail_cache`
 - `--no-publish` — build API queue only; skip canonical dashboard publish
 - `--force` — bypass cadence / cooldown gate
-- `--cooldown-seconds 7200` — minimum spacing used when computing the next canonical slot after a successful apply
+- `--cooldown-seconds 7200` — **nominal** scheduled-slot interval used when computing the next canonical slot after a successful apply (not a hard start-to-start floor)
 
 ## Cadence model (scheduled slots)
 
@@ -45,8 +45,10 @@ Cadence is **slot-based**; queue **freshness** remains **completion-based**.
 |--------|----------------|
 | Freshness | `last_successful_refresh_at` = finish time of the last successful apply |
 | Cadence anchor | Successful starts near a canonical slot snap to that slot (`cadence_anchor_kind=scheduled_slot`) |
+| Snap tolerance | Starts within **300 seconds** after a slot still snap to that slot; beyond that use wall-clock |
 | Off-slot / manual | Anchor is the actual start (`cadence_anchor_kind=wall_clock`); no false snap |
 | Next due | `next_recommended_run_at` = first canonical slot at or after `max(anchor + cooldown, finish)` |
+| Spacing note | Because of the 300s snap, actual start-to-start spacing may be **up to five minutes shorter** than `cooldown_seconds` |
 
 Canonical slots (`America/Santiago`):
 
@@ -56,6 +58,8 @@ Canonical slots (`America/Santiago`):
 Examples (cooldown = 7200s):
 
 - Start `08:12:03`, finish `08:14` → next **`10:12`** (same day)
+- Start exactly `08:17:00` (five minutes late) → still snaps to `08:12` → next **`10:12`**
+- Start `08:17:01` (just beyond tolerance) → `wall_clock` → next after `10:17` → **`12:12`**
 - Start `20:12`, finish `20:14` → next day **`08:12`**
 - Long run finishing `10:30` after an `08:12` slot → next **`12:12`**
 - Off-slot manual success at `09:00` → next slot at or after `11:00` → **`12:12`**

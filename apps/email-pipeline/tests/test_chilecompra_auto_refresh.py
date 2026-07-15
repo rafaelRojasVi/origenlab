@@ -330,6 +330,37 @@ def test_cron_startup_seconds_do_not_cause_four_hour_skip() -> None:
     assert result.should_run is True
 
 
+def test_exactly_five_minutes_late_still_snaps_to_scheduled_slot() -> None:
+    started = _santiago(2026, 6, 15, 8, 17, 0)  # exactly +300s after 08:12
+    finished = _santiago(2026, 6, 15, 8, 17, 30)
+    anchor, kind, slot = resolve_chilecompra_cadence_anchor(started)
+    assert kind == CADENCE_KIND_SCHEDULED_SLOT
+    assert slot == _santiago(2026, 6, 15, 8, 12).astimezone(timezone.utc)
+    assert anchor == slot
+    next_at = compute_chilecompra_next_recommended_run_at(
+        cadence_anchor=anchor,
+        finished_at=finished,
+        cooldown_seconds=DEFAULT_COOLDOWN_SECONDS,
+    )
+    assert next_at == _santiago(2026, 6, 15, 10, 12).astimezone(timezone.utc)
+
+
+def test_just_beyond_five_minutes_uses_wall_clock_and_later_slot() -> None:
+    started = _santiago(2026, 6, 15, 8, 17, 1)  # +301s — beyond snap tolerance
+    finished = _santiago(2026, 6, 15, 8, 17, 30)
+    anchor, kind, slot = resolve_chilecompra_cadence_anchor(started)
+    assert kind == CADENCE_KIND_WALL_CLOCK
+    assert slot is None
+    assert anchor == started.astimezone(timezone.utc)
+    next_at = compute_chilecompra_next_recommended_run_at(
+        cadence_anchor=anchor,
+        finished_at=finished,
+        cooldown_seconds=DEFAULT_COOLDOWN_SECONDS,
+    )
+    # max(08:17:01+2h, finish) = 10:17:01 → next canonical slot 12:12
+    assert next_at == _santiago(2026, 6, 15, 12, 12).astimezone(timezone.utc)
+
+
 def test_cooldown_before_exact_due_boundary() -> None:
     next_due = _santiago(2026, 6, 15, 10, 12)
     state = ChilecompraEquipmentAutoRefreshState(
@@ -433,6 +464,30 @@ def test_legacy_state_without_next_recommended_uses_elapsed_fallback() -> None:
     )
     assert result.reason == "cooldown"
     assert result.should_run is False
+
+
+def test_legacy_naive_next_recommended_does_not_raise() -> None:
+    """Persisted naive next_recommended_run_at must evaluate without TypeError."""
+    state = ChilecompraEquipmentAutoRefreshState(
+        next_recommended_run_at="2026-06-15T14:12:00",  # naive (no offset)
+        last_successful_refresh_at="2026-06-15T12:14:00",
+    )
+    early = datetime(2026, 6, 15, 14, 0, 0, tzinfo=timezone.utc)
+    blocked = evaluate_chilecompra_equipment_auto_refresh(
+        options=_opts(apply=True),
+        state=state,
+        now=early,
+    )
+    assert blocked.reason == "cooldown"
+    assert blocked.should_run is False
+
+    at_due = evaluate_chilecompra_equipment_auto_refresh(
+        options=_opts(apply=True),
+        state=state,
+        now=datetime(2026, 6, 15, 14, 12, 0, tzinfo=timezone.utc),
+    )
+    assert at_due.reason == "ready"
+    assert at_due.should_run is True
 
 
 def test_legacy_state_file_loads_missing_cadence_fields(tmp_path: Path) -> None:
