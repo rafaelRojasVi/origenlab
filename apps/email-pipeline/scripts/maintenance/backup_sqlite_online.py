@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Safe SQLite Online Backup API (never plain cp/rsync of a live WAL database).
 
-Creates a consistent destination snapshot via ``sqlite3.Connection.backup()``.
+Default is **preflight only** (zero writes). Pass ``--apply`` to create lock,
+``.partial``, backup, and completed manifest.
+
 Source is opened URI ``mode=ro``. Destination must not already exist and is
-written through a script-owned ``.partial`` file, then atomically renamed.
+written through a script-owned ``.partial`` file. A backup is **completed**
+only when the final DB and completed final manifest both exist.
 
 Planned operator destination (do not assume it exists yet)::
 
@@ -31,6 +34,7 @@ from origenlab_email_pipeline.qa.sqlite_online_backup import (
     BackupError,
     BackupOptions,
     run_online_backup,
+    sanitize_error_message,
     sanitize_path_for_log,
 )
 
@@ -50,10 +54,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Destination SQLite path (must not exist; written via .partial then rename)",
     )
     parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Execute backup (default is preflight-only with zero writes)",
+    )
+    parser.add_argument(
         "--pages-per-batch",
         type=int,
         default=DEFAULT_PAGES_PER_BATCH,
-        help=f"Positive page batch size for backup.step (default {DEFAULT_PAGES_PER_BATCH}; pages=0 forbidden)",
+        help=(
+            f"Positive page batch size for Connection.backup "
+            f"(default {DEFAULT_PAGES_PER_BATCH}; pages=0 forbidden)"
+        ),
     )
     parser.add_argument(
         "--allow-same-filesystem",
@@ -69,7 +81,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--json",
         action="store_true",
-        help="Print sanitized JSON manifest to stdout",
+        help="Print sanitized JSON preflight/manifest to stdout",
     )
     return parser
 
@@ -80,36 +92,55 @@ def main(argv: list[str] | None = None) -> int:
     options = BackupOptions(
         source=args.source.expanduser(),
         destination=args.destination.expanduser(),
+        apply=bool(args.apply),
         pages_per_batch=int(args.pages_per_batch),
         allow_same_filesystem=bool(args.allow_same_filesystem),
         busy_timeout_ms=int(args.busy_timeout_ms),
     )
     try:
-        print(
-            f"Starting online backup: src={sanitize_path_for_log(options.source)} "
-            f"dst={sanitize_path_for_log(options.destination)} "
-            f"pages_per_batch={options.pages_per_batch}",
-            file=sys.stderr,
-        )
-        manifest = run_online_backup(options)
+        if options.apply:
+            print(
+                f"Starting online backup (--apply): src={sanitize_path_for_log(options.source)} "
+                f"dst={sanitize_path_for_log(options.destination)} "
+                f"pages_per_batch={options.pages_per_batch}",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"Preflight only (no writes): src={sanitize_path_for_log(options.source)} "
+                f"dst={sanitize_path_for_log(options.destination)}. "
+                "Re-run with --apply to execute.",
+                file=sys.stderr,
+            )
+        result = run_online_backup(options)
     except BackupError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        print(f"ERROR: {sanitize_error_message(exc)}", file=sys.stderr)
         return 2
     except Exception as exc:
-        print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"ERROR: {sanitize_error_message(exc)}", file=sys.stderr)
         return 1
 
     if args.json:
-        print(json.dumps(manifest, indent=2, sort_keys=True))
+        print(json.dumps(result, indent=2, sort_keys=True))
+    elif result.get("mode") == "preflight":
+        print(f"mode=preflight writes_performed={result.get('writes_performed')}")
+        print(f"source_basename={result.get('source_basename')}")
+        print(f"destination_basename={result.get('destination_basename')}")
+        print(f"source_size_bytes={result.get('source_size_bytes')}")
+        print(f"destination_free_bytes={result.get('destination_free_bytes')}")
+        print(f"capacity_required_bytes={result.get('capacity_required_bytes')}")
+        print(f"filesystem_separated={result.get('filesystem_separated')}")
+        print(f"pages_per_batch={result.get('pages_per_batch')}")
     else:
         print(
             f"Backup completed: {sanitize_path_for_log(options.destination)} "
-            f"({manifest.get('destination_size_bytes')} bytes, "
-            f"{manifest.get('elapsed_seconds')}s)",
+            f"({result.get('destination_size_bytes')} bytes, "
+            f"{result.get('elapsed_seconds')}s)",
             file=sys.stderr,
         )
-        print(f"completed={manifest.get('completed')}")
-        print(f"source_mutated_by_utility={manifest.get('source_mutated_by_utility')}")
+        print(f"completed={result.get('completed')}")
+        print(f"source_mutated_by_utility={result.get('source_mutated_by_utility')}")
+        print(f"directory_fsync_supported={result.get('directory_fsync_supported')}")
     return 0
 
 

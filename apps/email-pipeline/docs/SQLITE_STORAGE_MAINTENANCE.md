@@ -56,13 +56,26 @@ that with destination sizing for a future `VACUUM INTO` of a verified copy.
 
 For maintenance snapshots, prefer SQLite’s **Online Backup API** over ad-hoc copies while writers are active.
 
-Operator tool (does **not** run a backup by itself until explicitly invoked):
+Operator tool (does **not** write unless `--apply` is passed):
+
+**Preflight (default — zero writes):**
 
 ```bash
 cd apps/email-pipeline
 uv run python scripts/maintenance/backup_sqlite_online.py \
   --source /path/to/emails.sqlite \
-  --destination /mnt/d/origenlab-sqlite-offline/emails_offline_YYYYMMDDTHHMMSSZ.sqlite
+  --destination /mnt/d/origenlab-sqlite-offline/emails_offline_YYYYMMDDTHHMMSSZ.sqlite \
+  --json
+```
+
+**Execute backup (requires `--apply`):**
+
+```bash
+cd apps/email-pipeline
+uv run python scripts/maintenance/backup_sqlite_online.py \
+  --source /path/to/emails.sqlite \
+  --destination /mnt/d/origenlab-sqlite-offline/emails_offline_YYYYMMDDTHHMMSSZ.sqlite \
+  --apply
 ```
 
 Planned operator destination directory (create only when ready to back up; this doc does not create it):
@@ -71,20 +84,27 @@ Planned operator destination directory (create only when ready to back up; this 
 
 Behavior of `backup_sqlite_online.py`:
 
+- Default is **preflight only** (reports basenames, sizes, free capacity, FS separation, planned batch settings). No lock/partial/backup/manifest.
+- `--apply` required to create lock, `.partial`, backup, or completed manifest
 - Uses `sqlite3.Connection.backup()` only — **never** plain `cp` / `rsync` of a live WAL database
 - Opens source with URI `mode=ro`
 - Requires explicit `--source` and `--destination`; destination must not already exist
-- Writes via a script-owned `.partial` file, then fsync + atomic rename
+- Writes via script-owned `.partial` (+ companions cleaned on failure); file fsync mandatory
+- Completion = final DB **and** completed final `.manifest.json` (manifest rename is the completion marker)
+- Crash window: final DB without final completed manifest is an **orphan** — next run refuses overwrite; cleanup must be explicit (never silently treated as completed)
+- Directory fsync may be unsupported on some mounts (e.g. `/mnt/d` 9p); recorded as a durability warning, not a reason to delete a verified backup
 - Refuses source/destination aliases (`samefile` / resolve)
 - By default refuses same-filesystem destinations (`--allow-same-filesystem` for tests/emergencies only)
 - Checks destination free space (source size + conservative margin) before starting
-- Positive page batches with periodic progress; busy retries without `pages=0`
-- Concurrent backup lock; SIGINT/errors never publish a partial as completed
-- Writes a sanitized JSON `.manifest.json` (basenames only; no mailbox content)
+- Default `--pages-per-batch 4096` (positive/configurable); time-based progress + guaranteed final 100%
+- Concurrent backup lock; SIGINT/SIGTERM abort never publishes an incomplete completed pair
+- Writes a sanitized JSON `.manifest.json` (basenames only; no mailbox content / absolute paths)
 - Cheap destination verification only (header, `query_only`, page/freelist/schema inventory)
 - Does **not** run `integrity_check`, `dbstat`, duplicate analysis, `VACUUM`, or the deep audit
 
 **Old same-volume clones** under `~/data/origenlab-email/sqlite/` (including `backups/`) must **not** be deleted until a **current** Online Backup API copy on separate storage has completed and passed the deep forensic audit.
+
+**Proposed post-merge synthetic smoke (not this change):** after merge, run a tiny temporary SQLite through `--apply` onto a throwaway path under `/mnt/d` only if the operator creates the parent directory — never against production.
 
 ## 7. `VACUUM INTO` only against approved destinations
 
