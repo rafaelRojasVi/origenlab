@@ -88,3 +88,30 @@ uv run python scripts/qa/audit_sqlite_storage.py --storage-only --json
 ```
 
 Do **not** pass `--include-dbstat` against production without explicit approval.
+
+## 10. Deep forensic audit (offline copy only)
+
+`scripts/qa/audit_sqlite_deep.py` performs a privacy-safe, resumable deep audit for **verified offline/backup copies** on separate storage. It never runs against the configured production SQLite path for heavy phases, even with `--confirm-offline-copy`.
+
+| Phase | Purpose | Production path |
+|-------|---------|-----------------|
+| `structural_quick` | `quick_check`, `foreign_key_check`, schema/row inventory | light-only allowed |
+| `structural_full` | opt-in `integrity_check` (may take hours) | refused |
+| `physical_dbstat` | page allocation by table/index + reconciliation | refused |
+| `column_bytes` | aggregate TEXT/BLOB bytes (`length(CAST(col AS BLOB))`) | refused |
+| `duplicate_analysis` | message_id cohort dupes + attachment sha256 dupes | refused |
+| `usefulness_classification` | source tiers, mart/commercial references, review candidates | refused |
+
+Heavy phases require `--confirm-offline-copy`. Outputs are sanitized JSON + Markdown with phase timings and **estimate-only** space-saving conclusions. Age alone never classifies rows as deletable.
+
+Example (synthetic or verified copy only):
+
+```bash
+cd apps/email-pipeline
+uv run python scripts/qa/audit_sqlite_deep.py \
+  --db /path/to/verified/emails_copy.sqlite \
+  --confirm-offline-copy \
+  --output-dir reports/out/active/current/sqlite_deep_audit
+```
+
+Use `--light-only` for quick structural inventory without heavy I/O. Use `--resume` to continue from `audit_sqlite_deep_checkpoint.json`.
