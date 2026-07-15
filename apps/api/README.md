@@ -123,11 +123,13 @@ All routes are **GET-only**. Production serves Postgres read models when `ORIGEN
 
 ### Route reference
 
+Responses include `X-Request-ID` plus read-only timing headers `Server-Timing` / `X-Process-Time-Ms` (duration only; timing middleware does not log request bodies, query strings, or identifier-bearing paths).
+
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Liveness + backend mode |
 | GET | `/operator/status` | Operator verdict (`operator_status_report`) |
-| GET | `/operator/automation-status` | Mail refresh + dashboard mirror local state |
+| GET | `/operator/automation-status` | Mail refresh + dashboard mirror + SQLite storage observation (`sqlite_storage`) |
 | GET | `/cases/warm` | Warm commercial case queue (`api.v_warm_case` in production) |
 | GET | `/opportunities/equipment` | Equipment-first operator queue |
 | GET | `/emails/recent` | Recent canonical Gmail rows (`api.v_recent_email`) |

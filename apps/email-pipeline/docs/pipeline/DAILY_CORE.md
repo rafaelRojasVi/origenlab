@@ -94,6 +94,8 @@ This file is **operator visibility / evidence only**. It records which daily-cor
 
 Plan-only (`uv run origenlab daily-core`) and `--help` do **not** write this file.
 
+After a **successful** applied daily-core run, the CLI may also write aggregate-only SQLite storage evidence (`sqlite_storage_snapshot.json` / `sqlite_storage_history.json`) under `active/current`. That telemetry is **non-critical operator evidence**, not a ninth workflow step, and failures there must not change daily-core’s return code. See [`../SQLITE_STORAGE_MAINTENANCE.md`](../SQLITE_STORAGE_MAINTENANCE.md).
+
 `uv run origenlab status` includes a read-only summary of this manifest when present (visibility only — **not send approval**).
 
 ---
