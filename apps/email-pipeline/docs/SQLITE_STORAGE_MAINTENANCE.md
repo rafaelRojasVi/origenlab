@@ -54,22 +54,75 @@ that with destination sizing for a future `VACUUM INTO` of a verified copy.
 
 ## 6. Prefer Online Backup API for future snapshots
 
-For future maintenance snapshots, prefer SQLite’s **Online Backup API** (or an approved filesystem-consistent cold copy under downtime) over ad-hoc copies while writers are active. Observation tooling in this repo never creates such backups by itself.
+For maintenance snapshots, prefer SQLite’s **Online Backup API** over ad-hoc copies while writers are active.
+
+Operator tool (does **not** write unless `--apply` is passed):
+
+**Preflight (default — zero writes):**
+
+```bash
+cd apps/email-pipeline
+uv run python scripts/maintenance/backup_sqlite_online.py \
+  --source /path/to/emails.sqlite \
+  --destination /mnt/d/origenlab-sqlite-offline/emails_offline_YYYYMMDDTHHMMSSZ.sqlite \
+  --json
+```
+
+**Execute backup (requires `--apply`):**
+
+```bash
+cd apps/email-pipeline
+uv run python scripts/maintenance/backup_sqlite_online.py \
+  --source /path/to/emails.sqlite \
+  --destination /mnt/d/origenlab-sqlite-offline/emails_offline_YYYYMMDDTHHMMSSZ.sqlite \
+  --apply
+```
+
+Planned operator destination directory (create only when ready to back up; this doc does not create it):
+
+`/mnt/d/origenlab-sqlite-offline`
+
+Behavior of `backup_sqlite_online.py`:
+
+- Default is **preflight only**: `stat` + read-only SQLite **header parse** (no `sqlite3.connect()` on the live source). Reports page size/count from the header; freelist/schema/table metadata are `not_assessed_until_apply`. No lock directory, no destination artifacts, and no source WAL/SHM creation from preflight.
+- `--apply` required to create lock, `.partial`, backup, or completed manifest
+- Uses `sqlite3.Connection.backup()` only — **never** plain `cp` / `rsync` of a live WAL database
+- Opens source with URI `mode=ro` only under `--apply`
+- Requires explicit `--source` and `--destination`; destination must not already exist
+- Writes via script-owned `.partial` (+ companions cleaned on failure); file fsync mandatory
+- **Publication** is same-filesystem hard-link no-clobber (`os.link(partial, final)` → `unlink(partial)`); fails safely on `EEXIST` so neither final DB nor final manifest can overwrite a path created after preflight. Equivalent for the manifest. If the destination FS cannot hard-link, `--apply` fails **before** the long copy rather than weakening overwrite protection.
+- Completion = final DB **and** completed final `.manifest.json` (manifest hard-link publish is the completion marker)
+- Crash window: final DB without final completed manifest is an **orphan** — next run refuses overwrite; cleanup must be explicit (never silently treated as completed). Partial artifacts from a failed run are cleaned; a pre-existing final left by a race is left for operator review (orphan policy).
+- Directory open/fsync may be unsupported on some mounts (e.g. `/mnt/d` 9p / DrvFS); recorded as a durability warning (including post-publish warnings surfaced on the return value / stderr). File fsync remains mandatory.
+- Refuses source/destination aliases (`samefile` / resolve)
+- By default refuses same-filesystem destinations (`--allow-same-filesystem` for tests/emergencies only)
+- Checks destination free space (source size + conservative margin) before starting
+- Default `--pages-per-batch 4096` (positive/configurable); time-based progress + guaranteed final 100%
+- Concurrent backup lock (lock FD closed on every flock `OSError`); SIGINT/SIGTERM abort never publishes an incomplete completed pair
+- Writes a sanitized JSON `.manifest.json` (basenames only; no mailbox content / absolute paths)
+- Cheap destination verification only (`mode=ro&immutable=1` header + page/freelist/schema inventory; no sidecar creation; journal format from header bytes 18/19)
+- Does **not** run `integrity_check`, `dbstat`, duplicate analysis, `VACUUM`, or the deep audit
+
+**Old same-volume clones** under `~/data/origenlab-email/sqlite/` (including `backups/`) must **not** be deleted until a **current** Online Backup API copy on separate storage has completed and passed the deep forensic audit.
+
+**Proposed post-merge synthetic smoke (not this change):** after merge, run a tiny temporary SQLite through `--apply` onto a throwaway path under `/mnt/d` only if the operator creates the parent directory — never against production.
 
 ## 7. `VACUUM INTO` only against approved destinations
 
 If compaction is ever approved, prefer `VACUUM INTO` (or equivalent rewrite) **only** into an approved destination on separate storage with verified capacity. Never rewrite the live path in place as the first experiment.
 
-## 8. Proposed future controlled procedure (not implemented here)
+**Explicit prohibitions:** live plain-file copying of the active WAL database (`cp`/`rsync`) and live `VACUUM` / `VACUUM INTO` against production.
+
+## 8. Proposed future controlled procedure (not implemented as automatic)
 
 1. Observe storage trends for **14–30 days** via daily aggregate telemetry.
-2. Obtain **separate** storage with ample headroom.
-3. Create a **verified** backup/snapshot (Online Backup API or controlled downtime copy).
-4. Run heavy diagnostics (`dbstat`, count audits) **only against a copy**.
+2. Obtain **separate** storage with ample headroom (planned: `/mnt/d/origenlab-sqlite-offline`).
+3. Create a **verified** backup/snapshot with `backup_sqlite_online.py --apply` (Online Backup API; preflight first without `--apply`).
+4. Run heavy diagnostics (`dbstat`, deep audit) **only against that copy** with `--confirm-offline-copy`.
 5. Compact the **copy**, not production.
 6. Validate schema, row counts, and Sent/history audits on the compacted copy.
 7. Schedule controlled downtime and an **atomic swap** only after validation.
-8. Keep an explicit **rollback** plan (retain prior file until post-cutover confidence).
+8. Keep an explicit **rollback** plan (retain prior file until post-cutover confidence). Only then consider reclaiming stale same-volume clones.
 
 ## 9. Observation-only statement
 
