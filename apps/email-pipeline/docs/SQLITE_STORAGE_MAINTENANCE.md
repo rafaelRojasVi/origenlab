@@ -116,7 +116,7 @@ If compaction is ever approved, prefer `VACUUM INTO` (or equivalent rewrite) **o
 
 1. Observe storage trends for **14–30 days** via daily aggregate telemetry.
 2. Obtain **separate** storage with ample headroom (planned: `/mnt/d/origenlab-sqlite-offline`).
-3. Create a **verified** backup/snapshot with `backup_sqlite_online.py` (Online Backup API).
+3. Create a **verified** backup/snapshot with `backup_sqlite_online.py --apply` (Online Backup API; preflight first without `--apply`).
 4. Run heavy diagnostics (`dbstat`, deep audit) **only against that copy** with `--confirm-offline-copy`.
 5. Compact the **copy**, not production.
 6. Validate schema, row counts, and Sent/history audits on the compacted copy.
