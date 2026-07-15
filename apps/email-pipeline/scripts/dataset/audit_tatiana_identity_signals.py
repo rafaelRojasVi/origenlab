@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Scan emails.sqlite for Tatiana/Vivanco signals (headers + bodies) — discovery, not a label.
 
-Stdout is aggregate-only: counts and From-address *domain* tallies. Raw email
-addresses, display names, message bodies, subjects, and hashed identifiers are
-never printed (CodeQL alert #20 / py/clear-text-logging-sensitive-data).
+Stdout contains numeric aggregates and static labels only. No sender-derived
+address, display name, domain, subject, body, hash, or identifier is retained
+or printed (CodeQL alerts #20/#22 / py/clear-text-logging-sensitive-data).
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import sqlite3
 import sys
-from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,7 +18,6 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_ROOT / "src"))
 
-from origenlab_email_pipeline.business_mart import domain_of, primary_sender_email
 from origenlab_email_pipeline.config import load_settings
 from origenlab_email_pipeline.db import connect
 from origenlab_email_pipeline.progress import iter_sqlite_email_batches_with_progress
@@ -46,9 +44,6 @@ class TatianaAuditStats:
     hit_any_t: int
     hit_any_v: int
     hit_trusted_identity_in_from_or_body: int
-    domain_trusted_identity: Counter[str]
-    domain_tatiana_in_from: Counter[str]
-    domain_vivanco_in_from: Counter[str]
 
 
 def scan_tatiana_identity_signals(conn: sqlite3.Connection) -> TatianaAuditStats:
@@ -72,9 +67,6 @@ def scan_tatiana_identity_signals(conn: sqlite3.Connection) -> TatianaAuditStats
     hit_top_t = hit_top_v = 0
     hit_any_t = hit_any_v = 0
     hit_trusted_identity_in_from_or_body = 0
-    domain_trusted_identity: Counter[str] = Counter()
-    domain_tatiana_in_from: Counter[str] = Counter()
-    domain_vivanco_in_from: Counter[str] = Counter()
 
     for batch in iter_sqlite_email_batches_with_progress(
         conn, cur, desc="Audit Tatiana/Vivanco signals"
@@ -97,14 +89,8 @@ def scan_tatiana_identity_signals(conn: sqlite3.Connection) -> TatianaAuditStats
 
             if t_in_s:
                 hit_sender_t += 1
-                pe = primary_sender_email(sender)
-                dtf = domain_of(pe or "") or "(no address)"
-                domain_tatiana_in_from[dtf] += 1
             if v_in_s:
                 hit_sender_v += 1
-                pev = primary_sender_email(sender)
-                dvf = domain_of(pev or "") or "(no address)"
-                domain_vivanco_in_from[dvf] += 1
             if t_in_sub:
                 hit_subj_t += 1
             if v_in_sub:
@@ -127,9 +113,6 @@ def scan_tatiana_identity_signals(conn: sqlite3.Connection) -> TatianaAuditStats
                 t_in_s or v_in_s or t_in_f or v_in_f or t_in_top or v_in_top
             ):
                 hit_trusted_identity_in_from_or_body += 1
-                pe = primary_sender_email(sender)
-                d = domain_of(pe or "") or "(no domain)"
-                domain_trusted_identity[d] += 1
 
     return TatianaAuditStats(
         rows_scanned=n,
@@ -144,9 +127,6 @@ def scan_tatiana_identity_signals(conn: sqlite3.Connection) -> TatianaAuditStats
         hit_any_t=hit_any_t,
         hit_any_v=hit_any_v,
         hit_trusted_identity_in_from_or_body=hit_trusted_identity_in_from_or_body,
-        domain_trusted_identity=domain_trusted_identity,
-        domain_tatiana_in_from=domain_tatiana_in_from,
-        domain_vivanco_in_from=domain_vivanco_in_from,
     )
 
 
@@ -155,22 +135,14 @@ def render_audit_report(
     *,
     trusted_domain_count: int,
 ) -> str:
-    """Build an aggregate-only stdout report (no per-message identity samples)."""
+    """Build a numeric-aggregate stdout report (no sender-derived strings)."""
     lines: list[str] = []
     lines.append(f"Rows scanned: {stats.rows_scanned:,}")
     lines.append(f"Trusted sender domain count (internal ∪ voice): {trusted_domain_count}")
     lines.append("")
     lines.append("Counts — word-boundary Tatiana / Vivanco:")
     lines.append(f"  From header contains 'Tatiana': {stats.hit_sender_t:,}")
-    if stats.domain_tatiana_in_from:
-        lines.append("    → by parsed From-address domain (top 12):")
-        for dom, c in stats.domain_tatiana_in_from.most_common(12):
-            lines.append(f"       {dom}: {c:,}")
     lines.append(f"  From header contains 'Vivanco': {stats.hit_sender_v:,}")
-    if stats.domain_vivanco_in_from:
-        lines.append("    → by parsed From-address domain (top 12):")
-        for dom, c in stats.domain_vivanco_in_from.most_common(12):
-            lines.append(f"       {dom}: {c:,}")
     lines.append(f"  Subject contains 'Tatiana': {stats.hit_subj_t:,}")
     lines.append(f"  Subject contains 'Vivanco': {stats.hit_subj_v:,}")
     lines.append(f"  full_body_clean contains 'Tatiana': {stats.hit_full_t:,}")
@@ -184,18 +156,15 @@ def render_audit_report(
         "Trusted-domain senders with Tatiana/Vivanco in From OR clean body "
         f"(cohort-style signal): {stats.hit_trusted_identity_in_from_or_body:,}"
     )
-    if stats.domain_trusted_identity:
-        lines.append("  Sender domains (same rows):")
-        for dom, c in stats.domain_trusted_identity.most_common(15):
-            lines.append(f"    {dom}: {c:,}")
     lines.append("")
     lines.append(
         "Note: client replies often say “Hola Tatiana” in body; those usually have "
         "external From domains and are not counted as trusted-domain signature hits."
     )
     lines.append(
-        "Privacy: stdout reports aggregate counts and domains only; "
-        "raw From headers, subjects, bodies, and hashed identifiers are never printed."
+        "Privacy: stdout reports numeric aggregates and static labels only; "
+        "no sender-derived address, display name, domain, subject, body, hash, "
+        "or identifier is retained or printed."
     )
     return "\n".join(lines)
 
