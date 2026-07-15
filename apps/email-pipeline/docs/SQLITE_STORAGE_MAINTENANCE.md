@@ -95,14 +95,19 @@ Do **not** pass `--include-dbstat` against production without explicit approval.
 
 | Phase | Purpose | Production path |
 |-------|---------|-----------------|
-| `structural_quick` | `quick_check`, `foreign_key_check`, schema/row inventory | light-only allowed |
-| `structural_full` | opt-in `integrity_check` (may take hours) | refused |
-| `physical_dbstat` | page allocation by table/index + reconciliation | refused |
+| `structural_light` | Constant-time storage PRAGMAs + `sqlite_master` inventory only | **`--light-only` on production** |
+| `structural_quick` | `quick_check`, `foreign_key_check`, table COUNT/ID ranges | refused (offline copy + confirm) |
+| `structural_full` | opt-in `integrity_check` via `--full-integrity-check` only (may take hours) | refused |
+| `physical_dbstat` | page allocation by table/index/autoindex + reconciliation | refused |
 | `column_bytes` | aggregate TEXT/BLOB bytes (`length(CAST(col AS BLOB))`) | refused |
-| `duplicate_analysis` | message_id cohort dupes + attachment sha256 dupes | refused |
-| `usefulness_classification` | source tiers, mart/commercial references, review candidates | refused |
+| `duplicate_analysis` | SHA-256 body fingerprints for duplicate `message_id` groups; attachment external-payload dupes | refused |
+| `usefulness_classification` | source tiers (rows + body bytes), discovered reference tables, review candidates | refused |
 
-Heavy phases require `--confirm-offline-copy`. Outputs are sanitized JSON + Markdown with phase timings and **estimate-only** space-saving conclusions. Age alone never classifies rows as deletable.
+**Defaults:** heavy offline phases run when `--confirm-offline-copy` is set; `structural_full` is **not** in the default phase set. Use `--full-integrity-check` explicitly.
+
+**Production-safe light mode:** `--light-only` runs `structural_light` only (no `quick_check`, FK checks, COUNT scans, dbstat, or body profiling). Safe on the configured production path without `--confirm-offline-copy`.
+
+Heavy phases require `--confirm-offline-copy`. Outputs are sanitized JSON + Markdown with phase timings and **estimate-only** SQLite body-byte conclusions. Attachment `size_bytes` duplication is reported as **external payload only**, never as SQLite file savings. Conclusions use tri-state values (`yes` / `no` / `not_assessed`); SQLite integrity is `not_assessed` unless `structural_full` completed. Age or lack of references never classifies rows as deletable.
 
 Example (synthetic or verified copy only):
 
@@ -114,4 +119,4 @@ uv run python scripts/qa/audit_sqlite_deep.py \
   --output-dir reports/out/active/current/sqlite_deep_audit
 ```
 
-Use `--light-only` for quick structural inventory without heavy I/O. Use `--resume` to continue from `audit_sqlite_deep_checkpoint.json`.
+Use `--light-only` on production for constant-time storage metadata. Use `--full-integrity-check` only when a full `integrity_check` is explicitly required. Use `--resume` to continue from `audit_sqlite_deep_checkpoint.json` (refuses resume when schema version, file fingerprint, or selected configuration differs).
