@@ -76,3 +76,21 @@ def test_automation_status_includes_timing_and_sqlite_storage(
     body = response.json()
     assert body["sqlite_storage"]["status"] == "healthy"
     assert body["sqlite_storage"]["mutation"] is False
+
+
+def test_timing_and_request_id_headers_both_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from origenlab_api.main import create_app
+
+    monkeypatch.delenv("ORIGENLAB_ENV", raising=False)
+    monkeypatch.setenv("ORIGENLAB_API_BACKEND", "sqlite")
+    get_settings.cache_clear()
+
+    client = TestClient(create_app())
+    response = client.get("/health", headers={"X-Request-ID": "timing-order-test"})
+    assert response.status_code == 200
+    assert response.headers.get("X-Request-ID") == "timing-order-test"
+    assert re.fullmatch(r"\d+\.\d{2}", response.headers.get("X-Process-Time-Ms") or "")
+    assert re.fullmatch(r"app;dur=\d+\.\d{2}", response.headers.get("Server-Timing") or "")

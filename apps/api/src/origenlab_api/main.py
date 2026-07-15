@@ -31,9 +31,11 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json" if docs_on else None,
     )
     configure_http_security(app, settings)
-    # Outer timing wraps inner middleware so Server-Timing covers full request handling.
-    app.add_middleware(ResponseTimingMiddleware)
+    # Starlette runs the last-added middleware outermost. Register request-id
+    # first, then timing, so ResponseTimingMiddleware wraps RequestIdMiddleware
+    # and both headers remain present on the response.
     app.add_middleware(RequestIdMiddleware)
+    app.add_middleware(ResponseTimingMiddleware)
     register_exception_handlers(app)
     app.include_router(health.router)
     app.include_router(operator.router)
