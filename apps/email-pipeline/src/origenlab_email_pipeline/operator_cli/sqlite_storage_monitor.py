@@ -22,6 +22,10 @@ DISK_FREE_GIB_WARNING = 150.0
 DISK_FREE_PERCENT_WARNING = 15.0
 GROWTH_7D_GIB_WARNING = 5.0
 SNAPSHOT_STALE_SECONDS = 8 * 24 * 3600
+# Seven-day growth only uses prior samples separated by 6–8 UTC days inclusive.
+GROWTH_7D_TARGET_SECONDS = 7 * 24 * 3600
+GROWTH_7D_MIN_SECONDS = 6 * 24 * 3600
+GROWTH_7D_MAX_SECONDS = 8 * 24 * 3600
 
 AUTO_VACUUM_NAMES = {
     0: "none",
@@ -39,9 +43,25 @@ def _iso_now(now: datetime) -> str:
 
 
 def _bytes_or_none(path: Path) -> int | None:
-    if not path.is_file():
+    """Return file size in bytes, or None if missing / races away during stat."""
+    try:
+        if not path.is_file():
+            return None
+        return int(path.stat().st_size)
+    except (OSError, FileNotFoundError):
         return None
-    return int(path.stat().st_size)
+
+
+def _coerce_float(value: Any) -> tuple[float | None, bool]:
+    """Return (parsed, ok). ``ok=False`` means the value was present but not numeric."""
+    if value is None:
+        return None, True
+    if isinstance(value, bool):
+        return None, False
+    try:
+        return float(value), True
+    except (TypeError, ValueError):
+        return None, False
 
 
 def _connect_storage_ro(db: Path) -> sqlite3.Connection:
@@ -280,10 +300,16 @@ def collect_and_store_sqlite_storage_evidence(
 
 
 def growth_7d_gib(history: list[dict[str, Any]], *, now: datetime | None = None) -> float | None:
-    """Compare newest allocated_gib to closest sample ~7 days earlier."""
+    """Compare newest allocated_gib to the closest prior sample in the 6–8 day window.
+
+    Only samples whose separation from the newest sample is within
+    ``[GROWTH_7D_MIN_SECONDS, GROWTH_7D_MAX_SECONDS]`` are eligible. Among those,
+    pick the one closest to exactly seven days earlier. Return ``None`` when no
+    eligible sample exists (e.g. only a 3-day or 20-day prior point).
+    """
     if len(history) < 2:
         return None
-    now_dt = now or datetime.now(timezone.utc)
+    _ = now or datetime.now(timezone.utc)
 
     def parse(item: dict[str, Any]) -> datetime | None:
         ts = item.get("captured_at_utc")
@@ -300,29 +326,28 @@ def growth_7d_gib(history: list[dict[str, Any]], *, now: datetime | None = None)
         gib = item.get("allocated_gib")
         if ts is None or gib is None:
             continue
-        try:
-            dated.append((ts, float(gib)))
-        except (TypeError, ValueError):
+        coerced, ok = _coerce_float(gib)
+        if not ok or coerced is None:
             continue
+        dated.append((ts, coerced))
     if len(dated) < 2:
         return None
     dated.sort(key=lambda x: x[0])
     newest_ts, newest_gib = dated[-1]
-    target = newest_ts.timestamp() - (7 * 24 * 3600)
-    # Prefer sample closest to 7d ago without going newer than newest.
+    target_ts = newest_ts.timestamp() - GROWTH_7D_TARGET_SECONDS
+
     best: tuple[datetime, float] | None = None
     best_delta: float | None = None
     for ts, gib in dated[:-1]:
-        delta = abs(ts.timestamp() - target)
+        separation = (newest_ts - ts).total_seconds()
+        if separation < GROWTH_7D_MIN_SECONDS or separation > GROWTH_7D_MAX_SECONDS:
+            continue
+        delta = abs(ts.timestamp() - target_ts)
         if best is None or best_delta is None or delta < best_delta:
             best = (ts, gib)
             best_delta = delta
     if best is None:
         return None
-    # Require at least ~3 days separation to avoid noisy same-week near-duplicates.
-    if (newest_ts - best[0]).total_seconds() < (3 * 24 * 3600):
-        return None
-    _ = now_dt  # reserved for future clock injection symmetry
     return round(newest_gib - best[1], 4)
 
 
@@ -426,18 +451,45 @@ def build_sqlite_storage_status(
         if key in snap:
             base[key] = snap.get(key)
 
+    numeric_keys = (
+        "allocated_gib",
+        "freelist_gib",
+        "active_gib",
+        "freelist_ratio_percent",
+        "disk_free_gib",
+        "disk_free_percent",
+        "allocated_bytes",
+        "freelist_bytes",
+        "active_bytes",
+        "disk_total_gib",
+        "disk_used_gib",
+    )
+    coerced: dict[str, float | None] = {}
+    for key in numeric_keys:
+        if key not in snap:
+            continue
+        value, ok = _coerce_float(snap.get(key))
+        if not ok:
+            base["parse_error"] = "malformed_numeric"
+            base["status"] = "unknown"
+            base["reasons"] = ["snapshot_malformed_numeric"]
+            base["growth_7d_gib"] = None
+            return base
+        coerced[key] = value
+        base[key] = value
+
     growth = growth_7d_gib(history, now=now_dt)
     base["growth_7d_gib"] = growth
 
     reasons: list[str] = []
     attention = False
 
-    disk_free_gib = base.get("disk_free_gib")
-    disk_free_percent = base.get("disk_free_percent")
-    if disk_free_gib is not None and float(disk_free_gib) < DISK_FREE_GIB_WARNING:
+    disk_free_gib = coerced.get("disk_free_gib", base.get("disk_free_gib"))
+    disk_free_percent = coerced.get("disk_free_percent", base.get("disk_free_percent"))
+    if disk_free_gib is not None and disk_free_gib < DISK_FREE_GIB_WARNING:
         reasons.append("disk_free_below_150_gib")
         attention = True
-    if disk_free_percent is not None and float(disk_free_percent) < DISK_FREE_PERCENT_WARNING:
+    if disk_free_percent is not None and disk_free_percent < DISK_FREE_PERCENT_WARNING:
         reasons.append("disk_free_below_15_percent")
         attention = True
     if growth is not None and growth > GROWTH_7D_GIB_WARNING:
@@ -446,8 +498,8 @@ def build_sqlite_storage_status(
     if stale:
         reasons.append("snapshot_stale_informational")
     # High freelist is informational only — never drives attention alone.
-    freelist_ratio = base.get("freelist_ratio_percent")
-    if freelist_ratio is not None and float(freelist_ratio) >= 40.0:
+    freelist_ratio = coerced.get("freelist_ratio_percent", base.get("freelist_ratio_percent"))
+    if freelist_ratio is not None and freelist_ratio >= 40.0:
         reasons.append("high_freelist_ratio_informational")
 
     if attention:

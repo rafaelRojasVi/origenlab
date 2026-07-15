@@ -155,7 +155,7 @@ def test_history_35_day_cap(tmp_path: Path) -> None:
     assert merged[-1]["allocated_gib"] == 39.0
 
 
-def test_growth_7d_calculation() -> None:
+def test_growth_7d_exact_seven_day() -> None:
     now = datetime(2026, 7, 15, tzinfo=timezone.utc)
     history = [
         {"captured_at_utc": (now - timedelta(days=10)).isoformat(), "allocated_gib": 100.0},
@@ -163,6 +163,203 @@ def test_growth_7d_calculation() -> None:
         {"captured_at_utc": now.isoformat(), "allocated_gib": 126.5},
     ]
     assert growth_7d_gib(history, now=now) == 6.5
+
+
+def test_growth_3d_returns_none_and_cannot_trigger_attention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = datetime(2026, 7, 15, tzinfo=timezone.utc)
+    history = [
+        {"captured_at_utc": (now - timedelta(days=3)).isoformat(), "allocated_gib": 100.0},
+        {"captured_at_utc": now.isoformat(), "allocated_gib": 120.0},
+    ]
+    assert growth_7d_gib(history, now=now) is None
+
+    reports = tmp_path / "reports"
+    active = reports / "active" / "current"
+    active.mkdir(parents=True)
+    monkeypatch.setenv("ORIGENLAB_REPORTS_DIR", str(reports))
+    write_storage_evidence(
+        {
+            "captured_at_utc": now.isoformat(),
+            "allocated_gib": 120.0,
+            "freelist_gib": 1.0,
+            "active_gib": 119.0,
+            "freelist_ratio_percent": 1.0,
+            "disk_free_gib": 200.0,
+            "disk_free_percent": 20.0,
+        },
+        active_current=active,
+    )
+    # Inject a history file with only 3-day prior growth (large delta must not warn).
+    from origenlab_email_pipeline.operator_cli.sqlite_storage_monitor import (
+        HISTORY_FILENAME,
+        SCHEMA_VERSION,
+        atomic_write_json,
+    )
+
+    atomic_write_json(
+        active / HISTORY_FILENAME,
+        {"schema_version": SCHEMA_VERSION, "sample_count": 2, "samples": history, "mutation": False},
+    )
+    status = build_sqlite_storage_status(reports_dir=reports, now=now)
+    assert status["growth_7d_gib"] is None
+    assert "db_growth_7d_above_5_gib" not in status["reasons"]
+    assert status["status"] == "healthy"
+
+
+def test_growth_lone_older_sample_outside_window_returns_none() -> None:
+    now = datetime(2026, 7, 15, tzinfo=timezone.utc)
+    history = [
+        {"captured_at_utc": (now - timedelta(days=20)).isoformat(), "allocated_gib": 50.0},
+        {"captured_at_utc": now.isoformat(), "allocated_gib": 120.0},
+    ]
+    assert growth_7d_gib(history, now=now) is None
+
+
+def test_valid_seven_day_growth_over_5_gib_drives_attention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = datetime(2026, 7, 15, 17, 0, tzinfo=timezone.utc)
+    reports = tmp_path / "reports"
+    active = reports / "active" / "current"
+    active.mkdir(parents=True)
+    monkeypatch.setenv("ORIGENLAB_REPORTS_DIR", str(reports))
+    history = [
+        {"captured_at_utc": (now - timedelta(days=7)).isoformat(), "allocated_gib": 100.0},
+        {
+            "captured_at_utc": now.isoformat(),
+            "allocated_gib": 108.0,
+            "freelist_gib": 1.0,
+            "active_gib": 107.0,
+            "freelist_ratio_percent": 1.0,
+            "disk_free_gib": 200.0,
+            "disk_free_percent": 20.0,
+        },
+    ]
+    write_storage_evidence(history[-1], active_current=active)
+    from origenlab_email_pipeline.operator_cli.sqlite_storage_monitor import (
+        HISTORY_FILENAME,
+        SCHEMA_VERSION,
+        atomic_write_json,
+    )
+
+    atomic_write_json(
+        active / HISTORY_FILENAME,
+        {"schema_version": SCHEMA_VERSION, "sample_count": 2, "samples": history, "mutation": False},
+    )
+    status = build_sqlite_storage_status(reports_dir=reports, now=now)
+    assert status["growth_7d_gib"] == 8.0
+    assert status["status"] == "attention"
+    assert "db_growth_7d_above_5_gib" in status["reasons"]
+
+    (active / "daily_core_run_manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "success",
+                "returncode": 0,
+                "generated_at_utc": "2026-07-15T15:55:28+00:00",
+                "steps": [{}] * 8,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (active / "mail_auto_refresh_state.json").write_text(
+        json.dumps(
+            {
+                "dirty": False,
+                "last_result": "no_change",
+                "last_run_started_at": "2026-07-15T16:00:00+00:00",
+                "last_run_finished_at": "2026-07-15T16:00:02+00:00",
+                "consecutive_failures": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (active / "dashboard_auto_mirror_state.json").write_text(
+        json.dumps(
+            {
+                "last_result": "already_mirrored",
+                "last_successful_mirror_at": "2026-07-15T16:17:49+00:00",
+                "last_mirrored_daily_core_generated_at": "2026-07-15T15:55:28+00:00",
+                "last_run_started_at": "2026-07-15T16:17:49+00:00",
+                "last_run_finished_at": "2026-07-15T16:17:49+00:00",
+                "consecutive_failures": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = build_operator_automation_status(
+        reports_dir=reports,
+        options=OperatorAutomationStatusOptions(skip_cron_inspection=True),
+        now=now,
+        process_alive=lambda _pid: False,
+    )
+    assert report["verdict"] == "attention"
+    assert report["recommended_action"] == "inspect_sqlite_storage_capacity_no_vacuum"
+    assert "db_growth_7d_above_5_gib" in report["warnings"]
+
+
+def test_bytes_or_none_tolerates_disappearing_wal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from origenlab_email_pipeline.operator_cli import sqlite_storage_monitor as mod
+
+    wal = tmp_path / "emails.sqlite-wal"
+    wal.write_bytes(b"abc")
+
+    real_is_file = Path.is_file
+    real_stat = Path.stat
+
+    def flaky_is_file(self: Path) -> bool:
+        if self == wal:
+            return True
+        return real_is_file(self)
+
+    def flaky_stat(self: Path, *args, **kwargs):
+        if self == wal:
+            raise FileNotFoundError(self)
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "is_file", flaky_is_file)
+    monkeypatch.setattr(Path, "stat", flaky_stat)
+    assert mod._bytes_or_none(wal) is None
+
+
+@pytest.mark.parametrize(
+    "bad_field,bad_value",
+    [
+        ("disk_free_gib", "not-a-number"),
+        ("disk_free_percent", {"x": 1}),
+        ("freelist_ratio_percent", "high"),
+        ("allocated_gib", "big"),
+        ("allocated_bytes", "oops"),
+    ],
+)
+def test_invalid_numeric_snapshot_fields_stay_unknown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    bad_field: str,
+    bad_value: object,
+) -> None:
+    reports = tmp_path / "reports"
+    active = reports / "active" / "current"
+    active.mkdir(parents=True)
+    monkeypatch.setenv("ORIGENLAB_REPORTS_DIR", str(reports))
+    sample = {
+        "captured_at_utc": datetime.now(timezone.utc).isoformat(),
+        "allocated_gib": 10.0,
+        "freelist_gib": 1.0,
+        "active_gib": 9.0,
+        "freelist_ratio_percent": 10.0,
+        "disk_free_gib": 200.0,
+        "disk_free_percent": 20.0,
+        bad_field: bad_value,
+    }
+    (active / SNAPSHOT_FILENAME).write_text(json.dumps(sample), encoding="utf-8")
+    status = build_sqlite_storage_status(reports_dir=reports)
+    assert status["status"] == "unknown"
+    assert status["parse_error"] == "malformed_numeric"
+    assert status["reasons"] == ["snapshot_malformed_numeric"]
+    assert "db_growth_7d_above_5_gib" not in status["reasons"]
 
 
 def test_high_freelist_alone_stays_healthy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
