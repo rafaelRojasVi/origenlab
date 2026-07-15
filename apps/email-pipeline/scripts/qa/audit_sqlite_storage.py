@@ -4,6 +4,9 @@
 Opens the database with URI ``mode=ro``. Never runs VACUUM, ANALYZE, REINDEX,
 wal_checkpoint, DELETE, or any mutation.
 
+``--storage-only`` emits constant-time storage metadata without querying
+application tables (including ``emails``).
+
 ``--include-dbstat`` is opt-in and can cause heavy I/O on large databases
 (e.g. ~127 GiB). Do not enable it against production SQLite without operator approval.
 """
@@ -24,13 +27,16 @@ if str(_ROOT / "src") not in sys.path:
 
 from origenlab_email_pipeline.config import load_settings
 from origenlab_email_pipeline.contacto_gmail_source import sql_predicate_contacto_gmail_source
-
-GiB = 1024**3
+from origenlab_email_pipeline.operator_cli.sqlite_storage_monitor import (
+    GiB,
+    collect_sqlite_storage_telemetry,
+)
 
 
 def _connect_ro(db: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=120.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA query_only=ON")
     return conn
 
 
@@ -58,12 +64,53 @@ def _safe_count(conn: sqlite3.Connection, sql: str) -> int | None:
         return None
 
 
+def run_storage_only_audit(db: Path) -> dict[str, Any]:
+    """Constant-time storage metadata only — no application-table queries."""
+    telem = collect_sqlite_storage_telemetry(db)
+    return {
+        "mode": "storage-only",
+        "db_path_basename": telem["database_basename"],
+        "database_size_bytes": telem["database_size_bytes"],
+        "wal_size_bytes": telem["wal_size_bytes"],
+        "shm_size_bytes": telem["shm_size_bytes"],
+        "page_size": telem["page_size"],
+        "page_count": telem["page_count"],
+        "freelist_count": telem["freelist_count"],
+        "allocated_bytes": telem["allocated_bytes"],
+        "allocated_gib": telem["allocated_gib"],
+        "freelist_unused_bytes": telem["freelist_bytes"],
+        "freelist_unused_gib": telem["freelist_gib"],
+        "freelist_bytes": telem["freelist_bytes"],
+        "freelist_gib": telem["freelist_gib"],
+        "active_page_count": telem["active_page_count"],
+        "active_bytes": telem["active_bytes"],
+        "active_gib": telem["active_gib"],
+        "freelist_ratio_percent": telem["freelist_ratio_percent"],
+        "auto_vacuum": telem["auto_vacuum"],
+        "auto_vacuum_name": telem["auto_vacuum_name"],
+        "journal_mode": telem["journal_mode"],
+        "disk_total_bytes": telem["disk_total_bytes"],
+        "disk_free_bytes": telem["disk_free_bytes"],
+        "disk_used_bytes": telem["disk_used_bytes"],
+        "disk_total_gib": telem["disk_total_gib"],
+        "disk_free_gib": telem["disk_free_gib"],
+        "disk_used_gib": telem["disk_used_gib"],
+        "disk_free_percent": telem["disk_free_percent"],
+        "dbstat_included": False,
+        "mutation": False,
+        "read_only": True,
+        "captured_at_utc": telem["captured_at_utc"],
+        "schema_version": telem["schema_version"],
+    }
+
+
 def run_quick_audit(conn: sqlite3.Connection, db: Path) -> dict[str, Any]:
-    page_size = int(conn.execute("PRAGMA page_size").fetchone()[0])
-    page_count = int(conn.execute("PRAGMA page_count").fetchone()[0])
-    freelist_count = int(conn.execute("PRAGMA freelist_count").fetchone()[0])
-    allocated_bytes = page_size * page_count
-    freelist_bytes = page_size * freelist_count
+    telem = collect_sqlite_storage_telemetry(db)
+    page_size = int(telem["page_size"])
+    page_count = int(telem["page_count"])
+    freelist_count = int(telem["freelist_count"])
+    allocated_bytes = int(telem["allocated_bytes"])
+    freelist_bytes = int(telem["freelist_bytes"])
 
     wal_path = Path(str(db) + "-wal")
     shm_path = Path(str(db) + "-shm")
@@ -202,6 +249,7 @@ def run_dbstat(conn: sqlite3.Connection, *, limit: int = 25) -> dict[str, Any]:
 def format_human(report: dict[str, Any]) -> str:
     lines = [
         "SQLite storage audit (read-only)",
+        f"  mode: {report.get('mode')}",
         f"  database: {report.get('db_path_basename')}",
         f"  size_bytes: {report.get('database_size_bytes')}",
         f"  wal_size_bytes: {report.get('wal_size_bytes')}",
@@ -211,15 +259,31 @@ def format_human(report: dict[str, Any]) -> str:
         f"  freelist_count: {report.get('freelist_count')}",
         f"  allocated_gib: {report.get('allocated_gib')}",
         f"  freelist_unused_gib: {report.get('freelist_unused_gib')}",
-        f"  email_row_count: {report.get('email_row_count')}",
-        f"  canonical_sent_row_count: {report.get('canonical_sent_row_count')}",
-        f"  canonical_sent_distinct_message_id_count: "
-        f"{report.get('canonical_sent_distinct_message_id_count')}",
-        f"  canonical_sent_missing_message_id_count: "
-        f"{report.get('canonical_sent_missing_message_id_count')}",
-        f"  suspicious_future_date_count: {report.get('suspicious_future_date_count')}",
-        f"  comparison_note: {report.get('comparison_note')}",
     ]
+    if report.get("mode") == "storage-only":
+        lines.extend(
+            [
+                f"  active_gib: {report.get('active_gib')}",
+                f"  freelist_ratio_percent: {report.get('freelist_ratio_percent')}",
+                f"  auto_vacuum_name: {report.get('auto_vacuum_name')}",
+                f"  journal_mode: {report.get('journal_mode')}",
+                f"  disk_free_gib: {report.get('disk_free_gib')}",
+                f"  disk_free_percent: {report.get('disk_free_percent')}",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                f"  email_row_count: {report.get('email_row_count')}",
+                f"  canonical_sent_row_count: {report.get('canonical_sent_row_count')}",
+                f"  canonical_sent_distinct_message_id_count: "
+                f"{report.get('canonical_sent_distinct_message_id_count')}",
+                f"  canonical_sent_missing_message_id_count: "
+                f"{report.get('canonical_sent_missing_message_id_count')}",
+                f"  suspicious_future_date_count: {report.get('suspicious_future_date_count')}",
+                f"  comparison_note: {report.get('comparison_note')}",
+            ]
+        )
     if report.get("dbstat"):
         lines.append(f"  dbstat: {report['dbstat'].get('warning') or report['dbstat']}")
     return "\n".join(lines)
@@ -237,6 +301,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--json", action="store_true", help="Emit JSON on stdout")
     parser.add_argument(
+        "--storage-only",
+        action="store_true",
+        help=(
+            "Emit constant-time storage metadata only "
+            "(no emails/Sent/future-date/COUNT/dbstat queries)."
+        ),
+    )
+    parser.add_argument(
         "--include-dbstat",
         action="store_true",
         help=(
@@ -251,6 +323,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    if args.storage_only and (args.include_dbstat or args.include_subjects):
+        print(
+            "ERROR: --storage-only cannot be combined with --include-dbstat or --include-subjects.",
+            file=sys.stderr,
+        )
+        return 2
+
     db = args.db or load_settings().resolved_sqlite_path()
     if not db.is_file():
         print(f"SQLite not found: {db}", file=sys.stderr)
@@ -262,22 +341,24 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
 
-    conn = _connect_ro(db)
-    try:
-        report = run_quick_audit(conn, db)
-        if args.include_subjects and report.get("suspicious_future_date_rows_metadata"):
-            # Opt-in subject attachment without bodies.
-            for meta in report["suspicious_future_date_rows_metadata"]:
-                row = conn.execute(
-                    "SELECT subject FROM emails WHERE id = ?", (meta["id"],)
-                ).fetchone()
-                meta["subject"] = row["subject"] if row else None
-        if args.include_dbstat:
-            report["dbstat_included"] = True
-            report["dbstat"] = run_dbstat(conn)
-            report["mode"] = "quick+dbstat"
-    finally:
-        conn.close()
+    if args.storage_only:
+        report = run_storage_only_audit(db)
+    else:
+        conn = _connect_ro(db)
+        try:
+            report = run_quick_audit(conn, db)
+            if args.include_subjects and report.get("suspicious_future_date_rows_metadata"):
+                for meta in report["suspicious_future_date_rows_metadata"]:
+                    row = conn.execute(
+                        "SELECT subject FROM emails WHERE id = ?", (meta["id"],)
+                    ).fetchone()
+                    meta["subject"] = row["subject"] if row else None
+            if args.include_dbstat:
+                report["dbstat_included"] = True
+                report["dbstat"] = run_dbstat(conn)
+                report["mode"] = "quick+dbstat"
+        finally:
+            conn.close()
 
     if args.json:
         print(json.dumps(report, indent=2, ensure_ascii=False))

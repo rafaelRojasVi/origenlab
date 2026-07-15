@@ -91,6 +91,26 @@ def test_audit_sqlite_storage_quick_json(tmp_path: Path) -> None:
     assert payload["read_only"] is True
 
 
+def test_audit_sqlite_storage_storage_only_json(tmp_path: Path) -> None:
+    db = tmp_path / "emails.sqlite"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE emails (id INTEGER PRIMARY KEY)")
+    conn.commit()
+    conn.close()
+    cp = subprocess.run(
+        [sys.executable, str(SCRIPT), "--db", str(db), "--storage-only", "--json"],
+        cwd=str(REPO),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert cp.returncode == 0, cp.stderr
+    payload = json.loads(cp.stdout)
+    assert payload["mode"] == "storage-only"
+    assert "email_row_count" not in payload
+    assert payload["read_only"] is True
+
+
 def test_audit_sqlite_storage_include_dbstat(tmp_path: Path) -> None:
     db = tmp_path / "emails.sqlite"
     _seed(db)

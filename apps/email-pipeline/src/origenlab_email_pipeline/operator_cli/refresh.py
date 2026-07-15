@@ -11,6 +11,9 @@ from origenlab_email_pipeline.operator_cli.constants import (
     REFRESH_DASHBOARD_USAGE,
 )
 from origenlab_email_pipeline.operator_cli.daily_core_manifest import write_daily_core_run_manifest
+from origenlab_email_pipeline.operator_cli.sqlite_storage_monitor import (
+    collect_and_store_sqlite_storage_evidence,
+)
 
 SubcommandRunner = Callable[..., int]
 
@@ -268,6 +271,13 @@ def run_daily_core(
         skip_ingest=forced.skip_ingest,
         since_days=forced.since_days,
     )
+    # Non-critical operator evidence only — never a 9th workflow step and never
+    # changes daily-core return codes on telemetry failure.
+    if rc == 0:
+        try:
+            collect_and_store_sqlite_storage_evidence()
+        except Exception:
+            pass
     return rc
 
 
