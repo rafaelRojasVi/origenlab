@@ -19,6 +19,7 @@ from origenlab_email_pipeline.contacto_gmail_source import (
     LEGACY_LABDELIVERY_SOURCE_LIKE,
     sql_predicate_contacto_gmail_source,
 )
+from origenlab_email_pipeline.mart_core_postgres_migrate import iso_text_to_datetime
 
 GiB = 1024**3
 AUDIT_SCHEMA_VERSION = 2
@@ -378,6 +379,62 @@ def run_structural_light(conn: sqlite3.Connection, db: Path) -> dict[str, Any]:
     }
 
 
+def _retarget_table_alias(where_sql: str, alias: str) -> str:
+    return where_sql.replace("e.", f"{alias}.")
+
+
+def _collect_foreign_key_violations(conn: sqlite3.Connection) -> tuple[int, list[dict[str, Any]]]:
+    fk_total = 0
+    fk_violations: list[dict[str, Any]] = []
+    for row in execute_ro(conn, "PRAGMA foreign_key_check"):
+        fk_total += 1
+        if len(fk_violations) < MAX_VIOLATION_SAMPLES:
+            fk_violations.append(
+                {
+                    "table": row[0],
+                    "rowid": row[1],
+                    "parent": row[2],
+                    "fk_index": row[3],
+                }
+            )
+    return fk_total, fk_violations
+
+
+def _count_invalid_date_iso_rows(conn: sqlite3.Connection) -> int:
+    if not _has_table(conn, "emails"):
+        return 0
+    invalid = 0
+    cur = execute_ro(
+        conn,
+        "SELECT date_iso FROM emails WHERE date_iso IS NOT NULL AND trim(date_iso) != ''",
+    )
+    for row in cur:
+        try:
+            iso_text_to_datetime(row[0])
+        except (ValueError, TypeError):
+            invalid += 1
+    return invalid
+
+
+def _assert_privacy_safe(payload: Any) -> None:
+    violations = scan_for_pii_leaks(payload)
+    if violations:
+        raise RuntimeError(f"privacy leak detected: {violations[:5]}")
+
+
+def _fingerprint_dict_from_files(fps: dict[str, FileFingerprint | None]) -> dict[str, dict[str, int | None] | None]:
+    return {k: (v.to_dict() if v else None) for k, v in fps.items()}
+
+
+def _current_fingerprint_matches_stored(
+    stored: dict[str, dict[str, int | None] | None] | None,
+    current: dict[str, FileFingerprint | None],
+) -> bool:
+    if not stored:
+        return False
+    return stored == _fingerprint_dict_from_files(current)
+
+
 def _row_count_and_id_range(conn: sqlite3.Connection, table: str) -> dict[str, Any]:
     if not _has_table(conn, table):
         return {"exists": False}
@@ -394,17 +451,7 @@ def _row_count_and_id_range(conn: sqlite3.Connection, table: str) -> dict[str, A
 def run_structural_quick(conn: sqlite3.Connection, db: Path) -> dict[str, Any]:
     started = time.perf_counter()
     quick = str(execute_ro(conn, "PRAGMA quick_check").fetchone()[0])
-    fk_rows = execute_ro(conn, "PRAGMA foreign_key_check").fetchall()
-    fk_total = len(fk_rows)
-    fk_violations = [
-        {
-            "table": r[0],
-            "rowid": r[1],
-            "parent": r[2],
-            "fk_index": r[3],
-        }
-        for r in fk_rows[:MAX_VIOLATION_SAMPLES]
-    ]
+    fk_total, fk_violations = _collect_foreign_key_violations(conn)
     pragmas = _constant_time_storage_pragmas(conn)
     inventory = _schema_inventory(conn)
     table_stats: dict[str, Any] = {}
@@ -629,6 +676,7 @@ def _duplicate_message_id_stats(
 ) -> dict[str, Any]:
     if not _has_table(conn, "emails"):
         return {"cohort": cohort_label, "exists": False}
+    cohort_where_e2 = _retarget_table_alias(where_sql, "e2")
     total = int(execute_ro(conn, f"SELECT COUNT(*) FROM emails e WHERE {where_sql}").fetchone()[0])
     dup_groups = int(
         execute_ro(
@@ -659,23 +707,26 @@ def _duplicate_message_id_stats(
         """,
     ).fetchone()[0]
 
-    # True SHA-256 fingerprints for duplicate message_id groups only.
-    fingerprint_groups: dict[str, set[str]] = {}
+    cohort_dup_subquery = f"""
+      SELECT lower(trim(e2.message_id)) AS mid
+      FROM emails e2
+      WHERE {cohort_where_e2}
+        AND e2.message_id IS NOT NULL AND trim(e2.message_id) != ''
+      GROUP BY lower(trim(e2.message_id))
+      HAVING COUNT(*) > 1
+    """
+
+    rows_by_mid: dict[str, list[tuple[str, int]]] = {}
     cur = execute_ro(
         conn,
         f"""
         SELECT lower(trim(e.message_id)) AS mid, e.id,
-               {_body_fingerprint_expr()} AS payload
+               {_body_fingerprint_expr()} AS payload,
+               ({_body_bytes_sum_expr('e')}) AS body_bytes
         FROM emails e
         WHERE {where_sql}
           AND e.message_id IS NOT NULL AND trim(e.message_id) != ''
-          AND lower(trim(e.message_id)) IN (
-            SELECT lower(trim(message_id))
-            FROM emails
-            WHERE message_id IS NOT NULL AND trim(message_id) != ''
-            GROUP BY lower(trim(message_id))
-            HAVING COUNT(*) > 1
-          )
+          AND lower(trim(e.message_id)) IN ({cohort_dup_subquery})
         ORDER BY mid, e.id
         """,
     )
@@ -687,25 +738,32 @@ def _duplicate_message_id_stats(
         elif isinstance(payload, str):
             payload = payload.encode("utf-8")
         digest = hashlib.sha256(payload).hexdigest()
-        fingerprint_groups.setdefault(mid, set()).add(digest)
+        body_bytes = int(row["body_bytes"] or 0)
+        rows_by_mid.setdefault(mid, []).append((digest, body_bytes))
 
-    sha_exact_groups = sum(1 for fps in fingerprint_groups.values() if len(fps) == 1)
-    sha_mixed_content_groups = sum(1 for fps in fingerprint_groups.values() if len(fps) > 1)
+    sha_exact_groups = 0
+    sha_mixed_fingerprint_groups = 0
+    sha_same_length_different_content_groups = 0
+    estimated_repeated_body_bytes = 0
 
-    repeated_body_bytes = execute_ro(
-        conn,
-        f"""
-        SELECT SUM(extra_bytes) FROM (
-          SELECT
-            SUM({_body_bytes_sum_expr('e')}) - MIN({_body_bytes_sum_expr('e')}) AS extra_bytes
-          FROM emails e
-          WHERE {where_sql}
-            AND e.message_id IS NOT NULL AND trim(e.message_id) != ''
-          GROUP BY lower(trim(e.message_id))
-          HAVING COUNT(*) > 1
-        )
-        """,
-    ).fetchone()[0]
+    for row_data in rows_by_mid.values():
+        digests = {digest for digest, _ in row_data}
+        if len(digests) == 1:
+            sha_exact_groups += 1
+            bodies = [body for _, body in row_data]
+            if len(bodies) > 1:
+                estimated_repeated_body_bytes += sum(bodies) - min(bodies)
+        else:
+            sha_mixed_fingerprint_groups += 1
+            body_lens = {body for _, body in row_data}
+            if len(body_lens) == 1:
+                sha_same_length_different_content_groups += 1
+            by_digest: dict[str, list[int]] = {}
+            for digest, body in row_data:
+                by_digest.setdefault(digest, []).append(body)
+            for bodies in by_digest.values():
+                if len(bodies) > 1:
+                    estimated_repeated_body_bytes += sum(bodies) - min(bodies)
 
     return {
         "cohort": cohort_label,
@@ -714,13 +772,14 @@ def _duplicate_message_id_stats(
         "duplicate_message_id_groups": dup_groups,
         "duplicate_extra_rows": int(extra_rows or 0),
         "sha256_exact_duplicate_groups": sha_exact_groups,
-        "sha256_same_length_different_content_groups": sha_mixed_content_groups,
-        "estimated_repeated_body_bytes_in_sqlite": int(repeated_body_bytes or 0),
+        "sha256_mixed_fingerprint_duplicate_groups": sha_mixed_fingerprint_groups,
+        "sha256_same_length_different_content_groups": sha_same_length_different_content_groups,
+        "estimated_repeated_body_bytes_in_sqlite": estimated_repeated_body_bytes,
         "note": (
-            "duplicate_message_id_groups counts repeated IDs only. "
+            "duplicate_message_id_groups counts repeated IDs within this cohort only. "
             "sha256_exact_duplicate_groups requires identical SHA-256 fingerprints over "
-            "length-prefixed body column values. Same-length different content remains a "
-            "repeated message_id, not an exact duplicate."
+            "length-prefixed body column values. estimated_repeated_body_bytes_in_sqlite "
+            "includes only repeated rows with identical fingerprints (conservative)."
         ),
         "exact": True,
     }
@@ -819,6 +878,23 @@ def _referenced_email_ids_sql(conn: sqlite3.Connection) -> tuple[str | None, lis
     return " UNION ".join(parts), discovered
 
 
+def _valid_referenced_email_ids_sql(ref_sql: str) -> str:
+    return f"""
+      SELECT DISTINCT refs.email_id
+      FROM ({ref_sql}) AS refs
+      INNER JOIN emails e ON e.id = refs.email_id
+    """
+
+
+def _orphan_referenced_email_ids_sql(ref_sql: str) -> str:
+    return f"""
+      SELECT DISTINCT refs.email_id
+      FROM ({ref_sql}) AS refs
+      LEFT JOIN emails e ON e.id = refs.email_id
+      WHERE e.id IS NULL
+    """
+
+
 def _cohort_body_bytes(conn: sqlite3.Connection, where_sql: str) -> int:
     if not _has_table(conn, "emails"):
         return 0
@@ -862,15 +938,20 @@ def run_usefulness_classification(conn: sqlite3.Connection) -> dict[str, Any]:
     historical_only = total_emails
     attachment_linked = 0
     operational_refs = 0
+    orphan_reference_ids = 0
 
     if ref_sql:
+        valid_ref_sql = _valid_referenced_email_ids_sql(ref_sql)
         referenced = int(
-            execute_ro(conn, f"SELECT COUNT(DISTINCT email_id) FROM ({ref_sql})").fetchone()[0]
+            execute_ro(conn, f"SELECT COUNT(*) FROM ({valid_ref_sql})").fetchone()[0]
+        )
+        orphan_reference_ids = int(
+            execute_ro(conn, f"SELECT COUNT(*) FROM ({_orphan_referenced_email_ids_sql(ref_sql)})").fetchone()[0]
         )
         historical_only = int(
             execute_ro(
                 conn,
-                f"SELECT COUNT(*) FROM emails e WHERE e.id NOT IN (SELECT email_id FROM ({ref_sql}))",
+                f"SELECT COUNT(*) FROM emails e WHERE e.id NOT IN ({valid_ref_sql})",
             ).fetchone()[0]
         )
         attachment_only_parts = [
@@ -886,32 +967,35 @@ def run_usefulness_classification(conn: sqlite3.Connection) -> dict[str, Any]:
             if item["role"] != "attachment_linkage"
         ]
         if attachment_only_parts:
+            attachment_ref_sql = " UNION ".join(attachment_only_parts)
             attachment_linked = int(
                 execute_ro(
                     conn,
-                    f"SELECT COUNT(DISTINCT email_id) FROM ({' UNION '.join(attachment_only_parts)})",
+                    f"SELECT COUNT(*) FROM ({_valid_referenced_email_ids_sql(attachment_ref_sql)})",
                 ).fetchone()[0]
             )
         if operational_parts:
+            operational_ref_sql = " UNION ".join(operational_parts)
             operational_refs = int(
                 execute_ro(
                     conn,
-                    f"SELECT COUNT(DISTINCT email_id) FROM ({' UNION '.join(operational_parts)})",
+                    f"SELECT COUNT(*) FROM ({_valid_referenced_email_ids_sql(operational_ref_sql)})",
                 ).fetchone()[0]
             )
 
     canonical_where = sql_predicate_contacto_gmail_source(table_alias="e", coalesce_null=False)
+    valid_ref_for_bytes = _valid_referenced_email_ids_sql(ref_sql) if ref_sql else None
     cohort_bytes = {
         "canonical_gmail": _cohort_body_bytes(conn, canonical_where),
         "legacy_labdelivery": _cohort_body_bytes(
             conn, "lower(e.source_file) LIKE '%contacto@labdelivery%'"
         ),
         "referenced_by_discovered_tables": _cohort_body_bytes(
-            conn, f"e.id IN (SELECT email_id FROM ({ref_sql}))" if ref_sql else "0"
+            conn, f"e.id IN ({valid_ref_for_bytes})" if valid_ref_for_bytes else "0"
         ),
         "historical_unreferenced": _cohort_body_bytes(
             conn,
-            f"e.id NOT IN (SELECT email_id FROM ({ref_sql}))" if ref_sql else "1=1",
+            f"e.id NOT IN ({valid_ref_for_bytes})" if valid_ref_for_bytes else "1=1",
         ),
     }
 
@@ -942,19 +1026,7 @@ def run_usefulness_classification(conn: sqlite3.Connection) -> dict[str, Any]:
                 execute_ro(conn, f"SELECT COUNT(*) FROM {qtable}").fetchone()[0]
             )
 
-    invalid_date_rows = int(
-        execute_ro(
-            conn,
-            """
-            SELECT COUNT(*) FROM emails
-            WHERE date_iso IS NOT NULL AND trim(date_iso) != ''
-              AND (
-                length(date_iso) < 10
-                OR substr(date_iso, 1, 4) GLOB '[0-9][0-9][0-9][0-9]' = 0
-              )
-            """,
-        ).fetchone()[0]
-    )
+    invalid_date_rows = _count_invalid_date_iso_rows(conn)
 
     canonical_stats = _duplicate_message_id_stats(
         conn,
@@ -987,7 +1059,9 @@ def run_usefulness_classification(conn: sqlite3.Connection) -> dict[str, Any]:
         "recomputable_mart_table_counts": mart_counts,
         "commercial_table_counts": commercial_counts,
         "orphan_attachment_rows": orphan_attachments,
+        "orphan_reference_email_id_count": orphan_reference_ids,
         "invalid_date_iso_rows": invalid_date_rows,
+        "invalid_date_iso_validation": "iso_text_to_datetime",
         "deletion_review_candidates": deletion_review_candidates,
     }
 
@@ -1174,12 +1248,18 @@ def scan_for_pii_leaks(payload: Any, *, path: str = "$") -> list[str]:
     return violations
 
 
-def checkpoint_identity(options: AuditOptions) -> dict[str, Any]:
-    fps = fingerprint_db_files(options.db)
+def checkpoint_identity(
+    options: AuditOptions,
+    *,
+    file_fingerprint: dict[str, dict[str, int | None] | None] | None = None,
+) -> dict[str, Any]:
+    if file_fingerprint is None:
+        fps = fingerprint_db_files(options.db)
+        file_fingerprint = _fingerprint_dict_from_files(fps)
     return {
         "audit_schema_version": AUDIT_SCHEMA_VERSION,
         "database_basename": options.db.name,
-        "file_fingerprint": {k: (v.to_dict() if v else None) for k, v in fps.items()},
+        "file_fingerprint": file_fingerprint,
         "phases_requested": sorted(options.phases),
         "full_integrity_check": options.full_integrity_check,
         "confirm_offline_copy": options.confirm_offline_copy,
@@ -1194,20 +1274,38 @@ def load_checkpoint(path: Path) -> dict[str, Any]:
 
 
 def save_checkpoint(path: Path, data: dict[str, Any]) -> None:
+    _assert_privacy_safe(data)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def validate_resume_checkpoint(checkpoint: dict[str, Any], options: AuditOptions) -> None:
+def validate_resume_checkpoint(
+    checkpoint: dict[str, Any],
+    options: AuditOptions,
+    *,
+    current_fingerprint: dict[str, FileFingerprint | None],
+) -> None:
     if not checkpoint:
         raise RuntimeError("resume requested but checkpoint is missing")
-    expected = checkpoint_identity(options)
     stored = checkpoint.get("identity") or {}
-    for key, value in expected.items():
-        if stored.get(key) != value:
+    expected_config = checkpoint_identity(options, file_fingerprint=stored.get("file_fingerprint"))
+    for key in (
+        "audit_schema_version",
+        "database_basename",
+        "phases_requested",
+        "full_integrity_check",
+        "confirm_offline_copy",
+        "production_path",
+    ):
+        if stored.get(key) != expected_config.get(key):
             raise RuntimeError(
-                f"checkpoint identity mismatch for {key}: stored={stored.get(key)!r} expected={value!r}"
+                f"checkpoint identity mismatch for {key}: stored={stored.get(key)!r} "
+                f"expected={expected_config.get(key)!r}"
             )
+    if not _current_fingerprint_matches_stored(stored.get("file_fingerprint"), current_fingerprint):
+        raise RuntimeError(
+            "checkpoint file fingerprint mismatch: database/WAL/SHM changed since audit started"
+        )
 
 
 def ordered_phases(requested: frozenset[str], *, full_integrity_check: bool) -> list[str]:
@@ -1233,8 +1331,19 @@ def run_audit(
     output_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = output_dir / "audit_sqlite_deep_checkpoint.json"
     checkpoint = load_checkpoint(checkpoint_path) if options.resume else {}
+    before_fp = fingerprint_db_files(options.db)
+    frozen_fingerprint = _fingerprint_dict_from_files(before_fp)
+
     if options.resume:
-        validate_resume_checkpoint(checkpoint, options)
+        validate_resume_checkpoint(checkpoint, options, current_fingerprint=before_fp)
+    elif checkpoint.get("identity"):
+        if not _current_fingerprint_matches_stored(
+            (checkpoint.get("identity") or {}).get("file_fingerprint"),
+            before_fp,
+        ):
+            raise RuntimeError(
+                "existing checkpoint file fingerprint mismatch: database/WAL/SHM changed since audit started"
+            )
 
     completed_phases = {
         k
@@ -1242,7 +1351,6 @@ def run_audit(
         if isinstance(v, dict) and v.get("status") == "completed"
     }
 
-    before_fp = fingerprint_db_files(options.db)
     report: dict[str, Any] = {
         "schema_version": AUDIT_SCHEMA_VERSION,
         "captured_at_utc": _iso_now(),
@@ -1251,9 +1359,7 @@ def run_audit(
         "mutation": False,
         "confirm_offline_copy": options.confirm_offline_copy,
         "production_path": is_configured_production_db(options.db, options.settings),
-        "file_fingerprint_before": {
-            k: (v.to_dict() if v else None) for k, v in before_fp.items()
-        },
+        "file_fingerprint_before": frozen_fingerprint,
         "phases": dict(checkpoint.get("phases") or {}),
         "phase_order": ordered_phases(options.phases, full_integrity_check=options.full_integrity_check),
     }
@@ -1263,6 +1369,11 @@ def run_audit(
         for phase_name in report["phase_order"]:
             if phase_name in completed_phases:
                 continue
+            current_fp = fingerprint_db_files(options.db)
+            if not _current_fingerprint_matches_stored(frozen_fingerprint, current_fp):
+                raise RuntimeError(
+                    "database file fingerprint changed during audit (database/WAL/SHM mismatch)"
+                )
             started = clock()
             try:
                 if phase_name == "structural_light":
@@ -1285,19 +1396,34 @@ def run_audit(
                     raise ValueError(f"unknown phase: {phase_name}")
                 result["status"] = "completed"
                 result["elapsed_seconds"] = round(clock() - started, 3)
+                _assert_privacy_safe(result)
                 report["phases"][phase_name] = result
-                checkpoint["identity"] = checkpoint_identity(options)
+                if "identity" not in checkpoint:
+                    checkpoint["identity"] = checkpoint_identity(
+                        options,
+                        file_fingerprint=frozen_fingerprint,
+                    )
                 checkpoint["phases"] = report["phases"]
                 save_checkpoint(checkpoint_path, checkpoint)
             except sqlite3.Error as exc:
-                report["phases"][phase_name] = {
+                failed = {
                     "status": "failed",
                     "error": f"{type(exc).__name__}: {exc}",
                     "elapsed_seconds": round(clock() - started, 3),
                 }
-                checkpoint["identity"] = checkpoint_identity(options)
+                _assert_privacy_safe(failed)
+                report["phases"][phase_name] = failed
+                if "identity" not in checkpoint:
+                    checkpoint["identity"] = checkpoint_identity(
+                        options,
+                        file_fingerprint=frozen_fingerprint,
+                    )
                 checkpoint["phases"] = report["phases"]
                 save_checkpoint(checkpoint_path, checkpoint)
+                raise
+            except RuntimeError as exc:
+                if "privacy leak detected" in str(exc):
+                    raise
                 raise
     finally:
         conn.close()

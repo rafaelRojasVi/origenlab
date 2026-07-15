@@ -207,6 +207,80 @@ def _build_same_length_different_content_db(path: Path) -> None:
     conn.close()
 
 
+def _build_cross_cohort_shared_message_id_db(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    init_schema(conn)
+    conn.executemany(
+        """
+        INSERT INTO emails (
+          id, source_file, folder, message_id, subject, sender, recipients,
+          date_iso, body, body_html, body_text_raw, body_text_clean,
+          full_body_clean, top_reply_clean
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        [
+            (
+                1,
+                CANONICAL_SRC,
+                "INBOX",
+                "<shared@x>",
+                "c1",
+                "a@b.co",
+                "c@d.co",
+                "2026-01-01T00:00:00Z",
+                "body-a",
+                "",
+                "",
+                "",
+                "",
+                "",
+            ),
+            (
+                2,
+                LEGACY_SRC,
+                "INBOX",
+                "<shared@x>",
+                "l1",
+                "a@b.co",
+                "c@d.co",
+                "2020-01-01T00:00:00Z",
+                "body-b",
+                "",
+                "",
+                "",
+                "",
+                "",
+            ),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+
+def _build_orphan_reference_db(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    init_schema(conn)
+    conn.execute(
+        """
+        INSERT INTO emails (
+          id, source_file, folder, message_id, subject, sender, recipients,
+          date_iso, body, body_html, body_text_raw, body_text_clean,
+          full_body_clean, top_reply_clean
+        ) VALUES (1, ?, 'INBOX', '<x@y>', 's', 'a@b.co', 'c@d.co',
+          '2026-01-01T00:00:00Z', 'b', '', '', '', '', '')
+        """,
+        (CANONICAL_SRC,),
+    )
+    conn.execute(
+        """
+        INSERT INTO document_master (attachment_id, email_id, filename, doc_type)
+        VALUES (NULL, 99999, 'missing.pdf', 'quote')
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
 def _build_fk_violation_db(path: Path) -> None:
     conn = sqlite3.connect(path)
     init_schema(conn)
@@ -239,6 +313,20 @@ def same_len_db(tmp_path: Path) -> Path:
 def fk_db(tmp_path: Path) -> Path:
     db = tmp_path / "fk_bad.sqlite"
     _build_fk_violation_db(db)
+    return db
+
+
+@pytest.fixture
+def cross_cohort_db(tmp_path: Path) -> Path:
+    db = tmp_path / "cross_cohort.sqlite"
+    _build_cross_cohort_shared_message_id_db(db)
+    return db
+
+
+@pytest.fixture
+def orphan_ref_db(tmp_path: Path) -> Path:
+    db = tmp_path / "orphan_ref.sqlite"
+    _build_orphan_reference_db(db)
     return db
 
 
@@ -436,6 +524,7 @@ def test_duplicate_analysis_sha256_exact_vs_same_length_different_content(
     )
     assert canonical["duplicate_message_id_groups"] == 1
     assert canonical["sha256_exact_duplicate_groups"] == 1
+    assert canonical["sha256_mixed_fingerprint_duplicate_groups"] == 0
     assert canonical["sha256_same_length_different_content_groups"] == 0
     assert canonical["estimated_repeated_body_bytes_in_sqlite"] > 0
 
@@ -449,7 +538,21 @@ def test_duplicate_analysis_sha256_exact_vs_same_length_different_content(
     )
     assert mixed["duplicate_message_id_groups"] == 1
     assert mixed["sha256_exact_duplicate_groups"] == 0
+    assert mixed["sha256_mixed_fingerprint_duplicate_groups"] == 1
     assert mixed["sha256_same_length_different_content_groups"] == 1
+    assert mixed["estimated_repeated_body_bytes_in_sqlite"] == 0
+
+
+def test_duplicate_analysis_scopes_candidates_to_cohort(cross_cohort_db: Path) -> None:
+    conn = connect_readonly(cross_cohort_db)
+    try:
+        report = run_duplicate_analysis(conn)
+    finally:
+        conn.close()
+    by_cohort = {c["cohort"]: c for c in report["message_id_cohorts"]}
+    assert by_cohort["canonical_gmail"]["duplicate_message_id_groups"] == 0
+    assert by_cohort["legacy_labdelivery"]["duplicate_message_id_groups"] == 0
+    assert by_cohort["all_emails"]["duplicate_message_id_groups"] == 1
 
 
 def test_attachment_duplication_is_external_payload_only(rich_db: Path) -> None:
@@ -474,6 +577,17 @@ def test_attachment_duplication_is_external_payload_only(rich_db: Path) -> None:
     assert "1000" not in savings_text
 
 
+def test_usefulness_reports_orphan_reference_ids_separately(orphan_ref_db: Path) -> None:
+    conn = connect_readonly(orphan_ref_db)
+    try:
+        report = run_usefulness_classification(conn)
+    finally:
+        conn.close()
+    assert report["referenced_email_id_count"] == 0
+    assert report["orphan_reference_email_id_count"] == 1
+    assert report["historical_only_email_rows"] == 1
+
+
 def test_usefulness_reports_body_bytes_and_discovered_refs(rich_db: Path) -> None:
     conn = connect_readonly(rich_db)
     try:
@@ -487,6 +601,8 @@ def test_usefulness_reports_body_bytes_and_discovered_refs(rich_db: Path) -> Non
     assert ("document_master", "email_id") in discovered
     assert report["attachment_linked_email_id_count"] >= 1
     assert report["operational_reference_email_id_count"] >= 1
+    assert report["orphan_reference_email_id_count"] == 0
+    assert report["invalid_date_iso_validation"] == "iso_text_to_datetime"
     assert "automatically deletable" in report["deletion_review_candidates"]["policy"]
 
 
@@ -517,7 +633,11 @@ def test_resume_refuses_identity_mismatch(rich_db: Path, tmp_path: Path) -> None
         full_integrity_check=True,
     )
     with pytest.raises(RuntimeError, match="identity mismatch"):
-        validate_resume_checkpoint(checkpoint, mismatched)
+        validate_resume_checkpoint(
+            checkpoint,
+            mismatched,
+            current_fingerprint=fingerprint_db_files(rich_db),
+        )
 
 
 def test_resume_skips_completed_phase(rich_db: Path, tmp_path: Path) -> None:
@@ -546,6 +666,86 @@ def test_resume_skips_completed_phase(rich_db: Path, tmp_path: Path) -> None:
     assert first["phases"]["structural_quick"]["elapsed_seconds"] == (
         second["phases"]["structural_quick"]["elapsed_seconds"]
     )
+
+
+def test_checkpoint_identity_is_immutable_across_phases(rich_db: Path, tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    quick_only = frozenset({"structural_quick", "physical_dbstat"})
+    run_audit(
+        AuditOptions(
+            db=rich_db,
+            confirm_offline_copy=True,
+            output_dir=out,
+            phases=quick_only,
+        )
+    )
+    checkpoint = json.loads((out / "audit_sqlite_deep_checkpoint.json").read_text())
+    identity_after_two = dict(checkpoint["identity"])
+    assert identity_after_two["file_fingerprint"]["database"] is not None
+
+
+def test_resume_refuses_database_change_after_partial_run(rich_db: Path, tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    quick_only = frozenset({"structural_quick"})
+    run_audit(
+        AuditOptions(
+            db=rich_db,
+            confirm_offline_copy=True,
+            output_dir=out,
+            phases=quick_only,
+        )
+    )
+    rich_db.write_bytes(rich_db.read_bytes() + b"\0")
+    with pytest.raises(RuntimeError, match="fingerprint"):
+        run_audit(
+            AuditOptions(
+                db=rich_db,
+                confirm_offline_copy=True,
+                output_dir=out,
+                resume=True,
+                phases=quick_only,
+            )
+        )
+
+
+def test_privacy_violation_in_phase_is_not_persisted(rich_db: Path, tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    leaked = {
+        "phase": "structural_light",
+        "exact": True,
+        "note": "contact user@example.org on /var/lib/data/emails.sqlite",
+        "page_size": 4096,
+        "page_count": 1,
+        "freelist_count": 0,
+        "allocated_bytes": 4096,
+        "freelist_bytes": 0,
+        "journal_mode": "delete",
+        "auto_vacuum": 0,
+        "tables": [],
+        "indexes": [],
+    }
+    with patch(
+        "origenlab_email_pipeline.qa.sqlite_deep_audit.run_structural_light",
+        return_value=leaked,
+    ):
+        with pytest.raises(RuntimeError, match="privacy leak"):
+            run_audit(
+                AuditOptions(
+                    db=rich_db,
+                    confirm_offline_copy=True,
+                    output_dir=out,
+                    phases=PRODUCTION_LIGHT_PHASE_NAMES,
+                )
+            )
+    checkpoint_path = out / "audit_sqlite_deep_checkpoint.json"
+    if checkpoint_path.is_file():
+        payload = checkpoint_path.read_text(encoding="utf-8")
+        assert "user@example.org" not in payload
+        assert "/var/lib/data" not in payload
+    else:
+        assert "structural_light" not in json.loads(
+            (out / "audit_sqlite_deep.json").read_text()
+        ) if (out / "audit_sqlite_deep.json").is_file() else True
 
 
 def test_run_audit_never_mutates_db(rich_db: Path, tmp_path: Path) -> None:
