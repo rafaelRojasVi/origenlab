@@ -15,6 +15,7 @@ Single entrypoint for **how to run** the email pipeline. **Daily core contract (
 | Track | Section | When |
 |-------|---------|------|
 | **Daily core (SQLite refresh)** | [`pipeline/DAILY_CORE.md`](pipeline/DAILY_CORE.md) | Canonical `daily-core --apply` (alias for `refresh-dashboard --apply --no-mirror`) — ingest, mart, commercial, safety, status |
+| **SQLite storage observation** | [`SQLITE_STORAGE_MAINTENANCE.md`](SQLITE_STORAGE_MAINTENANCE.md) | Read-only freelist/disk telemetry; **never VACUUM** live DB without an approved offline plan |
 | **Daily outbound + equipment-first** | [Daily outbound](#m-eprun-daily-outbound) | Send safety, DNR, campaigns, tenders — **default** |
 | **Gmail ingest + mart (SQLite)** | [Primary mailbox](#m-eprun-mailbox-primary) · [Post–Gmail ingest](#m-eprun-post-gmail-ingest) | Ingest freshness, `build-mart` on host |
 | **Active operator UI** | [Dashboard stack](#m-eprun-dashboard-optional) · [`pipeline/POSTGRES_MIRROR_REFRESH.md`](pipeline/POSTGRES_MIRROR_REFRESH.md) | `apps/dashboard` + `apps/api` + Postgres mirror; mirror refresh recipe |
