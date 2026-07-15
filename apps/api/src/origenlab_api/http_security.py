@@ -197,5 +197,5 @@ def configure_http_security(app: FastAPI, settings: Settings) -> None:
         allow_credentials=True,
         allow_methods=["GET", "HEAD", "OPTIONS"],
         allow_headers=["*"],
-        expose_headers=["X-Request-ID"],
+        expose_headers=["X-Request-ID", "Server-Timing", "X-Process-Time-Ms"],
     )

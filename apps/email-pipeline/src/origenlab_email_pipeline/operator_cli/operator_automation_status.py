@@ -33,6 +33,9 @@ from origenlab_email_pipeline.operator_cli.mail_auto_refresh import (
     _process_alive,
     read_lock,
 )
+from origenlab_email_pipeline.operator_cli.sqlite_storage_monitor import (
+    build_sqlite_storage_status,
+)
 from origenlab_email_pipeline.qa.ndr_pending_review_status import (
     apply_ndr_recommended_action,
     build_ndr_pending_review_status,
@@ -44,6 +47,9 @@ NowFn = Callable[[], datetime]
 VERDICT_HEALTHY = "healthy"
 VERDICT_ATTENTION = "attention"
 VERDICT_BLOCKED = "blocked"
+
+# Cron fires every minute; successful mirrors may exceed this interval safely via locks/cooldowns.
+MIRROR_SCHEDULE_INTERVAL_SECONDS = 60
 
 TRACKED_MAIL_CRON_SCRIPT = "scripts/operator/run_auto_refresh_mail.sh"
 TRACKED_MIRROR_CRON_SCRIPT = "scripts/operator/run_auto_mirror_dashboard.sh"
@@ -85,6 +91,14 @@ def _age_seconds(ts: str | None, now: datetime) -> int | None:
     if parsed is None:
         return None
     return max(0, int((now - parsed).total_seconds()))
+
+
+def _elapsed_seconds(started_at: str | None, finished_at: str | None) -> int | None:
+    start = _parse_iso(started_at)
+    finish = _parse_iso(finished_at)
+    if start is None or finish is None:
+        return None
+    return max(0, int((finish - start).total_seconds()))
 
 
 def _lock_is_live(lock_file: Path, *, process_alive: ProcessAliveFn) -> bool:
@@ -391,6 +405,10 @@ def build_operator_automation_status(
         "last_successful_refresh_at": mail_state.last_successful_refresh_at if mail_state else None,
         "last_run_started_at": mail_state.last_run_started_at if mail_state else None,
         "last_run_finished_at": mail_state.last_run_finished_at if mail_state else None,
+        "last_run_elapsed_seconds": _elapsed_seconds(
+            mail_state.last_run_started_at if mail_state else None,
+            mail_state.last_run_finished_at if mail_state else None,
+        ),
         "last_seen_inbox_total": mail_state.last_seen_inbox_total if mail_state else None,
         "last_seen_sent_total": mail_state.last_seen_sent_total if mail_state else None,
         "pending_inbox_total": mail_state.pending_inbox_total if mail_state else None,
@@ -414,12 +432,22 @@ def build_operator_automation_status(
         ),
         "last_run_started_at": mirror_state.last_run_started_at if mirror_state else None,
         "last_run_finished_at": mirror_state.last_run_finished_at if mirror_state else None,
+        "last_run_elapsed_seconds": _elapsed_seconds(
+            mirror_state.last_run_started_at if mirror_state else None,
+            mirror_state.last_run_finished_at if mirror_state else None,
+        ),
+        "runtime_exceeds_schedule_interval": None,
         "mirror_matches_daily_core": mirror_matches,
         "cooldown_seconds": opts.mirror_cooldown_seconds,
         "cooldown_remaining_seconds": mirror_cooldown_remaining,
         "consecutive_failures": mirror_state.consecutive_failures if mirror_state else 0,
         "parse_error": mirror_error,
     }
+    mirror_elapsed = mirror_section["last_run_elapsed_seconds"]
+    if mirror_elapsed is not None:
+        mirror_section["runtime_exceeds_schedule_interval"] = (
+            int(mirror_elapsed) > MIRROR_SCHEDULE_INTERVAL_SECONDS
+        )
 
     chilecompra_state_path = active_current / CHILECOMPRA_STATE_FILENAME
     chilecompra_data, chilecompra_error = _safe_load_json(chilecompra_state_path)
@@ -453,6 +481,10 @@ def build_operator_automation_status(
         ),
         "last_run_started_at": chilecompra_state.last_run_started_at if chilecompra_state else None,
         "last_run_finished_at": chilecompra_state.last_run_finished_at if chilecompra_state else None,
+        "last_run_elapsed_seconds": _elapsed_seconds(
+            chilecompra_state.last_run_started_at if chilecompra_state else None,
+            chilecompra_state.last_run_finished_at if chilecompra_state else None,
+        ),
         "next_recommended_run_at": chilecompra_next_recommended_run_at,
         "freshness_age_seconds": _age_seconds(chilecompra_last_successful_refresh_at, now_dt),
         "next_run_due": chilecompra_next_run_due,
@@ -472,6 +504,8 @@ def build_operator_automation_status(
         "candidate_audit": chilecompra_state.candidate_audit if chilecompra_state else None,
         "parse_error": chilecompra_error,
     }
+
+    sqlite_storage_section = build_sqlite_storage_status(reports_dir=reports_dir, now=now_dt)
 
     verdict, recommended_action = _derive_verdict_and_action(
         daily_core=daily_core_section,
@@ -505,6 +539,26 @@ def build_operator_automation_status(
         ndr_pending_review=ndr_section,
     )
 
+    # Storage disk/growth attention is advisory: inspect only, never recommend VACUUM.
+    # High freelist ratio alone never escalates the global verdict.
+    storage_reasons = list(sqlite_storage_section.get("reasons") or [])
+    storage_attention_reasons = {
+        "disk_free_below_150_gib",
+        "disk_free_below_15_percent",
+        "db_growth_7d_above_5_gib",
+    }
+    if any(r in storage_attention_reasons for r in storage_reasons):
+        for reason in storage_reasons:
+            if reason not in warnings:
+                warnings.append(reason)
+        if verdict == VERDICT_HEALTHY:
+            verdict = VERDICT_ATTENTION
+            recommended_action = "inspect_sqlite_storage_capacity_no_vacuum"
+    else:
+        for reason in storage_reasons:
+            if reason.endswith("_informational") and reason not in warnings:
+                warnings.append(reason)
+
     return {
         "generated_at_utc": _iso_now(now_dt),
         "active_current_dir": str(active_current),
@@ -513,6 +567,7 @@ def build_operator_automation_status(
         "mail_auto_refresh": mail_section,
         "dashboard_auto_mirror": mirror_section,
         "chilecompra_equipment_auto_refresh": chilecompra_section,
+        "sqlite_storage": sqlite_storage_section,
         "ndr_pending_review": ndr_section,
         "cron": cron_section,
         "recommended_action": recommended_action,
@@ -648,6 +703,7 @@ def format_operator_automation_status_text(report: dict[str, Any]) -> str:
         "last_successful_refresh_at",
         "last_run_started_at",
         "last_run_finished_at",
+        "last_run_elapsed_seconds",
         "last_seen_inbox_total",
         "last_seen_sent_total",
         "pending_inbox_total",
@@ -666,6 +722,8 @@ def format_operator_automation_status_text(report: dict[str, Any]) -> str:
         "last_result",
         "last_successful_mirror_at",
         "last_mirrored_daily_core_generated_at",
+        "last_run_elapsed_seconds",
+        "runtime_exceeds_schedule_interval",
         "mirror_matches_daily_core",
         "cooldown_seconds",
         "cooldown_remaining_seconds",
@@ -685,6 +743,7 @@ def format_operator_automation_status_text(report: dict[str, Any]) -> str:
         "last_successful_publish_at",
         "last_run_started_at",
         "last_run_finished_at",
+        "last_run_elapsed_seconds",
         "next_recommended_run_at",
         "freshness_age_seconds",
         "next_run_due",
@@ -702,6 +761,27 @@ def format_operator_automation_status_text(report: dict[str, Any]) -> str:
         "parse_error",
     ):
         lines.append(f"  {key}={_fmt_value(chilecompra.get(key))}")
+
+    lines.append("")
+    lines.append("sqlite_storage")
+    storage = report.get("sqlite_storage") or {}
+    for key in (
+        "state_exists",
+        "status",
+        "captured_at_utc",
+        "age_seconds",
+        "snapshot_stale",
+        "history_sample_count",
+        "allocated_gib",
+        "freelist_gib",
+        "active_gib",
+        "freelist_ratio_percent",
+        "disk_free_gib",
+        "disk_free_percent",
+        "growth_7d_gib",
+        "parse_error",
+    ):
+        lines.append(f"  {key}={_fmt_value(storage.get(key))}")
 
     lines.append("")
     lines.append("ndr_pending_review")
