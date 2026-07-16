@@ -11,6 +11,7 @@ Connection policy:
 from __future__ import annotations
 
 import hashlib
+import errno
 import json
 import os
 import re
@@ -1217,12 +1218,26 @@ def _validate_usefulness_progress(
 def _query_plan_uses_temp_sorter(
     conn: sqlite3.Connection, sql: str, params: tuple[Any, ...]
 ) -> bool:
+    return any("USE TEMP B-TREE" in detail for detail in _query_plan_details(conn, sql, params))
+
+
+def _query_plan_details(
+    conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()
+) -> list[str]:
     rows = conn.execute(f"EXPLAIN QUERY PLAN {sql}", params).fetchall()
-    return any("USE TEMP B-TREE" in str(row[-1]).upper() for row in rows)
+    return [str(row[-1]).upper() for row in rows]
+
+
+def _query_plan_uses_group_sorter(details: list[str]) -> bool:
+    return any("USE TEMP B-TREE FOR GROUP BY" in detail for detail in details)
+
+
+def _query_plan_uses_union_temp_btree(details: list[str]) -> bool:
+    return any("UNION USING TEMP B-TREE" in detail for detail in details)
 
 
 def _body_byte_query_plan_evidence(
-    conn: sqlite3.Connection, *, batch_size: int, ref_sql_present: bool
+    conn: sqlite3.Connection, *, batch_size: int, valid_ref_sql: str | None
 ) -> dict[str, Any]:
     """Privacy-safe EXPLAIN QUERY PLAN summary for body-byte query shapes."""
     source_sql = f"""
@@ -1241,17 +1256,57 @@ def _body_byte_query_plan_evidence(
         WHERE e.id BETWEEN ? AND ?
           AND (0)
     """
-    return {
+    source_details = _query_plan_details(conn, source_sql, (1, max(1, int(batch_size))))
+    outer_shape_details = _query_plan_details(
+        conn, referenced_sql, (1, max(1, int(batch_size)))
+    )
+    evidence = {
         "source_tier_stream_uses_group_by": False,
         "source_tier_stream_uses_fetchall": False,
-        "source_tier_stream_temp_sorter": _query_plan_uses_temp_sorter(
-            conn, source_sql, (1, max(1, int(batch_size)))
+        "source_tier_stream_temp_sorter": any(
+            "USE TEMP B-TREE" in detail for detail in source_details
         ),
-        "referenced_body_aggregate_temp_sorter": _query_plan_uses_temp_sorter(
-            conn, referenced_sql, (1, max(1, int(batch_size)))
+        "referenced_body_outer_aggregate_shape_explained": True,
+        "referenced_body_outer_aggregate_shape_temp_sorter": any(
+            "USE TEMP B-TREE" in detail for detail in outer_shape_details
         ),
-        "referenced_body_actual_partition_checked": bool(ref_sql_present),
+        "referenced_body_actual_partition_explained": False,
+        "referenced_body_actual_query_temp_btree": None,
+        "referenced_body_actual_query_group_sorter": None,
+        "referenced_id_union_temp_btree": None,
+        "temp_btree_note": (
+            "Reference ID UNION planning may use a temporary B-tree for ID de-duplication; "
+            "the prohibited case is a GROUP BY/temp sorter carrying body or body-length rows."
+        ),
     }
+    if valid_ref_sql:
+        referenced_id_details = _query_plan_details(conn, valid_ref_sql)
+        actual_sql = f"""
+            SELECT COUNT(*) AS row_count,
+                   SUM({_body_bytes_sum_expr('e')}) AS body_bytes
+            FROM emails e
+            WHERE e.id BETWEEN ? AND ?
+              AND (e.id IN ({valid_ref_sql}))
+        """
+        actual_details = _query_plan_details(
+            conn, actual_sql, (1, max(1, int(batch_size)))
+        )
+        evidence.update(
+            {
+                "referenced_body_actual_partition_explained": True,
+                "referenced_body_actual_query_temp_btree": any(
+                    "USE TEMP B-TREE" in detail or "UNION USING TEMP B-TREE" in detail
+                    for detail in actual_details
+                ),
+                "referenced_body_actual_query_group_sorter": _query_plan_uses_group_sorter(
+                    actual_details
+                ),
+                "referenced_id_union_temp_btree": _query_plan_uses_union_temp_btree(
+                    referenced_id_details
+                ),
+            }
+        )
+    return evidence
 
 
 def _cohort_body_bytes_batched(
@@ -1715,6 +1770,10 @@ def run_usefulness_classification(
             "all counts require human review."
         ),
     }
+    ref_sql_for_plan, _ = _referenced_email_ids_sql(conn)
+    valid_ref_sql_for_plan = (
+        _valid_referenced_email_ids_sql(ref_sql_for_plan) if ref_sql_for_plan else None
+    )
 
     result = {
         "phase": "usefulness_classification",
@@ -1748,7 +1807,7 @@ def run_usefulness_classification(
             "query_plan_evidence": _body_byte_query_plan_evidence(
                 conn,
                 batch_size=batch_size,
-                ref_sql_present=bool(partial.get("ref_sql_present")),
+                valid_ref_sql=valid_ref_sql_for_plan,
             ),
             "cohort_byte_derivation": partial.get("cohort_byte_derivation") or {},
         },
@@ -1972,10 +2031,109 @@ def load_checkpoint(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def save_checkpoint(path: Path, data: dict[str, Any]) -> None:
+def _fsync_checkpoint_directory(
+    path: Path, *, dir_fsync: Callable[[int], None] | None = None
+) -> dict[str, Any]:
+    fn = dir_fsync or os.fsync
+    unsupported = {
+        errno.EINVAL,
+        errno.ENOTSUP,
+        getattr(errno, "EOPNOTSUPP", errno.ENOTSUP),
+    }
+    try:
+        dir_fd = os.open(str(path), os.O_RDONLY)
+    except OSError as exc:
+        if exc.errno in unsupported:
+            return {
+                "directory_fsync_supported": False,
+                "directory_fsync_warning": (
+                    f"checkpoint directory open/fsync unsupported (errno={exc.errno}); "
+                    "checkpoint file fsync was still performed"
+                ),
+            }
+        return {
+            "directory_fsync_supported": False,
+            "directory_fsync_warning": (
+                f"checkpoint directory open/fsync failed (errno={exc.errno}); "
+                "checkpoint file fsync was still performed"
+            ),
+        }
+    try:
+        try:
+            fn(dir_fd)
+            return {"directory_fsync_supported": True, "directory_fsync_warning": None}
+        except OSError as exc:
+            if exc.errno in unsupported:
+                return {
+                    "directory_fsync_supported": False,
+                    "directory_fsync_warning": (
+                        f"checkpoint directory fsync unsupported (errno={exc.errno}); "
+                        "checkpoint file fsync was still performed"
+                    ),
+                }
+            return {
+                "directory_fsync_supported": False,
+                "directory_fsync_warning": (
+                    f"checkpoint directory fsync failed (errno={exc.errno}); "
+                    "checkpoint file fsync was still performed"
+                ),
+            }
+    finally:
+        os.close(dir_fd)
+
+
+def _checkpoint_temp_path(path: Path) -> Path:
+    return path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+
+
+def save_checkpoint(
+    path: Path,
+    data: dict[str, Any],
+    *,
+    write_hook: Callable[[Any, str], None] | None = None,
+    replace_hook: Callable[[Path, Path], None] | None = None,
+    dir_fsync: Callable[[int], None] | None = None,
+    warning_sink: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
     _assert_privacy_safe(data)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    payload = json.dumps(data, indent=2, sort_keys=True) + "\n"
+    tmp_path = _checkpoint_temp_path(path)
+    fd: int | None = None
+    try:
+        fd = os.open(str(tmp_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = None
+            if write_hook is not None:
+                write_hook(handle, payload)
+            else:
+                handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if replace_hook is not None:
+            replace_hook(tmp_path, path)
+        else:
+            os.replace(tmp_path, path)
+        info = {
+            "atomic_replace": True,
+            "file_fsync_completed": True,
+            **_fsync_checkpoint_directory(path.parent, dir_fsync=dir_fsync),
+        }
+        warning = info.get("directory_fsync_warning")
+        if warning and warning_sink is not None:
+            warning_sink(f"checkpoint durability warning: {warning}")
+        return info
+    except Exception:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def validate_resume_checkpoint(
@@ -2135,7 +2293,11 @@ def run_audit(
                         }
                         report["phases"] = phases_map
                         checkpoint["phases"] = phases_map
-                        save_checkpoint(checkpoint_path, checkpoint)
+                        save_checkpoint(
+                            checkpoint_path,
+                            checkpoint,
+                            warning_sink=options.progress_sink,
+                        )
 
                     result = run_usefulness_classification(
                         conn,
@@ -2160,7 +2322,11 @@ def run_audit(
                 checkpoint["phases"] = report["phases"]
                 if phase_name == "usefulness_classification":
                     checkpoint.pop("usefulness_progress", None)
-                save_checkpoint(checkpoint_path, checkpoint)
+                save_checkpoint(
+                    checkpoint_path,
+                    checkpoint,
+                    warning_sink=options.progress_sink,
+                )
             except sqlite3.Error as exc:
                 failed = {
                     "status": "failed",
@@ -2175,7 +2341,11 @@ def run_audit(
                         file_fingerprint=frozen_fingerprint,
                     )
                 checkpoint["phases"] = report["phases"]
-                save_checkpoint(checkpoint_path, checkpoint)
+                save_checkpoint(
+                    checkpoint_path,
+                    checkpoint,
+                    warning_sink=options.progress_sink,
+                )
                 raise
             except RuntimeError as exc:
                 if "privacy leak detected" in str(exc):

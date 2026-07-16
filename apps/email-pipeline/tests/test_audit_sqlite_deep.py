@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import sqlite3
@@ -1088,6 +1089,71 @@ def test_v2_checkpoint_resumes_skipping_four_completed_phases(
     assert report["immutable_open"] is True
 
 
+def test_save_checkpoint_atomic_write_failure_preserves_previous_json(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "checkpoint.json"
+    save_checkpoint(path, {"schema_version": 2, "phases": {"old": {"status": "completed"}}})
+    before = json.loads(path.read_text(encoding="utf-8"))
+
+    def fail_during_write(handle, payload: str) -> None:
+        handle.write(payload[:10])
+        raise OSError("simulated partial write failure")
+
+    with pytest.raises(OSError, match="simulated partial write failure"):
+        save_checkpoint(
+            path,
+            {"schema_version": 2, "phases": {"new": {"status": "completed"}}},
+            write_hook=fail_during_write,
+        )
+
+    assert json.loads(path.read_text(encoding="utf-8")) == before
+    assert list(tmp_path.glob(".checkpoint.json.*.tmp")) == []
+
+
+def test_save_checkpoint_atomic_replace_failure_preserves_previous_json(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "checkpoint.json"
+    save_checkpoint(path, {"schema_version": 2, "phases": {"old": {"status": "completed"}}})
+    before = json.loads(path.read_text(encoding="utf-8"))
+
+    def fail_before_replace(tmp: Path, final: Path) -> None:
+        assert tmp.is_file()
+        assert final == path
+        raise OSError("simulated replace failure")
+
+    with pytest.raises(OSError, match="simulated replace failure"):
+        save_checkpoint(
+            path,
+            {"schema_version": 2, "phases": {"new": {"status": "completed"}}},
+            replace_hook=fail_before_replace,
+        )
+
+    assert json.loads(path.read_text(encoding="utf-8")) == before
+    assert list(tmp_path.glob(".checkpoint.json.*.tmp")) == []
+
+
+def test_save_checkpoint_directory_fsync_warning_is_reported(tmp_path: Path) -> None:
+    path = tmp_path / "checkpoint.json"
+    warnings: list[str] = []
+
+    def unsupported_dir_fsync(_fd: int) -> None:
+        raise OSError(errno.EINVAL, "unsupported")
+
+    info = save_checkpoint(
+        path,
+        {"schema_version": 2, "phases": {}},
+        dir_fsync=unsupported_dir_fsync,
+        warning_sink=warnings.append,
+    )
+
+    assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == 2
+    assert info["directory_fsync_supported"] is False
+    assert "checkpoint directory fsync unsupported" in info["directory_fsync_warning"]
+    assert any("checkpoint durability warning" in warning for warning in warnings)
+
+
 def _fingerprint_dict_for_test(db: Path) -> dict:
     from origenlab_email_pipeline.qa.sqlite_deep_audit import _fingerprint_dict_from_files
 
@@ -1177,7 +1243,32 @@ def test_usefulness_sql_never_selects_raw_body_columns(rich_db: Path) -> None:
     evidence = result["memory_bounds"]["query_plan_evidence"]
     assert evidence["source_tier_stream_uses_group_by"] is False
     assert evidence["source_tier_stream_temp_sorter"] is False
-    assert evidence["referenced_body_aggregate_temp_sorter"] is False
+    assert evidence["referenced_body_outer_aggregate_shape_explained"] is True
+    assert evidence["referenced_body_outer_aggregate_shape_temp_sorter"] is False
+    assert evidence["referenced_body_actual_partition_explained"] is True
+    assert evidence["referenced_body_actual_query_group_sorter"] is False
+    assert "referenced_body_actual_partition_checked" not in evidence
+
+
+def test_query_plan_report_does_not_claim_actual_reference_partition_when_absent(
+    rich_db: Path,
+) -> None:
+    with patch(
+        "origenlab_email_pipeline.qa.sqlite_deep_audit._referenced_email_ids_sql",
+        return_value=("", []),
+    ):
+        conn = connect_readonly(rich_db)
+        try:
+            result = run_usefulness_classification(conn, batch_size=2)
+        finally:
+            conn.close()
+
+    evidence = result["memory_bounds"]["query_plan_evidence"]
+    assert evidence["referenced_body_outer_aggregate_shape_explained"] is True
+    assert evidence["referenced_body_actual_partition_explained"] is False
+    assert evidence["referenced_body_actual_query_temp_btree"] is None
+    assert evidence["referenced_id_union_temp_btree"] is None
+    assert "referenced_body_actual_partition_checked" not in evidence
 
 
 def test_usefulness_substep_resume_does_not_repeat_completed(

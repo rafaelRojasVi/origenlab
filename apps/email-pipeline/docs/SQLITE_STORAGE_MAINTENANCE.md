@@ -151,7 +151,7 @@ Do **not** pass `--include-dbstat` against production without explicit approval.
 Online Backup API snapshots can retain a **WAL-format database header** (bytes 18/19 = 2) while having **no** `-wal`/`-shm` companions. Opening such a file with ordinary `mode=ro` can create sidecars and fail the frozen fingerprint check.
 
 | Case | Open URI |
-|------|----------|
+| --- | --- |
 | Confirmed offline copy (`--confirm-offline-copy`), not production, **no** `-wal`/`-shm`/`-journal` | `mode=ro&immutable=1` |
 | Production DB / `--light-only` / unconfirmed path | ordinary `mode=ro` only — **never** immutable |
 | Offline never inferred from filename alone | require `--confirm-offline-copy` + non-production gate |
@@ -159,7 +159,7 @@ Online Backup API snapshots can retain a **WAL-format database header** (bytes 1
 Immutable is appropriate only for a **frozen, verified offline copy**. It must **never** be used against live production. A **non-empty WAL** blocks offline immutable auditing because immutable mode would ignore committed WAL content. This tool **never deletes** sidecars.
 
 | Phase | Purpose | Production path |
-|-------|---------|-----------------|
+| --- | --- | --- |
 | `structural_light` | Constant-time storage PRAGMAs + `sqlite_master` inventory only | **`--light-only` on production** |
 | `structural_quick` | `quick_check`, `foreign_key_check`, table COUNT/ID ranges | refused (offline copy + confirm) |
 | `structural_full` | opt-in `integrity_check` via `--full-integrity-check` only (may take hours) | refused |
@@ -192,18 +192,31 @@ Those PRAGMAs are **not** a hard RSS bound. The remediation is the sorter-free q
 
 Privacy-safe progress lines (stderr) may include substep name, elapsed seconds, batch size, completed batch counts, rows processed in the last batch, and RSS — never sender/subject/body/paths/raw identifiers.
 
-For a future real resume, prefer a transient user unit with a cgroup ceiling so any regression kills only the audit process, not WSL/Cursor. Example template (do **not** run without operator approval and verified placeholder paths):
+For a future real resume, prefer a **system-level transient service** running as `rafael`, with a cgroup ceiling so any regression kills only the audit process, not WSL/Cursor. Do **not** use `systemd-run --user` as the primary command while `loginctl show-user rafael -p Linger` is `Linger=no`; the prior user unit disappeared during the Cursor/WSL disruption. A user unit is acceptable only if linger is explicitly approved and enabled first.
+
+Example template (documentation only; do **not** launch without operator approval):
 
 ```bash
-systemd-run --user --unit=sqlite-deep-audit-resume \
-  --property=MemoryMax=24G \
+sudo systemd-run --unit=sqlite-deep-audit-resume \
+  --uid=rafael \
+  --property=WorkingDirectory=/home/rafael/dev/freelance/origenlab/apps/email-pipeline \
+  --property=MemoryHigh=4G \
+  --property=MemoryMax=6G \
   --property=MemorySwapMax=0 \
-  --same-dir \
-  uv run python scripts/qa/audit_sqlite_deep.py \
-    --db <verified-offline-snapshot.sqlite> \
+  --property=OOMPolicy=stop \
+  --property=StandardOutput=append:/mnt/d/origenlab-sqlite-offline/deep_audit_20260716T023339Z/resume.progress.log \
+  --property=StandardError=append:/mnt/d/origenlab-sqlite-offline/deep_audit_20260716T023339Z/resume.progress.log \
+  /bin/bash -lc 'set -uo pipefail
+    cd /home/rafael/dev/freelance/origenlab/apps/email-pipeline
+    uv run --frozen python scripts/qa/audit_sqlite_deep.py \
+    --db /mnt/d/origenlab-sqlite-offline/emails_offline_20260716T023339Z.sqlite \
     --confirm-offline-copy \
-    --output-dir <existing-deep-audit-output-dir> \
-    --resume --json
+    --output-dir /mnt/d/origenlab-sqlite-offline/deep_audit_20260716T023339Z \
+    --resume --json \
+    > /mnt/d/origenlab-sqlite-offline/deep_audit_20260716T023339Z/resume.report.json
+    rc=$?
+    echo "AUDIT_RESUME_EXIT=${rc}" >> /mnt/d/origenlab-sqlite-offline/deep_audit_20260716T023339Z/resume.progress.log
+    exit "${rc}"'
 ```
 
 **Still prohibited:** live production heavy audit, `VACUUM` / `VACUUM INTO`, deleting offline clones, mutating Gmail/Postgres/cron/systemd, or treating usefulness counts as deletion approval.
