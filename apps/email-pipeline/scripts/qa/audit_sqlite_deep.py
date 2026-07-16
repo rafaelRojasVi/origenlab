@@ -137,6 +137,7 @@ def main(argv: list[str] | None = None) -> int:
         resume=bool(args.resume),
         output_dir=args.output_dir,
         settings=settings,
+        progress_sink=lambda msg: print(msg, file=sys.stderr),
     )
 
     err = validate_audit_access(options)

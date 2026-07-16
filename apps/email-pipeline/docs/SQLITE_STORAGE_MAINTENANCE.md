@@ -166,9 +166,28 @@ Immutable is appropriate only for a **frozen, verified offline copy**. It must *
 | `physical_dbstat` | page allocation by table/index/autoindex + reconciliation | refused |
 | `column_bytes` | aggregate TEXT/BLOB bytes (`length(CAST(col AS BLOB))`) | refused |
 | `duplicate_analysis` | SHA-256 body fingerprints for duplicate `message_id` groups; attachment external-payload dupes | refused |
-| `usefulness_classification` | source tiers (rows + body bytes), discovered reference tables, review candidates | refused |
+| `usefulness_classification` | source tiers (rows + body **lengths**), discovered reference tables, review candidates — **bounded id-range aggregates; never loads bodies into Python** | refused |
 
 **Defaults:** heavy offline phases run when `--confirm-offline-copy` is set; `structural_full` is **not** in the default phase set. Use `--full-integrity-check` explicitly.
+
+### Usefulness OOM incident and bounded-memory correction
+
+A resume of `usefulness_classification` against a ~127.5 GiB offline snapshot was **OOM-killed** (~28 GiB Python RSS on a 30 GiB WSL VM) while earlier phases remained completed in the v2 checkpoint. Evidence showed ~60 GiB of body content and only ~0.058 GiB max single body — the failure was **cumulative query/temp growth**, not one giant value.
+
+**Root cause (fixed):** the usefulness phase used a nested `SELECT … body_bytes FROM emails` subquery before `GROUP BY tier`, which can materialize large intermediate results, and it also re-ran body-fingerprint duplicate analysis (fetching body payloads) solely for a COUNT of duplicate extras.
+
+**Correction:** usefulness now:
+
+- aggregates only `length(CAST(col AS BLOB))` (never SELECTs body values into Python)
+- uses **id-range batches** (default 25 000) so sorter/temp memory cannot scale with total body volume
+- checkpoints privacy-safe **substeps** (`source_tiers` → `references` → `cohort_bytes` → `orphans_and_tables` → `finalize`) without marking the top-level phase `completed` until the end
+- configures connection-local `temp_store=FILE` + bounded `cache_size` (does not mutate the DB file / does not create sidecars)
+
+**Increasing WSL memory, swap, or systemd MemoryMax is not remediation.** Resume the same v2 checkpoint with the fixed code; do not discard completed phases.
+
+Privacy-safe progress lines (stderr) may include substep name, elapsed seconds, batch size, batch counts, and RSS — never sender/subject/body/paths.
+
+**Still prohibited:** live production heavy audit, `VACUUM` / `VACUUM INTO`, deleting offline clones, mutating Gmail/Postgres/cron/systemd, or treating usefulness counts as deletion approval.
 
 **Production-safe light mode:** `--light-only` runs `structural_light` only (no `quick_check`, FK checks, COUNT scans, dbstat, or body profiling). Safe on the configured production path without `--confirm-offline-copy` (ordinary `mode=ro`).
 
