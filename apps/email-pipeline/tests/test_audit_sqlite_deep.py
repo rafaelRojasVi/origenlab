@@ -758,6 +758,155 @@ def test_run_audit_never_mutates_db(rich_db: Path, tmp_path: Path) -> None:
     assert report["mutation"] is False
     assert report["privacy_scan_ok"] is True
     assert report["schema_version"] == AUDIT_SCHEMA_VERSION
+    assert report["immutable_open"] is True
+    assert report["sqlite_open_uri"] == "mode=ro&immutable=1"
+
+
+def _as_wal_format_offline_copy_no_sidecars(path: Path) -> None:
+    """Leave WAL-format header bytes while removing companions (online-backup-like)."""
+    conn = sqlite3.connect(path)
+    assert str(conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]).lower() == "wal"
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    conn.close()
+    for suffix in ("-wal", "-shm", "-journal"):
+        companion = Path(str(path) + suffix)
+        if companion.exists():
+            companion.unlink()
+    with path.open("rb") as handle:
+        header = handle.read(20)
+    assert header[18] == 2, "expected WAL-format header write version"
+
+
+def test_wal_format_offline_copy_immutable_audit_no_sidecars(
+    rich_db: Path, tmp_path: Path
+) -> None:
+    offline = tmp_path / "wal_offline.sqlite"
+    offline.write_bytes(rich_db.read_bytes())
+    _as_wal_format_offline_copy_no_sidecars(offline)
+    before = fingerprint_db_files(offline)
+    assert before["wal"] is None and before["shm"] is None
+    assert not Path(str(offline) + "-journal").exists()
+
+    report = run_audit(
+        AuditOptions(
+            db=offline,
+            confirm_offline_copy=True,
+            output_dir=tmp_path / "wal_out",
+        )
+    )
+    after = fingerprint_db_files(offline)
+    assert fingerprints_equal(before, after)
+    assert report["immutable_open"] is True
+    assert report["sqlite_open_uri"] == "mode=ro&immutable=1"
+    assert not Path(str(offline) + "-wal").exists()
+    assert not Path(str(offline) + "-shm").exists()
+    assert not Path(str(offline) + "-journal").exists()
+    assert report["privacy_scan_ok"] is True
+
+
+def test_nonempty_wal_refused_before_immutable_open(
+    rich_db: Path, tmp_path: Path
+) -> None:
+    offline = tmp_path / "with_wal.sqlite"
+    offline.write_bytes(rich_db.read_bytes())
+    conn = sqlite3.connect(offline)
+    assert str(conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]).lower() == "wal"
+    conn.execute("UPDATE emails SET subject = subject || '-x' WHERE id = 1")
+    conn.commit()
+    # Keep a dirty WAL by leaving the writer process-closed without truncate.
+    conn.close()
+    wal = Path(str(offline) + "-wal")
+    if not wal.is_file() or wal.stat().st_size == 0:
+        # Some SQLite builds auto-truncate; plant a non-empty companion for the gate.
+        wal.write_bytes(b"\x37\x7f\x06\x82" + b"\0" * 128)
+    assert wal.is_file() and wal.stat().st_size > 0
+
+    with pytest.raises(PermissionError, match="non-empty WAL"):
+        run_audit(
+            AuditOptions(
+                db=offline,
+                confirm_offline_copy=True,
+                output_dir=tmp_path / "blocked",
+            )
+        )
+    assert wal.exists()  # tool never deletes sidecars
+
+
+def test_production_light_only_uses_ordinary_mode_ro(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prod = tmp_path / "emails.sqlite"
+    _build_rich_db(prod)
+    settings = Settings(sqlite_path=str(prod))
+    monkeypatch.setenv("ORIGENLAB_SQLITE_PATH", str(prod))
+    opened: list[bool] = []
+
+    real_connect = connect_readonly
+
+    def tracking_connect(db: Path, *, timeout: float = 120.0, immutable: bool = False):
+        opened.append(immutable)
+        return real_connect(db, timeout=timeout, immutable=immutable)
+
+    with patch(
+        "origenlab_email_pipeline.qa.sqlite_deep_audit.connect_readonly",
+        side_effect=tracking_connect,
+    ):
+        report = run_audit(
+            AuditOptions(
+                db=prod,
+                confirm_offline_copy=False,
+                phases=frozenset(PRODUCTION_LIGHT_PHASE_NAMES),
+                settings=settings,
+                output_dir=tmp_path / "light_out",
+            )
+        )
+    assert opened == [False]
+    assert report["immutable_open"] is False
+    assert report["sqlite_open_uri"] == "mode=ro"
+    assert report["production_path"] is True
+
+
+def test_confirm_cannot_bypass_production_for_immutable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prod = tmp_path / "emails.sqlite"
+    _build_rich_db(prod)
+    settings = Settings(sqlite_path=str(prod))
+    monkeypatch.setenv("ORIGENLAB_SQLITE_PATH", str(prod))
+    # Heavy + confirm on production still refused (access gate before immutable).
+    with pytest.raises(PermissionError, match="production"):
+        run_audit(
+            AuditOptions(
+                db=prod,
+                confirm_offline_copy=True,
+                settings=settings,
+                output_dir=tmp_path / "prod_heavy",
+            )
+        )
+    # Light + confirm on production must still use ordinary mode=ro (never immutable).
+    opened: list[bool] = []
+    real_connect = connect_readonly
+
+    def tracking_connect(db: Path, *, timeout: float = 120.0, immutable: bool = False):
+        opened.append(immutable)
+        return real_connect(db, timeout=timeout, immutable=immutable)
+
+    with patch(
+        "origenlab_email_pipeline.qa.sqlite_deep_audit.connect_readonly",
+        side_effect=tracking_connect,
+    ):
+        report = run_audit(
+            AuditOptions(
+                db=prod,
+                confirm_offline_copy=True,
+                phases=frozenset(PRODUCTION_LIGHT_PHASE_NAMES),
+                settings=settings,
+                output_dir=tmp_path / "prod_light_confirm",
+            )
+        )
+    assert opened == [False]
+    assert report["immutable_open"] is False
+    assert report["sqlite_open_uri"] == "mode=ro"
 
 
 def test_privacy_scan_detects_generic_email_and_paths() -> None:

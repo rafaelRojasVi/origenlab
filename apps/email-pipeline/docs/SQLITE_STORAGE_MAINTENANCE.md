@@ -146,6 +146,18 @@ Do **not** pass `--include-dbstat` against production without explicit approval.
 
 `scripts/qa/audit_sqlite_deep.py` performs a privacy-safe, resumable deep audit for **verified offline/backup copies** on separate storage. It never runs against the configured production SQLite path for heavy phases, even with `--confirm-offline-copy`.
 
+### Connection / immutable policy
+
+Online Backup API snapshots can retain a **WAL-format database header** (bytes 18/19 = 2) while having **no** `-wal`/`-shm` companions. Opening such a file with ordinary `mode=ro` can create sidecars and fail the frozen fingerprint check.
+
+| Case | Open URI |
+|------|----------|
+| Confirmed offline copy (`--confirm-offline-copy`), not production, **no** `-wal`/`-shm`/`-journal` | `mode=ro&immutable=1` |
+| Production DB / `--light-only` / unconfirmed path | ordinary `mode=ro` only — **never** immutable |
+| Offline never inferred from filename alone | require `--confirm-offline-copy` + non-production gate |
+
+Immutable is appropriate only for a **frozen, verified offline copy**. It must **never** be used against live production. A **non-empty WAL** blocks offline immutable auditing because immutable mode would ignore committed WAL content. This tool **never deletes** sidecars.
+
 | Phase | Purpose | Production path |
 |-------|---------|-----------------|
 | `structural_light` | Constant-time storage PRAGMAs + `sqlite_master` inventory only | **`--light-only` on production** |
@@ -158,7 +170,7 @@ Do **not** pass `--include-dbstat` against production without explicit approval.
 
 **Defaults:** heavy offline phases run when `--confirm-offline-copy` is set; `structural_full` is **not** in the default phase set. Use `--full-integrity-check` explicitly.
 
-**Production-safe light mode:** `--light-only` runs `structural_light` only (no `quick_check`, FK checks, COUNT scans, dbstat, or body profiling). Safe on the configured production path without `--confirm-offline-copy`.
+**Production-safe light mode:** `--light-only` runs `structural_light` only (no `quick_check`, FK checks, COUNT scans, dbstat, or body profiling). Safe on the configured production path without `--confirm-offline-copy` (ordinary `mode=ro`).
 
 Heavy phases require `--confirm-offline-copy`. Outputs are sanitized JSON + Markdown with phase timings and **estimate-only** SQLite body-byte conclusions. Attachment `size_bytes` duplication is reported as **external payload only**, never as SQLite file savings. Conclusions use tri-state values (`yes` / `no` / `not_assessed`); SQLite integrity is `not_assessed` unless `structural_full` completed. Age or lack of references never classifies rows as deletable.
 
