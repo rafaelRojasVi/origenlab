@@ -200,6 +200,7 @@ Example template (documentation only; do **not** launch without operator approva
 sudo systemd-run --unit=sqlite-deep-audit-resume \
   --uid=rafael \
   --property=WorkingDirectory=/home/rafael/dev/freelance/origenlab/apps/email-pipeline \
+  --property=Environment=HOME=/home/rafael \
   --property=MemoryHigh=4G \
   --property=MemoryMax=6G \
   --property=MemorySwapMax=0 \
@@ -208,7 +209,7 @@ sudo systemd-run --unit=sqlite-deep-audit-resume \
   --property=StandardError=append:/mnt/d/origenlab-sqlite-offline/deep_audit_20260716T023339Z/resume.progress.log \
   /bin/bash -lc 'set -uo pipefail
     cd /home/rafael/dev/freelance/origenlab/apps/email-pipeline
-    uv run --frozen python scripts/qa/audit_sqlite_deep.py \
+    /home/rafael/.local/bin/uv run --frozen python scripts/qa/audit_sqlite_deep.py \
     --db /mnt/d/origenlab-sqlite-offline/emails_offline_20260716T023339Z.sqlite \
     --confirm-offline-copy \
     --output-dir /mnt/d/origenlab-sqlite-offline/deep_audit_20260716T023339Z \
