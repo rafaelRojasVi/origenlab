@@ -11,6 +11,7 @@ Connection policy:
 from __future__ import annotations
 
 import hashlib
+import errno
 import json
 import os
 import re
@@ -19,7 +20,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Iterator, Literal
 
 from origenlab_email_pipeline.config import Settings, load_settings
 from origenlab_email_pipeline.contacto_gmail_source import (
@@ -32,6 +33,17 @@ from origenlab_email_pipeline.mart_core_postgres_migrate import iso_text_to_date
 GiB = 1024**3
 AUDIT_SCHEMA_VERSION = 2
 MAX_VIOLATION_SAMPLES = 20
+# Bound usefulness id-range work so no query or Python batch scales with body volume.
+USEFULNESS_ID_BATCH_SIZE = 5_000
+# Soft page-cache cap for readonly connections (KiB, negative PRAGMA cache_size units).
+READONLY_CACHE_SIZE_KIB = -65_536
+USEFULNESS_SUBSTEP_ORDER: tuple[str, ...] = (
+    "source_tiers",
+    "references",
+    "cohort_bytes",
+    "orphans_and_tables",
+    "finalize",
+)
 
 TriState = Literal["yes", "no", "not_assessed"]
 
@@ -170,6 +182,8 @@ class AuditOptions:
     resume: bool = False
     output_dir: Path | None = None
     settings: Settings | None = None
+    progress_sink: Callable[[str], None] | None = None
+    usefulness_batch_size: int = USEFULNESS_ID_BATCH_SIZE
 
 
 @dataclass
@@ -265,7 +279,66 @@ def connect_readonly(
     conn = sqlite3.connect(uri, uri=True, timeout=timeout)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA query_only=ON")
+    configure_readonly_memory_bounds(conn)
     return conn
+
+
+def configure_readonly_memory_bounds(conn: sqlite3.Connection) -> dict[str, Any]:
+    """
+    Connection-local temp/cache preferences.
+
+    These PRAGMAs are not a hard RSS ceiling. The audit relies on sorter-free query
+    shapes for body-byte work; this only nudges SQLite away from large in-memory
+    temporaries if a future query accidentally needs temp storage.
+    """
+    applied: dict[str, Any] = {}
+    try:
+        conn.execute("PRAGMA temp_store=FILE")
+    except sqlite3.Error as exc:
+        applied["temp_store_error"] = type(exc).__name__
+    try:
+        # Negative cache_size is KiB; this is a soft page-cache preference.
+        conn.execute(f"PRAGMA cache_size={READONLY_CACHE_SIZE_KIB}")
+    except sqlite3.Error as exc:
+        applied["cache_size_error"] = type(exc).__name__
+    applied.update(read_readonly_connection_settings(conn))
+    return applied
+
+
+def read_readonly_connection_settings(conn: sqlite3.Connection) -> dict[str, Any]:
+    temp_store_names = {0: "DEFAULT", 1: "FILE", 2: "MEMORY"}
+    settings: dict[str, Any] = {
+        "temp_store_requested": "FILE",
+        "cache_size_kib_requested": abs(READONLY_CACHE_SIZE_KIB),
+        "pragma_bounds_are_hard_rss_limit": False,
+    }
+    try:
+        temp_store_value = int(conn.execute("PRAGMA temp_store").fetchone()[0])
+        settings["temp_store_actual"] = temp_store_names.get(
+            temp_store_value, f"UNKNOWN_{temp_store_value}"
+        )
+        settings["temp_store_actual_code"] = temp_store_value
+    except (sqlite3.Error, TypeError, ValueError, IndexError) as exc:
+        settings["temp_store_read_error"] = type(exc).__name__
+    try:
+        cache_size_value = int(conn.execute("PRAGMA cache_size").fetchone()[0])
+        settings["cache_size_actual"] = cache_size_value
+        settings["cache_size_actual_units"] = "KiB" if cache_size_value < 0 else "pages"
+        if cache_size_value < 0:
+            settings["cache_size_actual_kib"] = abs(cache_size_value)
+    except (sqlite3.Error, TypeError, ValueError, IndexError) as exc:
+        settings["cache_size_read_error"] = type(exc).__name__
+    try:
+        compile_options = [
+            str(row[0]) for row in conn.execute("PRAGMA compile_options").fetchall()
+        ]
+        settings["compile_temp_store"] = next(
+            (opt for opt in compile_options if opt.startswith("TEMP_STORE=")),
+            "not_reported",
+        )
+    except sqlite3.Error as exc:
+        settings["compile_options_error"] = type(exc).__name__
+    return settings
 
 
 def execute_ro(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Cursor:
@@ -997,7 +1070,47 @@ def _orphan_referenced_email_ids_sql(ref_sql: str) -> str:
     """
 
 
+def _process_rss_bytes() -> int | None:
+    """Portable-ish RSS sample for privacy-safe progress (Linux /proc preferred)."""
+    try:
+        with open("/proc/self/status", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import resource
+
+        usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        # Linux: KiB; macOS: bytes
+        return int(usage) * 1024 if usage < 10**9 else int(usage)
+    except (ImportError, OSError, ValueError):
+        return None
+
+
+def _emails_id_bounds(conn: sqlite3.Connection) -> tuple[int, int, int]:
+    row = execute_ro(conn, "SELECT MIN(id), MAX(id), COUNT(*) FROM emails").fetchone()
+    lo = int(row[0] or 0)
+    hi = int(row[1] or 0)
+    count = int(row[2] or 0)
+    return lo, hi, count
+
+
+def _iter_id_batches(
+    lo: int, hi: int, *, batch_size: int = USEFULNESS_ID_BATCH_SIZE
+) -> Iterator[tuple[int, int]]:
+    if lo == 0 and hi == 0:
+        return
+    start = lo
+    while start <= hi:
+        end = min(start + batch_size - 1, hi)
+        yield start, end
+        start = end + 1
+
+
 def _cohort_body_bytes(conn: sqlite3.Connection, where_sql: str) -> int:
+    """Exact SUM of body-column lengths for a cohort (single aggregate; no body fetch)."""
     if not _has_table(conn, "emails"):
         return 0
     row = execute_ro(
@@ -1007,165 +1120,708 @@ def _cohort_body_bytes(conn: sqlite3.Connection, where_sql: str) -> int:
     return int(row[0] or 0)
 
 
-def run_usefulness_classification(conn: sqlite3.Connection) -> dict[str, Any]:
+def _body_length_select_expr(alias: str = "e") -> str:
+    return ",\n                   ".join(
+        f"length(CAST({alias}.{quote_identifier(col)} AS BLOB)) AS body_len_{idx}"
+        for idx, col in enumerate(EMAIL_BODY_COLUMNS)
+    )
+
+
+def _empty_source_tier_counts() -> dict[str, dict[str, int]]:
+    return {}
+
+
+def _normalize_source_tier_counts(value: Any) -> dict[str, dict[str, int]]:
+    out: dict[str, dict[str, int]] = {}
+    if not isinstance(value, dict):
+        return out
+    for tier, payload in value.items():
+        if not isinstance(tier, str) or not isinstance(payload, dict):
+            continue
+        out[tier] = {
+            "row_count": int(payload.get("row_count") or 0),
+            "aggregate_body_bytes": int(payload.get("aggregate_body_bytes") or 0),
+        }
+    return out
+
+
+def _sort_source_tier_counts(
+    counts: dict[str, dict[str, int]]
+) -> dict[str, dict[str, int]]:
+    return dict(
+        sorted(counts.items(), key=lambda item: item[1]["row_count"], reverse=True)
+    )
+
+
+def _update_source_tier_counts_from_row(
+    counts: dict[str, dict[str, int]], row: sqlite3.Row
+) -> int:
+    tier = str(row["tier"])
+    body_bytes = sum(int(row[f"body_len_{idx}"] or 0) for idx in range(len(EMAIL_BODY_COLUMNS)))
+    bucket = counts.setdefault(tier, {"row_count": 0, "aggregate_body_bytes": 0})
+    bucket["row_count"] += 1
+    bucket["aggregate_body_bytes"] += body_bytes
+    return body_bytes
+
+
+def _validate_usefulness_progress(
+    progress: dict[str, Any] | None, *, batch_size: int
+) -> dict[str, Any]:
+    if not progress:
+        return {}
+    if not isinstance(progress, dict):
+        raise RuntimeError("invalid usefulness checkpoint: progress must be an object")
+    saved_batch_size = progress.get("id_batch_size")
+    if saved_batch_size is not None:
+        try:
+            saved_batch_size_int = int(saved_batch_size)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "invalid usefulness checkpoint: id_batch_size must be an integer"
+            ) from exc
+        if saved_batch_size_int != int(batch_size):
+            raise RuntimeError(
+                "invalid usefulness checkpoint: batch size mismatch; resume with the original "
+                "--usefulness-batch-size or restart usefulness progress after operator review"
+            )
+    completed = progress.get("substeps_completed") or []
+    if not isinstance(completed, list) or any(not isinstance(v, str) for v in completed):
+        raise RuntimeError("invalid usefulness checkpoint: substeps_completed must be a list")
+    expected_prefix = list(USEFULNESS_SUBSTEP_ORDER[: len(completed)])
+    if completed != expected_prefix:
+        raise RuntimeError("invalid usefulness checkpoint: substeps are out of order")
+    current = progress.get("current_substep")
+    if current is not None and current not in USEFULNESS_SUBSTEP_ORDER:
+        raise RuntimeError("invalid usefulness checkpoint: unknown current substep")
+    batch = progress.get("batch")
+    if batch is not None:
+        if not isinstance(batch, dict):
+            raise RuntimeError("invalid usefulness checkpoint: batch must be an object")
+        if batch.get("substep") not in USEFULNESS_SUBSTEP_ORDER:
+            raise RuntimeError("invalid usefulness checkpoint: unknown batch substep")
+        if int(batch.get("batch_size") or 0) != int(batch_size):
+            raise RuntimeError("invalid usefulness checkpoint: batch configuration mismatch")
+        for key in ("next_id", "high_id", "completed_batches"):
+            try:
+                int(batch[key])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    f"invalid usefulness checkpoint: batch {key} must be an integer"
+                ) from exc
+    partial = progress.get("partial")
+    if partial is not None and not isinstance(partial, dict):
+        raise RuntimeError("invalid usefulness checkpoint: partial must be an object")
+    _assert_privacy_safe(progress)
+    return dict(progress)
+
+
+def _query_plan_uses_temp_sorter(
+    conn: sqlite3.Connection, sql: str, params: tuple[Any, ...]
+) -> bool:
+    return any("USE TEMP B-TREE" in detail for detail in _query_plan_details(conn, sql, params))
+
+
+def _query_plan_details(
+    conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()
+) -> list[str]:
+    rows = conn.execute(f"EXPLAIN QUERY PLAN {sql}", params).fetchall()
+    return [str(row[-1]).upper() for row in rows]
+
+
+def _query_plan_uses_group_sorter(details: list[str]) -> bool:
+    return any("USE TEMP B-TREE FOR GROUP BY" in detail for detail in details)
+
+
+def _query_plan_uses_union_temp_btree(details: list[str]) -> bool:
+    return any("UNION USING TEMP B-TREE" in detail for detail in details)
+
+
+def _body_byte_query_plan_evidence(
+    conn: sqlite3.Connection, *, batch_size: int, valid_ref_sql: str | None
+) -> dict[str, Any]:
+    """Privacy-safe EXPLAIN QUERY PLAN summary for body-byte query shapes."""
+    source_sql = f"""
+        SELECT {SOURCE_TIER_CASE_SQL} AS tier,
+               {_body_length_select_expr('e')}
+        FROM emails e
+        WHERE e.id BETWEEN ? AND ?
+    """
+    # Do not embed reference SQL here; the live referenced-byte plan is checked by
+    # the same aggregate shape when that substep runs. This evidence proves the body
+    # length work itself is sorter-free.
+    referenced_sql = f"""
+        SELECT COUNT(*) AS row_count,
+               SUM({_body_bytes_sum_expr('e')}) AS body_bytes
+        FROM emails e
+        WHERE e.id BETWEEN ? AND ?
+          AND (0)
+    """
+    source_details = _query_plan_details(conn, source_sql, (1, max(1, int(batch_size))))
+    outer_shape_details = _query_plan_details(
+        conn, referenced_sql, (1, max(1, int(batch_size)))
+    )
+    evidence = {
+        "source_tier_stream_uses_group_by": False,
+        "source_tier_stream_uses_fetchall": False,
+        "source_tier_stream_temp_sorter": any(
+            "USE TEMP B-TREE" in detail for detail in source_details
+        ),
+        "referenced_body_outer_aggregate_shape_explained": True,
+        "referenced_body_outer_aggregate_shape_temp_sorter": any(
+            "USE TEMP B-TREE" in detail for detail in outer_shape_details
+        ),
+        "referenced_body_actual_partition_explained": False,
+        "referenced_body_actual_query_temp_btree": None,
+        "referenced_body_actual_query_group_sorter": None,
+        "referenced_id_union_temp_btree": None,
+        "temp_btree_note": (
+            "Reference ID UNION planning may use a temporary B-tree for ID de-duplication; "
+            "the prohibited case is a GROUP BY/temp sorter carrying body or body-length rows."
+        ),
+    }
+    if valid_ref_sql:
+        referenced_id_details = _query_plan_details(conn, valid_ref_sql)
+        actual_sql = f"""
+            SELECT COUNT(*) AS row_count,
+                   SUM({_body_bytes_sum_expr('e')}) AS body_bytes
+            FROM emails e
+            WHERE e.id BETWEEN ? AND ?
+              AND (e.id IN ({valid_ref_sql}))
+        """
+        actual_details = _query_plan_details(
+            conn, actual_sql, (1, max(1, int(batch_size)))
+        )
+        evidence.update(
+            {
+                "referenced_body_actual_partition_explained": True,
+                "referenced_body_actual_query_temp_btree": any(
+                    "USE TEMP B-TREE" in detail or "UNION USING TEMP B-TREE" in detail
+                    for detail in actual_details
+                ),
+                "referenced_body_actual_query_group_sorter": _query_plan_uses_group_sorter(
+                    actual_details
+                ),
+                "referenced_id_union_temp_btree": _query_plan_uses_union_temp_btree(
+                    referenced_id_details
+                ),
+            }
+        )
+    return evidence
+
+
+def _cohort_body_bytes_batched(
+    conn: sqlite3.Connection,
+    where_sql: str,
+    *,
+    cohort_name: str,
+    batch_size: int = USEFULNESS_ID_BATCH_SIZE,
+    stats: dict[str, Any] | None = None,
+    partial: dict[str, Any] | None = None,
+    progress: dict[str, Any] | None = None,
+    checkpoint_batch: Callable[[str, dict[str, Any]], None] | None = None,
+) -> int:
+    """
+    Exact cohort body-byte total via id-range batches.
+
+    Never SELECTs body columns — only ``length(CAST(... AS BLOB))`` aggregates.
+    """
+    if not _has_table(conn, "emails"):
+        return 0
+    lo, hi, _count = _emails_id_bounds(conn)
+    batch_state = (progress or {}).get("batch") if isinstance(progress, dict) else None
+    resume_this = (
+        isinstance(batch_state, dict)
+        and batch_state.get("substep") == "cohort_bytes"
+        and batch_state.get("cohort") == cohort_name
+    )
+    total = int(
+        ((partial or {}).get("cohort_aggregate_body_bytes") or {}).get(cohort_name) or 0
+    ) if resume_this else 0
+    next_id = int(batch_state["next_id"]) if resume_this else lo
+    completed_batches = int(batch_state["completed_batches"]) if resume_this else 0
+    for start, end in _iter_id_batches(next_id, hi, batch_size=batch_size):
+        row = execute_ro(
+            conn,
+            f"""
+            SELECT COUNT(*) AS row_count,
+                   SUM({_body_bytes_sum_expr('e')}) AS body_bytes
+            FROM emails e
+            WHERE e.id BETWEEN ? AND ?
+              AND ({where_sql})
+            """,
+            (start, end),
+        ).fetchone()
+        batch_rows = int(row["row_count"] or 0)
+        total += int(row["body_bytes"] or 0)
+        if stats is not None:
+            stats["batches_executed"] = int(stats.get("batches_executed") or 0) + 1
+            stats["max_observed_batch_row_count"] = max(
+                int(stats.get("max_observed_batch_row_count") or 0), batch_rows
+            )
+        completed_batches += 1
+        if partial is not None:
+            cohort_bytes = dict(partial.get("cohort_aggregate_body_bytes") or {})
+            cohort_bytes[cohort_name] = total
+            partial["cohort_aggregate_body_bytes"] = cohort_bytes
+        if checkpoint_batch is not None:
+            checkpoint_batch(
+                "cohort_bytes",
+                {
+                    "substep": "cohort_bytes",
+                    "cohort": cohort_name,
+                    "next_id": end + 1,
+                    "high_id": hi,
+                    "batch_size": int(batch_size),
+                    "completed_batches": completed_batches,
+                    "rows_processed_in_last_batch": batch_rows,
+                },
+            )
+    return total
+
+
+def _source_tier_counts_batched(
+    conn: sqlite3.Connection,
+    *,
+    batch_size: int = USEFULNESS_ID_BATCH_SIZE,
+    stats: dict[str, Any] | None = None,
+    partial: dict[str, Any] | None = None,
+    progress: dict[str, Any] | None = None,
+    checkpoint_batch: Callable[[str, dict[str, Any]], None] | None = None,
+) -> dict[str, dict[str, int]]:
+    """
+    Exact per-tier row counts and body-byte sums without GROUP BY or fetchall().
+
+    Each streamed row contains only tier plus six scalar length integers. Body
+    values never cross into Python.
+    """
+    lo, hi, _count = _emails_id_bounds(conn)
+    batch_state = (progress or {}).get("batch") if isinstance(progress, dict) else None
+    resume_this = isinstance(batch_state, dict) and batch_state.get("substep") == "source_tiers"
+    acc = _normalize_source_tier_counts(
+        (partial or {}).get("source_tier_counts") if resume_this else {}
+    )
+    next_id = int(batch_state["next_id"]) if resume_this else lo
+    completed_batches = int(batch_state["completed_batches"]) if resume_this else 0
+    for start, end in _iter_id_batches(next_id, hi, batch_size=batch_size):
+        cursor = execute_ro(
+            conn,
+            f"""
+            SELECT {SOURCE_TIER_CASE_SQL} AS tier,
+                   {_body_length_select_expr('e')}
+            FROM emails e
+            WHERE e.id BETWEEN ? AND ?
+            """,
+            (start, end),
+        )
+        batch_rows = 0
+        for row in cursor:
+            _update_source_tier_counts_from_row(acc, row)
+            batch_rows += 1
+        if stats is not None:
+            stats["batches_executed"] = int(stats.get("batches_executed") or 0) + 1
+            stats["max_observed_batch_row_count"] = max(
+                int(stats.get("max_observed_batch_row_count") or 0), batch_rows
+            )
+        completed_batches += 1
+        if partial is not None:
+            partial["source_tier_counts"] = _sort_source_tier_counts(acc)
+        if checkpoint_batch is not None:
+            checkpoint_batch(
+                "source_tiers",
+                {
+                    "substep": "source_tiers",
+                    "next_id": end + 1,
+                    "high_id": hi,
+                    "batch_size": int(batch_size),
+                    "completed_batches": completed_batches,
+                    "rows_processed_in_last_batch": batch_rows,
+                },
+            )
+    return _sort_source_tier_counts(acc)
+
+
+def _duplicate_extra_rows_only(conn: sqlite3.Connection, *, where_sql: str) -> int:
+    """Cheap COUNT-only duplicate extras — never fetches body payloads."""
+    if not _has_table(conn, "emails"):
+        return 0
+    extra = execute_ro(
+        conn,
+        f"""
+        SELECT SUM(cnt - 1) FROM (
+          SELECT COUNT(*) AS cnt
+          FROM emails e
+          WHERE {where_sql}
+            AND e.message_id IS NOT NULL AND trim(e.message_id) != ''
+          GROUP BY lower(trim(e.message_id))
+          HAVING COUNT(*) > 1
+        )
+        """,
+    ).fetchone()[0]
+    return int(extra or 0)
+
+
+def _emit_usefulness_progress(
+    sink: Callable[[str], None] | None,
+    *,
+    substep: str,
+    rows_processed: int | None = None,
+    batch_size: int | None = None,
+    elapsed_s: float,
+    batches_executed: int | None = None,
+) -> None:
+    if sink is None:
+        return
+    parts = [
+        f"usefulness substep={substep}",
+        f"elapsed_s={elapsed_s:.1f}",
+    ]
+    if batch_size is not None:
+        parts.append(f"batch_size={batch_size}")
+    if rows_processed is not None:
+        parts.append(f"rows_processed={rows_processed}")
+    if batches_executed is not None:
+        parts.append(f"batches={batches_executed}")
+    rss = _process_rss_bytes()
+    if rss is not None:
+        parts.append(f"rss_mib={rss / (1024 * 1024):.1f}")
+    sink("; ".join(parts))
+
+
+def run_usefulness_classification(
+    conn: sqlite3.Connection,
+    *,
+    progress: dict[str, Any] | None = None,
+    on_substep: Callable[[dict[str, Any]], None] | None = None,
+    progress_sink: Callable[[str], None] | None = None,
+    batch_size: int = USEFULNESS_ID_BATCH_SIZE,
+) -> dict[str, Any]:
+    """
+    Classify operational usefulness with memory bounded independently of body volume.
+
+    - Never SELECTs body column values into Python.
+    - Streams source-tier rows as tier + scalar body lengths; no GROUP BY sorter.
+    - Does not re-run body-fingerprint duplicate analysis (uses COUNT-only extras).
+    - Optional batch checkpointing via ``on_substep`` for resume without marking the
+      top-level phase completed until finalize.
+    """
     started = time.perf_counter()
     if not _has_table(conn, "emails"):
         return {"phase": "usefulness_classification", "exists": False, "exact": True}
 
-    tier_rows = execute_ro(
-        conn,
-        f"""
-        SELECT tier, COUNT(*) AS row_count,
-               SUM(body_bytes) AS aggregate_body_bytes
-        FROM (
-          SELECT {SOURCE_TIER_CASE_SQL} AS tier,
-                 {_body_bytes_sum_expr('e')} AS body_bytes
-          FROM emails e
-        )
-        GROUP BY tier
-        ORDER BY row_count DESC
-        """,
-    ).fetchall()
-    source_tiers = {
-        str(r["tier"]): {
-            "row_count": int(r["row_count"]),
-            "aggregate_body_bytes": int(r["aggregate_body_bytes"] or 0),
+    state = _validate_usefulness_progress(progress, batch_size=batch_size)
+    completed = list(state.get("substeps_completed") or [])
+    partial = dict(state.get("partial") or {})
+    stats: dict[str, Any] = {
+        "id_batch_size": int(batch_size),
+        "batches_executed": int(state.get("batches_executed") or 0),
+        "max_observed_batch_row_count": int(state.get("max_observed_batch_row_count") or 0),
+        "body_payloads_fetched": 0,
+    }
+    connection_settings = read_readonly_connection_settings(conn)
+
+    def _checkpoint(
+        substep: str, *, completed_substep: bool = False, batch: dict[str, Any] | None = None
+    ) -> None:
+        if completed_substep and substep not in completed:
+            completed.append(substep)
+        payload = {
+            "phase": "usefulness_classification",
+            "status": "in_progress",
+            "current_substep": substep if not completed_substep else None,
+            "substeps_completed": list(completed),
+            "partial": partial,
+            "batches_executed": stats["batches_executed"],
+            "max_observed_batch_row_count": stats["max_observed_batch_row_count"],
+            "id_batch_size": stats["id_batch_size"],
+            "body_payloads_fetched": 0,
+            "batch": batch,
+            "updated_at_utc": _iso_now(),
         }
-        for r in tier_rows
-    }
-
-    ref_sql, discovered_refs = _referenced_email_ids_sql(conn)
-    total_emails = int(execute_ro(conn, "SELECT COUNT(*) FROM emails").fetchone()[0])
-    referenced = 0
-    historical_only = total_emails
-    attachment_linked = 0
-    operational_refs = 0
-    orphan_reference_ids = 0
-
-    if ref_sql:
-        valid_ref_sql = _valid_referenced_email_ids_sql(ref_sql)
-        referenced = int(
-            execute_ro(conn, f"SELECT COUNT(*) FROM ({valid_ref_sql})").fetchone()[0]
+        if completed_substep:
+            payload["batch"] = None
+            payload["current_substep"] = None
+        _assert_privacy_safe(payload)
+        if on_substep is not None:
+            on_substep(payload)
+        _emit_usefulness_progress(
+            progress_sink,
+            substep=f"{substep}_{'done' if completed_substep else 'batch_done'}",
+            batch_size=batch_size,
+            elapsed_s=time.perf_counter() - started,
+            batches_executed=int(stats["batches_executed"]),
+            rows_processed=(batch or {}).get("rows_processed_in_last_batch"),
         )
-        orphan_reference_ids = int(
-            execute_ro(conn, f"SELECT COUNT(*) FROM ({_orphan_referenced_email_ids_sql(ref_sql)})").fetchone()[0]
-        )
-        historical_only = int(
-            execute_ro(
-                conn,
-                f"SELECT COUNT(*) FROM emails e WHERE e.id NOT IN ({valid_ref_sql})",
-            ).fetchone()[0]
-        )
-        attachment_only_parts = [
-            f"SELECT {quote_identifier(item['column'])} AS email_id FROM {quote_identifier(item['table'])} "
-            f"WHERE {quote_identifier(item['column'])} IS NOT NULL"
-            for item in discovered_refs
-            if item["role"] == "attachment_linkage"
-        ]
-        operational_parts = [
-            f"SELECT {quote_identifier(item['column'])} AS email_id FROM {quote_identifier(item['table'])} "
-            f"WHERE {quote_identifier(item['column'])} IS NOT NULL"
-            for item in discovered_refs
-            if item["role"] != "attachment_linkage"
-        ]
-        if attachment_only_parts:
-            attachment_ref_sql = " UNION ".join(attachment_only_parts)
-            attachment_linked = int(
-                execute_ro(
-                    conn,
-                    f"SELECT COUNT(*) FROM ({_valid_referenced_email_ids_sql(attachment_ref_sql)})",
-                ).fetchone()[0]
-            )
-        if operational_parts:
-            operational_ref_sql = " UNION ".join(operational_parts)
-            operational_refs = int(
-                execute_ro(
-                    conn,
-                    f"SELECT COUNT(*) FROM ({_valid_referenced_email_ids_sql(operational_ref_sql)})",
-                ).fetchone()[0]
-            )
 
-    canonical_where = sql_predicate_contacto_gmail_source(table_alias="e", coalesce_null=False)
-    valid_ref_for_bytes = _valid_referenced_email_ids_sql(ref_sql) if ref_sql else None
-    cohort_bytes = {
-        "canonical_gmail": _cohort_body_bytes(conn, canonical_where),
-        "legacy_labdelivery": _cohort_body_bytes(
-            conn, "lower(e.source_file) LIKE '%contacto@labdelivery%'"
-        ),
-        "referenced_by_discovered_tables": _cohort_body_bytes(
-            conn, f"e.id IN ({valid_ref_for_bytes})" if valid_ref_for_bytes else "0"
-        ),
-        "historical_unreferenced": _cohort_body_bytes(
+    def _checkpoint_batch(substep: str, batch: dict[str, Any]) -> None:
+        _checkpoint(substep, completed_substep=False, batch=batch)
+
+    def _complete_substep(substep: str) -> None:
+        _checkpoint(substep, completed_substep=True)
+
+    if "source_tiers" not in completed:
+        _emit_usefulness_progress(
+            progress_sink,
+            substep="source_tiers",
+            batch_size=batch_size,
+            elapsed_s=time.perf_counter() - started,
+        )
+        partial["source_tier_counts"] = _source_tier_counts_batched(
             conn,
-            f"e.id NOT IN ({valid_ref_for_bytes})" if valid_ref_for_bytes else "1=1",
-        ),
-    }
-
-    orphan_attachments = 0
-    if _has_table(conn, "attachments"):
-        orphan_attachments = int(
-            execute_ro(
-                conn,
-                """
-                SELECT COUNT(*) FROM attachments a
-                LEFT JOIN emails e ON e.id = a.email_id
-                WHERE e.id IS NULL
-                """,
-            ).fetchone()[0]
+            batch_size=batch_size,
+            stats=stats,
+            partial=partial,
+            progress=state,
+            checkpoint_batch=_checkpoint_batch,
         )
+        _complete_substep("source_tiers")
 
-    mart_counts: dict[str, int] = {}
-    for table in MART_TABLES:
-        if _has_table(conn, table):
-            qtable = quote_identifier(table)
-            mart_counts[table] = int(execute_ro(conn, f"SELECT COUNT(*) FROM {qtable}").fetchone()[0])
+    source_tiers: dict[str, dict[str, int]] = _normalize_source_tier_counts(
+        partial["source_tier_counts"]
+    )
 
-    commercial_counts: dict[str, int] = {}
-    for table in COMMERCIAL_TABLES:
-        if _has_table(conn, table):
-            qtable = quote_identifier(table)
-            commercial_counts[table] = int(
-                execute_ro(conn, f"SELECT COUNT(*) FROM {qtable}").fetchone()[0]
+    if "references" not in completed:
+        _emit_usefulness_progress(
+            progress_sink,
+            substep="references",
+            batch_size=batch_size,
+            elapsed_s=time.perf_counter() - started,
+        )
+        ref_sql, discovered_refs = _referenced_email_ids_sql(conn)
+        total_emails = int(execute_ro(conn, "SELECT COUNT(*) FROM emails").fetchone()[0])
+        referenced = 0
+        historical_only = total_emails
+        attachment_linked = 0
+        operational_refs = 0
+        orphan_reference_ids = 0
+
+        if ref_sql:
+            valid_ref_sql = _valid_referenced_email_ids_sql(ref_sql)
+            referenced = int(
+                execute_ro(conn, f"SELECT COUNT(*) FROM ({valid_ref_sql})").fetchone()[0]
+            )
+            orphan_reference_ids = int(
+                execute_ro(
+                    conn, f"SELECT COUNT(*) FROM ({_orphan_referenced_email_ids_sql(ref_sql)})"
+                ).fetchone()[0]
+            )
+            historical_only = int(
+                execute_ro(
+                    conn,
+                    f"SELECT COUNT(*) FROM emails e WHERE e.id NOT IN ({valid_ref_sql})",
+                ).fetchone()[0]
+            )
+            attachment_only_parts = [
+                f"SELECT {quote_identifier(item['column'])} AS email_id "
+                f"FROM {quote_identifier(item['table'])} "
+                f"WHERE {quote_identifier(item['column'])} IS NOT NULL"
+                for item in discovered_refs
+                if item["role"] == "attachment_linkage"
+            ]
+            operational_parts = [
+                f"SELECT {quote_identifier(item['column'])} AS email_id "
+                f"FROM {quote_identifier(item['table'])} "
+                f"WHERE {quote_identifier(item['column'])} IS NOT NULL"
+                for item in discovered_refs
+                if item["role"] != "attachment_linkage"
+            ]
+            if attachment_only_parts:
+                attachment_ref_sql = " UNION ".join(attachment_only_parts)
+                attachment_linked = int(
+                    execute_ro(
+                        conn,
+                        f"SELECT COUNT(*) FROM ({_valid_referenced_email_ids_sql(attachment_ref_sql)})",
+                    ).fetchone()[0]
+                )
+            if operational_parts:
+                operational_ref_sql = " UNION ".join(operational_parts)
+                operational_refs = int(
+                    execute_ro(
+                        conn,
+                        f"SELECT COUNT(*) FROM ({_valid_referenced_email_ids_sql(operational_ref_sql)})",
+                    ).fetchone()[0]
+                )
+
+        partial["discovered_reference_sources"] = discovered_refs
+        partial["referenced_email_id_count"] = referenced
+        partial["attachment_linked_email_id_count"] = attachment_linked
+        partial["operational_reference_email_id_count"] = operational_refs
+        partial["historical_only_email_rows"] = historical_only
+        partial["orphan_reference_email_id_count"] = orphan_reference_ids
+        partial["ref_sql_present"] = bool(ref_sql)
+        _complete_substep("references")
+
+    if "cohort_bytes" not in completed:
+        _emit_usefulness_progress(
+            progress_sink,
+            substep="cohort_bytes",
+            batch_size=batch_size,
+            elapsed_s=time.perf_counter() - started,
+        )
+        ref_sql, _discovered = _referenced_email_ids_sql(conn)
+        valid_ref_for_bytes = _valid_referenced_email_ids_sql(ref_sql) if ref_sql else None
+        total_body_bytes = sum(
+            int(bucket.get("aggregate_body_bytes") or 0)
+            for bucket in source_tiers.values()
+        )
+        canonical_bytes = int(
+            source_tiers.get("canonical_gmail", {}).get("aggregate_body_bytes") or 0
+        )
+        legacy_bytes = int(
+            source_tiers.get("legacy_labdelivery", {}).get("aggregate_body_bytes") or 0
+        )
+        referenced_body_bytes = 0
+        if valid_ref_for_bytes:
+            referenced_body_bytes = _cohort_body_bytes_batched(
+                conn,
+                f"e.id IN ({valid_ref_for_bytes})",
+                cohort_name="referenced_by_discovered_tables",
+                batch_size=batch_size,
+                stats=stats,
+                partial=partial,
+                progress=state,
+                checkpoint_batch=_checkpoint_batch,
+            )
+        cohort_bytes = {
+            "canonical_gmail": canonical_bytes,
+            "legacy_labdelivery": legacy_bytes,
+            "referenced_by_discovered_tables": referenced_body_bytes,
+            "historical_unreferenced": total_body_bytes - referenced_body_bytes,
+        }
+        partial["cohort_byte_derivation"] = {
+            "canonical_gmail": "reused_source_tier_counts",
+            "legacy_labdelivery": "reused_source_tier_counts",
+            "total_body_bytes": "sum_source_tier_counts",
+            "referenced_by_discovered_tables": (
+                "single_id_range_scan_of_valid_discovered_references"
+                if valid_ref_for_bytes
+                else "no_discovered_references"
+            ),
+            "historical_unreferenced": "total_body_bytes_minus_referenced_body_bytes",
+        }
+        partial["cohort_aggregate_body_bytes"] = cohort_bytes
+        _complete_substep("cohort_bytes")
+
+    if "orphans_and_tables" not in completed:
+        _emit_usefulness_progress(
+            progress_sink,
+            substep="orphans_and_tables",
+            batch_size=batch_size,
+            elapsed_s=time.perf_counter() - started,
+        )
+        orphan_attachments = 0
+        if _has_table(conn, "attachments"):
+            orphan_attachments = int(
+                execute_ro(
+                    conn,
+                    """
+                    SELECT COUNT(*) FROM attachments a
+                    LEFT JOIN emails e ON e.id = a.email_id
+                    WHERE e.id IS NULL
+                    """,
+                ).fetchone()[0]
             )
 
-    invalid_date_rows = _count_invalid_date_iso_rows(conn)
+        mart_counts: dict[str, int] = {}
+        for table in MART_TABLES:
+            if _has_table(conn, table):
+                qtable = quote_identifier(table)
+                mart_counts[table] = int(
+                    execute_ro(conn, f"SELECT COUNT(*) FROM {qtable}").fetchone()[0]
+                )
 
-    canonical_stats = _duplicate_message_id_stats(
-        conn,
-        cohort_label="canonical_gmail",
-        where_sql=canonical_where,
-    )
+        commercial_counts: dict[str, int] = {}
+        for table in COMMERCIAL_TABLES:
+            if _has_table(conn, table):
+                qtable = quote_identifier(table)
+                commercial_counts[table] = int(
+                    execute_ro(conn, f"SELECT COUNT(*) FROM {qtable}").fetchone()[0]
+                )
+
+        invalid_date_rows = _count_invalid_date_iso_rows(conn)
+        canonical_where = sql_predicate_contacto_gmail_source(
+            table_alias="e", coalesce_null=False
+        )
+        # COUNT-only — do not re-run body-fingerprint duplicate analysis here.
+        duplicate_canonical_extra_rows = _duplicate_extra_rows_only(
+            conn, where_sql=canonical_where
+        )
+
+        partial["orphan_attachment_rows"] = orphan_attachments
+        partial["recomputable_mart_table_counts"] = mart_counts
+        partial["commercial_table_counts"] = commercial_counts
+        partial["invalid_date_iso_rows"] = invalid_date_rows
+        partial["duplicate_canonical_extra_rows"] = duplicate_canonical_extra_rows
+        _complete_substep("orphans_and_tables")
+
     deletion_review_candidates = {
-        "duplicate_canonical_extra_rows": canonical_stats.get("duplicate_extra_rows", 0),
-        "legacy_labdelivery_rows": source_tiers.get("legacy_labdelivery", {}).get("row_count", 0),
-        "historical_only_unreferenced_rows": historical_only,
-        "orphan_attachment_rows": orphan_attachments,
-        "invalid_date_iso_rows": invalid_date_rows,
+        "duplicate_canonical_extra_rows": int(
+            partial.get("duplicate_canonical_extra_rows") or 0
+        ),
+        "legacy_labdelivery_rows": source_tiers.get("legacy_labdelivery", {}).get(
+            "row_count", 0
+        ),
+        "historical_only_unreferenced_rows": int(
+            partial.get("historical_only_email_rows") or 0
+        ),
+        "orphan_attachment_rows": int(partial.get("orphan_attachment_rows") or 0),
+        "invalid_date_iso_rows": int(partial.get("invalid_date_iso_rows") or 0),
         "policy": (
             "Age or lack of references never classifies rows as automatically deletable; "
             "all counts require human review."
         ),
     }
+    ref_sql_for_plan, _ = _referenced_email_ids_sql(conn)
+    valid_ref_sql_for_plan = (
+        _valid_referenced_email_ids_sql(ref_sql_for_plan) if ref_sql_for_plan else None
+    )
 
-    return {
+    result = {
         "phase": "usefulness_classification",
         "exact": True,
         "elapsed_seconds": round(time.perf_counter() - started, 3),
         "source_tier_counts": source_tiers,
-        "cohort_aggregate_body_bytes": cohort_bytes,
-        "discovered_reference_sources": discovered_refs,
-        "referenced_email_id_count": referenced,
-        "attachment_linked_email_id_count": attachment_linked,
-        "operational_reference_email_id_count": operational_refs,
-        "historical_only_email_rows": historical_only,
-        "recomputable_mart_table_counts": mart_counts,
-        "commercial_table_counts": commercial_counts,
-        "orphan_attachment_rows": orphan_attachments,
-        "orphan_reference_email_id_count": orphan_reference_ids,
-        "invalid_date_iso_rows": invalid_date_rows,
+        "cohort_aggregate_body_bytes": partial["cohort_aggregate_body_bytes"],
+        "discovered_reference_sources": partial["discovered_reference_sources"],
+        "referenced_email_id_count": partial["referenced_email_id_count"],
+        "attachment_linked_email_id_count": partial["attachment_linked_email_id_count"],
+        "operational_reference_email_id_count": partial[
+            "operational_reference_email_id_count"
+        ],
+        "historical_only_email_rows": partial["historical_only_email_rows"],
+        "recomputable_mart_table_counts": partial["recomputable_mart_table_counts"],
+        "commercial_table_counts": partial["commercial_table_counts"],
+        "orphan_attachment_rows": partial["orphan_attachment_rows"],
+        "orphan_reference_email_id_count": partial["orphan_reference_email_id_count"],
+        "invalid_date_iso_rows": partial["invalid_date_iso_rows"],
         "invalid_date_iso_validation": "iso_text_to_datetime",
         "deletion_review_candidates": deletion_review_candidates,
+        "memory_bounds": {
+            "id_batch_size": stats["id_batch_size"],
+            "batches_executed": stats["batches_executed"],
+            "max_observed_batch_row_count": stats["max_observed_batch_row_count"],
+            "body_payloads_fetched": 0,
+            "substeps_completed": list(USEFULNESS_SUBSTEP_ORDER),
+            "nested_body_materializing_subquery": False,
+            "source_tier_body_group_by": False,
+            "connection_settings": connection_settings,
+            "query_plan_evidence": _body_byte_query_plan_evidence(
+                conn,
+                batch_size=batch_size,
+                valid_ref_sql=valid_ref_sql_for_plan,
+            ),
+            "cohort_byte_derivation": partial.get("cohort_byte_derivation") or {},
+        },
     }
+    if "finalize" not in completed:
+        _complete_substep("finalize")
+    _emit_usefulness_progress(
+        progress_sink,
+        substep="finalize_done",
+        batch_size=batch_size,
+        elapsed_s=time.perf_counter() - started,
+        batches_executed=int(stats["batches_executed"]),
+    )
+    return result
 
 
 def _phase_status(report: dict[str, Any], phase: str) -> str:
@@ -1375,10 +2031,109 @@ def load_checkpoint(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def save_checkpoint(path: Path, data: dict[str, Any]) -> None:
+def _fsync_checkpoint_directory(
+    path: Path, *, dir_fsync: Callable[[int], None] | None = None
+) -> dict[str, Any]:
+    fn = dir_fsync or os.fsync
+    unsupported = {
+        errno.EINVAL,
+        errno.ENOTSUP,
+        getattr(errno, "EOPNOTSUPP", errno.ENOTSUP),
+    }
+    try:
+        dir_fd = os.open(str(path), os.O_RDONLY)
+    except OSError as exc:
+        if exc.errno in unsupported:
+            return {
+                "directory_fsync_supported": False,
+                "directory_fsync_warning": (
+                    f"checkpoint directory open/fsync unsupported (errno={exc.errno}); "
+                    "checkpoint file fsync was still performed"
+                ),
+            }
+        return {
+            "directory_fsync_supported": False,
+            "directory_fsync_warning": (
+                f"checkpoint directory open/fsync failed (errno={exc.errno}); "
+                "checkpoint file fsync was still performed"
+            ),
+        }
+    try:
+        try:
+            fn(dir_fd)
+            return {"directory_fsync_supported": True, "directory_fsync_warning": None}
+        except OSError as exc:
+            if exc.errno in unsupported:
+                return {
+                    "directory_fsync_supported": False,
+                    "directory_fsync_warning": (
+                        f"checkpoint directory fsync unsupported (errno={exc.errno}); "
+                        "checkpoint file fsync was still performed"
+                    ),
+                }
+            return {
+                "directory_fsync_supported": False,
+                "directory_fsync_warning": (
+                    f"checkpoint directory fsync failed (errno={exc.errno}); "
+                    "checkpoint file fsync was still performed"
+                ),
+            }
+    finally:
+        os.close(dir_fd)
+
+
+def _checkpoint_temp_path(path: Path) -> Path:
+    return path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+
+
+def save_checkpoint(
+    path: Path,
+    data: dict[str, Any],
+    *,
+    write_hook: Callable[[Any, str], None] | None = None,
+    replace_hook: Callable[[Path, Path], None] | None = None,
+    dir_fsync: Callable[[int], None] | None = None,
+    warning_sink: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
     _assert_privacy_safe(data)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    payload = json.dumps(data, indent=2, sort_keys=True) + "\n"
+    tmp_path = _checkpoint_temp_path(path)
+    fd: int | None = None
+    try:
+        fd = os.open(str(tmp_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = None
+            if write_hook is not None:
+                write_hook(handle, payload)
+            else:
+                handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if replace_hook is not None:
+            replace_hook(tmp_path, path)
+        else:
+            os.replace(tmp_path, path)
+        info = {
+            "atomic_replace": True,
+            "file_fsync_completed": True,
+            **_fsync_checkpoint_directory(path.parent, dir_fsync=dir_fsync),
+        }
+        warning = info.get("directory_fsync_warning")
+        if warning and warning_sink is not None:
+            warning_sink(f"checkpoint durability warning: {warning}")
+        return info
+    except Exception:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def validate_resume_checkpoint(
@@ -1516,7 +2271,41 @@ def run_audit(
                 elif phase_name == "duplicate_analysis":
                     result = run_duplicate_analysis(conn)
                 elif phase_name == "usefulness_classification":
-                    result = run_usefulness_classification(conn)
+                    usefulness_progress = checkpoint.get("usefulness_progress")
+                    if not isinstance(usefulness_progress, dict):
+                        usefulness_progress = {}
+
+                    def _persist_usefulness_substep(partial: dict[str, Any]) -> None:
+                        checkpoint["usefulness_progress"] = partial
+                        if "identity" not in checkpoint:
+                            checkpoint["identity"] = checkpoint_identity(
+                                options,
+                                file_fingerprint=frozen_fingerprint,
+                            )
+                        phases_map = dict(checkpoint.get("phases") or report["phases"])
+                        phases_map["usefulness_classification"] = {
+                            "phase": "usefulness_classification",
+                            "status": "in_progress",
+                            "substeps_completed": list(
+                                partial.get("substeps_completed") or []
+                            ),
+                            "exact": True,
+                        }
+                        report["phases"] = phases_map
+                        checkpoint["phases"] = phases_map
+                        save_checkpoint(
+                            checkpoint_path,
+                            checkpoint,
+                            warning_sink=options.progress_sink,
+                        )
+
+                    result = run_usefulness_classification(
+                        conn,
+                        progress=usefulness_progress,
+                        on_substep=_persist_usefulness_substep,
+                        progress_sink=options.progress_sink,
+                        batch_size=max(1, int(options.usefulness_batch_size)),
+                    )
                 elif phase_name == "summarize":
                     continue
                 else:
@@ -1531,7 +2320,13 @@ def run_audit(
                         file_fingerprint=frozen_fingerprint,
                     )
                 checkpoint["phases"] = report["phases"]
-                save_checkpoint(checkpoint_path, checkpoint)
+                if phase_name == "usefulness_classification":
+                    checkpoint.pop("usefulness_progress", None)
+                save_checkpoint(
+                    checkpoint_path,
+                    checkpoint,
+                    warning_sink=options.progress_sink,
+                )
             except sqlite3.Error as exc:
                 failed = {
                     "status": "failed",
@@ -1546,7 +2341,11 @@ def run_audit(
                         file_fingerprint=frozen_fingerprint,
                     )
                 checkpoint["phases"] = report["phases"]
-                save_checkpoint(checkpoint_path, checkpoint)
+                save_checkpoint(
+                    checkpoint_path,
+                    checkpoint,
+                    warning_sink=options.progress_sink,
+                )
                 raise
             except RuntimeError as exc:
                 if "privacy leak detected" in str(exc):

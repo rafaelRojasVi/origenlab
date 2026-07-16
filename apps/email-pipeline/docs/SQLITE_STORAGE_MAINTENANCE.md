@@ -151,7 +151,7 @@ Do **not** pass `--include-dbstat` against production without explicit approval.
 Online Backup API snapshots can retain a **WAL-format database header** (bytes 18/19 = 2) while having **no** `-wal`/`-shm` companions. Opening such a file with ordinary `mode=ro` can create sidecars and fail the frozen fingerprint check.
 
 | Case | Open URI |
-|------|----------|
+| --- | --- |
 | Confirmed offline copy (`--confirm-offline-copy`), not production, **no** `-wal`/`-shm`/`-journal` | `mode=ro&immutable=1` |
 | Production DB / `--light-only` / unconfirmed path | ordinary `mode=ro` only — **never** immutable |
 | Offline never inferred from filename alone | require `--confirm-offline-copy` + non-production gate |
@@ -159,16 +159,68 @@ Online Backup API snapshots can retain a **WAL-format database header** (bytes 1
 Immutable is appropriate only for a **frozen, verified offline copy**. It must **never** be used against live production. A **non-empty WAL** blocks offline immutable auditing because immutable mode would ignore committed WAL content. This tool **never deletes** sidecars.
 
 | Phase | Purpose | Production path |
-|-------|---------|-----------------|
+| --- | --- | --- |
 | `structural_light` | Constant-time storage PRAGMAs + `sqlite_master` inventory only | **`--light-only` on production** |
 | `structural_quick` | `quick_check`, `foreign_key_check`, table COUNT/ID ranges | refused (offline copy + confirm) |
 | `structural_full` | opt-in `integrity_check` via `--full-integrity-check` only (may take hours) | refused |
 | `physical_dbstat` | page allocation by table/index/autoindex + reconciliation | refused |
 | `column_bytes` | aggregate TEXT/BLOB bytes (`length(CAST(col AS BLOB))`) | refused |
 | `duplicate_analysis` | SHA-256 body fingerprints for duplicate `message_id` groups; attachment external-payload dupes | refused |
-| `usefulness_classification` | source tiers (rows + body bytes), discovered reference tables, review candidates | refused |
+| `usefulness_classification` | source tiers (rows + body **lengths**), discovered reference tables, review candidates — **bounded id-range streaming / scalar aggregates; never loads bodies into Python** | refused |
 
 **Defaults:** heavy offline phases run when `--confirm-offline-copy` is set; `structural_full` is **not** in the default phase set. Use `--full-integrity-check` explicitly.
+
+### Usefulness OOM incident and bounded-memory correction
+
+A resume of `usefulness_classification` against a ~127.5 GiB offline snapshot was **OOM-killed** (~28 GiB Python RSS on a 30 GiB WSL VM) while earlier phases remained completed in the v2 checkpoint. Evidence showed ~60 GiB of body content and only ~0.058 GiB max single body — the failure was **cumulative query/temp growth**, not one giant value.
+
+**Root cause (fixed):** the usefulness phase used a nested `SELECT … body_bytes FROM emails` subquery before `GROUP BY tier`, which can materialize large intermediate results, and it also re-ran body-fingerprint duplicate analysis (fetching body payloads) solely for a COUNT of duplicate extras.
+
+**Correction:** usefulness now:
+
+- streams source-tier rows as `tier` plus six scalar `length(CAST(col AS BLOB))` integers, with **no `GROUP BY`** and no `fetchall()` on body-length work
+- uses **id-range batches** (default 5,000; override with `--usefulness-batch-size`) and checkpoints after each completed ID batch
+- stores resumable batch state: current substep/cohort, next ID, integer accumulators, completed batch count, and batch configuration
+- reuses source-tier byte totals for canonical/legacy cohorts, derives total body bytes from tier totals, scans referenced body bytes once, and derives historical-unreferenced as total-minus-referenced
+- records privacy-safe EXPLAIN QUERY PLAN evidence that body-byte query shapes do not use a temporary GROUP BY sorter
+- checkpoints privacy-safe **substeps** (`source_tiers` → `references` → `cohort_bytes` → `orphans_and_tables` → `finalize`) without marking the top-level phase `completed` until the end
+- requests connection-local `temp_store=FILE` + bounded `cache_size`, then reports actual PRAGMA values and SQLite `TEMP_STORE` compile option
+
+Those PRAGMAs are **not** a hard RSS bound. The remediation is the sorter-free query shape plus batch-granular resume; memory/swap increases only mask regressions.
+
+**Increasing WSL memory, swap, or systemd MemoryMax is not remediation.** Resume the same v2 checkpoint with the fixed code; do not discard completed phases.
+
+Privacy-safe progress lines (stderr) may include substep name, elapsed seconds, batch size, completed batch counts, rows processed in the last batch, and RSS — never sender/subject/body/paths/raw identifiers.
+
+For a future real resume, prefer a **system-level transient service** running as `rafael`, with a cgroup ceiling so any regression kills only the audit process, not WSL/Cursor. Do **not** use `systemd-run --user` as the primary command while `loginctl show-user rafael -p Linger` is `Linger=no`; the prior user unit disappeared during the Cursor/WSL disruption. A user unit is acceptable only if linger is explicitly approved and enabled first.
+
+Example template (documentation only; do **not** launch without operator approval):
+
+```bash
+sudo systemd-run --unit=sqlite-deep-audit-resume \
+  --uid=rafael \
+  --property=WorkingDirectory=/home/rafael/dev/freelance/origenlab/apps/email-pipeline \
+  --property=Environment=HOME=/home/rafael \
+  --property=MemoryHigh=4G \
+  --property=MemoryMax=6G \
+  --property=MemorySwapMax=0 \
+  --property=OOMPolicy=stop \
+  --property=StandardOutput=append:/mnt/d/origenlab-sqlite-offline/deep_audit_20260716T023339Z/resume.progress.log \
+  --property=StandardError=append:/mnt/d/origenlab-sqlite-offline/deep_audit_20260716T023339Z/resume.progress.log \
+  /bin/bash -lc 'set -uo pipefail
+    cd /home/rafael/dev/freelance/origenlab/apps/email-pipeline
+    /home/rafael/.local/bin/uv run --frozen python scripts/qa/audit_sqlite_deep.py \
+    --db /mnt/d/origenlab-sqlite-offline/emails_offline_20260716T023339Z.sqlite \
+    --confirm-offline-copy \
+    --output-dir /mnt/d/origenlab-sqlite-offline/deep_audit_20260716T023339Z \
+    --resume --json \
+    > /mnt/d/origenlab-sqlite-offline/deep_audit_20260716T023339Z/resume.report.json
+    rc=$?
+    echo "AUDIT_RESUME_EXIT=${rc}" >> /mnt/d/origenlab-sqlite-offline/deep_audit_20260716T023339Z/resume.progress.log
+    exit "${rc}"'
+```
+
+**Still prohibited:** live production heavy audit, `VACUUM` / `VACUUM INTO`, deleting offline clones, mutating Gmail/Postgres/cron/systemd, or treating usefulness counts as deletion approval.
 
 **Production-safe light mode:** `--light-only` runs `structural_light` only (no `quick_check`, FK checks, COUNT scans, dbstat, or body profiling). Safe on the configured production path without `--confirm-offline-copy` (ordinary `mode=ro`).
 
@@ -184,4 +236,4 @@ uv run python scripts/qa/audit_sqlite_deep.py \
   --output-dir reports/out/active/current/sqlite_deep_audit
 ```
 
-Use `--light-only` on production for constant-time storage metadata. Use `--full-integrity-check` only when a full `integrity_check` is explicitly required. Use `--resume` to continue from `audit_sqlite_deep_checkpoint.json` (refuses resume when schema version, file fingerprint, or selected configuration differs).
+Use `--light-only` on production for constant-time storage metadata. Use `--full-integrity-check` only when a full `integrity_check` is explicitly required. Use `--resume` to continue from `audit_sqlite_deep_checkpoint.json` (refuses resume when schema version, file fingerprint, selected configuration, or in-progress usefulness batch size differs).

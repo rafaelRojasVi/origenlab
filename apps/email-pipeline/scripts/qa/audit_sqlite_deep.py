@@ -111,6 +111,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print sanitized Markdown summary to stdout",
     )
+    parser.add_argument(
+        "--usefulness-batch-size",
+        type=int,
+        default=5_000,
+        help=(
+            "Rows per resumable usefulness ID batch (default: 5000). "
+            "Must match any in-progress usefulness checkpoint when --resume is used."
+        ),
+    )
     return parser
 
 
@@ -129,6 +138,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.light_only:
         phases = frozenset(PRODUCTION_LIGHT_PHASE_NAMES)
 
+    if args.usefulness_batch_size < 1 or args.usefulness_batch_size > 100_000:
+        print(
+            "ERROR: --usefulness-batch-size must be between 1 and 100000",
+            file=sys.stderr,
+        )
+        return 2
+
     options = AuditOptions(
         db=db,
         confirm_offline_copy=bool(args.confirm_offline_copy),
@@ -137,6 +153,8 @@ def main(argv: list[str] | None = None) -> int:
         resume=bool(args.resume),
         output_dir=args.output_dir,
         settings=settings,
+        progress_sink=lambda msg: print(msg, file=sys.stderr),
+        usefulness_batch_size=int(args.usefulness_batch_size),
     )
 
     err = validate_audit_access(options)
