@@ -166,7 +166,7 @@ Immutable is appropriate only for a **frozen, verified offline copy**. It must *
 | `physical_dbstat` | page allocation by table/index/autoindex + reconciliation | refused |
 | `column_bytes` | aggregate TEXT/BLOB bytes (`length(CAST(col AS BLOB))`) | refused |
 | `duplicate_analysis` | SHA-256 body fingerprints for duplicate `message_id` groups; attachment external-payload dupes | refused |
-| `usefulness_classification` | source tiers (rows + body **lengths**), discovered reference tables, review candidates — **bounded id-range aggregates; never loads bodies into Python** | refused |
+| `usefulness_classification` | source tiers (rows + body **lengths**), discovered reference tables, review candidates — **bounded id-range streaming / scalar aggregates; never loads bodies into Python** | refused |
 
 **Defaults:** heavy offline phases run when `--confirm-offline-copy` is set; `structural_full` is **not** in the default phase set. Use `--full-integrity-check` explicitly.
 
@@ -178,14 +178,33 @@ A resume of `usefulness_classification` against a ~127.5 GiB offline snapshot wa
 
 **Correction:** usefulness now:
 
-- aggregates only `length(CAST(col AS BLOB))` (never SELECTs body values into Python)
-- uses **id-range batches** (default 25 000) so sorter/temp memory cannot scale with total body volume
+- streams source-tier rows as `tier` plus six scalar `length(CAST(col AS BLOB))` integers, with **no `GROUP BY`** and no `fetchall()` on body-length work
+- uses **id-range batches** (default 5,000; override with `--usefulness-batch-size`) and checkpoints after each completed ID batch
+- stores resumable batch state: current substep/cohort, next ID, integer accumulators, completed batch count, and batch configuration
+- reuses source-tier byte totals for canonical/legacy cohorts, derives total body bytes from tier totals, scans referenced body bytes once, and derives historical-unreferenced as total-minus-referenced
+- records privacy-safe EXPLAIN QUERY PLAN evidence that body-byte query shapes do not use a temporary GROUP BY sorter
 - checkpoints privacy-safe **substeps** (`source_tiers` → `references` → `cohort_bytes` → `orphans_and_tables` → `finalize`) without marking the top-level phase `completed` until the end
-- configures connection-local `temp_store=FILE` + bounded `cache_size` (does not mutate the DB file / does not create sidecars)
+- requests connection-local `temp_store=FILE` + bounded `cache_size`, then reports actual PRAGMA values and SQLite `TEMP_STORE` compile option
+
+Those PRAGMAs are **not** a hard RSS bound. The remediation is the sorter-free query shape plus batch-granular resume; memory/swap increases only mask regressions.
 
 **Increasing WSL memory, swap, or systemd MemoryMax is not remediation.** Resume the same v2 checkpoint with the fixed code; do not discard completed phases.
 
-Privacy-safe progress lines (stderr) may include substep name, elapsed seconds, batch size, batch counts, and RSS — never sender/subject/body/paths.
+Privacy-safe progress lines (stderr) may include substep name, elapsed seconds, batch size, completed batch counts, rows processed in the last batch, and RSS — never sender/subject/body/paths/raw identifiers.
+
+For a future real resume, prefer a transient user unit with a cgroup ceiling so any regression kills only the audit process, not WSL/Cursor. Example template (do **not** run without operator approval and verified placeholder paths):
+
+```bash
+systemd-run --user --unit=sqlite-deep-audit-resume \
+  --property=MemoryMax=24G \
+  --property=MemorySwapMax=0 \
+  --same-dir \
+  uv run python scripts/qa/audit_sqlite_deep.py \
+    --db <verified-offline-snapshot.sqlite> \
+    --confirm-offline-copy \
+    --output-dir <existing-deep-audit-output-dir> \
+    --resume --json
+```
 
 **Still prohibited:** live production heavy audit, `VACUUM` / `VACUUM INTO`, deleting offline clones, mutating Gmail/Postgres/cron/systemd, or treating usefulness counts as deletion approval.
 
@@ -203,4 +222,4 @@ uv run python scripts/qa/audit_sqlite_deep.py \
   --output-dir reports/out/active/current/sqlite_deep_audit
 ```
 
-Use `--light-only` on production for constant-time storage metadata. Use `--full-integrity-check` only when a full `integrity_check` is explicitly required. Use `--resume` to continue from `audit_sqlite_deep_checkpoint.json` (refuses resume when schema version, file fingerprint, or selected configuration differs).
+Use `--light-only` on production for constant-time storage metadata. Use `--full-integrity-check` only when a full `integrity_check` is explicitly required. Use `--resume` to continue from `audit_sqlite_deep_checkpoint.json` (refuses resume when schema version, file fingerprint, selected configuration, or in-progress usefulness batch size differs).
