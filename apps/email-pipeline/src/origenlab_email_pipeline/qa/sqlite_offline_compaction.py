@@ -9,11 +9,10 @@ and never treats historical/referenced rows as deletable.
 
 from __future__ import annotations
 
-import errno
-import fcntl
 import hashlib
 import json
 import os
+import re
 import signal
 import sqlite3
 import sys
@@ -56,6 +55,7 @@ CRITICAL_TABLES: tuple[str, ...] = (
     "email_mart_features",
     "conversations",
 )
+_WS_RE = re.compile(r"\s+")
 
 
 class CompactionError(BackupError):
@@ -92,8 +92,28 @@ def _emit(options: CompactionOptions, message: str) -> None:
     sink(message)
 
 
-def partial_path_for(destination: Path) -> Path:
+def partial_path_for(destination: Path, *, unique: bool = True) -> Path:
+    if unique:
+        return destination.with_name(
+            f"{destination.name}.partial.{os.getpid()}.{time.time_ns()}"
+        )
     return destination.with_name(destination.name + ".partial")
+
+
+def existing_partial_artifacts(destination: Path) -> list[Path]:
+    parent = destination.parent
+    prefix = destination.name + ".partial"
+    found: list[Path] = []
+    if not parent.is_dir():
+        return found
+    for path in parent.iterdir():
+        name = path.name
+        if name == prefix or name.startswith(prefix + "."):
+            found.append(path)
+            for companion in companion_paths(path).values():
+                if companion.exists():
+                    found.append(companion)
+    return found
 
 
 def manifest_path_for(destination: Path) -> Path:
@@ -101,7 +121,9 @@ def manifest_path_for(destination: Path) -> Path:
 
 
 def manifest_partial_path_for(destination: Path) -> Path:
-    return destination.with_name(destination.name + ".compaction.manifest.json.partial")
+    return destination.with_name(
+        destination.name + f".compaction.manifest.json.partial.{os.getpid()}.{time.time_ns()}"
+    )
 
 
 def companion_paths(db: Path) -> dict[str, Path]:
@@ -119,6 +141,42 @@ def assert_no_sidecars(db: Path, *, label: str = "database") -> None:
                 f"{label} has companion {kind} beside {sanitize_path_for_log(db)}; "
                 "offline compaction requires a closed copy with no -wal/-shm/-journal"
             )
+
+
+def compaction_is_completed(destination: Path) -> bool:
+    man = manifest_path_for(destination)
+    if not (destination.is_file() and man.is_file()):
+        return False
+    try:
+        payload = json.loads(man.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return payload.get("completed") is True
+
+
+def detect_orphan_destination(destination: Path) -> str | None:
+    """Detect final DB without a completed compaction manifest."""
+    man = manifest_path_for(destination)
+    if destination.exists() and not man.exists():
+        return (
+            f"orphaned/uncommitted destination detected: "
+            f"{sanitize_path_for_log(destination)} exists without completed manifest "
+            f"{sanitize_path_for_log(man)}. Explicit cleanup required; refusing overwrite."
+        )
+    if destination.exists() and man.exists():
+        try:
+            payload = json.loads(man.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return (
+                f"destination exists with unreadable manifest "
+                f"{sanitize_path_for_log(man)}. Explicit cleanup required."
+            )
+        if payload.get("completed") is not True:
+            return (
+                f"destination exists with incomplete manifest completed!=true: "
+                f"{sanitize_path_for_log(destination)}. Explicit cleanup required."
+            )
+    return None
 
 
 def connect_source_immutable(db: Path) -> sqlite3.Connection:
@@ -153,7 +211,33 @@ def storage_stats(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def database_identity_props(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Stable DB identity attributes that must survive VACUUM INTO."""
+    encoding = conn.execute("PRAGMA encoding").fetchone()[0]
+    return {
+        "page_size": int(conn.execute("PRAGMA page_size").fetchone()[0]),
+        "user_version": int(conn.execute("PRAGMA user_version").fetchone()[0]),
+        "application_id": int(conn.execute("PRAGMA application_id").fetchone()[0]),
+        "encoding": str(encoding),
+        "schema_version": int(conn.execute("PRAGMA schema_version").fetchone()[0]),
+    }
+
+
+def _normalize_sql(sql: str | None) -> str:
+    if not sql:
+        return ""
+    collapsed = _WS_RE.sub(" ", sql).strip()
+    # Ignore insignificant spacing around SQL punctuation so VACUUM INTO / pretty
+    # CREATE text does not look like schema drift.
+    return re.sub(r"\s*([(),;])\s*", r"\1", collapsed)
+
+
 def schema_fingerprint(conn: sqlite3.Connection) -> str:
+    """
+    Stable schema fingerprint ignoring root-page layout changes from compaction.
+
+    Uses object type/name/table name plus whitespace-normalized CREATE SQL only.
+    """
     rows = conn.execute(
         """
         SELECT type, name, tbl_name, sql
@@ -162,7 +246,8 @@ def schema_fingerprint(conn: sqlite3.Connection) -> str:
         """
     ).fetchall()
     payload = "\n".join(
-        f"{r['type']}|{r['name']}|{r['tbl_name']}|{r['sql'] or ''}" for r in rows
+        f"{r[0]}|{r[1]}|{r[2]}|{_normalize_sql(r[3])}"
+        for r in rows
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -177,7 +262,7 @@ def schema_object_inventory(conn: sqlite3.Connection) -> list[dict[str, str]]:
         """
     ).fetchall()
     return [
-        {"type": str(r["type"]), "name": str(r["name"]), "tbl_name": str(r["tbl_name"])}
+        {"type": str(r[0]), "name": str(r[1]), "tbl_name": str(r[2])}
         for r in rows
     ]
 
@@ -197,6 +282,31 @@ def critical_table_counts(conn: sqlite3.Connection) -> dict[str, int | None]:
         q = quote_identifier(table)
         out[table] = int(conn.execute(f"SELECT COUNT(*) FROM {q}").fetchone()[0])
     return out
+
+
+def _assert_paths_distinct(source: Path, *others: Path) -> None:
+    for other in others:
+        try:
+            if source.resolve() == other.resolve():
+                raise CompactionError(
+                    "source and destination/partial resolve to the same path"
+                )
+        except OSError:
+            pass
+        if other.exists() and paths_same_file(source, other):
+            raise CompactionError(
+                "source and destination/partial resolve to the same file"
+            )
+
+
+def _read_destination_free_bytes(destination_parent: Path) -> int:
+    try:
+        return int(disk_free_bytes(destination_parent))
+    except OSError as exc:
+        raise CompactionError(
+            f"unable to read destination filesystem capacity "
+            f"(errno={getattr(exc, 'errno', None)})"
+        ) from None
 
 
 def validate_compaction_options(options: CompactionOptions) -> None:
@@ -221,39 +331,39 @@ def validate_compaction_options(options: CompactionOptions) -> None:
         )
 
     assert_no_sidecars(source, label="source")
+    _assert_paths_distinct(
+        source,
+        destination,
+        partial_path_for(destination, unique=False),
+        manifest_path_for(destination),
+    )
 
-    try:
-        if source.resolve() == destination.resolve():
-            raise CompactionError("source and destination resolve to the same path")
-    except OSError:
-        pass
-    if destination.exists() and paths_same_file(source, destination):
-        raise CompactionError("source and destination resolve to the same file")
+    orphan = detect_orphan_destination(destination)
+    if orphan:
+        raise CompactionError(orphan)
 
+    if compaction_is_completed(destination):
+        raise CompactionError(
+            f"destination already completed (refusing overwrite): "
+            f"{sanitize_path_for_log(destination)}"
+        )
     if destination.exists():
         raise CompactionError(
             f"destination already exists (refusing overwrite): "
             f"{sanitize_path_for_log(destination)}"
         )
-    partial = partial_path_for(destination)
-    if partial.exists():
+
+    leftovers = existing_partial_artifacts(destination)
+    if leftovers:
         raise CompactionError(
-            f"conflicting partial already exists: {sanitize_path_for_log(partial)}"
+            "conflicting partial artifact already exists: "
+            f"{sanitize_path_for_log(leftovers[0])}"
         )
-    for kind, path in companion_paths(partial).items():
-        if path.exists():
-            raise CompactionError(
-                f"conflicting partial companion {kind}: {sanitize_path_for_log(path)}"
-            )
     man = manifest_path_for(destination)
-    man_partial = manifest_partial_path_for(destination)
-    if man.exists():
+    if man.exists() and not destination.exists():
         raise CompactionError(
-            f"destination manifest already exists: {sanitize_path_for_log(man)}"
-        )
-    if man_partial.exists():
-        raise CompactionError(
-            f"conflicting manifest.partial already exists: {sanitize_path_for_log(man_partial)}"
+            f"conflicting final manifest without destination DB: "
+            f"{sanitize_path_for_log(man)}"
         )
     if not destination.parent.is_dir():
         raise CompactionError(
@@ -261,22 +371,44 @@ def validate_compaction_options(options: CompactionOptions) -> None:
             f"{sanitize_path_for_log(destination.parent)}"
         )
 
-    if not options.allow_same_filesystem:
-        src_dev = os.stat(source).st_dev
-        dst_dev = os.stat(destination.parent).st_dev
+    if options.allow_same_filesystem:
+        if not options.confirm_offline_copy:
+            raise CompactionError(
+                "--allow-same-filesystem requires --confirm-offline-copy on a "
+                "verified non-production offline snapshot"
+            )
+        if is_configured_production_db(source, settings):
+            raise CompactionError(
+                "--allow-same-filesystem refused for production SQLite paths"
+            )
+    else:
+        try:
+            src_dev = os.stat(source).st_dev
+            dst_dev = os.stat(destination.parent).st_dev
+        except OSError as exc:
+            raise CompactionError(
+                f"unable to compare filesystems (errno={getattr(exc, 'errno', None)})"
+            ) from None
         if src_dev == dst_dev:
             raise CompactionError(
                 "destination is on the same filesystem as source; refuse by default. "
-                "Use --allow-same-filesystem only for synthetic tests/emergencies."
+                "Hard-link no-clobber publication requires same-FS between partial and "
+                "final destination names. Use --allow-same-filesystem only for "
+                "confirmed offline non-production snapshots / synthetic tests."
             )
 
-    source_size = int(source.stat().st_size)
+    try:
+        source_size = int(source.stat().st_size)
+    except OSError as exc:
+        raise CompactionError(
+            f"unable to stat source (errno={getattr(exc, 'errno', None)})"
+        ) from None
     needed = required_capacity_bytes(
         source_size,
         margin_ratio=options.capacity_margin_ratio,
         margin_min_bytes=options.capacity_margin_min_bytes,
     )
-    free = disk_free_bytes(destination.parent)
+    free = _read_destination_free_bytes(destination.parent)
     if free < needed:
         raise CompactionError(
             "insufficient destination capacity: "
@@ -285,16 +417,16 @@ def validate_compaction_options(options: CompactionOptions) -> None:
 
 
 def build_preflight_report(options: CompactionOptions) -> dict[str, Any]:
-    validate_compaction_options(options)
     if not options.confirm_offline_copy:
         raise CompactionError(
             "offline compaction requires --confirm-offline-copy acknowledging a "
             "verified frozen offline/backup copy"
         )
+    validate_compaction_options(options)
     source = options.source
     destination = options.destination
     source_size = int(source.stat().st_size)
-    free = disk_free_bytes(destination.parent)
+    free = _read_destination_free_bytes(destination.parent)
     needed = required_capacity_bytes(
         source_size,
         margin_ratio=options.capacity_margin_ratio,
@@ -320,13 +452,19 @@ def build_preflight_report(options: CompactionOptions) -> dict[str, Any]:
             "Never in-place VACUUM; never swaps candidate into production.",
             "Never deletes source snapshot or historical clones.",
             "Within-row body redundancy is not deletion approval.",
+            "Hard-link no-clobber requires same filesystem between .partial and final names.",
             "Re-run with --confirm-offline-copy --apply to create a compacted candidate.",
         ],
     }
 
 
 def verify_compact_candidate(
-    candidate: Path, *, source_counts: dict[str, int | None], source_schema: str
+    candidate: Path,
+    *,
+    source_counts: dict[str, int | None],
+    source_schema: str,
+    source_identity: dict[str, Any],
+    source_storage: dict[str, Any],
 ) -> dict[str, Any]:
     assert_no_sidecars(candidate, label="candidate")
     conn = connect_candidate_readonly(candidate)
@@ -342,6 +480,13 @@ def verify_compact_candidate(
         cand_schema = schema_fingerprint(conn)
         if cand_schema != source_schema:
             raise CompactionError("candidate schema fingerprint disagrees with source")
+        cand_identity = database_identity_props(conn)
+        for key in ("page_size", "user_version", "application_id", "encoding"):
+            if cand_identity.get(key) != source_identity.get(key):
+                raise CompactionError(
+                    f"candidate {key} mismatch: "
+                    f"source={source_identity.get(key)!r} candidate={cand_identity.get(key)!r}"
+                )
         cand_counts = critical_table_counts(conn)
         for table, expected in source_counts.items():
             actual = cand_counts.get(table)
@@ -351,28 +496,46 @@ def verify_compact_candidate(
                     f"source={expected} candidate={actual}"
                 )
         stats = storage_stats(conn)
+        src_freelist = int(source_storage.get("freelist_count") or 0)
+        cand_freelist = int(stats["freelist_count"])
+        src_allocated = int(source_storage.get("allocated_bytes") or 0)
+        if src_freelist > 0 and not (cand_freelist < src_freelist):
+            raise CompactionError(
+                "candidate freelist was not reduced relative to source "
+                f"(source_freelist={src_freelist} candidate_freelist={cand_freelist})"
+            )
+        if src_allocated > 0 and not (int(stats["allocated_bytes"]) < src_allocated):
+            raise CompactionError(
+                "candidate allocated size was not smaller than source "
+                f"(source={src_allocated} candidate={stats['allocated_bytes']})"
+            )
         inventory = schema_object_inventory(conn)
         return {
             "quick_check": "ok",
             "foreign_key_violation_count": 0,
             "schema_fingerprint": cand_schema,
             "schema_object_count": len(inventory),
+            "database_identity": cand_identity,
             "critical_table_counts": cand_counts,
             "storage": stats,
+            "freelist_reduced": cand_freelist < src_freelist if src_freelist > 0 else True,
             "companions_present": False,
         }
     finally:
         conn.close()
 
 
-def cleanup_script_owned_artifacts(destination: Path) -> list[str]:
+def cleanup_script_owned_artifacts(
+    destination: Path, *, partial: Path | None = None, manifest_partial: Path | None = None
+) -> list[str]:
+    """Remove only this run's partial artifacts. Never deletes final DB/manifest/source."""
     removed: list[str] = []
-    partial = partial_path_for(destination)
-    for path in [
-        *companion_paths(partial).values(),
-        partial,
-        manifest_partial_path_for(destination),
-    ]:
+    targets: list[Path] = []
+    if partial is not None:
+        targets.extend([partial, *companion_paths(partial).values()])
+    if manifest_partial is not None:
+        targets.append(manifest_partial)
+    for path in targets:
         if path.exists():
             try:
                 path.unlink()
@@ -392,6 +555,12 @@ def run_offline_compaction(options: CompactionOptions) -> dict[str, Any]:
     """
     Preflight by default. With apply+confirm, create compacted candidate via VACUUM INTO.
     """
+    if options.allow_same_filesystem and not options.confirm_offline_copy:
+        raise CompactionError(
+            "--allow-same-filesystem requires --confirm-offline-copy on a "
+            "verified non-production offline snapshot"
+        )
+
     if not options.apply:
         return build_preflight_report(options)
 
@@ -403,16 +572,21 @@ def run_offline_compaction(options: CompactionOptions) -> dict[str, Any]:
     validate_compaction_options(options)
     source = options.source
     destination = options.destination
-    partial = partial_path_for(destination)
+    partial = partial_path_for(destination, unique=True)
     manifest_path = manifest_path_for(destination)
-    manifest_partial = manifest_partial_path_for(destination)
+    manifest_partial = destination.with_name(
+        destination.name
+        + f".compaction.manifest.json.partial.{os.getpid()}.{time.time_ns()}"
+    )
+    _assert_paths_distinct(source, destination, partial, manifest_path, manifest_partial)
+
     default_lock_dir = Path.home() / ".cache" / "origenlab" / LOCK_DIR_NAME
     lock = BackupLock(lock_path_for(source, options.lock_dir or default_lock_dir))
 
     source_fp_before = fingerprint_file(source)
     started = options.clock()
     warnings: list[str] = []
-    published = False
+    published_db = False
     previous_sigint = signal.getsignal(signal.SIGINT)
     previous_sigterm = signal.getsignal(signal.SIGTERM)
     abort_flag = {"value": False}
@@ -426,6 +600,7 @@ def run_offline_compaction(options: CompactionOptions) -> dict[str, Any]:
         signal.signal(signal.SIGINT, _handle_signal)
         signal.signal(signal.SIGTERM, _handle_signal)
 
+        # Probe hard-link support BEFORE the expensive VACUUM INTO.
         probe_hardlink_no_clobber_supported(destination.parent)
         assert_no_sidecars(source, label="source")
 
@@ -434,6 +609,7 @@ def run_offline_compaction(options: CompactionOptions) -> dict[str, Any]:
             assert_no_sidecars(source, label="source")
             source_stats = storage_stats(source_conn)
             source_schema = schema_fingerprint(source_conn)
+            source_identity = database_identity_props(source_conn)
             source_counts = critical_table_counts(source_conn)
             source_inventory = schema_object_inventory(source_conn)
             _emit(
@@ -472,7 +648,11 @@ def run_offline_compaction(options: CompactionOptions) -> dict[str, Any]:
             verification = options.verify_hook(partial)
         else:
             verification = verify_compact_candidate(
-                partial, source_counts=source_counts, source_schema=source_schema
+                partial,
+                source_counts=source_counts,
+                source_schema=source_schema,
+                source_identity=source_identity,
+                source_storage=source_stats,
             )
 
         fsync_file(partial)
@@ -502,18 +682,21 @@ def run_offline_compaction(options: CompactionOptions) -> dict[str, Any]:
             "source_fingerprint_after": source_fp_after.to_dict(),
             "source_fingerprint_unchanged": True,
             "source_storage": source_stats,
+            "source_database_identity": source_identity,
             "source_schema_object_count": len(source_inventory),
             "source_critical_table_counts": source_counts,
             "verification": verification,
             "directory_fsync_supported": dir_info.get("directory_fsync_supported"),
             "warnings": warnings,
             "publication_method": "hardlink_no_clobber",
+            "completion_marker": "final_compaction_manifest",
             "notes": [
                 "Offline VACUUM INTO candidate only; not swapped into production.",
                 "Source snapshot was not deleted or modified.",
                 "In-place VACUUM was not used.",
                 "Historical/referenced rows are not treated as deletable.",
                 "Within-row body redundancy remains an engineering opportunity only.",
+                "Completed only when final DB and completed final manifest both exist.",
             ],
         }
         privacy = scan_manifest_privacy(manifest)
@@ -529,9 +712,10 @@ def run_offline_compaction(options: CompactionOptions) -> dict[str, Any]:
 
         try:
             publish_no_clobber(partial, destination)
-            published = True
+            published_db = True
             publish_no_clobber(manifest_partial, manifest_path)
         except BackupError as exc:
+            # If DB published but manifest did not, leave orphan for explicit cleanup.
             raise CompactionError(str(exc)) from None
 
         post = fsync_directory(destination.parent, dir_fsync=options.dir_fsync)
@@ -547,15 +731,32 @@ def run_offline_compaction(options: CompactionOptions) -> dict[str, Any]:
             }
 
         assert_no_sidecars(destination, label="published candidate")
+        source_fp_final = fingerprint_file(source)
+        if source_fp_final != source_fp_before:
+            raise CompactionError(
+                "source fingerprint changed after publication; refusing success"
+            )
+        assert_no_sidecars(source, label="source")
         _emit(
             options,
             "compaction completed: "
             f"dest_bytes={dest_size} reclaimed_est={reclaimed} elapsed_s={elapsed}",
         )
         return manifest
-    except Exception:
-        if not published:
-            cleanup_script_owned_artifacts(destination)
+    except Exception as exc:
+        if not published_db:
+            cleanup_script_owned_artifacts(
+                destination, partial=partial, manifest_partial=manifest_partial
+            )
+        else:
+            # Orphan window: final DB may exist without completed manifest.
+            cleanup_script_owned_artifacts(
+                destination, partial=None, manifest_partial=manifest_partial
+            )
+        if isinstance(exc, CompactionError):
+            raise
+        if isinstance(exc, BackupError):
+            raise CompactionError(str(exc)) from None
         raise
     finally:
         signal.signal(signal.SIGINT, previous_sigint)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import sqlite3
@@ -18,13 +19,19 @@ from origenlab_email_pipeline.qa.sqlite_offline_compaction import (
     CompactionOptions,
     cleanup_script_owned_artifacts,
     companion_paths,
-    manifest_partial_path_for,
+    database_identity_props,
+    detect_orphan_destination,
+    existing_partial_artifacts,
     manifest_path_for,
-    partial_path_for,
     run_offline_compaction,
+    schema_fingerprint,
     storage_stats,
 )
-from origenlab_email_pipeline.qa.sqlite_online_backup import fingerprint_file
+from origenlab_email_pipeline.qa.sqlite_online_backup import (
+    BackupError,
+    fingerprint_file,
+    publish_no_clobber,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "maintenance" / "compact_sqlite_offline.py"
@@ -33,6 +40,8 @@ EXIT_WRAPPER = REPO / "scripts" / "maintenance" / "run_sqlite_maintenance_with_e
 
 def _build_fragmented_db(path: Path, *, rows: int = 80) -> None:
     conn = sqlite3.connect(path)
+    conn.execute("PRAGMA user_version=42")
+    conn.execute("PRAGMA application_id=123456789")
     conn.execute(
         """
         CREATE TABLE emails (
@@ -69,7 +78,7 @@ def _build_fragmented_db(path: Path, *, rows: int = 80) -> None:
             """,
             (
                 i,
-                f"gmail:contacto@origenlab.cl/INBOX",
+                "gmail:contacto@origenlab.cl/INBOX",
                 f"<m{i}@x>",
                 f"subj-{i}",
                 body,
@@ -113,6 +122,7 @@ def _opts(
     confirm: bool = True,
     allow_same_fs: bool = True,
     settings: Settings | None = None,
+    **kwargs: object,
 ) -> CompactionOptions:
     return CompactionOptions(
         source=source,
@@ -126,6 +136,7 @@ def _opts(
             sqlite_path=str(source.parent / "production_emails.sqlite"),
             postgres_url=None,
         ),
+        **kwargs,  # type: ignore[arg-type]
     )
 
 
@@ -142,7 +153,7 @@ def test_preflight_default_is_zero_write(synth_dirs: tuple[Path, Path, Path]) ->
     assert report["completed"] is False
     assert before == after
     assert not dest.exists()
-    assert not partial_path_for(dest).exists()
+    assert existing_partial_artifacts(dest) == []
     assert not manifest_path_for(dest).exists()
 
 
@@ -156,6 +167,30 @@ def test_apply_requires_confirm_offline_copy(
     with pytest.raises(CompactionError, match="confirm-offline-copy"):
         run_offline_compaction(
             _opts(source, dest, lock_dir=lock_dir, apply=True, confirm=False)
+        )
+
+
+def test_allow_same_filesystem_requires_confirm(
+    synth_dirs: tuple[Path, Path, Path],
+) -> None:
+    src_dir, dst_dir, lock_dir = synth_dirs
+    source = src_dir / "offline.sqlite"
+    dest = dst_dir / "compact.sqlite"
+    _build_fragmented_db(source)
+    with pytest.raises(CompactionError, match="allow-same-filesystem requires"):
+        run_offline_compaction(
+            CompactionOptions(
+                source=source,
+                destination=dest,
+                confirm_offline_copy=False,
+                apply=False,
+                allow_same_filesystem=True,
+                lock_dir=lock_dir,
+                settings=Settings(
+                    sqlite_path=str(src_dir / "production_emails.sqlite"),
+                    postgres_url=None,
+                ),
+            )
         )
 
 
@@ -181,6 +216,18 @@ def test_refuses_configured_production_db(
         )
 
 
+def test_refuses_destination_equal_to_source(
+    synth_dirs: tuple[Path, Path, Path],
+) -> None:
+    src_dir, _dst_dir, lock_dir = synth_dirs
+    source = src_dir / "offline.sqlite"
+    _build_fragmented_db(source)
+    with pytest.raises(CompactionError, match="same path|same file"):
+        run_offline_compaction(
+            _opts(source, source, lock_dir=lock_dir, apply=True)
+        )
+
+
 def test_refuses_source_sidecars(synth_dirs: tuple[Path, Path, Path]) -> None:
     src_dir, dst_dir, lock_dir = synth_dirs
     source = src_dir / "offline.sqlite"
@@ -203,7 +250,20 @@ def test_insufficient_capacity(synth_dirs: tuple[Path, Path, Path]) -> None:
         with pytest.raises(CompactionError, match="insufficient destination capacity"):
             run_offline_compaction(_opts(source, dest, lock_dir=lock_dir, apply=True))
     assert not dest.exists()
-    assert not partial_path_for(dest).exists()
+    assert existing_partial_artifacts(dest) == []
+
+
+def test_capacity_stat_unavailable(synth_dirs: tuple[Path, Path, Path]) -> None:
+    src_dir, dst_dir, lock_dir = synth_dirs
+    source = src_dir / "offline.sqlite"
+    dest = dst_dir / "compact.sqlite"
+    _build_fragmented_db(source)
+    with patch(
+        "origenlab_email_pipeline.qa.sqlite_offline_compaction.disk_free_bytes",
+        side_effect=OSError(errno.EIO, "boom"),
+    ):
+        with pytest.raises(CompactionError, match="unable to read destination filesystem"):
+            run_offline_compaction(_opts(source, dest, lock_dir=lock_dir, apply=True))
 
 
 def test_destination_collision_refused(synth_dirs: tuple[Path, Path, Path]) -> None:
@@ -212,7 +272,18 @@ def test_destination_collision_refused(synth_dirs: tuple[Path, Path, Path]) -> N
     dest = dst_dir / "compact.sqlite"
     _build_fragmented_db(source)
     dest.write_bytes(b"existing")
-    with pytest.raises(CompactionError, match="already exists"):
+    with pytest.raises(CompactionError, match="already exists|orphaned"):
+        run_offline_compaction(_opts(source, dest, lock_dir=lock_dir, apply=True))
+
+
+def test_orphan_destination_refused(synth_dirs: tuple[Path, Path, Path]) -> None:
+    src_dir, dst_dir, lock_dir = synth_dirs
+    source = src_dir / "offline.sqlite"
+    dest = dst_dir / "compact.sqlite"
+    _build_fragmented_db(source)
+    dest.write_bytes(b"SQLite format 3\x00" + b"\x00" * 100)
+    assert detect_orphan_destination(dest) is not None
+    with pytest.raises(CompactionError, match="orphaned"):
         run_offline_compaction(_opts(source, dest, lock_dir=lock_dir, apply=True))
 
 
@@ -226,8 +297,11 @@ def test_successful_compaction_shrinks_and_verifies(
     before = fingerprint_file(source)
     src_conn = sqlite3.connect(source)
     src_stats = storage_stats(src_conn)
+    src_identity = database_identity_props(src_conn)
+    src_schema = schema_fingerprint(src_conn)
     src_emails = int(src_conn.execute("SELECT COUNT(*) FROM emails").fetchone()[0])
     src_conn.close()
+    assert src_stats["freelist_count"] > 0
 
     report = run_offline_compaction(_opts(source, dest, lock_dir=lock_dir, apply=True))
 
@@ -235,8 +309,7 @@ def test_successful_compaction_shrinks_and_verifies(
     assert report["method"] == "VACUUM INTO"
     assert dest.is_file()
     assert manifest_path_for(dest).is_file()
-    assert not partial_path_for(dest).exists()
-    assert not manifest_partial_path_for(dest).exists()
+    assert existing_partial_artifacts(dest) == []
     for path in companion_paths(dest).values():
         assert not path.exists()
     assert fingerprint_file(source) == before
@@ -244,12 +317,50 @@ def test_successful_compaction_shrinks_and_verifies(
     assert report["verification"]["quick_check"] == "ok"
     assert report["verification"]["foreign_key_violation_count"] == 0
     assert report["verification"]["critical_table_counts"]["emails"] == src_emails
+    assert report["verification"]["schema_fingerprint"] == src_schema
+    assert report["verification"]["database_identity"]["user_version"] == 42
+    assert report["verification"]["database_identity"]["application_id"] == 123456789
+    assert (
+        report["verification"]["database_identity"]["page_size"]
+        == src_identity["page_size"]
+    )
+    assert report["verification"]["freelist_reduced"] is True
+    assert (
+        report["verification"]["storage"]["freelist_count"]
+        < src_stats["freelist_count"]
+    )
     assert dest.stat().st_size < before.size_bytes
     assert report["estimated_reclaimed_bytes"] == before.size_bytes - dest.stat().st_size
     assert report["source_storage"]["freelist_count"] == src_stats["freelist_count"]
     privacy = json.dumps(report)
     assert "/home/" not in privacy
     assert "@origenlab" not in privacy
+
+
+def test_schema_fingerprint_ignores_whitespace_detects_drift(
+    synth_dirs: tuple[Path, Path, Path],
+) -> None:
+    src_dir, _dst_dir, _lock = synth_dirs
+    a = src_dir / "a.sqlite"
+    b = src_dir / "b.sqlite"
+    c = src_dir / "c.sqlite"
+    for path, sql in (
+        (a, "CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT)"),
+        (b, "CREATE TABLE t ( id  INTEGER  PRIMARY KEY ,  name   TEXT )"),
+        (c, "CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT, extra TEXT)"),
+    ):
+        conn = sqlite3.connect(path)
+        conn.execute(sql)
+        conn.commit()
+        conn.close()
+    ca = sqlite3.connect(a)
+    cb = sqlite3.connect(b)
+    cc = sqlite3.connect(c)
+    assert schema_fingerprint(ca) == schema_fingerprint(cb)
+    assert schema_fingerprint(ca) != schema_fingerprint(cc)
+    ca.close()
+    cb.close()
+    cc.close()
 
 
 def test_interruption_cleans_partial(synth_dirs: tuple[Path, Path, Path]) -> None:
@@ -264,22 +375,16 @@ def test_interruption_cleans_partial(synth_dirs: tuple[Path, Path, Path]) -> Non
 
     with pytest.raises(CompactionError, match="aborted"):
         run_offline_compaction(
-            CompactionOptions(
-                source=source,
-                destination=dest,
-                confirm_offline_copy=True,
-                apply=True,
-                allow_same_filesystem=True,
+            _opts(
+                source,
+                dest,
                 lock_dir=lock_dir,
+                apply=True,
                 vacuum_hook=aborting_vacuum,
-                settings=Settings(
-                    sqlite_path=str(src_dir / "production_emails.sqlite"),
-                    postgres_url=None,
-                ),
             )
         )
     assert not dest.exists()
-    assert not partial_path_for(dest).exists()
+    assert existing_partial_artifacts(dest) == []
     assert not manifest_path_for(dest).exists()
     assert cleanup_script_owned_artifacts(dest) == []
 
@@ -291,27 +396,20 @@ def test_fingerprint_drift_refused(synth_dirs: tuple[Path, Path, Path]) -> None:
     _build_fragmented_db(source)
 
     def mutate_source_after_vacuum() -> None:
-        # Touch mtime after vacuum to simulate drift.
         os.utime(source, (source.stat().st_atime + 5, source.stat().st_mtime + 5))
 
     with pytest.raises(CompactionError, match="fingerprint changed"):
         run_offline_compaction(
-            CompactionOptions(
-                source=source,
-                destination=dest,
-                confirm_offline_copy=True,
-                apply=True,
-                allow_same_filesystem=True,
+            _opts(
+                source,
+                dest,
                 lock_dir=lock_dir,
+                apply=True,
                 post_vacuum_hook=mutate_source_after_vacuum,
-                settings=Settings(
-                    sqlite_path=str(src_dir / "production_emails.sqlite"),
-                    postgres_url=None,
-                ),
             )
         )
     assert not dest.exists()
-    assert not partial_path_for(dest).exists()
+    assert existing_partial_artifacts(dest) == []
 
 
 def test_validation_failure_refuses_publish(
@@ -327,18 +425,12 @@ def test_validation_failure_refuses_publish(
 
     with pytest.raises(CompactionError, match="quick_check failed"):
         run_offline_compaction(
-            CompactionOptions(
-                source=source,
-                destination=dest,
-                confirm_offline_copy=True,
-                apply=True,
-                allow_same_filesystem=True,
+            _opts(
+                source,
+                dest,
                 lock_dir=lock_dir,
+                apply=True,
                 verify_hook=bad_verify,
-                settings=Settings(
-                    sqlite_path=str(src_dir / "production_emails.sqlite"),
-                    postgres_url=None,
-                ),
             )
         )
     assert not dest.exists()
@@ -359,21 +451,108 @@ def test_publish_race_existing_destination(
 
     with pytest.raises(CompactionError, match="no-clobber|already exists"):
         run_offline_compaction(
-            CompactionOptions(
-                source=source,
-                destination=dest,
-                confirm_offline_copy=True,
-                apply=True,
-                allow_same_filesystem=True,
+            _opts(
+                source,
+                dest,
                 lock_dir=lock_dir,
+                apply=True,
                 post_vacuum_hook=create_final,
-                settings=Settings(
-                    sqlite_path=str(src_dir / "production_emails.sqlite"),
-                    postgres_url=None,
-                ),
             )
         )
     assert dest.read_bytes() == preexisting
+
+
+def test_hardlink_unsupported_refuses_before_vacuum(
+    synth_dirs: tuple[Path, Path, Path],
+) -> None:
+    src_dir, dst_dir, lock_dir = synth_dirs
+    source = src_dir / "offline.sqlite"
+    dest = dst_dir / "compact.sqlite"
+    _build_fragmented_db(source)
+    vacuum_calls = {"n": 0}
+
+    def counting_vacuum(conn: sqlite3.Connection, partial: Path) -> None:
+        vacuum_calls["n"] += 1
+        raise AssertionError("VACUUM INTO must not run when hard-link probe fails")
+
+    with patch(
+        "origenlab_email_pipeline.qa.sqlite_offline_compaction.probe_hardlink_no_clobber_supported",
+        side_effect=BackupError(
+            "destination filesystem does not support atomic hard-link no-clobber "
+            "publication (errno=1); refusing to weaken overwrite protection"
+        ),
+    ):
+        with pytest.raises(CompactionError, match="hard-link"):
+            run_offline_compaction(
+                _opts(
+                    source,
+                    dest,
+                    lock_dir=lock_dir,
+                    apply=True,
+                    vacuum_hook=counting_vacuum,
+                )
+            )
+    assert vacuum_calls["n"] == 0
+    assert not dest.exists()
+    assert existing_partial_artifacts(dest) == []
+
+
+def test_manifest_publish_failure_leaves_orphan(
+    synth_dirs: tuple[Path, Path, Path],
+) -> None:
+    src_dir, dst_dir, lock_dir = synth_dirs
+    source = src_dir / "offline.sqlite"
+    dest = dst_dir / "compact.sqlite"
+    _build_fragmented_db(source)
+    calls = {"n": 0}
+    real_publish = publish_no_clobber
+
+    def flaky_publish(src: Path, target: Path) -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            real_publish(src, target)
+            return
+        raise BackupError(
+            f"no-clobber publication refused: destination already exists ({target.name})"
+        )
+
+    with patch(
+        "origenlab_email_pipeline.qa.sqlite_offline_compaction.publish_no_clobber",
+        side_effect=flaky_publish,
+    ):
+        with pytest.raises(CompactionError, match="no-clobber"):
+            run_offline_compaction(_opts(source, dest, lock_dir=lock_dir, apply=True))
+
+    assert dest.is_file()
+    assert not manifest_path_for(dest).exists()
+    assert detect_orphan_destination(dest) is not None
+    with pytest.raises(CompactionError, match="orphaned"):
+        run_offline_compaction(_opts(source, dest, lock_dir=lock_dir, apply=True))
+
+
+def test_directory_fsync_unsupported_recorded_as_warning(
+    synth_dirs: tuple[Path, Path, Path],
+) -> None:
+    src_dir, dst_dir, lock_dir = synth_dirs
+    source = src_dir / "offline.sqlite"
+    dest = dst_dir / "compact.sqlite"
+    _build_fragmented_db(source)
+
+    def unsupported_fsync(_fd: int) -> None:
+        raise OSError(errno.EINVAL, "unsupported")
+
+    report = run_offline_compaction(
+        _opts(
+            source,
+            dest,
+            lock_dir=lock_dir,
+            apply=True,
+            dir_fsync=unsupported_fsync,
+        )
+    )
+    assert report["completed"] is True
+    assert report["directory_fsync_supported"] is False
+    assert any("directory" in w and "unsupported" in w for w in report["warnings"])
 
 
 def test_cli_preflight_and_apply(synth_dirs: tuple[Path, Path, Path]) -> None:
@@ -453,7 +632,9 @@ def test_exit_marker_records_zero_on_success(tmp_path: Path) -> None:
     assert cp.returncode == 0
     assert marker.read_text(encoding="utf-8").strip() == "0"
     text = progress.read_text(encoding="utf-8")
+    assert "SQLITE_MAINTENANCE_EXIT=0" in text
     assert "AUDIT_RESUME_EXIT=0" in text
+    assert "SQLITE_MAINTENANCE_EXIT=\n" not in text
     assert "AUDIT_RESUME_EXIT=\n" not in text
 
 
@@ -479,4 +660,31 @@ def test_exit_marker_records_nonzero_on_failure(tmp_path: Path) -> None:
     )
     assert cp.returncode == 7
     assert marker.read_text(encoding="utf-8").strip() == "7"
-    assert "AUDIT_RESUME_EXIT=7" in progress.read_text(encoding="utf-8")
+    text = progress.read_text(encoding="utf-8")
+    assert "SQLITE_MAINTENANCE_EXIT=7" in text
+    assert "AUDIT_RESUME_EXIT=7" in text
+
+
+def test_exit_marker_no_false_success_when_command_fails(tmp_path: Path) -> None:
+    progress = tmp_path / "progress.log"
+    marker = tmp_path / "exit.marker"
+    cp = subprocess.run(
+        [
+            "bash",
+            str(EXIT_WRAPPER),
+            "--progress-log",
+            str(progress),
+            "--exit-marker",
+            str(marker),
+            "--",
+            "bash",
+            "-lc",
+            "echo failing; false",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert cp.returncode != 0
+    assert marker.read_text(encoding="utf-8").strip() != "0"
+    assert "SQLITE_MAINTENANCE_EXIT=0" not in progress.read_text(encoding="utf-8")
