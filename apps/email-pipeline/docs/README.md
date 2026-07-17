@@ -29,6 +29,7 @@ Postgres mirror reporting and Dashboard operator routes are served by **[`apps/a
 - [`RUNBOOK.md`](RUNBOOK.md#m-eprun-path) — incl. [**publicación / gate QA**](RUNBOOK.md#m-eprun-publish-qa) ([`publish_gate.py`](../scripts/qa/publish_gate.py)) y [**elegibilidad export frío / gate compartido**](RUNBOOK.md#m-eprun-cold-export-gate)
 - [`DATA_LOCATIONS.md`](DATA_LOCATIONS.md#m-epdata-root)
 - [`REPORTING.md`](REPORTING.md#m-eprep-mail) (+ [`REPORT_SCOPE_CLIENT.md`](REPORT_SCOPE_CLIENT.md) para el texto de alcance que se adjunta al informe de correo); **validación pack + CSVs operativos:** [§ QA leads](REPORTING.md#m-eprep-leads-qa)
+- SQLite storage / offline backup & compaction: [`SQLITE_STORAGE_MAINTENANCE.md`](SQLITE_STORAGE_MAINTENANCE.md) · body-column inventory: [`SQLITE_BODY_STORAGE_ASSESSMENT.md`](SQLITE_BODY_STORAGE_ASSESSMENT.md)
 
 ## Setup and navigation
 
