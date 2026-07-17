@@ -2,11 +2,11 @@
 
 Status: canonical (operator safety)  
 Owner: email-pipeline-maintainers  
-Last reviewed: 2026-07-15
+Last reviewed: 2026-07-17
 
-Related: [`SCRIPT_MAP.md`](SCRIPT_MAP.md) · [`pipeline/DAILY_CORE.md`](pipeline/DAILY_CORE.md) · [`RUNBOOK.md`](RUNBOOK.md) · [`CRUD_SAFETY.md`](CRUD_SAFETY.md)
+Related: [`SCRIPT_MAP.md`](SCRIPT_MAP.md) · [`SQLITE_BODY_STORAGE_ASSESSMENT.md`](SQLITE_BODY_STORAGE_ASSESSMENT.md) · [`pipeline/DAILY_CORE.md`](pipeline/DAILY_CORE.md) · [`RUNBOOK.md`](RUNBOOK.md) · [`CRUD_SAFETY.md`](CRUD_SAFETY.md)
 
-**This document describes observation and a future controlled maintenance path. The current OrigenLab change set implements observation only.**
+**Observation tooling and offline candidate compaction tooling are implemented. Production cutover, clone deletion, and body-column drops remain prohibited without explicit approval.**
 
 ---
 
@@ -192,12 +192,21 @@ Those PRAGMAs are **not** a hard RSS bound. The remediation is the sorter-free q
 
 Privacy-safe progress lines (stderr) may include substep name, elapsed seconds, batch size, completed batch counts, rows processed in the last batch, and RSS — never sender/subject/body/paths/raw identifiers.
 
-For a future real resume, prefer a **system-level transient service** running as `rafael`, with a cgroup ceiling so any regression kills only the audit process, not WSL/Cursor. Do **not** use `systemd-run --user` as the primary command while `loginctl show-user rafael -p Linger` is `Linger=no`; the prior user unit disappeared during the Cursor/WSL disruption. A user unit is acceptable only if linger is explicitly approved and enabled first.
+For long offline jobs, prefer a **system-level transient service** running as `rafael`, with a cgroup ceiling so any regression kills only the job, not WSL/Cursor. Do **not** use `systemd-run --user` as the primary command while linger is `no`. Nested `bash -lc` quoting previously produced a blank exit marker even when Python succeeded — always wrap through the checked-in exit-marker helper:
 
-Example template (documentation only; do **not** launch without operator approval):
+`scripts/maintenance/run_sqlite_maintenance_with_exit_marker.sh`
+
+Example audit resume template (documentation only; do **not** launch without operator approval):
 
 ```bash
-sudo systemd-run --unit=sqlite-deep-audit-resume \
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+OUT=/mnt/d/origenlab-sqlite-offline/deep_audit_20260716T023339Z
+UNIT="origenlab-sqlite-deep-audit-resume-${STAMP}"
+PROGRESS="${OUT}/resume_${STAMP}.progress.log"
+MARKER="${OUT}/resume_${STAMP}.exit"
+REPORT="${OUT}/resume_${STAMP}.report.json"
+
+sudo systemd-run --unit="${UNIT}" \
   --uid=rafael \
   --property=WorkingDirectory=/home/rafael/dev/freelance/origenlab/apps/email-pipeline \
   --property=Environment=HOME=/home/rafael \
@@ -205,22 +214,114 @@ sudo systemd-run --unit=sqlite-deep-audit-resume \
   --property=MemoryMax=6G \
   --property=MemorySwapMax=0 \
   --property=OOMPolicy=stop \
-  --property=StandardOutput=append:/mnt/d/origenlab-sqlite-offline/deep_audit_20260716T023339Z/resume.progress.log \
-  --property=StandardError=append:/mnt/d/origenlab-sqlite-offline/deep_audit_20260716T023339Z/resume.progress.log \
-  /bin/bash -lc 'set -uo pipefail
-    cd /home/rafael/dev/freelance/origenlab/apps/email-pipeline
-    /home/rafael/.local/bin/uv run --frozen python scripts/qa/audit_sqlite_deep.py \
-    --db /mnt/d/origenlab-sqlite-offline/emails_offline_20260716T023339Z.sqlite \
-    --confirm-offline-copy \
-    --output-dir /mnt/d/origenlab-sqlite-offline/deep_audit_20260716T023339Z \
-    --resume --json \
-    > /mnt/d/origenlab-sqlite-offline/deep_audit_20260716T023339Z/resume.report.json
-    rc=$?
-    echo "AUDIT_RESUME_EXIT=${rc}" >> /mnt/d/origenlab-sqlite-offline/deep_audit_20260716T023339Z/resume.progress.log
-    exit "${rc}"'
+  /home/rafael/dev/freelance/origenlab/apps/email-pipeline/scripts/maintenance/run_sqlite_maintenance_with_exit_marker.sh \
+    --progress-log "${PROGRESS}" \
+    --exit-marker "${MARKER}" \
+    -- \
+    /bin/bash -c "set -o noclobber; /home/rafael/.local/bin/uv run --frozen python scripts/qa/audit_sqlite_deep.py \
+      --db /mnt/d/origenlab-sqlite-offline/emails_offline_20260716T023339Z.sqlite \
+      --confirm-offline-copy \
+      --output-dir ${OUT} \
+      --usefulness-batch-size 5000 \
+      --resume --json > ${REPORT}"
 ```
 
-**Still prohibited:** live production heavy audit, `VACUUM` / `VACUUM INTO`, deleting offline clones, mutating Gmail/Postgres/cron/systemd, or treating usefulness counts as deletion approval.
+The wrapper always appends both `SQLITE_MAINTENANCE_EXIT=<integer>` and the compatibility alias `AUDIT_RESUME_EXIT=<integer>` (including `0`) and writes the same integer to the exit-marker file. It intentionally does **not** use `set -e` around the wrapped command so ordinary failures still produce a marker. Disconnecting WSL/Cursor must not terminate a **system-level** transient unit; user-session units without linger are unsafe for multi-hour jobs.
+
+### Offline compaction (`VACUUM INTO` candidate)
+
+Tooling creates a **new compacted candidate** from a verified offline snapshot. It never runs in-place `VACUUM`, never swaps into production, and never deletes the source snapshot.
+
+A compact candidate is **not** a production cutover. Any future swap requires a **separate recovery drill** and **explicit human approval**. Stale-clone deletion and body-column/schema redesign are **out of scope** for this operation.
+
+**Same-filesystem note:** hard-link no-clobber publication requires the `.partial` and final destination names to share one filesystem. Destination vs source defaults to **refuse same filesystem**; `--allow-same-filesystem` is allowed only with `--confirm-offline-copy` on a verified non-production offline snapshot (synthetic tests / emergency). There is **no** silent fallback to clobber-capable rename/copy when hard links are unsupported (for example some 9p/`/mnt/d` layouts) — the job refuses before the expensive `VACUUM INTO`.
+
+**Preflight (default — zero writes):**
+
+```bash
+cd /home/rafael/dev/freelance/origenlab/apps/email-pipeline
+/home/rafael/.local/bin/uv run --frozen python scripts/maintenance/compact_sqlite_offline.py \
+  --source /mnt/d/origenlab-sqlite-offline/emails_offline_20260716T023339Z.sqlite \
+  --destination /mnt/d/origenlab-sqlite-offline/emails_compact_YYYYMMDDTHHMMSSZ.sqlite \
+  --confirm-offline-copy \
+  --json
+```
+
+**Apply (writes candidate only; still not production cutover):**
+
+```bash
+cd /home/rafael/dev/freelance/origenlab/apps/email-pipeline
+/home/rafael/.local/bin/uv run --frozen python scripts/maintenance/compact_sqlite_offline.py \
+  --source /mnt/d/origenlab-sqlite-offline/emails_offline_20260716T023339Z.sqlite \
+  --destination /mnt/d/origenlab-sqlite-offline/emails_compact_YYYYMMDDTHHMMSSZ.sqlite \
+  --confirm-offline-copy \
+  --apply \
+  --json
+```
+
+**System-level transient unit template (documentation only — do not launch without explicit approval):**
+
+Runtime may be **several hours**; that is not a hard estimate. Do not compute a full ~127.5 GiB content hash. Use a **unique** unit name, progress log, exit marker, report, and destination basename every run. Keep `set -o noclobber` around report redirection.
+
+```bash
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+OFFLINE=/mnt/d/origenlab-sqlite-offline
+SOURCE="${OFFLINE}/emails_offline_20260716T023339Z.sqlite"
+DEST="${OFFLINE}/emails_compact_${STAMP}.sqlite"
+UNIT="origenlab-sqlite-offline-compact-${STAMP}"
+PROGRESS="${OFFLINE}/compact_${STAMP}.progress.log"
+MARKER="${OFFLINE}/compact_${STAMP}.exit"
+REPORT="${OFFLINE}/compact_${STAMP}.report.json"
+EP=/home/rafael/dev/freelance/origenlab/apps/email-pipeline
+
+# Refuse if destination or report already exist (operator safety).
+test ! -e "${DEST}"
+test ! -e "${REPORT}"
+
+sudo systemd-run --unit="${UNIT}" \
+  --uid=rafael \
+  --property=WorkingDirectory="${EP}" \
+  --property=Environment=HOME=/home/rafael \
+  --property=MemoryHigh=4G \
+  --property=MemoryMax=6G \
+  --property=MemorySwapMax=0 \
+  --property=OOMPolicy=stop \
+  "${EP}/scripts/maintenance/run_sqlite_maintenance_with_exit_marker.sh" \
+    --progress-log "${PROGRESS}" \
+    --exit-marker "${MARKER}" \
+    -- \
+    /bin/bash -c "set -o noclobber; /home/rafael/.local/bin/uv run --frozen python scripts/maintenance/compact_sqlite_offline.py \
+      --source ${SOURCE} \
+      --destination ${DEST} \
+      --confirm-offline-copy \
+      --apply \
+      --json > ${REPORT}"
+```
+
+Safety model:
+
+- Requires `--confirm-offline-copy`; writes additionally require `--apply`
+- Refuses configured production SQLite (path / samefile / device+inode)
+- Source must have no `-wal`/`-shm`/`-journal`; opened `mode=ro&immutable=1`
+- Destination / partial / final must never equal the source
+- Destination must be new; unique `.partial.<pid>.<ns>` + hard-link no-clobber publish + completed `.compaction.manifest.json` as the completion marker
+- If the DB is published but the manifest cannot be published, leave a detectable orphan and refuse subsequent runs until explicit cleanup
+- Capacity check covers expected compacted output plus a conservative safety margin; malformed/unavailable FS stats fail closed
+- Source fingerprint (size/mtime/device/inode + sidecar absence) frozen before work and verified after; drift refuses success
+- Candidate verification: `quick_check`, bounded `foreign_key_check`, stable schema fingerprint (type/name/tbl_name/normalized SQL; ignores root-page layout noise), `user_version` / `application_id` / encoding / page_size, exact critical table counts (including `emails`), freelist reduced vs source (exact zero freelist not required), zero destination sidecars
+- Estimated reclaim ≈ source allocated − candidate size (freelist-dominated on the audited snapshot: ~127.5 GiB → ~61 GiB active)
+- Cleanup removes only this run’s script-owned partials/companions; never deletes a pre-existing DB, final manifest, source, or clone
+- Unsupported directory fsync is recorded as a durability warning, not silent success
+
+**Later operational procedure (do not run in this PR):**
+
+1. Merge compaction tooling.
+2. Launch against the `/mnt/d` offline snapshot under a unique system-level transient unit (template above).
+3. Verify the candidate and compare ~127.5 GiB source vs ~61 GiB active output.
+4. **Stop for explicit approval** before any recovery drill or production cutover.
+5. Body-column redesign (~28.43 GiB within-row redundancy) and stale-clone deletion remain separate workstreams — see [`SQLITE_BODY_STORAGE_ASSESSMENT.md`](SQLITE_BODY_STORAGE_ASSESSMENT.md).
+
+**Still prohibited:** live production heavy audit, `VACUUM` / `VACUUM INTO` against production, deleting offline clones, mutating Gmail/Postgres/cron/systemd, or treating usefulness counts as deletion approval.
 
 **Production-safe light mode:** `--light-only` runs `structural_light` only (no `quick_check`, FK checks, COUNT scans, dbstat, or body profiling). Safe on the configured production path without `--confirm-offline-copy` (ordinary `mode=ro`).
 
