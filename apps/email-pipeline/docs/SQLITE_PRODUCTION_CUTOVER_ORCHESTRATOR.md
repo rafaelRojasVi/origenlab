@@ -3,29 +3,27 @@
 **Status:** hardened staged orchestrator + synthetic tests (draft).  
 **Does not authorize** running a real production cutover from this PR alone.
 
-Implements the fail-closed tool required by [`SQLITE_WRITABLE_RESTORE_AND_CUTOVER.md`](SQLITE_WRITABLE_RESTORE_AND_CUTOVER.md).
+Three distinct modes (do not conflate):
+
+| Mode | What it does |
+|------|----------------|
+| Writable **RO rehearsal** | Separate tool (`sqlite_writable_restore_rehearsal`) — scratch fixtures only |
+| **Zero-write production preflight** | `plan_preflight` — reports only; no locks, journals, pauses, chmod |
+| **Real staged apply** | Separate `--apply` per stage with high-friction auth |
+
+The July 2026 compact candidate is **not eligible** for production cutover (evidence only).
 
 ## Corrected access classification
 
 | Class | Entry | Barrier |
 |-------|-------|---------|
-| **SQLite writers** | `mail_auto_refresh` / daily-core | `auto_refresh_paused` (must pause) |
-| **SQLite writers** | ad-hoc operator scripts | OS chmod write barrier (mitigates accidental RW opens) |
-| **SQLite readers** | `dashboard_auto_mirror` | `dashboard_auto_mirror_paused` (release SQLite reads; stop stale Postgres publish) |
+| **SQLite writers** | `mail_auto_refresh` / daily-core | `auto_refresh_paused` |
+| **SQLite writers** | ad-hoc operator scripts | OS chmod write barrier (accidental RW opens) |
+| **SQLite readers** | `dashboard_auto_mirror` | `dashboard_auto_mirror_paused` |
 | **SQLite readers** | `origenlab-api` + health timer | `systemctl stop` |
-| **Unrelated external** | `chilecompra_equipment_auto_refresh` | optional quiet only — **does not mutate SQLite**; **must not block RPO=0** |
+| **Unrelated external** | `chilecompra_equipment_auto_refresh` | optional quiet — **does not open/mutate SQLite**; **must not block RPO=0** |
 
-Threat model: the OS write barrier blocks ordinary accidental ad-hoc SQLite writes. Malicious/root processes can bypass chmod and are out of scope.
-
-## Corrected state invariants
-
-1. Git identity from bounded `git rev-parse` only (never env SHA).
-2. Canonical production samefile/device/inode (synthetic only with `allow_synthetic_world` + `SyntheticWorld`).
-3. Immutable approved plan + private path journal (incl. original mode/uid/gid).
-4. Exclusive flock keyed **only** by production device+inode (maintenance ID is diagnostic payload only).
-5. After quiesce: record mode/owner → `chmod(mode & ~0222)` → fsync → FD rescan → keep RO through backup/compact/verify/swap/smoke.
-6. `writer_resume_started` fsynced **before** restoring writable mode; automatic rollback forbidden from that point.
-7. Post-mail observation accepts size/mtime fingerprint drift; refuses device/inode replacement.
+Threat model: chmod write barrier blocks ordinary accidental ad-hoc SQLite writes. **Malicious/root bypass is explicitly out of scope.**
 
 ## State diagram
 
@@ -36,54 +34,61 @@ plan_preflight (zero-write, no lock)
 pause_writers → stop_readers → quiesce_wal
         |
         v
-apply_os_write_barrier   --chmod remove write bits; journal original mode
+apply_os_write_barrier
+  -- journal original_mode + intent
+  -- open FD, fstat match device+inode, fchmod(~write)
+  -- fsync; verify; rescan FDs
         |
         v
-create_current_backup → compact → verify → approve_swap (staging RO)
+create_current_backup → compact → verify
         |
         v
-atomic_swap → readonly_smoke (API only) → resume_services
+approve_swap (staging owner + RO) → atomic_swap → readonly_smoke → resume_services
         |
         v
-resume_writers_ponr → resume_writers_restore_mode
-        → resume_writers_mail → observe_mail
-        → resume_writers_mirror → observe_mirror
-        → resume_writers_commit → completed
+resume_writers_ponr          -- writer_resume_started (rollback forbidden)
+resume_writers_restore_mode  -- fchmod restore writable on verified inode
+resume_writers_mail          -- remove mail pause
+resume_writers_observe_mail  -- accept size/mtime drift; on failure RE-PAUSE mail
+resume_writers_mirror        -- only if mail_observe_ok
+resume_writers_observe_mirror
+resume_writers_commit → completed
 
-abort_before_swap (operation): only before swap intent/exchange and before PoNR
+abort_before_swap: before swap_intent AND before PoNR only
 ```
 
-## Write-barrier state transitions
+## Write-barrier / abort recovery matrix
 
-| Transition | Journal |
-|------------|---------|
-| Intent before chmod | `permission_intent` |
-| Barrier active | `production_write_barrier_active=true`, `original_mode/uid/gid` |
-| Staging RO before swap | `staging_write_barrier_active=true` |
-| PoNR | `writer_resume_started=true` (rollback refused) |
-| Restore writable | `writable_mode_restored=true`, barrier cleared |
-| Abort before swap | restore mode → API smoke → health → remove pauses |
+| Condition | Safe action |
+|-----------|-------------|
+| Intent written; chmod not yet applied | Re-run `apply_os_write_barrier` or `abort_before_swap` |
+| Chmod applied; `barrier_active` not yet journaled | `abort_before_swap` restores from `original_mode` / `permission_intent` / private plan |
+| `barrier_active=true`, pre-swap | Continue stages or `abort_before_swap` |
+| After `swap_intent` / exchange | Abort refused; use swap reconciliation / rollback rules |
+| After `writer_resume_started` | Abort + automatic rollback refused |
+| Mail observe failed | Mail re-paused; mirror blocked; fix then re-run observe |
 
-## Abort / recovery matrix
+`reconcile_permission_barrier` inspects mode vs journal and reports the recognized state — it never silently leaves writers unpaused with an unknown DB mode.
 
-| Condition | Action |
-|-----------|--------|
-| Before swap intent | `abort_before_swap` restores perms/services/markers |
-| After swap intent/exchange | abort refused |
-| After `writer_resume_started` | abort + automatic rollback refused |
-| Crash mid-chmod | inspect mode + journal; resume documented next stage |
-| `pre_exchange_ready` / retain pending / swap complete | same reconciliation as before |
+## Final human approval boundary
 
-## Production apply readiness (derived)
+Real apply requires **all** of:
 
-Not a hard-coded `True`. Later stages require: SQLite automation writers paused, readers stopped, exclusive flock held, OS write barrier active, FD scan clean, WAL quiesced, approved plan valid. ChileCompra reclassification alone does not clear readiness.
+1. `--confirm-production-cutover`
+2. Unique `--maintenance-id` matching `^[A-Za-z0-9][A-Za-z0-9._-]{7,63}$`
+3. Exact 40-char `--expected-main-sha` matching `git rev-parse HEAD` (and `main` / clean / `origin/main` for non-synthetic)
+4. Exact `--expected-production-path` + fingerprint matching canonical production
+5. Separate `--approve-swap` for `approve_swap` / `atomic_swap`
+6. Operator maintenance window + capacity confirmation on target topology
+
+No interactive fingerprint echo is implemented; the operator must supply the exact tokens.
 
 ## Remaining environment-only blockers
 
-1. Operator maintenance window + capacity on `/mnt/d` backup and `/` staging.
+1. Live maintenance window + disk capacity on `/mnt/d` and `/`.
 2. Prove `renameat2(RENAME_EXCHANGE|NOREPLACE)` on the production filesystem.
-3. Explicit human approval of maintenance ID + fingerprints at swap.
-4. Live dry-run still must not mutate production until an approved window.
+3. Explicit human approval of the tokens above at swap time.
+4. Keep **draft** until an approved window; this PR does not authorize a real cutover.
 
 ## Module / tests
 

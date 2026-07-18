@@ -356,7 +356,9 @@ class WriterInventory:
         return [
             int(r.pid)
             for r in self.locks
-            if r.classification == "live" and r.pid is not None
+            if r.classification == "live"
+            and r.pid is not None
+            and r.basename != CHILECOMPRA_LOCK_FILENAME
         ]
 
     @property
@@ -457,6 +459,8 @@ class CutoverJournal:
     permission_intent: dict[str, Any] | None = None
     abort_before_swap_completed: bool = False
     post_mail_fingerprint: str | None = None
+    mail_observe_ok: bool = False
+    mail_observe_failure: str | None = None
     updated_at_utc: str = field(default_factory=_iso_now)
     notes: list[str] = field(default_factory=list)
 
@@ -526,6 +530,14 @@ class CutoverAdapters(Protocol):
     def fsync_file(self, path: Path) -> None: ...
     def get_file_mode_owner(self, path: Path) -> dict[str, int]: ...
     def chmod_path(self, path: Path, mode: int) -> None: ...
+    def chmod_verified_inode(
+        self,
+        path: Path,
+        mode: int,
+        *,
+        expected_device: int,
+        expected_inode: int,
+    ) -> None: ...
     def chown_path(self, path: Path, uid: int, gid: int) -> None: ...
     def quick_check_ok(self, path: Path) -> bool: ...
     def try_open_writable(self, path: Path) -> bool: ...
@@ -714,6 +726,21 @@ def scan_proc_fds_for_inode(
                 key = (int(target.st_dev), int(target.st_ino))
                 if key == (device, inode) or key in sidecar_inodes:
                     access = read_fdinfo_flags(pid, fd.name)
+                    path_label = "unknown"
+                    try:
+                        link = os.readlink(fd)
+                        if link.endswith(" (deleted)"):
+                            path_label = "deleted"
+                        elif link.endswith("-wal"):
+                            path_label = "wal"
+                        elif link.endswith("-shm"):
+                            path_label = "shm"
+                        elif link.endswith("-journal"):
+                            path_label = "journal"
+                        else:
+                            path_label = "db_or_alias"
+                    except OSError:
+                        path_label = "unreadable_link"
                     hits.append(
                         {
                             "pid": pid,
@@ -722,6 +749,7 @@ def scan_proc_fds_for_inode(
                             "inode": key[1],
                             "kind": "production" if key == (device, inode) else "sidecar",
                             "access": access,
+                            "path_label": path_label,
                         }
                     )
         except OSError:
@@ -1313,6 +1341,34 @@ class FilesystemAdapters:
 
     def chmod_path(self, path: Path, mode: int) -> None:
         os.chmod(path, mode)
+
+    def chmod_verified_inode(
+        self,
+        path: Path,
+        mode: int,
+        *,
+        expected_device: int,
+        expected_inode: int,
+    ) -> None:
+        """Open path, fstat-match device+inode, then fchmod (not path chmod)."""
+        fd = os.open(str(path), os.O_RDONLY)
+        try:
+            st = os.fstat(fd)
+            if int(st.st_dev) != int(expected_device) or int(st.st_ino) != int(
+                expected_inode
+            ):
+                _fail(
+                    "refusing chmod: opened FD device/inode mismatch vs journal",
+                    category=CutoverFailureCategory.SAFETY,
+                    recovery=(
+                        "Do not chmod by path alone. Re-resolve canonical production "
+                        "and verify fingerprints before retrying the write barrier."
+                    ),
+                )
+            os.fchmod(fd, mode)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
     def chown_path(self, path: Path, uid: int, gid: int) -> None:
         os.chown(path, uid, gid)
@@ -2358,10 +2414,23 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
             original_uid = int(owner["uid"])
             original_gid = int(owner["gid"])
             barrier_mode = original_mode & ~0o222
+            ident = adapters.path_identity(production)
+            expected_dev = int(journal.production_device or ident["device"])
+            expected_ino = int(journal.production_inode or ident["inode"])
+            if int(ident["device"]) != expected_dev or int(ident["inode"]) != expected_ino:
+                _fail(
+                    "production device/inode drift before write barrier",
+                    category=CutoverFailureCategory.SAFETY,
+                )
+            journal.original_mode = original_mode
+            journal.original_uid = original_uid
+            journal.original_gid = original_gid
             journal.permission_intent = {
                 "action": "apply_production_write_barrier",
                 "original_mode": original_mode,
                 "barrier_mode": barrier_mode,
+                "expected_device": expected_dev,
+                "expected_inode": expected_ino,
             }
             write_journal(adapters, journal_path, journal)
             _inject("permission_intent_barrier")
@@ -2375,10 +2444,15 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
             private.original_mode = original_mode
             private.original_uid = original_uid
             private.original_gid = original_gid
-            private.production_device = journal.production_device
-            private.production_inode = journal.production_inode
+            private.production_device = expected_dev
+            private.production_inode = expected_ino
             write_private_paths(adapters, journal_path, private)
-            adapters.chmod_path(production, barrier_mode)
+            adapters.chmod_verified_inode(
+                production,
+                barrier_mode,
+                expected_device=expected_dev,
+                expected_inode=expected_ino,
+            )
             adapters.fsync_file(production)
             adapters.fsync_dir(production.parent)
             _inject("after_production_chmod_barrier")
@@ -2387,16 +2461,31 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                 _fail(
                     "write barrier mode verification failed",
                     category=CutoverFailureCategory.VERIFY,
+                    recovery=(
+                        "Production may be read-only. Run abort_before_swap or "
+                        "reconcile_permission_barrier to restore original_mode from "
+                        "journal/private plan, then inspect."
+                    ),
                 )
             if adapters.try_open_writable(production):
                 _fail(
                     "write barrier failed: production still opens writable",
                     category=CutoverFailureCategory.VERIFY,
+                    recovery=(
+                        "Barrier incomplete. Restore via abort_before_swap / "
+                        "reconcile_permission_barrier before any writer resume."
+                    ),
+                )
+            post_ident = adapters.path_identity(production)
+            if (
+                int(post_ident["device"]) != expected_dev
+                or int(post_ident["inode"]) != expected_ino
+            ):
+                _fail(
+                    "production device/inode changed during write barrier",
+                    category=CutoverFailureCategory.SAFETY,
                 )
             _assert_writers_quiesced(adapters, production)
-            journal.original_mode = original_mode
-            journal.original_uid = original_uid
-            journal.original_gid = original_gid
             journal.production_write_barrier_active = True
             journal.writable_mode_restored = False
             journal.permission_intent = None
@@ -2409,6 +2498,8 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                 {
                     "production_write_barrier_active": True,
                     "barrier_mode": barrier_mode,
+                    "barrier_device": expected_dev,
+                    "barrier_inode": expected_ino,
                     "threat_model_note": (
                         "Ordinary accidental ad-hoc SQLite writes are blocked; "
                         "malicious/root bypass is outside operator threat model."
@@ -2664,7 +2755,12 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
             }
             write_journal(adapters, journal_path, journal)
             _inject("restore_mode_intent")
-            adapters.chmod_path(production, int(journal.original_mode))
+            adapters.chmod_verified_inode(
+                production,
+                int(journal.original_mode),
+                expected_device=int(journal.production_device or 0),
+                expected_inode=int(journal.production_inode or 0),
+            )
             adapters.fsync_file(production)
             adapters.fsync_dir(production.parent)
             _inject("after_restore_chmod")
@@ -2712,6 +2808,7 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
         if stage == CutoverStage.RESUME_WRITERS_OBSERVE_MAIL:
             _expect_journal_stage(journal, CutoverStage.RESUME_WRITERS_MAIL)
             # Legitimate ingestion may change size/mtime fingerprint.
+            failure: str | None = None
             ident = adapters.path_identity(production)
             if (
                 journal.production_device is not None
@@ -2720,39 +2817,41 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                 journal.production_inode is not None
                 and int(ident["inode"]) != int(journal.production_inode)
             ):
-                _fail(
-                    "production device/inode replacement after mail resume refused",
-                    category=CutoverFailureCategory.SAFETY,
-                )
+                failure = "production_device_inode_replacement"
             mode = adapters.get_file_mode_owner(production)
-            if journal.original_mode is not None and int(mode["mode"]) != int(
-                journal.original_mode
-            ):
+            if failure is None and journal.original_mode is not None and int(
+                mode["mode"]
+            ) != int(journal.original_mode):
+                failure = "production_mode_unexpected"
+            if failure is None and int(mode["mode"]) & 0o222 == 0:
+                failure = "production_not_writable"
+            if failure is None and not adapters.quick_check_ok(production):
+                failure = "quick_check_failed"
+            if failure is not None:
+                # Re-pause mail; do not advance to mirror. Recoverable stopped state.
+                adapters.touch(mail_pause_path(reports))
+                journal.mail_observe_ok = False
+                journal.mail_observe_failure = failure
+                journal.notes.append(f"mail_observe_failed:{failure}")
+                write_journal(adapters, journal_path, journal)
                 _fail(
-                    "production mode unexpected after mail resume",
+                    f"mail observe failed ({failure}); mail re-paused; "
+                    "mirror must not proceed",
                     category=CutoverFailureCategory.VERIFY,
+                    recovery=(
+                        "Inspect production SQLite and mail automation. "
+                        "Journal stage remains resume_writers_mail / observe "
+                        "incomplete. Do not resume_writers_mirror until observe "
+                        "succeeds. Rollback remains forbidden after "
+                        "writer_resume_started."
+                    ),
+                    evidence={"mail_observe_failure": failure},
                 )
-            if int(mode["mode"]) & 0o222 == 0:
-                _fail(
-                    "production not writable after mail resume",
-                    category=CutoverFailureCategory.VERIFY,
-                )
-            if not adapters.quick_check_ok(production):
-                _fail(
-                    "quick_check failed after mail resume",
-                    category=CutoverFailureCategory.VERIFY,
-                )
-            writers = adapters.list_writers(production)
-            if any(
-                r.classification == "live" and r.basename == MAIL_LOCK_FILENAME
-                for r in writers.locks
-            ):
-                # Live mail lock during ingest is expected; do not treat as failure
-                # unless automation reports explicit failure via smoke.
-                pass
             live_fp = adapters.fingerprint(production)
             journal.post_mail_fingerprint = live_fp
             journal.production_fingerprint = live_fp
+            journal.mail_observe_ok = True
+            journal.mail_observe_failure = None
             journal.stage = stage.value
             write_journal(adapters, journal_path, journal)
             _inject("resume_writers_observe_mail")
@@ -2763,6 +2862,7 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                     "post_mail_fingerprint": live_fp,
                     "device": ident["device"],
                     "inode": ident["inode"],
+                    "mail_observe_ok": True,
                 },
             )
 
@@ -2772,6 +2872,15 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                 _fail(
                     "writer_resume_started missing",
                     category=CutoverFailureCategory.AMBIGUOUS,
+                )
+            if not journal.mail_observe_ok:
+                _fail(
+                    "refusing mirror resume: mail observe not ok",
+                    category=CutoverFailureCategory.SAFETY,
+                    recovery=(
+                        "Re-run resume_writers_observe_mail after fixing mail/SQLite. "
+                        "Mail should remain paused if observe previously failed."
+                    ),
                 )
             path = mirror_pause_path(reports)
             if adapters.path_exists(path):
@@ -3109,6 +3218,70 @@ def attempt_rollback_before_writers(
         )
 
 
+def _resolve_original_mode_for_restore(
+    adapters: CutoverAdapters,
+    journal: CutoverJournal,
+    journal_path: Path,
+) -> int | None:
+    if journal.original_mode is not None:
+        return int(journal.original_mode)
+    intent = journal.permission_intent or {}
+    if intent.get("original_mode") is not None:
+        return int(intent["original_mode"])
+    if intent.get("target_mode") is not None and str(intent.get("action", "")).endswith(
+        "restore_writable_mode"
+    ):
+        return int(intent["target_mode"])
+    private = load_private_paths(adapters, journal_path)
+    if private is not None and private.original_mode is not None:
+        return int(private.original_mode)
+    return None
+
+
+def reconcile_permission_barrier(
+    adapters: CutoverAdapters,
+    *,
+    production: Path,
+    journal: CutoverJournal,
+    journal_path: Path,
+) -> dict[str, Any]:
+    """Inspect mode vs journal after chmod crash; never silently leave writers unpaused."""
+    mode = int(adapters.get_file_mode_owner(production)["mode"])
+    write_bits = bool(mode & 0o222)
+    original = _resolve_original_mode_for_restore(adapters, journal, journal_path)
+    state = {
+        "current_mode": mode,
+        "write_bits_present": write_bits,
+        "barrier_active_flag": journal.production_write_barrier_active,
+        "permission_intent": journal.permission_intent,
+        "original_mode_known": original is not None,
+        "recognized": None,
+        "safe_action": None,
+    }
+    if journal.writer_resume_started:
+        state["recognized"] = "ponr_reached"
+        state["safe_action"] = "never_auto_rollback_inspect_manually"
+        return state
+    if not write_bits and original is not None:
+        if journal.production_write_barrier_active:
+            state["recognized"] = "barrier_active_ro"
+            state["safe_action"] = "continue_or_abort_before_swap"
+        elif journal.permission_intent:
+            state["recognized"] = "chmod_applied_journal_incomplete"
+            state["safe_action"] = "abort_before_swap_to_restore_or_complete_barrier_stage"
+        else:
+            state["recognized"] = "unexpected_readonly"
+            state["safe_action"] = "abort_before_swap_or_manual_chmod_restore"
+        return state
+    if write_bits and journal.production_write_barrier_active:
+        state["recognized"] = "barrier_flag_stale_file_writable"
+        state["safe_action"] = "manual_inspect_refuse_blind_retry"
+        return state
+    state["recognized"] = "writable_no_barrier"
+    state["safe_action"] = "continue_if_pre_barrier_else_inspect"
+    return state
+
+
 def abort_before_swap(opts: CutoverOptions) -> dict[str, Any]:
     """Safe abort before exchange / writer resume: restore perms, services, markers."""
     _require_auth(opts, for_swap=False)
@@ -3157,20 +3330,40 @@ def abort_before_swap(opts: CutoverOptions) -> dict[str, Any]:
         adapters.stop_health_timer()
         adapters.stop_api()
 
-        if journal.production_write_barrier_active and journal.original_mode is not None:
+        original = _resolve_original_mode_for_restore(adapters, journal, journal_path)
+        current_mode = int(adapters.get_file_mode_owner(production)["mode"])
+        needs_restore = (
+            original is not None
+            and (
+                journal.production_write_barrier_active
+                or bool(journal.permission_intent)
+                or (current_mode & 0o222) == 0
+            )
+        )
+        if needs_restore:
             journal.permission_intent = {
                 "action": "abort_restore_writable_mode",
-                "target_mode": journal.original_mode,
+                "target_mode": original,
             }
             write_journal(adapters, journal_path, journal)
-            adapters.chmod_path(production, int(journal.original_mode))
+            adapters.chmod_verified_inode(
+                production,
+                int(original),
+                expected_device=int(journal.production_device or ident["device"]),
+                expected_inode=int(journal.production_inode or ident["inode"]),
+            )
             adapters.fsync_file(production)
             adapters.fsync_dir(production.parent)
             verified = adapters.get_file_mode_owner(production)
-            if int(verified["mode"]) != int(journal.original_mode):
+            if int(verified["mode"]) != int(original):
                 _fail(
                     "abort failed to restore original mode",
                     category=CutoverFailureCategory.VERIFY,
+                    recovery=(
+                        "Manual chmod may be required using original_mode from "
+                        "journal or private plan. Do not resume writers until "
+                        "writable mode is verified."
+                    ),
                 )
             journal.production_write_barrier_active = False
             journal.writable_mode_restored = True
@@ -3190,7 +3383,13 @@ def abort_before_swap(opts: CutoverOptions) -> dict[str, Any]:
         journal.abort_before_swap_completed = True
         journal.services_stopped = False
         journal.notes.append("aborted_before_swap")
-        journal.stage = CutoverStage.COMPLETED.value
+        # Leave stage at last completed forward stage for audit; mark abort note.
+        # Do not silently claim COMPLETED cutover success.
+        if journal.stage not in {
+            CutoverStage.COMPLETED.value,
+            CutoverStage.PLAN_PREFLIGHT.value,
+        }:
+            journal.notes.append(f"abort_from_stage={journal.stage}")
         write_journal(adapters, journal_path, journal)
         return sanitize_evidence(
             {
@@ -3198,6 +3397,12 @@ def abort_before_swap(opts: CutoverOptions) -> dict[str, Any]:
                 "smoke": smoke,
                 "production_write_barrier_active": False,
                 "stage": journal.stage,
+                "permission_reconcile": reconcile_permission_barrier(
+                    adapters,
+                    production=production,
+                    journal=journal,
+                    journal_path=journal_path,
+                ),
             }
         )
 
@@ -3536,6 +3741,24 @@ class SyntheticWorld:
 
     def chmod_path(self, path: Path, mode: int) -> None:
         self.modes[self.key(path)] = int(mode) & 0o7777
+
+    def chmod_verified_inode(
+        self,
+        path: Path,
+        mode: int,
+        *,
+        expected_device: int,
+        expected_inode: int,
+    ) -> None:
+        ident = self.path_identity(path)
+        if int(ident["device"]) != int(expected_device) or int(ident["inode"]) != int(
+            expected_inode
+        ):
+            _fail(
+                "refusing chmod: opened FD device/inode mismatch vs journal",
+                category=CutoverFailureCategory.SAFETY,
+            )
+        self.chmod_path(path, mode)
 
     def chown_path(self, path: Path, uid: int, gid: int) -> None:
         self.owners[self.key(path)] = (int(uid), int(gid))

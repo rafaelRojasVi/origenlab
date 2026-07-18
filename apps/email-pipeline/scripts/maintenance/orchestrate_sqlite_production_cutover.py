@@ -6,7 +6,8 @@ Default is zero-write ``plan_preflight``. Every mutating stage requires its own
 workflow in one command.
 
 Does not authorize improvising dual ``mv`` when rename exchange is unavailable.
-Real production apply remains blocked while unguarded writer entry points exist.
+Production apply readiness is derived (pause, stop, flock, write barrier, FD
+scan, WAL quiesce, valid plan). ChileCompra does not block SQLite RPO=0.
 """
 
 from __future__ import annotations

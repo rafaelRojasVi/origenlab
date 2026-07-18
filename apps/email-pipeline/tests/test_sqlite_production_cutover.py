@@ -1237,3 +1237,190 @@ def test_ponr_before_chmod_restore(tmp_path: Path) -> None:
     assert journal["writer_resume_started"] is True
     assert journal["writable_mode_restored"] is False
     assert world.modes[str(prod)] & 0o222 == 0
+
+
+def test_chilecompra_live_lock_does_not_block_preflight(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    world.lock_records = [
+        LockRecord(
+            basename=CHILECOMPRA_LOCK_FILENAME,
+            classification="live",
+            pid=5555,
+        )
+    ]
+    report = plan_preflight(
+        _opts(world, prod, reports, fp, stage=CutoverStage.PLAN_PREFLIGHT)
+    )
+    assert "active_sqlite_writers_or_locks" not in report["blockers"]
+    assert report["chilecompra_blocks_rpo0"] is False
+
+
+def test_mid_barrier_crash_abort_restores_mode(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.APPLY_OS_WRITE_BARRIER
+    )
+    live_fp = world.fingerprint(prod)
+    with pytest.raises(CutoverError):
+        apply_stage(
+            _opts(
+                world, prod, reports, live_fp,
+                stage=CutoverStage.APPLY_OS_WRITE_BARRIER, apply=True,
+                backup=backup, staging=staging,
+                fail_after="after_production_chmod_barrier",
+            )
+        )
+    # chmod applied; barrier_active may still be false
+    assert world.modes[str(prod)] & 0o222 == 0
+    jpath = journal_path_for(
+        CutoverOptions(maintenance_id=MID, expected_production_path=prod), prod
+    )
+    journal = json.loads(world.files[str(jpath)].decode())
+    assert journal.get("original_mode") == 0o644
+    report = abort_before_swap(
+        _opts(
+            world, prod, reports, world.fingerprint(prod),
+            stage=CutoverStage.APPLY_OS_WRITE_BARRIER, apply=True,
+            backup=backup, staging=staging,
+        )
+    )
+    assert report["aborted_before_swap"] is True
+    assert world.modes[str(prod)] == 0o644
+
+
+def test_chmod_refuses_device_inode_mismatch(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.APPLY_OS_WRITE_BARRIER
+    )
+    # Corrupt journal device so verified chmod fails
+    jpath = journal_path_for(
+        CutoverOptions(maintenance_id=MID, expected_production_path=prod), prod
+    )
+    journal = json.loads(world.files[str(jpath)].decode())
+    journal["production_device"] = 999
+    world.files[str(jpath)] = json.dumps(journal).encode()
+    with pytest.raises(CutoverError) as exc:
+        apply_stage(
+            _opts(
+                world, prod, reports, world.fingerprint(prod),
+                stage=CutoverStage.APPLY_OS_WRITE_BARRIER, apply=True,
+                backup=backup, staging=staging,
+            )
+        )
+    assert "device" in str(exc.value).lower() or "inode" in str(exc.value).lower()
+
+
+def test_mail_observe_failure_repauses_and_blocks_mirror(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.RESUME_WRITERS_OBSERVE_MAIL
+    )
+    world.quick_check_fail = True
+    with pytest.raises(CutoverError) as exc:
+        apply_stage(
+            _opts(
+                world, prod, reports, world.fingerprint(prod),
+                stage=CutoverStage.RESUME_WRITERS_OBSERVE_MAIL, apply=True,
+                backup=backup, staging=staging,
+            )
+        )
+    assert "mail" in str(exc.value).lower()
+    assert world.mail_pause is True
+    assert "mirror" in (exc.value.recovery or "").lower()
+    with pytest.raises(CutoverError) as exc2:
+        apply_stage(
+            _opts(
+                world, prod, reports, world.fingerprint(prod),
+                stage=CutoverStage.RESUME_WRITERS_MIRROR, apply=True,
+                backup=backup, staging=staging,
+            )
+        )
+    msg = str(exc2.value).lower()
+    assert (
+        "mail observe" in msg
+        or "observe" in msg
+        or "non-sequential" in msg
+        or "resume_writers_mail" in msg
+    )
+
+
+def test_fail_after_matrix_never_loses_both_dbs(tmp_path: Path) -> None:
+    phases = [
+        "pause_writers",
+        "stop_readers",
+        "quiesce_wal",
+        "permission_intent_barrier",
+        "after_production_chmod_barrier",
+        "apply_os_write_barrier",
+        "create_current_backup",
+        "compact_to_production_fs_staging",
+        "verify_candidate",
+        "approve_swap",
+        "swap_intent",
+        "before_exchange",
+        "after_exchange",
+        "after_dir_fsync",
+        "before_retain",
+        "after_retain",
+        "atomic_swap",
+    ]
+    stage_for_phase = {
+        "pause_writers": CutoverStage.PAUSE_WRITERS,
+        "stop_readers": CutoverStage.STOP_READERS,
+        "quiesce_wal": CutoverStage.QUIESCE_WAL,
+        "permission_intent_barrier": CutoverStage.APPLY_OS_WRITE_BARRIER,
+        "after_production_chmod_barrier": CutoverStage.APPLY_OS_WRITE_BARRIER,
+        "apply_os_write_barrier": CutoverStage.APPLY_OS_WRITE_BARRIER,
+        "create_current_backup": CutoverStage.CREATE_CURRENT_BACKUP,
+        "compact_to_production_fs_staging": CutoverStage.COMPACT_TO_PRODUCTION_FS_STAGING,
+        "verify_candidate": CutoverStage.VERIFY_CANDIDATE,
+        "approve_swap": CutoverStage.APPROVE_SWAP,
+        "swap_intent": CutoverStage.ATOMIC_SWAP,
+        "before_exchange": CutoverStage.ATOMIC_SWAP,
+        "after_exchange": CutoverStage.ATOMIC_SWAP,
+        "after_dir_fsync": CutoverStage.ATOMIC_SWAP,
+        "before_retain": CutoverStage.ATOMIC_SWAP,
+        "after_retain": CutoverStage.ATOMIC_SWAP,
+        "atomic_swap": CutoverStage.ATOMIC_SWAP,
+    }
+    for phase in phases:
+        w, p, r, rt, f = _world(tmp_path / phase)
+        backup, staging = _paths(rt)
+        stop = stage_for_phase[phase]
+        _run_through(w, p, r, f, rt, stop_before=stop)
+        live = w.fingerprint(p)
+        with pytest.raises(CutoverError):
+            apply_stage(
+                _opts(
+                    w, p, r, live, stage=stop, apply=True,
+                    approve_swap=stop
+                    in {CutoverStage.APPROVE_SWAP, CutoverStage.ATOMIC_SWAP},
+                    backup=backup, staging=staging, fail_after=phase,
+                )
+            )
+        prod_present = w.is_file(p)
+        staging_present = w.is_file(staging)
+        pre = p.with_name(f"{p.name}.pre_cutover.{MID}")
+        pre_present = w.is_file(pre)
+        # Never lose both active production and all recoverable copies.
+        recoverable = prod_present or staging_present or pre_present
+        # Before any backup, only production must exist.
+        if phase in {"pause_writers", "stop_readers", "quiesce_wal", "permission_intent_barrier", "after_production_chmod_barrier", "apply_os_write_barrier"}:
+            assert prod_present
+        else:
+            assert recoverable, f"phase={phase} lost all DB copies"
+
+
+def test_zero_write_preflight_creates_no_lock_file(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    lock_dir = tmp_path / "locks"
+    before = tree_snapshot(tmp_path)
+    plan_preflight(_opts(world, prod, reports, fp, stage=CutoverStage.PLAN_PREFLIGHT))
+    after = tree_snapshot(tmp_path)
+    assert before == after
+    assert not lock_dir.exists()
+    assert world.lock_held is False
