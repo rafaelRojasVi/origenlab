@@ -337,6 +337,12 @@ Ordinary API opens use `mode=ro` only. That is **not** safe for fingerprint-froz
   - candidate regular file with **no** `-wal`/`-shm`/`-journal` (including zero-byte)
   - manifest `completed=true`, basename/size agreement, and successful verification fields
 - Failed admission **fails API startup** (no silent fallback to ordinary/production mode).
+- **Dotenv isolation:** when both recovery flags are present in the *process* environment
+  (or `ORIGENLAB_DISABLE_DOTENV=1`), the API and email-pipeline settings loaders **do not**
+  read project `.env` files. This prevents `WorkingDirectory=apps/api` from injecting
+  `ORIGENLAB_POSTGRES_URL`, Gmail OAuth paths, or API tokens into recovery. Unsafe values
+  that are explicitly present in the process environment are still refused by admission.
+  Health exposes sanitized `dotenv_disabled=true` (never paths or secrets).
 
 In-process harness (synthetic or verified candidate; after merge):
 
@@ -359,7 +365,9 @@ MANIFEST=${CAND}.compaction.manifest.json
 EP=/home/rafael/dev/freelance/origenlab/apps/api
 LOG=/mnt/d/origenlab-sqlite-offline/recovery_${STAMP}.log
 
-# Explicit environment — do not inherit production service EnvironmentFile.
+# Explicit environment only — do not inherit production EnvironmentFile.
+# Code-level dotenv isolation activates from the recovery flags below; also set
+# ORIGENLAB_DISABLE_DOTENV=1 as defense in depth. Do not pass Postgres/Gmail/token vars.
 sudo systemd-run --unit="${UNIT}" \
   --uid=rafael \
   --property=WorkingDirectory="${EP}" \
@@ -369,8 +377,12 @@ sudo systemd-run --unit="${UNIT}" \
   --property=Environment=ORIGENLAB_SQLITE_IMMUTABLE_RO=1 \
   --property=Environment=ORIGENLAB_SQLITE_CONFIRM_OFFLINE_COPY=1 \
   --property=Environment=ORIGENLAB_SQLITE_COMPACTION_MANIFEST=${MANIFEST} \
+  --property=Environment=ORIGENLAB_DISABLE_DOTENV=1 \
   --property=MemoryMax=1G \
   --property=MemorySwapMax=0 \
+  --property=OOMPolicy=stop \
+  --property=StandardOutput=append:${LOG} \
+  --property=StandardError=append:${LOG} \
   /home/rafael/.local/bin/uv run --frozen uvicorn origenlab_api.main:app \
     --host 127.0.0.1 --port 8002
 ```

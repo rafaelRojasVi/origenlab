@@ -23,6 +23,7 @@ def test_health_returns_stable_contract() -> None:
     assert data["sqlite_immutable"] is False
     assert data["sqlite_query_only"] is True
     assert data["recovery_mode"] is False
+    assert data["dotenv_disabled"] is False
     assert set(data.keys()) == {
         "ok",
         "service",
@@ -32,6 +33,7 @@ def test_health_returns_stable_contract() -> None:
         "sqlite_immutable",
         "sqlite_query_only",
         "recovery_mode",
+        "dotenv_disabled",
     }
 
 

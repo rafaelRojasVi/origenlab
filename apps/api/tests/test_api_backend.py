@@ -73,6 +73,7 @@ def test_health_shows_backend_sqlite_default() -> None:
         "sqlite_immutable",
         "sqlite_query_only",
         "recovery_mode",
+        "dotenv_disabled",
     }
 
 

@@ -12,6 +12,7 @@ and a frozen candidate fingerprint.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -94,12 +95,43 @@ def sqlite_readonly_uri(sqlite_path: Path, *, immutable: bool) -> str:
     return f"file:{encoded}?mode=ro"
 
 
-def assert_not_production_sqlite(db: Path, *, settings: Any | None = None) -> None:
-    """Refuse configured/default production path and aliases/samefile/device+inode."""
+def _ep_settings_for_production_exclusion(*, recovery_mode: bool) -> Any:
+    """
+    Resolve email-pipeline settings used only for production-path exclusion.
+
+    In recovery mode the process ``ORIGENLAB_SQLITE_PATH`` is the *candidate*, so it
+    must not be treated as the production path. Temporarily unset it while loading
+    dotenv-disabled EP settings so exclusion compares against default/DATA_ROOT
+    production locations only.
+    """
     from origenlab_email_pipeline.config import load_settings as load_ep_settings
 
+    if not recovery_mode:
+        return load_ep_settings()
+
+    saved = os.environ.pop("ORIGENLAB_SQLITE_PATH", None)
     try:
-        ep_settings = load_ep_settings()
+        return load_ep_settings(enable_dotenv=False)
+    finally:
+        if saved is not None:
+            os.environ["ORIGENLAB_SQLITE_PATH"] = saved
+
+
+def assert_not_production_sqlite(db: Path, *, settings: Any | None = None) -> None:
+    """Refuse configured/default production path and aliases/samefile/device+inode."""
+    recovery_mode = False
+    if settings is not None:
+        try:
+            recovery_mode = bool(resolve_open_policy(settings).recovery_mode)
+        except SqliteAdmissionError:
+            recovery_mode = False
+    if not recovery_mode:
+        from origenlab_api.settings import recovery_mode_requested_from_environ
+
+        recovery_mode = recovery_mode_requested_from_environ()
+
+    try:
+        ep_settings = _ep_settings_for_production_exclusion(recovery_mode=recovery_mode)
     except Exception as exc:
         raise SqliteAdmissionError(
             f"unable to load settings for production exclusion ({type(exc).__name__})"

@@ -375,6 +375,7 @@ def test_repositories_use_central_policy(tmp_path: Path) -> None:
     assert health["recovery_mode"] is True
     assert health["sqlite_immutable"] is True
     assert health["sqlite_query_only"] is True
+    assert "dotenv_disabled" in health
     assert "/home/" not in json.dumps(health)
     recent = client.get("/emails/recent", params={"limit": 5})
     assert recent.status_code == 200
