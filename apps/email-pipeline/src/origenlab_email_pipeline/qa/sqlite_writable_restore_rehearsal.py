@@ -14,6 +14,7 @@ Fixture creation (``build_fixture``) and rehearsal (``rehearse``) are
 from __future__ import annotations
 
 import enum
+import errno
 import fcntl
 import hashlib
 import json
@@ -107,6 +108,24 @@ class RehearsalFailureCategory(enum.Enum):
     VERIFY = "verify"
 
 
+class RehearsalApplyState(enum.Enum):
+    """Deterministic apply state machine (synthetic rehearsal only).
+
+    After ``TARGET_PRESERVED``, ``preserved`` is recovery-critical while
+    ``target`` is absent. Cleanup must never delete that last recoverable copy.
+    Ephemeral ``partial`` / ``republish`` artifacts may always be removed.
+    """
+
+    START = "start"
+    PARTIAL_COPIED = "partial_copied"
+    TARGET_PUBLISHED = "target_published"
+    TARGET_WRITTEN = "target_written"
+    TARGET_PRESERVED = "target_preserved"
+    REPUBLISH_PARTIAL = "republish_partial"
+    TARGET_RESTORED = "target_restored"
+    COMPLETE = "complete"
+
+
 class RehearsalError(BackupError):
     """Operator-facing rehearsal failure with typed category / exit code."""
 
@@ -117,6 +136,8 @@ class RehearsalError(BackupError):
         category: RehearsalFailureCategory,
         exit_code: int | None = None,
         recovery: str | None = None,
+        recovery_evidence: dict[str, Any] | None = None,
+        apply_state: str | None = None,
     ) -> None:
         super().__init__(message)
         self.category = category
@@ -131,6 +152,8 @@ class RehearsalError(BackupError):
             }[category]
         )
         self.recovery = recovery
+        self.recovery_evidence = recovery_evidence
+        self.apply_state = apply_state
 
 
 @dataclass
@@ -347,8 +370,10 @@ def target_collision_paths(target: Path) -> list[Path]:
 def list_existing_collisions(target: Path) -> list[str]:
     found: list[str] = []
     for path in target_collision_paths(target):
-        if path.exists():
+        if _path_lexists(path):
             found.append(path.name)
+            if path.is_symlink() or (path.exists() and not path.is_file()):
+                found.append(f"{path.name}:non_regular")
     # Script-owned unique partials/republish leftovers with pid/ns suffixes.
     if target.parent.is_dir():
         for child in target.parent.iterdir():
@@ -361,7 +386,20 @@ def list_existing_collisions(target: Path) -> list[str]:
                 f"{target.name}.preserved."
             ):
                 found.append(n)
+            if child.is_symlink() and (
+                n == target.name
+                or n.startswith(f"{target.name}.")
+            ):
+                found.append(f"{n}:symlink")
     return sorted(set(found))
+
+
+def _path_lexists(path: Path) -> bool:
+    """True if the path name exists, including broken symlinks."""
+    try:
+        return path.is_symlink() or path.exists()
+    except OSError:
+        return False
 
 
 def stream_copy_file(
@@ -371,14 +409,41 @@ def stream_copy_file(
     chunk_bytes: int = COPY_CHUNK_BYTES,
     progress_sink: Callable[[str], None] | None = None,
 ) -> int:
-    """Bounded streaming copy; never loads the whole file into memory."""
+    """Bounded streaming copy with exclusive destination create (O_EXCL).
+
+    Never loads the whole file into memory. Refuses if ``destination`` already
+    exists (including races after a prior existence check).
+    """
     if chunk_bytes <= 0:
         _fail(
             "copy chunk size must be positive",
             category=RehearsalFailureCategory.APPLY,
         )
+    if _path_lexists(destination):
+        _fail(
+            "exclusive create refused: destination already exists",
+            category=RehearsalFailureCategory.APPLY,
+        )
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    try:
+        fd = os.open(str(destination), flags, 0o600)
+    except FileExistsError:
+        _fail(
+            "exclusive create refused: destination already exists",
+            category=RehearsalFailureCategory.APPLY,
+        )
+    except OSError as exc:
+        if exc.errno == errno.EEXIST:
+            _fail(
+                "exclusive create refused: destination already exists",
+                category=RehearsalFailureCategory.APPLY,
+            )
+        _fail(
+            f"exclusive create failed (errno={getattr(exc, 'errno', None)})",
+            category=RehearsalFailureCategory.APPLY,
+        )
     copied = 0
-    with source.open("rb") as src, destination.open("wb") as dst:
+    with source.open("rb") as src, os.fdopen(fd, "wb") as dst:
         while True:
             buf = src.read(chunk_bytes)
             if not buf:
@@ -692,7 +757,8 @@ def _validate_common_paths(opts: RehearsalOptions, *, require_source_file: bool)
                 category=RehearsalFailureCategory.SAFETY,
             )
         try:
-            if path.exists() and path.is_symlink():
+            # Refuse symlinks including broken ones (exists() is false for broken links).
+            if path.is_symlink():
                 _fail(
                     f"refusing symlink {role}",
                     category=RehearsalFailureCategory.SAFETY,
@@ -718,9 +784,9 @@ def _validate_common_paths(opts: RehearsalOptions, *, require_source_file: bool)
         pass
 
     if require_source_file:
-        if not source.is_file():
+        if source.is_symlink() or not source.is_file():
             _fail(
-                "source must be an existing regular file",
+                "source must be an existing regular non-symlink file",
                 category=RehearsalFailureCategory.PREFLIGHT,
             )
         size = int(source.stat().st_size)
@@ -733,14 +799,25 @@ def _validate_common_paths(opts: RehearsalOptions, *, require_source_file: bool)
         # Size gate happens before header/marker/payload reads of large bodies.
         assert_sqlite_header(source)
         for suffix_path in companion_paths(source):
-            if suffix_path.exists():
+            if _path_lexists(suffix_path):
                 _fail(
                     f"source has companion file(s): {suffix_path.name}",
                     category=RehearsalFailureCategory.PREFLIGHT,
                 )
         read_fixture_marker(source)
 
-    if target.exists():
+    # Target must not lexist (covers broken symlinks and non-regular names).
+    if target.is_symlink():
+        _fail(
+            "refusing symlink target (including broken symlinks)",
+            category=RehearsalFailureCategory.SAFETY,
+        )
+    if _path_lexists(target):
+        if target.exists() and not target.is_file():
+            _fail(
+                "refusing non-regular target path",
+                category=RehearsalFailureCategory.SAFETY,
+            )
         _fail(
             "restore target already exists (no-clobber)",
             category=RehearsalFailureCategory.PREFLIGHT,
@@ -836,6 +913,128 @@ def _owned_partial_name(target: Path, kind: str) -> Path:
     return target.with_name(f"{target.name}.{kind}.{os.getpid()}.{time.time_ns()}")
 
 
+def _unlink_ephemeral(paths: list[Path]) -> list[str]:
+    removed: list[str] = []
+    for path in list(paths):
+        try:
+            if path.is_symlink() or path.is_file():
+                path.unlink()
+                removed.append(path.name)
+        except OSError:
+            pass
+    return removed
+
+
+def finalize_failure_artifacts(
+    *,
+    target: Path,
+    ephemeral: list[Path],
+    preserved: Path | None,
+    apply_state: RehearsalApplyState,
+) -> dict[str, Any]:
+    """Handle failure without destroying the last recoverable DB copy.
+
+    - Always remove ephemeral partial/republish files.
+    - Never delete ``preserved`` while ``target`` is absent.
+    - If target is absent and preserved exists: restore preserved→target
+      (no-clobber) with directory fsync, or retain preserved with evidence.
+    """
+    removed = _unlink_ephemeral(ephemeral)
+    evidence: dict[str, Any] = {
+        "apply_state": apply_state.value,
+        "target_present": False,
+        "preserved_present": bool(preserved is not None and _path_lexists(preserved)),
+        "preserved_basename": (
+            sanitize_path_for_log(preserved) if preserved is not None else None
+        ),
+        "preserved_restored_to_target": False,
+        "preserved_retained_for_recovery": False,
+        "removed_ephemeral": removed,
+        "last_recoverable_deleted": False,
+    }
+
+    target_present = target.exists() and target.is_file() and not target.is_symlink()
+    preserved_present = (
+        preserved is not None
+        and preserved.exists()
+        and preserved.is_file()
+        and not preserved.is_symlink()
+    )
+    evidence["target_present"] = target_present
+    evidence["preserved_present"] = preserved_present
+
+    if preserved_present and not target_present:
+        # Recovery-critical: restore or retain — never unlink.
+        try:
+            if _path_lexists(target):
+                evidence["preserved_retained_for_recovery"] = True
+            else:
+                assert preserved is not None
+                os.rename(preserved, target)
+                fsync_directory(target.parent)
+                evidence["preserved_restored_to_target"] = True
+                evidence["target_present"] = True
+                evidence["preserved_present"] = False
+        except OSError:
+            evidence["preserved_retained_for_recovery"] = True
+            evidence["preserved_present"] = bool(
+                preserved is not None and preserved.exists()
+            )
+    elif preserved_present and target_present:
+        # Target is authoritative again; retain preserved for operator inspection
+        # on failure (do not auto-delete the post-write copy on crash paths).
+        evidence["preserved_retained_for_recovery"] = True
+
+    # Invariant: never both absent after we had entered TARGET_PRESERVED+.
+    if apply_state in {
+        RehearsalApplyState.TARGET_PRESERVED,
+        RehearsalApplyState.REPUBLISH_PARTIAL,
+        RehearsalApplyState.TARGET_RESTORED,
+    }:
+        if not evidence["target_present"] and not evidence["preserved_present"]:
+            evidence["last_recoverable_deleted"] = True
+
+    return evidence
+
+
+def validate_planned_cutover_topology(
+    *,
+    mnt_d_free_bytes: int,
+    root_free_bytes: int,
+    snapshot_size_bytes: int,
+    compact_capacity_required_bytes: int,
+    staged_compact_size_bytes: int,
+) -> dict[str, Any]:
+    """Synthetic capacity plan for documented topology (no I/O, no real paths).
+
+    Recommended plan: Online Backup snapshot on /mnt/d, compact staging on /.
+    Does **not** require a second ~127 GiB artifact on /mnt/d.
+    """
+    dual_on_mnt_d_need = int(snapshot_size_bytes) + int(compact_capacity_required_bytes)
+    snapshot_ok = int(mnt_d_free_bytes) >= int(snapshot_size_bytes)
+    compact_on_root_ok = int(root_free_bytes) >= int(compact_capacity_required_bytes)
+    dual_on_mnt_d_ok = int(mnt_d_free_bytes) >= dual_on_mnt_d_need
+    root_after_stage = int(root_free_bytes) - int(staged_compact_size_bytes)
+    recommended_ok = snapshot_ok and compact_on_root_ok
+    return {
+        "schema_version": REHEARSAL_SCHEMA_VERSION,
+        "mode": "planned_cutover_topology_validation",
+        "snapshot_on_mnt_d_ok": snapshot_ok,
+        "compact_staging_on_root_ok": compact_on_root_ok,
+        "dual_artifacts_on_mnt_d_ok": dual_on_mnt_d_ok,
+        "second_full_snapshot_on_mnt_d_required": False,
+        "dual_on_mnt_d_required_bytes": dual_on_mnt_d_need,
+        "root_free_after_staged_compact_bytes": root_after_stage,
+        "recommended_topology": "online_snapshot_mnt_d__compact_staging_root",
+        "recommended_topology_ok": recommended_ok,
+        "fail_closed": not recommended_ok,
+        "notes": [
+            "Synthetic capacity math only; opens no mounts or databases.",
+            "Dual snapshot+compact on /mnt/d fails closed at current free space.",
+        ],
+    }
+
+
 def apply_rehearsal(opts: RehearsalOptions) -> dict[str, Any]:
     report = preflight(opts)
     if not opts.apply:
@@ -850,27 +1049,49 @@ def apply_rehearsal(opts: RehearsalOptions) -> dict[str, Any]:
     counts_before = table_row_counts(source)
     t0 = opts.clock()
 
-    owned: list[Path] = []
+    state = RehearsalApplyState.START
+    ephemeral: list[Path] = []
+    preserved: Path | None = None
     lock: BackupLock | None = None
     previous_handlers: dict[int, Any] = {}
 
-    def _cleanup_owned() -> list[str]:
-        removed: list[str] = []
-        for path in list(owned):
-            try:
-                if path.exists() and path.is_file():
-                    path.unlink()
-                    removed.append(path.name)
-            except OSError:
-                pass
-        return removed
+    def _handle_failure(exc: RehearsalError) -> RehearsalError:
+        evidence = finalize_failure_artifacts(
+            target=target,
+            ephemeral=ephemeral,
+            preserved=preserved,
+            apply_state=state,
+        )
+        ephemeral.clear()
+        exc.recovery_evidence = evidence
+        exc.apply_state = state.value
+        if evidence.get("last_recoverable_deleted"):
+            exc.recovery = (
+                "CRITICAL: last recoverable rehearsal copy missing under scratch root; "
+                "do not touch production or offline clones."
+            )
+        elif evidence.get("preserved_restored_to_target"):
+            exc.recovery = (
+                "Restored preserved→target under scratch root; remove target after review "
+                "before retrying rehearsal."
+            )
+        elif evidence.get("preserved_retained_for_recovery"):
+            exc.recovery = (
+                "Retained script-owned *.preserved.* under scratch root; restore or remove "
+                "only that artifact after review — never touch production."
+            )
+        elif evidence.get("removed_ephemeral"):
+            exc.recovery = (
+                "Removed script-owned ephemeral partial/republish files under scratch root only."
+            )
+        return exc
 
     def _on_signal(signum: int, _frame: Any) -> None:
-        _cleanup_owned()
-        _fail(
-            f"interrupted by signal {signum}; cleaned script-owned partials only",
+        err = RehearsalError(
+            f"interrupted by signal {signum}",
             category=RehearsalFailureCategory.APPLY,
         )
+        raise _handle_failure(err)
 
     try:
         # Apply may create the target parent under the scratch root only.
@@ -898,12 +1119,18 @@ def apply_rehearsal(opts: RehearsalOptions) -> dict[str, Any]:
             )
 
         partial = _owned_partial_name(target, "partial")
-        if partial.exists() or target.exists():
+        if _path_lexists(target):
             _fail(
                 "partial/target exists (no-clobber)",
                 category=RehearsalFailureCategory.APPLY,
             )
-        owned.append(partial)
+        # Track before exclusive create so a raced name is cleaned on failure.
+        ephemeral.append(partial)
+        if _path_lexists(partial):
+            _fail(
+                "partial exists (no-clobber)",
+                category=RehearsalFailureCategory.APPLY,
+            )
         stream_copy_file(
             source,
             partial,
@@ -911,6 +1138,7 @@ def apply_rehearsal(opts: RehearsalOptions) -> dict[str, Any]:
             progress_sink=opts.progress_sink,
         )
         fsync_file(partial)
+        state = RehearsalApplyState.PARTIAL_COPIED
         _maybe_inject(opts, "initial_copy")
 
         _progress(opts, "publish_no_clobber")
@@ -920,14 +1148,12 @@ def apply_rehearsal(opts: RehearsalOptions) -> dict[str, Any]:
             raise RehearsalError(
                 str(exc),
                 category=RehearsalFailureCategory.APPLY,
-                recovery=(
-                    "Remove only script-owned *.partial.* under scratch root after review."
-                ),
             ) from None
-        if partial in owned:
-            owned.remove(partial)
+        if partial in ephemeral:
+            ephemeral.remove(partial)
         fsync_file(target)
         fsync_directory(target.parent)
+        state = RehearsalApplyState.TARGET_PUBLISHED
         _maybe_inject(opts, "publication")
 
         if fingerprint_file(source) != fp_before:
@@ -974,27 +1200,33 @@ def apply_rehearsal(opts: RehearsalOptions) -> dict[str, Any]:
             )
         finally:
             conn.close()
+        state = RehearsalApplyState.TARGET_WRITTEN
         _maybe_inject(opts, "writable_commit")
 
-        # Cutover-style rollback model (two-phase, crash-recoverable — not one atomic swap).
+        # Two-phase preserve + republish (crash-recoverable — not one atomic swap).
         _progress(opts, "preserve_target_then_republish_source")
         preserved = _owned_partial_name(target, "preserved")
-        if preserved.exists():
+        if _path_lexists(preserved):
             _fail(
                 "preserve path exists (no-clobber)",
                 category=RehearsalFailureCategory.APPLY,
             )
         os.rename(target, preserved)
-        owned.append(preserved)
+        state = RehearsalApplyState.TARGET_PRESERVED
         _maybe_inject(opts, "target_preservation")
 
         republish = _owned_partial_name(target, "republish")
-        if republish.exists() or target.exists():
+        if _path_lexists(target):
             _fail(
                 "republish/target exists (no-clobber)",
                 category=RehearsalFailureCategory.APPLY,
             )
-        owned.append(republish)
+        ephemeral.append(republish)
+        if _path_lexists(republish):
+            _fail(
+                "republish exists (no-clobber)",
+                category=RehearsalFailureCategory.APPLY,
+            )
         stream_copy_file(
             source,
             republish,
@@ -1002,28 +1234,31 @@ def apply_rehearsal(opts: RehearsalOptions) -> dict[str, Any]:
             progress_sink=opts.progress_sink,
         )
         fsync_file(republish)
+        state = RehearsalApplyState.REPUBLISH_PARTIAL
         try:
             publish_no_clobber(republish, target)
         except BackupError as exc:
             raise RehearsalError(
                 str(exc),
                 category=RehearsalFailureCategory.APPLY,
-                recovery=(
-                    "Remove only script-owned *.republish.* / *.preserved.* under "
-                    "scratch root after review."
-                ),
             ) from None
-        if republish in owned:
-            owned.remove(republish)
+        if republish in ephemeral:
+            ephemeral.remove(republish)
         fsync_file(target)
         fsync_directory(target.parent)
+        state = RehearsalApplyState.TARGET_RESTORED
         _maybe_inject(opts, "rollback_republish")
 
-        # Cleanup only the script-owned preserved post-write DB after successful republish.
+        # Safe to remove preserved only while target is present again.
+        if not (target.exists() and target.is_file()):
+            _fail(
+                "target missing after republish; refusing to delete preserved",
+                category=RehearsalFailureCategory.APPLY,
+            )
         try:
+            assert preserved is not None
             preserved.unlink(missing_ok=True)
-            if preserved in owned:
-                owned.remove(preserved)
+            preserved = None
         except OSError:
             _fail(
                 "rollback republish succeeded but preserved artifact unlink failed; "
@@ -1069,14 +1304,15 @@ def apply_rehearsal(opts: RehearsalOptions) -> dict[str, Any]:
                 "source content hash changed during rehearsal",
                 category=RehearsalFailureCategory.VERIFY,
             )
-        if any(p.exists() for p in companion_paths(source)) or any(
-            p.exists() for p in companion_paths(target)
+        if any(_path_lexists(p) for p in companion_paths(source)) or any(
+            _path_lexists(p) for p in companion_paths(target)
         ):
             _fail(
                 "unexpected sidecars after rehearsal",
                 category=RehearsalFailureCategory.VERIFY,
             )
 
+        state = RehearsalApplyState.COMPLETE
         elapsed = opts.clock() - t0
         report.update(
             {
@@ -1085,6 +1321,7 @@ def apply_rehearsal(opts: RehearsalOptions) -> dict[str, Any]:
                 "completed": True,
                 "captured_at_utc": _iso_now(),
                 "elapsed_seconds": round(float(elapsed), 6),
+                "apply_state": state.value,
                 "source_fingerprint_before": fp_before.to_dict(),
                 "source_fingerprint_after": fp_after.to_dict(),
                 "source_fingerprint_unchanged": True,
@@ -1098,6 +1335,7 @@ def apply_rehearsal(opts: RehearsalOptions) -> dict[str, Any]:
                 "content_hash_matched": True,
                 "marker_values_matched": True,
                 "zero_sidecars": True,
+                "exclusive_temp_create": True,
                 "copy_chunk_bytes": int(opts.copy_chunk_bytes),
                 "max_source_bytes": int(opts.max_source_bytes),
                 "streaming_copy_used": True,
@@ -1105,7 +1343,7 @@ def apply_rehearsal(opts: RehearsalOptions) -> dict[str, Any]:
                 "target_basename_after": target.name,
                 "notes": [
                     "Synthetic/throwaway rehearsal only; not a real 61 GiB restore.",
-                    "Source fingerprint unchanged; script-owned preserve artifact removed.",
+                    "Source fingerprint unchanged; preserved removed only after target restored.",
                     "Two-phase preserve+republish is crash-recoverable, not a single atomic swap.",
                     "Not production cutover.",
                 ],
@@ -1115,12 +1353,8 @@ def apply_rehearsal(opts: RehearsalOptions) -> dict[str, Any]:
         report["target_path_sanitized"] = sanitize_path_for_log(target)
         assert_report_privacy(report)
         return report
-    except RehearsalError:
-        removed = _cleanup_owned()
-        if removed:
-            # Attach recovery hint without mutating exception fields mid-raise awkwardly.
-            pass
-        raise
+    except RehearsalError as exc:
+        raise _handle_failure(exc) from None
     finally:
         for sig, handler in previous_handlers.items():
             signal.signal(sig, handler)

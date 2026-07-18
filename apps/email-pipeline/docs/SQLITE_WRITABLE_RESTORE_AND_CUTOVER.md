@@ -78,9 +78,9 @@ Writers stay stopped through backup, compaction, verification, staging, swap, an
 1. Pause **all** SQLite writers (`auto_refresh_paused` + `dashboard_auto_mirror_paused`; no manual `--apply`).  
 2. Confirm quiet: no writer PIDs, locks gone, WAL not growing.  
 3. **Mandatory:** stop `origenlab-api.service` and its health timer before any filesystem rename/swap.  
-4. Checkpoint/quiet WAL so committed frames are not left only in `-wal` while the main file moves (see WAL notes below).  
+4. **WAL checkpoint/quieting** — required responsibility of the future cutover tool (not a manual ready command here).  
 5. Build a **current** compact candidate using the **proven Online Backup API → offline compact** path (not `VACUUM INTO` against production):
-   - Online Backup API snapshot onto `/mnt/d` (writers already paused → RPO=0 snapshot).  
+   - Online Backup API snapshot onto `/mnt/d` (writers already paused → RPO=0 snapshot **iff** writers remain stopped through smoke).  
    - Compact that verified snapshot **directly into a new no-clobber staging file on production ext4 (`/`)**.  
 6. Verify staged candidate on `/` (quick_check, FK, schema, counts, zero sidecars, manifest).  
 7. Perform cutover only via a **tested cutover tool** (see swap semantics) — not ad-hoc dual `mv`.  
@@ -97,8 +97,10 @@ Writers stay stopped through backup, compaction, verification, staging, swap, an
 
 #### WAL / Online Backup notes
 
-- SQLite Online Backup API copies **committed** database pages as of the backup run. With writers paused and WAL quiet/checkpointed, committed state is included; uncommitted transactions are not.  
-- **Never** rename only `emails.sqlite` while committed frames remain only in `emails.sqlite-wal`. Checkpoint or otherwise ensure the main DB file + companions are handled as a consistent set by the cutover tool.  
+- SQLite Online Backup API copies **committed** database pages as of the backup run. With writers paused, committed state is included; uncommitted transactions are not.  
+- **Never** rename only `emails.sqlite` while committed frames remain only in `emails.sqlite-wal`.  
+- **WAL checkpoint / quieting is a required future cutover-tool responsibility** — not a ready manual operator command in this PR. Until an approved cutover tool implements checkpoint/companion handling, production cutover remains blocked.  
+- RPO=0 remains **conditional** on all SQLite writers staying stopped from the consistent Online Backup through post-swap smoke.  
 - Pause files are necessary but **not sufficient** until in-flight writer PIDs and locks are gone.
 
 ### Option B — Online backup then offline compact (writers stay up)
@@ -183,11 +185,22 @@ uv run --frozen python scripts/maintenance/rehearse_sqlite_writable_restore.py \
 - Source and target must resolve under the scratch root  
 - Approved basename tokens: `throwaway` / `rehearsal` / `synthetic`  
 - Dedicated marker table `origenlab_sqlite_rehearsal_meta` required on source  
-- Hard max source size **64 MiB**; streaming copy chunk **1 MiB** (no `Path.read_bytes`)  
-- Refuses production path/dir/aliases, known offline/compact path shapes, sidecars, collisions  
+- Hard max source size **64 MiB**; streaming copy chunk **1 MiB** with **O_EXCL** temp create  
+- Refuses production path/dir/aliases, known offline/compact path shapes, sidecars, collisions, symlinks (including broken)  
 - Preflight is byte-for-byte zero-write on the tree  
+- Apply state machine: never deletes `preserved` while `target` is absent; restores or retains on failure  
 - Evidence claims `sqlite_readonly_reopen_verified` (not a full API process reopen)  
 - Typed `RehearsalFailureCategory` / exit codes  
+
+### Apply failure-state matrix (synthetic)
+
+| Injected boundary | Authoritative after handled failure | Ephemeral cleaned | Preflight retry |
+|-------------------|-------------------------------------|-------------------|-----------------|
+| `initial_copy` | none (partial removed) | yes | succeeds |
+| `publication` | `target` | yes | fails (target exists) |
+| `writable_commit` | `target` (post-write) | yes | fails (target exists) |
+| `target_preservation` | `target` restored from `preserved`, or `preserved` retained | yes | fails (target or preserved collision) |
+| `rollback_republish` | `target` (+ `preserved` retained) | yes | fails (target/preserved) |
 
 Module: `origenlab_email_pipeline.qa.sqlite_writable_restore_rehearsal`  
 Tests: `tests/test_sqlite_writable_restore_rehearsal.py`
