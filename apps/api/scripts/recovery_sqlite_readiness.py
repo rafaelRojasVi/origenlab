@@ -75,6 +75,7 @@ def run_recovery_readiness(
 
     fp_before = fingerprint_path(db)
     settings = Settings(
+        _env_file=None,
         sqlite_path=db,
         sqlite_immutable_ro=True,
         sqlite_confirm_offline_copy=True,
@@ -82,6 +83,7 @@ def run_recovery_readiness(
         api_backend="sqlite",
         postgres_url=None,
     )
+    settings._dotenv_disabled = True
 
     checks: dict[str, Any] = {}
     try:

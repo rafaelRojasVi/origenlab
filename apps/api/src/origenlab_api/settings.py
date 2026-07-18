@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+from pydantic import PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ApiBackend = Literal["sqlite", "postgres"]
@@ -13,6 +15,32 @@ ApiBackend = Literal["sqlite", "postgres"]
 _API_ROOT = Path(__file__).resolve().parents[2]
 _EMAIL_PIPELINE_ROOT = _API_ROOT.parent / "email-pipeline"
 _DEFAULT_ACTIVE_CURRENT = _EMAIL_PIPELINE_ROOT / "reports" / "out" / "active" / "current"
+
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def env_flag_truthy(name: str) -> bool:
+    """Read a boolean-like process environment flag (names only; no dotenv)."""
+    return (os.environ.get(name) or "").strip().lower() in _TRUTHY
+
+
+def recovery_mode_requested_from_environ() -> bool:
+    """
+    Detect explicit recovery request from the process environment only.
+
+    Must run before BaseSettings reads project ``.env`` files. Both immutable and
+    offline-confirmation flags are required (matching admission policy).
+    """
+    return env_flag_truthy("ORIGENLAB_SQLITE_IMMUTABLE_RO") and env_flag_truthy(
+        "ORIGENLAB_SQLITE_CONFIRM_OFFLINE_COPY"
+    )
+
+
+def dotenv_disabled_from_environ() -> bool:
+    """True when recovery mode is requested or an explicit disable flag is set."""
+    return recovery_mode_requested_from_environ() or env_flag_truthy(
+        "ORIGENLAB_DISABLE_DOTENV"
+    )
 
 
 class Settings(BaseSettings):
@@ -44,6 +72,13 @@ class Settings(BaseSettings):
     env: str | None = None
     """Bearer/API-key token required for non-public routes when ORIGENLAB_ENV=production."""
     api_auth_token: str | None = None
+
+    _dotenv_disabled: bool = PrivateAttr(default=False)
+
+    @property
+    def dotenv_disabled(self) -> bool:
+        """Sanitized indicator: project dotenv was not loaded for this settings object."""
+        return bool(self._dotenv_disabled)
 
     def production_mode(self) -> bool:
         return (self.env or "").strip().lower() in ("production", "prod")
@@ -94,6 +129,11 @@ class Settings(BaseSettings):
     def resolved_sqlite_path(self) -> Path:
         if self.sqlite_path is not None:
             return self.sqlite_path.expanduser().resolve()
+        if self.dotenv_disabled or recovery_mode_requested_from_environ():
+            raise ValueError(
+                "recovery mode requires ORIGENLAB_SQLITE_PATH "
+                "(refusing email-pipeline dotenv fallback)"
+            )
         from origenlab_email_pipeline.config import load_settings
 
         return load_settings().resolved_sqlite_path()
@@ -107,6 +147,45 @@ class Settings(BaseSettings):
         return self.resolved_active_current() / "manifest.json"
 
 
-@lru_cache
+def build_settings(*, dotenv_disabled: bool | None = None) -> Settings:
+    """
+    Construct Settings with optional dotenv isolation.
+
+    When ``dotenv_disabled`` is true (or recovery/disable flags are in the process
+    environment), project ``.env`` files are not read. Process environment variables
+    remain visible to Pydantic and to recovery admission.
+
+    ``ORIGENLAB_DISABLE_DOTENV=1`` disables dotenv only; it does not grant recovery
+    admission (immutable + confirm + manifest are still required).
+    """
+    disable = (
+        dotenv_disabled_from_environ() if dotenv_disabled is None else bool(dotenv_disabled)
+    )
+    if disable:
+        settings = Settings(_env_file=None)
+        settings._dotenv_disabled = True
+        return settings
+    settings = Settings()
+    settings._dotenv_disabled = False
+    return settings
+
+
+@lru_cache(maxsize=8)
+def _get_settings_cached(recovery_requested: bool, dotenv_disabled: bool) -> Settings:
+    """Cache keyed by mode flags so recovery/normal settings never share an entry."""
+    return build_settings(dotenv_disabled=dotenv_disabled)
+
+
+def clear_settings_cache() -> None:
+    _get_settings_cached.cache_clear()
+
+
 def get_settings() -> Settings:
-    return Settings()
+    return _get_settings_cached(
+        recovery_mode_requested_from_environ(),
+        dotenv_disabled_from_environ(),
+    )
+
+
+# Tests and callers historically use get_settings.cache_clear().
+get_settings.cache_clear = clear_settings_cache  # type: ignore[attr-defined]

@@ -26,4 +26,5 @@ def build_health_response(settings: Settings) -> HealthResponse:
         sqlite_immutable=flags["sqlite_immutable"],
         sqlite_query_only=flags["sqlite_query_only"],
         recovery_mode=flags["recovery_mode"],
+        dotenv_disabled=bool(getattr(settings, "dotenv_disabled", False)),
     )

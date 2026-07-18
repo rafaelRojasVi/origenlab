@@ -12,6 +12,7 @@ and a frozen candidate fingerprint.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +24,24 @@ from origenlab_email_pipeline.qa.sqlite_deep_audit import is_configured_producti
 
 class SqliteAdmissionError(Exception):
     """Fail-closed recovery/admission admission failure (sanitized message)."""
+
+
+# Non-empty process values refused in recovery (names only; never log values).
+RECOVERY_FORBIDDEN_ENV_VARS: tuple[str, ...] = (
+    "ORIGENLAB_POSTGRES_URL",
+    "ALEMBIC_DATABASE_URL",
+    "ORIGENLAB_CLOUD_POSTGRES_URL",
+    "ORIGENLAB_GMAIL_OAUTH_CLIENT_JSON",
+    "ORIGENLAB_GMAIL_TOKEN_JSON",
+    "ORIGENLAB_GMAIL_WORKSPACE_USER",
+    "ORIGENLAB_API_AUTH_TOKEN",
+    "ORIGENLAB_TATIANA_OPENAI_API_KEY",
+    "OPENAI_API_KEY",
+    "CF_ACCESS_CLIENT_ID",
+    "CF_ACCESS_CLIENT_SECRET",
+    "CF_ACCESS_CLIENT_ID_PROXY",
+    "CF_ACCESS_CLIENT_SECRET_PROXY",
+)
 
 
 @dataclass(frozen=True)
@@ -94,8 +113,91 @@ def sqlite_readonly_uri(sqlite_path: Path, *, immutable: bool) -> str:
     return f"file:{encoded}?mode=ro"
 
 
+def resolve_canonical_production_sqlite_path(
+    *,
+    data_root: Path | None = None,
+    home: Path | None = None,
+) -> Path:
+    """
+    Production SQLite path for recovery exclusion.
+
+    Independent of the recovery candidate (``ORIGENLAB_SQLITE_PATH``). Does not
+    load dotenv and does not mutate ``os.environ``.
+    """
+    from origenlab_email_pipeline.config import canonical_production_sqlite_path
+
+    try:
+        return canonical_production_sqlite_path(data_root=data_root, home=home)
+    except OSError as exc:
+        raise SqliteAdmissionError(
+            f"unable to resolve canonical production SQLite path ({type(exc).__name__})"
+        ) from None
+
+
+def sqlite_paths_equivalent(left: Path, right: Path) -> bool:
+    """True when paths refer to the same DB (resolve/samefile/device+inode)."""
+    try:
+        left_r = left.expanduser().resolve()
+        right_r = right.expanduser().resolve()
+    except OSError:
+        return False
+    if left_r == right_r:
+        return True
+    try:
+        if os.path.samefile(left_r, right_r):
+            return True
+    except OSError:
+        pass
+    try:
+        left_st = left_r.stat()
+        right_st = right_r.stat()
+    except OSError:
+        return False
+    return int(left_st.st_dev) == int(right_st.st_dev) and int(left_st.st_ino) == int(
+        right_st.st_ino
+    )
+
+
+def assert_recovery_forbidden_process_env() -> None:
+    """Refuse non-empty mutation-related process env vars (never log values)."""
+    for name in RECOVERY_FORBIDDEN_ENV_VARS:
+        if (os.environ.get(name) or "").strip():
+            raise SqliteAdmissionError(
+                f"recovery mode refuses non-empty process environment variable {name}"
+            )
+
+
 def assert_not_production_sqlite(db: Path, *, settings: Any | None = None) -> None:
     """Refuse configured/default production path and aliases/samefile/device+inode."""
+    recovery_mode = False
+    if settings is not None:
+        try:
+            recovery_mode = bool(resolve_open_policy(settings).recovery_mode)
+        except SqliteAdmissionError:
+            recovery_mode = False
+    if not recovery_mode:
+        from origenlab_api.settings import recovery_mode_requested_from_environ
+
+        recovery_mode = recovery_mode_requested_from_environ()
+
+    if recovery_mode:
+        # Candidate override must never redefine production. Resolve production
+        # independently; never mutate os.environ.
+        production = resolve_canonical_production_sqlite_path()
+        try:
+            if sqlite_paths_equivalent(db, production):
+                raise SqliteAdmissionError(
+                    "refusing configured/default production SQLite path "
+                    "(including symlink/hardlink/samefile/device+inode aliases)"
+                )
+        except SqliteAdmissionError:
+            raise
+        except OSError as exc:
+            raise SqliteAdmissionError(
+                f"unable to verify production path exclusion ({type(exc).__name__})"
+            ) from None
+        return
+
     from origenlab_email_pipeline.config import load_settings as load_ep_settings
 
     try:
@@ -287,6 +389,8 @@ def admit_settings_for_immutable_api(settings: Any) -> dict[str, Any] | None:
     """
     API startup admission. Returns admission evidence when recovery mode is on.
     Returns None for ordinary mode=ro. Raises SqliteAdmissionError on failure.
+
+    ``ORIGENLAB_DISABLE_DOTENV=1`` alone never grants recovery admission.
     """
     policy = resolve_open_policy(settings)
     if not policy.recovery_mode:
@@ -294,6 +398,7 @@ def admit_settings_for_immutable_api(settings: Any) -> dict[str, Any] | None:
 
     if settings.resolved_api_backend() != "sqlite":
         raise SqliteAdmissionError("recovery mode requires ORIGENLAB_API_BACKEND=sqlite")
+    assert_recovery_forbidden_process_env()
     if settings.postgres_configured():
         raise SqliteAdmissionError(
             "recovery mode refuses ORIGENLAB_POSTGRES_URL (no Postgres in recovery)"

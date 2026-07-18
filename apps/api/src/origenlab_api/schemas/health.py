@@ -14,3 +14,4 @@ class HealthResponse(BaseModel):
     sqlite_immutable: bool = False
     sqlite_query_only: bool = False
     recovery_mode: bool = False
+    dotenv_disabled: bool = False

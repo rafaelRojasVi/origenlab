@@ -110,9 +110,70 @@ class Settings(BaseSettings):
         return self.reports_dir or (_repo_root() / "reports" / "out")
 
 
-def load_settings() -> Settings:
-    # Pydantic only binds ORIGENLAB_* fields from .env; OPENAI_API_KEY must hit os.environ.
-    env_path = _repo_root() / ".env"
-    if env_path.is_file():
-        load_dotenv(env_path, override=False)
-    return Settings()
+def canonical_production_sqlite_path(
+    *,
+    data_root: Path | None = None,
+    home: Path | None = None,
+) -> Path:
+    """
+    Resolve the canonical *production* SQLite path for safety exclusion.
+
+    Never consults ``ORIGENLAB_SQLITE_PATH`` (that may be a recovery candidate).
+    Never loads dotenv and never mutates ``os.environ``.
+
+    Resolution order:
+    1. Explicit ``data_root`` argument
+    2. Process ``ORIGENLAB_DATA_ROOT`` if non-empty
+    3. ``{home}/data/origenlab-email`` (default ``Path.home()``)
+    """
+    if data_root is not None:
+        root = Path(data_root).expanduser()
+    else:
+        raw = (os.environ.get("ORIGENLAB_DATA_ROOT") or "").strip()
+        if raw:
+            root = Path(raw).expanduser()
+        else:
+            root = (home or Path.home()) / "data" / "origenlab-email"
+    return (root / "sqlite" / "emails.sqlite").expanduser().resolve()
+
+
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _env_flag_truthy(name: str) -> bool:
+    return (os.environ.get(name) or "").strip().lower() in _TRUTHY
+
+
+def recovery_mode_requested_from_environ() -> bool:
+    """Match API recovery detection: both immutable + offline-confirm process flags."""
+    return _env_flag_truthy("ORIGENLAB_SQLITE_IMMUTABLE_RO") and _env_flag_truthy(
+        "ORIGENLAB_SQLITE_CONFIRM_OFFLINE_COPY"
+    )
+
+
+def dotenv_disabled_from_environ() -> bool:
+    """Disable project dotenv when recovery is requested or explicitly opted out."""
+    return recovery_mode_requested_from_environ() or _env_flag_truthy(
+        "ORIGENLAB_DISABLE_DOTENV"
+    )
+
+
+def load_settings(*, enable_dotenv: bool | None = None) -> Settings:
+    """
+    Load email-pipeline settings.
+
+    When recovery flags (or ``ORIGENLAB_DISABLE_DOTENV=1``) are present in the
+    process environment, skip ``load_dotenv`` and construct Settings with
+    ``_env_file=None`` so repo ``.env`` files cannot inject Postgres/Gmail/tokens.
+    Process environment variables remain visible.
+    """
+    use_dotenv = (not dotenv_disabled_from_environ()) if enable_dotenv is None else bool(
+        enable_dotenv
+    )
+    if use_dotenv:
+        # Pydantic only binds ORIGENLAB_* fields from .env; OPENAI_API_KEY must hit os.environ.
+        env_path = _repo_root() / ".env"
+        if env_path.is_file():
+            load_dotenv(env_path, override=False)
+        return Settings()
+    return Settings(_env_file=None)

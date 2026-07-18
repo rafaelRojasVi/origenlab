@@ -337,6 +337,27 @@ Ordinary API opens use `mode=ro` only. That is **not** safe for fingerprint-froz
   - candidate regular file with **no** `-wal`/`-shm`/`-journal` (including zero-byte)
   - manifest `completed=true`, basename/size agreement, and successful verification fields
 - Failed admission **fails API startup** (no silent fallback to ordinary/production mode).
+- **Candidate vs production are separate concepts:** `ORIGENLAB_SQLITE_PATH` names the
+  offline candidate; production exclusion uses a dedicated canonical resolver
+  (`~/data/origenlab-email/sqlite/emails.sqlite` or `ORIGENLAB_DATA_ROOT/...`) that
+  **never** treats the candidate override as production and **never** mutates
+  `os.environ` (no temporary unset / restore).
+- **Dotenv isolation:** when both recovery flags are present in the *process* environment
+  (or `ORIGENLAB_DISABLE_DOTENV=1`), the API and email-pipeline settings loaders **do not**
+  read project `.env` files. This prevents `WorkingDirectory=apps/api` from injecting
+  secrets via pydantic-settings / python-dotenv.
+  - Changing `WorkingDirectory` alone is **insufficient** (cwd `.env` and
+    `apps/email-pipeline/.env` are still discoverable by default loaders).
+  - Clearing only `ORIGENLAB_POSTGRES_URL` is **insufficient** (Gmail OAuth paths, API
+    tokens, and other mutation-related keys can still enter via dotenv).
+  - Process-global environment mutation is **prohibited** (concurrent settings callers
+    must not observe a temporarily modified environment).
+  - Unsafe values that are **explicitly** present in the process environment are still
+    refused by admission (Postgres, Gmail/OAuth, tokens, CF Access secrets, etc.).
+  - `ORIGENLAB_DISABLE_DOTENV=1` disables dotenv only; it does **not** grant recovery
+    admission by itself.
+  - Health exposes sanitized `dotenv_disabled=true` as an informational indicator only
+    (never paths or secrets; not proof of admission).
 
 In-process harness (synthetic or verified candidate; after merge):
 
@@ -359,7 +380,10 @@ MANIFEST=${CAND}.compaction.manifest.json
 EP=/home/rafael/dev/freelance/origenlab/apps/api
 LOG=/mnt/d/origenlab-sqlite-offline/recovery_${STAMP}.log
 
-# Explicit environment — do not inherit production service EnvironmentFile.
+# Explicit environment only — do not inherit production EnvironmentFile.
+# Code-level dotenv isolation activates from the recovery flags below; also set
+# ORIGENLAB_DISABLE_DOTENV=1 as defense in depth. Do not pass Postgres/Gmail/token vars.
+# Do not mutate os.environ inside the app to “fix” production exclusion.
 sudo systemd-run --unit="${UNIT}" \
   --uid=rafael \
   --property=WorkingDirectory="${EP}" \
@@ -369,8 +393,12 @@ sudo systemd-run --unit="${UNIT}" \
   --property=Environment=ORIGENLAB_SQLITE_IMMUTABLE_RO=1 \
   --property=Environment=ORIGENLAB_SQLITE_CONFIRM_OFFLINE_COPY=1 \
   --property=Environment=ORIGENLAB_SQLITE_COMPACTION_MANIFEST=${MANIFEST} \
+  --property=Environment=ORIGENLAB_DISABLE_DOTENV=1 \
   --property=MemoryMax=1G \
   --property=MemorySwapMax=0 \
+  --property=OOMPolicy=stop \
+  --property=StandardOutput=append:${LOG} \
+  --property=StandardError=append:${LOG} \
   /home/rafael/.local/bin/uv run --frozen uvicorn origenlab_api.main:app \
     --host 127.0.0.1 --port 8002
 ```
