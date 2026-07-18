@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 from typing import Any
 
 from origenlab_email_pipeline.cases_review_queue import fetch_cases_review_queue
 
 from origenlab_api.schemas.cases import WarmCaseItem
+from origenlab_api.settings import get_settings
+from origenlab_api.sqlite_ro import open_sqlite_readonly
 
 
 def fetch_warm_cases(
@@ -29,7 +30,9 @@ def fetch_warm_cases(
         return [], False, True, "SQLite database file not found."
 
     cap = max(1, min(int(limit), 200))
-    conn = sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True)
+    conn = open_sqlite_readonly(
+        sqlite_path, immutable=bool(get_settings().sqlite_immutable_ro)
+    )
     try:
         result = fetch_cases_review_queue(
             conn,

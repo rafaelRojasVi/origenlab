@@ -321,6 +321,30 @@ Safety model:
 4. **Stop for explicit approval** before any recovery drill or production cutover.
 5. Body-column redesign (~28.43 GiB within-row redundancy) and stale-clone deletion remain separate workstreams — see [`SQLITE_BODY_STORAGE_ASSESSMENT.md`](SQLITE_BODY_STORAGE_ASSESSMENT.md).
 
+### Application recovery-readiness (immutable RO; not cutover)
+
+Ordinary API opens use `mode=ro` only. That is **not** safe for fingerprint-frozen offline candidates with a WAL-format header and no live sidecars — SQLite may create `-wal`/`-shm`.
+
+Use the recovery harness (after merge) for an isolated read-only drill:
+
+```bash
+cd /home/rafael/dev/freelance/origenlab/apps/api
+/home/rafael/.local/bin/uv run --frozen python scripts/recovery_sqlite_readiness.py \
+  --db /mnt/d/origenlab-sqlite-offline/emails_compact_YYYYMMDDTHHMMSSZ.sqlite \
+  --confirm-offline-copy \
+  --json
+```
+
+For an isolated HTTP instance on `127.0.0.1:8002` (never replace production `:8001`):
+
+- `ORIGENLAB_SQLITE_PATH=<candidate>`
+- `ORIGENLAB_SQLITE_IMMUTABLE_RO=1`
+- `ORIGENLAB_API_BACKEND=sqlite`
+- leave `ORIGENLAB_POSTGRES_URL` unset
+- do not load production Gmail OAuth tokens into the recovery environment
+
+A compact candidate remains a **point-in-time recovery experiment**. Production mtime advancing after the offline snapshot means it is **not** eligible for direct cutover without a separate writable restore rehearsal and explicit approval.
+
 **Still prohibited:** live production heavy audit, `VACUUM` / `VACUUM INTO` against production, deleting offline clones, mutating Gmail/Postgres/cron/systemd, or treating usefulness counts as deletion approval.
 
 **Production-safe light mode:** `--light-only` runs `structural_light` only (no `quick_check`, FK checks, COUNT scans, dbstat, or body profiling). Safe on the configured production path without `--confirm-offline-copy` (ordinary `mode=ro`).

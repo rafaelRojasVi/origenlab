@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     )
 
     sqlite_path: Path | None = None
+    """When true, operator SQLite opens use mode=ro&immutable=1 + query_only (recovery drills)."""
+    sqlite_immutable_ro: bool = False
     active_current: Path | None = None
     api_backend: str | None = None
     postgres_url: str | None = None

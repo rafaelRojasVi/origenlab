@@ -252,6 +252,7 @@ def build_operator_status_report(
     gmail_user: str,
     sent_folders: tuple[str, ...],
     max_staleness_days: float = 14.0,
+    immutable: bool = False,
 ) -> OperatorStatusReport:
     generated_at = _utc_now_iso()
     errors: list[str] = []
@@ -279,7 +280,14 @@ def build_operator_status_report(
 
     if sqlite_exists:
         size_bytes = sqlite_path.stat().st_size
-        sqlite_conn = sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True)
+        uri = (
+            f"file:{sqlite_path.resolve().as_posix()}?mode=ro&immutable=1"
+            if immutable
+            else f"file:{sqlite_path.resolve().as_posix()}?mode=ro"
+        )
+        sqlite_conn = sqlite3.connect(uri, uri=True)
+        if immutable:
+            sqlite_conn.execute("PRAGMA query_only=ON")
         try:
             row = sqlite_conn.execute("SELECT MAX(date_iso) FROM emails").fetchone()
             global_max = row[0] if row else None

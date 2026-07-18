@@ -183,6 +183,7 @@ Requires editable `../email-pipeline` (`origenlab-email-pipeline`). Business log
 | Variable | Default |
 |----------|---------|
 | `ORIGENLAB_SQLITE_PATH` | From email-pipeline `load_settings()` |
+| `ORIGENLAB_SQLITE_IMMUTABLE_RO` | `false` — set `1`/`true` for recovery drills (`mode=ro&immutable=1` + `query_only`) |
 | `ORIGENLAB_ACTIVE_CURRENT` | `../email-pipeline/reports/out/active/current` |
 
 Postgres URL is **not** required.
