@@ -405,6 +405,8 @@ sudo systemd-run --unit="${UNIT}" \
 
 After the drill: stop only the recovery unit; confirm `:8001` was never restarted; confirm candidate fingerprint and zero sidecars before/after; treat the candidate as a **point-in-time** recovery experiment that **cannot** be swapped into production without a separate writable restore rehearsal and explicit approval.
 
+**Writable restore rehearsal + cutover design (docs + synthetic tooling only):** see [`SQLITE_WRITABLE_RESTORE_AND_CUTOVER.md`](SQLITE_WRITABLE_RESTORE_AND_CUTOVER.md). Do not treat the July 2026 compact candidate as cutover-eligible while production continues to change.
+
 **Still prohibited:** live production heavy audit, `VACUUM` / `VACUUM INTO` against production, deleting offline clones, mutating Gmail/Postgres/cron/systemd, or treating usefulness counts as deletion approval.
 
 **Production-safe light mode:** `--light-only` runs `structural_light` only (no `quick_check`, FK checks, COUNT scans, dbstat, or body profiling). Safe on the configured production path without `--confirm-offline-copy` (ordinary `mode=ro`).
