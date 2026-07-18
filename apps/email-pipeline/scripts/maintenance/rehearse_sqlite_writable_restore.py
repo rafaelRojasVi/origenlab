@@ -1,7 +1,16 @@
 #!/usr/bin/env python3
 """Synthetic writable-restore rehearsal CLI (throwaway fixtures only).
 
-Default is preflight (zero writes). ``--apply`` requires ``--confirm-throwaway``.
+Operations (explicit):
+
+* Default / ``--operation preflight`` — **zero-write** validation only
+  (no mkdir, locks, fixtures, or sidecars).
+* ``--operation build-fixture --apply --confirm-throwaway`` — create a tiny
+  marked synthetic source under the scratch root (a write).
+* ``--operation rehearse --apply --confirm-throwaway`` — stream-copy restore,
+  writable transaction, two-phase rollback verification.
+
+Fixture creation and rehearsal are **separate** apply operations.
 Never opens the real ~61 GiB compact candidate or production SQLite.
 """
 
@@ -18,12 +27,13 @@ if str(_ROOT / "src") not in sys.path:
 
 from origenlab_email_pipeline.qa.sqlite_online_backup import sanitize_error_message
 from origenlab_email_pipeline.qa.sqlite_writable_restore_rehearsal import (
+    COPY_CHUNK_BYTES,
+    DEFAULT_SCRATCH_ROOT,
     EXIT_APPLY,
     EXIT_OK,
-    EXIT_PREFLIGHT,
-    EXIT_SAFETY,
-    EXIT_VERIFY,
+    MAX_SOURCE_BYTES,
     RehearsalError,
+    RehearsalFailureCategory,
     RehearsalOptions,
     build_synthetic_source,
     run_rehearsal,
@@ -33,25 +43,36 @@ from origenlab_email_pipeline.qa.sqlite_writable_restore_rehearsal import (
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description=(
-            "Synthetic writable-restore rehearsal. Use throwaway/synthetic paths only."
+            "Synthetic writable-restore rehearsal. Paths must live under the "
+            "rehearsal scratch root and use throwaway|rehearsal|synthetic basenames. "
+            f"Hard source size cap: {MAX_SOURCE_BYTES} bytes; "
+            f"stream copy chunk: {COPY_CHUNK_BYTES} bytes."
         )
+    )
+    p.add_argument(
+        "--operation",
+        choices=("preflight", "build-fixture", "rehearse"),
+        default="preflight",
+        help=(
+            "preflight=zero-write checks; build-fixture=create marked synthetic DB "
+            "(requires --apply); rehearse=restore rehearsal (requires --apply)"
+        ),
     )
     p.add_argument(
         "--source",
         type=Path,
-        help="Existing synthetic source DB (or use --build-synthetic-source)",
+        help="Synthetic source DB path (under scratch root; required for preflight/rehearse)",
     )
     p.add_argument(
         "--restore-target",
         type=Path,
-        required=True,
-        help="New no-clobber throwaway restore target (basename must include throwaway|rehearsal|synthetic)",
+        help="New no-clobber throwaway restore target (required for preflight/rehearse)",
     )
     p.add_argument(
-        "--build-synthetic-source",
+        "--scratch-root",
         type=Path,
-        default=None,
-        help="Create a tiny synthetic source at this path (no-clobber) then rehearse",
+        default=DEFAULT_SCRATCH_ROOT,
+        help=f"Rehearsal scratch root (default: {DEFAULT_SCRATCH_ROOT})",
     )
     p.add_argument(
         "--confirm-throwaway",
@@ -61,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--apply",
         action="store_true",
-        help="Perform copy + writable transaction + rollback verification",
+        help="Perform the selected write operation (build-fixture or rehearse)",
     )
     p.add_argument("--json", action="store_true", help="Print sanitized JSON report")
     return p
@@ -70,19 +91,50 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        source = args.source
-        if args.build_synthetic_source is not None:
-            build_synthetic_source(args.build_synthetic_source.expanduser())
-            source = args.build_synthetic_source.expanduser()
-        if source is None:
-            raise RehearsalError("provide --source or --build-synthetic-source")
-        opts = RehearsalOptions(
-            source=source.expanduser(),
-            restore_target=args.restore_target.expanduser(),
-            confirm_throwaway=bool(args.confirm_throwaway),
-            apply=bool(args.apply),
-        )
-        report = run_rehearsal(opts)
+        if args.operation == "build-fixture":
+            if args.source is None:
+                raise RehearsalError(
+                    "build-fixture requires --source as the fixture output path",
+                    category=RehearsalFailureCategory.PREFLIGHT,
+                )
+            if args.restore_target is not None:
+                raise RehearsalError(
+                    "build-fixture does not take --restore-target "
+                    "(fixture creation and rehearsal are separate operations)",
+                    category=RehearsalFailureCategory.PREFLIGHT,
+                )
+            report = build_synthetic_source(
+                args.source.expanduser(),
+                scratch_root=args.scratch_root.expanduser(),
+                confirm_throwaway=bool(args.confirm_throwaway),
+                apply=bool(args.apply),
+            )
+        else:
+            if args.source is None or args.restore_target is None:
+                raise RehearsalError(
+                    "preflight/rehearse require --source and --restore-target",
+                    category=RehearsalFailureCategory.PREFLIGHT,
+                )
+            if args.operation == "rehearse" and not args.apply:
+                raise RehearsalError(
+                    "operation=rehearse requires --apply "
+                    "(use operation=preflight for zero-write checks)",
+                    category=RehearsalFailureCategory.PREFLIGHT,
+                )
+            if args.operation == "preflight" and args.apply:
+                raise RehearsalError(
+                    "operation=preflight is zero-write; use operation=rehearse --apply",
+                    category=RehearsalFailureCategory.PREFLIGHT,
+                )
+            opts = RehearsalOptions(
+                source=args.source.expanduser(),
+                restore_target=args.restore_target.expanduser(),
+                scratch_root=args.scratch_root.expanduser(),
+                confirm_throwaway=bool(args.confirm_throwaway),
+                apply=bool(args.apply) and args.operation == "rehearse",
+            )
+            report = run_rehearsal(opts)
+
         if args.json:
             print(json.dumps(report, indent=2, sort_keys=True))
         else:
@@ -94,19 +146,11 @@ def main(argv: list[str] | None = None) -> int:
     except RehearsalError as exc:
         msg = sanitize_error_message(str(exc))
         print(f"error: {msg}", file=sys.stderr)
-        low = msg.lower()
-        if "production" in low or "basename" in low or "symlink" in low:
-            return EXIT_SAFETY
-        if "fingerprint" in low or "rollback" in low or "read-back" in low:
-            return EXIT_VERIFY
-        if args.apply:
-            return EXIT_APPLY
-        return EXIT_PREFLIGHT
-    except Exception as exc:  # noqa: BLE001 — CLI boundary
-        print(
-            f"error: unexpected {type(exc).__name__}",
-            file=sys.stderr,
-        )
+        if exc.recovery:
+            print(f"recovery: {sanitize_error_message(exc.recovery)}", file=sys.stderr)
+        return int(exc.exit_code)
+    except Exception:  # noqa: BLE001 — CLI boundary
+        print("error: unexpected failure", file=sys.stderr)
         return EXIT_APPLY
 
 
