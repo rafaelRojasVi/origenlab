@@ -1,17 +1,25 @@
-"""Isolated recovery-readiness checks against an offline SQLite candidate.
+#!/usr/bin/env python3
+"""Isolated recovery-readiness checks against an offline compact SQLite candidate.
 
-Opens the database with ``mode=ro&immutable=1`` and ``PRAGMA query_only=ON``.
+Fail-closed admission requires:
+
+* ``--confirm-offline-copy``
+* completed compaction ``--manifest``
+* non-production path (aliases/samefile/device+inode refused)
+* no ``-wal``/``-shm``/``-journal`` (including zero-byte)
+* fingerprint agreement with the manifest, frozen before/after checks
+
+Opens through the same application connection factory used by the API
+(``mode=ro&immutable=1`` + verified ``PRAGMA query_only=ON``).
+
 Never starts production cutover, never opens production, never mutates Gmail or
-Postgres. Default is in-process checks only (no uvicorn).
-
-Requires ``--confirm-offline-copy``.
+Postgres. Does not repeat deep audit or full quick_check.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import sqlite3
 import sys
 from datetime import datetime, timezone
@@ -23,62 +31,75 @@ _SRC = _API_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+from origenlab_api.settings import Settings  # noqa: E402
 from origenlab_api.sqlite_ro import (  # noqa: E402
+    SqliteAdmissionError,
+    admit_immutable_candidate,
     existing_companions,
-    open_sqlite_readonly,
+    fingerprint_path,
+    open_operator_sqlite,
 )
+
+
+EXIT_ADMISSION = 2
+EXIT_MANIFEST = 3
+EXIT_SCHEMA = 4
+EXIT_QUERY = 5
+EXIT_FINGERPRINT = 6
 
 
 def _iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _fingerprint(path: Path) -> dict[str, int]:
-    st = path.stat()
-    return {
-        "size_bytes": int(st.st_size),
-        "mtime_ns": int(st.st_mtime_ns),
-        "device": int(st.st_dev),
-        "inode": int(st.st_ino),
-    }
-
-
-def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
-    row = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
-        (name,),
-    ).fetchone()
-    return row is not None
-
-
 def run_recovery_readiness(
     db: Path,
     *,
     confirm_offline_copy: bool,
+    manifest_path: Path,
 ) -> dict[str, Any]:
-    if not confirm_offline_copy:
-        raise SystemExit(
-            "recovery readiness requires --confirm-offline-copy "
-            "(verified offline/backup candidate only)"
-        )
-    if not db.is_file():
-        raise SystemExit(f"database not found: {db}")
+    db = db.expanduser()
+    manifest_path = manifest_path.expanduser()
 
-    before_companions = existing_companions(db)
-    if before_companions:
-        raise SystemExit(
-            f"refusing candidate with companions present: {before_companions}"
+    try:
+        admission = admit_immutable_candidate(
+            db,
+            confirm_offline_copy=confirm_offline_copy,
+            manifest_path=manifest_path,
         )
+    except SqliteAdmissionError as exc:
+        msg = str(exc)
+        if "manifest" in msg.lower():
+            raise SystemExit((EXIT_MANIFEST, msg)) from None
+        raise SystemExit((EXIT_ADMISSION, msg)) from None
 
-    fp_before = _fingerprint(db)
-    conn = open_sqlite_readonly(db, immutable=True, query_only=True)
+    fp_before = fingerprint_path(db)
+    settings = Settings(
+        sqlite_path=db,
+        sqlite_immutable_ro=True,
+        sqlite_confirm_offline_copy=True,
+        sqlite_compaction_manifest=manifest_path,
+        api_backend="sqlite",
+        postgres_url=None,
+    )
+
     checks: dict[str, Any] = {}
     try:
-        # Confirm URI / pragma mode.
-        checks["query_only"] = conn.execute("PRAGMA query_only").fetchone()[0]
-        checks["encoding"] = conn.execute("PRAGMA encoding").fetchone()[0]
+        conn = open_operator_sqlite(db, settings=settings)
+    except SqliteAdmissionError as exc:
+        raise SystemExit((EXIT_ADMISSION, str(exc))) from None
+    except sqlite3.Error as exc:
+        raise SystemExit((EXIT_QUERY, f"sqlite open failed: {type(exc).__name__}")) from None
+
+    try:
+        qonly = int(conn.execute("PRAGMA query_only").fetchone()[0])
+        checks["query_only"] = qonly
+        if qonly != 1:
+            raise SystemExit((EXIT_QUERY, "PRAGMA query_only is not active"))
+        checks["encoding"] = str(conn.execute("PRAGMA encoding").fetchone()[0])
         checks["page_size"] = int(conn.execute("PRAGMA page_size").fetchone()[0])
         checks["user_version"] = int(conn.execute("PRAGMA user_version").fetchone()[0])
+        checks["sqlite_open_uri"] = "mode=ro&immutable=1"
 
         tables = {
             str(r[0])
@@ -86,16 +107,31 @@ def run_recovery_readiness(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             ).fetchall()
         }
-        checks["has_emails"] = "emails" in tables
-        checks["has_attachments"] = "attachments" in tables
-        checks["has_email_mart_features"] = "email_mart_features" in tables
+        expected_counts = admission["manifest"]["critical_table_counts"]
+        for table in ("emails", "attachments", "email_mart_features"):
+            present = table in tables
+            checks[f"has_{table}"] = present
+            if table == "emails" and not present:
+                raise SystemExit((EXIT_SCHEMA, "candidate missing emails table"))
+            if not present:
+                checks[f"{table}_count"] = None
+                continue
+            try:
+                count = int(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
+            except sqlite3.Error as exc:
+                raise SystemExit(
+                    (EXIT_QUERY, f"count failed for {table}: {type(exc).__name__}")
+                ) from None
+            checks[f"{table}_count"] = count
+            expected = expected_counts.get(table)
+            if expected is not None and int(expected) != count:
+                raise SystemExit(
+                    (
+                        EXIT_SCHEMA,
+                        f"{table} count {count} != manifest evidence {expected}",
+                    )
+                )
 
-        if "emails" not in tables:
-            raise SystemExit("candidate missing emails table")
-
-        # Indexed / bounded application-shaped reads (not full analytical scans).
-        email_count = int(conn.execute("SELECT COUNT(*) FROM emails").fetchone()[0])
-        checks["emails_count"] = email_count
         sample = conn.execute(
             """
             SELECT id, date_iso, substr(COALESCE(subject, ''), 1, 40) AS subject_preview
@@ -108,26 +144,13 @@ def run_recovery_readiness(
         checks["emails_sample_count"] = len(sample)
 
         if "attachments" in tables:
-            checks["attachments_count"] = int(
-                conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0]
-            )
             checks["attachments_sample"] = int(
                 conn.execute(
                     "SELECT COUNT(*) FROM attachments WHERE email_id IN "
                     "(SELECT id FROM emails ORDER BY id DESC LIMIT 20)"
                 ).fetchone()[0]
             )
-        else:
-            checks["attachments_count"] = None
 
-        if "email_mart_features" in tables:
-            checks["email_mart_features_count"] = int(
-                conn.execute("SELECT COUNT(*) FROM email_mart_features").fetchone()[0]
-            )
-        else:
-            checks["email_mart_features_count"] = None
-
-        # Attempt a write must fail under query_only / immutable.
         write_rejected = False
         try:
             conn.execute("CREATE TABLE origenlab_recovery_probe(x INTEGER)")
@@ -135,18 +158,18 @@ def run_recovery_readiness(
             write_rejected = True
         checks["write_rejected"] = write_rejected
         if not write_rejected:
-            raise SystemExit("immutable/query_only open failed to reject writes")
+            raise SystemExit((EXIT_QUERY, "immutable/query_only open failed to reject writes"))
     finally:
         conn.close()
 
     after_companions = existing_companions(db)
-    fp_after = _fingerprint(db)
+    fp_after = fingerprint_path(db)
     if after_companions:
         raise SystemExit(
-            f"companions appeared after immutable open: {after_companions}"
+            (EXIT_FINGERPRINT, f"companions appeared after open: {after_companions}")
         )
     if fp_after != fp_before:
-        raise SystemExit("candidate fingerprint changed during recovery readiness")
+        raise SystemExit((EXIT_FINGERPRINT, "candidate fingerprint changed during checks"))
 
     return {
         "schema_version": 1,
@@ -157,19 +180,23 @@ def run_recovery_readiness(
         "database_basename": db.name,
         "sqlite_open_uri": "mode=ro&immutable=1",
         "pragma_query_only": True,
-        "fingerprint_before": fp_before,
-        "fingerprint_after": fp_after,
+        "admission": {
+            "admitted": True,
+            "manifest_quick_check": admission["manifest"]["quick_check"],
+            "manifest_emails_count": admission["manifest"]["critical_table_counts"].get(
+                "emails"
+            ),
+        },
+        "fingerprint_before": fp_before.to_dict(),
+        "fingerprint_after": fp_after.to_dict(),
         "fingerprint_unchanged": True,
-        "companions_before": before_companions,
+        "companions_before": [],
         "companions_after": after_companions,
         "checks": checks,
         "notes": [
             "In-process recovery readiness only; not a production cutover.",
-            "Candidate was opened immutable read-only; writes were rejected.",
-            "For an isolated HTTP drill, start uvicorn on 127.0.0.1:8002 with "
-            "ORIGENLAB_SQLITE_PATH=<candidate>, ORIGENLAB_SQLITE_IMMUTABLE_RO=1, "
-            "ORIGENLAB_API_BACKEND=sqlite, and ORIGENLAB_POSTGRES_URL unset.",
-            "Do not point this harness at production SQLite.",
+            "Candidate opened via API connection factory (immutable + query_only).",
+            "Point-in-time compact candidate cannot be swapped into live production.",
         ],
     }
 
@@ -178,46 +205,43 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--db", type=Path, required=True, help="Offline compact candidate")
     p.add_argument(
+        "--manifest",
+        type=Path,
+        required=True,
+        help="Completed .compaction.manifest.json for the candidate",
+    )
+    p.add_argument(
         "--confirm-offline-copy",
         action="store_true",
-        help="Acknowledge --db is a verified offline/backup candidate",
+        help="Acknowledge --db is a verified offline compact candidate",
     )
-    p.add_argument("--json", action="store_true", help="Print JSON report to stdout")
+    p.add_argument("--json", action="store_true", help="Print sanitized JSON to stdout")
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    # Refuse accidental production path via common env default.
-    prod = os.environ.get("ORIGENLAB_SQLITE_PATH", "").strip()
-    db = args.db.expanduser().resolve()
-    if prod:
-        try:
-            if Path(prod).expanduser().resolve() == db:
-                # Still allowed if operator explicitly confirmed offline copy of
-                # that path, but refuse the well-known production location.
-                pass
-        except OSError:
-            pass
-    known_prod = Path.home() / "data" / "origenlab-email" / "sqlite" / "emails.sqlite"
-    try:
-        if db.resolve() == known_prod.resolve():
-            print(
-                "ERROR: refusing known production SQLite path for recovery readiness",
-                file=sys.stderr,
-            )
-            return 2
-    except OSError:
-        pass
-
     try:
         report = run_recovery_readiness(
-            db, confirm_offline_copy=bool(args.confirm_offline_copy)
+            args.db.expanduser(),
+            confirm_offline_copy=bool(args.confirm_offline_copy),
+            manifest_path=args.manifest.expanduser(),
         )
     except SystemExit as exc:
+        code = EXIT_ADMISSION
+        message = str(exc)
+        if isinstance(exc.code, tuple) and len(exc.code) == 2:
+            code, message = exc.code
+        elif isinstance(exc.code, int):
+            code = exc.code
+            message = message or f"exit {code}"
+        print(f"ERROR: {message}", file=sys.stderr)
+        return int(code)
+    except SqliteAdmissionError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
-        return 2
+        return EXIT_ADMISSION
 
+    # Privacy: never print absolute paths
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
@@ -226,6 +250,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"emails_count={report['checks']['emails_count']}")
         print(f"fingerprint_unchanged={report['fingerprint_unchanged']}")
         print(f"write_rejected={report['checks']['write_rejected']}")
+        print(f"query_only={report['checks']['query_only']}")
     return 0
 
 

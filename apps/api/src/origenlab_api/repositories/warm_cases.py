@@ -9,7 +9,7 @@ from origenlab_email_pipeline.cases_review_queue import fetch_cases_review_queue
 
 from origenlab_api.schemas.cases import WarmCaseItem
 from origenlab_api.settings import get_settings
-from origenlab_api.sqlite_ro import open_sqlite_readonly
+from origenlab_api.sqlite_ro import open_operator_sqlite
 
 
 def fetch_warm_cases(
@@ -30,9 +30,7 @@ def fetch_warm_cases(
         return [], False, True, "SQLite database file not found."
 
     cap = max(1, min(int(limit), 200))
-    conn = open_sqlite_readonly(
-        sqlite_path, immutable=bool(get_settings().sqlite_immutable_ro)
-    )
+    conn = open_operator_sqlite(sqlite_path, settings=get_settings())
     try:
         result = fetch_cases_review_queue(
             conn,

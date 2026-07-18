@@ -192,11 +192,9 @@ def fetch_contact_intelligence(
     sent_folders = resolve_outbound_sent_folders(None)
 
     from origenlab_api.settings import get_settings
-    from origenlab_api.sqlite_ro import open_sqlite_readonly
+    from origenlab_api.sqlite_ro import open_operator_sqlite
 
-    conn = open_sqlite_readonly(
-        sqlite_path, immutable=bool(get_settings().sqlite_immutable_ro)
-    )
+    conn = open_operator_sqlite(sqlite_path, settings=get_settings())
     try:
         mart_row = _fetch_contact_master(conn, email_norm)
         if mart_row is None and _table_exists(conn, "contact_master"):

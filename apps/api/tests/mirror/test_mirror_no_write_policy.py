@@ -57,5 +57,10 @@ def test_operator_health_route_unchanged_contract() -> None:
         "mode",
         "backend",
         "postgres_configured",
+        "sqlite_immutable",
+        "sqlite_query_only",
+        "recovery_mode",
     }
     assert body["mode"] == "operator-sqlite-readonly"
+    assert body["sqlite_immutable"] is False
+    assert body["recovery_mode"] is False

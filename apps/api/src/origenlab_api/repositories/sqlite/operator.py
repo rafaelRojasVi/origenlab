@@ -37,7 +37,9 @@ class SqliteOperatorStatusRepository:
             gmail_user=gmail_user,
             sent_folders=sent_folders,
             max_staleness_days=max_staleness_days,
-            immutable=bool(settings.sqlite_immutable_ro),
+            immutable=bool(
+                settings.sqlite_immutable_ro and settings.sqlite_confirm_offline_copy
+            ),
         )
 
         readiness = report.outbound_readiness or {}

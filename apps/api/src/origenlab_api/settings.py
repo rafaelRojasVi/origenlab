@@ -23,8 +23,12 @@ class Settings(BaseSettings):
     )
 
     sqlite_path: Path | None = None
-    """When true, operator SQLite opens use mode=ro&immutable=1 + query_only (recovery drills)."""
+    """Request immutable recovery opens (insufficient alone — see confirm + manifest)."""
     sqlite_immutable_ro: bool = False
+    """Explicit offline confirmation required with sqlite_immutable_ro for recovery mode."""
+    sqlite_confirm_offline_copy: bool = False
+    """Completed compaction manifest path required for recovery mode."""
+    sqlite_compaction_manifest: Path | None = None
     active_current: Path | None = None
     api_backend: str | None = None
     postgres_url: str | None = None

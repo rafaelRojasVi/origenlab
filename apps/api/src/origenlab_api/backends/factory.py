@@ -36,8 +36,12 @@ class RepositoryBundle:
 
 
 def validate_api_settings(settings: Settings) -> None:
-    """Fail fast when postgres backend is selected without a DSN."""
+    """Fail fast when postgres backend is selected without a DSN or recovery admission fails."""
     from origenlab_api.http_security import validate_http_security_settings
+    from origenlab_api.sqlite_ro import (
+        SqliteAdmissionError,
+        admit_settings_for_immutable_api,
+    )
 
     validate_http_security_settings(settings)
     backend = settings.resolved_api_backend()
@@ -57,6 +61,11 @@ def validate_api_settings(settings: Settings) -> None:
         raise ValueError(
             "ORIGENLAB_ENV=production requires ORIGENLAB_API_AUTH_TOKEN"
         )
+    # Fail-closed recovery admission: never silently fall back to ordinary mode.
+    try:
+        admit_settings_for_immutable_api(settings)
+    except SqliteAdmissionError as exc:
+        raise ValueError(f"sqlite recovery admission failed: {exc}") from None
 
 
 def get_repository_bundle(settings: Settings) -> RepositoryBundle:
