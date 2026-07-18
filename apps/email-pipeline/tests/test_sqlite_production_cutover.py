@@ -9,8 +9,15 @@ from pathlib import Path
 import pytest
 
 from origenlab_email_pipeline.qa.sqlite_production_cutover import (
+    CHILECOMPRA_LOCK_FILENAME,
+    CUTOVER_ACCESS_INVENTORY,
+    DASHBOARD_LOCK_FILENAME,
     KNOWN_EVIDENCE_COMPACT,
+    MAIL_LOCK_FILENAME,
     REAL_PRODUCTION_APPLY_BLOCKED,
+    REAL_SQLITE_READER_ENTRY_POINTS,
+    REAL_SQLITE_WRITER_ENTRY_POINTS,
+    UNRELATED_EXTERNAL_WRITER_ENTRY_POINTS,
     CutoverError,
     CutoverExclusiveLock,
     CutoverFailureCategory,
@@ -18,9 +25,11 @@ from origenlab_email_pipeline.qa.sqlite_production_cutover import (
     CutoverStage,
     LockRecord,
     SyntheticWorld,
+    abort_before_swap,
     apply_stage,
     attempt_rollback_before_writers,
     journal_path_for,
+    parse_fdinfo_access_mode,
     plan_preflight,
     reconcile_atomic_swap_state,
     tree_snapshot,
@@ -39,6 +48,10 @@ def _world(tmp_path: Path) -> tuple[SyntheticWorld, Path, Path, Path, str]:
     (reports / "active" / "current").mkdir(parents=True)
     world = SyntheticWorld(root=root, head_sha=MAIN_SHA)
     world.files[str(prod)] = b"SYNTHETIC-PROD-DB-v1"
+    world.modes[str(prod)] = 0o644
+    world.owners[str(prod)] = (1000, 1000)
+    world.inode_overrides[str(prod)] = 4242
+    world.device_overrides[str(prod)] = 7
     world.services.api_active = True
     world.services.health_timer_active = True
     world.wal_size = 4096
@@ -99,6 +112,7 @@ def _run_through(
         CutoverStage.PAUSE_WRITERS,
         CutoverStage.STOP_READERS,
         CutoverStage.QUIESCE_WAL,
+        CutoverStage.APPLY_OS_WRITE_BARRIER,
         CutoverStage.CREATE_CURRENT_BACKUP,
         CutoverStage.COMPACT_TO_PRODUCTION_FS_STAGING,
         CutoverStage.VERIFY_CANDIDATE,
@@ -106,6 +120,8 @@ def _run_through(
         CutoverStage.ATOMIC_SWAP,
         CutoverStage.READONLY_SMOKE,
         CutoverStage.RESUME_SERVICES,
+        CutoverStage.RESUME_WRITERS_PONR,
+        CutoverStage.RESUME_WRITERS_RESTORE_MODE,
         CutoverStage.RESUME_WRITERS_MAIL,
         CutoverStage.RESUME_WRITERS_OBSERVE_MAIL,
         CutoverStage.RESUME_WRITERS_MIRROR,
@@ -275,6 +291,46 @@ def test_concurrent_stage_lock_contention(tmp_path: Path) -> None:
     assert "contention" in str(exc.value).lower()
     t.join(timeout=2.0)
     assert not errors
+
+
+def test_cross_maintenance_id_lock_contention(tmp_path: Path) -> None:
+    db = tmp_path / "emails.sqlite"
+    db.write_bytes(b"x")
+    lock_dir = tmp_path / "locks"
+    a = CutoverExclusiveLock(db, "maintAAAA1111", lock_dir=lock_dir)
+    b = CutoverExclusiveLock(db, "maintBBBB2222", lock_dir=lock_dir)
+    assert a.key == b.key
+    a.acquire()
+    with pytest.raises(CutoverError):
+        b.acquire()
+    a.release()
+
+
+def test_different_databases_independent_locks(tmp_path: Path) -> None:
+    a_path = tmp_path / "a.sqlite"
+    b_path = tmp_path / "b.sqlite"
+    a_path.write_bytes(b"a")
+    b_path.write_bytes(b"b")
+    lock_dir = tmp_path / "locks"
+    la = CutoverExclusiveLock(a_path, MID, lock_dir=lock_dir)
+    lb = CutoverExclusiveLock(b_path, MID, lock_dir=lock_dir)
+    assert la.key != lb.key
+    la.acquire()
+    lb.acquire()
+    la.release()
+    lb.release()
+
+
+def test_stale_lock_file_without_flock_reusable(tmp_path: Path) -> None:
+    db = tmp_path / "emails.sqlite"
+    db.write_bytes(b"x")
+    lock_dir = tmp_path / "locks"
+    lock = CutoverExclusiveLock(db, MID, lock_dir=lock_dir)
+    lock.path.parent.mkdir(parents=True, exist_ok=True)
+    lock.path.write_text("pid=1 maintenance_id=stale started_at=x\n", encoding="utf-8")
+    # No flock held — acquire must succeed.
+    lock.acquire()
+    lock.release()
 
 
 def test_real_flock_contention(tmp_path: Path) -> None:
@@ -715,9 +771,9 @@ def test_rollback_refused_from_writer_resume_started(tmp_path: Path) -> None:
         reports,
         fp,
         root,
-        stop_before=CutoverStage.RESUME_WRITERS_OBSERVE_MAIL,
+        stop_before=CutoverStage.RESUME_WRITERS_RESTORE_MODE,
     )
-    # writer_resume_started should be true after resume_writers_mail
+    # writer_resume_started should be true after resume_writers_ponr
     jpath = journal_path_for(
         CutoverOptions(maintenance_id=MID, expected_production_path=prod),
         prod,
@@ -725,6 +781,7 @@ def test_rollback_refused_from_writer_resume_started(tmp_path: Path) -> None:
     journal = json.loads(world.files[str(jpath)].decode())
     assert journal["writer_resume_started"] is True
     assert journal["writers_resumed"] is False
+    assert journal["writable_mode_restored"] is False
     pre = prod.with_name(f"{prod.name}.pre_cutover.{MID}")
     with pytest.raises(CutoverError) as exc:
         attempt_rollback_before_writers(
@@ -822,7 +879,7 @@ def test_crash_after_first_writer_unpause(tmp_path: Path) -> None:
     world, prod, reports, root, fp = _world(tmp_path)
     backup, staging = _paths(root)
     _run_through(
-        world, prod, reports, fp, root, stop_before=CutoverStage.RESUME_WRITERS_MAIL
+        world, prod, reports, fp, root, stop_before=CutoverStage.RESUME_WRITERS_PONR
     )
     live_fp = world.fingerprint(prod)
     with pytest.raises(CutoverError):
@@ -832,11 +889,11 @@ def test_crash_after_first_writer_unpause(tmp_path: Path) -> None:
                 prod,
                 reports,
                 live_fp,
-                stage=CutoverStage.RESUME_WRITERS_MAIL,
+                stage=CutoverStage.RESUME_WRITERS_PONR,
                 apply=True,
                 backup=backup,
                 staging=staging,
-                fail_after="resume_writers_mail",
+                fail_after="writer_resume_started",
             )
         )
     jpath = journal_path_for(
@@ -846,6 +903,7 @@ def test_crash_after_first_writer_unpause(tmp_path: Path) -> None:
     journal = json.loads(world.files[str(jpath)].decode())
     assert journal["writer_resume_started"] is True
     assert journal["writers_resumed"] is False
+    assert journal["writable_mode_restored"] is False
 
 
 def test_non_sequential_stage_refused(tmp_path: Path) -> None:
@@ -944,7 +1002,16 @@ def test_maintenance_id_regex(tmp_path: Path) -> None:
 
 
 def test_real_apply_blocked_flag_documented() -> None:
-    assert REAL_PRODUCTION_APPLY_BLOCKED is True
+    assert REAL_PRODUCTION_APPLY_BLOCKED is False
+    names = {e["name"] for e in REAL_SQLITE_WRITER_ENTRY_POINTS}
+    assert "chilecompra_equipment_auto_refresh" not in names
+    assert "mail_auto_refresh" in names
+    reader_names = {e["name"] for e in REAL_SQLITE_READER_ENTRY_POINTS}
+    assert "dashboard_auto_mirror" in reader_names
+    assert "origenlab-api.service" in reader_names
+    unrelated = {e["name"] for e in UNRELATED_EXTERNAL_WRITER_ENTRY_POINTS}
+    assert "chilecompra_equipment_auto_refresh" in unrelated
+    assert "sqlite_writers" in CUTOVER_ACCESS_INVENTORY
 
 
 def test_no_clobber_backup_dest(tmp_path: Path) -> None:
@@ -969,3 +1036,204 @@ def test_no_clobber_backup_dest(tmp_path: Path) -> None:
             )
         )
     assert "no-clobber" in str(exc.value).lower() or "exists" in str(exc.value).lower()
+
+
+def test_parse_fdinfo_access_modes() -> None:
+    assert parse_fdinfo_access_mode(0o100000) == "read_only"  # O_RDONLY
+    assert parse_fdinfo_access_mode(0o100001) == "writable"  # O_WRONLY
+    assert parse_fdinfo_access_mode(0o100002) == "writable"  # O_RDWR
+    assert parse_fdinfo_access_mode("0100002") == "writable"
+    assert parse_fdinfo_access_mode("not-a-flag") == "unknown"
+
+
+def test_writable_fd_fails_quiesce(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    apply_stage(
+        _opts(
+            world, prod, reports, fp, stage=CutoverStage.PAUSE_WRITERS, apply=True,
+            backup=backup, staging=staging,
+        )
+    )
+    apply_stage(
+        _opts(
+            world, prod, reports, fp, stage=CutoverStage.STOP_READERS, apply=True,
+            backup=backup, staging=staging,
+        )
+    )
+    world.lock_records = []
+    world.fd_hits = [
+        {"pid": 99999, "fd": "3", "device": 7, "inode": 4242, "kind": "production", "access": "writable"}
+    ]
+    with pytest.raises(CutoverError) as exc:
+        apply_stage(
+            _opts(
+                world, prod, reports, fp, stage=CutoverStage.QUIESCE_WAL, apply=True,
+                backup=backup, staging=staging,
+            )
+        )
+    assert "writable" in str(exc.value).lower() or "fd" in str(exc.value).lower()
+
+
+def test_unknown_fdinfo_fails_closed(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    apply_stage(
+        _opts(
+            world, prod, reports, fp, stage=CutoverStage.PAUSE_WRITERS, apply=True,
+            backup=backup, staging=staging,
+        )
+    )
+    apply_stage(
+        _opts(
+            world, prod, reports, fp, stage=CutoverStage.STOP_READERS, apply=True,
+            backup=backup, staging=staging,
+        )
+    )
+    world.lock_records = []
+    world.fd_hits = [
+        {"pid": 99999, "fd": "3", "device": 7, "inode": 4242, "kind": "production", "access": "unknown"}
+    ]
+    with pytest.raises(CutoverError):
+        apply_stage(
+            _opts(
+                world, prod, reports, fp, stage=CutoverStage.QUIESCE_WAL, apply=True,
+                backup=backup, staging=staging,
+            )
+        )
+
+
+def test_write_barrier_blocks_writable_open(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.CREATE_CURRENT_BACKUP
+    )
+    assert world.modes[str(prod)] & 0o222 == 0
+    assert world.try_open_writable(prod) is False
+    jpath = journal_path_for(
+        CutoverOptions(maintenance_id=MID, expected_production_path=prod), prod
+    )
+    journal = json.loads(world.files[str(jpath)].decode())
+    assert journal["production_write_barrier_active"] is True
+    assert journal["original_mode"] == 0o644
+
+
+def test_pre_swap_abort_restores_permissions(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.APPROVE_SWAP
+    )
+    live_fp = world.fingerprint(prod)
+    report = abort_before_swap(
+        _opts(
+            world, prod, reports, live_fp, stage=CutoverStage.VERIFY_CANDIDATE,
+            apply=True, backup=backup, staging=staging,
+        )
+    )
+    assert report["aborted_before_swap"] is True
+    assert world.modes[str(prod)] == 0o644
+    assert world.mail_pause is False
+    assert world.services.api_active is True
+
+
+def test_abort_refused_after_swap_intent(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.READONLY_SMOKE
+    )
+    with pytest.raises(CutoverError) as exc:
+        abort_before_swap(
+            _opts(
+                world, prod, reports, world.fingerprint(prod),
+                stage=CutoverStage.ATOMIC_SWAP, apply=True, approve_swap=True,
+                backup=backup, staging=staging,
+            )
+        )
+    assert "swap" in str(exc.value).lower()
+
+
+def test_post_mail_fingerprint_drift_accepted(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.RESUME_WRITERS_OBSERVE_MAIL
+    )
+    # Simulate legitimate mail ingest changing content/size.
+    world.files[str(prod)] = world.files[str(prod)] + b"-INGESTED"
+    world.modes[str(prod)] = 0o644
+    live_fp = world.fingerprint(prod)
+    report = apply_stage(
+        _opts(
+            world, prod, reports, live_fp,
+            stage=CutoverStage.RESUME_WRITERS_OBSERVE_MAIL, apply=True,
+            backup=backup, staging=staging,
+        )
+    )
+    assert report["post_mail_fingerprint"] == live_fp
+
+
+def test_device_inode_replacement_after_mail_refused(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.RESUME_WRITERS_OBSERVE_MAIL
+    )
+    world.inode_overrides[str(prod)] = 999999
+    with pytest.raises(CutoverError) as exc:
+        apply_stage(
+            _opts(
+                world, prod, reports, world.fingerprint(prod),
+                stage=CutoverStage.RESUME_WRITERS_OBSERVE_MAIL, apply=True,
+                backup=backup, staging=staging,
+            )
+        )
+    assert "inode" in str(exc.value).lower()
+
+
+def test_chilecompra_live_lock_does_not_block_quiesce(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    apply_stage(
+        _opts(
+            world, prod, reports, fp, stage=CutoverStage.PAUSE_WRITERS, apply=True,
+            backup=backup, staging=staging,
+        )
+    )
+    apply_stage(
+        _opts(
+            world, prod, reports, fp, stage=CutoverStage.STOP_READERS, apply=True,
+            backup=backup, staging=staging,
+        )
+    )
+    world.lock_records = [
+        LockRecord(
+            basename=CHILECOMPRA_LOCK_FILENAME,
+            classification="live",
+            pid=5555,
+        )
+    ]
+    world.fd_hits = []
+    apply_stage(
+        _opts(
+            world, prod, reports, fp, stage=CutoverStage.QUIESCE_WAL, apply=True,
+            backup=backup, staging=staging,
+        )
+    )
+
+
+def test_ponr_before_chmod_restore(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.RESUME_WRITERS_RESTORE_MODE
+    )
+    jpath = journal_path_for(
+        CutoverOptions(maintenance_id=MID, expected_production_path=prod), prod
+    )
+    journal = json.loads(world.files[str(jpath)].decode())
+    assert journal["writer_resume_started"] is True
+    assert journal["writable_mode_restored"] is False
+    assert world.modes[str(prod)] & 0o222 == 0

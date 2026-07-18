@@ -28,6 +28,7 @@ from origenlab_email_pipeline.qa.sqlite_production_cutover import (
     CutoverOptions,
     CutoverStage,
     STAGE_ORDER,
+    abort_before_swap,
     apply_stage,
     attempt_rollback_before_writers,
     plan_preflight,
@@ -95,6 +96,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Attempt verified atomic rollback before writer_resume_started",
     )
     p.add_argument(
+        "--abort-before-swap",
+        action="store_true",
+        help="Abort before swap intent/exchange; restore perms/services/markers",
+    )
+    p.add_argument(
         "--pre-cutover-path",
         type=Path,
         default=None,
@@ -124,7 +130,9 @@ def main(argv: list[str] | None = None) -> int:
             reports_dir=args.reports_dir,
             api_base_url=str(args.api_base_url),
         )
-        if args.rollback_before_writers:
+        if args.abort_before_swap:
+            report = abort_before_swap(opts)
+        elif args.rollback_before_writers:
             report = attempt_rollback_before_writers(
                 opts,
                 pre_cutover_path=(

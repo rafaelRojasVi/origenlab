@@ -3,10 +3,14 @@
 Staged state machine only. Default is zero-write preflight. Never runs the
 entire production workflow from one command.
 
-Real production apply is currently blocked because not every SQLite writer
-entry point has a cutover-linked pause barrier (see
-``REAL_SQLITE_WRITER_ENTRY_POINTS`` / ``REAL_PRODUCTION_APPLY_BLOCKED``).
-SyntheticWorld remains available for exhaustive tests.
+Access inventory is split into SQLite writers, SQLite readers, and unrelated
+external writers (see ``CUTOVER_ACCESS_INVENTORY``). ChileCompra does not
+mutate SQLite and must not block RPO=0. An OS-level chmod write barrier
+mitigates accidental ad-hoc SQLite writes; malicious/root bypass is outside
+the operator threat model.
+
+Production apply readiness is derived dynamically (pause + stop + flock +
+write barrier + clean FDs + WAL quiesce + valid plan), not a hard-coded True.
 
 The July 2026 compact candidate is evidence-only and is never accepted as a
 cutover source. Environment variables are never accepted as proof of git HEAD.
@@ -28,7 +32,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Generator, Iterator, Protocol
+from typing import Any, Callable, Generator, Protocol
 
 from origenlab_email_pipeline.config import Settings, canonical_production_sqlite_path, load_settings
 from origenlab_email_pipeline.operator_cli.chilecompra_auto_refresh import (
@@ -74,7 +78,7 @@ from origenlab_email_pipeline.qa.sqlite_writable_restore_rehearsal import (
     validate_planned_cutover_topology,
 )
 
-CUTOVER_SCHEMA_VERSION = 2
+CUTOVER_SCHEMA_VERSION = 3
 TOOL_NAME = "sqlite_production_cutover"
 API_SERVICE = "origenlab-api.service"
 API_HEALTH_TIMER = "origenlab-api-health.timer"
@@ -86,6 +90,11 @@ JOURNAL_DIR_NAME = ".origenlab_cutover_journals"
 LOCK_DIR_NAME = ".origenlab_sqlite_cutover_locks"
 # SHM may appear after API open; only these sizes are acceptable.
 ALLOWED_SHM_SIZES = frozenset({0, 32768})
+# Linux open(2) access-mode bits (from /proc/<pid>/fdinfo/<fd> flags).
+_O_ACCMODE = 0o3
+_O_RDONLY = 0o0
+_O_WRONLY = 0o1
+_O_RDWR = 0o2
 
 EXIT_OK = 0
 EXIT_PREFLIGHT = 2
@@ -101,55 +110,83 @@ _EMAIL = re.compile(
     r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
 )
 
-# Inventory of known production SQLite writers / holders. Keep exact.
+# Verified from source: mail writes SQLite; dashboard reads SQLite + writes Postgres;
+# API reads SQLite; chilecompra writes CSV/Postgres/external only (no SQLite).
+CUTOVER_ACCESS_INVENTORY: dict[str, tuple[dict[str, str], ...]] = {
+    "sqlite_writers": (
+        {
+            "name": "mail_auto_refresh",
+            "also_known_as": "daily-core",
+            "barrier": "auto_refresh_paused",
+            "lock": MAIL_LOCK_FILENAME,
+            "status": "must_pause",
+            "access": "sqlite_writer",
+        },
+        {
+            "name": "ad_hoc_operator_scripts",
+            "barrier": "os_write_barrier_chmod",
+            "lock": "none",
+            "status": "mitigated_by_write_barrier",
+            "access": "potential_sqlite_writer",
+            "reason": (
+                "manual sqlite3 / scripts may open production RW without pause "
+                "markers; chmod write barrier blocks ordinary accidental opens. "
+                "Malicious/root bypass is outside the operator threat model."
+            ),
+        },
+    ),
+    "sqlite_readers": (
+        {
+            "name": "dashboard_auto_mirror",
+            "barrier": "dashboard_auto_mirror_paused",
+            "lock": DASHBOARD_LOCK_FILENAME,
+            "status": "must_pause",
+            "access": "sqlite_reader_postgres_writer",
+            "reason": (
+                "pause to release SQLite reads and prevent stale mirror publication"
+            ),
+        },
+        {
+            "name": "origenlab-api.service",
+            "barrier": "systemctl stop API + health timer",
+            "lock": "n/a",
+            "status": "must_stop",
+            "access": "sqlite_reader",
+        },
+    ),
+    "unrelated_external_writers": (
+        {
+            "name": "chilecompra_equipment_auto_refresh",
+            "barrier": "optional_operational_quiet",
+            "lock": CHILECOMPRA_LOCK_FILENAME,
+            "status": "not_sqlite",
+            "access": "csv_postgres_external_writer",
+            "reason": (
+                "does not mutate SQLite; must not block RPO=0. Optional quiet "
+                "for operational clarity only."
+            ),
+        },
+    ),
+}
+
+# Backward-compatible aliases used by docs/tests.
 REAL_SQLITE_WRITER_ENTRY_POINTS: tuple[dict[str, str], ...] = (
-    {
-        "name": "mail_auto_refresh",
-        "barrier": "auto_refresh_paused",
-        "lock": MAIL_LOCK_FILENAME,
-        "status": "guarded",
-    },
-    {
-        "name": "dashboard_auto_mirror",
-        "barrier": "dashboard_auto_mirror_paused",
-        "lock": DASHBOARD_LOCK_FILENAME,
-        "status": "guarded",
-    },
-    {
-        "name": "chilecompra_equipment_auto_refresh",
-        "barrier": "none",
-        "lock": CHILECOMPRA_LOCK_FILENAME,
-        "status": "unguarded",
-        "reason": "has concurrency lock but no cutover-linked pause marker",
-    },
-    {
-        "name": "origenlab-api.service",
-        "barrier": "systemctl stop (reader; must stop before WAL quiesce/swap)",
-        "lock": "n/a",
-        "status": "guarded_via_stop_readers",
-    },
-    {
-        "name": "ad_hoc_operator_scripts",
-        "barrier": "none",
-        "lock": "none",
-        "status": "unguarded",
-        "reason": "manual sqlite3 / scripts may open production RW without markers",
-    },
+    CUTOVER_ACCESS_INVENTORY["sqlite_writers"]
+)
+REAL_SQLITE_READER_ENTRY_POINTS: tuple[dict[str, str], ...] = (
+    CUTOVER_ACCESS_INVENTORY["sqlite_readers"]
+)
+UNRELATED_EXTERNAL_WRITER_ENTRY_POINTS: tuple[dict[str, str], ...] = (
+    CUTOVER_ACCESS_INVENTORY["unrelated_external_writers"]
 )
 
-UNGUARDED_WRITER_ENTRY_POINTS: tuple[str, ...] = tuple(
-    e["name"]
-    for e in REAL_SQLITE_WRITER_ENTRY_POINTS
-    if e.get("status") == "unguarded"
-)
-
-# Real FilesystemAdapters mutating apply remains blocked until every writer
-# has a reliable maintenance barrier.
-REAL_PRODUCTION_APPLY_BLOCKED = True
+# Deprecated name — no longer a hard True; use evaluate_production_apply_readiness.
+REAL_PRODUCTION_APPLY_BLOCKED = False
 REAL_PRODUCTION_APPLY_BLOCK_REASON = (
-    "Real production cutover apply is blocked: unguarded SQLite writer entry "
-    f"points remain: {', '.join(UNGUARDED_WRITER_ENTRY_POINTS)}. "
-    "SyntheticWorld tests exercise the state machine without touching production."
+    "Production apply readiness is derived: SQLite automation writers paused, "
+    "readers stopped, exclusive flock held, OS write barrier active, FD scan "
+    "clean, WAL quiesced, and approved plan/journal valid. ChileCompra is not "
+    "a SQLite writer and does not block RPO=0."
 )
 
 
@@ -158,6 +195,7 @@ class CutoverStage(enum.Enum):
     PAUSE_WRITERS = "pause_writers"
     STOP_READERS = "stop_readers"
     QUIESCE_WAL = "quiesce_wal"
+    APPLY_OS_WRITE_BARRIER = "apply_os_write_barrier"
     CREATE_CURRENT_BACKUP = "create_current_backup"
     COMPACT_TO_PRODUCTION_FS_STAGING = "compact_to_production_fs_staging"
     VERIFY_CANDIDATE = "verify_candidate"
@@ -165,12 +203,15 @@ class CutoverStage(enum.Enum):
     ATOMIC_SWAP = "atomic_swap"
     READONLY_SMOKE = "readonly_smoke"
     RESUME_SERVICES = "resume_services"
+    RESUME_WRITERS_PONR = "resume_writers_ponr"
+    RESUME_WRITERS_RESTORE_MODE = "resume_writers_restore_mode"
     RESUME_WRITERS_MAIL = "resume_writers_mail"
     RESUME_WRITERS_OBSERVE_MAIL = "resume_writers_observe_mail"
     RESUME_WRITERS_MIRROR = "resume_writers_mirror"
     RESUME_WRITERS_OBSERVE_MIRROR = "resume_writers_observe_mirror"
     RESUME_WRITERS_COMMIT = "resume_writers_commit"
     COMPLETED = "completed"
+    # abort_before_swap is an operation, not a forward stage.
 
 
 STAGE_ORDER: tuple[CutoverStage, ...] = tuple(CutoverStage)
@@ -326,12 +367,19 @@ class WriterInventory:
     def writers_quiesced(self) -> bool:
         if not self.mail_pause_present or not self.mirror_pause_present:
             return False
-        if any(r.classification in {"live", "malformed"} for r in self.locks):
+        if any(
+            r.classification in {"live", "malformed"}
+            and r.basename != CHILECOMPRA_LOCK_FILENAME
+            for r in self.locks
+        ):
             return False
         # Foreign FD hits (not our pid) block quiesce.
         for hit in self.fd_hits:
             if int(hit.get("pid") or -1) != self.orchestrator_pid:
-                return False
+                access = str(hit.get("access") or "unknown")
+                if access != "read_only":
+                    return False
+                return False  # foreign RO also blocks until readers stopped
         if self.unreadable:
             return False
         return True
@@ -400,6 +448,15 @@ class CutoverJournal:
     exchange_completed: bool = False
     old_production_retained: bool = False
     rollback_intent: dict[str, Any] | None = None
+    original_mode: int | None = None
+    original_uid: int | None = None
+    original_gid: int | None = None
+    production_write_barrier_active: bool = False
+    staging_write_barrier_active: bool = False
+    writable_mode_restored: bool = False
+    permission_intent: dict[str, Any] | None = None
+    abort_before_swap_completed: bool = False
+    post_mail_fingerprint: str | None = None
     updated_at_utc: str = field(default_factory=_iso_now)
     notes: list[str] = field(default_factory=list)
 
@@ -422,6 +479,11 @@ class PrivatePlanPaths:
     reports_dir: str
     journal_path: str
     journal_dir: str
+    original_mode: int | None = None
+    original_uid: int | None = None
+    original_gid: int | None = None
+    production_device: int | None = None
+    production_inode: int | None = None
 
 
 class CutoverAdapters(Protocol):
@@ -461,6 +523,12 @@ class CutoverAdapters(Protocol):
         self, production: Path, maintenance_id: str
     ) -> Any: ...
     def fsync_dir(self, path: Path) -> None: ...
+    def fsync_file(self, path: Path) -> None: ...
+    def get_file_mode_owner(self, path: Path) -> dict[str, int]: ...
+    def chmod_path(self, path: Path, mode: int) -> None: ...
+    def chown_path(self, path: Path, uid: int, gid: int) -> None: ...
+    def quick_check_ok(self, path: Path) -> bool: ...
+    def try_open_writable(self, path: Path) -> bool: ...
 
 
 def find_repository_root(start: Path | None = None) -> Path:
@@ -579,6 +647,36 @@ def classify_lock_file(path: Path) -> LockRecord:
     )
 
 
+def parse_fdinfo_access_mode(flags_value: int | str) -> str:
+    """Classify Linux open flags into read_only / writable / unknown."""
+    try:
+        if isinstance(flags_value, str):
+            text = flags_value.strip().lower()
+            flags = int(text, 8) if text.startswith("0") else int(text, 0)
+        else:
+            flags = int(flags_value)
+    except (TypeError, ValueError):
+        return "unknown"
+    mode = flags & _O_ACCMODE
+    if mode == _O_RDONLY:
+        return "read_only"
+    if mode in {_O_WRONLY, _O_RDWR}:
+        return "writable"
+    return "unknown"
+
+
+def read_fdinfo_flags(pid: int, fd: str) -> str:
+    path = Path(f"/proc/{pid}/fdinfo/{fd}")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return "unknown"
+    for line in text.splitlines():
+        if line.startswith("flags:"):
+            return parse_fdinfo_access_mode(line.split(":", 1)[1].strip())
+    return "unknown"
+
+
 def scan_proc_fds_for_inode(
     *,
     device: int,
@@ -615,6 +713,7 @@ def scan_proc_fds_for_inode(
                     continue
                 key = (int(target.st_dev), int(target.st_ino))
                 if key == (device, inode) or key in sidecar_inodes:
+                    access = read_fdinfo_flags(pid, fd.name)
                     hits.append(
                         {
                             "pid": pid,
@@ -622,6 +721,7 @@ def scan_proc_fds_for_inode(
                             "device": key[0],
                             "inode": key[1],
                             "kind": "production" if key == (device, inode) else "sidecar",
+                            "access": access,
                         }
                     )
         except OSError:
@@ -630,11 +730,29 @@ def scan_proc_fds_for_inode(
 
 
 class CutoverExclusiveLock:
-    """Exclusive flock keyed by production device/inode + maintenance id."""
+    """Exclusive flock keyed only by canonical production device/inode.
 
-    def __init__(self, production: Path, maintenance_id: str, lock_dir: Path | None = None) -> None:
-        st = production.stat()
-        self.key = f"dev{st.st_dev}_ino{st.st_ino}_{maintenance_id}.lock"
+    Maintenance ID is stored inside the lock file for diagnostics but must not
+    create independent lock namespaces for the same production inode.
+    """
+
+    def __init__(
+        self,
+        production: Path,
+        maintenance_id: str,
+        lock_dir: Path | None = None,
+        *,
+        device: int | None = None,
+        inode: int | None = None,
+    ) -> None:
+        if device is None or inode is None:
+            st = production.stat()
+            device = int(st.st_dev)
+            inode = int(st.st_ino)
+        self.device = int(device)
+        self.inode = int(inode)
+        self.maintenance_id = maintenance_id
+        self.key = f"dev{self.device}_ino{self.inode}.lock"
         base = lock_dir or (Path.home() / ".cache" / "origenlab" / LOCK_DIR_NAME)
         self.path = base / self.key
         self._fd: int | None = None
@@ -650,9 +768,15 @@ class CutoverExclusiveLock:
             _fail(
                 f"cutover lock contention ({type(exc).__name__})",
                 category=CutoverFailureCategory.SAFETY,
-                recovery="Another cutover stage holds the exclusive lock; wait or inspect.",
+                recovery=(
+                    "Another cutover stage holds the exclusive lock for this "
+                    "production inode; wait or inspect."
+                ),
             )
-        payload = f"pid={os.getpid()} started_at={_iso_now()}\n"
+        payload = (
+            f"pid={os.getpid()} maintenance_id={self.maintenance_id} "
+            f"started_at={_iso_now()}\n"
+        )
         os.ftruncate(self._fd, 0)
         os.write(self._fd, payload.encode())
         os.fsync(self._fd)
@@ -1176,6 +1300,41 @@ class FilesystemAdapters:
     def fsync_dir(self, path: Path) -> None:
         fsync_directory(path)
 
+    def fsync_file(self, path: Path) -> None:
+        fsync_file(path)
+
+    def get_file_mode_owner(self, path: Path) -> dict[str, int]:
+        st = path.stat()
+        return {
+            "mode": int(st.st_mode) & 0o7777,
+            "uid": int(st.st_uid),
+            "gid": int(st.st_gid),
+        }
+
+    def chmod_path(self, path: Path, mode: int) -> None:
+        os.chmod(path, mode)
+
+    def chown_path(self, path: Path, uid: int, gid: int) -> None:
+        os.chown(path, uid, gid)
+
+    def quick_check_ok(self, path: Path) -> bool:
+        conn = sqlite3.connect(
+            f"file:{path.resolve().as_posix()}?mode=ro", uri=True, timeout=30.0
+        )
+        try:
+            row = conn.execute("PRAGMA quick_check").fetchone()
+            return bool(row and row[0] == "ok")
+        finally:
+            conn.close()
+
+    def try_open_writable(self, path: Path) -> bool:
+        try:
+            fd = os.open(str(path), os.O_RDWR)
+            os.close(fd)
+            return True
+        except OSError:
+            return False
+
 
 @dataclass
 class CutoverOptions:
@@ -1312,7 +1471,8 @@ def load_private_paths(adapters: CutoverAdapters, journal: Path) -> PrivatePlanP
     if not adapters.path_exists(path):
         return None
     data = json.loads(adapters.read_text(path))
-    return PrivatePlanPaths(**{k: data[k] for k in PrivatePlanPaths.__dataclass_fields__})
+    known = {f.name for f in PrivatePlanPaths.__dataclass_fields__.values()}
+    return PrivatePlanPaths(**{k: data[k] for k in data if k in known})
 
 
 def _require_auth(opts: CutoverOptions, *, for_swap: bool = False) -> None:
@@ -1450,6 +1610,7 @@ def _assert_writers_quiesced(
     production: Path,
     *,
     allow_own_fd: bool = False,
+    allow_readonly_foreign: bool = False,
 ) -> WriterInventory:
     writers = adapters.list_writers(production)
     if not writers.mail_pause_present or not writers.mirror_pause_present:
@@ -1464,21 +1625,40 @@ def _assert_writers_quiesced(
             evidence={"locks": [asdict(r) for r in writers.locks]},
         )
     if any(r.classification == "live" for r in writers.locks):
+        # ChileCompra lock is unrelated to SQLite; ignore if present as live
+        # only when basename is chilecompra — still fail for mail/dashboard locks.
+        live_sqlite = [
+            r
+            for r in writers.locks
+            if r.classification == "live"
+            and r.basename != CHILECOMPRA_LOCK_FILENAME
+        ]
+        if live_sqlite:
+            _fail(
+                "live writer lock(s) present",
+                category=CutoverFailureCategory.SAFETY,
+                evidence={"locks": [asdict(r) for r in live_sqlite]},
+            )
+    bad_fds: list[dict[str, Any]] = []
+    for hit in writers.fd_hits:
+        pid = int(hit.get("pid") or -1)
+        access = str(hit.get("access") or "unknown")
+        if pid == writers.orchestrator_pid and allow_own_fd:
+            continue
+        if access == "writable":
+            bad_fds.append(hit)
+        elif access == "unknown":
+            bad_fds.append(hit)
+        elif access == "read_only":
+            if not allow_readonly_foreign and pid != writers.orchestrator_pid:
+                bad_fds.append(hit)
+        else:
+            bad_fds.append(hit)
+    if bad_fds:
         _fail(
-            "live writer lock(s) present",
+            "unexpected or writable/ambiguous FD holds production/sidecar",
             category=CutoverFailureCategory.SAFETY,
-            evidence={"locks": [asdict(r) for r in writers.locks]},
-        )
-    foreign = [
-        h
-        for h in writers.fd_hits
-        if int(h.get("pid") or -1) != writers.orchestrator_pid
-    ]
-    if foreign and not allow_own_fd:
-        _fail(
-            "foreign process FD holds production/sidecar inode",
-            category=CutoverFailureCategory.SAFETY,
-            evidence={"fd_hits": foreign[:8]},
+            evidence={"fd_hits": bad_fds[:8]},
         )
     if writers.unreadable:
         _fail(
@@ -1487,6 +1667,85 @@ def _assert_writers_quiesced(
             evidence={"unreadable": writers.unreadable},
         )
     return writers
+
+
+def evaluate_production_apply_readiness(
+    *,
+    stage: CutoverStage,
+    journal: CutoverJournal | None,
+    writers: WriterInventory | None,
+    services: ServiceState | None,
+    flock_held: bool,
+    synthetic: bool,
+) -> dict[str, Any]:
+    """Derive whether a mutating stage may proceed (not a hard-coded True)."""
+    blockers: list[str] = []
+    if synthetic:
+        return {
+            "ready": True,
+            "blockers": [],
+            "reason": "synthetic_world",
+            "access_inventory": CUTOVER_ACCESS_INVENTORY,
+        }
+    # Early stages establish barriers; later stages require them.
+    needs_barrier = stage in {
+        CutoverStage.CREATE_CURRENT_BACKUP,
+        CutoverStage.COMPACT_TO_PRODUCTION_FS_STAGING,
+        CutoverStage.VERIFY_CANDIDATE,
+        CutoverStage.APPROVE_SWAP,
+        CutoverStage.ATOMIC_SWAP,
+        CutoverStage.READONLY_SMOKE,
+    }
+    if writers is not None:
+        if not writers.mail_pause_present:
+            blockers.append("mail_pause_absent")
+        if stage not in {CutoverStage.PAUSE_WRITERS} and not writers.mirror_pause_present:
+            blockers.append("mirror_pause_absent")
+        live = [
+            r
+            for r in writers.locks
+            if r.classification == "live" and r.basename != CHILECOMPRA_LOCK_FILENAME
+        ]
+        if live and stage not in {CutoverStage.PAUSE_WRITERS}:
+            blockers.append("live_sqlite_automation_locks")
+    if services is not None and stage not in {
+        CutoverStage.PAUSE_WRITERS,
+        CutoverStage.STOP_READERS,
+    }:
+        if services.api_active or services.health_timer_active:
+            if stage not in {
+                CutoverStage.READONLY_SMOKE,
+                CutoverStage.RESUME_SERVICES,
+                CutoverStage.RESUME_WRITERS_PONR,
+                CutoverStage.RESUME_WRITERS_RESTORE_MODE,
+                CutoverStage.RESUME_WRITERS_MAIL,
+                CutoverStage.RESUME_WRITERS_OBSERVE_MAIL,
+                CutoverStage.RESUME_WRITERS_MIRROR,
+                CutoverStage.RESUME_WRITERS_OBSERVE_MIRROR,
+                CutoverStage.RESUME_WRITERS_COMMIT,
+                CutoverStage.COMPLETED,
+            }:
+                blockers.append("readers_still_active")
+    if not flock_held and stage != CutoverStage.PLAN_PREFLIGHT:
+        blockers.append("exclusive_flock_not_held")
+    if needs_barrier:
+        if journal is None or not journal.production_write_barrier_active:
+            blockers.append("os_write_barrier_inactive")
+        if journal is None or not journal.wal_quiesced:
+            blockers.append("wal_not_quiesced")
+        if journal is None or not journal.approved_plan:
+            blockers.append("approved_plan_missing")
+    chilecompra_names = {e["name"] for e in UNRELATED_EXTERNAL_WRITER_ENTRY_POINTS}
+    return {
+        "ready": not blockers,
+        "blockers": blockers,
+        "reason": REAL_PRODUCTION_APPLY_BLOCK_REASON,
+        "chilecompra_blocks_rpo0": False,
+        "chilecompra_entry_points": sorted(chilecompra_names),
+        "access_inventory": {
+            k: list(v) for k, v in CUTOVER_ACCESS_INVENTORY.items()
+        },
+    }
 
 
 def _assert_sidecars_smoke_policy(adapters: CutoverAdapters, production: Path) -> dict[str, Any]:
@@ -1591,18 +1850,30 @@ def plan_preflight(opts: CutoverOptions) -> dict[str, Any]:
         blockers.append("production_sqlite_missing")
     if not writers.mail_pause_present or not writers.mirror_pause_present:
         blockers.append("pause_markers_absent")
-    if writers.live_writer_pids or any(
-        r.classification in {"live", "malformed"} for r in writers.locks
-    ):
-        blockers.append("active_writers_or_locks")
+    live_sqlite_locks = [
+        r
+        for r in writers.locks
+        if r.classification in {"live", "malformed"}
+        and r.basename != CHILECOMPRA_LOCK_FILENAME
+    ]
+    if writers.live_writer_pids or live_sqlite_locks:
+        blockers.append("active_sqlite_writers_or_locks")
     if services.api_active or services.health_timer_active:
         blockers.append("api_or_health_still_active")
     if not topology.get("recommended_topology_ok"):
         blockers.append("capacity_topology_fail_closed")
     if opts.staging_dest and not same_fs_ok:
         blockers.append("staging_not_same_filesystem_as_production")
-    if REAL_PRODUCTION_APPLY_BLOCKED and not _is_synthetic(opts, adapters):
-        blockers.append("real_production_apply_blocked_unguarded_writers")
+    readiness = evaluate_production_apply_readiness(
+        stage=CutoverStage.CREATE_CURRENT_BACKUP,
+        journal=None,
+        writers=writers,
+        services=services,
+        flock_held=False,
+        synthetic=_is_synthetic(opts, adapters),
+    )
+    if not readiness["ready"] and not _is_synthetic(opts, adapters):
+        blockers.extend(f"readiness:{b}" for b in readiness["blockers"])
 
     journal_expected = None
     if opts.maintenance_id and MAINTENANCE_ID_RE.fullmatch(opts.maintenance_id):
@@ -1652,15 +1923,20 @@ def plan_preflight(opts: CutoverOptions) -> dict[str, Any]:
         "rename_exchange_probe": "deferred_until_apply",
         "estimated_downtime_hours": "4-6",
         "journal_basename": journal_expected,
-        "real_production_apply_blocked": REAL_PRODUCTION_APPLY_BLOCKED,
-        "unguarded_writer_entry_points": list(UNGUARDED_WRITER_ENTRY_POINTS),
-        "writer_entry_points": list(REAL_SQLITE_WRITER_ENTRY_POINTS),
+        "access_inventory": readiness["access_inventory"],
+        "chilecompra_blocks_rpo0": False,
+        "production_apply_readiness": {
+            "ready": readiness["ready"],
+            "blockers": readiness["blockers"],
+        },
         "blockers": blockers,
         "notes": [
             "Zero-write plan only; no pause markers, journals, locks, backups, or swaps created.",
             "July compact candidate is evidence-only and must never be a cutover source.",
             "Each stage requires a separate --apply invocation.",
-            "RPO=0 requires writers stopped from backup through post-swap smoke.",
+            "RPO=0 requires SQLite writers stopped from backup through post-swap smoke.",
+            "ChileCompra does not mutate SQLite and does not block RPO=0.",
+            "OS write barrier mitigates accidental ad-hoc SQLite writes; root/malicious bypass is out of scope.",
             REAL_PRODUCTION_APPLY_BLOCK_REASON,
         ],
         "captured_at_utc": _iso_now(),
@@ -1834,16 +2110,6 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
     production = opts.expected_production_path.expanduser()
     _refuse_evidence_compact(production)
 
-    if not _is_synthetic(opts, adapters) and REAL_PRODUCTION_APPLY_BLOCKED:
-        _fail(
-            REAL_PRODUCTION_APPLY_BLOCK_REASON,
-            category=CutoverFailureCategory.SAFETY,
-            evidence={
-                "unguarded": list(UNGUARDED_WRITER_ENTRY_POINTS),
-                "entry_points": list(REAL_SQLITE_WRITER_ENTRY_POINTS),
-            },
-        )
-
     _require_git_match(opts, adapters)
     fp = _validate_production_identity(opts, adapters, production)
     journal_path = journal_path_for(opts, production)
@@ -1860,6 +2126,44 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
     # Exclusive lock for entire mutating stage (not for plan_preflight).
     with adapters.acquire_exclusive_lock(production, opts.maintenance_id):
         journal = load_journal(adapters, journal_path)
+        readiness = evaluate_production_apply_readiness(
+            stage=opts.stage,
+            journal=journal,
+            writers=adapters.list_writers(production),
+            services=adapters.service_state(),
+            flock_held=True,
+            synthetic=_is_synthetic(opts, adapters),
+        )
+        if not readiness["ready"] and opts.stage not in {
+            CutoverStage.PAUSE_WRITERS,
+            CutoverStage.STOP_READERS,
+            CutoverStage.QUIESCE_WAL,
+            CutoverStage.APPLY_OS_WRITE_BARRIER,
+            CutoverStage.RESUME_SERVICES,
+            CutoverStage.RESUME_WRITERS_PONR,
+            CutoverStage.RESUME_WRITERS_RESTORE_MODE,
+            CutoverStage.RESUME_WRITERS_MAIL,
+            CutoverStage.RESUME_WRITERS_OBSERVE_MAIL,
+            CutoverStage.RESUME_WRITERS_MIRROR,
+            CutoverStage.RESUME_WRITERS_OBSERVE_MIRROR,
+            CutoverStage.RESUME_WRITERS_COMMIT,
+            CutoverStage.COMPLETED,
+        }:
+            # Early bootstrap stages allowed; barrier-required stages fail closed.
+            if opts.stage in {
+                CutoverStage.CREATE_CURRENT_BACKUP,
+                CutoverStage.COMPACT_TO_PRODUCTION_FS_STAGING,
+                CutoverStage.VERIFY_CANDIDATE,
+                CutoverStage.APPROVE_SWAP,
+                CutoverStage.ATOMIC_SWAP,
+                CutoverStage.READONLY_SMOKE,
+            }:
+                _fail(
+                    "production apply readiness not met",
+                    category=CutoverFailureCategory.SAFETY,
+                    evidence={"blockers": readiness["blockers"]},
+                    recovery=REAL_PRODUCTION_APPLY_BLOCK_REASON,
+                )
 
         if journal is None:
             if opts.stage != CutoverStage.PAUSE_WRITERS:
@@ -1943,6 +2247,8 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                     CutoverStage.ATOMIC_SWAP,
                     CutoverStage.READONLY_SMOKE,
                     CutoverStage.RESUME_SERVICES,
+                    CutoverStage.RESUME_WRITERS_PONR,
+                    CutoverStage.RESUME_WRITERS_RESTORE_MODE,
                     CutoverStage.RESUME_WRITERS_MAIL,
                     CutoverStage.RESUME_WRITERS_OBSERVE_MAIL,
                     CutoverStage.RESUME_WRITERS_MIRROR,
@@ -2036,8 +2342,87 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                 {"wal_before": before, "wal_after": after, "checkpoint": result},
             )
 
-        if stage == CutoverStage.CREATE_CURRENT_BACKUP:
+        if stage == CutoverStage.APPLY_OS_WRITE_BARRIER:
             _expect_journal_stage(journal, CutoverStage.QUIESCE_WAL)
+            if not journal.wal_quiesced:
+                _fail("WAL not quiesced", category=CutoverFailureCategory.SAFETY)
+            _assert_writers_quiesced(adapters, production)
+            services = adapters.service_state()
+            if services.api_active or services.health_timer_active:
+                _fail(
+                    "API/health must be stopped before write barrier",
+                    category=CutoverFailureCategory.SAFETY,
+                )
+            owner = adapters.get_file_mode_owner(production)
+            original_mode = int(owner["mode"])
+            original_uid = int(owner["uid"])
+            original_gid = int(owner["gid"])
+            barrier_mode = original_mode & ~0o222
+            journal.permission_intent = {
+                "action": "apply_production_write_barrier",
+                "original_mode": original_mode,
+                "barrier_mode": barrier_mode,
+            }
+            write_journal(adapters, journal_path, journal)
+            _inject("permission_intent_barrier")
+            private = load_private_paths(adapters, journal_path)
+            if private is None:
+                _fail(
+                    "missing private plan for permission record",
+                    category=CutoverFailureCategory.AMBIGUOUS,
+                )
+            assert private is not None
+            private.original_mode = original_mode
+            private.original_uid = original_uid
+            private.original_gid = original_gid
+            private.production_device = journal.production_device
+            private.production_inode = journal.production_inode
+            write_private_paths(adapters, journal_path, private)
+            adapters.chmod_path(production, barrier_mode)
+            adapters.fsync_file(production)
+            adapters.fsync_dir(production.parent)
+            _inject("after_production_chmod_barrier")
+            verified = adapters.get_file_mode_owner(production)
+            if int(verified["mode"]) != barrier_mode:
+                _fail(
+                    "write barrier mode verification failed",
+                    category=CutoverFailureCategory.VERIFY,
+                )
+            if adapters.try_open_writable(production):
+                _fail(
+                    "write barrier failed: production still opens writable",
+                    category=CutoverFailureCategory.VERIFY,
+                )
+            _assert_writers_quiesced(adapters, production)
+            journal.original_mode = original_mode
+            journal.original_uid = original_uid
+            journal.original_gid = original_gid
+            journal.production_write_barrier_active = True
+            journal.writable_mode_restored = False
+            journal.permission_intent = None
+            journal.stage = stage.value
+            write_journal(adapters, journal_path, journal)
+            _inject("apply_os_write_barrier")
+            return _stage_report(
+                opts,
+                journal,
+                {
+                    "production_write_barrier_active": True,
+                    "barrier_mode": barrier_mode,
+                    "threat_model_note": (
+                        "Ordinary accidental ad-hoc SQLite writes are blocked; "
+                        "malicious/root bypass is outside operator threat model."
+                    ),
+                },
+            )
+
+        if stage == CutoverStage.CREATE_CURRENT_BACKUP:
+            _expect_journal_stage(journal, CutoverStage.APPLY_OS_WRITE_BARRIER)
+            if not journal.production_write_barrier_active:
+                _fail(
+                    "OS write barrier must be active before backup",
+                    category=CutoverFailureCategory.SAFETY,
+                )
             _assert_writers_quiesced(adapters, production)
             if opts.backup_dest is None:
                 _fail("--backup-dest required", category=CutoverFailureCategory.PREFLIGHT)
@@ -2152,6 +2537,34 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
             _expect_journal_stage(journal, CutoverStage.VERIFY_CANDIDATE)
             if not journal.compact_verified or not journal.candidate_fingerprint:
                 _fail("candidate not verified", category=CutoverFailureCategory.SAFETY)
+            if opts.staging_dest is None:
+                _fail("--staging-dest required", category=CutoverFailureCategory.PREFLIGHT)
+            staged = opts.staging_dest.expanduser()
+            # Staging must be RO before swap; bind owner/mode into journal.
+            if journal.original_uid is None or journal.original_gid is None:
+                _fail(
+                    "original ownership missing for staging barrier",
+                    category=CutoverFailureCategory.AMBIGUOUS,
+                )
+            journal.permission_intent = {
+                "action": "apply_staging_write_barrier",
+                "staging_basename": staged.name,
+            }
+            write_journal(adapters, journal_path, journal)
+            _inject("staging_barrier_intent")
+            adapters.chown_path(staged, int(journal.original_uid), int(journal.original_gid))
+            st_mode = int(adapters.get_file_mode_owner(staged)["mode"]) & ~0o222
+            adapters.chmod_path(staged, st_mode)
+            adapters.fsync_file(staged)
+            adapters.fsync_dir(staged.parent)
+            verified = adapters.get_file_mode_owner(staged)
+            if int(verified["mode"]) & 0o222:
+                _fail(
+                    "staging still has write bits",
+                    category=CutoverFailureCategory.VERIFY,
+                )
+            journal.staging_write_barrier_active = True
+            journal.permission_intent = None
             journal.swap_approved = True
             journal.stage = stage.value
             write_journal(adapters, journal_path, journal)
@@ -2210,12 +2623,84 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                 opts, journal, {"services": asdict(adapters.service_state())}
             )
 
-        if stage == CutoverStage.RESUME_WRITERS_MAIL:
+        if stage == CutoverStage.RESUME_WRITERS_PONR:
             _expect_journal_stage(journal, CutoverStage.RESUME_SERVICES)
-            # Point of no return BEFORE removing first pause marker.
+            if journal.writable_mode_restored:
+                _fail(
+                    "writable mode already restored while advertising rollback safety",
+                    category=CutoverFailureCategory.AMBIGUOUS,
+                )
+            # Point of no return BEFORE restoring writable permissions.
             journal.writer_resume_started = True
             write_journal(adapters, journal_path, journal)
             _inject("writer_resume_started")
+            journal.stage = stage.value
+            write_journal(adapters, journal_path, journal)
+            _inject("resume_writers_ponr")
+            return _stage_report(
+                opts,
+                journal,
+                {
+                    "writer_resume_started": True,
+                    "rollback_allowed": False,
+                },
+            )
+
+        if stage == CutoverStage.RESUME_WRITERS_RESTORE_MODE:
+            _expect_journal_stage(journal, CutoverStage.RESUME_WRITERS_PONR)
+            if not journal.writer_resume_started:
+                _fail(
+                    "writer_resume_started required before restoring writable mode",
+                    category=CutoverFailureCategory.SAFETY,
+                )
+            if journal.original_mode is None:
+                _fail(
+                    "original_mode missing from journal",
+                    category=CutoverFailureCategory.AMBIGUOUS,
+                )
+            journal.permission_intent = {
+                "action": "restore_production_writable_mode",
+                "target_mode": journal.original_mode,
+            }
+            write_journal(adapters, journal_path, journal)
+            _inject("restore_mode_intent")
+            adapters.chmod_path(production, int(journal.original_mode))
+            adapters.fsync_file(production)
+            adapters.fsync_dir(production.parent)
+            _inject("after_restore_chmod")
+            verified = adapters.get_file_mode_owner(production)
+            if int(verified["mode"]) != int(journal.original_mode):
+                _fail(
+                    "writable mode restore verification failed",
+                    category=CutoverFailureCategory.VERIFY,
+                )
+            ident = adapters.path_identity(production)
+            if (
+                journal.production_device is not None
+                and int(ident["device"]) != int(journal.production_device)
+            ) or (
+                journal.production_inode is not None
+                and int(ident["inode"]) != int(journal.production_inode)
+            ):
+                _fail(
+                    "production device/inode changed before writer resume",
+                    category=CutoverFailureCategory.SAFETY,
+                )
+            journal.writable_mode_restored = True
+            journal.production_write_barrier_active = False
+            journal.permission_intent = None
+            journal.stage = stage.value
+            write_journal(adapters, journal_path, journal)
+            _inject("resume_writers_restore_mode")
+            return _stage_report(opts, journal, {"writable_mode_restored": True})
+
+        if stage == CutoverStage.RESUME_WRITERS_MAIL:
+            _expect_journal_stage(journal, CutoverStage.RESUME_WRITERS_RESTORE_MODE)
+            if not journal.writer_resume_started or not journal.writable_mode_restored:
+                _fail(
+                    "PoNR and writable restore required before removing mail pause",
+                    category=CutoverFailureCategory.SAFETY,
+                )
             path = mail_pause_path(reports)
             if adapters.path_exists(path):
                 adapters.unlink(path)
@@ -2226,16 +2711,60 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
 
         if stage == CutoverStage.RESUME_WRITERS_OBSERVE_MAIL:
             _expect_journal_stage(journal, CutoverStage.RESUME_WRITERS_MAIL)
-            live_fp = adapters.fingerprint(production)
-            if live_fp != journal.production_fingerprint:
+            # Legitimate ingestion may change size/mtime fingerprint.
+            ident = adapters.path_identity(production)
+            if (
+                journal.production_device is not None
+                and int(ident["device"]) != int(journal.production_device)
+            ) or (
+                journal.production_inode is not None
+                and int(ident["inode"]) != int(journal.production_inode)
+            ):
                 _fail(
-                    "fingerprint drift after mail unpause",
+                    "production device/inode replacement after mail resume refused",
+                    category=CutoverFailureCategory.SAFETY,
+                )
+            mode = adapters.get_file_mode_owner(production)
+            if journal.original_mode is not None and int(mode["mode"]) != int(
+                journal.original_mode
+            ):
+                _fail(
+                    "production mode unexpected after mail resume",
                     category=CutoverFailureCategory.VERIFY,
                 )
+            if int(mode["mode"]) & 0o222 == 0:
+                _fail(
+                    "production not writable after mail resume",
+                    category=CutoverFailureCategory.VERIFY,
+                )
+            if not adapters.quick_check_ok(production):
+                _fail(
+                    "quick_check failed after mail resume",
+                    category=CutoverFailureCategory.VERIFY,
+                )
+            writers = adapters.list_writers(production)
+            if any(
+                r.classification == "live" and r.basename == MAIL_LOCK_FILENAME
+                for r in writers.locks
+            ):
+                # Live mail lock during ingest is expected; do not treat as failure
+                # unless automation reports explicit failure via smoke.
+                pass
+            live_fp = adapters.fingerprint(production)
+            journal.post_mail_fingerprint = live_fp
+            journal.production_fingerprint = live_fp
             journal.stage = stage.value
             write_journal(adapters, journal_path, journal)
             _inject("resume_writers_observe_mail")
-            return _stage_report(opts, journal, {"observed_fingerprint": live_fp})
+            return _stage_report(
+                opts,
+                journal,
+                {
+                    "post_mail_fingerprint": live_fp,
+                    "device": ident["device"],
+                    "inode": ident["inode"],
+                },
+            )
 
         if stage == CutoverStage.RESUME_WRITERS_MIRROR:
             _expect_journal_stage(journal, CutoverStage.RESUME_WRITERS_OBSERVE_MAIL)
@@ -2254,16 +2783,27 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
 
         if stage == CutoverStage.RESUME_WRITERS_OBSERVE_MIRROR:
             _expect_journal_stage(journal, CutoverStage.RESUME_WRITERS_MIRROR)
-            live_fp = adapters.fingerprint(production)
-            if live_fp != journal.production_fingerprint:
+            # Mirror must not mutate SQLite; identity changes attributed to mail.
+            ident = adapters.path_identity(production)
+            if (
+                journal.production_device is not None
+                and int(ident["device"]) != int(journal.production_device)
+            ) or (
+                journal.production_inode is not None
+                and int(ident["inode"]) != int(journal.production_inode)
+            ):
                 _fail(
-                    "fingerprint drift after mirror unpause",
-                    category=CutoverFailureCategory.VERIFY,
+                    "production device/inode replacement after mirror resume refused",
+                    category=CutoverFailureCategory.SAFETY,
                 )
             journal.stage = stage.value
             write_journal(adapters, journal_path, journal)
             _inject("resume_writers_observe_mirror")
-            return _stage_report(opts, journal, {"observed_fingerprint": live_fp})
+            return _stage_report(
+                opts,
+                journal,
+                {"observed_fingerprint": adapters.fingerprint(production)},
+            )
 
         if stage == CutoverStage.RESUME_WRITERS_COMMIT:
             _expect_journal_stage(journal, CutoverStage.RESUME_WRITERS_OBSERVE_MIRROR)
@@ -2460,12 +3000,6 @@ def attempt_rollback_before_writers(
     assert opts.expected_production_path is not None
     production = opts.expected_production_path.expanduser()
 
-    if not _is_synthetic(opts, adapters) and REAL_PRODUCTION_APPLY_BLOCKED:
-        _fail(
-            REAL_PRODUCTION_APPLY_BLOCK_REASON,
-            category=CutoverFailureCategory.SAFETY,
-        )
-
     journal_path = journal_path_for(opts, production)
     with adapters.acquire_exclusive_lock(production, opts.maintenance_id):
         journal = load_journal(adapters, journal_path)
@@ -2575,6 +3109,99 @@ def attempt_rollback_before_writers(
         )
 
 
+def abort_before_swap(opts: CutoverOptions) -> dict[str, Any]:
+    """Safe abort before exchange / writer resume: restore perms, services, markers."""
+    _require_auth(opts, for_swap=False)
+    adapters = opts.adapters or FilesystemAdapters(settings=opts.settings)
+    assert opts.expected_production_path is not None
+    production = opts.expected_production_path.expanduser()
+    reports = opts.reports_dir or (
+        opts.settings or load_settings(enable_dotenv=False)
+    ).resolved_reports_dir()
+    journal_path = journal_path_for(opts, production)
+    with adapters.acquire_exclusive_lock(production, opts.maintenance_id):
+        journal = load_journal(adapters, journal_path)
+        if journal is None:
+            _fail("missing journal for abort", category=CutoverFailureCategory.AMBIGUOUS)
+        assert journal is not None
+        if journal.writer_resume_started or journal.writers_resumed:
+            _fail(
+                "abort_before_swap refused after writer_resume_started",
+                category=CutoverFailureCategory.SAFETY,
+            )
+        if journal.swap_intent or journal.exchange_completed:
+            _fail(
+                "abort_before_swap refused after swap intent/exchange",
+                category=CutoverFailureCategory.SAFETY,
+            )
+        fp = adapters.fingerprint(production)
+        if journal.production_fingerprint and fp != journal.production_fingerprint:
+            _fail(
+                "production fingerprint mismatch for abort",
+                category=CutoverFailureCategory.VERIFY,
+            )
+        ident = adapters.path_identity(production)
+        if (
+            journal.production_device is not None
+            and int(ident["device"]) != int(journal.production_device)
+        ) or (
+            journal.production_inode is not None
+            and int(ident["inode"]) != int(journal.production_inode)
+        ):
+            _fail(
+                "production device/inode mismatch for abort",
+                category=CutoverFailureCategory.SAFETY,
+            )
+
+        # Stop readers (idempotent).
+        adapters.stop_health_timer()
+        adapters.stop_api()
+
+        if journal.production_write_barrier_active and journal.original_mode is not None:
+            journal.permission_intent = {
+                "action": "abort_restore_writable_mode",
+                "target_mode": journal.original_mode,
+            }
+            write_journal(adapters, journal_path, journal)
+            adapters.chmod_path(production, int(journal.original_mode))
+            adapters.fsync_file(production)
+            adapters.fsync_dir(production.parent)
+            verified = adapters.get_file_mode_owner(production)
+            if int(verified["mode"]) != int(journal.original_mode):
+                _fail(
+                    "abort failed to restore original mode",
+                    category=CutoverFailureCategory.VERIFY,
+                )
+            journal.production_write_barrier_active = False
+            journal.writable_mode_restored = True
+            journal.permission_intent = None
+            write_journal(adapters, journal_path, journal)
+
+        adapters.start_api()
+        smoke = adapters.http_smoke(
+            opts.api_base_url, expected_fingerprint=adapters.fingerprint(production)
+        )
+        adapters.start_health_timer()
+
+        for path in (mail_pause_path(reports), mirror_pause_path(reports)):
+            if adapters.path_exists(path):
+                adapters.unlink(path)
+
+        journal.abort_before_swap_completed = True
+        journal.services_stopped = False
+        journal.notes.append("aborted_before_swap")
+        journal.stage = CutoverStage.COMPLETED.value
+        write_journal(adapters, journal_path, journal)
+        return sanitize_evidence(
+            {
+                "aborted_before_swap": True,
+                "smoke": smoke,
+                "production_write_barrier_active": False,
+                "stage": journal.stage,
+            }
+        )
+
+
 # --- Synthetic world for tests -------------------------------------------------
 
 
@@ -2612,8 +3239,15 @@ class SyntheticWorld:
     compact_incomplete: bool = False
     lock_held: bool = False
     _lock_owner: int | None = None
+    _held_lock_keys: set[str] = field(default_factory=set)
     same_fs_pairs: set[tuple[str, str]] | None = None
     free_bytes: int = 300 * 1024**3
+    modes: dict[str, int] = field(default_factory=dict)
+    owners: dict[str, tuple[int, int]] = field(default_factory=dict)
+    quick_check_fail: bool = False
+    # Stable inode overrides for tests that need fixed device/inode.
+    inode_overrides: dict[str, int] = field(default_factory=dict)
+    device_overrides: dict[str, int] = field(default_factory=dict)
 
     def key(self, path: Path) -> str:
         return str(path)
@@ -2671,13 +3305,15 @@ class SyntheticWorld:
 
     def path_identity(self, path: Path) -> dict[str, Any]:
         data = self.files.get(self.key(path), b"")
-        digest = int(hashlib.sha256(data).hexdigest()[:8], 16)
+        digest = int(hashlib.sha256(self.key(path).encode()).hexdigest()[:8], 16)
+        inode = self.inode_overrides.get(self.key(path), digest or 1)
+        device = self.device_overrides.get(self.key(path), 1)
         return {
             "basename": path.name,
             "size_bytes": len(data),
             "mtime_ns": 0,
-            "device": 1,
-            "inode": digest or 1,
+            "device": device,
+            "inode": inode,
         }
 
     def parent_identity(self, path: Path) -> dict[str, Any]:
@@ -2749,6 +3385,7 @@ class SyntheticWorld:
             return {"completed": False, "manifest_completed": False}
         before = self.fingerprint(source)
         self.files[self.key(dest)] = self.files[self.key(source)]
+        self.modes[self.key(dest)] = 0o444
         # Write synthetic completed manifest
         man = dest.with_name(dest.name + ".manifest.json")
         self.files[self.key(man)] = json.dumps({"completed": True}).encode()
@@ -2770,6 +3407,8 @@ class SyntheticWorld:
             return {"completed": False, "manifest_completed": False}
         src_fp = self.fingerprint(source)
         self.files[self.key(dest)] = b"COMPACT:" + self.files[self.key(source)]
+        self.modes[self.key(dest)] = 0o644
+        self.owners[self.key(dest)] = self.owners.get(self.key(source), (1000, 1000))
         man = dest.with_name(dest.name + ".compaction.manifest.json")
         self.files[self.key(man)] = json.dumps(
             {
@@ -2866,21 +3505,49 @@ class SyntheticWorld:
     def acquire_exclusive_lock(
         self, production: Path, maintenance_id: str
     ) -> Generator[None, None, None]:
-        if self.lock_held:
+        ident = self.path_identity(production)
+        lock_key = f"dev{ident['device']}_ino{ident['inode']}"
+        if lock_key in self._held_lock_keys or self.lock_held:
             _fail(
                 "cutover lock contention (Busy)",
                 category=CutoverFailureCategory.SAFETY,
             )
+        self._held_lock_keys.add(lock_key)
         self.lock_held = True
         self._lock_owner = os.getpid()
         try:
             yield None
         finally:
+            self._held_lock_keys.discard(lock_key)
             self.lock_held = False
             self._lock_owner = None
 
     def fsync_dir(self, path: Path) -> None:
         return
+
+    def fsync_file(self, path: Path) -> None:
+        return
+
+    def get_file_mode_owner(self, path: Path) -> dict[str, int]:
+        k = self.key(path)
+        mode = self.modes.get(k, 0o644)
+        uid, gid = self.owners.get(k, (1000, 1000))
+        return {"mode": mode, "uid": uid, "gid": gid}
+
+    def chmod_path(self, path: Path, mode: int) -> None:
+        self.modes[self.key(path)] = int(mode) & 0o7777
+
+    def chown_path(self, path: Path, uid: int, gid: int) -> None:
+        self.owners[self.key(path)] = (int(uid), int(gid))
+
+    def quick_check_ok(self, path: Path) -> bool:
+        if self.quick_check_fail:
+            return False
+        return self.is_file(path)
+
+    def try_open_writable(self, path: Path) -> bool:
+        mode = self.modes.get(self.key(path), 0o644)
+        return bool(mode & 0o222)
 
 
 def tree_snapshot(root: Path) -> dict[str, tuple[int, int] | str]:
