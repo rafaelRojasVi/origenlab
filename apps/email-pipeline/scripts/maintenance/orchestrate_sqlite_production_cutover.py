@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""Staged SQLite production cutover orchestrator CLI.
+
+Default is zero-write ``plan_preflight``. Every mutating stage requires its own
+``--apply`` plus high-friction production authorization. Never runs the full
+workflow in one command.
+
+Does not authorize improvising dual ``mv`` when rename exchange is unavailable.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parents[2]
+if str(_ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(_ROOT / "src"))
+
+from origenlab_email_pipeline.qa.sqlite_online_backup import sanitize_error_message
+from origenlab_email_pipeline.qa.sqlite_production_cutover import (
+    EXIT_OK,
+    CutoverError,
+    CutoverFailureCategory,
+    CutoverOptions,
+    CutoverStage,
+    STAGE_ORDER,
+    apply_stage,
+    attempt_rollback_before_writers,
+    plan_preflight,
+)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description=(
+            "Fail-closed SQLite production cutover orchestrator. "
+            "Stages must be applied one at a time."
+        )
+    )
+    p.add_argument(
+        "--stage",
+        choices=[s.value for s in STAGE_ORDER],
+        default=CutoverStage.PLAN_PREFLIGHT.value,
+        help="Single stage to plan or apply",
+    )
+    p.add_argument(
+        "--apply",
+        action="store_true",
+        help="Perform the selected stage write (forbidden for plan_preflight)",
+    )
+    p.add_argument(
+        "--confirm-production-cutover",
+        action="store_true",
+        help="Acknowledge real production cutover authorization",
+    )
+    p.add_argument("--maintenance-id", default="", help="Unique maintenance ID")
+    p.add_argument("--expected-main-sha", default="", help="Expected git main SHA")
+    p.add_argument(
+        "--expected-production-path",
+        type=Path,
+        default=None,
+        help="Exact expected production SQLite path",
+    )
+    p.add_argument(
+        "--expected-production-fingerprint",
+        default="",
+        help="size:mtime_ns:device:inode token",
+    )
+    p.add_argument(
+        "--approve-swap",
+        action="store_true",
+        help="Separate explicit approval for approve_swap / atomic_swap",
+    )
+    p.add_argument("--journal-path", type=Path, default=None)
+    p.add_argument("--backup-dest", type=Path, default=None)
+    p.add_argument("--staging-dest", type=Path, default=None)
+    p.add_argument("--reports-dir", type=Path, default=None)
+    p.add_argument("--api-base-url", default="http://127.0.0.1:8001")
+    p.add_argument(
+        "--rollback-before-writers",
+        action="store_true",
+        help="Attempt verified atomic rollback before writers resume",
+    )
+    p.add_argument("--pre-cutover-path", type=Path, default=None)
+    p.add_argument("--expected-old-fingerprint", default="")
+    p.add_argument("--expected-new-fingerprint", default="")
+    p.add_argument("--json", action="store_true")
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        opts = CutoverOptions(
+            stage=CutoverStage(args.stage),
+            apply=bool(args.apply),
+            confirm_production_cutover=bool(args.confirm_production_cutover),
+            maintenance_id=str(args.maintenance_id),
+            expected_main_sha=str(args.expected_main_sha),
+            expected_production_path=args.expected_production_path,
+            expected_production_fingerprint=str(args.expected_production_fingerprint),
+            approve_swap=bool(args.approve_swap),
+            journal_path=args.journal_path,
+            backup_dest=args.backup_dest,
+            staging_dest=args.staging_dest,
+            reports_dir=args.reports_dir,
+            api_base_url=str(args.api_base_url),
+        )
+        if args.rollback_before_writers:
+            if args.pre_cutover_path is None:
+                raise CutoverError(
+                    "--pre-cutover-path required for rollback",
+                    category=CutoverFailureCategory.PREFLIGHT,
+                )
+            report = attempt_rollback_before_writers(
+                opts,
+                pre_cutover_path=args.pre_cutover_path.expanduser(),
+                expected_old_fingerprint=args.expected_old_fingerprint,
+                expected_new_fingerprint=args.expected_new_fingerprint,
+            )
+        elif opts.stage == CutoverStage.PLAN_PREFLIGHT and not opts.apply:
+            report = plan_preflight(opts)
+        else:
+            report = apply_stage(opts)
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            print(
+                f"ok stage={report.get('stage')} apply={report.get('apply')} "
+                f"mode={report.get('mode')}"
+            )
+        return EXIT_OK
+    except CutoverError as exc:
+        print(f"error: {sanitize_error_message(str(exc))}", file=sys.stderr)
+        if exc.recovery:
+            print(
+                f"recovery: {sanitize_error_message(exc.recovery)}",
+                file=sys.stderr,
+            )
+        return int(exc.exit_code)
+    except Exception:  # noqa: BLE001
+        print("error: unexpected failure", file=sys.stderr)
+        return 3
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
