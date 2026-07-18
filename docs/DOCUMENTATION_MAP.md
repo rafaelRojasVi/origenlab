@@ -76,6 +76,7 @@ Paths below are under [`apps/email-pipeline/docs/`](../apps/email-pipeline/docs/
   - [SCRIPT_MAP.md](../apps/email-pipeline/docs/SCRIPT_MAP.md) (daily outbound lanes; core / ops / lab / break-glass)
   - [SQLITE_STORAGE_MAINTENANCE.md](../apps/email-pipeline/docs/SQLITE_STORAGE_MAINTENANCE.md) (offline backup/compaction; never live VACUUM)
   - [SQLITE_WRITABLE_RESTORE_AND_CUTOVER.md](../apps/email-pipeline/docs/SQLITE_WRITABLE_RESTORE_AND_CUTOVER.md) (synthetic writable rehearsal + RPO=0 cutover design; not an authorization to cut over)
+  - [SQLITE_PRODUCTION_CUTOVER_ORCHESTRATOR.md](../apps/email-pipeline/docs/SQLITE_PRODUCTION_CUTOVER_ORCHESTRATOR.md) (staged fail-closed cutover CLI; draft tooling — not a live cutover authorization)
   - [RUNBOOK.md](../apps/email-pipeline/docs/RUNBOOK.md#m-eprun-path) (incl. [cold outreach / shared export gate](../apps/email-pipeline/docs/RUNBOOK.md#m-eprun-cold-export-gate))
   - [REPORTING.md](../apps/email-pipeline/docs/REPORTING.md#m-eprep-mail) (informe correo + paquete leads)
   - [REPORT_SCOPE_CLIENT.md](../apps/email-pipeline/docs/REPORT_SCOPE_CLIENT.md) (alcance del informe de correo; copiado por [`generate_client_report.py`](../apps/email-pipeline/scripts/reports/generate_client_report.py) a `ALCANCE_INFORME.md`)

@@ -99,9 +99,9 @@ Writers stay stopped through backup, compaction, verification, staging, swap, an
 
 - SQLite Online Backup API copies **committed** database pages as of the backup run. With writers paused, committed state is included; uncommitted transactions are not.  
 - **Never** rename only `emails.sqlite` while committed frames remain only in `emails.sqlite-wal`.  
-- **WAL checkpoint / quieting is a required future cutover-tool responsibility** — not a ready manual operator command in this PR. Until an approved cutover tool implements checkpoint/companion handling, production cutover remains blocked.  
+- **WAL checkpoint / quieting** is implemented by the staged orchestrator in [`SQLITE_PRODUCTION_CUTOVER_ORCHESTRATOR.md`](SQLITE_PRODUCTION_CUTOVER_ORCHESTRATOR.md) (`quiesce_wal`). Real production apply remains blocked while unguarded writer entry points exist (see that doc).  
 - RPO=0 remains **conditional** on all SQLite writers staying stopped from the consistent Online Backup through post-swap smoke.  
-- Pause files are necessary but **not sufficient** until in-flight writer PIDs and locks are gone.
+- Pause files are necessary but **not sufficient** until in-flight writer PIDs, locks, and `/proc` FD holders are gone.
 
 ### Option B — Online backup then offline compact (writers stay up)
 
@@ -211,12 +211,7 @@ Tests: `tests/test_sqlite_writable_restore_rehearsal.py`
 
 Stop conditions (abort / rollback): verification failure, unexpected writer PID, sidecar appearance, fingerprint drift, free-space shortfall, API smoke failure, any Gmail/Postgres mutation outside the plan.
 
-**Swap semantics:** the pair `mv production → pre_cutover` then `mv staged → production` is **not** one atomic operation. Do **not** put raw live `mv` commands in the operator checklist until a tested cutover tool exists that either:
-
-- performs a same-filesystem `renameat2(RENAME_EXCHANGE)`-style exchange with fsync and **refuses** when unsupported, or  
-- implements an explicitly crash-recoverable **two-phase** rename protocol with a durable state manifest and exact recovery actions.
-
-Until that tool ships, this section is a design checklist only.
+**Swap semantics:** use the staged orchestrator in [`SQLITE_PRODUCTION_CUTOVER_ORCHESTRATOR.md`](SQLITE_PRODUCTION_CUTOVER_ORCHESTRATOR.md). The pair `mv production → pre_cutover` then `mv staged → production` is **not** one atomic operation and must not be used. The orchestrator requires `renameat2(RENAME_EXCHANGE)` after a capability probe and fails closed when unsupported.
 
 1. **Preflight:** pause-file paths as in §1; record prod fingerprint; confirm free space on `/` and `/mnt/d`; confirm no competing maintenance units.  
 2. **Pause writers:** create `{reports_dir}/active/current/auto_refresh_paused` and `dashboard_auto_mirror_paused`; no manual `--apply`.  
@@ -261,6 +256,8 @@ Until that tool ships, this section is a design checklist only.
 - Long maintenance window: WSL sleep/network; use system-level units for multi-hour compact.  
 - Cutover rename tool not yet implemented — do not improvise dual `mv`.  
 - Operator error during swap — mitigate with synthetic rehearsal + checklist + retained pre_cutover file.
+
+**Orchestrator (staged, fail-closed):** see [`SQLITE_PRODUCTION_CUTOVER_ORCHESTRATOR.md`](SQLITE_PRODUCTION_CUTOVER_ORCHESTRATOR.md). Prefer `renameat2(RENAME_EXCHANGE)`; dual `mv` remains prohibited.
 
 ---
 
