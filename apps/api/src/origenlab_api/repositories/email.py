@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 from typing import Any
 
 from origenlab_email_pipeline.cases_review_queue import fetch_cases_review_queue
 from origenlab_email_pipeline.operational_scope import CANONICAL_SCOPE_NOTE
+
+from origenlab_api.settings import get_settings
+from origenlab_api.sqlite_ro import open_operator_sqlite
 
 
 def _folder_hint(source_file: str | None) -> str | None:
@@ -50,7 +52,7 @@ def list_recent_emails(
         return [], False, True, CANONICAL_SCOPE_NOTE
 
     cap = max(1, min(int(limit), 200))
-    conn = sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True)
+    conn = open_operator_sqlite(sqlite_path, settings=get_settings())
     try:
         # cases_review_queue enforces an internal floor of 10; slice to API ``limit`` afterward.
         result = fetch_cases_review_queue(

@@ -20,12 +20,18 @@ def test_health_returns_stable_contract() -> None:
     assert data["mode"] == "operator-sqlite-readonly"
     assert data["backend"] == "sqlite"
     assert data["postgres_configured"] is False
+    assert data["sqlite_immutable"] is False
+    assert data["sqlite_query_only"] is True
+    assert data["recovery_mode"] is False
     assert set(data.keys()) == {
         "ok",
         "service",
         "mode",
         "backend",
         "postgres_configured",
+        "sqlite_immutable",
+        "sqlite_query_only",
+        "recovery_mode",
     }
 
 

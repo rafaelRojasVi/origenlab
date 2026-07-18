@@ -11,3 +11,6 @@ class HealthResponse(BaseModel):
     mode: str = "operator-sqlite-readonly"
     backend: str = "sqlite"
     postgres_configured: bool = False
+    sqlite_immutable: bool = False
+    sqlite_query_only: bool = False
+    recovery_mode: bool = False

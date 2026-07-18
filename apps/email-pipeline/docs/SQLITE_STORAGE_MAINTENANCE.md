@@ -321,6 +321,62 @@ Safety model:
 4. **Stop for explicit approval** before any recovery drill or production cutover.
 5. Body-column redesign (~28.43 GiB within-row redundancy) and stale-clone deletion remain separate workstreams — see [`SQLITE_BODY_STORAGE_ASSESSMENT.md`](SQLITE_BODY_STORAGE_ASSESSMENT.md).
 
+### Application recovery-readiness (immutable RO; not cutover)
+
+Ordinary API opens use `mode=ro` only. That is **not** safe for fingerprint-frozen offline candidates with a WAL-format header and no live sidecars — SQLite may create `-wal`/`-shm`.
+
+**Threat model:** `immutable=1` tells SQLite the file cannot change and may ignore locking/WAL updates. Enabling immutable against live production can return stale or inconsistent data. Therefore:
+
+- Default API behavior remains ordinary `mode=ro`.
+- `ORIGENLAB_SQLITE_IMMUTABLE_RO=1` alone is **never** enough.
+- Recovery mode also requires:
+  - `ORIGENLAB_SQLITE_CONFIRM_OFFLINE_COPY=1`
+  - `ORIGENLAB_SQLITE_COMPACTION_MANIFEST=<completed manifest>`
+  - `ORIGENLAB_SQLITE_PATH=<candidate>` (non-production; aliases/samefile/device+inode refused)
+  - `ORIGENLAB_API_BACKEND=sqlite` with `ORIGENLAB_POSTGRES_URL` unset
+  - candidate regular file with **no** `-wal`/`-shm`/`-journal` (including zero-byte)
+  - manifest `completed=true`, basename/size agreement, and successful verification fields
+- Failed admission **fails API startup** (no silent fallback to ordinary/production mode).
+
+In-process harness (synthetic or verified candidate; after merge):
+
+```bash
+cd /home/rafael/dev/freelance/origenlab/apps/api
+/home/rafael/.local/bin/uv run --frozen python scripts/recovery_sqlite_readiness.py \
+  --db /mnt/d/origenlab-sqlite-offline/emails_compact_YYYYMMDDTHHMMSSZ.sqlite \
+  --manifest /mnt/d/origenlab-sqlite-offline/emails_compact_YYYYMMDDTHHMMSSZ.sqlite.compaction.manifest.json \
+  --confirm-offline-copy \
+  --json
+```
+
+Isolated HTTP drill on `127.0.0.1:8002` (documentation only — unique system-level transient unit; never replace production `:8001`):
+
+```bash
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+UNIT="origenlab-api-recovery-readiness-${STAMP}"
+CAND=/mnt/d/origenlab-sqlite-offline/emails_compact_YYYYMMDDTHHMMSSZ.sqlite
+MANIFEST=${CAND}.compaction.manifest.json
+EP=/home/rafael/dev/freelance/origenlab/apps/api
+LOG=/mnt/d/origenlab-sqlite-offline/recovery_${STAMP}.log
+
+# Explicit environment — do not inherit production service EnvironmentFile.
+sudo systemd-run --unit="${UNIT}" \
+  --uid=rafael \
+  --property=WorkingDirectory="${EP}" \
+  --property=Environment=HOME=/home/rafael \
+  --property=Environment=ORIGENLAB_API_BACKEND=sqlite \
+  --property=Environment=ORIGENLAB_SQLITE_PATH=${CAND} \
+  --property=Environment=ORIGENLAB_SQLITE_IMMUTABLE_RO=1 \
+  --property=Environment=ORIGENLAB_SQLITE_CONFIRM_OFFLINE_COPY=1 \
+  --property=Environment=ORIGENLAB_SQLITE_COMPACTION_MANIFEST=${MANIFEST} \
+  --property=MemoryMax=1G \
+  --property=MemorySwapMax=0 \
+  /home/rafael/.local/bin/uv run --frozen uvicorn origenlab_api.main:app \
+    --host 127.0.0.1 --port 8002
+```
+
+After the drill: stop only the recovery unit; confirm `:8001` was never restarted; confirm candidate fingerprint and zero sidecars before/after; treat the candidate as a **point-in-time** recovery experiment that **cannot** be swapped into production without a separate writable restore rehearsal and explicit approval.
+
 **Still prohibited:** live production heavy audit, `VACUUM` / `VACUUM INTO` against production, deleting offline clones, mutating Gmail/Postgres/cron/systemd, or treating usefulness counts as deletion approval.
 
 **Production-safe light mode:** `--light-only` runs `structural_light` only (no `quick_check`, FK checks, COUNT scans, dbstat, or body profiling). Safe on the configured production path without `--confirm-offline-copy` (ordinary `mode=ro`).

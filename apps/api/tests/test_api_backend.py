@@ -64,7 +64,16 @@ def test_health_shows_backend_sqlite_default() -> None:
     assert data["backend"] == "sqlite"
     assert data["postgres_configured"] is False
     assert data["mode"] == "operator-sqlite-readonly"
-    assert set(data.keys()) == {"ok", "service", "mode", "backend", "postgres_configured"}
+    assert set(data.keys()) == {
+        "ok",
+        "service",
+        "mode",
+        "backend",
+        "postgres_configured",
+        "sqlite_immutable",
+        "sqlite_query_only",
+        "recovery_mode",
+    }
 
 
 def test_health_shows_postgres_backend_when_configured(
