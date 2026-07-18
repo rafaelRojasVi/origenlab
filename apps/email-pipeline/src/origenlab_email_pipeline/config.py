@@ -110,6 +110,33 @@ class Settings(BaseSettings):
         return self.reports_dir or (_repo_root() / "reports" / "out")
 
 
+def canonical_production_sqlite_path(
+    *,
+    data_root: Path | None = None,
+    home: Path | None = None,
+) -> Path:
+    """
+    Resolve the canonical *production* SQLite path for safety exclusion.
+
+    Never consults ``ORIGENLAB_SQLITE_PATH`` (that may be a recovery candidate).
+    Never loads dotenv and never mutates ``os.environ``.
+
+    Resolution order:
+    1. Explicit ``data_root`` argument
+    2. Process ``ORIGENLAB_DATA_ROOT`` if non-empty
+    3. ``{home}/data/origenlab-email`` (default ``Path.home()``)
+    """
+    if data_root is not None:
+        root = Path(data_root).expanduser()
+    else:
+        raw = (os.environ.get("ORIGENLAB_DATA_ROOT") or "").strip()
+        if raw:
+            root = Path(raw).expanduser()
+        else:
+            root = (home or Path.home()) / "data" / "origenlab-email"
+    return (root / "sqlite" / "emails.sqlite").expanduser().resolve()
+
+
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 

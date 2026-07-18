@@ -154,6 +154,9 @@ def build_settings(*, dotenv_disabled: bool | None = None) -> Settings:
     When ``dotenv_disabled`` is true (or recovery/disable flags are in the process
     environment), project ``.env`` files are not read. Process environment variables
     remain visible to Pydantic and to recovery admission.
+
+    ``ORIGENLAB_DISABLE_DOTENV=1`` disables dotenv only; it does not grant recovery
+    admission (immutable + confirm + manifest are still required).
     """
     disable = (
         dotenv_disabled_from_environ() if dotenv_disabled is None else bool(dotenv_disabled)
@@ -167,6 +170,22 @@ def build_settings(*, dotenv_disabled: bool | None = None) -> Settings:
     return settings
 
 
-@lru_cache
+@lru_cache(maxsize=8)
+def _get_settings_cached(recovery_requested: bool, dotenv_disabled: bool) -> Settings:
+    """Cache keyed by mode flags so recovery/normal settings never share an entry."""
+    return build_settings(dotenv_disabled=dotenv_disabled)
+
+
+def clear_settings_cache() -> None:
+    _get_settings_cached.cache_clear()
+
+
 def get_settings() -> Settings:
-    return build_settings()
+    return _get_settings_cached(
+        recovery_mode_requested_from_environ(),
+        dotenv_disabled_from_environ(),
+    )
+
+
+# Tests and callers historically use get_settings.cache_clear().
+get_settings.cache_clear = clear_settings_cache  # type: ignore[attr-defined]

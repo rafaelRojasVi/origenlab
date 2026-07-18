@@ -194,7 +194,7 @@ def test_explicit_process_postgres_still_refused(
         settings = build_settings()
         assert settings.dotenv_disabled is True
         assert settings.postgres_configured() is True
-        with pytest.raises(ValueError, match="POSTGRES_URL") as excinfo:
+        with pytest.raises(ValueError, match="ORIGENLAB_POSTGRES_URL") as excinfo:
             validate_api_settings(settings)
         _assert_no_secret_leak(str(excinfo.value))
     finally:
@@ -232,6 +232,15 @@ def test_subprocess_recovery_startup_ignores_dotenv(tmp_path: Path) -> None:
         key: value
         for key, value in os.environ.items()
         if not key.startswith("ORIGENLAB_")
+        and key
+        not in {
+            "ALEMBIC_DATABASE_URL",
+            "OPENAI_API_KEY",
+            "CF_ACCESS_CLIENT_ID",
+            "CF_ACCESS_CLIENT_SECRET",
+            "CF_ACCESS_CLIENT_ID_PROXY",
+            "CF_ACCESS_CLIENT_SECRET_PROXY",
+        }
     }
     env.update(
         {
@@ -244,6 +253,8 @@ def test_subprocess_recovery_startup_ignores_dotenv(tmp_path: Path) -> None:
             "ORIGENLAB_DISABLE_DOTENV": "1",
             "ORIGENLAB_DATA_ROOT": str(tmp_path / "home" / "data" / "origenlab-email"),
             "ORIGENLAB_ACTIVE_CURRENT": str(active),
+            "ORIGENLAB_POSTGRES_URL": "",
+            "ORIGENLAB_API_AUTH_TOKEN": "",
             "PYTHONPATH": str(REPO / "src"),
         }
     )
@@ -333,3 +344,259 @@ def test_email_pipeline_load_settings_respects_recovery_env(
     assert settings.gmail_oauth_client_json in (None, "")
     assert settings.gmail_workspace_user in (None, "")
     _assert_no_secret_leak(repr(settings))
+
+
+def test_disable_dotenv_alone_does_not_grant_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ORIGENLAB_SQLITE_IMMUTABLE_RO", raising=False)
+    monkeypatch.delenv("ORIGENLAB_SQLITE_CONFIRM_OFFLINE_COPY", raising=False)
+    monkeypatch.setenv("ORIGENLAB_DISABLE_DOTENV", "1")
+    monkeypatch.setenv("ORIGENLAB_API_BACKEND", "sqlite")
+    get_settings.cache_clear()
+    try:
+        settings = build_settings()
+        assert settings.dotenv_disabled is True
+        assert recovery_mode_requested_from_environ() is False
+        assert validate_api_settings(settings) is None
+    finally:
+        get_settings.cache_clear()
+
+
+def test_empty_optional_env_vars_are_allowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "candidate.sqlite"
+    man = tmp_path / "m.json"
+    _build_candidate(db)
+    _write_manifest(man, db)
+    home = tmp_path / "home"
+    (home / "data" / "origenlab-email" / "sqlite").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("ORIGENLAB_DATA_ROOT", str(home / "data" / "origenlab-email"))
+    monkeypatch.setenv("ORIGENLAB_SQLITE_IMMUTABLE_RO", "1")
+    monkeypatch.setenv("ORIGENLAB_SQLITE_CONFIRM_OFFLINE_COPY", "1")
+    monkeypatch.setenv("ORIGENLAB_API_BACKEND", "sqlite")
+    monkeypatch.setenv("ORIGENLAB_SQLITE_PATH", str(db))
+    monkeypatch.setenv("ORIGENLAB_SQLITE_COMPACTION_MANIFEST", str(man))
+    for key in (
+        "ORIGENLAB_POSTGRES_URL",
+        "ORIGENLAB_GMAIL_OAUTH_CLIENT_JSON",
+        "ORIGENLAB_API_AUTH_TOKEN",
+        "OPENAI_API_KEY",
+    ):
+        monkeypatch.setenv(key, "")
+
+    get_settings.cache_clear()
+    try:
+        settings = build_settings()
+        assert settings.dotenv_disabled is True
+        validate_api_settings(settings)
+    finally:
+        get_settings.cache_clear()
+
+
+def test_production_exclusion_does_not_mutate_environ(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from origenlab_api.sqlite_ro import (
+        assert_not_production_sqlite,
+        resolve_canonical_production_sqlite_path,
+        sqlite_paths_equivalent,
+    )
+
+    home = tmp_path / "home"
+    prod_dir = home / "data" / "origenlab-email" / "sqlite"
+    prod_dir.mkdir(parents=True)
+    prod = prod_dir / "emails.sqlite"
+    cand = tmp_path / "candidate.sqlite"
+    _build_candidate(prod)
+    _build_candidate(cand)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("ORIGENLAB_DATA_ROOT", str(home / "data" / "origenlab-email"))
+    monkeypatch.setenv("ORIGENLAB_SQLITE_PATH", str(cand))
+    monkeypatch.setenv("ORIGENLAB_SQLITE_IMMUTABLE_RO", "1")
+    monkeypatch.setenv("ORIGENLAB_SQLITE_CONFIRM_OFFLINE_COPY", "1")
+
+    settings = Settings(
+        _env_file=None,
+        sqlite_path=cand,
+        sqlite_immutable_ro=True,
+        sqlite_confirm_offline_copy=True,
+        sqlite_compaction_manifest=tmp_path / "m.json",
+        api_backend="sqlite",
+        postgres_url=None,
+    )
+    settings._dotenv_disabled = True
+
+    before = dict(os.environ)
+    assert_not_production_sqlite(cand, settings=settings)
+    after = dict(os.environ)
+    assert before == after
+    assert "ORIGENLAB_SQLITE_PATH" in after
+    assert after["ORIGENLAB_SQLITE_PATH"] == str(cand)
+
+    production = resolve_canonical_production_sqlite_path(home=home)
+    assert sqlite_paths_equivalent(production, prod)
+    assert not sqlite_paths_equivalent(cand, production)
+
+    def _worker() -> dict[str, str]:
+        snap = dict(os.environ)
+        assert_not_production_sqlite(cand, settings=settings)
+        return dict(os.environ)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _: _worker(), range(16)))
+    assert all(r == before for r in results)
+    assert dict(os.environ) == before
+
+
+def test_candidate_matching_production_aliases_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from origenlab_api.sqlite_ro import (
+        SqliteAdmissionError,
+        assert_not_production_sqlite,
+    )
+
+    home = tmp_path / "home"
+    prod_dir = home / "data" / "origenlab-email" / "sqlite"
+    prod_dir.mkdir(parents=True)
+    prod = prod_dir / "emails.sqlite"
+    _build_candidate(prod)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("ORIGENLAB_DATA_ROOT", str(home / "data" / "origenlab-email"))
+    monkeypatch.setenv("ORIGENLAB_SQLITE_IMMUTABLE_RO", "1")
+    monkeypatch.setenv("ORIGENLAB_SQLITE_CONFIRM_OFFLINE_COPY", "1")
+
+    settings = Settings(
+        _env_file=None,
+        sqlite_path=prod,
+        sqlite_immutable_ro=True,
+        sqlite_confirm_offline_copy=True,
+        api_backend="sqlite",
+        postgres_url=None,
+    )
+    settings._dotenv_disabled = True
+
+    before = dict(os.environ)
+    with pytest.raises(SqliteAdmissionError, match="production"):
+        assert_not_production_sqlite(prod, settings=settings)
+    assert dict(os.environ) == before
+
+    link = tmp_path / "alias.sqlite"
+    link.symlink_to(prod)
+    with pytest.raises(SqliteAdmissionError, match="production"):
+        assert_not_production_sqlite(link, settings=settings)
+    assert dict(os.environ) == before
+
+    hard = tmp_path / "hardlink.sqlite"
+    os.link(prod, hard)
+    with pytest.raises(SqliteAdmissionError, match="production"):
+        assert_not_production_sqlite(hard, settings=settings)
+    assert dict(os.environ) == before
+
+
+def test_missing_production_path_still_fail_closed_on_path_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from origenlab_api.sqlite_ro import (
+        SqliteAdmissionError,
+        assert_not_production_sqlite,
+        resolve_canonical_production_sqlite_path,
+    )
+
+    home = tmp_path / "home"
+    prod = home / "data" / "origenlab-email" / "sqlite" / "emails.sqlite"
+    # Directory exists but file does not.
+    prod.parent.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("ORIGENLAB_DATA_ROOT", str(home / "data" / "origenlab-email"))
+    monkeypatch.setenv("ORIGENLAB_SQLITE_IMMUTABLE_RO", "1")
+    monkeypatch.setenv("ORIGENLAB_SQLITE_CONFIRM_OFFLINE_COPY", "1")
+
+    settings = Settings(
+        _env_file=None,
+        sqlite_path=prod,
+        sqlite_immutable_ro=True,
+        sqlite_confirm_offline_copy=True,
+        api_backend="sqlite",
+        postgres_url=None,
+    )
+    settings._dotenv_disabled = True
+
+    before = dict(os.environ)
+    assert resolve_canonical_production_sqlite_path(home=home) == prod.resolve()
+    with pytest.raises(SqliteAdmissionError, match="production"):
+        assert_not_production_sqlite(prod, settings=settings)
+    assert dict(os.environ) == before
+
+
+def test_settings_cache_does_not_cross_contaminate_modes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    poison = tmp_path / "workdir"
+    poison.mkdir()
+    _write_poison_dotenv(poison)
+    monkeypatch.chdir(poison)
+
+    for key in (
+        "ORIGENLAB_POSTGRES_URL",
+        "ORIGENLAB_API_BACKEND",
+        "ORIGENLAB_API_AUTH_TOKEN",
+        "ORIGENLAB_SQLITE_IMMUTABLE_RO",
+        "ORIGENLAB_SQLITE_CONFIRM_OFFLINE_COPY",
+        "ORIGENLAB_DISABLE_DOTENV",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    get_settings.cache_clear()
+    normal = get_settings()
+    assert normal.dotenv_disabled is False
+    assert normal.postgres_configured() is True
+
+    monkeypatch.setenv("ORIGENLAB_SQLITE_IMMUTABLE_RO", "1")
+    monkeypatch.setenv("ORIGENLAB_SQLITE_CONFIRM_OFFLINE_COPY", "1")
+    monkeypatch.setenv("ORIGENLAB_API_BACKEND", "sqlite")
+    recovery = get_settings()
+    assert recovery.dotenv_disabled is True
+    assert recovery.postgres_configured() is False
+    assert normal.postgres_configured() is True
+
+    monkeypatch.delenv("ORIGENLAB_SQLITE_IMMUTABLE_RO", raising=False)
+    monkeypatch.delenv("ORIGENLAB_SQLITE_CONFIRM_OFFLINE_COPY", raising=False)
+    again = get_settings()
+    assert again.dotenv_disabled is False
+    assert again.postgres_configured() is True
+    get_settings.cache_clear()
+
+
+def test_explicit_gmail_process_env_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "candidate.sqlite"
+    man = tmp_path / "m.json"
+    _build_candidate(db)
+    _write_manifest(man, db)
+    home = tmp_path / "home"
+    (home / "data" / "origenlab-email" / "sqlite").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("ORIGENLAB_DATA_ROOT", str(home / "data" / "origenlab-email"))
+    monkeypatch.setenv("ORIGENLAB_SQLITE_IMMUTABLE_RO", "1")
+    monkeypatch.setenv("ORIGENLAB_SQLITE_CONFIRM_OFFLINE_COPY", "1")
+    monkeypatch.setenv("ORIGENLAB_API_BACKEND", "sqlite")
+    monkeypatch.setenv("ORIGENLAB_SQLITE_PATH", str(db))
+    monkeypatch.setenv("ORIGENLAB_SQLITE_COMPACTION_MANIFEST", str(man))
+    monkeypatch.setenv("ORIGENLAB_POSTGRES_URL", "")
+    monkeypatch.setenv("ORIGENLAB_GMAIL_OAUTH_CLIENT_JSON", FAKE_GMAIL)
+
+    get_settings.cache_clear()
+    try:
+        settings = build_settings()
+        with pytest.raises(ValueError, match="ORIGENLAB_GMAIL_OAUTH_CLIENT_JSON") as exc:
+            validate_api_settings(settings)
+        _assert_no_secret_leak(str(exc.value))
+    finally:
+        get_settings.cache_clear()
