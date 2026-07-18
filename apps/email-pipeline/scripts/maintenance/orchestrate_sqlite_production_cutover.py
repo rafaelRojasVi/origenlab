@@ -6,6 +6,7 @@ Default is zero-write ``plan_preflight``. Every mutating stage requires its own
 workflow in one command.
 
 Does not authorize improvising dual ``mv`` when rename exchange is unavailable.
+Real production apply remains blocked while unguarded writer entry points exist.
 """
 
 from __future__ import annotations
@@ -57,12 +58,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Acknowledge real production cutover authorization",
     )
     p.add_argument("--maintenance-id", default="", help="Unique maintenance ID")
-    p.add_argument("--expected-main-sha", default="", help="Expected git main SHA")
+    p.add_argument(
+        "--expected-main-sha",
+        default="",
+        help="Complete 40-character git SHA (exact match required)",
+    )
     p.add_argument(
         "--expected-production-path",
         type=Path,
         default=None,
-        help="Exact expected production SQLite path",
+        help="Exact expected production SQLite path (canonical only for real apply)",
     )
     p.add_argument(
         "--expected-production-fingerprint",
@@ -74,7 +79,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Separate explicit approval for approve_swap / atomic_swap",
     )
-    p.add_argument("--journal-path", type=Path, default=None)
+    p.add_argument(
+        "--journal-path",
+        type=Path,
+        default=None,
+        help="Must stay under production .origenlab_cutover_journals/",
+    )
     p.add_argument("--backup-dest", type=Path, default=None)
     p.add_argument("--staging-dest", type=Path, default=None)
     p.add_argument("--reports-dir", type=Path, default=None)
@@ -82,9 +92,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--rollback-before-writers",
         action="store_true",
-        help="Attempt verified atomic rollback before writers resume",
+        help="Attempt verified atomic rollback before writer_resume_started",
     )
-    p.add_argument("--pre-cutover-path", type=Path, default=None)
+    p.add_argument(
+        "--pre-cutover-path",
+        type=Path,
+        default=None,
+        help="Optional; must exactly match journal-approved pre-cutover path",
+    )
     p.add_argument("--expected-old-fingerprint", default="")
     p.add_argument("--expected-new-fingerprint", default="")
     p.add_argument("--json", action="store_true")
@@ -110,14 +125,13 @@ def main(argv: list[str] | None = None) -> int:
             api_base_url=str(args.api_base_url),
         )
         if args.rollback_before_writers:
-            if args.pre_cutover_path is None:
-                raise CutoverError(
-                    "--pre-cutover-path required for rollback",
-                    category=CutoverFailureCategory.PREFLIGHT,
-                )
             report = attempt_rollback_before_writers(
                 opts,
-                pre_cutover_path=args.pre_cutover_path.expanduser(),
+                pre_cutover_path=(
+                    args.pre_cutover_path.expanduser()
+                    if args.pre_cutover_path is not None
+                    else None
+                ),
                 expected_old_fingerprint=args.expected_old_fingerprint,
                 expected_new_fingerprint=args.expected_new_fingerprint,
             )

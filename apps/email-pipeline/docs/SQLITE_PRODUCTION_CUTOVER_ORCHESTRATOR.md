@@ -1,29 +1,39 @@
 # SQLite production cutover orchestrator
 
-**Status:** staged orchestrator + synthetic tests.  
+**Status:** hardened staged orchestrator + synthetic tests (draft).  
 **Does not authorize** running a real production cutover from this PR alone.
 
 Implements the fail-closed tool required by [`SQLITE_WRITABLE_RESTORE_AND_CUTOVER.md`](SQLITE_WRITABLE_RESTORE_AND_CUTOVER.md).
 
+## Corrected state invariants
+
+1. Git identity comes from bounded `git rev-parse` only (never env SHA). Production apply requires branch `main`, clean worktree, and `main == origin/main`. Exact 40-character SHA match.
+2. Real production path must be `canonical_production_sqlite_path()` (samefile/device/inode). Synthetic paths only with `allow_synthetic_world=True` + `SyntheticWorld`.
+3. First mutating stage seals an **immutable approved plan** (public journal basenames + private path journal). Later CLI options cannot drift.
+4. Every mutating stage holds an exclusive `flock` keyed by production device/inode + maintenance ID. Zero-write preflight creates no lock.
+5. `writer_resume_started=true` is fsynced **before** removing the first pause marker; automatic rollback is permanently refused afterward.
+6. Atomic swap uses `renameat2(RENAME_EXCHANGE)` then `renameat2(RENAME_NOREPLACE)` for pre-cutover retention. Crash reconciliation never blindly repeats exchange.
+7. Read-only smoke starts **API only**; health timer starts in `resume_services`.
+
 ## State diagram
 
 ```text
-plan_preflight (zero-write)
+plan_preflight (zero-write, no lock)
         |
         v
-pause_writers  --touch auto_refresh_paused + dashboard_auto_mirror_paused
+pause_writers  --seal approved plan; touch pause markers
         |
         v
-stop_readers   --stop origenlab-api-health.timer + origenlab-api.service
+stop_readers   --stop health timer, then API
         |
         v
-quiesce_wal    --checkpoint TRUNCATE; fail if writers/WAL inconsistent
+quiesce_wal    --wal_checkpoint(TRUNCATE); busy==0; recheck barriers
         |
         v
-create_current_backup   --Online Backup API → /mnt/d (fresh only)
+create_current_backup   --Online Backup API → approved /mnt/d dest
         |
         v
-compact_to_production_fs_staging  --VACUUM INTO staging on / (same FS)
+compact_to_production_fs_staging  --VACUUM INTO staging on production FS
         |
         v
 verify_candidate
@@ -32,16 +42,20 @@ verify_candidate
 approve_swap   --separate --approve-swap
         |
         v
-atomic_swap    --renameat2(RENAME_EXCHANGE) only; retain pre_cutover.*
+atomic_swap    --swap_intent → RENAME_EXCHANGE → RENAME_NOREPLACE retain
         |
         v
-readonly_smoke --/health /operator/status /operator/automation-status
+readonly_smoke --API only; semantic checks; sidecar/SHM policy
         |
         v
-resume_services
+resume_services --start health timer after smoke
         |
         v
-resume_writers --remove pause markers
+resume_writers_mail           --fsync writer_resume_started; remove mail pause
+resume_writers_observe_mail
+resume_writers_mirror
+resume_writers_observe_mirror
+resume_writers_commit         --writers_resumed=true
         |
         v
 completed
@@ -49,73 +63,60 @@ completed
 
 Each arrow is a **separate** CLI invocation with `--apply` (except `plan_preflight`).
 
-## CLI
+## Writer entry points
 
-```bash
-cd apps/email-pipeline
+| Entry | Barrier | Status |
+|-------|---------|--------|
+| `mail_auto_refresh` | `auto_refresh_paused` | guarded |
+| `dashboard_auto_mirror` | `dashboard_auto_mirror_paused` | guarded |
+| `chilecompra_equipment_auto_refresh` | lock only | **unguarded** |
+| `origenlab-api.service` | stop_readers | guarded via stop |
+| ad-hoc operator scripts | none | **unguarded** |
 
-# Zero-write plan
-uv run --frozen python scripts/maintenance/orchestrate_sqlite_production_cutover.py \
-  --stage plan_preflight \
-  --json
+**`REAL_PRODUCTION_APPLY_BLOCKED = True`** until every unguarded entry gains a reliable maintenance barrier. SyntheticWorld tests still exercise the full machine.
 
-# Example mutating stage (still requires full auth flags)
-uv run --frozen python scripts/maintenance/orchestrate_sqlite_production_cutover.py \
-  --stage pause_writers \
-  --apply \
-  --confirm-production-cutover \
-  --maintenance-id cutoverYYYYMMDDTHHMMSSZ \
-  --expected-main-sha <sha> \
-  --expected-production-path /exact/path/emails.sqlite \
-  --expected-production-fingerprint '<size:mtime_ns:dev:ino>' \
-  --reports-dir <reports/out> \
-  --json
-```
+## Implemented vs stubbed (real adapters)
 
-Swap stages additionally require `--approve-swap`.
+| Capability | Status |
+|------------|--------|
+| Online Backup via `run_online_backup` | **Implemented** in `FilesystemAdapters` |
+| Offline compact via `run_offline_compaction` | **Implemented** in `FilesystemAdapters` |
+| WAL checkpoint busy/log validation | **Implemented** |
+| Exclusive flock | **Implemented** |
+| Canonical path + git identity | **Implemented** |
+| Real mutating apply against production | **Blocked** (`REAL_PRODUCTION_APPLY_BLOCKED`) |
 
-## Authorization
+## Crash-reconciliation matrix
 
-| Flag | Required when |
-|------|----------------|
-| `--confirm-production-cutover` | any `--apply` stage |
-| `--maintenance-id` | unique id, no path separators |
-| `--expected-main-sha` | apply |
-| `--expected-production-path` | exact path + basename |
-| `--expected-production-fingerprint` | `size:mtime_ns:device:inode` |
-| `--approve-swap` | `approve_swap` and `atomic_swap` |
+| Condition | Recognized | Safe action |
+|-----------|------------|-------------|
+| Intent written; prod=old, staging=new; no pre_cutover | `pre_exchange_ready` | retry atomic swap from intent |
+| `exchange_completed`; staging still holds old | `exchange_done_retain_pending` | `RENAME_NOREPLACE` retain only |
+| prod=new, pre_cutover=old, staging absent | `swap_complete` | continue readonly_smoke |
+| Fingerprints disagree / unexpected layout | `ambiguous_*` | manual inspect; **never** repeat exchange |
+| Crash after `writer_resume_started` | n/a | rollback refused |
+| Crash before journal write | n/a | re-run same stage after inspect |
 
-Rejects: July/offline compact evidence basenames, symlinks, path/fingerprint drift, non-sequential stages, ambiguous journals.
+## Rollback rules
 
-## Journal
+- Allowed only before `writer_resume_started`.
+- Pre-cutover path must match journal basename/path exactly (arbitrary `--pre-cutover-path` refused).
+- Require writers paused, no live locks/FDs, API+health stopped, same FS, exchange capability.
+- After rollback: `readonly_smoke` required before services resume.
 
-Durable JSON journal (atomic write + fsync) under:
+## SHM / sidecar smoke policy
 
-`{production_parent}/.origenlab_cutover_journals/{maintenance_id}.journal.json`
-
-Records stage, fingerprints, service/writer flags, backup/staging basenames, swap direction, `writers_resumed`, and safe next actions. On resume, reality + journal must agree; ambiguous states refuse.
-
-## Recovery matrix
-
-| Condition | Action |
-|-----------|--------|
-| Crash after stage journal write | Re-run **next** stage only |
-| Crash before journal write | Re-run **same** stage after inspecting filesystem |
-| `renameat2` unsupported | **Fail closed** — no dual-`mv` fallback |
-| Rollback before `writers_resumed` | `--rollback-before-writers` with exact old/new fingerprints |
-| Rollback after writers resumed | **Refused** — incident/reconciliation only |
-| Evidence compact as source | **Refused** |
-
-## RPO=0 invariants
-
-Writers remain paused from `create_current_backup` through `readonly_smoke`. API + health timer stopped before `quiesce_wal` / swap. Fresh Online Backup on `/mnt/d`; compact staging on `/` beside production. Never hot `cp`, in-place VACUUM, or production `VACUUM INTO`.
+- `-journal`: forbidden
+- `-wal`: fail if size > 0
+- `-shm`: allowed only if size ∈ `{0, 32768}` after API open
 
 ## Remaining blockers before a real cutover
 
-1. Wire real Online Backup / offline compact adapters into the stage runners (today they fail closed with operator recovery hints in the default `FilesystemAdapters`).
-2. Operator maintenance window with capacity confirmation.
-3. Successful synthetic drill on this tooling in the target environment’s rename-exchange capability.
+1. Add cutover-linked pause barriers for chilecompra + document/handle ad-hoc writers; clear `REAL_PRODUCTION_APPLY_BLOCKED`.
+2. Operator maintenance window + capacity confirmation.
+3. Prove `renameat2(RENAME_EXCHANGE)` / `RENAME_NOREPLACE` on the production filesystem.
 4. Explicit human approval of maintenance ID + fingerprints at swap time.
+5. End-to-end dry run still must not mutate production until blockers clear.
 
 ## Module / tests
 

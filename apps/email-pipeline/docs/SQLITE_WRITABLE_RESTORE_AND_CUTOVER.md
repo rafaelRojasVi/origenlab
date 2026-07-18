@@ -99,9 +99,9 @@ Writers stay stopped through backup, compaction, verification, staging, swap, an
 
 - SQLite Online Backup API copies **committed** database pages as of the backup run. With writers paused, committed state is included; uncommitted transactions are not.  
 - **Never** rename only `emails.sqlite` while committed frames remain only in `emails.sqlite-wal`.  
-- **WAL checkpoint / quieting is a required future cutover-tool responsibility** — not a ready manual operator command in this PR. Until an approved cutover tool implements checkpoint/companion handling, production cutover remains blocked.  
+- **WAL checkpoint / quieting** is implemented by the staged orchestrator in [`SQLITE_PRODUCTION_CUTOVER_ORCHESTRATOR.md`](SQLITE_PRODUCTION_CUTOVER_ORCHESTRATOR.md) (`quiesce_wal`). Real production apply remains blocked while unguarded writer entry points exist (see that doc).  
 - RPO=0 remains **conditional** on all SQLite writers staying stopped from the consistent Online Backup through post-swap smoke.  
-- Pause files are necessary but **not sufficient** until in-flight writer PIDs and locks are gone.
+- Pause files are necessary but **not sufficient** until in-flight writer PIDs, locks, and `/proc` FD holders are gone.
 
 ### Option B — Online backup then offline compact (writers stay up)
 
