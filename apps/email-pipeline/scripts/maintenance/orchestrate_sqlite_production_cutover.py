@@ -107,7 +107,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Finalize a verified pre-PoNR rollback into terminal ABANDONED "
-            "(never COMPLETED); mutually exclusive with --execute/--resume"
+            "(never COMPLETED). Requires --apply and the full production approval "
+            "contract; mutually exclusive with --stage cutover application, "
+            "--abort-before-swap, and --rollback-before-writers"
         ),
     )
     p.add_argument(
@@ -149,6 +151,13 @@ def main(argv: list[str] | None = None) -> int:
         if len(selected) > 1:
             print(
                 f"error: {' and '.join(selected)} are mutually exclusive",
+                file=sys.stderr,
+            )
+            return 2
+        if args.rollback_finalize and args.stage != CutoverStage.PLAN_PREFLIGHT.value:
+            print(
+                "error: --rollback-finalize does not take --stage "
+                "(it is a dedicated operation, not a cutover stage)",
                 file=sys.stderr,
             )
             return 2

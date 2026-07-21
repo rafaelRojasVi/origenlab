@@ -335,8 +335,64 @@ def previous_stage(current: CutoverStage) -> CutoverStage | None:
     return STAGE_ORDER[idx - 1]
 
 
+def _rollback_finalize_locked(journal: "CutoverJournal | None") -> str | None:
+    """Return a reason string if the journal is owned by the rollback-finalize
+    lifecycle (any marker present), else None.
+
+    Once any of these is recorded, ONLY rollback_finalize status/reconciliation
+    may proceed — every other mutating route (ordinary stages, a second physical
+    rollback, abort_before_swap) must refuse. This is what prevents a second
+    rollback call from ever exchanging the original and candidate again.
+    """
+    if journal is None:
+        return None
+    if journal.abandoned or journal.stage == CutoverStage.ABANDONED.value:
+        return "journal is terminal ABANDONED"
+    if journal.rollback_finalized:
+        return "rollback already finalized"
+    if journal.rollback_verified:
+        return "verified rollback recorded"
+    if journal.rollback_finalize_intent:
+        return "rollback_finalize intent recorded"
+    return None
+
+
 def companion_paths(path: Path) -> list[Path]:
     return [Path(str(path) + s) for s in ("-wal", "-shm", "-journal")]
+
+
+def wal_path(path: Path) -> Path:
+    return Path(str(path) + "-wal")
+
+
+def shm_path(path: Path) -> Path:
+    return Path(str(path) + "-shm")
+
+
+def _sidecar_identity_snapshot(
+    adapters: "CutoverAdapters", path: Path
+) -> dict[str, Any]:
+    """Immutable-identity snapshot of a WAL/SHM sidecar (never size/mtime).
+
+    Records presence + device/inode + mode only. Returns ``{"present": False}``
+    for an absent sidecar. Non-regular / symlink sidecars are recorded as
+    ``ambiguous`` so finalize can fail closed rather than trust them.
+    """
+    if not adapters.path_exists(path):
+        return {"present": False}
+    try:
+        if adapters.is_symlink(path) or not adapters.is_file(path):
+            return {"present": True, "ambiguous": True}
+        ident = adapters.path_identity(path)
+        mode = int(adapters.get_file_mode_owner(path)["mode"])
+        return {
+            "present": True,
+            "device": int(ident["device"]),
+            "inode": int(ident["inode"]),
+            "mode": mode,
+        }
+    except Exception:  # noqa: BLE001
+        return {"present": True, "ambiguous": True}
 
 
 def sanitize_evidence(payload: dict[str, Any]) -> dict[str, Any]:
@@ -701,10 +757,35 @@ class CutoverJournal:
     # Writers resumed on the RESTORED ORIGINAL — deliberately separate from the
     # normal-cutover writer_resume_started / writers_resumed (new-DB) semantics.
     rollback_original_writers_resumed: bool = False
+    # HISTORICAL truth: a pause-removal mutation happened at least once. These are
+    # never reset to False just because writers were later re-paused.
     rollback_finalize_mail_resumed: bool = False
     rollback_finalize_mirror_resumed: bool = False
+    # Durable intent-before / success-after for each pause removal.
+    rollback_finalize_mail_resume_intent: bool = False
+    rollback_finalize_mirror_resume_intent: bool = False
+    rollback_finalize_mail_observed_ok: bool = False
+    rollback_finalize_mirror_observed_ok: bool = False
+    # CURRENT state (separate from historical truth): are the pauses currently
+    # absent (writers live) and were they re-paused during a recovery?
+    rollback_finalize_mail_pause_absent: bool = False
+    rollback_finalize_mirror_pause_absent: bool = False
+    rollback_finalize_writers_repaused: bool = False
+    # Explicit post-mail fingerprint recorded once legitimate writes may begin, so
+    # a retry after real mail activity does not demand the pristine original fp.
+    rollback_finalize_post_mail_fingerprint: str | None = None
     # Ownership of any API this finalize started (separate from smoke ownership).
     rollback_finalize_started_api: bool = False
+    # An API this finalize started ONLY to verify health when it was inactive
+    # pre-maintenance; it must be owned-stopped again before terminal.
+    rollback_finalize_owned_temp_api: bool = False
+    rollback_finalize_service_intent: dict[str, Any] | None = None
+    # Sidecar (WAL/SHM) lifecycle proof captured immediately after the physical
+    # rollback, used to fail closed on unexplained candidate sidecars.
+    rollback_sidecar_proof: dict[str, Any] | None = None
+    # Pre-maintenance service policy captured before STOP_READERS stops them.
+    pre_maintenance_api_active: bool | None = None
+    pre_maintenance_health_timer_active: bool | None = None
     original_mode: int | None = None
     original_uid: int | None = None
     original_gid: int | None = None
@@ -2828,26 +2909,19 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                         category=CutoverFailureCategory.AMBIGUOUS,
                     )
 
-        # PR-C lockout: once a verified rollback (or rollback-finalize intent) is
-        # recorded, the ordinary cutover path is closed. A crash must never leave
-        # a rolled-back MID able to continue toward COMPLETED. Only the dedicated
+        # PR-C lockout: once the rollback-finalize lifecycle owns the journal, the
+        # ordinary cutover path is closed. A crash must never leave a rolled-back
+        # MID able to continue toward COMPLETED. Only the dedicated
         # rollback_finalize operation (a separate entrypoint) may proceed.
-        if journal.abandoned or journal.stage == CutoverStage.ABANDONED.value:
+        locked = _rollback_finalize_locked(journal)
+        if locked is not None:
             _fail(
-                "cutover MID is ABANDONED; ordinary execute/resume/apply refused",
+                f"ordinary execute/resume/apply refused: {locked}",
                 category=CutoverFailureCategory.SAFETY,
                 recovery=(
-                    "This MID terminated as ABANDONED (rolled back). It can never "
-                    "complete. Re-run --rollback-finalize only for idempotent status."
-                ),
-            )
-        if journal.rollback_verified or journal.rollback_finalize_intent:
-            _fail(
-                "verified rollback recorded; ordinary cutover path is locked",
-                category=CutoverFailureCategory.SAFETY,
-                recovery=(
-                    "Only --rollback-finalize may proceed. The normal "
-                    "readonly-smoke -> completed / resume_writers path is refused."
+                    "Only --rollback-finalize may proceed (status or "
+                    "reconciliation). The normal cutover path is permanently "
+                    "locked for this MID."
                 ),
             )
 
@@ -2882,6 +2956,19 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
 
         if stage == CutoverStage.STOP_READERS:
             _expect_journal_stage(journal, CutoverStage.PAUSE_WRITERS)
+            # Capture the pre-maintenance service policy BEFORE stopping anything so
+            # a later rollback_finalize restores exactly the services that were
+            # active (and never enables one that was disabled before maintenance).
+            if (
+                journal.pre_maintenance_api_active is None
+                or journal.pre_maintenance_health_timer_active is None
+            ):
+                pre_state = adapters.service_state()
+                journal.pre_maintenance_api_active = bool(pre_state.api_active)
+                journal.pre_maintenance_health_timer_active = bool(
+                    pre_state.health_timer_active
+                )
+                write_journal(adapters, journal_path, journal)
             adapters.stop_health_timer()
             adapters.stop_api()
             services = adapters.service_state()
@@ -3782,6 +3869,19 @@ def attempt_rollback_before_writers(
                 category=CutoverFailureCategory.AMBIGUOUS,
             )
         assert journal is not None
+        # Never exchange twice: if the rollback-finalize lifecycle already owns the
+        # journal, refuse a second physical rollback outright.
+        locked = _rollback_finalize_locked(journal)
+        if locked is not None:
+            _fail(
+                f"second rollback refused: {locked}; only --rollback-finalize may "
+                "proceed",
+                category=CutoverFailureCategory.SAFETY,
+                recovery=(
+                    "The original has already been restored and recorded. Use "
+                    "--rollback-finalize to reconcile/finish; do not exchange again."
+                ),
+            )
         if journal.writer_resume_started or journal.writers_resumed:
             _fail(
                 "automatic rollback refused after writer_resume_started; "
@@ -3904,6 +4004,16 @@ def attempt_rollback_before_writers(
             "before_writer_resume": True,
             "verified_at_utc": _iso_now(),
         }
+        # Sidecar lifecycle proof: RENAME_EXCHANGE moves only main, so whatever
+        # WAL/SHM sit at the production paths immediately after rollback are the
+        # authoritative "expected" state finalize must reconcile against. Record
+        # exact identity or explicit absence — never invent or delete.
+        journal.rollback_sidecar_proof = {
+            "schema": 1,
+            "captured_at_utc": _iso_now(),
+            "wal": _sidecar_identity_snapshot(adapters, wal_path(production)),
+            "shm": _sidecar_identity_snapshot(adapters, shm_path(production)),
+        }
         # Rollback-finalize is now the only supported forward operation.
         write_journal(adapters, journal_path, journal)
         return sanitize_evidence(
@@ -3960,52 +4070,246 @@ def _rollback_finalize_manual_recovery(
     adapters: CutoverAdapters,
     journal: CutoverJournal,
     journal_path: Path,
+    production: Path,
     reports: Path,
     reason: str,
+    *,
+    evidence: dict[str, Any] | None = None,
 ) -> None:
-    """Fail safe: reassert both pauses, retain ownership, refuse ABANDONED.
+    """Fail safe: reassert both pauses + prove quiescence, retain ownership.
 
-    Preserves ``rollback_finalize_intent`` so a later retry reconciles reality.
-    Records partial truth durably. Never records ABANDONED/COMPLETED/success.
+    Preserves ``rollback_finalize_intent`` and all HISTORICAL mutation truth so a
+    later retry reconciles reality. Records only CURRENT pause state; never resets
+    historical ``*_resumed`` fields. Preserves cleanup/journal-write failures in
+    sanitized evidence instead of swallowing them, and only claims a verified
+    re-pause when it truly verified one. Never records ABANDONED/COMPLETED/success.
     """
-    repaused = False
+    cleanup_errors: list[str] = []
     try:
         adapters.touch(mail_pause_path(reports))
         adapters.touch(mirror_pause_path(reports))
-        writers = adapters.list_writers(journal_path.parent)
+    except Exception as exc:  # noqa: BLE001
+        cleanup_errors.append(f"touch:{type(exc).__name__}")
+    repaused = False
+    quiesced = False
+    try:
+        writers = adapters.list_writers(production)
         repaused = bool(writers.mail_pause_present and writers.mirror_pause_present)
-    except Exception:  # noqa: BLE001
-        repaused = False
-    # Partial writer resume is undone; ownership/intent are retained for retry.
-    journal.rollback_finalize_mail_resumed = False
-    journal.rollback_finalize_mirror_resumed = False
+    except Exception as exc:  # noqa: BLE001
+        cleanup_errors.append(f"list_writers:{type(exc).__name__}")
+    if repaused:
+        try:
+            _assert_writers_quiesced(adapters, production)
+            quiesced = True
+        except CutoverError:
+            quiesced = False
+        except Exception as exc:  # noqa: BLE001
+            cleanup_errors.append(f"quiesce:{type(exc).__name__}")
+    # CURRENT state truth only — HISTORICAL *_resumed truth is preserved.
+    if repaused:
+        journal.rollback_finalize_mail_pause_absent = False
+        journal.rollback_finalize_mirror_pause_absent = False
+        if (
+            journal.rollback_finalize_mail_resumed
+            or journal.rollback_finalize_mirror_resumed
+        ):
+            journal.rollback_finalize_writers_repaused = True
     journal.rollback_original_writers_resumed = False
     journal.notes.append(f"rollback_finalize_manual_recovery:{reason}")
+    journal_write_failed = False
     try:
         write_journal(adapters, journal_path, journal)
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        journal_write_failed = True
+        cleanup_errors.append(f"journal_write:{type(exc).__name__}")
+    ok = repaused and quiesced and not journal_write_failed
+    ev = dict(evidence or {})
+    ev.update(
+        {
+            "reason": reason,
+            "repaused": repaused,
+            "writers_quiesced": quiesced,
+            "journal_write_failed": journal_write_failed,
+            "cleanup_errors": cleanup_errors,
+        }
+    )
+    recovery = (
+        "Both writer pauses were reasserted and verified quiescent; "
+        if ok
+        else "Re-pause/quiescence/journal state is NOT fully verified — manual "
+        "inspection required before any resume; "
+    )
     _fail(
         "MANUAL_RECOVERY_REQUIRED during rollback_finalize",
         category=CutoverFailureCategory.AMBIGUOUS,
-        recovery=(
-            "Both writer pauses were reasserted. Inspect service/identity state "
-            "and re-run --rollback-finalize. ABANDONED was not recorded."
-        ),
-        evidence=sanitize_evidence({"reason": reason, "repaused": repaused}),
+        recovery=recovery
+        + "inspect service/identity state and re-run --rollback-finalize. "
+        "ABANDONED was not recorded.",
+        evidence=sanitize_evidence(ev),
     )
+
+
+def _rollback_finalize_terminal_state(journal: CutoverJournal) -> str:
+    """Classify terminal coherence: not_terminal | coherent_abandoned | mixed."""
+    has_marker = (
+        journal.abandoned
+        or journal.rollback_finalized
+        or journal.stage == CutoverStage.ABANDONED.value
+    )
+    if not has_marker:
+        return "not_terminal"
+    coherent = (
+        journal.stage == CutoverStage.ABANDONED.value
+        and journal.abandoned is True
+        and journal.rollback_finalized is True
+        and bool(journal.rollback_finalized_at_utc)
+        and journal.rollback_verified is True
+        and bool(journal.rollback_proof)
+        and journal.stage != CutoverStage.COMPLETED.value
+        and not journal.writer_resume_started
+        and not journal.writers_resumed
+        and journal.rollback_finalize_intent is None
+    )
+    return "coherent_abandoned" if coherent else "mixed"
+
+
+def _validate_rollback_proof(
+    journal: CutoverJournal, proof: dict[str, Any], opts: CutoverOptions
+) -> None:
+    """Fail closed unless the structured proof has every required typed field."""
+    if not journal.rollback_verified or not proof:
+        _fail(
+            "no verified rollback proof; manual reconciliation required",
+            category=CutoverFailureCategory.AMBIGUOUS,
+            recovery=(
+                "rollback_finalize requires a durable, structured rollback proof "
+                "from attempt_rollback_before_writers. Reconcile manually."
+            ),
+        )
+    for key in (
+        "old_fingerprint",
+        "new_fingerprint",
+        "restored_fingerprint",
+        "candidate_basename",
+        "retained_candidate_basename",
+    ):
+        if not isinstance(proof.get(key), str) or not proof.get(key):
+            _fail(
+                f"rollback proof missing/invalid field '{key}'; manual "
+                "reconciliation required",
+                category=CutoverFailureCategory.AMBIGUOUS,
+            )
+    for key in (
+        "restored_device",
+        "restored_inode",
+        "plan_production_device",
+        "plan_production_inode",
+    ):
+        value = proof.get(key)
+        if not isinstance(value, int) or isinstance(value, bool):
+            _fail(
+                f"rollback proof missing approved-plan identity '{key}'; manual "
+                "reconciliation required",
+                category=CutoverFailureCategory.AMBIGUOUS,
+            )
+    if proof.get("before_writer_resume") is not True or (
+        proof.get("candidate_not_production") is not True
+    ):
+        _fail(
+            "rollback proof insufficient/ambiguous; manual reconciliation required",
+            category=CutoverFailureCategory.AMBIGUOUS,
+        )
+    if proof.get("maintenance_id") != opts.maintenance_id:
+        _fail(
+            "rollback proof maintenance_id mismatch",
+            category=CutoverFailureCategory.SAFETY,
+        )
+
+
+def _rf_api_running(adapters: CutoverAdapters, opts: CutoverOptions) -> bool:
+    return bool(
+        adapters.api_activity(api_base_url=opts.api_base_url).get("running")
+    )
+
+
+def _rf_api_stopped(adapters: CutoverAdapters, opts: CutoverOptions) -> bool:
+    return bool(
+        adapters.api_activity(api_base_url=opts.api_base_url).get("stopped")
+    )
+
+
+def _rollback_finalize_check_pre_api_sidecars(
+    adapters: CutoverAdapters,
+    production: Path,
+    journal: CutoverJournal,
+    artifact: ArtifactPermissions | None,
+) -> dict[str, Any]:
+    """Fail closed on any unexplained WAL/SHM before starting the API.
+
+    Legit BEFORE API start: absent (proof said absent), or present with an
+    identity that matches BOTH the rollback sidecar proof AND an ORIGINAL
+    barrier-applied companion. A candidate-created sidecar, an appearance /
+    disappearance, an identity drift, or an ambiguous sidecar all fail closed.
+    Never deletes or chmods a sidecar to make the state pass.
+    """
+    proof = journal.rollback_sidecar_proof or {}
+    detail: dict[str, str] = {}
+    for role, path in (("wal", wal_path(production)), ("shm", shm_path(production))):
+        expected = proof.get(role) or {"present": False}
+        live = _sidecar_identity_snapshot(adapters, path)
+        if live.get("ambiguous") or expected.get("ambiguous"):
+            return {"ok": False, "role": role, "reason": "ambiguous_sidecar"}
+        exp_present = bool(expected.get("present"))
+        live_present = bool(live.get("present"))
+        if not exp_present and not live_present:
+            detail[role] = "absent"
+            continue
+        if exp_present != live_present:
+            return {
+                "ok": False,
+                "role": role,
+                "reason": "sidecar_appeared" if live_present else "sidecar_disappeared",
+            }
+        if int(live["device"]) != int(expected["device"]) or int(
+            live["inode"]
+        ) != int(expected["inode"]):
+            return {"ok": False, "role": role, "reason": "sidecar_identity_drift"}
+        member = artifact.member(role) if artifact is not None else None
+        if (
+            member is None
+            or not member.present
+            or member.device is None
+            or member.inode is None
+            or int(member.device) != int(live["device"])
+            or int(member.inode) != int(live["inode"])
+        ):
+            return {
+                "ok": False,
+                "role": role,
+                "reason": "unexplained_candidate_sidecar",
+            }
+        detail[role] = "original_companion"
+    return {"ok": True, "detail": detail}
 
 
 def rollback_finalize(opts: CutoverOptions) -> dict[str, Any]:
     """Finalize a verified pre-PoNR rollback into the terminal ABANDONED state.
 
-    Never runs through ordinary ``--execute``/``--resume``. Reuses the normal
-    operator-approval contract (adds no new bypass) and the July 19 MID is
-    rejected by ``_require_auth``. abandoned != completed; ABANDONED is never a
-    successful cutover and never soak-eligible.
+    A dedicated mutating operation: it never runs through ordinary ``--stage``
+    cutover application, requires ``--apply``, and enforces the full production
+    approval contract (``--confirm-production-cutover``, exact MID/path/SHA/
+    fingerprint, ``--approve-swap``) plus an exact repository HEAD match. The
+    July 19 MID is rejected by ``_require_auth``. abandoned != completed;
+    ABANDONED is never a successful cutover and never soak-eligible.
     """
+    if not opts.apply:
+        _fail(
+            "rollback_finalize requires --apply",
+            category=CutoverFailureCategory.PREFLIGHT,
+        )
     _require_auth(opts, for_swap=True)
     adapters = opts.adapters or FilesystemAdapters(settings=opts.settings)
+    _require_git_match(opts, adapters)
     assert opts.expected_production_path is not None
     production = opts.expected_production_path.expanduser()
     reports = opts.reports_dir or (
@@ -4034,9 +4338,17 @@ def rollback_finalize(opts: CutoverOptions) -> dict[str, Any]:
                 category=CutoverFailureCategory.AMBIGUOUS,
             )
 
-        # Idempotent: already terminal ABANDONED.
-        if journal.abandoned or journal.stage == CutoverStage.ABANDONED.value:
+        # ---- F4: strict terminal consistency / idempotency. A COHERENT
+        # ABANDONED record is idempotent success; any MIXED terminal state
+        # (e.g. abandoned=true with stage=completed) is MANUAL_RECOVERY. ----
+        terminal = _rollback_finalize_terminal_state(journal)
+        if terminal == "coherent_abandoned":
             return _rollback_finalize_status(opts, journal, already=True)
+        if terminal == "mixed":
+            _rollback_finalize_manual_recovery(
+                adapters, journal, journal_path, production, reports,
+                "mixed_terminal_state",
+            )
 
         # Refuse COMPLETED / post-PoNR / normal writers resumed.
         if journal.stage == CutoverStage.COMPLETED.value:
@@ -4051,130 +4363,105 @@ def rollback_finalize(opts: CutoverOptions) -> dict[str, Any]:
                 category=CutoverFailureCategory.SAFETY,
             )
 
-        # Require STRUCTURED verified rollback proof; legacy/insufficient → manual.
+        # ---- F4: structured proof schema validation (typed fields + approved
+        # plan device/inode required; legacy/insufficient → manual). ----
         proof = journal.rollback_proof or {}
-        if not journal.rollback_verified or not proof:
-            _fail(
-                "no verified rollback proof; manual reconciliation required",
-                category=CutoverFailureCategory.AMBIGUOUS,
-                recovery=(
-                    "rollback_finalize requires a durable, structured rollback "
-                    "proof from attempt_rollback_before_writers. Reconcile manually."
-                ),
-            )
-        if not proof.get("before_writer_resume") or not proof.get(
-            "candidate_not_production"
-        ):
-            _fail(
-                "rollback proof insufficient/ambiguous; manual reconciliation "
-                "required",
-                category=CutoverFailureCategory.AMBIGUOUS,
-            )
-        if proof.get("maintenance_id") != opts.maintenance_id:
-            _fail(
-                "rollback proof maintenance_id mismatch",
-                category=CutoverFailureCategory.SAFETY,
-            )
+        _validate_rollback_proof(journal, proof, opts)
 
-        # Verify the restored ORIGINAL is at production (fail closed on drift).
-        live = adapters.path_identity(production)
-        live_fp = adapters.fingerprint(production)
-        if live_fp != proof.get("old_fingerprint") or live_fp != proof.get(
-            "restored_fingerprint"
-        ):
-            _fail(
-                "production fingerprint does not match restored original",
-                category=CutoverFailureCategory.VERIFY,
-            )
-        if int(live["device"]) != int(proof.get("restored_device", -1)) or int(
-            live["inode"]
-        ) != int(proof.get("restored_inode", -1)):
-            _fail(
-                "production identity drift vs recorded rollback",
-                category=CutoverFailureCategory.SAFETY,
-            )
-        if proof.get("plan_production_device") is not None and (
-            int(live["device"]) != int(proof["plan_production_device"])
-            or int(live["inode"]) != int(proof["plan_production_inode"])
-        ):
-            _fail(
-                "restored production identity does not match approved-plan original",
-                category=CutoverFailureCategory.SAFETY,
-            )
-        if proof.get("new_fingerprint") and live_fp == proof.get("new_fingerprint"):
-            _fail(
-                "compacted candidate is at production; refuse finalize",
-                category=CutoverFailureCategory.SAFETY,
-            )
-        retained_basename = proof.get("retained_candidate_basename") or (
-            journal.pre_cutover_basename
-        )
-        if not retained_basename:
-            _fail(
-                "missing retained candidate reference; manual reconciliation",
-                category=CutoverFailureCategory.AMBIGUOUS,
-            )
-        retained = production.with_name(str(retained_basename))
-        if adapters.path_exists(retained):
-            if proof.get("new_fingerprint") and adapters.fingerprint(
-                retained
-            ) != proof.get("new_fingerprint"):
-                _fail(
-                    "retained candidate fingerprint drift; manual reconciliation",
-                    category=CutoverFailureCategory.VERIFY,
-                )
-        else:
-            _fail(
-                "retained candidate evidence missing; manual reconciliation",
-                category=CutoverFailureCategory.AMBIGUOUS,
-            )
-
-        # (2) durable finalize intent BEFORE any mutation.
+        # ---- ownership: persist finalize intent BEFORE any mutation. ----
         if not journal.rollback_finalize_intent:
             journal.rollback_finalize_intent = {
                 "action": "finalize_abandoned",
                 "maintenance_id": journal.maintenance_id,
-                "target_original_fingerprint": live_fp,
                 "started_at_utc": _iso_now(),
             }
             write_journal(adapters, journal_path, journal)
         _inject("rollback_finalize_intent")
 
-        # (3) reassert + verify both writer pauses.
+        # ---- F1: reassert BOTH pauses and prove quiescence BEFORE any
+        # mutable-fingerprint gate. An interrupted finalize whose writers were
+        # legitimately resumed must be re-paused and recovered, never rejected on
+        # content drift while writers remain live. ----
+        _inject("rollback_finalize_before_pause_touch")
         adapters.touch(mail_pause_path(reports))
         adapters.touch(mirror_pause_path(reports))
-        writers = adapters.list_writers(production)
-        if not writers.mail_pause_present or not writers.mirror_pause_present:
-            _fail(
-                "failed to reassert writer pauses before rollback_finalize",
-                category=CutoverFailureCategory.APPLY,
+        if (
+            journal.rollback_finalize_mail_pause_absent
+            or journal.rollback_finalize_mirror_pause_absent
+        ):
+            journal.rollback_finalize_writers_repaused = True
+        journal.rollback_finalize_mail_pause_absent = False
+        journal.rollback_finalize_mirror_pause_absent = False
+        write_journal(adapters, journal_path, journal)
+        _inject("rollback_finalize_after_pause_touch")
+        try:
+            _assert_writers_quiesced(adapters, production)
+        except CutoverError:
+            _rollback_finalize_manual_recovery(
+                adapters, journal, journal_path, production, reports,
+                "writers_not_quiesced",
             )
         _inject("rollback_finalize_pauses_reasserted")
 
-        # (4) reconcile PR-A smoke/API ownership: only stop an API this MID owns.
-        if journal.smoke_started_api:
-            activity = adapters.api_activity(api_base_url=opts.api_base_url)
-            if activity.get("running"):
-                try:
-                    adapters.stop_api()
-                except Exception:  # noqa: BLE001
-                    pass
-                after = adapters.api_activity(api_base_url=opts.api_base_url)
-                if not after.get("stopped"):
-                    _rollback_finalize_manual_recovery(
-                        adapters,
-                        journal,
-                        journal_path,
-                        reports,
-                        "smoke_api_stop_ambiguous",
-                    )
-            journal.smoke_started_api = False
-            write_journal(adapters, journal_path, journal)
-        if adapters.service_state().health_timer_active:
-            adapters.stop_health_timer()
-        _inject("rollback_finalize_smoke_reconciled")
+        # ---- immutable identity bindings (device/inode + approved plan). ----
+        live = adapters.path_identity(production)
+        live_fp = adapters.fingerprint(production)
+        if int(live["device"]) != int(proof["restored_device"]) or int(
+            live["inode"]
+        ) != int(proof["restored_inode"]):
+            _fail(
+                "production identity drift vs recorded rollback",
+                category=CutoverFailureCategory.SAFETY,
+            )
+        if int(live["device"]) != int(proof["plan_production_device"]) or int(
+            live["inode"]
+        ) != int(proof["plan_production_inode"]):
+            _fail(
+                "restored production identity does not match approved-plan original",
+                category=CutoverFailureCategory.SAFETY,
+            )
+        if live_fp == proof["new_fingerprint"]:
+            _fail(
+                "compacted candidate is at production; refuse finalize",
+                category=CutoverFailureCategory.SAFETY,
+            )
+        retained = production.with_name(str(proof["retained_candidate_basename"]))
+        if not adapters.path_exists(retained):
+            _fail(
+                "retained candidate evidence missing; manual reconciliation",
+                category=CutoverFailureCategory.AMBIGUOUS,
+            )
+        if adapters.fingerprint(retained) != proof["new_fingerprint"]:
+            _fail(
+                "retained candidate fingerprint drift; manual reconciliation",
+                category=CutoverFailureCategory.VERIFY,
+            )
 
-        # (5) restore ORIGINAL main/WAL/SHM via PR-B device/inode-bound logic.
+        # ---- F1: mutable-content gate. The pristine original size/mtime
+        # fingerprint is required ONLY while no writer-pause removal has ever been
+        # recorded. Once mail legitimately resumed, content may differ; the
+        # immutable device/inode identity above plus quick_check carry safety. ----
+        writers_ever_resumed = (
+            journal.rollback_finalize_mail_resumed
+            or journal.rollback_finalize_mirror_resumed
+        )
+        if not writers_ever_resumed:
+            if live_fp != proof["old_fingerprint"] or live_fp != proof[
+                "restored_fingerprint"
+            ]:
+                _fail(
+                    "production fingerprint does not match restored original",
+                    category=CutoverFailureCategory.VERIFY,
+                )
+        elif not adapters.quick_check_ok(production):
+            _rollback_finalize_manual_recovery(
+                adapters, journal, journal_path, production, reports,
+                "post_resume_quick_check_failed",
+            )
+
+        # ---- F5: verify WAL/SHM lifecycle BEFORE touching services/API. A
+        # candidate-created / appeared / disappeared / drifted / ambiguous
+        # sidecar fails closed to manual reconciliation (never delete/chmod). ----
         artifact = _resolve_artifact_for_barrier_ops(journal)
         if artifact is None:
             _fail(
@@ -4182,6 +4469,31 @@ def rollback_finalize(opts: CutoverOptions) -> dict[str, Any]:
                 category=CutoverFailureCategory.AMBIGUOUS,
             )
         assert artifact is not None
+        side = _rollback_finalize_check_pre_api_sidecars(
+            adapters, production, journal, artifact
+        )
+        if not side.get("ok"):
+            _rollback_finalize_manual_recovery(
+                adapters, journal, journal_path, production, reports,
+                f"sidecar_{side.get('role')}_{side.get('reason')}",
+                evidence={"sidecar": side},
+            )
+        _inject("rollback_finalize_sidecars_verified")
+
+        # ---- F6: require the captured pre-maintenance service policy. Legacy
+        # journals lacking it fail closed (backward-compatible refusal). ----
+        if (
+            journal.pre_maintenance_api_active is None
+            or journal.pre_maintenance_health_timer_active is None
+        ):
+            _rollback_finalize_manual_recovery(
+                adapters, journal, journal_path, production, reports,
+                "pre_maintenance_service_state_missing",
+            )
+        want_api = bool(journal.pre_maintenance_api_active)
+        want_timer = bool(journal.pre_maintenance_health_timer_active)
+
+        # (5) restore ORIGINAL main/WAL/SHM via PR-B device/inode-bound logic.
         journal.permission_intent = {
             "action": "rollback_finalize_restore_original_writable",
             "target_mode": journal.original_mode,
@@ -4210,20 +4522,77 @@ def rollback_finalize(opts: CutoverOptions) -> dict[str, Any]:
         write_journal(adapters, journal_path, journal)
         _inject("rollback_finalize_permissions_restored")
 
-        # (6) start only services that should be active pre-maintenance.
-        if not adapters.service_state().api_active:
-            journal.rollback_finalize_started_api = True
+        # ---- F6: reconcile services with ownership + pre-maintenance policy. ----
+        # (a) Stop only an API this MID owns; refuse an unowned running API.
+        if _rf_api_running(adapters, opts):
+            owned = (
+                journal.smoke_started_api
+                or journal.rollback_finalize_started_api
+                or journal.rollback_finalize_owned_temp_api
+            )
+            if not owned:
+                _rollback_finalize_manual_recovery(
+                    adapters, journal, journal_path, production, reports,
+                    "unowned_api_active",
+                )
+            journal.rollback_finalize_service_intent = {"action": "stop_owned_api"}
             write_journal(adapters, journal_path, journal)
+            _inject("rollback_finalize_api_stop_intent")
+            try:
+                adapters.stop_api()
+            except Exception:  # noqa: BLE001
+                pass
+            _inject("rollback_finalize_api_stopped")
+            if not _rf_api_stopped(adapters, opts):
+                # Never clear ownership when the stopped state is unverified.
+                _rollback_finalize_manual_recovery(
+                    adapters, journal, journal_path, production, reports,
+                    "owned_api_stop_unverified",
+                )
+            journal.smoke_started_api = False
+            journal.rollback_finalize_started_api = False
+            journal.rollback_finalize_owned_temp_api = False
+            journal.rollback_finalize_service_intent = None
+            write_journal(adapters, journal_path, journal)
+        # (b) Health timer must be stopped for health verification; verify it.
+        if adapters.service_state().health_timer_active:
+            _inject("rollback_finalize_timer_stop_intent")
+            adapters.stop_health_timer()
+            _inject("rollback_finalize_timer_stopped")
+            if adapters.service_state().health_timer_active:
+                _rollback_finalize_manual_recovery(
+                    adapters, journal, journal_path, production, reports,
+                    "timer_stop_unverified",
+                )
+        _inject("rollback_finalize_services_reconciled")
+
+        # (6) start the API for health verification; own it as a TEMPORARY start
+        # when pre-maintenance policy says the API must end up inactive.
+        if not adapters.service_state().api_active:
+            journal.rollback_finalize_service_intent = {
+                "action": "start_api",
+                "owned_temp": not want_api,
+            }
+            if want_api:
+                journal.rollback_finalize_started_api = True
+            else:
+                journal.rollback_finalize_owned_temp_api = True
+            write_journal(adapters, journal_path, journal)
+            _inject("rollback_finalize_api_start_intent")
             adapters.start_api()
         _inject("rollback_finalize_api_started")
-        adapters.start_health_timer()
+        if not _rf_api_running(adapters, opts):
+            _rollback_finalize_manual_recovery(
+                adapters, journal, journal_path, production, reports,
+                "api_start_unverified",
+            )
 
         # (7) verify health against the restored original (bounded loopback).
         live_fp = adapters.fingerprint(production)
         smoke = adapters.http_smoke(opts.api_base_url, expected_fingerprint=live_fp)
         _inject("rollback_finalize_health_verified")
 
-        # (8) recapture any sidecars created by API open (hardened capture).
+        # (8) recapture sidecars created at the API-open boundary (hardened).
         try:
             recapture_post_swap_companions(
                 artifact, adapters, production, source="rollback_finalize"
@@ -4233,6 +4602,54 @@ def rollback_finalize(opts: CutoverOptions) -> dict[str, Any]:
             raise AssertionError("unreachable") from exc
         journal.artifact_permissions = dump_artifact_permissions(artifact)
         write_journal(adapters, journal_path, journal)
+        _inject("rollback_finalize_sidecars_recaptured")
+
+        # ---- F6: converge to the captured pre-maintenance service policy and
+        # verify the outcomes. A temporary owned API is stopped again. ----
+        if journal.rollback_finalize_owned_temp_api:
+            journal.rollback_finalize_service_intent = {
+                "action": "stop_owned_temp_api"
+            }
+            write_journal(adapters, journal_path, journal)
+            _inject("rollback_finalize_temp_api_stop_intent")
+            try:
+                adapters.stop_api()
+            except Exception:  # noqa: BLE001
+                pass
+            _inject("rollback_finalize_temp_api_stopped")
+            if not _rf_api_stopped(adapters, opts):
+                _rollback_finalize_manual_recovery(
+                    adapters, journal, journal_path, production, reports,
+                    "temp_api_stop_unverified",
+                )
+            journal.rollback_finalize_owned_temp_api = False
+            journal.rollback_finalize_service_intent = None
+            write_journal(adapters, journal_path, journal)
+        if want_timer and not adapters.service_state().health_timer_active:
+            _inject("rollback_finalize_timer_start_intent")
+            adapters.start_health_timer()
+            _inject("rollback_finalize_timer_started")
+            if not adapters.service_state().health_timer_active:
+                _rollback_finalize_manual_recovery(
+                    adapters, journal, journal_path, production, reports,
+                    "timer_start_unverified",
+                )
+        if not want_timer and adapters.service_state().health_timer_active:
+            adapters.stop_health_timer()
+            if adapters.service_state().health_timer_active:
+                _rollback_finalize_manual_recovery(
+                    adapters, journal, journal_path, production, reports,
+                    "timer_stop_unverified_final",
+                )
+        final_state = adapters.service_state()
+        if bool(final_state.api_active) != want_api or bool(
+            final_state.health_timer_active
+        ) != want_timer:
+            _rollback_finalize_manual_recovery(
+                adapters, journal, journal_path, production, reports,
+                "final_service_state_mismatch",
+            )
+        _inject("rollback_finalize_service_policy_applied")
 
         # (9) verify main + present required sidecars writable before any resume.
         try:
@@ -4246,9 +4663,21 @@ def rollback_finalize(opts: CutoverOptions) -> dict[str, Any]:
             _map_artifact_error(exc)
             raise AssertionError("unreachable") from exc
 
-        # (10) resume mail then mirror on the RESTORED ORIGINAL, with observation.
-        adapters.unlink(mail_pause_path(reports))
+        # (10) resume mail then mirror on the RESTORED ORIGINAL. Each pause
+        # removal is intent-before / success-after with separate current-state
+        # truth. Historical *_resumed is set once and never reset on re-pause.
+        journal.rollback_finalize_mail_resume_intent = True
         journal.rollback_finalize_mail_resumed = True
+        write_journal(adapters, journal_path, journal)
+        _inject("rollback_finalize_mail_intent")
+        adapters.unlink(mail_pause_path(reports))
+        journal.rollback_finalize_mail_pause_absent = True
+        # Record the fingerprint at the instant writes may legitimately begin so
+        # a crash-and-retry after real mail activity is recognizable and does not
+        # demand the pristine original fingerprint.
+        journal.rollback_finalize_post_mail_fingerprint = adapters.fingerprint(
+            production
+        )
         write_journal(adapters, journal_path, journal)
         _inject("rollback_finalize_mail_resumed")
         mail_failure: str | None = None
@@ -4271,16 +4700,19 @@ def rollback_finalize(opts: CutoverOptions) -> dict[str, Any]:
                 mail_failure = "artifact_not_writable"
         if mail_failure is not None:
             _rollback_finalize_manual_recovery(
-                adapters,
-                journal,
-                journal_path,
-                reports,
+                adapters, journal, journal_path, production, reports,
                 f"mail_observe_failed:{mail_failure}",
             )
+        journal.rollback_finalize_mail_observed_ok = True
+        write_journal(adapters, journal_path, journal)
         _inject("rollback_finalize_mail_observed")
 
-        adapters.unlink(mirror_pause_path(reports))
+        journal.rollback_finalize_mirror_resume_intent = True
         journal.rollback_finalize_mirror_resumed = True
+        write_journal(adapters, journal_path, journal)
+        _inject("rollback_finalize_mirror_intent")
+        adapters.unlink(mirror_pause_path(reports))
+        journal.rollback_finalize_mirror_pause_absent = True
         write_journal(adapters, journal_path, journal)
         _inject("rollback_finalize_mirror_resumed")
         ident_mirror = adapters.path_identity(production)
@@ -4288,16 +4720,13 @@ def rollback_finalize(opts: CutoverOptions) -> dict[str, Any]:
             ident_mirror["inode"]
         ) != int(proof["restored_inode"]):
             _rollback_finalize_manual_recovery(
-                adapters,
-                journal,
-                journal_path,
-                reports,
+                adapters, journal, journal_path, production, reports,
                 "mirror_observe_identity_drift",
             )
-        _inject("rollback_finalize_mirror_observed")
-
+        journal.rollback_finalize_mirror_observed_ok = True
         journal.rollback_original_writers_resumed = True
         write_journal(adapters, journal_path, journal)
+        _inject("rollback_finalize_mirror_observed")
         _inject("rollback_finalize_before_terminal")
 
         # (11) terminal ABANDONED — only after every step above verified.
@@ -4308,6 +4737,8 @@ def rollback_finalize(opts: CutoverOptions) -> dict[str, Any]:
         journal.stage = CutoverStage.ABANDONED.value
         journal.notes.append("rollback_finalized_abandoned")
         write_journal(adapters, journal_path, journal)
+        _inject("rollback_finalize_after_terminal_replace")
+        adapters.fsync_dir(journal_path.parent)
         _inject("rollback_finalize_abandoned")
         return _rollback_finalize_status(
             opts, journal, already=False, smoke=smoke, restore=restore_evidence
@@ -4374,6 +4805,13 @@ def abort_before_swap(opts: CutoverOptions) -> dict[str, Any]:
         if journal is None:
             _fail("missing journal for abort", category=CutoverFailureCategory.AMBIGUOUS)
         assert journal is not None
+        locked = _rollback_finalize_locked(journal)
+        if locked is not None:
+            _fail(
+                f"abort_before_swap refused: {locked}; only --rollback-finalize "
+                "may proceed",
+                category=CutoverFailureCategory.SAFETY,
+            )
         if journal.writer_resume_started or journal.writers_resumed:
             _fail(
                 "abort_before_swap refused after writer_resume_started",
