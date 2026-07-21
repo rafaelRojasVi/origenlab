@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import json
 import os
+import stat as stat_mod
+import threading
 from pathlib import Path
 
 import pytest
 
+from origenlab_email_pipeline.qa import sqlite_cutover_artifact_permissions as apmod
 from origenlab_email_pipeline.qa.sqlite_cutover_artifact_permissions import (
     ROLE_MAIN,
     ROLE_SHM,
     ROLE_WAL,
     ArtifactPermissionError,
+    apply_barrier_to_member,
     apply_write_barrier,
     capture_artifact,
     filesystem_capture_member_identity,
@@ -539,3 +543,140 @@ def test_verify_helper_rejects_ro_shm(tmp_path: Path) -> None:
         verify_artifact_writable_for_resume(
             world, prod, None, legacy_original_mode=0o644
         )
+
+
+def _run_with_timeout(fn, timeout: float = 5.0):
+    """Run ``fn`` in a thread; fail if it does not return within ``timeout``."""
+    box: dict[str, BaseException | None] = {"exc": None}
+
+    def _target() -> None:
+        try:
+            fn()
+        except BaseException as exc:  # noqa: BLE001 - re-raised in caller
+            box["exc"] = exc
+
+    thread = threading.Thread(target=_target, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        raise AssertionError(f"capture did not return within {timeout}s (hang)")
+    return box["exc"]
+
+
+def test_fifo_capture_fails_promptly_not_hang(tmp_path: Path) -> None:
+    """A FIFO at an artifact path must fail fast, never block open()."""
+    fifo = tmp_path / "emails.sqlite-wal"
+    try:
+        os.mkfifo(fifo)
+    except (OSError, AttributeError):
+        pytest.skip("mkfifo unsupported on this filesystem")
+    exc = _run_with_timeout(
+        lambda: filesystem_capture_member_identity(fifo), timeout=5.0
+    )
+    assert isinstance(exc, ArtifactPermissionError)
+    assert "non-regular" in str(exc)
+
+
+def test_toctou_lstat_bypassed_fstat_is_authoritative(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """lstat is only an early gate; a FIFO swapped in after it is caught by fstat.
+
+    Simulate the pathname changing between the ``lstat`` early check and the
+    ``open`` by forcing ``lstat`` to report a regular file while the real path
+    is a FIFO. The authoritative post-open ``fstat`` must reject it, and the
+    nonblocking open must not hang.
+    """
+    fifo = tmp_path / "emails.sqlite-shm"
+    try:
+        os.mkfifo(fifo)
+    except (OSError, AttributeError):
+        pytest.skip("mkfifo unsupported on this filesystem")
+
+    fake_reg = os.stat_result(
+        (stat_mod.S_IFREG | 0o644, 123, 7, 1, 1000, 1000, 16, 0, 0, 0)
+    )
+    real_lstat = os.lstat
+
+    def _fake_lstat(path, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if str(path) == str(fifo):
+            return fake_reg
+        return real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(apmod.os, "lstat", _fake_lstat)
+    exc = _run_with_timeout(
+        lambda: filesystem_capture_member_identity(fifo), timeout=5.0
+    )
+    assert isinstance(exc, ArtifactPermissionError)
+    assert "non-regular" in str(exc) and "fstat" in str(exc)
+
+
+def test_barrier_records_mutation_even_if_journal_write_fails(tmp_path: Path) -> None:
+    """If persist raises right after fchmod, the mutation is still recorded.
+
+    Journal truthfulness: a crash between the successful chmod and the durable
+    journal update must not leave a clean no-mutation record.
+    """
+    world, prod, reports, root, fp = _world(tmp_path)
+    art = capture_artifact(world, prod)
+    member = art.member(ROLE_MAIN)
+
+    calls: dict[str, int] = {"n": 0}
+
+    def _persist(_a) -> None:  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        raise RuntimeError("simulated journal write failure")
+
+    with pytest.raises(RuntimeError, match="journal write failure"):
+        apply_barrier_to_member(
+            world, prod, member, artifact=art, persist=_persist
+        )
+    # chmod already landed and the in-memory artifact reflects it truthfully.
+    assert world.modes[str(prod)] & 0o222 == 0
+    assert member.barrier_applied is True
+    assert ROLE_MAIN in art.members_changed
+    assert art.barrier_partial is True
+    assert calls["n"] >= 1
+
+
+def test_barrier_partial_persist_failure_then_abort_restores(tmp_path: Path) -> None:
+    """persist failure after WAL chmod still lets abort restore every change."""
+    world, prod, reports, root, fp = _world(tmp_path)
+    world.materialize_companion(prod, "wal", size=0, mode=0o644, inode=8801)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.APPLY_OS_WRITE_BARRIER
+    )
+    live = world.fingerprint(prod)
+    backup, staging = _paths(root)
+    # Fail right after the WAL chmod (compat alias covers main; use wal here).
+    with pytest.raises(CutoverError):
+        apply_stage(
+            _opts(
+                world,
+                prod,
+                reports,
+                live,
+                stage=CutoverStage.APPLY_OS_WRITE_BARRIER,
+                apply=True,
+                backup=backup,
+                staging=staging,
+                fail_after="after_barrier_chmod_main",
+            )
+        )
+    art = _journal(world, prod)["artifact_permissions"]
+    assert ROLE_MAIN in art["members_changed"]
+    assert world.modes[str(prod)] & 0o222 == 0
+    abort_before_swap(
+        _opts(
+            world,
+            prod,
+            reports,
+            live,
+            stage=CutoverStage.APPLY_OS_WRITE_BARRIER,
+            apply=True,
+            backup=backup,
+            staging=staging,
+        )
+    )
+    assert world.modes[str(prod)] == 0o644
+    assert world.modes[str(wal_path(prod))] & 0o222

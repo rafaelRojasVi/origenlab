@@ -26,6 +26,7 @@ import json
 import os
 import re
 import sqlite3
+import stat as stat_mod
 import subprocess
 import time
 from contextlib import contextmanager
@@ -1654,10 +1655,27 @@ class FilesystemAdapters:
         expected_device: int,
         expected_inode: int,
     ) -> None:
-        """Open path, fstat-match device+inode, then fchmod (not path chmod)."""
-        fd = os.open(str(path), os.O_RDONLY)
+        """Open path, fstat-match device+inode, then fchmod (not path chmod).
+
+        O_NOFOLLOW refuses a symlink swapped at the path; O_NONBLOCK prevents a
+        FIFO/device swapped in from blocking open(); O_CLOEXEC avoids FD leaks.
+        A post-open fstat proves the opened FD is a regular file before fchmod.
+        """
+        flags = os.O_RDONLY
+        for _flag_name in ("O_NOFOLLOW", "O_CLOEXEC", "O_NONBLOCK"):
+            flags |= getattr(os, _flag_name, 0)
+        fd = os.open(str(path), flags)
         try:
             st = os.fstat(fd)
+            if not stat_mod.S_ISREG(st.st_mode):
+                _fail(
+                    "refusing chmod: opened member is not a regular file",
+                    category=CutoverFailureCategory.SAFETY,
+                    recovery=(
+                        "A non-regular file occupies the artifact path. Inspect "
+                        "before retrying the write barrier."
+                    ),
+                )
             if int(st.st_dev) != int(expected_device) or int(st.st_ino) != int(
                 expected_inode
             ):
@@ -1688,8 +1706,11 @@ class FilesystemAdapters:
             conn.close()
 
     def try_open_writable(self, path: Path) -> bool:
+        flags = os.O_RDWR
+        for _flag_name in ("O_NOFOLLOW", "O_CLOEXEC", "O_NONBLOCK"):
+            flags |= getattr(os, _flag_name, 0)
         try:
-            fd = os.open(str(path), os.O_RDWR)
+            fd = os.open(str(path), flags)
             os.close(fd)
             return True
         except OSError:

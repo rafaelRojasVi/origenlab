@@ -15,7 +15,7 @@ import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, MutableMapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 ARTIFACT_PERMISSIONS_SCHEMA = 1
 ROLE_MAIN = "main"
@@ -297,10 +297,16 @@ def apply_barrier_to_member(
     production: Path,
     member: ArtifactMember,
     *,
-    on_partial: Callable[[ArtifactPermissions], None] | None = None,
+    persist: Callable[[ArtifactPermissions], None] | None = None,
     artifact: ArtifactPermissions | None = None,
 ) -> ArtifactMember:
-    """fchmod one present member to clear write bits; bind to captured identity."""
+    """fchmod one present member to clear write bits; bind to captured identity.
+
+    Journal truthfulness: once ``fchmod`` succeeds the mutation is recorded and
+    persisted *before* the verification read, so a crash between the syscall and
+    the durable journal update can still be recovered conservatively (the member
+    is already marked ``barrier_applied`` / ``members_changed`` / partial).
+    """
     if not member.present:
         return member
     if member.device is None or member.inode is None or member.mode is None:
@@ -310,6 +316,11 @@ def apply_barrier_to_member(
         )
     path = member_path(production, member.role)
     target = barrier_mode_for(int(member.mode))
+
+    def _persist() -> None:
+        if artifact is not None and persist is not None:
+            persist(artifact)
+
     try:
         adapters.chmod_verified_inode(
             path,
@@ -319,21 +330,26 @@ def apply_barrier_to_member(
         )
         adapters.fsync_file(path)
     except Exception:
+        # chmod_verified_inode fstat-matches device+inode before fchmod, so a
+        # raise here means no mutation occurred on the captured identity.
         if artifact is not None:
             artifact.barrier_partial = True
-            if on_partial is not None:
-                on_partial(artifact)
+        _persist()
         raise
+    # fchmod succeeded on the captured device+inode. Record truthfully now.
+    member.barrier_applied = True
+    member.barrier_mode = target
+    if artifact is not None:
+        artifact.set_member(member)
+        if member.role not in artifact.members_changed:
+            artifact.members_changed.append(member.role)
+        artifact.barrier_partial = True
+    _persist()
     verified = adapters.capture_member_identity(path)
     if int(verified["mode"]) != target:
-        member.barrier_applied = True
-        member.barrier_mode = target
         if artifact is not None:
             artifact.barrier_partial = True
-            if member.role not in artifact.members_changed:
-                artifact.members_changed.append(member.role)
-            if on_partial is not None:
-                on_partial(artifact)
+        _persist()
         raise ArtifactPermissionError(
             f"write barrier mode verification failed for {member.role}",
             category="verify",
@@ -346,12 +362,12 @@ def apply_barrier_to_member(
         int(verified["device"]) != int(member.device)
         or int(verified["inode"]) != int(member.inode)
     ):
+        # The mode change already landed on the captured identity (recorded
+        # above); surface the drift without discarding that record.
         raise ArtifactPermissionError(
             f"artifact member identity changed during barrier ({member.role})",
             category="safety",
         )
-    member.barrier_applied = True
-    member.barrier_mode = target
     return member
 
 
@@ -376,7 +392,7 @@ def apply_write_barrier(
             production,
             member,
             artifact=artifact,
-            on_partial=persist,
+            persist=persist,
         )
         if role not in artifact.members_changed:
             artifact.members_changed.append(role)
@@ -536,14 +552,6 @@ def assert_no_unexpected_journal(adapters: ArtifactFs, production: Path) -> None
         )
 
 
-def member_is_writable(adapters: ArtifactFs, production: Path, role: str) -> bool:
-    path = member_path(production, role)
-    if not adapters.path_exists(path):
-        return True  # absent companion does not block
-    mode = int(adapters.get_file_mode_owner(path)["mode"])
-    return bool(mode & 0o222)
-
-
 def verify_artifact_writable_for_resume(
     adapters: ArtifactFs,
     production: Path,
@@ -555,7 +563,10 @@ def verify_artifact_writable_for_resume(
     assert_no_unexpected_journal(adapters, production)
     evidence: dict[str, Any] = {"main_ok": False, "wal_ok": False, "shm_ok": False}
 
-    main_mode = int(adapters.get_file_mode_owner(production)["mode"])
+    # Authoritative, symlink/FIFO-safe read of the live main via fstat: a symlink
+    # or non-regular file swapped at the production path fails closed here rather
+    # than letting a followed path spoof writable bits before the mail pause lifts.
+    main_mode = int(adapters.capture_member_identity(production)["mode"])
     if main_mode & 0o222 == 0:
         raise ArtifactPermissionError(
             "production main is not writable before mail resume",
@@ -577,7 +588,8 @@ def verify_artifact_writable_for_resume(
             evidence[f"{role}_ok"] = True
             evidence[f"{role}_absent"] = True
             continue
-        mode = int(adapters.get_file_mode_owner(path)["mode"])
+        # Present companion: fstat-authoritative + symlink/non-regular fail-closed.
+        mode = int(adapters.capture_member_identity(path)["mode"])
         if mode & 0o222 == 0:
             raise ArtifactPermissionError(
                 f"production {role} is not writable before mail resume",
@@ -746,10 +758,13 @@ def filesystem_capture_member_identity(path: Path) -> dict[str, Any]:
             "refusing non-regular artifact member",
             category="safety",
         )
+    # lstat above is only an early rejection: the pathname can change between
+    # lstat and open. O_NOFOLLOW refuses a symlink swapped in; O_NONBLOCK keeps
+    # a FIFO/device swapped in from blocking open(); O_CLOEXEC avoids FD leaks.
+    # The authoritative identity/type is taken from fstat on the opened FD.
     flags = os.O_RDONLY
-    nofollow = getattr(os, "O_NOFOLLOW", 0)
-    if nofollow:
-        flags |= nofollow
+    for _flag_name in ("O_NOFOLLOW", "O_CLOEXEC", "O_NONBLOCK"):
+        flags |= getattr(os, _flag_name, 0)
     try:
         fd = os.open(str(path), flags)
     except OSError as exc:
@@ -888,17 +903,3 @@ def dump_artifact_permissions(
     if artifact is None:
         return None
     return artifact.to_dict()
-
-
-def merge_into_journal_dict(
-    journal_like: MutableMapping[str, Any],
-    artifact: ArtifactPermissions,
-) -> None:
-    """Keep legacy original_* fields mirrored from main for compatibility."""
-    journal_like["artifact_permissions"] = artifact.to_dict()
-    if artifact.main.present and artifact.main.mode is not None:
-        journal_like["original_mode"] = int(artifact.main.mode)
-    if artifact.main.uid is not None:
-        journal_like["original_uid"] = int(artifact.main.uid)
-    if artifact.main.gid is not None:
-        journal_like["original_gid"] = int(artifact.main.gid)
