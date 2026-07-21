@@ -70,6 +70,49 @@ abort_before_swap: before swap_intent AND before PoNR only
 
 `reconcile_permission_barrier` inspects mode vs journal and reports the recognized state — it never silently leaves writers unpaused with an unknown DB mode.
 
+## Read-only smoke (loopback getter + fail-safe API cleanup)
+
+`readonly_smoke` runs after `atomic_swap` and before `resume_services`.
+
+**Default loopback getter.** `FilesystemAdapters.http_get` now has a real
+production default: `make_loopback_json_getter(base_url)` is used automatically
+when no getter is injected (dependency injection stays available for tests). The
+getter is **GET-only**, restricted to the configured loopback origin
+(`http://127.0.0.1:8001` by default), **rejects redirects and any final URL that
+leaves the approved loopback origin**, applies bounded connect/read timeout and a
+bounded response-byte limit, and requires **HTTP 200 with a JSON object**. It
+attaches `ORIGENLAB_API_AUTH_TOKEN` via the `X-OriginLab-API-Key` header through
+the existing settings mechanism and never logs the token, response bodies,
+secrets, or absolute paths.
+
+**Fail-safe API ownership.** The stage tracks whether it started the API
+(`journal.smoke_started_api`). If the API start succeeds but any later HTTP smoke
+request, validation, journal write, or stage completion fails, the stage:
+
+- stops **only** the API it started (never an unrelated process);
+- keeps the health timer stopped;
+- leaves writers paused and `smoke_ok=false`;
+- does **not** advance the journal from `atomic_swap`;
+- preserves rollback-before-writers availability.
+
+If the API is already active on entry and this stage did not start it, the stage
+**fails closed without claiming ownership or stopping** the unrelated process. On
+successful smoke the API remains running and the health timer remains stopped
+until `resume_services` (unchanged designed behavior).
+
+## Service activity / exit-143 bookkeeping
+
+An intentional `systemctl stop` sends SIGTERM and can leave the unit in a
+`failed` state with `ExecMainStatus=143`. `classify_api_activity(...)` encodes the
+gate policy: any **non-active / no-PID / no-listener** state — including that
+`failed`/143 result — is treated as **stopped**, while a process that is `active`
+(or still has a live PID **and** a loopback listener) is treated as **running**
+and rejected by "must be stopped" gates. Genuine failure sub-states
+(auto-restart, OOM, restart-limit) are surfaced via `genuine_failure_signal` so a
+real OOM, restart loop, bind failure, or traceback is never silently masked as a
+clean stop. This PR intentionally does **not** change the deployed systemd unit;
+the policy lives in the orchestrator + tests.
+
 ## Final human approval boundary
 
 Real apply requires **all** of:
@@ -90,8 +133,17 @@ No interactive fingerprint echo is implemented; the operator must supply the exa
 3. Explicit human approval of the tokens above at swap time.
 4. Keep **draft** until an approved window; this PR does not authorize a real cutover.
 
+## Code-readiness scope of this change
+
+This change fixes **code readiness only** (real loopback smoke getter, fail-safe
+API cleanup, exit-143 classification) and **does not authorize another cutover
+maintenance ID**. The abandoned attempt **`cutover20260719T163633Z`** remains
+abandoned and **must never be resumed**; any future cutover requires a fresh MID
+and the full human approval boundary above.
+
 ## Module / tests
 
 - `origenlab_email_pipeline.qa.sqlite_production_cutover`
 - `scripts/maintenance/orchestrate_sqlite_production_cutover.py`
 - `tests/test_sqlite_production_cutover.py`
+- `tests/test_sqlite_cutover_readonly_smoke.py` — loopback getter + exit-143 gates

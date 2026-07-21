@@ -714,6 +714,142 @@ def test_non_empty_wal_sidecar_rejected_in_smoke(tmp_path: Path) -> None:
     assert "wal" in str(exc.value).lower()
 
 
+def _journal_dict(world: SyntheticWorld, prod: Path) -> dict:
+    jpath = journal_path_for(
+        CutoverOptions(maintenance_id=MID, expected_production_path=prod),
+        prod,
+    )
+    return json.loads(world.files[str(jpath)].decode())
+
+
+def test_smoke_success_keeps_api_running_and_started_ownership(tmp_path: Path) -> None:
+    # PR-A test 8: successful smoke keeps API running, health timer stopped.
+    world, prod, reports, root, fp = _world(tmp_path)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.RESUME_SERVICES
+    )
+    assert world.services.api_active is True
+    assert world.services.health_timer_active is False
+    journal = _journal_dict(world, prod)
+    assert journal["smoke_ok"] is True
+    assert journal["smoke_started_api"] is True
+    assert journal["stage"] == CutoverStage.READONLY_SMOKE.value
+
+
+def test_smoke_failure_after_api_start_stops_that_api(tmp_path: Path) -> None:
+    # PR-A test 7: failure after API start stops that API; timer/writers/journal safe.
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.READONLY_SMOKE
+    )
+    assert world.services.api_active is False  # stopped at stop_readers
+    # Force the HTTP smoke to fail (degraded health).
+    world.smoke_payload = {"status": "degraded", "sqlite_query_only": True}
+    live_fp = world.fingerprint(prod)
+    with pytest.raises(CutoverError):
+        apply_stage(
+            _opts(
+                world, prod, reports, live_fp,
+                stage=CutoverStage.READONLY_SMOKE,
+                apply=True, backup=backup, staging=staging,
+            )
+        )
+    # API this stage started is stopped again; timer stays stopped.
+    assert world.services.api_active is False
+    assert world.services.health_timer_active is False
+    # Writers remain paused.
+    assert world.mail_pause is True
+    assert world.mirror_pause is True
+    # Journal did not advance past atomic_swap; smoke not ok; ownership cleared.
+    journal = _journal_dict(world, prod)
+    assert journal["stage"] == CutoverStage.ATOMIC_SWAP.value
+    assert journal["smoke_ok"] is False
+    assert journal["smoke_started_api"] is False
+    # Rollback-before-writers remains available.
+    pre_path = prod.with_name(f"{prod.name}.pre_cutover.{MID}")
+    report = attempt_rollback_before_writers(
+        _opts(
+            world, prod, reports, world.fingerprint(prod),
+            stage=CutoverStage.ATOMIC_SWAP, apply=True, approve_swap=True,
+            backup=backup, staging=staging,
+        ),
+        pre_cutover_path=pre_path,
+        expected_old_fingerprint=world.fingerprint(pre_path),
+        expected_new_fingerprint=world.fingerprint(prod),
+    )
+    assert report["rolled_back"] is True
+    assert world.files[str(prod)] == b"SYNTHETIC-PROD-DB-v1"
+
+
+def test_smoke_refuses_preexisting_active_api(tmp_path: Path) -> None:
+    # PR-A test 9: a pre-existing active API is not claimed or stopped.
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.READONLY_SMOKE
+    )
+    # Simulate an unrelated/unexpected active API not started by this stage.
+    world.services.api_active = True
+    live_fp = world.fingerprint(prod)
+    with pytest.raises(CutoverError) as exc:
+        apply_stage(
+            _opts(
+                world, prod, reports, live_fp,
+                stage=CutoverStage.READONLY_SMOKE,
+                apply=True, backup=backup, staging=staging,
+            )
+        )
+    assert "ownership" in str(exc.value).lower() or "already active" in str(exc.value).lower()
+    # The unrelated API is NOT stopped, and journal did not advance.
+    assert world.services.api_active is True
+    journal = _journal_dict(world, prod)
+    assert journal["stage"] == CutoverStage.ATOMIC_SWAP.value
+    assert journal["smoke_ok"] is False
+    assert journal["smoke_started_api"] is False
+
+
+def test_incident_chain_smoke_boundary_rollback(tmp_path: Path) -> None:
+    # PR-A test 12: synthetic regression for the exact incident chain at the
+    # smoke boundary — smoke blocks, API is stopped, journal stays at
+    # atomic_swap, writers never resume, and rollback restores production.
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.READONLY_SMOKE
+    )
+    world.smoke_payload = {"status": "degraded"}
+    live_fp = world.fingerprint(prod)
+    with pytest.raises(CutoverError):
+        apply_stage(
+            _opts(
+                world, prod, reports, live_fp,
+                stage=CutoverStage.READONLY_SMOKE,
+                apply=True, backup=backup, staging=staging,
+            )
+        )
+    journal = _journal_dict(world, prod)
+    assert journal["stage"] == CutoverStage.ATOMIC_SWAP.value
+    assert journal["writers_resumed"] is False
+    assert journal["writer_resume_started"] is False
+    assert world.services.api_active is False
+    assert world.services.health_timer_active is False
+    pre_path = prod.with_name(f"{prod.name}.pre_cutover.{MID}")
+    report = attempt_rollback_before_writers(
+        _opts(
+            world, prod, reports, world.fingerprint(prod),
+            stage=CutoverStage.ATOMIC_SWAP, apply=True, approve_swap=True,
+            backup=backup, staging=staging,
+        ),
+        pre_cutover_path=pre_path,
+        expected_old_fingerprint=world.fingerprint(pre_path),
+        expected_new_fingerprint=world.fingerprint(prod),
+    )
+    assert report["rolled_back"] is True
+    assert report["writers_resumed"] is False
+    assert world.files[str(prod)] == b"SYNTHETIC-PROD-DB-v1"
+
+
 def test_full_happy_path_retains_pre_cutover(tmp_path: Path) -> None:
     world, prod, reports, root, fp = _world(tmp_path)
     _run_through(world, prod, reports, fp, root)

@@ -33,8 +33,15 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Generator, Protocol
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from origenlab_email_pipeline.config import Settings, canonical_production_sqlite_path, load_settings
+from origenlab_email_pipeline.qa.dashboard_api_readiness import (
+    API_AUTH_TOKEN_HEADER,
+    resolve_api_auth_token,
+)
 from origenlab_email_pipeline.operator_cli.chilecompra_auto_refresh import (
     LOCK_FILENAME as CHILECOMPRA_LOCK_FILENAME,
 )
@@ -90,6 +97,14 @@ JOURNAL_DIR_NAME = ".origenlab_cutover_journals"
 LOCK_DIR_NAME = ".origenlab_sqlite_cutover_locks"
 # SHM may appear after API open; only these sizes are acceptable.
 ALLOWED_SHM_SIZES = frozenset({0, 32768})
+# Read-only smoke may only ever talk to the local loopback operator API.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+_DEFAULT_PORT_BY_SCHEME = {"http": 80, "https": 443}
+DEFAULT_SMOKE_TIMEOUT_SECONDS = 10.0
+DEFAULT_SMOKE_MAX_RESPONSE_BYTES = 1_000_000
+# API process activity classification (SIGTERM/143 bookkeeping, A3).
+API_ACTIVITY_RUNNING = "running"
+API_ACTIVITY_STOPPED = "stopped"
 # Linux open(2) access-mode bits (from /proc/<pid>/fdinfo/<fd> flags).
 _O_ACCMODE = 0o3
 _O_RDONLY = 0o0
@@ -293,6 +308,157 @@ def sanitize_evidence(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+class _RedirectBlocked(Exception):
+    """Internal sentinel: a smoke request attempted an HTTP redirect."""
+
+
+class _LoopbackOnlyRedirectHandler(HTTPRedirectHandler):
+    """Refuse every redirect so smoke can never leave the approved origin."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
+        raise _RedirectBlocked()
+
+
+def _origin_tuple(url: str) -> tuple[str, str, int]:
+    parts = urlsplit(url)
+    scheme = (parts.scheme or "").lower()
+    host = (parts.hostname or "").lower()
+    port = parts.port or _DEFAULT_PORT_BY_SCHEME.get(scheme, 0)
+    return scheme, host, port
+
+
+def make_loopback_json_getter(
+    api_base_url: str,
+    *,
+    token_provider: Callable[[], str | None] = resolve_api_auth_token,
+    timeout: float = DEFAULT_SMOKE_TIMEOUT_SECONDS,
+    max_bytes: int = DEFAULT_SMOKE_MAX_RESPONSE_BYTES,
+) -> Callable[[str], dict[str, Any]]:
+    """Build a bounded, GET-only, loopback-restricted JSON getter.
+
+    The returned callable is the production default for ``FilesystemAdapters.http_get``:
+    no dependency injection required. It authenticates via the approved settings
+    mechanism (``ORIGENLAB_API_AUTH_TOKEN`` -> ``X-OriginLab-API-Key``) and never
+    logs the token, response bodies, secrets, or absolute paths.
+    """
+    approved_scheme, approved_host, approved_port = _origin_tuple(api_base_url)
+    if approved_scheme != "http" or approved_host not in _LOOPBACK_HOSTS:
+        _fail(
+            "readonly smoke base URL is not an approved loopback http origin",
+            category=CutoverFailureCategory.SAFETY,
+        )
+
+    def _assert_same_origin(url: str, *, where: str) -> None:
+        scheme, host, port = _origin_tuple(url)
+        if (
+            scheme != approved_scheme
+            or host not in _LOOPBACK_HOSTS
+            or host != approved_host
+            or port != approved_port
+        ):
+            _fail(
+                f"readonly smoke {where} left the approved loopback origin",
+                category=CutoverFailureCategory.VERIFY,
+            )
+
+    def get(url: str) -> dict[str, Any]:
+        _assert_same_origin(url, where="request URL")
+        headers = {"Accept": "application/json"}
+        token = (token_provider() or "").strip()
+        if token:
+            headers[API_AUTH_TOKEN_HEADER] = token
+        request = Request(url, method="GET", headers=headers)
+        opener = build_opener(_LoopbackOnlyRedirectHandler())
+        try:
+            with opener.open(request, timeout=timeout) as response:
+                status = int(getattr(response, "status", 0) or 0)
+                final_url = response.geturl()
+                raw = response.read(max_bytes + 1)
+        except _RedirectBlocked:
+            _fail(
+                "readonly smoke rejected an HTTP redirect",
+                category=CutoverFailureCategory.VERIFY,
+            )
+        except HTTPError:
+            # Never surface the response body or headers.
+            _fail(
+                "readonly smoke received a non-success HTTP status",
+                category=CutoverFailureCategory.VERIFY,
+            )
+        except (URLError, TimeoutError, OSError):
+            _fail(
+                "readonly smoke request failed or timed out",
+                category=CutoverFailureCategory.VERIFY,
+            )
+        _assert_same_origin(final_url, where="final URL")
+        if len(raw) > max_bytes:
+            _fail(
+                "readonly smoke response exceeded byte bound",
+                category=CutoverFailureCategory.VERIFY,
+            )
+        if status != 200:
+            _fail(
+                "readonly smoke response was not HTTP 200",
+                category=CutoverFailureCategory.VERIFY,
+            )
+        try:
+            parsed = json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            _fail(
+                "readonly smoke response was not valid JSON",
+                category=CutoverFailureCategory.VERIFY,
+            )
+        if not isinstance(parsed, dict):
+            _fail(
+                "readonly smoke response JSON was not an object",
+                category=CutoverFailureCategory.VERIFY,
+            )
+        return parsed
+
+    return get
+
+
+def classify_api_activity(
+    *,
+    is_active_text: str | None,
+    main_pid: int | None,
+    listener_present: bool,
+    sub_state: str | None = None,
+) -> dict[str, Any]:
+    """Classify whether the API process is actually running (A3, SIGTERM/143).
+
+    A process is treated as *stopped* when it is not ``active`` and has no live
+    PID/loopback listener — this deliberately includes the ``failed`` state that
+    an intentional ``systemctl stop`` (SIGTERM, ExecMainStatus 143) leaves behind.
+    A process that is ``active`` — or that still has a PID *and* a listener — is
+    treated as *running* and must be rejected by "must be stopped" gates. Genuine
+    failure sub-states (auto-restart, oom, restart loops) are surfaced via
+    ``genuine_failure_signal`` so callers never silently mask them.
+    """
+    text = (is_active_text or "").strip().lower()
+    pid = int(main_pid or 0)
+    listener = bool(listener_present)
+    running = text == "active" or (pid > 0 and listener)
+    sub = (sub_state or "").strip().lower()
+    genuine_failure = sub in {
+        "auto-restart",
+        "oom-kill",
+        "oom-killed",
+        "restart",
+        "start-limit-hit",
+    }
+    return {
+        "state": API_ACTIVITY_RUNNING if running else API_ACTIVITY_STOPPED,
+        "running": running,
+        "stopped": not running,
+        "genuine_failure_signal": genuine_failure,
+        "is_active_text": text or None,
+        "main_pid": pid,
+        "listener_present": listener,
+        "sub_state": sub or None,
+    }
+
+
 def fingerprint_token(path: Path) -> str:
     fp = fingerprint_file(path)
     return f"{fp.size_bytes}:{fp.mtime_ns}:{fp.device}:{fp.inode}"
@@ -445,6 +611,7 @@ class CutoverJournal:
     backup_verified: bool = False
     compact_verified: bool = False
     smoke_ok: bool = False
+    smoke_started_api: bool = False
     swap_direction: str | None = None
     swap_intent: dict[str, Any] | None = None
     exchange_completed: bool = False
@@ -1263,12 +1430,8 @@ class FilesystemAdapters:
         _rename_noreplace(src, dest)
 
     def http_smoke(self, base_url: str, *, expected_fingerprint: str) -> dict[str, Any]:
-        getter = self.http_get
-        if getter is None:
-            _fail(
-                "http smoke getter not configured",
-                category=CutoverFailureCategory.VERIFY,
-            )
+        # Dependency injection stays available for tests; production needs none.
+        getter = self.http_get or make_loopback_json_getter(base_url)
         results: dict[str, Any] = {}
         health = getter(base_url.rstrip("/") + "/health")
         if health.get("status") not in {"ok", "healthy", True} and "ok" not in str(
@@ -1840,6 +2003,43 @@ def _assert_sidecars_smoke_policy(adapters: CutoverAdapters, production: Path) -
                 evidence=evidence,
             )
     return evidence
+
+
+def _failsafe_stop_smoke_api(
+    adapters: CutoverAdapters,
+    journal: CutoverJournal,
+    journal_path: Path,
+) -> None:
+    """Best-effort cleanup when readonly smoke fails after starting the API.
+
+    Stops only the API this stage started and keeps the health timer stopped.
+    Never advances the journal past ``atomic_swap`` and never raises, so the
+    original smoke failure propagates unchanged with rollback-before-writers
+    availability preserved.
+    """
+    try:
+        state = adapters.service_state()
+        if state.health_timer_active:
+            try:
+                adapters.stop_health_timer()
+            except Exception:  # noqa: BLE001
+                pass
+        if adapters.service_state().api_active:
+            try:
+                adapters.stop_api()
+            except Exception:  # noqa: BLE001
+                pass
+        journal.smoke_started_api = False
+        journal.smoke_ok = False
+        journal.stage = CutoverStage.ATOMIC_SWAP.value
+        journal.notes.append("readonly_smoke_failed_started_api_stopped")
+        try:
+            write_journal(adapters, journal_path, journal)
+        except Exception:  # noqa: BLE001
+            pass
+    except Exception:  # noqa: BLE001
+        # Cleanup is strictly best-effort; never mask the real smoke failure.
+        pass
 
 
 def plan_preflight(opts: CutoverOptions) -> dict[str, Any]:
@@ -2674,30 +2874,54 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                     "swap retention incomplete; refuse smoke",
                     category=CutoverFailureCategory.AMBIGUOUS,
                 )
-            adapters.start_api()
-            # Health timer must remain stopped.
-            if adapters.service_state().health_timer_active:
-                adapters.stop_health_timer()
-            if adapters.service_state().health_timer_active:
+            entry_state = adapters.service_state()
+            # Ownership: this stage may only stop an API it started itself.
+            owns_api = journal.smoke_started_api
+            if entry_state.api_active and not owns_api:
                 _fail(
-                    "health timer active during readonly smoke",
+                    "API already active before readonly smoke; refusing to "
+                    "claim ownership or stop an unrelated process",
                     category=CutoverFailureCategory.SAFETY,
                 )
-            live_fp = adapters.fingerprint(production)
-            if live_fp != journal.production_fingerprint:
-                _fail(
-                    "production fingerprint mismatch during smoke",
-                    category=CutoverFailureCategory.VERIFY,
+            try:
+                if not entry_state.api_active:
+                    # Record durable ownership intent before the start so a
+                    # crash cannot orphan an unowned running API.
+                    journal.smoke_started_api = True
+                    write_journal(adapters, journal_path, journal)
+                    adapters.start_api()
+                    owns_api = True
+                    _inject("readonly_smoke_after_api_start")
+                # Health timer must remain stopped.
+                if adapters.service_state().health_timer_active:
+                    adapters.stop_health_timer()
+                if adapters.service_state().health_timer_active:
+                    _fail(
+                        "health timer active during readonly smoke",
+                        category=CutoverFailureCategory.SAFETY,
+                    )
+                live_fp = adapters.fingerprint(production)
+                if live_fp != journal.production_fingerprint:
+                    _fail(
+                        "production fingerprint mismatch during smoke",
+                        category=CutoverFailureCategory.VERIFY,
+                    )
+                smoke = adapters.http_smoke(
+                    opts.api_base_url, expected_fingerprint=live_fp
                 )
-            smoke = adapters.http_smoke(
-                opts.api_base_url, expected_fingerprint=live_fp
-            )
-            _assert_sidecars_smoke_policy(adapters, production)
-            journal.smoke_ok = True
-            journal.stage = stage.value
-            write_journal(adapters, journal_path, journal)
-            _inject("readonly_smoke")
-            return _stage_report(opts, journal, {"smoke": smoke})
+                _assert_sidecars_smoke_policy(adapters, production)
+                journal.smoke_ok = True
+                journal.stage = stage.value
+                write_journal(adapters, journal_path, journal)
+                _inject("readonly_smoke")
+                return _stage_report(opts, journal, {"smoke": smoke})
+            except BaseException:
+                # Fail-safe: stop only the API we started; keep timer stopped;
+                # leave smoke_ok=False; do not advance the journal from
+                # atomic_swap; preserve rollback-before-writers availability.
+                if owns_api:
+                    _failsafe_stop_smoke_api(adapters, journal, journal_path)
+                raise
 
         if stage == CutoverStage.RESUME_SERVICES:
             _expect_journal_stage(journal, CutoverStage.READONLY_SMOKE)
