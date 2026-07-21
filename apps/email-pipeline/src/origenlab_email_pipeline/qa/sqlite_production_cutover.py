@@ -42,6 +42,26 @@ from origenlab_email_pipeline.qa.dashboard_api_readiness import (
     API_AUTH_TOKEN_HEADER,
     resolve_api_auth_token,
 )
+from origenlab_email_pipeline.qa.sqlite_cutover_artifact_permissions import (
+    ROLE_MAIN,
+    ROLE_SHM,
+    ROLE_WAL,
+    ArtifactPermissionError,
+    ArtifactPermissions,
+    apply_write_barrier,
+    capture_artifact,
+    dump_artifact_permissions,
+    filesystem_capture_member_identity,
+    legacy_artifact_from_original_mode,
+    load_artifact_permissions,
+    member_path,
+    recapture_post_swap_companions,
+    reconcile_artifact_barrier_state,
+    record_post_swap_main,
+    restore_post_swap_for_writer_resume,
+    restore_pre_swap_changed_members,
+    verify_artifact_writable_for_resume,
+)
 from origenlab_email_pipeline.operator_cli.chilecompra_auto_refresh import (
     LOCK_FILENAME as CHILECOMPRA_LOCK_FILENAME,
 )
@@ -657,6 +677,8 @@ class CutoverJournal:
     original_mode: int | None = None
     original_uid: int | None = None
     original_gid: int | None = None
+    # Canonical main/WAL/SHM permission capture (PR-B). Absent on legacy journals.
+    artifact_permissions: dict[str, Any] | None = None
     production_write_barrier_active: bool = False
     staging_write_barrier_active: bool = False
     writable_mode_restored: bool = False
@@ -692,6 +714,7 @@ class PrivatePlanPaths:
     original_gid: int | None = None
     production_device: int | None = None
     production_inode: int | None = None
+    artifact_permissions: dict[str, Any] | None = None
 
 
 class CutoverAdapters(Protocol):
@@ -734,6 +757,7 @@ class CutoverAdapters(Protocol):
     def fsync_dir(self, path: Path) -> None: ...
     def fsync_file(self, path: Path) -> None: ...
     def get_file_mode_owner(self, path: Path) -> dict[str, int]: ...
+    def capture_member_identity(self, path: Path) -> dict[str, Any]: ...
     def chmod_path(self, path: Path, mode: int) -> None: ...
     def chmod_verified_inode(
         self,
@@ -1612,6 +1636,13 @@ class FilesystemAdapters:
             "gid": int(st.st_gid),
         }
 
+    def capture_member_identity(self, path: Path) -> dict[str, Any]:
+        try:
+            return filesystem_capture_member_identity(path)
+        except ArtifactPermissionError as exc:
+            _map_artifact_error(exc)
+            raise AssertionError("unreachable") from exc
+
     def chmod_path(self, path: Path, mode: int) -> None:
         os.chmod(path, mode)
 
@@ -1787,6 +1818,72 @@ def write_journal(adapters: CutoverAdapters, path: Path, journal: CutoverJournal
     journal.updated_at_utc = _iso_now()
     payload = sanitize_evidence(journal.to_dict())
     adapters.write_text_atomic(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def _map_artifact_error(exc: ArtifactPermissionError) -> None:
+    category = {
+        "preflight": CutoverFailureCategory.PREFLIGHT,
+        "safety": CutoverFailureCategory.SAFETY,
+        "apply": CutoverFailureCategory.APPLY,
+        "verify": CutoverFailureCategory.VERIFY,
+        "ambiguous": CutoverFailureCategory.AMBIGUOUS,
+    }.get(exc.category, CutoverFailureCategory.SAFETY)
+    _fail(
+        str(exc),
+        category=category,
+        recovery=exc.recovery,
+        evidence=sanitize_evidence(exc.evidence) if exc.evidence else None,
+    )
+
+
+def _journal_artifact(journal: CutoverJournal) -> ArtifactPermissions | None:
+    try:
+        return load_artifact_permissions(journal.artifact_permissions)
+    except ArtifactPermissionError as exc:
+        _map_artifact_error(exc)
+        raise AssertionError("unreachable") from exc
+
+
+def _persist_artifact(
+    adapters: CutoverAdapters,
+    journal_path: Path,
+    journal: CutoverJournal,
+    artifact: ArtifactPermissions,
+    *,
+    private: PrivatePlanPaths | None = None,
+) -> None:
+    journal.artifact_permissions = dump_artifact_permissions(artifact)
+    if artifact.main.present and artifact.main.mode is not None:
+        journal.original_mode = int(artifact.main.mode)
+    if artifact.main.uid is not None:
+        journal.original_uid = int(artifact.main.uid)
+    if artifact.main.gid is not None:
+        journal.original_gid = int(artifact.main.gid)
+    write_journal(adapters, journal_path, journal)
+    if private is not None:
+        private.artifact_permissions = dump_artifact_permissions(artifact)
+        private.original_mode = journal.original_mode
+        private.original_uid = journal.original_uid
+        private.original_gid = journal.original_gid
+        write_private_paths(adapters, journal_path, private)
+
+
+def _resolve_artifact_for_barrier_ops(
+    journal: CutoverJournal,
+) -> ArtifactPermissions | None:
+    """Load artifact_permissions, or main-only legacy view. Never invent companions."""
+    art = _journal_artifact(journal)
+    if art is not None:
+        return art
+    if journal.original_mode is None:
+        return None
+    return legacy_artifact_from_original_mode(
+        original_mode=int(journal.original_mode),
+        production_device=journal.production_device,
+        production_inode=journal.production_inode,
+        original_uid=journal.original_uid,
+        original_gid=journal.original_gid,
+    )
 
 
 def write_private_paths(adapters: CutoverAdapters, journal: Path, paths: PrivatePlanPaths) -> None:
@@ -2762,11 +2859,6 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                     "API/health must be stopped before write barrier",
                     category=CutoverFailureCategory.SAFETY,
                 )
-            owner = adapters.get_file_mode_owner(production)
-            original_mode = int(owner["mode"])
-            original_uid = int(owner["uid"])
-            original_gid = int(owner["gid"])
-            barrier_mode = original_mode & ~0o222
             ident = adapters.path_identity(production)
             expected_dev = int(journal.production_device or ident["device"])
             expected_ino = int(journal.production_inode or ident["inode"])
@@ -2775,18 +2867,34 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                     "production device/inode drift before write barrier",
                     category=CutoverFailureCategory.SAFETY,
                 )
-            journal.original_mode = original_mode
-            journal.original_uid = original_uid
-            journal.original_gid = original_gid
+            try:
+                artifact = capture_artifact(adapters, production, phase="pre_swap")
+            except ArtifactPermissionError as exc:
+                _map_artifact_error(exc)
+                raise AssertionError("unreachable") from exc
+            if (
+                int(artifact.main.device or -1) != expected_dev
+                or int(artifact.main.inode or -1) != expected_ino
+            ):
+                _fail(
+                    "captured main identity disagrees with journal production identity",
+                    category=CutoverFailureCategory.SAFETY,
+                )
+            journal.original_mode = int(artifact.main.mode or 0)
+            journal.original_uid = int(artifact.main.uid or 0)
+            journal.original_gid = int(artifact.main.gid or 0)
             journal.permission_intent = {
                 "action": "apply_production_write_barrier",
-                "original_mode": original_mode,
-                "barrier_mode": barrier_mode,
+                "original_mode": journal.original_mode,
+                "barrier_mode": int(journal.original_mode) & ~0o222,
                 "expected_device": expected_dev,
                 "expected_inode": expected_ino,
+                "members_present": {
+                    ROLE_MAIN: True,
+                    ROLE_WAL: bool(artifact.wal.present),
+                    ROLE_SHM: bool(artifact.shm.present),
+                },
             }
-            write_journal(adapters, journal_path, journal)
-            _inject("permission_intent_barrier")
             private = load_private_paths(adapters, journal_path)
             if private is None:
                 _fail(
@@ -2794,32 +2902,34 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                     category=CutoverFailureCategory.AMBIGUOUS,
                 )
             assert private is not None
-            private.original_mode = original_mode
-            private.original_uid = original_uid
-            private.original_gid = original_gid
+            private.original_mode = journal.original_mode
+            private.original_uid = journal.original_uid
+            private.original_gid = journal.original_gid
             private.production_device = expected_dev
             private.production_inode = expected_ino
-            write_private_paths(adapters, journal_path, private)
-            adapters.chmod_verified_inode(
-                production,
-                barrier_mode,
-                expected_device=expected_dev,
-                expected_inode=expected_ino,
+            # Durable capture BEFORE first chmod.
+            _persist_artifact(
+                adapters, journal_path, journal, artifact, private=private
             )
-            adapters.fsync_file(production)
-            adapters.fsync_dir(production.parent)
-            _inject("after_production_chmod_barrier")
-            verified = adapters.get_file_mode_owner(production)
-            if int(verified["mode"]) != barrier_mode:
-                _fail(
-                    "write barrier mode verification failed",
-                    category=CutoverFailureCategory.VERIFY,
-                    recovery=(
-                        "Production may be read-only. Run abort_before_swap or "
-                        "reconcile_permission_barrier to restore original_mode from "
-                        "journal/private plan, then inspect."
-                    ),
+            _inject("permission_intent_barrier")
+
+            def _persist(art: ArtifactPermissions) -> None:
+                _persist_artifact(
+                    adapters, journal_path, journal, art, private=private
                 )
+
+            try:
+                apply_write_barrier(
+                    adapters,
+                    production,
+                    artifact,
+                    persist=_persist,
+                    inject=_inject,
+                )
+            except ArtifactPermissionError as exc:
+                _map_artifact_error(exc)
+                raise AssertionError("unreachable") from exc
+
             if adapters.try_open_writable(production):
                 _fail(
                     "write barrier failed: production still opens writable",
@@ -2829,6 +2939,13 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                         "reconcile_permission_barrier before any writer resume."
                     ),
                 )
+            for role in (ROLE_WAL, ROLE_SHM):
+                path = member_path(production, role)
+                if adapters.path_exists(path) and adapters.try_open_writable(path):
+                    _fail(
+                        f"write barrier failed: {role} still opens writable",
+                        category=CutoverFailureCategory.VERIFY,
+                    )
             post_ident = adapters.path_identity(production)
             if (
                 int(post_ident["device"]) != expected_dev
@@ -2843,16 +2960,19 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
             journal.writable_mode_restored = False
             journal.permission_intent = None
             journal.stage = stage.value
-            write_journal(adapters, journal_path, journal)
+            _persist_artifact(
+                adapters, journal_path, journal, artifact, private=private
+            )
             _inject("apply_os_write_barrier")
             return _stage_report(
                 opts,
                 journal,
                 {
                     "production_write_barrier_active": True,
-                    "barrier_mode": barrier_mode,
+                    "barrier_mode": int(journal.original_mode) & ~0o222,
                     "barrier_device": expected_dev,
                     "barrier_inode": expected_ino,
+                    "artifact_members_changed": list(artifact.members_changed),
                     "threat_model_note": (
                         "Ordinary accidental ad-hoc SQLite writes are blocked; "
                         "malicious/root bypass is outside operator threat model."
@@ -3066,6 +3186,18 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                     opts.api_base_url, expected_fingerprint=live_fp
                 )
                 _assert_sidecars_smoke_policy(adapters, production)
+                art = _resolve_artifact_for_barrier_ops(journal)
+                if art is not None:
+                    try:
+                        if not art.post_swap_main:
+                            record_post_swap_main(art, adapters, production)
+                        recapture_post_swap_companions(
+                            art, adapters, production, source="readonly_smoke"
+                        )
+                    except ArtifactPermissionError as exc:
+                        _map_artifact_error(exc)
+                        raise AssertionError("unreachable") from exc
+                    journal.artifact_permissions = dump_artifact_permissions(art)
                 journal.smoke_ok = True
                 journal.stage = stage.value
                 write_journal(adapters, journal_path, journal)
@@ -3136,46 +3268,54 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                     "original_mode missing from journal",
                     category=CutoverFailureCategory.AMBIGUOUS,
                 )
+            artifact = _resolve_artifact_for_barrier_ops(journal)
+            if artifact is None:
+                _fail(
+                    "artifact permission state missing",
+                    category=CutoverFailureCategory.AMBIGUOUS,
+                )
+            assert artifact is not None
+            if not artifact.post_swap_main:
+                try:
+                    record_post_swap_main(artifact, adapters, production)
+                except ArtifactPermissionError as exc:
+                    _map_artifact_error(exc)
+                    raise AssertionError("unreachable") from exc
             journal.permission_intent = {
                 "action": "restore_production_writable_mode",
                 "target_mode": journal.original_mode,
             }
             write_journal(adapters, journal_path, journal)
             _inject("restore_mode_intent")
-            adapters.chmod_verified_inode(
-                production,
-                int(journal.original_mode),
-                expected_device=int(journal.production_device or 0),
-                expected_inode=int(journal.production_inode or 0),
-            )
-            adapters.fsync_file(production)
-            adapters.fsync_dir(production.parent)
-            _inject("after_restore_chmod")
-            verified = adapters.get_file_mode_owner(production)
-            if int(verified["mode"]) != int(journal.original_mode):
-                _fail(
-                    "writable mode restore verification failed",
-                    category=CutoverFailureCategory.VERIFY,
+            try:
+                restore_evidence = restore_post_swap_for_writer_resume(
+                    adapters,
+                    production,
+                    artifact,
+                    original_mode=int(journal.original_mode),
+                    inject=_inject,
                 )
-            ident = adapters.path_identity(production)
-            if (
-                journal.production_device is not None
-                and int(ident["device"]) != int(journal.production_device)
-            ) or (
-                journal.production_inode is not None
-                and int(ident["inode"]) != int(journal.production_inode)
-            ):
-                _fail(
-                    "production device/inode changed before writer resume",
-                    category=CutoverFailureCategory.SAFETY,
-                )
+            except ArtifactPermissionError as exc:
+                # Preserve barrier ownership / pauses; do not clear flags.
+                journal.artifact_permissions = dump_artifact_permissions(artifact)
+                write_journal(adapters, journal_path, journal)
+                _map_artifact_error(exc)
+                raise AssertionError("unreachable") from exc
             journal.writable_mode_restored = True
             journal.production_write_barrier_active = False
             journal.permission_intent = None
+            journal.artifact_permissions = dump_artifact_permissions(artifact)
             journal.stage = stage.value
             write_journal(adapters, journal_path, journal)
             _inject("resume_writers_restore_mode")
-            return _stage_report(opts, journal, {"writable_mode_restored": True})
+            return _stage_report(
+                opts,
+                journal,
+                {
+                    "writable_mode_restored": True,
+                    "artifact_writable": restore_evidence,
+                },
+            )
 
         if stage == CutoverStage.RESUME_WRITERS_MAIL:
             _expect_journal_stage(journal, CutoverStage.RESUME_WRITERS_RESTORE_MODE)
@@ -3184,6 +3324,16 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                     "PoNR and writable restore required before removing mail pause",
                     category=CutoverFailureCategory.SAFETY,
                 )
+            try:
+                verify_artifact_writable_for_resume(
+                    adapters,
+                    production,
+                    _journal_artifact(journal),
+                    legacy_original_mode=journal.original_mode,
+                )
+            except ArtifactPermissionError as exc:
+                _map_artifact_error(exc)
+                raise AssertionError("unreachable") from exc
             path = mail_pause_path(reports)
             if adapters.path_exists(path):
                 adapters.unlink(path)
@@ -3212,6 +3362,22 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                 failure = "production_mode_unexpected"
             if failure is None and int(mode["mode"]) & 0o222 == 0:
                 failure = "production_not_writable"
+            if failure is None:
+                try:
+                    verify_artifact_writable_for_resume(
+                        adapters,
+                        production,
+                        _journal_artifact(journal),
+                        legacy_original_mode=journal.original_mode,
+                    )
+                except ArtifactPermissionError as exc:
+                    msg = str(exc).lower()
+                    if "wal" in msg:
+                        failure = "wal_not_writable"
+                    elif "shm" in msg:
+                        failure = "shm_not_writable"
+                    else:
+                        failure = "artifact_not_writable"
             if failure is None and not adapters.quick_check_ok(production):
                 failure = "quick_check_failed"
             if failure is not None:
@@ -3449,6 +3615,25 @@ def _run_atomic_swap(
     journal.old_production_retained = True
     journal.pre_cutover_basename = pre_path.name
     journal.production_fingerprint = adapters.fingerprint(production)
+    # Post-swap: production path now holds the former staging inode. Bind
+    # subsequent chmod/restore to the live identity, not the pre-swap main.
+    live_ident = adapters.path_identity(production)
+    journal.production_device = int(live_ident["device"])
+    journal.production_inode = int(live_ident["inode"])
+    art = _resolve_artifact_for_barrier_ops(journal)
+    if art is not None:
+        try:
+            record_post_swap_main(art, adapters, production)
+            # Companions at production-wal/shm are path-bound, not exchanged with
+            # the main. Capture what is actually present without transferring
+            # pre-swap companion metadata onto a different inode.
+            recapture_post_swap_companions(
+                art, adapters, production, source="atomic_swap"
+            )
+        except ArtifactPermissionError as exc:
+            _map_artifact_error(exc)
+            raise AssertionError("unreachable") from exc
+        journal.artifact_permissions = dump_artifact_permissions(art)
     journal.swap_direction = "staging_to_production_via_rename_exchange"
     journal.stage = CutoverStage.ATOMIC_SWAP.value
     journal.notes.append(f"old_fp_before_swap={old_fp}")
@@ -3461,6 +3646,8 @@ def _run_atomic_swap(
             "pre_cutover_basename": pre_path.name,
             "new_production_fingerprint": journal.production_fingerprint,
             "retained_old_production": True,
+            "post_swap_production_device": journal.production_device,
+            "post_swap_production_inode": journal.production_inode,
         },
     )
 
@@ -3633,40 +3820,21 @@ def reconcile_permission_barrier(
     journal_path: Path,
 ) -> dict[str, Any]:
     """Inspect mode vs journal after chmod crash; never silently leave writers unpaused."""
-    mode = int(adapters.get_file_mode_owner(production)["mode"])
-    write_bits = bool(mode & 0o222)
-    original = _resolve_original_mode_for_restore(adapters, journal, journal_path)
-    state = {
-        "current_mode": mode,
-        "write_bits_present": write_bits,
-        "barrier_active_flag": journal.production_write_barrier_active,
-        "permission_intent": journal.permission_intent,
-        "original_mode_known": original is not None,
-        "recognized": None,
-        "safe_action": None,
-    }
-    if journal.writer_resume_started:
-        state["recognized"] = "ponr_reached"
-        state["safe_action"] = "never_auto_rollback_inspect_manually"
-        return state
-    if not write_bits and original is not None:
-        if journal.production_write_barrier_active:
-            state["recognized"] = "barrier_active_ro"
-            state["safe_action"] = "continue_or_abort_before_swap"
-        elif journal.permission_intent:
-            state["recognized"] = "chmod_applied_journal_incomplete"
-            state["safe_action"] = "abort_before_swap_to_restore_or_complete_barrier_stage"
-        else:
-            state["recognized"] = "unexpected_readonly"
-            state["safe_action"] = "abort_before_swap_or_manual_chmod_restore"
-        return state
-    if write_bits and journal.production_write_barrier_active:
-        state["recognized"] = "barrier_flag_stale_file_writable"
-        state["safe_action"] = "manual_inspect_refuse_blind_retry"
-        return state
-    state["recognized"] = "writable_no_barrier"
-    state["safe_action"] = "continue_if_pre_barrier_else_inspect"
-    return state
+    artifact = _resolve_artifact_for_barrier_ops(journal)
+    try:
+        state = reconcile_artifact_barrier_state(
+            adapters,
+            production,
+            artifact,
+            barrier_active_flag=journal.production_write_barrier_active,
+            permission_intent=journal.permission_intent,
+            writer_resume_started=journal.writer_resume_started,
+            legacy_original_mode=journal.original_mode,
+        )
+    except ArtifactPermissionError as exc:
+        _map_artifact_error(exc)
+        raise AssertionError("unreachable") from exc
+    return sanitize_evidence(state)
 
 
 def abort_before_swap(opts: CutoverOptions) -> dict[str, Any]:
@@ -3717,44 +3885,57 @@ def abort_before_swap(opts: CutoverOptions) -> dict[str, Any]:
         adapters.stop_health_timer()
         adapters.stop_api()
 
-        original = _resolve_original_mode_for_restore(adapters, journal, journal_path)
+        artifact = _resolve_artifact_for_barrier_ops(journal)
         current_mode = int(adapters.get_file_mode_owner(production)["mode"])
-        needs_restore = (
-            original is not None
-            and (
-                journal.production_write_barrier_active
-                or bool(journal.permission_intent)
-                or (current_mode & 0o222) == 0
-            )
+        needs_restore = artifact is not None and (
+            journal.production_write_barrier_active
+            or bool(journal.permission_intent)
+            or bool(artifact.barrier_partial)
+            or bool(artifact.members_changed)
+            or (current_mode & 0o222) == 0
         )
         if needs_restore:
+            assert artifact is not None
             journal.permission_intent = {
                 "action": "abort_restore_writable_mode",
-                "target_mode": original,
+                "target_mode": journal.original_mode or artifact.main.mode,
+                "members_changed": list(artifact.members_changed),
             }
             write_journal(adapters, journal_path, journal)
-            adapters.chmod_verified_inode(
-                production,
-                int(original),
-                expected_device=int(journal.production_device or ident["device"]),
-                expected_inode=int(journal.production_inode or ident["inode"]),
-            )
-            adapters.fsync_file(production)
-            adapters.fsync_dir(production.parent)
-            verified = adapters.get_file_mode_owner(production)
-            if int(verified["mode"]) != int(original):
-                _fail(
-                    "abort failed to restore original mode",
-                    category=CutoverFailureCategory.VERIFY,
-                    recovery=(
-                        "Manual chmod may be required using original_mode from "
-                        "journal or private plan. Do not resume writers until "
-                        "writable mode is verified."
-                    ),
+
+            def _persist(art: ArtifactPermissions) -> None:
+                journal.artifact_permissions = dump_artifact_permissions(art)
+                write_journal(adapters, journal_path, journal)
+
+            try:
+                # Mark barrier_applied for any present member that is currently RO
+                # so restore covers partial chmod crashes.
+                for role in (ROLE_MAIN, ROLE_WAL, ROLE_SHM):
+                    member = artifact.member(role)
+                    path = member_path(production, role)
+                    if not member.present or not adapters.path_exists(path):
+                        continue
+                    live_mode = int(adapters.get_file_mode_owner(path)["mode"])
+                    if live_mode & 0o222 == 0:
+                        member.barrier_applied = True
+                        if role not in artifact.members_changed:
+                            artifact.members_changed.append(role)
+                        artifact.set_member(member)
+                restore_pre_swap_changed_members(
+                    adapters,
+                    production,
+                    artifact,
+                    persist=_persist,
                 )
+            except ArtifactPermissionError as exc:
+                journal.artifact_permissions = dump_artifact_permissions(artifact)
+                write_journal(adapters, journal_path, journal)
+                _map_artifact_error(exc)
+                raise AssertionError("unreachable") from exc
             journal.production_write_barrier_active = False
             journal.writable_mode_restored = True
             journal.permission_intent = None
+            journal.artifact_permissions = dump_artifact_permissions(artifact)
             write_journal(adapters, journal_path, journal)
 
         adapters.start_api()
@@ -3965,11 +4146,25 @@ class SyntheticWorld:
         self.services.health_timer_active = True
 
     def wal_state(self, db: Path) -> dict[str, Any]:
+        wal = Path(str(db) + "-wal")
+        shm = Path(str(db) + "-shm")
+        wal_present = self.path_exists(wal) or self.wal_size > 0
+        shm_present = self.path_exists(shm) or self.shm_size > 0
+        wal_size = (
+            int(self.path_identity(wal)["size_bytes"])
+            if self.path_exists(wal)
+            else int(self.wal_size)
+        )
+        shm_size = (
+            int(self.path_identity(shm)["size_bytes"])
+            if self.path_exists(shm)
+            else int(self.shm_size)
+        )
         return {
-            "wal_present": self.wal_size > 0,
-            "wal_size": self.wal_size,
-            "shm_present": self.shm_size > 0,
-            "shm_size": self.shm_size,
+            "wal_present": wal_present,
+            "wal_size": wal_size,
+            "shm_present": shm_present,
+            "shm_size": shm_size,
             "journal_present": self.journal_present,
             "db_fingerprint": self.fingerprint(db) if self.is_file(db) else None,
         }
@@ -3984,6 +4179,10 @@ class SyntheticWorld:
             )
         before = self.wal_state(db)
         self.wal_size = 0
+        wal = Path(str(db) + "-wal")
+        if self.path_exists(wal):
+            # Truncate companion in place (identity preserved).
+            self.files[self.key(wal)] = b""
         return {
             "before": before,
             "after": self.wal_state(db),
@@ -4089,12 +4288,102 @@ class SyntheticWorld:
             raise OSError(errno.ENOSYS, "exchange unsupported")
         ka, kb = self.key(a), self.key(b)
         self.files[ka], self.files[kb] = self.files[kb], self.files[ka]
+        self.modes[ka], self.modes[kb] = (
+            self.modes.get(kb, 0o644),
+            self.modes.get(ka, 0o644),
+        )
+        self.owners[ka], self.owners[kb] = (
+            self.owners.get(kb, (1000, 1000)),
+            self.owners.get(ka, (1000, 1000)),
+        )
+        ia, ib = self.inode_overrides.get(ka), self.inode_overrides.get(kb)
+        da, db = self.device_overrides.get(ka), self.device_overrides.get(kb)
+        if ib is not None:
+            self.inode_overrides[ka] = ib
+        elif ka in self.inode_overrides:
+            self.inode_overrides.pop(ka, None)
+        if ia is not None:
+            self.inode_overrides[kb] = ia
+        elif kb in self.inode_overrides:
+            self.inode_overrides.pop(kb, None)
+        if db is not None:
+            self.device_overrides[ka] = db
+        elif ka in self.device_overrides:
+            self.device_overrides.pop(ka, None)
+        if da is not None:
+            self.device_overrides[kb] = da
+        elif kb in self.device_overrides:
+            self.device_overrides.pop(kb, None)
 
     def rename_noreplace(self, src: Path, dest: Path) -> None:
         if self.path_exists(dest):
             raise OSError(errno.EEXIST, "RENAME_NOREPLACE dest exists")
-        data = self.files.pop(self.key(src))
-        self.files[self.key(dest)] = data
+        ks, kd = self.key(src), self.key(dest)
+        data = self.files.pop(ks)
+        self.files[kd] = data
+        if ks in self.modes:
+            self.modes[kd] = self.modes.pop(ks)
+        if ks in self.owners:
+            self.owners[kd] = self.owners.pop(ks)
+        if ks in self.inode_overrides:
+            self.inode_overrides[kd] = self.inode_overrides.pop(ks)
+        if ks in self.device_overrides:
+            self.device_overrides[kd] = self.device_overrides.pop(ks)
+
+    def materialize_companion(
+        self,
+        db: Path,
+        role: str,
+        *,
+        size: int,
+        mode: int = 0o644,
+        inode: int | None = None,
+        device: int | None = None,
+    ) -> Path:
+        """Create an exact -wal/-shm companion file for permission tests."""
+        suffix = {"wal": "-wal", "shm": "-shm"}[role]
+        path = Path(str(db) + suffix)
+        self.files[self.key(path)] = b"\0" * int(size)
+        self.modes[self.key(path)] = int(mode) & 0o7777
+        self.owners[self.key(path)] = self.owners.get(self.key(db), (1000, 1000))
+        if inode is not None:
+            self.inode_overrides[self.key(path)] = int(inode)
+        if device is not None:
+            self.device_overrides[self.key(path)] = int(device)
+        if role == "wal":
+            self.wal_size = int(size)
+        if role == "shm":
+            self.shm_size = int(size)
+        return path
+
+    def capture_member_identity(self, path: Path) -> dict[str, Any]:
+        if self.is_symlink(path):
+            from origenlab_email_pipeline.qa.sqlite_cutover_artifact_permissions import (
+                ArtifactPermissionError as _APE,
+            )
+
+            raise _APE("refusing symlink artifact member (fstat)", category="safety")
+        if not self.is_file(path):
+            from origenlab_email_pipeline.qa.sqlite_cutover_artifact_permissions import (
+                ArtifactPermissionError as _APE,
+            )
+
+            raise _APE(
+                "refusing non-regular artifact member (fstat)",
+                category="safety",
+            )
+        ident = self.path_identity(path)
+        owner = self.get_file_mode_owner(path)
+        return {
+            "basename": path.name,
+            "device": int(ident["device"]),
+            "inode": int(ident["inode"]),
+            "mode": int(owner["mode"]),
+            "uid": int(owner["uid"]),
+            "gid": int(owner["gid"]),
+            "nlink": 1,
+            "size": int(ident["size_bytes"]),
+        }
 
     def http_smoke(self, base_url: str, *, expected_fingerprint: str) -> dict[str, Any]:
         payload = dict(self.smoke_payload)
