@@ -97,13 +97,17 @@ The production SQLite file is one **artifact** with three exact members (no glob
 | PR | Scope | Status |
 |----|--------|--------|
 | **A — Smoke + fail-safe** | Bounded loopback JSON getter; fail-safe API cleanup; SIGTERM/143 bookkeeping | **Complete** (PR [#387](https://github.com/rafaelRojasVi/origenlab/pull/387)) |
-| **B — Permissions + sidecars** | Capture/apply/reconcile/restore main + WAL + SHM modes via FD `fstat`/`fchmod` | **Implemented by this change** |
-| **C — Rollback finalize** | Supported `rollback_finalize` (abandoned ≠ completed) | **Not started** |
+| **B — Permissions + sidecars** | Capture/apply/reconcile/restore main + WAL + SHM modes via FD `fstat`/`fchmod` | **Complete** (PR [#393](https://github.com/rafaelRojasVi/origenlab/pull/393)) |
+| **C — Rollback finalize** | Supported `rollback_finalize` (abandoned ≠ completed) | **Implemented by this change** |
 | **D — Maintenance boot policy** | Prevent API/timer auto-start after WSL reboot during maintenance | **Not started** |
 | **E — Observability + backup FD taxonomy** | Trusted backup WAL/SHM locking FD classification; sanitized OperationalError detail | **Not started** |
 | **F — Incident regression pack** | Broader end-to-end incident-chain regressions | **Not started** |
 
-**Merging PR-B does not authorize a cutover.** The abandoned maintenance ID `cutover20260719T163633Z` remains abandoned and **must never be resumed**. Any future cutover requires a fresh MID and the full human approval boundary below.
+**Merging PR-C does not authorize a cutover.** It only adds an explicit terminal path for an already-verified rollback. The abandoned maintenance ID `cutover20260719T163633Z` remains permanently non-resumable — it is rejected by `_require_auth` for **every** operation, including `--rollback-finalize` — and any future cutover requires a fresh MID and the full human approval boundary below. PR-D–F remain unstarted.
+
+### Deferred (known) swap-reconciliation hardening
+
+Out of scope for PR-C and intentionally **not** changed: `reconcile_atomic_swap_state` still classifies an "exchange succeeded but the journal write was stale" reality as `ambiguous_pre_exchange`. Teaching the classifier to positively distinguish that case is a separate future swap-reconciliation hardening item; it is not folded into rollback finalize.
 
 ## Read-only smoke (loopback getter + fail-safe API cleanup)
 
@@ -152,6 +156,28 @@ If the API is already active/ambiguous on entry and this stage did not start it,
 the stage **fails closed without claiming ownership or stopping** the unrelated
 process. On successful smoke the API remains running and the health timer remains
 stopped until `resume_services` (unchanged designed behavior).
+
+## Rollback finalize — terminal `ABANDONED` (PR-C)
+
+After a verified **pre-point-of-no-return** rollback (`attempt_rollback_before_writers`) has physically restored the original database to the production path, the cutover is *not* complete and must never become complete. PR-C adds an explicit, crash-safe operation to close it out.
+
+**Distinct terminal state.** `CutoverStage.ABANDONED` is a terminal state that is **mutually exclusive** with `COMPLETED`. ABANDONED is deliberately kept **out of the linear `STAGE_ORDER`**, so ordinary `next_stage`/`previous_stage` progression can never advance a rolled-back MID toward `COMPLETED`. ABANDONED is **never** a successful cutover, is **never** soak-eligible, and **never** unblocks Waves 3B/3C. The `COMPLETED` stage handler additionally refuses if `abandoned`/`rollback_verified` is set.
+
+**Structured rollback proof.** A successful rollback is no longer inferred from `stage=atomic_swap`, a note string, `swap_direction`, or pathnames. `attempt_rollback_before_writers` now durably records `rollback_verified=true` plus a structured `rollback_proof` block: the restored original fingerprint, the live restored device/inode (which it also writes back to `production_device`/`production_inode`), the approved-plan original identity for cross-check, that the rollback occurred **before** `writer_resume_started`, that the compacted candidate is **not** production (and its retained basename), and that `rollback_finalize` is the only supported forward operation. It reports `next_required: "rollback_finalize"`. Legacy journals lacking this structured proof **refuse** `rollback_finalize` and require manual reconciliation.
+
+**Normal-path lockout.** Once a verified rollback (or a `rollback_finalize_intent`) is recorded, `apply_stage` refuses **all** ordinary execute/resume/apply stages (including `readonly_smoke → completed` and `resume_writers_ponr`). Only the dedicated `rollback_finalize` operation, status, and manual reconciliation may proceed. A crash therefore can never leave a rolled-back journal able to continue toward `COMPLETED`.
+
+**Separate writer semantics.** Normal-cutover fields `writer_resume_started` / `writers_resumed` keep their meaning (writers resumed on the **new** production DB) and are never set by finalize. Rollback finalize uses its own state — `rollback_original_writers_resumed`, `rollback_finalize_mail_resumed`, `rollback_finalize_mirror_resumed` — and status reports `writers_resumed_against: "restored_original"`.
+
+**Eligibility (fail closed on any ambiguity).** All of: supported journal version; explicit `rollback_verified` proof; `writer_resume_started == false`; normal writers never resumed; journal neither `COMPLETED` nor already terminal; production fingerprint **and** device/inode match the captured original (and the approved-plan original); the compacted candidate is not at production; the retained candidate is present and matches, or absent only per the explicit rule; no unexplained main/WAL/SHM identity drift; exact maintenance-ID match. Finalize never attempts another exchange to force the state to fit.
+
+**Crash-safe finalization order.** (1) verify rollback + original identity; (2) durably write `rollback_finalize_intent` before any mutation; (3) reassert and verify both writer pauses; (4) reconcile PR-A smoke/API ownership — stop **only** an API this MID started, retaining ownership + `MANUAL_RECOVERY_REQUIRED` if the stop is ambiguous; (5) restore the original main/WAL/SHM using PR-B's exact device/inode-bound logic rebound to the **original** (now-live) inode — never by pathname, never applying old sidecar metadata to a new inode; (6) start only services active pre-maintenance; (7) verify health against the restored original via the bounded loopback getter; (8) recapture any sidecars created by API open through hardened `lstat`/open/`fstat`; (9) verify main + every present sidecar is writable before removing any pause; (10) resume mail then mirror via dedicated substeps with observation gates; (11) only then durably set `abandoned=true`, `rollback_finalized=true` (+ timestamp), `stage=ABANDONED`, leaving `completed=false` and reporting `cutover_succeeded=false`, `soak_eligible=false`, `waves_unblocked=false`.
+
+**Failure / retry behavior.** Each externally visible mutation persists intent before and success after, preserving atomic journal replacement + file/dir fsync. A crash before the terminal write leaves `rollback_finalize_intent` set, so the normal cutover path stays locked and re-running `--rollback-finalize` reconciles actual pause/service/identity state and safely finishes `ABANDONED` — it never restarts the normal path. A partial writer resume (e.g. mail resumed, observation fails) fails safe by reasserting **both** pauses, verifying the re-pause, recording partial truth, and returning sanitized `MANUAL_RECOVERY_REQUIRED` (never `ABANDONED`/`COMPLETED`/success). Sanitized errors contain no token, secret, response body, or absolute production path.
+
+**Command / approval.** `orchestrate_sqlite_production_cutover.py --rollback-finalize` is mutually exclusive with `--abort-before-swap` and `--rollback-before-writers`, never runs through `--execute`/`--resume`, and reuses the existing operator-approval contract (including `--approve-swap`). On a valid rolled-back journal it executes/reconciles; on an already-`ABANDONED` journal it returns a safe idempotent "already finalized" status; on `COMPLETED`, an in-progress cutover, or a post-PoNR journal it refuses; on an ambiguous/legacy journal it requires manual reconciliation. Status output distinguishes `ABANDONED` from success and states that operations run against the restored original.
+
+**Evidence preserved.** Finalize deletes nothing: the compacted candidate, retained database, backup, journal, and incident evidence all remain. No cleanup policy lives in PR-C.
 
 ## Service activity / exit-143 bookkeeping
 
@@ -210,3 +236,4 @@ and the full human approval boundary above.
 - `tests/test_sqlite_production_cutover.py`
 - `tests/test_sqlite_cutover_readonly_smoke.py` — loopback getter + exit-143 gates
 - `tests/test_sqlite_cutover_artifact_permissions.py` — main/WAL/SHM permissions + July 19 SHM regression
+- `tests/test_sqlite_cutover_rollback_finalize.py` — PR-C terminal ABANDONED, structured rollback proof, lockout, crash-safe finalize + failure injection
