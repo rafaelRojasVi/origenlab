@@ -1584,7 +1584,14 @@ def test_t5_owned_temp_api_stopped_before_quiescence(tmp_path: Path) -> None:
     world.services.api_active = True
     world.api_fd_hits = [{"pid": 4321, "path": str(prod), "mode": "r",
                           "cmdline": "uvicorn", "device": 7, "inode": 4242}]
-    _edit_journal(world, prod, rollback_finalize_owned_temp_api=True)
+    # T3: manual recovery only stops a PROVEN-owned temp API. The synthetic live
+    # identity while active (no start yet, generation 0) is MainPID 4321 /
+    # invocation "inv-0"; record it as the durable owner evidence.
+    _edit_journal(
+        world, prod,
+        rollback_finalize_owned_temp_api=True,
+        rollback_finalize_api_owner={"main_pid": 4321, "invocation_id": "inv-0"},
+    )
     _enter_manual_via_capture_lock(world, prod)
     err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
     ev = err.evidence or {}
@@ -1707,3 +1714,366 @@ def test_t6_dir_fsync_fault_installs_new_durability_indeterminate(
         adapters.write_text_atomic(p, "NEW")
     assert p.read_text() == "NEW"
     assert p.with_name(p.name + ".prev").read_text() == "OLD"
+
+
+# --------------------------------------------------------------------------- #
+# P4-1: bind every sealed path before mutation
+# --------------------------------------------------------------------------- #
+
+def _private_path(prod: Path) -> Path:
+    jp = _journal_path(prod)
+    return jp.with_name(jp.name + ".private.json")
+
+
+def _assert_no_mutation(world: SyntheticWorld, prod: Path, *, api: bool, timer: bool,
+                        mail: bool, mirror: bool) -> None:
+    assert world.services.api_active is api
+    assert world.services.health_timer_active is timer
+    assert world.mail_pause is mail
+    assert world.mirror_pause is mirror
+    assert _journal(world, prod)["abandoned"] is False
+
+
+def test_p4_wrong_reports_dir_no_file_or_service_mutation(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    # After the rollback the API/timer are stopped and both pauses reasserted.
+    world.services.api_active = True
+    world.services.health_timer_active = True
+    world.mail_pause = True
+    world.mirror_pause = True
+    wrong = root / "reports" / "OTHER"
+    err = _expect_locked(lambda: rollback_finalize(
+        _finalize_opts(world, prod, wrong)
+    ))
+    assert "manual_recovery_required" in str(err).lower()
+    ev = err.evidence or {}
+    assert ev.get("sealed_plan_problem") == "reports_dir_mismatch"
+    # No file or service mutation may have occurred.
+    _assert_no_mutation(world, prod, api=True, timer=True, mail=True, mirror=True)
+
+
+def test_p4_missing_private_plan_is_manual(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    world.files.pop(str(_private_path(prod)), None)
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert (err.evidence or {}).get("sealed_plan_problem") == "private_plan_missing"
+    assert _journal(world, prod)["abandoned"] is False
+
+
+def test_p4_malformed_private_plan_is_manual(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    world.files[str(_private_path(prod))] = b"[1, 2, 3]"
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert (err.evidence or {}).get("sealed_plan_problem") == "private_plan_not_object"
+    assert _journal(world, prod)["abandoned"] is False
+
+
+def test_p4_private_plan_journal_drift_is_manual(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    priv = json.loads(world.files[str(_private_path(prod))])
+    priv["journal_path"] = "/somewhere/else.json"
+    world.files[str(_private_path(prod))] = json.dumps(priv).encode()
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert (err.evidence or {}).get("sealed_plan_problem") == (
+        "private_plan_journal_path_drift"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# P4-2: remove circular/optional proof binding
+# --------------------------------------------------------------------------- #
+
+def test_p4_joint_old_restored_and_operator_fp_still_manual(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    j = _journal(world, prod)
+    proof = dict(j["rollback_proof"])
+    proof["old_fingerprint"] = "FORGED"
+    proof["restored_fingerprint"] = "FORGED"
+    _edit_journal(world, prod, rollback_proof=proof)
+    # Even if the operator ALSO supplies the forged fingerprint, the proof is
+    # still bound to the approved plan + rollback_intent, so it fails closed.
+    err = _expect_locked(lambda: rollback_finalize(
+        _finalize_opts(world, prod, reports, expected_fp="FORGED")
+    ))
+    assert "manual" in (str(err) + str(err.recovery or "")).lower()
+    assert _journal(world, prod)["abandoned"] is False
+
+
+@pytest.mark.parametrize("field", [
+    "staging_basename", "pre_cutover_basename", "candidate_fingerprint",
+])
+def test_p4_missing_journal_binding_field_is_manual(tmp_path: Path, field: str) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    _edit_journal(world, prod, **{field: None})
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual" in (str(err) + str(err.recovery or "")).lower()
+    assert _journal(world, prod)["abandoned"] is False
+
+
+@pytest.mark.parametrize("value", [["a"], "a-string", 5, None])
+def test_p4_approved_plan_wrong_type_is_manual(tmp_path: Path, value) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    _edit_journal(world, prod, approved_plan=value)
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual" in (str(err) + str(err.recovery or "")).lower()
+    assert _journal(world, prod)["abandoned"] is False
+
+
+@pytest.mark.parametrize("value", ["x", ["x"], 3, None])
+def test_p4_rollback_intent_wrong_type_is_manual(tmp_path: Path, value) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    _edit_journal(world, prod, rollback_intent=value)
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual" in (str(err) + str(err.recovery or "")).lower()
+    assert _journal(world, prod)["abandoned"] is False
+
+
+@pytest.mark.parametrize("changes", [
+    {"pre_maintenance_api_active": "false"},
+    {"pre_maintenance_health_timer_active": 0},
+    {"pre_maintenance_api_active": 1},
+])
+def test_p4_non_bool_service_policy_is_manual(tmp_path: Path, changes) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    _edit_journal(world, prod, **changes)
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual" in (str(err) + str(err.recovery or "")).lower()
+    assert _journal(world, prod)["abandoned"] is False
+
+
+@pytest.mark.parametrize("changes", [
+    {"rollback_finalized_at_utc": ""},
+    {"rollback_finalize_post_mail_fingerprint": ""},
+])
+def test_p4_malformed_terminal_fields_are_manual(tmp_path: Path, changes) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    rollback_finalize(_finalize_opts(world, prod, reports))
+    _edit_journal(world, prod, **changes)
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual" in (str(err) + str(err.recovery or "")).lower()
+
+
+# --------------------------------------------------------------------------- #
+# P4-3: API ownership verified-success-after
+# --------------------------------------------------------------------------- #
+
+def test_p4_crash_after_start_intent_then_external_api_is_manual(
+    tmp_path: Path,
+) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    # Crash exactly at the durable start-intent (before start executes): no
+    # ownership flag and no owner evidence are persisted.
+    with pytest.raises(CutoverError):
+        rollback_finalize(_finalize_opts(
+            world, prod, reports,
+            fail_after="rollback_finalize_api_start_intent",
+        ))
+    j = _journal(world, prod)
+    assert j["rollback_finalize_started_api"] is False
+    assert j.get("rollback_finalize_api_owner") is None
+    # A DIFFERENT API now appears externally (different MainPID/generation).
+    world.services.api_active = True
+    world.api_process_identity_override = {"main_pid": 9999, "invocation_id": "ext"}
+    world.api_activity_override = {
+        "is_active_text": "active", "main_pid": 9999,
+        "listener_present": True, "sub_state": "running",
+    }
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual" in (str(err) + str(err.recovery or "")).lower()
+    # The unowned external API was NOT stopped.
+    assert world.services.api_active is True
+    assert _journal(world, prod)["abandoned"] is False
+
+
+def test_p4_owned_flag_with_ambiguous_activity_is_manual(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    world.services.api_active = True
+    world.api_activity_override = {
+        "is_active_text": "unknown", "main_pid": 0,
+        "listener_present": False, "sub_state": None,
+    }
+    _edit_journal(world, prod, rollback_finalize_started_api=True)
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual" in (str(err) + str(err.recovery or "")).lower()
+    # Ambiguous activity is never stopped.
+    assert world.services.api_active is True
+    assert _journal(world, prod)["abandoned"] is False
+
+
+def test_p4_happy_path_records_verified_api_owner(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    rollback_finalize(_finalize_opts(world, prod, reports))
+    j = _journal(world, prod)
+    # want_api True (pre-maintenance active) so the API is reused/kept, owner
+    # evidence captured after verified start.
+    assert j["rollback_finalize_started_api"] is True
+    owner = j.get("rollback_finalize_api_owner")
+    assert isinstance(owner, dict)
+    assert owner["main_pid"] == 4321
+    assert owner["invocation_id"] is not None
+
+
+# --------------------------------------------------------------------------- #
+# P4-4: timer + final service verification fail closed
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("rc,text,expect", [
+    (0, "active", "active"),
+    (3, "inactive", "inactive"),
+    (3, "dead", "inactive"),
+    (3, "failed", "ambiguous"),
+    (0, "activating", "ambiguous"),
+    (0, "deactivating", "ambiguous"),
+    (0, "reloading", "ambiguous"),
+    (0, "", "ambiguous"),
+    (127, "", "ambiguous"),
+    (0, "totally-unknown", "ambiguous"),
+])
+def test_p4_classify_health_timer_buckets(rc, text, expect) -> None:
+    from origenlab_email_pipeline.qa.sqlite_production_cutover import (
+        classify_health_timer_activity,
+    )
+    out = classify_health_timer_activity(returncode=rc, is_active_text=text)
+    assert out["state"] == expect
+    assert out[expect] is True
+
+
+def test_p4_systemctl_failure_127_timer_is_manual(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    world.health_timer_activity_override = {"returncode": 127, "is_active_text": ""}
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual" in (str(err) + str(err.recovery or "")).lower()
+    assert _journal(world, prod)["abandoned"] is False
+
+
+def test_p4_unknown_timer_state_is_manual(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    world.health_timer_activity_override = {
+        "returncode": 0, "is_active_text": "reloading",
+    }
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual" in (str(err) + str(err.recovery or "")).lower()
+    assert _journal(world, prod)["abandoned"] is False
+
+
+def test_p4_timer_ambiguous_final_state_is_manual(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    # Scripted transitions: every timer read is a clean known state until the
+    # FINAL convergence read, which turns ambiguous (models a late reappearance
+    # / unknown state at the end). Fail closed to manual recovery.
+    world.health_timer_activity_override = [
+        {"returncode": 0, "is_active_text": "inactive"},   # stop_timer(pre_api)
+        {"returncode": 0, "is_active_text": "inactive"},   # stop_timer(pre_health)
+        {"returncode": 0, "is_active_text": "inactive"},   # start-path classify
+        {"returncode": 0, "is_active_text": "active"},     # start-path verify
+        {"returncode": 3, "is_active_text": "failed"},     # final convergence
+    ]
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual" in (str(err) + str(err.recovery or "")).lower()
+    assert _journal(world, prod)["abandoned"] is False
+
+
+# --------------------------------------------------------------------------- #
+# P4-5: validate rollback proof inputs BEFORE the physical exchange
+# --------------------------------------------------------------------------- #
+
+def _drive_to_atomic_swap(world, prod, reports, root):
+    _run_through(world, prod, reports, world.fingerprint(prod), root,
+                 stop_before=CutoverStage.READONLY_SMOKE)
+    pre_path = prod.with_name(f"{prod.name}.pre_cutover.{MID}")
+    new_fp = world.fingerprint(prod)
+    old_fp = world.fingerprint(pre_path)
+    return pre_path, old_fp, new_fp
+
+
+def test_p4_rollback_unsafe_pre_cutover_basename_refused(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    pre_path, old_fp, new_fp = _drive_to_atomic_swap(world, prod, reports, root)
+    _edit_journal(world, prod, pre_cutover_basename="../evil")
+    backup, staging = _paths(root)
+    err = _expect_locked(lambda: attempt_rollback_before_writers(
+        _opts(world, prod, reports, new_fp, stage=CutoverStage.ATOMIC_SWAP,
+              apply=True, approve_swap=True, backup=backup, staging=staging),
+        expected_old_fingerprint=old_fp,
+        expected_new_fingerprint=new_fp,
+    ))
+    assert "safe single component" in str(err).lower()
+    # No physical exchange occurred.
+    assert world.fingerprint(prod) == new_fp
+
+
+def test_p4_rollback_uncapturable_retained_original_refused(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    pre_path, old_fp, new_fp = _drive_to_atomic_swap(world, prod, reports, root)
+    world.capture_raise_paths = {str(pre_path)}
+    backup, staging = _paths(root)
+    err = _expect_locked(lambda: attempt_rollback_before_writers(
+        _opts(world, prod, reports, new_fp, stage=CutoverStage.ATOMIC_SWAP,
+              apply=True, approve_swap=True, backup=backup, staging=staging),
+        pre_cutover_path=pre_path,
+        expected_old_fingerprint=old_fp,
+        expected_new_fingerprint=new_fp,
+    ))
+    assert "regular capturable file" in str(err).lower()
+    assert world.fingerprint(prod) == new_fp
+
+
+def test_p4_rollback_operator_fp_must_bind_new_side(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    pre_path, old_fp, new_fp = _drive_to_atomic_swap(world, prod, reports, root)
+    backup, staging = _paths(root)
+    # Operator supplies the OLD fingerprint (wrong side) as the approval fp.
+    err = _expect_locked(lambda: attempt_rollback_before_writers(
+        _opts(world, prod, reports, old_fp, stage=CutoverStage.ATOMIC_SWAP,
+              apply=True, approve_swap=True, backup=backup, staging=staging),
+        pre_cutover_path=pre_path,
+        expected_old_fingerprint=old_fp,
+        expected_new_fingerprint=new_fp,
+    ))
+    assert "current/new production" in str(err).lower()
+    assert world.fingerprint(prod) == new_fp
+
+
+# --------------------------------------------------------------------------- #
+# P4-6: preserve unknown manual-recovery truth
+# --------------------------------------------------------------------------- #
+
+def test_p4_list_writers_failure_marks_unknown(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    _enter_manual_via_capture_lock(world, prod)
+    world.raise_list_writers = True
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    ev = err.evidence or {}
+    assert ev.get("mail_pause_state") == "unknown"
+    assert ev.get("mirror_pause_state") == "unknown"
+    j = _journal(world, prod)
+    assert j["rollback_finalize_mail_pause_known"] is False
+    assert j["rollback_finalize_mirror_pause_known"] is False
+
+
+def test_p4_terminal_coherence_requires_known_pause_state(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    rollback_finalize(_finalize_opts(world, prod, reports))
+    # A stale/unknown pause observation can never qualify as coherent terminal.
+    _edit_journal(world, prod, rollback_finalize_mail_pause_known=False)
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual" in (str(err) + str(err.recovery or "")).lower()
+    assert (err.evidence or {}).get("terminal") == "mixed"
