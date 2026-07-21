@@ -78,40 +78,66 @@ abort_before_swap: before swap_intent AND before PoNR only
 production default: `make_loopback_json_getter(base_url)` is used automatically
 when no getter is injected (dependency injection stays available for tests). The
 getter is **GET-only**, restricted to the configured loopback origin
-(`http://127.0.0.1:8001` by default), **rejects redirects and any final URL that
-leaves the approved loopback origin**, applies bounded connect/read timeout and a
-bounded response-byte limit, and requires **HTTP 200 with a JSON object**. It
-attaches `ORIGENLAB_API_AUTH_TOKEN` via the `X-OriginLab-API-Key` header through
-the existing settings mechanism and never logs the token, response bodies,
-secrets, or absolute paths.
+(`http://127.0.0.1:8001` by default), **rejects redirects, userinfo, fragments,
+non-loopback hosts, and any origin/port drift** on both the request URL and the
+final URL, and requires **HTTP 200 with a JSON object**. The response byte cap is
+enforced by reading at most `limit + 1` bytes. Timeouts are **per endpoint**:
+`/operator/status` gets a longer bounded allowance (180s — it has been observed
+to take ~57s under real load) while `/health` and `/operator/automation-status`
+keep a short bound (15s).
 
-**Fail-safe API ownership.** The stage tracks whether it started the API
-(`journal.smoke_started_api`). If the API start succeeds but any later HTTP smoke
+**Auth contract.** The getter matches the real `apps/api` auth contract
+(`origenlab_api.http_security`): the API accepts **`Authorization: Bearer <token>`
+(checked first) and `X-OriginLab-API-Key: <token>` (fallback)**, comparing with
+`secrets.compare_digest`; `/health` is public. The getter sends **both** headers
+from `ORIGENLAB_API_AUTH_TOKEN` and never logs the token, response bodies,
+secrets, or absolute paths. A contract test in `apps/api`
+(`tests/test_smoke_getter_auth_contract.py`) feeds the getter's emitted headers
+through the real `extract_api_token` to keep the two sides in lock-step.
+
+**Fail-safe API ownership.** The stage records durable ownership
+(`journal.smoke_started_api = true`) **before** calling `start_api()`, so a crash
+can never orphan an *unowned* running API — a resumed run sees the flag and either
+re-drives or safely stops it. If the API start succeeds but any later HTTP smoke
 request, validation, journal write, or stage completion fails, the stage:
 
 - stops **only** the API it started (never an unrelated process);
+- **verifies via `api_activity()` that the API has no PID/listener before clearing
+  ownership**; if the stop failed or the API is still running/ambiguous it keeps
+  `smoke_started_api=true`, surfaces a sanitized `manual_stop_required` on the
+  original error, and never claims cleanup succeeded;
 - keeps the health timer stopped;
 - leaves writers paused and `smoke_ok=false`;
 - does **not** advance the journal from `atomic_swap`;
-- preserves rollback-before-writers availability.
+- preserves rollback-before-writers availability;
+- **preserves the original smoke error** (cleanup state is *attached* as sanitized
+  evidence, never substituted).
 
-If the API is already active on entry and this stage did not start it, the stage
-**fails closed without claiming ownership or stopping** the unrelated process. On
-successful smoke the API remains running and the health timer remains stopped
-until `resume_services` (unchanged designed behavior).
+If the API is already active/ambiguous on entry and this stage did not start it,
+the stage **fails closed without claiming ownership or stopping** the unrelated
+process. On successful smoke the API remains running and the health timer remains
+stopped until `resume_services` (unchanged designed behavior).
 
 ## Service activity / exit-143 bookkeeping
 
 An intentional `systemctl stop` sends SIGTERM and can leave the unit in a
-`failed` state with `ExecMainStatus=143`. `classify_api_activity(...)` encodes the
-gate policy: any **non-active / no-PID / no-listener** state — including that
-`failed`/143 result — is treated as **stopped**, while a process that is `active`
-(or still has a live PID **and** a loopback listener) is treated as **running**
-and rejected by "must be stopped" gates. Genuine failure sub-states
-(auto-restart, OOM, restart-limit) are surfaced via `genuine_failure_signal` so a
-real OOM, restart loop, bind failure, or traceback is never silently masked as a
-clean stop. This PR intentionally does **not** change the deployed systemd unit;
-the policy lives in the orchestrator + tests.
+`failed` state with `ExecMainStatus=143`. `classify_api_activity(...)` — used by
+the **real** `FilesystemAdapters.api_activity()` path (systemd `is-active` +
+`MainPID`/`SubState` + a loopback listener probe), not only by tests — encodes the
+gate policy:
+
+- a **known** stopped state (`inactive`/`failed`/`dead`) with **no PID and no
+  listener** — including the `failed`/143 result of an intentional stop — is
+  **stopped**;
+- `active`, any live **PID or listener**, or an **unknown/unreachable** activity
+  text is treated as **running/ambiguous** and **fails closed** so "must be
+  stopped" gates never proceed on uncertainty;
+- genuine failure sub-states (auto-restart, OOM, restart-limit) are surfaced via
+  `genuine_failure_signal` so a real OOM, restart loop, bind failure, or traceback
+  is never silently masked as a clean stop.
+
+This PR intentionally does **not** change the deployed systemd unit; the policy
+lives in the orchestrator + tests.
 
 ## Final human approval boundary
 

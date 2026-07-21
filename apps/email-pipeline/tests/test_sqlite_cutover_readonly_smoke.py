@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 import pytest
@@ -30,10 +30,17 @@ from origenlab_email_pipeline.qa.sqlite_production_cutover import (
 class _Handler(BaseHTTPRequestHandler):
     # Populated per-server via the factory below.
     routes: dict[str, dict[str, Any]] = {}
-    received_headers: list[dict[str, str]] = []
+    received_headers: list[Any] = []
 
     def log_message(self, *args: Any) -> None:  # silence test noise
         return
+
+    def _safe_write(self, data: bytes) -> None:
+        try:
+            self.wfile.write(data)
+        except OSError:
+            # Client bailed (e.g. timeout test closed the socket) — ignore.
+            pass
 
     def do_GET(self) -> None:  # noqa: N802
         # Keep the case-insensitive header object (urllib normalizes header case).
@@ -42,7 +49,7 @@ class _Handler(BaseHTTPRequestHandler):
         if route is None:
             self.send_response(404)
             self.end_headers()
-            self.wfile.write(b"{}")
+            self._safe_write(b"{}")
             return
         if route.get("sleep"):
             time.sleep(route["sleep"])
@@ -55,12 +62,12 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_response(route.get("status", 200))
         self.send_header("Content-Type", route.get("content_type", "application/json"))
         self.end_headers()
-        self.wfile.write(body)
+        self._safe_write(body)
 
 
-def _make_server(routes: dict[str, dict[str, Any]]) -> tuple[HTTPServer, str, type]:
+def _make_server(routes: dict[str, dict[str, Any]]) -> tuple[ThreadingHTTPServer, str, type]:
     handler = type("_ScopedHandler", (_Handler,), {"routes": dict(routes), "received_headers": []})
-    server = HTTPServer(("127.0.0.1", 0), handler)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     host, port = server.server_address
@@ -97,11 +104,14 @@ def test_real_adapters_smoke_without_injected_getter(monkeypatch: pytest.MonkeyP
         server.shutdown()
 
 
-# --- Test 2: loopback-origin enforcement ---
+# --- Test 2: loopback-origin enforcement (+ userinfo/fragment) ---
 def test_loopback_origin_enforced() -> None:
     # Non-loopback base URL is refused at build time.
     with pytest.raises(CutoverError):
         make_loopback_json_getter("http://example.com:8001")
+    # HTTPS (non-http) base URL is refused at build time.
+    with pytest.raises(CutoverError):
+        make_loopback_json_getter("https://127.0.0.1:8001")
     # A getter bound to one loopback port refuses a different port.
     getter = make_loopback_json_getter("http://127.0.0.1:8001")
     with pytest.raises(CutoverError) as exc:
@@ -110,6 +120,16 @@ def test_loopback_origin_enforced() -> None:
     # And refuses a non-loopback host outright.
     with pytest.raises(CutoverError):
         getter("http://10.0.0.5:8001/health")
+
+
+def test_userinfo_and_fragment_rejected() -> None:
+    getter = make_loopback_json_getter("http://127.0.0.1:8001")
+    with pytest.raises(CutoverError) as exc1:
+        getter("http://user:pass@127.0.0.1:8001/health")
+    assert "userinfo" in str(exc1.value).lower()
+    with pytest.raises(CutoverError) as exc2:
+        getter("http://127.0.0.1:8001/health#fragment")
+    assert "fragment" in str(exc2.value).lower()
 
 
 # --- Test 3: redirect rejection ---
@@ -147,6 +167,25 @@ def test_timeout_bound() -> None:
         with pytest.raises(CutoverError) as exc:
             getter(base_url + "/slow")
         assert "timed out" in str(exc.value).lower() or "failed" in str(exc.value).lower()
+    finally:
+        server.shutdown()
+
+
+def test_per_endpoint_timeout_status_gets_longer_allowance() -> None:
+    # /operator/status tolerates a slow-but-healthy response; /health does not.
+    server, base_url, _ = _make_server(
+        {
+            "/operator/status": {"body": _json({"status": "ok"}), "sleep": 0.5},
+            "/health": {"body": _json({"status": "ok"}), "sleep": 0.5},
+        }
+    )
+    try:
+        getter = make_loopback_json_getter(base_url, timeout=0.2, status_timeout=3.0)
+        # Longer bound applies to /operator/status -> succeeds despite 0.5s sleep.
+        assert getter(base_url + "/operator/status")["status"] == "ok"
+        # Short bound applies to /health -> times out at 0.2s.
+        with pytest.raises(CutoverError):
+            getter(base_url + "/health")
     finally:
         server.shutdown()
 
@@ -203,14 +242,49 @@ def test_auth_header_present_but_not_leaked(
     try:
         getter = make_loopback_json_getter(base_url)
         getter(base_url + "/health")
+        # Matches the real apps/api contract: both Bearer and X-OriginLab-API-Key.
         assert any(
             h.get(API_AUTH_TOKEN_HEADER) == secret for h in handler.received_headers
-        ), "auth header was not sent"
+        ), "X-OriginLab-API-Key header was not sent"
+        assert any(
+            (h.get("Authorization") or "") == f"Bearer {secret}"
+            for h in handler.received_headers
+        ), "Authorization: Bearer header was not sent"
         with caplog.at_level("DEBUG"):
             with pytest.raises(CutoverError) as exc:
                 getter(base_url + "/arr")
         assert secret not in str(exc.value)
+        assert secret not in str(getattr(exc.value, "evidence", "") or "")
         assert secret not in caplog.text
+    finally:
+        server.shutdown()
+
+
+def test_no_secret_or_body_leak_in_any_error(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    secret = "leak-check-token-XYZ"
+    body_sentinel = "SENSITIVE_BODY_MARKER_9999"
+    monkeypatch.setenv("ORIGENLAB_API_AUTH_TOKEN", secret)
+    server, base_url, _ = _make_server(
+        {
+            "/e500": {"status": 500, "body": json.dumps({"detail": body_sentinel}).encode()},
+            "/bad": {"body": (body_sentinel + "{{").encode()},
+            "/arr": {"body": json.dumps([body_sentinel]).encode()},
+            "/big": {"body": (body_sentinel + "x" * 5000).encode()},
+        }
+    )
+    try:
+        getter = make_loopback_json_getter(base_url, max_bytes=50)
+        for path in ("/e500", "/bad", "/arr", "/big"):
+            with caplog.at_level("DEBUG"):
+                with pytest.raises(CutoverError) as exc:
+                    getter(base_url + path)
+            msg = str(exc.value) + str(getattr(exc.value, "evidence", "") or "")
+            assert secret not in msg, f"token leaked for {path}"
+            assert body_sentinel not in msg, f"body leaked for {path}"
+        assert secret not in caplog.text
+        assert body_sentinel not in caplog.text
     finally:
         server.shutdown()
 
@@ -227,14 +301,18 @@ def test_exit_143_failed_classified_as_stopped() -> None:
     assert result["state"] == API_ACTIVITY_STOPPED
     assert result["running"] is False
     assert result["stopped"] is True
-    # inactive is likewise stopped.
-    assert classify_api_activity(
-        is_active_text="inactive", main_pid=0, listener_present=False
-    )["stopped"] is True
+    assert result["ambiguous"] is False  # 'failed' is a KNOWN stopped state
+    # inactive/dead are likewise known-stopped, not ambiguous.
+    for text in ("inactive", "dead"):
+        r = classify_api_activity(
+            is_active_text=text, main_pid=0, listener_present=False
+        )
+        assert r["stopped"] is True
+        assert r["ambiguous"] is False
 
 
-# --- Test 11: genuine running / unknown states still fail closed ---
-def test_running_and_unknown_states_are_running() -> None:
+# --- Test 11: genuine running / unknown-ambiguous states fail closed ---
+def test_running_and_unknown_states_fail_closed() -> None:
     assert classify_api_activity(
         is_active_text="active", main_pid=1234, listener_present=True
     )["state"] == API_ACTIVITY_RUNNING
@@ -244,6 +322,17 @@ def test_running_and_unknown_states_are_running() -> None:
     )["running"] is True
     assert classify_api_activity(
         is_active_text="unknown", main_pid=999, listener_present=True
+    )["running"] is True
+    # Unknown/unreachable text with no PID/listener => AMBIGUOUS, fail closed.
+    for text in ("unknown", "", None):
+        amb = classify_api_activity(
+            is_active_text=text, main_pid=0, listener_present=False
+        )
+        assert amb["ambiguous"] is True
+        assert amb["running"] is True
+    # A lingering listener alone (no PID) is still running.
+    assert classify_api_activity(
+        is_active_text="failed", main_pid=0, listener_present=True
     )["running"] is True
     # Genuine failure signals are surfaced, never masked.
     crash_loop = classify_api_activity(
