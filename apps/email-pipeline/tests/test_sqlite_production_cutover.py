@@ -714,6 +714,303 @@ def test_non_empty_wal_sidecar_rejected_in_smoke(tmp_path: Path) -> None:
     assert "wal" in str(exc.value).lower()
 
 
+def _journal_dict(world: SyntheticWorld, prod: Path) -> dict:
+    jpath = journal_path_for(
+        CutoverOptions(maintenance_id=MID, expected_production_path=prod),
+        prod,
+    )
+    return json.loads(world.files[str(jpath)].decode())
+
+
+def test_smoke_success_keeps_api_running_and_started_ownership(tmp_path: Path) -> None:
+    # PR-A test 8: successful smoke keeps API running, health timer stopped.
+    world, prod, reports, root, fp = _world(tmp_path)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.RESUME_SERVICES
+    )
+    assert world.services.api_active is True
+    assert world.services.health_timer_active is False
+    journal = _journal_dict(world, prod)
+    assert journal["smoke_ok"] is True
+    assert journal["smoke_started_api"] is True
+    assert journal["stage"] == CutoverStage.READONLY_SMOKE.value
+
+
+def test_smoke_failure_after_api_start_stops_that_api(tmp_path: Path) -> None:
+    # PR-A test 7: failure after API start stops that API; timer/writers/journal safe.
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.READONLY_SMOKE
+    )
+    assert world.services.api_active is False  # stopped at stop_readers
+    # Force the HTTP smoke to fail (degraded health).
+    world.smoke_payload = {"status": "degraded", "sqlite_query_only": True}
+    live_fp = world.fingerprint(prod)
+    with pytest.raises(CutoverError):
+        apply_stage(
+            _opts(
+                world, prod, reports, live_fp,
+                stage=CutoverStage.READONLY_SMOKE,
+                apply=True, backup=backup, staging=staging,
+            )
+        )
+    # API this stage started is stopped again; timer stays stopped.
+    assert world.services.api_active is False
+    assert world.services.health_timer_active is False
+    # Writers remain paused.
+    assert world.mail_pause is True
+    assert world.mirror_pause is True
+    # Journal did not advance past atomic_swap; smoke not ok; ownership cleared.
+    journal = _journal_dict(world, prod)
+    assert journal["stage"] == CutoverStage.ATOMIC_SWAP.value
+    assert journal["smoke_ok"] is False
+    assert journal["smoke_started_api"] is False
+    # Rollback-before-writers remains available.
+    pre_path = prod.with_name(f"{prod.name}.pre_cutover.{MID}")
+    report = attempt_rollback_before_writers(
+        _opts(
+            world, prod, reports, world.fingerprint(prod),
+            stage=CutoverStage.ATOMIC_SWAP, apply=True, approve_swap=True,
+            backup=backup, staging=staging,
+        ),
+        pre_cutover_path=pre_path,
+        expected_old_fingerprint=world.fingerprint(pre_path),
+        expected_new_fingerprint=world.fingerprint(prod),
+    )
+    assert report["rolled_back"] is True
+    assert world.files[str(prod)] == b"SYNTHETIC-PROD-DB-v1"
+
+
+def test_smoke_refuses_preexisting_active_api(tmp_path: Path) -> None:
+    # PR-A test 9: a pre-existing active API is not claimed or stopped.
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.READONLY_SMOKE
+    )
+    # Simulate an unrelated/unexpected active API not started by this stage.
+    world.services.api_active = True
+    live_fp = world.fingerprint(prod)
+    with pytest.raises(CutoverError) as exc:
+        apply_stage(
+            _opts(
+                world, prod, reports, live_fp,
+                stage=CutoverStage.READONLY_SMOKE,
+                apply=True, backup=backup, staging=staging,
+            )
+        )
+    assert "ownership" in str(exc.value).lower() or "already active" in str(exc.value).lower()
+    # The unrelated API is NOT stopped, and journal did not advance.
+    assert world.services.api_active is True
+    journal = _journal_dict(world, prod)
+    assert journal["stage"] == CutoverStage.ATOMIC_SWAP.value
+    assert journal["smoke_ok"] is False
+    assert journal["smoke_started_api"] is False
+
+
+def test_incident_chain_smoke_boundary_rollback(tmp_path: Path) -> None:
+    # PR-A test 12: synthetic regression for the exact incident chain at the
+    # smoke boundary — smoke blocks, API is stopped, journal stays at
+    # atomic_swap, writers never resume, and rollback restores production.
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.READONLY_SMOKE
+    )
+    world.smoke_payload = {"status": "degraded"}
+    live_fp = world.fingerprint(prod)
+    with pytest.raises(CutoverError):
+        apply_stage(
+            _opts(
+                world, prod, reports, live_fp,
+                stage=CutoverStage.READONLY_SMOKE,
+                apply=True, backup=backup, staging=staging,
+            )
+        )
+    journal = _journal_dict(world, prod)
+    assert journal["stage"] == CutoverStage.ATOMIC_SWAP.value
+    assert journal["writers_resumed"] is False
+    assert journal["writer_resume_started"] is False
+    assert world.services.api_active is False
+    assert world.services.health_timer_active is False
+    pre_path = prod.with_name(f"{prod.name}.pre_cutover.{MID}")
+    report = attempt_rollback_before_writers(
+        _opts(
+            world, prod, reports, world.fingerprint(prod),
+            stage=CutoverStage.ATOMIC_SWAP, apply=True, approve_swap=True,
+            backup=backup, staging=staging,
+        ),
+        pre_cutover_path=pre_path,
+        expected_old_fingerprint=world.fingerprint(pre_path),
+        expected_new_fingerprint=world.fingerprint(prod),
+    )
+    assert report["rolled_back"] is True
+    assert report["writers_resumed"] is False
+    assert world.files[str(prod)] == b"SYNTHETIC-PROD-DB-v1"
+
+
+def test_crash_before_ownership_write_leaves_no_ownership(tmp_path: Path) -> None:
+    # Failure before the ownership intent is written: API never started, no
+    # ownership recorded, journal stays at atomic_swap.
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.READONLY_SMOKE
+    )
+    live_fp = world.fingerprint(prod)
+    with pytest.raises(CutoverError):
+        apply_stage(
+            _opts(
+                world, prod, reports, live_fp,
+                stage=CutoverStage.READONLY_SMOKE, apply=True,
+                backup=backup, staging=staging,
+                fail_after="readonly_smoke_before_ownership_write",
+            )
+        )
+    journal = _journal_dict(world, prod)
+    assert journal["smoke_started_api"] is False
+    assert journal["stage"] == CutoverStage.ATOMIC_SWAP.value
+    assert world.services.api_active is False
+
+
+def test_crash_after_ownership_write_before_start_clears_when_stopped(tmp_path: Path) -> None:
+    # Failure after ownership intent is durably written but before start_api.
+    # Cleanup confirms the API is not running and clears ownership.
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.READONLY_SMOKE
+    )
+    live_fp = world.fingerprint(prod)
+    with pytest.raises(CutoverError):
+        apply_stage(
+            _opts(
+                world, prod, reports, live_fp,
+                stage=CutoverStage.READONLY_SMOKE, apply=True,
+                backup=backup, staging=staging,
+                fail_after="readonly_smoke_ownership_written",
+            )
+        )
+    journal = _journal_dict(world, prod)
+    assert journal["smoke_started_api"] is False  # cleared: API confirmed stopped
+    assert journal["smoke_ok"] is False
+    assert journal["stage"] == CutoverStage.ATOMIC_SWAP.value
+    assert world.services.api_active is False
+
+
+def test_crash_after_api_start_stops_and_clears(tmp_path: Path) -> None:
+    # Failure immediately after start_api: cleanup stops it and clears ownership.
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.READONLY_SMOKE
+    )
+    live_fp = world.fingerprint(prod)
+    with pytest.raises(CutoverError):
+        apply_stage(
+            _opts(
+                world, prod, reports, live_fp,
+                stage=CutoverStage.READONLY_SMOKE, apply=True,
+                backup=backup, staging=staging,
+                fail_after="readonly_smoke_after_api_start",
+            )
+        )
+    journal = _journal_dict(world, prod)
+    assert journal["smoke_started_api"] is False
+    assert journal["stage"] == CutoverStage.ATOMIC_SWAP.value
+    assert world.services.api_active is False
+    assert world.services.health_timer_active is False
+
+
+def test_stop_failure_still_listening_preserves_ownership(tmp_path: Path) -> None:
+    # If the API cannot be stopped (still listening) after smoke fails, ownership
+    # is preserved, manual-stop-required is surfaced, and cleanup never claims
+    # success. The original smoke error is preserved.
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.READONLY_SMOKE
+    )
+    world.refuse_stop_api = True  # stop() is a no-op; API keeps listening
+    world.smoke_payload = {"status": "degraded"}  # force smoke failure
+    live_fp = world.fingerprint(prod)
+    with pytest.raises(CutoverError) as exc:
+        apply_stage(
+            _opts(
+                world, prod, reports, live_fp,
+                stage=CutoverStage.READONLY_SMOKE, apply=True,
+                backup=backup, staging=staging,
+            )
+        )
+    # Original smoke error preserved (not replaced by a cleanup error).
+    assert "semantic" in str(exc.value).lower() or "health" in str(exc.value).lower()
+    # Sanitized manual-stop-required surfaced on the same error.
+    evidence = getattr(exc.value, "evidence", {}) or {}
+    assert evidence.get("smoke_cleanup", {}).get("manual_stop_required") is True
+    assert evidence.get("smoke_cleanup", {}).get("api_stopped") is False
+    # Ownership preserved; API still running; journal safe.
+    journal = _journal_dict(world, prod)
+    assert journal["smoke_started_api"] is True
+    assert journal["smoke_ok"] is False
+    assert journal["stage"] == CutoverStage.ATOMIC_SWAP.value
+    assert world.services.api_active is True
+
+
+def test_full_failure_injection_chain_fail_safe(tmp_path: Path) -> None:
+    # Ownership intent -> start -> GETs -> validation -> journal commit: every
+    # injected failure boundary leaves the journal deterministic and safe.
+    phases = [
+        "readonly_smoke_before_ownership_write",
+        "readonly_smoke_ownership_written",
+        "readonly_smoke_after_api_start",
+        "readonly_smoke",
+    ]
+    for phase in phases:
+        world, prod, reports, root, fp = _world(tmp_path / phase)
+        backup, staging = _paths(root)
+        _run_through(
+            world, prod, reports, fp, root, stop_before=CutoverStage.READONLY_SMOKE
+        )
+        live_fp = world.fingerprint(prod)
+        with pytest.raises(CutoverError):
+            apply_stage(
+                _opts(
+                    world, prod, reports, live_fp,
+                    stage=CutoverStage.READONLY_SMOKE, apply=True,
+                    backup=backup, staging=staging, fail_after=phase,
+                )
+            )
+        journal = _journal_dict(world, prod)
+        # Never advanced past atomic_swap; smoke never marked ok; writers intact.
+        assert journal["stage"] == CutoverStage.ATOMIC_SWAP.value
+        assert journal["smoke_ok"] is False
+        assert journal["writers_resumed"] is False
+        assert world.mail_pause is True
+        assert world.mirror_pause is True
+        # For any phase where we owned the (stoppable) API, it ends stopped.
+        assert world.services.api_active is False
+
+
+def test_old_journal_without_smoke_started_api_loads_false() -> None:
+    from origenlab_email_pipeline.qa.sqlite_production_cutover import CutoverJournal
+
+    legacy = {
+        "schema_version": 3,
+        "tool": "sqlite_production_cutover",
+        "maintenance_id": MID,
+        "stage": CutoverStage.ATOMIC_SWAP.value,
+        "smoke_ok": True,
+        # no smoke_started_api key at all (older journal)
+    }
+    j = CutoverJournal.from_dict(legacy)
+    assert j.smoke_started_api is False
+    assert j.smoke_ok is True
+    assert j.stage == CutoverStage.ATOMIC_SWAP.value
+    # Round-trips with the new field present and defaulted.
+    assert "smoke_started_api" in j.to_dict()
+
+
 def test_full_happy_path_retains_pre_cutover(tmp_path: Path) -> None:
     world, prod, reports, root, fp = _world(tmp_path)
     _run_through(world, prod, reports, fp, root)
