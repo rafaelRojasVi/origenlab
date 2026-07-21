@@ -35,20 +35,24 @@ pause_writers → stop_readers → quiesce_wal
         |
         v
 apply_os_write_barrier
-  -- journal original_mode + intent
-  -- open FD, fstat match device+inode, fchmod(~write)
+  -- capture main + exact -wal/-shm via open/fstat
+  -- journal artifact_permissions before first chmod
+  -- fchmod(~write) per captured identity; partial → barrier_partial
   -- fsync; verify; rescan FDs
         |
         v
 create_current_backup → compact → verify
         |
         v
-approve_swap (staging owner + RO) → atomic_swap → readonly_smoke → resume_services
+approve_swap (staging owner + RO) → atomic_swap
+  -- post_swap_main binds new production inode
+  -- companions re-captured (never copy old sidecar inode onto a new one)
+        → readonly_smoke → resume_services
         |
         v
 resume_writers_ponr          -- writer_resume_started (rollback forbidden)
-resume_writers_restore_mode  -- fchmod restore writable on verified inode
-resume_writers_mail          -- remove mail pause
+resume_writers_restore_mode  -- restore main + barrier-changed companions; refuse RO SHM/WAL
+resume_writers_mail          -- require writable artifact; then remove mail pause
 resume_writers_observe_mail  -- accept size/mtime drift; on failure RE-PAUSE mail
 resume_writers_mirror        -- only if mail_observe_ok
 resume_writers_observe_mirror
@@ -62,13 +66,44 @@ abort_before_swap: before swap_intent AND before PoNR only
 | Condition | Safe action |
 |-----------|-------------|
 | Intent written; chmod not yet applied | Re-run `apply_os_write_barrier` or `abort_before_swap` |
-| Chmod applied; `barrier_active` not yet journaled | `abort_before_swap` restores from `original_mode` / `permission_intent` / private plan |
+| Chmod applied to some members; `barrier_partial` | `abort_before_swap` restores **every** member in `members_changed` (main/WAL/SHM) |
+| Chmod applied; `barrier_active` not yet journaled | `abort_before_swap` restores from `artifact_permissions` / `original_mode` / private plan |
 | `barrier_active=true`, pre-swap | Continue stages or `abort_before_swap` |
 | After `swap_intent` / exchange | Abort refused; use swap reconciliation / rollback rules |
 | After `writer_resume_started` | Abort + automatic rollback refused |
 | Mail observe failed | Mail re-paused; mirror blocked; fix then re-run observe |
+| SHM/WAL still `0444` before mail resume | Fail closed; do not remove mail pause; mirror stays paused |
 
-`reconcile_permission_barrier` inspects mode vs journal and reports the recognized state — it never silently leaves writers unpaused with an unknown DB mode.
+`reconcile_permission_barrier` inspects main (+ journaled companions) vs journal and reports the recognized state — it never silently leaves writers unpaused with an unknown DB mode, and never invents companion modes for a legacy journal that lacks `artifact_permissions`.
+
+## Artifact permissions (main / `-wal` / `-shm`) — PR-B
+
+The production SQLite file is one **artifact** with three exact members (no globs):
+
+| Member | Path rule |
+|--------|-----------|
+| main | production basename |
+| WAL | `production` + `-wal` |
+| SHM | `production` + `-shm` |
+
+**Capture** uses open + `fstat` (symlink / non-regular refused). Journal field `artifact_permissions` records presence, device, inode, mode, uid/gid, nlink, size, and which members were barrier-changed. Legacy `original_mode` remains mirrored from main for compatibility. Older journals without `artifact_permissions` still load; companion ownership is **never** silently invented for an in-progress legacy barrier.
+
+**Write barrier** journals the full capture **before** the first `fchmod`, then applies the RO barrier only to captured identities. Partial chmod sets `barrier_partial` and remains recoverable via `abort_before_swap`.
+
+**Swap-aware restore:** `RENAME_EXCHANGE` moves main inodes only; `-wal`/`-shm` stay path-bound. After swap, `post_swap_main` binds writable restore to the **new** production inode. Pre-swap companion metadata is never copied onto a different inode. `readonly_smoke` re-captures companions present after API open. Writer resume restores barrier-changed companions that still match identity, requires any other present companion to already be writable, and refuses mail resume if SHM/WAL remain read-only.
+
+## Post-incident PR roadmap A–F (canonical)
+
+| PR | Scope | Status |
+|----|--------|--------|
+| **A — Smoke + fail-safe** | Bounded loopback JSON getter; fail-safe API cleanup; SIGTERM/143 bookkeeping | **Complete** (PR [#387](https://github.com/rafaelRojasVi/origenlab/pull/387)) |
+| **B — Permissions + sidecars** | Capture/apply/reconcile/restore main + WAL + SHM modes via FD `fstat`/`fchmod` | **Implemented by this change** |
+| **C — Rollback finalize** | Supported `rollback_finalize` (abandoned ≠ completed) | **Not started** |
+| **D — Maintenance boot policy** | Prevent API/timer auto-start after WSL reboot during maintenance | **Not started** |
+| **E — Observability + backup FD taxonomy** | Trusted backup WAL/SHM locking FD classification; sanitized OperationalError detail | **Not started** |
+| **F — Incident regression pack** | Broader end-to-end incident-chain regressions | **Not started** |
+
+**Merging PR-B does not authorize a cutover.** The abandoned maintenance ID `cutover20260719T163633Z` remains abandoned and **must never be resumed**. Any future cutover requires a fresh MID and the full human approval boundary below.
 
 ## Read-only smoke (loopback getter + fail-safe API cleanup)
 
@@ -170,6 +205,8 @@ and the full human approval boundary above.
 ## Module / tests
 
 - `origenlab_email_pipeline.qa.sqlite_production_cutover`
+- `origenlab_email_pipeline.qa.sqlite_cutover_artifact_permissions` — PR-B artifact mode capture/barrier/restore
 - `scripts/maintenance/orchestrate_sqlite_production_cutover.py`
 - `tests/test_sqlite_production_cutover.py`
 - `tests/test_sqlite_cutover_readonly_smoke.py` — loopback getter + exit-143 gates
+- `tests/test_sqlite_cutover_artifact_permissions.py` — main/WAL/SHM permissions + July 19 SHM regression
