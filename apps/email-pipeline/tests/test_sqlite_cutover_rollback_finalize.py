@@ -751,3 +751,435 @@ def test_terminal_write_injection_blocks_normal_resume(tmp_path: Path) -> None:
                           backup=backup, staging=staging))
     report = rollback_finalize(_finalize_opts(world, prod, reports))
     assert report["stage"] == CutoverStage.ABANDONED.value
+
+
+# --------------------------------------------------------------------------- #
+# R1: idempotent ABANDONED must pass full proof + identity + coherence
+# --------------------------------------------------------------------------- #
+
+def _finalize_to_abandoned(world, prod, reports, root):
+    _rollback(world, prod, reports, root)
+    rollback_finalize(_finalize_opts(world, prod, reports))
+    assert _journal(world, prod)["stage"] == CutoverStage.ABANDONED.value
+
+
+def test_idempotent_abandoned_with_junk_proof_is_manual_recovery(
+    tmp_path: Path,
+) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _finalize_to_abandoned(world, prod, reports, root)
+    # Terminal record looks coherent but the proof is junk: idempotent success
+    # must NOT be returned; full typed validation runs first.
+    _edit_journal(world, prod, rollback_proof={"junk": True})
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual_recovery_required" in str(err).lower()
+    assert "already_finalized" not in str(err.evidence or {})
+
+
+def test_idempotent_abandoned_missing_typed_proof_field_is_manual_recovery(
+    tmp_path: Path,
+) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _finalize_to_abandoned(world, prod, reports, root)
+    j = _journal(world, prod)
+    proof = dict(j["rollback_proof"])
+    proof["restored_device"] = None  # wrong type
+    _edit_journal(world, prod, rollback_proof=proof)
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual_recovery_required" in str(err).lower()
+
+
+def test_idempotent_abandoned_with_unresolved_service_intent_is_manual_recovery(
+    tmp_path: Path,
+) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _finalize_to_abandoned(world, prod, reports, root)
+    _edit_journal(world, prod,
+                  rollback_finalize_service_intent={"action": "start_api"})
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual_recovery_required" in str(err).lower()
+
+
+def test_idempotent_abandoned_missing_mirror_observation_is_manual_recovery(
+    tmp_path: Path,
+) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _finalize_to_abandoned(world, prod, reports, root)
+    _edit_journal(world, prod, rollback_finalize_mirror_observed_ok=False)
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual_recovery_required" in str(err).lower()
+
+
+def test_idempotent_abandoned_with_normal_writer_fields_is_manual_recovery(
+    tmp_path: Path,
+) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _finalize_to_abandoned(world, prod, reports, root)
+    _edit_journal(world, prod, writers_resumed=True)
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual_recovery_required" in str(err).lower()
+
+
+def test_fully_coherent_abandoned_remains_idempotent(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _finalize_to_abandoned(world, prod, reports, root)
+    report = rollback_finalize(_finalize_opts(world, prod, reports))
+    assert report["already_finalized"] is True
+    assert report["stage"] == CutoverStage.ABANDONED.value
+    assert report["cutover_succeeded"] is False
+
+
+# --------------------------------------------------------------------------- #
+# R2: authoritative fstat capture (real filesystem) — no pathname TOCTOU
+# --------------------------------------------------------------------------- #
+
+def _fs_adapters():
+    from origenlab_email_pipeline.qa.sqlite_production_cutover import FilesystemAdapters
+    return FilesystemAdapters()
+
+
+def test_real_fs_snapshot_fifo_is_ambiguous_and_never_blocks(tmp_path: Path) -> None:
+    import os
+    import threading
+
+    from origenlab_email_pipeline.qa.sqlite_production_cutover import (
+        _sidecar_identity_snapshot,
+    )
+
+    fifo = tmp_path / "emails.sqlite-wal"
+    os.mkfifo(fifo)
+    result: dict = {}
+
+    def _run():
+        result["snap"] = _sidecar_identity_snapshot(_fs_adapters(), fifo)
+
+    t = threading.Thread(target=_run)
+    t.start()
+    t.join(timeout=5)
+    assert not t.is_alive(), "capture blocked on a FIFO (O_NONBLOCK missing)"
+    assert result["snap"] == {"present": True, "ambiguous": True}
+
+
+def test_real_fs_snapshot_symlink_is_refused(tmp_path: Path) -> None:
+    from origenlab_email_pipeline.qa.sqlite_production_cutover import (
+        _sidecar_identity_snapshot,
+    )
+
+    target = tmp_path / "target"
+    target.write_bytes(b"x")
+    link = tmp_path / "emails.sqlite-shm"
+    link.symlink_to(target)
+    snap = _sidecar_identity_snapshot(_fs_adapters(), link)
+    assert snap == {"present": True, "ambiguous": True}
+
+
+def test_real_fs_snapshot_regular_uses_fstat_identity(tmp_path: Path) -> None:
+    import os
+
+    from origenlab_email_pipeline.qa.sqlite_production_cutover import (
+        _sidecar_identity_snapshot,
+    )
+
+    p = tmp_path / "emails.sqlite-wal"
+    p.write_bytes(b"payload")
+    st = os.stat(p)
+    snap = _sidecar_identity_snapshot(_fs_adapters(), p)
+    assert snap["present"] is True
+    assert snap["device"] == int(st.st_dev)
+    assert snap["inode"] == int(st.st_ino)
+
+
+def test_real_fs_authoritative_fstat_rejects_identity_replacement(
+    tmp_path: Path,
+) -> None:
+    import os
+
+    adapters = _fs_adapters()
+    p = tmp_path / "emails.sqlite"
+    p.write_bytes(b"orig")
+    ident = adapters.capture_member_identity(p)
+    # Correct identity: fchmod succeeds.
+    adapters.chmod_verified_inode(
+        p, 0o600, expected_device=ident["device"], expected_inode=ident["inode"]
+    )
+    # Create a DISTINCT file (guaranteed different inode while p still exists),
+    # then atomically replace p with it — modeling an identity swap at the path.
+    other = tmp_path / "swapped"
+    other.write_bytes(b"swapped")
+    assert os.stat(other).st_ino != ident["inode"]
+    os.replace(other, p)
+    with pytest.raises(CutoverError):
+        adapters.chmod_verified_inode(
+            p, 0o600, expected_device=ident["device"], expected_inode=ident["inode"]
+        )
+
+
+def test_real_fs_authoritative_fstat_rejects_symlink_at_path(tmp_path: Path) -> None:
+    adapters = _fs_adapters()
+    target = tmp_path / "target"
+    target.write_bytes(b"x")
+    link = tmp_path / "emails.sqlite"
+    link.symlink_to(target)
+    with pytest.raises(CutoverError):
+        adapters.capture_member_identity(link)
+
+
+# --------------------------------------------------------------------------- #
+# R3: typed rollback-sidecar proof + barrier_applied membership
+# --------------------------------------------------------------------------- #
+
+def test_missing_sidecar_proof_fails_closed_even_when_absent(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    _edit_journal(world, prod, rollback_sidecar_proof=None)
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual_recovery_required" in str(err).lower()
+    assert _journal(world, prod)["abandoned"] is False
+
+
+def test_malformed_sidecar_proof_is_manual_recovery(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    _edit_journal(world, prod, rollback_sidecar_proof={
+        "schema": 1, "captured_at_utc": "z",
+        "wal": {"present": True},  # present but no device/inode
+        "shm": {"present": False},
+    })
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual_recovery_required" in str(err).lower()
+
+
+def test_present_sidecar_without_barrier_applied_is_manual_recovery(
+    tmp_path: Path,
+) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    world.materialize_companion(prod, "wal", size=0, mode=0o644,
+                                inode=4243, device=7)
+    _rollback(world, prod, reports, root)
+    j = _journal(world, prod)
+    art = dict(j["artifact_permissions"])
+    wal = dict(art["wal"])
+    wal["barrier_applied"] = False
+    art["wal"] = wal
+    _edit_journal(world, prod, artifact_permissions=art)
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual_recovery_required" in str(err).lower()
+    # The unexplained/not-barriered sidecar is never deleted or chmod'd.
+    assert world.path_exists(Path(str(prod) + "-wal"))
+
+
+def test_non_regular_sidecar_capture_is_ambiguous_manual_recovery(
+    tmp_path: Path,
+) -> None:
+    # Synthetic analog of a FIFO/symlink sidecar: capture fails -> ambiguous.
+    world, prod, reports, root, fp = _world(tmp_path)
+    world.materialize_companion(prod, "wal", size=0, mode=0o644,
+                                inode=4243, device=7)
+    _rollback(world, prod, reports, root)
+    world.capture_raise_paths = {str(Path(str(prod) + "-wal"))}
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual_recovery_required" in str(err).lower()
+
+
+# --------------------------------------------------------------------------- #
+# R4: resume intent-before / verified-success-after
+# --------------------------------------------------------------------------- #
+
+def test_mail_unlink_failure_before_mutation_never_claims_resume(
+    tmp_path: Path,
+) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    world.refuse_unlink_mail = True
+    with pytest.raises(OSError):
+        rollback_finalize(_finalize_opts(world, prod, reports))
+    j = _journal(world, prod)
+    assert j["rollback_finalize_mail_resume_intent"] is True
+    assert j["rollback_finalize_mail_resumed"] is False
+    assert world.mail_pause is True
+    # Recover: allow the unlink and retry -> ABANDONED.
+    world.refuse_unlink_mail = False
+    report = rollback_finalize(_finalize_opts(world, prod, reports))
+    assert report["stage"] == CutoverStage.ABANDONED.value
+
+
+def test_crash_after_mail_unlink_before_success_reconciles_on_retry(
+    tmp_path: Path,
+) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    with pytest.raises(CutoverError):
+        rollback_finalize(_finalize_opts(world, prod, reports,
+                          fail_after="rollback_finalize_mail_unlinked"))
+    j = _journal(world, prod)
+    assert j["rollback_finalize_mail_resume_intent"] is True
+    assert j["rollback_finalize_mail_resumed"] is False
+    assert world.mail_pause is False  # unlink already happened
+    report = rollback_finalize(_finalize_opts(world, prod, reports))
+    assert report["stage"] == CutoverStage.ABANDONED.value
+
+
+def test_mail_pause_recreated_before_verification_is_manual_recovery(
+    tmp_path: Path,
+) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    world.sticky_mail_pause = True  # unlink is ineffective / pause reappears
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual_recovery_required" in str(err).lower()
+    j = _journal(world, prod)
+    assert j["rollback_finalize_mail_resumed"] is False
+    assert j["rollback_finalize_mail_resume_intent"] is True
+    assert j["abandoned"] is False
+
+
+def test_repause_preserves_historical_mail_resume_truth(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    # Mail resumes, then observation fails -> manual recovery re-pauses but must
+    # keep historical mail_resumed True.
+    world.quick_check_fail = True
+    with pytest.raises(CutoverError):
+        rollback_finalize(_finalize_opts(world, prod, reports))
+    j = _journal(world, prod)
+    assert j["rollback_finalize_mail_resumed"] is True
+    assert j["rollback_finalize_mail_pause_absent"] is False
+    assert j["rollback_finalize_writers_repaused"] is True
+
+
+# --------------------------------------------------------------------------- #
+# R5: service ownership ordering + durable timer truth
+# --------------------------------------------------------------------------- #
+
+def test_owned_active_api_with_readonly_fd_reconciled_before_quiescence(
+    tmp_path: Path,
+) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    # An OWNED API is active on retry and holds a real read-only FD on the DB.
+    world.services.api_active = True
+    _edit_journal(world, prod, rollback_finalize_started_api=True)
+    world.api_fd_hits = [{
+        "pid": 999999, "access": "read_only", "basename": prod.name,
+    }]
+    # New ordering stops the owned API before the FD-quiescence gate, so the
+    # read-only FD disappears and finalize still reaches ABANDONED.
+    report = rollback_finalize(_finalize_opts(world, prod, reports))
+    assert report["stage"] == CutoverStage.ABANDONED.value
+    assert world.services.api_active is True  # want_api True (restarted)
+
+
+def test_durable_timer_stop_intent_recorded_then_retry(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    # Force the timer active at finalize so the durable stop-intent path runs.
+    world.services.health_timer_active = True
+    with pytest.raises(CutoverError):
+        rollback_finalize(_finalize_opts(world, prod, reports,
+                          fail_after="rollback_finalize_timer_stop_intent"))
+    j = _journal(world, prod)
+    assert j["rollback_finalize_service_intent"] == {"action": "stop_timer"}
+    assert j["abandoned"] is False
+    report = rollback_finalize(_finalize_opts(world, prod, reports))
+    assert report["stage"] == CutoverStage.ABANDONED.value
+
+
+def test_manual_recovery_stops_owned_temp_api(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    # Pre-maintenance said API should end inactive (owned temp start), then a
+    # later failure triggers manual recovery which must stop the owned temp API.
+    _edit_journal(world, prod, pre_maintenance_api_active=False)
+    # Fail after recapture so the owned temp API is live at manual recovery.
+    world.quick_check_fail = True  # forces mail-observe failure post temp start
+    with pytest.raises(CutoverError):
+        rollback_finalize(_finalize_opts(world, prod, reports))
+    j = _journal(world, prod)
+    # The owned temp API was stopped and ownership cleared by manual recovery.
+    assert j["rollback_finalize_owned_temp_api"] is False
+    assert world.services.api_active is False
+
+
+# --------------------------------------------------------------------------- #
+# R6: real atomic-journal write fault injection
+# --------------------------------------------------------------------------- #
+
+ATOMIC_PHASES = [
+    "before_temp_write",
+    "after_temp_fsync",
+    "before_replace",
+    "after_replace_before_dir_fsync",
+    "dir_fsync_failure",
+]
+
+
+@pytest.mark.parametrize("phase", ATOMIC_PHASES)
+def test_atomic_journal_write_fault_at_finalize_intent(
+    tmp_path: Path, phase: str
+) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    pre_path, old_fp, new_fp = _rollback(world, prod, reports, root)
+    # Fail the atomic write that persists the finalize intent, at each phase.
+    world.journal_write_fault = ('"action": "finalize_abandoned"', phase)
+    with pytest.raises(OSError):
+        rollback_finalize(_finalize_opts(world, prod, reports))
+    j = _journal(world, prod)
+    applied = phase in ("after_replace_before_dir_fsync", "dir_fsync_failure")
+    # Applied phases persisted the intent; pre-replace phases did not.
+    assert (j.get("rollback_finalize_intent") is not None) == applied
+    # Every boundary keeps the safety invariants.
+    assert j["abandoned"] is False
+    assert j["stage"] != CutoverStage.COMPLETED.value
+    assert world.path_identity(prod)["device"] == 7
+    assert world.path_identity(prod)["inode"] == 4242
+    assert world.fingerprint(prod) != new_fp
+    assert world.path_exists(pre_path)
+    assert world.fingerprint(pre_path) == new_fp
+    # One-shot fault cleared: retry reconciles to ABANDONED.
+    report = rollback_finalize(_finalize_opts(world, prod, reports))
+    assert report["stage"] == CutoverStage.ABANDONED.value
+
+
+@pytest.mark.parametrize("phase", ATOMIC_PHASES)
+def test_atomic_journal_write_fault_at_terminal(tmp_path: Path, phase: str) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    pre_path, old_fp, new_fp = _rollback(world, prod, reports, root)
+    # Fail the terminal write (the one that sets stage=abandoned).
+    world.journal_write_fault = ('"stage": "abandoned"', phase)
+    with pytest.raises(OSError):
+        rollback_finalize(_finalize_opts(world, prod, reports))
+    applied = phase in ("after_replace_before_dir_fsync", "dir_fsync_failure")
+    j = _journal(world, prod)
+    # If the replace happened, the terminal record is durable already.
+    assert (j["stage"] == CutoverStage.ABANDONED.value) == applied
+    # A normal cutover stage can never resume from here.
+    backup, staging = _paths(root)
+    with pytest.raises(CutoverError):
+        apply_stage(_opts(world, prod, reports, world.fingerprint(prod),
+                          stage=CutoverStage.READONLY_SMOKE, apply=True,
+                          backup=backup, staging=staging))
+    # Original identity + candidate retained regardless.
+    assert world.path_identity(prod)["inode"] == 4242
+    assert world.fingerprint(pre_path) == new_fp
+    report = rollback_finalize(_finalize_opts(world, prod, reports))
+    assert report["stage"] == CutoverStage.ABANDONED.value
+    assert report["abandoned"] is True
+
+
+def test_crash_after_api_open_before_recapture_fails_closed_on_retry(
+    tmp_path: Path,
+) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    # Crash right after health verification (API open) but before recapture.
+    with pytest.raises(CutoverError):
+        rollback_finalize(_finalize_opts(world, prod, reports,
+                          fail_after="rollback_finalize_health_verified"))
+    # The API created a WAL that was never folded into the artifact.
+    world.materialize_companion(prod, "wal", size=8, mode=0o644,
+                                inode=787878, device=7)
+    # Retry: the pre-API sidecar check sees an unexplained sidecar -> fail closed.
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual_recovery_required" in str(err).lower()
+    assert _journal(world, prod)["abandoned"] is False
+    assert world.path_exists(Path(str(prod) + "-wal"))
