@@ -70,6 +70,17 @@ loginctl enable-linger "$USER"
 
 WSL or Windows host sleep, and a stopped WSL VM, prevent true 24/7 local operation — cron and user systemd both pause until the environment wakes.
 
+## SQLite cutover maintenance (boot auto-start)
+
+During a SQLite production cutover, `STOP_READERS` **stops** `origenlab-api.service` and `origenlab-api-health.timer` and also **persistently disables** both (`systemctl --user disable`) so a WSL or user-manager restart cannot auto-start them and reopen production SQLite mid-maintenance.
+
+- Runtime **masks** are not used (they do not survive WSL reboot the way operators need).
+- `RESUME_SERVICES` may **start** the units for post-swap health while they remain **disabled** for boot.
+- Exact pre-maintenance enablement is restored only at a terminal exit (`COMPLETED`, successful `abort_before_swap`, or `rollback_finalize` → `ABANDONED`).
+- PR-D / the cutover orchestrator does **not** authorize a live cutover by itself; see [`SQLITE_PRODUCTION_CUTOVER_ORCHESTRATOR.md`](../../email-pipeline/docs/SQLITE_PRODUCTION_CUTOVER_ORCHESTRATOR.md).
+
+Do not manually `systemctl --user enable` either unit during an in-progress cutover maintenance window.
+
 ## Safety
 
 - API remains **GET-only** / read-only.
