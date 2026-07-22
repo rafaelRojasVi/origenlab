@@ -28,13 +28,22 @@ from origenlab_email_pipeline.qa.sqlite_production_cutover import (
     rollback_finalize,
     _ownership_flag_exact,
     _rollback_finalize_locked,
-    _rollback_finalize_terminal_state,
     _rollback_sidecar_proof_problem,
 )
 
 MID = "cutover20260718T120000Z"
 MAIN_SHA = "25cd4100e226427b3a4d027f1ee3b3af056884d4"
 ABANDONED_INCIDENT_MID = "cutover20260719T163633Z"
+
+
+def _owner(role: str, *, pid: int = 4321, inv: str = "inv-0") -> dict:
+    """Role-bound API ownership evidence for finalize stop gates."""
+    return {
+        "role": role,
+        "main_pid": pid,
+        "invocation_id": inv,
+        "maintenance_id": MID,
+    }
 
 
 def _world(tmp_path: Path) -> tuple[SyntheticWorld, Path, Path, Path, str]:
@@ -1084,7 +1093,7 @@ def test_owned_active_api_with_readonly_fd_reconciled_before_quiescence(
     _edit_journal(
         world, prod,
         rollback_finalize_started_api=True,
-        rollback_finalize_api_owner={"main_pid": 4321, "invocation_id": "inv-0"},
+        rollback_finalize_api_owner=_owner("started"),
     )
     world.api_fd_hits = [{
         "pid": 999999, "access": "read_only", "basename": prod.name,
@@ -1610,7 +1619,7 @@ def test_t5_owned_temp_api_stopped_before_quiescence(tmp_path: Path) -> None:
     _edit_journal(
         world, prod,
         rollback_finalize_owned_temp_api=True,
-        rollback_finalize_api_owner={"main_pid": 4321, "invocation_id": "inv-0"},
+        rollback_finalize_api_owner=_owner("temp"),
     )
     _enter_manual_via_capture_lock(world, prod)
     err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
@@ -2115,7 +2124,7 @@ def test_p5_stale_owned_flag_foreign_pid_not_stopped(tmp_path: Path) -> None:
     _edit_journal(
         world, prod,
         rollback_finalize_started_api=True,
-        rollback_finalize_api_owner={"main_pid": 4321, "invocation_id": "inv-0"},
+        rollback_finalize_api_owner=_owner("started"),
     )
     err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
     assert "manual" in (str(err) + str(err.recovery or "")).lower()
@@ -2130,7 +2139,7 @@ def test_p5_matching_pid_different_invocation_not_stopped(tmp_path: Path) -> Non
     _edit_journal(
         world, prod,
         rollback_finalize_started_api=True,
-        rollback_finalize_api_owner={"main_pid": 4321, "invocation_id": "inv-0"},
+        rollback_finalize_api_owner=_owner("started"),
     )
     err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
     assert "manual" in (str(err) + str(err.recovery or "")).lower()
@@ -2560,7 +2569,7 @@ def test_p6_truthy_non_boolean_temp_flag_does_not_stop_api(tmp_path: Path) -> No
     _edit_journal(
         world, prod,
         rollback_finalize_owned_temp_api="yes",  # truthy, not True
-        rollback_finalize_api_owner={"main_pid": 4321, "invocation_id": "inv-0"},
+        rollback_finalize_api_owner=_owner("temp"),
     )
     err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
     assert "manual" in (str(err) + str(err.recovery or "")).lower()
@@ -2578,7 +2587,7 @@ def test_p6_smoke_ownership_does_not_authorize_temp_stop(tmp_path: Path) -> None
         smoke_started_api=True,
         rollback_finalize_started_api=False,
         rollback_finalize_owned_temp_api=False,
-        rollback_finalize_api_owner={"main_pid": 4321, "invocation_id": "inv-0"},
+        rollback_finalize_api_owner=_owner("smoke"),
         # Early manual path (before reconcile) — exercises cleanup only.
         rollback_identity_capture_failed=True,
     )
@@ -2673,12 +2682,9 @@ def test_p6_identity_mutation_after_intent_before_exchange(tmp_path: Path) -> No
 def test_p6_boolean_safety_gate_matrix_rejects_truthy_non_bool(
     field: str, truthy
 ) -> None:
-    """Every PR-C boolean used as a safety decision gate requires exact True/False."""
+    """Legacy unit check retained; P7 matrices use coherent journals below."""
     j = CutoverJournal()
     setattr(j, field, truthy)
-    # Presence locks still fire for intent-like fields elsewhere; here we assert
-    # exact-boolean ownership / terminal / lock predicates never treat truthy
-    # non-bools as True.
     if field in {
         "smoke_started_api",
         "rollback_finalize_started_api",
@@ -2690,26 +2696,289 @@ def test_p6_boolean_safety_gate_matrix_rejects_truthy_non_bool(
             "rollback_finalize_owned_temp_api": "temp",
         }[field]
         assert _ownership_flag_exact(j, role) is False
-    if field in {
-        "abandoned",
-        "rollback_finalized",
-        "rollback_verified",
-        "rollback_identity_capture_failed",
-    }:
-        # Truthy non-bool must not alone trip the exact-True lock branches.
-        locked = _rollback_finalize_locked(j)
-        if field == "abandoned":
-            assert locked is None or "ABANDONED" not in (locked or "")
-        elif field == "rollback_finalized":
-            assert locked != "rollback already finalized"
-        elif field == "rollback_verified":
-            assert locked != "verified rollback recorded"
-        elif field == "rollback_identity_capture_failed":
-            assert locked != (
-                "post-rollback identity capture failed (manual recovery required)"
-            )
-    # Terminal coherence never accepts truthy non-bools as coherent abandoned.
-    j.stage = CutoverStage.ABANDONED.value
-    j.abandoned = True if field != "abandoned" else truthy
-    j.rollback_finalized = True if field != "rollback_finalized" else truthy
-    assert _rollback_finalize_terminal_state(j) != "coherent_abandoned"
+    locked = _rollback_finalize_locked(j)
+    assert locked is not None
+    assert "malformed safety boolean" in locked
+
+
+# --------------------------------------------------------------------------- #
+# P7: seventh residual — exact dest binding, intent schemas, role-bound owner,
+# fail-closed booleans, both-member post-intent identity
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("which", ["staging", "backup"])
+def test_p7_wrong_parent_dest_option_refuses_before_intent(
+    tmp_path: Path, which: str
+) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    pre_path, old_fp, new_fp = _drive_to_atomic_swap(world, prod, reports, root)
+    backup, staging = _paths(root)
+    wrong_parent = root / "other_parent"
+    wrong_parent.mkdir()
+    if which == "staging":
+        bad_staging = wrong_parent / staging.name
+        err = _expect_locked(lambda: attempt_rollback_before_writers(
+            _opts(world, prod, reports, new_fp, stage=CutoverStage.ATOMIC_SWAP,
+                  apply=True, approve_swap=True, backup=backup, staging=bad_staging),
+            pre_cutover_path=pre_path,
+            expected_old_fingerprint=old_fp,
+            expected_new_fingerprint=new_fp,
+        ))
+    else:
+        bad_backup = wrong_parent / backup.name
+        err = _expect_locked(lambda: attempt_rollback_before_writers(
+            _opts(world, prod, reports, new_fp, stage=CutoverStage.ATOMIC_SWAP,
+                  apply=True, approve_swap=True, backup=bad_backup, staging=staging),
+            pre_cutover_path=pre_path,
+            expected_old_fingerprint=old_fp,
+            expected_new_fingerprint=new_fp,
+        ))
+    msg = (str(err) + str(err.evidence or {})).lower()
+    assert "approved_plan" in msg or which in msg
+    assert world.fingerprint(prod) == new_fp
+    assert _journal(world, prod).get("rollback_intent") is None
+
+
+def test_p7_missing_journal_backup_basename_refuses_before_intent(
+    tmp_path: Path,
+) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    pre_path, old_fp, new_fp = _drive_to_atomic_swap(world, prod, reports, root)
+    _edit_journal(world, prod, backup_basename=None)
+    backup, staging = _paths(root)
+    err = _expect_locked(lambda: attempt_rollback_before_writers(
+        _opts(world, prod, reports, new_fp, stage=CutoverStage.ATOMIC_SWAP,
+              apply=True, approve_swap=True, backup=backup, staging=staging),
+        pre_cutover_path=pre_path,
+        expected_old_fingerprint=old_fp,
+        expected_new_fingerprint=new_fp,
+    ))
+    assert "backup" in (str(err) + str(err.evidence or {})).lower()
+    assert world.fingerprint(prod) == new_fp
+    assert _journal(world, prod).get("rollback_intent") is None
+
+
+@pytest.mark.parametrize("intent,expect", [
+    ({}, "empty"),
+    ({"action": "finalize_abandoned"}, "timestamp"),
+    ({"action": "finalize_abandoned", "maintenance_id": MID,
+      "started_at_utc": ""}, "timestamp"),
+    ({"action": "finalize_abandoned",
+      "maintenance_id": "cutover20260718T999999Z",
+      "started_at_utc": "2026-07-18T12:00:00Z"}, "mid"),
+    ({"action": "not_a_real_action", "maintenance_id": MID,
+      "started_at_utc": "2026-07-18T12:00:00Z"}, "action"),
+])
+def test_p7_malformed_finalize_intent_is_manual(
+    tmp_path: Path, intent, expect: str
+) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    _edit_journal(world, prod, rollback_finalize_intent=intent)
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual" in (str(err) + str(err.recovery or "")).lower()
+    assert _journal(world, prod)["abandoned"] is False
+    assert expect  # parametrize documentation
+
+
+@pytest.mark.parametrize("intent", [
+    {},
+    {"action": "explode"},
+    {"action": "stop_timer", "phase": "wrong"},
+    {"action": "start_api", "owned_temp": "yes"},
+    {"action": "start_api"},  # missing owned_temp
+])
+def test_p7_malformed_service_intent_is_manual(tmp_path: Path, intent) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    _edit_journal(world, prod, rollback_finalize_service_intent=intent)
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual" in (str(err) + str(err.recovery or "")).lower()
+    assert _journal(world, prod)["abandoned"] is False
+
+
+def test_p7_valid_finalize_intent_retry_succeeds(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    _edit_journal(
+        world, prod,
+        rollback_finalize_intent={
+            "action": "finalize_abandoned",
+            "maintenance_id": MID,
+            "started_at_utc": "2026-07-18T12:00:00Z",
+        },
+    )
+    report = rollback_finalize(_finalize_opts(world, prod, reports))
+    assert report["stage"] == CutoverStage.ABANDONED.value
+    assert report.get("already_finalized") is not True
+
+
+def test_p7_mixed_temp_and_started_flags_do_not_stop_api(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    world.services.api_active = True
+    world.api_process_identity_override = {"main_pid": 4321, "invocation_id": "inv-0"}
+    # Both role flags True + owner bound to temp: mixed/contradictory → no stop.
+    _edit_journal(
+        world, prod,
+        rollback_finalize_owned_temp_api=True,
+        rollback_finalize_started_api=True,
+        smoke_started_api=False,
+        rollback_finalize_api_owner=_owner("temp"),
+    )
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual" in (str(err) + str(err.recovery or "")).lower()
+    assert world.services.api_active is True
+
+
+def test_p7_legacy_smoke_without_role_bound_owner_not_stopped(
+    tmp_path: Path,
+) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    world.services.api_active = True
+    world.api_process_identity_override = {"main_pid": 4321, "invocation_id": "inv-0"}
+    # Legacy smoke flag + PID/Invocation evidence without role/MID → unproven.
+    _edit_journal(
+        world, prod,
+        smoke_started_api=True,
+        rollback_finalize_started_api=False,
+        rollback_finalize_owned_temp_api=False,
+        rollback_finalize_api_owner={"main_pid": 4321, "invocation_id": "inv-0"},
+    )
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual" in (str(err) + str(err.recovery or "")).lower()
+    assert world.services.api_active is True
+
+
+def test_p7_temp_owner_cannot_authorize_started_only_stop(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    world.services.api_active = True
+    world.api_process_identity_override = {"main_pid": 4321, "invocation_id": "inv-0"}
+    # Started flag True but owner role is temp → roles disagree → no stop.
+    _edit_journal(
+        world, prod,
+        rollback_finalize_started_api=True,
+        rollback_finalize_owned_temp_api=False,
+        smoke_started_api=False,
+        rollback_finalize_api_owner=_owner("temp"),
+    )
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual" in (str(err) + str(err.recovery or "")).lower()
+    assert world.services.api_active is True
+
+
+@pytest.mark.parametrize("field", [
+    "writer_resume_started",
+    "writers_resumed",
+    "rollback_verified",
+    "exchange_completed",
+    "old_production_retained",
+    "smoke_started_api",
+    "rollback_finalize_started_api",
+    "rollback_finalize_owned_temp_api",
+    "rollback_identity_capture_failed",
+])
+@pytest.mark.parametrize("bad", [0, 1, "", "false", [], {}])
+def test_p7_malformed_bool_on_fresh_rollback_locks_and_no_mutation(
+    tmp_path: Path, field: str, bad
+) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _rollback(world, prod, reports, root)
+    before_fp = world.fingerprint(prod)
+    before_j = dict(_journal(world, prod))
+    _edit_journal(world, prod, **{field: bad})
+    # Ordinary progression locked.
+    backup, staging = _paths(root)
+    err = _expect_locked(lambda: apply_stage(
+        _opts(world, prod, reports, before_fp, stage=CutoverStage.READONLY_SMOKE,
+              apply=True, backup=backup, staging=staging)
+    ))
+    assert "refused" in str(err).lower() or "malformed" in str(err).lower()
+    # Finalize → manual before mutation.
+    err2 = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual" in (str(err2) + str(err2.recovery or "")).lower()
+    assert world.fingerprint(prod) == before_fp
+    assert _journal(world, prod)["abandoned"] is False
+    # Pause/service state unchanged from pre-finalize attempt (still paused).
+    assert world.mail_pause is True or before_j.get("rollback_finalize_intent") is None
+
+
+@pytest.mark.parametrize("field", [
+    "abandoned",
+    "rollback_finalized",
+    "rollback_verified",
+    "rollback_identity_capture_failed",
+    "writer_resume_started",
+    "writers_resumed",
+    "rollback_original_writers_resumed",
+    "rollback_finalize_mail_resumed",
+    "rollback_finalize_mirror_resumed",
+    "rollback_finalize_mail_observed_ok",
+    "rollback_finalize_mirror_observed_ok",
+    "rollback_finalize_mail_pause_known",
+    "rollback_finalize_mirror_pause_known",
+    "rollback_finalize_mail_pause_absent",
+    "rollback_finalize_mirror_pause_absent",
+    "rollback_finalize_mail_resume_intent",
+    "rollback_finalize_mirror_resume_intent",
+    "production_write_barrier_active",
+    "smoke_started_api",
+    "rollback_finalize_started_api",
+    "rollback_finalize_owned_temp_api",
+    "pre_maintenance_api_active",
+    "pre_maintenance_health_timer_active",
+])
+@pytest.mark.parametrize("bad", [0, 1, "", "false", [], {}])
+def test_p7_malformed_bool_on_coherent_abandoned_is_manual(
+    tmp_path: Path, field: str, bad
+) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    _finalize_to_abandoned(world, prod, reports, root)
+    _edit_journal(world, prod, **{field: bad})
+    err = _expect_locked(lambda: rollback_finalize(_finalize_opts(world, prod, reports)))
+    assert "manual" in (str(err) + str(err.recovery or "")).lower()
+    assert (err.evidence or {}).get("already_finalized") is not True
+
+
+def test_p7_candidate_inode_only_mutation_after_intent(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    pre_path, old_fp, new_fp = _drive_to_atomic_swap(world, prod, reports, root)
+    backup, staging = _paths(root)
+    # Inode-only change: SyntheticWorld fingerprint is content-based and will
+    # NOT independently detect this — identity comparison must catch it.
+    original_inode = world.inode_overrides.get(str(prod))
+
+    def _mutate_candidate_inode(_adapters) -> None:
+        world.inode_overrides[str(prod)] = 777_001
+
+    world.after_rollback_intent_hook = _mutate_candidate_inode
+    err = _expect_locked(lambda: attempt_rollback_before_writers(
+        _opts(world, prod, reports, new_fp, stage=CutoverStage.ATOMIC_SWAP,
+              apply=True, approve_swap=True, backup=backup, staging=staging),
+        pre_cutover_path=pre_path,
+        expected_old_fingerprint=old_fp,
+        expected_new_fingerprint=new_fp,
+    ))
+    msg = str(err).lower()
+    assert "candidate" in msg or "intent retained" in msg or "drift" in msg
+    assert world.fingerprint(prod) == new_fp  # no exchange
+    j = _journal(world, prod)
+    assert j.get("rollback_intent") is not None
+    assert j.get("rollback_verified") is not True
+    # Intent retained → second rollback refused.
+    world.after_rollback_intent_hook = None
+    if original_inode is not None:
+        world.inode_overrides[str(prod)] = original_inode
+    else:
+        world.inode_overrides.pop(str(prod), None)
+    err2 = _expect_locked(lambda: attempt_rollback_before_writers(
+        _opts(world, prod, reports, new_fp, stage=CutoverStage.ATOMIC_SWAP,
+              apply=True, approve_swap=True, backup=backup, staging=staging),
+        pre_cutover_path=pre_path,
+        expected_old_fingerprint=old_fp,
+        expected_new_fingerprint=new_fp,
+    ))
+    assert "rollback_intent" in str(err2).lower() or "refused" in str(err2).lower()
