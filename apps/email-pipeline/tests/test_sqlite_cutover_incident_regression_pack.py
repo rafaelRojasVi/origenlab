@@ -248,6 +248,38 @@ def _assert_sanitized(blob: str) -> None:
         assert bad not in blob, f"leaked {bad!r} in evidence"
 
 
+def _assert_sanitized_obj(obj: Any, *, path: str = "$") -> None:
+    """Recursively reject forbidden keys and hostile string values."""
+    forbidden_keys = {
+        "pid",
+        "fd",
+        "device",
+        "inode",
+        "path",
+        "message",
+        "sql",
+        "token",
+        "email",
+        "uri",
+        "dsn",
+    }
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            key_l = str(key).lower()
+            assert key_l not in forbidden_keys, f"forbidden key {key!r} at {path}"
+            assert "token" not in key_l or key_l in {
+                "accepted_locking_count",
+            }, f"suspicious key {key!r} at {path}"
+            _assert_sanitized_obj(value, path=f"{path}.{key}")
+        return
+    if isinstance(obj, list):
+        for i, value in enumerate(obj):
+            _assert_sanitized_obj(value, path=f"{path}[{i}]")
+        return
+    if isinstance(obj, str):
+        _assert_sanitized(obj)
+
+
 def _member(
     role: str,
     *,
@@ -463,6 +495,13 @@ def test_july19_mid_rejected_before_any_mutation(tmp_path: Path, op: str) -> Non
     assert tree_snapshot(tmp_path) == tree_before
     assert not _journal_exists(world, prod, maintenance_id=JULY19_MID)
     assert world.systemctl_calls == before["systemctl"]
+    # No backup / staging / journal artifacts for the abandoned MID.
+    mid_artifacts = [
+        k for k in world.files if JULY19_MID in k or "online_backup" in k
+    ]
+    assert mid_artifacts == []
+    assert world.mail_pause is False
+    assert world.mirror_pause is False
 
 
 # ---------------------------------------------------------------------------
@@ -540,10 +579,21 @@ def test_stop_readers_crash_boundaries_reconciliation(
     )
     j2 = report["journal"]
     assert j2["maintenance_boot_policy_active"] is True
+    assert type(j2["maintenance_boot_policy_active"]) is bool
     assert world.api_enabled is False
     assert world.health_timer_enabled is False
     assert world.services.api_active is False
     assert world.services.health_timer_active is False
+    # Timer disable must precede API disable (durable ordering).
+    disables = [c for c in world.systemctl_calls if len(c) >= 3 and c[1] == "disable"]
+    timer_idxs = [
+        i for i, c in enumerate(disables) if c[2].endswith("api-health.timer")
+    ]
+    api_idxs = [
+        i for i, c in enumerate(disables) if c[2].endswith("api.service")
+    ]
+    assert timer_idxs and api_idxs
+    assert timer_idxs[0] < api_idxs[0]
 
 
 def test_wsl_restart_simulation_keeps_units_stopped_during_maintenance(
@@ -605,7 +655,7 @@ def test_empty_fd_scan_fail_closed_not_ok() -> None:
     assert exc.value.verdict == "ambiguous"
     assert exc.value.aggregate is not None
     assert exc.value.aggregate["verdict"] == "ambiguous"
-    assert exc.value.aggregate.get("reason") == "missing_trusted_main"
+    assert exc.value.aggregate["reason"] == "missing_trusted_main"
 
 
 def test_missing_positive_proof_for_present_wal_is_ambiguous() -> None:
@@ -628,6 +678,49 @@ def test_missing_positive_proof_for_present_wal_is_ambiguous() -> None:
     )
     assert agg["verdict"] == "ambiguous"
     assert agg["reason"] == "missing_trusted_wal"
+
+
+def test_missing_positive_proof_for_present_shm_is_ambiguous() -> None:
+    classified = [
+        {
+            "role": ROLE_MAIN,
+            "owner_role": "active_backup_process",
+            "access": ACCESS_READ_ONLY,
+            "confidence": CONFIDENCE_TRUSTED,
+            "reason": "trusted_readonly_main",
+        }
+    ]
+    members = {
+        ROLE_MAIN: _member(ROLE_MAIN),
+        ROLE_WAL: _member(ROLE_WAL, present=False),
+        ROLE_SHM: _member(ROLE_SHM, present=True),
+    }
+    agg = summarize_fd_observation(
+        phase="pre_copy", classified=classified, members=members
+    )
+    assert agg["verdict"] == "ambiguous"
+    assert agg["reason"] == "missing_trusted_shm"
+
+
+def test_foreign_writable_wal_fd_is_blocker() -> None:
+    from origenlab_email_pipeline.qa.sqlite_backup_fd_observability import (
+        ACCESS_WRITABLE,
+    )
+
+    cap = _capability(
+        members={
+            ROLE_MAIN: _member(ROLE_MAIN),
+            ROLE_WAL: _member(ROLE_WAL, present=True),
+            ROLE_SHM: _member(ROLE_SHM, present=False),
+        }
+    )
+    row = classify_backup_source_fd(
+        role=ROLE_WAL,
+        owner_pid=cap.owner_pid + 7,
+        access=ACCESS_WRITABLE,
+        capability=cap,
+    )
+    assert row["confidence"] == CONFIDENCE_BLOCKER
 
 
 def test_quiesce_rejects_foreign_main_fd(tmp_path: Path) -> None:
@@ -675,6 +768,7 @@ def test_quiesce_rejects_foreign_main_fd(tmp_path: Path) -> None:
 def test_create_current_backup_requires_sanitized_ok_observation(
     tmp_path: Path,
 ) -> None:
+    """SyntheticWorld path: stage advances only with completed backup + sanitized fd_obs."""
     world, prod, reports, root, fp = _world(tmp_path)
     backup, staging = _paths(root)
     fp = _run_through(
@@ -699,14 +793,60 @@ def test_create_current_backup_requires_sanitized_ok_observation(
     )
     fd = report["backup"]["fd_observation"]
     assert fd["verdict"] == "ok"
+    assert type(fd["verdict"]) is str
     assert "pre_copy" in fd["observation_phases"]
     assert "post_copy" in fd["observation_phases"]
-    blob = json.dumps(report)
-    _assert_sanitized(blob)
+    _assert_sanitized_obj(fd)
     assert "pid" not in fd
     j = _journal(world, prod)
     assert j["stage"] == CutoverStage.CREATE_CURRENT_BACKUP.value
-    assert j.get("backup_verified") is True or report["backup"]["completed"] is True
+    assert j["backup_verified"] is True
+    assert type(j["backup_verified"]) is bool
+
+
+def test_filesystem_adapter_rejects_incomplete_fd_observation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real FilesystemAdapters gate: missing post_copy fails closed (PR-E)."""
+    from origenlab_email_pipeline.qa import sqlite_production_cutover as cutover
+    from origenlab_email_pipeline.qa.sqlite_online_backup import manifest_path_for
+
+    src_dir = tmp_path / "src"
+    dst_dir = tmp_path / "dst"
+    src_dir.mkdir()
+    dst_dir.mkdir()
+    source = src_dir / "src.sqlite"
+    dest = dst_dir / "dst.sqlite"
+    source.write_bytes(b"SYNTHETIC")
+    dest.write_bytes(source.read_bytes())
+    man = manifest_path_for(dest)
+    man.write_text(json.dumps({"completed": True, "method": "test"}), encoding="utf-8")
+
+    def fake_backup(_options: Any) -> dict[str, Any]:
+        return {
+            "completed": True,
+            "method": "test",
+            "fd_observation": {
+                "schema_version": 1,
+                "observation_phases": ["pre_copy"],  # missing post_copy
+                "member_roles_present": ["main"],
+                "member_roles_observed": ["main"],
+                "accepted_locking_count": 1,
+                "blocker_count": 0,
+                "ambiguous_count": 0,
+                "verdict": "ok",
+            },
+        }
+
+    monkeypatch.setattr(cutover, "run_online_backup", fake_backup)
+    monkeypatch.setattr(cutover, "backup_is_completed", lambda _p: True)
+    monkeypatch.setattr(cutover, "fingerprint_token", lambda _p: "fp")
+    monkeypatch.setattr(cutover, "companion_paths", lambda _p: [])
+    adapters = cutover.FilesystemAdapters()
+    with pytest.raises(CutoverError) as exc:
+        adapters.create_online_backup(source, dest)
+    assert exc.value.category == CutoverFailureCategory.SAFETY
+    assert "pre_copy/post_copy" in str(exc.value)
 
 
 def test_backup_failure_does_not_advance_journal(tmp_path: Path) -> None:
@@ -737,9 +877,9 @@ def test_backup_failure_does_not_advance_journal(tmp_path: Path) -> None:
     assert "unexpected" not in str(exc.value).lower()
     j = _journal(world, prod)
     assert j["stage"] == CutoverStage.APPLY_OS_WRITE_BARRIER.value
-    assert j.get("backup_verified") is not True
-    evidence = json.dumps(exc.value.evidence or {})
-    _assert_sanitized(evidence)
+    assert j["backup_verified"] is False
+    assert type(j["backup_verified"]) is bool
+    _assert_sanitized_obj(exc.value.evidence or {})
 
 
 # ---------------------------------------------------------------------------
@@ -822,11 +962,14 @@ def test_sanitized_backup_failure_evidence_drops_hostile_recovery() -> None:
         },
     }
     evidence = _sanitized_backup_failure_evidence(detail)
-    blob = json.dumps(evidence)
-    _assert_sanitized(blob)
-    assert "recovery" not in evidence.get("operational_error", {})
-    assert "message" not in evidence.get("operational_error", {})
-    assert "pid" not in evidence.get("fd_observation", {})
+    _assert_sanitized_obj(evidence)
+    assert "operational_error" in evidence
+    assert "recovery" not in evidence["operational_error"]
+    assert "message" not in evidence["operational_error"]
+    assert "pid" not in evidence["fd_observation"]
+    assert evidence["fd_observation"]["verdict"] == "blocked"
+    assert evidence["fd_observation"]["blocker_count"] == 1
+    assert evidence["fd_observation"]["reason"] == "foreign_writable_main"
 
 
 # ---------------------------------------------------------------------------
@@ -882,7 +1025,8 @@ def test_barrier_partial_then_abort_restores_without_writer_resume(
     )
     j2 = _journal(world, prod)
     assert j2["stage"] != CutoverStage.COMPLETED.value
-    assert j2.get("writers_resumed") is not True
+    assert j2["writers_resumed"] is False
+    assert type(j2["writers_resumed"]) is bool
 
 
 def test_shm_readonly_blocks_mail_resume_after_barrier(tmp_path: Path) -> None:
@@ -917,7 +1061,8 @@ def test_shm_readonly_blocks_mail_resume_after_barrier(tmp_path: Path) -> None:
     assert "shm" in str(exc.value).lower()
     j = _journal(world, prod)
     assert j["stage"] != CutoverStage.COMPLETED.value
-    assert j.get("writers_resumed") is not True
+    assert j["writers_resumed"] is False
+    assert type(j["writers_resumed"]) is bool
 
 
 # ---------------------------------------------------------------------------
@@ -954,8 +1099,10 @@ def test_smoke_failure_cleans_owned_api_and_preserves_pause(tmp_path: Path) -> N
     assert j["stage"] == CutoverStage.ATOMIC_SWAP.value
     assert j["smoke_ok"] is False
     assert j["smoke_started_api"] is False
-    blob = json.dumps(exc.value.evidence or {}) + str(exc.value)
-    _assert_sanitized(blob)
+    assert type(j["smoke_ok"]) is bool
+    assert type(j["smoke_started_api"]) is bool
+    _assert_sanitized_obj(exc.value.evidence or {})
+    _assert_sanitized(str(exc.value))
 
 
 def test_smoke_cleanup_ambiguous_keeps_ownership(tmp_path: Path) -> None:
@@ -981,11 +1128,17 @@ def test_smoke_cleanup_ambiguous_keeps_ownership(tmp_path: Path) -> None:
             )
         )
     evidence = getattr(exc.value, "evidence", {}) or {}
-    assert evidence.get("smoke_cleanup", {}).get("manual_stop_required") is True
+    cleanup = evidence["smoke_cleanup"]
+    assert cleanup["manual_stop_required"] is True
+    assert cleanup["api_stopped"] is False
+    assert type(cleanup["manual_stop_required"]) is bool
     j = _journal(world, prod)
     assert j["stage"] == CutoverStage.ATOMIC_SWAP.value
     assert j["smoke_started_api"] is True
+    assert type(j["smoke_started_api"]) is bool
     assert world.services.api_active is True
+    assert world.mail_pause is True
+    assert world.mirror_pause is True
 
 
 # ---------------------------------------------------------------------------
@@ -1046,16 +1199,21 @@ def test_smoke_fail_rollback_finalize_abandoned_not_completed(tmp_path: Path) ->
     assert report["completed"] is False
     assert report["soak_eligible"] is False
     assert report["waves_unblocked"] is False
+    assert type(report["abandoned"]) is bool
+    assert type(report["completed"]) is bool
     assert report["stage"] == CutoverStage.ABANDONED.value
     j = _journal(world, prod)
     assert j["abandoned"] is True
     assert j["stage"] == CutoverStage.ABANDONED.value
     assert j["stage"] != CutoverStage.COMPLETED.value
     assert j["writers_resumed"] is False
+    assert type(j["writers_resumed"]) is bool
+    assert type(j["abandoned"]) is bool
     # Idempotent terminal.
     again = rollback_finalize(_finalize_opts(world, prod, reports))
     assert again["already_finalized"] is True
     assert again["abandoned"] is True
+    assert again["completed"] is False
 
 
 def test_incomplete_rollback_proof_rejected_without_mutation(tmp_path: Path) -> None:
@@ -1074,9 +1232,18 @@ def test_incomplete_rollback_proof_rejected_without_mutation(tmp_path: Path) -> 
         CutoverFailureCategory.VERIFY,
     }
     j = _journal(world, prod)
-    assert j.get("abandoned") is not True
+    assert j["abandoned"] is False
+    assert type(j["abandoned"]) is bool
     assert j["stage"] != CutoverStage.ABANDONED.value
     assert world.mail_pause == before["mail_pause"]
+    assert world.mirror_pause == before["mirror_pause"]
+    # May probe enablement, but must not mutate enablement/runtime.
+    mutating = [
+        c
+        for c in world.systemctl_calls[len(before["systemctl"]) :]
+        if len(c) >= 2 and c[1] in {"enable", "disable", "start", "stop"}
+    ]
+    assert mutating == []
 
 
 # ---------------------------------------------------------------------------
@@ -1089,13 +1256,19 @@ def test_successful_path_reaches_completed_only_after_gates(tmp_path: Path) -> N
     live = _run_through(world, prod, reports, fp, root)
     j = _journal(world, prod)
     assert j["stage"] == CutoverStage.COMPLETED.value
-    assert j.get("abandoned") is not True
-    assert type(j.get("writers_resumed", False)) is bool
+    assert j["abandoned"] is False
+    assert type(j["abandoned"]) is bool
+    assert j["writers_resumed"] is True
+    assert type(j["writers_resumed"]) is bool
+    assert j["smoke_ok"] is True
+    assert j["backup_verified"] is True
     assert world.mail_pause is False
     assert world.mirror_pause is False
     # Enablement restored from pre-maintenance capture.
     assert world.api_enabled is True
     assert world.health_timer_enabled is True
+    assert j["maintenance_boot_policy_restored"] is True
+    assert type(j["maintenance_boot_policy_restored"]) is bool
     assert live
 
 
@@ -1126,8 +1299,10 @@ def test_failure_before_completed_cannot_claim_success(tmp_path: Path) -> None:
         )
     j = _journal(world, prod)
     assert j["stage"] != CutoverStage.COMPLETED.value
-    assert j.get("abandoned") is not True
-    assert j.get("maintenance_boot_policy_restored") is not True
+    assert j["abandoned"] is False
+    assert type(j["abandoned"]) is bool
+    assert j["maintenance_boot_policy_restored"] is False
+    assert type(j["maintenance_boot_policy_restored"]) is bool
 
 
 # ---------------------------------------------------------------------------
