@@ -387,7 +387,7 @@ def _cli_nonneg_float(value: Any, *, max_value: float) -> float:
     return number
 
 
-def _cli_map_token(value: Any, emit: Mapping[str, str]) -> str:
+def _cli_emit_fixed_literal(value: Any, emit: Mapping[str, str]) -> str:
     if type(value) is not str:
         _cli_reject()
     if value not in emit:
@@ -395,12 +395,12 @@ def _cli_map_token(value: Any, emit: Mapping[str, str]) -> str:
     return emit[value]
 
 
-def _cli_map_token_list(value: Any, emit: Mapping[str, str]) -> list[str]:
+def _cli_emit_fixed_literal_list(value: Any, emit: Mapping[str, str]) -> list[str]:
     if type(value) is not list:
         _cli_reject()
     out: list[str] = []
     for item in value:
-        out.append(_cli_map_token(item, emit))
+        out.append(_cli_emit_fixed_literal(item, emit))
     return out
 
 
@@ -411,34 +411,37 @@ def _build_safe_cli_fd_observation(raw: Any) -> dict[str, Any]:
     schema = raw.get("schema_version")
     if type(schema) is not int or schema != CLI_JSON_SCHEMA_VERSION:
         _cli_reject()
-    verdict = _cli_map_token(raw.get("verdict"), _CLI_FD_VERDICT_EMIT)
+    verdict = _cli_emit_fixed_literal(raw.get("verdict"), _CLI_FD_VERDICT_EMIT)
     phases_raw = raw.get("observation_phases")
     if phases_raw is None:
         phase_one = raw.get("phase")
         if phase_one is None:
             phases: list[str] = []
         else:
-            phases = [_cli_map_token(phase_one, _CLI_FD_PHASE_EMIT)]
+            phases = [_cli_emit_fixed_literal(phase_one, _CLI_FD_PHASE_EMIT)]
     else:
-        phases = _cli_map_token_list(phases_raw, _CLI_FD_PHASE_EMIT)
+        phases = _cli_emit_fixed_literal_list(phases_raw, _CLI_FD_PHASE_EMIT)
     present = raw.get("member_roles_present")
     observed = raw.get("member_roles_observed")
     if present is None:
         present_roles: list[str] = []
     else:
-        present_roles = _cli_map_token_list(present, _CLI_FD_ROLE_EMIT)
+        present_roles = _cli_emit_fixed_literal_list(present, _CLI_FD_ROLE_EMIT)
     if observed is None:
         observed_roles: list[str] = []
     else:
-        observed_roles = _cli_map_token_list(observed, _CLI_FD_ROLE_EMIT)
+        observed_roles = _cli_emit_fixed_literal_list(observed, _CLI_FD_ROLE_EMIT)
+    trusted = _cli_nonneg_int(raw.get("trusted_locking_count"))
+    blockers = _cli_nonneg_int(raw.get("blocker_count"))
+    ambiguous = _cli_nonneg_int(raw.get("ambiguous_count"))
     return {
         "schema_version": CLI_JSON_SCHEMA_VERSION,
         "observation_phases": phases,
         "member_roles_present": present_roles,
         "member_roles_observed": observed_roles,
-        "trusted_locking_count": _cli_nonneg_int(raw.get("trusted_locking_count")),
-        "blocker_count": _cli_nonneg_int(raw.get("blocker_count")),
-        "ambiguous_count": _cli_nonneg_int(raw.get("ambiguous_count")),
+        "trusted_locking_count": trusted,
+        "blocker_count": blockers,
+        "ambiguous_count": ambiguous,
         "verdict": verdict,
     }
 
@@ -457,7 +460,7 @@ def build_safe_cli_json_report(result: Mapping[str, Any]) -> dict[str, Any]:
     completed_raw = result.get("completed")
 
     if mode_raw == CLI_MODE_PREFLIGHT:
-        _cli_map_token(mode_raw, {CLI_MODE_PREFLIGHT: CLI_MODE_PREFLIGHT})
+        _cli_emit_fixed_literal(mode_raw, {CLI_MODE_PREFLIGHT: CLI_MODE_PREFLIGHT})
         completed = _cli_exact_bool(completed_raw)
         writes = _cli_exact_bool(result.get("writes_performed"))
         if completed is not False or writes is not False:
@@ -486,7 +489,7 @@ def build_safe_cli_json_report(result: Mapping[str, Any]) -> dict[str, Any]:
             "schema_version": CLI_JSON_SCHEMA_VERSION,
             "mode": CLI_MODE_COMPLETED,
             "completed": True,
-            "method": _cli_map_token(
+            "method": _cli_emit_fixed_literal(
                 result.get("method"),
                 {CLI_METHOD_BACKUP: CLI_METHOD_BACKUP},
             ),
@@ -499,11 +502,11 @@ def build_safe_cli_json_report(result: Mapping[str, Any]) -> dict[str, Any]:
             "pages_per_batch": _cli_positive_int(result.get("pages_per_batch")),
             "progress_events": _cli_nonneg_int(result.get("progress_events")),
             "allow_same_filesystem": _cli_exact_bool(result.get("allow_same_filesystem")),
-            "publication_method": _cli_map_token(
+            "publication_method": _cli_emit_fixed_literal(
                 result.get("publication_method"),
                 {CLI_PUBLICATION_HARDLINK: CLI_PUBLICATION_HARDLINK},
             ),
-            "destination_verification": _cli_map_token(
+            "destination_verification": _cli_emit_fixed_literal(
                 result.get("destination_verification"),
                 {CLI_DEST_VERIFY_IMMUTABLE: CLI_DEST_VERIFY_IMMUTABLE},
             ),
@@ -517,11 +520,11 @@ def build_safe_cli_json_report(result: Mapping[str, Any]) -> dict[str, Any]:
             "source_fingerprint_changed_during_backup": _cli_exact_bool(
                 result.get("source_fingerprint_changed_during_backup")
             ),
-            "verification": _cli_map_token(
+            "verification": _cli_emit_fixed_literal(
                 result.get("verification"),
                 {CLI_VERIFICATION_CHEAP: CLI_VERIFICATION_CHEAP},
             ),
-            "completion_marker": _cli_map_token(
+            "completion_marker": _cli_emit_fixed_literal(
                 result.get("completion_marker"),
                 {CLI_COMPLETION_FINAL_MANIFEST: CLI_COMPLETION_FINAL_MANIFEST},
             ),
