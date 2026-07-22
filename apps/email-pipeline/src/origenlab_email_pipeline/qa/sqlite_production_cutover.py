@@ -99,9 +99,14 @@ from origenlab_email_pipeline.qa.sqlite_offline_compaction import (
     run_offline_compaction,
     schema_fingerprint,
     storage_stats,
-    verify_compact_candidate,
 )
 from origenlab_email_pipeline.qa.sqlite_online_backup import (
+    OPERR_BUSY_OR_LOCKED,
+    OPERR_CANNOT_OPEN,
+    OPERR_CAPACITY,
+    OPERR_INTERRUPTED,
+    OPERR_IO_ERROR,
+    OPERR_READONLY_WAL_LOCKING,
     BackupError,
     BackupOptions,
     backup_is_completed,
@@ -305,8 +310,9 @@ class CutoverError(BackupError):
         exit_code: int | None = None,
         recovery: str | None = None,
         evidence: dict[str, Any] | None = None,
+        detail: dict[str, Any] | None = None,
     ) -> None:
-        super().__init__(message)
+        super().__init__(message, detail=detail)
         self.category = category
         self.exit_code = exit_code or {
             CutoverFailureCategory.PREFLIGHT: EXIT_PREFLIGHT,
@@ -2232,15 +2238,21 @@ class FilesystemAdapters:
 
     def create_online_backup(self, source: Path, dest: Path) -> dict[str, Any]:
         source_fp_before = fingerprint_token(source)
-        result = run_online_backup(
-            BackupOptions(
-                source=source,
-                destination=dest,
-                apply=True,
-                allow_same_filesystem=False,
-                fail_if_source_fingerprint_changes=True,
+        try:
+            result = run_online_backup(
+                BackupOptions(
+                    source=source,
+                    destination=dest,
+                    apply=True,
+                    allow_same_filesystem=False,
+                    fail_if_source_fingerprint_changes=True,
+                    # PR-E: mandatory FD observation while source connection is open.
+                    require_fd_observation=True,
+                )
             )
-        )
+        except BackupError as exc:
+            _raise_cutover_from_backup_error(exc)
+            raise  # pragma: no cover — _raise always raises
         if not backup_is_completed(dest):
             _fail(
                 "online backup did not complete with final DB+manifest",
@@ -2262,7 +2274,7 @@ class FilesystemAdapters:
                     f"backup has sidecar {sanitize_path_for_log(side)}",
                     category=CutoverFailureCategory.VERIFY,
                 )
-        return {
+        out: dict[str, Any] = {
             "completed": True,
             "destination_basename": dest.name,
             "destination_fingerprint": dest_fp,
@@ -2272,6 +2284,24 @@ class FilesystemAdapters:
             "method": man.get("method"),
             "raw_keys": sorted(result.keys())[:20],
         }
+        # Sanitized FD aggregate only (never raw FD/error evidence).
+        fd_obs = result.get("fd_observation")
+        if isinstance(fd_obs, dict):
+            out["fd_observation"] = {
+                k: fd_obs[k]
+                for k in (
+                    "schema_version",
+                    "observation_phases",
+                    "member_roles_present",
+                    "member_roles_observed",
+                    "trusted_locking_count",
+                    "blocker_count",
+                    "ambiguous_count",
+                    "verdict",
+                )
+                if k in fd_obs
+            }
+        return out
 
     def compact_offline(self, source: Path, dest: Path) -> dict[str, Any]:
         source_fp = fingerprint_token(source)
@@ -2895,11 +2925,103 @@ def _require_git_match(opts: CutoverOptions, adapters: CutoverAdapters) -> GitId
     return identity
 
 
+def _sanitized_backup_failure_evidence(
+    detail: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Allowlisted BackupError.detail fragments for cutover evidence (no paths/PIDs)."""
+    out: dict[str, Any] = {}
+    if not isinstance(detail, dict):
+        return out
+    op = detail.get("operational_error")
+    if isinstance(op, dict):
+        safe_op: dict[str, Any] = {}
+        for key in (
+            "schema",
+            "phase",
+            "category",
+            "sqlite_errorcode",
+            "sqlite_errorname",
+            "retryable",
+            "recovery",
+        ):
+            if key in op:
+                safe_op[key] = op[key]
+        if safe_op:
+            out["operational_error"] = safe_op
+    fd = detail.get("fd_observation")
+    if isinstance(fd, dict):
+        safe_fd: dict[str, Any] = {}
+        for key in (
+            "schema_version",
+            "phase",
+            "observation_phases",
+            "member_roles_present",
+            "member_roles_observed",
+            "trusted_locking_count",
+            "blocker_count",
+            "ambiguous_count",
+            "verdict",
+            "reason",
+        ):
+            if key in fd:
+                safe_fd[key] = fd[key]
+        if safe_fd:
+            out["fd_observation"] = safe_fd
+    return out
+
+
+def _cutover_category_for_backup_error(
+    exc: BackupError,
+) -> CutoverFailureCategory:
+    detail = exc.detail if isinstance(exc.detail, dict) else {}
+    fd = detail.get("fd_observation") if isinstance(detail, dict) else None
+    if isinstance(fd, dict):
+        verdict = fd.get("verdict")
+        if verdict == "ambiguous":
+            return CutoverFailureCategory.AMBIGUOUS
+        if verdict == "blocked":
+            return CutoverFailureCategory.SAFETY
+    op = detail.get("operational_error") if isinstance(detail, dict) else None
+    if isinstance(op, dict):
+        cat = op.get("category")
+        if cat in {OPERR_BUSY_OR_LOCKED, OPERR_READONLY_WAL_LOCKING}:
+            return CutoverFailureCategory.SAFETY
+        if cat == OPERR_CANNOT_OPEN:
+            return CutoverFailureCategory.APPLY
+        if cat == OPERR_IO_ERROR:
+            return CutoverFailureCategory.APPLY
+        if cat == OPERR_CAPACITY:
+            return CutoverFailureCategory.PREFLIGHT
+        if cat == OPERR_INTERRUPTED:
+            return CutoverFailureCategory.APPLY
+    return CutoverFailureCategory.APPLY
+
+
+def _raise_cutover_from_backup_error(exc: BackupError) -> None:
+    """Convert a sanitized BackupError into CutoverError (never 'unexpected')."""
+    if isinstance(exc, CutoverError):
+        raise exc
+    evidence = _sanitized_backup_failure_evidence(exc.detail)
+    category = _cutover_category_for_backup_error(exc)
+    recovery: str | None = None
+    op = evidence.get("operational_error")
+    if isinstance(op, dict) and isinstance(op.get("recovery"), str):
+        recovery = str(op["recovery"])
+    elif isinstance(evidence.get("fd_observation"), dict):
+        recovery = "verify_backup_source_fd_identity_and_wal_shm_locking"
+    raise CutoverError(
+        str(exc),
+        category=category,
+        recovery=recovery,
+        evidence=evidence,
+        detail=dict(exc.detail) if isinstance(exc.detail, dict) else None,
+    )
+
+
 def _assert_writers_quiesced(
     adapters: CutoverAdapters,
     production: Path,
     *,
-    allow_own_fd: bool = False,
     allow_readonly_foreign: bool = False,
     reports_dir: Path | None = None,
 ) -> WriterInventory:
@@ -2934,8 +3056,9 @@ def _assert_writers_quiesced(
     for hit in writers.fd_hits:
         pid = int(hit.get("pid") or -1)
         access = str(hit.get("access") or "unknown")
-        if pid == writers.orchestrator_pid and allow_own_fd:
-            continue
+        # Own-PID alone is never a bypass: matching FDs must still satisfy
+        # access rules. Trusted backup WAL/SHM locking is classified only
+        # inside run_online_backup's active observation capability (PR-E).
         if access == "writable":
             bad_fds.append(hit)
         elif access == "unknown":
@@ -7824,6 +7947,17 @@ class SyntheticWorld:
             "source_fingerprint_after": after,
             "manifest_completed": True,
             "method": "synthetic",
+            # Sanitized FD aggregate shape (PR-E); synthetic path has no /proc scan.
+            "fd_observation": {
+                "schema_version": 1,
+                "observation_phases": ["pre_copy", "post_copy"],
+                "member_roles_present": ["main"],
+                "member_roles_observed": ["main"],
+                "trusted_locking_count": 1,
+                "blocker_count": 0,
+                "ambiguous_count": 0,
+                "verdict": "ok",
+            },
         }
 
     def compact_offline(self, source: Path, dest: Path) -> dict[str, Any]:
