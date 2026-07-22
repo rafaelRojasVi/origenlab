@@ -343,24 +343,29 @@ def _rollback_finalize_locked(journal: "CutoverJournal | None") -> str | None:
     may proceed — every other mutating route (ordinary stages, a second physical
     rollback, abort_before_swap) must refuse. This is what prevents a second
     rollback call from ever exchanging the original and candidate again.
+
+    Presence semantics (``is not None``), not truthiness: an empty dict, list,
+    string, or otherwise malformed ``rollback_intent`` / finalize intent still
+    locks ordinary progression.
     """
     if journal is None:
         return None
-    if journal.abandoned or journal.stage == CutoverStage.ABANDONED.value:
+    if journal.abandoned is True or journal.stage == CutoverStage.ABANDONED.value:
         return "journal is terminal ABANDONED"
-    if journal.rollback_finalized:
+    if journal.rollback_finalized is True:
         return "rollback already finalized"
-    if journal.rollback_verified:
+    if journal.rollback_verified is True:
         return "verified rollback recorded"
-    if journal.rollback_identity_capture_failed:
+    if journal.rollback_identity_capture_failed is True:
         return "post-rollback identity capture failed (manual recovery required)"
-    if journal.rollback_finalize_intent:
+    if journal.rollback_finalize_intent is not None:
         return "rollback_finalize intent recorded"
-    # T5: any durable rollback_intent is itself a lifecycle lock — even if the
-    # later post-exchange journal write failed — so ordinary stages, abort, and
-    # a second physical rollback can never resume after intent was recorded.
-    if journal.rollback_intent:
+    # Any durable rollback_intent (including malformed {}) is itself a lifecycle
+    # lock — even if the later post-exchange journal write failed.
+    if journal.rollback_intent is not None:
         return "rollback_intent recorded (pre-PoNR rollback lifecycle owns journal)"
+    if journal.rollback_finalize_service_intent is not None:
+        return "rollback_finalize service intent recorded"
     return None
 
 
@@ -4146,21 +4151,24 @@ def attempt_rollback_before_writers(
                 category=CutoverFailureCategory.SAFETY,
             )
         assert pre_ident is not None
-        # T5: fully validate approved-plan identity + all proof SOURCE fields and
-        # bind the operator/plan/candidate fingerprints to the rollback sides so
-        # NO int()/Path.with_name()/schema failure can first occur AFTER the
-        # exchange (the post-exchange proof build must be pure serialization).
-        plan = journal.approved_plan
-        if (
-            not isinstance(plan, dict)
-            or not _is_exact_int(plan.get("production_device"))
-            or not _is_exact_int(plan.get("production_inode"))
-            or not _is_nonempty_str(plan.get("production_fingerprint"))
-        ):
+        # Complete ApprovedPlan validator (sanitized) before intent/exchange —
+        # no dataclass construction / int conversion / missing-key exception may
+        # escape unsanitized.
+        plan_problem = _approved_plan_problem(
+            journal,
+            opts,
+            adapters=adapters,
+            sealed=sealed,
+            production=production,
+        )
+        if plan_problem is not None:
             _fail(
-                "approved_plan identity/fingerprint invalid before rollback",
+                f"approved_plan invalid before rollback ({plan_problem})",
                 category=CutoverFailureCategory.SAFETY,
+                evidence={"approved_plan_problem": plan_problem},
             )
+        plan = journal.approved_plan
+        assert isinstance(plan, dict)
         if int(pre_ident["device"]) != int(plan["production_device"]) or int(
             pre_ident["inode"]
         ) != int(plan["production_inode"]):
@@ -4216,8 +4224,71 @@ def attempt_rollback_before_writers(
             "pre_cutover_basename": pre.name,
         }
         write_journal(adapters, journal_path, journal)
+        # Inject point for crash-after-intent tests. Intent remains durable.
+        if opts.fail_after == "rollback_intent_written":
+            _fail(
+                "injected failure after rollback_intent_written",
+                category=CutoverFailureCategory.APPLY,
+            )
+        # Synthetic/test hook: mutate after the durable intent write but before
+        # the immediate pre-exchange recapture (models TOCTOU replacement).
+        hook = getattr(adapters, "after_rollback_intent_hook", None)
+        if callable(hook):
+            hook(adapters)
+
+        # Close the pre-exchange identity window: immediately recapture BOTH
+        # exchange members authoritatively and revalidate against the already
+        # approved values. Drift/replacement/symlink/FIFO/capture failure leaves
+        # the durable lifecycle lock in place, performs no exchange, and requires
+        # manual recovery. Do NOT clear the durable intent to permit a retry.
+        if adapters.is_symlink(pre) or adapters.is_symlink(production):
+            _fail(
+                "exchange member became a symlink after rollback_intent; "
+                "manual recovery required (intent retained)",
+                category=CutoverFailureCategory.AMBIGUOUS,
+            )
+        pre_ident2 = _authoritative_identity(adapters, pre)
+        prod_ident2 = _authoritative_identity(adapters, production)
+        if pre_ident2 is None or prod_ident2 is None:
+            _fail(
+                "authoritative recapture of exchange members failed after "
+                "rollback_intent; manual recovery required (intent retained)",
+                category=CutoverFailureCategory.AMBIGUOUS,
+            )
+        assert pre_ident2 is not None and prod_ident2 is not None
+        if int(pre_ident2["device"]) != int(plan["production_device"]) or int(
+            pre_ident2["inode"]
+        ) != int(plan["production_inode"]):
+            _fail(
+                "retained original identity drifted after rollback_intent; "
+                "manual recovery required (intent retained, no exchange)",
+                category=CutoverFailureCategory.VERIFY,
+            )
+        if adapters.fingerprint(pre) != expected_old_fingerprint:
+            _fail(
+                "retained original fingerprint drifted after rollback_intent; "
+                "manual recovery required (intent retained, no exchange)",
+                category=CutoverFailureCategory.VERIFY,
+            )
+        if adapters.fingerprint(production) != expected_new_fingerprint:
+            _fail(
+                "current production fingerprint drifted after rollback_intent; "
+                "manual recovery required (intent retained, no exchange)",
+                category=CutoverFailureCategory.VERIFY,
+            )
+        if int(pre_ident2["device"]) != int(pre_ident["device"]) or int(
+            pre_ident2["inode"]
+        ) != int(pre_ident["inode"]):
+            _fail(
+                "retained original identity replaced after rollback_intent; "
+                "manual recovery required (intent retained, no exchange)",
+                category=CutoverFailureCategory.VERIFY,
+            )
 
         adapters.rename_exchange(production, pre)
+        post_hook = getattr(adapters, "after_rename_exchange_hook", None)
+        if callable(post_hook):
+            post_hook(adapters)
         adapters.fsync_dir(production.parent)
         journal.swap_direction = "rollback_pre_cutover_to_production"
         restored_fp = adapters.fingerprint(production)
@@ -4413,10 +4484,10 @@ def _rollback_finalize_manual_recovery(
     # T5: stop a demonstrably OWNED temporary API BEFORE the final quiescence
     # assessment, then rerun quiescence so evidence reflects post-cleanup state.
     temp_api_stopped: bool | None = None
-    if opts is not None and journal.rollback_finalize_owned_temp_api:
-        # T3: classify activity ONCE; never stop an ambiguous or unproven process;
-        # persist a cleanup stop intent BEFORE stopping a proven-owned API; retain
-        # ownership when the stopped state remains uncertain.
+    if opts is not None and journal.rollback_finalize_owned_temp_api is True:
+        # Temporary stops require the exact temp flag plus matching live
+        # MainPID/InvocationID. Never stop on a truthy non-boolean flag or on
+        # started/smoke ownership substituting for temp.
         try:
             act = adapters.api_activity(api_base_url=opts.api_base_url)
             if act.get("stopped"):
@@ -4426,7 +4497,9 @@ def _rollback_finalize_manual_recovery(
                 journal.rollback_finalize_service_intent = None
             elif act.get("ambiguous"):
                 cleanup_errors.append("temp_api_ambiguous_not_stopped")
-            elif not _api_ownership_proven(adapters, journal, opts):
+            elif not _api_ownership_proven(
+                adapters, journal, opts, roles=frozenset({"temp"})
+            ):
                 cleanup_errors.append("temp_api_ownership_unproven_not_stopped")
             else:
                 journal.rollback_finalize_service_intent = {
@@ -4611,9 +4684,10 @@ def _rollback_finalize_terminal_state(journal: CutoverJournal) -> str:
         # Permission barrier fully resolved (no leftover intent / active barrier).
         and journal.permission_intent is None
         and journal.production_write_barrier_active is False
-        # Typed sidecar proof and captured service policy must be present AND
-        # the pre-maintenance policy fields must be EXACT booleans (T2).
-        and bool(journal.rollback_sidecar_proof)
+        # Typed sidecar proof must be structurally valid (exact schema/timestamp/
+        # presence/ambiguity/device/inode). An ambiguous captured member or a
+        # list/string/non-empty malformed object can never qualify as coherent.
+        and _rollback_sidecar_proof_problem(journal.rollback_sidecar_proof) is None
         and isinstance(journal.pre_maintenance_api_active, bool)
         and isinstance(journal.pre_maintenance_health_timer_active, bool)
     )
@@ -4621,7 +4695,13 @@ def _rollback_finalize_terminal_state(journal: CutoverJournal) -> str:
 
 
 def _rollback_proof_problem(
-    journal: CutoverJournal, proof: dict[str, Any], opts: CutoverOptions
+    journal: CutoverJournal,
+    proof: dict[str, Any],
+    opts: CutoverOptions,
+    *,
+    adapters: CutoverAdapters | None = None,
+    sealed: dict[str, Any] | None = None,
+    production: Path | None = None,
 ) -> str | None:
     """Return a short reason if the structured proof is missing/invalid, else None.
 
@@ -4683,8 +4763,15 @@ def _rollback_proof_problem(
         return "expected_fingerprint_mismatch"
 
     # Complete ApprovedPlan schema with exact types; bind MID / SHA / production
-    # identity/basename / staging basename / pause basenames to journal + opts.
-    plan_problem = _approved_plan_problem(journal, opts)
+    # identity/basename / staging basename / pause basenames to journal + opts
+    # (+ sealed/live parent captures when supplied).
+    plan_problem = _approved_plan_problem(
+        journal,
+        opts,
+        adapters=adapters,
+        sealed=sealed,
+        production=production,
+    )
     if plan_problem is not None:
         return plan_problem
     plan = journal.approved_plan
@@ -4748,9 +4835,20 @@ def _rollback_proof_problem(
 
 
 def _approved_plan_problem(
-    journal: CutoverJournal, opts: CutoverOptions
+    journal: CutoverJournal,
+    opts: CutoverOptions,
+    *,
+    adapters: CutoverAdapters | None = None,
+    sealed: dict[str, Any] | None = None,
+    production: Path | None = None,
 ) -> str | None:
-    """Validate the complete ApprovedPlan schema with exact typed bindings."""
+    """Validate the complete ApprovedPlan schema with exact typed bindings.
+
+    When ``adapters`` / ``sealed`` / ``production`` are supplied (finalize and
+    pre-exchange), also bind basenames and parent identities to the sealed
+    private plan and live authoritative captures. Never raises on malformed
+    input — returns a short path-free problem token.
+    """
     plan = journal.approved_plan
     if not isinstance(plan, dict):
         return "approved_plan_not_object"
@@ -4799,18 +4897,132 @@ def _approved_plan_problem(
         return "approved_plan_basename_ne_journal"
     if plan["staging_dest_basename"] != journal.staging_basename:
         return "approved_plan_staging_ne_journal"
+    if journal.backup_basename is not None and (
+        plan["backup_dest_basename"] != journal.backup_basename
+    ):
+        return "approved_plan_backup_ne_journal"
     if plan["mail_pause_basename"] != MAIL_PAUSE_FILENAME:
         return "approved_plan_mail_pause_basename"
     if plan["mirror_pause_basename"] != DASHBOARD_PAUSE_FILENAME:
         return "approved_plan_mirror_pause_basename"
+    if plan["reports_active_basename"] != "current":
+        return "approved_plan_reports_active_ne_current"
+    # Capacity fields: exact non-negative integers.
+    if int(plan["capacity_backup_required_bytes"]) < 0:
+        return "approved_plan_capacity_backup_negative"
+    if int(plan["capacity_staging_required_bytes"]) < 0:
+        return "approved_plan_capacity_staging_negative"
+
+    # Bind production basename to the actual expected/canonical production path.
+    prod = production
+    if prod is None and opts.expected_production_path is not None:
+        prod = opts.expected_production_path.expanduser()
+    if prod is not None and plan["production_basename"] != prod.name:
+        return "approved_plan_basename_ne_production"
+    if (
+        opts.expected_production_path is not None
+        and plan["production_basename"] != opts.expected_production_path.expanduser().name
+    ):
+        return "approved_plan_basename_ne_opts"
+
+    if sealed is not None:
+        sealed_prod = sealed.get("production_path")
+        if _is_nonempty_str(sealed_prod) and Path(sealed_prod).name != plan[
+            "production_basename"
+        ]:
+            return "approved_plan_basename_ne_sealed"
+        sealed_backup = sealed.get("backup_dest")
+        sealed_staging = sealed.get("staging_dest")
+        if not _is_nonempty_str(sealed_backup):
+            return "sealed_backup_dest_missing"
+        if not _is_nonempty_str(sealed_staging):
+            return "sealed_staging_dest_missing"
+        if Path(sealed_backup).name != plan["backup_dest_basename"]:
+            return "approved_plan_backup_ne_sealed"
+        if Path(sealed_staging).name != plan["staging_dest_basename"]:
+            return "approved_plan_staging_ne_sealed"
+        if opts.backup_dest is not None and (
+            Path(opts.backup_dest.expanduser()).name != plan["backup_dest_basename"]
+            or str(opts.backup_dest.expanduser()) != sealed_backup
+        ):
+            try:
+                if opts.backup_dest.expanduser().resolve() != Path(
+                    sealed_backup
+                ).resolve():
+                    return "approved_plan_backup_ne_opts"
+            except OSError:
+                return "approved_plan_backup_ne_opts"
+        if opts.staging_dest is not None and (
+            Path(opts.staging_dest.expanduser()).name != plan["staging_dest_basename"]
+        ):
+            return "approved_plan_staging_ne_opts"
+        # Bind mail/mirror basenames to the actual sealed pause paths.
+        sealed_reports = sealed.get("reports")
+        if sealed_reports is not None:
+            mail_p = mail_pause_path(Path(sealed_reports))
+            mirror_p = mirror_pause_path(Path(sealed_reports))
+            if mail_p.name != plan["mail_pause_basename"]:
+                return "approved_plan_mail_ne_sealed_path"
+            if mirror_p.name != plan["mirror_pause_basename"]:
+                return "approved_plan_mirror_ne_sealed_path"
+        # Bind approved production device/inode to sealed private-plan identity.
+        sealed_dev = sealed.get("production_device")
+        sealed_ino = sealed.get("production_inode")
+        if not _is_exact_int(sealed_dev) or not _is_exact_int(sealed_ino):
+            return "sealed_production_identity_missing"
+        if int(plan["production_device"]) != int(sealed_dev) or int(
+            plan["production_inode"]
+        ) != int(sealed_ino):
+            return "approved_plan_identity_ne_sealed"
+
+        # Compare backup/staging parent device/inode with live parent captures.
+        if adapters is not None:
+            try:
+                backup_parent = adapters.parent_identity(Path(sealed_backup))
+                staging_parent = adapters.parent_identity(Path(sealed_staging))
+            except Exception:  # noqa: BLE001
+                return "approved_plan_parent_identity_uncapturable"
+            if not isinstance(backup_parent, dict) or not isinstance(
+                staging_parent, dict
+            ):
+                return "approved_plan_parent_identity_uncapturable"
+            if not _is_exact_int(backup_parent.get("device")) or not _is_exact_int(
+                backup_parent.get("inode")
+            ):
+                return "approved_plan_backup_parent_live_invalid"
+            if not _is_exact_int(staging_parent.get("device")) or not _is_exact_int(
+                staging_parent.get("inode")
+            ):
+                return "approved_plan_staging_parent_live_invalid"
+            if int(backup_parent["device"]) != int(plan["backup_parent_device"]) or int(
+                backup_parent["inode"]
+            ) != int(plan["backup_parent_inode"]):
+                return "approved_plan_backup_parent_drift"
+            if int(staging_parent["device"]) != int(plan["staging_parent_device"]) or int(
+                staging_parent["inode"]
+            ) != int(plan["staging_parent_inode"]):
+                return "approved_plan_staging_parent_drift"
     return None
 
 
 def _validate_rollback_proof(
-    journal: CutoverJournal, proof: dict[str, Any], opts: CutoverOptions
+    journal: CutoverJournal,
+    proof: dict[str, Any],
+    opts: CutoverOptions,
+    *,
+    adapters: CutoverAdapters | None = None,
+    sealed: dict[str, Any] | None = None,
+    production: Path | None = None,
 ) -> None:
     """Fail closed unless the structured proof has every required typed field."""
-    problem = _rollback_proof_problem(journal, proof, opts)
+    problem = _rollback_proof_problem(
+        journal,
+        proof,
+        opts,
+        adapters=adapters,
+        sealed=sealed,
+        production=production,
+    )
     if problem is not None:
         _fail(
             f"rollback proof invalid ({problem}); manual reconciliation required",
@@ -4875,6 +5087,7 @@ def _rollback_sidecar_proof_problem(proof: dict[str, Any] | None) -> str | None:
     """Return a reason if the typed rollback_sidecar_proof is missing/malformed.
 
     A missing proof is NOT treated as "both companions absent"; it fails closed.
+    An ambiguous captured member never qualifies as a coherent terminal proof.
     """
     if not isinstance(proof, dict) or not proof:
         return "missing_sidecar_proof"
@@ -4889,11 +5102,12 @@ def _rollback_sidecar_proof_problem(proof: dict[str, Any] | None) -> str | None:
         present = record.get("present")
         if present is not True and present is not False:
             return f"sidecar_proof_{role}_present"
+        # Ambiguous members (FIFO/symlink/capture failure) never qualify.
+        if record.get("ambiguous") is True:
+            return f"sidecar_proof_{role}_ambiguous"
+        if "ambiguous" in record and record.get("ambiguous") is not False:
+            return f"sidecar_proof_{role}_ambiguous"
         if present is True:
-            if record.get("ambiguous") is True:
-                continue
-            if "ambiguous" in record and record.get("ambiguous") is not False:
-                return f"sidecar_proof_{role}_ambiguous"
             for key in ("device", "inode"):
                 if not _is_exact_int(record.get(key)):
                     return f"sidecar_proof_{role}_{key}"
@@ -4921,19 +5135,24 @@ def _rf_api_owned(journal: CutoverJournal) -> bool:
     )
 
 
-def _api_ownership_proven(
+_OWNERSHIP_ROLES = frozenset({"temp", "started", "smoke"})
+
+
+def _ownership_flag_exact(journal: CutoverJournal, role: str) -> bool:
+    """Exact-boolean ownership flag for one role; roles never substitute."""
+    if role == "temp":
+        return journal.rollback_finalize_owned_temp_api is True
+    if role == "started":
+        return journal.rollback_finalize_started_api is True
+    if role == "smoke":
+        return journal.smoke_started_api is True
+    return False
+
+
+def _api_process_matches_owner(
     adapters: CutoverAdapters, journal: CutoverJournal, opts: CutoverOptions
 ) -> bool:
-    """True only if the CURRENT API process is provably the one we started.
-
-    Every stop requires BOTH an exact-boolean ownership flag AND live MainPID +
-    InvocationID equality. The owner object is untrusted: exact positive-integer
-    MainPID and a non-empty string InvocationID are mandatory. Missing
-    InvocationID never degrades ownership to PID-only. Malformed fields fail
-    closed (False) without raising.
-    """
-    if not _rf_api_owned(journal):
-        return False
+    """True when live MainPID + InvocationID match the untrusted owner record."""
     owner = journal.rollback_finalize_api_owner
     if not isinstance(owner, dict):
         return False
@@ -4956,6 +5175,38 @@ def _api_ownership_proven(
     if not _is_nonempty_str(cur_inv):
         return False
     return int(cur_pid) == int(owner_pid) and cur_inv == owner_inv
+
+
+def _api_ownership_proven(
+    adapters: CutoverAdapters,
+    journal: CutoverJournal,
+    opts: CutoverOptions,
+    *,
+    roles: frozenset[str],
+) -> bool:
+    """True only if an enumerated ownership role is exact-True AND process matches.
+
+    Temporary stops must pass ``roles={"temp"}``. General reconcile must pass an
+    explicit frozenset of allowed roles; one role never substitutes for another.
+    """
+    if not roles or not roles <= _OWNERSHIP_ROLES:
+        return False
+    if not any(_ownership_flag_exact(journal, role) for role in roles):
+        return False
+    # Require the matching role's flag; process evidence is shared per MID start.
+    return _api_process_matches_owner(adapters, journal, opts)
+
+
+def _api_ownership_proven_any_reconcile(
+    adapters: CutoverAdapters, journal: CutoverJournal, opts: CutoverOptions
+) -> bool:
+    """Reconcile may stop only when an enumerated appropriate role is proven."""
+    for role in ("temp", "started", "smoke"):
+        if _ownership_flag_exact(journal, role) and _api_process_matches_owner(
+            adapters, journal, opts
+        ):
+            return True
+    return False
 
 
 def _sealed_paths_problem(
@@ -5016,7 +5267,18 @@ def _sealed_paths_problem(
             return ("reports_dir_not_directory", None)
         if adapters.is_symlink(journal_path.parent):
             return ("journal_dir_symlink", None)
-    return (None, {"reports": reports})
+    return (
+        None,
+        {
+            "reports": reports,
+            "private": data,
+            "production_path": data["production_path"],
+            "backup_dest": data.get("backup_dest"),
+            "staging_dest": data.get("staging_dest"),
+            "production_device": data.get("production_device"),
+            "production_inode": data.get("production_inode"),
+        },
+    )
 
 
 def _fail_sealed_binding(problem: str) -> None:
@@ -5109,9 +5371,9 @@ def _rollback_finalize_reconcile_active_api(
             adapters, journal, journal_path, production, reports,
             "api_activity_ambiguous", opts=opts,
         )
-    # Every stop requires proven ownership (flag + live PID/InvocationID). A
-    # stale owned flag against a foreign process must never authorize a stop.
-    if not _api_ownership_proven(adapters, journal, opts):
+    # Every stop requires proven ownership for an enumerated appropriate role.
+    # A stale owned flag against a foreign process must never authorize a stop.
+    if not _api_ownership_proven_any_reconcile(adapters, journal, opts):
         _rollback_finalize_manual_recovery(
             adapters, journal, journal_path, production, reports,
             "unowned_api_active", opts=opts,
@@ -5285,30 +5547,59 @@ def rollback_finalize(opts: CutoverOptions) -> dict[str, Any]:
                 opts=opts, **kw,
             )
 
-        proof = journal.rollback_proof or {}
+        proof = journal.rollback_proof if isinstance(journal.rollback_proof, dict) else {}
+
+        # Malformed rollback_intent (present but not a typed object) routes to
+        # sanitized manual recovery; presence alone already locks other entrypoints.
+        if journal.rollback_intent is not None and not isinstance(
+            journal.rollback_intent, dict
+        ):
+            _manual(
+                "malformed_rollback_intent",
+                evidence={"intent_type": type(journal.rollback_intent).__name__},
+            )
+        if journal.rollback_finalize_intent is not None and not isinstance(
+            journal.rollback_finalize_intent, dict
+        ):
+            _manual("malformed_rollback_finalize_intent")
+        if journal.rollback_finalize_service_intent is not None and not isinstance(
+            journal.rollback_finalize_service_intent, dict
+        ):
+            _manual("malformed_rollback_finalize_service_intent")
 
         # T3: a post-exchange authoritative-capture failure is a durable
         # conservative lock. Never verified rollback, never normal progression —
         # route straight to sanitized manual recovery.
-        if journal.rollback_identity_capture_failed:
+        if journal.rollback_identity_capture_failed is True:
             _manual("post_rollback_identity_capture_failed")
 
         # ---- R1: strict terminal consistency / idempotency. Idempotent success
         # requires BOTH a self-consistent terminal record AND full typed-proof +
-        # live-identity validation. A malformed / incomplete / contradictory
-        # terminal record is sanitized MANUAL_RECOVERY_REQUIRED, never
-        # already_finalized=true. ----
+        # typed sidecar proof + live-identity validation. A malformed / incomplete
+        # / contradictory terminal record is sanitized MANUAL_RECOVERY_REQUIRED,
+        # never already_finalized=true. ----
         terminal = _rollback_finalize_terminal_state(journal)
         if terminal != "not_terminal":
-            proof_problem = _rollback_proof_problem(journal, proof, opts)
+            proof_problem = _rollback_proof_problem(
+                journal,
+                proof if isinstance(proof, dict) else {},
+                opts,
+                adapters=adapters,
+                sealed=sealed,
+                production=production,
+            )
+            sidecar_problem = _rollback_sidecar_proof_problem(
+                journal.rollback_sidecar_proof
+            )
             identity_problem = (
                 _rollback_identity_problem(adapters, production, proof)
-                if proof_problem is None
+                if proof_problem is None and isinstance(proof, dict)
                 else "proof_invalid"
             )
             if (
                 terminal == "coherent_abandoned"
                 and proof_problem is None
+                and sidecar_problem is None
                 and identity_problem is None
             ):
                 return _rollback_finalize_status(opts, journal, already=True)
@@ -5317,6 +5608,7 @@ def rollback_finalize(opts: CutoverOptions) -> dict[str, Any]:
                 evidence={
                     "terminal": terminal,
                     "proof_problem": proof_problem,
+                    "sidecar_problem": sidecar_problem,
                     "identity_problem": identity_problem,
                 },
             )
@@ -5336,7 +5628,14 @@ def rollback_finalize(opts: CutoverOptions) -> dict[str, Any]:
 
         # ---- structured proof schema validation (typed fields + approved plan
         # device/inode required; legacy/insufficient → manual). ----
-        _validate_rollback_proof(journal, proof, opts)
+        _validate_rollback_proof(
+            journal,
+            proof,
+            opts,
+            adapters=adapters,
+            sealed=sealed,
+            production=production,
+        )
 
         # Fresh finalize requires stage ATOMIC_SWAP (terminal ABANDONED is handled
         # by the idempotency gate above). Any other stage after a verified
@@ -5509,13 +5808,7 @@ def rollback_finalize(opts: CutoverOptions) -> dict[str, Any]:
         )
         _inject("rollback_finalize_services_reconciled")
 
-        # (6) T4: recheck the API activity IMMEDIATELY before using/starting the
-        # health-check API. An API that appeared since the initial reconcile must
-        # not be silently accepted: ambiguous → manual; unowned-running → manual;
-        # owned-running → reuse (no double start). Otherwise start it, owning it
-        # as a TEMPORARY start when pre-maintenance policy says the API must end
-        # up inactive. Every transition carries durable intent + verified success.
-        # (6) T5: recheck API activity IMMEDIATELY before using/starting the
+        # (6) Recheck API activity IMMEDIATELY before using/starting the
         # health-check API. Ambiguity is tested FIRST. Start only from an
         # unambiguously stopped state; ambiguous/unknown activity is manual
         # recovery. Late unproven activity is never adopted, reused, or stopped.
@@ -5523,9 +5816,9 @@ def rollback_finalize(opts: CutoverOptions) -> dict[str, Any]:
         if act.get("ambiguous"):
             _manual("api_ambiguous_before_health")
         if act.get("running"):
-            # Reuse ONLY a PROVEN-owned running API (exact-boolean flag + live
+            # Reuse ONLY a PROVEN-owned running API (enumerated role + live
             # MainPID/InvocationID match). Never adopt/stop late unproven activity.
-            if not _api_ownership_proven(adapters, journal, opts):
+            if not _api_ownership_proven_any_reconcile(adapters, journal, opts):
                 _manual("api_appeared_unowned_before_health")
             # Proven owned + unambiguously running: reuse it, do not start again.
         elif act.get("stopped"):
@@ -5588,11 +5881,12 @@ def rollback_finalize(opts: CutoverOptions) -> dict[str, Any]:
 
         # ---- F6: converge to the captured pre-maintenance service policy and
         # verify the outcomes. A temporary owned API is stopped again. ----
-        if journal.rollback_finalize_owned_temp_api:
-            # Only a PROVEN-owned temporary API may be stopped. If ownership can
-            # no longer be proven (a later, different process), fail closed to
-            # manual recovery rather than stopping a foreign API.
-            if not _api_ownership_proven(adapters, journal, opts):
+        if journal.rollback_finalize_owned_temp_api is True:
+            # Temporary stops require the exact temp flag + proven process match.
+            # started/smoke ownership must never authorize a temporary stop.
+            if not _api_ownership_proven(
+                adapters, journal, opts, roles=frozenset({"temp"})
+            ):
                 _manual("temp_api_ownership_unproven")
             journal.rollback_finalize_service_intent = {
                 "action": "stop_owned_temp_api"
@@ -6056,6 +6350,14 @@ class SyntheticWorld:
     health_timer_activity_override: dict[str, Any] | None = None
     api_process_identity_override: dict[str, Any] | None = None
     _api_invocation: int = 0
+    # ---- P6: callable invoked AFTER durable rollback_intent is written and
+    # BEFORE the immediate pre-exchange member recapture. Models TOCTOU
+    # replacement / content drift / capture failure in that window. ----
+    after_rollback_intent_hook: Any | None = None
+    # Callable invoked immediately AFTER rename_exchange in rollback (test-only)
+    # so post-exchange identity-capture failure can be scripted without breaking
+    # the pre-exchange recapture gate.
+    after_rename_exchange_hook: Any | None = None
 
     def key(self, path: Path) -> str:
         return str(path)
