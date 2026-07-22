@@ -115,6 +115,29 @@ def main(argv: list[str] | None = None) -> int:
         result = run_online_backup(options)
     except BackupError as exc:
         print(f"ERROR: {sanitize_error_message(exc)}", file=sys.stderr)
+        detail = exc.detail if isinstance(exc.detail, dict) else None
+        if detail:
+            op = detail.get("operational_error")
+            if isinstance(op, dict):
+                print(
+                    "operational_error "
+                    f"category={op.get('category')} "
+                    f"phase={op.get('phase')} "
+                    f"sqlite_errorcode={op.get('sqlite_errorcode')} "
+                    f"sqlite_errorname={op.get('sqlite_errorname')} "
+                    f"retryable={op.get('retryable')} "
+                    f"recovery={op.get('recovery')}",
+                    file=sys.stderr,
+                )
+            fd = detail.get("fd_observation")
+            if isinstance(fd, dict):
+                print(
+                    "fd_observation "
+                    f"verdict={fd.get('verdict')} "
+                    f"blocker_count={fd.get('blocker_count')} "
+                    f"ambiguous_count={fd.get('ambiguous_count')}",
+                    file=sys.stderr,
+                )
         return 2
     except Exception as exc:
         print(f"ERROR: {sanitize_error_message(exc)}", file=sys.stderr)
