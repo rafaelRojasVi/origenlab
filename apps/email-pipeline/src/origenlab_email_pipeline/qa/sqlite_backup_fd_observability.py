@@ -311,9 +311,16 @@ def _scan_proc_for_members(
     members: dict[str, SourceMemberIdentity],
     *,
     uid: int | None = None,
+    owner_pid: int | None = None,
     read_fdinfo: Callable[[int, str], str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Scan same-user /proc for FDs matching captured member identities."""
+    """Scan same-user /proc for FDs matching captured member identities.
+
+    Fail closed when the active backup process FD table is unreadable. Other
+    same-UID processes that deny FD listing (common for restricted helpers such
+    as sd-pam) are skipped; residual risk is contained by requiring a positive
+    trusted observation for every present member role.
+    """
     from origenlab_email_pipeline.qa.sqlite_production_cutover import (
         read_fdinfo_flags,
     )
@@ -351,6 +358,14 @@ def _scan_proc_for_members(
             st = entry.stat()
             if st.st_uid != want_uid:
                 continue
+        except OSError:
+            if owner_pid is not None and entry.name == str(owner_pid):
+                raise BackupFdObservationError(
+                    "unable to stat active backup process for FD inventory",
+                    verdict=VERDICT_AMBIGUOUS,
+                ) from None
+            continue
+        try:
             fd_dir = entry / "fd"
             for fd_path in fd_dir.iterdir():
                 try:
@@ -389,9 +404,15 @@ def _scan_proc_for_members(
                     }
                 )
         except OSError:
+            if owner_pid is not None and pid == owner_pid:
+                raise BackupFdObservationError(
+                    "unable to read active backup process FD table",
+                    verdict=VERDICT_AMBIGUOUS,
+                ) from None
+            # Non-owner same-UID denial (e.g. sd-pam): skip. Positive trusted
+            # observation still required for every present member.
             continue
     return hits
-
 
 def classify_observation_hits(
     hits: list[dict[str, Any]],
@@ -410,6 +431,31 @@ def classify_observation_hits(
         )
         classified.append(row)
     return classified
+
+
+def _positive_trusted_observation_problem(
+    classified: list[dict[str, Any]],
+    members: dict[str, SourceMemberIdentity],
+) -> str | None:
+    """Require a trusted FD for every present source member (fail closed)."""
+    trusted_roles = {
+        str(c.get("role"))
+        for c in classified
+        if c.get("confidence") == CONFIDENCE_TRUSTED
+        and isinstance(c.get("role"), str)
+        and c.get("role") in BACKUP_FD_ROLES
+    }
+    main = members.get(ROLE_MAIN)
+    if main is None or not main.present:
+        return "main_identity_missing"
+    if ROLE_MAIN not in trusted_roles:
+        return "missing_trusted_main"
+    for role, member in members.items():
+        if role not in BACKUP_FD_ROLES:
+            continue
+        if member.present and role not in trusted_roles:
+            return f"missing_trusted_{role}"
+    return None
 
 
 def summarize_fd_observation(
@@ -436,13 +482,16 @@ def summarize_fd_observation(
     members_present = sorted(
         role for role, m in members.items() if m.present
     )
-    if ambiguous:
+    positive_problem = _positive_trusted_observation_problem(classified, members)
+    if ambiguous or positive_problem is not None:
         verdict = VERDICT_AMBIGUOUS
+        if positive_problem is not None:
+            ambiguous = max(ambiguous, 1)
     elif blockers:
         verdict = VERDICT_BLOCKED
     else:
         verdict = VERDICT_OK
-    return {
+    out = {
         "schema_version": FD_OBS_SCHEMA_VERSION,
         "phase": phase,
         "member_roles_present": members_present,
@@ -452,6 +501,9 @@ def summarize_fd_observation(
         "ambiguous_count": int(ambiguous),
         "verdict": verdict,
     }
+    if positive_problem is not None:
+        out["reason"] = positive_problem
+    return out
 
 
 def observe_backup_source_fds(
@@ -467,7 +519,9 @@ def observe_backup_source_fds(
             verdict=VERDICT_AMBIGUOUS,
         )
     scanner = scan_fn or (
-        lambda members: _scan_proc_for_members(members)
+        lambda members: _scan_proc_for_members(
+            members, owner_pid=capability.owner_pid
+        )
     )
     try:
         hits = scanner(capability.members)
@@ -478,6 +532,11 @@ def observe_backup_source_fds(
             "backup FD scan failed",
             verdict=VERDICT_AMBIGUOUS,
         ) from None
+    if not isinstance(hits, list):
+        raise BackupFdObservationError(
+            "backup FD scan returned malformed inventory",
+            verdict=VERDICT_AMBIGUOUS,
+        )
     classified = classify_observation_hits(hits, capability=capability)
     aggregate = summarize_fd_observation(
         phase=phase, classified=classified, members=capability.members
@@ -508,14 +567,25 @@ def merge_observation_aggregates(
         ph = obs.get("phase")
         if isinstance(ph, str) and ph in OBS_PHASES:
             phases.append(ph)
-        accepted += int(obs.get("accepted_locking_count") or 0)
-        blockers += int(obs.get("blocker_count") or 0)
-        ambiguous += int(obs.get("ambiguous_count") or 0)
+        for key in (
+            "accepted_locking_count",
+            "blocker_count",
+            "ambiguous_count",
+        ):
+            raw = obs.get(key)
+            if type(raw) is not int or raw < 0:
+                continue
+            if key == "accepted_locking_count":
+                accepted += raw
+            elif key == "blocker_count":
+                blockers += raw
+            else:
+                ambiguous += raw
         for r in obs.get("member_roles_observed") or []:
-            if isinstance(r, str):
+            if isinstance(r, str) and r in BACKUP_FD_ROLES:
                 roles.add(r)
         for r in obs.get("member_roles_present") or []:
-            if isinstance(r, str):
+            if isinstance(r, str) and r in BACKUP_FD_ROLES:
                 present.add(r)
         v = obs.get("verdict")
         if v == VERDICT_AMBIGUOUS:

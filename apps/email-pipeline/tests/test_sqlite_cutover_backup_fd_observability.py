@@ -343,6 +343,129 @@ def test_summarize_and_merge_omit_raw_identity() -> None:
     assert PHASE_PRE_COPY in merged["observation_phases"]
 
 
+def test_empty_fd_scan_is_ambiguous_not_ok() -> None:
+    """No /proc hits must not fail open as verdict=ok."""
+    from origenlab_email_pipeline.qa.sqlite_backup_fd_observability import (
+        BackupFdObservationError,
+        observe_backup_source_fds,
+    )
+
+    cap = _capability(
+        members={
+            ROLE_MAIN: _member(ROLE_MAIN),
+            ROLE_WAL: _member(ROLE_WAL, present=False),
+            ROLE_SHM: _member(ROLE_SHM, present=False),
+        }
+    )
+    with pytest.raises(BackupFdObservationError) as excinfo:
+        observe_backup_source_fds(cap, phase=PHASE_PRE_COPY, scan_fn=lambda _m: [])
+    assert excinfo.value.verdict == "ambiguous"
+    assert excinfo.value.aggregate is not None
+    assert excinfo.value.aggregate["verdict"] == "ambiguous"
+    assert excinfo.value.aggregate.get("reason") == "missing_trusted_main"
+
+
+def test_missing_trusted_wal_when_wal_present_is_ambiguous() -> None:
+    classified = [
+        {
+            "role": ROLE_MAIN,
+            "owner_role": "active_backup_process",
+            "access": ACCESS_READ_ONLY,
+            "confidence": CONFIDENCE_TRUSTED,
+            "reason": "trusted_readonly_main",
+        }
+    ]
+    members = {
+        ROLE_MAIN: _member(ROLE_MAIN),
+        ROLE_WAL: _member(ROLE_WAL, present=True),
+        ROLE_SHM: _member(ROLE_SHM, present=False),
+    }
+    agg = summarize_fd_observation(
+        phase=PHASE_PRE_COPY, classified=classified, members=members
+    )
+    assert agg["verdict"] == "ambiguous"
+    assert agg["reason"] == "missing_trusted_wal"
+
+
+def test_observe_propagates_incomplete_scan_error() -> None:
+    from origenlab_email_pipeline.qa.sqlite_backup_fd_observability import (
+        BackupFdObservationError,
+        observe_backup_source_fds,
+    )
+
+    def boom(_members: dict[str, SourceMemberIdentity]) -> list[dict[str, Any]]:
+        raise BackupFdObservationError(
+            "unable to read active backup process FD table",
+            verdict="ambiguous",
+        )
+
+    with pytest.raises(BackupFdObservationError) as excinfo:
+        observe_backup_source_fds(
+            _capability(),
+            phase=PHASE_PRE_COPY,
+            scan_fn=boom,
+        )
+    assert excinfo.value.verdict == "ambiguous"
+    assert "active backup process" in str(excinfo.value)
+
+
+def test_scan_fails_closed_when_owner_fd_table_unreadable() -> None:
+    import errno as errno_mod
+
+    from origenlab_email_pipeline.qa import sqlite_backup_fd_observability as obs
+
+    owner_pid = 4242
+    members = {ROLE_MAIN: _member(ROLE_MAIN, device=1, inode=10)}
+    want_uid = os.getuid()
+
+    class _FdDir:
+        def iterdir(self) -> Any:
+            raise PermissionError(errno_mod.EACCES, "denied")
+
+    class _Entry:
+        name = str(owner_pid)
+
+        def stat(self) -> os.stat_result:
+            return os.stat_result(
+                (0o555, owner_pid, 1, 1, want_uid, want_uid, 0, 0, 0, 0)
+            )
+
+        def __truediv__(self, other: str) -> Any:
+            assert other == "fd"
+            return _FdDir()
+
+    class _Proc:
+        def is_dir(self) -> bool:
+            return True
+
+        def iterdir(self) -> Any:
+            return iter([_Entry()])
+
+    real_path = Path
+
+    def path_factory(p: Any) -> Any:
+        if str(p) == "/proc":
+            return _Proc()
+        return real_path(p)
+
+    # Patch Path only inside the observability module.
+    import origenlab_email_pipeline.qa.sqlite_backup_fd_observability as obs_mod
+
+    original_path = obs_mod.Path
+    try:
+        obs_mod.Path = path_factory  # type: ignore[misc,assignment]
+        with pytest.raises(obs.BackupFdObservationError) as excinfo:
+            obs._scan_proc_for_members(
+                members,
+                owner_pid=owner_pid,
+                read_fdinfo=lambda *_a: "r--",
+            )
+        assert excinfo.value.verdict == "ambiguous"
+        assert "active backup process" in str(excinfo.value)
+    finally:
+        obs_mod.Path = original_path
+
+
 def test_observation_phases_before_during_after(tmp_path: Path) -> None:
     src_dir = tmp_path / "src"
     dst_dir = tmp_path / "dst"
@@ -784,13 +907,104 @@ def test_sanitized_evidence_and_category_mapping() -> None:
             "blocker_count": 1,
             "pid": 12345,
             "path": "/home/rafael/x",
+            "reason": "foreign_writable_main",
+            "extra_leak": HOSTILE,
         },
     }
     evidence = _sanitized_backup_failure_evidence(detail)
     assert "pid" not in json.dumps(evidence["fd_observation"])
     assert "path" not in evidence["fd_observation"]
+    assert "extra_leak" not in evidence["fd_observation"]
+    assert evidence["fd_observation"].get("reason") == "foreign_writable_main"
     err = BackupError("x", detail=detail)
     assert _cutover_category_for_backup_error(err) == CutoverFailureCategory.SAFETY
+    with pytest.raises(CutoverError) as raised:
+        _raise_cutover_from_backup_error(err)
+    assert raised.value.detail == raised.value.evidence
+    assert "pid" not in json.dumps(raised.value.detail or {})
+
+
+def test_sanitized_evidence_drops_hostile_recovery_and_malformed_fields() -> None:
+    detail = {
+        "operational_error": {
+            "schema": 1,
+            "phase": "copy",
+            "category": OPERR_BUSY_OR_LOCKED,
+            "sqlite_errorcode": 5,
+            "sqlite_errorname": "SQLITE_BUSY",
+            "retryable": True,
+            "recovery": "/home/rafael/secret or SELECT 1",
+            "message": HOSTILE,
+        },
+        "fd_observation": {
+            "verdict": "not-a-real-verdict",
+            "blocker_count": True,  # bool must not count as int
+            "ambiguous_count": -1,
+            "reason": "Bad Reason!",
+            "observation_phases": ["pre_copy", "evil", 3],
+            "member_roles_present": ["main", "journal", "/tmp/x"],
+        },
+    }
+    evidence = _sanitized_backup_failure_evidence(detail)
+    op = evidence["operational_error"]
+    assert "recovery" not in op
+    assert "message" not in op
+    assert op["category"] == OPERR_BUSY_OR_LOCKED
+    fd = evidence["fd_observation"]
+    assert "verdict" not in fd
+    assert "blocker_count" not in fd
+    assert "ambiguous_count" not in fd
+    assert "reason" not in fd
+    assert fd["observation_phases"] == ["pre_copy"]
+    assert fd["member_roles_present"] == ["main"]
+
+
+def test_filesystem_backup_requires_ok_fd_observation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from origenlab_email_pipeline.qa import sqlite_production_cutover as cutover
+    from origenlab_email_pipeline.qa.sqlite_online_backup import manifest_path_for
+
+    src_dir = tmp_path / "src"
+    dst_dir = tmp_path / "dst"
+    src_dir.mkdir()
+    dst_dir.mkdir()
+    source = src_dir / "src.sqlite"
+    dest = dst_dir / "dst.sqlite"
+    conn = sqlite3.connect(source)
+    conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+    conn.execute("INSERT INTO t VALUES (1)")
+    conn.commit()
+    conn.close()
+    dest.write_bytes(source.read_bytes())
+    man = manifest_path_for(dest)
+    man.write_text(json.dumps({"completed": True, "method": "test"}), encoding="utf-8")
+
+    def fake_backup(_options: Any) -> dict[str, Any]:
+        return {
+            "completed": True,
+            "method": "test",
+            "fd_observation": {
+                "schema_version": 1,
+                "observation_phases": ["pre_copy"],  # missing post_copy
+                "member_roles_present": ["main"],
+                "member_roles_observed": ["main"],
+                "accepted_locking_count": 1,
+                "blocker_count": 0,
+                "ambiguous_count": 0,
+                "verdict": "ok",
+            },
+        }
+
+    monkeypatch.setattr(cutover, "run_online_backup", fake_backup)
+    monkeypatch.setattr(cutover, "backup_is_completed", lambda _p: True)
+    monkeypatch.setattr(cutover, "fingerprint_token", lambda _p: "fp")
+    monkeypatch.setattr(cutover, "companion_paths", lambda _p: [])
+    adapters = cutover.FilesystemAdapters()
+    with pytest.raises(CutoverError) as excinfo:
+        adapters.create_online_backup(source, dest)
+    assert excinfo.value.category == CutoverFailureCategory.SAFETY
+    assert "pre_copy/post_copy" in str(excinfo.value)
 
 
 def test_successful_synthetic_backup_includes_sanitized_fd_aggregate(

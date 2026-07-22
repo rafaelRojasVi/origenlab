@@ -37,6 +37,7 @@ from origenlab_email_pipeline.qa.sqlite_production_cutover import (
     attempt_rollback_before_writers,
     plan_preflight,
     rollback_finalize,
+    _sanitized_backup_failure_evidence,
 )
 
 
@@ -222,9 +223,12 @@ def main(argv: list[str] | None = None) -> int:
         return int(exc.exit_code)
     except BackupError as exc:
         # Adapter should convert; still never report as mere "unexpected failure".
+        # Re-allowlist detail before printing (never dump raw BackupError.detail).
         print(f"error: {sanitize_error_message(str(exc))}", file=sys.stderr)
-        detail = exc.detail if isinstance(exc.detail, dict) else {}
-        op = detail.get("operational_error")
+        evidence = _sanitized_backup_failure_evidence(
+            exc.detail if isinstance(exc.detail, dict) else None
+        )
+        op = evidence.get("operational_error")
         if isinstance(op, dict):
             print(
                 "operational_error "
@@ -235,8 +239,21 @@ def main(argv: list[str] | None = None) -> int:
                 f"retryable={op.get('retryable')}",
                 file=sys.stderr,
             )
-            if isinstance(op.get("recovery"), str):
-                print(f"recovery: {op['recovery']}", file=sys.stderr)
+            recovery = op.get("recovery")
+            if isinstance(recovery, str):
+                print(
+                    f"recovery: {sanitize_error_message(recovery)}",
+                    file=sys.stderr,
+                )
+        fd = evidence.get("fd_observation")
+        if isinstance(fd, dict):
+            print(
+                "fd_observation "
+                f"verdict={fd.get('verdict')} "
+                f"blocker_count={fd.get('blocker_count')} "
+                f"ambiguous_count={fd.get('ambiguous_count')}",
+                file=sys.stderr,
+            )
         return EXIT_APPLY
     except Exception:  # noqa: BLE001
         print("error: unexpected failure", file=sys.stderr)

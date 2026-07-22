@@ -101,12 +101,22 @@ from origenlab_email_pipeline.qa.sqlite_offline_compaction import (
     storage_stats,
 )
 from origenlab_email_pipeline.qa.sqlite_online_backup import (
+    BACKUP_PHASES,
     OPERR_BUSY_OR_LOCKED,
     OPERR_CANNOT_OPEN,
     OPERR_CAPACITY,
+    OPERR_CATEGORIES,
     OPERR_INTERRUPTED,
     OPERR_IO_ERROR,
     OPERR_READONLY_WAL_LOCKING,
+    OPERR_RECOVERY_BUSY,
+    OPERR_RECOVERY_CANTOPEN,
+    OPERR_RECOVERY_FULL,
+    OPERR_RECOVERY_INTERRUPT,
+    OPERR_RECOVERY_IO,
+    OPERR_RECOVERY_OTHER,
+    OPERR_RECOVERY_WAL_SHM,
+    OPERR_UNKNOWN_NAME,
     BackupError,
     BackupOptions,
     backup_is_completed,
@@ -2285,22 +2295,40 @@ class FilesystemAdapters:
             "raw_keys": sorted(result.keys())[:20],
         }
         # Sanitized FD aggregate only (never raw FD/error evidence).
+        # Cutover CREATE_CURRENT_BACKUP requires a successful observation proof.
         fd_obs = result.get("fd_observation")
-        if isinstance(fd_obs, dict):
-            out["fd_observation"] = {
-                k: fd_obs[k]
-                for k in (
-                    "schema_version",
-                    "observation_phases",
-                    "member_roles_present",
-                    "member_roles_observed",
-                    "accepted_locking_count",
-                    "blocker_count",
-                    "ambiguous_count",
-                    "verdict",
-                )
-                if k in fd_obs
-            }
+        if not isinstance(fd_obs, dict):
+            _fail(
+                "online backup missing required fd_observation aggregate",
+                category=CutoverFailureCategory.SAFETY,
+            )
+        if fd_obs.get("verdict") != "ok":
+            _fail(
+                "online backup fd_observation verdict is not ok",
+                category=(
+                    CutoverFailureCategory.AMBIGUOUS
+                    if fd_obs.get("verdict") == "ambiguous"
+                    else CutoverFailureCategory.SAFETY
+                ),
+            )
+        phases = fd_obs.get("observation_phases")
+        if not isinstance(phases, list) or not {
+            "pre_copy",
+            "post_copy",
+        }.issubset({p for p in phases if isinstance(p, str)}):
+            _fail(
+                "online backup fd_observation missing required pre_copy/post_copy phases",
+                category=CutoverFailureCategory.SAFETY,
+            )
+        safe_fd = _sanitized_backup_failure_evidence({"fd_observation": fd_obs}).get(
+            "fd_observation"
+        )
+        if not isinstance(safe_fd, dict) or safe_fd.get("verdict") != "ok":
+            _fail(
+                "online backup fd_observation failed sanitization gate",
+                category=CutoverFailureCategory.SAFETY,
+            )
+        out["fd_observation"] = safe_fd
         return out
 
     def compact_offline(self, source: Path, dest: Path) -> dict[str, Any]:
@@ -2925,6 +2953,22 @@ def _require_git_match(opts: CutoverOptions, adapters: CutoverAdapters) -> GitId
     return identity
 
 
+_OPERR_RECOVERY_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        OPERR_RECOVERY_WAL_SHM,
+        OPERR_RECOVERY_BUSY,
+        OPERR_RECOVERY_CANTOPEN,
+        OPERR_RECOVERY_IO,
+        OPERR_RECOVERY_FULL,
+        OPERR_RECOVERY_INTERRUPT,
+        OPERR_RECOVERY_OTHER,
+        "verify_backup_source_fd_identity_and_wal_shm_locking",
+    }
+)
+_FD_OBS_VERDICTS: frozenset[str] = frozenset({"ok", "blocked", "ambiguous"})
+_FD_OBS_REASON_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+
 def _sanitized_backup_failure_evidence(
     detail: dict[str, Any] | None,
 ) -> dict[str, Any]:
@@ -2935,36 +2979,68 @@ def _sanitized_backup_failure_evidence(
     op = detail.get("operational_error")
     if isinstance(op, dict):
         safe_op: dict[str, Any] = {}
-        for key in (
-            "schema",
-            "phase",
-            "category",
-            "sqlite_errorcode",
-            "sqlite_errorname",
-            "retryable",
-            "recovery",
+        schema = op.get("schema")
+        if type(schema) is int and schema >= 0:
+            safe_op["schema"] = schema
+        phase = op.get("phase")
+        if isinstance(phase, str) and phase in BACKUP_PHASES:
+            safe_op["phase"] = phase
+        category = op.get("category")
+        if isinstance(category, str) and category in OPERR_CATEGORIES:
+            safe_op["category"] = category
+        code = op.get("sqlite_errorcode")
+        if code is None or (type(code) is int and code >= 0):
+            safe_op["sqlite_errorcode"] = code
+        name = op.get("sqlite_errorname")
+        if isinstance(name, str) and (
+            name == OPERR_UNKNOWN_NAME or re.fullmatch(r"^SQLITE_[A-Z0-9_]+$", name)
         ):
-            if key in op:
-                safe_op[key] = op[key]
+            safe_op["sqlite_errorname"] = name
+        retryable = op.get("retryable")
+        if type(retryable) is bool:
+            safe_op["retryable"] = retryable
+        recovery = op.get("recovery")
+        if isinstance(recovery, str) and recovery in _OPERR_RECOVERY_ALLOWLIST:
+            safe_op["recovery"] = recovery
         if safe_op:
             out["operational_error"] = safe_op
     fd = detail.get("fd_observation")
     if isinstance(fd, dict):
         safe_fd: dict[str, Any] = {}
-        for key in (
-            "schema_version",
-            "phase",
-            "observation_phases",
-            "member_roles_present",
-            "member_roles_observed",
+        schema_v = fd.get("schema_version")
+        if type(schema_v) is int and schema_v >= 0:
+            safe_fd["schema_version"] = schema_v
+        phase = fd.get("phase")
+        if isinstance(phase, str) and phase in {"pre_copy", "during_copy", "post_copy"}:
+            safe_fd["phase"] = phase
+        phases = fd.get("observation_phases")
+        if isinstance(phases, list):
+            safe_phases = [
+                p
+                for p in phases
+                if isinstance(p, str) and p in {"pre_copy", "during_copy", "post_copy"}
+            ]
+            safe_fd["observation_phases"] = safe_phases
+        for roles_key in ("member_roles_present", "member_roles_observed"):
+            roles = fd.get(roles_key)
+            if isinstance(roles, list):
+                safe_fd[roles_key] = [
+                    r for r in roles if isinstance(r, str) and r in {ROLE_MAIN, ROLE_WAL, ROLE_SHM}
+                ]
+        for count_key in (
             "accepted_locking_count",
             "blocker_count",
             "ambiguous_count",
-            "verdict",
-            "reason",
         ):
-            if key in fd:
-                safe_fd[key] = fd[key]
+            count = fd.get(count_key)
+            if type(count) is int and count >= 0:
+                safe_fd[count_key] = count
+        verdict = fd.get("verdict")
+        if isinstance(verdict, str) and verdict in _FD_OBS_VERDICTS:
+            safe_fd["verdict"] = verdict
+        reason = fd.get("reason")
+        if isinstance(reason, str) and _FD_OBS_REASON_RE.fullmatch(reason):
+            safe_fd["reason"] = reason
         if safe_fd:
             out["fd_observation"] = safe_fd
     return out
@@ -3014,7 +3090,7 @@ def _raise_cutover_from_backup_error(exc: BackupError) -> None:
         category=category,
         recovery=recovery,
         evidence=evidence,
-        detail=dict(exc.detail) if isinstance(exc.detail, dict) else None,
+        detail=evidence if evidence else None,
     )
 
 
