@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from origenlab_email_pipeline.qa.sqlite_cutover_artifact_permissions import ROLE_MAIN
 
@@ -26,6 +26,42 @@ DEFAULT_BUSY_TIMEOUT_MS = 30_000
 DEFAULT_PROGRESS_INTERVAL_SECONDS = 2.0
 DEFAULT_FD_OBSERVATION_INTERVAL_SECONDS = 2.0
 LOCK_DIR_NAME = ".origenlab_sqlite_online_backup_locks"
+
+# Closed CLI --json projection (stdout boundary; not the on-disk manifest).
+CLI_JSON_SCHEMA_VERSION = 1
+CLI_MODE_PREFLIGHT = "preflight"
+CLI_MODE_COMPLETED = "completed"
+CLI_METHOD_BACKUP = "sqlite3.Connection.backup"
+CLI_PUBLICATION_HARDLINK = "hardlink_no_clobber"
+CLI_DEST_VERIFY_IMMUTABLE = "mode=ro&immutable=1"
+CLI_VERIFICATION_CHEAP = "header+query_only+cheap_pragmas+schema_inventory"
+CLI_COMPLETION_FINAL_MANIFEST = "final_manifest"
+CLI_FD_PHASE_PRE_COPY = "pre_copy"
+CLI_FD_PHASE_DURING_COPY = "during_copy"
+CLI_FD_PHASE_POST_COPY = "post_copy"
+CLI_FD_ROLE_MAIN = "main"
+CLI_FD_ROLE_WAL = "wal"
+CLI_FD_ROLE_SHM = "shm"
+CLI_FD_VERDICT_OK = "ok"
+CLI_FD_VERDICT_BLOCKED = "blocked"
+CLI_FD_VERDICT_AMBIGUOUS = "ambiguous"
+_CLI_FD_PHASE_EMIT: dict[str, str] = {
+    CLI_FD_PHASE_PRE_COPY: CLI_FD_PHASE_PRE_COPY,
+    CLI_FD_PHASE_DURING_COPY: CLI_FD_PHASE_DURING_COPY,
+    CLI_FD_PHASE_POST_COPY: CLI_FD_PHASE_POST_COPY,
+}
+_CLI_FD_ROLE_EMIT: dict[str, str] = {
+    CLI_FD_ROLE_MAIN: CLI_FD_ROLE_MAIN,
+    CLI_FD_ROLE_WAL: CLI_FD_ROLE_WAL,
+    CLI_FD_ROLE_SHM: CLI_FD_ROLE_SHM,
+}
+_CLI_FD_VERDICT_EMIT: dict[str, str] = {
+    CLI_FD_VERDICT_OK: CLI_FD_VERDICT_OK,
+    CLI_FD_VERDICT_BLOCKED: CLI_FD_VERDICT_BLOCKED,
+    CLI_FD_VERDICT_AMBIGUOUS: CLI_FD_VERDICT_AMBIGUOUS,
+}
+_CLI_MAX_ELAPSED_SECONDS = 31_536_000.0  # 365d bound for CLI float field
+_CLI_JSON_REJECT = "cli json report rejected: malformed field"
 
 # PR-E: allowlisted backup phases for OperationalError classification.
 BACKUP_PHASE_SOURCE_CONNECT = "source_connect"
@@ -312,6 +348,192 @@ def sanitize_error_message(exc: BaseException | str) -> str:
     text = _ABS_PATH_IN_TEXT.sub("<path>", text)
     text = _EMAIL_IN_TEXT.sub("<email>", text)
     return text
+
+
+def _cli_reject() -> None:
+    raise BackupError(_CLI_JSON_REJECT)
+
+
+def _cli_exact_bool(value: Any) -> bool:
+    if type(value) is not bool:
+        _cli_reject()
+    return value
+
+
+def _cli_nonneg_int(value: Any) -> int:
+    if type(value) is not int or value < 0:
+        _cli_reject()
+    return value
+
+
+def _cli_positive_int(value: Any) -> int:
+    if type(value) is not int or value <= 0:
+        _cli_reject()
+    return value
+
+
+def _cli_nonneg_float(value: Any, *, max_value: float) -> float:
+    if type(value) is bool:
+        _cli_reject()
+    if type(value) is int:
+        number = float(value)
+    elif type(value) is float:
+        number = value
+    else:
+        _cli_reject()
+        raise AssertionError("unreachable")
+    if number < 0.0 or number > max_value:
+        _cli_reject()
+    return number
+
+
+def _cli_map_token(value: Any, emit: Mapping[str, str]) -> str:
+    if type(value) is not str:
+        _cli_reject()
+    if value not in emit:
+        _cli_reject()
+    return emit[value]
+
+
+def _cli_map_token_list(value: Any, emit: Mapping[str, str]) -> list[str]:
+    if type(value) is not list:
+        _cli_reject()
+    out: list[str] = []
+    for item in value:
+        out.append(_cli_map_token(item, emit))
+    return out
+
+
+def _build_safe_cli_fd_observation(raw: Any) -> dict[str, Any]:
+    """Rebuild fd_observation from an explicit allowlist (no key copy)."""
+    if type(raw) is not dict:
+        _cli_reject()
+    schema = raw.get("schema_version")
+    if type(schema) is not int or schema != CLI_JSON_SCHEMA_VERSION:
+        _cli_reject()
+    verdict = _cli_map_token(raw.get("verdict"), _CLI_FD_VERDICT_EMIT)
+    phases_raw = raw.get("observation_phases")
+    if phases_raw is None:
+        phase_one = raw.get("phase")
+        if phase_one is None:
+            phases: list[str] = []
+        else:
+            phases = [_cli_map_token(phase_one, _CLI_FD_PHASE_EMIT)]
+    else:
+        phases = _cli_map_token_list(phases_raw, _CLI_FD_PHASE_EMIT)
+    present = raw.get("member_roles_present")
+    observed = raw.get("member_roles_observed")
+    if present is None:
+        present_roles: list[str] = []
+    else:
+        present_roles = _cli_map_token_list(present, _CLI_FD_ROLE_EMIT)
+    if observed is None:
+        observed_roles: list[str] = []
+    else:
+        observed_roles = _cli_map_token_list(observed, _CLI_FD_ROLE_EMIT)
+    return {
+        "schema_version": CLI_JSON_SCHEMA_VERSION,
+        "observation_phases": phases,
+        "member_roles_present": present_roles,
+        "member_roles_observed": observed_roles,
+        "trusted_locking_count": _cli_nonneg_int(raw.get("trusted_locking_count")),
+        "blocker_count": _cli_nonneg_int(raw.get("blocker_count")),
+        "ambiguous_count": _cli_nonneg_int(raw.get("ambiguous_count")),
+        "verdict": verdict,
+    }
+
+
+def build_safe_cli_json_report(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Project ``run_online_backup`` results to a closed CLI stdout schema.
+
+    Copies only allowlisted fields with exact type checks. Emits fixed string
+    literals for accepted states. Never copies unknown keys, fingerprints,
+    basenames, meta blobs, warnings, notes, or raw exception text.
+    """
+    if not isinstance(result, Mapping) or isinstance(result, (str, bytes, bytearray)):
+        _cli_reject()
+
+    mode_raw = result.get("mode")
+    completed_raw = result.get("completed")
+
+    if mode_raw == CLI_MODE_PREFLIGHT:
+        _cli_map_token(mode_raw, {CLI_MODE_PREFLIGHT: CLI_MODE_PREFLIGHT})
+        completed = _cli_exact_bool(completed_raw)
+        writes = _cli_exact_bool(result.get("writes_performed"))
+        if completed is not False or writes is not False:
+            _cli_reject()
+        return {
+            "schema_version": CLI_JSON_SCHEMA_VERSION,
+            "mode": CLI_MODE_PREFLIGHT,
+            "apply": _cli_exact_bool(result.get("apply")),
+            "completed": False,
+            "writes_performed": False,
+            "source_opened_with_sqlite3": _cli_exact_bool(
+                result.get("source_opened_with_sqlite3")
+            ),
+            "source_size_bytes": _cli_nonneg_int(result.get("source_size_bytes")),
+            "estimated_output_bytes": _cli_nonneg_int(result.get("estimated_output_bytes")),
+            "destination_free_bytes": _cli_nonneg_int(result.get("destination_free_bytes")),
+            "capacity_required_bytes": _cli_nonneg_int(result.get("capacity_required_bytes")),
+            "filesystem_separated": _cli_exact_bool(result.get("filesystem_separated")),
+            "allow_same_filesystem": _cli_exact_bool(result.get("allow_same_filesystem")),
+            "pages_per_batch": _cli_positive_int(result.get("pages_per_batch")),
+            "busy_timeout_ms": _cli_nonneg_int(result.get("busy_timeout_ms")),
+        }
+
+    if completed_raw is True:
+        out: dict[str, Any] = {
+            "schema_version": CLI_JSON_SCHEMA_VERSION,
+            "mode": CLI_MODE_COMPLETED,
+            "completed": True,
+            "method": _cli_map_token(
+                result.get("method"),
+                {CLI_METHOD_BACKUP: CLI_METHOD_BACKUP},
+            ),
+            "elapsed_seconds": _cli_nonneg_float(
+                result.get("elapsed_seconds"),
+                max_value=_CLI_MAX_ELAPSED_SECONDS,
+            ),
+            "source_size_bytes": _cli_nonneg_int(result.get("source_size_bytes")),
+            "destination_size_bytes": _cli_nonneg_int(result.get("destination_size_bytes")),
+            "pages_per_batch": _cli_positive_int(result.get("pages_per_batch")),
+            "progress_events": _cli_nonneg_int(result.get("progress_events")),
+            "allow_same_filesystem": _cli_exact_bool(result.get("allow_same_filesystem")),
+            "publication_method": _cli_map_token(
+                result.get("publication_method"),
+                {CLI_PUBLICATION_HARDLINK: CLI_PUBLICATION_HARDLINK},
+            ),
+            "destination_verification": _cli_map_token(
+                result.get("destination_verification"),
+                {CLI_DEST_VERIFY_IMMUTABLE: CLI_DEST_VERIFY_IMMUTABLE},
+            ),
+            "directory_fsync_supported": _cli_exact_bool(
+                result.get("directory_fsync_supported")
+            ),
+            "source_opened_readonly": _cli_exact_bool(result.get("source_opened_readonly")),
+            "source_mutated_by_utility": _cli_exact_bool(
+                result.get("source_mutated_by_utility")
+            ),
+            "source_fingerprint_changed_during_backup": _cli_exact_bool(
+                result.get("source_fingerprint_changed_during_backup")
+            ),
+            "verification": _cli_map_token(
+                result.get("verification"),
+                {CLI_VERIFICATION_CHEAP: CLI_VERIFICATION_CHEAP},
+            ),
+            "completion_marker": _cli_map_token(
+                result.get("completion_marker"),
+                {CLI_COMPLETION_FINAL_MANIFEST: CLI_COMPLETION_FINAL_MANIFEST},
+            ),
+        }
+        if "fd_observation" in result:
+            out["fd_observation"] = _build_safe_cli_fd_observation(
+                result.get("fd_observation")
+            )
+        return out
+
+    _cli_reject()
+    raise AssertionError("unreachable")
 
 
 def scan_manifest_privacy(payload: Any) -> list[str]:
