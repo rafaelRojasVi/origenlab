@@ -67,8 +67,13 @@ from origenlab_email_pipeline.qa.sqlite_cutover_maintenance_boot_policy import (
     BOOT_POLICY_RESTORE_ACTION,
     BOOT_POLICY_SUPPRESS_ACTION,
     BOOT_POLICY_UNITS,
+    LIFECYCLE_PRISTINE,
+    LIFECYCLE_RESTORED,
+    LIFECYCLE_SUPPRESSION_ACTIVE,
     boot_policy_intent_problem,
     boot_policy_journal_problem,
+    boot_policy_lifecycle,
+    boot_policy_requires_restoration,
     classify_unit_enablement,
     sanitized_boot_policy_status,
 )
@@ -663,6 +668,124 @@ def _boot_policy_journal_fields_problem(journal: CutoverJournal) -> str | None:
     )
 
 
+def _boot_policy_lifecycle_for(journal: CutoverJournal) -> tuple[str | None, str | None]:
+    return boot_policy_lifecycle(
+        maintenance_id=journal.maintenance_id,
+        api_enabled=journal.pre_maintenance_api_enabled,
+        timer_enabled=journal.pre_maintenance_health_timer_enabled,
+        intent=journal.maintenance_boot_policy_intent,
+        active=journal.maintenance_boot_policy_active,
+        restored=journal.maintenance_boot_policy_restored,
+    )
+
+
+def _require_coherent_boot_policy(
+    journal: CutoverJournal,
+    *,
+    allow_pristine: bool = False,
+    require_restored: bool = False,
+    require_suppression_active: bool = False,
+) -> str:
+    """Validate coherent PR-D lifecycle; return the lifecycle label or fail.
+
+    ``allow_pristine``: abort before STOP_READERS may see pristine state.
+    ``require_restored``: terminal COMPLETED / late abort / ABANDONED.
+    ``require_suppression_active``: hazardous maintenance stages.
+    """
+    lifecycle, problem = _boot_policy_lifecycle_for(journal)
+    if problem is not None or lifecycle is None:
+        _fail(
+            f"malformed maintenance boot policy ({problem or 'unknown'})",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={"boot_policy_problem": problem},
+        )
+        raise AssertionError("unreachable")
+    if lifecycle == LIFECYCLE_PRISTINE:
+        if allow_pristine and not require_restored and not require_suppression_active:
+            return lifecycle
+        _fail(
+            "maintenance boot policy looks pristine after STOP_READERS began",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={"boot_policy_lifecycle": lifecycle},
+        )
+    if require_suppression_active and lifecycle != LIFECYCLE_SUPPRESSION_ACTIVE:
+        _fail(
+            "maintenance boot policy not in coherent suppression_active state",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={"boot_policy_lifecycle": lifecycle},
+        )
+    if require_restored and lifecycle != LIFECYCLE_RESTORED:
+        _fail(
+            "terminal cutover exit requires coherent verified boot-policy restoration",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={"boot_policy_lifecycle": lifecycle},
+        )
+    return lifecycle
+
+
+def _require_readers_unambiguously_inactive(
+    adapters: CutoverAdapters,
+    *,
+    api_base_url: str | None = None,
+    context: str,
+) -> None:
+    """Fail-closed reader inactivity via structured classifiers (never binary).
+
+    API must be unambiguously stopped through ``api_activity()``; timer must be
+    unambiguously inactive through ``health_timer_activity()``. Rejects
+    ambiguity, running/listener/PID presence, genuine failure/restart signals,
+    rc=127, empty/unknown, failed/activating/deactivating/reloading timer text.
+    """
+    api_act = adapters.api_activity(api_base_url=api_base_url)
+    if not isinstance(api_act, dict) or api_act.get("ambiguous"):
+        _fail(
+            f"API activity ambiguous ({context})",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={"context": context, "api_state": (
+                api_act.get("state") if isinstance(api_act, dict) else None
+            )},
+        )
+    if api_act.get("running") or not api_act.get("stopped"):
+        _fail(
+            f"API not unambiguously stopped ({context})",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={"context": context, "api_state": api_act.get("state")},
+        )
+    if api_act.get("genuine_failure_signal"):
+        _fail(
+            f"API genuine failure/restart signal ({context})",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={"context": context, "sub_state": api_act.get("sub_state")},
+        )
+    if int(api_act.get("main_pid") or 0) > 0 or bool(api_act.get("listener_present")):
+        _fail(
+            f"API PID/listener still present ({context})",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={"context": context},
+        )
+    timer_act = adapters.health_timer_activity()
+    if not isinstance(timer_act, dict) or timer_act.get("ambiguous"):
+        _fail(
+            f"health timer activity ambiguous ({context})",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={
+                "context": context,
+                "timer_state": (
+                    timer_act.get("state") if isinstance(timer_act, dict) else None
+                ),
+                "returncode": (
+                    timer_act.get("returncode") if isinstance(timer_act, dict) else None
+                ),
+            },
+        )
+    if not timer_act.get("inactive") or timer_act.get("active"):
+        _fail(
+            f"health timer not unambiguously inactive ({context})",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={"context": context, "timer_state": timer_act.get("state")},
+        )
+
+
 def _probe_unit_enablement(adapters: CutoverAdapters, unit: str) -> dict[str, Any]:
     if unit not in BOOT_POLICY_UNITS:
         _fail(
@@ -702,13 +825,7 @@ def _require_boot_policy_suppression_active(
     journal: CutoverJournal,
 ) -> None:
     """Fail closed unless persistent disablement is verified for both units."""
-    problem = _boot_policy_journal_fields_problem(journal)
-    if problem is not None:
-        _fail(
-            f"malformed maintenance boot policy ({problem})",
-            category=CutoverFailureCategory.SAFETY,
-            evidence={"boot_policy_problem": problem},
-        )
+    _require_coherent_boot_policy(journal, require_suppression_active=True)
     if journal.maintenance_boot_policy_active is not True:
         _fail(
             "maintenance boot policy not active",
@@ -741,18 +858,19 @@ def _require_boot_policy_suppression_active(
 
 
 def _should_restore_boot_policy(journal: CutoverJournal) -> bool:
-    """True when STOP_READERS established (or began) suppression that needs restore."""
-    if journal.maintenance_boot_policy_restored is True:
-        return True
-    if journal.maintenance_boot_policy_active is True:
-        return True
-    intent = journal.maintenance_boot_policy_intent
-    if isinstance(intent, dict) and intent.get("action") in {
-        BOOT_POLICY_SUPPRESS_ACTION,
-        BOOT_POLICY_RESTORE_ACTION,
-    }:
-        return True
-    return False
+    """True when coherent non-pristine lifecycle requires restore/verify.
+
+    Validates lifecycle **before** deciding to skip. Malformed / empty /
+    unknown intents fail closed rather than being treated as pristine.
+    """
+    lifecycle, problem = _boot_policy_lifecycle_for(journal)
+    if problem is not None or lifecycle is None:
+        _fail(
+            f"malformed maintenance boot policy ({problem or 'unknown'})",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={"boot_policy_problem": problem},
+        )
+    return boot_policy_requires_restoration(lifecycle)
 
 
 def _establish_boot_policy_suppression(
@@ -761,12 +879,15 @@ def _establish_boot_policy_suppression(
     journal_path: Path,
     *,
     inject: Callable[[str], None],
+    api_base_url: str | None = None,
 ) -> None:
     """Capture enablement, disable+verify timer then API, then stop both units.
 
     Crash after durable intent (or after either disable) leaves reconcilable
     journal state. Retry observes live enablement and continues; it never
-    overwrites a malformed or unrelated intent.
+    overwrites a malformed or unrelated intent. Inactivity verification uses
+    structured ``api_activity`` / ``health_timer_activity`` classifiers — never
+    binary ``service_state()``.
     """
     problem = _boot_policy_journal_fields_problem(journal)
     if problem is not None:
@@ -880,25 +1001,18 @@ def _establish_boot_policy_suppression(
         journal.maintenance_boot_policy_intent = intent
         write_journal(adapters, journal_path, journal)
 
-    # Stop and unambiguously verify inactive (activity, not enablement).
+    # Stop and unambiguously verify inactive via structured classifiers.
     adapters.stop_health_timer()
     adapters.stop_api()
-    services = adapters.service_state()
-    if services.api_active or services.health_timer_active:
-        _fail(
-            "services still active after stop",
-            category=CutoverFailureCategory.APPLY,
-        )
-    # Final enablement gate before marking policy active.
-    _probe_unit_enablement(adapters, API_HEALTH_TIMER)
-    timer_final = adapters.unit_enablement(API_HEALTH_TIMER)
-    api_final = adapters.unit_enablement(API_SERVICE)
-    if (
-        not isinstance(timer_final, dict)
-        or timer_final.get("disabled") is not True
-        or not isinstance(api_final, dict)
-        or api_final.get("disabled") is not True
-    ):
+    _require_readers_unambiguously_inactive(
+        adapters,
+        api_base_url=api_base_url,
+        context="stop_readers_after_stop",
+    )
+    # Final enablement gate — both probes go through consistency checks.
+    timer_final = _probe_unit_enablement(adapters, API_HEALTH_TIMER)
+    api_final = _probe_unit_enablement(adapters, API_SERVICE)
+    if timer_final.get("disabled") is not True or api_final.get("disabled") is not True:
         _fail(
             "units not persistently disabled before STOP_READERS completion",
             category=CutoverFailureCategory.SAFETY,
@@ -949,27 +1063,15 @@ def _restore_boot_policy(
 ) -> dict[str, Any]:
     """Exact enablement restoration (intent-before / verified-success-after).
 
-    Restores only the two maintenance units. Partial restoration retains typed
-    intent and must not claim COMPLETED / ABANDONED / successful abort.
+    Validates coherent lifecycle **before** deciding to skip. Restores only the
+    two maintenance units. Partial restoration retains typed intent and must not
+    claim COMPLETED / ABANDONED / successful abort.
     """
+    # Lifecycle validation precedes any skip decision (empty/unknown intents
+    # fail closed rather than looking pristine).
     if not _should_restore_boot_policy(journal):
         return {"boot_policy_restored": False, "boot_policy_skipped": True}
 
-    problem = _boot_policy_journal_fields_problem(journal)
-    if problem is not None:
-        _fail(
-            f"malformed maintenance boot policy before restore ({problem})",
-            category=CutoverFailureCategory.SAFETY,
-            evidence={"boot_policy_problem": problem},
-        )
-    if (
-        not _is_exact_bool(journal.pre_maintenance_api_enabled)
-        or not _is_exact_bool(journal.pre_maintenance_health_timer_enabled)
-    ):
-        _fail(
-            "pre-maintenance enablement missing before restore",
-            category=CutoverFailureCategory.SAFETY,
-        )
     want_api = bool(journal.pre_maintenance_api_enabled)
     want_timer = bool(journal.pre_maintenance_health_timer_enabled)
 
@@ -979,6 +1081,7 @@ def _restore_boot_policy(
             adapters, API_HEALTH_TIMER, want_enabled=want_timer
         )
         _restore_one_unit_enablement(adapters, API_SERVICE, want_enabled=want_api)
+        _require_coherent_boot_policy(journal, require_restored=True)
         return {
             "boot_policy_restored": True,
             "pre_maintenance_api_enabled": want_api,
@@ -986,33 +1089,13 @@ def _restore_boot_policy(
         }
 
     intent = journal.maintenance_boot_policy_intent
-    if intent is not None:
-        ip = boot_policy_intent_problem(intent, maintenance_id=journal.maintenance_id)
-        if ip is not None:
-            _fail(
-                f"malformed boot policy intent before restore ({ip})",
-                category=CutoverFailureCategory.SAFETY,
-                evidence={"boot_policy_intent_problem": ip},
-            )
-        if intent.get("action") not in {
-            BOOT_POLICY_SUPPRESS_ACTION,
-            BOOT_POLICY_RESTORE_ACTION,
-        }:
-            _fail(
-                "unrelated boot policy intent; refusing restore mutation",
-                category=CutoverFailureCategory.SAFETY,
-            )
-        if (
-            intent.get("api_was_enabled") != want_api
-            or intent.get("timer_was_enabled") != want_timer
-        ):
-            _fail(
-                "boot policy intent disagrees with journal pre-enablement on restore",
-                category=CutoverFailureCategory.SAFETY,
-            )
+    assert isinstance(intent, dict)
 
     # Intent-before: typed restore intent (or upgrade suppress → restore).
-    if not isinstance(intent, dict) or intent.get("action") != BOOT_POLICY_RESTORE_ACTION:
+    # Keep active=True throughout restoration_in_progress (even if suppress
+    # crashed before the active flag was set).
+    if intent.get("action") != BOOT_POLICY_RESTORE_ACTION:
+        journal.maintenance_boot_policy_active = True
         journal.maintenance_boot_policy_intent = {
             "action": BOOT_POLICY_RESTORE_ACTION,
             "maintenance_id": journal.maintenance_id,
@@ -1023,18 +1106,12 @@ def _restore_boot_policy(
         }
         write_journal(adapters, journal_path, journal)
         inject("boot_policy_restore_intent")
-    else:
-        # Retry: keep existing restore intent; advance phase as needed.
-        pass
 
     intent = journal.maintenance_boot_policy_intent
     assert isinstance(intent, dict)
-    phase = intent.get("phase")
-    if phase in {"restore_timer", "restore_api", "verified"} or phase == "active" or (
-        isinstance(intent.get("action"), str)
-        and intent.get("action") == BOOT_POLICY_RESTORE_ACTION
-    ):
-        pass
+    if journal.maintenance_boot_policy_active is not True:
+        journal.maintenance_boot_policy_active = True
+        write_journal(adapters, journal_path, journal)
 
     # Restore timer first, then API (same order as suppress).
     if intent.get("phase") != "verified":
@@ -1072,6 +1149,7 @@ def _restore_boot_policy(
         write_journal(adapters, journal_path, journal)
         inject("boot_policy_restored")
 
+    _require_coherent_boot_policy(journal, require_restored=True)
     return {
         "boot_policy_restored": True,
         "pre_maintenance_api_enabled": want_api,
@@ -3617,7 +3695,11 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                 )
                 write_journal(adapters, journal_path, journal)
             _establish_boot_policy_suppression(
-                adapters, journal, journal_path, inject=_inject
+                adapters,
+                journal,
+                journal_path,
+                inject=_inject,
+                api_base_url=opts.api_base_url,
             )
             journal.stage = stage.value
             write_journal(adapters, journal_path, journal)
@@ -3635,12 +3717,11 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
             _expect_journal_stage(journal, CutoverStage.STOP_READERS)
             _require_boot_policy_suppression_active(adapters, journal)
             _assert_writers_quiesced(adapters, production)
-            services = adapters.service_state()
-            if services.api_active or services.health_timer_active:
-                _fail(
-                    "API/health must be stopped before WAL quiesce",
-                    category=CutoverFailureCategory.SAFETY,
-                )
+            _require_readers_unambiguously_inactive(
+                adapters,
+                api_base_url=opts.api_base_url,
+                context="quiesce_wal_before_checkpoint",
+            )
             before = adapters.wal_state(production)
             result = adapters.checkpoint_wal(production)
             after = adapters.wal_state(production)
@@ -3651,12 +3732,11 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                 )
             # Recheck barriers after checkpoint.
             _assert_writers_quiesced(adapters, production)
-            services = adapters.service_state()
-            if services.api_active or services.health_timer_active:
-                _fail(
-                    "services reappeared after checkpoint",
-                    category=CutoverFailureCategory.SAFETY,
-                )
+            _require_readers_unambiguously_inactive(
+                adapters,
+                api_base_url=opts.api_base_url,
+                context="quiesce_wal_after_checkpoint",
+            )
             journal.wal_quiesced = True
             journal.production_fingerprint = adapters.fingerprint(production)
             journal.stage = stage.value
@@ -4329,14 +4409,14 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
             boot = _restore_boot_policy(
                 adapters, journal, journal_path, inject=_inject
             )
-            if _should_restore_boot_policy(journal) and (
-                journal.maintenance_boot_policy_restored is not True
-            ):
+            if boot.get("boot_policy_skipped"):
                 _fail(
-                    "refusing COMPLETED without verified boot-policy restoration",
+                    "refusing COMPLETED with pristine boot policy "
+                    "(STOP_READERS never established suppression)",
                     category=CutoverFailureCategory.SAFETY,
                     evidence={"boot_policy": boot},
                 )
+            _require_coherent_boot_policy(journal, require_restored=True)
             journal.stage = stage.value
             write_journal(adapters, journal_path, journal)
             return _stage_report(
@@ -5471,20 +5551,8 @@ def _rollback_finalize_terminal_state(journal: CutoverJournal) -> str:
         and _rollback_sidecar_proof_problem(journal.rollback_sidecar_proof) is None
         and _is_exact_bool(journal.pre_maintenance_api_active)
         and _is_exact_bool(journal.pre_maintenance_health_timer_active)
-        # PR-D: when STOP_READERS established (or began) suppression, terminal
-        # ABANDONED requires verified enablement restoration.
-        and (
-            not _should_restore_boot_policy(journal)
-            or journal.maintenance_boot_policy_restored is True
-        )
-        and (
-            not _should_restore_boot_policy(journal)
-            or (
-                _is_exact_bool(journal.pre_maintenance_api_enabled)
-                and _is_exact_bool(journal.pre_maintenance_health_timer_enabled)
-                and journal.maintenance_boot_policy_active is False
-            )
-        )
+        # PR-D: terminal ABANDONED requires coherent verified restoration.
+        and _boot_policy_lifecycle_for(journal) == (LIFECYCLE_RESTORED, None)
     )
     return "coherent_abandoned" if coherent else "mixed"
 
@@ -6420,6 +6488,23 @@ def rollback_finalize(opts: CutoverOptions) -> dict[str, Any]:
                 evidence={"boolean_problem": bool_problem},
             )
 
+        # PR-D: validate coherent boot-policy lifecycle BEFORE any stop/start /
+        # service-intent reconciliation / enable / disable. Malformed state is
+        # a sanitized hard refusal with zero service/enablement mutation.
+        bp_lifecycle, bp_problem = _boot_policy_lifecycle_for(journal)
+        if bp_problem is not None or bp_lifecycle is None:
+            _fail(
+                f"malformed maintenance boot policy ({bp_problem or 'unknown'})",
+                category=CutoverFailureCategory.SAFETY,
+                evidence={"boot_policy_problem": bp_problem},
+            )
+        if bp_lifecycle == LIFECYCLE_PRISTINE:
+            _fail(
+                "maintenance boot policy looks pristine after STOP_READERS began",
+                category=CutoverFailureCategory.SAFETY,
+                evidence={"boot_policy_lifecycle": bp_lifecycle},
+            )
+
         # Malformed rollback_intent (present but not a typed object) routes to
         # sanitized manual recovery; presence alone already locks other entrypoints.
         if journal.rollback_intent is not None and not isinstance(
@@ -6910,14 +6995,17 @@ def rollback_finalize(opts: CutoverOptions) -> dict[str, Any]:
         boot = _restore_boot_policy(
             adapters, journal, journal_path, inject=_inject
         )
-        if (
-            not boot.get("boot_policy_skipped")
-            and journal.maintenance_boot_policy_restored is not True
+        if boot.get("boot_policy_skipped") or (
+            journal.maintenance_boot_policy_restored is not True
         ):
             _manual(
                 "boot_policy_restore_incomplete",
                 evidence={"boot_policy": boot},
             )
+        try:
+            _require_coherent_boot_policy(journal, require_restored=True)
+        except CutoverError:
+            _manual("boot_policy_restore_incoherent")
         _inject("rollback_finalize_boot_policy_restored")
 
         # (9) verify main + present required sidecars writable before any resume.
@@ -7153,6 +7241,10 @@ def abort_before_swap(opts: CutoverOptions) -> dict[str, Any]:
                 category=CutoverFailureCategory.SAFETY,
             )
 
+        # PR-D: validate coherent boot-policy lifecycle BEFORE any stop/start /
+        # enable/disable. Pristine is allowed only when STOP_READERS never began.
+        lifecycle = _require_coherent_boot_policy(journal, allow_pristine=True)
+
         # Stop readers (idempotent).
         adapters.stop_health_timer()
         adapters.stop_api()
@@ -7222,15 +7314,18 @@ def abort_before_swap(opts: CutoverOptions) -> dict[str, Any]:
         boot = _restore_boot_policy(
             adapters, journal, journal_path, inject=_inject
         )
-        if (
-            not boot.get("boot_policy_skipped")
-            and journal.maintenance_boot_policy_restored is not True
-        ):
-            _fail(
-                "refusing abort completion without verified boot-policy restoration",
-                category=CutoverFailureCategory.SAFETY,
-                evidence={"boot_policy": boot},
-            )
+        if boot.get("boot_policy_skipped"):
+            if lifecycle != LIFECYCLE_PRISTINE:
+                _fail(
+                    "abort boot-policy skip refused for non-pristine lifecycle",
+                    category=CutoverFailureCategory.SAFETY,
+                    evidence={
+                        "boot_policy": boot,
+                        "boot_policy_lifecycle": lifecycle,
+                    },
+                )
+        else:
+            _require_coherent_boot_policy(journal, require_restored=True)
 
         for path in (mail_pause_path(reports), mirror_pause_path(reports)):
             if adapters.path_exists(path):
