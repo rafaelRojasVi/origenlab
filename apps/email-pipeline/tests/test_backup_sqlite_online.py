@@ -926,3 +926,73 @@ def test_tests_never_use_production_path(tmp_path: Path) -> None:
     )
     assert manifest["source_basename"] == "only_synth.sqlite"
     assert str(PRODUCTION_SQLITE) not in json.dumps(manifest)
+
+
+def test_standalone_backup_without_observation_still_completes(
+    synth_dirs: tuple[Path, Path, Path],
+) -> None:
+    """PR-E: observation remains optional for the standalone utility."""
+    src_dir, dst_dir, lock_dir = synth_dirs
+    source = src_dir / "source.sqlite"
+    dest = dst_dir / "copy.sqlite"
+    _build_wal_db(source, rows=30)
+    manifest = run_online_backup(
+        _opts(source, dest, lock_dir=lock_dir, pages_per_batch=8)
+    )
+    assert manifest["completed"] is True
+    assert "fd_observation" not in manifest
+    assert backup_is_completed(dest)
+
+
+def test_cli_prints_operational_error_fields_without_hostile_text(
+    synth_dirs: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import io
+    import importlib.util
+    from contextlib import redirect_stderr
+
+    from origenlab_email_pipeline.qa.sqlite_online_backup import (
+        BACKUP_PHASE_COPY,
+        operational_error_to_backup_error,
+    )
+
+    src_dir, dst_dir, _lock = synth_dirs
+    source = src_dir / "source.sqlite"
+    dest = dst_dir / "copy.sqlite"
+    _build_wal_db(source, rows=5)
+    hostile = sqlite3.OperationalError(
+        "disk I/O at /home/rafael/secret.sqlite token=sk_live_ABC "
+        "user@x.com SELECT * FROM t"
+    )
+    hostile.sqlite_errorcode = 10  # type: ignore[attr-defined]
+    hostile.sqlite_errorname = "SQLITE_IOERR"  # type: ignore[attr-defined]
+    err = operational_error_to_backup_error(hostile, phase=BACKUP_PHASE_COPY)
+
+    spec = importlib.util.spec_from_file_location("backup_cli_pre_e", SCRIPT)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    monkeypatch.setattr(
+        mod, "run_online_backup", lambda _opts: (_ for _ in ()).throw(err)
+    )
+    buf = io.StringIO()
+    with redirect_stderr(buf):
+        code = mod.main(
+            [
+                "--source",
+                str(source),
+                "--destination",
+                str(dest),
+                "--apply",
+                "--allow-same-filesystem",
+            ]
+        )
+    err_text = buf.getvalue()
+    assert code == 2
+    assert "operational_error" in err_text
+    assert "category=io_error" in err_text
+    assert "/home/rafael" not in err_text
+    assert "sk_live" not in err_text
+    assert "user@x.com" not in err_text
+    assert "SELECT *" not in err_text
