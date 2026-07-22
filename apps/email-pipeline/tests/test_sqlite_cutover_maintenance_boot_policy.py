@@ -228,7 +228,10 @@ def _run_through(
         (0, "enabled-runtime", False, False, True),
         (0, "", False, False, True),
         (1, None, False, False, True),
-        (0, "ENABLED", True, False, False),  # case-normalized
+        (0, "ENABLED", False, False, True),  # no case normalization
+        (0, "Enabled", False, False, True),
+        (1, "DISABLED", False, False, True),
+        (0, "  enabled  ", True, False, False),  # trim only
         (2, "activating", False, False, True),
     ],
 )
@@ -244,8 +247,42 @@ def test_enablement_classifier_matrix(
     assert result["disabled"] is disabled
     assert result["ambiguous"] is ambiguous
     # Never treat "nonzero means disabled" as a binary rule without exact text.
-    if returncode != 0 and (text or "").strip().lower() != "disabled":
+    if returncode != 0 and (text or "").strip() != "disabled":
         assert result["disabled"] is False
+
+
+def test_sanitized_status_allowlists_action_phase_only() -> None:
+    status = sanitized_boot_policy_status(
+        api_enabled=True,
+        timer_enabled=False,
+        intent={
+            "action": "suppress",
+            "phase": "active",
+            "maintenance_id": MID,
+            "started_at_utc": "2026-07-21T00:00:00Z",
+            "api_was_enabled": True,
+            "timer_was_enabled": False,
+        },
+        active=True,
+        restored=False,
+    )
+    assert status["intent_action"] == "suppress"
+    assert status["intent_phase"] == "active"
+    bad = sanitized_boot_policy_status(
+        api_enabled=True,
+        timer_enabled=False,
+        intent={
+            "action": "systemctl --user enable /home/secret",
+            "phase": "/home/rafael/dev/freelance/origenlab/x",
+        },
+        active=True,
+        restored=False,
+    )
+    assert bad["intent_action"] is None
+    assert bad["intent_phase"] is None
+    blob = json.dumps(bad)
+    assert "/home/" not in blob
+    assert "systemctl" not in blob
 
 
 def test_sanitized_boot_policy_status_has_no_paths() -> None:
@@ -692,3 +729,427 @@ def test_malformed_journal_booleans_block_quiesce(tmp_path: Path) -> None:
 def test_units_constants_match() -> None:
     assert BOOT_POLICY_API_UNIT == API_SERVICE
     assert BOOT_POLICY_TIMER_UNIT == API_HEALTH_TIMER
+
+
+# --- Residual 1: structured inactivity gate -----------------------------------
+
+
+def test_stop_succeeds_but_api_still_running_refuses_active(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    world.refuse_stop_api = True
+    fp = _pause(world, prod, reports, fp, root)
+    with pytest.raises(CutoverError) as exc:
+        _stop_readers(world, prod, reports, fp, root)
+    assert "stopped" in str(exc.value).lower() or "api" in str(exc.value).lower()
+    j = _journal(world, prod)
+    assert j["maintenance_boot_policy_active"] is not True
+    assert j["stage"] == CutoverStage.PAUSE_WRITERS.value
+
+
+def test_api_activity_ambiguous_refuses_stop_readers(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    world.api_activity_override = {
+        "is_active_text": "unknown-state",
+        "main_pid": 0,
+        "listener_present": False,
+        "sub_state": "dead",
+    }
+    fp = _pause(world, prod, reports, fp, root)
+    with pytest.raises(CutoverError) as exc:
+        _stop_readers(world, prod, reports, fp, root)
+    assert "ambiguous" in str(exc.value).lower()
+    assert _journal(world, prod)["maintenance_boot_policy_active"] is not True
+    assert _journal(world, prod)["stage"] == CutoverStage.PAUSE_WRITERS.value
+
+
+@pytest.mark.parametrize(
+    "timer_override",
+    [
+        {"returncode": 127, "is_active_text": "inactive"},
+        {"returncode": 0, "is_active_text": ""},
+        {"returncode": 0, "is_active_text": "failed"},
+        {"returncode": 0, "is_active_text": "activating"},
+        {"returncode": 0, "is_active_text": "deactivating"},
+        {"returncode": 0, "is_active_text": "reloading"},
+        {"returncode": 0, "is_active_text": "unknown"},
+    ],
+)
+def test_timer_probe_failures_refuse_stop_readers(
+    tmp_path: Path, timer_override: dict
+) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    world.health_timer_activity_override = timer_override
+    fp = _pause(world, prod, reports, fp, root)
+    with pytest.raises(CutoverError):
+        _stop_readers(world, prod, reports, fp, root)
+    j = _journal(world, prod)
+    assert j["maintenance_boot_policy_active"] is not True
+    assert j["stage"] == CutoverStage.PAUSE_WRITERS.value
+
+
+def test_api_reappears_before_checkpoint_refuses(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    live = _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.QUIESCE_WAL
+    )
+    world.services.api_active = True
+    world.lock_records = []
+    world.fd_hits = []
+    with pytest.raises(CutoverError) as exc:
+        apply_stage(
+            _opts(
+                world,
+                prod,
+                reports,
+                live,
+                stage=CutoverStage.QUIESCE_WAL,
+                apply=True,
+                backup=_paths(root)[0],
+                staging=_paths(root)[1],
+            )
+        )
+    assert "stopped" in str(exc.value).lower() or "api" in str(exc.value).lower()
+    assert _journal(world, prod)["stage"] == CutoverStage.STOP_READERS.value
+    assert _journal(world, prod).get("wal_quiesced") is not True
+
+
+def test_timer_reappears_after_checkpoint_refuses(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    live = _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.QUIESCE_WAL
+    )
+    world.lock_records = []
+    world.fd_hits = []
+    world.health_timer_activity_override = [
+        {"returncode": 0, "is_active_text": "inactive"},
+        {"returncode": 0, "is_active_text": "active"},
+    ]
+    with pytest.raises(CutoverError) as exc:
+        apply_stage(
+            _opts(
+                world,
+                prod,
+                reports,
+                live,
+                stage=CutoverStage.QUIESCE_WAL,
+                apply=True,
+                backup=_paths(root)[0],
+                staging=_paths(root)[1],
+            )
+        )
+    assert "timer" in str(exc.value).lower() or "inactive" in str(exc.value).lower()
+    assert _journal(world, prod)["stage"] == CutoverStage.STOP_READERS.value
+    assert _journal(world, prod).get("wal_quiesced") is not True
+
+
+# --- Residual 2: coherent lifecycle before skip/mutation ----------------------
+
+
+def _active_suppress_intent() -> dict:
+    return {
+        "action": "suppress",
+        "maintenance_id": MID,
+        "started_at_utc": "2026-07-21T00:00:00Z",
+        "api_was_enabled": True,
+        "timer_was_enabled": True,
+        "phase": "active",
+    }
+
+
+def _verified_restore_intent() -> dict:
+    return {
+        "action": "restore",
+        "maintenance_id": MID,
+        "started_at_utc": "2026-07-21T00:00:00Z",
+        "api_was_enabled": True,
+        "timer_was_enabled": True,
+        "phase": "verified",
+    }
+
+
+def test_empty_intent_at_completed_refuses(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    live = _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.COMPLETED
+    )
+    _edit_journal(world, prod, maintenance_boot_policy_intent={})
+    with pytest.raises(CutoverError):
+        apply_stage(
+            _opts(
+                world,
+                prod,
+                reports,
+                live,
+                stage=CutoverStage.COMPLETED,
+                apply=True,
+                backup=_paths(root)[0],
+                staging=_paths(root)[1],
+            )
+        )
+    assert _journal(world, prod)["stage"] != CutoverStage.COMPLETED.value
+
+
+def test_wrong_mid_intent_at_completed_refuses(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    live = _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.COMPLETED
+    )
+    intent = _active_suppress_intent()
+    intent["maintenance_id"] = "wrong-mid"
+    _edit_journal(world, prod, maintenance_boot_policy_intent=intent)
+    with pytest.raises(CutoverError):
+        apply_stage(
+            _opts(
+                world,
+                prod,
+                reports,
+                live,
+                stage=CutoverStage.COMPLETED,
+                apply=True,
+                backup=_paths(root)[0],
+                staging=_paths(root)[1],
+            )
+        )
+    assert _journal(world, prod)["stage"] != CutoverStage.COMPLETED.value
+
+
+def test_cleared_prd_fields_at_resume_commit_refuses(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    live = _run_through(
+        world,
+        prod,
+        reports,
+        fp,
+        root,
+        stop_before=CutoverStage.RESUME_WRITERS_COMMIT,
+    )
+    _edit_journal(
+        world,
+        prod,
+        maintenance_boot_policy_intent=None,
+        pre_maintenance_api_enabled=None,
+        pre_maintenance_health_timer_enabled=None,
+        maintenance_boot_policy_active=False,
+        maintenance_boot_policy_restored=False,
+    )
+    with pytest.raises(CutoverError) as exc:
+        apply_stage(
+            _opts(
+                world,
+                prod,
+                reports,
+                live,
+                stage=CutoverStage.RESUME_WRITERS_COMMIT,
+                apply=True,
+                backup=_paths(root)[0],
+                staging=_paths(root)[1],
+            )
+        )
+    assert "pristine" in str(exc.value).lower() or "boot" in str(exc.value).lower()
+    assert _journal(world, prod)["stage"] != CutoverStage.RESUME_WRITERS_COMMIT.value
+
+
+def test_active_and_restored_both_true_refuses(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    live = _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.COMPLETED
+    )
+    _edit_journal(
+        world,
+        prod,
+        maintenance_boot_policy_active=True,
+        maintenance_boot_policy_restored=True,
+        maintenance_boot_policy_intent=_verified_restore_intent(),
+    )
+    with pytest.raises(CutoverError):
+        apply_stage(
+            _opts(
+                world,
+                prod,
+                reports,
+                live,
+                stage=CutoverStage.COMPLETED,
+                apply=True,
+                backup=_paths(root)[0],
+                staging=_paths(root)[1],
+            )
+        )
+    assert _journal(world, prod)["stage"] != CutoverStage.COMPLETED.value
+
+
+def test_restored_with_suppress_intent_refuses(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    live = _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.COMPLETED
+    )
+    _edit_journal(
+        world,
+        prod,
+        maintenance_boot_policy_active=False,
+        maintenance_boot_policy_restored=True,
+        maintenance_boot_policy_intent=_active_suppress_intent(),
+    )
+    with pytest.raises(CutoverError):
+        apply_stage(
+            _opts(
+                world,
+                prod,
+                reports,
+                live,
+                stage=CutoverStage.COMPLETED,
+                apply=True,
+                backup=_paths(root)[0],
+                staging=_paths(root)[1],
+            )
+        )
+    assert _journal(world, prod)["stage"] != CutoverStage.COMPLETED.value
+
+
+def test_verified_phase_with_restored_false_refuses(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    live = _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.COMPLETED
+    )
+    _edit_journal(
+        world,
+        prod,
+        maintenance_boot_policy_active=True,
+        maintenance_boot_policy_restored=False,
+        maintenance_boot_policy_intent=_verified_restore_intent(),
+    )
+    with pytest.raises(CutoverError):
+        apply_stage(
+            _opts(
+                world,
+                prod,
+                reports,
+                live,
+                stage=CutoverStage.COMPLETED,
+                apply=True,
+                backup=_paths(root)[0],
+                staging=_paths(root)[1],
+            )
+        )
+    assert _journal(world, prod)["stage"] != CutoverStage.COMPLETED.value
+
+
+# --- Residual 3: validate before abort/finalize service mutation --------------
+
+
+def test_abort_malformed_boolean_zero_service_mutation(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    live = _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.ATOMIC_SWAP
+    )
+    _edit_journal(world, prod, maintenance_boot_policy_active="yes")
+    world.systemctl_calls.clear()
+    before_api = world.api_enabled
+    before_timer = world.health_timer_enabled
+    before_active = (world.services.api_active, world.services.health_timer_active)
+    with pytest.raises(CutoverError):
+        abort_before_swap(
+            _opts(
+                world,
+                prod,
+                reports,
+                live,
+                stage=CutoverStage.PAUSE_WRITERS,
+                apply=True,
+            )
+        )
+    assert world.api_enabled is before_api
+    assert world.health_timer_enabled is before_timer
+    assert (
+        world.services.api_active,
+        world.services.health_timer_active,
+    ) == before_active
+    assert not any(
+        c[1] in {"enable", "disable", "start", "stop"} for c in world.systemctl_calls
+    )
+
+
+def test_abort_empty_intent_zero_service_mutation(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    live = _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.ATOMIC_SWAP
+    )
+    _edit_journal(world, prod, maintenance_boot_policy_intent={})
+    world.systemctl_calls.clear()
+    before = (world.api_enabled, world.health_timer_enabled, world.services.api_active)
+    with pytest.raises(CutoverError):
+        abort_before_swap(
+            _opts(
+                world,
+                prod,
+                reports,
+                live,
+                stage=CutoverStage.PAUSE_WRITERS,
+                apply=True,
+            )
+        )
+    assert (
+        world.api_enabled,
+        world.health_timer_enabled,
+        world.services.api_active,
+    ) == before
+    assert not any(
+        c[1] in {"enable", "disable", "start", "stop"} for c in world.systemctl_calls
+    )
+
+
+def test_finalize_malformed_intent_zero_enablement_mutation(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    backup, staging = _paths(root)
+    live = _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.READONLY_SMOKE
+    )
+    j = _journal(world, prod)
+    old_fp = j["approved_plan"]["production_fingerprint"]
+    new_fp = j["production_fingerprint"]
+    attempt_rollback_before_writers(
+        _opts(
+            world,
+            prod,
+            reports,
+            live,
+            stage=CutoverStage.ATOMIC_SWAP,
+            apply=True,
+            approve_swap=True,
+            backup=backup,
+            staging=staging,
+        ),
+        expected_old_fingerprint=old_fp,
+        expected_new_fingerprint=new_fp,
+    )
+    _edit_journal(
+        world,
+        prod,
+        maintenance_boot_policy_intent={
+            "action": "not-a-real-action",
+            "maintenance_id": MID,
+            "started_at_utc": "2026-07-21T00:00:00Z",
+            "api_was_enabled": True,
+            "timer_was_enabled": True,
+            "phase": "active",
+        },
+    )
+    world.systemctl_calls.clear()
+    before = (world.api_enabled, world.health_timer_enabled)
+    with pytest.raises(CutoverError) as exc:
+        rollback_finalize(
+            _opts(
+                world,
+                prod,
+                reports,
+                old_fp,
+                stage=CutoverStage.ATOMIC_SWAP,
+                apply=True,
+                approve_swap=True,
+                backup=backup,
+                staging=staging,
+            )
+        )
+    assert "malformed" in str(exc.value).lower() or "boot" in str(exc.value).lower()
+    assert (world.api_enabled, world.health_timer_enabled) == before
+    assert not any(c[1] in {"enable", "disable"} for c in world.systemctl_calls)
+    assert "MANUAL_RECOVERY" not in str(exc.value)
