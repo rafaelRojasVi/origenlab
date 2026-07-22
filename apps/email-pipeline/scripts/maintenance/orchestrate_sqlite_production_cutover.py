@@ -33,6 +33,7 @@ from origenlab_email_pipeline.qa.sqlite_production_cutover import (
     apply_stage,
     attempt_rollback_before_writers,
     plan_preflight,
+    rollback_finalize,
 )
 
 
@@ -102,6 +103,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Abort before swap intent/exchange; restore perms/services/markers",
     )
     p.add_argument(
+        "--rollback-finalize",
+        action="store_true",
+        help=(
+            "Finalize a verified pre-PoNR rollback into terminal ABANDONED "
+            "(never COMPLETED). Requires --apply and the full production approval "
+            "contract; mutually exclusive with --stage cutover application, "
+            "--abort-before-swap, and --rollback-before-writers"
+        ),
+    )
+    p.add_argument(
         "--pre-cutover-path",
         type=Path,
         default=None,
@@ -131,7 +142,28 @@ def main(argv: list[str] | None = None) -> int:
             reports_dir=args.reports_dir,
             api_base_url=str(args.api_base_url),
         )
-        if args.abort_before_swap:
+        mutually_exclusive = [
+            ("--abort-before-swap", bool(args.abort_before_swap)),
+            ("--rollback-before-writers", bool(args.rollback_before_writers)),
+            ("--rollback-finalize", bool(args.rollback_finalize)),
+        ]
+        selected = [name for name, on in mutually_exclusive if on]
+        if len(selected) > 1:
+            print(
+                f"error: {' and '.join(selected)} are mutually exclusive",
+                file=sys.stderr,
+            )
+            return 2
+        if args.rollback_finalize and args.stage != CutoverStage.PLAN_PREFLIGHT.value:
+            print(
+                "error: --rollback-finalize does not take --stage "
+                "(it is a dedicated operation, not a cutover stage)",
+                file=sys.stderr,
+            )
+            return 2
+        if args.rollback_finalize:
+            report = rollback_finalize(opts)
+        elif args.abort_before_swap:
             report = abort_before_swap(opts)
         elif args.rollback_before_writers:
             report = attempt_rollback_before_writers(
