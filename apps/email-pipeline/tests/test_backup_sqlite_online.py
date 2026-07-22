@@ -926,3 +926,353 @@ def test_tests_never_use_production_path(tmp_path: Path) -> None:
     )
     assert manifest["source_basename"] == "only_synth.sqlite"
     assert str(PRODUCTION_SQLITE) not in json.dumps(manifest)
+
+
+def test_standalone_backup_without_observation_still_completes(
+    synth_dirs: tuple[Path, Path, Path],
+) -> None:
+    """PR-E: observation remains optional for the standalone utility."""
+    src_dir, dst_dir, lock_dir = synth_dirs
+    source = src_dir / "source.sqlite"
+    dest = dst_dir / "copy.sqlite"
+    _build_wal_db(source, rows=30)
+    manifest = run_online_backup(
+        _opts(source, dest, lock_dir=lock_dir, pages_per_batch=8)
+    )
+    assert manifest["completed"] is True
+    assert "fd_observation" not in manifest
+    assert backup_is_completed(dest)
+
+
+def test_cli_prints_operational_error_fields_without_hostile_text(
+    synth_dirs: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import io
+    import importlib.util
+    from contextlib import redirect_stderr
+
+    from origenlab_email_pipeline.qa.sqlite_online_backup import (
+        BACKUP_PHASE_COPY,
+        operational_error_to_backup_error,
+    )
+
+    src_dir, dst_dir, _lock = synth_dirs
+    source = src_dir / "source.sqlite"
+    dest = dst_dir / "copy.sqlite"
+    _build_wal_db(source, rows=5)
+    hostile = sqlite3.OperationalError(
+        "disk I/O at /home/rafael/secret.sqlite token=origenlab_test_token_ABC "
+        "user@x.com SELECT * FROM t"
+    )
+    hostile.sqlite_errorcode = 10  # type: ignore[attr-defined]
+    hostile.sqlite_errorname = "SQLITE_IOERR"  # type: ignore[attr-defined]
+    err = operational_error_to_backup_error(hostile, phase=BACKUP_PHASE_COPY)
+
+    spec = importlib.util.spec_from_file_location("backup_cli_pre_e", SCRIPT)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    monkeypatch.setattr(
+        mod, "run_online_backup", lambda _opts: (_ for _ in ()).throw(err)
+    )
+    buf = io.StringIO()
+    with redirect_stderr(buf):
+        code = mod.main(
+            [
+                "--source",
+                str(source),
+                "--destination",
+                str(dest),
+                "--apply",
+                "--allow-same-filesystem",
+            ]
+        )
+    err_text = buf.getvalue()
+    assert code == 2
+    assert "operational_error" in err_text
+    assert "category=io_error" in err_text
+    assert "/home/rafael" not in err_text
+    assert "origenlab_test_token" not in err_text
+    assert "user@x.com" not in err_text
+    assert "SELECT *" not in err_text
+
+
+def _completed_cli_source() -> dict:
+    return {
+        "schema_version": 1,
+        "completed": True,
+        "method": "sqlite3.Connection.backup",
+        "elapsed_seconds": 1.5,
+        "source_size_bytes": 100,
+        "destination_size_bytes": 100,
+        "pages_per_batch": 4096,
+        "progress_events": 2,
+        "allow_same_filesystem": True,
+        "publication_method": "hardlink_no_clobber",
+        "destination_verification": "mode=ro&immutable=1",
+        "directory_fsync_supported": True,
+        "source_opened_readonly": True,
+        "source_mutated_by_utility": False,
+        "source_fingerprint_changed_during_backup": False,
+        "verification": "header+query_only+cheap_pragmas+schema_inventory",
+        "completion_marker": "final_manifest",
+    }
+
+
+def test_build_safe_cli_json_report_preflight_allowlist(
+    synth_dirs: tuple[Path, Path, Path],
+) -> None:
+    from origenlab_email_pipeline.qa.sqlite_online_backup import build_safe_cli_json_report
+
+    src_dir, dst_dir, lock_dir = synth_dirs
+    source = src_dir / "source.sqlite"
+    dest = dst_dir / "copy.sqlite"
+    _build_wal_db(source, rows=5)
+    raw = run_online_backup(_opts(source, dest, lock_dir=lock_dir, apply=False))
+    report = build_safe_cli_json_report(raw)
+    assert report["mode"] == "preflight"
+    assert report["writes_performed"] is False
+    assert report["completed"] is False
+    assert report["pages_per_batch"] == DEFAULT_PAGES_PER_BATCH or report[
+        "pages_per_batch"
+    ] == 5
+    assert "source_basename" not in report
+    assert "destination_basename" not in report
+    assert "source_meta" not in report
+    assert "notes" not in report
+    assert "secret" not in json.dumps(report)
+
+
+def test_build_safe_cli_json_report_completed_allowlist(
+    synth_dirs: tuple[Path, Path, Path],
+) -> None:
+    from origenlab_email_pipeline.qa.sqlite_online_backup import build_safe_cli_json_report
+
+    src_dir, dst_dir, lock_dir = synth_dirs
+    source = src_dir / "source.sqlite"
+    dest = dst_dir / "copy.sqlite"
+    _build_wal_db(source, rows=20)
+    raw = run_online_backup(_opts(source, dest, lock_dir=lock_dir, pages_per_batch=4))
+    report = build_safe_cli_json_report(raw)
+    assert report["mode"] == "completed"
+    assert report["completed"] is True
+    assert report["method"] == "sqlite3.Connection.backup"
+    for forbidden in (
+        "source_basename",
+        "destination_basename",
+        "source_fingerprint_before",
+        "source_fingerprint_after",
+        "warnings",
+        "notes",
+        "source_meta",
+        "destination_meta",
+        "device",
+        "inode",
+        "pid",
+        "started_at_utc",
+        "finished_at_utc",
+        "python_version",
+        "sqlite_version",
+    ):
+        assert forbidden not in report
+        assert forbidden not in json.dumps(report)
+
+
+def test_build_safe_cli_json_report_omits_unknown_keys() -> None:
+    from origenlab_email_pipeline.qa.sqlite_online_backup import build_safe_cli_json_report
+
+    raw = {
+        "mode": "preflight",
+        "apply": False,
+        "completed": False,
+        "writes_performed": False,
+        "source_opened_with_sqlite3": False,
+        "source_size_bytes": 1,
+        "estimated_output_bytes": 1,
+        "destination_free_bytes": 10,
+        "capacity_required_bytes": 2,
+        "filesystem_separated": True,
+        "allow_same_filesystem": False,
+        "pages_per_batch": 4096,
+        "busy_timeout_ms": 30_000,
+        "future_secret_field": "sk_should_never_appear",
+        "nested": {"token": "origenlab_test_token_LEAK"},
+    }
+    report = build_safe_cli_json_report(raw)
+    blob = json.dumps(report)
+    assert "future_secret_field" not in report
+    assert "nested" not in report
+    assert "sk_should_never_appear" not in blob
+    assert "origenlab_test_token_LEAK" not in blob
+
+
+def test_build_safe_cli_json_report_rejects_hostile_string_fields() -> None:
+    from origenlab_email_pipeline.qa.sqlite_online_backup import (
+        BackupError,
+        build_safe_cli_json_report,
+    )
+
+    hostile = "/home/rafael/secret.sqlite user@x.com SELECT * token=origenlab_test_token"
+    base = _completed_cli_source()
+    for field in (
+        "method",
+        "publication_method",
+        "destination_verification",
+        "verification",
+        "completion_marker",
+    ):
+        poisoned = {**base, field: hostile}
+        with pytest.raises(BackupError, match="cli json report rejected"):
+            build_safe_cli_json_report(poisoned)
+
+
+def test_build_safe_cli_json_report_rejects_malformed_scalars() -> None:
+    from origenlab_email_pipeline.qa.sqlite_online_backup import (
+        BackupError,
+        build_safe_cli_json_report,
+    )
+
+    base = _completed_cli_source()
+    cases = [
+        {**base, "completed": 1},
+        {**base, "pages_per_batch": 0},
+        {**base, "pages_per_batch": -1},
+        {**base, "elapsed_seconds": -0.1},
+        {**base, "progress_events": "2"},
+        {**base, "directory_fsync_supported": "true"},
+        {
+            **base,
+            "fd_observation": {
+                "schema_version": 1,
+                "observation_phases": ["pre_copy", "evil_phase"],
+                "member_roles_present": ["main"],
+                "member_roles_observed": ["main"],
+                "accepted_locking_count": 1,
+                "blocker_count": 0,
+                "ambiguous_count": 0,
+                "verdict": "ok",
+            },
+        },
+        {
+            **base,
+            "fd_observation": {
+                "schema_version": 1,
+                "observation_phases": ["pre_copy"],
+                "member_roles_present": ["main"],
+                "member_roles_observed": ["root"],
+                "accepted_locking_count": 1,
+                "blocker_count": 0,
+                "ambiguous_count": 0,
+                "verdict": "ok",
+            },
+        },
+        {
+            **base,
+            "fd_observation": {
+                "schema_version": 1,
+                "observation_phases": ["pre_copy"],
+                "member_roles_present": ["main"],
+                "member_roles_observed": ["main"],
+                "accepted_locking_count": 1,
+                "blocker_count": 0,
+                "ambiguous_count": 0,
+                "verdict": "weird",
+            },
+        },
+    ]
+    for poisoned in cases:
+        with pytest.raises(BackupError, match="cli json report rejected"):
+            build_safe_cli_json_report(poisoned)
+
+
+def test_build_safe_cli_json_report_fd_observation_fixed_literals() -> None:
+    from origenlab_email_pipeline.qa.sqlite_online_backup import build_safe_cli_json_report
+
+    raw = _completed_cli_source()
+    raw["fd_observation"] = {
+        "schema_version": 1,
+        "observation_phases": ["pre_copy", "during_copy", "post_copy"],
+        "member_roles_present": ["main", "wal", "shm"],
+        "member_roles_observed": ["main", "shm"],
+        "accepted_locking_count": 3,
+        "blocker_count": 0,
+        "ambiguous_count": 0,
+        "verdict": "ok",
+        "pid": 12345,
+        "path": "/home/rafael/db.sqlite",
+        "device": 99,
+        "inode": 88,
+    }
+    report = build_safe_cli_json_report(raw)
+    fd = report["fd_observation"]
+    assert fd["verdict"] == "ok"
+    assert fd["observation_phases"] == ["pre_copy", "during_copy", "post_copy"]
+    blob = json.dumps(report)
+    assert "pid" not in fd
+    assert "path" not in fd
+    assert "device" not in fd
+    assert "inode" not in fd
+    assert "/home/rafael" not in blob
+    assert "12345" not in blob
+
+
+def test_cli_json_stdout_blocks_injected_hostile_result(
+    synth_dirs: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import io
+    import importlib.util
+    from contextlib import redirect_stderr, redirect_stdout
+
+    src_dir, dst_dir, _lock = synth_dirs
+    source = src_dir / "source.sqlite"
+    dest = dst_dir / "copy.sqlite"
+    _build_wal_db(source, rows=5)
+    hostile = {
+        **_completed_cli_source(),
+        "source_basename": "/home/rafael/secret.sqlite",
+        "notes": ["SELECT * FROM secrets WHERE token='origenlab_test_token'"],
+        "source_fingerprint_before": {"device": 1, "inode": 2},
+        "operator_email": "user@x.com",
+        "sql": "SELECT * FROM t",
+        "unknown_nested": {"token": "origenlab_test_token_NESTED"},
+    }
+    spec = importlib.util.spec_from_file_location("backup_cli_json_safe", SCRIPT)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    monkeypatch.setattr(mod, "run_online_backup", lambda _opts: hostile)
+    out = io.StringIO()
+    err = io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        code = mod.main(
+            [
+                "--source",
+                str(source),
+                "--destination",
+                str(dest),
+                "--apply",
+                "--allow-same-filesystem",
+                "--json",
+            ]
+        )
+    assert code == 0
+    stdout = out.getvalue()
+    stderr = err.getvalue()
+    payload = json.loads(stdout)
+    assert payload["completed"] is True
+    combined = stdout + stderr
+    for needle in (
+        "/home/rafael",
+        "origenlab_test_token",
+        "user@x.com",
+        "SELECT *",
+        "source_fingerprint_before",
+        "source_fingerprint_after",
+        "unknown_nested",
+        "operator_email",
+    ):
+        assert needle not in combined
+    assert "device" not in payload
+    assert "inode" not in payload

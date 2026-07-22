@@ -33,6 +33,7 @@ from origenlab_email_pipeline.qa.sqlite_online_backup import (
     DEFAULT_PAGES_PER_BATCH,
     BackupError,
     BackupOptions,
+    build_safe_cli_json_report,
     run_online_backup,
     sanitize_error_message,
     sanitize_path_for_log,
@@ -81,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--json",
         action="store_true",
-        help="Print sanitized JSON preflight/manifest to stdout",
+        help="Print allowlisted CLI JSON report to stdout (closed projection)",
     )
     return parser
 
@@ -113,16 +114,41 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
         result = run_online_backup(options)
+        if args.json:
+            report = build_safe_cli_json_report(result)
+            print(json.dumps(report, indent=2, sort_keys=True))
+            return 0
     except BackupError as exc:
         print(f"ERROR: {sanitize_error_message(exc)}", file=sys.stderr)
+        detail = exc.detail if isinstance(exc.detail, dict) else None
+        if detail:
+            op = detail.get("operational_error")
+            if isinstance(op, dict):
+                print(
+                    "operational_error "
+                    f"category={op.get('category')} "
+                    f"phase={op.get('phase')} "
+                    f"sqlite_errorcode={op.get('sqlite_errorcode')} "
+                    f"sqlite_errorname={op.get('sqlite_errorname')} "
+                    f"retryable={op.get('retryable')} "
+                    f"recovery={op.get('recovery')}",
+                    file=sys.stderr,
+                )
+            fd = detail.get("fd_observation")
+            if isinstance(fd, dict):
+                print(
+                    "fd_observation "
+                    f"verdict={fd.get('verdict')} "
+                    f"blocker_count={fd.get('blocker_count')} "
+                    f"ambiguous_count={fd.get('ambiguous_count')}",
+                    file=sys.stderr,
+                )
         return 2
     except Exception as exc:
         print(f"ERROR: {sanitize_error_message(exc)}", file=sys.stderr)
         return 1
 
-    if args.json:
-        print(json.dumps(result, indent=2, sort_keys=True))
-    elif result.get("mode") == "preflight":
+    if result.get("mode") == "preflight":
         print(f"mode=preflight writes_performed={result.get('writes_performed')}")
         print(f"source_basename={result.get('source_basename')}")
         print(f"destination_basename={result.get('destination_basename')}")

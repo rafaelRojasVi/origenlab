@@ -14,7 +14,9 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
+
+from origenlab_email_pipeline.qa.sqlite_cutover_artifact_permissions import ROLE_MAIN
 
 BACKUP_SCHEMA_VERSION = 1
 DEFAULT_PAGES_PER_BATCH = 4096
@@ -22,7 +24,106 @@ DEFAULT_CAPACITY_MARGIN_RATIO = 0.05
 DEFAULT_CAPACITY_MARGIN_MIN_BYTES = 256 * 1024 * 1024  # 256 MiB
 DEFAULT_BUSY_TIMEOUT_MS = 30_000
 DEFAULT_PROGRESS_INTERVAL_SECONDS = 2.0
+DEFAULT_FD_OBSERVATION_INTERVAL_SECONDS = 2.0
 LOCK_DIR_NAME = ".origenlab_sqlite_online_backup_locks"
+
+# Closed CLI --json projection (stdout boundary; not the on-disk manifest).
+CLI_JSON_SCHEMA_VERSION = 1
+CLI_MODE_PREFLIGHT = "preflight"
+CLI_MODE_COMPLETED = "completed"
+CLI_METHOD_BACKUP = "sqlite3.Connection.backup"
+CLI_PUBLICATION_HARDLINK = "hardlink_no_clobber"
+CLI_DEST_VERIFY_IMMUTABLE = "mode=ro&immutable=1"
+CLI_VERIFICATION_CHEAP = "header+query_only+cheap_pragmas+schema_inventory"
+CLI_COMPLETION_FINAL_MANIFEST = "final_manifest"
+CLI_FD_PHASE_PRE_COPY = "pre_copy"
+CLI_FD_PHASE_DURING_COPY = "during_copy"
+CLI_FD_PHASE_POST_COPY = "post_copy"
+CLI_FD_ROLE_MAIN = "main"
+CLI_FD_ROLE_WAL = "wal"
+CLI_FD_ROLE_SHM = "shm"
+CLI_FD_VERDICT_OK = "ok"
+CLI_FD_VERDICT_BLOCKED = "blocked"
+CLI_FD_VERDICT_AMBIGUOUS = "ambiguous"
+_CLI_FD_PHASE_EMIT: dict[str, str] = {
+    CLI_FD_PHASE_PRE_COPY: CLI_FD_PHASE_PRE_COPY,
+    CLI_FD_PHASE_DURING_COPY: CLI_FD_PHASE_DURING_COPY,
+    CLI_FD_PHASE_POST_COPY: CLI_FD_PHASE_POST_COPY,
+}
+_CLI_FD_ROLE_EMIT: dict[str, str] = {
+    CLI_FD_ROLE_MAIN: CLI_FD_ROLE_MAIN,
+    CLI_FD_ROLE_WAL: CLI_FD_ROLE_WAL,
+    CLI_FD_ROLE_SHM: CLI_FD_ROLE_SHM,
+}
+_CLI_FD_VERDICT_EMIT: dict[str, str] = {
+    CLI_FD_VERDICT_OK: CLI_FD_VERDICT_OK,
+    CLI_FD_VERDICT_BLOCKED: CLI_FD_VERDICT_BLOCKED,
+    CLI_FD_VERDICT_AMBIGUOUS: CLI_FD_VERDICT_AMBIGUOUS,
+}
+_CLI_MAX_ELAPSED_SECONDS = 31_536_000.0  # 365d bound for CLI float field
+_CLI_JSON_REJECT = "cli json report rejected: malformed field"
+
+# PR-E: allowlisted backup phases for OperationalError classification.
+BACKUP_PHASE_SOURCE_CONNECT = "source_connect"
+BACKUP_PHASE_SOURCE_INVENTORY = "source_inventory"
+BACKUP_PHASE_DESTINATION_CONNECT = "destination_connect"
+BACKUP_PHASE_COPY = "copy"
+BACKUP_PHASE_DESTINATION_COMMIT = "destination_commit"
+BACKUP_PHASE_DESTINATION_VERIFY = "destination_verify"
+BACKUP_PHASE_PUBLISH = "publish"
+BACKUP_PHASES: frozenset[str] = frozenset(
+    {
+        BACKUP_PHASE_SOURCE_CONNECT,
+        BACKUP_PHASE_SOURCE_INVENTORY,
+        BACKUP_PHASE_DESTINATION_CONNECT,
+        BACKUP_PHASE_COPY,
+        BACKUP_PHASE_DESTINATION_COMMIT,
+        BACKUP_PHASE_DESTINATION_VERIFY,
+        BACKUP_PHASE_PUBLISH,
+    }
+)
+
+OPERR_SCHEMA_VERSION = 1
+OPERR_BUSY_OR_LOCKED = "busy_or_locked"
+OPERR_READONLY_WAL_LOCKING = "readonly_wal_locking"
+OPERR_CANNOT_OPEN = "cannot_open"
+OPERR_IO_ERROR = "io_error"
+OPERR_CAPACITY = "capacity"
+OPERR_INTERRUPTED = "interrupted"
+OPERR_OTHER = "other_operational"
+OPERR_CATEGORIES: frozenset[str] = frozenset(
+    {
+        OPERR_BUSY_OR_LOCKED,
+        OPERR_READONLY_WAL_LOCKING,
+        OPERR_CANNOT_OPEN,
+        OPERR_IO_ERROR,
+        OPERR_CAPACITY,
+        OPERR_INTERRUPTED,
+        OPERR_OTHER,
+    }
+)
+OPERR_RECOVERY_WAL_SHM = "verify_wal_shm_permissions_and_identity"
+OPERR_RECOVERY_BUSY = "retry_after_writers_quiesced"
+OPERR_RECOVERY_CANTOPEN = "verify_source_path_and_permissions"
+OPERR_RECOVERY_IO = "inspect_destination_storage_health"
+OPERR_RECOVERY_FULL = "free_destination_capacity"
+OPERR_RECOVERY_INTERRUPT = "retry_backup_after_interrupt"
+OPERR_RECOVERY_OTHER = "inspect_sqlite_operational_failure"
+OPERR_UNKNOWN_NAME = "UNKNOWN"
+
+# Primary/extended result codes (sqlite3 exposes these on modern Python).
+_SQLITE_BUSY = int(getattr(sqlite3, "SQLITE_BUSY", 5))
+_SQLITE_LOCKED = int(getattr(sqlite3, "SQLITE_LOCKED", 6))
+_SQLITE_READONLY = int(getattr(sqlite3, "SQLITE_READONLY", 8))
+_SQLITE_INTERRUPT = int(getattr(sqlite3, "SQLITE_INTERRUPT", 9))
+_SQLITE_IOERR = int(getattr(sqlite3, "SQLITE_IOERR", 10))
+_SQLITE_FULL = int(getattr(sqlite3, "SQLITE_FULL", 13))
+_SQLITE_CANTOPEN = int(getattr(sqlite3, "SQLITE_CANTOPEN", 14))
+_SQLITE_READONLY_CANTLOCK = int(getattr(sqlite3, "SQLITE_READONLY_CANTLOCK", 520))
+_SQLITE_READONLY_CANTINIT = int(getattr(sqlite3, "SQLITE_READONLY_CANTINIT", 1288))
+
+_VALID_SQLITE_NAME = re.compile(r"^SQLITE_[A-Z0-9_]+$")
+
 
 PRIVACY_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(p, re.IGNORECASE)
@@ -42,7 +143,140 @@ _EMAIL_IN_TEXT = re.compile(
 
 
 class BackupError(RuntimeError):
-    """Operator-facing backup failure (already sanitized)."""
+    """Operator-facing backup failure (already sanitized).
+
+    May carry additive ``detail`` with a structured OperationalError schema or
+    FD-observation aggregate. Never put raw exception text, paths, SQL, or
+    tokens into ``detail``.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.detail: dict[str, Any] | None = (
+            dict(detail) if isinstance(detail, dict) else None
+        )
+
+
+def _safe_int_code(value: Any) -> int | None:
+    if type(value) is int and value >= 0:
+        return value
+    return None
+
+
+def _safe_sqlite_name(value: Any) -> str:
+    if isinstance(value, str) and _VALID_SQLITE_NAME.fullmatch(value):
+        return value
+    return OPERR_UNKNOWN_NAME
+
+
+def classify_sqlite_operational_error(
+    exc: BaseException,
+    *,
+    phase: str,
+) -> dict[str, Any]:
+    """Derive a sanitized OperationalError detail object (never raises).
+
+    Uses exact integer ``sqlite_errorcode`` and validated symbolic
+    ``sqlite_errorname`` when present. Never includes ``str(exc)``, SQL, URI,
+    paths, emails, tokens, or arbitrary exception attributes.
+    """
+    safe_phase = phase if phase in BACKUP_PHASES else "unknown"
+    code: int | None = None
+    name = OPERR_UNKNOWN_NAME
+    try:
+        code = _safe_int_code(getattr(exc, "sqlite_errorcode", None))
+        name = _safe_sqlite_name(getattr(exc, "sqlite_errorname", None))
+    except Exception:  # noqa: BLE001
+        code = None
+        name = OPERR_UNKNOWN_NAME
+
+    category = OPERR_OTHER
+    retryable = False
+    recovery = OPERR_RECOVERY_OTHER
+
+    primary = (code % 256) if isinstance(code, int) else None
+    try:
+        if code in {_SQLITE_BUSY, _SQLITE_LOCKED} or primary in {
+            _SQLITE_BUSY,
+            _SQLITE_LOCKED,
+        }:
+            category = OPERR_BUSY_OR_LOCKED
+            retryable = True
+            recovery = OPERR_RECOVERY_BUSY
+        elif code in {_SQLITE_READONLY_CANTLOCK, _SQLITE_READONLY_CANTINIT} or (
+            name in {"SQLITE_READONLY_CANTLOCK", "SQLITE_READONLY_CANTINIT"}
+        ):
+            category = OPERR_READONLY_WAL_LOCKING
+            retryable = False
+            recovery = OPERR_RECOVERY_WAL_SHM
+        elif primary == _SQLITE_READONLY or name.startswith("SQLITE_READONLY"):
+            # Other readonly family without CANTLOCK/CANTINIT.
+            category = OPERR_READONLY_WAL_LOCKING
+            retryable = False
+            recovery = OPERR_RECOVERY_WAL_SHM
+        elif code == _SQLITE_CANTOPEN or primary == _SQLITE_CANTOPEN or name.startswith(
+            "SQLITE_CANTOPEN"
+        ):
+            category = OPERR_CANNOT_OPEN
+            retryable = False
+            recovery = OPERR_RECOVERY_CANTOPEN
+        elif code == _SQLITE_IOERR or primary == _SQLITE_IOERR or name.startswith(
+            "SQLITE_IOERR"
+        ):
+            category = OPERR_IO_ERROR
+            retryable = True
+            recovery = OPERR_RECOVERY_IO
+        elif code == _SQLITE_FULL or primary == _SQLITE_FULL or name == "SQLITE_FULL":
+            category = OPERR_CAPACITY
+            retryable = False
+            recovery = OPERR_RECOVERY_FULL
+        elif (
+            code == _SQLITE_INTERRUPT
+            or primary == _SQLITE_INTERRUPT
+            or name == "SQLITE_INTERRUPT"
+        ):
+            category = OPERR_INTERRUPTED
+            retryable = True
+            recovery = OPERR_RECOVERY_INTERRUPT
+    except Exception:  # noqa: BLE001
+        category = OPERR_OTHER
+        retryable = False
+        recovery = OPERR_RECOVERY_OTHER
+        code = None
+        name = OPERR_UNKNOWN_NAME
+
+    if category not in OPERR_CATEGORIES:
+        category = OPERR_OTHER
+
+    return {
+        "schema": OPERR_SCHEMA_VERSION,
+        "phase": safe_phase,
+        "category": category,
+        "sqlite_errorcode": code,
+        "sqlite_errorname": name,
+        "retryable": bool(retryable) if type(retryable) is bool else False,
+        "recovery": recovery,
+    }
+
+
+def operational_error_to_backup_error(
+    exc: BaseException,
+    *,
+    phase: str,
+    message: str | None = None,
+) -> BackupError:
+    """Convert sqlite3.OperationalError (or similar) into a safe BackupError."""
+    detail = classify_sqlite_operational_error(exc, phase=phase)
+    fixed = message or (
+        f"sqlite operational failure category={detail['category']} "
+        f"phase={detail['phase']}"
+    )
+    return BackupError(fixed, detail={"operational_error": detail})
 
 
 @dataclass
@@ -78,10 +312,20 @@ class BackupOptions:
     progress_sink: Callable[[str], None] | None = None
     should_abort: Callable[[], bool] | None = None
     fail_if_source_fingerprint_changes: bool = False
+    # PR-E: optional FD observation while the source connection is open.
+    # Cutover CREATE_CURRENT_BACKUP sets require_fd_observation=True.
+    require_fd_observation: bool = False
+    fd_observation_interval_seconds: float = DEFAULT_FD_OBSERVATION_INTERVAL_SECONDS
+    # Test / DI hooks for observation (injected scanners, capture, etc.).
+    fd_observe_hook: Callable[[Any, str], dict[str, Any]] | None = None
+    fd_capture_hook: Callable[[Path], dict[str, Any]] | None = None
     # Test hooks
     dir_fsync: Callable[[int], None] | None = None
     manifest_write_hook: Callable[[Path, str], None] | None = None
     post_copy_hook: Callable[[], None] | None = None
+    # Inject OperationalError / observation faults by phase name (tests).
+    fail_phase: str | None = None
+    fail_phase_exc: BaseException | None = None
 
 
 def _iso_now() -> str:
@@ -104,6 +348,196 @@ def sanitize_error_message(exc: BaseException | str) -> str:
     text = _ABS_PATH_IN_TEXT.sub("<path>", text)
     text = _EMAIL_IN_TEXT.sub("<email>", text)
     return text
+
+
+def _cli_reject() -> None:
+    raise BackupError(_CLI_JSON_REJECT)
+
+
+def _cli_exact_bool(value: Any) -> bool:
+    if type(value) is not bool:
+        _cli_reject()
+    return value
+
+
+def _cli_nonneg_int(value: Any) -> int:
+    if type(value) is not int or value < 0:
+        _cli_reject()
+    return value
+
+
+def _cli_positive_int(value: Any) -> int:
+    if type(value) is not int or value <= 0:
+        _cli_reject()
+    return value
+
+
+def _cli_nonneg_float(value: Any, *, max_value: float) -> float:
+    if type(value) is bool:
+        _cli_reject()
+    if type(value) is int:
+        number = float(value)
+    elif type(value) is float:
+        number = value
+    else:
+        _cli_reject()
+        raise AssertionError("unreachable")
+    if number < 0.0 or number > max_value:
+        _cli_reject()
+    return number
+
+
+def _cli_emit_fixed_literal(value: Any, emit: Mapping[str, str]) -> str:
+    if type(value) is not str:
+        _cli_reject()
+    if value not in emit:
+        _cli_reject()
+    return emit[value]
+
+
+def _cli_emit_fixed_literal_list(value: Any, emit: Mapping[str, str]) -> list[str]:
+    if type(value) is not list:
+        _cli_reject()
+    out: list[str] = []
+    for item in value:
+        out.append(_cli_emit_fixed_literal(item, emit))
+    return out
+
+
+def _build_safe_cli_fd_observation(raw: Any) -> dict[str, Any]:
+    """Rebuild fd_observation from an explicit allowlist (no key copy)."""
+    if type(raw) is not dict:
+        _cli_reject()
+    schema = raw.get("schema_version")
+    if type(schema) is not int or schema != CLI_JSON_SCHEMA_VERSION:
+        _cli_reject()
+    verdict = _cli_emit_fixed_literal(raw.get("verdict"), _CLI_FD_VERDICT_EMIT)
+    phases_raw = raw.get("observation_phases")
+    if phases_raw is None:
+        phase_one = raw.get("phase")
+        if phase_one is None:
+            phases: list[str] = []
+        else:
+            phases = [_cli_emit_fixed_literal(phase_one, _CLI_FD_PHASE_EMIT)]
+    else:
+        phases = _cli_emit_fixed_literal_list(phases_raw, _CLI_FD_PHASE_EMIT)
+    present = raw.get("member_roles_present")
+    observed = raw.get("member_roles_observed")
+    if present is None:
+        present_roles: list[str] = []
+    else:
+        present_roles = _cli_emit_fixed_literal_list(present, _CLI_FD_ROLE_EMIT)
+    if observed is None:
+        observed_roles: list[str] = []
+    else:
+        observed_roles = _cli_emit_fixed_literal_list(observed, _CLI_FD_ROLE_EMIT)
+    # Field name must not match CodeQL maybeSecret (.*trusted.*) heuristics.
+    accepted = _cli_nonneg_int(raw.get("accepted_locking_count"))
+    blockers = _cli_nonneg_int(raw.get("blocker_count"))
+    ambiguous = _cli_nonneg_int(raw.get("ambiguous_count"))
+    return {
+        "schema_version": CLI_JSON_SCHEMA_VERSION,
+        "observation_phases": phases,
+        "member_roles_present": present_roles,
+        "member_roles_observed": observed_roles,
+        "accepted_locking_count": accepted,
+        "blocker_count": blockers,
+        "ambiguous_count": ambiguous,
+        "verdict": verdict,
+    }
+
+
+def build_safe_cli_json_report(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Project ``run_online_backup`` results to a closed CLI stdout schema.
+
+    Copies only allowlisted fields with exact type checks. Emits fixed string
+    literals for accepted states. Never copies unknown keys, fingerprints,
+    basenames, meta blobs, warnings, notes, or raw exception text.
+    """
+    if not isinstance(result, Mapping) or isinstance(result, (str, bytes, bytearray)):
+        _cli_reject()
+
+    mode_raw = result.get("mode")
+    completed_raw = result.get("completed")
+
+    if mode_raw == CLI_MODE_PREFLIGHT:
+        _cli_emit_fixed_literal(mode_raw, {CLI_MODE_PREFLIGHT: CLI_MODE_PREFLIGHT})
+        completed = _cli_exact_bool(completed_raw)
+        writes = _cli_exact_bool(result.get("writes_performed"))
+        if completed is not False or writes is not False:
+            _cli_reject()
+        return {
+            "schema_version": CLI_JSON_SCHEMA_VERSION,
+            "mode": CLI_MODE_PREFLIGHT,
+            "apply": _cli_exact_bool(result.get("apply")),
+            "completed": False,
+            "writes_performed": False,
+            "source_opened_with_sqlite3": _cli_exact_bool(
+                result.get("source_opened_with_sqlite3")
+            ),
+            "source_size_bytes": _cli_nonneg_int(result.get("source_size_bytes")),
+            "estimated_output_bytes": _cli_nonneg_int(result.get("estimated_output_bytes")),
+            "destination_free_bytes": _cli_nonneg_int(result.get("destination_free_bytes")),
+            "capacity_required_bytes": _cli_nonneg_int(result.get("capacity_required_bytes")),
+            "filesystem_separated": _cli_exact_bool(result.get("filesystem_separated")),
+            "allow_same_filesystem": _cli_exact_bool(result.get("allow_same_filesystem")),
+            "pages_per_batch": _cli_positive_int(result.get("pages_per_batch")),
+            "busy_timeout_ms": _cli_nonneg_int(result.get("busy_timeout_ms")),
+        }
+
+    if completed_raw is True:
+        out: dict[str, Any] = {
+            "schema_version": CLI_JSON_SCHEMA_VERSION,
+            "mode": CLI_MODE_COMPLETED,
+            "completed": True,
+            "method": _cli_emit_fixed_literal(
+                result.get("method"),
+                {CLI_METHOD_BACKUP: CLI_METHOD_BACKUP},
+            ),
+            "elapsed_seconds": _cli_nonneg_float(
+                result.get("elapsed_seconds"),
+                max_value=_CLI_MAX_ELAPSED_SECONDS,
+            ),
+            "source_size_bytes": _cli_nonneg_int(result.get("source_size_bytes")),
+            "destination_size_bytes": _cli_nonneg_int(result.get("destination_size_bytes")),
+            "pages_per_batch": _cli_positive_int(result.get("pages_per_batch")),
+            "progress_events": _cli_nonneg_int(result.get("progress_events")),
+            "allow_same_filesystem": _cli_exact_bool(result.get("allow_same_filesystem")),
+            "publication_method": _cli_emit_fixed_literal(
+                result.get("publication_method"),
+                {CLI_PUBLICATION_HARDLINK: CLI_PUBLICATION_HARDLINK},
+            ),
+            "destination_verification": _cli_emit_fixed_literal(
+                result.get("destination_verification"),
+                {CLI_DEST_VERIFY_IMMUTABLE: CLI_DEST_VERIFY_IMMUTABLE},
+            ),
+            "directory_fsync_supported": _cli_exact_bool(
+                result.get("directory_fsync_supported")
+            ),
+            "source_opened_readonly": _cli_exact_bool(result.get("source_opened_readonly")),
+            "source_mutated_by_utility": _cli_exact_bool(
+                result.get("source_mutated_by_utility")
+            ),
+            "source_fingerprint_changed_during_backup": _cli_exact_bool(
+                result.get("source_fingerprint_changed_during_backup")
+            ),
+            "verification": _cli_emit_fixed_literal(
+                result.get("verification"),
+                {CLI_VERIFICATION_CHEAP: CLI_VERIFICATION_CHEAP},
+            ),
+            "completion_marker": _cli_emit_fixed_literal(
+                result.get("completion_marker"),
+                {CLI_COMPLETION_FINAL_MANIFEST: CLI_COMPLETION_FINAL_MANIFEST},
+            ),
+        }
+        if "fd_observation" in result:
+            out["fd_observation"] = _build_safe_cli_fd_observation(
+                result.get("fd_observation")
+            )
+        return out
+
+    _cli_reject()
+    raise AssertionError("unreachable")
 
 
 def scan_manifest_privacy(payload: Any) -> list[str]:
@@ -803,9 +1237,25 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
 
     Without ``apply=True``, runs sanitized preflight only (zero writes).
     A backup is completed only when final DB + completed final manifest both exist.
+
+    When ``require_fd_observation=True`` (cutover CREATE_CURRENT_BACKUP), observes
+    source FDs while the source connection is open (pre-copy, periodically during
+    copy, post-copy) via the trusted backup FD taxonomy.
     """
     if not options.apply:
         return build_preflight_report(options)
+
+    from origenlab_email_pipeline.qa.sqlite_backup_fd_observability import (
+        PHASE_DURING_COPY,
+        PHASE_POST_COPY,
+        PHASE_PRE_COPY,
+        ActiveBackupObservationCapability,
+        BackupFdObservationError,
+        capture_backup_source_members,
+        compare_source_member_sets,
+        merge_observation_aggregates,
+        observe_backup_source_fds,
+    )
 
     validate_backup_options(options)
     source = options.source.resolve()
@@ -828,48 +1278,171 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
     }
     previous_sigint = signal.getsignal(signal.SIGINT)
     previous_sigterm = signal.getsignal(signal.SIGTERM)
+    capability: ActiveBackupObservationCapability | None = None
+    fd_observations: list[dict[str, Any]] = []
+    members_before = None
+    members_before_connect = None
 
     def _on_signal(signum: int, frame: Any) -> None:  # noqa: ARG001
         nonlocal interrupted
         interrupted = True
 
+    def _raise_phase(phase: str) -> None:
+        if options.fail_phase == phase:
+            injected = options.fail_phase_exc
+            if isinstance(injected, sqlite3.OperationalError):
+                raise operational_error_to_backup_error(injected, phase=phase)
+            if isinstance(injected, BaseException):
+                if isinstance(injected, BackupError):
+                    raise injected
+                raise BackupError(sanitize_error_message(injected))
+            raise BackupError(f"injected failure at phase={phase}")
+
+    def _observe(phase: str) -> None:
+        if not options.require_fd_observation and options.fd_observe_hook is None:
+            return
+        if capability is None or not capability.active:
+            raise BackupError(
+                "backup FD observation capability inactive",
+                detail={"fd_observation": {"verdict": "ambiguous", "phase": phase}},
+            )
+        try:
+            if options.fd_observe_hook is not None:
+                agg = options.fd_observe_hook(capability, phase)
+            else:
+                agg = observe_backup_source_fds(capability, phase=phase)
+        except BackupFdObservationError as exc:
+            raise BackupError(
+                str(exc),
+                detail={"fd_observation": exc.aggregate or {"verdict": exc.verdict}},
+            ) from None
+        if not isinstance(agg, dict) or agg.get("verdict") != "ok":
+            raise BackupError(
+                "backup FD observation blocked or ambiguous",
+                detail={"fd_observation": agg if isinstance(agg, dict) else {}},
+            )
+        fd_observations.append(agg)
+
     signal.signal(signal.SIGINT, _on_signal)
     try:
         signal.signal(signal.SIGTERM, _on_signal)
     except (ValueError, OSError):
-        # Some environments restrict SIGTERM replacement.
         previous_sigterm = None
 
     published = False
     try:
         lock.acquire()
         try:
-            # Fail early if dest FS cannot hard-link publish (before multi-hour copy).
             probe_hardlink_no_clobber_supported(destination.parent)
 
-            src_conn = connect_source_readonly(source, busy_timeout_ms=options.busy_timeout_ms)
-            source_meta = read_cheap_sqlite_meta(
-                src_conn, path=source, journal_reporting="pragma"
-            )
+            # Capture source identities before connect (cutover / optional observe).
+            # Main must remain stable across open; WAL/SHM often appear only after
+            # the readonly source connection opens WAL locking — re-baseline then.
+            members_before_connect = None
+            if options.require_fd_observation or options.fd_observe_hook is not None:
+                try:
+                    members_before_connect = capture_backup_source_members(
+                        source,
+                        capture_fn=options.fd_capture_hook,
+                    )
+                except BackupFdObservationError as exc:
+                    raise BackupError(str(exc), detail={"fd_observation": exc.aggregate}) from None
+                capability = ActiveBackupObservationCapability(
+                    owner_pid=os.getpid(),
+                    source_basename=source.name,
+                    members=members_before_connect,
+                    active=True,
+                )
+
+            _raise_phase(BACKUP_PHASE_SOURCE_CONNECT)
+            try:
+                src_conn = connect_source_readonly(
+                    source, busy_timeout_ms=options.busy_timeout_ms
+                )
+            except sqlite3.OperationalError as exc:
+                raise operational_error_to_backup_error(
+                    exc, phase=BACKUP_PHASE_SOURCE_CONNECT
+                ) from None
+
+            _raise_phase(BACKUP_PHASE_SOURCE_INVENTORY)
+            try:
+                source_meta = read_cheap_sqlite_meta(
+                    src_conn, path=source, journal_reporting="pragma"
+                )
+            except sqlite3.OperationalError as exc:
+                raise operational_error_to_backup_error(
+                    exc, phase=BACKUP_PHASE_SOURCE_INVENTORY
+                ) from None
             page_size = int(source_meta["page_size"])
+
+            # Re-baseline after WAL locking state is open; refuse main identity drift.
+            if members_before_connect is not None and capability is not None:
+                try:
+                    members_before = capture_backup_source_members(
+                        source,
+                        capture_fn=options.fd_capture_hook,
+                    )
+                except BackupFdObservationError as exc:
+                    raise BackupError(
+                        str(exc), detail={"fd_observation": exc.aggregate}
+                    ) from None
+                main_before = members_before_connect.get(ROLE_MAIN)
+                main_open = members_before.get(ROLE_MAIN)
+                if (
+                    main_before is None
+                    or main_open is None
+                    or not main_before.present
+                    or not main_open.present
+                    or main_before.key() != main_open.key()
+                ):
+                    raise BackupError(
+                        "source main identity changed across backup connect",
+                        detail={
+                            "fd_observation": {
+                                "verdict": "ambiguous",
+                                "reason": "member_identity_drift_main",
+                            }
+                        },
+                    )
+                capability.members = members_before
+
+            # Observe after WAL state is opened and before first backup() copy.
+            _observe(PHASE_PRE_COPY)
 
             flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
             fd = os.open(str(partial), flags, 0o600)
             os.close(fd)
 
-            dest_conn = connect_destination(partial, busy_timeout_ms=options.busy_timeout_ms)
+            _raise_phase(BACKUP_PHASE_DESTINATION_CONNECT)
+            try:
+                dest_conn = connect_destination(
+                    partial, busy_timeout_ms=options.busy_timeout_ms
+                )
+            except sqlite3.OperationalError as exc:
+                raise operational_error_to_backup_error(
+                    exc, phase=BACKUP_PHASE_DESTINATION_CONNECT
+                ) from None
 
             last_progress = t0
+            last_fd_obs = t0
             progress_events = 0
             final_progress_emitted = False
+            obs_interval = float(options.fd_observation_interval_seconds)
 
             def progress_callback(status: int, remaining: int, pagecount: int) -> None:  # noqa: ARG001
-                nonlocal last_progress, progress_events, final_progress_emitted, interrupted
+                nonlocal last_progress, last_fd_obs, progress_events, final_progress_emitted, interrupted
                 if interrupted or (options.should_abort and options.should_abort()):
                     raise BackupError("backup interrupted; partial file not published")
                 now = options.clock()
                 remaining_i = int(remaining)
                 pagecount_i = int(pagecount)
+                # Bounded-interval FD observation during long copies (not per page).
+                if (
+                    (options.require_fd_observation or options.fd_observe_hook is not None)
+                    and (now - last_fd_obs) >= obs_interval
+                ):
+                    _observe(PHASE_DURING_COPY)
+                    last_fd_obs = now
                 due = remaining_i == 0 or (now - last_progress) >= options.progress_interval_seconds
                 if due:
                     _emit_progress(
@@ -885,16 +1458,21 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
                         final_progress_emitted = True
 
             sleep_s = max(0.001, min(0.25, options.busy_timeout_ms / 1000.0 / 100.0))
-            src_conn.backup(
-                dest_conn,
-                pages=options.pages_per_batch,
-                progress=progress_callback,
-                sleep=sleep_s,
-            )
+            _raise_phase(BACKUP_PHASE_COPY)
+            try:
+                src_conn.backup(
+                    dest_conn,
+                    pages=options.pages_per_batch,
+                    progress=progress_callback,
+                    sleep=sleep_s,
+                )
+            except sqlite3.OperationalError as exc:
+                raise operational_error_to_backup_error(
+                    exc, phase=BACKUP_PHASE_COPY
+                ) from None
             if options.post_copy_hook is not None:
                 options.post_copy_hook()
             if not final_progress_emitted:
-                # Guarantee final 100% progress line even if last callback was time-throttled skip.
                 _emit_progress(
                     options,
                     remaining=0,
@@ -904,18 +1482,55 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
                 )
                 progress_events += 1
 
-            dest_conn.commit()
+            # Observe once more after copy and before closing the source.
+            _observe(PHASE_POST_COPY)
+
+            _raise_phase(BACKUP_PHASE_DESTINATION_COMMIT)
+            try:
+                dest_conn.commit()
+            except sqlite3.OperationalError as exc:
+                raise operational_error_to_backup_error(
+                    exc, phase=BACKUP_PHASE_DESTINATION_COMMIT
+                ) from None
             dest_conn.close()
             dest_conn = None
             src_conn.close()
             src_conn = None
+            if capability is not None:
+                capability.deactivate()
 
-            # Mandatory file fsync of partial DB before verification/publish.
+            # Recapture identities at the boundary; fail on drift.
+            if members_before is not None:
+                try:
+                    members_after = capture_backup_source_members(
+                        source,
+                        capture_fn=options.fd_capture_hook,
+                    )
+                except BackupFdObservationError as exc:
+                    raise BackupError(
+                        str(exc), detail={"fd_observation": exc.aggregate}
+                    ) from None
+                drift = compare_source_member_sets(members_before, members_after)
+                if drift is not None:
+                    raise BackupError(
+                        f"source artifact identity changed during backup ({drift})",
+                        detail={
+                            "fd_observation": {
+                                "verdict": "ambiguous",
+                                "reason": drift,
+                            }
+                        },
+                    )
+
             fsync_file(partial)
 
-            # --- Pre-publication: immutable verify, fingerprint policy, sidecars ---
-            dest_meta = verify_destination_cheap(partial)
-            # Sidecar invariant after verification closed: no -wal/-shm/-journal.
+            _raise_phase(BACKUP_PHASE_DESTINATION_VERIFY)
+            try:
+                dest_meta = verify_destination_cheap(partial)
+            except sqlite3.OperationalError as exc:
+                raise operational_error_to_backup_error(
+                    exc, phase=BACKUP_PHASE_DESTINATION_VERIFY
+                ) from None
             ensure_no_partial_sidecars_before_publish(partial)
 
             source_fp_after = fingerprint_file(source)
@@ -929,12 +1544,17 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
             elapsed = options.clock() - t0
             assert source_meta is not None
             warnings: list[str] = []
-            # Directory fsync of parent (may be unsupported on 9p/DrvFS) — recorded, not fatal.
             dir_fsync_info = fsync_directory(
                 partial.parent, dir_fsync=options.dir_fsync
             )
             if dir_fsync_info.get("directory_fsync_warning"):
                 warnings.append(str(dir_fsync_info["directory_fsync_warning"]))
+
+            fd_obs_summary = (
+                merge_observation_aggregates(fd_observations)
+                if fd_observations
+                else None
+            )
 
             manifest: dict[str, Any] = {
                 "schema_version": BACKUP_SCHEMA_VERSION,
@@ -1009,11 +1629,12 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
                     "Utility opens source with URI mode=ro (not immutable); concurrent writers may still change source.",
                 ],
             }
+            if fd_obs_summary is not None:
+                manifest["fd_observation"] = fd_obs_summary
             privacy = scan_manifest_privacy(manifest)
             if privacy:
                 raise BackupError(f"manifest privacy violation: {privacy[:3]}")
 
-            # Write+fsync manifest.partial BEFORE entering finalization publish sequence.
             payload = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
             if options.manifest_write_hook is not None:
                 options.manifest_write_hook(manifest_partial, payload)
@@ -1021,12 +1642,11 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
                 manifest_partial.write_text(payload, encoding="utf-8")
             fsync_file(manifest_partial)
 
-            # --- Finalization: no-clobber hard-link publish DB, then manifest ---
+            _raise_phase(BACKUP_PHASE_PUBLISH)
             publish_no_clobber(partial, destination)
-            published = True  # DB published; crash before manifest publish => orphan
+            published = True
             publish_no_clobber(manifest_partial, manifest_path)
 
-            # Post-publish directory fsync; unsupported FS warnings must not be discarded.
             post_publish = fsync_directory(destination.parent, dir_fsync=options.dir_fsync)
             post_publish_warnings: list[str] = []
             if post_publish.get("directory_fsync_warning"):
@@ -1035,7 +1655,6 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
                 for warning in post_publish_warnings:
                     sink = options.progress_sink or (lambda s: print(s, file=sys.stderr))
                     sink(f"post-publish durability warning: {warning}")
-                # Surface on returned object (on-disk manifest already sealed as completion marker).
                 manifest = {
                     **manifest,
                     "warnings": [*warnings, *post_publish_warnings],
@@ -1050,6 +1669,11 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
         finally:
             lock.release()
     except Exception as exc:
+        if capability is not None:
+            try:
+                capability.deactivate()
+            except Exception:  # noqa: BLE001
+                pass
         if dest_conn is not None:
             try:
                 dest_conn.close()
@@ -1060,11 +1684,14 @@ def run_online_backup(options: BackupOptions) -> dict[str, Any]:
                 src_conn.close()
             except Exception:
                 pass
-        # Never delete a published orphan final DB; refuse overwrite on next run.
         if not published:
             cleanup_script_owned_artifacts(destination)
         if isinstance(exc, BackupError):
             raise
+        if isinstance(exc, sqlite3.OperationalError):
+            raise operational_error_to_backup_error(
+                exc, phase=BACKUP_PHASE_COPY
+            ) from None
         raise BackupError(sanitize_error_message(exc)) from None
     finally:
         signal.signal(signal.SIGINT, previous_sigint)

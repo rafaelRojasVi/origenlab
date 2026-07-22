@@ -21,11 +21,14 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_ROOT / "src"))
 
-from origenlab_email_pipeline.qa.sqlite_online_backup import sanitize_error_message
+from origenlab_email_pipeline.qa.sqlite_online_backup import (
+    BackupError,
+    sanitize_error_message,
+)
 from origenlab_email_pipeline.qa.sqlite_production_cutover import (
+    EXIT_APPLY,
     EXIT_OK,
     CutoverError,
-    CutoverFailureCategory,
     CutoverOptions,
     CutoverStage,
     STAGE_ORDER,
@@ -34,6 +37,7 @@ from origenlab_email_pipeline.qa.sqlite_production_cutover import (
     attempt_rollback_before_writers,
     plan_preflight,
     rollback_finalize,
+    _sanitized_backup_failure_evidence,
 )
 
 
@@ -195,7 +199,62 @@ def main(argv: list[str] | None = None) -> int:
                 f"recovery: {sanitize_error_message(exc.recovery)}",
                 file=sys.stderr,
             )
+        evidence = exc.evidence if isinstance(exc.evidence, dict) else {}
+        op = evidence.get("operational_error")
+        if isinstance(op, dict):
+            print(
+                "operational_error "
+                f"category={op.get('category')} "
+                f"phase={op.get('phase')} "
+                f"sqlite_errorcode={op.get('sqlite_errorcode')} "
+                f"sqlite_errorname={op.get('sqlite_errorname')} "
+                f"retryable={op.get('retryable')}",
+                file=sys.stderr,
+            )
+        fd = evidence.get("fd_observation")
+        if isinstance(fd, dict):
+            print(
+                "fd_observation "
+                f"verdict={fd.get('verdict')} "
+                f"blocker_count={fd.get('blocker_count')} "
+                f"ambiguous_count={fd.get('ambiguous_count')}",
+                file=sys.stderr,
+            )
         return int(exc.exit_code)
+    except BackupError as exc:
+        # Adapter should convert; still never report as mere "unexpected failure".
+        # Re-allowlist detail before printing (never dump raw BackupError.detail).
+        print(f"error: {sanitize_error_message(str(exc))}", file=sys.stderr)
+        evidence = _sanitized_backup_failure_evidence(
+            exc.detail if isinstance(exc.detail, dict) else None
+        )
+        op = evidence.get("operational_error")
+        if isinstance(op, dict):
+            print(
+                "operational_error "
+                f"category={op.get('category')} "
+                f"phase={op.get('phase')} "
+                f"sqlite_errorcode={op.get('sqlite_errorcode')} "
+                f"sqlite_errorname={op.get('sqlite_errorname')} "
+                f"retryable={op.get('retryable')}",
+                file=sys.stderr,
+            )
+            recovery = op.get("recovery")
+            if isinstance(recovery, str):
+                print(
+                    f"recovery: {sanitize_error_message(recovery)}",
+                    file=sys.stderr,
+                )
+        fd = evidence.get("fd_observation")
+        if isinstance(fd, dict):
+            print(
+                "fd_observation "
+                f"verdict={fd.get('verdict')} "
+                f"blocker_count={fd.get('blocker_count')} "
+                f"ambiguous_count={fd.get('ambiguous_count')}",
+                file=sys.stderr,
+            )
+        return EXIT_APPLY
     except Exception:  # noqa: BLE001
         print("error: unexpected failure", file=sys.stderr)
         return 3
