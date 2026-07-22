@@ -87,6 +87,9 @@ Behavior of `backup_sqlite_online.py`:
 - Default is **preflight only**: `stat` + read-only SQLite **header parse** (no `sqlite3.connect()` on the live source). Reports page size/count from the header; freelist/schema/table metadata are `not_assessed_until_apply`. No lock directory, no destination artifacts, and no source WAL/SHM creation from preflight.
 - `--apply` required to create lock, `.partial`, backup, or completed manifest
 - Uses `sqlite3.Connection.backup()` only — **never** plain `cp` / `rsync` of a live WAL database
+- Standalone utility keeps FD observation **optional**. Cutover `CREATE_CURRENT_BACKUP` sets `require_fd_observation=True` and observes source FDs before copy, at a bounded interval during long copies, and after copy (see `sqlite_backup_fd_observability.py`). Successful manifests may include a sanitized `fd_observation` aggregate (no paths/PIDs/FDs/device/inode).
+- `sqlite3.OperationalError` is converted to `BackupError` with a sanitized structured `detail.operational_error` (category/phase/code/name/retryable/recovery). CLI prints those fixed fields; raw exception text, SQL, URIs, paths, emails, and tokens are never persisted.
+- The broad `allow_own_fd` quiesce bypass was removed; own-PID alone never authorizes a writable production FD outside the active backup observation capability.
 - Opens source with URI `mode=ro` only under `--apply`
 - Requires explicit `--source` and `--destination`; destination must not already exist
 - Writes via script-owned `.partial` (+ companions cleaned on failure); file fsync mandatory

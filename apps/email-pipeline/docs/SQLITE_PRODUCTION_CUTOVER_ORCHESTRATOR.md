@@ -99,11 +99,27 @@ The production SQLite file is one **artifact** with three exact members (no glob
 | **A — Smoke + fail-safe** | Bounded loopback JSON getter; fail-safe API cleanup; SIGTERM/143 bookkeeping | **Complete** (PR [#387](https://github.com/rafaelRojasVi/origenlab/pull/387)) |
 | **B — Permissions + sidecars** | Capture/apply/reconcile/restore main + WAL + SHM modes via FD `fstat`/`fchmod` | **Complete** (PR [#393](https://github.com/rafaelRojasVi/origenlab/pull/393)) |
 | **C — Rollback finalize** | Supported `rollback_finalize` (abandoned ≠ completed) | **Complete** (PR [#394](https://github.com/rafaelRojasVi/origenlab/pull/394)) |
-| **D — Maintenance boot policy** | Prevent API/timer auto-start after WSL reboot during maintenance | **Implemented by this change** |
-| **E — Observability + backup FD taxonomy** | Trusted backup WAL/SHM locking FD classification; sanitized OperationalError detail | **Not started** |
+| **D — Maintenance boot policy** | Prevent API/timer auto-start after WSL reboot during maintenance | **Complete** (PR [#395](https://github.com/rafaelRojasVi/origenlab/pull/395)) |
+| **E — Observability + backup FD taxonomy** | Trusted backup WAL/SHM locking FD classification; sanitized OperationalError detail | **Implemented by this change** (draft PR) |
 | **F — Incident regression pack** | Broader end-to-end incident-chain regressions | **Not started** |
 
-**Merging PR-C (#394) does not authorize a cutover.** It only adds an explicit terminal path for an already-verified rollback. **PR-D does not authorize a cutover either** — it only adds persistent systemd enablement suppression (`systemctl --user disable`) for `origenlab-api.service` and `origenlab-api-health.timer` during maintenance, with exact restoration at terminal exits. The abandoned maintenance ID `cutover20260719T163633Z` remains permanently non-resumable — it is rejected by `_require_auth` for **every** operation, including `--rollback-finalize` — and any future cutover requires a fresh MID and the full human approval boundary below. PR-E–F remain unstarted.
+**Merging PR-C (#394) does not authorize a cutover.** It only adds an explicit terminal path for an already-verified rollback. **PR-D (#395) does not authorize a cutover either** — it only adds persistent systemd enablement suppression (`systemctl --user disable`) for `origenlab-api.service` and `origenlab-api-health.timer` during maintenance, with exact restoration at terminal exits. **PR-E does not authorize a cutover** — it only adds fail-closed backup FD observation and sanitized SQLite `OperationalError` detail for `CREATE_CURRENT_BACKUP` / Online Backup API. The abandoned maintenance ID `cutover20260719T163633Z` remains permanently non-resumable — it is rejected by `_require_auth` for **every** operation, including `--rollback-finalize` — and any future cutover requires a fresh MID and the full human approval boundary below. Waves 3B/3C remain blocked. PR-F is not started.
+
+### Backup FD observability + OperationalError taxonomy (PR-E)
+
+`CREATE_CURRENT_BACKUP` now requires in-process FD observation while the Online Backup API source connection is open. Classification uses exact main / `-wal` / `-shm` identities from non-following open + `fstat` (never basename/readlink alone). Own PID alone is never sufficient: acceptance requires an active backup observation capability that exists only while `run_online_backup()` owns the source.
+
+Trust rules (fail closed):
+
+- own **main** must be read-only;
+- own **WAL** may be RDWR only under the active capability (SQLite opens `-wal` RDWR even for URI `mode=ro`);
+- own **SHM** may be writable under the active capability (WAL locking);
+- any foreign main/WAL/SHM FD (including foreign read-only) is a blocker;
+- unknown fdinfo, unreadable `/proc`, deleted/unmatched identities, main identity drift, unexpected journal FDs → ambiguous.
+
+Sanitized observation aggregates may appear on successful manifests/stage reports; they never include absolute paths, `/proc` links, FD numbers, PIDs, or device/inode values.
+
+SQLite `OperationalError` is classified into fixed categories (`busy_or_locked`, `readonly_wal_locking`, `cannot_open`, `io_error`, `capacity`, `interrupted`, `other_operational`) with allowlisted backup phases. `BackupError.detail` carries only sanitized structured fields; cutover converts these to `CutoverError` evidence so the CLI never reports a backup OperationalError as a mere “unexpected failure”. The journal does not advance to `CREATE_CURRENT_BACKUP` on failure.
 
 ### Maintenance boot policy (PR-D)
 
@@ -126,7 +142,7 @@ See also [`apps/api/docs/LOCAL_SYSTEMD.md`](../../api/docs/LOCAL_SYSTEMD.md) for
 
 ### Deferred (known) swap-reconciliation hardening
 
-Out of scope for PR-C/D and intentionally **not** changed: `reconcile_atomic_swap_state` still classifies an "exchange succeeded but the journal write was stale" reality as `ambiguous_pre_exchange`. Teaching the classifier to positively distinguish that case is a separate future swap-reconciliation hardening item; it is not folded into rollback finalize or maintenance boot policy.
+Out of scope for PR-C/D/E and intentionally **not** changed: `reconcile_atomic_swap_state` still classifies an "exchange succeeded but the journal write was stale" reality as `ambiguous_pre_exchange`. Teaching the classifier to positively distinguish that case is a separate future swap-reconciliation hardening item; it is not folded into rollback finalize, maintenance boot policy, or backup FD observability.
 
 ## Read-only smoke (loopback getter + fail-safe API cleanup)
 
