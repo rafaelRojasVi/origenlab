@@ -92,26 +92,35 @@ def test_malformed_wal_and_empty_wal(tmp_path: Path) -> None:
     attach_sidecar(main, wal=b"NOTWALHDR!!!!!!!!!!!")
 
 
-def test_symlink_source_refused_by_apply_binding(tmp_path: Path) -> None:
-    world, prod, reports, root, fp = make_world(tmp_path)
-    real = root / "real.sqlite"
-    world.files[str(real)] = b"SYNTHETIC"
-    world.modes[str(real)] = 0o644
-    link = root / "link.sqlite"
-    # SyntheticWorld may not follow OS symlinks; use real FS for this case.
+def test_symlink_source_refused_by_path_binding(tmp_path: Path) -> None:
     real_fs = tmp_path / "real_fs"
     real_fs.mkdir()
     target = real_fs / "emails.sqlite"
     target.write_bytes(b"SQLite format 3\x00" + b"\x00" * 200)
-    link_fs = real_fs / "alias.sqlite"
+    link_fs = real_fs / "emails.sqlite.link"
     link_fs.symlink_to(target)
     assert link_fs.is_symlink()
-    # Header parser should still open the target via open(); cutover binding
-    # must refuse symlink production paths when validated on real FS adapters.
-    from origenlab_email_pipeline.qa.sqlite_production_cutover import FilesystemAdapters
+
+    from origenlab_email_pipeline.qa.sqlite_production_cutover import (
+        CutoverOptions,
+        FilesystemAdapters,
+        _validate_production_path_binding,
+    )
 
     adapters = FilesystemAdapters()
-    assert adapters.is_symlink(link_fs) is True
+    opts = CutoverOptions(
+        confirm_production_cutover=True,
+        maintenance_id="cutover20260722T180000Z",
+        expected_main_sha="25cd4100e226427b3a4d027f1ee3b3af056884d4",
+        expected_production_path=link_fs,
+        expected_production_fingerprint="unused",
+        allow_synthetic_world=False,
+        adapters=adapters,
+    )
+    with pytest.raises(CutoverError) as ei:
+        _validate_production_path_binding(opts, adapters, link_fs)
+    assert ei.value.category is CutoverFailureCategory.SAFETY
+    assert "symlink" in str(ei.value).lower()
 
 
 def test_hardlink_alias_same_inode(tmp_path: Path) -> None:
@@ -124,14 +133,19 @@ def test_hardlink_alias_same_inode(tmp_path: Path) -> None:
 
 def test_replaced_inode_same_pathname(tmp_path: Path) -> None:
     db = create_sqlite_corpus(tmp_path, "one_table")
-    before = (db.stat().st_dev, db.stat().st_ino)
+    before = (db.stat().st_dev, db.stat().st_ino, db.stat().st_size, db.stat().st_mtime_ns)
     db.unlink()
-    create_sqlite_corpus(tmp_path, "one_table")
-    # recreate at same path name
+    # Force a distinct identity at the same pathname.
     db2 = tmp_path / "corpus_one_table.sqlite"
-    assert db2.exists()
-    after = (db2.stat().st_dev, db2.stat().st_ino)
-    assert before != after or True  # inode may or may not reuse; identity must be re-captured
+    db2.write_bytes(b"SQLite format 3\x00" + b"\x00" * 4096 + os.urandom(64))
+    after = (db2.stat().st_dev, db2.stat().st_ino, db2.stat().st_size, db2.stat().st_mtime_ns)
+    assert after[1] != before[1] or after[2] != before[2] or after[3] != before[3]
+    # Fingerprint binding must observe the new identity, not the old tuple.
+    from origenlab_email_pipeline.qa.sqlite_online_backup import fingerprint_file
+
+    fp = fingerprint_file(db2)
+    assert (fp.device, fp.inode) == (after[0], after[1])
+    assert (fp.device, fp.inode) != (before[0], before[1]) or fp.size_bytes != before[2]
 
 
 def test_readonly_main_wal_shm_combinations(tmp_path: Path) -> None:
@@ -183,9 +197,8 @@ def test_stale_lock_and_journal_dirs(tmp_path: Path) -> None:
 
 def test_enospc_disk_free_blocks_topology(tmp_path: Path) -> None:
     world, prod, reports, root, fp = make_world(tmp_path)
-    world.free_bytes = 1024  # tiny
+    world.free_bytes = 1024  # tiny — below capacity topology requirement
     backup, staging = backup_staging(root)
-    # pause_writers may still succeed on synthetic world; capacity is checked in preflight/topology
     from origenlab_email_pipeline.qa.sqlite_production_cutover import plan_preflight
 
     report = plan_preflight(
@@ -200,5 +213,9 @@ def test_enospc_disk_free_blocks_topology(tmp_path: Path) -> None:
             staging=staging,
         )
     )
-    blockers = report.get("blockers") or []
+    blockers = report.get("blockers")
     assert isinstance(blockers, list)
+    assert "capacity_topology_fail_closed" in blockers
+    assert report.get("topology", {}).get("recommended_topology_ok") is False or (
+        "capacity_topology_fail_closed" in blockers
+    )

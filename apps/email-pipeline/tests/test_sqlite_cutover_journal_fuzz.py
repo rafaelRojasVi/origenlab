@@ -24,7 +24,6 @@ from origenlab_email_pipeline.qa.sqlite_production_cutover import (
     sanitize_evidence,
 )
 from sqlite_adversarial_support import (
-    FORBIDDEN_EVIDENCE,
     HOSTILE_TEXT,
     MAIN_SHA,
     MID,
@@ -69,8 +68,19 @@ def test_sanitize_evidence_path_gate_does_not_cover_token_only() -> None:
         "{",
         "[]",
         "null",
+        "true",
+        "false",
         '"string"',
+        '""',
+        "0",
         "1",
+        "-1",
+        "1.5",
+        "0.0",
+        "[[1]]",
+        '[{"schema_version":3}]',
+        "  null  ",
+        "\t[]\n",
         '{"schema_version":"3"}',
         '{"schema_version":3,"tool":"wrong"}',
         '{"schema_version":999,"tool":"orchestrate_sqlite_production_cutover"}',
@@ -83,10 +93,34 @@ def test_load_journal_rejects_malformed(tmp_path: Path, raw: str) -> None:
     jpath = jdir / f"{MID}.journal.json"
     world.files[str(jpath)] = raw.encode()
     world.modes[str(jpath)] = 0o644
+    writes_before = list(getattr(world, "systemctl_calls", []))
     with pytest.raises(CutoverError) as ei:
         load_journal(world, jpath)
     assert ei.value.category is CutoverFailureCategory.AMBIGUOUS
     assert_no_forbidden(str(ei.value))
+    if ei.value.recovery:
+        assert_no_forbidden(ei.value.recovery)
+    # Non-object / malformed loads must not rewrite the journal bytes.
+    assert world.files[str(jpath)] == raw.encode()
+    assert getattr(world, "systemctl_calls", []) == writes_before
+    # Raw journal content must not appear verbatim in error text for hostile roots.
+    if "/home/" in raw or "@" in raw:
+        assert raw not in str(ei.value)
+
+
+def test_load_journal_rejects_bom_prefixed_object_as_unreadable(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = make_world(tmp_path)
+    jdir = prod.parent / ".origenlab_cutover_journals"
+    jdir.mkdir(parents=True, exist_ok=True)
+    jpath = jdir / f"{MID}.journal.json"
+    raw = "\ufeff" + json.dumps(
+        {"schema_version": 3, "tool": "orchestrate_sqlite_production_cutover"}
+    )
+    world.files[str(jpath)] = raw.encode("utf-8")
+    world.modes[str(jpath)] = 0o644
+    with pytest.raises(CutoverError) as ei:
+        load_journal(world, jpath)
+    assert ei.value.category is CutoverFailureCategory.AMBIGUOUS
 
 
 @pytest.mark.parametrize(
@@ -181,7 +215,6 @@ def _run_cli(script: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
 @pytest.mark.parametrize(
     "args",
     [
-        [],
         ["--stage", "not_a_stage"],
         ["--apply"],
         ["--apply", "--confirm-production-cutover"],
@@ -228,11 +261,18 @@ def _run_cli(script: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
             "--approve-swap",
         ],
         [
-            "--json",
+            "--stage",
+            "pause_writers",
+            "--apply",
+            "--confirm-production-cutover",
             "--maintenance-id",
-            " " * 8,
+            "bad mid!!",
             "--expected-main-sha",
             "0" * 40,
+            "--expected-production-path",
+            "/tmp/nope.sqlite",
+            "--expected-production-fingerprint",
+            "fp",
         ],
         [
             "--stage",
@@ -252,17 +292,27 @@ def _run_cli(script: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
 )
 def test_cutover_cli_fuzz_exit_codes_and_no_leakage(args: list[str]) -> None:
     proc = _run_cli(CUTOVER_CLI, args)
-    # Must terminate; non-zero is fine for invalid input.
-    assert proc.returncode != 0 or "ok stage=" in proc.stdout or proc.stdout.startswith("{")
+    # Invalid adversarial inputs must fail closed (non-zero) without traceback.
+    assert proc.returncode != 0
     combined = proc.stdout + proc.stderr
     assert "Traceback" not in combined
-    for needle in FORBIDDEN_EVIDENCE:
-        # CLI may print sanitized errors; forbid raw hostile patterns.
-        if needle in {"SELECT ", "file://"} and needle.lower() in combined.lower():
-            # file URI may appear in argparse help for path types — only fail on token/email/home
-            continue
-        if needle in {"/home/", "@origenlab.example", "origenlab_test_token", "pid=", "inode=", "device="}:
-            assert needle.lower() not in combined.lower()
+    for needle in (
+        "/home/",
+        "@origenlab.example",
+        "origenlab_test_token",
+        "pid=",
+        "inode=",
+        "device=",
+    ):
+        assert needle.lower() not in combined.lower()
+
+
+def test_cutover_cli_default_preflight_is_zero_write() -> None:
+    proc = _run_cli(CUTOVER_CLI, [])
+    assert proc.returncode == 0
+    assert "Traceback" not in (proc.stdout + proc.stderr)
+    assert "plan_preflight" in proc.stdout
+    assert "apply=False" in proc.stdout
 
 
 @pytest.mark.parametrize(

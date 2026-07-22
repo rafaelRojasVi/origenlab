@@ -98,8 +98,8 @@ def test_barrier_then_abort_restores_modes(tmp_path: Path) -> None:
     assert world.modes[str(prod)] & 0o200 != 0
 
 
-def test_shm_readonly_blocks_mail_resume_stage(tmp_path: Path) -> None:
-    """Read-only SHM after barrier must not allow safe writer resume claims."""
+def test_shm_readonly_blocks_mail_resume_verification(tmp_path: Path) -> None:
+    """Read-only SHM after barrier must fail closed at resume verification."""
     world, prod, reports, root, fp = make_world(tmp_path)
     _synth_paths(world, prod)
     backup, staging = backup_staging(root)
@@ -124,11 +124,21 @@ def test_shm_readonly_blocks_mail_resume_stage(tmp_path: Path) -> None:
                 staging=staging,
             )
         )
-    # Keep SHM read-only while attempting restore-mode / resume path later would
-    # fail; assert barrier left companions non-writable.
     shm = Path(str(prod) + "-shm")
     assert world.modes[str(shm)] & 0o222 == 0
+    # Restore main writable (as post-swap resume would) but leave SHM RO.
+    world.modes[str(prod)] = 0o644
+    artifact = capture_artifact(world, prod)
+    from origenlab_email_pipeline.qa.sqlite_cutover_artifact_permissions import (
+        ArtifactPermissionError,
+        verify_artifact_writable_for_resume,
+    )
 
+    with pytest.raises(ArtifactPermissionError) as ei:
+        verify_artifact_writable_for_resume(
+            world, prod, artifact, legacy_original_mode=0o644
+        )
+    assert "shm" in str(ei.value).lower() or "not writable" in str(ei.value).lower()
 
 def test_stale_sidecar_identity_drift_is_visible(tmp_path: Path) -> None:
     world, prod, reports, root, fp = make_world(tmp_path)

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -74,26 +73,33 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(self.body)
 
 
+@pytest.fixture
+def stop_server():
+    servers: list[tuple[HTTPServer, threading.Thread]] = []
+
+    def _add(server: HTTPServer, thread: threading.Thread) -> HTTPServer:
+        servers.append((server, thread))
+        return server
+
+    yield _add
+    for s, t in servers:
+        s.shutdown()
+        s.server_close()
+        t.join(timeout=5)
+        assert not t.is_alive()
+
+
 def _serve(mode: str) -> tuple[HTTPServer, str, threading.Thread]:
-    _Handler.mode = mode
-    server = HTTPServer(("127.0.0.1", 0), _Handler)
+    handler = type(
+        f"Handler_{mode}",
+        (_Handler,),
+        {"mode": mode},
+    )
+    server = HTTPServer(("127.0.0.1", 0), handler)
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, f"http://127.0.0.1:{port}", thread
-
-
-@pytest.fixture
-def stop_server():
-    servers: list[HTTPServer] = []
-
-    def _add(server: HTTPServer) -> HTTPServer:
-        servers.append(server)
-        return server
-
-    yield _add
-    for s in servers:
-        s.shutdown()
 
 
 @pytest.mark.parametrize(
@@ -101,8 +107,8 @@ def stop_server():
     ["redirect", "redirect_external", "oversized", "empty", "array", "malformed", "http_error"],
 )
 def test_loopback_getter_rejects_hostile_responses(mode: str, stop_server) -> None:
-    server, base, _ = _serve(mode)
-    stop_server(server)
+    server, base, thread = _serve(mode)
+    stop_server(server, thread)
     getter = make_loopback_json_getter(base, token_provider=lambda: None, max_bytes=1000)
     with pytest.raises(CutoverError) as ei:
         getter(base + "/health")
@@ -115,8 +121,8 @@ def test_loopback_getter_rejects_hostile_responses(mode: str, stop_server) -> No
 
 
 def test_loopback_getter_accepts_ok(stop_server) -> None:
-    server, base, _ = _serve("ok")
-    stop_server(server)
+    server, base, thread = _serve("ok")
+    stop_server(server, thread)
     getter = make_loopback_json_getter(base, token_provider=lambda: None)
     payload = getter(base + "/health")
     assert isinstance(payload, dict)
@@ -154,8 +160,8 @@ def test_loopback_getter_rejects_hostile_request_urls(url: str) -> None:
 
 
 def test_token_sent_but_never_in_error_text(stop_server) -> None:
-    server, base, _ = _serve("http_error")
-    stop_server(server)
+    server, base, thread = _serve("http_error")
+    stop_server(server, thread)
     secret = "origenlab_test_token_ABCDEF123456"
 
     def provider() -> str:

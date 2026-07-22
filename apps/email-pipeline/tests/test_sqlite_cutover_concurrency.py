@@ -49,10 +49,12 @@ def test_two_orchestrators_same_mid_exclusive_lock(tmp_path: Path) -> None:
         )
     release.set()
     t.join(timeout=5)
+    assert not t.is_alive()
     assert errors == []
 
 
-def test_two_mids_racing_same_source(tmp_path: Path) -> None:
+def test_two_mids_serialized_same_source(tmp_path: Path) -> None:
+    """Two MIDs may each create journals, but exclusive flock serializes apply."""
     world, prod, reports, root, fp = make_world(tmp_path)
     backup, staging = backup_staging(root)
     mid_a = "cutover20260722T180001Z"
@@ -70,8 +72,6 @@ def test_two_mids_racing_same_source(tmp_path: Path) -> None:
             maintenance_id=mid_a,
         )
     )
-    # Second MID against same synthetic source should take its own journal path
-    # but exclusive flock on production must serialize.
     apply_stage(
         make_opts(
             world,
@@ -93,6 +93,40 @@ def test_two_mids_racing_same_source(tmp_path: Path) -> None:
     )
     assert ja is not None and jb is not None
     assert ja.maintenance_id != jb.maintenance_id
+    # Concurrent ownership is refused while one lock is held.
+    errors: list[BaseException] = []
+    started = threading.Event()
+    release = threading.Event()
+
+    def hold() -> None:
+        try:
+            with world.acquire_exclusive_lock(prod, mid_a):
+                started.set()
+                release.wait(timeout=5)
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    t = threading.Thread(target=hold, daemon=True)
+    t.start()
+    assert started.wait(timeout=5)
+    with pytest.raises(CutoverError):
+        apply_stage(
+            make_opts(
+                world,
+                prod,
+                reports,
+                world.fingerprint(prod),
+                stage=CutoverStage.STOP_READERS,
+                apply=True,
+                backup=backup,
+                staging=staging,
+                maintenance_id=mid_b,
+            )
+        )
+    release.set()
+    t.join(timeout=5)
+    assert not t.is_alive()
+    assert errors == []
 
 
 def test_foreign_fd_after_quiescence_blocks_backup(tmp_path: Path) -> None:
@@ -125,7 +159,7 @@ def test_foreign_fd_after_quiescence_blocks_backup(tmp_path: Path) -> None:
             "classification": "live",
             "access": "read_only",
             "role": "main",
-            "foreign": True,
+            "pid": 99999,
         }
     ]
     with pytest.raises(CutoverError):

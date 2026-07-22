@@ -74,7 +74,9 @@ was **not** committed.
    Malformed journals whose JSON root was a list/null/string/int raised
    `AttributeError` instead of a fail-closed `CutoverError(AMBIGUOUS)`.
    Minimal fix: reject non-dict roots before field access.
-   Regression: `test_load_journal_rejects_malformed` covers `[]`/`null`/`"string"`/`1`.
+   Regression: `test_load_journal_rejects_malformed` covers non-object roots
+   including `null`/`true`/`false`/ints/floats/arrays/strings plus schema/tool
+   mismatches; BOM-prefixed objects fail via the unreadable-JSON path.
 
 ## Residual risks still open
 

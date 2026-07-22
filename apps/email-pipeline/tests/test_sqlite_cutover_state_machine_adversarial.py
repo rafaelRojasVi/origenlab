@@ -16,11 +16,8 @@ from origenlab_email_pipeline.qa.sqlite_production_cutover import (
     STAGE_ORDER,
     CutoverError,
     CutoverFailureCategory,
-    CutoverJournal,
     CutoverStage,
-    abort_before_swap,
     apply_stage,
-    attempt_rollback_before_writers,
     load_journal,
     next_stage,
     previous_stage,
@@ -29,11 +26,9 @@ from origenlab_email_pipeline.qa.sqlite_production_cutover import (
 )
 from sqlite_adversarial_support import (
     JULY19_MID,
-    MAIN_SHA,
     MID,
     assert_no_forbidden,
     backup_staging,
-    journal_dict_skeleton,
     make_opts,
     make_world,
 )
@@ -493,10 +488,9 @@ def test_repeat_pause_writers_is_idempotent_or_refuses_cleanly(tmp_path: Path) -
         prod.parent / ".origenlab_cutover_journals" / f"{MID}.journal.json",
     )
     assert journal is not None
-    assert journal.stage in {
-        CutoverStage.PAUSE_WRITERS.value,
-        CutoverStage.STOP_READERS.value,
-    }
+    assert journal.stage == CutoverStage.PAUSE_WRITERS.value
+    assert type(journal.abandoned) is bool
+    assert journal.abandoned is False
 
 
 def test_rollback_finalize_without_proof_refuses(tmp_path: Path) -> None:

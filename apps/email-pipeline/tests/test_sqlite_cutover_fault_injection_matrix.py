@@ -117,13 +117,16 @@ def test_fail_after_never_claims_completed(
             )
         )
     assert_no_forbidden(str(ei.value))
-    assert ei.value.category in set(CutoverFailureCategory)
+    assert ei.value.category is CutoverFailureCategory.APPLY
+    assert "injected failure after" in str(ei.value)
     journal = load_journal(
         world, prod.parent / ".origenlab_cutover_journals" / f"{MID}.journal.json"
     )
-    if journal is not None:
-        assert journal.stage != CutoverStage.COMPLETED.value
-        assert journal.abandoned is not True
+    assert journal is not None
+    assert journal.stage != CutoverStage.COMPLETED.value
+    assert type(journal.abandoned) is bool
+    assert journal.abandoned is False
+    assert "abandoned" in journal.to_dict()
 
 
 def test_journal_write_fault_keeps_non_completed(tmp_path: Path) -> None:
