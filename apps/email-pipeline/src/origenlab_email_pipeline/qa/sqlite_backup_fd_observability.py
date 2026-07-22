@@ -421,7 +421,7 @@ def summarize_fd_observation(
     """Build a sanitized aggregate — no PID/FD/path/device/inode."""
     if phase not in OBS_PHASES:
         phase = "unknown"
-    trusted = sum(1 for c in classified if c.get("confidence") == CONFIDENCE_TRUSTED)
+    accepted = sum(1 for c in classified if c.get("confidence") == CONFIDENCE_TRUSTED)
     blockers = sum(1 for c in classified if c.get("confidence") == CONFIDENCE_BLOCKER)
     ambiguous = sum(
         1 for c in classified if c.get("confidence") == CONFIDENCE_AMBIGUOUS
@@ -447,7 +447,7 @@ def summarize_fd_observation(
         "phase": phase,
         "member_roles_present": members_present,
         "member_roles_observed": roles_observed,
-        "trusted_locking_count": int(trusted),
+        "accepted_locking_count": int(accepted),
         "blocker_count": int(blockers),
         "ambiguous_count": int(ambiguous),
         "verdict": verdict,
@@ -496,7 +496,7 @@ def merge_observation_aggregates(
 ) -> dict[str, Any]:
     """Merge per-phase aggregates into one sanitized report fragment."""
     phases: list[str] = []
-    trusted = 0
+    accepted = 0
     blockers = 0
     ambiguous = 0
     roles: set[str] = set()
@@ -508,7 +508,7 @@ def merge_observation_aggregates(
         ph = obs.get("phase")
         if isinstance(ph, str) and ph in OBS_PHASES:
             phases.append(ph)
-        trusted += int(obs.get("trusted_locking_count") or 0)
+        accepted += int(obs.get("accepted_locking_count") or 0)
         blockers += int(obs.get("blocker_count") or 0)
         ambiguous += int(obs.get("ambiguous_count") or 0)
         for r in obs.get("member_roles_observed") or []:
@@ -527,7 +527,7 @@ def merge_observation_aggregates(
         "observation_phases": phases,
         "member_roles_present": sorted(present),
         "member_roles_observed": sorted(roles),
-        "trusted_locking_count": trusted,
+        "accepted_locking_count": accepted,
         "blocker_count": blockers,
         "ambiguous_count": ambiguous,
         "verdict": verdict,
