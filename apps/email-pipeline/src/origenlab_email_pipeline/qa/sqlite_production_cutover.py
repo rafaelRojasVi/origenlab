@@ -2704,6 +2704,12 @@ def load_journal(adapters: CutoverAdapters, path: Path) -> CutoverJournal | None
             category=CutoverFailureCategory.AMBIGUOUS,
             recovery="Do not guess; inspect journal under cutover journals dir.",
         )
+    if not isinstance(data, dict):
+        _fail(
+            "cutover journal root must be a JSON object",
+            category=CutoverFailureCategory.AMBIGUOUS,
+            recovery="Do not guess; inspect journal under cutover journals dir.",
+        )
     if data.get("schema_version") != CUTOVER_SCHEMA_VERSION:
         _fail(
             "journal schema_version mismatch",
