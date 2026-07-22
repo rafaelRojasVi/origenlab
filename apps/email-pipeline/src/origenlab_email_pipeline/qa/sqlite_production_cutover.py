@@ -63,6 +63,20 @@ from origenlab_email_pipeline.qa.sqlite_cutover_artifact_permissions import (
     restore_pre_swap_changed_members,
     verify_artifact_writable_for_resume,
 )
+from origenlab_email_pipeline.qa.sqlite_cutover_maintenance_boot_policy import (
+    BOOT_POLICY_RESTORE_ACTION,
+    BOOT_POLICY_SUPPRESS_ACTION,
+    BOOT_POLICY_UNITS,
+    LIFECYCLE_PRISTINE,
+    LIFECYCLE_RESTORED,
+    LIFECYCLE_SUPPRESSION_ACTIVE,
+    boot_policy_intent_problem,
+    boot_policy_journal_problem,
+    boot_policy_lifecycle,
+    boot_policy_requires_restoration,
+    classify_unit_enablement,
+    sanitized_boot_policy_status,
+)
 from origenlab_email_pipeline.operator_cli.chilecompra_auto_refresh import (
     LOCK_FILENAME as CHILECOMPRA_LOCK_FILENAME,
 )
@@ -643,6 +657,516 @@ def classify_health_timer_activity(
     }
 
 
+def _boot_policy_journal_fields_problem(journal: CutoverJournal) -> str | None:
+    return boot_policy_journal_problem(
+        maintenance_id=journal.maintenance_id,
+        api_enabled=journal.pre_maintenance_api_enabled,
+        timer_enabled=journal.pre_maintenance_health_timer_enabled,
+        intent=journal.maintenance_boot_policy_intent,
+        active=journal.maintenance_boot_policy_active,
+        restored=journal.maintenance_boot_policy_restored,
+    )
+
+
+def _boot_policy_lifecycle_for(journal: CutoverJournal) -> tuple[str | None, str | None]:
+    return boot_policy_lifecycle(
+        maintenance_id=journal.maintenance_id,
+        api_enabled=journal.pre_maintenance_api_enabled,
+        timer_enabled=journal.pre_maintenance_health_timer_enabled,
+        intent=journal.maintenance_boot_policy_intent,
+        active=journal.maintenance_boot_policy_active,
+        restored=journal.maintenance_boot_policy_restored,
+    )
+
+
+def _require_coherent_boot_policy(
+    journal: CutoverJournal,
+    *,
+    allow_pristine: bool = False,
+    require_restored: bool = False,
+    require_suppression_active: bool = False,
+) -> str:
+    """Validate coherent PR-D lifecycle; return the lifecycle label or fail.
+
+    ``allow_pristine``: abort before STOP_READERS may see pristine state.
+    ``require_restored``: terminal COMPLETED / late abort / ABANDONED.
+    ``require_suppression_active``: hazardous maintenance stages.
+    """
+    lifecycle, problem = _boot_policy_lifecycle_for(journal)
+    if problem is not None or lifecycle is None:
+        _fail(
+            f"malformed maintenance boot policy ({problem or 'unknown'})",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={"boot_policy_problem": problem},
+        )
+        raise AssertionError("unreachable")
+    if lifecycle == LIFECYCLE_PRISTINE:
+        if allow_pristine and not require_restored and not require_suppression_active:
+            return lifecycle
+        _fail(
+            "maintenance boot policy looks pristine after STOP_READERS began",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={"boot_policy_lifecycle": lifecycle},
+        )
+    if require_suppression_active and lifecycle != LIFECYCLE_SUPPRESSION_ACTIVE:
+        _fail(
+            "maintenance boot policy not in coherent suppression_active state",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={"boot_policy_lifecycle": lifecycle},
+        )
+    if require_restored and lifecycle != LIFECYCLE_RESTORED:
+        _fail(
+            "terminal cutover exit requires coherent verified boot-policy restoration",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={"boot_policy_lifecycle": lifecycle},
+        )
+    return lifecycle
+
+
+def _require_readers_unambiguously_inactive(
+    adapters: CutoverAdapters,
+    *,
+    api_base_url: str | None = None,
+    context: str,
+) -> None:
+    """Fail-closed reader inactivity via structured classifiers (never binary).
+
+    API must be unambiguously stopped through ``api_activity()``; timer must be
+    unambiguously inactive through ``health_timer_activity()``. Rejects
+    ambiguity, running/listener/PID presence, genuine failure/restart signals,
+    rc=127, empty/unknown, failed/activating/deactivating/reloading timer text.
+    """
+    api_act = adapters.api_activity(api_base_url=api_base_url)
+    if not isinstance(api_act, dict) or api_act.get("ambiguous"):
+        _fail(
+            f"API activity ambiguous ({context})",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={"context": context, "api_state": (
+                api_act.get("state") if isinstance(api_act, dict) else None
+            )},
+        )
+    if api_act.get("running") or not api_act.get("stopped"):
+        _fail(
+            f"API not unambiguously stopped ({context})",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={"context": context, "api_state": api_act.get("state")},
+        )
+    if api_act.get("genuine_failure_signal"):
+        _fail(
+            f"API genuine failure/restart signal ({context})",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={"context": context, "sub_state": api_act.get("sub_state")},
+        )
+    if int(api_act.get("main_pid") or 0) > 0 or bool(api_act.get("listener_present")):
+        _fail(
+            f"API PID/listener still present ({context})",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={"context": context},
+        )
+    timer_act = adapters.health_timer_activity()
+    if not isinstance(timer_act, dict) or timer_act.get("ambiguous"):
+        _fail(
+            f"health timer activity ambiguous ({context})",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={
+                "context": context,
+                "timer_state": (
+                    timer_act.get("state") if isinstance(timer_act, dict) else None
+                ),
+                "returncode": (
+                    timer_act.get("returncode") if isinstance(timer_act, dict) else None
+                ),
+            },
+        )
+    if not timer_act.get("inactive") or timer_act.get("active"):
+        _fail(
+            f"health timer not unambiguously inactive ({context})",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={"context": context, "timer_state": timer_act.get("state")},
+        )
+
+
+def _probe_unit_enablement(adapters: CutoverAdapters, unit: str) -> dict[str, Any]:
+    if unit not in BOOT_POLICY_UNITS:
+        _fail(
+            f"refusing enablement probe for unrelated unit {unit}",
+            category=CutoverFailureCategory.SAFETY,
+        )
+    classified = adapters.unit_enablement(unit)
+    if not isinstance(classified, dict) or classified.get("ambiguous"):
+        _fail(
+            f"ambiguous systemd enablement for {unit}",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={
+                "unit": unit,
+                "enablement_state": (
+                    classified.get("state") if isinstance(classified, dict) else None
+                ),
+            },
+            recovery=(
+                "Inspect systemctl --user is-enabled for the unit; only exact "
+                "enabled/disabled results are accepted. Manual recovery required."
+            ),
+        )
+    if classified.get("enabled") is True and classified.get("disabled") is False:
+        return classified
+    if classified.get("disabled") is True and classified.get("enabled") is False:
+        return classified
+    _fail(
+        f"inconsistent enablement classification for {unit}",
+        category=CutoverFailureCategory.SAFETY,
+        evidence={"unit": unit},
+    )
+    raise AssertionError("unreachable")
+
+
+def _require_boot_policy_suppression_active(
+    adapters: CutoverAdapters,
+    journal: CutoverJournal,
+) -> None:
+    """Fail closed unless persistent disablement is verified for both units."""
+    _require_coherent_boot_policy(journal, require_suppression_active=True)
+    if journal.maintenance_boot_policy_active is not True:
+        _fail(
+            "maintenance boot policy not active",
+            category=CutoverFailureCategory.SAFETY,
+            recovery=(
+                "STOP_READERS must establish persistent disablement before "
+                "hazardous maintenance stages proceed."
+            ),
+        )
+    if journal.maintenance_boot_policy_restored is True:
+        _fail(
+            "maintenance boot policy already restored during maintenance",
+            category=CutoverFailureCategory.SAFETY,
+        )
+    for unit in (API_HEALTH_TIMER, API_SERVICE):
+        classified = _probe_unit_enablement(adapters, unit)
+        if classified.get("disabled") is not True:
+            _fail(
+                f"boot suppression lost or reversed for {unit}",
+                category=CutoverFailureCategory.SAFETY,
+                evidence={
+                    "unit": unit,
+                    "enablement_state": classified.get("state"),
+                },
+                recovery=(
+                    "An external enable during maintenance reopens production SQLite "
+                    "on WSL/user-manager restart. Re-disable and retry, or abort."
+                ),
+            )
+
+
+def _should_restore_boot_policy(journal: CutoverJournal) -> bool:
+    """True when coherent non-pristine lifecycle requires restore/verify.
+
+    Validates lifecycle **before** deciding to skip. Malformed / empty /
+    unknown intents fail closed rather than being treated as pristine.
+    """
+    lifecycle, problem = _boot_policy_lifecycle_for(journal)
+    if problem is not None or lifecycle is None:
+        _fail(
+            f"malformed maintenance boot policy ({problem or 'unknown'})",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={"boot_policy_problem": problem},
+        )
+    return boot_policy_requires_restoration(lifecycle)
+
+
+def _establish_boot_policy_suppression(
+    adapters: CutoverAdapters,
+    journal: CutoverJournal,
+    journal_path: Path,
+    *,
+    inject: Callable[[str], None],
+    api_base_url: str | None = None,
+) -> None:
+    """Capture enablement, disable+verify timer then API, then stop both units.
+
+    Crash after durable intent (or after either disable) leaves reconcilable
+    journal state. Retry observes live enablement and continues; it never
+    overwrites a malformed or unrelated intent. Inactivity verification uses
+    structured ``api_activity`` / ``health_timer_activity`` classifiers — never
+    binary ``service_state()``.
+    """
+    problem = _boot_policy_journal_fields_problem(journal)
+    if problem is not None:
+        _fail(
+            f"malformed maintenance boot policy before suppress ({problem})",
+            category=CutoverFailureCategory.SAFETY,
+            evidence={"boot_policy_problem": problem},
+        )
+    if journal.maintenance_boot_policy_restored is True:
+        _fail(
+            "refusing STOP_READERS after boot policy already restored",
+            category=CutoverFailureCategory.SAFETY,
+        )
+
+    if journal.maintenance_boot_policy_active is True:
+        _require_boot_policy_suppression_active(adapters, journal)
+    else:
+        intent = journal.maintenance_boot_policy_intent
+        if intent is not None:
+            ip = boot_policy_intent_problem(
+                intent, maintenance_id=journal.maintenance_id
+            )
+            if ip is not None:
+                _fail(
+                    f"malformed boot policy intent ({ip}); refusing overwrite",
+                    category=CutoverFailureCategory.SAFETY,
+                    evidence={"boot_policy_intent_problem": ip},
+                )
+            if intent.get("action") != BOOT_POLICY_SUPPRESS_ACTION:
+                _fail(
+                    "unrelated boot policy intent present; refusing overwrite",
+                    category=CutoverFailureCategory.SAFETY,
+                )
+            # Reconcile captured booleans from intent; never rewrite them.
+            if journal.pre_maintenance_api_enabled is None:
+                journal.pre_maintenance_api_enabled = bool(intent["api_was_enabled"])
+            if journal.pre_maintenance_health_timer_enabled is None:
+                journal.pre_maintenance_health_timer_enabled = bool(
+                    intent["timer_was_enabled"]
+                )
+            if (
+                journal.pre_maintenance_api_enabled != intent.get("api_was_enabled")
+                or journal.pre_maintenance_health_timer_enabled
+                != intent.get("timer_was_enabled")
+            ):
+                _fail(
+                    "boot policy intent disagrees with journal pre-enablement",
+                    category=CutoverFailureCategory.SAFETY,
+                )
+        else:
+            # Fresh capture — probe live enablement before any mutation.
+            timer_cls = _probe_unit_enablement(adapters, API_HEALTH_TIMER)
+            api_cls = _probe_unit_enablement(adapters, API_SERVICE)
+            timer_enabled = bool(timer_cls.get("enabled"))
+            api_enabled = bool(api_cls.get("enabled"))
+            journal.pre_maintenance_api_enabled = api_enabled
+            journal.pre_maintenance_health_timer_enabled = timer_enabled
+            journal.maintenance_boot_policy_intent = {
+                "action": BOOT_POLICY_SUPPRESS_ACTION,
+                "maintenance_id": journal.maintenance_id,
+                "started_at_utc": _iso_now(),
+                "api_was_enabled": api_enabled,
+                "timer_was_enabled": timer_enabled,
+                "phase": "capture",
+            }
+            write_journal(adapters, journal_path, journal)
+            inject("boot_policy_intent")
+
+        # Disable + verify health timer first, then API.
+        intent = journal.maintenance_boot_policy_intent
+        assert isinstance(intent, dict)
+        timer_live = _probe_unit_enablement(adapters, API_HEALTH_TIMER)
+        if timer_live.get("enabled") is True:
+            intent["phase"] = "disable_timer"
+            journal.maintenance_boot_policy_intent = intent
+            write_journal(adapters, journal_path, journal)
+            adapters.disable_unit(API_HEALTH_TIMER)
+            inject("boot_policy_timer_disabled")
+            after = _probe_unit_enablement(adapters, API_HEALTH_TIMER)
+            if after.get("disabled") is not True:
+                _fail(
+                    f"disable unverified for {API_HEALTH_TIMER}",
+                    category=CutoverFailureCategory.APPLY,
+                )
+        elif timer_live.get("disabled") is not True:
+            _fail(
+                f"timer enablement not disabled after suppress path for {API_HEALTH_TIMER}",
+                category=CutoverFailureCategory.SAFETY,
+            )
+
+        api_live = _probe_unit_enablement(adapters, API_SERVICE)
+        if api_live.get("enabled") is True:
+            intent["phase"] = "disable_api"
+            journal.maintenance_boot_policy_intent = intent
+            write_journal(adapters, journal_path, journal)
+            adapters.disable_unit(API_SERVICE)
+            inject("boot_policy_api_disabled")
+            after_api = _probe_unit_enablement(adapters, API_SERVICE)
+            if after_api.get("disabled") is not True:
+                _fail(
+                    f"disable unverified for {API_SERVICE}",
+                    category=CutoverFailureCategory.APPLY,
+                )
+        elif api_live.get("disabled") is not True:
+            _fail(
+                f"API enablement not disabled after suppress path for {API_SERVICE}",
+                category=CutoverFailureCategory.SAFETY,
+            )
+
+        intent["phase"] = "stop_units"
+        journal.maintenance_boot_policy_intent = intent
+        write_journal(adapters, journal_path, journal)
+
+    # Stop and unambiguously verify inactive via structured classifiers.
+    adapters.stop_health_timer()
+    adapters.stop_api()
+    _require_readers_unambiguously_inactive(
+        adapters,
+        api_base_url=api_base_url,
+        context="stop_readers_after_stop",
+    )
+    # Final enablement gate — both probes go through consistency checks.
+    timer_final = _probe_unit_enablement(adapters, API_HEALTH_TIMER)
+    api_final = _probe_unit_enablement(adapters, API_SERVICE)
+    if timer_final.get("disabled") is not True or api_final.get("disabled") is not True:
+        _fail(
+            "units not persistently disabled before STOP_READERS completion",
+            category=CutoverFailureCategory.SAFETY,
+        )
+    intent = journal.maintenance_boot_policy_intent
+    if isinstance(intent, dict):
+        intent["phase"] = "active"
+        journal.maintenance_boot_policy_intent = intent
+    journal.maintenance_boot_policy_active = True
+    journal.services_stopped = True
+
+
+def _restore_one_unit_enablement(
+    adapters: CutoverAdapters,
+    unit: str,
+    *,
+    want_enabled: bool,
+) -> None:
+    live = _probe_unit_enablement(adapters, unit)
+    if want_enabled:
+        if live.get("enabled") is True:
+            return
+        adapters.enable_unit(unit)
+        after = _probe_unit_enablement(adapters, unit)
+        if after.get("enabled") is not True:
+            _fail(
+                f"enable unverified for {unit}",
+                category=CutoverFailureCategory.APPLY,
+            )
+        return
+    if live.get("disabled") is True:
+        return
+    adapters.disable_unit(unit)
+    after_dis = _probe_unit_enablement(adapters, unit)
+    if after_dis.get("disabled") is not True:
+        _fail(
+            f"disable unverified for {unit} during restore",
+            category=CutoverFailureCategory.APPLY,
+        )
+
+
+def _restore_boot_policy(
+    adapters: CutoverAdapters,
+    journal: CutoverJournal,
+    journal_path: Path,
+    *,
+    inject: Callable[[str], None],
+) -> dict[str, Any]:
+    """Exact enablement restoration (intent-before / verified-success-after).
+
+    Validates coherent lifecycle **before** deciding to skip. Restores only the
+    two maintenance units. Partial restoration retains typed intent and must not
+    claim COMPLETED / ABANDONED / successful abort.
+    """
+    # Lifecycle validation precedes any skip decision (empty/unknown intents
+    # fail closed rather than looking pristine).
+    if not _should_restore_boot_policy(journal):
+        return {"boot_policy_restored": False, "boot_policy_skipped": True}
+
+    want_api = bool(journal.pre_maintenance_api_enabled)
+    want_timer = bool(journal.pre_maintenance_health_timer_enabled)
+
+    if journal.maintenance_boot_policy_restored is True:
+        # Idempotent verify: live state must already match captured policy.
+        _restore_one_unit_enablement(
+            adapters, API_HEALTH_TIMER, want_enabled=want_timer
+        )
+        _restore_one_unit_enablement(adapters, API_SERVICE, want_enabled=want_api)
+        _require_coherent_boot_policy(journal, require_restored=True)
+        return {
+            "boot_policy_restored": True,
+            "pre_maintenance_api_enabled": want_api,
+            "pre_maintenance_health_timer_enabled": want_timer,
+        }
+
+    intent = journal.maintenance_boot_policy_intent
+    assert isinstance(intent, dict)
+
+    # Intent-before: typed restore intent (or upgrade suppress → restore).
+    # Keep active=True throughout restoration_in_progress (even if suppress
+    # crashed before the active flag was set).
+    if intent.get("action") != BOOT_POLICY_RESTORE_ACTION:
+        journal.maintenance_boot_policy_active = True
+        journal.maintenance_boot_policy_intent = {
+            "action": BOOT_POLICY_RESTORE_ACTION,
+            "maintenance_id": journal.maintenance_id,
+            "started_at_utc": _iso_now(),
+            "api_was_enabled": want_api,
+            "timer_was_enabled": want_timer,
+            "phase": "restore_timer",
+        }
+        write_journal(adapters, journal_path, journal)
+        inject("boot_policy_restore_intent")
+
+    intent = journal.maintenance_boot_policy_intent
+    assert isinstance(intent, dict)
+    if journal.maintenance_boot_policy_active is not True:
+        journal.maintenance_boot_policy_active = True
+        write_journal(adapters, journal_path, journal)
+
+    # Restore timer first, then API (same order as suppress).
+    if intent.get("phase") != "verified":
+        intent["phase"] = "restore_timer"
+        journal.maintenance_boot_policy_intent = intent
+        write_journal(adapters, journal_path, journal)
+        _restore_one_unit_enablement(
+            adapters, API_HEALTH_TIMER, want_enabled=want_timer
+        )
+        inject("boot_policy_timer_restored")
+
+        intent["phase"] = "restore_api"
+        journal.maintenance_boot_policy_intent = intent
+        write_journal(adapters, journal_path, journal)
+        _restore_one_unit_enablement(adapters, API_SERVICE, want_enabled=want_api)
+        inject("boot_policy_api_restored")
+
+        # Verified-success-after.
+        timer_v = _probe_unit_enablement(adapters, API_HEALTH_TIMER)
+        api_v = _probe_unit_enablement(adapters, API_SERVICE)
+        if bool(timer_v.get("enabled")) != want_timer:
+            _fail(
+                f"timer enablement restore mismatch for {API_HEALTH_TIMER}",
+                category=CutoverFailureCategory.VERIFY,
+            )
+        if bool(api_v.get("enabled")) != want_api:
+            _fail(
+                f"API enablement restore mismatch for {API_SERVICE}",
+                category=CutoverFailureCategory.VERIFY,
+            )
+        intent["phase"] = "verified"
+        journal.maintenance_boot_policy_intent = intent
+        journal.maintenance_boot_policy_restored = True
+        journal.maintenance_boot_policy_active = False
+        write_journal(adapters, journal_path, journal)
+        inject("boot_policy_restored")
+
+    _require_coherent_boot_policy(journal, require_restored=True)
+    return {
+        "boot_policy_restored": True,
+        "pre_maintenance_api_enabled": want_api,
+        "pre_maintenance_health_timer_enabled": want_timer,
+    }
+
+
+def _boot_policy_status_fragment(journal: CutoverJournal) -> dict[str, Any]:
+    return sanitized_boot_policy_status(
+        api_enabled=journal.pre_maintenance_api_enabled,
+        timer_enabled=journal.pre_maintenance_health_timer_enabled,
+        intent=journal.maintenance_boot_policy_intent,
+        active=journal.maintenance_boot_policy_active,
+        restored=journal.maintenance_boot_policy_restored,
+    )
+
+
 def _default_api_process_identity(api_base_url: str | None) -> dict[str, Any]:
     """Best-effort durable process identity for the API unit (MainPID + generation).
 
@@ -883,6 +1407,13 @@ class CutoverJournal:
     # Pre-maintenance service policy captured before STOP_READERS stops them.
     pre_maintenance_api_active: bool | None = None
     pre_maintenance_health_timer_active: bool | None = None
+    # PR-D: persistent systemd enablement policy (boot auto-start suppression).
+    # Exact pre-maintenance is-enabled states for the two maintenance units only.
+    pre_maintenance_api_enabled: bool | None = None
+    pre_maintenance_health_timer_enabled: bool | None = None
+    maintenance_boot_policy_intent: dict[str, Any] | None = None
+    maintenance_boot_policy_active: bool = False
+    maintenance_boot_policy_restored: bool = False
     original_mode: int | None = None
     original_uid: int | None = None
     original_gid: int | None = None
@@ -957,6 +1488,9 @@ class CutoverAdapters(Protocol):
     def start_api(self) -> None: ...
     def stop_health_timer(self) -> None: ...
     def start_health_timer(self) -> None: ...
+    def unit_enablement(self, unit: str) -> dict[str, Any]: ...
+    def disable_unit(self, unit: str) -> None: ...
+    def enable_unit(self, unit: str) -> None: ...
     def wal_state(self, db: Path) -> dict[str, Any]: ...
     def checkpoint_wal(self, db: Path) -> dict[str, Any]: ...
     def create_online_backup(self, source: Path, dest: Path) -> dict[str, Any]: ...
@@ -1604,6 +2138,42 @@ class FilesystemAdapters:
         if fn(["--user", "start", API_HEALTH_TIMER]) != 0:
             _fail(
                 f"failed to start {API_HEALTH_TIMER}",
+                category=CutoverFailureCategory.APPLY,
+            )
+
+    def unit_enablement(self, unit: str) -> dict[str, Any]:
+        if unit not in BOOT_POLICY_UNITS:
+            _fail(
+                f"refusing enablement probe for unrelated unit {unit}",
+                category=CutoverFailureCategory.SAFETY,
+            )
+        fn = self.systemctl_text or _default_systemctl_text
+        rc, text = fn(["--user", "is-enabled", unit])
+        return classify_unit_enablement(returncode=rc, is_enabled_text=text)
+
+    def disable_unit(self, unit: str) -> None:
+        if unit not in BOOT_POLICY_UNITS:
+            _fail(
+                f"refusing to disable unrelated unit {unit}",
+                category=CutoverFailureCategory.SAFETY,
+            )
+        fn = self.systemctl or _default_systemctl
+        if fn(["--user", "disable", unit]) != 0:
+            _fail(
+                f"failed to disable {unit}",
+                category=CutoverFailureCategory.APPLY,
+            )
+
+    def enable_unit(self, unit: str) -> None:
+        if unit not in BOOT_POLICY_UNITS:
+            _fail(
+                f"refusing to enable unrelated unit {unit}",
+                category=CutoverFailureCategory.SAFETY,
+            )
+        fn = self.systemctl or _default_systemctl
+        if fn(["--user", "enable", unit]) != 0:
+            _fail(
+                f"failed to enable {unit}",
                 category=CutoverFailureCategory.APPLY,
             )
 
@@ -3109,9 +3679,11 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
 
         if stage == CutoverStage.STOP_READERS:
             _expect_journal_stage(journal, CutoverStage.PAUSE_WRITERS)
-            # Capture the pre-maintenance service policy BEFORE stopping anything so
-            # a later rollback_finalize restores exactly the services that were
-            # active (and never enables one that was disabled before maintenance).
+            # Capture the pre-maintenance service *activity* policy BEFORE stopping
+            # anything so a later rollback_finalize restores exactly the services
+            # that were active (and never enables one that was disabled before
+            # maintenance). Enablement (boot auto-start) is handled separately by
+            # the PR-D boot-policy suppress path below.
             if (
                 journal.pre_maintenance_api_active is None
                 or journal.pre_maintenance_health_timer_active is None
@@ -3122,29 +3694,34 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                     pre_state.health_timer_active
                 )
                 write_journal(adapters, journal_path, journal)
-            adapters.stop_health_timer()
-            adapters.stop_api()
-            services = adapters.service_state()
-            if services.api_active or services.health_timer_active:
-                _fail(
-                    "services still active after stop",
-                    category=CutoverFailureCategory.APPLY,
-                )
-            journal.services_stopped = True
+            _establish_boot_policy_suppression(
+                adapters,
+                journal,
+                journal_path,
+                inject=_inject,
+                api_base_url=opts.api_base_url,
+            )
             journal.stage = stage.value
             write_journal(adapters, journal_path, journal)
             _inject("stop_readers")
-            return _stage_report(opts, journal, {"services": asdict(services)})
+            return _stage_report(
+                opts,
+                journal,
+                {
+                    "services": asdict(adapters.service_state()),
+                    "boot_policy": _boot_policy_status_fragment(journal),
+                },
+            )
 
         if stage == CutoverStage.QUIESCE_WAL:
             _expect_journal_stage(journal, CutoverStage.STOP_READERS)
+            _require_boot_policy_suppression_active(adapters, journal)
             _assert_writers_quiesced(adapters, production)
-            services = adapters.service_state()
-            if services.api_active or services.health_timer_active:
-                _fail(
-                    "API/health must be stopped before WAL quiesce",
-                    category=CutoverFailureCategory.SAFETY,
-                )
+            _require_readers_unambiguously_inactive(
+                adapters,
+                api_base_url=opts.api_base_url,
+                context="quiesce_wal_before_checkpoint",
+            )
             before = adapters.wal_state(production)
             result = adapters.checkpoint_wal(production)
             after = adapters.wal_state(production)
@@ -3155,12 +3732,11 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                 )
             # Recheck barriers after checkpoint.
             _assert_writers_quiesced(adapters, production)
-            services = adapters.service_state()
-            if services.api_active or services.health_timer_active:
-                _fail(
-                    "services reappeared after checkpoint",
-                    category=CutoverFailureCategory.SAFETY,
-                )
+            _require_readers_unambiguously_inactive(
+                adapters,
+                api_base_url=opts.api_base_url,
+                context="quiesce_wal_after_checkpoint",
+            )
             journal.wal_quiesced = True
             journal.production_fingerprint = adapters.fingerprint(production)
             journal.stage = stage.value
@@ -3174,6 +3750,7 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
 
         if stage == CutoverStage.APPLY_OS_WRITE_BARRIER:
             _expect_journal_stage(journal, CutoverStage.QUIESCE_WAL)
+            _require_boot_policy_suppression_active(adapters, journal)
             if not journal.wal_quiesced:
                 _fail("WAL not quiesced", category=CutoverFailureCategory.SAFETY)
             _assert_writers_quiesced(adapters, production)
@@ -3306,6 +3883,7 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
 
         if stage == CutoverStage.CREATE_CURRENT_BACKUP:
             _expect_journal_stage(journal, CutoverStage.APPLY_OS_WRITE_BARRIER)
+            _require_boot_policy_suppression_active(adapters, journal)
             if not journal.production_write_barrier_active:
                 _fail(
                     "OS write barrier must be active before backup",
@@ -3351,6 +3929,7 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
 
         if stage == CutoverStage.COMPACT_TO_PRODUCTION_FS_STAGING:
             _expect_journal_stage(journal, CutoverStage.CREATE_CURRENT_BACKUP)
+            _require_boot_policy_suppression_active(adapters, journal)
             _assert_writers_quiesced(adapters, production)
             if opts.backup_dest is None or opts.staging_dest is None:
                 _fail(
@@ -3399,6 +3978,7 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
             _expect_journal_stage(
                 journal, CutoverStage.COMPACT_TO_PRODUCTION_FS_STAGING
             )
+            _require_boot_policy_suppression_active(adapters, journal)
             _assert_writers_quiesced(adapters, production)
             if opts.staging_dest is None:
                 _fail("--staging-dest required", category=CutoverFailureCategory.PREFLIGHT)
@@ -3423,6 +4003,7 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
 
         if stage == CutoverStage.APPROVE_SWAP:
             _expect_journal_stage(journal, CutoverStage.VERIFY_CANDIDATE)
+            _require_boot_policy_suppression_active(adapters, journal)
             if not journal.compact_verified or not journal.candidate_fingerprint:
                 _fail("candidate not verified", category=CutoverFailureCategory.SAFETY)
             if opts.staging_dest is None:
@@ -3466,6 +4047,7 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
 
         if stage == CutoverStage.READONLY_SMOKE:
             _expect_journal_stage(journal, CutoverStage.ATOMIC_SWAP)
+            _require_boot_policy_suppression_active(adapters, journal)
             if not journal.old_production_retained:
                 _fail(
                     "swap retention incomplete; refuse smoke",
@@ -3544,21 +4126,31 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
 
         if stage == CutoverStage.RESUME_SERVICES:
             _expect_journal_stage(journal, CutoverStage.READONLY_SMOKE)
+            _require_boot_policy_suppression_active(adapters, journal)
             if not journal.smoke_ok:
                 _fail("smoke not ok", category=CutoverFailureCategory.SAFETY)
             if not adapters.service_state().api_active:
                 adapters.start_api()
             adapters.start_health_timer()
+            # RESUME_SERVICES may start the units but must NOT re-enable boot
+            # auto-start; verify persistent disablement still holds.
+            _require_boot_policy_suppression_active(adapters, journal)
             journal.services_stopped = False
             journal.stage = stage.value
             write_journal(adapters, journal_path, journal)
             _inject("resume_services")
             return _stage_report(
-                opts, journal, {"services": asdict(adapters.service_state())}
+                opts,
+                journal,
+                {
+                    "services": asdict(adapters.service_state()),
+                    "boot_policy": _boot_policy_status_fragment(journal),
+                },
             )
 
         if stage == CutoverStage.RESUME_WRITERS_PONR:
             _expect_journal_stage(journal, CutoverStage.RESUME_SERVICES)
+            _require_boot_policy_suppression_active(adapters, journal)
             if journal.writable_mode_restored:
                 _fail(
                     "writable mode already restored while advertising rollback safety",
@@ -3582,6 +4174,7 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
 
         if stage == CutoverStage.RESUME_WRITERS_RESTORE_MODE:
             _expect_journal_stage(journal, CutoverStage.RESUME_WRITERS_PONR)
+            _require_boot_policy_suppression_active(adapters, journal)
             if not journal.writer_resume_started:
                 _fail(
                     "writer_resume_started required before restoring writable mode",
@@ -3643,6 +4236,7 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
 
         if stage == CutoverStage.RESUME_WRITERS_MAIL:
             _expect_journal_stage(journal, CutoverStage.RESUME_WRITERS_RESTORE_MODE)
+            _require_boot_policy_suppression_active(adapters, journal)
             if not journal.writer_resume_started or not journal.writable_mode_restored:
                 _fail(
                     "PoNR and writable restore required before removing mail pause",
@@ -3668,6 +4262,7 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
 
         if stage == CutoverStage.RESUME_WRITERS_OBSERVE_MAIL:
             _expect_journal_stage(journal, CutoverStage.RESUME_WRITERS_MAIL)
+            _require_boot_policy_suppression_active(adapters, journal)
             # Legitimate ingestion may change size/mtime fingerprint.
             failure: str | None = None
             ident = adapters.path_identity(production)
@@ -3745,6 +4340,7 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
 
         if stage == CutoverStage.RESUME_WRITERS_MIRROR:
             _expect_journal_stage(journal, CutoverStage.RESUME_WRITERS_OBSERVE_MAIL)
+            _require_boot_policy_suppression_active(adapters, journal)
             if not journal.writer_resume_started:
                 _fail(
                     "writer_resume_started missing",
@@ -3769,6 +4365,7 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
 
         if stage == CutoverStage.RESUME_WRITERS_OBSERVE_MIRROR:
             _expect_journal_stage(journal, CutoverStage.RESUME_WRITERS_MIRROR)
+            _require_boot_policy_suppression_active(adapters, journal)
             # Mirror must not mutate SQLite; identity changes attributed to mail.
             ident = adapters.path_identity(production)
             if (
@@ -3793,6 +4390,7 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
 
         if stage == CutoverStage.RESUME_WRITERS_COMMIT:
             _expect_journal_stage(journal, CutoverStage.RESUME_WRITERS_OBSERVE_MIRROR)
+            _require_boot_policy_suppression_active(adapters, journal)
             journal.writers_resumed = True
             journal.stage = stage.value
             write_journal(adapters, journal_path, journal)
@@ -3807,9 +4405,28 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                     "(abandoned != completed)",
                     category=CutoverFailureCategory.SAFETY,
                 )
+            # Exact enablement restoration immediately BEFORE committing COMPLETED.
+            boot = _restore_boot_policy(
+                adapters, journal, journal_path, inject=_inject
+            )
+            if boot.get("boot_policy_skipped"):
+                _fail(
+                    "refusing COMPLETED with pristine boot policy "
+                    "(STOP_READERS never established suppression)",
+                    category=CutoverFailureCategory.SAFETY,
+                    evidence={"boot_policy": boot},
+                )
+            _require_coherent_boot_policy(journal, require_restored=True)
             journal.stage = stage.value
             write_journal(adapters, journal_path, journal)
-            return _stage_report(opts, journal, {"completed": True})
+            return _stage_report(
+                opts,
+                journal,
+                {
+                    "completed": True,
+                    "boot_policy": _boot_policy_status_fragment(journal),
+                },
+            )
 
         _fail(f"unsupported stage {stage.value}", category=CutoverFailureCategory.PREFLIGHT)
         raise AssertionError("unreachable")
@@ -3829,6 +4446,7 @@ def _run_atomic_swap(
             _fail("swap not approved", category=CutoverFailureCategory.SAFETY)
     else:
         _expect_journal_stage(journal, CutoverStage.APPROVE_SWAP)
+    _require_boot_policy_suppression_active(adapters, journal)
     if not journal.swap_approved:
         _fail("swap not approved", category=CutoverFailureCategory.SAFETY)
     if journal.writers_resumed or journal.writer_resume_started:
@@ -4361,6 +4979,9 @@ def attempt_rollback_before_writers(
                 category=CutoverFailureCategory.VERIFY,
             )
 
+        # PR-D: verified persistent disablement before any physical exchange.
+        _require_boot_policy_suppression_active(adapters, journal)
+
         adapters.rename_exchange(production, pre)
         post_hook = getattr(adapters, "after_rename_exchange_hook", None)
         if callable(post_hook):
@@ -4733,11 +5354,38 @@ _PRC_ALWAYS_BOOL_FIELDS: tuple[str, ...] = (
     "rollback_finalize_owned_temp_api",
     "exchange_completed",
     "old_production_retained",
+    "maintenance_boot_policy_active",
+    "maintenance_boot_policy_restored",
 )
 
 _PRC_OPTIONAL_BOOL_FIELDS: tuple[str, ...] = (
     "pre_maintenance_api_active",
     "pre_maintenance_health_timer_active",
+    "pre_maintenance_api_enabled",
+    "pre_maintenance_health_timer_enabled",
+)
+
+# Stages after STOP_READERS through RESUME_WRITERS_COMMIT must keep boot
+# suppression verified (persistently disabled) for both maintenance units.
+_BOOT_POLICY_GATED_STAGES: frozenset[CutoverStage] = frozenset(
+    {
+        CutoverStage.QUIESCE_WAL,
+        CutoverStage.APPLY_OS_WRITE_BARRIER,
+        CutoverStage.CREATE_CURRENT_BACKUP,
+        CutoverStage.COMPACT_TO_PRODUCTION_FS_STAGING,
+        CutoverStage.VERIFY_CANDIDATE,
+        CutoverStage.APPROVE_SWAP,
+        CutoverStage.ATOMIC_SWAP,
+        CutoverStage.READONLY_SMOKE,
+        CutoverStage.RESUME_SERVICES,
+        CutoverStage.RESUME_WRITERS_PONR,
+        CutoverStage.RESUME_WRITERS_RESTORE_MODE,
+        CutoverStage.RESUME_WRITERS_MAIL,
+        CutoverStage.RESUME_WRITERS_OBSERVE_MAIL,
+        CutoverStage.RESUME_WRITERS_MIRROR,
+        CutoverStage.RESUME_WRITERS_OBSERVE_MIRROR,
+        CutoverStage.RESUME_WRITERS_COMMIT,
+    }
 )
 
 
@@ -4903,6 +5551,8 @@ def _rollback_finalize_terminal_state(journal: CutoverJournal) -> str:
         and _rollback_sidecar_proof_problem(journal.rollback_sidecar_proof) is None
         and _is_exact_bool(journal.pre_maintenance_api_active)
         and _is_exact_bool(journal.pre_maintenance_health_timer_active)
+        # PR-D: terminal ABANDONED requires coherent verified restoration.
+        and _boot_policy_lifecycle_for(journal) == (LIFECYCLE_RESTORED, None)
     )
     return "coherent_abandoned" if coherent else "mixed"
 
@@ -5838,6 +6488,23 @@ def rollback_finalize(opts: CutoverOptions) -> dict[str, Any]:
                 evidence={"boolean_problem": bool_problem},
             )
 
+        # PR-D: validate coherent boot-policy lifecycle BEFORE any stop/start /
+        # service-intent reconciliation / enable / disable. Malformed state is
+        # a sanitized hard refusal with zero service/enablement mutation.
+        bp_lifecycle, bp_problem = _boot_policy_lifecycle_for(journal)
+        if bp_problem is not None or bp_lifecycle is None:
+            _fail(
+                f"malformed maintenance boot policy ({bp_problem or 'unknown'})",
+                category=CutoverFailureCategory.SAFETY,
+                evidence={"boot_policy_problem": bp_problem},
+            )
+        if bp_lifecycle == LIFECYCLE_PRISTINE:
+            _fail(
+                "maintenance boot policy looks pristine after STOP_READERS began",
+                category=CutoverFailureCategory.SAFETY,
+                evidence={"boot_policy_lifecycle": bp_lifecycle},
+            )
+
         # Malformed rollback_intent (present but not a typed object) routes to
         # sanitized manual recovery; presence alone already locks other entrypoints.
         if journal.rollback_intent is not None and not isinstance(
@@ -5972,6 +6639,16 @@ def rollback_finalize(opts: CutoverOptions) -> dict[str, Any]:
                 "rollback_finalize refused (post point-of-no-return)",
                 category=CutoverFailureCategory.SAFETY,
             )
+
+        # PR-D: verified persistent disablement before finalize mutations.
+        # Skipped for coherent already-ABANDONED idempotent returns above, and
+        # when enablement was already restored (crash after restore intent /
+        # verified restore but before terminal ABANDONED).
+        if journal.maintenance_boot_policy_restored is not True:
+            try:
+                _require_boot_policy_suppression_active(adapters, journal)
+            except CutoverError:
+                _manual("boot_policy_suppression_inactive")
 
         # ---- structured proof schema validation (typed fields + approved plan
         # device/inode required; legacy/insufficient → manual). ----
@@ -6313,6 +6990,24 @@ def rollback_finalize(opts: CutoverOptions) -> dict[str, Any]:
             _manual("final_service_state_mismatch")
         _inject("rollback_finalize_service_policy_applied")
 
+        # PR-D: exact enablement restoration after service/health convergence and
+        # BEFORE writer-pause removal / terminal ABANDONED.
+        boot = _restore_boot_policy(
+            adapters, journal, journal_path, inject=_inject
+        )
+        if boot.get("boot_policy_skipped") or (
+            journal.maintenance_boot_policy_restored is not True
+        ):
+            _manual(
+                "boot_policy_restore_incomplete",
+                evidence={"boot_policy": boot},
+            )
+        try:
+            _require_coherent_boot_policy(journal, require_restored=True)
+        except CutoverError:
+            _manual("boot_policy_restore_incoherent")
+        _inject("rollback_finalize_boot_policy_restored")
+
         # (9) verify main + present required sidecars writable before any resume.
         try:
             verify_artifact_writable_for_resume(
@@ -6497,6 +7192,14 @@ def abort_before_swap(opts: CutoverOptions) -> dict[str, Any]:
         opts.settings or load_settings(enable_dotenv=False)
     ).resolved_reports_dir()
     journal_path = journal_path_for(opts, production)
+
+    def _inject(phase: str) -> None:
+        if opts.fail_after == phase:
+            _fail(
+                f"injected failure after {phase}",
+                category=CutoverFailureCategory.APPLY,
+            )
+
     with adapters.acquire_exclusive_lock(production, opts.maintenance_id):
         journal = load_journal(adapters, journal_path)
         if journal is None:
@@ -6537,6 +7240,10 @@ def abort_before_swap(opts: CutoverOptions) -> dict[str, Any]:
                 "production device/inode mismatch for abort",
                 category=CutoverFailureCategory.SAFETY,
             )
+
+        # PR-D: validate coherent boot-policy lifecycle BEFORE any stop/start /
+        # enable/disable. Pristine is allowed only when STOP_READERS never began.
+        lifecycle = _require_coherent_boot_policy(journal, allow_pristine=True)
 
         # Stop readers (idempotent).
         adapters.stop_health_timer()
@@ -6601,6 +7308,25 @@ def abort_before_swap(opts: CutoverOptions) -> dict[str, Any]:
         )
         adapters.start_health_timer()
 
+        # Exact enablement restoration after restored-original health verification
+        # and BEFORE removing pauses / claiming abort complete. An abort that
+        # never established STOP_READERS suppression must not invent restoration.
+        boot = _restore_boot_policy(
+            adapters, journal, journal_path, inject=_inject
+        )
+        if boot.get("boot_policy_skipped"):
+            if lifecycle != LIFECYCLE_PRISTINE:
+                _fail(
+                    "abort boot-policy skip refused for non-pristine lifecycle",
+                    category=CutoverFailureCategory.SAFETY,
+                    evidence={
+                        "boot_policy": boot,
+                        "boot_policy_lifecycle": lifecycle,
+                    },
+                )
+        else:
+            _require_coherent_boot_policy(journal, require_restored=True)
+
         for path in (mail_pause_path(reports), mirror_pause_path(reports)):
             if adapters.path_exists(path):
                 adapters.unlink(path)
@@ -6622,6 +7348,7 @@ def abort_before_swap(opts: CutoverOptions) -> dict[str, Any]:
                 "smoke": smoke,
                 "production_write_barrier_active": False,
                 "stage": journal.stage,
+                "boot_policy": _boot_policy_status_fragment(journal),
                 "permission_reconcile": reconcile_permission_barrier(
                     adapters,
                     production=production,
@@ -6643,6 +7370,13 @@ class SyntheticWorld:
     files: dict[str, bytes] = field(default_factory=dict)
     meta: dict[str, dict[str, Any]] = field(default_factory=dict)
     services: ServiceState = field(default_factory=ServiceState)
+    # PR-D: persistent systemd enablement (boot auto-start). Defaults match a
+    # typical enabled local API stack. ``simulate_user_manager_restart`` models
+    # WSL/user-manager reboot: enabled units auto-start; disabled stay stopped.
+    api_enabled: bool = True
+    health_timer_enabled: bool = True
+    unit_enablement_override: dict[str, dict[str, Any]] | None = None
+    systemctl_calls: list[list[str]] = field(default_factory=list)
     lock_records: list[LockRecord] = field(default_factory=list)
     fd_hits: list[dict[str, Any]] = field(default_factory=list)
     # ---- R6: FD hits attributable to the API process. These are visible to
@@ -6955,6 +7689,71 @@ class SyntheticWorld:
 
     def start_health_timer(self) -> None:
         self.services.health_timer_active = True
+
+    def unit_enablement(self, unit: str) -> dict[str, Any]:
+        if unit not in BOOT_POLICY_UNITS:
+            _fail(
+                f"refusing enablement probe for unrelated unit {unit}",
+                category=CutoverFailureCategory.SAFETY,
+            )
+        self.systemctl_calls.append(["--user", "is-enabled", unit])
+        override = self.unit_enablement_override
+        if isinstance(override, dict) and unit in override:
+            o = dict(override[unit])
+            return classify_unit_enablement(
+                returncode=int(o.get("returncode", 0)),
+                is_enabled_text=o.get("is_enabled_text"),
+            )
+        enabled = (
+            self.api_enabled if unit == API_SERVICE else self.health_timer_enabled
+        )
+        if enabled:
+            return classify_unit_enablement(
+                returncode=0, is_enabled_text="enabled"
+            )
+        return classify_unit_enablement(
+            returncode=1, is_enabled_text="disabled"
+        )
+
+    def disable_unit(self, unit: str) -> None:
+        if unit not in BOOT_POLICY_UNITS:
+            _fail(
+                f"refusing to disable unrelated unit {unit}",
+                category=CutoverFailureCategory.SAFETY,
+            )
+        self.systemctl_calls.append(["--user", "disable", unit])
+        if unit == API_SERVICE:
+            self.api_enabled = False
+        else:
+            self.health_timer_enabled = False
+
+    def enable_unit(self, unit: str) -> None:
+        if unit not in BOOT_POLICY_UNITS:
+            _fail(
+                f"refusing to enable unrelated unit {unit}",
+                category=CutoverFailureCategory.SAFETY,
+            )
+        self.systemctl_calls.append(["--user", "enable", unit])
+        if unit == API_SERVICE:
+            self.api_enabled = True
+        else:
+            self.health_timer_enabled = True
+
+    def simulate_user_manager_restart(self) -> None:
+        """Model WSL / user systemd manager restart.
+
+        Persistently enabled units auto-start; disabled units remain stopped and
+        do not regain activity.
+        """
+        if self.api_enabled:
+            self._api_invocation += 1
+            self.services.api_active = True
+        else:
+            self.services.api_active = False
+        if self.health_timer_enabled:
+            self.services.health_timer_active = True
+        else:
+            self.services.health_timer_active = False
 
     def wal_state(self, db: Path) -> dict[str, Any]:
         wal = Path(str(db) + "-wal")

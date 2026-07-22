@@ -98,16 +98,35 @@ The production SQLite file is one **artifact** with three exact members (no glob
 |----|--------|--------|
 | **A — Smoke + fail-safe** | Bounded loopback JSON getter; fail-safe API cleanup; SIGTERM/143 bookkeeping | **Complete** (PR [#387](https://github.com/rafaelRojasVi/origenlab/pull/387)) |
 | **B — Permissions + sidecars** | Capture/apply/reconcile/restore main + WAL + SHM modes via FD `fstat`/`fchmod` | **Complete** (PR [#393](https://github.com/rafaelRojasVi/origenlab/pull/393)) |
-| **C — Rollback finalize** | Supported `rollback_finalize` (abandoned ≠ completed) | **Implemented by this change** |
-| **D — Maintenance boot policy** | Prevent API/timer auto-start after WSL reboot during maintenance | **Not started** |
+| **C — Rollback finalize** | Supported `rollback_finalize` (abandoned ≠ completed) | **Complete** (PR [#394](https://github.com/rafaelRojasVi/origenlab/pull/394)) |
+| **D — Maintenance boot policy** | Prevent API/timer auto-start after WSL reboot during maintenance | **Implemented by this change** |
 | **E — Observability + backup FD taxonomy** | Trusted backup WAL/SHM locking FD classification; sanitized OperationalError detail | **Not started** |
 | **F — Incident regression pack** | Broader end-to-end incident-chain regressions | **Not started** |
 
-**Merging PR-C does not authorize a cutover.** It only adds an explicit terminal path for an already-verified rollback. The abandoned maintenance ID `cutover20260719T163633Z` remains permanently non-resumable — it is rejected by `_require_auth` for **every** operation, including `--rollback-finalize` — and any future cutover requires a fresh MID and the full human approval boundary below. PR-D–F remain unstarted.
+**Merging PR-C (#394) does not authorize a cutover.** It only adds an explicit terminal path for an already-verified rollback. **PR-D does not authorize a cutover either** — it only adds persistent systemd enablement suppression (`systemctl --user disable`) for `origenlab-api.service` and `origenlab-api-health.timer` during maintenance, with exact restoration at terminal exits. The abandoned maintenance ID `cutover20260719T163633Z` remains permanently non-resumable — it is rejected by `_require_auth` for **every** operation, including `--rollback-finalize` — and any future cutover requires a fresh MID and the full human approval boundary below. PR-E–F remain unstarted.
+
+### Maintenance boot policy (PR-D)
+
+`STOP_READERS` previously stopped the API and health timer but left both **enabled**, so a WSL / user-manager restart could auto-start them and reopen production SQLite mid-maintenance.
+
+PR-D adds a fail-closed enablement classifier and durable journal fields:
+
+- `pre_maintenance_api_enabled` / `pre_maintenance_health_timer_enabled` (exact booleans)
+- `maintenance_boot_policy_intent` (typed suppress/restore intent)
+- `maintenance_boot_policy_active` / `maintenance_boot_policy_restored` (exact booleans)
+
+Behavior:
+
+1. Before `STOP_READERS` completes: capture enablement → durable suppress intent → `disable`+verify **timer first**, then API → stop+verify both inactive → mark policy active.
+2. From `STOP_READERS` through `RESUME_WRITERS_COMMIT`: both units must remain persistently disabled; every hazardous stage fails closed if suppression is missing, malformed, ambiguous, or externally reversed. `RESUME_SERVICES` may **start** the units without **enable**.
+3. Exact restoration only at terminal exits: immediately before `COMPLETED`; after abort health verification before pause removal; after rollback-finalize service convergence before pause removal / `ABANDONED`. Mixed original policies are restored exactly. Partial restore retains typed intent and cannot claim success.
+4. Runtime **masks** are not used (they disappear across WSL reboot). Unrelated units are never touched. Abort before `STOP_READERS` established suppression does not invent restoration.
+
+See also [`apps/api/docs/LOCAL_SYSTEMD.md`](../../api/docs/LOCAL_SYSTEMD.md) for operator-facing maintenance disable/restore notes.
 
 ### Deferred (known) swap-reconciliation hardening
 
-Out of scope for PR-C and intentionally **not** changed: `reconcile_atomic_swap_state` still classifies an "exchange succeeded but the journal write was stale" reality as `ambiguous_pre_exchange`. Teaching the classifier to positively distinguish that case is a separate future swap-reconciliation hardening item; it is not folded into rollback finalize.
+Out of scope for PR-C/D and intentionally **not** changed: `reconcile_atomic_swap_state` still classifies an "exchange succeeded but the journal write was stale" reality as `ambiguous_pre_exchange`. Teaching the classifier to positively distinguish that case is a separate future swap-reconciliation hardening item; it is not folded into rollback finalize or maintenance boot policy.
 
 ## Read-only smoke (loopback getter + fail-safe API cleanup)
 
@@ -273,3 +292,4 @@ and the full human approval boundary above.
 - `tests/test_sqlite_cutover_readonly_smoke.py` — loopback getter + exit-143 gates
 - `tests/test_sqlite_cutover_artifact_permissions.py` — main/WAL/SHM permissions + July 19 SHM regression
 - `tests/test_sqlite_cutover_rollback_finalize.py` — PR-C terminal ABANDONED, structured rollback proof, lockout, crash-safe finalize + failure injection
+- `tests/test_sqlite_cutover_maintenance_boot_policy.py` — PR-D enablement classifier, suppress/restore, WSL restart model, external re-enable fail-closed
