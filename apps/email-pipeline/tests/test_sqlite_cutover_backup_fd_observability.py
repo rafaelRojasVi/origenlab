@@ -70,7 +70,7 @@ HOSTILE = (
     "file:///tmp/x.db?mode=rw "
     "C:\\Users\\rafael\\db.sqlite "
     "operator@origenlab.example "
-    "SELECT * FROM secrets WHERE token='sk_live_ABCDEF123456' "
+    "SELECT * FROM secrets WHERE token='origenlab_test_token_ABCDEF123456' "
     "newline\ninjected\x00control"
 )
 
@@ -134,7 +134,7 @@ def _assert_no_hostile(text: str) -> None:
         "file://",
         "operator@",
         "select * from",
-        "sk_live",
+        "origenlab_test_token",
         "injected",
     ):
         assert needle not in lowered, f"hostile fragment leaked: {needle!r} in {text!r}"

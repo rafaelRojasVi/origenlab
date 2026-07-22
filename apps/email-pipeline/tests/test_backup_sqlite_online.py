@@ -962,7 +962,7 @@ def test_cli_prints_operational_error_fields_without_hostile_text(
     dest = dst_dir / "copy.sqlite"
     _build_wal_db(source, rows=5)
     hostile = sqlite3.OperationalError(
-        "disk I/O at /home/rafael/secret.sqlite token=sk_live_ABC "
+        "disk I/O at /home/rafael/secret.sqlite token=origenlab_test_token_ABC "
         "user@x.com SELECT * FROM t"
     )
     hostile.sqlite_errorcode = 10  # type: ignore[attr-defined]
@@ -993,6 +993,6 @@ def test_cli_prints_operational_error_fields_without_hostile_text(
     assert "operational_error" in err_text
     assert "category=io_error" in err_text
     assert "/home/rafael" not in err_text
-    assert "sk_live" not in err_text
+    assert "origenlab_test_token" not in err_text
     assert "user@x.com" not in err_text
     assert "SELECT *" not in err_text
