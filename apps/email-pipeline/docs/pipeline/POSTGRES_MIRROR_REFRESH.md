@@ -10,6 +10,27 @@ This document is the **operator recipe** for refreshing the **Postgres dashboard
 
 ---
 
+## Mirror run lifecycle status
+
+`reporting.dashboard_sync_run` and `ops.pipeline_kv` (`dashboard_postgres_mirror_last_sync`) share one lifecycle per apply invocation:
+
+| Status | Meaning |
+|--------|---------|
+| **`running`** | Invocation accepted; selected loaders are still executing. `finished_at` is null. |
+| **`success`** | **Every** selected loader and final count verification completed. Terminal. |
+| **`failed`** | Invocation terminated before complete publication. Terminal. |
+
+Invariants:
+
+- **One history row per invocation** when `reporting.dashboard_sync_run` exists (insert `running`, then update the same `id`).
+- **`ops.pipeline_kv` reflects the same current lifecycle** (same `sync_run_id`, status, timestamps, and details).
+- A **success watermark is terminal**, not an intermediate milestone after outbound/mart only.
+- Dry-run writes **no** run row and **no** KV lifecycle update.
+
+This lifecycle PR does **not** make loader publication globally atomic. Outbound/mart empty-window remediation (DELETE committed before reload) is a **separate** follow-up PR.
+
+---
+
 ## Purpose
 
 Give operators a single, copy-paste workflow for:
