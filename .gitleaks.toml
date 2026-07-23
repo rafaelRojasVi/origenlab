@@ -4,8 +4,10 @@ title = "OrigenLab"
 [extend]
 useDefault = true
 
-[[allowlists]]
+# Legacy [allowlist] path form is what currently suppresses findings in git
+# history scans for this fixture file (validated against gitleaks 8.24.3).
+[allowlist]
 description = "Intentional fake credentials in dashboard mirror lifecycle sanitizer tests"
 paths = [
-  '''(^|/)apps/email-pipeline/tests/test_dashboard_mirror_lifecycle_cas\.py$'''
+  '''apps/email-pipeline/tests/test_dashboard_mirror_lifecycle_cas\.py'''
 ]
