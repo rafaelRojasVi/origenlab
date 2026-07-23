@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -367,6 +369,19 @@ def run_loader_subprocess(cmd: list[str], *, repo_root: Path) -> int:
     return int(proc.returncode)
 
 
+class LifecycleConsistencyError(RuntimeError):
+    """Fail-closed lifecycle publication / transition error."""
+
+
+@dataclass(frozen=True)
+class SyncRunHandle:
+    """Topology captured at lifecycle start for consistent terminal publication."""
+
+    sync_run_id: int | None
+    reporting_enabled: bool
+    kv_enabled: bool
+
+
 def _count_columns(counts: dict[str, int] | None) -> tuple[Any, ...]:
     c = counts or {}
     return (
@@ -380,6 +395,59 @@ def _count_columns(counts: dict[str, int] | None) -> tuple[Any, ...]:
         c.get("domain_suppression_count"),
         c.get("outreach_state_count"),
     )
+
+
+def sanitize_lifecycle_error(
+    message: BaseException | str,
+    *,
+    postgres_url: str | None = None,
+    sqlite_path: Path | str | None = None,
+) -> str:
+    """Sanitize lifecycle/CLI errors without destroying useful classification text."""
+    if isinstance(message, BaseException):
+        # Prefer the exception message (matches historical str(exc) behavior) so
+        # classifications like "Loader mart_core failed..." stay intact.
+        text = str(message) or type(message).__name__
+    else:
+        text = str(message)
+
+    secrets: list[str] = []
+    if postgres_url:
+        secrets.append(postgres_url)
+        secrets.append(redact_postgres_url(postgres_url))
+    for key in (
+        "ORIGENLAB_POSTGRES_URL",
+        "ALEMBIC_DATABASE_URL",
+        "ORIGENLAB_CLOUD_POSTGRES_URL",
+        "ORIGENLAB_API_AUTH_TOKEN",
+    ):
+        val = os.environ.get(key)
+        if val:
+            secrets.append(val)
+    if sqlite_path is not None:
+        sp = str(sqlite_path)
+        secrets.append(sp)
+        try:
+            secrets.append(str(Path(sqlite_path).resolve()))
+        except OSError:
+            pass
+
+    # Longest-first so partial overlaps do not leave remnants.
+    for secret in sorted({s for s in secrets if s}, key=len, reverse=True):
+        if secret and secret in text:
+            text = text.replace(secret, "<redacted>")
+
+    # Generic credential-bearing URI forms.
+    text = re.sub(
+        r"(?i)(postgres(?:ql)?|postgresql\+psycopg(?:2)?)://[^\s\"']+",
+        "<redacted-url>",
+        text,
+    )
+    text = re.sub(r"(?i)(Bearer\s+)[A-Za-z0-9._\-]+", r"\1<redacted-token>", text)
+    text = re.sub(r"(?i)(password=)[^\s&;\"']+", r"\1<redacted>", text)
+    # Absolute Unix paths → basename-only hint.
+    text = re.sub(r"(/[^/\s\"']+)+", lambda m: f"<path:{Path(m.group(0)).name}>", text)
+    return text
 
 
 def _lifecycle_kv_payload(
@@ -431,6 +499,28 @@ def _reporting_run_table_exists(cur: Any) -> bool:
         schema=REPORTING_WATERMARK_TABLE[0],
         table=REPORTING_WATERMARK_TABLE[1],
     )
+
+
+def _fetch_returning_id(row: Any) -> int | None:
+    if row is None:
+        return None
+    if isinstance(row, dict):
+        return int(row["id"])
+    return int(row[0])
+
+
+def _assert_topology_matches_handle(cur: Any, handle: SyncRunHandle) -> None:
+    has_run = _reporting_run_table_exists(cur)
+    has_kv = pg_table_exists(cur, schema="ops", table="pipeline_kv")
+    if handle.reporting_enabled != has_run:
+        raise LifecycleConsistencyError(
+            "dashboard sync lifecycle table topology changed mid-run "
+            f"(reporting_enabled={handle.reporting_enabled}, present={has_run})"
+        )
+    if handle.kv_enabled and not has_kv:
+        raise LifecycleConsistencyError(
+            "ops.pipeline_kv disappeared mid-run after lifecycle start"
+        )
 
 
 def build_selected_loaders(
@@ -488,12 +578,8 @@ def start_sync_run(
     started_at: datetime,
     details: dict[str, Any],
     counts: dict[str, int] | None = None,
-) -> int | None:
-    """Insert one ``running`` lifecycle row (and matching KV) before loaders.
-
-    Returns the ``dashboard_sync_run.id`` when the reporting table exists, else
-    ``None`` when only ``ops.pipeline_kv`` (or neither) is available.
-    """
+) -> SyncRunHandle:
+    """Insert one ``running`` lifecycle row (and matching KV) before loaders."""
     _require_psycopg()
     assert psycopg is not None and Json is not None
     sync_id: int | None = None
@@ -503,7 +589,9 @@ def start_sync_run(
             has_kv = pg_table_exists(cur, schema="ops", table="pipeline_kv")
             if not has_run and not has_kv:
                 conn.commit()
-                return None
+                return SyncRunHandle(
+                    sync_run_id=None, reporting_enabled=False, kv_enabled=False
+                )
             if has_run:
                 cur.execute(
                     """
@@ -535,29 +623,37 @@ def start_sync_run(
                         Json(details),
                     ),
                 )
-                row = cur.fetchone()
-                sync_id = int(row[0] if not isinstance(row, dict) else row["id"])
-            _upsert_dashboard_sync_kv(
-                cur,
-                _lifecycle_kv_payload(
-                    status="running",
-                    started_at=started_at,
-                    finished_at=None,
-                    sqlite_path=sqlite_path,
-                    postgres_url_redacted=postgres_url_redacted,
-                    counts=counts,
-                    sync_run_id=sync_id,
-                    details=details,
-                ),
-            )
+                sync_id = _fetch_returning_id(cur.fetchone())
+                if sync_id is None:
+                    raise LifecycleConsistencyError(
+                        "failed to insert running dashboard_sync_run row"
+                    )
+            if has_kv:
+                _upsert_dashboard_sync_kv(
+                    cur,
+                    _lifecycle_kv_payload(
+                        status="running",
+                        started_at=started_at,
+                        finished_at=None,
+                        sqlite_path=sqlite_path,
+                        postgres_url_redacted=postgres_url_redacted,
+                        counts=counts,
+                        sync_run_id=sync_id,
+                        details=details,
+                    ),
+                )
         conn.commit()
-    return sync_id
+    return SyncRunHandle(
+        sync_run_id=sync_id,
+        reporting_enabled=has_run,
+        kv_enabled=has_kv,
+    )
 
 
 def finish_sync_run(
     pg_url: str,
     *,
-    sync_run_id: int | None,
+    handle: SyncRunHandle,
     sqlite_path: Path,
     postgres_url_redacted: str,
     status: Literal["success", "failed"],
@@ -567,16 +663,25 @@ def finish_sync_run(
     error_message: str | None,
     details: dict[str, Any],
 ) -> None:
-    """Update the same run to a terminal status and publish matching KV state."""
+    """Compare-and-set the same running row to a terminal status; publish matching KV."""
     if status not in ("success", "failed"):
         raise ValueError(f"terminal sync status must be success|failed, got {status!r}")
     _require_psycopg()
     assert psycopg is not None and Json is not None
+
+    if handle.reporting_enabled and handle.sync_run_id is None:
+        raise LifecycleConsistencyError(
+            "reporting lifecycle enabled but sync_run_id is missing; "
+            "refusing terminal publication without a durable running row"
+        )
+
     with psycopg.connect(pg_url, autocommit=False) as conn:
         with conn.cursor() as cur:
-            has_run = _reporting_run_table_exists(cur)
-            has_kv = pg_table_exists(cur, schema="ops", table="pipeline_kv")
-            if has_run and sync_run_id is not None:
+            _assert_topology_matches_handle(cur, handle)
+            sync_run_id = handle.sync_run_id
+
+            if handle.reporting_enabled:
+                assert sync_run_id is not None
                 cur.execute(
                     """
                     UPDATE reporting.dashboard_sync_run
@@ -594,6 +699,8 @@ def finish_sync_run(
                         error_message = %s,
                         details_json = %s
                     WHERE id = %s
+                      AND status = 'running'
+                    RETURNING id
                     """,
                     (
                         finished_at,
@@ -604,45 +711,29 @@ def finish_sync_run(
                         sync_run_id,
                     ),
                 )
-            elif has_run and sync_run_id is None:
-                # Reporting table appeared mid-run or start skipped insert — fail closed
-                # by inserting a terminal row only when no ID was ever assigned.
-                cur.execute(
-                    """
-                    INSERT INTO reporting.dashboard_sync_run (
-                      started_at, finished_at, status,
-                      sqlite_path, postgres_url_redacted,
-                      canonical_contact_count, canonical_organization_count,
-                      canonical_opportunity_signal_count,
-                      archive_contact_count, archive_organization_count,
-                      archive_opportunity_signal_count,
-                      email_suppression_count, domain_suppression_count,
-                      outreach_state_count,
-                      error_message, details_json
-                    ) VALUES (
-                      %s, %s, %s,
-                      %s, %s,
-                      %s, %s, %s,
-                      %s, %s, %s,
-                      %s, %s, %s,
-                      %s, %s
+                returned = _fetch_returning_id(cur.fetchone())
+                if returned is None or returned != int(sync_run_id):
+                    raise LifecycleConsistencyError(
+                        "terminal lifecycle update affected no running row "
+                        f"(expected sync_run_id={sync_run_id})"
                     )
-                    RETURNING id
-                    """,
-                    (
-                        started_at,
-                        finished_at,
-                        status,
-                        str(sqlite_path),
-                        postgres_url_redacted,
-                        *_count_columns(counts),
-                        error_message,
-                        Json(details),
-                    ),
-                )
-                row = cur.fetchone()
-                sync_run_id = int(row[0] if not isinstance(row, dict) else row["id"])
-            if has_kv:
+                if handle.kv_enabled:
+                    _upsert_dashboard_sync_kv(
+                        cur,
+                        _lifecycle_kv_payload(
+                            status=status,
+                            started_at=started_at,
+                            finished_at=finished_at,
+                            sqlite_path=sqlite_path,
+                            postgres_url_redacted=postgres_url_redacted,
+                            counts=counts,
+                            sync_run_id=sync_run_id,
+                            details=details,
+                            error_message=error_message,
+                        ),
+                    )
+            elif handle.kv_enabled:
+                # Explicit KV-only mode: reporting must still be absent.
                 _upsert_dashboard_sync_kv(
                     cur,
                     _lifecycle_kv_payload(
@@ -652,17 +743,18 @@ def finish_sync_run(
                         sqlite_path=sqlite_path,
                         postgres_url_redacted=postgres_url_redacted,
                         counts=counts,
-                        sync_run_id=sync_run_id,
+                        sync_run_id=None,
                         details=details,
                         error_message=error_message,
                     ),
                 )
+            # Neither table: intentionally no-op.
         conn.commit()
 
 
 def update_sync_run_details(
     pg_url: str,
-    sync_run_id: int,
+    handle: SyncRunHandle,
     details: dict[str, Any],
     *,
     started_at: datetime | None = None,
@@ -670,26 +762,62 @@ def update_sync_run_details(
     postgres_url_redacted: str | None = None,
     counts: dict[str, int] | None = None,
 ) -> None:
-    """Refresh in-progress details on the run row and matching KV (status stays running)."""
+    """Refresh in-progress details only while the lifecycle row remains ``running``."""
     _require_psycopg()
     assert psycopg is not None and Json is not None
     with psycopg.connect(pg_url, autocommit=False) as conn:
         with conn.cursor() as cur:
-            if _reporting_run_table_exists(cur):
+            _assert_topology_matches_handle(cur, handle)
+            if handle.reporting_enabled:
+                if handle.sync_run_id is None:
+                    raise LifecycleConsistencyError(
+                        "reporting lifecycle enabled but sync_run_id is missing"
+                    )
                 cur.execute(
                     """
                     UPDATE reporting.dashboard_sync_run
                     SET details_json = %s
-                    WHERE id = %s AND status = 'running'
+                    WHERE id = %s
+                      AND status = 'running'
+                    RETURNING id
                     """,
-                    (Json(details), sync_run_id),
+                    (Json(details), handle.sync_run_id),
                 )
-            if (
-                pg_table_exists(cur, schema="ops", table="pipeline_kv")
-                and started_at is not None
-                and sqlite_path is not None
-                and postgres_url_redacted is not None
-            ):
+                returned = _fetch_returning_id(cur.fetchone())
+                if returned is None or returned != int(handle.sync_run_id):
+                    raise LifecycleConsistencyError(
+                        "mid-run details update affected no running row "
+                        f"(expected sync_run_id={handle.sync_run_id})"
+                    )
+                if (
+                    handle.kv_enabled
+                    and started_at is not None
+                    and sqlite_path is not None
+                    and postgres_url_redacted is not None
+                ):
+                    _upsert_dashboard_sync_kv(
+                        cur,
+                        _lifecycle_kv_payload(
+                            status="running",
+                            started_at=started_at,
+                            finished_at=None,
+                            sqlite_path=sqlite_path,
+                            postgres_url_redacted=postgres_url_redacted,
+                            counts=counts,
+                            sync_run_id=handle.sync_run_id,
+                            details=details,
+                        ),
+                    )
+            elif handle.kv_enabled:
+                if (
+                    started_at is None
+                    or sqlite_path is None
+                    or postgres_url_redacted is None
+                ):
+                    raise LifecycleConsistencyError(
+                        "KV-only mid-run update requires started_at, sqlite_path, "
+                        "and postgres_url_redacted"
+                    )
                 _upsert_dashboard_sync_kv(
                     cur,
                     _lifecycle_kv_payload(
@@ -699,7 +827,7 @@ def update_sync_run_details(
                         sqlite_path=sqlite_path,
                         postgres_url_redacted=postgres_url_redacted,
                         counts=counts,
-                        sync_run_id=sync_run_id,
+                        sync_run_id=None,
                         details=details,
                     ),
                 )
@@ -734,13 +862,12 @@ def write_sync_watermark(
             started_at=started_at,
             details=details,
             counts=counts,
-        )
+        ).sync_run_id
     if status not in ("success", "failed"):
         raise ValueError(f"unsupported watermark status: {status!r}")
     if finished_at is None:
         raise ValueError("finished_at is required for terminal watermark status")
-    # Insert-then-finish is intentionally not offered; callers must start a run first.
-    sync_id = start_sync_run(
+    handle = start_sync_run(
         pg_url,
         sqlite_path=sqlite_path,
         postgres_url_redacted=postgres_url_redacted,
@@ -750,7 +877,7 @@ def write_sync_watermark(
     )
     finish_sync_run(
         pg_url,
-        sync_run_id=sync_id,
+        handle=handle,
         sqlite_path=sqlite_path,
         postgres_url_redacted=postgres_url_redacted,
         status=status,  # type: ignore[arg-type]
@@ -760,7 +887,7 @@ def write_sync_watermark(
         error_message=error_message,
         details=details,
     )
-    return sync_id
+    return handle.sync_run_id
 
 
 def default_active_current_dir(repo_root: Path) -> Path:
@@ -1289,8 +1416,15 @@ def run_dashboard_mirror_sync(
     completed_loaders: list[str] = []
     failed_loader: str | None = None
     loader_summaries: dict[str, Any] = {}
-    sync_id: int | None = None
+    lifecycle_handle = SyncRunHandle(
+        sync_run_id=None, reporting_enabled=False, kv_enabled=False
+    )
     lifecycle_started = False
+
+    def _sanitize(msg: BaseException | str) -> str:
+        return sanitize_lifecycle_error(
+            msg, postgres_url=pg_url, sqlite_path=sqlite_path
+        )
 
     running_details = build_lifecycle_details(
         selected_loaders=selected_loaders,
@@ -1299,7 +1433,7 @@ def run_dashboard_mirror_sync(
         alembic_version=alembic_version,
     )
     try:
-        sync_id = start_sync_run(
+        lifecycle_handle = start_sync_run(
             pg_url,
             sqlite_path=sqlite_path,
             postgres_url_redacted=result["postgres_url_redacted"],
@@ -1310,12 +1444,14 @@ def run_dashboard_mirror_sync(
         lifecycle_started = True
     except Exception as exc:  # noqa: BLE001
         result["errors"].append(
-            f"Failed to publish running sync lifecycle before loaders: {exc}"
+            "Failed to publish running sync lifecycle before loaders: "
+            + _sanitize(exc)
         )
         result["status"] = "failed"
         result["elapsed_seconds"] = round(time.monotonic() - t0, 3)
         return result
 
+    sync_id = lifecycle_handle.sync_run_id
     result["sync_run_id"] = sync_id
     result["selected_loaders"] = list(selected_loaders)
 
@@ -1363,7 +1499,7 @@ def run_dashboard_mirror_sync(
     ) -> None:
         finish_sync_run(
             pg_url,
-            sync_run_id=sync_id,
+            handle=lifecycle_handle,
             sqlite_path=sqlite_path,
             postgres_url_redacted=result["postgres_url_redacted"],
             status=status,
@@ -1372,6 +1508,21 @@ def run_dashboard_mirror_sync(
             counts=result.get("counts") or {},
             error_message=error_message,
             details=_current_details(failed=failed),
+        )
+
+    def _maybe_update_details() -> None:
+        if not (
+            lifecycle_handle.reporting_enabled or lifecycle_handle.kv_enabled
+        ):
+            return
+        update_sync_run_details(
+            pg_url,
+            lifecycle_handle,
+            _current_details(),
+            started_at=started_at,
+            sqlite_path=sqlite_path,
+            postgres_url_redacted=result["postgres_url_redacted"],
+            counts=result.get("counts") or {},
         )
 
     try:
@@ -1488,19 +1639,11 @@ def run_dashboard_mirror_sync(
                 result.setdefault("timings", {})["optional_db2_loaders_seconds"] = round(
                     time.monotonic() - stage_t0, 3
                 )
-            if sync_id is not None and (
+            if (
                 "equipment_opportunities" in completed_loaders
                 or "warm_cases" in completed_loaders
             ):
-                update_sync_run_details(
-                    pg_url,
-                    sync_id,
-                    _current_details(),
-                    started_at=started_at,
-                    sqlite_path=sqlite_path,
-                    postgres_url_redacted=result["postgres_url_redacted"],
-                    counts=result.get("counts") or {},
-                )
+                _maybe_update_details()
 
         if args.include_operator_snapshots:
             failed_loader = "operator_snapshots"
@@ -1517,16 +1660,7 @@ def run_dashboard_mirror_sync(
             result["operator_snapshots"] = operator_snapshots
             _mark_completed("operator_snapshots", operator_snapshots)
             failed_loader = None
-            if sync_id is not None:
-                update_sync_run_details(
-                    pg_url,
-                    sync_id,
-                    _current_details(),
-                    started_at=started_at,
-                    sqlite_path=sqlite_path,
-                    postgres_url_redacted=result["postgres_url_redacted"],
-                    counts=result.get("counts") or {},
-                )
+            _maybe_update_details()
 
         failed_loader = "final_counts"
         result["counts"] = collect_mirror_counts(pg_url)
@@ -1537,7 +1671,7 @@ def run_dashboard_mirror_sync(
             _publish_terminal(status="success", error_message=None, failed=None)
         except Exception as pub_exc:  # noqa: BLE001
             result["errors"].append(
-                f"Failed to publish terminal success lifecycle: {pub_exc}"
+                "Failed to publish terminal success lifecycle: " + _sanitize(pub_exc)
             )
             result["status"] = "failed"
             result["ok"] = False
@@ -1546,8 +1680,8 @@ def run_dashboard_mirror_sync(
         result["ok"] = True
         result["status"] = "success"
     except Exception as exc:  # noqa: BLE001
-        error_message = str(exc)
-        result["errors"].append(error_message)
+        sanitized = _sanitize(exc)
+        result["errors"].append(sanitized)
         result["status"] = "failed"
         result["ok"] = False
         result["completed_loaders"] = list(completed_loaders)
@@ -1559,12 +1693,13 @@ def run_dashboard_mirror_sync(
             try:
                 _publish_terminal(
                     status="failed",
-                    error_message=error_message,
+                    error_message=sanitized,
                     failed=failed_loader,
                 )
             except Exception as pub_exc:  # noqa: BLE001
                 result["errors"].append(
-                    f"Failed to publish terminal failure lifecycle: {pub_exc}"
+                    "Failed to publish terminal failure lifecycle: "
+                    + _sanitize(pub_exc)
                 )
         result["details"] = _current_details(failed=failed_loader)
 

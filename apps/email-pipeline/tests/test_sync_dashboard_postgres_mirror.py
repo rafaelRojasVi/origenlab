@@ -14,6 +14,7 @@ import pytest
 
 from origenlab_email_pipeline.contacto_gmail_source import CONTACTO_GMAIL_SOURCE_PREFIX
 from origenlab_email_pipeline.dashboard_postgres_sync import (
+    SyncRunHandle,
     DASHBOARD_SYNC_KV_KEY,
     EXPECTED_ALEMBIC_HEAD,
     assert_sqlite_mart_ready_for_mirror_sync,
@@ -182,7 +183,7 @@ def test_dashboard_fast_maps_to_only_canonical(
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS,
         return_value=_sample_mirror_counts(),
-    ), patch(_PATCH_START, return_value=5), patch(_PATCH_FINISH), patch(_PATCH_CLASSIFY, return_value={}), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=5, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(_PATCH_CLASSIFY, return_value={}), patch(
         _PATCH_PURCHASE, return_value={}
     ):
         result = run_dashboard_mirror_sync(
@@ -293,7 +294,7 @@ def test_loaders_called_in_order(
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS,
         return_value=sample_counts,
-    ), patch(_PATCH_START, return_value=42), patch(_PATCH_FINISH), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=42, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(
         _PATCH_CLASSIFY,
         return_value={"rows_written": 0, "skipped": False},
     ), patch(
@@ -553,7 +554,7 @@ def test_sync_passes_when_mart_tables_have_rows(
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS,
         return_value=_sample_mirror_counts(),
-    ), patch(_PATCH_START, return_value=7), patch(_PATCH_FINISH), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=7, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(
         _PATCH_CLASSIFY,
         return_value={"rows_written": 0, "skipped": False},
     ), patch(
@@ -586,7 +587,7 @@ def test_sync_passes_with_allow_empty_mart_flag(
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS,
         return_value=_sample_mirror_counts(),
-    ), patch(_PATCH_START, return_value=1), patch(_PATCH_FINISH), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=1, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(
         _PATCH_CLASSIFY,
         return_value={"rows_written": 0, "skipped": False},
     ), patch(
@@ -668,7 +669,7 @@ def test_default_sync_does_not_call_optional_loaders(
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS,
         return_value=_sample_mirror_counts(),
-    ), patch(_PATCH_START, return_value=1), patch(_PATCH_FINISH), patch(_PATCH_CLASSIFY, return_value={}), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=1, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(_PATCH_CLASSIFY, return_value={}), patch(
         _PATCH_PURCHASE, return_value={}
     ), patch(_PATCH_OPTIONAL, side_effect=_optional):
         result = run_dashboard_mirror_sync(
@@ -705,7 +706,7 @@ def test_include_equipment_flag_calls_optional_loader(
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS,
         return_value=_sample_mirror_counts(),
-    ), patch(_PATCH_START, return_value=7), patch(_PATCH_FINISH), patch(_PATCH_CLASSIFY, return_value={}), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=7, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(_PATCH_CLASSIFY, return_value={}), patch(
         _PATCH_PURCHASE, return_value={}
     ), patch(_PATCH_EQUIP, side_effect=lambda *a, **k: {
         "applied": True, "source_id": 42, "rows_inserted": 9
@@ -753,7 +754,7 @@ def test_include_warm_cases_flag_calls_optional_loader(
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS,
         return_value=_sample_mirror_counts(),
-    ), patch(_PATCH_START, return_value=3), patch(_PATCH_FINISH), patch(_PATCH_CLASSIFY, return_value={}), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=3, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(_PATCH_CLASSIFY, return_value={}), patch(
         _PATCH_PURCHASE, return_value={}
     ), patch(_PATCH_WARM, side_effect=lambda *a, **k: {
         "applied": True,
@@ -886,7 +887,7 @@ def test_include_commercial_deals_flag_calls_deals_sync(
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS,
         return_value=_sample_mirror_counts(),
-    ), patch(_PATCH_START, return_value=3), patch(_PATCH_FINISH), patch(_PATCH_CLASSIFY, return_value={}), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=3, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(_PATCH_CLASSIFY, return_value={}), patch(
         _PATCH_PURCHASE, return_value={}
     ), patch(_PATCH_DEALS, side_effect=_deals):
         result = run_dashboard_mirror_sync(
@@ -913,7 +914,7 @@ def test_optional_loader_failure_surfaces_in_errors(
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS,
         return_value=_sample_mirror_counts(),
-    ), patch(_PATCH_START, return_value=1), patch(_PATCH_FINISH), patch(_PATCH_CLASSIFY, return_value={}), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=1, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(_PATCH_CLASSIFY, return_value={}), patch(
         _PATCH_PURCHASE, return_value={}
     ), patch(_PATCH_EQUIP, side_effect=RuntimeError("equipment_opportunity_mirror failed: source_already_loaded")):
         result = run_dashboard_mirror_sync(
@@ -1087,7 +1088,7 @@ def test_apply_writes_operator_snapshots_when_flag_enabled(
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS,
         return_value=_sample_mirror_counts(),
-    ), patch(_PATCH_START, return_value=1), patch(_PATCH_FINISH), patch(_PATCH_CLASSIFY, return_value={}), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=1, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(_PATCH_CLASSIFY, return_value={}), patch(
         _PATCH_PURCHASE, return_value={}
     ), patch(_PATCH_UPDATE_DETAILS), patch(
         _PATCH_SNAPSHOTS,

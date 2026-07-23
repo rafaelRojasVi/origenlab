@@ -12,6 +12,7 @@ import pytest
 
 from origenlab_email_pipeline.contacto_gmail_source import CONTACTO_GMAIL_SOURCE_PREFIX
 from origenlab_email_pipeline.dashboard_postgres_sync import (
+    SyncRunHandle,
     DASHBOARD_SYNC_KV_KEY,
     EXPECTED_ALEMBIC_HEAD,
     build_selected_loaders,
@@ -141,13 +142,13 @@ def test_successful_default_run_finishes_after_classification_and_purchase(
     monkeypatch.setenv("ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/scratch")
     order: list[str] = []
 
-    def _start(*_a: Any, **_k: Any) -> int:
+    def _start(*_a: Any, **_k: Any) -> SyncRunHandle:
         order.append("start")
-        return 77
+        return SyncRunHandle(sync_run_id=77, reporting_enabled=True, kv_enabled=True)
 
     def _finish(*_a: Any, **kwargs: Any) -> None:
         order.append(f"finish:{kwargs['status']}")
-        assert kwargs["sync_run_id"] == 77
+        assert kwargs["handle"].sync_run_id == 77
         assert "classification" in kwargs["details"]["completed_loaders"]
         assert "commercial_purchase" in kwargs["details"]["completed_loaders"]
 
@@ -193,7 +194,7 @@ def test_optional_loaders_success_after_all_selected(
 
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS, return_value=_sample_mirror_counts()
-    ), patch(_PATCH_START, return_value=9), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=9, reporting_enabled=True, kv_enabled=True)), patch(
         _PATCH_FINISH, side_effect=_finish
     ), patch(_PATCH_CLASSIFY, return_value={}), patch(
         _PATCH_PURCHASE, return_value={}
@@ -312,7 +313,7 @@ def test_loader_failure_marks_same_run_failed(
     with ExitStack() as stack:
         stack.enter_context(patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])))
         stack.enter_context(patch(_PATCH_COUNTS, return_value=_sample_mirror_counts()))
-        stack.enter_context(patch(_PATCH_START, return_value=55))
+        stack.enter_context(patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=55, reporting_enabled=True, kv_enabled=True)))
         stack.enter_context(patch(_PATCH_FINISH, side_effect=_finish))
         if fail_step == "classification":
             stack.enter_context(patch(_PATCH_CLASSIFY, side_effect=side_effect))
@@ -347,7 +348,7 @@ def test_loader_failure_marks_same_run_failed(
     assert result["status"] == "failed"
     assert len(finishes) == 1
     assert finishes[0]["status"] == "failed"
-    assert finishes[0]["sync_run_id"] == 55
+    assert finishes[0]["handle"].sync_run_id == 55
     assert finishes[0]["details"]["failed_loader"] == fail_step
     assert all(f["status"] != "success" for f in finishes)
     if fail_step == "outbound_sidecars":
@@ -371,7 +372,7 @@ def test_final_count_failure_marks_failed(
 
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS, side_effect=RuntimeError("count boom")
-    ), patch(_PATCH_START, return_value=1), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=1, reporting_enabled=True, kv_enabled=True)), patch(
         _PATCH_FINISH, side_effect=_finish
     ), patch(_PATCH_CLASSIFY, return_value={}), patch(_PATCH_PURCHASE, return_value={}):
         result = run_dashboard_mirror_sync(
@@ -420,7 +421,7 @@ def test_terminal_success_publish_failure_does_not_claim_success(
 
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS, return_value=_sample_mirror_counts()
-    ), patch(_PATCH_START, return_value=3), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=3, reporting_enabled=True, kv_enabled=True)), patch(
         _PATCH_FINISH, side_effect=RuntimeError("finish boom")
     ), patch(_PATCH_CLASSIFY, return_value={}), patch(_PATCH_PURCHASE, return_value={}):
         result = run_dashboard_mirror_sync(
@@ -443,7 +444,7 @@ def test_terminal_failure_publish_failure_keeps_primary_error(
 
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS, return_value=_sample_mirror_counts()
-    ), patch(_PATCH_START, return_value=3), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=3, reporting_enabled=True, kv_enabled=True)), patch(
         _PATCH_FINISH, side_effect=RuntimeError("finish boom")
     ), patch(
         _PATCH_CLASSIFY, side_effect=RuntimeError("primary classification failure")
@@ -494,7 +495,7 @@ def test_only_modes_selected_completed_accuracy(
 
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS, return_value=_sample_mirror_counts()
-    ), patch(_PATCH_START, return_value=2), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=2, reporting_enabled=True, kv_enabled=True)), patch(
         _PATCH_FINISH, side_effect=_finish
     ), patch(_PATCH_CLASSIFY, return_value={}), patch(_PATCH_PURCHASE, return_value={}):
         result = run_dashboard_mirror_sync(
@@ -540,7 +541,7 @@ def test_start_and_finish_sql_one_row_lifecycle() -> None:
         ),
     ):
         mock_pg.connect.return_value = conn
-        sync_id = start_sync_run(
+        handle_started = start_sync_run(
             "postgresql://u:p@127.0.0.1/scratch",
             sqlite_path=Path("/data/emails.sqlite"),
             postgres_url_redacted="postgresql://u:***@127.0.0.1/scratch",
@@ -548,10 +549,12 @@ def test_start_and_finish_sql_one_row_lifecycle() -> None:
             details={"selected_loaders": ["outbound_sidecars"], "completed_loaders": []},
             counts=None,
         )
-        assert sync_id == 101
+        assert handle_started.sync_run_id == 101
+        handle = SyncRunHandle(sync_run_id=101, reporting_enabled=True, kv_enabled=True)
+        # Re-bind start return for the local variable from start_sync_run above
         finish_sync_run(
             "postgresql://u:p@127.0.0.1/scratch",
-            sync_run_id=101,
+            handle=handle,
             sqlite_path=Path("/data/emails.sqlite"),
             postgres_url_redacted="postgresql://u:***@127.0.0.1/scratch",
             status="success",
@@ -567,10 +570,13 @@ def test_start_and_finish_sql_one_row_lifecycle() -> None:
 
     sql = " ".join(str(c) for c in cur.execute.call_args_list)
     assert "INSERT INTO reporting.dashboard_sync_run" in sql
-    assert "'running'" in sql or "running" in sql
+    assert "running" in sql
     assert "UPDATE reporting.dashboard_sync_run" in sql
+    assert "status = 'running'" in sql or 'status = %s' in sql
+    assert "RETURNING id" in sql
     assert DASHBOARD_SYNC_KV_KEY in sql
     assert sql.count("INSERT INTO reporting.dashboard_sync_run") == 1
+    assert "INSERT INTO reporting.dashboard_sync_run" in sql
 
 
 def test_cli_exit_code_compatible(
@@ -584,7 +590,7 @@ def test_cli_exit_code_compatible(
 
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS, return_value=_sample_mirror_counts()
-    ), patch(_PATCH_START, return_value=1), patch(_PATCH_FINISH), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=1, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(
         _PATCH_CLASSIFY, return_value={}
     ), patch(_PATCH_PURCHASE, return_value={}), patch(
         "origenlab_email_pipeline.dashboard_postgres_sync.run_loader_subprocess",
@@ -594,7 +600,7 @@ def test_cli_exit_code_compatible(
 
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS, return_value=_sample_mirror_counts()
-    ), patch(_PATCH_START, return_value=1), patch(_PATCH_FINISH), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=1, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(
         _PATCH_CLASSIFY, side_effect=RuntimeError("x")
     ), patch(_PATCH_PURCHASE, return_value={}), patch(
         "origenlab_email_pipeline.dashboard_postgres_sync.run_loader_subprocess",
