@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sqlite3
 import subprocess
 import sys
@@ -368,31 +367,246 @@ def run_loader_subprocess(cmd: list[str], *, repo_root: Path) -> int:
     return int(proc.returncode)
 
 
-def write_sync_watermark(
+def _count_columns(counts: dict[str, int] | None) -> tuple[Any, ...]:
+    c = counts or {}
+    return (
+        c.get("canonical_contact_count"),
+        c.get("canonical_organization_count"),
+        c.get("canonical_opportunity_signal_count"),
+        c.get("archive_contact_count"),
+        c.get("archive_organization_count"),
+        c.get("archive_opportunity_signal_count"),
+        c.get("email_suppression_count"),
+        c.get("domain_suppression_count"),
+        c.get("outreach_state_count"),
+    )
+
+
+def _lifecycle_kv_payload(
+    *,
+    status: str,
+    started_at: datetime,
+    finished_at: datetime | None,
+    sqlite_path: Path,
+    postgres_url_redacted: str,
+    counts: dict[str, int] | None,
+    sync_run_id: int | None,
+    details: dict[str, Any],
+    error_message: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "status": status,
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat() if finished_at else None,
+        "sqlite_path": str(sqlite_path),
+        "postgres_url_redacted": postgres_url_redacted,
+        "counts": counts or {},
+        "sync_run_id": sync_run_id,
+        "details": details,
+    }
+    if error_message is not None:
+        payload["error_message"] = error_message
+    return payload
+
+
+def _upsert_dashboard_sync_kv(cur: Any, payload: dict[str, Any]) -> None:
+    assert Json is not None
+    if not pg_table_exists(cur, schema="ops", table="pipeline_kv"):
+        return
+    cur.execute(
+        """
+        INSERT INTO ops.pipeline_kv (kv_key, value_json, updated_at)
+        VALUES (%s, %s, now())
+        ON CONFLICT (kv_key) DO UPDATE SET
+          value_json = EXCLUDED.value_json,
+          updated_at = now()
+        """,
+        (DASHBOARD_SYNC_KV_KEY, Json(payload)),
+    )
+
+
+def _reporting_run_table_exists(cur: Any) -> bool:
+    return pg_table_exists(
+        cur,
+        schema=REPORTING_WATERMARK_TABLE[0],
+        table=REPORTING_WATERMARK_TABLE[1],
+    )
+
+
+def build_selected_loaders(
+    steps: list[LoaderStep],
+    *,
+    include_commercial_deals: bool = False,
+    include_equipment_opportunities: bool = False,
+    include_warm_cases: bool = False,
+    include_operator_snapshots: bool = False,
+) -> list[str]:
+    """Ordered logical loaders for one non-dry-run invocation."""
+    selected = [step.name for step in steps]
+    # In-process stages always follow base subprocess loaders on apply.
+    selected.extend(["classification", "commercial_purchase"])
+    if include_commercial_deals:
+        selected.append("commercial_deals")
+    if include_equipment_opportunities:
+        selected.append("equipment_opportunities")
+    if include_warm_cases:
+        selected.append("warm_cases")
+    if include_operator_snapshots:
+        selected.append("operator_snapshots")
+    return selected
+
+
+def build_lifecycle_details(
+    *,
+    selected_loaders: list[str],
+    completed_loaders: list[str],
+    loader_steps: list[dict[str, Any]],
+    alembic_version: str | None,
+    loader_summaries: dict[str, Any] | None = None,
+    failed_loader: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    details: dict[str, Any] = {
+        "selected_loaders": list(selected_loaders),
+        "completed_loaders": list(completed_loaders),
+        "loader_steps": list(loader_steps),
+        "alembic_version": alembic_version,
+        "loader_summaries": dict(loader_summaries or {}),
+    }
+    if failed_loader is not None:
+        details["failed_loader"] = failed_loader
+    if extra:
+        details.update(extra)
+    return details
+
+
+def start_sync_run(
     pg_url: str,
     *,
     sqlite_path: Path,
     postgres_url_redacted: str,
-    status: str,
     started_at: datetime,
-    finished_at: datetime | None,
-    counts: dict[str, int],
-    error_message: str | None,
     details: dict[str, Any],
-    dry_run: bool,
+    counts: dict[str, int] | None = None,
 ) -> int | None:
-    if dry_run:
-        return None
+    """Insert one ``running`` lifecycle row (and matching KV) before loaders.
+
+    Returns the ``dashboard_sync_run.id`` when the reporting table exists, else
+    ``None`` when only ``ops.pipeline_kv`` (or neither) is available.
+    """
     _require_psycopg()
     assert psycopg is not None and Json is not None
     sync_id: int | None = None
     with psycopg.connect(pg_url, autocommit=False) as conn:
         with conn.cursor() as cur:
-            if pg_table_exists(
+            has_run = _reporting_run_table_exists(cur)
+            has_kv = pg_table_exists(cur, schema="ops", table="pipeline_kv")
+            if not has_run and not has_kv:
+                conn.commit()
+                return None
+            if has_run:
+                cur.execute(
+                    """
+                    INSERT INTO reporting.dashboard_sync_run (
+                      started_at, finished_at, status,
+                      sqlite_path, postgres_url_redacted,
+                      canonical_contact_count, canonical_organization_count,
+                      canonical_opportunity_signal_count,
+                      archive_contact_count, archive_organization_count,
+                      archive_opportunity_signal_count,
+                      email_suppression_count, domain_suppression_count,
+                      outreach_state_count,
+                      error_message, details_json
+                    ) VALUES (
+                      %s, NULL, 'running',
+                      %s, %s,
+                      %s, %s, %s,
+                      %s, %s, %s,
+                      %s, %s, %s,
+                      NULL, %s
+                    )
+                    RETURNING id
+                    """,
+                    (
+                        started_at,
+                        str(sqlite_path),
+                        postgres_url_redacted,
+                        *_count_columns(counts),
+                        Json(details),
+                    ),
+                )
+                row = cur.fetchone()
+                sync_id = int(row[0] if not isinstance(row, dict) else row["id"])
+            _upsert_dashboard_sync_kv(
                 cur,
-                schema=REPORTING_WATERMARK_TABLE[0],
-                table=REPORTING_WATERMARK_TABLE[1],
-            ):
+                _lifecycle_kv_payload(
+                    status="running",
+                    started_at=started_at,
+                    finished_at=None,
+                    sqlite_path=sqlite_path,
+                    postgres_url_redacted=postgres_url_redacted,
+                    counts=counts,
+                    sync_run_id=sync_id,
+                    details=details,
+                ),
+            )
+        conn.commit()
+    return sync_id
+
+
+def finish_sync_run(
+    pg_url: str,
+    *,
+    sync_run_id: int | None,
+    sqlite_path: Path,
+    postgres_url_redacted: str,
+    status: Literal["success", "failed"],
+    started_at: datetime,
+    finished_at: datetime,
+    counts: dict[str, int] | None,
+    error_message: str | None,
+    details: dict[str, Any],
+) -> None:
+    """Update the same run to a terminal status and publish matching KV state."""
+    if status not in ("success", "failed"):
+        raise ValueError(f"terminal sync status must be success|failed, got {status!r}")
+    _require_psycopg()
+    assert psycopg is not None and Json is not None
+    with psycopg.connect(pg_url, autocommit=False) as conn:
+        with conn.cursor() as cur:
+            has_run = _reporting_run_table_exists(cur)
+            has_kv = pg_table_exists(cur, schema="ops", table="pipeline_kv")
+            if has_run and sync_run_id is not None:
+                cur.execute(
+                    """
+                    UPDATE reporting.dashboard_sync_run
+                    SET finished_at = %s,
+                        status = %s,
+                        canonical_contact_count = %s,
+                        canonical_organization_count = %s,
+                        canonical_opportunity_signal_count = %s,
+                        archive_contact_count = %s,
+                        archive_organization_count = %s,
+                        archive_opportunity_signal_count = %s,
+                        email_suppression_count = %s,
+                        domain_suppression_count = %s,
+                        outreach_state_count = %s,
+                        error_message = %s,
+                        details_json = %s
+                    WHERE id = %s
+                    """,
+                    (
+                        finished_at,
+                        status,
+                        *_count_columns(counts),
+                        error_message,
+                        Json(details),
+                        sync_run_id,
+                    ),
+                )
+            elif has_run and sync_run_id is None:
+                # Reporting table appeared mid-run or start skipped insert — fail closed
+                # by inserting a terminal row only when no ID was ever assigned.
                 cur.execute(
                     """
                     INSERT INTO reporting.dashboard_sync_run (
@@ -421,69 +635,132 @@ def write_sync_watermark(
                         status,
                         str(sqlite_path),
                         postgres_url_redacted,
-                        counts.get("canonical_contact_count"),
-                        counts.get("canonical_organization_count"),
-                        counts.get("canonical_opportunity_signal_count"),
-                        counts.get("archive_contact_count"),
-                        counts.get("archive_organization_count"),
-                        counts.get("archive_opportunity_signal_count"),
-                        counts.get("email_suppression_count"),
-                        counts.get("domain_suppression_count"),
-                        counts.get("outreach_state_count"),
+                        *_count_columns(counts),
                         error_message,
                         Json(details),
                     ),
                 )
                 row = cur.fetchone()
-                sync_id = int(row[0] if not isinstance(row, dict) else row["id"])
-            if pg_table_exists(cur, schema="ops", table="pipeline_kv"):
-                kv_payload = {
-                    "status": status,
-                    "started_at": started_at.isoformat(),
-                    "finished_at": finished_at.isoformat() if finished_at else None,
-                    "sqlite_path": str(sqlite_path),
-                    "postgres_url_redacted": postgres_url_redacted,
-                    "counts": counts,
-                    "sync_run_id": sync_id,
-                    "details": details,
-                }
-                cur.execute(
-                    """
-                    INSERT INTO ops.pipeline_kv (kv_key, value_json, updated_at)
-                    VALUES (%s, %s, now())
-                    ON CONFLICT (kv_key) DO UPDATE SET
-                      value_json = EXCLUDED.value_json,
-                      updated_at = now()
-                    """,
-                    (DASHBOARD_SYNC_KV_KEY, Json(kv_payload)),
+                sync_run_id = int(row[0] if not isinstance(row, dict) else row["id"])
+            if has_kv:
+                _upsert_dashboard_sync_kv(
+                    cur,
+                    _lifecycle_kv_payload(
+                        status=status,
+                        started_at=started_at,
+                        finished_at=finished_at,
+                        sqlite_path=sqlite_path,
+                        postgres_url_redacted=postgres_url_redacted,
+                        counts=counts,
+                        sync_run_id=sync_run_id,
+                        details=details,
+                        error_message=error_message,
+                    ),
                 )
         conn.commit()
-    return sync_id
 
 
 def update_sync_run_details(
     pg_url: str,
     sync_run_id: int,
     details: dict[str, Any],
+    *,
+    started_at: datetime | None = None,
+    sqlite_path: Path | None = None,
+    postgres_url_redacted: str | None = None,
+    counts: dict[str, int] | None = None,
 ) -> None:
+    """Refresh in-progress details on the run row and matching KV (status stays running)."""
     _require_psycopg()
     assert psycopg is not None and Json is not None
     with psycopg.connect(pg_url, autocommit=False) as conn:
         with conn.cursor() as cur:
-            if pg_table_exists(
-                cur,
-                schema=REPORTING_WATERMARK_TABLE[0],
-                table=REPORTING_WATERMARK_TABLE[1],
-            ):
+            if _reporting_run_table_exists(cur):
                 cur.execute(
                     """
                     UPDATE reporting.dashboard_sync_run
                     SET details_json = %s
-                    WHERE id = %s
+                    WHERE id = %s AND status = 'running'
                     """,
                     (Json(details), sync_run_id),
                 )
+            if (
+                pg_table_exists(cur, schema="ops", table="pipeline_kv")
+                and started_at is not None
+                and sqlite_path is not None
+                and postgres_url_redacted is not None
+            ):
+                _upsert_dashboard_sync_kv(
+                    cur,
+                    _lifecycle_kv_payload(
+                        status="running",
+                        started_at=started_at,
+                        finished_at=None,
+                        sqlite_path=sqlite_path,
+                        postgres_url_redacted=postgres_url_redacted,
+                        counts=counts,
+                        sync_run_id=sync_run_id,
+                        details=details,
+                    ),
+                )
         conn.commit()
+
+
+def write_sync_watermark(
+    pg_url: str,
+    *,
+    sqlite_path: Path,
+    postgres_url_redacted: str,
+    status: str,
+    started_at: datetime,
+    finished_at: datetime | None,
+    counts: dict[str, int],
+    error_message: str | None,
+    details: dict[str, Any],
+    dry_run: bool,
+) -> int | None:
+    """Compatibility wrapper.
+
+    Prefer :func:`start_sync_run` / :func:`finish_sync_run`. This helper must not
+    be used to publish intermediate ``success`` milestones.
+    """
+    if dry_run:
+        return None
+    if status == "running":
+        return start_sync_run(
+            pg_url,
+            sqlite_path=sqlite_path,
+            postgres_url_redacted=postgres_url_redacted,
+            started_at=started_at,
+            details=details,
+            counts=counts,
+        )
+    if status not in ("success", "failed"):
+        raise ValueError(f"unsupported watermark status: {status!r}")
+    if finished_at is None:
+        raise ValueError("finished_at is required for terminal watermark status")
+    # Insert-then-finish is intentionally not offered; callers must start a run first.
+    sync_id = start_sync_run(
+        pg_url,
+        sqlite_path=sqlite_path,
+        postgres_url_redacted=postgres_url_redacted,
+        started_at=started_at,
+        details=details,
+        counts=counts,
+    )
+    finish_sync_run(
+        pg_url,
+        sync_run_id=sync_id,
+        sqlite_path=sqlite_path,
+        postgres_url_redacted=postgres_url_redacted,
+        status=status,  # type: ignore[arg-type]
+        started_at=started_at,
+        finished_at=finished_at,
+        counts=counts,
+        error_message=error_message,
+        details=details,
+    )
+    return sync_id
 
 
 def default_active_current_dir(repo_root: Path) -> Path:
@@ -862,7 +1139,6 @@ def run_dashboard_mirror_sync(
 ) -> dict[str, Any]:
     args = build_parser().parse_args(argv)
     root = repo_root or Path(__file__).resolve().parents[2]
-    run_loader = loader_runner or run_loader_subprocess
 
     result: dict[str, Any] = {
         "ok": False,
@@ -920,8 +1196,8 @@ def run_dashboard_mirror_sync(
         result["alembic_version"] = alembic_version
         if reporting_missing:
             result["warnings"].append(
-                "reporting.dashboard_sync_run not present; watermark row skipped "
-                "(run alembic upgrade head)."
+                "reporting.dashboard_sync_run not present; sync run row skipped "
+                "(run alembic upgrade head). ops.pipeline_kv lifecycle may still update."
             )
     except ValueError as exc:
         result["errors"].append(str(exc))
@@ -1003,9 +1279,104 @@ def run_dashboard_mirror_sync(
         phase_log("[sync] dry-run ok (no loaders executed, Postgres mirror unchanged)", log=log)
         return result
 
-    error_message: str | None = None
+    selected_loaders = build_selected_loaders(
+        steps,
+        include_commercial_deals=bool(args.include_commercial_deals),
+        include_equipment_opportunities=bool(args.include_equipment_opportunities),
+        include_warm_cases=bool(args.include_warm_cases),
+        include_operator_snapshots=bool(args.include_operator_snapshots),
+    )
+    completed_loaders: list[str] = []
+    failed_loader: str | None = None
+    loader_summaries: dict[str, Any] = {}
+    sync_id: int | None = None
+    lifecycle_started = False
+
+    running_details = build_lifecycle_details(
+        selected_loaders=selected_loaders,
+        completed_loaders=completed_loaders,
+        loader_steps=result["loader_steps"],
+        alembic_version=alembic_version,
+    )
+    try:
+        sync_id = start_sync_run(
+            pg_url,
+            sqlite_path=sqlite_path,
+            postgres_url_redacted=result["postgres_url_redacted"],
+            started_at=started_at,
+            details=running_details,
+            counts=None,
+        )
+        lifecycle_started = True
+    except Exception as exc:  # noqa: BLE001
+        result["errors"].append(
+            f"Failed to publish running sync lifecycle before loaders: {exc}"
+        )
+        result["status"] = "failed"
+        result["elapsed_seconds"] = round(time.monotonic() - t0, 3)
+        return result
+
+    result["sync_run_id"] = sync_id
+    result["selected_loaders"] = list(selected_loaders)
+
+    def _mark_completed(name: str, summary: Any | None = None) -> None:
+        if name not in completed_loaders:
+            completed_loaders.append(name)
+        if summary is not None:
+            loader_summaries[name] = summary
+
+    def _current_details(*, failed: str | None = None) -> dict[str, Any]:
+        extra: dict[str, Any] = {}
+        for key, value in loader_summaries.items():
+            # Preserve prior result field names for known in-process stages.
+            if key == "classification":
+                extra["classification_sync"] = value
+            elif key == "commercial_purchase":
+                extra["commercial_purchase_sync"] = value
+            elif key == "commercial_deals":
+                extra["commercial_deals_sync"] = value
+            elif key == "equipment_opportunities":
+                extra = merge_optional_loader_details(
+                    extra, equipment_summary=value, warm_summary=None
+                )
+            elif key == "warm_cases":
+                extra = merge_optional_loader_details(
+                    extra, equipment_summary=None, warm_summary=value
+                )
+            elif key == "operator_snapshots":
+                extra["operator_snapshots"] = value
+        return build_lifecycle_details(
+            selected_loaders=selected_loaders,
+            completed_loaders=completed_loaders,
+            loader_steps=result["loader_steps"],
+            alembic_version=alembic_version,
+            loader_summaries=loader_summaries,
+            failed_loader=failed,
+            extra=extra,
+        )
+
+    def _publish_terminal(
+        *,
+        status: Literal["success", "failed"],
+        error_message: str | None,
+        failed: str | None,
+    ) -> None:
+        finish_sync_run(
+            pg_url,
+            sync_run_id=sync_id,
+            sqlite_path=sqlite_path,
+            postgres_url_redacted=result["postgres_url_redacted"],
+            status=status,
+            started_at=started_at,
+            finished_at=datetime.now(timezone.utc),
+            counts=result.get("counts") or {},
+            error_message=error_message,
+            details=_current_details(failed=failed),
+        )
+
     try:
         for step in steps:
+            failed_loader = step.name
             cmd = build_loader_command(
                 root,
                 step,
@@ -1023,27 +1394,16 @@ def run_dashboard_mirror_sync(
                 time.monotonic() - step_t0, 3
             )
             phase_log(
-                f"[sync] loader {step.name} finished in {result['timings'][f'loader_{step.name}_seconds']}s",
+                f"[sync] loader {step.name} finished in "
+                f"{result['timings'][f'loader_{step.name}_seconds']}s",
                 log=log,
             )
             if rc != 0:
                 raise RuntimeError(f"Loader {step.name} failed with exit code {rc}")
+            _mark_completed(step.name)
+            failed_loader = None
 
-        result["counts"] = collect_mirror_counts(pg_url)
-        finished_at = datetime.now(timezone.utc)
-        sync_id = write_sync_watermark(
-            pg_url,
-            sqlite_path=sqlite_path,
-            postgres_url_redacted=result["postgres_url_redacted"],
-            status="success",
-            started_at=started_at,
-            finished_at=finished_at,
-            counts=result["counts"],
-            error_message=None,
-            details={"loader_steps": result["loader_steps"], "alembic_version": alembic_version},
-            dry_run=False,
-        )
-        result["sync_run_id"] = sync_id
+        failed_loader = "classification"
         stage_t0 = time.monotonic()
         classification_sync = sync_email_classification_canonical(
             pg_url,
@@ -1055,6 +1415,10 @@ def run_dashboard_mirror_sync(
             time.monotonic() - stage_t0, 3
         )
         result["classification_sync"] = classification_sync
+        _mark_completed("classification", classification_sync)
+        failed_loader = None
+
+        failed_loader = "commercial_purchase"
         stage_t0 = time.monotonic()
         purchase_sync = sync_commercial_purchase_events(
             pg_url,
@@ -1066,9 +1430,11 @@ def run_dashboard_mirror_sync(
             time.monotonic() - stage_t0, 3
         )
         result["commercial_purchase_sync"] = purchase_sync
+        _mark_completed("commercial_purchase", purchase_sync)
+        failed_loader = None
 
-        deals_sync: dict[str, Any] | None = None
         if args.include_commercial_deals:
+            failed_loader = "commercial_deals"
             stage_t0 = time.monotonic()
             deals_sync = sync_commercial_deals(
                 pg_url,
@@ -1080,43 +1446,64 @@ def run_dashboard_mirror_sync(
                 time.monotonic() - stage_t0, 3
             )
             result["commercial_deals_sync"] = deals_sync
+            _mark_completed("commercial_deals", deals_sync)
+            failed_loader = None
 
-        details: dict[str, Any] = {
-            "loader_steps": result["loader_steps"],
-            "alembic_version": alembic_version,
-            "classification_sync": classification_sync,
-            "commercial_purchase_sync": purchase_sync,
-        }
-        if deals_sync is not None:
-            details["commercial_deals_sync"] = deals_sync
-        equipment_summary: dict[str, Any] | None = None
-        warm_summary: dict[str, Any] | None = None
         if args.include_equipment_opportunities or args.include_warm_cases:
             stage_t0 = time.monotonic()
-            equipment_summary, warm_summary = run_optional_db2_loaders(
-                args=args,
-                pg_url=pg_url,
-                sqlite_path=sqlite_path,
-                repo_root=root,
-                sync_run_id=sync_id,
-                dry_run=False,
-            )
-            result.setdefault("timings", {})["optional_db2_loaders_seconds"] = round(
-                time.monotonic() - stage_t0, 3
-            )
-            if equipment_summary is not None:
-                result["equipment_opportunity_sync"] = equipment_summary
-            if warm_summary is not None:
-                result["warm_case_sync"] = warm_summary
-            details = merge_optional_loader_details(
-                details,
-                equipment_summary=equipment_summary,
-                warm_summary=warm_summary,
-            )
-            if sync_id is not None:
-                update_sync_run_details(pg_url, sync_id, details)
+            try:
+                if args.include_equipment_opportunities:
+                    failed_loader = "equipment_opportunities"
+                    equipment_summary = run_equipment_opportunity_sync(
+                        pg_url,
+                        root,
+                        dry_run=False,
+                        updated_by=args.updated_by,
+                        reason=args.reason,
+                        sync_run_id=sync_id,
+                    )
+                    _raise_if_optional_loader_failed(
+                        "equipment_opportunity_mirror", equipment_summary
+                    )
+                    result["equipment_opportunity_sync"] = equipment_summary
+                    _mark_completed("equipment_opportunities", equipment_summary)
+                    failed_loader = None
+                if args.include_warm_cases:
+                    failed_loader = "warm_cases"
+                    warm_summary = run_warm_case_promotion_sync(
+                        pg_url,
+                        sqlite_path,
+                        dry_run=False,
+                        updated_by=args.updated_by,
+                        reason=args.reason,
+                        days_window=int(args.warm_days),
+                        limit=int(args.warm_limit),
+                        close_missing=bool(args.close_missing_warm_cases),
+                    )
+                    _raise_if_optional_loader_failed("warm_case_promotion", warm_summary)
+                    result["warm_case_sync"] = warm_summary
+                    _mark_completed("warm_cases", warm_summary)
+                    failed_loader = None
+            finally:
+                result.setdefault("timings", {})["optional_db2_loaders_seconds"] = round(
+                    time.monotonic() - stage_t0, 3
+                )
+            if sync_id is not None and (
+                "equipment_opportunities" in completed_loaders
+                or "warm_cases" in completed_loaders
+            ):
+                update_sync_run_details(
+                    pg_url,
+                    sync_id,
+                    _current_details(),
+                    started_at=started_at,
+                    sqlite_path=sqlite_path,
+                    postgres_url_redacted=result["postgres_url_redacted"],
+                    counts=result.get("counts") or {},
+                )
 
         if args.include_operator_snapshots:
+            failed_loader = "operator_snapshots"
             stage_t0 = time.monotonic()
             operator_snapshots = run_operator_snapshots_sync(
                 pg_url=pg_url,
@@ -1128,34 +1515,58 @@ def run_dashboard_mirror_sync(
                 time.monotonic() - stage_t0, 3
             )
             result["operator_snapshots"] = operator_snapshots
-            details["operator_snapshots"] = operator_snapshots
+            _mark_completed("operator_snapshots", operator_snapshots)
+            failed_loader = None
             if sync_id is not None:
-                update_sync_run_details(pg_url, sync_id, details)
+                update_sync_run_details(
+                    pg_url,
+                    sync_id,
+                    _current_details(),
+                    started_at=started_at,
+                    sqlite_path=sqlite_path,
+                    postgres_url_redacted=result["postgres_url_redacted"],
+                    counts=result.get("counts") or {},
+                )
 
-        result["details"] = details
+        failed_loader = "final_counts"
         result["counts"] = collect_mirror_counts(pg_url)
+        failed_loader = None
+        result["details"] = _current_details()
+        result["completed_loaders"] = list(completed_loaders)
+        try:
+            _publish_terminal(status="success", error_message=None, failed=None)
+        except Exception as pub_exc:  # noqa: BLE001
+            result["errors"].append(
+                f"Failed to publish terminal success lifecycle: {pub_exc}"
+            )
+            result["status"] = "failed"
+            result["ok"] = False
+            result["elapsed_seconds"] = round(time.monotonic() - t0, 3)
+            return result
         result["ok"] = True
         result["status"] = "success"
     except Exception as exc:  # noqa: BLE001
         error_message = str(exc)
         result["errors"].append(error_message)
         result["status"] = "failed"
+        result["ok"] = False
+        result["completed_loaders"] = list(completed_loaders)
         try:
             result["counts"] = collect_mirror_counts(pg_url)
         except Exception:  # noqa: BLE001
             pass
-        write_sync_watermark(
-            pg_url,
-            sqlite_path=sqlite_path,
-            postgres_url_redacted=result["postgres_url_redacted"],
-            status="failed",
-            started_at=started_at,
-            finished_at=datetime.now(timezone.utc),
-            counts=result.get("counts") or {},
-            error_message=error_message,
-            details={"loader_steps": result["loader_steps"]},
-            dry_run=False,
-        )
+        if lifecycle_started:
+            try:
+                _publish_terminal(
+                    status="failed",
+                    error_message=error_message,
+                    failed=failed_loader,
+                )
+            except Exception as pub_exc:  # noqa: BLE001
+                result["errors"].append(
+                    f"Failed to publish terminal failure lifecycle: {pub_exc}"
+                )
+        result["details"] = _current_details(failed=failed_loader)
 
     result["elapsed_seconds"] = round(time.monotonic() - t0, 3)
     return result

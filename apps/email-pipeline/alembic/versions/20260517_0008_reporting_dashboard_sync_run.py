@@ -4,7 +4,9 @@ Revision ID: 20260517_0008
 Revises: 20260516_0007
 Create Date: 2026-05-17
 
-Written by scripts/sync/sync_dashboard_postgres_mirror.py after successful loader runs.
+Lifecycle rows are published by dashboard_postgres_sync: insert status=running
+before loaders, then update the same row to success or failed at true completion.
+finished_at remains NULL while running.
 """
 
 from __future__ import annotations
