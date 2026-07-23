@@ -28,7 +28,7 @@ from origenlab_email_pipeline.db import init_schema
 REPO = Path(__file__).resolve().parents[1]
 STARTED = datetime(2026, 7, 23, 12, 0, tzinfo=timezone.utc)
 FINISHED = datetime(2026, 7, 23, 12, 5, tzinfo=timezone.utc)
-PG_URL = "postgresql://u:SentinelPassw0rd@127.0.0.1:5432/scratch"
+PG_URL = "postgresql://u:notasecret-pw@127.0.0.1:5432/scratch"
 PG_REDACTED = "postgresql://u:***@127.0.0.1:5432/scratch"
 SQLITE = Path("/home/rafael/data/emails.sqlite")
 
@@ -577,16 +577,16 @@ def test_start_finish_one_history_row_per_invocation() -> None:
 def test_sanitize_lifecycle_error_redacts_url_path_and_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("ORIGENLAB_API_AUTH_TOKEN", "sentinel-api-token-xyz")
+    monkeypatch.setenv("ORIGENLAB_API_AUTH_TOKEN", "notasecret-token")
     msg = (
-        "connect failed postgresql://u:SentinelPassw0rd@127.0.0.1:5432/scratch "
-        f"sqlite={SQLITE} Bearer sentinel-api-token-xyz password=SentinelPassw0rd"
+        "connect failed postgresql://u:notasecret-pw@127.0.0.1:5432/scratch "
+        f"sqlite={SQLITE} Bearer notasecret-token password=notasecret-pw"
     )
     cleaned = sanitize_lifecycle_error(msg, postgres_url=PG_URL, sqlite_path=SQLITE)
-    assert "SentinelPassw0rd" not in cleaned
-    assert "sentinel-api-token-xyz" not in cleaned
+    assert "notasecret-pw" not in cleaned
+    assert "notasecret-token" not in cleaned
     assert str(SQLITE) not in cleaned
-    assert "postgresql://u:SentinelPassw0rd@" not in cleaned
+    assert "postgresql://u:notasecret-pw@" not in cleaned
     assert "Loader mart_core failed with exit code 3" in sanitize_lifecycle_error(
         "Loader mart_core failed with exit code 3",
         postgres_url=PG_URL,
@@ -615,12 +615,12 @@ def test_persisted_failure_error_is_sanitized() -> None:
             ),
         )
     assert store.runs[18].error_message == cleaned
-    assert "SentinelPassw0rd" not in str(store.runs[18].error_message)
+    assert "notasecret-pw" not in str(store.runs[18].error_message)
     assert store.kv_payload is not None
-    assert "SentinelPassw0rd" not in store.kv_payload["error_message"]
+    assert "notasecret-pw" not in store.kv_payload["error_message"]
     err_params = [p for p in store.params_log if cleaned in p]
     assert err_params
-    assert all("SentinelPassw0rd" not in str(p) for p in err_params)
+    assert all("notasecret-pw" not in str(p) for p in err_params)
 
 
 def test_cli_formatted_output_sanitizes_secrets(
@@ -650,7 +650,7 @@ def test_cli_formatted_output_sanitizes_secrets(
         assert main(["--sqlite-db", str(db)]) == 1
     captured = capsys.readouterr()
     combined = captured.out + captured.err
-    assert "SentinelPassw0rd" not in combined
+    assert "notasecret-pw" not in combined
     assert "classification failed" in combined
 
 
@@ -677,6 +677,6 @@ def test_returned_errors_are_sanitized(
         ),
     ):
         result = run_dashboard_mirror_sync(["--sqlite-db", str(db)], repo_root=REPO)
-    assert all("SentinelPassw0rd" not in e for e in result["errors"])
+    assert all("notasecret-pw" not in e for e in result["errors"])
     assert any("classification failed" in e for e in result["errors"])
-    assert "SentinelPassw0rd" not in format_summary_text(result)
+    assert "notasecret-pw" not in format_summary_text(result)
