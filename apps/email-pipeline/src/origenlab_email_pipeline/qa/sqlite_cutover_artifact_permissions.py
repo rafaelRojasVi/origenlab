@@ -519,6 +519,43 @@ def record_post_swap_main(
     return artifact
 
 
+def companion_writable_target_mode(
+    *,
+    captured_mode: int,
+    production_target_mode: int,
+) -> int:
+    """Derive a writable companion mode without inventing ownership.
+
+    Preserves non-write bits from the live post-swap companion and ORs in the
+    write bits from the production main target mode::
+
+        target_mode = captured_mode | (production_target_mode & 0o222)
+
+    The result must itself contain write permission or restore fails closed.
+    """
+    target = int(captured_mode) | (int(production_target_mode) & 0o222)
+    if target & 0o222 == 0:
+        raise ArtifactPermissionError(
+            "derived companion target mode is not writable",
+            category="safety",
+            evidence={
+                "captured_mode": int(captured_mode),
+                "production_target_mode": int(production_target_mode),
+                "target_mode": target,
+            },
+        )
+    return target
+
+
+def _production_target_mode_for_companions(artifact: ArtifactPermissions) -> int | None:
+    post = artifact.post_swap_main or {}
+    if post.get("target_mode") is not None:
+        return int(post["target_mode"])
+    if artifact.main.mode is not None:
+        return int(artifact.main.mode)
+    return None
+
+
 def recapture_post_swap_companions(
     artifact: ArtifactPermissions,
     adapters: ArtifactFs,
@@ -529,6 +566,9 @@ def recapture_post_swap_companions(
     """Record companions currently at production paths after swap/smoke.
 
     Never copies pre-swap companion inode metadata onto a different inode.
+    When a companion is present, records a durable ``target_mode`` derived from
+    the companion's captured mode and the production writable target mode so
+    later writer-resume restore can chmod the *exact* post-swap inode.
     """
     companions: dict[str, Any] = {
         "captured_at": source,
@@ -536,11 +576,183 @@ def recapture_post_swap_companions(
         "wal": None,
         "shm": None,
     }
+    prod_target = _production_target_mode_for_companions(artifact)
     for role, path in ((ROLE_WAL, wal_path(production)), (ROLE_SHM, shm_path(production))):
         member = capture_member(adapters, path, role=role)
-        companions[role] = member.to_dict() if member.present else {"role": role, "present": False}
+        if not member.present:
+            companions[role] = {"role": role, "present": False}
+            continue
+        payload = member.to_dict()
+        if prod_target is not None and member.mode is not None:
+            payload["target_mode"] = companion_writable_target_mode(
+                captured_mode=int(member.mode),
+                production_target_mode=prod_target,
+            )
+        companions[role] = payload
     artifact.post_swap_companions = companions
     return artifact
+
+
+def _post_swap_companion_record(
+    artifact: ArtifactPermissions, role: str
+) -> dict[str, Any] | None:
+    psc = artifact.post_swap_companions
+    if not isinstance(psc, dict):
+        return None
+    rec = psc.get(role)
+    if not isinstance(rec, dict):
+        return None
+    return rec
+
+
+def restore_post_swap_companion_writable(
+    adapters: ArtifactFs,
+    production: Path,
+    artifact: ArtifactPermissions,
+    *,
+    role: str,
+    live: Mapping[str, Any],
+    production_owner: Mapping[str, Any],
+) -> None:
+    """Restore write bits on an exact post-swap companion inode (fail closed)."""
+    rec = _post_swap_companion_record(artifact, role)
+    if rec is None or not rec.get("present"):
+        raise ArtifactPermissionError(
+            f"production {role} is read-only and has no typed post-swap companion "
+            "record; refusing to invent companion ownership",
+            category="verify",
+            evidence={"role": role, "live_mode": int(live["mode"])},
+            recovery=(
+                "Do not remove the mail pause. Re-run readonly_smoke to capture "
+                "post_swap_companions with target_mode, or inspect companion modes. "
+                "Mirror must remain paused."
+            ),
+        )
+    if rec.get("role") is not None and rec.get("role") != role:
+        raise ArtifactPermissionError(
+            f"post-swap companion role mismatch for {role}",
+            category="verify",
+            evidence={"role": role, "recorded_role": rec.get("role")},
+        )
+    expected_base = member_path(production, role).name
+    if rec.get("basename") != expected_base:
+        raise ArtifactPermissionError(
+            f"post-swap companion basename mismatch for {role}",
+            category="verify",
+            evidence={
+                "role": role,
+                "recorded_basename": rec.get("basename"),
+                "expected_basename": expected_base,
+            },
+        )
+    if rec.get("device") is None or rec.get("inode") is None:
+        raise ArtifactPermissionError(
+            f"post-swap companion identity incomplete for {role}",
+            category="verify",
+            evidence={"role": role},
+        )
+    live_id = (int(live["device"]), int(live["inode"]))
+    recorded_id = (int(rec["device"]), int(rec["inode"]))
+    if live_id != recorded_id:
+        raise ArtifactPermissionError(
+            f"production {role} identity does not match typed post-swap capture; "
+            "refusing to chmod a replacement inode",
+            category="verify",
+            evidence={
+                "role": role,
+                "live_device": live_id[0],
+                "live_inode": live_id[1],
+                "recorded_device": recorded_id[0],
+                "recorded_inode": recorded_id[1],
+            },
+            recovery=(
+                "Do not remove the mail pause. Inspect companion identities. "
+                "Mirror must remain paused."
+            ),
+        )
+    if int(live.get("nlink") or 0) != 1:
+        raise ArtifactPermissionError(
+            f"production {role} link count refuses exact companion restore",
+            category="safety",
+            evidence={"role": role, "nlink": live.get("nlink")},
+        )
+    if int(live["uid"]) != int(production_owner["uid"]) or int(live["gid"]) != int(
+        production_owner["gid"]
+    ):
+        raise ArtifactPermissionError(
+            f"production {role} owner does not match production main",
+            category="verify",
+            evidence={
+                "role": role,
+                "live_uid": int(live["uid"]),
+                "live_gid": int(live["gid"]),
+                "main_uid": int(production_owner["uid"]),
+                "main_gid": int(production_owner["gid"]),
+            },
+        )
+    if rec.get("uid") is not None and int(rec["uid"]) != int(live["uid"]):
+        raise ArtifactPermissionError(
+            f"post-swap companion uid drift for {role}",
+            category="verify",
+            evidence={"role": role},
+        )
+    if rec.get("gid") is not None and int(rec["gid"]) != int(live["gid"]):
+        raise ArtifactPermissionError(
+            f"post-swap companion gid drift for {role}",
+            category="verify",
+            evidence={"role": role},
+        )
+    if rec.get("target_mode") is None:
+        raise ArtifactPermissionError(
+            f"legacy post-swap companion record for {role} lacks target_mode; "
+            "refusing to invent writable ownership",
+            category="verify",
+            evidence={"role": role, "live_mode": int(live["mode"])},
+            recovery=(
+                "Do not remove the mail pause. Re-capture companions with a "
+                "build that records target_mode, or restore via barrier-owned "
+                "identity. Mirror must remain paused."
+            ),
+        )
+    target_mode = int(rec["target_mode"])
+    if target_mode & 0o222 == 0:
+        raise ArtifactPermissionError(
+            f"recorded companion target_mode for {role} is not writable",
+            category="safety",
+            evidence={"role": role, "target_mode": target_mode},
+        )
+    path = member_path(production, role)
+    adapters.chmod_verified_inode(
+        path,
+        target_mode,
+        expected_device=int(rec["device"]),
+        expected_inode=int(rec["inode"]),
+    )
+    adapters.fsync_file(path)
+    verified = adapters.capture_member_identity(path)
+    if (
+        int(verified["device"]) != int(rec["device"])
+        or int(verified["inode"]) != int(rec["inode"])
+    ):
+        raise ArtifactPermissionError(
+            f"production {role} identity changed during companion restore",
+            category="safety",
+            evidence={"role": role},
+        )
+    if int(verified["mode"]) != target_mode:
+        raise ArtifactPermissionError(
+            f"companion restore mode verification failed for {role}",
+            category="verify",
+            evidence={
+                "role": role,
+                "expected_mode": target_mode,
+                "live_mode": int(verified["mode"]),
+            },
+            recovery=(
+                "Barrier ownership remains. Do not clear barrier flags or "
+                "remove pauses until restore succeeds."
+            ),
+        )
 
 
 def assert_no_unexpected_journal(adapters: ArtifactFs, production: Path) -> None:
@@ -644,9 +856,11 @@ def restore_post_swap_for_writer_resume(
     Companions:
     - if present and matching a barrier-applied pre-swap identity at the same
       device+inode, restore that original mode;
-    - if present with a post_swap capture, require writable (or restore when
-      the capture recorded an intended target_mode / barrier);
-    - if present, RO, and no usable metadata → fail closed (do not invent).
+    - if present and already writable, accept after authoritative capture;
+    - if present, read-only, and a typed ``post_swap_companions`` record binds
+      the exact live device/inode with a writable ``target_mode``, restore via
+      ``chmod_verified_inode``;
+    - otherwise fail closed (do not invent ownership for a path replacement).
     """
     post = artifact.post_swap_main
     if not post:
@@ -692,6 +906,10 @@ def restore_post_swap_for_writer_resume(
         inject("after_restore_main")
 
     # Companions currently at production paths.
+    main_owner = {
+        "uid": int(verified["uid"]),
+        "gid": int(verified["gid"]),
+    }
     for role in (ROLE_WAL, ROLE_SHM):
         path = member_path(production, role)
         if not adapters.path_exists(path):
@@ -711,22 +929,24 @@ def restore_post_swap_for_writer_resume(
             if inject:
                 inject(f"after_restore_{role}")
             continue
-        # New or different inode: must already be writable (SQLite-created).
-        if int(live["mode"]) & 0o222 == 0:
-            raise ArtifactPermissionError(
-                f"production {role} is read-only and is not the barrier-captured "
-                "identity; refusing to invent companion ownership",
-                category="verify",
-                evidence={
-                    "role": role,
-                    "live_mode": int(live["mode"]),
-                    "legacy_without_companions": artifact.legacy_without_companions,
-                },
-                recovery=(
-                    "Do not remove the mail pause. Inspect companion modes. "
-                    "Mirror must remain paused."
-                ),
-            )
+        # Already writable (e.g. SQLite-created under a writable main): accept
+        # after authoritative type/identity capture above.
+        if int(live["mode"]) & 0o222 != 0:
+            continue
+        # Read-only companion: restore only via typed post-swap capture of this
+        # exact device/inode (never invent ownership for a path replacement).
+        if inject:
+            inject(f"before_restore_{role}")
+        restore_post_swap_companion_writable(
+            adapters,
+            production,
+            artifact,
+            role=role,
+            live=live,
+            production_owner=main_owner,
+        )
+        if inject:
+            inject(f"after_restore_{role}")
 
     adapters.fsync_dir(production.parent)
     return verify_artifact_writable_for_resume(
