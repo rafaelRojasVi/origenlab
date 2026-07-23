@@ -198,6 +198,33 @@ def test_readiness_healthy_immediately() -> None:
     assert result["attempts"] == 1
 
 
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"timeout_seconds": 0},
+        {"poll_interval_seconds": 0},
+        {"attempt_timeout_seconds": 0},
+        {"timeout_seconds": -1},
+        {"poll_interval_seconds": -0.1},
+        {"attempt_timeout_seconds": -1},
+    ],
+)
+def test_readiness_rejects_non_positive_timeouts(kwargs: dict) -> None:
+    params = {
+        "api_base_url": "http://127.0.0.1:8001",
+        "api_activity": _activity_running,
+        "probe": lambda: "ready",
+        "timeout_seconds": 5.0,
+        "poll_interval_seconds": 0.5,
+        "attempt_timeout_seconds": 3.0,
+        "sleep": lambda _s: None,
+    }
+    params.update(kwargs)
+    with pytest.raises(CutoverError, match="timeout/poll/attempt must be positive") as exc:
+        wait_for_api_health_ready(**params)
+    assert exc.value.category == CutoverFailureCategory.PREFLIGHT
+
+
 def test_readiness_timeout_never_reachable() -> None:
     clock = [0.0]
 

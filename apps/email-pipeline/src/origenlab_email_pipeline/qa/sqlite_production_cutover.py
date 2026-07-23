@@ -693,15 +693,16 @@ def wait_for_api_health_ready(
     """
     timeout = float(timeout_seconds)
     poll = float(poll_interval_seconds)
-    if timeout <= 0 or poll <= 0:
+    attempt = float(attempt_timeout_seconds)
+    if timeout <= 0 or poll <= 0 or attempt <= 0:
         _fail(
-            "API readiness timeout/poll must be positive",
+            "API readiness timeout/poll/attempt must be positive",
             category=CutoverFailureCategory.PREFLIGHT,
         )
     probe_fn = probe or (
         lambda: probe_loopback_health_once(
             api_base_url,
-            attempt_timeout_seconds=attempt_timeout_seconds,
+            attempt_timeout_seconds=attempt,
         )
     )
     deadline = monotonic() + timeout
