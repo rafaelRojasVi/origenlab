@@ -90,7 +90,14 @@ The production SQLite file is one **artifact** with three exact members (no glob
 
 **Write barrier** journals the full capture **before** the first `fchmod`, then applies the RO barrier only to captured identities. Partial chmod sets `barrier_partial` and remains recoverable via `abort_before_swap`.
 
-**Swap-aware restore:** `RENAME_EXCHANGE` moves main inodes only; `-wal`/`-shm` stay path-bound. After swap, `post_swap_main` binds writable restore to the **new** production inode. Pre-swap companion metadata is never copied onto a different inode. `readonly_smoke` re-captures companions present after API open. Writer resume restores barrier-changed companions that still match identity, requires any other present companion to already be writable, and refuses mail resume if SHM/WAL remain read-only.
+**Swap-aware restore:** `RENAME_EXCHANGE` moves main inodes only; `-wal`/`-shm` stay path-bound. After swap, `post_swap_main` binds writable restore to the **new** production inode. Pre-swap companion metadata is never copied onto a different inode. `readonly_smoke` re-captures companions present after API open into `artifact_permissions.post_swap_companions`, including a durable writable `target_mode` derived as `captured_mode | (production_target_mode & 0o222)` (write bits from the production target; other bits preserved from the companion). Writer resume (`restore_post_swap_for_writer_resume`):
+
+1. restores barrier-applied pre-swap companions that still match exact device+inode;
+2. accepts already-writable companions after authoritative capture;
+3. restores **exact** post-swap read-only companions via `chmod_verified_inode` when the typed record matches live role/basename/device/inode/owner/nlink and carries a writable `target_mode`;
+4. **fails closed** on missing/malformed/legacy-without-`target_mode` records, identity drift, or a replacement inode at the same path (pathname-only `chmod` is prohibited).
+
+Mail resume still refuses if SHM/WAL remain read-only after restore verification.
 
 ## Post-incident PR roadmap A–F (canonical)
 
@@ -176,7 +183,21 @@ through the real `extract_api_token` to keep the two sides in lock-step.
 **Fail-safe API ownership.** The stage records durable ownership
 (`journal.smoke_started_api = true`) **before** calling `start_api()`, so a crash
 can never orphan an *unowned* running API — a resumed run sees the flag and either
-re-drives or safely stops it. If the API start succeeds but any later HTTP smoke
+re-drives or safely stops it.
+
+**Bounded HTTP readiness wait.** A successful `systemctl start` for a
+`Type=simple` unit proves process launch, not HTTP readiness. After start (and
+before the full smoke request set), the stage runs a loopback-only
+`wait_api_ready` / `wait_for_api_health_ready` poll against `/health` with a
+monotonic deadline (default **120s**, poll ~**0.5s**, per-attempt timeout
+~**3s**; overridable via `CutoverOptions`). Only connection-level
+not-listening outcomes are retried. Non-200, malformed JSON, `ok!=true`, process
+exit before ready, and deadline expiry fail closed. Tokens and response bodies
+are never logged. The health timer remains stopped. Only after `/health` returns
+HTTP 200 JSON with `ok=true` does the stage proceed to the existing complete
+smoke (`/health`, `/operator/status`, `/operator/automation-status`).
+
+If the API start succeeds but readiness, any later HTTP smoke
 request, validation, journal write, or stage completion fails, the stage:
 
 - stops **only** the API it started (never an unrelated process);
