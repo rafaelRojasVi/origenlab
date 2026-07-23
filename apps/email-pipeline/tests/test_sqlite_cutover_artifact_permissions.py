@@ -680,3 +680,425 @@ def test_barrier_partial_persist_failure_then_abort_restores(tmp_path: Path) -> 
     )
     assert world.modes[str(prod)] == 0o644
     assert world.modes[str(wal_path(prod))] & 0o222
+
+
+def test_companion_writable_target_mode_derivation() -> None:
+    assert apmod.companion_writable_target_mode(
+        captured_mode=0o444, production_target_mode=0o644
+    ) == 0o644
+    assert apmod.companion_writable_target_mode(
+        captured_mode=0o444, production_target_mode=0o664
+    ) == 0o664
+    # Preserve execute bit from companion.
+    assert apmod.companion_writable_target_mode(
+        captured_mode=0o555, production_target_mode=0o644
+    ) == 0o755
+    with pytest.raises(ArtifactPermissionError, match="not writable"):
+        apmod.companion_writable_target_mode(
+            captured_mode=0o444, production_target_mode=0o444
+        )
+
+
+def test_post_swap_readonly_companions_restore_exact_inodes(tmp_path: Path) -> None:
+    """Synthetic reproduction of the post-PoNR companion restore incident shape."""
+    world, prod, reports, root, fp = _world(tmp_path)
+    # Pre-barrier companions absent (production shape).
+    world.wal_size = 0
+    world.shm_size = 0
+    live = _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.READONLY_SMOKE
+    )
+    art_pre = _journal(world, prod)["artifact_permissions"]
+    assert art_pre["wal"]["present"] is False
+    assert art_pre["shm"]["present"] is False
+    # Post-swap smoke creates exact read-only WAL/SHM under barriered main.
+    world.modes[str(prod)] = 0o444
+    wal = world.materialize_companion(
+        prod, "wal", size=0, mode=0o444, inode=88011, device=77
+    )
+    shm = world.materialize_companion(
+        prod, "shm", size=32768, mode=0o444, inode=88012, device=77
+    )
+    backup, staging = _paths(root)
+    apply_stage(
+        _opts(
+            world,
+            prod,
+            reports,
+            live,
+            stage=CutoverStage.READONLY_SMOKE,
+            apply=True,
+            backup=backup,
+            staging=staging,
+        )
+    )
+    art = _journal(world, prod)["artifact_permissions"]
+    psc = art["post_swap_companions"]
+    assert psc["captured_at"] == "readonly_smoke"
+    assert psc["wal"]["present"] is True
+    assert psc["wal"]["inode"] == 88011
+    assert psc["wal"]["mode"] == 0o444
+    assert psc["wal"]["target_mode"] == 0o644
+    assert psc["shm"]["inode"] == 88012
+    assert psc["shm"]["target_mode"] == 0o644
+
+    live = world.fingerprint(prod)
+    apply_stage(
+        _opts(
+            world,
+            prod,
+            reports,
+            live,
+            stage=CutoverStage.RESUME_SERVICES,
+            apply=True,
+            backup=backup,
+            staging=staging,
+        )
+    )
+    live = world.fingerprint(prod)
+    apply_stage(
+        _opts(
+            world,
+            prod,
+            reports,
+            live,
+            stage=CutoverStage.RESUME_WRITERS_PONR,
+            apply=True,
+            backup=backup,
+            staging=staging,
+        )
+    )
+    live = world.fingerprint(prod)
+    apply_stage(
+        _opts(
+            world,
+            prod,
+            reports,
+            live,
+            stage=CutoverStage.RESUME_WRITERS_RESTORE_MODE,
+            apply=True,
+            backup=backup,
+            staging=staging,
+        )
+    )
+    assert world.modes[str(prod)] == 0o644
+    assert world.modes[str(wal)] == 0o644
+    assert world.modes[str(shm)] == 0o644
+    assert world.inode_overrides[str(wal)] == 88011
+    assert world.inode_overrides[str(shm)] == 88012
+    j = _journal(world, prod)
+    assert j["writable_mode_restored"] is True
+    assert j["stage"] == CutoverStage.RESUME_WRITERS_RESTORE_MODE.value
+    assert world.mail_pause is True
+    assert world.mirror_pause is True
+
+
+def test_post_swap_companion_identity_drift_fails_before_mutation(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    world.wal_size = 0
+    world.shm_size = 0
+    live = _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.READONLY_SMOKE
+    )
+    world.materialize_companion(prod, "wal", size=0, mode=0o444, inode=1001)
+    world.materialize_companion(prod, "shm", size=32768, mode=0o444, inode=1002)
+    backup, staging = _paths(root)
+    apply_stage(
+        _opts(
+            world, prod, reports, live,
+            stage=CutoverStage.READONLY_SMOKE, apply=True,
+            backup=backup, staging=staging,
+        )
+    )
+    for stage in (
+        CutoverStage.RESUME_SERVICES,
+        CutoverStage.RESUME_WRITERS_PONR,
+    ):
+        live = world.fingerprint(prod)
+        apply_stage(
+            _opts(
+                world, prod, reports, live, stage=stage, apply=True,
+                backup=backup, staging=staging,
+            )
+        )
+    # Replace WAL inode at same path after capture.
+    world.inode_overrides[str(wal_path(prod))] = 9999
+    live = world.fingerprint(prod)
+    with pytest.raises(CutoverError, match="identity|refusing"):
+        apply_stage(
+            _opts(
+                world, prod, reports, live,
+                stage=CutoverStage.RESUME_WRITERS_RESTORE_MODE, apply=True,
+                backup=backup, staging=staging,
+            )
+        )
+    # Drift detected before chmod — mode remains read-only.
+    assert world.modes[str(wal_path(prod))] & 0o222 == 0
+    j = _journal(world, prod)
+    assert j["writable_mode_restored"] is not True
+    assert j["stage"] == CutoverStage.RESUME_WRITERS_PONR.value
+    assert world.mail_pause is True
+    assert world.mirror_pause is True
+
+
+def test_legacy_post_swap_record_without_target_mode_fails_closed(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    world.wal_size = 0
+    world.shm_size = 0
+    live = _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.READONLY_SMOKE
+    )
+    world.materialize_companion(prod, "wal", size=0, mode=0o444, inode=2001)
+    world.materialize_companion(prod, "shm", size=32768, mode=0o444, inode=2002)
+    backup, staging = _paths(root)
+    apply_stage(
+        _opts(
+            world, prod, reports, live,
+            stage=CutoverStage.READONLY_SMOKE, apply=True,
+            backup=backup, staging=staging,
+        )
+    )
+    # Strip target_mode to simulate a legacy journal capture.
+    jpath = journal_path_for(
+        CutoverOptions(maintenance_id=MID, expected_production_path=prod), prod
+    )
+    raw = json.loads(world.files[str(jpath)].decode())
+    for role in ("wal", "shm"):
+        raw["artifact_permissions"]["post_swap_companions"][role].pop("target_mode", None)
+    world.files[str(jpath)] = json.dumps(raw).encode()
+    for stage in (CutoverStage.RESUME_SERVICES, CutoverStage.RESUME_WRITERS_PONR):
+        live = world.fingerprint(prod)
+        apply_stage(
+            _opts(
+                world, prod, reports, live, stage=stage, apply=True,
+                backup=backup, staging=staging,
+            )
+        )
+    live = world.fingerprint(prod)
+    with pytest.raises(CutoverError, match="target_mode|invent"):
+        apply_stage(
+            _opts(
+                world, prod, reports, live,
+                stage=CutoverStage.RESUME_WRITERS_RESTORE_MODE, apply=True,
+                backup=backup, staging=staging,
+            )
+        )
+    assert world.modes[str(wal_path(prod))] & 0o222 == 0
+    assert world.mail_pause is True
+
+
+def test_missing_post_swap_companions_fails_closed_for_ro(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    world.wal_size = 0
+    world.shm_size = 0
+    live = _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.RESUME_WRITERS_RESTORE_MODE
+    )
+    # Inject RO companions without post_swap capture (record cleared).
+    world.materialize_companion(prod, "wal", size=0, mode=0o444, inode=3001)
+    world.materialize_companion(prod, "shm", size=32768, mode=0o444, inode=3002)
+    jpath = journal_path_for(
+        CutoverOptions(maintenance_id=MID, expected_production_path=prod), prod
+    )
+    raw = json.loads(world.files[str(jpath)].decode())
+    raw["artifact_permissions"]["post_swap_companions"] = None
+    world.files[str(jpath)] = json.dumps(raw).encode()
+    backup, staging = _paths(root)
+    with pytest.raises(CutoverError, match="invent|post-swap|read-only"):
+        apply_stage(
+            _opts(
+                world, prod, reports, live,
+                stage=CutoverStage.RESUME_WRITERS_RESTORE_MODE, apply=True,
+                backup=backup, staging=staging,
+            )
+        )
+    assert world.mail_pause is True
+    assert world.mirror_pause is True
+
+
+def test_basename_mismatch_fails_companion_restore(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    world.wal_size = 0
+    world.shm_size = 0
+    live = _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.READONLY_SMOKE
+    )
+    world.materialize_companion(prod, "wal", size=0, mode=0o444, inode=4001)
+    world.materialize_companion(prod, "shm", size=32768, mode=0o444, inode=4002)
+    backup, staging = _paths(root)
+    apply_stage(
+        _opts(
+            world, prod, reports, live,
+            stage=CutoverStage.READONLY_SMOKE, apply=True,
+            backup=backup, staging=staging,
+        )
+    )
+    jpath = journal_path_for(
+        CutoverOptions(maintenance_id=MID, expected_production_path=prod), prod
+    )
+    raw = json.loads(world.files[str(jpath)].decode())
+    raw["artifact_permissions"]["post_swap_companions"]["wal"]["basename"] = "wrong-wal"
+    world.files[str(jpath)] = json.dumps(raw).encode()
+    for stage in (CutoverStage.RESUME_SERVICES, CutoverStage.RESUME_WRITERS_PONR):
+        live = world.fingerprint(prod)
+        apply_stage(
+            _opts(
+                world, prod, reports, live, stage=stage, apply=True,
+                backup=backup, staging=staging,
+            )
+        )
+    live = world.fingerprint(prod)
+    with pytest.raises(CutoverError, match="basename"):
+        apply_stage(
+            _opts(
+                world, prod, reports, live,
+                stage=CutoverStage.RESUME_WRITERS_RESTORE_MODE, apply=True,
+                backup=backup, staging=staging,
+            )
+        )
+
+
+def test_writable_post_swap_companions_accepted_without_chmod(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    world.wal_size = 0
+    world.shm_size = 0
+    live = _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.READONLY_SMOKE
+    )
+    world.materialize_companion(prod, "wal", size=0, mode=0o644, inode=5001)
+    world.materialize_companion(prod, "shm", size=32768, mode=0o644, inode=5002)
+    backup, staging = _paths(root)
+    apply_stage(
+        _opts(
+            world, prod, reports, live,
+            stage=CutoverStage.READONLY_SMOKE, apply=True,
+            backup=backup, staging=staging,
+        )
+    )
+    for stage in (
+        CutoverStage.RESUME_SERVICES,
+        CutoverStage.RESUME_WRITERS_PONR,
+        CutoverStage.RESUME_WRITERS_RESTORE_MODE,
+    ):
+        live = world.fingerprint(prod)
+        apply_stage(
+            _opts(
+                world, prod, reports, live, stage=stage, apply=True,
+                backup=backup, staging=staging,
+            )
+        )
+    assert world.modes[str(wal_path(prod))] == 0o644
+    assert _journal(world, prod)["writable_mode_restored"] is True
+
+
+def test_post_swap_sidecar_recapture_records_target_mode(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    live = _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.READONLY_SMOKE
+    )
+    world.materialize_companion(prod, "shm", size=32768, mode=0o444, inode=424242)
+    backup, staging = _paths(root)
+    apply_stage(
+        _opts(
+            world, prod, reports, live,
+            stage=CutoverStage.READONLY_SMOKE, apply=True,
+            backup=backup, staging=staging,
+        )
+    )
+    art = _journal(world, prod)["artifact_permissions"]
+    assert art["post_swap_companions"]["shm"]["present"] is True
+    assert art["post_swap_companions"]["captured_at"] == "readonly_smoke"
+    assert art["post_swap_companions"]["shm"]["target_mode"] == 0o644
+
+
+def test_partial_companion_restore_does_not_claim_success(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    world.wal_size = 0
+    world.shm_size = 0
+    live = _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.READONLY_SMOKE
+    )
+    world.materialize_companion(prod, "wal", size=0, mode=0o444, inode=6001)
+    world.materialize_companion(prod, "shm", size=32768, mode=0o444, inode=6002)
+    backup, staging = _paths(root)
+    apply_stage(
+        _opts(
+            world, prod, reports, live,
+            stage=CutoverStage.READONLY_SMOKE, apply=True,
+            backup=backup, staging=staging,
+        )
+    )
+    for stage in (CutoverStage.RESUME_SERVICES, CutoverStage.RESUME_WRITERS_PONR):
+        live = world.fingerprint(prod)
+        apply_stage(
+            _opts(
+                world, prod, reports, live, stage=stage, apply=True,
+                backup=backup, staging=staging,
+            )
+        )
+    # After WAL would restore, SHM identity drifts — fail on SHM.
+    # Corrupt SHM recorded inode so restore of SHM fails after WAL succeeds.
+    jpath = journal_path_for(
+        CutoverOptions(maintenance_id=MID, expected_production_path=prod), prod
+    )
+    raw = json.loads(world.files[str(jpath)].decode())
+    raw["artifact_permissions"]["post_swap_companions"]["shm"]["inode"] = 1
+    world.files[str(jpath)] = json.dumps(raw).encode()
+    live = world.fingerprint(prod)
+    with pytest.raises(CutoverError):
+        apply_stage(
+            _opts(
+                world, prod, reports, live,
+                stage=CutoverStage.RESUME_WRITERS_RESTORE_MODE, apply=True,
+                backup=backup, staging=staging,
+            )
+        )
+    j = _journal(world, prod)
+    assert j["writable_mode_restored"] is not True
+    assert j["stage"] == CutoverStage.RESUME_WRITERS_PONR.value
+    # WAL may already be writable from partial progress; SHM remains RO.
+    assert world.modes[str(shm_path(prod))] & 0o222 == 0
+    assert world.mail_pause is True
+
+
+def test_retry_after_partial_companion_restore_is_idempotent(tmp_path: Path) -> None:
+    world, prod, reports, root, fp = _world(tmp_path)
+    world.wal_size = 0
+    world.shm_size = 0
+    live = _run_through(
+        world, prod, reports, fp, root, stop_before=CutoverStage.READONLY_SMOKE
+    )
+    world.materialize_companion(prod, "wal", size=0, mode=0o444, inode=7001)
+    world.materialize_companion(prod, "shm", size=32768, mode=0o444, inode=7002)
+    backup, staging = _paths(root)
+    apply_stage(
+        _opts(
+            world, prod, reports, live,
+            stage=CutoverStage.READONLY_SMOKE, apply=True,
+            backup=backup, staging=staging,
+        )
+    )
+    for stage in (CutoverStage.RESUME_SERVICES, CutoverStage.RESUME_WRITERS_PONR):
+        live = world.fingerprint(prod)
+        apply_stage(
+            _opts(
+                world, prod, reports, live, stage=stage, apply=True,
+                backup=backup, staging=staging,
+            )
+        )
+    # Simulate interrupted restore: main+WAL already writable, SHM still RO.
+    world.modes[str(prod)] = 0o644
+    world.modes[str(wal_path(prod))] = 0o644
+    live = world.fingerprint(prod)
+    apply_stage(
+        _opts(
+            world, prod, reports, live,
+            stage=CutoverStage.RESUME_WRITERS_RESTORE_MODE, apply=True,
+            backup=backup, staging=staging,
+        )
+    )
+    assert world.modes[str(prod)] == 0o644
+    assert world.modes[str(wal_path(prod))] == 0o644
+    assert world.modes[str(shm_path(prod))] == 0o644
+    assert world.inode_overrides[str(wal_path(prod))] == 7001
+    assert world.inode_overrides[str(shm_path(prod))] == 7002
