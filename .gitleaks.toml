@@ -1,0 +1,11 @@
+# Extend defaults; only suppress intentional sanitizer fixtures.
+title = "OrigenLab"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Intentional fake credentials in dashboard mirror lifecycle sanitizer tests"
+paths = [
+  '''(^|/)apps/email-pipeline/tests/test_dashboard_mirror_lifecycle_cas\.py$'''
+]

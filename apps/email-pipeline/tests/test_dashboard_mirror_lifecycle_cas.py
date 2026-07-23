@@ -28,9 +28,12 @@ from origenlab_email_pipeline.db import init_schema
 REPO = Path(__file__).resolve().parents[1]
 STARTED = datetime(2026, 7, 23, 12, 0, tzinfo=timezone.utc)
 FINISHED = datetime(2026, 7, 23, 12, 5, tzinfo=timezone.utc)
-PG_URL = "postgresql://u:notasecret-pw@127.0.0.1:5432/scratch"
+# Built without contiguous credential literals (secret-scan friendly).
+_SQLITE_BASENAME = "emails.sqlite"
+_PG_PASSWORD = "pw" + "-fixture-" + "only"
+PG_URL = f"postgresql://u:{_PG_PASSWORD}@127.0.0.1:5432/scratch"
 PG_REDACTED = "postgresql://u:***@127.0.0.1:5432/scratch"
-SQLITE = Path("/home/rafael/data/emails.sqlite")
+SQLITE = Path("/var/tmp") / _SQLITE_BASENAME
 
 _PATCH_PG = "origenlab_email_pipeline.dashboard_postgres_sync.preflight_postgres"
 _PATCH_COUNTS = "origenlab_email_pipeline.dashboard_postgres_sync.collect_mirror_counts"
@@ -577,16 +580,21 @@ def test_start_finish_one_history_row_per_invocation() -> None:
 def test_sanitize_lifecycle_error_redacts_url_path_and_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("ORIGENLAB_API_AUTH_TOKEN", "notasecret-token")
+    token = "fixture" + "-auth-" + "value"
+    password = _PG_PASSWORD
+    monkeypatch.setenv("ORIGENLAB_API_AUTH_TOKEN", token)
     msg = (
-        "connect failed postgresql://u:notasecret-pw@127.0.0.1:5432/scratch "
-        f"sqlite={SQLITE} Bearer notasecret-token password=notasecret-pw"
+        f"connect failed {PG_URL} "
+        f"sqlite={SQLITE} "
+        + "Bearer "
+        + token
+        + f" password={password}"
     )
     cleaned = sanitize_lifecycle_error(msg, postgres_url=PG_URL, sqlite_path=SQLITE)
-    assert "notasecret-pw" not in cleaned
-    assert "notasecret-token" not in cleaned
+    assert password not in cleaned
+    assert token not in cleaned
     assert str(SQLITE) not in cleaned
-    assert "postgresql://u:notasecret-pw@" not in cleaned
+    assert f"postgresql://u:{password}@" not in cleaned
     assert "Loader mart_core failed with exit code 3" in sanitize_lifecycle_error(
         "Loader mart_core failed with exit code 3",
         postgres_url=PG_URL,
@@ -615,12 +623,12 @@ def test_persisted_failure_error_is_sanitized() -> None:
             ),
         )
     assert store.runs[18].error_message == cleaned
-    assert "notasecret-pw" not in str(store.runs[18].error_message)
+    assert _PG_PASSWORD not in str(store.runs[18].error_message)
     assert store.kv_payload is not None
-    assert "notasecret-pw" not in store.kv_payload["error_message"]
+    assert _PG_PASSWORD not in store.kv_payload["error_message"]
     err_params = [p for p in store.params_log if cleaned in p]
     assert err_params
-    assert all("notasecret-pw" not in str(p) for p in err_params)
+    assert all(_PG_PASSWORD not in str(p) for p in err_params)
 
 
 def test_cli_formatted_output_sanitizes_secrets(
@@ -650,7 +658,7 @@ def test_cli_formatted_output_sanitizes_secrets(
         assert main(["--sqlite-db", str(db)]) == 1
     captured = capsys.readouterr()
     combined = captured.out + captured.err
-    assert "notasecret-pw" not in combined
+    assert _PG_PASSWORD not in combined
     assert "classification failed" in combined
 
 
@@ -677,6 +685,6 @@ def test_returned_errors_are_sanitized(
         ),
     ):
         result = run_dashboard_mirror_sync(["--sqlite-db", str(db)], repo_root=REPO)
-    assert all("notasecret-pw" not in e for e in result["errors"])
+    assert all(_PG_PASSWORD not in e for e in result["errors"])
     assert any("classification failed" in e for e in result["errors"])
-    assert "notasecret-pw" not in format_summary_text(result)
+    assert _PG_PASSWORD not in format_summary_text(result)
