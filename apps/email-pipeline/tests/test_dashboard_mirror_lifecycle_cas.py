@@ -377,6 +377,126 @@ def test_reporting_disappearing_mid_run_does_not_publish_kv_success() -> None:
     assert store.kv_payload is None
 
 
+@pytest.mark.parametrize("status", ["success", "failed"])
+def test_kv_appearing_mid_run_before_terminal_fails(status: str) -> None:
+    """Reporting-only start must not publish into a KV table that appears later."""
+    store = _LifecycleStore(
+        reporting=True, kv=False, runs={21: _FakeRun(status="running")}
+    )
+    handle = SyncRunHandle(21, reporting_enabled=True, kv_enabled=False)
+    mock_pg, exists = _connect_store(store)
+    with (
+        patch("origenlab_email_pipeline.dashboard_postgres_sync.psycopg", mock_pg),
+        patch(
+            "origenlab_email_pipeline.dashboard_postgres_sync.pg_table_exists",
+            side_effect=exists,
+        ),
+    ):
+        store.kv = True  # topology drift: KV appears before terminal
+        with pytest.raises(LifecycleConsistencyError, match="kv_enabled=False"):
+            finish_sync_run(
+                PG_URL,
+                **_finish_kwargs(
+                    handle,
+                    status=status,
+                    error_message="Loader mart_core failed with exit code 3"
+                    if status == "failed"
+                    else None,
+                ),
+            )
+    assert store.kv_payload is None
+    assert store.runs[21].status == "running"
+    assert store.commits == 0
+
+
+def test_kv_appearing_mid_run_before_details_update_fails() -> None:
+    store = _LifecycleStore(
+        reporting=True, kv=False, runs={22: _FakeRun(status="running")}
+    )
+    handle = SyncRunHandle(22, reporting_enabled=True, kv_enabled=False)
+    mock_pg, exists = _connect_store(store)
+    with (
+        patch("origenlab_email_pipeline.dashboard_postgres_sync.psycopg", mock_pg),
+        patch(
+            "origenlab_email_pipeline.dashboard_postgres_sync.pg_table_exists",
+            side_effect=exists,
+        ),
+    ):
+        store.kv = True
+        with pytest.raises(LifecycleConsistencyError, match="kv_enabled=False"):
+            update_sync_run_details(
+                PG_URL,
+                handle,
+                {"completed_loaders": ["outbound_sidecars"]},
+                started_at=STARTED,
+                sqlite_path=SQLITE,
+                postgres_url_redacted=PG_REDACTED,
+            )
+    assert store.kv_payload is None
+    assert store.commits == 0
+
+
+def test_neither_then_kv_appears_before_terminal_fails() -> None:
+    store = _LifecycleStore(reporting=False, kv=False)
+    handle = SyncRunHandle(None, reporting_enabled=False, kv_enabled=False)
+    mock_pg, exists = _connect_store(store)
+    with (
+        patch("origenlab_email_pipeline.dashboard_postgres_sync.psycopg", mock_pg),
+        patch(
+            "origenlab_email_pipeline.dashboard_postgres_sync.pg_table_exists",
+            side_effect=exists,
+        ),
+    ):
+        store.kv = True
+        with pytest.raises(LifecycleConsistencyError, match="kv_enabled=False"):
+            finish_sync_run(PG_URL, **_finish_kwargs(handle, status="success"))
+    assert store.kv_payload is None
+    assert store.commits == 0
+
+
+def test_neither_then_kv_appears_before_mid_run_fails() -> None:
+    store = _LifecycleStore(reporting=False, kv=False)
+    handle = SyncRunHandle(None, reporting_enabled=False, kv_enabled=False)
+    mock_pg, exists = _connect_store(store)
+    with (
+        patch("origenlab_email_pipeline.dashboard_postgres_sync.psycopg", mock_pg),
+        patch(
+            "origenlab_email_pipeline.dashboard_postgres_sync.pg_table_exists",
+            side_effect=exists,
+        ),
+    ):
+        store.kv = True
+        with pytest.raises(LifecycleConsistencyError, match="kv_enabled=False"):
+            update_sync_run_details(
+                PG_URL,
+                handle,
+                {"completed_loaders": ["mart_core"]},
+                started_at=STARTED,
+                sqlite_path=SQLITE,
+                postgres_url_redacted=PG_REDACTED,
+            )
+    assert store.kv_payload is None
+    assert store.commits == 0
+
+
+def test_kv_only_disappearing_mid_run_fails() -> None:
+    store = _LifecycleStore(reporting=False, kv=True)
+    handle = SyncRunHandle(None, reporting_enabled=False, kv_enabled=True)
+    mock_pg, exists = _connect_store(store)
+    with (
+        patch("origenlab_email_pipeline.dashboard_postgres_sync.psycopg", mock_pg),
+        patch(
+            "origenlab_email_pipeline.dashboard_postgres_sync.pg_table_exists",
+            side_effect=exists,
+        ),
+    ):
+        store.kv = False
+        with pytest.raises(LifecycleConsistencyError, match="kv_enabled=True"):
+            finish_sync_run(PG_URL, **_finish_kwargs(handle, status="success"))
+    assert store.kv_payload is None
+    assert store.commits == 0
+
+
 def test_reporting_and_kv_terminal_updates_one_transaction() -> None:
     store = _LifecycleStore(runs={12: _FakeRun(status="running")})
     mock_pg, exists = _connect_store(store)

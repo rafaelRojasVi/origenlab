@@ -517,9 +517,10 @@ def _assert_topology_matches_handle(cur: Any, handle: SyncRunHandle) -> None:
             "dashboard sync lifecycle table topology changed mid-run "
             f"(reporting_enabled={handle.reporting_enabled}, present={has_run})"
         )
-    if handle.kv_enabled and not has_kv:
+    if handle.kv_enabled != has_kv:
         raise LifecycleConsistencyError(
-            "ops.pipeline_kv disappeared mid-run after lifecycle start"
+            "dashboard sync lifecycle table topology changed mid-run "
+            f"(kv_enabled={handle.kv_enabled}, present={has_kv})"
         )
 
 

@@ -1,0 +1,11 @@
+# Exact gitleaks fingerprints for historical synthetic sanitizer-test fixtures only.
+# These are NOT real credentials. They were introduced in commit 10af8fe as
+# intentional fake values (sentinel-api-token-xyz / SentinelPassw0rd) for lifecycle
+# error-sanitization tests, then rewritten in later commits.
+#
+# Fingerprint format: <commit>:<file>:<rule>:<line>
+# Generated with gitleaks 8.24.3 (same major line as CI gitleaks-action@v3).
+#
+# Do not add path-wide or rule-wide suppressions here. An unrelated finding in the
+# same test file (different secret / fingerprint) must still fail secret-scan.
+10af8fec667df0d382fc5a6bfec443cc3e9a250b:apps/email-pipeline/tests/test_dashboard_mirror_lifecycle_cas.py:generic-api-key:583
