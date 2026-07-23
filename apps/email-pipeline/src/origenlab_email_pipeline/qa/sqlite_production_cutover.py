@@ -157,6 +157,11 @@ DEFAULT_SMOKE_TIMEOUT_SECONDS = 15.0
 STATUS_SMOKE_TIMEOUT_SECONDS = 180.0
 DEFAULT_SMOKE_MAX_RESPONSE_BYTES = 1_000_000
 _STATUS_PATH_SUFFIX = "/operator/status"
+# Bounded wait after systemctl start before full readonly smoke (Type=simple
+# proves process launch, not HTTP readiness). Test-overridable via CutoverOptions.
+DEFAULT_API_READY_TIMEOUT_SECONDS = 120.0
+DEFAULT_API_READY_POLL_SECONDS = 0.5
+DEFAULT_API_READY_ATTEMPT_TIMEOUT_SECONDS = 3.0
 # API process activity classification (SIGTERM/143 bookkeeping, A3).
 API_ACTIVITY_RUNNING = "running"
 API_ACTIVITY_STOPPED = "stopped"
@@ -581,6 +586,188 @@ def make_loopback_json_getter(
         return parsed
 
     return get
+
+
+def _classify_health_ready_payload(payload: Any) -> str:
+    """Return ready|fail_malformed|fail_not_ok for a decoded /health body."""
+    if not isinstance(payload, dict):
+        return "fail_malformed"
+    if payload.get("ok") is not True:
+        return "fail_not_ok"
+    return "ready"
+
+
+def probe_loopback_health_once(
+    api_base_url: str,
+    *,
+    attempt_timeout_seconds: float = DEFAULT_API_READY_ATTEMPT_TIMEOUT_SECONDS,
+    token_provider: Callable[[], str | None] = resolve_api_auth_token,
+    max_bytes: int = DEFAULT_SMOKE_MAX_RESPONSE_BYTES,
+) -> str:
+    """One bounded /health probe for readiness (no body/token logging).
+
+    Returns one of:
+    ``ready``, ``retry_not_listening``, ``fail_http``, ``fail_malformed``,
+    ``fail_not_ok``.
+    """
+    approved_scheme, approved_host, approved_port = _origin_tuple(api_base_url)
+    if approved_scheme != "http" or approved_host not in _LOOPBACK_HOSTS:
+        _fail(
+            "API readiness base URL is not an approved loopback http origin",
+            category=CutoverFailureCategory.SAFETY,
+        )
+    health_url = api_base_url.rstrip("/") + "/health"
+    parts = urlsplit(health_url)
+    if parts.username or parts.password or parts.fragment:
+        _fail(
+            "API readiness health URL contained userinfo or a fragment",
+            category=CutoverFailureCategory.VERIFY,
+        )
+    scheme, host, port = _origin_tuple(health_url)
+    if (
+        scheme != approved_scheme
+        or host not in _LOOPBACK_HOSTS
+        or host != approved_host
+        or port != approved_port
+    ):
+        _fail(
+            "API readiness health URL left the approved loopback origin",
+            category=CutoverFailureCategory.VERIFY,
+        )
+    headers = {"Accept": "application/json"}
+    token = (token_provider() or "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+        headers[API_AUTH_TOKEN_HEADER] = token
+    request = Request(health_url, method="GET", headers=headers)
+    opener = build_opener(_LoopbackOnlyRedirectHandler())
+    try:
+        with opener.open(request, timeout=float(attempt_timeout_seconds)) as response:
+            status = int(getattr(response, "status", 0) or 0)
+            final_url = response.geturl()
+            raw = response.read(max_bytes + 1)
+    except _RedirectBlocked:
+        return "fail_http"
+    except HTTPError:
+        return "fail_http"
+    except (URLError, TimeoutError, OSError):
+        return "retry_not_listening"
+    try:
+        f_scheme, f_host, f_port = _origin_tuple(final_url)
+        if (
+            f_scheme != approved_scheme
+            or f_host not in _LOOPBACK_HOSTS
+            or f_host != approved_host
+            or f_port != approved_port
+        ):
+            return "fail_http"
+    except Exception:
+        return "fail_http"
+    if len(raw) > max_bytes:
+        return "fail_malformed"
+    if status != 200:
+        return "fail_http"
+    try:
+        parsed = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return "fail_malformed"
+    return _classify_health_ready_payload(parsed)
+
+
+def wait_for_api_health_ready(
+    *,
+    api_base_url: str,
+    api_activity: Callable[[], dict[str, Any]],
+    probe: Callable[[], str] | None = None,
+    timeout_seconds: float = DEFAULT_API_READY_TIMEOUT_SECONDS,
+    poll_interval_seconds: float = DEFAULT_API_READY_POLL_SECONDS,
+    attempt_timeout_seconds: float = DEFAULT_API_READY_ATTEMPT_TIMEOUT_SECONDS,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
+    """Poll loopback ``/health`` until ready or a bounded deadline elapses.
+
+    Retries only while the probe reports ``retry_not_listening``. HTTP failures,
+    malformed JSON, ``ok!=true``, process exit, and deadline expiry fail closed
+    without logging tokens or response bodies.
+    """
+    timeout = float(timeout_seconds)
+    poll = float(poll_interval_seconds)
+    if timeout <= 0 or poll <= 0:
+        _fail(
+            "API readiness timeout/poll must be positive",
+            category=CutoverFailureCategory.PREFLIGHT,
+        )
+    probe_fn = probe or (
+        lambda: probe_loopback_health_once(
+            api_base_url,
+            attempt_timeout_seconds=attempt_timeout_seconds,
+        )
+    )
+    deadline = monotonic() + timeout
+    attempts = 0
+    last = "retry_not_listening"
+    while True:
+        activity = api_activity()
+        if activity.get("stopped") and not activity.get("running"):
+            _fail(
+                "API process exited before HTTP readiness",
+                category=CutoverFailureCategory.VERIFY,
+                evidence={"readiness": "fail_process_exited", "attempts": attempts},
+            )
+        if activity.get("ambiguous"):
+            _fail(
+                "API activity ambiguous during readiness wait",
+                category=CutoverFailureCategory.AMBIGUOUS,
+                evidence={"readiness": "fail_ambiguous", "attempts": attempts},
+            )
+        attempts += 1
+        last = probe_fn()
+        if last == "ready":
+            waited = max(0.0, timeout - max(0.0, deadline - monotonic()))
+            return {
+                "ok": True,
+                "attempts": attempts,
+                "waited_seconds": round(waited, 3),
+                "outcome": "ready",
+            }
+        if last == "fail_http":
+            _fail(
+                "API /health returned a non-success HTTP status during readiness",
+                category=CutoverFailureCategory.VERIFY,
+                evidence={"readiness": last, "attempts": attempts},
+            )
+        if last == "fail_malformed":
+            _fail(
+                "API /health returned malformed JSON during readiness",
+                category=CutoverFailureCategory.VERIFY,
+                evidence={"readiness": last, "attempts": attempts},
+            )
+        if last == "fail_not_ok":
+            _fail(
+                "API /health JSON did not report ok=true during readiness",
+                category=CutoverFailureCategory.VERIFY,
+                evidence={"readiness": last, "attempts": attempts},
+            )
+        if last != "retry_not_listening":
+            _fail(
+                "API readiness probe returned an unexpected outcome",
+                category=CutoverFailureCategory.VERIFY,
+                evidence={"readiness": last, "attempts": attempts},
+            )
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            _fail(
+                "API readiness timed out before /health succeeded",
+                category=CutoverFailureCategory.VERIFY,
+                evidence={
+                    "readiness": "fail_timeout",
+                    "attempts": attempts,
+                    "timeout_seconds": timeout,
+                    "last_outcome": last,
+                },
+            )
+        sleep(min(poll, remaining))
 
 
 def classify_api_activity(
@@ -1518,6 +1705,14 @@ class CutoverAdapters(Protocol):
     def rename_exchange(self, a: Path, b: Path) -> None: ...
     def rename_noreplace(self, src: Path, dest: Path) -> None: ...
     def http_smoke(self, base_url: str, *, expected_fingerprint: str) -> dict[str, Any]: ...
+    def wait_api_ready(
+        self,
+        base_url: str,
+        *,
+        timeout_seconds: float = DEFAULT_API_READY_TIMEOUT_SECONDS,
+        poll_interval_seconds: float = DEFAULT_API_READY_POLL_SECONDS,
+        attempt_timeout_seconds: float = DEFAULT_API_READY_ATTEMPT_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]: ...
     def git_identity(self) -> GitIdentity: ...
     def acquire_exclusive_lock(
         self, production: Path, maintenance_id: str
@@ -2141,6 +2336,22 @@ class FilesystemAdapters:
         if fn(["--user", "start", API_SERVICE]) != 0:
             _fail(f"failed to start {API_SERVICE}", category=CutoverFailureCategory.APPLY)
 
+    def wait_api_ready(
+        self,
+        base_url: str,
+        *,
+        timeout_seconds: float = DEFAULT_API_READY_TIMEOUT_SECONDS,
+        poll_interval_seconds: float = DEFAULT_API_READY_POLL_SECONDS,
+        attempt_timeout_seconds: float = DEFAULT_API_READY_ATTEMPT_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        return wait_for_api_health_ready(
+            api_base_url=base_url,
+            api_activity=lambda: self.api_activity(api_base_url=base_url),
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+            attempt_timeout_seconds=attempt_timeout_seconds,
+        )
+
     def stop_health_timer(self) -> None:
         fn = self.systemctl or _default_systemctl
         if fn(["--user", "stop", API_HEALTH_TIMER]) != 0:
@@ -2611,6 +2822,9 @@ class CutoverOptions:
     staging_dest: Path | None = None
     reports_dir: Path | None = None
     api_base_url: str = "http://127.0.0.1:8001"
+    api_ready_timeout_seconds: float = DEFAULT_API_READY_TIMEOUT_SECONDS
+    api_ready_poll_seconds: float = DEFAULT_API_READY_POLL_SECONDS
+    api_ready_attempt_timeout_seconds: float = DEFAULT_API_READY_ATTEMPT_TIMEOUT_SECONDS
     adapters: CutoverAdapters | None = None
     settings: Settings | None = None
     fail_after: str | None = None
@@ -4287,6 +4501,14 @@ def apply_stage(opts: CutoverOptions) -> dict[str, Any]:
                         "health timer active during readonly smoke",
                         category=CutoverFailureCategory.SAFETY,
                     )
+                # Type=simple start is not HTTP readiness; wait for /health.
+                adapters.wait_api_ready(
+                    opts.api_base_url,
+                    timeout_seconds=opts.api_ready_timeout_seconds,
+                    poll_interval_seconds=opts.api_ready_poll_seconds,
+                    attempt_timeout_seconds=opts.api_ready_attempt_timeout_seconds,
+                )
+                _inject("readonly_smoke_after_api_ready")
                 live_fp = adapters.fingerprint(production)
                 if live_fp != journal.production_fingerprint:
                     _fail(
@@ -7611,6 +7833,9 @@ class SyntheticWorld:
             "production_fingerprint": None,
         }
     )
+    # Scripted readiness outcomes consumed by wait_api_ready (tests only):
+    # "retry" | "ready" | "http" | "malformed" | "not_ok" | "exited"
+    api_ready_script: list[str] | None = None
     fail_checkpoint: bool = False
     checkpoint_busy: int = 0
     backup_incomplete: bool = False
@@ -7888,6 +8113,48 @@ class SyntheticWorld:
         # Each start models a fresh systemd generation (new InvocationID).
         self._api_invocation += 1
         self.services.api_active = True
+
+    def wait_api_ready(
+        self,
+        base_url: str,
+        *,
+        timeout_seconds: float = DEFAULT_API_READY_TIMEOUT_SECONDS,
+        poll_interval_seconds: float = DEFAULT_API_READY_POLL_SECONDS,
+        attempt_timeout_seconds: float = DEFAULT_API_READY_ATTEMPT_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        scripted = self.api_ready_script is not None
+        script = list(self.api_ready_script or [])
+
+        def _probe() -> str:
+            if scripted:
+                if not script:
+                    # Exhausted script: keep retrying so timeout tests can expire.
+                    return "retry_not_listening"
+                outcome = script.pop(0)
+                mapping = {
+                    "retry": "retry_not_listening",
+                    "ready": "ready",
+                    "http": "fail_http",
+                    "malformed": "fail_malformed",
+                    "not_ok": "fail_not_ok",
+                    "exited": "retry_not_listening",
+                }
+                if outcome == "exited":
+                    self.services.api_active = False
+                return mapping.get(outcome, "fail_http")
+            if self.smoke_payload.get("status") == "ok":
+                return "ready"
+            return "fail_not_ok"
+
+        return wait_for_api_health_ready(
+            api_base_url=base_url,
+            api_activity=lambda: self.api_activity(api_base_url=base_url),
+            probe=_probe,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+            attempt_timeout_seconds=attempt_timeout_seconds,
+            sleep=lambda _s: None,
+        )
 
     def stop_health_timer(self) -> None:
         self.services.health_timer_active = False
