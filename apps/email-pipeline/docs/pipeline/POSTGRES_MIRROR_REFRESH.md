@@ -10,6 +10,39 @@ This document is the **operator recipe** for refreshing the **Postgres dashboard
 
 ---
 
+## Mirror run lifecycle status
+
+`reporting.dashboard_sync_run` and `ops.pipeline_kv` (`dashboard_postgres_mirror_last_sync`) share one lifecycle per apply invocation:
+
+| Status | Meaning |
+|--------|---------|
+| **`running`** | Invocation accepted; selected loaders are still executing. `finished_at` is null. |
+| **`success`** | **Every** selected loader and final count verification completed. Terminal. |
+| **`failed`** | Invocation terminated before complete publication. Terminal. |
+
+Invariants:
+
+- **One history row per invocation** when `reporting.dashboard_sync_run` exists (insert `running`, then compare-and-set the same `id` with `WHERE status = 'running' RETURNING id`).
+- Terminal publication **fails closed** if the expected running row is missing, already terminal, or the sync id is stale — KV is not updated and no replacement history row is inserted.
+- Mid-run detail refresh also requires a still-`running` row before rewriting KV (so terminal KV cannot regress to `running`).
+- **`ops.pipeline_kv` reflects the same current lifecycle** (same `sync_run_id`, status, timestamps, and details) when both stores exist.
+- A **success watermark is terminal**, not an intermediate milestone after outbound/mart only.
+- Dry-run writes **no** run row and **no** KV lifecycle update.
+- Persisted / CLI `error_message` values are sanitized (no raw Postgres URLs, passwords, tokens, or absolute SQLite paths).
+
+Compatibility when tables are missing:
+
+| Reporting table | KV table | Behavior |
+|-----------------|----------|----------|
+| present | present / absent | Require durable `running` row; CAS to terminal; update KV only if present and CAS succeeded. |
+| absent at start and finish | present | Explicit KV-only mode (`sync_run_id` may be `None`); no invented history row. |
+| absent | absent | No-op lifecycle publication (supported compatibility). |
+| topology changes mid-run | — | Fail closed; do not synthesize history or claim consistent terminal publication. |
+
+This lifecycle PR does **not** make loader publication globally atomic. Outbound/mart empty-window remediation (DELETE committed before reload) is a **separate** follow-up PR.
+
+---
+
 ## Purpose
 
 Give operators a single, copy-paste workflow for:

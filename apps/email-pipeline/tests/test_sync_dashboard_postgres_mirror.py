@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 import sqlite3
 import subprocess
@@ -15,12 +14,12 @@ import pytest
 
 from origenlab_email_pipeline.contacto_gmail_source import CONTACTO_GMAIL_SOURCE_PREFIX
 from origenlab_email_pipeline.dashboard_postgres_sync import (
+    SyncRunHandle,
     DASHBOARD_SYNC_KV_KEY,
     EXPECTED_ALEMBIC_HEAD,
     assert_sqlite_mart_ready_for_mirror_sync,
     build_loader_command,
     check_alembic_head,
-    collect_mirror_counts,
     format_summary_text,
     merge_optional_loader_details,
     plan_loader_steps,
@@ -70,6 +69,8 @@ def compute_alembic_head_from_versions(versions_dir: Path = ALEMBIC_VERSIONS_DIR
 
 _PATCH_PG = "origenlab_email_pipeline.dashboard_postgres_sync.preflight_postgres"
 _PATCH_COUNTS = "origenlab_email_pipeline.dashboard_postgres_sync.collect_mirror_counts"
+_PATCH_START = "origenlab_email_pipeline.dashboard_postgres_sync.start_sync_run"
+_PATCH_FINISH = "origenlab_email_pipeline.dashboard_postgres_sync.finish_sync_run"
 _PATCH_WM = "origenlab_email_pipeline.dashboard_postgres_sync.write_sync_watermark"
 _PATCH_CLASSIFY = (
     "origenlab_email_pipeline.dashboard_postgres_sync.sync_email_classification_canonical"
@@ -81,8 +82,17 @@ _PATCH_DEALS = "origenlab_email_pipeline.dashboard_postgres_sync.sync_commercial
 _PATCH_OPTIONAL = (
     "origenlab_email_pipeline.dashboard_postgres_sync.run_optional_db2_loaders"
 )
+_PATCH_EQUIP = (
+    "origenlab_email_pipeline.dashboard_postgres_sync.run_equipment_opportunity_sync"
+)
+_PATCH_WARM = (
+    "origenlab_email_pipeline.dashboard_postgres_sync.run_warm_case_promotion_sync"
+)
 _PATCH_UPDATE_DETAILS = (
     "origenlab_email_pipeline.dashboard_postgres_sync.update_sync_run_details"
+)
+_PATCH_SNAPSHOTS = (
+    "origenlab_email_pipeline.dashboard_postgres_sync.run_operator_snapshots_sync"
 )
 
 
@@ -173,7 +183,7 @@ def test_dashboard_fast_maps_to_only_canonical(
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS,
         return_value=_sample_mirror_counts(),
-    ), patch(_PATCH_WM, return_value=5), patch(_PATCH_CLASSIFY, return_value={}), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=5, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(_PATCH_CLASSIFY, return_value={}), patch(
         _PATCH_PURCHASE, return_value={}
     ):
         result = run_dashboard_mirror_sync(
@@ -235,7 +245,7 @@ def test_dry_run_does_not_invoke_loaders(
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS,
         return_value=sample_counts,
-    ), patch(_PATCH_WM) as mock_wm:
+    ), patch(_PATCH_START) as mock_start, patch(_PATCH_FINISH) as mock_finish:
         result = run_dashboard_mirror_sync(
             ["--sqlite-db", str(db), "--dry-run"],
             repo_root=REPO,
@@ -247,7 +257,8 @@ def test_dry_run_does_not_invoke_loaders(
     assert result["counts"]["canonical_contact_count"] == 497
     assert result["counts"]["archive_contact_count"] == 27198
     assert calls == []
-    mock_wm.assert_not_called()
+    mock_start.assert_not_called()
+    mock_finish.assert_not_called()
 
 
 def test_loaders_called_in_order(
@@ -283,7 +294,7 @@ def test_loaders_called_in_order(
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS,
         return_value=sample_counts,
-    ), patch(_PATCH_WM, return_value=42), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=42, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(
         _PATCH_CLASSIFY,
         return_value={"rows_written": 0, "skipped": False},
     ), patch(
@@ -543,7 +554,7 @@ def test_sync_passes_when_mart_tables_have_rows(
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS,
         return_value=_sample_mirror_counts(),
-    ), patch(_PATCH_WM, return_value=7), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=7, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(
         _PATCH_CLASSIFY,
         return_value={"rows_written": 0, "skipped": False},
     ), patch(
@@ -576,7 +587,7 @@ def test_sync_passes_with_allow_empty_mart_flag(
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS,
         return_value=_sample_mirror_counts(),
-    ), patch(_PATCH_WM, return_value=1), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=1, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(
         _PATCH_CLASSIFY,
         return_value={"rows_written": 0, "skipped": False},
     ), patch(
@@ -658,7 +669,7 @@ def test_default_sync_does_not_call_optional_loaders(
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS,
         return_value=_sample_mirror_counts(),
-    ), patch(_PATCH_WM, return_value=1), patch(_PATCH_CLASSIFY, return_value={}), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=1, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(_PATCH_CLASSIFY, return_value={}), patch(
         _PATCH_PURCHASE, return_value={}
     ), patch(_PATCH_OPTIONAL, side_effect=_optional):
         result = run_dashboard_mirror_sync(
@@ -687,15 +698,19 @@ def test_include_equipment_flag_calls_optional_loader(
 
     captured_details: dict[str, Any] = {}
 
-    def _capture_update(_url: str, _sync_id: int, details: dict[str, Any]) -> None:
+    def _capture_update(
+        _url: str, _sync_id: int, details: dict[str, Any], **_kwargs: Any
+    ) -> None:
         captured_details.update(details)
 
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS,
         return_value=_sample_mirror_counts(),
-    ), patch(_PATCH_WM, return_value=7), patch(_PATCH_CLASSIFY, return_value={}), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=7, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(_PATCH_CLASSIFY, return_value={}), patch(
         _PATCH_PURCHASE, return_value={}
-    ), patch(_PATCH_OPTIONAL, side_effect=_optional), patch(
+    ), patch(_PATCH_EQUIP, side_effect=lambda *a, **k: {
+        "applied": True, "source_id": 42, "rows_inserted": 9
+    }), patch(
         _PATCH_UPDATE_DETAILS, side_effect=_capture_update
     ):
         result = run_dashboard_mirror_sync(
@@ -739,9 +754,14 @@ def test_include_warm_cases_flag_calls_optional_loader(
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS,
         return_value=_sample_mirror_counts(),
-    ), patch(_PATCH_WM, return_value=3), patch(_PATCH_CLASSIFY, return_value={}), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=3, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(_PATCH_CLASSIFY, return_value={}), patch(
         _PATCH_PURCHASE, return_value={}
-    ), patch(_PATCH_OPTIONAL, side_effect=_optional), patch(_PATCH_UPDATE_DETAILS):
+    ), patch(_PATCH_WARM, side_effect=lambda *a, **k: {
+        "applied": True,
+        "inserted_cases": 4,
+        "updated_cases": 1,
+        "linked_emails": 4,
+    }), patch(_PATCH_UPDATE_DETAILS):
         result = run_dashboard_mirror_sync(
             [
                 "--sqlite-db",
@@ -867,7 +887,7 @@ def test_include_commercial_deals_flag_calls_deals_sync(
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS,
         return_value=_sample_mirror_counts(),
-    ), patch(_PATCH_WM, return_value=3), patch(_PATCH_CLASSIFY, return_value={}), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=3, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(_PATCH_CLASSIFY, return_value={}), patch(
         _PATCH_PURCHASE, return_value={}
     ), patch(_PATCH_DEALS, side_effect=_deals):
         result = run_dashboard_mirror_sync(
@@ -894,9 +914,9 @@ def test_optional_loader_failure_surfaces_in_errors(
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS,
         return_value=_sample_mirror_counts(),
-    ), patch(_PATCH_WM, return_value=1), patch(_PATCH_CLASSIFY, return_value={}), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=1, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(_PATCH_CLASSIFY, return_value={}), patch(
         _PATCH_PURCHASE, return_value={}
-    ), patch(_PATCH_OPTIONAL, side_effect=_optional):
+    ), patch(_PATCH_EQUIP, side_effect=RuntimeError("equipment_opportunity_mirror failed: source_already_loaded")):
         result = run_dashboard_mirror_sync(
             [
                 "--sqlite-db",
@@ -1068,10 +1088,10 @@ def test_apply_writes_operator_snapshots_when_flag_enabled(
     with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
         _PATCH_COUNTS,
         return_value=_sample_mirror_counts(),
-    ), patch(_PATCH_WM, return_value=1), patch(_PATCH_CLASSIFY, return_value={}), patch(
+    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=1, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(_PATCH_CLASSIFY, return_value={}), patch(
         _PATCH_PURCHASE, return_value={}
     ), patch(_PATCH_UPDATE_DETAILS), patch(
-        _PATCH_OPERATOR_SNAPSHOTS,
+        _PATCH_SNAPSHOTS,
         return_value={
             "dry_run": False,
             "gmail_interaction_audit": {
