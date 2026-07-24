@@ -988,9 +988,20 @@ def assert_opp_sequence_restart_authority(
 ) -> None:
     """Fail closed unless current role can ``ALTER SEQUENCE`` selected opp sequences.
 
-    ``ALTER SEQUENCE … RESTART`` requires sequence ownership (or superuser /
-    membership in the owner role). BIGSERIAL sequences are owned by the role that
-    ran Alembic; mirror apply must use that same owning role (not ``origenlab_api_ro``).
+    ``ALTER SEQUENCE … RESTART`` requires sequence ownership or immediately usable
+    privileges of the owner role. Accept only:
+
+    * ``current_user`` is the exact sequence owner;
+    * ``current_user`` is a superuser; or
+    * ``pg_has_role(current_user, owner, 'USAGE')`` (owner privileges are
+      immediately available without ``SET ROLE``).
+
+    Do **not** treat ``pg_has_role(..., 'MEMBER')`` alone as authority: a
+    ``NOINHERIT`` membership path can be a member without usable privileges until
+    ``SET ROLE``, which this loader does not execute.
+
+    BIGSERIAL sequences are owned by the Alembic migration role; mirror apply must
+    use that owning role or an immediately inheriting path (not ``origenlab_api_ro``).
     """
     if psycopg is None:
         raise RuntimeError(f"psycopg is required: {_PSYCOPG_IMPORT_ERROR}")
@@ -1011,7 +1022,7 @@ def assert_opp_sequence_restart_authority(
                   SELECT 1 FROM pg_roles r
                   WHERE r.rolname = current_user AND r.rolsuper
                 )
-                OR pg_has_role(current_user, c.relowner, 'MEMBER')
+                OR pg_has_role(current_user, c.relowner, 'USAGE')
               ) AS can_alter
             FROM pg_class c
             JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -1028,9 +1039,10 @@ def assert_opp_sequence_restart_authority(
         if not can_alter:
             raise PermissionError(
                 f"current role {current_role!r} cannot ALTER SEQUENCE {seq_identity} "
-                f"(owner={owner_role!r}); mart publication requires sequence ownership "
-                "or equivalent membership (typically the Alembic migration / mirror "
-                "apply role — not origenlab_api_ro)"
+                f"(owner={owner_role!r}); mart publication requires exact sequence "
+                "ownership, superuser, or immediately available owner privileges "
+                "(pg_has_role USAGE / INHERIT) — not MEMBER-only NOINHERIT membership; "
+                "typically the Alembic migration / mirror apply role, not origenlab_api_ro"
             )
 
 

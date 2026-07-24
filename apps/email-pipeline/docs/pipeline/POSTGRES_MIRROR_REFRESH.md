@@ -58,8 +58,10 @@ Within that transaction:
 4. For selected opportunity-signal tables, repair owned sequences with transactional
    ``ALTER SEQUENCE … RESTART WITH`` (``MAX(id)+1``, or ``1`` when empty) — **not**
    ``setval`` — then run final validation **before** commit. Preflight refuses apply
-   when the current role lacks sequence ownership (mirror apply must use the Alembic
-   migration / sequence-owning role, not ``origenlab_api_ro``).
+   unless the current role is the exact sequence owner, a superuser, or has
+   immediately available owner privileges (``pg_has_role(..., 'USAGE')`` / ``INHERIT``).
+   ``MEMBER``-only ``NOINHERIT`` membership is not sufficient. Mirror apply must use
+   the Alembic migration / sequence-owning role (not ``origenlab_api_ro``).
 5. **Commit once** on success; **rollback** on any conversion, insert, sequence, or
    validation failure so prior committed **table rows and sequence state** remain
    unchanged together.

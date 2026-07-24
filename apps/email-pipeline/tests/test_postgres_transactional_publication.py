@@ -651,11 +651,22 @@ def test_opp_sequence_restart_rolls_back_with_rows(table: str) -> None:
         _, last_after, called_after = _opp_seq_state(cur, table)
         assert last_after == last_before
         assert called_after == called_before
+        # nextval() is non-transactional: it permanently advances the sequence even
+        # if this connection later rolls back. Use it only for the collision check,
+        # then restore a known disposable state with transactional ALTER SEQUENCE.
         cur.execute("SELECT nextval(pg_get_serial_sequence(%s, 'id'))", (table,))
         nxt = int(cur.fetchone()[0])
         assert nxt == 9003
         assert nxt not in ids_before
-        conn.rollback()  # discard the diagnostic nextval
+        schema, name = table.split(".", 1)
+        cur.execute(
+            mart.pg_sql.SQL("ALTER SEQUENCE {}.{} RESTART WITH {}").format(
+                mart.pg_sql.Identifier(schema),
+                mart.pg_sql.Identifier(f"{name}_id_seq"),
+                mart.pg_sql.Literal(int(max(ids_before)) + 1),
+            )
+        )
+        conn.commit()
 
 
 @pytest.mark.parametrize(
@@ -817,3 +828,339 @@ def test_mart_publication_source_has_no_setval() -> None:
     src = Path(mart.__file__).read_text(encoding="utf-8")
     assert "setval(" not in src
     assert "ALTER SEQUENCE" in src or "RESTART WITH" in src
+    assert "pg_has_role(current_user, c.relowner, 'USAGE')" in src
+    assert "pg_has_role(current_user, c.relowner, 'MEMBER')" not in src
+
+
+def _drop_temp_roles(cur: Any, roles: tuple[str, ...]) -> None:
+    from psycopg import sql as pg_sql
+
+    for role in roles:
+        cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,))
+        if cur.fetchone() is None:
+            continue
+        cur.execute(
+            pg_sql.SQL("REVOKE ALL ON SCHEMA mart FROM {}").format(
+                pg_sql.Identifier(role)
+            )
+        )
+        cur.execute(
+            pg_sql.SQL("REVOKE ALL ON ALL TABLES IN SCHEMA mart FROM {}").format(
+                pg_sql.Identifier(role)
+            )
+        )
+        cur.execute(
+            pg_sql.SQL("REVOKE ALL ON ALL SEQUENCES IN SCHEMA mart FROM {}").format(
+                pg_sql.Identifier(role)
+            )
+        )
+        cur.execute(
+            pg_sql.SQL("DROP ROLE IF EXISTS {}").format(pg_sql.Identifier(role))
+        )
+
+
+def _table_and_sequence_owner(cur: Any, table: str) -> tuple[str, str, str]:
+    """Return (table_owner, sequence_identity, sequence_owner)."""
+    schema, name = table.split(".", 1)
+    cur.execute(
+        """
+        SELECT pg_catalog.pg_get_userbyid(c.relowner)
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = %s AND c.relname = %s AND c.relkind = 'r'
+        """,
+        (schema, name),
+    )
+    table_owner = str(cur.fetchone()[0])
+    cur.execute("SELECT pg_get_serial_sequence(%s, 'id')", (table,))
+    seq_identity = str(cur.fetchone()[0])
+    seq_schema, seq_name = seq_identity.split(".", 1)
+    cur.execute(
+        """
+        SELECT pg_catalog.pg_get_userbyid(c.relowner)
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = %s AND c.relname = %s AND c.relkind = 'S'
+        """,
+        (seq_schema, seq_name),
+    )
+    seq_owner = str(cur.fetchone()[0])
+    return table_owner, seq_identity, seq_owner
+
+
+@requires_pg
+def test_opp_sequence_authority_exact_owner_superuser_and_inherit() -> None:
+    """Exact owner, superuser, and INHERIT membership pass; NOINHERIT MEMBER rejects."""
+    import uuid
+
+    import psycopg
+    from psycopg import sql as pg_sql
+
+    pg = _pg_url()
+    assert pg
+    table = "mart.opportunity_signals"
+    specs = tuple(s for s in mart.ALL_TABLE_SPECS if s["target"] == table)
+    suffix = uuid.uuid4().hex[:12]
+    owner_role = f"ol_txpub_owner_{suffix}"
+    inherit_role = f"ol_txpub_inherit_{suffix}"
+    noinher_role = f"ol_txpub_noinh_{suffix}"
+    unrelated_role = f"ol_txpub_other_{suffix}"
+    roles = (owner_role, inherit_role, noinher_role, unrelated_role)
+
+    admin = psycopg.connect(pg, autocommit=True)
+    original_table_owner: str | None = None
+    try:
+        with admin.cursor() as cur:
+            original_table_owner, _seq, original_seq_owner = _table_and_sequence_owner(
+                cur, table
+            )
+            assert original_table_owner == original_seq_owner
+
+            _drop_temp_roles(cur, roles)
+            cur.execute(
+                pg_sql.SQL("CREATE ROLE {} NOLOGIN").format(pg_sql.Identifier(owner_role))
+            )
+            cur.execute(
+                pg_sql.SQL("CREATE ROLE {} NOLOGIN INHERIT").format(
+                    pg_sql.Identifier(inherit_role)
+                )
+            )
+            cur.execute(
+                pg_sql.SQL("CREATE ROLE {} NOLOGIN NOINHERIT").format(
+                    pg_sql.Identifier(noinher_role)
+                )
+            )
+            cur.execute(
+                pg_sql.SQL("CREATE ROLE {} NOLOGIN").format(
+                    pg_sql.Identifier(unrelated_role)
+                )
+            )
+            cur.execute(
+                pg_sql.SQL("GRANT {} TO {}").format(
+                    pg_sql.Identifier(owner_role),
+                    pg_sql.Identifier(inherit_role),
+                )
+            )
+            cur.execute(
+                pg_sql.SQL("GRANT {} TO {}").format(
+                    pg_sql.Identifier(owner_role),
+                    pg_sql.Identifier(noinher_role),
+                )
+            )
+            for role in roles:
+                cur.execute(
+                    pg_sql.SQL("GRANT USAGE ON SCHEMA mart TO {}").format(
+                        pg_sql.Identifier(role)
+                    )
+                )
+            # Linked BIGSERIAL ownership follows the table owner.
+            t_schema, t_name = table.split(".", 1)
+            cur.execute(
+                pg_sql.SQL("ALTER TABLE {}.{} OWNER TO {}").format(
+                    pg_sql.Identifier(t_schema),
+                    pg_sql.Identifier(t_name),
+                    pg_sql.Identifier(owner_role),
+                )
+            )
+            _t_owner, _seq, seq_owner = _table_and_sequence_owner(cur, table)
+            assert seq_owner == owner_role
+
+            # 1) Exact sequence owner passes.
+            cur.execute(pg_sql.SQL("SET ROLE {}").format(pg_sql.Identifier(owner_role)))
+            mart.assert_opp_sequence_restart_authority(cur, specs)
+            cur.execute("RESET ROLE")
+
+            # 2) Superuser passes (admin connection role).
+            cur.execute("SELECT rolsuper FROM pg_roles WHERE rolname = current_user")
+            assert bool(cur.fetchone()[0])
+            mart.assert_opp_sequence_restart_authority(cur, specs)
+
+            # 3) INHERIT member with immediately usable owner privileges passes.
+            cur.execute(pg_sql.SQL("SET ROLE {}").format(pg_sql.Identifier(inherit_role)))
+            cur.execute(
+                "SELECT pg_has_role(current_user, %s::regrole, 'USAGE'), "
+                "pg_has_role(current_user, %s::regrole, 'MEMBER')",
+                (owner_role, owner_role),
+            )
+            usage, member = cur.fetchone()
+            assert bool(usage) is True
+            assert bool(member) is True
+            mart.assert_opp_sequence_restart_authority(cur, specs)
+            cur.execute("RESET ROLE")
+
+            # 4) NOINHERIT MEMBER-only path: MEMBER true, USAGE false → reject.
+            cur.execute(pg_sql.SQL("SET ROLE {}").format(pg_sql.Identifier(noinher_role)))
+            cur.execute(
+                "SELECT pg_has_role(current_user, %s::regrole, 'USAGE'), "
+                "pg_has_role(current_user, %s::regrole, 'MEMBER')",
+                (owner_role, owner_role),
+            )
+            usage, member = cur.fetchone()
+            assert bool(usage) is False
+            assert bool(member) is True
+            with pytest.raises(PermissionError, match="immediately available owner privileges"):
+                mart.assert_opp_sequence_restart_authority(cur, specs)
+            cur.execute("RESET ROLE")
+
+            # 5) Unrelated role rejects.
+            cur.execute(
+                pg_sql.SQL("SET ROLE {}").format(pg_sql.Identifier(unrelated_role))
+            )
+            with pytest.raises(PermissionError, match="cannot ALTER SEQUENCE"):
+                mart.assert_opp_sequence_restart_authority(cur, specs)
+            cur.execute("RESET ROLE")
+    finally:
+        try:
+            with admin.cursor() as cur:
+                cur.execute("RESET ROLE")
+                if original_table_owner:
+                    t_schema, t_name = table.split(".", 1)
+                    cur.execute(
+                        pg_sql.SQL("ALTER TABLE {}.{} OWNER TO {}").format(
+                            pg_sql.Identifier(t_schema),
+                            pg_sql.Identifier(t_name),
+                            pg_sql.Identifier(original_table_owner),
+                        )
+                    )
+                _drop_temp_roles(cur, roles)
+        finally:
+            admin.close()
+
+
+@requires_pg
+def test_opp_sequence_authority_rejects_before_delete_and_load() -> None:
+    """NOINHERIT membership fails closed before delete/load/restart mutation."""
+    import uuid
+
+    import psycopg
+    from psycopg import sql as pg_sql
+
+    pg = _pg_url()
+    assert pg
+    table = "mart.opportunity_signals"
+    specs = tuple(s for s in mart.ALL_TABLE_SPECS if s["target"] == table)
+    suffix = uuid.uuid4().hex[:12]
+    owner_role = f"ol_txpub_own2_{suffix}"
+    noinher_role = f"ol_txpub_ni2_{suffix}"
+    roles = (owner_role, noinher_role)
+
+    admin = psycopg.connect(pg, autocommit=True)
+    original_table_owner: str | None = None
+    try:
+        with admin.cursor() as cur:
+            original_table_owner, _seq, _seq_owner = _table_and_sequence_owner(cur, table)
+            _drop_temp_roles(cur, roles)
+            cur.execute(
+                pg_sql.SQL("CREATE ROLE {} NOLOGIN").format(pg_sql.Identifier(owner_role))
+            )
+            cur.execute(
+                pg_sql.SQL("CREATE ROLE {} NOLOGIN NOINHERIT").format(
+                    pg_sql.Identifier(noinher_role)
+                )
+            )
+            cur.execute(
+                pg_sql.SQL("GRANT {} TO {}").format(
+                    pg_sql.Identifier(owner_role),
+                    pg_sql.Identifier(noinher_role),
+                )
+            )
+            # Table privileges so LOCK can succeed; ALTER SEQUENCE still needs ownership.
+            cur.execute(
+                pg_sql.SQL("GRANT USAGE ON SCHEMA mart TO {}").format(
+                    pg_sql.Identifier(noinher_role)
+                )
+            )
+            for target in (str(s["target"]) for s in specs):
+                t_schema, t_name = target.split(".", 1)
+                cur.execute(
+                    pg_sql.SQL(
+                        "GRANT SELECT, INSERT, UPDATE, DELETE ON {}.{} TO {}"
+                    ).format(
+                        pg_sql.Identifier(t_schema),
+                        pg_sql.Identifier(t_name),
+                        pg_sql.Identifier(noinher_role),
+                    )
+                )
+            t_schema, t_name = table.split(".", 1)
+            cur.execute(
+                pg_sql.SQL("ALTER TABLE {}.{} OWNER TO {}").format(
+                    pg_sql.Identifier(t_schema),
+                    pg_sql.Identifier(t_name),
+                    pg_sql.Identifier(owner_role),
+                )
+            )
+
+        mutation_calls: list[str] = []
+
+        def track_delete(*_a: Any, **_k: Any) -> None:
+            mutation_calls.append("delete")
+            raise AssertionError("delete_targets_for_specs must not run")
+
+        def track_load(*_a: Any, **_k: Any) -> int:
+            mutation_calls.append("load")
+            raise AssertionError("load_table must not run")
+
+        def track_restart(*_a: Any, **_k: Any) -> None:
+            mutation_calls.append("restart")
+            raise AssertionError("restart_opp_sequences must not run")
+
+        session = psycopg.connect(pg, autocommit=False)
+        try:
+            with session.cursor() as cur:
+                cur.execute(
+                    pg_sql.SQL("SET ROLE {}").format(pg_sql.Identifier(noinher_role))
+                )
+                cur.execute(
+                    "SELECT pg_has_role(current_user, %s::regrole, 'USAGE'), "
+                    "pg_has_role(current_user, %s::regrole, 'MEMBER')",
+                    (owner_role, owner_role),
+                )
+                usage, member = cur.fetchone()
+                assert bool(usage) is False
+                assert bool(member) is True
+
+                # Mirror run_migration ordering: lock → authority → delete → load → restart.
+                mart.lock_mart_targets(cur, specs)
+                with (
+                    patch.object(mart, "delete_targets_for_specs", side_effect=track_delete),
+                    patch.object(mart, "load_table", side_effect=track_load),
+                    patch.object(mart, "restart_opp_sequences", side_effect=track_restart),
+                ):
+                    with pytest.raises(PermissionError) as raised:
+                        mart.assert_opp_sequence_restart_authority(cur, specs)
+                        mart.delete_targets_for_specs(cur, specs)
+                        mart.load_table(
+                            MagicMock(),
+                            session,
+                            spec=specs[0],
+                            source_exists=False,
+                            t_start=time.monotonic(),
+                        )
+                        mart.restart_opp_sequences(cur, specs)
+            assert mutation_calls == []
+            err = mart.sanitize_migrate_error(raised.value, postgres_url=pg)
+            assert noinher_role in err
+            assert owner_role in err
+            assert "USAGE" in err or "immediately available" in err
+            assert "postgres:postgres@" not in err
+            assert "postgresql://" not in err.lower()
+            assert pg not in err
+        finally:
+            session.rollback()
+            session.close()
+    finally:
+        try:
+            with admin.cursor() as cur:
+                cur.execute("RESET ROLE")
+                if original_table_owner:
+                    t_schema, t_name = table.split(".", 1)
+                    cur.execute(
+                        pg_sql.SQL("ALTER TABLE {}.{} OWNER TO {}").format(
+                            pg_sql.Identifier(t_schema),
+                            pg_sql.Identifier(t_name),
+                            pg_sql.Identifier(original_table_owner),
+                        )
+                    )
+                _drop_temp_roles(cur, roles)
+        finally:
+            admin.close()
