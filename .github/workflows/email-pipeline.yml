@@ -20,10 +20,40 @@ jobs:
     defaults:
       run:
         working-directory: apps/email-pipeline
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: origenlab_pg_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d origenlab_pg_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       - run: uv sync --group dev --group data-tools --group postgres --group lab --frozen
-      - run: uv run pytest
+      - name: Migrate disposable Postgres schema
+        env:
+          ALEMBIC_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/origenlab_pg_test
+        run: uv run alembic -c alembic.ini upgrade head
+      - name: Transactional publication Postgres tests
+        env:
+          # Disposable loopback test DB only — never a production URL.
+          ORIGENLAB_POSTGRES_TEST_URL: postgresql://postgres:postgres@127.0.0.1:5432/origenlab_pg_test
+        run: >
+          uv run pytest -q
+          tests/test_postgres_transactional_publication.py
+          tests/test_sqlite_outbound_sidecars_to_postgres_migrate.py
+          tests/test_sqlite_mart_core_to_postgres_migrate.py
+      - name: Full suite
+        # Leave ORIGENLAB_POSTGRES_TEST_URL unset so unrelated optional PG
+        # integrations that require a preloaded archive stay skip-gated.
+        run: uv run pytest -q
