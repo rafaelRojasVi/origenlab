@@ -117,7 +117,9 @@ describe("AutomationHealthCard", () => {
     mockFetch.mockResolvedValue(freshnessStatus());
     render(<AutomationHealthCard />);
     await waitFor(() => {
-      screen.getByText("Automatización al día");
+      expect(screen.getByTestId("automation-freshness-title").textContent).toBe(
+        "Automatización al día",
+      );
     });
     expect(screen.getByTestId("automation-snapshot-summary").textContent).toMatch(
       /Snapshot local publicado/i,
@@ -129,7 +131,9 @@ describe("AutomationHealthCard", () => {
       /mirror visible/i,
     );
     screen.getByText("Sin acción requerida");
-    screen.getByText("Datos frescos");
+    expect(screen.getByTestId("automation-freshness-title").textContent).toBe(
+      "Automatización al día",
+    );
     screen.getByTestId("automation-freshness-panel");
     screen.getByTestId("automation-run-summary");
     screen.getByText("Últimas ejecuciones");
@@ -137,7 +141,9 @@ describe("AutomationHealthCard", () => {
     screen.getByTestId("automation-run-row-sqlite-dashboard");
     screen.getByTestId("automation-run-row-chilecompra");
     screen.getByTestId("automation-run-row-postgres-sync");
-    screen.getByText(/Loop auto-mirror:/);
+    expect(screen.getByTestId("automation-freshness-panel").textContent).toMatch(
+      /Loop auto-mirror comprobación:/,
+    );
     screen.getByText(/Gmail → SQLite:/);
     screen.getByText(/limpio/);
     screen.getByText(/sincronizado/);
@@ -467,8 +473,10 @@ describe("AutomationHealthCard", () => {
           dashboard_auto_mirror: {
             ...BASE_STATUS.dashboard_auto_mirror,
             last_successful_mirror_at: minutesAgoIso(60 * 24),
-            last_result: "mail_dirty",
-            mirror_matches_daily_core: false,
+            last_result: "already_mirrored",
+            last_run_finished_at: minutesAgoIso(60 * 24),
+            mirror_matches_daily_core: true,
+            consecutive_failures: 0,
           },
           dashboard_mirror_sync: {
             status: "success",
@@ -480,11 +488,14 @@ describe("AutomationHealthCard", () => {
     );
     render(<AutomationHealthCard />);
     await waitFor(() => {
-      screen.getByText("Datos frescos");
+      expect(screen.getByTestId("automation-freshness-title").textContent).toBe(
+        "Automatización al día",
+      );
     });
-    expect(screen.getByTestId("automation-freshness-panel").textContent).toMatch(/Espejo Postgres:/);
+    expect(screen.getByTestId("automation-freshness-panel").textContent).toMatch(
+      /Espejo Postgres comprobación:/,
+    );
     expect(screen.queryByTestId("automation-freshness-warning")).toBeNull();
-    screen.getByTestId("automation-freshness-loop-warning");
   });
 
   it("still renders auto-mirror loop details when postgres sync is fresh", async () => {
@@ -494,8 +505,9 @@ describe("AutomationHealthCard", () => {
         {
           dashboard_auto_mirror: {
             ...BASE_STATUS.dashboard_auto_mirror,
-            last_result: "mail_dirty",
-            mirror_matches_daily_core: false,
+            last_result: "already_mirrored",
+            last_run_finished_at: minutesAgoIso(60),
+            mirror_matches_daily_core: true,
           },
           dashboard_mirror_sync: {
             status: "success",
@@ -506,10 +518,16 @@ describe("AutomationHealthCard", () => {
     );
     render(<AutomationHealthCard />);
     await waitFor(() => {
-      screen.getByText("Datos frescos");
+      expect(screen.getByTestId("automation-freshness-title").textContent).toBe(
+        "Automatización al día",
+      );
     });
-    expect(screen.getByTestId("automation-freshness-panel").textContent).toMatch(/Espejo Postgres:/);
-    screen.getByText(/atrás/);
+    expect(screen.getByTestId("automation-freshness-panel").textContent).toMatch(
+      /Espejo Postgres comprobación:/,
+    );
+    expect(screen.getByTestId("automation-freshness-panel").textContent).toMatch(
+      /Última publicación material:/,
+    );
   });
 
   it('shows "sin dato" when freshness timestamps are missing', async () => {

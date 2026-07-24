@@ -7,6 +7,10 @@ import {
 
 const NOW = new Date("2026-06-10T18:20:00+00:00");
 
+function minutesAgoIso(minutes: number, now: Date = NOW): string {
+  return new Date(now.getTime() - minutes * 60_000).toISOString();
+}
+
 function baseStatus(overrides: Partial<OperatorAutomationStatus> = {}): OperatorAutomationStatus {
   return {
     generated_at_utc: "2026-06-10T18:12:48+00:00",
@@ -62,17 +66,354 @@ function baseStatus(overrides: Partial<OperatorAutomationStatus> = {}): Operator
 }
 
 describe("buildAutomationFreshnessSummary", () => {
-  it("returns fresh tone and Datos frescos when all timestamps are within thresholds", () => {
-    const summary = buildAutomationFreshnessSummary(baseStatus(), { now: NOW });
+  it("returns fresh when recent Postgres success is under threshold", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_successful_mirror_at: minutesAgoIso(180),
+          last_run_finished_at: null,
+          last_result: "success",
+        },
+        dashboard_mirror_sync: {
+          status: "success",
+          finished_at: minutesAgoIso(5),
+        },
+      }),
+      { now: NOW },
+    );
     expect(summary.tone).toBe("fresh");
-    expect(summary.title).toBe("Datos frescos");
-    expect(summary.warning).toBeNull();
-    expect(summary.gmailAgeLabel).toBe("hace 7 min");
-    expect(summary.mirrorAgeLabel).toBe("hace 1 min");
+    expect(summary.title).toBe("Automatización al día");
+    expect(summary.mirrorSourceLabel).toBe("Espejo Postgres");
+    expect(summary.mirrorAgeLabel).toBe("hace 5 min");
+  });
+
+  it("returns fresh when old Postgres success plus recent already_mirrored and parity true", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_result: "already_mirrored",
+          last_run_finished_at: minutesAgoIso(2),
+          last_successful_mirror_at: minutesAgoIso(180),
+          mirror_matches_daily_core: true,
+        },
+        dashboard_mirror_sync: {
+          status: "success",
+          finished_at: minutesAgoIso(150),
+        },
+      }),
+      { now: NOW },
+    );
+    expect(summary.tone).toBe("fresh");
+    expect(summary.title).toBe("Automatización al día");
+    expect(summary.mirrorAgeLabel).toBe("hace 2 min");
+    expect(summary.mirrorMaterialAgeLabel).toBe("hace 3 h");
+    expect(summary.detail).toMatch(/comprobaciones recientes/i);
+  });
+
+  it("does not stale Gmail when useful refresh is old but recent no_change check exists", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        mail_auto_refresh: {
+          ...baseStatus().mail_auto_refresh,
+          last_result: "no_change",
+          last_run_finished_at: minutesAgoIso(3),
+          last_successful_refresh_at: minutesAgoIso(600),
+        },
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_result: "already_mirrored",
+          last_run_finished_at: minutesAgoIso(3),
+          last_successful_mirror_at: minutesAgoIso(3),
+        },
+      }),
+      { now: NOW },
+    );
+    expect(summary.tone).toBe("fresh");
+    expect(summary.gmailAgeLabel).toBe("hace 3 min");
+    expect(summary.gmailMaterialAgeLabel).toBe("hace 10 h");
+  });
+
+  it("does not stale mirror when material publication is old but recent parity check exists", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        mail_auto_refresh: {
+          ...baseStatus().mail_auto_refresh,
+          last_run_finished_at: minutesAgoIso(4),
+          last_successful_refresh_at: minutesAgoIso(4),
+        },
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_result: "already_mirrored",
+          last_run_finished_at: minutesAgoIso(4),
+          last_successful_mirror_at: minutesAgoIso(240),
+          mirror_matches_daily_core: true,
+        },
+      }),
+      { now: NOW },
+    );
+    expect(summary.tone).toBe("fresh");
+    expect(summary.mirrorAgeLabel).toBe("hace 4 min");
+    expect(summary.mirrorMaterialAgeLabel).toBe("hace 4 h");
+  });
+
+  it("warns when recent check exists but mail.dirty is true", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        mail_auto_refresh: {
+          ...baseStatus().mail_auto_refresh,
+          dirty: true,
+          last_result: "no_change",
+          last_run_finished_at: minutesAgoIso(2),
+          last_successful_refresh_at: minutesAgoIso(2),
+        },
+        dashboard_mirror_sync: {
+          status: "success",
+          finished_at: minutesAgoIso(5),
+        },
+      }),
+      { now: NOW },
+    );
+    expect(summary.tone).toBe("warning");
+    expect(summary.title).toBe("Correo pendiente de procesar");
+  });
+
+  it("stales when recent already_mirrored exists but parity is false", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_result: "already_mirrored",
+          last_run_finished_at: minutesAgoIso(1),
+          last_successful_mirror_at: minutesAgoIso(1),
+          mirror_matches_daily_core: false,
+        },
+      }),
+      { now: NOW },
+    );
+    expect(summary.tone).toBe("stale");
+    expect(summary.title).toBe("Espejo desalineado con daily-core");
+  });
+
+  it("does not treat consecutive failures as fresh", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        mail_auto_refresh: {
+          ...baseStatus().mail_auto_refresh,
+          last_run_finished_at: minutesAgoIso(1),
+          consecutive_failures: 2,
+        },
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_run_finished_at: minutesAgoIso(1),
+          consecutive_failures: 0,
+        },
+      }),
+      { now: NOW },
+    );
+    expect(summary.tone).toBe("stale");
+    expect(summary.title).toBe("Automatización con fallos");
+  });
+
+  it("does not count failed Postgres lifecycle as freshness proof", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_successful_mirror_at: minutesAgoIso(60),
+          last_run_finished_at: null,
+          last_result: "error",
+        },
+        dashboard_mirror_sync: {
+          status: "failed",
+          finished_at: minutesAgoIso(2),
+        },
+      }),
+      { now: NOW },
+    );
+    expect(summary.mirrorSourceLabel).toBe("Loop auto-mirror");
+    expect(summary.tone).toBe("stale");
+  });
+
+  it("does not count running Postgres lifecycle as terminal freshness proof", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_successful_mirror_at: minutesAgoIso(60),
+          last_run_finished_at: null,
+        },
+        dashboard_mirror_sync: {
+          status: "running",
+          finished_at: null,
+          started_at: minutesAgoIso(1),
+        },
+      }),
+      { now: NOW },
+    );
+    expect(summary.mirrorSourceLabel).toBe("Loop auto-mirror");
+    expect(summary.tone).toBe("stale");
+  });
+
+  it("returns stale when successful checks are older than configured thresholds", () => {
+    const summary = buildAutomationFreshnessSummary(baseStatus(), {
+      now: new Date("2026-06-10T18:45:00+00:00"),
+    });
+    expect(summary.tone).toBe("stale");
+    expect(summary.title).toBe("Loop auto-mirror desactualizado");
+  });
+
+  it("returns fresh when recent snapshot and verified loops are healthy", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        mail_auto_refresh: {
+          ...baseStatus().mail_auto_refresh,
+          last_run_finished_at: minutesAgoIso(2),
+        },
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_result: "already_mirrored",
+          last_run_finished_at: minutesAgoIso(2),
+        },
+        snapshot_updated_at: minutesAgoIso(5),
+      }),
+      { now: NOW },
+    );
+    expect(summary.tone).toBe("fresh");
     expect(summary.snapshotAgeLabel).toBe("hace 5 min");
   });
 
-  it("returns warning when Gmail is stale but mirror is fresh", () => {
+  it("keeps snapshot stale even when loops are healthy", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        mail_auto_refresh: {
+          ...baseStatus().mail_auto_refresh,
+          last_run_finished_at: minutesAgoIso(1),
+        },
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_result: "already_mirrored",
+          last_run_finished_at: minutesAgoIso(1),
+        },
+        snapshot_stale: true,
+      }),
+      { now: NOW },
+    );
+    expect(summary.tone).toBe("stale");
+    expect(summary.warning).toBe("Dashboard puede estar desactualizado.");
+  });
+
+  it("returns unknown for invalid timestamps", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        mail_auto_refresh: {
+          ...baseStatus().mail_auto_refresh,
+          last_successful_refresh_at: "not-a-date",
+          last_run_finished_at: "also-bad",
+        },
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_successful_mirror_at: "also-bad",
+          last_run_finished_at: "bad",
+        },
+        snapshot_updated_at: "invalid",
+        generated_at_utc: "invalid",
+      }),
+      { now: NOW },
+    );
+    expect(summary.tone).toBe("unknown");
+    expect(summary.gmailAgeLabel).toBe("sin dato");
+    expect(summary.mirrorAgeLabel).toBe("sin dato");
+    expect(summary.snapshotAgeLabel).toBe("sin dato");
+  });
+
+  it("keeps Spanish labels coherent for healthy verified automation", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        mail_auto_refresh: {
+          ...baseStatus().mail_auto_refresh,
+          last_run_finished_at: minutesAgoIso(1),
+        },
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_result: "already_mirrored",
+          last_run_finished_at: minutesAgoIso(1),
+        },
+      }),
+      { now: NOW },
+    );
+    expect(summary.title).toBe("Automatización al día");
+    expect(summary.detail).toMatch(/No hay cambios pendientes/i);
+    expect(summary.gmailMaterialAgeLabel).toMatch(/^hace /);
+    expect(summary.mirrorMaterialAgeLabel).toMatch(/^hace /);
+  });
+
+  it("renders production-like contradictory fixture as non-red healthy state", () => {
+    // Mirrors observed production: healthy verdict, recent no_change / already_mirrored,
+    // old material ages, old Postgres success, recent snapshot.
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        generated_at_utc: minutesAgoIso(1),
+        snapshot_updated_at: minutesAgoIso(1),
+        snapshot_stale: false,
+        mail_auto_refresh: {
+          ...baseStatus().mail_auto_refresh,
+          last_result: "no_change",
+          dirty: false,
+          pending: false,
+          consecutive_failures: 0,
+          last_run_finished_at: minutesAgoIso(1),
+          last_successful_refresh_at: minutesAgoIso(648),
+        },
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_result: "already_mirrored",
+          mirror_matches_daily_core: true,
+          consecutive_failures: 0,
+          paused: false,
+          lock_live: false,
+          last_run_finished_at: minutesAgoIso(1),
+          last_successful_mirror_at: minutesAgoIso(273),
+        },
+        dashboard_mirror_sync: {
+          status: "success",
+          finished_at: minutesAgoIso(146),
+        },
+      }),
+      { now: NOW },
+    );
+    expect(summary.tone).toBe("fresh");
+    expect(summary.title).toBe("Automatización al día");
+    expect(summary.gmailAgeLabel).toBe("hace 1 min");
+    expect(summary.mirrorAgeLabel).toBe("hace 1 min");
+    expect(summary.gmailMaterialAgeLabel).toBe("hace 10 h");
+    expect(summary.mirrorMaterialAgeLabel).toBe("hace 4 h");
+  });
+
+  it("keeps material publication timestamps visible as informational age", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        mail_auto_refresh: {
+          ...baseStatus().mail_auto_refresh,
+          last_run_finished_at: minutesAgoIso(2),
+          last_successful_refresh_at: minutesAgoIso(90),
+        },
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_result: "already_mirrored",
+          last_run_finished_at: minutesAgoIso(2),
+          last_successful_mirror_at: minutesAgoIso(120),
+        },
+      }),
+      { now: NOW },
+    );
+    expect(summary.tone).toBe("fresh");
+    expect(summary.gmailMaterialAgeLabel).toBe("hace 1 h");
+    expect(summary.mirrorMaterialAgeLabel).toBe("hace 2 h");
+  });
+
+  it("returns warning when Gmail lacks a recent check/refresh but mirror is fresh", () => {
     const summary = buildAutomationFreshnessSummary(baseStatus(), {
       now: new Date("2026-06-10T18:25:00+00:00"),
     });
@@ -81,19 +422,14 @@ describe("buildAutomationFreshnessSummary", () => {
     expect(summary.detail).toMatch(/Gmail → SQLite/i);
   });
 
-  it("returns stale when loop auto-mirror is old and no postgres sync is present", () => {
-    const summary = buildAutomationFreshnessSummary(baseStatus(), {
-      now: new Date("2026-06-10T18:45:00+00:00"),
-    });
-    expect(summary.tone).toBe("stale");
-    expect(summary.title).toBe("Loop auto-mirror desactualizado");
-    expect(summary.mirrorSourceLabel).toBe("Loop auto-mirror");
-    expect(summary.detail).toMatch(/loop SQLite → Dashboard/i);
-  });
-
   it("prefers dashboard_mirror_sync finished_at over stale loop timestamp", () => {
     const summary = buildAutomationFreshnessSummary(
       baseStatus({
+        mail_auto_refresh: {
+          ...baseStatus().mail_auto_refresh,
+          dirty: false,
+          last_run_finished_at: minutesAgoIso(5),
+        },
         dashboard_auto_mirror: {
           ...baseStatus().dashboard_auto_mirror,
           last_successful_mirror_at: "2026-06-10T12:00:00+00:00",
@@ -110,13 +446,20 @@ describe("buildAutomationFreshnessSummary", () => {
     );
     expect(summary.mirrorSourceLabel).toBe("Espejo Postgres");
     expect(summary.mirrorAgeLabel).toBe("hace 5 min");
-    expect(summary.tone).not.toBe("stale");
-    expect(summary.loopWarning).toMatch(/loop auto-mirror/i);
+    // Parity false remains an attention/stale signal.
+    expect(summary.tone).toBe("stale");
+    expect(summary.title).toBe("Espejo desalineado con daily-core");
   });
 
-  it("does not mark stale when postgres mirror sync is fresh but loop says mail_dirty", () => {
+  it("warns when postgres sync is fresh but mail is dirty", () => {
     const summary = buildAutomationFreshnessSummary(
       baseStatus({
+        mail_auto_refresh: {
+          ...baseStatus().mail_auto_refresh,
+          dirty: true,
+          last_run_finished_at: minutesAgoIso(5),
+          last_successful_refresh_at: minutesAgoIso(5),
+        },
         dashboard_auto_mirror: {
           ...baseStatus().dashboard_auto_mirror,
           last_successful_mirror_at: "2026-06-09T12:00:00+00:00",
@@ -130,9 +473,8 @@ describe("buildAutomationFreshnessSummary", () => {
       }),
       { now: NOW },
     );
-    expect(summary.tone).toBe("fresh");
-    expect(summary.title).toBe("Datos frescos");
-    expect(summary.warning).toBeNull();
+    expect(summary.tone).toBe("warning");
+    expect(summary.title).toBe("Correo pendiente de procesar");
   });
 
   it("falls back to loop auto-mirror when dashboard_mirror_sync is missing", () => {
@@ -170,6 +512,7 @@ describe("buildAutomationFreshnessSummary", () => {
         mail_auto_refresh: {
           ...baseStatus().mail_auto_refresh,
           last_successful_refresh_at: null,
+          last_run_finished_at: null,
         },
         snapshot_updated_at: null,
         generated_at_utc: "",
@@ -179,28 +522,6 @@ describe("buildAutomationFreshnessSummary", () => {
     expect(summary.tone).toBe("unknown");
     expect(summary.warning).toBe("No se pudo confirmar frescura completa.");
     expect(summary.gmailAgeLabel).toBe("sin dato");
-  });
-
-  it("returns unknown for invalid timestamps", () => {
-    const summary = buildAutomationFreshnessSummary(
-      baseStatus({
-        mail_auto_refresh: {
-          ...baseStatus().mail_auto_refresh,
-          last_successful_refresh_at: "not-a-date",
-        },
-        dashboard_auto_mirror: {
-          ...baseStatus().dashboard_auto_mirror,
-          last_successful_mirror_at: "also-bad",
-        },
-        snapshot_updated_at: "invalid",
-        generated_at_utc: "invalid",
-      }),
-      { now: NOW },
-    );
-    expect(summary.tone).toBe("unknown");
-    expect(summary.gmailAgeLabel).toBe("sin dato");
-    expect(summary.mirrorAgeLabel).toBe("sin dato");
-    expect(summary.snapshotAgeLabel).toBe("sin dato");
   });
 
   it("formats ages older than one hour in hours", () => {
