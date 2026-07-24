@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -25,17 +26,22 @@ from origenlab_email_pipeline.contacto_gmail_source import (
 )
 from origenlab_email_pipeline.email_business_filters import EMAIL_RE
 from origenlab_email_pipeline.operational_scope import is_operational_noise_entity
+from origenlab_email_pipeline.postgres_outbound_audit import redact_postgres_url
 from origenlab_email_pipeline.progress import tqdm_stderr
 
 try:
     import psycopg
+    from psycopg import sql as pg_sql
     from psycopg.types.json import Json
 except ImportError as exc:  # pragma: no cover
     psycopg = None  # type: ignore[misc, assignment]
+    pg_sql = None  # type: ignore[misc, assignment]
     Json = None  # type: ignore[misc, assignment]
     _PSYCOPG_IMPORT_ERROR = exc
 else:
     _PSYCOPG_IMPORT_ERROR = None
+
+_SEQ_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 MartTablesArg = Literal["all", "archive", "canonical"]
 PhaseLogger = Callable[[str], None]
@@ -186,6 +192,32 @@ class ConversionError(Exception):
         super().__init__(
             f"invalid conversion {table} id={row_id!r} column={column!r} value={value!r}"
         )
+
+
+class ValidationError(RuntimeError):
+    """Post-load validation failed; caller must roll back the apply transaction."""
+
+
+def sanitize_migrate_error(
+    message: BaseException | str, *, postgres_url: str | None = None
+) -> str:
+    text = str(message) if not isinstance(message, BaseException) else (
+        str(message) or type(message).__name__
+    )
+    if postgres_url:
+        for secret in (postgres_url, redact_postgres_url(postgres_url)):
+            if secret and secret in text:
+                text = text.replace(secret, "<redacted>")
+    for key in (
+        "ORIGENLAB_POSTGRES_URL",
+        "ALEMBIC_DATABASE_URL",
+        "ORIGENLAB_CLOUD_POSTGRES_URL",
+        "ORIGENLAB_POSTGRES_TEST_URL",
+    ):
+        val = os.environ.get(key)
+        if val and val in text:
+            text = text.replace(val, "<redacted>")
+    return text
 
 
 @dataclass(frozen=True)
@@ -806,6 +838,10 @@ def load_table(
     fetch_batch: int = _FETCH_BATCH,
     log: PhaseLogger | None = None,
 ) -> int:
+    """Insert one mart target into the caller-owned transaction.
+
+    Never commits or rolls back. Batching is for statement size only.
+    """
     if not source_exists:
         return 0
 
@@ -846,7 +882,6 @@ def load_table(
             if len(batch) >= fetch_batch:
                 with pconn.cursor() as pcur:
                     pcur.executemany(sql, batch)
-                pconn.commit()
                 loaded += len(batch)
                 phase_log(
                     format_load_progress(
@@ -862,7 +897,6 @@ def load_table(
         if batch:
             with pconn.cursor() as pcur:
                 pcur.executemany(sql, batch)
-            pconn.commit()
             loaded += len(batch)
             phase_log(
                 format_load_progress(
@@ -896,7 +930,6 @@ def load_table(
         ]
         with pconn.cursor() as pcur:
             pcur.executemany(sql, batch)
-        pconn.commit()
         loaded += len(batch)
         phase_log(
             format_load_progress(
@@ -912,38 +945,146 @@ def load_table(
     return loaded
 
 
+def lock_mart_targets(cur: psycopg.Cursor, specs: tuple[dict[str, Any], ...]) -> None:
+    """Serialize competing replace writers on selected targets; SELECTs remain allowed."""
+    cur.execute("SET LOCAL lock_timeout = '30s'")
+    for spec in sorted(specs, key=lambda s: (int(s["delete_order"]), str(s["target"]))):
+        cur.execute(f"LOCK TABLE {spec['target']} IN SHARE ROW EXCLUSIVE MODE")
+
+
 def delete_targets_for_specs(
     cur: psycopg.Cursor, specs: tuple[dict[str, Any], ...]
 ) -> None:
+    """DELETE selected targets only. Never commits. Does not touch sequences."""
     for spec in sorted(specs, key=lambda s: int(s["delete_order"])):
         cur.execute(f"DELETE FROM {spec['target']}")
-    for spec in specs:
-        if spec.get("reset_sequence"):
-            seq_table = str(spec["target"])
-            cur.execute(
-                f"""
-                SELECT setval(
-                  pg_get_serial_sequence('{seq_table}', 'id'),
-                  1,
-                  false
-                )
-                """
-            )
 
 
-def reset_opp_sequences(cur: psycopg.Cursor, specs: tuple[dict[str, Any], ...]) -> None:
+def _parse_qualified_sequence_name(seq_identity: str) -> tuple[str, str]:
+    """Parse ``schema.seqname`` from ``pg_get_serial_sequence``; fail closed on junk."""
+    raw = (seq_identity or "").strip().strip('"')
+    parts = raw.split(".")
+    if len(parts) != 2:
+        raise ValueError(f"malformed sequence identity: {seq_identity!r}")
+    schema = parts[0].strip().strip('"')
+    name = parts[1].strip().strip('"')
+    if not _SEQ_IDENT_RE.match(schema) or not _SEQ_IDENT_RE.match(name):
+        raise ValueError(f"malformed sequence identity: {seq_identity!r}")
+    return schema, name
+
+
+def _owned_serial_sequence_for_table(cur: psycopg.Cursor, table: str) -> str:
+    cur.execute("SELECT pg_get_serial_sequence(%s, 'id')", (table,))
+    row = cur.fetchone()
+    if not row or not row[0]:
+        raise ValueError(
+            f"no owned serial sequence for {table}.id; cannot restart transactionally"
+        )
+    return str(row[0])
+
+
+def assert_opp_sequence_restart_authority(
+    cur: psycopg.Cursor, specs: tuple[dict[str, Any], ...]
+) -> None:
+    """Fail closed unless current role can ``ALTER SEQUENCE`` selected opp sequences.
+
+    ``ALTER SEQUENCE … RESTART`` requires sequence ownership or immediately usable
+    privileges of the owner role. Accept only:
+
+    * ``current_user`` is the exact sequence owner;
+    * ``current_user`` is a superuser; or
+    * ``pg_has_role(current_user, owner, 'USAGE')`` (owner privileges are
+      immediately available without ``SET ROLE``).
+
+    Do **not** treat ``pg_has_role(..., 'MEMBER')`` alone as authority: a
+    ``NOINHERIT`` membership path can be a member without usable privileges until
+    ``SET ROLE``, which this loader does not execute.
+
+    BIGSERIAL sequences are owned by the Alembic migration role; mirror apply must
+    use that owning role or an immediately inheriting path (not ``origenlab_api_ro``).
+    """
+    if psycopg is None:
+        raise RuntimeError(f"psycopg is required: {_PSYCOPG_IMPORT_ERROR}")
     loaded_targets = {str(s["target"]) for s in specs}
     for seq_table in _OPP_SEQ_TABLES:
         if seq_table not in loaded_targets:
             continue
+        seq_identity = _owned_serial_sequence_for_table(cur, seq_table)
+        schema, name = _parse_qualified_sequence_name(seq_identity)
         cur.execute(
-            f"""
-            SELECT setval(
-              pg_get_serial_sequence('{seq_table}', 'id'),
-              COALESCE((SELECT MAX(id) FROM {seq_table}), 1)
-            )
             """
+            SELECT
+              pg_catalog.pg_get_userbyid(c.relowner) AS owner_role,
+              current_user AS current_role,
+              (
+                c.relowner = (SELECT oid FROM pg_roles WHERE rolname = current_user)
+                OR EXISTS (
+                  SELECT 1 FROM pg_roles r
+                  WHERE r.rolname = current_user AND r.rolsuper
+                )
+                OR pg_has_role(current_user, c.relowner, 'USAGE')
+              ) AS can_alter
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = %s
+              AND c.relname = %s
+              AND c.relkind = 'S'
+            """,
+            (schema, name),
         )
+        auth = cur.fetchone()
+        if auth is None:
+            raise ValueError(f"sequence catalog entry missing for {seq_identity}")
+        owner_role, current_role, can_alter = auth
+        if not can_alter:
+            raise PermissionError(
+                f"current role {current_role!r} cannot ALTER SEQUENCE {seq_identity} "
+                f"(owner={owner_role!r}); mart publication requires exact sequence "
+                "ownership, superuser, or immediately available owner privileges "
+                "(pg_has_role USAGE / INHERIT) — not MEMBER-only NOINHERIT membership; "
+                "typically the Alembic migration / mirror apply role, not origenlab_api_ro"
+            )
+
+
+def restart_opp_sequences(
+    cur: psycopg.Cursor, specs: tuple[dict[str, Any], ...]
+) -> None:
+    """Transactional sequence repair after explicit-ID inserts. Never commits.
+
+    Uses ``ALTER SEQUENCE … RESTART WITH`` (transactional). Does **not** use
+    ``setval`` (non-transactional). Next value is ``MAX(id)+1``, or ``1`` if empty.
+    """
+    if psycopg is None or pg_sql is None:
+        raise RuntimeError(f"psycopg is required: {_PSYCOPG_IMPORT_ERROR}")
+    loaded_targets = {str(s["target"]) for s in specs}
+    for seq_table in _OPP_SEQ_TABLES:
+        if seq_table not in loaded_targets:
+            continue
+        seq_identity = _owned_serial_sequence_for_table(cur, seq_table)
+        schema, name = _parse_qualified_sequence_name(seq_identity)
+        table_schema, table_name = seq_table.split(".", 1)
+        if not _SEQ_IDENT_RE.match(table_schema) or not _SEQ_IDENT_RE.match(table_name):
+            raise ValueError(f"malformed opportunity table identity: {seq_table!r}")
+        cur.execute(
+            pg_sql.SQL("SELECT COALESCE(MAX({}), 0) FROM {}.{}").format(
+                pg_sql.Identifier("id"),
+                pg_sql.Identifier(table_schema),
+                pg_sql.Identifier(table_name),
+            )
+        )
+        max_id = int(cur.fetchone()[0])
+        next_val = 1 if max_id <= 0 else max_id + 1
+        stmt = pg_sql.SQL("ALTER SEQUENCE {}.{} RESTART WITH {}").format(
+            pg_sql.Identifier(schema),
+            pg_sql.Identifier(name),
+            pg_sql.Literal(next_val),
+        )
+        try:
+            cur.execute(stmt)
+        except Exception as exc:
+            raise RuntimeError(
+                f"ALTER SEQUENCE {schema}.{name} RESTART WITH {next_val} failed: {exc}"
+            ) from exc
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -981,11 +1122,13 @@ def _empty_result() -> dict[str, Any]:
         "ok": False,
         "dry_run": False,
         "replace": False,
+        "transaction_committed": False,
         "tables": "all",
         "sqlite_counts": {},
         "postgres_counts_before": {},
         "postgres_counts_after": {},
         "loaded": {},
+        "attempted_loaded": {},
         "validation": {},
         "errors": [],
         "warnings": [],
@@ -1012,6 +1155,7 @@ def run_migration(argv: list[str] | None = None) -> int:
     result["replace"] = bool(args.replace)
     result["tables"] = tables_group
     result["loaded"] = {str(spec["source"]): 0 for spec in active_specs}
+    result["attempted_loaded"] = {str(spec["source"]): 0 for spec in active_specs}
 
     phase_log(
         f"[start] mart core migrate tables={tables_group} "
@@ -1068,7 +1212,9 @@ def run_migration(argv: list[str] | None = None) -> int:
         pconn = psycopg.connect(pg_url, autocommit=False)
     except Exception as exc:  # noqa: BLE001
         sconn.close()
-        result["errors"].append(f"Postgres connect failed: {exc}")
+        result["errors"].append(
+            "Postgres connect failed: " + sanitize_migrate_error(exc, postgres_url=pg_url)
+        )
         _write_json(args.json_out, result)
         print(result["errors"][-1], file=sys.stderr)
         return 2
@@ -1105,71 +1251,118 @@ def run_migration(argv: list[str] | None = None) -> int:
 
         if args.dry_run:
             result["ok"] = True
+            result["transaction_committed"] = False
             result["elapsed_seconds"] = round(time.monotonic() - t0, 3)
             sconn.close()
             _write_json(args.json_out, result)
             print("dry-run ok: mart core prechecks passed; no writes performed.")
             return 0
 
-        if args.replace:
-            phase_log(f"[replace] deleting selected targets ({tables_group})...")
+        result["attempted_loaded"] = {str(spec["source"]): 0 for spec in active_specs}
+        try:
             with pconn.cursor() as cur:
-                delete_targets_for_specs(cur, active_specs)
-            pconn.commit()
-            phase_log("[replace] delete complete", log=phase_log)
+                lock_mart_targets(cur, active_specs)
+                assert_opp_sequence_restart_authority(cur, active_specs)
+                for spec in active_specs:
+                    cur.execute(f"SELECT COUNT(*) FROM {spec['target']}")
+                    result["postgres_counts_before"][str(spec["source"])] = int(
+                        cur.fetchone()[0]
+                    )
+                selected_locked = {
+                    str(spec["source"]): result["postgres_counts_before"][str(spec["source"])]
+                    for spec in active_specs
+                }
+                if should_refuse_nonempty_targets(
+                    any_nonempty=any(v > 0 for v in selected_locked.values()),
+                    replace=bool(args.replace),
+                    dry_run=False,
+                ):
+                    raise ValueError(
+                        "Selected mart core targets are not empty. "
+                        "Use --replace to reload on scratch."
+                    )
+                if args.replace:
+                    phase_log(f"[replace] deleting selected targets ({tables_group})...")
+                    delete_targets_for_specs(cur, active_specs)
+                    phase_log("[replace] delete staged (uncommitted)")
 
-        for spec in active_specs:
-            src = str(spec["source"])
-            loaded = load_table(
-                sconn,
-                pconn,
-                spec=spec,
-                source_exists=bool(exists_map[src]),
-                t_start=t0,
-                canonical_ctx=canonical_ctx,
-                log=phase_log,
-            )
-            result["loaded"][src] = loaded
-            if sqlite_counts.get(src) == -1:
-                sqlite_counts[src] = loaded
-
-        with pconn.cursor() as cur:
-            reset_opp_sequences(cur, active_specs)
-        pconn.commit()
-
-        with pconn.cursor() as cur:
-            row_count_ok = True
             for spec in active_specs:
                 src = str(spec["source"])
-                target = str(spec["target"])
-                cur.execute(f"SELECT COUNT(*) FROM {target}")
-                after = int(cur.fetchone()[0])
-                result["postgres_counts_after"][src] = after
-                if not exists_map[src]:
-                    continue
-                expected = sqlite_counts[src]
-                if expected < 0:
-                    expected = result["loaded"][src]
-                row_count_ok = row_count_ok and (expected == after)
-            result["validation"]["row_counts_match"] = row_count_ok
-            result["ok"] = row_count_ok
+                loaded = load_table(
+                    sconn,
+                    pconn,
+                    spec=spec,
+                    source_exists=bool(exists_map[src]),
+                    t_start=t0,
+                    canonical_ctx=canonical_ctx,
+                    log=phase_log,
+                )
+                result["attempted_loaded"][src] = loaded
+                result["loaded"][src] = loaded
+                if sqlite_counts.get(src) == -1:
+                    sqlite_counts[src] = loaded
+
+            with pconn.cursor() as cur:
+                restart_opp_sequences(cur, active_specs)
+                row_count_ok = True
+                for spec in active_specs:
+                    src = str(spec["source"])
+                    target = str(spec["target"])
+                    cur.execute(f"SELECT COUNT(*) FROM {target}")
+                    after = int(cur.fetchone()[0])
+                    result["postgres_counts_after"][src] = after
+                    if not exists_map[src]:
+                        continue
+                    expected = sqlite_counts[src]
+                    if expected < 0:
+                        expected = result["loaded"][src]
+                    row_count_ok = row_count_ok and (expected == after)
+                result["validation"]["row_counts_match"] = row_count_ok
+                if not row_count_ok:
+                    raise ValidationError(
+                        "Post-load validation failed for mart core migration."
+                    )
+
+            pconn.commit()
+            result["transaction_committed"] = True
+            result["ok"] = True
+        except Exception:
+            pconn.rollback()
+            result["transaction_committed"] = False
+            result["ok"] = False
+            result["loaded"] = {str(spec["source"]): 0 for spec in active_specs}
+            raise
 
         result["elapsed_seconds"] = round(time.monotonic() - t0, 3)
-        if not result["ok"]:
-            result["errors"].append("Post-load validation failed for mart core migration.")
-            sconn.close()
-            _write_json(args.json_out, result)
-            print(result["errors"][-1], file=sys.stderr)
-            return 1
-
         sconn.close()
         _write_json(args.json_out, result)
         print("migration completed:", json.dumps(result["loaded"], indent=2))
         return 0
-    except (ConversionError, ValueError) as exc:
-        result["errors"].append(str(exc))
+    except (ConversionError, ValueError, ValidationError) as exc:
+        result["errors"].append(sanitize_migrate_error(exc, postgres_url=pg_url))
         result["elapsed_seconds"] = round(time.monotonic() - t0, 3)
-        sconn.close()
+        result["transaction_committed"] = False
+        result["ok"] = False
+        try:
+            sconn.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _write_json(args.json_out, result)
+        print(result["errors"][-1], file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        result["errors"].append(sanitize_migrate_error(exc, postgres_url=pg_url))
+        result["elapsed_seconds"] = round(time.monotonic() - t0, 3)
+        result["transaction_committed"] = False
+        result["ok"] = False
+        try:
+            pconn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            sconn.close()
+        except Exception:  # noqa: BLE001
+            pass
         _write_json(args.json_out, result)
         print(result["errors"][-1], file=sys.stderr)
         return 1
