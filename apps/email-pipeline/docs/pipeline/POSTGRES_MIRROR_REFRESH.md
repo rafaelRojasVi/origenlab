@@ -39,7 +39,28 @@ Compatibility when tables are missing:
 | absent | absent | No-op lifecycle publication (supported compatibility). |
 | topology changes mid-run | — | Fail closed; do not synthesize history or claim consistent terminal publication. |
 
-This lifecycle PR does **not** make loader publication globally atomic. Outbound/mart empty-window remediation (DELETE committed before reload) is a **separate** follow-up PR.
+This lifecycle PR does **not** make loader publication globally atomic across every dashboard dataset. Outbound may commit before mart, and later in-process loaders commit separately.
+
+## Transactional publication (outbound + mart loaders)
+
+Each base migrate loader publishes its **selected target set** in **one** PostgreSQL transaction:
+
+| Loader | Atomic visibility unit |
+|--------|------------------------|
+| **Outbound** | All three targets (`contact_email_suppression`, `contact_domain_suppression`, `outreach_contact_state`) become visible together at one commit. |
+| **Mart** | All **selected** mart targets (`--tables archive\|canonical\|all`) become visible together at one commit. |
+
+Within that transaction:
+
+1. Acquire `SHARE ROW EXCLUSIVE` locks on selected targets (serializes competing replace writers; ordinary `SELECT` readers remain allowed).
+2. Optionally `DELETE` selected targets (`--replace`).
+3. Load every selected table (batched inserts **without** intermediate commits).
+4. Repair sequences / run final validation **before** commit.
+5. **Commit once** on success; **rollback** on any conversion, insert, sequence, or validation failure so the prior committed publication remains unchanged.
+
+**Residual boundary:** the overall `mirror-dashboard` refresh is **not** one database-wide transaction. This removes empty/partial publication *inside* each base loader; it does **not** provide a generation-wide snapshot across outbound + mart + later in-process stages.
+
+Missing SQLite outbound sidecar source tables remain warnings (logical zero rows). In `--replace` mode that still publishes an empty Postgres target for that source as part of the same atomic outbound set.
 
 ---
 
