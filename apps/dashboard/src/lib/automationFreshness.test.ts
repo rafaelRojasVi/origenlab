@@ -85,7 +85,9 @@ describe("buildAutomationFreshnessSummary", () => {
     expect(summary.tone).toBe("fresh");
     expect(summary.title).toBe("Automatización al día");
     expect(summary.mirrorSourceLabel).toBe("Espejo Postgres");
+    expect(summary.mirrorProofKind).toBe("postgres_success");
     expect(summary.mirrorAgeLabel).toBe("hace 5 min");
+    expect(summary.detail).toMatch(/publicación exitosa del espejo Postgres/i);
   });
 
   it("returns fresh when old Postgres success plus recent already_mirrored and parity true", () => {
@@ -107,8 +109,10 @@ describe("buildAutomationFreshnessSummary", () => {
     );
     expect(summary.tone).toBe("fresh");
     expect(summary.title).toBe("Automatización al día");
+    expect(summary.mirrorProofKind).toBe("parity_check");
     expect(summary.mirrorAgeLabel).toBe("hace 2 min");
-    expect(summary.mirrorMaterialAgeLabel).toBe("hace 3 h");
+    // Newest material publication is Postgres success at 150 min, not local 180.
+    expect(summary.mirrorMaterialAgeLabel).toBe("hace 2 h");
     expect(summary.detail).toMatch(/comprobaciones recientes/i);
   });
 
@@ -216,14 +220,222 @@ describe("buildAutomationFreshnessSummary", () => {
     expect(summary.title).toBe("Automatización con fallos");
   });
 
-  it("does not count failed Postgres lifecycle as freshness proof", () => {
+  it("does not count failed Postgres lifecycle as freshness proof and keeps it visible", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        mail_auto_refresh: {
+          ...baseStatus().mail_auto_refresh,
+          last_run_finished_at: minutesAgoIso(1),
+        },
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_result: "already_mirrored",
+          last_run_finished_at: minutesAgoIso(1),
+          last_successful_mirror_at: minutesAgoIso(5),
+          mirror_matches_daily_core: true,
+        },
+        dashboard_mirror_sync: {
+          status: "failed",
+          finished_at: minutesAgoIso(2),
+          error_message: "secret DSN must not appear",
+        },
+      }),
+      { now: NOW },
+    );
+    expect(summary.tone).toBe("stale");
+    expect(summary.title).toBe("Último sync Postgres falló");
+    expect(summary.detail).toMatch(/terminó con error/i);
+    expect(summary.warning).toMatch(/Revisar el sync Postgres/i);
+    expect(summary.detail).not.toMatch(/DSN|secret/i);
+  });
+
+  it("stales when failed Postgres lifecycle coexists with recent local material publication", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        mail_auto_refresh: {
+          ...baseStatus().mail_auto_refresh,
+          last_run_finished_at: minutesAgoIso(2),
+          last_successful_refresh_at: minutesAgoIso(2),
+        },
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_result: "success",
+          last_run_finished_at: minutesAgoIso(2),
+          last_successful_mirror_at: minutesAgoIso(3),
+          mirror_matches_daily_core: true,
+        },
+        dashboard_mirror_sync: {
+          status: "error",
+          finished_at: minutesAgoIso(1),
+        },
+      }),
+      { now: NOW },
+    );
+    expect(summary.tone).toBe("stale");
+    expect(summary.title).toBe("Último sync Postgres falló");
+  });
+
+  it("lets latest Postgres failure win over an older prior Postgres success", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        mail_auto_refresh: {
+          ...baseStatus().mail_auto_refresh,
+          last_run_finished_at: minutesAgoIso(1),
+        },
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_result: "already_mirrored",
+          last_run_finished_at: minutesAgoIso(1),
+          last_successful_mirror_at: minutesAgoIso(90),
+          mirror_matches_daily_core: true,
+        },
+        dashboard_mirror_sync: {
+          status: "mirror_failed",
+          finished_at: minutesAgoIso(3),
+        },
+      }),
+      { now: NOW },
+    );
+    expect(summary.tone).toBe("stale");
+    expect(summary.title).toBe("Último sync Postgres falló");
+  });
+
+  it("warns when running Postgres lifecycle coexists with a recent parity check", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        mail_auto_refresh: {
+          ...baseStatus().mail_auto_refresh,
+          last_run_finished_at: minutesAgoIso(1),
+        },
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_result: "already_mirrored",
+          last_run_finished_at: minutesAgoIso(1),
+          last_successful_mirror_at: minutesAgoIso(30),
+          mirror_matches_daily_core: true,
+        },
+        dashboard_mirror_sync: {
+          status: "running",
+          started_at: minutesAgoIso(1),
+          finished_at: null,
+        },
+      }),
+      { now: NOW },
+    );
+    expect(summary.tone).toBe("warning");
+    expect(summary.title).toBe("Sync Postgres en curso");
+    expect(summary.detail).toMatch(/todavía no ha terminado/i);
+    // Parity age may still display; running started_at itself is never the proof.
+    expect(summary.mirrorProofKind).toBe("parity_check");
+  });
+
+  it("does not use running started_at as successful freshness evidence", () => {
     const summary = buildAutomationFreshnessSummary(
       baseStatus({
         dashboard_auto_mirror: {
           ...baseStatus().dashboard_auto_mirror,
           last_successful_mirror_at: minutesAgoIso(60),
           last_run_finished_at: null,
-          last_result: "error",
+          last_result: "success",
+        },
+        dashboard_mirror_sync: {
+          status: "running",
+          started_at: minutesAgoIso(1),
+          finished_at: null,
+        },
+      }),
+      { now: NOW },
+    );
+    expect(summary.tone).toBe("warning");
+    expect(summary.title).toBe("Sync Postgres en curso");
+    expect(summary.mirrorAgeLabel).toBe("hace 1 h");
+  });
+
+  it("preserves missing_table as muted compatibility, not failed publication", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        mail_auto_refresh: {
+          ...baseStatus().mail_auto_refresh,
+          last_run_finished_at: minutesAgoIso(2),
+        },
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_result: "already_mirrored",
+          last_run_finished_at: minutesAgoIso(2),
+          last_successful_mirror_at: minutesAgoIso(2),
+        },
+        dashboard_mirror_sync: {
+          status: "missing_table",
+          table_available: false,
+          finished_at: null,
+        },
+      }),
+      { now: NOW },
+    );
+    expect(summary.tone).toBe("fresh");
+    expect(summary.title).not.toBe("Último sync Postgres falló");
+    expect(summary.mirrorProofKind).toBe("parity_check");
+  });
+
+  it("uses newer Postgres success than local publication for material age", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        mail_auto_refresh: {
+          ...baseStatus().mail_auto_refresh,
+          last_run_finished_at: minutesAgoIso(1),
+        },
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_result: "already_mirrored",
+          last_run_finished_at: minutesAgoIso(1),
+          last_successful_mirror_at: minutesAgoIso(200),
+          mirror_matches_daily_core: true,
+        },
+        dashboard_mirror_sync: {
+          status: "success",
+          finished_at: minutesAgoIso(90),
+        },
+      }),
+      { now: NOW },
+    );
+    expect(summary.mirrorMaterialAgeLabel).toBe("hace 1 h");
+    expect(summary.mirrorAgeLabel).toBe("hace 1 min");
+    expect(summary.mirrorProofKind).toBe("parity_check");
+  });
+
+  it("uses newer local publication than Postgres success for material age", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        mail_auto_refresh: {
+          ...baseStatus().mail_auto_refresh,
+          last_run_finished_at: minutesAgoIso(1),
+        },
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_result: "already_mirrored",
+          last_run_finished_at: minutesAgoIso(1),
+          last_successful_mirror_at: minutesAgoIso(40),
+          mirror_matches_daily_core: true,
+        },
+        dashboard_mirror_sync: {
+          status: "success",
+          finished_at: minutesAgoIso(120),
+        },
+      }),
+      { now: NOW },
+    );
+    expect(summary.mirrorMaterialAgeLabel).toBe("hace 40 min");
+    expect(summary.mirrorProofKind).toBe("parity_check");
+  });
+
+  it("never lets failed or running Postgres timestamps control material age", () => {
+    const failed = buildAutomationFreshnessSummary(
+      baseStatus({
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_successful_mirror_at: minutesAgoIso(90),
+          last_run_finished_at: minutesAgoIso(1),
+          last_result: "already_mirrored",
         },
         dashboard_mirror_sync: {
           status: "failed",
@@ -232,28 +444,72 @@ describe("buildAutomationFreshnessSummary", () => {
       }),
       { now: NOW },
     );
-    expect(summary.mirrorSourceLabel).toBe("Loop auto-mirror");
-    expect(summary.tone).toBe("stale");
-  });
+    expect(failed.mirrorMaterialAgeLabel).toBe("hace 1 h");
 
-  it("does not count running Postgres lifecycle as terminal freshness proof", () => {
-    const summary = buildAutomationFreshnessSummary(
+    const running = buildAutomationFreshnessSummary(
       baseStatus({
         dashboard_auto_mirror: {
           ...baseStatus().dashboard_auto_mirror,
-          last_successful_mirror_at: minutesAgoIso(60),
-          last_run_finished_at: null,
+          last_successful_mirror_at: minutesAgoIso(90),
+          last_run_finished_at: minutesAgoIso(1),
+          last_result: "already_mirrored",
         },
         dashboard_mirror_sync: {
           status: "running",
-          finished_at: null,
           started_at: minutesAgoIso(1),
+          finished_at: null,
         },
       }),
       { now: NOW },
     );
-    expect(summary.mirrorSourceLabel).toBe("Loop auto-mirror");
+    expect(running.mirrorMaterialAgeLabel).toBe("hace 1 h");
+  });
+
+  it("lets material-only proof avoid check-confirmation wording", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        mail_auto_refresh: {
+          ...baseStatus().mail_auto_refresh,
+          last_run_finished_at: minutesAgoIso(2),
+          last_successful_refresh_at: minutesAgoIso(2),
+        },
+        dashboard_auto_mirror: {
+          ...baseStatus().dashboard_auto_mirror,
+          last_result: "mail_dirty",
+          last_run_finished_at: minutesAgoIso(2),
+          last_successful_mirror_at: minutesAgoIso(3),
+          mirror_matches_daily_core: true,
+        },
+      }),
+      { now: NOW },
+    );
+    expect(summary.tone).toBe("fresh");
+    expect(summary.mirrorProofKind).toBe("material");
+    expect(summary.detail).toBe(
+      "La publicación del espejo y el snapshot API están dentro de los umbrales esperados.",
+    );
+    expect(summary.detail).not.toMatch(/comprobaciones recientes confirmaron/i);
+  });
+
+  it("does not count failed Postgres lifecycle as a hidden local fallback", () => {
+    const summary = buildAutomationFreshnessSummary(
+      baseStatus({
+        dashboard_mirror_sync: {
+          status: "failed",
+          finished_at: "2026-06-10T18:15:00+00:00",
+        },
+      }),
+      { now: NOW },
+    );
     expect(summary.tone).toBe("stale");
+    expect(summary.title).toBe("Último sync Postgres falló");
+    expect(summary.mirrorSourceLabel).not.toBeNull();
+  });
+
+  it("falls back to loop auto-mirror when dashboard_mirror_sync is missing", () => {
+    const summary = buildAutomationFreshnessSummary(baseStatus(), { now: NOW });
+    expect(summary.mirrorSourceLabel).toBe("Loop auto-mirror");
+    expect(summary.mirrorAgeLabel).toBe("hace 1 min");
   });
 
   it("returns stale when successful checks are older than configured thresholds", () => {
@@ -384,11 +640,13 @@ describe("buildAutomationFreshnessSummary", () => {
       { now: NOW },
     );
     expect(summary.tone).toBe("fresh");
-    expect(summary.title).toBe("Automatización al día");
     expect(summary.gmailAgeLabel).toBe("hace 1 min");
     expect(summary.mirrorAgeLabel).toBe("hace 1 min");
+    expect(summary.mirrorProofKind).toBe("parity_check");
     expect(summary.gmailMaterialAgeLabel).toBe("hace 10 h");
-    expect(summary.mirrorMaterialAgeLabel).toBe("hace 4 h");
+    // Newest material publication is Postgres success (146m), not local applied (273m).
+    expect(summary.mirrorMaterialAgeLabel).toBe("hace 2 h");
+    expect(summary.detail).toMatch(/comprobaciones recientes/i);
   });
 
   it("keeps material publication timestamps visible as informational age", () => {
@@ -475,26 +733,6 @@ describe("buildAutomationFreshnessSummary", () => {
     );
     expect(summary.tone).toBe("warning");
     expect(summary.title).toBe("Correo pendiente de procesar");
-  });
-
-  it("falls back to loop auto-mirror when dashboard_mirror_sync is missing", () => {
-    const summary = buildAutomationFreshnessSummary(baseStatus(), { now: NOW });
-    expect(summary.mirrorSourceLabel).toBe("Loop auto-mirror");
-    expect(summary.mirrorAgeLabel).toBe("hace 1 min");
-  });
-
-  it("falls back to loop auto-mirror when dashboard_mirror_sync failed", () => {
-    const summary = buildAutomationFreshnessSummary(
-      baseStatus({
-        dashboard_mirror_sync: {
-          status: "failed",
-          finished_at: "2026-06-10T18:15:00+00:00",
-        },
-      }),
-      { now: NOW },
-    );
-    expect(summary.mirrorSourceLabel).toBe("Loop auto-mirror");
-    expect(summary.mirrorAgeLabel).toBe("hace 1 min");
   });
 
   it("returns stale with dashboard warning when snapshot_stale is true", () => {

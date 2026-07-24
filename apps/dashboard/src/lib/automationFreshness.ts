@@ -4,6 +4,8 @@ export type FreshnessTone = "fresh" | "warning" | "stale" | "unknown";
 
 export type MirrorSourceLabel = "Espejo Postgres" | "Loop auto-mirror";
 
+export type MirrorProofKind = "postgres_success" | "parity_check" | "material";
+
 export type AutomationFreshnessSummary = {
   tone: FreshnessTone;
   title: string;
@@ -13,10 +15,12 @@ export type AutomationFreshnessSummary = {
   /** Age of the strongest mirror proof-of-currentness. */
   mirrorAgeLabel: string;
   mirrorSourceLabel: MirrorSourceLabel;
+  /** Selected mirror freshness proof kind (internal rendering/tests). */
+  mirrorProofKind: MirrorProofKind | null;
   snapshotAgeLabel: string;
   /** Informational: last material Gmail useful refresh, may be older than the check. */
   gmailMaterialAgeLabel: string;
-  /** Informational: last material mirror publication. */
+  /** Informational: newest successful material mirror publication. */
   mirrorMaterialAgeLabel: string;
   warning: string | null;
   loopWarning: string | null;
@@ -36,6 +40,7 @@ const MS_PER_MINUTE = 60 * 1000;
 
 const GMAIL_HEALTHY_CHECK_RESULTS = new Set(["no_change", "success", "refreshed"]);
 const MIRROR_HEALTHY_CHECK_RESULTS = new Set(["already_mirrored", "success"]);
+const POSTGRES_TERMINAL_FAILURE = new Set(["failed", "error", "mirror_failed"]);
 
 function parseTimestamp(value: string | null | undefined): number | null {
   const trimmed = value?.trim();
@@ -97,13 +102,37 @@ function resolveGmailFreshnessTimestamp(status: OperatorAutomationStatus): numbe
 type MirrorProof = {
   ts: number;
   source: MirrorSourceLabel;
-  kind: "postgres_success" | "parity_check" | "material";
+  kind: MirrorProofKind;
 };
+
+/**
+ * Newest successful material publication among Postgres success and local applied mirror.
+ * Failed/running Postgres timestamps and parity-check finished_at never count.
+ */
+export function resolveMirrorMaterialTimestamp(
+  status: OperatorAutomationStatus,
+): number | null {
+  const candidates: number[] = [];
+  if (normalizeResult(status.dashboard_mirror_sync?.status) === "success") {
+    const finishedAt = parseTimestamp(status.dashboard_mirror_sync?.finished_at);
+    if (finishedAt != null) {
+      candidates.push(finishedAt);
+    }
+  }
+  const localApplied = parseTimestamp(status.dashboard_auto_mirror.last_successful_mirror_at);
+  if (localApplied != null) {
+    candidates.push(localApplied);
+  }
+  if (!candidates.length) {
+    return null;
+  }
+  return Math.max(...candidates);
+}
 
 function collectMirrorProofs(status: OperatorAutomationStatus): MirrorProof[] {
   const proofs: MirrorProof[] = [];
   const sync = status.dashboard_mirror_sync;
-  // Only terminal success counts. failed / running / other statuses are not freshness proof.
+  // Only terminal success counts as a freshness proof candidate.
   if (normalizeResult(sync?.status) === "success") {
     const finishedAt = parseTimestamp(sync?.finished_at);
     if (finishedAt != null) {
@@ -116,7 +145,6 @@ function collectMirrorProofs(status: OperatorAutomationStatus): MirrorProof[] {
   }
 
   const loop = status.dashboard_auto_mirror;
-  const materialTs = parseTimestamp(loop.last_successful_mirror_at);
   const canUseParityCheck =
     loop.consecutive_failures === 0 &&
     !loop.paused &&
@@ -135,6 +163,7 @@ function collectMirrorProofs(status: OperatorAutomationStatus): MirrorProof[] {
     }
   }
 
+  const materialTs = resolveMirrorMaterialTimestamp(status);
   if (
     materialTs != null &&
     loop.consecutive_failures === 0 &&
@@ -143,7 +172,11 @@ function collectMirrorProofs(status: OperatorAutomationStatus): MirrorProof[] {
   ) {
     proofs.push({
       ts: materialTs,
-      source: "Loop auto-mirror",
+      source:
+        normalizeResult(sync?.status) === "success" &&
+        parseTimestamp(sync?.finished_at) === materialTs
+          ? "Espejo Postgres"
+          : "Loop auto-mirror",
       kind: "material",
     });
   }
@@ -151,20 +184,29 @@ function collectMirrorProofs(status: OperatorAutomationStatus): MirrorProof[] {
   return proofs;
 }
 
-function resolveMirrorFreshness(
-  status: OperatorAutomationStatus,
-): {
+function resolveMirrorFreshness(status: OperatorAutomationStatus): {
   freshnessTs: number | null;
   materialTs: number | null;
   source: MirrorSourceLabel;
+  proofKind: MirrorProofKind | null;
 } {
+  const materialTs = resolveMirrorMaterialTimestamp(status);
   const proofs = collectMirrorProofs(status);
-  const materialTs = parseTimestamp(status.dashboard_auto_mirror.last_successful_mirror_at);
   if (!proofs.length) {
-    return { freshnessTs: null, materialTs, source: "Loop auto-mirror" };
+    return {
+      freshnessTs: null,
+      materialTs,
+      source: "Loop auto-mirror",
+      proofKind: null,
+    };
   }
   const best = proofs.reduce((a, b) => (a.ts >= b.ts ? a : b));
-  return { freshnessTs: best.ts, materialTs, source: best.source };
+  return {
+    freshnessTs: best.ts,
+    materialTs,
+    source: best.source,
+    proofKind: best.kind,
+  };
 }
 
 function buildLoopWarning(
@@ -189,19 +231,30 @@ function buildLoopWarning(
   return `${hints.join("; ")}; el espejo Postgres ya fue actualizado manualmente.`;
 }
 
+function freshDetailForProof(proofKind: MirrorProofKind): string {
+  if (proofKind === "parity_check") {
+    return "No hay cambios pendientes; las comprobaciones recientes confirmaron que el espejo coincide con daily-core.";
+  }
+  if (proofKind === "postgres_success") {
+    return "La última publicación exitosa del espejo Postgres y el snapshot API están dentro de los umbrales esperados.";
+  }
+  return "La publicación del espejo y el snapshot API están dentro de los umbrales esperados.";
+}
+
 export function buildAutomationFreshnessSummary(
   status: OperatorAutomationStatus,
   options?: { now?: Date },
 ): AutomationFreshnessSummary {
   const nowMs = (options?.now ?? new Date()).getTime();
+  const postgresStatus = normalizeResult(status.dashboard_mirror_sync?.status);
 
-  const gmailCheckTs = resolveGmailCheckTimestamp(status);
   const gmailMaterialTs = resolveGmailMaterialTimestamp(status);
   const gmailTs = resolveGmailFreshnessTimestamp(status);
   const {
     freshnessTs: mirrorTs,
     materialTs: mirrorMaterialTs,
     source: mirrorSourceLabel,
+    proofKind: mirrorProofKind,
   } = resolveMirrorFreshness(status);
   const snapshotTs = resolveSnapshotTimestamp(status);
 
@@ -215,11 +268,14 @@ export function buildAutomationFreshnessSummary(
     gmailAgeLabel: formatAutomationFreshnessAgeLabel(gmailAgeMs),
     mirrorAgeLabel: formatAutomationFreshnessAgeLabel(mirrorAgeMs),
     mirrorSourceLabel,
+    mirrorProofKind,
     snapshotAgeLabel: formatAutomationFreshnessAgeLabel(snapshotAgeMs),
     gmailMaterialAgeLabel: formatAutomationFreshnessAgeLabel(gmailMaterialAgeMs),
     mirrorMaterialAgeLabel: formatAutomationFreshnessAgeLabel(mirrorMaterialAgeMs),
   };
 
+  // Precedence: unknown core → snapshot_stale → consecutive failures → dirty/pending →
+  // parity false → pause/lock → Postgres failed → Postgres running → age thresholds → fresh.
   const coreMissing = gmailTs == null || mirrorTs == null || snapshotTs == null;
   if (coreMissing) {
     return {
@@ -296,6 +352,30 @@ export function buildAutomationFreshnessSummary(
     };
   }
 
+  // Latest Postgres lifecycle remains visible even when a newer parity check exists.
+  // `missing_table` is intentionally not treated as a failed publication.
+  if (POSTGRES_TERMINAL_FAILURE.has(postgresStatus)) {
+    return {
+      ...base,
+      tone: "stale",
+      title: "Último sync Postgres falló",
+      detail: "El último intento de publicar el espejo Postgres terminó con error.",
+      warning: "Revisar el sync Postgres antes de considerar el dashboard al día.",
+      loopWarning: null,
+    };
+  }
+
+  if (postgresStatus === "running") {
+    return {
+      ...base,
+      tone: "warning",
+      title: "Sync Postgres en curso",
+      detail: "La publicación del espejo Postgres todavía no ha terminado.",
+      warning: null,
+      loopWarning,
+    };
+  }
+
   if (!mirrorFresh) {
     const staleTitle =
       mirrorSourceLabel === "Espejo Postgres"
@@ -340,16 +420,11 @@ export function buildAutomationFreshnessSummary(
     };
   }
 
-  const verifiedByCheck = gmailCheckTs != null || mirrorSourceLabel === "Loop auto-mirror";
   return {
     ...base,
     tone: "fresh",
     title: "Automatización al día",
-    detail: verifiedByCheck
-      ? "No hay cambios pendientes; las comprobaciones recientes confirmaron que el espejo coincide con daily-core."
-      : mirrorSourceLabel === "Espejo Postgres"
-        ? "Gmail/SQLite, espejo Postgres y snapshot API tienen pruebas de actualidad dentro de los umbrales."
-        : "Gmail/SQLite, loop auto-mirror y snapshot API tienen pruebas de actualidad dentro de los umbrales.",
+    detail: freshDetailForProof(mirrorProofKind ?? "material"),
     warning: null,
     loopWarning,
   };

@@ -498,6 +498,74 @@ describe("AutomationHealthCard", () => {
     expect(screen.queryByTestId("automation-freshness-warning")).toBeNull();
   });
 
+  it("renders failed Postgres lifecycle as stale Spanish freshness warning", async () => {
+    mockFetch.mockResolvedValue(
+      freshnessStatus(
+        { gmailMinutesAgo: 1, mirrorMinutesAgo: 1, snapshotMinutesAgo: 1 },
+        {
+          dashboard_auto_mirror: {
+            ...BASE_STATUS.dashboard_auto_mirror,
+            last_result: "already_mirrored",
+            last_run_finished_at: minutesAgoIso(1),
+            last_successful_mirror_at: minutesAgoIso(5),
+            mirror_matches_daily_core: true,
+          },
+          dashboard_mirror_sync: {
+            status: "failed",
+            finished_at: minutesAgoIso(2),
+            error_message: "internal detail must stay out of headline",
+          },
+        },
+      ),
+    );
+    render(<AutomationHealthCard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("automation-freshness-title").textContent).toBe(
+        "Último sync Postgres falló",
+      );
+    });
+    expect(screen.getByTestId("automation-freshness-panel").textContent).toMatch(
+      /terminó con error/i,
+    );
+    expect(screen.getByTestId("automation-freshness-warning").textContent).toMatch(
+      /Revisar el sync Postgres/i,
+    );
+    expect(screen.getByTestId("automation-freshness-panel").textContent).not.toMatch(
+      /internal detail/i,
+    );
+  });
+
+  it("renders running Postgres lifecycle as in-progress Spanish warning", async () => {
+    mockFetch.mockResolvedValue(
+      freshnessStatus(
+        { gmailMinutesAgo: 1, mirrorMinutesAgo: 1, snapshotMinutesAgo: 1 },
+        {
+          dashboard_auto_mirror: {
+            ...BASE_STATUS.dashboard_auto_mirror,
+            last_result: "already_mirrored",
+            last_run_finished_at: minutesAgoIso(1),
+            last_successful_mirror_at: minutesAgoIso(30),
+            mirror_matches_daily_core: true,
+          },
+          dashboard_mirror_sync: {
+            status: "running",
+            started_at: minutesAgoIso(1),
+            finished_at: null,
+          },
+        },
+      ),
+    );
+    render(<AutomationHealthCard />);
+    await waitFor(() => {
+      expect(screen.getByTestId("automation-freshness-title").textContent).toBe(
+        "Sync Postgres en curso",
+      );
+    });
+    expect(screen.getByTestId("automation-freshness-panel").textContent).toMatch(
+      /todavía no ha terminado/i,
+    );
+  });
+
   it("still renders auto-mirror loop details when postgres sync is fresh", async () => {
     mockFetch.mockResolvedValue(
       freshnessStatus(
