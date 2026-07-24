@@ -307,6 +307,20 @@ def test_delete_targets_only_selected_specs() -> None:
     assert "DELETE FROM mart.contact_master_canonical" in executed
     assert "DELETE FROM mart.contact_master" not in executed
     assert executed.count("DELETE FROM mart.opportunity_signals_canonical") == 1
+    assert not any("setval" in sql.lower() for sql in executed)
+
+
+def test_parse_qualified_sequence_name_rejects_junk() -> None:
+    from origenlab_email_pipeline import mart_core_postgres_migrate as pkg
+
+    with pytest.raises(ValueError, match="malformed"):
+        pkg._parse_qualified_sequence_name("nope")
+    with pytest.raises(ValueError, match="malformed"):
+        pkg._parse_qualified_sequence_name("mart.bad-name")
+    assert pkg._parse_qualified_sequence_name("mart.opportunity_signals_id_seq") == (
+        "mart",
+        "opportunity_signals_id_seq",
+    )
 
 
 def test_missing_sqlite_mart_table_warning(tmp_path: Path) -> None:

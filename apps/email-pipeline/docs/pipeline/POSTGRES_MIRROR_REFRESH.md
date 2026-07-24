@@ -55,8 +55,14 @@ Within that transaction:
 1. Acquire `SHARE ROW EXCLUSIVE` locks on selected targets (serializes competing replace writers; ordinary `SELECT` readers remain allowed).
 2. Optionally `DELETE` selected targets (`--replace`).
 3. Load every selected table (batched inserts **without** intermediate commits).
-4. Repair sequences / run final validation **before** commit.
-5. **Commit once** on success; **rollback** on any conversion, insert, sequence, or validation failure so the prior committed publication remains unchanged.
+4. For selected opportunity-signal tables, repair owned sequences with transactional
+   ``ALTER SEQUENCE … RESTART WITH`` (``MAX(id)+1``, or ``1`` when empty) — **not**
+   ``setval`` — then run final validation **before** commit. Preflight refuses apply
+   when the current role lacks sequence ownership (mirror apply must use the Alembic
+   migration / sequence-owning role, not ``origenlab_api_ro``).
+5. **Commit once** on success; **rollback** on any conversion, insert, sequence, or
+   validation failure so prior committed **table rows and sequence state** remain
+   unchanged together.
 
 **Residual boundary:** the overall `mirror-dashboard` refresh is **not** one database-wide transaction. This removes empty/partial publication *inside* each base loader; it does **not** provide a generation-wide snapshot across outbound + mart + later in-process stages.
 

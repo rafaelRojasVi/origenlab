@@ -1,11 +1,12 @@
 """Transactional publication tests for outbound + mart Postgres loaders.
 
-Unit tests use mocks. Integration / MVCC tests require a disposable Postgres URL:
+Unit tests use mocks. Integration / MVCC / sequence tests require:
 
-  ORIGENLAB_POSTGRES_TEST_URL=postgresql://…@127.0.0.1/…_test…
+  ORIGENLAB_POSTGRES_TEST_URL=postgresql://…@127.0.0.1/origenlab_pg_test
 
-The URL must look like scratch (localhost / test / scratch / staging). Production
-URLs are refused. Schema must already be migrated (alembic upgrade head).
+The URL is structurally validated (PostgreSQL scheme, loopback host, test-only
+database name). Production / remote / substring-heuristic URLs are refused.
+Schema must already be migrated (alembic upgrade head).
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
+from urllib.parse import urlparse
 
 import pytest
 
@@ -27,6 +29,76 @@ from test_sqlite_mart_core_to_postgres_migrate import _make_mart_sqlite
 
 REPO = Path(__file__).resolve().parents[1]
 OUTBOUND_SCRIPT = REPO / "scripts" / "migrate" / "sqlite_outbound_sidecars_to_postgres.py"
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+_PG_SCHEMES = frozenset(
+    {
+        "postgresql",
+        "postgres",
+        "postgresql+psycopg",
+        "postgres+psycopg",
+    }
+)
+_EXACT_TEST_DBS = frozenset({"origenlab_pg_test"})
+_TEST_DB_SUFFIXES = ("_test", "_scratch")
+_PROD_DB_TOKENS = ("prod", "production", "live")
+
+
+def validate_disposable_postgres_test_url(url: str) -> str:
+    """Refuse non-disposable ORIGENLAB_POSTGRES_TEST_URL values before any SQL.
+
+    Safety is structural (scheme / hostname / database name only). A password or
+    username containing ``test`` must never make a remote URL acceptable.
+    """
+    raw = (url or "").strip()
+    if not raw:
+        raise ValueError("ORIGENLAB_POSTGRES_TEST_URL is empty")
+    parsed = urlparse(raw)
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in _PG_SCHEMES:
+        raise ValueError(
+            f"unsupported scheme for disposable Postgres test URL: {scheme!r}"
+        )
+    host = (parsed.hostname or "").lower()
+    if host not in _LOOPBACK_HOSTS:
+        raise ValueError(
+            f"disposable Postgres test URL hostname must be loopback, got {host!r}"
+        )
+    db = (parsed.path or "").lstrip("/")
+    if not db or "/" in db:
+        raise ValueError(
+            "disposable Postgres test URL must include an explicit database name"
+        )
+    lowered = db.lower()
+    if any(tok in lowered for tok in _PROD_DB_TOKENS):
+        raise ValueError(f"production-looking database name refused: {db!r}")
+    if db in _EXACT_TEST_DBS:
+        return raw
+    if any(lowered.endswith(suffix) for suffix in _TEST_DB_SUFFIXES):
+        return raw
+    raise ValueError(
+        "database name must be origenlab_pg_test or end with _test/_scratch, "
+        f"got {db!r}"
+    )
+
+
+def _pg_url() -> str | None:
+    """Return validated disposable URL, or None when unset.
+
+    When set but invalid, raise so integration tests fail closed before SQL
+    (never fall back to ORIGENLAB_POSTGRES_URL / ALEMBIC_DATABASE_URL /
+    ORIGENLAB_CLOUD_POSTGRES_URL).
+    """
+    raw = (os.environ.get("ORIGENLAB_POSTGRES_TEST_URL") or "").strip()
+    if not raw:
+        return None
+    return validate_disposable_postgres_test_url(raw)
+
+
+requires_pg = pytest.mark.skipif(
+    _pg_url() is None,
+    reason="Set ORIGENLAB_POSTGRES_TEST_URL for disposable Postgres integration tests.",
+)
 
 
 def _load_outbound():
@@ -42,14 +114,54 @@ def _load_outbound():
 ob = _load_outbound()
 
 
-def _pg_url() -> str | None:
-    return (os.environ.get("ORIGENLAB_POSTGRES_TEST_URL") or "").strip() or None
+def test_validate_disposable_postgres_test_url_accepts_ci_url() -> None:
+    assert (
+        validate_disposable_postgres_test_url(
+            "postgresql://postgres:postgres@127.0.0.1:5432/origenlab_pg_test"
+        )
+        == "postgresql://postgres:postgres@127.0.0.1:5432/origenlab_pg_test"
+    )
 
 
-requires_pg = pytest.mark.skipif(
-    _pg_url() is None,
-    reason="Set ORIGENLAB_POSTGRES_TEST_URL for disposable Postgres integration tests.",
+@pytest.mark.parametrize(
+    "url,match",
+    [
+        (
+            "postgresql://postgres:postgres@db.example.com:5432/origenlab_pg_test",
+            "loopback",
+        ),
+        (
+            "postgresql://postgres:postgres@127.0.0.1:5432/origenlab_dashboard_prod",
+            "production-looking",
+        ),
+        (
+            "postgresql://user:test_password@db.example.com:5432/origenlab_pg_test",
+            "loopback",
+        ),
+        ("postgresql://postgres:postgres@127.0.0.1:5432/", "database name"),
+        ("mysql://postgres:postgres@127.0.0.1:5432/origenlab_pg_test", "unsupported scheme"),
+    ],
 )
+def test_validate_disposable_postgres_test_url_rejects(url: str, match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        validate_disposable_postgres_test_url(url)
+
+
+def test_pg_url_never_falls_back_to_production_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ORIGENLAB_POSTGRES_TEST_URL", raising=False)
+    monkeypatch.setenv(
+        "ORIGENLAB_POSTGRES_URL",
+        "postgresql://u:p@127.0.0.1:5432/origenlab_pg_test",
+    )
+    monkeypatch.setenv(
+        "ALEMBIC_DATABASE_URL",
+        "postgresql://u:p@127.0.0.1:5432/origenlab_pg_test",
+    )
+    monkeypatch.setenv(
+        "ORIGENLAB_CLOUD_POSTGRES_URL",
+        "postgresql://u:p@127.0.0.1:5432/origenlab_pg_test",
+    )
+    assert _pg_url() is None
 
 
 def _make_outbound_sqlite(path: Path, *, email: str = "a@x.com") -> None:
@@ -443,3 +555,265 @@ def test_mart_canonical_does_not_mutate_archive(tmp_path: Path) -> None:
     with psycopg.connect(pg) as conn, conn.cursor() as cur:
         cur.execute("SELECT COUNT(*) FROM mart.contact_master")
         assert int(cur.fetchone()[0]) == archive_before
+
+
+def _opp_seq_state(cur: Any, table: str) -> tuple[str, int, bool]:
+    cur.execute("SELECT pg_get_serial_sequence(%s, 'id')", (table,))
+    seq = cur.fetchone()[0]
+    assert seq
+    schema, name = seq.split(".", 1)
+    cur.execute(
+        mart.pg_sql.SQL("SELECT last_value, is_called FROM {}.{}").format(
+            mart.pg_sql.Identifier(schema),
+            mart.pg_sql.Identifier(name),
+        )
+    )
+    last_value, is_called = cur.fetchone()
+    return str(seq), int(last_value), bool(is_called)
+
+
+def _seed_opp_table(cur: Any, table: str, row_id: int) -> None:
+    cur.execute(f"DELETE FROM {table}")
+    cur.execute(
+        f"""
+        INSERT INTO {table}
+          (id, signal_type, entity_kind, entity_key, score, created_at)
+        VALUES (%s, 'seed', 'contact', 'old@x.cl', 1.0, now())
+        """,
+        (row_id,),
+    )
+    schema, name = table.split(".", 1)
+    seq = f"{schema}.{name}_id_seq"
+    # Establish a known non-default sequence state without relying on publication code.
+    cur.execute(
+        mart.pg_sql.SQL("ALTER SEQUENCE {}.{} RESTART WITH {}").format(
+            mart.pg_sql.Identifier(schema),
+            mart.pg_sql.Identifier(f"{name}_id_seq"),
+            mart.pg_sql.Literal(row_id + 1),
+        )
+    )
+    # Advance once so is_called is true and last_value is row_id+1.
+    cur.execute("SELECT nextval(%s)", (seq,))
+    assert int(cur.fetchone()[0]) == row_id + 1
+
+
+@pytest.mark.parametrize(
+    "table",
+    ["mart.opportunity_signals", "mart.opportunity_signals_canonical"],
+)
+@requires_pg
+def test_opp_sequence_restart_rolls_back_with_rows(table: str) -> None:
+    import psycopg
+
+    pg = _pg_url()
+    assert pg
+    specs = tuple(s for s in mart.ALL_TABLE_SPECS if s["target"] == table)
+    assert len(specs) == 1
+
+    with psycopg.connect(pg, autocommit=False) as conn, conn.cursor() as cur:
+        _seed_opp_table(cur, table, row_id=9001)
+        conn.commit()
+
+    with psycopg.connect(pg) as conn, conn.cursor() as cur:
+        cur.execute(f"SELECT id FROM {table} ORDER BY id")
+        ids_before = [int(r[0]) for r in cur.fetchall()]
+        assert ids_before == [9001]
+        seq_name, last_before, called_before = _opp_seq_state(cur, table)
+        assert last_before == 9002
+        assert called_before is True
+
+    writer = psycopg.connect(pg, autocommit=False)
+    try:
+        with writer.cursor() as cur:
+            mart.lock_mart_targets(cur, specs)
+            mart.assert_opp_sequence_restart_authority(cur, specs)
+            mart.delete_targets_for_specs(cur, specs)
+            cur.execute(
+                f"""
+                INSERT INTO {table}
+                  (id, signal_type, entity_kind, entity_key, score, created_at)
+                VALUES (42, 'new', 'contact', 'new@x.cl', 2.0, now())
+                """
+            )
+            mart.restart_opp_sequences(cur, specs)
+            _, last_mid, called_mid = _opp_seq_state(cur, table)
+            assert last_mid == 43
+            assert called_mid is False
+            raise RuntimeError("injected failure after sequence restart")
+    except RuntimeError:
+        writer.rollback()
+    finally:
+        writer.close()
+
+    with psycopg.connect(pg) as conn, conn.cursor() as cur:
+        cur.execute(f"SELECT id FROM {table} ORDER BY id")
+        assert [int(r[0]) for r in cur.fetchall()] == ids_before
+        _, last_after, called_after = _opp_seq_state(cur, table)
+        assert last_after == last_before
+        assert called_after == called_before
+        cur.execute("SELECT nextval(pg_get_serial_sequence(%s, 'id'))", (table,))
+        nxt = int(cur.fetchone()[0])
+        assert nxt == 9003
+        assert nxt not in ids_before
+        conn.rollback()  # discard the diagnostic nextval
+
+
+@pytest.mark.parametrize(
+    "table",
+    ["mart.opportunity_signals", "mart.opportunity_signals_canonical"],
+)
+@requires_pg
+def test_opp_sequence_restart_commits_nextval_is_max_plus_one(table: str) -> None:
+    import psycopg
+
+    pg = _pg_url()
+    assert pg
+    specs = tuple(s for s in mart.ALL_TABLE_SPECS if s["target"] == table)
+    assert len(specs) == 1
+
+    with psycopg.connect(pg, autocommit=False) as conn, conn.cursor() as cur:
+        mart.lock_mart_targets(cur, specs)
+        mart.assert_opp_sequence_restart_authority(cur, specs)
+        mart.delete_targets_for_specs(cur, specs)
+        cur.execute(
+            f"""
+            INSERT INTO {table}
+              (id, signal_type, entity_kind, entity_key, score, created_at)
+            VALUES
+              (10, 'a', 'contact', 'a@x.cl', 1.0, now()),
+              (25, 'b', 'contact', 'b@x.cl', 1.0, now())
+            """
+        )
+        mart.restart_opp_sequences(cur, specs)
+        conn.commit()
+
+    with psycopg.connect(pg) as conn, conn.cursor() as cur:
+        cur.execute("SELECT nextval(pg_get_serial_sequence(%s, 'id'))", (table,))
+        assert int(cur.fetchone()[0]) == 26
+        conn.rollback()
+
+
+@pytest.mark.parametrize(
+    "table",
+    ["mart.opportunity_signals", "mart.opportunity_signals_canonical"],
+)
+@requires_pg
+def test_opp_sequence_empty_table_restarts_at_one(table: str) -> None:
+    import psycopg
+
+    pg = _pg_url()
+    assert pg
+    specs = tuple(s for s in mart.ALL_TABLE_SPECS if s["target"] == table)
+    with psycopg.connect(pg, autocommit=False) as conn, conn.cursor() as cur:
+        mart.lock_mart_targets(cur, specs)
+        mart.delete_targets_for_specs(cur, specs)
+        mart.restart_opp_sequences(cur, specs)
+        conn.commit()
+    with psycopg.connect(pg) as conn, conn.cursor() as cur:
+        cur.execute("SELECT nextval(pg_get_serial_sequence(%s, 'id'))", (table,))
+        assert int(cur.fetchone()[0]) == 1
+        conn.rollback()
+
+
+@requires_pg
+def test_archive_replace_does_not_modify_canonical_sequence(tmp_path: Path) -> None:
+    import psycopg
+
+    pg = _pg_url()
+    assert pg
+    canon = "mart.opportunity_signals_canonical"
+    with psycopg.connect(pg, autocommit=False) as conn, conn.cursor() as cur:
+        _seed_opp_table(cur, canon, row_id=7001)
+        conn.commit()
+    with psycopg.connect(pg) as conn, conn.cursor() as cur:
+        _, last_before, called_before = _opp_seq_state(cur, canon)
+
+    db = tmp_path / "mart.sqlite"
+    _make_mart_sqlite(db)
+    assert (
+        mart.run_migration(
+            ["--sqlite-db", str(db), "--postgres-url", pg, "--replace", "--tables", "archive"]
+        )
+        == 0
+    )
+    with psycopg.connect(pg) as conn, conn.cursor() as cur:
+        _, last_after, called_after = _opp_seq_state(cur, canon)
+        assert last_after == last_before
+        assert called_after == called_before
+        cur.execute(f"SELECT id FROM {canon}")
+        assert [int(r[0]) for r in cur.fetchall()] == [7001]
+
+
+@requires_pg
+def test_canonical_replace_does_not_modify_archive_sequence(tmp_path: Path) -> None:
+    import psycopg
+
+    pg = _pg_url()
+    assert pg
+    archive = "mart.opportunity_signals"
+    with psycopg.connect(pg, autocommit=False) as conn, conn.cursor() as cur:
+        _seed_opp_table(cur, archive, row_id=8001)
+        conn.commit()
+    with psycopg.connect(pg) as conn, conn.cursor() as cur:
+        _, last_before, called_before = _opp_seq_state(cur, archive)
+
+    db = tmp_path / "empty_canon.sqlite"
+    conn = sqlite3.connect(str(db))
+    conn.executescript(
+        """
+        CREATE TABLE emails (
+          id INTEGER PRIMARY KEY, source_file TEXT, message_id TEXT, date_iso TEXT,
+          folder TEXT, sender TEXT, recipients TEXT, subject TEXT, body TEXT
+        );
+        CREATE TABLE contact_master (email TEXT PRIMARY KEY, domain TEXT);
+        CREATE TABLE organization_master (domain TEXT PRIMARY KEY);
+        CREATE TABLE opportunity_signals (
+          id INTEGER PRIMARY KEY, signal_type TEXT, entity_kind TEXT, entity_key TEXT,
+          email_id INTEGER, attachment_id INTEGER, score REAL, details_json TEXT,
+          created_at TEXT
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+    mart.run_migration(
+        ["--sqlite-db", str(db), "--postgres-url", pg, "--replace", "--tables", "canonical"]
+    )
+    with psycopg.connect(pg) as conn, conn.cursor() as cur:
+        _, last_after, called_after = _opp_seq_state(cur, archive)
+        assert last_after == last_before
+        assert called_after == called_before
+        cur.execute(f"SELECT id FROM {archive}")
+        assert [int(r[0]) for r in cur.fetchall()] == [8001]
+
+
+@requires_pg
+def test_tables_all_repairs_both_opp_sequences(tmp_path: Path) -> None:
+    import psycopg
+
+    pg = _pg_url()
+    assert pg
+    db = tmp_path / "mart.sqlite"
+    _make_mart_sqlite(db)
+    # Enrich sqlite so both archive opportunity + empty canonical path still run.
+    assert (
+        mart.run_migration(
+            ["--sqlite-db", str(db), "--postgres-url", pg, "--replace", "--tables", "all"]
+        )
+        == 0
+    )
+    with psycopg.connect(pg) as conn, conn.cursor() as cur:
+        for table in mart._OPP_SEQ_TABLES:
+            cur.execute(f"SELECT COALESCE(MAX(id), 0) FROM {table}")
+            max_id = int(cur.fetchone()[0])
+            cur.execute("SELECT nextval(pg_get_serial_sequence(%s, 'id'))", (table,))
+            nxt = int(cur.fetchone()[0])
+            assert nxt == (max_id + 1 if max_id > 0 else 1)
+        conn.rollback()
+
+
+@requires_pg
+def test_mart_publication_source_has_no_setval() -> None:
+    src = Path(mart.__file__).read_text(encoding="utf-8")
+    assert "setval(" not in src
+    assert "ALTER SEQUENCE" in src or "RESTART WITH" in src

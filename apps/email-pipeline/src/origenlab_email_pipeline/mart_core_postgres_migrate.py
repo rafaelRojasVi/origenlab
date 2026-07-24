@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -30,13 +31,17 @@ from origenlab_email_pipeline.progress import tqdm_stderr
 
 try:
     import psycopg
+    from psycopg import sql as pg_sql
     from psycopg.types.json import Json
 except ImportError as exc:  # pragma: no cover
     psycopg = None  # type: ignore[misc, assignment]
+    pg_sql = None  # type: ignore[misc, assignment]
     Json = None  # type: ignore[misc, assignment]
     _PSYCOPG_IMPORT_ERROR = exc
 else:
     _PSYCOPG_IMPORT_ERROR = None
+
+_SEQ_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 MartTablesArg = Literal["all", "archive", "canonical"]
 PhaseLogger = Callable[[str], None]
@@ -950,37 +955,124 @@ def lock_mart_targets(cur: psycopg.Cursor, specs: tuple[dict[str, Any], ...]) ->
 def delete_targets_for_specs(
     cur: psycopg.Cursor, specs: tuple[dict[str, Any], ...]
 ) -> None:
-    """DELETE selected targets and reset sequences. Never commits."""
+    """DELETE selected targets only. Never commits. Does not touch sequences."""
     for spec in sorted(specs, key=lambda s: int(s["delete_order"])):
         cur.execute(f"DELETE FROM {spec['target']}")
-    for spec in specs:
-        if spec.get("reset_sequence"):
-            seq_table = str(spec["target"])
-            cur.execute(
-                f"""
-                SELECT setval(
-                  pg_get_serial_sequence('{seq_table}', 'id'),
-                  1,
-                  false
-                )
-                """
-            )
 
 
-def reset_opp_sequences(cur: psycopg.Cursor, specs: tuple[dict[str, Any], ...]) -> None:
-    """Repair opportunity-signal sequences. Never commits."""
+def _parse_qualified_sequence_name(seq_identity: str) -> tuple[str, str]:
+    """Parse ``schema.seqname`` from ``pg_get_serial_sequence``; fail closed on junk."""
+    raw = (seq_identity or "").strip().strip('"')
+    parts = raw.split(".")
+    if len(parts) != 2:
+        raise ValueError(f"malformed sequence identity: {seq_identity!r}")
+    schema = parts[0].strip().strip('"')
+    name = parts[1].strip().strip('"')
+    if not _SEQ_IDENT_RE.match(schema) or not _SEQ_IDENT_RE.match(name):
+        raise ValueError(f"malformed sequence identity: {seq_identity!r}")
+    return schema, name
+
+
+def _owned_serial_sequence_for_table(cur: psycopg.Cursor, table: str) -> str:
+    cur.execute("SELECT pg_get_serial_sequence(%s, 'id')", (table,))
+    row = cur.fetchone()
+    if not row or not row[0]:
+        raise ValueError(
+            f"no owned serial sequence for {table}.id; cannot restart transactionally"
+        )
+    return str(row[0])
+
+
+def assert_opp_sequence_restart_authority(
+    cur: psycopg.Cursor, specs: tuple[dict[str, Any], ...]
+) -> None:
+    """Fail closed unless current role can ``ALTER SEQUENCE`` selected opp sequences.
+
+    ``ALTER SEQUENCE … RESTART`` requires sequence ownership (or superuser /
+    membership in the owner role). BIGSERIAL sequences are owned by the role that
+    ran Alembic; mirror apply must use that same owning role (not ``origenlab_api_ro``).
+    """
+    if psycopg is None:
+        raise RuntimeError(f"psycopg is required: {_PSYCOPG_IMPORT_ERROR}")
     loaded_targets = {str(s["target"]) for s in specs}
     for seq_table in _OPP_SEQ_TABLES:
         if seq_table not in loaded_targets:
             continue
+        seq_identity = _owned_serial_sequence_for_table(cur, seq_table)
+        schema, name = _parse_qualified_sequence_name(seq_identity)
         cur.execute(
-            f"""
-            SELECT setval(
-              pg_get_serial_sequence('{seq_table}', 'id'),
-              COALESCE((SELECT MAX(id) FROM {seq_table}), 1)
-            )
             """
+            SELECT
+              pg_catalog.pg_get_userbyid(c.relowner) AS owner_role,
+              current_user AS current_role,
+              (
+                c.relowner = (SELECT oid FROM pg_roles WHERE rolname = current_user)
+                OR EXISTS (
+                  SELECT 1 FROM pg_roles r
+                  WHERE r.rolname = current_user AND r.rolsuper
+                )
+                OR pg_has_role(current_user, c.relowner, 'MEMBER')
+              ) AS can_alter
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = %s
+              AND c.relname = %s
+              AND c.relkind = 'S'
+            """,
+            (schema, name),
         )
+        auth = cur.fetchone()
+        if auth is None:
+            raise ValueError(f"sequence catalog entry missing for {seq_identity}")
+        owner_role, current_role, can_alter = auth
+        if not can_alter:
+            raise PermissionError(
+                f"current role {current_role!r} cannot ALTER SEQUENCE {seq_identity} "
+                f"(owner={owner_role!r}); mart publication requires sequence ownership "
+                "or equivalent membership (typically the Alembic migration / mirror "
+                "apply role — not origenlab_api_ro)"
+            )
+
+
+def restart_opp_sequences(
+    cur: psycopg.Cursor, specs: tuple[dict[str, Any], ...]
+) -> None:
+    """Transactional sequence repair after explicit-ID inserts. Never commits.
+
+    Uses ``ALTER SEQUENCE … RESTART WITH`` (transactional). Does **not** use
+    ``setval`` (non-transactional). Next value is ``MAX(id)+1``, or ``1`` if empty.
+    """
+    if psycopg is None or pg_sql is None:
+        raise RuntimeError(f"psycopg is required: {_PSYCOPG_IMPORT_ERROR}")
+    loaded_targets = {str(s["target"]) for s in specs}
+    for seq_table in _OPP_SEQ_TABLES:
+        if seq_table not in loaded_targets:
+            continue
+        seq_identity = _owned_serial_sequence_for_table(cur, seq_table)
+        schema, name = _parse_qualified_sequence_name(seq_identity)
+        table_schema, table_name = seq_table.split(".", 1)
+        if not _SEQ_IDENT_RE.match(table_schema) or not _SEQ_IDENT_RE.match(table_name):
+            raise ValueError(f"malformed opportunity table identity: {seq_table!r}")
+        cur.execute(
+            pg_sql.SQL("SELECT COALESCE(MAX({}), 0) FROM {}.{}").format(
+                pg_sql.Identifier("id"),
+                pg_sql.Identifier(table_schema),
+                pg_sql.Identifier(table_name),
+            )
+        )
+        max_id = int(cur.fetchone()[0])
+        next_val = 1 if max_id <= 0 else max_id + 1
+        stmt = pg_sql.SQL("ALTER SEQUENCE {}.{} RESTART WITH {}").format(
+            pg_sql.Identifier(schema),
+            pg_sql.Identifier(name),
+            pg_sql.Literal(next_val),
+        )
+        try:
+            cur.execute(stmt)
+        except Exception as exc:
+            raise RuntimeError(
+                f"ALTER SEQUENCE {schema}.{name} RESTART WITH {next_val} failed: {exc}"
+            ) from exc
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1158,6 +1250,7 @@ def run_migration(argv: list[str] | None = None) -> int:
         try:
             with pconn.cursor() as cur:
                 lock_mart_targets(cur, active_specs)
+                assert_opp_sequence_restart_authority(cur, active_specs)
                 for spec in active_specs:
                     cur.execute(f"SELECT COUNT(*) FROM {spec['target']}")
                     result["postgres_counts_before"][str(spec["source"])] = int(
@@ -1198,7 +1291,7 @@ def run_migration(argv: list[str] | None = None) -> int:
                     sqlite_counts[src] = loaded
 
             with pconn.cursor() as cur:
-                reset_opp_sequences(cur, active_specs)
+                restart_opp_sequences(cur, active_specs)
                 row_count_ok = True
                 for spec in active_specs:
                     src = str(spec["source"])
