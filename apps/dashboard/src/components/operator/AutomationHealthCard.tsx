@@ -258,13 +258,22 @@ export function AutomationHealthCard({
           <p className="mt-1 text-xs">{freshnessSummary.detail}</p>
           <div className="mt-2 flex flex-wrap gap-2 text-xs">
             <span className="rounded-full border border-current/20 bg-white/50 px-2 py-0.5">
-              Gmail/SQLite: {freshnessSummary.gmailAgeLabel}
+              Gmail comprobación: {freshnessSummary.gmailAgeLabel}
             </span>
             <span className="rounded-full border border-current/20 bg-white/50 px-2 py-0.5">
-              {freshnessSummary.mirrorSourceLabel}: {freshnessSummary.mirrorAgeLabel}
+              {freshnessSummary.mirrorSourceLabel} comprobación:{" "}
+              {freshnessSummary.mirrorAgeLabel}
             </span>
             <span className="rounded-full border border-current/20 bg-white/50 px-2 py-0.5">
               Snapshot API: {freshnessSummary.snapshotAgeLabel}
+            </span>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2 text-xs opacity-90">
+            <span className="rounded-full border border-current/15 bg-white/40 px-2 py-0.5">
+              Último refresh útil Gmail: {freshnessSummary.gmailMaterialAgeLabel}
+            </span>
+            <span className="rounded-full border border-current/15 bg-white/40 px-2 py-0.5">
+              Última publicación material: {freshnessSummary.mirrorMaterialAgeLabel}
             </span>
           </div>
           {freshnessSummary.loopWarning ? (
