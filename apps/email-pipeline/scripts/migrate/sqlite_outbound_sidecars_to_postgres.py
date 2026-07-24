@@ -21,6 +21,10 @@ Behavior:
     - Missing Postgres target sidecar tables are hard failures.
     - Default mode refuses to write if any target table is non-empty.
     - --replace clears only the three outbound sidecar target tables.
+    - Apply publishes all three targets in **one** PostgreSQL transaction (delete +
+      load + validate, then a single commit). Readers never see empty/partial sets.
+    - In --replace mode, a missing SQLite source still publishes an empty target
+      for that table (logical zero rows) as part of the same atomic set.
     - --dry-run validates only and performs no writes.
 """
 
@@ -41,7 +45,8 @@ REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from origenlab_email_pipeline.config import load_settings
+from origenlab_email_pipeline.config import load_settings  # noqa: E402
+from origenlab_email_pipeline.postgres_outbound_audit import redact_postgres_url  # noqa: E402
 
 _VALIDATE_PATH = REPO / "scripts" / "qa" / "validate_sqlite_archive_for_postgres.py"
 _spec = importlib.util.spec_from_file_location("validate_sqlite_archive_for_postgres", _VALIDATE_PATH)
@@ -106,12 +111,23 @@ TABLE_SPECS: tuple[dict[str, Any], ...] = (
     },
 )
 
+# Deterministic lock order for competing replace writers (deadlock-safe).
+OUTBOUND_LOCK_TARGETS: tuple[str, ...] = tuple(
+    str(spec["target"]) for spec in TABLE_SPECS
+)
+# Bound wait for writer serialization; ordinary SELECT readers are unaffected.
+OUTBOUND_LOCK_TIMEOUT = "30s"
+
 
 class ConversionError(Exception):
     def __init__(self, table: str, row_id: Any, column: str, value: Any) -> None:
         super().__init__(
             f"invalid conversion {table} id={row_id!r} column={column!r} value={value!r}"
         )
+
+
+class ValidationError(RuntimeError):
+    """Post-load validation failed; caller must roll back the apply transaction."""
 
 
 def normalize_postgres_url(url: str) -> str:
@@ -256,6 +272,38 @@ def _insert_sql(target: str, columns: tuple[str, ...]) -> str:
     return f"INSERT INTO {target} ({cols}) VALUES ({vals})"
 
 
+def sanitize_migrate_error(
+    message: BaseException | str, *, postgres_url: str | None = None
+) -> str:
+    """Sanitize CLI/JSON errors without inventing a second redaction stack."""
+    text = str(message) if not isinstance(message, BaseException) else (
+        str(message) or type(message).__name__
+    )
+    if postgres_url:
+        for secret in (postgres_url, redact_postgres_url(postgres_url)):
+            if secret and secret in text:
+                text = text.replace(secret, "<redacted>")
+    for key in ("ORIGENLAB_POSTGRES_URL", "ALEMBIC_DATABASE_URL"):
+        val = os.environ.get(key)
+        if val and val in text:
+            text = text.replace(val, "<redacted>")
+    return text
+
+
+def lock_outbound_sidecar_targets(cur: Any) -> None:
+    """Serialize competing replace writers; ordinary SELECT readers remain allowed."""
+    cur.execute(f"SET LOCAL lock_timeout = '{OUTBOUND_LOCK_TIMEOUT}'")
+    for target in OUTBOUND_LOCK_TARGETS:
+        cur.execute(f"LOCK TABLE {target} IN SHARE ROW EXCLUSIVE MODE")
+
+
+def delete_outbound_sidecar_targets(cur: Any) -> None:
+    """Delete targets in dependency-safe order (state → domain → email)."""
+    cur.execute("DELETE FROM outbound.outreach_contact_state")
+    cur.execute("DELETE FROM outbound.contact_domain_suppression")
+    cur.execute("DELETE FROM outbound.contact_email_suppression")
+
+
 def load_sidecar_table(
     sconn: sqlite3.Connection,
     pconn: psycopg.Connection,
@@ -269,6 +317,10 @@ def load_sidecar_table(
     t_start: float,
     fetch_batch: int = 1000,
 ) -> int:
+    """Insert one sidecar table into the caller-owned transaction.
+
+    Never commits or rolls back. Batching is for statement size only.
+    """
     if not source_exists:
         return 0
 
@@ -289,7 +341,6 @@ def load_sidecar_table(
         ]
         with pconn.cursor() as pcur:
             pcur.executemany(sql, batch)
-        pconn.commit()
         loaded += len(batch)
         print(
             format_load_progress(
@@ -324,10 +375,12 @@ def _empty_result() -> dict[str, Any]:
         "ok": False,
         "dry_run": False,
         "replace": False,
+        "transaction_committed": False,
         "sqlite_counts": {},
         "postgres_counts_before": {},
         "postgres_counts_after": {},
         "loaded": {},
+        "attempted_loaded": {},
         "validation": {},
         "errors": [],
         "warnings": [],
@@ -341,6 +394,62 @@ def _write_json(path: Path | None, doc: dict[str, Any]) -> None:
     path.write_text(json.dumps(doc, indent=2, ensure_ascii=False, default=str) + "\n", encoding="utf-8")
 
 
+def _validate_outbound_publication(
+    *,
+    sconn: sqlite3.Connection,
+    cur: Any,
+    exists_map: dict[str, bool],
+    sqlite_counts: dict[str, int],
+    result: dict[str, Any],
+) -> None:
+    """Populate validation fields; raise ValidationError if checks fail."""
+    for spec in TABLE_SPECS:
+        src = str(spec["source"])
+        pk = str(spec["pk"])
+        target = str(spec["target"])
+        cur.execute(f"SELECT COUNT(*) FROM {target}")
+        result["postgres_counts_after"][src] = int(cur.fetchone()[0])
+        cur.execute(f"SELECT COUNT(*) FROM {target} WHERE {pk} IS NULL")
+        result["validation"][f"{src}.target_null_pk"] = int(cur.fetchone()[0])
+
+        if exists_map[src]:
+            sqlite_pk = fetch_sqlite_pk_set(sconn, table=src, pk=pk)
+            pg_pk = fetch_pg_pk_set(cur, target=target, pk=pk)
+            result["validation"][f"{src}.pk_set_match"] = sqlite_pk == pg_pk
+        else:
+            result["validation"][f"{src}.pk_set_match"] = True
+
+    cur.execute(
+        """
+        SELECT state, COUNT(*) AS c
+        FROM outbound.outreach_contact_state
+        GROUP BY state
+        ORDER BY c DESC, state
+        """
+    )
+    result["validation"]["outreach_state_distribution"] = [
+        {"state": r[0], "count": int(r[1])} for r in cur.fetchall()
+    ]
+
+    row_count_ok = True
+    pk_ok = True
+    null_pk_ok = True
+    for spec in TABLE_SPECS:
+        src = str(spec["source"])
+        if exists_map[src]:
+            row_count_ok = row_count_ok and (
+                sqlite_counts[src] == result["postgres_counts_after"][src]
+            )
+        pk_ok = pk_ok and bool(result["validation"][f"{src}.pk_set_match"])
+        null_pk_ok = null_pk_ok and (int(result["validation"][f"{src}.target_null_pk"]) == 0)
+
+    result["validation"]["row_counts_match"] = row_count_ok
+    result["validation"]["pk_sets_match"] = pk_ok
+    result["validation"]["target_null_primary_keys"] = null_pk_ok
+    if not (row_count_ok and pk_ok and null_pk_ok):
+        raise ValidationError("Post-load validation failed for outbound sidecar migration.")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     sample_limit = max(1, int(args.sample_limit))
@@ -350,6 +459,7 @@ def main(argv: list[str] | None = None) -> int:
     result["dry_run"] = bool(args.dry_run)
     result["replace"] = bool(args.replace)
     result["loaded"] = {str(spec["source"]): 0 for spec in TABLE_SPECS}
+    result["attempted_loaded"] = {str(spec["source"]): 0 for spec in TABLE_SPECS}
 
     sqlite_path = resolve_sqlite_path(args.sqlite_db)
     if not sqlite_path.is_file():
@@ -370,6 +480,7 @@ def main(argv: list[str] | None = None) -> int:
     result["sqlite_counts"] = sqlite_counts
     result["warnings"].extend(warnings)
 
+    pg_url: str | None = None
     try:
         _require_psycopg()
         pg_url = resolve_postgres_url(args.postgres_url)
@@ -385,7 +496,9 @@ def main(argv: list[str] | None = None) -> int:
         pconn = psycopg.connect(pg_url, autocommit=False)
     except Exception as exc:  # noqa: BLE001
         sconn.close()
-        result["errors"].append(f"Postgres connect failed: {exc}")
+        result["errors"].append(
+            "Postgres connect failed: " + sanitize_migrate_error(exc, postgres_url=pg_url)
+        )
         _write_json(args.json_out, result)
         print(result["errors"][-1], file=sys.stderr)
         return 2
@@ -424,96 +537,103 @@ def main(argv: list[str] | None = None) -> int:
                     cur.execute(f"SELECT COUNT(*) FROM {target} WHERE {pk} IS NULL")
                     result["validation"][f"{src}.target_null_pk"] = int(cur.fetchone()[0])
             result["ok"] = True
+            result["transaction_committed"] = False
             result["elapsed_seconds"] = round(time.monotonic() - t0, 3)
             sconn.close()
             _write_json(args.json_out, result)
             print("dry-run ok: outbound sidecar prechecks passed; no writes performed.")
             return 0
 
-        if args.replace:
+        # Single apply transaction: lock → (optional delete) → load all → validate → commit.
+        try:
             with pconn.cursor() as cur:
-                cur.execute("DELETE FROM outbound.outreach_contact_state")
-                cur.execute("DELETE FROM outbound.contact_domain_suppression")
-                cur.execute("DELETE FROM outbound.contact_email_suppression")
-            pconn.commit()
+                lock_outbound_sidecar_targets(cur)
+                for spec in TABLE_SPECS:
+                    cur.execute(f"SELECT COUNT(*) FROM {spec['target']}")
+                    result["postgres_counts_before"][str(spec["source"])] = int(
+                        cur.fetchone()[0]
+                    )
+                any_nonempty_locked = any(
+                    v > 0 for v in result["postgres_counts_before"].values()
+                )
+                if should_refuse_nonempty_targets(
+                    any_nonempty=any_nonempty_locked,
+                    replace=bool(args.replace),
+                    dry_run=False,
+                ):
+                    raise ValueError(
+                        "Target outbound sidecar tables are not empty. Use --replace to reload."
+                    )
+                if args.replace:
+                    delete_outbound_sidecar_targets(cur)
 
-        # load in order
-        for spec in TABLE_SPECS:
-            src = str(spec["source"])
-            loaded = load_sidecar_table(
-                sconn,
-                pconn,
-                source=src,
-                target=str(spec["target"]),
-                pk=str(spec["pk"]),
-                columns=tuple(spec["columns"]),
-                timestamp_columns=frozenset(spec["timestamp_columns"]),
-                source_exists=bool(exists_map[src]),
-                t_start=t0,
-            )
-            result["loaded"][src] = loaded
-
-        with pconn.cursor() as cur:
             for spec in TABLE_SPECS:
                 src = str(spec["source"])
-                pk = str(spec["pk"])
-                target = str(spec["target"])
-                cur.execute(f"SELECT COUNT(*) FROM {target}")
-                result["postgres_counts_after"][src] = int(cur.fetchone()[0])
-                cur.execute(f"SELECT COUNT(*) FROM {target} WHERE {pk} IS NULL")
-                result["validation"][f"{src}.target_null_pk"] = int(cur.fetchone()[0])
-
-                if exists_map[src]:
-                    sqlite_pk = fetch_sqlite_pk_set(sconn, table=src, pk=pk)
-                    pg_pk = fetch_pg_pk_set(cur, target=target, pk=pk)
-                    result["validation"][f"{src}.pk_set_match"] = sqlite_pk == pg_pk
-                else:
-                    result["validation"][f"{src}.pk_set_match"] = True
-
-            cur.execute(
-                """
-                SELECT state, COUNT(*) AS c
-                FROM outbound.outreach_contact_state
-                GROUP BY state
-                ORDER BY c DESC, state
-                """
-            )
-            result["validation"]["outreach_state_distribution"] = [
-                {"state": r[0], "count": int(r[1])} for r in cur.fetchall()
-            ]
-
-        row_count_ok = True
-        pk_ok = True
-        null_pk_ok = True
-        for spec in TABLE_SPECS:
-            src = str(spec["source"])
-            if exists_map[src]:
-                row_count_ok = row_count_ok and (
-                    result["sqlite_counts"][src] == result["postgres_counts_after"][src]
+                loaded = load_sidecar_table(
+                    sconn,
+                    pconn,
+                    source=src,
+                    target=str(spec["target"]),
+                    pk=str(spec["pk"]),
+                    columns=tuple(spec["columns"]),
+                    timestamp_columns=frozenset(spec["timestamp_columns"]),
+                    source_exists=bool(exists_map[src]),
+                    t_start=t0,
                 )
-            pk_ok = pk_ok and bool(result["validation"][f"{src}.pk_set_match"])
-            null_pk_ok = null_pk_ok and (int(result["validation"][f"{src}.target_null_pk"]) == 0)
+                result["attempted_loaded"][src] = loaded
+                result["loaded"][src] = loaded
 
-        result["validation"]["row_counts_match"] = row_count_ok
-        result["validation"]["pk_sets_match"] = pk_ok
-        result["validation"]["target_null_primary_keys"] = null_pk_ok
-        result["ok"] = row_count_ok and pk_ok and null_pk_ok
+            with pconn.cursor() as cur:
+                _validate_outbound_publication(
+                    sconn=sconn,
+                    cur=cur,
+                    exists_map=exists_map,
+                    sqlite_counts=sqlite_counts,
+                    result=result,
+                )
+            pconn.commit()
+            result["transaction_committed"] = True
+            result["ok"] = True
+        except Exception:
+            pconn.rollback()
+            result["transaction_committed"] = False
+            result["ok"] = False
+            # Do not report uncommitted row counts as published.
+            result["loaded"] = {str(spec["source"]): 0 for spec in TABLE_SPECS}
+            raise
+
         result["elapsed_seconds"] = round(time.monotonic() - t0, 3)
-        if not result["ok"]:
-            result["errors"].append("Post-load validation failed for outbound sidecar migration.")
-            sconn.close()
-            _write_json(args.json_out, result)
-            print(result["errors"][-1], file=sys.stderr)
-            return 1
-
         sconn.close()
         _write_json(args.json_out, result)
         print("migration completed:", json.dumps(result["loaded"], indent=2))
         return 0
-    except (ConversionError, ValueError) as exc:
-        result["errors"].append(str(exc))
+    except (ConversionError, ValueError, ValidationError) as exc:
+        msg = sanitize_migrate_error(exc, postgres_url=pg_url)
+        result["errors"].append(msg)
         result["elapsed_seconds"] = round(time.monotonic() - t0, 3)
-        sconn.close()
+        result["transaction_committed"] = False
+        result["ok"] = False
+        try:
+            sconn.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _write_json(args.json_out, result)
+        print(result["errors"][-1], file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        msg = sanitize_migrate_error(exc, postgres_url=pg_url)
+        result["errors"].append(msg)
+        result["elapsed_seconds"] = round(time.monotonic() - t0, 3)
+        result["transaction_committed"] = False
+        result["ok"] = False
+        try:
+            pconn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            sconn.close()
+        except Exception:  # noqa: BLE001
+            pass
         _write_json(args.json_out, result)
         print(result["errors"][-1], file=sys.stderr)
         return 1
