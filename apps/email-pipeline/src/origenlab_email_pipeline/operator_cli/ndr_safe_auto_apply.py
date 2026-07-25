@@ -101,6 +101,7 @@ def build_ndr_safe_auto_apply_audit_record(
         "operator": operator,
         "confirm_reviewed": confirm_reviewed,
         "scan_start_date_utc": plan.get("scan_start_date_utc"),
+        "scan_window_error": plan.get("scan_window_error"),
     }
     if exit_code is not None:
         record["exit_code"] = exit_code
@@ -240,12 +241,21 @@ def build_ndr_safe_auto_apply_plan(
         )
 
     emails = load_ndr_allowlist_emails(allowlist_path)
-    reason = "ready" if emails else "no_candidates"
     now = (now_fn or (lambda: datetime.now(timezone.utc)))()
     scan_start_date_utc, scan_window_error = resolve_reviewed_ndr_scan_start_date_utc(
         summary,
         now_utc=now,
     )
+
+    if scan_window_error:
+        reason = str(scan_window_error)
+        exit_code: ExitCode = 1
+    elif emails:
+        reason = "ready"
+        exit_code = 0
+    else:
+        reason = "no_candidates"
+        exit_code = 0
 
     plan: dict[str, Any] = {
         "dry_run": options.dry_run,
@@ -266,7 +276,7 @@ def build_ndr_safe_auto_apply_plan(
         "allowlist_count": len(emails),
         "emails": emails,
     }
-    return plan, 0, summary
+    return plan, exit_code, summary
 
 
 def validate_apply_guards(
@@ -295,14 +305,13 @@ def validate_apply_guards(
     if batch_e > options.max_parser_uncertain:
         return "parser_uncertain_exceeded", 1
 
-    if plan.get("reason") != "ready":
-        return str(plan.get("reason") or "not_ready"), 1
-
-    scan_window_error = plan.get("scan_window_error")
-    if scan_window_error:
-        return str(scan_window_error), 1
+    if plan.get("scan_window_error"):
+        return str(plan["scan_window_error"]), 1
     if not plan.get("scan_start_date_utc"):
         return "missing_scan_start_date_utc", 1
+
+    if plan.get("reason") != "ready":
+        return str(plan.get("reason") or "not_ready"), 1
 
     return "ready", 0
 
@@ -383,6 +392,7 @@ def format_ndr_safe_auto_apply_text(plan: dict[str, Any]) -> str:
         "generated_at_utc",
         "since_days",
         "scan_start_date_utc",
+        "scan_window_error",
         "date_label",
         "candidates_total",
         "candidates_already_suppressed",

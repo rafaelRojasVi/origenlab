@@ -51,6 +51,7 @@ from origenlab_email_pipeline.db import connect
 from origenlab_email_pipeline.ndr_contacto_scan import (
     PlannedEntry,
     scan_ndr_planned_recipients,
+    validate_since_date_utc,
 )
 from origenlab_email_pipeline.reported_non_delivery_contacto_scan import (
     ReportedNonDeliveryEntry,
@@ -178,6 +179,13 @@ def main() -> int:
     if args.since_days is not None and args.since_date_utc is not None:
         print("--since-days and --since-date-utc are mutually exclusive", file=sys.stderr)
         return 1
+
+    if args.since_date_utc is not None:
+        try:
+            args.since_date_utc = validate_since_date_utc(args.since_date_utc)
+        except ValueError as exc:
+            print(f"invalid --since-date-utc: {exc}", file=sys.stderr)
+            return 1
 
     emails_allowlist: list[str] | None = None
     if args.emails_file is not None:

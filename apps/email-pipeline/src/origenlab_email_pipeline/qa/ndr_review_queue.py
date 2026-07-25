@@ -21,6 +21,7 @@ from origenlab_email_pipeline.ndr_contacto_scan import (
 BatchName = Literal["A", "B", "C", "D", "E"]
 NDR_SCAN_LIMIT = 50_000
 MAX_NDR_REVIEW_QUEUE_AGE_DAYS = 7
+MAX_QUEUE_FUTURE_SKEW = timedelta(minutes=5)
 
 # Targeted apply codes per human-review batch (exact-email only; never domain suppression).
 APPLY_ONLY_CODE_BATCH_A = "bounce_no_such_user"
@@ -58,17 +59,41 @@ def _utc_now_iso(as_of_utc: datetime | None = None) -> str:
 
 
 def parse_queue_generated_at_utc(value: object) -> datetime:
-    """Parse queue ``generated_at`` / ``generated_at_utc`` into an aware UTC datetime."""
+    """Parse queue ``generated_at`` / ``generated_at_utc`` into an aware UTC datetime.
+
+    Timezone-naive values are rejected; aware values are normalized to UTC.
+    """
     if not isinstance(value, str) or not value.strip():
         raise ValueError("queue generated_at is missing")
-    raw = value.strip().replace("Z", "+00:00")
+    raw = value.strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
     try:
         parsed = datetime.fromisoformat(raw)
     except ValueError as exc:
         raise ValueError(f"queue generated_at is malformed: {value!r}") from exc
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        raise ValueError(f"queue generated_at requires an explicit timezone: {value!r}")
     return parsed.astimezone(timezone.utc)
+
+
+def parse_queue_since_days(value: object) -> int:
+    """Require an exact nonnegative JSON integer for persisted queue ``since_days``."""
+    if value is None or value == "":
+        raise ValueError("queue since_days is missing")
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"queue since_days is malformed: {value!r}")
+    if value < 0:
+        raise ValueError(f"queue since_days is malformed: {value!r}")
+    return value
+
+
+def _validate_max_age_days(max_age_days: object) -> int:
+    if isinstance(max_age_days, bool) or not isinstance(max_age_days, int):
+        raise ValueError(f"max_age_days must be an exact nonnegative int, got {max_age_days!r}")
+    if max_age_days < 0:
+        raise ValueError(f"max_age_days must be an exact nonnegative int, got {max_age_days!r}")
+    return max_age_days
 
 
 def derive_legacy_scan_start_date_utc(
@@ -76,15 +101,8 @@ def derive_legacy_scan_start_date_utc(
     generated_at: object,
     since_days: object,
 ) -> str:
-    """Derive the original UTC calendar lower bound for queues lacking ``scan_start_date_utc``."""
-    if since_days is None or since_days == "":
-        raise ValueError("queue since_days is missing")
-    try:
-        days = int(since_days)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"queue since_days is malformed: {since_days!r}") from exc
-    if days < 0:
-        raise ValueError(f"queue since_days must be >= 0, got {since_days!r}")
+    """Derive the original UTC calendar lower bound from generation metadata."""
+    days = parse_queue_since_days(since_days)
     generated = parse_queue_generated_at_utc(generated_at)
     return compute_scan_start_date_utc(since_days=days, as_of_utc=generated)
 
@@ -98,7 +116,13 @@ def resolve_reviewed_ndr_scan_start_date_utc(
     """Resolve the frozen evidence lower bound for a reviewed NDR queue.
 
     Returns ``(scan_start_date_utc, error_reason)``. On success ``error_reason`` is None.
+    Explicit ``scan_start_date_utc`` must equal the bound derived from generation metadata.
     """
+    try:
+        age_limit_days = _validate_max_age_days(max_age_days)
+    except ValueError:
+        return None, "malformed_max_age_days"
+
     now = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
     generated_raw = summary.get("generated_at_utc", summary.get("generated_at"))
     try:
@@ -106,32 +130,34 @@ def resolve_reviewed_ndr_scan_start_date_utc(
     except ValueError:
         return None, "malformed_queue_generated_at"
 
+    if generated > now + MAX_QUEUE_FUTURE_SKEW:
+        return None, "queue_generated_in_future"
+
     age = now - generated
-    if age > timedelta(days=int(max_age_days)):
+    if age > timedelta(days=age_limit_days):
         return None, "queue_too_old_rebuild_required"
 
-    explicit = summary.get("scan_start_date_utc")
-    if explicit is not None and str(explicit).strip():
-        try:
-            return validate_since_date_utc(str(explicit)), None
-        except ValueError:
-            return None, "malformed_scan_start_date_utc"
-
     try:
-        return (
-            derive_legacy_scan_start_date_utc(
-                generated_at=generated_raw,
-                since_days=summary.get("since_days"),
-            ),
-            None,
-        )
+        days = parse_queue_since_days(summary.get("since_days"))
     except ValueError as exc:
         message = str(exc)
         if "since_days is missing" in message:
             return None, "missing_queue_since_days"
-        if "since_days is malformed" in message or "since_days must be" in message:
-            return None, "malformed_queue_since_days"
-        return None, "malformed_queue_generated_at"
+        return None, "malformed_queue_since_days"
+
+    expected = compute_scan_start_date_utc(since_days=days, as_of_utc=generated)
+
+    explicit = summary.get("scan_start_date_utc")
+    if explicit is not None and str(explicit).strip():
+        try:
+            validated_explicit = validate_since_date_utc(str(explicit))
+        except ValueError:
+            return None, "malformed_scan_start_date_utc"
+        if validated_explicit != expected:
+            return None, "scan_start_date_mismatch"
+        return validated_explicit, None
+
+    return expected, None
 
 
 def _body_blob(row: tuple[Any, ...]) -> str:
