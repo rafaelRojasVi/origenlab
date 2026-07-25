@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from origenlab_email_pipeline.contact_email_suppression import fetch_contact_email_suppression_row
@@ -15,6 +17,33 @@ from origenlab_email_pipeline.ndr_bounce_extraction import (
 
 PlannedEntry = tuple[str, str | None, int, str | None]
 # recipient_email -> (code, date_iso, email_id, subject_snip)
+
+_YYYY_MM_DD = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def validate_since_date_utc(value: str) -> str:
+    """Validate a strict UTC calendar date ``YYYY-MM-DD`` for absolute NDR windows."""
+    raw = (value or "").strip()
+    if not _YYYY_MM_DD.fullmatch(raw):
+        raise ValueError(f"since_date_utc must be YYYY-MM-DD, got {value!r}")
+    try:
+        date.fromisoformat(raw)
+    except ValueError as exc:
+        raise ValueError(f"since_date_utc is not a valid calendar date: {value!r}") from exc
+    return raw
+
+
+def compute_scan_start_date_utc(
+    *,
+    since_days: int,
+    as_of_utc: datetime | None = None,
+) -> str:
+    """UTC calendar lower bound matching SQLite ``date('now', '-N days')`` semantics."""
+    days = int(since_days)
+    if days < 0:
+        raise ValueError(f"since_days must be >= 0, got {since_days!r}")
+    as_of = (as_of_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    return (as_of.date() - timedelta(days=days)).isoformat()
 
 
 def _body_blob(row: tuple[Any, ...]) -> str:
@@ -29,14 +58,27 @@ def _body_blob(row: tuple[Any, ...]) -> str:
 def scan_ndr_planned_recipients(
     conn: sqlite3.Connection,
     *,
-    since_days: int | None,
+    since_days: int | None = None,
+    since_date_utc: str | None = None,
     limit: int,
 ) -> tuple[dict[str, PlannedEntry], int, int]:
-    """Scan contacto Gmail rows; return planned suppressions and scan stats."""
+    """Scan contacto Gmail rows; return planned suppressions and scan stats.
+
+    ``since_days`` uses SQLite calendar relative ``date('now', '-N days')``.
+    ``since_date_utc`` freezes an absolute ``YYYY-MM-DD`` lower bound.
+    The two options are mutually exclusive.
+    """
+    if since_days is not None and since_date_utc is not None:
+        raise ValueError("since_date_utc and since_days must not both be active")
+
     pred = sql_predicate_contacto_gmail_source()
     date_filter = ""
     params: list[Any] = []
-    if since_days is not None and since_days > 0:
+    if since_date_utc is not None:
+        validated = validate_since_date_utc(since_date_utc)
+        date_filter = "AND date_iso >= ?"
+        params.append(validated)
+    elif since_days is not None and since_days > 0:
         date_filter = "AND date_iso >= date('now', ?)"
         params.append(f"-{int(since_days)} days")
 

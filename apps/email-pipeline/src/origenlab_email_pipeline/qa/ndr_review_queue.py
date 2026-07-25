@@ -6,16 +6,22 @@ import csv
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
 from origenlab_email_pipeline.contact_email_suppression import fetch_contact_email_suppression_row
 from origenlab_email_pipeline.mart_core_postgres_migrate import connect_sqlite_readonly
-from origenlab_email_pipeline.ndr_contacto_scan import scan_ndr_planned_recipients
+from origenlab_email_pipeline.ndr_contacto_scan import (
+    compute_scan_start_date_utc,
+    scan_ndr_planned_recipients,
+    validate_since_date_utc,
+)
 
 BatchName = Literal["A", "B", "C", "D", "E"]
 NDR_SCAN_LIMIT = 50_000
+MAX_NDR_REVIEW_QUEUE_AGE_DAYS = 7
+MAX_QUEUE_FUTURE_SKEW = timedelta(minutes=5)
 
 # Targeted apply codes per human-review batch (exact-email only; never domain suppression).
 APPLY_ONLY_CODE_BATCH_A = "bounce_no_such_user"
@@ -47,8 +53,111 @@ def default_out_dir(repo_root: Path, date_label: str) -> Path:
     )
 
 
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+def _utc_now_iso(as_of_utc: datetime | None = None) -> str:
+    now = (as_of_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    return now.replace(microsecond=0).isoformat()
+
+
+def parse_queue_generated_at_utc(value: object) -> datetime:
+    """Parse queue ``generated_at`` / ``generated_at_utc`` into an aware UTC datetime.
+
+    Timezone-naive values are rejected; aware values are normalized to UTC.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("queue generated_at is missing")
+    raw = value.strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError as exc:
+        raise ValueError(f"queue generated_at is malformed: {value!r}") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"queue generated_at requires an explicit timezone: {value!r}")
+    return parsed.astimezone(timezone.utc)
+
+
+def parse_queue_since_days(value: object) -> int:
+    """Require an exact nonnegative JSON integer for persisted queue ``since_days``."""
+    if value is None or value == "":
+        raise ValueError("queue since_days is missing")
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"queue since_days is malformed: {value!r}")
+    if value < 0:
+        raise ValueError(f"queue since_days is malformed: {value!r}")
+    return value
+
+
+def _validate_max_age_days(max_age_days: object) -> int:
+    if isinstance(max_age_days, bool) or not isinstance(max_age_days, int):
+        raise ValueError(f"max_age_days must be an exact nonnegative int, got {max_age_days!r}")
+    if max_age_days < 0:
+        raise ValueError(f"max_age_days must be an exact nonnegative int, got {max_age_days!r}")
+    return max_age_days
+
+
+def derive_legacy_scan_start_date_utc(
+    *,
+    generated_at: object,
+    since_days: object,
+) -> str:
+    """Derive the original UTC calendar lower bound from generation metadata."""
+    days = parse_queue_since_days(since_days)
+    generated = parse_queue_generated_at_utc(generated_at)
+    return compute_scan_start_date_utc(since_days=days, as_of_utc=generated)
+
+
+def resolve_reviewed_ndr_scan_start_date_utc(
+    summary: dict[str, Any],
+    *,
+    now_utc: datetime | None = None,
+    max_age_days: int = MAX_NDR_REVIEW_QUEUE_AGE_DAYS,
+) -> tuple[str | None, str | None]:
+    """Resolve the frozen evidence lower bound for a reviewed NDR queue.
+
+    Returns ``(scan_start_date_utc, error_reason)``. On success ``error_reason`` is None.
+    Explicit ``scan_start_date_utc`` must equal the bound derived from generation metadata.
+    """
+    try:
+        age_limit_days = _validate_max_age_days(max_age_days)
+    except ValueError:
+        return None, "malformed_max_age_days"
+
+    now = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    generated_raw = summary.get("generated_at_utc", summary.get("generated_at"))
+    try:
+        generated = parse_queue_generated_at_utc(generated_raw)
+    except ValueError:
+        return None, "malformed_queue_generated_at"
+
+    if generated > now + MAX_QUEUE_FUTURE_SKEW:
+        return None, "queue_generated_in_future"
+
+    age = now - generated
+    if age > timedelta(days=age_limit_days):
+        return None, "queue_too_old_rebuild_required"
+
+    try:
+        days = parse_queue_since_days(summary.get("since_days"))
+    except ValueError as exc:
+        message = str(exc)
+        if "since_days is missing" in message:
+            return None, "missing_queue_since_days"
+        return None, "malformed_queue_since_days"
+
+    expected = compute_scan_start_date_utc(since_days=days, as_of_utc=generated)
+
+    explicit = summary.get("scan_start_date_utc")
+    if explicit is not None and str(explicit).strip():
+        try:
+            validated_explicit = validate_since_date_utc(str(explicit))
+        except ValueError:
+            return None, "malformed_scan_start_date_utc"
+        if validated_explicit != expected:
+            return None, "scan_start_date_mismatch"
+        return validated_explicit, None
+
+    return expected, None
 
 
 def _body_blob(row: tuple[Any, ...]) -> str:
@@ -193,6 +302,7 @@ class NdrCandidate:
 class NdrReviewQueueResult:
     generated_at: str
     since_days: int
+    scan_start_date_utc: str
     sqlite_path: str
     date_label: str
     out_dir: Path
@@ -229,6 +339,7 @@ class NdrReviewQueueResult:
         return {
             "generated_at": self.generated_at,
             "since_days": self.since_days,
+            "scan_start_date_utc": self.scan_start_date_utc,
             "sqlite_path": self.sqlite_path,
             "date_label": self.date_label,
             "scanned_rows": self.scanned_rows,
@@ -250,11 +361,20 @@ def build_ndr_review_queue(
     out_dir: Path,
     since_days: int,
     date_label: str,
+    as_of_utc: datetime | None = None,
 ) -> NdrReviewQueueResult:
+    as_of = (as_of_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    generated_at = _utc_now_iso(as_of)
+    scan_start_date_utc = compute_scan_start_date_utc(
+        since_days=since_days,
+        as_of_utc=as_of,
+    )
     conn = connect_sqlite_readonly(sqlite_path)
     try:
         planned, scanned, skipped_no_recpt = scan_ndr_planned_recipients(
-            conn, since_days=since_days, limit=NDR_SCAN_LIMIT
+            conn,
+            since_date_utc=scan_start_date_utc,
+            limit=NDR_SCAN_LIMIT,
         )
         recipient_count_by_email_id: dict[int, int] = {}
         for _email, (_code, _date_iso, email_id, _subj) in planned.items():
@@ -295,8 +415,9 @@ def build_ndr_review_queue(
         conn.close()
 
     result = NdrReviewQueueResult(
-        generated_at=_utc_now_iso(),
+        generated_at=generated_at,
         since_days=since_days,
+        scan_start_date_utc=scan_start_date_utc,
         sqlite_path=str(sqlite_path.resolve()),
         date_label=date_label,
         out_dir=out_dir,
@@ -434,6 +555,7 @@ def _format_summary_md(result: NdrReviewQueueResult) -> str:
             f"- Generated (UTC): {result.generated_at}",
             f"- SQLite: `{result.sqlite_path}`",
             f"- since_days: {result.since_days}",
+            f"- scan_start_date_utc: {result.scan_start_date_utc}",
             "",
             "## Scan summary",
             "",

@@ -134,6 +134,7 @@ def test_batch_a_dry_run_lists_candidates(reports_dir: Path) -> None:
     )
     plan, exit_code, _summary = build_ndr_safe_auto_apply_plan(
         NdrSafeAutoApplyOptions(batch="A", queue_dir=queue_dir, reports_dir=reports_dir),
+        now_fn=lambda: _FIXED_NOW,
     )
     assert exit_code == 0
     assert plan["reason"] == "ready"
@@ -158,6 +159,7 @@ def test_empty_batch_a_returns_no_op_success(reports_dir: Path) -> None:
     )
     plan, exit_code, _ = build_ndr_safe_auto_apply_plan(
         NdrSafeAutoApplyOptions(batch="A", reports_dir=reports_dir),
+        now_fn=lambda: _FIXED_NOW,
     )
     assert exit_code == 0
     assert plan["reason"] == "no_candidates"
@@ -174,6 +176,7 @@ def test_unsupported_batches_refused_dry_run(reports_dir: Path, batch: str) -> N
     )
     plan, exit_code, _ = build_ndr_safe_auto_apply_plan(
         NdrSafeAutoApplyOptions(batch=batch, reports_dir=reports_dir),  # type: ignore[arg-type]
+        now_fn=lambda: _FIXED_NOW,
     )
     assert exit_code == 1
     assert plan["reason"] == "unsupported_batch"
@@ -202,6 +205,7 @@ def test_unsupported_batches_apply_refused(reports_dir: Path, batch: str) -> Non
 def test_missing_queue_dir_returns_error(reports_dir: Path) -> None:
     plan, exit_code, _ = build_ndr_safe_auto_apply_plan(
         NdrSafeAutoApplyOptions(batch="A", reports_dir=reports_dir),
+        now_fn=lambda: _FIXED_NOW,
     )
     assert exit_code == 2
     assert plan["reason"] == "missing_queue"
@@ -370,8 +374,9 @@ def test_successful_apply_runs_targeted_ndr_refresh_and_rebuild(reports_dir: Pat
     assert "--only-code" in ndr_argv
     assert APPLY_ONLY_CODE_BATCH_A in ndr_argv
     assert "--apply" in ndr_argv
-    assert "--since-days" in ndr_argv
-    assert "1" in ndr_argv
+    assert "--since-date-utc" in ndr_argv
+    assert "2026-06-10" in ndr_argv
+    assert "--since-days" not in ndr_argv
 
     refresh_argv = mock_subprocess.call_args_list[1].args[0]
     assert refresh_argv[-1] == "refresh-safety"
@@ -393,13 +398,15 @@ def test_successful_apply_runs_targeted_ndr_refresh_and_rebuild(reports_dir: Pat
 def test_targeted_ndr_apply_command_shape() -> None:
     cmd = build_targeted_ndr_apply_command(
         allowlist_path=Path("/tmp/apply_allowlist_batch_a.txt"),
-        since_days=1,
+        since_date_utc="2026-07-22",
     )
     assert "--emails-file" in cmd
     assert "--only-code" in cmd
     assert APPLY_ONLY_CODE_BATCH_A in cmd
     assert "--apply" in cmd
-    assert "--since-days" in cmd
+    assert "--since-date-utc" in cmd
+    assert "2026-07-22" in cmd
+    assert "--since-days" not in cmd
 
 
 @patch("subprocess.run")
@@ -432,13 +439,17 @@ def test_cli_batch_a_dry_run_integration(reports_dir: Path, capsys: pytest.Captu
     )
     with patch(
         "origenlab_email_pipeline.operator_cli.ndr_safe_auto_apply.load_settings"
-    ) as mock_settings:
+    ) as mock_settings, patch(
+        "origenlab_email_pipeline.operator_cli.ndr_safe_auto_apply.datetime"
+    ) as mock_datetime:
         mock_settings.return_value.resolved_reports_dir.return_value = reports_dir
+        mock_datetime.now.return_value = _FIXED_NOW
         rc = main(["ndr-safe-auto-apply", "--batch", "A", "--dry-run", "--json"])
     assert rc == 0
     data = json.loads(capsys.readouterr().out)
     assert data["dry_run"] is True
     assert data["emails"] == ["cli@example.cl"]
+    assert data["reason"] == "ready"
 
 
 def test_cli_apply_refuses_without_confirm_reviewed(reports_dir: Path) -> None:

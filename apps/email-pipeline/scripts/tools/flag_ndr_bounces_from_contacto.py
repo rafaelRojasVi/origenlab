@@ -33,10 +33,8 @@ Example::
 from __future__ import annotations
 
 import argparse
-import sqlite3
 import sys
 from pathlib import Path
-from typing import Any
 
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT / "src") not in sys.path:
@@ -53,6 +51,7 @@ from origenlab_email_pipeline.db import connect
 from origenlab_email_pipeline.ndr_contacto_scan import (
     PlannedEntry,
     scan_ndr_planned_recipients,
+    validate_since_date_utc,
 )
 from origenlab_email_pipeline.reported_non_delivery_contacto_scan import (
     ReportedNonDeliveryEntry,
@@ -147,6 +146,15 @@ def main() -> int:
         help="Only rows with date_iso >= now - N days (SQLite date string compare is lexical ISO).",
     )
     ap.add_argument(
+        "--since-date-utc",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help=(
+            "Absolute UTC calendar lower bound for date_iso (YYYY-MM-DD). "
+            "Mutually exclusive with --since-days; preferred for reviewed-queue apply."
+        ),
+    )
+    ap.add_argument(
         "--emails-file",
         type=Path,
         default=None,
@@ -168,6 +176,17 @@ def main() -> int:
     )
     args = ap.parse_args()
 
+    if args.since_days is not None and args.since_date_utc is not None:
+        print("--since-days and --since-date-utc are mutually exclusive", file=sys.stderr)
+        return 1
+
+    if args.since_date_utc is not None:
+        try:
+            args.since_date_utc = validate_since_date_utc(args.since_date_utc)
+        except ValueError as exc:
+            print(f"invalid --since-date-utc: {exc}", file=sys.stderr)
+            return 1
+
     emails_allowlist: list[str] | None = None
     if args.emails_file is not None:
         if not args.emails_file.is_file():
@@ -184,6 +203,7 @@ def main() -> int:
         planned, scanned, skipped_no_rcpt = scan_ndr_planned_recipients(
             conn,
             since_days=args.since_days,
+            since_date_utc=args.since_date_utc,
             limit=args.limit,
         )
         print(
