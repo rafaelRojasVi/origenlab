@@ -370,8 +370,9 @@ def test_successful_apply_runs_targeted_ndr_refresh_and_rebuild(reports_dir: Pat
     assert "--only-code" in ndr_argv
     assert APPLY_ONLY_CODE_BATCH_A in ndr_argv
     assert "--apply" in ndr_argv
-    assert "--since-days" in ndr_argv
-    assert "1" in ndr_argv
+    assert "--since-date-utc" in ndr_argv
+    assert "2026-06-10" in ndr_argv
+    assert "--since-days" not in ndr_argv
 
     refresh_argv = mock_subprocess.call_args_list[1].args[0]
     assert refresh_argv[-1] == "refresh-safety"
@@ -393,13 +394,15 @@ def test_successful_apply_runs_targeted_ndr_refresh_and_rebuild(reports_dir: Pat
 def test_targeted_ndr_apply_command_shape() -> None:
     cmd = build_targeted_ndr_apply_command(
         allowlist_path=Path("/tmp/apply_allowlist_batch_a.txt"),
-        since_days=1,
+        since_date_utc="2026-07-22",
     )
     assert "--emails-file" in cmd
     assert "--only-code" in cmd
     assert APPLY_ONLY_CODE_BATCH_A in cmd
     assert "--apply" in cmd
-    assert "--since-days" in cmd
+    assert "--since-date-utc" in cmd
+    assert "2026-07-22" in cmd
+    assert "--since-days" not in cmd
 
 
 @patch("subprocess.run")

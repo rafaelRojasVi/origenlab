@@ -26,6 +26,7 @@ from origenlab_email_pipeline.qa.ndr_review_queue import (
     build_ndr_review_queue,
     default_date_label,
     default_out_dir,
+    resolve_reviewed_ndr_scan_start_date_utc,
 )
 
 SUPPORTED_DRY_RUN_BATCHES: frozenset[BatchName] = frozenset({"A"})
@@ -99,6 +100,7 @@ def build_ndr_safe_auto_apply_audit_record(
         "applied": applied,
         "operator": operator,
         "confirm_reviewed": confirm_reviewed,
+        "scan_start_date_utc": plan.get("scan_start_date_utc"),
     }
     if exit_code is not None:
         record["exit_code"] = exit_code
@@ -170,6 +172,8 @@ def _batch_e_count(summary: dict[str, Any]) -> int:
 
 def build_ndr_safe_auto_apply_plan(
     options: NdrSafeAutoApplyOptions,
+    *,
+    now_fn: NowFn | None = None,
 ) -> tuple[dict[str, Any], ExitCode, dict[str, Any] | None]:
     """Build a plan from on-disk ndr_review_queue artifacts."""
     supported = SUPPORTED_APPLY_BATCHES if options.apply else SUPPORTED_DRY_RUN_BATCHES
@@ -237,6 +241,11 @@ def build_ndr_safe_auto_apply_plan(
 
     emails = load_ndr_allowlist_emails(allowlist_path)
     reason = "ready" if emails else "no_candidates"
+    now = (now_fn or (lambda: datetime.now(timezone.utc)))()
+    scan_start_date_utc, scan_window_error = resolve_reviewed_ndr_scan_start_date_utc(
+        summary,
+        now_utc=now,
+    )
 
     plan: dict[str, Any] = {
         "dry_run": options.dry_run,
@@ -247,6 +256,8 @@ def build_ndr_safe_auto_apply_plan(
         "allowlist_path": str(allowlist_path.resolve()),
         "generated_at_utc": summary.get("generated_at"),
         "since_days": summary.get("since_days"),
+        "scan_start_date_utc": scan_start_date_utc,
+        "scan_window_error": scan_window_error,
         "date_label": summary.get("date_label"),
         "candidates_total": summary.get("candidates_total"),
         "candidates_already_suppressed": summary.get("candidates_already_suppressed"),
@@ -287,13 +298,19 @@ def validate_apply_guards(
     if plan.get("reason") != "ready":
         return str(plan.get("reason") or "not_ready"), 1
 
+    scan_window_error = plan.get("scan_window_error")
+    if scan_window_error:
+        return str(scan_window_error), 1
+    if not plan.get("scan_start_date_utc"):
+        return "missing_scan_start_date_utc", 1
+
     return "ready", 0
 
 
 def build_targeted_ndr_apply_command(
     *,
     allowlist_path: Path,
-    since_days: int | None,
+    since_date_utc: str,
 ) -> list[str]:
     cmd = [
         sys.executable,
@@ -302,12 +319,11 @@ def build_targeted_ndr_apply_command(
         str(allowlist_path),
         "--only-code",
         APPLY_ONLY_CODE_BATCH_A,
+        "--since-date-utc",
+        str(since_date_utc),
         "--apply",
     ]
-    if since_days is not None:
-        cmd.extend(["--since-days", str(int(since_days))])
     return cmd
-
 
 def build_refresh_safety_command() -> list[str]:
     return [sys.executable, "-m", "origenlab_email_pipeline.cli", "refresh-safety"]
@@ -366,6 +382,7 @@ def format_ndr_safe_auto_apply_text(plan: dict[str, Any]) -> str:
         "queue_dir",
         "generated_at_utc",
         "since_days",
+        "scan_start_date_utc",
         "date_label",
         "candidates_total",
         "candidates_already_suppressed",
@@ -447,9 +464,10 @@ def _run_apply_path(
     allowlist_path = Path(str(plan["allowlist_path"]))
     since_days = plan.get("since_days")
     since_days_int = int(since_days) if since_days is not None else None
+    scan_start_date_utc = str(plan["scan_start_date_utc"])
     ndr_argv = build_targeted_ndr_apply_command(
         allowlist_path=allowlist_path,
-        since_days=since_days_int,
+        since_date_utc=scan_start_date_utc,
     )
     ndr_result = subprocess_run(
         ndr_argv,
@@ -551,7 +569,7 @@ def run_ndr_safe_auto_apply(
     rebuild_fn = rebuild_queue_fn or rebuild_ndr_review_queue_after_apply
     active_current = _active_current_path(options.reports_dir)
 
-    plan, exit_code, summary = build_ndr_safe_auto_apply_plan(options)
+    plan, exit_code, summary = build_ndr_safe_auto_apply_plan(options, now_fn=now_fn)
     if options.dry_run:
         audit_record = build_ndr_safe_auto_apply_audit_record(
             plan,
