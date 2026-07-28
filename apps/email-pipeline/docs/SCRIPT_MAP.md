@@ -370,6 +370,7 @@ Research automation prompt templates: `prompts/deep_research_netnew_chile_market
 | `scripts/qa/build_ndr_review_queue.py` | OPS_AUDIT | **Read-only** NDR human-review batches + suggested allowlists; no `--apply` |
 | `scripts/qa/build_post_send_digest.py` | OPS_AUDIT | **Read-only** post-send digest (run **after** `audit_contacted_universe.py` in post-send loop) |
 | `scripts/qa/audit_prospectos_safety_drift.py` | OPS_AUDIT | Raw `lead_research_prospect` vs safety sidecars — drift ≠ send failure |
+| `scripts/qa/audit_commercial_truth.py` | OPS_AUDIT | **Read-only** commercial truth audit (PR1): requires `--sqlite-path` + `--output-dir`; no production fallback; gitignored reports — see [`COMMERCIAL_TRUTH_AUDIT_PR1.md`](audits/COMMERCIAL_TRUTH_AUDIT_PR1.md) |
 | `scripts/qa/audit_institution_grouping.py` | OPS_AUDIT | Institution/domain grouping — **not** send safety; prefer `origenlab audit-institution-grouping` |
 | `scripts/qa/smoke_dashboard_api_readiness.py` | OPS_AUDIT | **Read-only** HTTP smoke against deployed `apps/api` (:8001); debugging / deploy check only |
 
