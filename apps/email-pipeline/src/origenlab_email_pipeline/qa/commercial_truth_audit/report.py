@@ -5,12 +5,27 @@ from __future__ import annotations
 from typing import Any
 
 
+def _metric_line(name: str, payload: Any) -> str:
+    if isinstance(payload, dict) and "value" in payload:
+        conf = payload.get("confidence") or "unknown"
+        denom = payload.get("denominator")
+        denom_bit = f" (denominator={denom})" if denom is not None else ""
+        definition = payload.get("definition") or ""
+        return (
+            f"- `{name}` = **{payload.get('value')}** "
+            f"[{conf}]{denom_bit}"
+            + (f" — {definition}" if definition else "")
+        )
+    return f"- `{name}` = **{payload}**"
+
+
 def render_audit_report_md(
     *,
     summary: dict[str, Any],
     lineage_notes: list[str],
 ) -> str:
     m = summary.get("metrics") or {}
+    flat = m.get("_flat") if isinstance(m, dict) else None
     lines = [
         "# Commercial Truth Audit Report",
         "",
@@ -22,50 +37,73 @@ def render_audit_report_md(
         f"- Generated at (UTC): `{summary.get('generated_at_utc')}`",
         f"- SQLite path: `{summary.get('sqlite_path')}`",
         f"- Output dir: `{summary.get('output_dir')}`",
-        f"- Prospect rows analyzed: **{m.get('prospect_rows', 0)}**",
+        "",
+        "## Metric confidence legend",
+        "",
+        "- `observed` — directly counted from stored rows",
+        "- `derived_high_confidence` — deterministic from dated/explicit evidence",
+        "- `derived_medium_confidence` — derived with incomplete dates or weaker joins",
+        "- `heuristic` — audit candidate inference; not production truth",
+        "- `unavailable` — cannot be proven with current evidence",
         "",
         "## Headline metrics (sanitized)",
         "",
-        f"- `already_contacted` count: {m.get('already_contacted_count', 0)}",
-        f"- Campaign-recipient-only share of `already_contacted`: {m.get('already_contacted_campaign_recipient_only_pct', 0)}%",
-        f"- Active inquiry share: {m.get('already_contacted_active_inquiry_pct', 0)}%",
-        f"- Quotation-related share: {m.get('already_contacted_quotation_related_pct', 0)}%",
-        f"- Purchase-pending share: {m.get('already_contacted_purchase_pending_pct', 0)}%",
-        f"- Existing-customer share: {m.get('already_contacted_existing_customer_pct', 0)}%",
-        f"- Fulfilment/post-sale share: {m.get('already_contacted_fulfillment_or_post_sale_pct', 0)}%",
-        f"- Dormant share: {m.get('already_contacted_dormant_pct', 0)}%",
-        f"- Undetermined share: {m.get('already_contacted_undetermined_pct', 0)}%",
-        f"- Open threads without useful next action: {m.get('open_thread_without_next_action_count', 0)}",
-        f"- Sent-only treated like opportunities: {m.get('sent_only_treated_as_opportunity_count', 0)}",
-        f"- Active cases hidden in generic buckets: {m.get('active_cases_hidden_in_generic_buckets_count', 0)}",
-        f"- Hard-bounce leakage rate (campaign batches): {m.get('hard_bounce_leakage_rate', 0)}%",
-        f"- Duplicate-recipient rate: {m.get('duplicate_recipient_rate', 0)}%",
-        f"- Suppressed-recipient leakage (must be 0): {m.get('suppressed_recipient_leakage', 0)}",
-        f"- Labdelivery recoverable contacts / orgs: {m.get('labdelivery_unique_contacts', 0)} / {m.get('labdelivery_unique_orgs', 0)}",
-        f"- Tender rows with account-link attempt: {m.get('tender_rows_linked', 0)}",
-        f"- Product categories with any evidence: {m.get('batch_readiness_categories_with_evidence', 0)}",
-        f"- Product categories batch-ready: {m.get('batch_ready_categories', 0)}",
-        "",
-        "## Lineage (current system)",
-        "",
     ]
+    # Prefer structured metrics (skip _flat).
+    for key, payload in sorted((m or {}).items()):
+        if key.startswith("_"):
+            continue
+        lines.append(_metric_line(key, payload))
+
+    if flat:
+        lines.extend(
+            [
+                "",
+                "### Flat CLI snapshot",
+                "",
+                f"- prospects={flat.get('prospect_rows')}",
+                f"- already_contacted={flat.get('already_contacted_count')}",
+                f"- current_fulfillment_pct={flat.get('already_contacted_current_fulfillment_or_post_sale_pct')}",
+                f"- history_only_pct={flat.get('already_contacted_customer_or_commercial_history_pct')}",
+                f"- prospect_cohort_dup_rate_valid_emails={flat.get('prospect_cohort_duplicate_rate_of_valid_email_rows')}",
+                f"- hidden_active={flat.get('active_cases_hidden_in_generic_buckets_count')}",
+                f"- cohort_current_suppressed={flat.get('prospect_cohort_current_suppressed_count')}",
+            ]
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Important qualifications",
+            "",
+            "- **Prospect cohort ≠ Gmail campaign.** `prospect_source_batch_quality.csv` measures",
+            "  `lead_research_prospect` rows by `dataset_label`/`source_type`, not Sent-folder recipients.",
+            "- **Lifetime invoice/purchase counts ≠ current fulfilment.** Those counts are historical.",
+            "  Current fulfilment requires dated deal status or explicit recent logistics evidence.",
+            "- **Tender context is independent** of relationship and commercial stage",
+            "  (`audit_procurement_context`).",
+            "- Missing emails are **not** duplicates.",
+            "",
+            "## Lineage (current system)",
+            "",
+        ]
+    )
     for note in lineage_notes:
         lines.append(f"- {note}")
+
+    limitations = summary.get("limitations") or []
+    if limitations:
+        lines.extend(["", "## Remaining limitations", ""])
+        for lim in limitations:
+            lines.append(f"- {lim}")
+
     lines.extend(
         [
             "",
             "## Output artifacts",
             "",
             "See CSV/JSON siblings in this directory. Emails in CSV outputs are redacted.",
-            "The operator review sample is stratified and redacted; local unredacted review",
-            "must stay under gitignored `reports/out/`.",
-            "",
-            "## Interpretation guardrails",
-            "",
-            "- Audit dimensions (`audit_*`) are **candidates**, not production schema.",
-            "- Do not gate sends on `lead_research_prospect.classification` alone.",
-            "- Do not invent product interest; `unknown` means insufficient evidence.",
-            "- Consumer email domains must not be joined into accounts by domain alone.",
+            "`sent_campaign_quality.csv` is the actual Sent-folder report when columns permit.",
             "",
         ]
     )
@@ -78,9 +116,9 @@ DEFAULT_LINEAGE_NOTES = [
     "Safety sidecars: `contact_email_suppression`, `contact_domain_suppression`, `outreach_contact_state`.",
     "Operational overlay (`lead_research_operational_overlay`) adjusts classification/status for mirror/UI.",
     "Commercial action buckets (`commercial_action_buckets`) map overlay rows → dashboard queues.",
-    "Business mart: `contact_master` / `organization_master` (quote/invoice/purchase counts, equipment tags).",
+    "Business mart: `contact_master` / `organization_master` (historical quote/invoice/purchase counts).",
     "Commercial intel v1: signal facts/rollups + opportunity facts (rebuildable).",
-    "Commercial deals / purchase events (when present) provide stronger stage evidence.",
-    "Tenders: Chilecompra/equipment-first queues + `public_tender_review` prospects (CSV-first; not auto-outreach).",
+    "Commercial deals (when present) provide dated stage evidence when timestamps exist.",
+    "Tenders: Chilecompra/equipment-first queues + `public_tender_review` → audit_procurement_context only.",
     "Postgres mirror loaders → `apps/api` read-only routes → `apps/dashboard` Prospectos filters/exports.",
 ]

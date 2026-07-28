@@ -98,10 +98,27 @@ emails (canonical OrigenLab Gmail vs legacy Labdelivery mbox/PST)
 
 Audit-only candidate split (not implemented in production):
 
-- `audit_relationship_state`
-- `audit_commercial_stage`
+- `audit_relationship_state` — customer/knowledge relationship (tender does **not** overwrite this)
+- `audit_commercial_stage` — current stage only when dated/explicit; else `customer_history` / `commercial_history` / `unknown`
+- `audit_procurement_context` — `none` / `tender_watch` / `tender_active` / `historical_tender`
 - `audit_safety_state`
 - `audit_already_contacted_breakdown`
+- Stage evidence fields: `stage_evidence_type`, `stage_evidence_at`, `stage_evidence_source`, `stage_confidence`, `stage_is_current`
+
+---
+
+## 4b. Methodology hardening (post-review)
+
+Corrected so headlines do not overstate evidence:
+
+1. **Duplicates** — `duplicate_occurrence_count = sum(max(count-1,0))` over **valid** emails only; missing emails are never duplicates.
+2. **Procurement vs relationship/stage** — tender evidence sets `audit_procurement_context` only.
+3. **Lifetime counts ≠ current fulfilment** — `quote_email_count` / `invoice_email_count` / `purchase_email_count` are historical; current fulfilment requires dated `commercial_deal` status or explicit recent logistics evidence.
+4. **Multi-deal selection** — exact-email before institutional domain; active before terminal; newest timestamp; stable ID tie-break; consumer-domain fallback refused.
+5. **Batch readiness** — `safe_ready_with_explicit_interest` intersection; `provisional_batch_ready_flag` uses that intersection only.
+6. **Cohort ≠ campaign** — `prospect_source_batch_quality.csv` is prospect-source cohort quality; `sent_campaign_quality.csv` is the Sent-folder report. Do not publish cohort duplicate rates as campaign recipient rates.
+7. **Metric confidence** — every headline in `summary.json` carries `observed` / `derived_*` / `heuristic` / `unavailable` plus definition/denominator.
+8. **Output path** — `--output-dir` must be under gitignored `reports/out/` unless `--allow-output-outside-report-root`.
 
 ---
 
@@ -140,13 +157,14 @@ The audit CLI emits `product_interest_inventory.csv` and `batch_readiness.csv` t
 
 Measured by the audit CLI (local production runs stay gitignored):
 
-- hard-bounce leakage into campaign-like batches;
-- duplicate recipients within a batch label;
-- suppressed-recipient leakage (**target: zero**);
-- missing product-interest provenance;
-- previously contacted recipients still sitting in research-looking rows until overlay/rebuild.
+- **Prospect-source cohort** duplicate rate of **valid** email rows (missing emails excluded).
+- Cohort rows currently bounced/suppressed (current state — **not** proven “suppressed before send”).
+- Missing product-interest provenance.
+- Actual Sent-folder campaign quality in `sent_campaign_quality.csv` (subject+month grouping; no hard-coded subject allowlist).
 
 This PR **does not** apply NDRs or change suppression state.
+
+**Do not** treat prospect cohort duplicate rates as Gmail campaign recipient duplicate rates.
 
 ---
 
@@ -182,7 +200,7 @@ Keep safety tables authoritative. Add **separate read models** (later PRs):
 3. **Opportunity** — commercial stage with evidence pointers (quote/PO/invoice/tender).
 4. **Procurement signal** — Mercado Público / Chilecompra linked to accounts with confidence.
 5. **Next-action task** — operator queue item distinct from safety state.
-6. Dimensions: relationship × commercial-stage × safety (replace overloaded single bucket).
+6. Dimensions: relationship × commercial-stage × **procurement context** × safety × product-interest (replace overloaded single bucket).
 7. Optional read-only MCP/ChatGPT over the audit/read models — never send.
 8. Revised dashboard queues fed by those dimensions — not by “any Gmail history ⇒ already_contacted”.
 
@@ -210,16 +228,19 @@ uv run python scripts/qa/audit_commercial_truth.py \
 ```
 
 `--sqlite-path` and `--output-dir` are **required**. There is no silent fallback to `ORIGENLAB_SQLITE_PATH`.
+`--output-dir` must resolve under gitignored `reports/out/` unless `--allow-output-outside-report-root` is set.
 
 Outputs (emails redacted in CSVs):
 
-- `summary.json`, `audit_report.md`
+- `summary.json`, `audit_report.md` (metrics include confidence + definitions)
 - `source_inventory.csv`, `source_overlap.csv`
 - `account_identity_conflicts.csv`, `contact_identity_conflicts.csv`
 - `classification_distribution.csv`, `classification_conflicts.csv`
 - `already_contacted_breakdown.csv`, `opportunity_stage_candidates.csv`
 - `open_thread_without_next_action.csv`
-- `bounce_leakage.csv`, `campaign_batch_quality.csv`
+- `bounce_leakage.csv`
+- `prospect_source_batch_quality.csv` (prospect cohorts — **not** Sent campaigns)
+- `sent_campaign_quality.csv` (canonical OrigenLab Sent + NDR correlation)
 - `product_interest_inventory.csv`, `batch_readiness.csv`
 - `labdelivery_relationships.csv`, `tender_account_links.csv`
 - `operator_review_sample.csv`

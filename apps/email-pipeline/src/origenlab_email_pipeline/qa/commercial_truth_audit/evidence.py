@@ -20,7 +20,12 @@ from origenlab_email_pipeline.lead_research.lead_research_operational_overlay im
     load_operational_indexes_from_sqlite,
     normalize_prospect_email,
 )
+from origenlab_email_pipeline.qa.commercial_truth_audit.deals import (
+    load_deals_index,
+    resolve_deals_for_contact,
+)
 from origenlab_email_pipeline.qa.commercial_truth_audit.dimensions import enrich_audit_dimensions
+from origenlab_email_pipeline.qa.commercial_truth_audit.emails import normalize_valid_email
 from origenlab_email_pipeline.qa.commercial_truth_audit.readonly import table_columns, table_exists
 from origenlab_email_pipeline.qa.commercial_truth_audit.redaction import normalize_email
 
@@ -63,7 +68,7 @@ def _load_contact_master(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for row in conn.execute("SELECT * FROM contact_master"):
         d = _row_dict(row)
-        em = normalize_email(d.get("email"))
+        em = normalize_valid_email(d.get("email")) or normalize_email(d.get("email"))
         if em:
             out[em] = d
     return out
@@ -87,32 +92,10 @@ def _load_signal_rollups(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for row in conn.execute("SELECT * FROM commercial_contact_signal_rollup"):
         d = _row_dict(row)
-        em = normalize_email(d.get("contact_email"))
+        em = normalize_valid_email(d.get("contact_email")) or normalize_email(d.get("contact_email"))
         if em:
             out[em] = d
     return out
-
-
-def _load_deals_by_email_or_domain(conn: sqlite3.Connection) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    by_email: dict[str, dict[str, Any]] = {}
-    by_domain: dict[str, dict[str, Any]] = {}
-    if not table_exists(conn, "commercial_deal"):
-        return by_email, by_domain
-    for row in conn.execute("SELECT * FROM commercial_deal"):
-        d = _row_dict(row)
-        em = normalize_email(
-            d.get("client_contact_email")
-            or d.get("primary_contact_email")
-            or d.get("contact_email")
-        )
-        if em:
-            by_email[em] = d
-        dom = str(
-            d.get("client_domain") or d.get("org_domain") or d.get("domain") or ""
-        ).strip().lower()
-        if dom:
-            by_domain[dom] = d
-    return by_email, by_domain
 
 
 def _email_source_flags(conn: sqlite3.Connection) -> dict[str, dict[str, bool]]:
@@ -145,7 +128,7 @@ def _email_source_flags(conn: sqlite3.Connection) -> dict[str, dict[str, bool]]:
             text = str(raw)
             # Extract simple emails.
             for token in text.replace("<", " ").replace(">", " ").replace(",", " ").split():
-                em = normalize_email(token)
+                em = normalize_valid_email(token) or normalize_email(token)
                 if not em or "@" not in em:
                     continue
                 if is_origen:
@@ -179,7 +162,7 @@ def build_prospect_evidence_rows(
     contacts = _load_contact_master(conn)
     orgs = _load_org_master(conn)
     signals = _load_signal_rollups(conn)
-    deals_by_email, deals_by_domain = _load_deals_by_email_or_domain(conn)
+    deals_by_email, deals_by_domain = load_deals_index(conn)
     email_flags = _email_source_flags(conn)
 
     prospects = _load_prospects(conn)
@@ -187,12 +170,17 @@ def build_prospect_evidence_rows(
     for raw in prospects:
         overlaid = apply_operational_overlay_to_prospect(dict(raw), idx)
         overlaid = enrich_prospect_for_dashboard(overlaid)
-        em = normalize_prospect_email(overlaid.get("email"))
+        em = normalize_valid_email(overlaid.get("email")) or normalize_prospect_email(overlaid.get("email"))
         dom = str(overlaid.get("domain") or "").strip().lower() or (domain_of(em) if em else None) or ""
         cm = contacts.get(em or "", {})
         org = orgs.get(dom, {})
         sig = signals.get(em or "", {})
-        deal = deals_by_email.get(em or "") or deals_by_domain.get(dom, {})
+        deal_sel = resolve_deals_for_contact(
+            email=em,
+            domain=dom,
+            by_email=deals_by_email,
+            by_domain=deals_by_domain,
+        )
         flags = email_flags.get(em or "", {"origenlab": False, "labdelivery": False})
 
         overlaid["domain"] = dom
@@ -209,10 +197,17 @@ def build_prospect_evidence_rows(
         overlaid["quote_signal_count"] = int(sig.get("quote_signal_count") or 0)
         overlaid["procurement_signal_count"] = int(sig.get("procurement_signal_count") or 0)
         overlaid["technical_signal_count"] = int(sig.get("technical_signal_count") or 0)
-        overlaid["has_commercial_deal"] = bool(deal)
-        overlaid["deal_stage"] = str(
-            deal.get("deal_status") or deal.get("stage") or deal.get("status") or ""
-        )
+        overlaid["has_commercial_deal"] = deal_sel.has_commercial_deal
+        overlaid["deal_stage"] = deal_sel.selected_commercial_deal_stage
+        overlaid["selected_commercial_deal_stage"] = deal_sel.selected_commercial_deal_stage
+        overlaid["selected_commercial_deal_reason"] = deal_sel.selected_commercial_deal_reason
+        overlaid["commercial_deal_count"] = deal_sel.commercial_deal_count
+        overlaid["active_commercial_deal_count"] = deal_sel.active_commercial_deal_count
+        overlaid["latest_commercial_deal_at"] = deal_sel.latest_commercial_deal_at
+        overlaid["commercial_deal_stage_ambiguous"] = deal_sel.commercial_deal_stage_ambiguous
+        overlaid["commercial_deal_match_type"] = deal_sel.commercial_deal_match_type
+        overlaid["selected_deal_updated_at"] = deal_sel.selected_deal_updated_at
+        overlaid["selected_deal_id"] = deal_sel.selected_deal_id
         overlaid["has_labdelivery_evidence"] = bool(flags.get("labdelivery"))
         # Also treat explicit source_type / dataset labels as labdelivery evidence.
         source_type = str(overlaid.get("source_type") or "").strip().lower()

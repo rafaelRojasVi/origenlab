@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Final
 
-AUDIT_VERSION: Final = "commercial_truth_audit_v1"
+AUDIT_VERSION: Final = "commercial_truth_audit_v1_1"
 
 # Existing production commercial action buckets (observed, not redesigned).
 EXISTING_BUCKETS: Final = frozenset(
@@ -25,8 +25,15 @@ RELATIONSHIP_STATES: Final = (
     "known_origenlab",
     "existing_customer",
     "dormant_customer",
-    "public_buyer",
     "supplier_or_internal",
+    "unknown",
+)
+
+PROCUREMENT_CONTEXTS: Final = (
+    "none",
+    "tender_watch",
+    "tender_active",
+    "historical_tender",
     "unknown",
 )
 
@@ -45,8 +52,8 @@ COMMERCIAL_STAGES: Final = (
     "fulfillment",
     "post_sale",
     "lost",
-    "tender_watch",
-    "tender_active",
+    "customer_history",
+    "commercial_history",
     "unknown",
 )
 
@@ -60,6 +67,14 @@ SAFETY_STATES: Final = (
     "unknown",
 )
 
+METRIC_CONFIDENCE: Final = (
+    "observed",
+    "derived_high_confidence",
+    "derived_medium_confidence",
+    "heuristic",
+    "unavailable",
+)
+
 # already_contacted breakdown (audit-only).
 ALREADY_CONTACTED_BREAKDOWN: Final = (
     "campaign_recipient_only",
@@ -67,7 +82,8 @@ ALREADY_CONTACTED_BREAKDOWN: Final = (
     "quotation_related",
     "purchase_pending",
     "existing_customer",
-    "fulfillment_or_post_sale",
+    "customer_or_commercial_history",
+    "current_fulfillment_or_post_sale",
     "dormant",
     "undetermined",
 )
@@ -92,6 +108,31 @@ CONSUMER_EMAIL_DOMAINS: Final = frozenset(
 )
 
 INTERNAL_DOMAINS: Final = frozenset({"origenlab.cl", "labdelivery.cl"})
+
+# commercial_deal statuses treated as open/active vs terminal.
+ACTIVE_DEAL_STATUSES: Final = frozenset(
+    {
+        "draft",
+        "quoted",
+        "client_po_received",
+        "client_invoiced",
+        "client_paid",
+        "supplier_po_sent",
+        "supplier_invoiced",
+        "supplier_paid",
+        "logistics_pending",
+        "in_transit",
+        "needs_review",
+    }
+)
+TERMINAL_DEAL_STATUSES: Final = frozenset({"delivered", "closed", "cancelled"})
+FULFILLMENT_DEAL_STATUSES: Final = frozenset(
+    {"logistics_pending", "in_transit", "delivered", "shipping", "fulfillment", "fulfilled"}
+)
+QUOTE_DEAL_STATUSES: Final = frozenset({"quoted", "draft"})
+PURCHASE_PENDING_DEAL_STATUSES: Final = frozenset(
+    {"client_po_received", "supplier_po_sent", "client_invoiced"}
+)
 
 PRODUCT_CATEGORY_PATTERNS: Final = {
     "centrifuges": ("centrifug", "ultracentrifug", "rotor"),
@@ -164,25 +205,5 @@ SOURCE_INVENTORY_FIELDS: Final = [
     "notes",
 ]
 
-SUMMARY_HEADLINE_KEYS: Final = [
-    "prospect_rows",
-    "already_contacted_count",
-    "already_contacted_campaign_recipient_only_pct",
-    "already_contacted_active_inquiry_pct",
-    "already_contacted_quotation_related_pct",
-    "already_contacted_purchase_pending_pct",
-    "already_contacted_existing_customer_pct",
-    "already_contacted_fulfillment_or_post_sale_pct",
-    "already_contacted_dormant_pct",
-    "already_contacted_undetermined_pct",
-    "open_thread_without_next_action_count",
-    "sent_only_treated_as_opportunity_count",
-    "active_cases_hidden_in_generic_buckets_count",
-    "hard_bounce_leakage_rate",
-    "duplicate_recipient_rate",
-    "suppressed_recipient_leakage",
-    "labdelivery_unique_contacts",
-    "labdelivery_unique_orgs",
-    "tender_rows_linked",
-    "batch_readiness_categories_with_evidence",
-]
+# Relative to apps/email-pipeline/
+DEFAULT_REPORT_ROOT_REL: Final = "reports/out"

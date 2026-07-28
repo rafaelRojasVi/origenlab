@@ -14,7 +14,6 @@ from origenlab_email_pipeline.qa.commercial_truth_audit.analytics import (
     build_already_contacted_breakdown,
     build_batch_readiness,
     build_bounce_leakage,
-    build_campaign_batch_quality,
     build_classification_conflicts,
     build_classification_distribution,
     build_labdelivery_relationships,
@@ -22,6 +21,7 @@ from origenlab_email_pipeline.qa.commercial_truth_audit.analytics import (
     build_operator_review_sample,
     build_opportunity_stage_candidates,
     build_product_interest_inventory,
+    build_prospect_source_batch_quality,
     build_tender_account_links,
     headline_metrics,
 )
@@ -39,6 +39,9 @@ from origenlab_email_pipeline.qa.commercial_truth_audit.inventory import (
 from origenlab_email_pipeline.qa.commercial_truth_audit.report import (
     DEFAULT_LINEAGE_NOTES,
     render_audit_report_md,
+)
+from origenlab_email_pipeline.qa.commercial_truth_audit.sent_campaign import (
+    build_sent_campaign_quality,
 )
 
 
@@ -66,7 +69,6 @@ def _write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str] | N
             writer.writeheader()
         return
     fields = fieldnames or list(rows[0].keys())
-    # Stable union of keys across rows.
     for row in rows:
         for k in row:
             if k not in fields:
@@ -89,6 +91,8 @@ def run_commercial_truth_audit(
     sqlite_path: Path,
     output_dir: Path,
     generated_at_utc: str | None = None,
+    include_sent_campaign_quality: bool = True,
+    sent_campaign_since_days: int = 365,
 ) -> CommercialTruthAuditResult:
     """Run the full read-only commercial truth audit and write artifacts."""
     out = Path(output_dir)
@@ -107,7 +111,7 @@ def run_commercial_truth_audit(
     opportunity_stages = build_opportunity_stage_candidates(prospects)
     open_threads = build_open_thread_without_next_action(prospects)
     bounce_leakage = build_bounce_leakage(prospects)
-    campaign_quality = build_campaign_batch_quality(prospects)
+    prospect_cohort_quality = build_prospect_source_batch_quality(prospects)
     product_interest = build_product_interest_inventory(prospects)
     batch_readiness = build_batch_readiness(prospects)
     labdelivery = build_labdelivery_relationships(conn, prospects)
@@ -116,6 +120,11 @@ def run_commercial_truth_audit(
         prospects,
         account_conflicts=account_conflicts,
     )
+    sent_campaign = (
+        build_sent_campaign_quality(conn, since_days=sent_campaign_since_days)
+        if include_sent_campaign_quality
+        else []
+    )
 
     metrics = headline_metrics(
         prospects,
@@ -123,7 +132,7 @@ def run_commercial_truth_audit(
         open_threads=open_threads,
         conflicts=classification_conflicts,
         bounce_rows=bounce_leakage,
-        campaign_rows=campaign_quality,
+        cohort_rows=prospect_cohort_quality,
         labdelivery_rows=labdelivery,
         tender_rows=tenders,
         batch_readiness=batch_readiness,
@@ -139,6 +148,12 @@ def run_commercial_truth_audit(
         "sqlite_mutations": False,
         "postgres_mutations": False,
         "email_source_tiers": email_tiers,
+        "limitations": [
+            "Prospect-source cohort metrics are not actual Gmail campaign recipient metrics.",
+            "Lifetime mart quote/invoice/purchase counts are historical cumulative evidence, not current stage.",
+            "suppressed_before_send is unavailable without temporal suppression evidence.",
+            "human_reply_candidate_count / auto_reply_count left blank pending dedicated reply classification.",
+        ],
         "metrics": metrics,
         "artifacts": {},
     }
@@ -155,7 +170,8 @@ def run_commercial_truth_audit(
         "opportunity_stage_candidates.csv": opportunity_stages,
         "open_thread_without_next_action.csv": open_threads,
         "bounce_leakage.csv": bounce_leakage,
-        "campaign_batch_quality.csv": campaign_quality,
+        "prospect_source_batch_quality.csv": prospect_cohort_quality,
+        "sent_campaign_quality.csv": sent_campaign,
         "product_interest_inventory.csv": product_interest,
         "batch_readiness.csv": batch_readiness,
         "labdelivery_relationships.csv": labdelivery,
@@ -180,7 +196,6 @@ def run_commercial_truth_audit(
     report_path.write_text(report_md, encoding="utf-8")
     paths["audit_report.md"] = report_path
     summary["artifacts"]["audit_report.md"] = "audit_report.md"
-    # Rewrite summary with complete artifact list.
     _write_json(out / "summary.json", summary)
 
     return CommercialTruthAuditResult(output_dir=out, summary=summary, artifact_paths=paths)

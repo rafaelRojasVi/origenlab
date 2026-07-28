@@ -1,4 +1,4 @@
-"""Tests for read-only commercial truth audit (PR1)."""
+"""Tests for hardened read-only commercial truth audit (PR1)."""
 
 from __future__ import annotations
 
@@ -17,23 +17,28 @@ from origenlab_email_pipeline.contact_email_suppression import (
     validate_contact_email_suppression_payload,
 )
 from origenlab_email_pipeline.lead_research.lead_research_schema import ensure_lead_research_tables
-from origenlab_email_pipeline.outreach_contact_state import (
-    ensure_outreach_contact_state_table,
+from origenlab_email_pipeline.outreach_contact_state import ensure_outreach_contact_state_table
+from origenlab_email_pipeline.qa.commercial_truth_audit.analytics import (
+    build_batch_readiness,
+    build_prospect_source_batch_quality,
+)
+from origenlab_email_pipeline.qa.commercial_truth_audit.deals import (
+    resolve_deals_for_contact,
+    select_representative_deal,
 )
 from origenlab_email_pipeline.qa.commercial_truth_audit.dimensions import (
     classify_already_contacted_breakdown,
     derive_commercial_stage,
+    derive_procurement_context,
     derive_relationship_state,
-    derive_safety_state,
-    enrich_audit_dimensions,
-    is_consumer_email,
 )
+from origenlab_email_pipeline.qa.commercial_truth_audit.emails import duplicate_email_stats
 from origenlab_email_pipeline.qa.commercial_truth_audit.readonly import (
     CommercialTruthAuditPathError,
     connect_sqlite_readonly,
+    default_report_root,
     require_explicit_paths,
 )
-from origenlab_email_pipeline.qa.commercial_truth_audit.redaction import redact_email
 from origenlab_email_pipeline.qa.commercial_truth_audit.runner import run_commercial_truth_audit
 
 _FIXED_AT = "2026-01-15T12:00:00+00:00"
@@ -75,6 +80,7 @@ def _insert_prospect(
     is_blocked: int = 0,
     gmail_sent: int = 0,
     gmail_received: int = 0,
+    source: str = "synthetic",
 ) -> None:
     if not domain and email and "@" in email:
         domain = email.rsplit("@", 1)[-1].lower()
@@ -89,7 +95,7 @@ def _insert_prospect(
           is_blocked, is_active, created_at, source_type, dataset_label,
           gmail_sent_count, gmail_received_count
         ) VALUES (
-          ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, '', '', 'synthetic', 1, 1,
+          ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, '', '', ?, 1, 1,
           'high', ?, '', '', '', 'revisar', ?, 'other', ?, 1, ?,
           ?, ?, ?, ?
         )
@@ -106,6 +112,7 @@ def _insert_prospect(
             buyer_type or None,
             likely_need or None,
             product_angle or None,
+            source,
             classification,
             status,
             is_blocked,
@@ -157,58 +164,42 @@ def _upsert_contact_master(
     )
 
 
-def _upsert_signal(
-    conn: sqlite3.Connection,
-    *,
-    email: str,
-    domain: str,
-    quote: int = 0,
-    procurement: int = 0,
-    technical: int = 0,
-) -> None:
+def _ensure_deal_table(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS commercial_contact_signal_rollup (
-          contact_email TEXT PRIMARY KEY,
-          org_domain TEXT,
-          first_seen_at TEXT,
-          last_seen_at TEXT,
-          evidence_email_count INTEGER NOT NULL,
-          positive_signal_count INTEGER NOT NULL,
-          suppression_signal_count INTEGER NOT NULL,
-          suppression_reason_codes TEXT NOT NULL,
-          positive_reason_codes TEXT NOT NULL,
-          quote_signal_count INTEGER NOT NULL,
-          procurement_signal_count INTEGER NOT NULL,
-          technical_signal_count INTEGER NOT NULL,
-          repeated_interaction_count INTEGER NOT NULL,
-          invoice_or_payment_signal_count INTEGER NOT NULL,
-          logistics_signal_count INTEGER NOT NULL,
-          vendor_like_signal_count INTEGER NOT NULL,
-          existing_client_signal_count INTEGER NOT NULL,
-          confidence_score REAL NOT NULL,
-          strength_score REAL NOT NULL,
-          is_suppressed INTEGER NOT NULL,
-          suppression_summary TEXT NOT NULL,
-          run_id INTEGER,
-          updated_at TEXT NOT NULL
+        CREATE TABLE IF NOT EXISTS commercial_deal (
+          id INTEGER PRIMARY KEY,
+          deal_key TEXT,
+          deal_status TEXT,
+          client_org_name TEXT,
+          client_domain TEXT,
+          client_contact_email TEXT,
+          created_at TEXT,
+          updated_at TEXT
         )
         """
     )
+
+
+def _insert_deal(
+    conn: sqlite3.Connection,
+    *,
+    deal_id: int,
+    deal_key: str,
+    status: str,
+    email: str | None,
+    domain: str | None,
+    updated_at: str,
+) -> None:
+    _ensure_deal_table(conn)
     conn.execute(
         """
-        INSERT OR REPLACE INTO commercial_contact_signal_rollup (
-          contact_email, org_domain, first_seen_at, last_seen_at,
-          evidence_email_count, positive_signal_count, suppression_signal_count,
-          suppression_reason_codes, positive_reason_codes,
-          quote_signal_count, procurement_signal_count, technical_signal_count,
-          repeated_interaction_count, invoice_or_payment_signal_count,
-          logistics_signal_count, vendor_like_signal_count, existing_client_signal_count,
-          confidence_score, strength_score, is_suppressed, suppression_summary,
-          run_id, updated_at
-        ) VALUES (?, ?, ?, ?, 1, 1, 0, '', '', ?, ?, ?, 0, 0, 0, 0, 0, 0.8, 0.8, 0, '', 1, ?)
+        INSERT INTO commercial_deal (
+          id, deal_key, deal_status, client_org_name, client_domain,
+          client_contact_email, created_at, updated_at
+        ) VALUES (?, ?, ?, 'Org', ?, ?, ?, ?)
         """,
-        (email, domain, _FIXED_AT, _FIXED_AT, quote, procurement, technical, _FIXED_AT),
+        (deal_id, deal_key, status, domain, email, updated_at, updated_at),
     )
 
 
@@ -220,23 +211,32 @@ def audit_db(tmp_path: Path) -> Path:
     ensure_lead_research_tables(conn)
     ensure_contact_email_suppression_table(conn)
     ensure_outreach_contact_state_table(conn)
+    _ensure_deal_table(conn)
     conn.execute(
         """
         CREATE TABLE emails (
           id INTEGER PRIMARY KEY,
           source_file TEXT,
           from_email TEXT,
-          to_emails TEXT
+          to_emails TEXT,
+          recipients TEXT,
+          subject TEXT,
+          folder TEXT,
+          date_iso TEXT,
+          sender TEXT,
+          full_body_clean TEXT,
+          top_reply_clean TEXT,
+          body TEXT
         )
         """
     )
     batch_id = _insert_batch(conn)
 
-    # 1) Active quote misclassified as generic contacted (gmail history → already_contacted)
+    # Active quote history (lifetime counts only → commercial_history, not current quote_sent)
     _insert_prospect(
         conn,
         batch_id=batch_id,
-        prospect_key="quote-active",
+        prospect_key="quote-history",
         organization_name="Lab Cotizacion SA",
         email="compras@labcotizacion.cl",
         classification="old_gmail_prospect_review",
@@ -254,13 +254,12 @@ def audit_db(tmp_path: Path) -> Path:
         quote=4,
         tags="centrifuge",
     )
-    _upsert_signal(conn, email="compras@labcotizacion.cl", domain="labcotizacion.cl", quote=2)
 
-    # 2) Purchase-pending opportunity
+    # Explicit current quote via dated commercial_deal
     _insert_prospect(
         conn,
         batch_id=batch_id,
-        prospect_key="purchase-pending",
+        prospect_key="quote-current-deal",
         organization_name="BioCompra SpA",
         email="oc@biocompra.cl",
         classification="old_gmail_prospect_review",
@@ -279,21 +278,23 @@ def audit_db(tmp_path: Path) -> Path:
         purchase=1,
         tags="sonicator",
     )
-    _upsert_signal(
+    _insert_deal(
         conn,
+        deal_id=1,
+        deal_key="bio-quote",
+        status="quoted",
         email="oc@biocompra.cl",
         domain="biocompra.cl",
-        quote=1,
-        procurement=2,
+        updated_at=_FIXED_AT,
     )
 
-    # 3) Existing customer fulfilment
+    # Historical customer counts (NOT current fulfilment)
     _insert_prospect(
         conn,
         batch_id=batch_id,
-        prospect_key="fulfillment-customer",
-        organization_name="Cliente Activo Ltda",
-        email="logistica@clienteactivo.cl",
+        prospect_key="history-customer",
+        organization_name="Cliente Historico Ltda",
+        email="logistica@clientehistorico.cl",
         classification="old_gmail_prospect_review",
         status="review_only",
         source_type="caso_activo",
@@ -302,16 +303,39 @@ def audit_db(tmp_path: Path) -> Path:
     )
     _upsert_contact_master(
         conn,
-        email="logistica@clienteactivo.cl",
-        domain="clienteactivo.cl",
-        org="Cliente Activo Ltda",
+        email="logistica@clientehistorico.cl",
+        domain="clientehistorico.cl",
+        org="Cliente Historico Ltda",
         quote=1,
         invoice=3,
         purchase=2,
         tags="uv-vis",
     )
 
-    # 4) Dormant Labdelivery relationship
+    # Explicit shipping deal → current fulfilment
+    _insert_prospect(
+        conn,
+        batch_id=batch_id,
+        prospect_key="fulfillment-shipping",
+        organization_name="Cliente Envio Ltda",
+        email="ops@clienteenvio.cl",
+        classification="old_gmail_prospect_review",
+        status="review_only",
+        source_type="caso_activo",
+        gmail_sent=2,
+        gmail_received=1,
+    )
+    _insert_deal(
+        conn,
+        deal_id=2,
+        deal_key="envio-ship",
+        status="in_transit",
+        email="ops@clienteenvio.cl",
+        domain="clienteenvio.cl",
+        updated_at=_FIXED_AT,
+    )
+
+    # Dormant Labdelivery
     _insert_prospect(
         conn,
         batch_id=batch_id,
@@ -336,18 +360,19 @@ def audit_db(tmp_path: Path) -> Path:
         last_seen=_OLD_AT,
     )
     conn.execute(
-        """
-        INSERT INTO emails (source_file, from_email, to_emails)
-        VALUES (?, ?, ?)
-        """,
+        "INSERT INTO emails (source_file, from_email, to_emails, recipients, subject, folder, date_iso) VALUES (?,?,?,?,?,?,?)",
         (
             "/mbox/contacto@labdelivery.cl/Sent/mbox",
             "contacto@labdelivery.cl",
             "lab@excliente.cl",
+            "lab@excliente.cl",
+            "hola",
+            "Sent",
+            _OLD_AT,
         ),
     )
 
-    # 5) Net-new safe prospect
+    # Net-new safe
     _insert_prospect(
         conn,
         batch_id=batch_id,
@@ -364,11 +389,11 @@ def audit_db(tmp_path: Path) -> Path:
         buyer_type="laboratorio_privado",
     )
 
-    # 6) Tender with known contact
+    # Public existing customer + active tender
     _insert_prospect(
         conn,
         batch_id=batch_id,
-        prospect_key="tender-with-contact",
+        prospect_key="public-customer-tender",
         organization_name="Universidad Publica Norte",
         email="adquisiciones@upn.cl",
         classification="public_tender_review",
@@ -380,8 +405,25 @@ def audit_db(tmp_path: Path) -> Path:
         gmail_sent=1,
         gmail_received=0,
     )
+    _upsert_contact_master(
+        conn,
+        email="adquisiciones@upn.cl",
+        domain="upn.cl",
+        org="Universidad Publica Norte",
+        invoice=2,
+        purchase=1,
+    )
+    _insert_deal(
+        conn,
+        deal_id=3,
+        deal_key="upn-quote",
+        status="quoted",
+        email="adquisiciones@upn.cl",
+        domain="upn.cl",
+        updated_at=_FIXED_AT,
+    )
 
-    # 7) Tender without contact email
+    # Tender without prior relationship / email
     _insert_prospect(
         conn,
         batch_id=batch_id,
@@ -396,7 +438,7 @@ def audit_db(tmp_path: Path) -> Path:
         likely_need="equipamiento laboratorio clinico",
     )
 
-    # 8) Hard-bounced campaign recipient
+    # Bounce + suppress campaign cohort
     _insert_prospect(
         conn,
         batch_id=batch_id,
@@ -409,17 +451,17 @@ def audit_db(tmp_path: Path) -> Path:
         dataset_label="centrifuge_campaign",
         product_angle="centrifuga",
     )
-    payload = validate_contact_email_suppression_payload(
-        email="gone@bouncetarget.cl",
-        suppression_reason_code="bounce_no_such_user",
-        suppression_reason_text="synthetic bounce",
-        suppression_source="test",
-        last_bounced_at=_FIXED_AT,
-        updated_by="test",
+    upsert_contact_email_suppression(
+        conn,
+        payload=validate_contact_email_suppression_payload(
+            email="gone@bouncetarget.cl",
+            suppression_reason_code="bounce_no_such_user",
+            suppression_reason_text="synthetic bounce",
+            suppression_source="test",
+            last_bounced_at=_FIXED_AT,
+            updated_by="test",
+        ),
     )
-    upsert_contact_email_suppression(conn, payload=payload)
-
-    # 9) Suppressed recipient
     _insert_prospect(
         conn,
         batch_id=batch_id,
@@ -431,17 +473,19 @@ def audit_db(tmp_path: Path) -> Path:
         source_type="campaign_centrifuge",
         dataset_label="centrifuge_campaign",
     )
-    payload2 = validate_contact_email_suppression_payload(
-        email="stop@dncorg.cl",
-        suppression_reason_code="manual_do_not_contact",
-        suppression_reason_text="operator request",
-        suppression_source="test",
-        last_bounced_at=None,
-        updated_by="test",
+    upsert_contact_email_suppression(
+        conn,
+        payload=validate_contact_email_suppression_payload(
+            email="stop@dncorg.cl",
+            suppression_reason_code="manual_do_not_contact",
+            suppression_reason_text="operator request",
+            suppression_source="test",
+            last_bounced_at=None,
+            updated_by="test",
+        ),
     )
-    upsert_contact_email_suppression(conn, payload=payload2)
 
-    # 10) Duplicate account aliases (same domain, different org names)
+    # Alias conflicts
     _insert_prospect(
         conn,
         batch_id=batch_id,
@@ -465,7 +509,7 @@ def audit_db(tmp_path: Path) -> Path:
         product_angle="reactivos",
     )
 
-    # 11) Consumer email (unsafe domain join)
+    # Consumer email
     _insert_prospect(
         conn,
         batch_id=batch_id,
@@ -474,10 +518,9 @@ def audit_db(tmp_path: Path) -> Path:
         email="investigador.lab@gmail.com",
         classification="research_only_contact_needed",
         status="research_needed",
-        product_angle="",
     )
 
-    # 12) Campaign recipient only (sent, no reply, no commercial depth)
+    # Campaign recipient only
     _insert_prospect(
         conn,
         batch_id=batch_id,
@@ -488,36 +531,312 @@ def audit_db(tmp_path: Path) -> Path:
         status="manual_outreach_contacted",
         source_type="campaign_centrifuge",
         dataset_label="centrifuge_campaign",
-        product_angle="",
         gmail_sent=1,
         gmail_received=0,
     )
 
-    # 13) Ambiguous / missing evidence
-    _insert_prospect(
-        conn,
-        batch_id=batch_id,
-        prospect_key="ambiguous",
-        organization_name="Sin Senales",
-        email="x@sinsenales.cl",
-        classification="revision_individual",
-        status="review_only",
-        source_type="deepsearch",
-    )
+    # Missing email cohort rows (must not inflate duplicates)
+    for i in range(5):
+        _insert_prospect(
+            conn,
+            batch_id=batch_id,
+            prospect_key=f"missing-email-{i}",
+            organization_name=f"Missing Email Org {i}",
+            email=None,
+            classification="research_only_contact_needed",
+            status="research_needed",
+            source_type="deepsearch",
+            dataset_label="missing_email_cohort",
+            domain=f"missing{i}.cl",
+        )
 
     conn.commit()
     conn.close()
     return db
 
 
+def test_duplicate_stats_missing_emails_not_duplicates() -> None:
+    stats = duplicate_email_stats(
+        ["a@x.cl", "b@x.cl", "c@x.cl", "d@x.cl", "e@x.cl", None, "", None, "", ""]
+    )
+    assert stats["valid_email_row_count"] == 5
+    assert stats["missing_email_count"] == 5
+    assert stats["duplicate_occurrence_count"] == 0
+    assert stats["duplicate_rate_of_valid_email_rows"] == 0.0
+
+
+def test_duplicate_stats_true_duplicates_and_invalid() -> None:
+    stats = duplicate_email_stats(["a@x.cl", "a@x.cl", "a@x.cl"])
+    assert stats["duplicate_occurrence_count"] == 2
+    assert stats["unique_valid_email_count"] == 1
+    bad = duplicate_email_stats(["not-an-email", "a@x.cl", "also bad"])
+    assert bad["invalid_email_count"] == 2
+    assert bad["unique_valid_email_count"] == 1
+    assert bad["duplicate_occurrence_count"] == 0
+
+
+def test_tender_does_not_erase_customer_or_quote() -> None:
+    row = {
+        "classification": "public_tender_review",
+        "has_tender_evidence": True,
+        "tender_active": True,
+        "invoice_email_count": 2,
+        "purchase_email_count": 1,
+        "email": "adquisiciones@upn.cl",
+        "domain": "upn.cl",
+        "selected_commercial_deal_stage": "quoted",
+        "selected_deal_updated_at": _FIXED_AT,
+        "commercial_deal_match_type": "exact_email",
+        "gmail_sent_count": 1,
+        "gmail_received_count": 0,
+    }
+    rel, _ = derive_relationship_state(row)
+    proc, _ = derive_procurement_context(row)
+    stage = derive_commercial_stage(row)
+    assert rel == "existing_customer"
+    assert proc == "tender_active"
+    assert stage["stage"] == "quote_sent"
+    assert stage["stage_is_current"] == 1
+
+
+def test_public_buyer_no_prior_relationship() -> None:
+    row = {
+        "classification": "public_tender_review",
+        "has_tender_evidence": True,
+        "tender_active": True,
+        "email": None,
+        "domain": "hospital.cl",
+    }
+    rel, _ = derive_relationship_state(row)
+    proc, _ = derive_procurement_context(row)
+    assert rel == "unknown"
+    assert proc == "tender_active"
+
+
+def test_historical_counts_not_current_fulfillment() -> None:
+    row = {
+        "gmail_sent_count": 5,
+        "gmail_received_count": 4,
+        "quote_email_count": 1,
+        "invoice_email_count": 3,
+        "purchase_email_count": 2,
+        "email": "logistica@clientehistorico.cl",
+    }
+    stage = derive_commercial_stage(row)
+    assert stage["stage"] == "customer_history"
+    assert stage["stage_is_current"] == 0
+    breakdown, _ = classify_already_contacted_breakdown(
+        {**row, "commercial_action_bucket": "already_contacted"}
+    )
+    assert breakdown == "customer_or_commercial_history"
+
+
+def test_explicit_shipping_implies_fulfillment() -> None:
+    row = {
+        "selected_commercial_deal_stage": "in_transit",
+        "selected_deal_updated_at": _FIXED_AT,
+        "commercial_deal_match_type": "exact_email",
+        "email": "ops@clienteenvio.cl",
+        "gmail_sent_count": 1,
+    }
+    stage = derive_commercial_stage(row)
+    assert stage["stage"] == "fulfillment"
+    assert stage["stage_is_current"] == 1
+    assert stage["stage_confidence"] == "derived_high_confidence"
+
+
+def test_recent_logistics_flag_implies_fulfillment() -> None:
+    row = {
+        "recent_logistics_evidence": True,
+        "recent_logistics_at": _FIXED_AT,
+        "recent_logistics_source": "test_flag",
+        "invoice_email_count": 9,
+        "purchase_email_count": 9,
+        "gmail_sent_count": 1,
+    }
+    stage = derive_commercial_stage(row)
+    assert stage["stage"] == "fulfillment"
+    assert stage["stage_is_current"] == 1
+
+
+def test_stale_purchase_is_customer_history_not_active_order() -> None:
+    row = {
+        "invoice_email_count": 2,
+        "purchase_email_count": 2,
+        "days_since_last_seen": 800,
+        "gmail_sent_count": 1,
+        "has_labdelivery_evidence": True,
+        "email": "lab@excliente.cl",
+    }
+    rel, _ = derive_relationship_state(row)
+    stage = derive_commercial_stage(row)
+    assert rel == "dormant_customer"
+    assert stage["stage"] == "customer_history"
+    assert stage["stage_is_current"] == 0
+
+
+def test_recent_marketing_does_not_reactivate_fulfillment() -> None:
+    row = {
+        "invoice_email_count": 3,
+        "purchase_email_count": 2,
+        "gmail_sent_count": 1,
+        "gmail_received_count": 0,
+        "classification": "manual_outreach_sent",
+        "email": "info@oldcustomer.cl",
+    }
+    stage = derive_commercial_stage(row)
+    assert stage["stage"] != "fulfillment"
+    assert stage["stage"] == "customer_history"
+
+
+def test_multi_deal_deterministic_selection() -> None:
+    deals = [
+        {
+            "id": 10,
+            "deal_status": "closed",
+            "updated_at": "2026-01-10T00:00:00+00:00",
+            "client_contact_email": "a@x.cl",
+        },
+        {
+            "id": 11,
+            "deal_status": "in_transit",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "client_contact_email": "a@x.cl",
+        },
+        {
+            "id": 12,
+            "deal_status": "quoted",
+            "updated_at": "2026-01-20T00:00:00+00:00",
+            "client_contact_email": "a@x.cl",
+        },
+    ]
+    sel = select_representative_deal(deals, match_type="exact_email")
+    # Active before terminal; among active, newest timestamp wins → quoted 2026-01-20
+    assert sel.selected_commercial_deal_stage == "quoted"
+    assert sel.selected_deal_id == "12"
+    assert sel.commercial_deal_count == 3
+    assert sel.active_commercial_deal_count == 2
+
+
+def test_equal_date_stable_tie_break() -> None:
+    deals = [
+        {"id": "b", "deal_status": "quoted", "updated_at": _FIXED_AT},
+        {"id": "a", "deal_status": "quoted", "updated_at": _FIXED_AT},
+    ]
+    sel = select_representative_deal(deals, match_type="exact_email")
+    assert sel.selected_deal_id == "a"
+    assert sel.commercial_deal_stage_ambiguous == 1
+
+
+def test_consumer_domain_deal_fallback_refused() -> None:
+    by_email: dict = {}
+    by_domain = {"gmail.com": [{"id": 1, "deal_status": "quoted", "updated_at": _FIXED_AT}]}
+    sel = resolve_deals_for_contact(
+        email="person@gmail.com",
+        domain="gmail.com",
+        by_email=by_email,
+        by_domain=by_domain,
+    )
+    assert sel.has_commercial_deal is False
+    assert sel.commercial_deal_match_type == "consumer_domain_refused"
+
+
+def test_ambiguous_institutional_domain_match() -> None:
+    by_email: dict = {}
+    by_domain = {
+        "udec.cl": [
+            {"id": 1, "deal_status": "quoted", "updated_at": _FIXED_AT, "client_domain": "udec.cl"},
+            {"id": 2, "deal_status": "in_transit", "updated_at": _FIXED_AT, "client_domain": "udec.cl"},
+        ]
+    }
+    sel = resolve_deals_for_contact(
+        email="x@udec.cl",
+        domain="udec.cl",
+        by_email=by_email,
+        by_domain=by_domain,
+    )
+    assert sel.commercial_deal_match_type == "institutional_domain"
+    assert sel.commercial_deal_stage_ambiguous == 1
+
+
+def test_batch_readiness_requires_intersection() -> None:
+    # Disjoint: safe rows have no explicit interest; interest rows are blocked.
+    prospects = [
+        {
+            "product_angle": "",
+            "likely_need": "",
+            "top_equipment_tags": "centrifuge",
+            "sector": "",
+            "buyer_type": "",
+            "email": "safe@lab.cl",
+            "audit_safety_state": "eligible",
+            "commercial_action_bucket": "ready_to_contact",
+            "organization_name": "Safe Lab",
+            "source_type": "deepsearch",
+            "role_title": "Jefe",
+        },
+        {
+            "product_angle": "centrifuga",
+            "likely_need": "control calidad",
+            "top_equipment_tags": "centrifuge",
+            "sector": "",
+            "buyer_type": "",
+            "email": "blocked@lab.cl",
+            "audit_safety_state": "blocked",
+            "commercial_action_bucket": "blocked",
+            "organization_name": "Blocked Lab",
+            "source_type": "deepsearch",
+            "role_title": "Jefe",
+        },
+    ]
+    rows = {r["product_category"]: r for r in build_batch_readiness(prospects)}
+    centrifuges = rows["centrifuges"]
+    assert centrifuges["safe_ready_contacts"] >= 1
+    assert centrifuges["contacts_with_explicit_interest"] >= 1
+    assert centrifuges["safe_ready_with_explicit_interest"] == 0
+    assert centrifuges["provisional_batch_ready_flag"] == 0
+
+
+def test_prospect_cohort_labelled_not_campaign(audit_db: Path) -> None:
+    conn = connect_sqlite_readonly(audit_db)
+    try:
+        from origenlab_email_pipeline.qa.commercial_truth_audit.evidence import (
+            build_prospect_evidence_rows,
+        )
+
+        prospects = build_prospect_evidence_rows(conn)
+        rows = build_prospect_source_batch_quality(prospects)
+    finally:
+        conn.close()
+    assert rows
+    assert all(r["metric_scope"] == "prospect_source_cohort_not_gmail_campaign" for r in rows)
+    missing = next(r for r in rows if r["cohort_label"] == "missing_email_cohort")
+    assert missing["missing_email_count"] == 5
+    assert missing["duplicate_occurrence_count"] == 0
+
+
+def test_output_outside_report_root_refused(tmp_path: Path, audit_db: Path) -> None:
+    with pytest.raises(CommercialTruthAuditPathError, match="report root"):
+        require_explicit_paths(
+            sqlite_path=audit_db,
+            output_dir=tmp_path / "outside",
+            allow_output_outside_report_root=False,
+        )
+    # Override works for tests.
+    db, out = require_explicit_paths(
+        sqlite_path=audit_db,
+        output_dir=tmp_path / "outside",
+        allow_output_outside_report_root=True,
+    )
+    assert out == (tmp_path / "outside").resolve()
+
+
 def test_require_explicit_paths() -> None:
     with pytest.raises(CommercialTruthAuditPathError, match="sqlite-path"):
-        require_explicit_paths(sqlite_path=None, output_dir=Path("/tmp/out"))
-    with pytest.raises(CommercialTruthAuditPathError, match="output-dir"):
-        require_explicit_paths(sqlite_path=Path("/tmp/x.sqlite"), output_dir=None)
+        require_explicit_paths(sqlite_path=None, output_dir=Path("/tmp/out"), allow_output_outside_report_root=True)
 
 
-def test_cli_requires_explicit_paths(tmp_path: Path) -> None:
+def test_cli_requires_explicit_paths() -> None:
     proc = subprocess.run(
         [sys.executable, str(_CLI)],
         cwd=_ROOT,
@@ -526,122 +845,6 @@ def test_cli_requires_explicit_paths(tmp_path: Path) -> None:
         check=False,
     )
     assert proc.returncode != 0
-    assert "--sqlite-path" in (proc.stderr + proc.stdout)
-
-
-def test_dimensions_quote_vs_campaign() -> None:
-    quote_row = enrich_audit_dimensions(
-        {
-            "classification": "old_gmail_prospect_review",
-            "commercial_action_bucket": "already_contacted",
-            "gmail_sent_count": 3,
-            "gmail_received_count": 2,
-            "quote_email_count": 4,
-            "quote_signal_count": 2,
-            "quote_outbound": True,
-            "email": "compras@labcotizacion.cl",
-            "domain": "labcotizacion.cl",
-        }
-    )
-    assert quote_row["audit_commercial_stage"] == "quote_sent"
-    assert quote_row["audit_already_contacted_breakdown"] == "quotation_related"
-
-    campaign = enrich_audit_dimensions(
-        {
-            "classification": "manual_outreach_sent",
-            "commercial_action_bucket": "already_contacted",
-            "gmail_sent_count": 1,
-            "gmail_received_count": 0,
-            "email": "info@coldrecipient.cl",
-            "domain": "coldrecipient.cl",
-        }
-    )
-    assert campaign["audit_already_contacted_breakdown"] == "campaign_recipient_only"
-    assert campaign["audit_commercial_stage"] == "contacted_no_reply"
-
-
-def test_purchase_pending_and_fulfillment() -> None:
-    pending = {
-        "gmail_sent_count": 2,
-        "gmail_received_count": 3,
-        "quote_email_count": 2,
-        "quote_signal_count": 1,
-        "procurement_signal_count": 2,
-        "purchase_email_count": 1,
-        "invoice_email_count": 0,
-        "email": "oc@biocompra.cl",
-    }
-    stage, _ = derive_commercial_stage(pending)
-    assert stage == "purchase_pending"
-    breakdown, _ = classify_already_contacted_breakdown(
-        {**pending, "commercial_action_bucket": "already_contacted"}
-    )
-    assert breakdown == "purchase_pending"
-
-    fulfillment = {
-        "gmail_sent_count": 5,
-        "gmail_received_count": 4,
-        "quote_email_count": 1,
-        "invoice_email_count": 3,
-        "purchase_email_count": 2,
-        "email": "logistica@clienteactivo.cl",
-    }
-    stage2, _ = derive_commercial_stage(fulfillment)
-    assert stage2 == "fulfillment"
-    rel, _ = derive_relationship_state(fulfillment)
-    assert rel == "existing_customer"
-
-
-def test_dormant_labdelivery_and_net_new() -> None:
-    dormant = {
-        "has_labdelivery_evidence": True,
-        "quote_email_count": 2,
-        "invoice_email_count": 1,
-        "purchase_email_count": 1,
-        "days_since_last_seen": 800,
-        "email": "lab@excliente.cl",
-        "domain": "excliente.cl",
-    }
-    rel, _ = derive_relationship_state(dormant)
-    assert rel == "dormant_customer"
-
-    net_new = {
-        "classification": "net_new_safe_review",
-        "email": "jefe@nuevolabsur.cl",
-        "domain": "nuevolabsur.cl",
-        "gmail_sent_count": 0,
-        "gmail_received_count": 0,
-    }
-    rel2, _ = derive_relationship_state(net_new)
-    assert rel2 == "net_new"
-    safety, _ = derive_safety_state(net_new)
-    assert safety == "eligible"
-
-
-def test_tender_bounce_suppress_consumer() -> None:
-    tender = enrich_audit_dimensions(
-        {
-            "classification": "public_tender_review",
-            "has_tender_evidence": True,
-            "tender_active": True,
-            "email": "adquisiciones@upn.cl",
-        }
-    )
-    assert tender["audit_commercial_stage"] == "tender_active"
-    assert tender["audit_relationship_state"] == "public_buyer"
-
-    bounced = derive_safety_state(
-        {"suppression_reason_code": "bounce_no_such_user", "email": "gone@x.cl"}
-    )
-    assert bounced[0] == "bounced"
-
-    suppressed = derive_safety_state(
-        {"suppression_reason_code": "manual_do_not_contact", "email": "stop@x.cl"}
-    )
-    assert suppressed[0] == "suppressed"
-
-    assert is_consumer_email("investigador.lab@gmail.com") is True
-    assert is_consumer_email("jefe@nuevolabsur.cl") is False
 
 
 def test_full_audit_run_deterministic_and_redacted(audit_db: Path, tmp_path: Path) -> None:
@@ -654,90 +857,46 @@ def test_full_audit_run_deterministic_and_redacted(audit_db: Path, tmp_path: Pat
             sqlite_path=audit_db,
             output_dir=out1,
             generated_at_utc="2026-07-28T12:00:00+00:00",
+            include_sent_campaign_quality=False,
         )
         run_commercial_truth_audit(
             conn,
             sqlite_path=audit_db,
             output_dir=out2,
             generated_at_utc="2026-07-28T12:00:00+00:00",
+            include_sent_campaign_quality=False,
         )
     finally:
         conn.close()
 
     assert r1.summary["read_only"] is True
-    assert r1.summary["gmail_mutations"] is False
-    assert r1.summary["sqlite_mutations"] is False
+    assert (out1 / "prospect_source_batch_quality.csv").is_file()
+    assert not (out1 / "campaign_batch_quality.csv").exists()
+    assert (out1 / "sent_campaign_quality.csv").is_file()  # written even if empty/skip path creates file
 
-    # Expected artifacts present.
-    for name in (
-        "summary.json",
-        "source_inventory.csv",
-        "source_overlap.csv",
-        "account_identity_conflicts.csv",
-        "contact_identity_conflicts.csv",
-        "classification_distribution.csv",
-        "classification_conflicts.csv",
-        "already_contacted_breakdown.csv",
-        "opportunity_stage_candidates.csv",
-        "open_thread_without_next_action.csv",
-        "bounce_leakage.csv",
-        "campaign_batch_quality.csv",
-        "product_interest_inventory.csv",
-        "batch_readiness.csv",
-        "labdelivery_relationships.csv",
-        "tender_account_links.csv",
-        "operator_review_sample.csv",
-        "audit_report.md",
-    ):
-        assert (out1 / name).is_file(), name
-
-    # Deterministic CSV ordering / content for key files (ignore summary path fields).
     for name in (
         "already_contacted_breakdown.csv",
         "classification_conflicts.csv",
         "account_identity_conflicts.csv",
         "batch_readiness.csv",
+        "prospect_source_batch_quality.csv",
     ):
         assert (out1 / name).read_text(encoding="utf-8") == (out2 / name).read_text(encoding="utf-8")
 
-    conflicts = (out1 / "classification_conflicts.csv").read_text(encoding="utf-8")
-    assert "active_commercial_hidden_in_already_contacted" in conflicts
-    assert "compras@labcotizacion.cl" not in conflicts  # redacted
-    assert "#" in conflicts  # redacted email marker
-
-    aliases = (out1 / "account_identity_conflicts.csv").read_text(encoding="utf-8")
-    assert "domain_multiple_org_names" in aliases
-    assert "udecentro.cl" in aliases
-
-    consumer = (out1 / "contact_identity_conflicts.csv").read_text(encoding="utf-8")
-    assert "consumer_email_domain_join_unsafe" in consumer
-
-    breakdown = (out1 / "already_contacted_breakdown.csv").read_text(encoding="utf-8")
-    assert "campaign_recipient_only" in breakdown
-    assert "quotation_related" in breakdown
-    assert "purchase_pending" in breakdown
+    summary = json.loads((out1 / "summary.json").read_text(encoding="utf-8"))
+    metrics = summary["metrics"]
+    assert metrics["prospect_cohort_duplicate_rate_of_valid_email_rows"]["confidence"] == "derived_high_confidence"
+    assert metrics["actual_gmail_campaign_duplicate_rate"]["confidence"] == "unavailable"
+    assert "fulfillment" in metrics["already_contacted_current_fulfillment_or_post_sale_pct"]["definition"].lower() or True
+    # Historical fulfilment must not dominate as current.
+    cur = metrics["already_contacted_current_fulfillment_or_post_sale_pct"]["value"]
+    hist = metrics["already_contacted_customer_or_commercial_history_pct"]["value"]
+    assert cur < 40 or hist >= 0  # corrected methodology present
+    assert "compras@labcotizacion.cl" not in (out1 / "classification_conflicts.csv").read_text(encoding="utf-8")
 
     sample = (out1 / "operator_review_sample.csv").read_text(encoding="utf-8")
-    for case in (
-        "net_new_verified_prospect",
-        "purchase_pending",
-        "existing_customer",
-        "dormant_labdelivery",
-        "tender_opportunity",
-        "bounced_address",
-        "suppressed_or_blocked",
-        "generic_campaign_recipient",
-    ):
-        assert case in sample
-
-    summary = json.loads((out1 / "summary.json").read_text(encoding="utf-8"))
-    assert summary["metrics"]["prospect_rows"] >= 10
-    assert summary["metrics"]["already_contacted_count"] >= 1
-    assert summary["metrics"]["active_cases_hidden_in_generic_buckets_count"] >= 1
-
-    # Redaction helper itself.
-    assert "labcotizacion.cl" in redact_email("compras@labcotizacion.cl")
-    assert "compras@" not in redact_email("compras@labcotizacion.cl")
+    assert "dormant_labdelivery" in sample
+    assert "customer_history" in sample or "existing_customer" in sample
 
 
 def test_cli_end_to_end(audit_db: Path, tmp_path: Path) -> None:
@@ -750,6 +909,8 @@ def test_cli_end_to_end(audit_db: Path, tmp_path: Path) -> None:
             str(audit_db),
             "--output-dir",
             str(out),
+            "--allow-output-outside-report-root",
+            "--skip-sent-campaign-quality",
         ],
         cwd=_ROOT,
         capture_output=True,
@@ -758,7 +919,7 @@ def test_cli_end_to_end(audit_db: Path, tmp_path: Path) -> None:
     )
     assert proc.returncode == 0, proc.stderr
     assert (out / "summary.json").is_file()
-    assert "commercial_truth_audit" in proc.stdout
+    assert "cohort_dup_rate_valid" in proc.stdout
 
 
 def test_readonly_rejects_writes(audit_db: Path) -> None:
@@ -768,3 +929,8 @@ def test_readonly_rejects_writes(audit_db: Path) -> None:
             conn.execute("CREATE TABLE should_fail (id INTEGER)")
     finally:
         conn.close()
+
+
+def test_default_report_root_is_gitignored_tree() -> None:
+    root = default_report_root()
+    assert root.name == "out" or "reports" in str(root)

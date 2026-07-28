@@ -10,10 +10,13 @@ from origenlab_email_pipeline.qa.commercial_truth_audit.constants import (
     ALREADY_CONTACTED_BREAKDOWN,
     PRODUCT_CATEGORY_PATTERNS,
 )
+from origenlab_email_pipeline.qa.commercial_truth_audit.emails import (
+    duplicate_email_stats,
+    normalize_valid_email,
+)
 from origenlab_email_pipeline.qa.commercial_truth_audit.readonly import table_exists
 from origenlab_email_pipeline.qa.commercial_truth_audit.redaction import (
     email_domain,
-    normalize_email,
     redact_email,
 )
 
@@ -67,15 +70,15 @@ def build_classification_conflicts(prospects: list[dict[str, Any]]) -> list[dict
             "won",
             "technical_review",
             "qualifying",
-        }:
+        } and int(p.get("stage_is_current") or 0) == 1:
             conflict = "active_commercial_hidden_in_already_contacted"
         elif bucket == "already_contacted" and breakdown == "campaign_recipient_only":
             conflict = "campaign_recipient_labeled_already_contacted"
-        elif bucket == "review_history" and stage in {"purchase_pending", "quote_sent", "fulfillment"}:
+        elif bucket == "review_history" and stage in {"purchase_pending", "quote_sent", "fulfillment"} and int(p.get("stage_is_current") or 0) == 1:
             conflict = "active_commercial_hidden_in_review_history"
         elif bucket == "ready_to_contact" and p.get("audit_safety_state") in {"bounced", "suppressed", "blocked"}:
             conflict = "ready_to_contact_but_unsafe"
-        elif bucket == "tender_opportunity" and normalize_email(p.get("email")) is None:
+        elif bucket == "tender_opportunity" and normalize_valid_email(p.get("email")) is None:
             conflict = "tender_without_contact_email"
         if not conflict:
             continue
@@ -131,10 +134,8 @@ def build_opportunity_stage_candidates(prospects: list[dict[str, Any]]) -> list[
     rows = []
     for p in prospects:
         stage = str(p.get("audit_commercial_stage") or "")
-        if stage in {"unknown", "database_only", "research_needed", "contact_planned", "contacted_no_reply"}:
-            # Still include contacted_no_reply as a weak opportunity candidate marker? Spec wants stage candidates.
-            if stage != "contacted_no_reply":
-                continue
+        if stage in {"unknown", "database_only", "research_needed", "contact_planned"}:
+            continue
         rows.append(
             {
                 "prospect_key": p.get("prospect_key") or "",
@@ -144,10 +145,19 @@ def build_opportunity_stage_candidates(prospects: list[dict[str, Any]]) -> list[
                 "classification": p.get("classification") or "",
                 "audit_commercial_stage": stage,
                 "audit_commercial_stage_reason": p.get("audit_commercial_stage_reason") or "",
+                "stage_evidence_type": p.get("stage_evidence_type") or "",
+                "stage_evidence_at": p.get("stage_evidence_at") or "",
+                "stage_evidence_source": p.get("stage_evidence_source") or "",
+                "stage_confidence": p.get("stage_confidence") or "",
+                "stage_is_current": p.get("stage_is_current") or 0,
                 "audit_relationship_state": p.get("audit_relationship_state") or "",
-                "quote_email_count": int(p.get("quote_email_count") or 0),
-                "purchase_email_count": int(p.get("purchase_email_count") or 0),
-                "invoice_email_count": int(p.get("invoice_email_count") or 0),
+                "audit_procurement_context": p.get("audit_procurement_context") or "",
+                "commercial_deal_count": p.get("commercial_deal_count") or 0,
+                "selected_commercial_deal_stage": p.get("selected_commercial_deal_stage") or "",
+                "commercial_deal_stage_ambiguous": p.get("commercial_deal_stage_ambiguous") or 0,
+                "quote_email_count_historical": int(p.get("quote_email_count") or 0),
+                "purchase_email_count_historical": int(p.get("purchase_email_count") or 0),
+                "invoice_email_count_historical": int(p.get("invoice_email_count") or 0),
                 "gmail_sent_count": int(p.get("gmail_sent_count") or 0),
                 "gmail_received_count": int(p.get("gmail_received_count") or 0),
             }
@@ -224,18 +234,21 @@ def build_bounce_leakage(prospects: list[dict[str, Any]]) -> list[dict[str, Any]
     return rows
 
 
-def build_campaign_batch_quality(prospects: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Aggregate campaign/batch quality metrics from prospect provenance."""
+def build_prospect_source_batch_quality(prospects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Aggregate *prospect-source cohort* quality (NOT actual Gmail campaign recipients).
+
+    Groups ``lead_research_prospect`` rows by ``dataset_label`` / ``source_type``.
+    Missing emails are never counted as duplicates.
+    """
     by_batch: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for p in prospects:
-        label = str(p.get("dataset_label") or p.get("source_type") or "unknown_batch")
+        label = str(p.get("dataset_label") or p.get("source_type") or "unknown_cohort")
         by_batch[label].append(p)
     rows = []
     for label, items in sorted(by_batch.items()):
-        n = len(items)
-        emails = [normalize_email(p.get("email")) for p in items]
-        uniq = {e for e in emails if e}
-        dup_rate = _pct(n - len(uniq), n) if n else 0.0
+        stats = duplicate_email_stats([p.get("email") for p in items])
+        n = stats["row_count"]
+        valid_n = stats["valid_email_row_count"]
         bounced = sum(1 for p in items if p.get("audit_safety_state") == "bounced")
         suppressed = sum(1 for p in items if p.get("audit_safety_state") == "suppressed")
         no_product = sum(
@@ -246,23 +259,33 @@ def build_campaign_batch_quality(prospects: list[dict[str, Any]]) -> list[dict[s
         previously = sum(1 for p in items if p.get("audit_safety_state") == "previously_contacted")
         rows.append(
             {
-                "batch_label": label,
-                "recipient_count": n,
-                "unique_emails": len(uniq),
-                "duplicate_recipient_rate": dup_rate,
-                "hard_bounce_count": bounced,
-                "hard_bounce_leakage_rate": _pct(bounced, n),
-                "suppressed_count": suppressed,
-                "suppressed_recipient_leakage": suppressed,  # must be 0 ideally
+                "cohort_label": label,
+                "metric_scope": "prospect_source_cohort_not_gmail_campaign",
+                "row_count": n,
+                "valid_email_row_count": valid_n,
+                "missing_email_count": stats["missing_email_count"],
+                "invalid_email_count": stats["invalid_email_count"],
+                "unique_valid_email_count": stats["unique_valid_email_count"],
+                "duplicate_occurrence_count": stats["duplicate_occurrence_count"],
+                "duplicate_rate_of_valid_email_rows": stats["duplicate_rate_of_valid_email_rows"],
+                "hard_bounce_count_among_cohort_rows": bounced,
+                "hard_bounce_rate_of_cohort_rows": _pct(bounced, n),
+                "current_suppressed_count_among_cohort_rows": suppressed,
+                "current_suppressed_rate_of_cohort_rows": _pct(suppressed, n),
                 "missing_product_interest_count": no_product,
                 "missing_product_interest_pct": _pct(no_product, n),
                 "previously_contacted_count": previously,
                 "missing_provenance_count": sum(
                     1 for p in items if not str(p.get("source") or p.get("source_type") or "").strip()
                 ),
+                "notes": "Cohort membership only; not proof of actual Sent-folder campaign recipients.",
             }
         )
     return rows
+
+
+# Backward-compatible alias (deprecated name).
+build_campaign_batch_quality = build_prospect_source_batch_quality
 
 
 def infer_product_categories(text: str) -> list[str]:
@@ -274,6 +297,14 @@ def infer_product_categories(text: str) -> list[str]:
         if any(p in low for p in patterns):
             hits.append(cat)
     return hits
+
+
+def _has_explicit_product_interest(p: dict[str, Any]) -> bool:
+    return bool(str(p.get("product_angle") or p.get("likely_need") or "").strip())
+
+
+def _has_provenance(p: dict[str, Any]) -> bool:
+    return bool(str(p.get("source") or p.get("source_type") or p.get("dataset_label") or "").strip())
 
 
 def build_product_interest_inventory(prospects: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -292,6 +323,7 @@ def build_product_interest_inventory(prospects: list[dict[str, Any]]) -> list[di
             )
         )
         cats = infer_product_categories(blob)
+        valid = normalize_valid_email(p.get("email"))
         rows.append(
             {
                 "prospect_key": p.get("prospect_key") or "",
@@ -300,13 +332,22 @@ def build_product_interest_inventory(prospects: list[dict[str, Any]]) -> list[di
                 "role_title": p.get("role_title") or "",
                 "product_families": "|".join(cats) if cats else "unknown",
                 "evidence_text_present": int(bool(blob.strip())),
+                "explicit_interest_reason": int(_has_explicit_product_interest(p)),
                 "evidence_source": "prospect_fields+mart_tags",
                 "confidence": "medium" if cats else "unknown",
-                "previous_quotation": int(int(p.get("quote_email_count") or 0) + int(p.get("quote_signal_count") or 0) > 0),
-                "previous_purchase": int(int(p.get("purchase_email_count") or 0) + int(p.get("invoice_email_count") or 0) > 0),
-                "email_quality": "consumer" if p.get("is_consumer_email") else ("present" if normalize_email(p.get("email")) else "missing"),
+                "previous_quotation_history": int(
+                    int(p.get("quote_email_count") or 0) + int(p.get("quote_signal_count") or 0) > 0
+                ),
+                "previous_purchase_history": int(
+                    int(p.get("purchase_email_count") or 0) + int(p.get("invoice_email_count") or 0) > 0
+                ),
+                "email_quality": "consumer"
+                if p.get("is_consumer_email")
+                else ("valid" if valid else ("invalid_or_missing")),
                 "outreach_safety": p.get("audit_safety_state") or "unknown",
                 "audit_commercial_stage": p.get("audit_commercial_stage") or "unknown",
+                "stage_is_current": p.get("stage_is_current") or 0,
+                "audit_procurement_context": p.get("audit_procurement_context") or "none",
             }
         )
     rows.sort(key=lambda r: (r["product_families"], r["prospect_key"], r["email"]))
@@ -314,6 +355,11 @@ def build_product_interest_inventory(prospects: list[dict[str, Any]]) -> list[di
 
 
 def build_batch_readiness(prospects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Product-category readiness using the intersection of safety + explicit interest.
+
+    ``provisional_batch_ready_flag`` requires ``safe_ready_with_explicit_interest >= 3``
+    (same contacts must satisfy all gates — disjoint groups do not pass).
+    """
     rows = []
     for cat in sorted(PRODUCT_CATEGORY_PATTERNS):
         matched = []
@@ -324,27 +370,58 @@ def build_batch_readiness(prospects: list[dict[str, Any]]) -> list[dict[str, Any
             )
             if cat in infer_product_categories(blob):
                 matched.append(p)
-        safe = [
+
+        valid_email_contacts = [p for p in matched if normalize_valid_email(p.get("email"))]
+        # Deduplicate by valid email within category candidate set.
+        seen_emails: set[str] = set()
+        unique_valid: list[dict[str, Any]] = []
+        for p in valid_email_contacts:
+            em = normalize_valid_email(p.get("email"))
+            if em and em not in seen_emails:
+                seen_emails.add(em)
+                unique_valid.append(p)
+
+        safe_ready = [
             p
-            for p in matched
+            for p in unique_valid
             if p.get("audit_safety_state") == "eligible"
-            and normalize_email(p.get("email"))
             and str(p.get("commercial_action_bucket") or "") == "ready_to_contact"
         ]
-        with_reason = [
+        with_explicit = [p for p in unique_valid if _has_explicit_product_interest(p)]
+        intersection = [
             p
-            for p in matched
-            if str(p.get("product_angle") or p.get("likely_need") or "").strip()
+            for p in unique_valid
+            if p.get("audit_safety_state") == "eligible"
+            and str(p.get("commercial_action_bucket") or "") == "ready_to_contact"
+            and _has_explicit_product_interest(p)
+            and _has_provenance(p)
         ]
+        threshold = 3
         rows.append(
             {
                 "product_category": cat,
                 "matched_contacts": len(matched),
-                "matched_organizations": len({str(p.get("organization_name") or "").lower() for p in matched if p.get("organization_name")}),
-                "with_explicit_interest_reason": len(with_reason),
-                "safe_ready_to_contact": len(safe),
-                "batch_ready_flag": int(len(safe) >= 3 and len(with_reason) >= 3),
-                "notes": "unknown interest excluded; no invented product fit.",
+                "valid_email_contacts": len(unique_valid),
+                "safe_ready_contacts": len(safe_ready),
+                "contacts_with_explicit_interest": len(with_explicit),
+                "safe_ready_with_explicit_interest": len(intersection),
+                "unique_ready_organizations": len(
+                    {
+                        str(p.get("organization_name") or "").lower()
+                        for p in intersection
+                        if p.get("organization_name")
+                    }
+                ),
+                "missing_role_count": sum(1 for p in unique_valid if not str(p.get("role_title") or "").strip()),
+                "missing_provenance_count": sum(1 for p in unique_valid if not _has_provenance(p)),
+                "provisional_batch_ready_threshold": threshold,
+                "provisional_batch_ready_flag": int(len(intersection) >= threshold),
+                "provisional_batch_ready_definition": (
+                    "safe_ready_with_explicit_interest >= threshold; "
+                    "requires valid email + eligible safety + ready_to_contact + "
+                    "explicit product/application reason + provenance; unknown interest excluded"
+                ),
+                "notes": "Intersection required; disjoint safe vs evidence groups do not pass.",
             }
         )
     rows.sort(key=lambda r: r["product_category"])
@@ -435,7 +512,7 @@ def build_tender_account_links(prospects: list[dict[str, Any]]) -> list[dict[str
             + int(p.get("gmail_received_count") or 0)
             > 0
         )
-        has_email = bool(normalize_email(p.get("email")))
+        has_email = bool(normalize_valid_email(p.get("email")))
         conf = "high" if known and has_email else ("medium" if known or has_email else "low")
         rows.append(
             {
@@ -447,13 +524,18 @@ def build_tender_account_links(prospects: list[dict[str, Any]]) -> list[dict[str
                 "known_in_gmail_or_labdelivery": int(known),
                 "has_contact_email": int(has_email),
                 "enrichment_required": int(not has_email),
+                "audit_relationship_state": p.get("audit_relationship_state") or "",
+                "audit_procurement_context": p.get("audit_procurement_context") or "none",
+                "audit_commercial_stage": p.get("audit_commercial_stage") or "",
+                "stage_is_current": p.get("stage_is_current") or 0,
                 "active_opportunity_hint": int(
                     str(p.get("audit_commercial_stage") or "")
-                    in {"quote_sent", "purchase_pending", "qualifying", "technical_review"}
+                    in {"quote_sent", "purchase_pending", "qualifying", "technical_review", "fulfillment"}
+                    and int(p.get("stage_is_current") or 0) == 1
                 ),
                 "link_confidence": conf,
                 "reason_code": p.get("audit_relationship_reason") or "tender_prospect_row",
-                "notes": "Do not auto-classify as ready_to_contact.",
+                "notes": "Do not auto-classify as ready_to_contact. Procurement context is independent of relationship.",
             }
         )
     rows.sort(key=lambda r: (r["link_confidence"], r["organization_name"], r["email"]))
@@ -462,10 +544,11 @@ def build_tender_account_links(prospects: list[dict[str, Any]]) -> list[dict[str
 
 _SAMPLE_CASES: tuple[tuple[str, Any], ...] = (
     ("dormant_labdelivery", lambda p: p.get("audit_relationship_state") in {"dormant_customer", "known_labdelivery"}),
-    ("order_fulfillment", lambda p: p.get("audit_commercial_stage") == "fulfillment"),
+    ("order_fulfillment", lambda p: p.get("audit_commercial_stage") == "fulfillment" and int(p.get("stage_is_current") or 0) == 1),
+    ("customer_history", lambda p: p.get("audit_commercial_stage") == "customer_history"),
     ("existing_customer", lambda p: p.get("audit_relationship_state") == "existing_customer"),
-    ("purchase_pending", lambda p: p.get("audit_commercial_stage") == "purchase_pending"),
-    ("quotation_sent", lambda p: p.get("audit_commercial_stage") == "quote_sent"),
+    ("purchase_pending", lambda p: p.get("audit_commercial_stage") == "purchase_pending" and int(p.get("stage_is_current") or 0) == 1),
+    ("quotation_sent", lambda p: p.get("audit_commercial_stage") == "quote_sent" and int(p.get("stage_is_current") or 0) == 1),
     ("quotation_requested", lambda p: p.get("audit_commercial_stage") == "quote_requested"),
     ("technical_review", lambda p: p.get("audit_commercial_stage") == "technical_review"),
     ("qualified_inbound_inquiry", lambda p: p.get("audit_commercial_stage") == "qualifying" or p.get("audit_already_contacted_breakdown") == "active_inquiry"),
@@ -505,7 +588,7 @@ def build_operator_review_sample(
                 break
             if not predicate(p):
                 continue
-            key = f"{p.get('prospect_key')}|{normalize_email(p.get('email'))}"
+            key = f"{p.get('prospect_key')}|{normalize_valid_email(p.get('email'))}"
             if key in used_keys:
                 continue
             used_keys.add(key)
@@ -520,13 +603,17 @@ def build_operator_review_sample(
                     "commercial_action_bucket": p.get("commercial_action_bucket") or "",
                     "operational_next_action": p.get("operational_next_action") or "",
                     "audit_relationship_state": p.get("audit_relationship_state") or "",
+                    "audit_procurement_context": p.get("audit_procurement_context") or "",
                     "audit_commercial_stage": p.get("audit_commercial_stage") or "",
+                    "stage_is_current": p.get("stage_is_current") or 0,
+                    "stage_confidence": p.get("stage_confidence") or "",
                     "audit_safety_state": p.get("audit_safety_state") or "",
                     "audit_already_contacted_breakdown": p.get("audit_already_contacted_breakdown") or "",
                     "reason_codes": "|".join(
                         str(p.get(k) or "")
                         for k in (
                             "audit_relationship_reason",
+                            "audit_procurement_reason",
                             "audit_commercial_stage_reason",
                             "audit_safety_reason",
                             "audit_already_contacted_breakdown_reason",
@@ -546,11 +633,15 @@ def headline_metrics(
     open_threads: list[dict[str, Any]],
     conflicts: list[dict[str, Any]],
     bounce_rows: list[dict[str, Any]],
-    campaign_rows: list[dict[str, Any]],
+    cohort_rows: list[dict[str, Any]],
     labdelivery_rows: list[dict[str, Any]],
     tender_rows: list[dict[str, Any]],
     batch_readiness: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    """Build headline metrics with confidence labels and corrected denominators.
+
+    Prospect-source cohort duplicate/bounce rates are **not** Gmail campaign recipient rates.
+    """
     contacted = [p for p in prospects if str(p.get("commercial_action_bucket") or "") == "already_contacted"]
     total_c = len(contacted)
     breakdown = {r["breakdown"]: r for r in already_contacted_rows}
@@ -560,46 +651,163 @@ def headline_metrics(
         if p.get("audit_already_contacted_breakdown") == "campaign_recipient_only"
     )
     hidden_active = sum(1 for c in conflicts if c["conflict_code"] == "active_commercial_hidden_in_already_contacted")
-    hard_bounce_rate = 0.0
-    dup_rate = 0.0
-    suppressed_leak = 0
-    if campaign_rows:
-        # Weight by recipient_count.
-        recipients = sum(int(r["recipient_count"]) for r in campaign_rows)
-        bounced = sum(int(r["hard_bounce_count"]) for r in campaign_rows)
-        dups = sum(
-            int(round(float(r["duplicate_recipient_rate"]) * int(r["recipient_count"]) / 100.0))
-            for r in campaign_rows
-        )
-        suppressed_leak = sum(int(r["suppressed_recipient_leakage"]) for r in campaign_rows)
-        hard_bounce_rate = _pct(bounced, recipients)
-        dup_rate = _pct(dups, recipients)
+    hidden_active += sum(1 for c in conflicts if c["conflict_code"] == "active_commercial_hidden_in_review_history")
+
+    # Corrected cohort-level duplicate stats (valid emails only).
+    cohort_rows_total = sum(int(r.get("row_count") or 0) for r in cohort_rows)
+    cohort_valid = sum(int(r.get("valid_email_row_count") or 0) for r in cohort_rows)
+    cohort_dup_occ = sum(int(r.get("duplicate_occurrence_count") or 0) for r in cohort_rows)
+    cohort_missing = sum(int(r.get("missing_email_count") or 0) for r in cohort_rows)
+    cohort_invalid = sum(int(r.get("invalid_email_count") or 0) for r in cohort_rows)
+    cohort_bounce = sum(int(r.get("hard_bounce_count_among_cohort_rows") or 0) for r in cohort_rows)
+    cohort_suppressed = sum(int(r.get("current_suppressed_count_among_cohort_rows") or 0) for r in cohort_rows)
+    cohort_dup_rate = _pct(cohort_dup_occ, cohort_valid)
+    cohort_bounce_rate = _pct(cohort_bounce, cohort_rows_total)
+
+    current_fulfillment = sum(
+        1
+        for p in contacted
+        if p.get("audit_already_contacted_breakdown") == "current_fulfillment_or_post_sale"
+    )
+    history_like = sum(
+        1
+        for p in contacted
+        if p.get("audit_already_contacted_breakdown") == "customer_or_commercial_history"
+    )
 
     def bp(key: str) -> float:
         return float(breakdown.get(key, {}).get("pct_of_already_contacted") or 0.0)
 
+    def metric(value: Any, *, confidence: str, definition: str, denominator: Any = None) -> dict[str, Any]:
+        out = {
+            "value": value,
+            "confidence": confidence,
+            "definition": definition,
+        }
+        if denominator is not None:
+            out["denominator"] = denominator
+        return out
+
     return {
-        "prospect_rows": len(prospects),
-        "already_contacted_count": total_c,
-        "already_contacted_campaign_recipient_only_pct": bp("campaign_recipient_only"),
-        "already_contacted_active_inquiry_pct": bp("active_inquiry"),
-        "already_contacted_quotation_related_pct": bp("quotation_related"),
-        "already_contacted_purchase_pending_pct": bp("purchase_pending"),
-        "already_contacted_existing_customer_pct": bp("existing_customer"),
-        "already_contacted_fulfillment_or_post_sale_pct": bp("fulfillment_or_post_sale"),
-        "already_contacted_dormant_pct": bp("dormant"),
-        "already_contacted_undetermined_pct": bp("undetermined"),
-        "open_thread_without_next_action_count": len(open_threads),
-        "sent_only_treated_as_opportunity_count": sent_only_as_opp,
-        "active_cases_hidden_in_generic_buckets_count": hidden_active
-        + sum(1 for c in conflicts if c["conflict_code"] == "active_commercial_hidden_in_review_history"),
-        "hard_bounce_leakage_rate": hard_bounce_rate,
-        "duplicate_recipient_rate": dup_rate,
-        "suppressed_recipient_leakage": suppressed_leak,
-        "bounce_leakage_row_count": sum(int(r.get("leakage_flag") or 0) for r in bounce_rows),
-        "labdelivery_unique_contacts": len({r["email"] for r in labdelivery_rows if r.get("email")}),
-        "labdelivery_unique_orgs": len({r["organization_name"].lower() for r in labdelivery_rows if r.get("organization_name")}),
-        "tender_rows_linked": len(tender_rows),
-        "batch_readiness_categories_with_evidence": sum(1 for r in batch_readiness if int(r["matched_contacts"]) > 0),
-        "batch_ready_categories": sum(1 for r in batch_readiness if int(r["batch_ready_flag"]) == 1),
+        "prospect_rows": metric(len(prospects), confidence="observed", definition="Count of lead_research_prospect rows after overlay."),
+        "already_contacted_count": metric(
+            total_c,
+            confidence="observed",
+            definition="Rows with commercial_action_bucket=already_contacted (existing overloaded bucket).",
+        ),
+        "already_contacted_campaign_recipient_only_pct": metric(
+            bp("campaign_recipient_only"),
+            confidence="heuristic",
+            definition="Share of already_contacted with sent-only / no commercial-depth breakdown.",
+            denominator=total_c,
+        ),
+        "already_contacted_active_inquiry_pct": metric(bp("active_inquiry"), confidence="heuristic", definition="Share classified active_inquiry.", denominator=total_c),
+        "already_contacted_quotation_related_pct": metric(bp("quotation_related"), confidence="heuristic", definition="Share with current quotation-related stage.", denominator=total_c),
+        "already_contacted_purchase_pending_pct": metric(bp("purchase_pending"), confidence="derived_medium_confidence", definition="Share with current purchase_pending stage evidence.", denominator=total_c),
+        "already_contacted_existing_customer_pct": metric(bp("existing_customer"), confidence="derived_medium_confidence", definition="Share with existing_customer relationship.", denominator=total_c),
+        "already_contacted_current_fulfillment_or_post_sale_pct": metric(
+            bp("current_fulfillment_or_post_sale"),
+            confidence="derived_high_confidence",
+            definition="Share with current fulfilment/post-sale stage (dated deal or explicit logistics). Not lifetime invoice counts.",
+            denominator=total_c,
+        ),
+        "already_contacted_customer_or_commercial_history_pct": metric(
+            bp("customer_or_commercial_history"),
+            confidence="derived_medium_confidence",
+            definition="Share with historical customer/commercial evidence without proving current operational stage.",
+            denominator=total_c,
+        ),
+        "already_contacted_dormant_pct": metric(bp("dormant"), confidence="heuristic", definition="Share dormant relationship breakdown.", denominator=total_c),
+        "already_contacted_undetermined_pct": metric(bp("undetermined"), confidence="heuristic", definition="Share undetermined.", denominator=total_c),
+        "current_fulfillment_count_among_already_contacted": metric(
+            current_fulfillment,
+            confidence="derived_high_confidence",
+            definition="Count of already_contacted with current_fulfillment_or_post_sale breakdown.",
+        ),
+        "customer_or_commercial_history_count_among_already_contacted": metric(
+            history_like,
+            confidence="derived_medium_confidence",
+            definition="Count of already_contacted with history-only commercial evidence.",
+        ),
+        "open_thread_without_next_action_count": metric(len(open_threads), confidence="heuristic", definition="Inbound evidence without useful next-action text."),
+        "sent_only_treated_as_opportunity_count": metric(sent_only_as_opp, confidence="heuristic", definition="already_contacted rows that look campaign-recipient-only."),
+        "active_cases_hidden_in_generic_buckets_count": metric(
+            hidden_active,
+            confidence="derived_medium_confidence",
+            definition="Conflicts where current stage evidence is hidden under already_contacted/review_history.",
+        ),
+        "prospect_cohort_duplicate_rate_of_valid_email_rows": metric(
+            cohort_dup_rate,
+            confidence="derived_high_confidence",
+            definition=(
+                "duplicate_occurrence_count / valid_email_row_count across prospect-source cohorts "
+                "(dataset_label/source_type). NOT an actual Gmail campaign recipient duplicate rate. "
+                "Missing emails excluded."
+            ),
+            denominator=cohort_valid,
+        ),
+        "prospect_cohort_duplicate_occurrence_count": metric(cohort_dup_occ, confidence="derived_high_confidence", definition="sum(max(count-1,0)) over valid emails in cohorts."),
+        "prospect_cohort_valid_email_row_count": metric(cohort_valid, confidence="observed", definition="Valid email rows across cohorts."),
+        "prospect_cohort_missing_email_count": metric(cohort_missing, confidence="observed", definition="Missing-email cohort rows (not duplicates)."),
+        "prospect_cohort_invalid_email_count": metric(cohort_invalid, confidence="observed", definition="Invalid nonempty email strings in cohorts."),
+        "prospect_cohort_hard_bounce_rate_of_cohort_rows": metric(
+            cohort_bounce_rate,
+            confidence="derived_medium_confidence",
+            definition="Share of cohort rows currently safety-state bounced (not proven pre-send leakage).",
+            denominator=cohort_rows_total,
+        ),
+        "prospect_cohort_current_suppressed_count": metric(
+            cohort_suppressed,
+            confidence="observed",
+            definition="Cohort rows with current suppression state. Not 'suppressed before send' unless temporal evidence exists.",
+        ),
+        "actual_gmail_campaign_duplicate_rate": metric(
+            None,
+            confidence="unavailable",
+            definition=(
+                "Actual Sent-folder campaign duplicate rate is not claimed from prospect cohorts. "
+                "See sent_campaign_quality.csv when generated; otherwise unresolved limitation."
+            ),
+        ),
+        "bounce_leakage_row_count": metric(
+            sum(int(r.get("leakage_flag") or 0) for r in bounce_rows),
+            confidence="heuristic",
+            definition="Prospect rows where bounced/suppressed safety coexists with non-blocked buckets.",
+        ),
+        "labdelivery_unique_contacts": metric(
+            len({r["email"] for r in labdelivery_rows if r.get("email")}),
+            confidence="heuristic",
+            definition="Distinct redacted contact keys in labdelivery relationship candidates.",
+        ),
+        "labdelivery_unique_orgs": metric(
+            len({r["organization_name"].lower() for r in labdelivery_rows if r.get("organization_name")}),
+            confidence="heuristic",
+            definition="Distinct orgs in labdelivery relationship candidates.",
+        ),
+        "tender_rows_linked": metric(len(tender_rows), confidence="heuristic", definition="Tender prospect rows with account-link attempt."),
+        "batch_readiness_categories_with_evidence": metric(
+            sum(1 for r in batch_readiness if int(r["matched_contacts"]) > 0),
+            confidence="heuristic",
+            definition="Product categories with any keyword/evidence match.",
+        ),
+        "provisional_batch_ready_categories": metric(
+            sum(1 for r in batch_readiness if int(r.get("provisional_batch_ready_flag") or 0) == 1),
+            confidence="heuristic",
+            definition="Categories where safe_ready_with_explicit_interest meets explicit threshold (intersection).",
+        ),
+        # Flat aliases for CLI headline printing (values only).
+        "_flat": {
+            "prospect_rows": len(prospects),
+            "already_contacted_count": total_c,
+            "already_contacted_campaign_recipient_only_pct": bp("campaign_recipient_only"),
+            "already_contacted_current_fulfillment_or_post_sale_pct": bp("current_fulfillment_or_post_sale"),
+            "already_contacted_customer_or_commercial_history_pct": bp("customer_or_commercial_history"),
+            "active_cases_hidden_in_generic_buckets_count": hidden_active,
+            "prospect_cohort_duplicate_rate_of_valid_email_rows": cohort_dup_rate,
+            "prospect_cohort_current_suppressed_count": cohort_suppressed,
+            "provisional_batch_ready_categories": sum(
+                1 for r in batch_readiness if int(r.get("provisional_batch_ready_flag") or 0) == 1
+            ),
+        },
     }
+

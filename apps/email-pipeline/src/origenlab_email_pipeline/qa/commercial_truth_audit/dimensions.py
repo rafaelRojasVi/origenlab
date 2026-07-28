@@ -1,4 +1,4 @@
-"""Audit-only relationship / commercial-stage / safety dimension derivation.
+"""Audit-only relationship / stage / safety / procurement dimension derivation.
 
 These dimensions are evidence-gated candidates for later PRs. They are never
 written to production schema and do not replace existing classifications.
@@ -10,9 +10,13 @@ from typing import Any
 
 from origenlab_email_pipeline.qa.commercial_truth_audit.constants import (
     CONSUMER_EMAIL_DOMAINS,
+    FULFILLMENT_DEAL_STATUSES,
     INTERNAL_DOMAINS,
+    PURCHASE_PENDING_DEAL_STATUSES,
+    QUOTE_DEAL_STATUSES,
 )
-from origenlab_email_pipeline.qa.commercial_truth_audit.redaction import email_domain, normalize_email
+from origenlab_email_pipeline.qa.commercial_truth_audit.emails import normalize_valid_email
+from origenlab_email_pipeline.qa.commercial_truth_audit.redaction import email_domain
 
 _BLOCKED_CLASS = frozenset(
     {
@@ -72,21 +76,36 @@ def derive_safety_state(row: dict[str, Any]) -> tuple[str, str]:
         or classification == "manual_outreach_sent"
     ):
         return "previously_contacted", "gmail_or_outreach_history"
-    if classification == "net_new_safe_review" and normalize_email(row.get("email")):
+    if classification == "net_new_safe_review" and normalize_valid_email(row.get("email")):
         return "eligible", "net_new_with_email"
     if classification == "research_only_contact_needed":
         return "unknown", "needs_email"
     return "unknown", "insufficient_safety_evidence"
 
 
+def derive_procurement_context(row: dict[str, Any]) -> tuple[str, str]:
+    """Return (procurement_context, reason_code). Never replaces relationship/stage."""
+    classification = str(row.get("classification") or "").strip()
+    has_tender = classification == "public_tender_review" or _truthy(row, "has_tender_evidence")
+    if not has_tender:
+        return "none", "no_tender_evidence"
+    if _truthy(row, "tender_historical_only"):
+        return "historical_tender", "historical_tender_flag"
+    if _truthy(row, "tender_active"):
+        return "tender_active", "active_tender_signal"
+    if classification == "public_tender_review":
+        # Prospect tender queue without explicit closed/historical flag.
+        return "tender_active", "public_tender_review_classification"
+    return "tender_watch", "tender_signal_watch"
+
+
 def derive_relationship_state(row: dict[str, Any]) -> tuple[str, str]:
-    """Return (relationship_state, reason_code)."""
+    """Return (relationship_state, reason_code). Tender does not overwrite customer evidence."""
     classification = str(row.get("classification") or "").strip()
     domain = (str(row.get("domain") or "").strip().lower() or email_domain(row.get("email")))
     if classification == "supplier_or_internal_block" or is_internal_domain(domain):
         return "supplier_or_internal", "internal_or_supplier"
-    if classification == "public_tender_review" or _truthy(row, "has_tender_evidence"):
-        return "public_buyer", "tender_evidence"
+
     invoice = _int(row, "invoice_email_count")
     purchase = _int(row, "purchase_email_count")
     quote = _int(row, "quote_email_count")
@@ -99,8 +118,10 @@ def derive_relationship_state(row: dict[str, Any]) -> tuple[str, str]:
             dormant = int(last_seen_days) >= 365
         except (TypeError, ValueError):
             dormant = False
+
+    # Historical cumulative purchase/invoice counts prove customer relationship, not stage.
     if (invoice > 0 or purchase > 0) and not dormant:
-        return "existing_customer", "invoice_or_purchase_evidence"
+        return "existing_customer", "invoice_or_purchase_history_counts"
     if (invoice > 0 or purchase > 0 or (labdelivery and quote > 0)) and dormant:
         return "dormant_customer", "stale_customer_evidence"
     if labdelivery and not origenlab:
@@ -112,8 +133,34 @@ def derive_relationship_state(row: dict[str, Any]) -> tuple[str, str]:
     return "unknown", "insufficient_relationship_evidence"
 
 
-def derive_commercial_stage(row: dict[str, Any]) -> tuple[str, str]:
-    """Return (commercial_stage, reason_code). Prefer multi-signal evidence over keywords."""
+def _stage_result(
+    stage: str,
+    *,
+    reason: str,
+    evidence_type: str,
+    evidence_at: str = "",
+    evidence_source: str = "",
+    confidence: str = "heuristic",
+    is_current: bool = False,
+) -> dict[str, Any]:
+    return {
+        "stage": stage,
+        "reason": reason,
+        "stage_evidence_type": evidence_type,
+        "stage_evidence_at": evidence_at,
+        "stage_evidence_source": evidence_source,
+        "stage_confidence": confidence,
+        "stage_is_current": int(bool(is_current)),
+    }
+
+
+def derive_commercial_stage(row: dict[str, Any]) -> dict[str, Any]:
+    """Derive commercial stage with explicit evidence metadata.
+
+    Lifetime ``quote_email_count`` / ``invoice_email_count`` / ``purchase_email_count``
+    are treated as historical cumulative evidence and do **not** alone prove current
+    fulfilment, won, post_sale, or purchase_pending.
+    """
     classification = str(row.get("classification") or "").strip()
     sent = _int(row, "gmail_sent_count")
     received = _int(row, "gmail_received_count")
@@ -123,9 +170,13 @@ def derive_commercial_stage(row: dict[str, Any]) -> tuple[str, str]:
     quote_signals = _int(row, "quote_signal_count")
     procurement_signals = _int(row, "procurement_signal_count")
     technical_signals = _int(row, "technical_signal_count")
-    has_deal = _truthy(row, "has_commercial_deal")
-    deal_stage = str(row.get("deal_stage") or "").strip().lower()
-    has_tender = classification == "public_tender_review" or _truthy(row, "has_tender_evidence")
+    deal_stage = str(row.get("selected_commercial_deal_stage") or row.get("deal_stage") or "").strip().lower()
+    deal_at = str(row.get("selected_deal_updated_at") or row.get("latest_commercial_deal_at") or "").strip()
+    deal_source = str(row.get("commercial_deal_match_type") or "commercial_deal")
+    has_dated_deal = bool(deal_stage and deal_at)
+    recent_logistics = _truthy(row, "recent_logistics_evidence")
+    recent_po = _truthy(row, "recent_purchase_order_evidence")
+    recent_invoice_event = _truthy(row, "recent_invoice_payment_evidence")
     last_seen_days = row.get("days_since_last_seen")
     dormant = False
     if last_seen_days is not None:
@@ -134,82 +185,226 @@ def derive_commercial_stage(row: dict[str, Any]) -> tuple[str, str]:
         except (TypeError, ValueError):
             dormant = False
 
-    if has_tender:
-        if _truthy(row, "tender_active"):
-            return "tender_active", "active_tender_signal"
-        return "tender_watch", "tender_signal"
+    # Explicit current deal stage wins when timestamped.
+    if has_dated_deal:
+        if deal_stage in FULFILLMENT_DEAL_STATUSES:
+            return _stage_result(
+                "fulfillment",
+                reason=f"explicit_deal_status:{deal_stage}",
+                evidence_type="commercial_deal_status",
+                evidence_at=deal_at,
+                evidence_source=deal_source,
+                confidence="derived_high_confidence",
+                is_current=True,
+            )
+        if deal_stage in {"closed"} and deal_stage != "cancelled":
+            # closed without logistics may be won/post_sale — still current only with date.
+            return _stage_result(
+                "won",
+                reason=f"explicit_deal_status:{deal_stage}",
+                evidence_type="commercial_deal_status",
+                evidence_at=deal_at,
+                evidence_source=deal_source,
+                confidence="derived_medium_confidence",
+                is_current=True,
+            )
+        if deal_stage in PURCHASE_PENDING_DEAL_STATUSES:
+            return _stage_result(
+                "purchase_pending",
+                reason=f"explicit_deal_status:{deal_stage}",
+                evidence_type="commercial_deal_status",
+                evidence_at=deal_at,
+                evidence_source=deal_source,
+                confidence="derived_high_confidence",
+                is_current=True,
+            )
+        if deal_stage in QUOTE_DEAL_STATUSES:
+            return _stage_result(
+                "quote_sent" if deal_stage == "quoted" else "quote_preparing",
+                reason=f"explicit_deal_status:{deal_stage}",
+                evidence_type="commercial_deal_status",
+                evidence_at=deal_at,
+                evidence_source=deal_source,
+                confidence="derived_high_confidence",
+                is_current=True,
+            )
 
-    # Stale customer history is not an active fulfilment case.
-    if dormant and (invoice > 0 or purchase > 0 or quote > 0):
-        return "post_sale", "dormant_customer_history"
+    # Recent explicit operational events (must be pre-flagged by evidence loader).
+    if recent_logistics:
+        return _stage_result(
+            "fulfillment",
+            reason="recent_logistics_or_shipment_evidence",
+            evidence_type="logistics_event",
+            evidence_at=str(row.get("recent_logistics_at") or ""),
+            evidence_source=str(row.get("recent_logistics_source") or "explicit_flag"),
+            confidence="derived_high_confidence",
+            is_current=True,
+        )
+    if recent_po:
+        return _stage_result(
+            "purchase_pending",
+            reason="recent_purchase_order_evidence",
+            evidence_type="purchase_order_event",
+            evidence_at=str(row.get("recent_purchase_order_at") or ""),
+            evidence_source=str(row.get("recent_purchase_order_source") or "explicit_flag"),
+            confidence="derived_high_confidence",
+            is_current=True,
+        )
+    if recent_invoice_event and (quote_signals > 0 or has_dated_deal or _truthy(row, "has_commercial_deal")):
+        return _stage_result(
+            "purchase_pending",
+            reason="recent_invoice_with_active_opportunity",
+            evidence_type="invoice_payment_event",
+            evidence_at=str(row.get("recent_invoice_payment_at") or ""),
+            evidence_source=str(row.get("recent_invoice_payment_source") or "explicit_flag"),
+            confidence="derived_medium_confidence",
+            is_current=True,
+        )
 
-    if deal_stage in {"fulfillment", "fulfilled", "shipping"} or (invoice > 0 and purchase > 0 and sent > 0 and not dormant):
-        if _truthy(row, "post_sale_hint"):
-            return "post_sale", "invoice_purchase_post_sale"
-        return "fulfillment", "invoice_and_purchase_evidence"
+    # Untimestamped deal status cannot prove current operational stage.
+    if deal_stage and not deal_at:
+        return _stage_result(
+            "unknown",
+            reason="deal_status_without_usable_timestamp",
+            evidence_type="commercial_deal_status_undated",
+            evidence_source=deal_source,
+            confidence="unavailable",
+            is_current=False,
+        )
 
-    if deal_stage in {"won", "closed_won"} or (purchase > 0 and invoice > 0):
-        return "won", "purchase_and_invoice_evidence"
+    # Historical cumulative counts → history stages, not current fulfilment.
+    if dormant and (invoice > 0 or purchase > 0):
+        return _stage_result(
+            "customer_history",
+            reason="stale_purchase_invoice_counts",
+            evidence_type="lifetime_mart_counts",
+            evidence_source="contact_master",
+            confidence="derived_medium_confidence",
+            is_current=False,
+        )
+    if invoice > 0 or purchase > 0:
+        return _stage_result(
+            "customer_history",
+            reason="lifetime_purchase_invoice_counts_not_current_stage",
+            evidence_type="lifetime_mart_counts",
+            evidence_source="contact_master",
+            confidence="derived_medium_confidence",
+            is_current=False,
+        )
+    if quote > 0 or quote_signals > 0 or procurement_signals > 0 or technical_signals > 0:
+        # Signals without dates remain commercial history / weak heuristics.
+        if quote_signals > 0 and sent > 0 and _truthy(row, "quote_outbound"):
+            return _stage_result(
+                "commercial_history",
+                reason="undated_quote_signal_with_sent_history",
+                evidence_type="commercial_signal_undated",
+                evidence_source="commercial_contact_signal_rollup",
+                confidence="heuristic",
+                is_current=False,
+            )
+        return _stage_result(
+            "commercial_history",
+            reason="undated_commercial_signals_or_quote_counts",
+            evidence_type="lifetime_or_undated_signals",
+            evidence_source="mart_or_intel",
+            confidence="heuristic",
+            is_current=False,
+        )
 
-    if procurement_signals > 0 and invoice == 0 and (quote > 0 or quote_signals > 0 or has_deal):
-        return "purchase_pending", "procurement_without_invoice"
-
-    if technical_signals > 0 and received > 0 and quote > 0:
-        return "technical_review", "technical_signal_with_quote_thread"
-
-    if quote > 0 or quote_signals > 0:
-        if sent > 0 and (quote_signals > 0 or _truthy(row, "quote_outbound")):
-            return "quote_sent", "quote_outbound_evidence"
-        if received > 0 or _truthy(row, "quote_inbound"):
-            return "quote_requested", "quote_inbound_evidence"
-        return "quote_preparing", "quote_evidence_ambiguous_direction"
-
-    if received > 0 and (quote_signals > 0 or technical_signals > 0 or procurement_signals > 0):
-        return "qualifying", "inbound_with_commercial_signals"
+    if technical_signals > 0 and received > 0:
+        return _stage_result(
+            "qualifying",
+            reason="inbound_technical_signal_undated",
+            evidence_type="commercial_signal_undated",
+            confidence="heuristic",
+            is_current=False,
+        )
 
     if sent > 0 and received == 0:
-        return "contacted_no_reply", "sent_without_reply"
+        return _stage_result(
+            "contacted_no_reply",
+            reason="sent_without_reply",
+            evidence_type="gmail_counts",
+            confidence="derived_medium_confidence",
+            is_current=False,
+        )
 
-    if classification == "net_new_safe_review" and normalize_email(row.get("email")):
-        return "contact_planned", "ready_net_new"
+    if classification == "net_new_safe_review" and normalize_valid_email(row.get("email")):
+        return _stage_result(
+            "contact_planned",
+            reason="ready_net_new",
+            evidence_type="prospect_classification",
+            confidence="derived_medium_confidence",
+            is_current=True,
+        )
 
-    if classification == "research_only_contact_needed" or not normalize_email(row.get("email")):
-        return "research_needed", "missing_email_or_research_only"
+    if classification == "research_only_contact_needed" or not normalize_valid_email(row.get("email")):
+        return _stage_result(
+            "research_needed",
+            reason="missing_email_or_research_only",
+            evidence_type="prospect_classification",
+            confidence="derived_medium_confidence",
+            is_current=False,
+        )
 
     if _truthy(row, "in_contact_master_only"):
-        return "database_only", "mart_without_prospect_action"
+        return _stage_result(
+            "database_only",
+            reason="mart_without_prospect_action",
+            evidence_type="contact_master",
+            confidence="derived_medium_confidence",
+            is_current=False,
+        )
 
     if sent > 0 or received > 0 or classification:
-        return "unknown", "history_without_stage_evidence"
-    return "unknown", "insufficient_stage_evidence"
+        return _stage_result(
+            "unknown",
+            reason="history_without_current_stage_evidence",
+            evidence_type="insufficient",
+            confidence="unavailable",
+            is_current=False,
+        )
+    return _stage_result(
+        "unknown",
+        reason="insufficient_stage_evidence",
+        evidence_type="insufficient",
+        confidence="unavailable",
+        is_current=False,
+    )
 
 
 def classify_already_contacted_breakdown(row: dict[str, Any]) -> tuple[str, str]:
     """Map an already_contacted row into a finer audit-only bucket."""
-    stage, stage_reason = derive_commercial_stage(row)
+    stage_info = derive_commercial_stage(row)
+    stage = str(stage_info["stage"])
+    stage_reason = str(stage_info["reason"])
     relationship, _ = derive_relationship_state(row)
     sent = _int(row, "gmail_sent_count")
     received = _int(row, "gmail_received_count")
     quote = _int(row, "quote_email_count") + _int(row, "quote_signal_count")
     purchase = _int(row, "purchase_email_count") + _int(row, "procurement_signal_count")
     invoice = _int(row, "invoice_email_count")
+    is_current = bool(stage_info.get("stage_is_current"))
 
     if relationship == "dormant_customer" or (
         relationship == "known_labdelivery" and sent + received > 0 and quote == 0 and purchase == 0
     ):
         return "dormant", f"relationship:{relationship}"
-    if stage in {"fulfillment", "post_sale", "won"} or (invoice > 0 and purchase > 0):
-        return "fulfillment_or_post_sale", stage_reason
-    if stage == "purchase_pending" or (purchase > 0 and invoice == 0):
+    if stage in {"fulfillment", "post_sale", "won"} and is_current:
+        return "current_fulfillment_or_post_sale", stage_reason
+    if stage in {"customer_history", "commercial_history"} or (
+        (invoice > 0 or purchase > 0) and not is_current
+    ):
+        return "customer_or_commercial_history", stage_reason
+    if stage == "purchase_pending" and is_current:
         return "purchase_pending", stage_reason
-    if relationship == "existing_customer" or (invoice > 0 or purchase > 0):
+    if relationship == "existing_customer":
         return "existing_customer", f"relationship:{relationship}"
-    if stage in {"quote_requested", "quote_preparing", "quote_sent", "technical_review"} or quote > 0:
+    if stage in {"quote_requested", "quote_preparing", "quote_sent", "technical_review"} and is_current:
         return "quotation_related", stage_reason
-    if stage == "qualifying" or (received > 0 and (quote > 0 or purchase > 0 or _int(row, "technical_signal_count") > 0)):
+    if stage == "qualifying" or (received > 0 and quote > 0):
         return "active_inquiry", stage_reason
     if sent > 0 and received == 0 and quote == 0 and purchase == 0 and invoice == 0:
-        # Campaign / cold outreach recipient with no commercial depth.
         return "campaign_recipient_only", "sent_only_no_commercial_depth"
     return "undetermined", "insufficient_breakdown_evidence"
 
@@ -219,13 +414,21 @@ def enrich_audit_dimensions(row: dict[str, Any]) -> dict[str, Any]:
     out = dict(row)
     safety, safety_reason = derive_safety_state(out)
     relationship, relationship_reason = derive_relationship_state(out)
-    stage, stage_reason = derive_commercial_stage(out)
+    procurement, procurement_reason = derive_procurement_context(out)
+    stage_info = derive_commercial_stage(out)
     out["audit_safety_state"] = safety
     out["audit_safety_reason"] = safety_reason
     out["audit_relationship_state"] = relationship
     out["audit_relationship_reason"] = relationship_reason
-    out["audit_commercial_stage"] = stage
-    out["audit_commercial_stage_reason"] = stage_reason
+    out["audit_procurement_context"] = procurement
+    out["audit_procurement_reason"] = procurement_reason
+    out["audit_commercial_stage"] = stage_info["stage"]
+    out["audit_commercial_stage_reason"] = stage_info["reason"]
+    out["stage_evidence_type"] = stage_info["stage_evidence_type"]
+    out["stage_evidence_at"] = stage_info["stage_evidence_at"]
+    out["stage_evidence_source"] = stage_info["stage_evidence_source"]
+    out["stage_confidence"] = stage_info["stage_confidence"]
+    out["stage_is_current"] = stage_info["stage_is_current"]
     if str(out.get("commercial_action_bucket") or "") == "already_contacted":
         breakdown, breakdown_reason = classify_already_contacted_breakdown(out)
         out["audit_already_contacted_breakdown"] = breakdown
