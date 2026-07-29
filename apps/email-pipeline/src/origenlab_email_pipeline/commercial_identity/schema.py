@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import sqlite3
 
-from origenlab_email_pipeline.commercial_identity.constants import REBUILDABLE_TABLES, SCHEMA_VERSION
+from origenlab_email_pipeline.commercial_identity.constants import (
+    REBUILDABLE_DATA_TABLES,
+    SCHEMA_VERSION,
+)
 
 COMMERCIAL_IDENTITY_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS commercial_identity_account (
@@ -125,7 +128,13 @@ CREATE TABLE IF NOT EXISTS commercial_identity_build_meta (
 
 
 def ensure_commercial_identity_tables(conn: sqlite3.Connection) -> None:
-    """Create identity read-model tables if missing. Idempotent."""
+    """Create identity read-model tables if missing. Idempotent.
+
+    Note: ``executescript`` auto-commits in SQLite, so schema creation is additive and
+    outside the DELETE+INSERT data transaction (contract B). This helper also commits
+    the schema_version meta upsert so the connection is not left inside an open
+    transaction (required before ``PRAGMA foreign_keys=ON`` can take effect).
+    """
     conn.executescript(COMMERCIAL_IDENTITY_SCHEMA_SQL)
     conn.execute(
         """
@@ -135,11 +144,10 @@ def ensure_commercial_identity_tables(conn: sqlite3.Connection) -> None:
         """,
         (SCHEMA_VERSION,),
     )
+    conn.commit()
 
 
 def clear_rebuildable_identity_tables(conn: sqlite3.Connection) -> None:
-    """Delete rebuildable identity rows (FK-safe order). Does not drop tables."""
-    for table in REBUILDABLE_TABLES:
-        if table == "commercial_identity_build_meta":
-            continue
+    """Delete rebuildable identity *data* rows (FK-safe order). Does not drop tables."""
+    for table in REBUILDABLE_DATA_TABLES:
         conn.execute(f"DELETE FROM {table}")

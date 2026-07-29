@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # -----------------------------------------------------------------------------
-# SAFETY (break-glass): --apply DELETE+rewrites commercial_identity_* tables.
+# SAFETY (break-glass): --apply DELETE+rewrites commercial_identity_* *data*.
 # Default is dry-run. Requires explicit --sqlite-path (no production fallback).
+# Transaction contract B: additive schema (executescript) may remain after a
+# first-run failure; DELETE+INSERT data replacement is atomic with foreign_keys=ON.
 # Do not run --apply against production SQLite without operator approval.
 # See docs/SCRIPT_MAP.md and docs/audits/COMMERCIAL_IDENTITY_READ_MODEL_PR2.md.
 # -----------------------------------------------------------------------------
@@ -9,6 +11,8 @@
 
 Identity only — does not infer opportunity stage, next action, or product interest.
 Does not mutate Gmail, suppressions, outreach state, or classifications.
+
+Transaction contract B: schema ensure is additive; data replacement rolls back atomically.
 
 Example (dry-run)::
 
@@ -55,7 +59,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_apply_dry_run_flags(
         parser,
-        apply_help="Write commercial_identity_* tables (DELETE+rebuild in one transaction).",
+        apply_help=(
+            "Write commercial_identity_* data (DELETE+rebuild in one transaction with "
+            "foreign_keys=ON; additive schema may already exist — contract B)."
+        ),
     )
     parser.add_argument(
         "--json-summary",
@@ -81,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"mode={summary['mode']}")
         print(f"sqlite_path={summary['sqlite_path']}")
+        print(f"transaction_contract={summary.get('transaction_contract')}")
         print("planned_writes:")
         for name, count in sorted(summary["planned_writes"].items()):
             print(f"  {name}: {count}")
@@ -98,9 +106,13 @@ def main(argv: list[str] | None = None) -> int:
             "contact_conflicts",
             "records_without_usable_email",
             "records_without_usable_organization_identity",
-            "origenlab_origin_identities",
-            "labdelivery_origin_identities",
-            "research_only_identities",
+            "origenlab_origin_source_assertion_rows",
+            "labdelivery_origin_source_assertion_rows",
+            "research_origin_source_assertion_rows",
+            "canonical_contacts_with_origenlab_origin",
+            "canonical_contacts_with_labdelivery_origin",
+            "canonical_contacts_with_research_origin",
+            "canonical_contacts_research_only",
         ):
             if key in metrics:
                 print(f"  {key}: {metrics[key]}")

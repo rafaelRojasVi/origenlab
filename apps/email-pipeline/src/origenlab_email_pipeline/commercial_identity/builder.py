@@ -1,4 +1,11 @@
-"""Path safety and orchestration for commercial identity rebuilds."""
+"""Path safety and orchestration for commercial identity rebuilds.
+
+Transaction contract B (documented in constants.TRANSACTION_CONTRACT):
+- Additive schema (`CREATE TABLE IF NOT EXISTS` via executescript) may remain after a
+  first-run failure because SQLite executescript auto-commits DDL.
+- Prior read-model *data* is never partially replaced: DELETE+INSERT runs in an
+  explicit transaction with ``PRAGMA foreign_keys=ON`` and rolls back atomically.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from origenlab_email_pipeline.commercial_identity.constants import TRANSACTION_CONTRACT
 from origenlab_email_pipeline.commercial_identity.models import IdentityResolution
 from origenlab_email_pipeline.commercial_identity.persist import write_identity_resolution
 from origenlab_email_pipeline.commercial_identity.resolve import resolve_identity
@@ -69,23 +77,41 @@ def apply_identity_build(
     *,
     inject_failure: Callable[[sqlite3.Connection], None] | None = None,
 ) -> dict[str, Any]:
-    """Apply rebuild in a single transaction; roll back completely on failure."""
+    """Apply rebuild under transaction contract B.
+
+    1. Ensure additive schema (may auto-commit via executescript).
+    2. BEGIN data replacement with foreign_keys=ON.
+    3. DELETE+INSERT identity rows; commit or roll back atomically.
+    """
     if not plan.apply:
         raise CommercialIdentityPathError("apply_identity_build called without apply=True")
 
     conn = sqlite3.connect(str(plan.sqlite_path))
     conn.row_factory = sqlite3.Row
     try:
-        conn.execute("BEGIN")
+        # Schema ensure is outside the data transaction (executescript commits DDL).
         ensure_commercial_identity_tables(conn)
-        counts = write_identity_resolution(conn, plan.resolution)
-        if inject_failure is not None:
-            inject_failure(conn)
-        conn.commit()
-        return {"applied": True, "written": counts, "metrics": plan.resolution.metrics}
-    except Exception:
-        conn.rollback()
-        raise
+
+        conn.execute("PRAGMA foreign_keys = ON")
+        fk = conn.execute("PRAGMA foreign_keys").fetchone()
+        if fk is None or int(fk[0]) != 1:
+            raise RuntimeError("PRAGMA foreign_keys=ON failed; refusing unsafe identity rebuild")
+
+        conn.execute("BEGIN")
+        try:
+            counts = write_identity_resolution(conn, plan.resolution)
+            if inject_failure is not None:
+                inject_failure(conn)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        return {
+            "applied": True,
+            "written": counts,
+            "metrics": plan.resolution.metrics,
+            "transaction_contract": TRANSACTION_CONTRACT,
+        }
     finally:
         conn.close()
 
@@ -99,6 +125,7 @@ def run_identity_build(*, sqlite_path: Path, apply: bool) -> dict[str, Any]:
         "planned_writes": plan.planned_writes,
         "metrics": plan.resolution.metrics,
         "applied": False,
+        "transaction_contract": TRANSACTION_CONTRACT,
     }
     if not apply:
         return summary

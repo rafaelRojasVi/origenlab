@@ -9,10 +9,7 @@ from typing import Any
 
 from origenlab_email_pipeline.commercial_identity.constants import SCHEMA_VERSION
 from origenlab_email_pipeline.commercial_identity.models import IdentityResolution
-from origenlab_email_pipeline.commercial_identity.schema import (
-    clear_rebuildable_identity_tables,
-    ensure_commercial_identity_tables,
-)
+from origenlab_email_pipeline.commercial_identity.schema import clear_rebuildable_identity_tables
 
 
 def _now_iso() -> str:
@@ -20,8 +17,11 @@ def _now_iso() -> str:
 
 
 def write_identity_resolution(conn: sqlite3.Connection, resolution: IdentityResolution) -> dict[str, int]:
-    """Replace rebuildable identity tables with ``resolution`` inside the caller's transaction."""
-    ensure_commercial_identity_tables(conn)
+    """Replace rebuildable identity *data* with ``resolution`` inside the caller's transaction.
+
+    Caller must already have ensured schema and opened a transaction with foreign_keys=ON.
+    This function does not run executescript / DDL.
+    """
     clear_rebuildable_identity_tables(conn)
 
     account_rows = [
