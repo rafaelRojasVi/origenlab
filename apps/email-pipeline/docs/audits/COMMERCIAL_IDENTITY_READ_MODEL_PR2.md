@@ -82,9 +82,32 @@ No opportunity-stage, next-action, won/lost, or fulfilment columns exist on thes
 
 1. **Exact normalized email** — strongest automatic contact key (case + trim; existing `normalize_valid_email` / export helpers). No Gmail-dot or plus-address transforms.
 2. **Institutional domain** — may create/link accounts and link contacts when org evidence is compatible.
-3. **Compatible org name** — may link a contact to a name-keyed account when no safer domain path applies.
-4. **Never** merge solely on vague name similarity.
-5. Ambiguity → **conflict / needs_review**, not a silent confident merge.
+3. **Compatible org name** — may link a contact to a name-keyed account **only when exactly one** compatible candidate account exists for that normalized name.
+4. **Never** merge solely on vague name similarity, and **never** merge distinct institutional domains solely because normalized org names match.
+5. Ambiguity → **conflict / needs_review / ambiguous**, not a silent confident merge.
+
+### Internal-domain policy
+
+Reuse `INTERNAL_DOMAINS` (`origenlab.cl`, `labdelivery.cl`).
+
+- These domains **must not** become external commercial accounts via institutional-domain resolution.
+- Contacts on those domains are represented explicitly as **internal actors** (`identity_status=internal_actor`).
+- They remain unlinked to commercial accounts and are **not** classified as customer institutions.
+- Reason code: `internal_domain_not_commercial_account`.
+
+### Multi-domain / competing-domain policy
+
+Distinguish:
+
+- normalized **email domain**
+- explicit source **`domain_raw`**
+- candidate **account domains**
+
+Incompatible domain evidence for the same exact email withholds the account link and emits `exact_email_competing_domains` and/or `contact_competing_account_links` with real source evidence pointers.
+
+### Consumer-email organization evidence
+
+A consumer-domain email **never** proves account membership. Explicit organization-name evidence may still create a **low-confidence name-only account**, but the consumer contact is **not** attached. A review conflict (`consumer_email_org_link_withheld`) describes the withheld link.
 
 ---
 
@@ -92,7 +115,7 @@ No opportunity-stage, next-action, won/lost, or fulfilment columns exist on thes
 
 Uses PR1 `CONSUMER_EMAIL_DOMAINS` plus `proton.me` (and `protonmail.com`).
 
-Domains such as `gmail.com`, `googlemail.com`, `outlook.com`, `hotmail.com`, `live.com`, `yahoo.com`, `icloud.com`, `proton.me`, `protonmail.com`, … **never** establish institutional account membership by domain alone. Consumer-domain contacts remain unlinked (or review-queued) in PR2.
+Domains such as `gmail.com`, `googlemail.com`, `outlook.com`, `hotmail.com`, `live.com`, `yahoo.com`, `icloud.com`, `proton.me`, `protonmail.com`, … **never** establish institutional account membership by domain alone.
 
 ---
 
@@ -113,10 +136,12 @@ IDs are independent of input ordering and stable across rebuilds with unchanged 
 
 - `evidence_at` is the **observed** source timestamp when present.
 - Missing timestamps stay **missing** — build time is never substituted as evidence time.
+- Alias rows track **alias-specific** `evidence_count`, `first_evidence_at`, and `last_evidence_at` (not domain-wide ranges copied onto every alias).
 - Confidence labels: `high` / `medium` / `low` / `none`.
-- Status labels: `resolved` / `needs_review` / `ambiguous` / `unlinked`.
+- Status labels: `resolved` / `needs_review` / `ambiguous` / `unlinked` / `internal_actor`.
 - Origins remain distinguishable: OrigenLab Gmail, Labdelivery archive, research, business mart, commercial deal.
 - Research-only rows are never labeled as customers (PR2 has no customer flag; research origin is explicit on evidence).
+- Research roles come from `lead_research_prospect.role_title` (canonical), with legacy `role` / `title` fallback for older fixtures.
 
 ---
 
@@ -126,8 +151,12 @@ Deterministic reason codes include:
 
 - `exact_email_conflicting_organizations`
 - `institutional_domain_conflicting_organizations`
+- `exact_email_competing_domains`
+- `contact_competing_account_links`
+- `ambiguous_name_account_candidates`
 - `consumer_domain_auto_link_refused`
-- (and related insufficient-merge / competing-link codes reserved in constants)
+- `consumer_email_org_link_withheld`
+- `internal_domain_not_commercial_account`
 
 Every conflict stores subject keys JSON + evidence pointers JSON for human review.
 
@@ -139,8 +168,9 @@ CLI: `scripts/commercial/build_commercial_identity_read_model.py`
 
 - **Requires** `--sqlite-path` (no `ORIGENLAB_SQLITE_PATH` fallback).
 - **Default dry-run** — prints planned row counts; performs **no writes**.
-- `--apply` — single transaction: ensure schema → clear rebuildable tables → insert → commit.
-- Failure → full rollback.
+- **Transaction contract B** (`B_schema_additive_data_atomic`):
+  - Additive schema (`CREATE TABLE IF NOT EXISTS` via `executescript`) may remain after a first-run failure because SQLite `executescript` auto-commits DDL.
+  - Prior read-model **data** is never partially replaced: `PRAGMA foreign_keys=ON`, then `BEGIN` → DELETE+INSERT → `COMMIT`, or full **rollback** of the data replacement on failure.
 - Do **not** run `--apply` against production SQLite without explicit operator approval.
 
 Package: `origenlab_email_pipeline.commercial_identity`.
@@ -151,21 +181,23 @@ Package: `origenlab_email_pipeline.commercial_identity`.
 
 Emitted in dry-run/apply summaries (fixture/local unless a production run is explicitly authorized):
 
-| Metric | Definition |
-|--------|------------|
+| Metric | Definition / denominator |
+|--------|--------------------------|
 | `source_identity_rows_inspected` | Source assertions loaded |
 | `canonical_account_count` | Distinct `account_id` |
 | `canonical_contact_count` | Distinct valid-email contacts |
 | `contacts_linked_to_accounts` | Contacts with `account_id` |
 | `unlinked_contacts` | Contacts without account link |
 | `institutional_domain_links` | Links via institutional domain |
-| `consumer_domain_auto_link_refusals` | Consumer-domain auto-link refusals |
+| `consumer_domain_auto_link_refusals` | **Distinct canonical contacts** whose consumer/public email domain refused institutional auto-link (incremented once during contact construction; not during source aggregation) |
 | `account_conflicts` / `contact_conflicts` | Conflict rows by class |
-| `records_without_usable_email` | Missing/invalid email assertions |
-| `records_without_usable_organization_identity` | No usable org name and no institutional domain |
-| OrigenLab / Labdelivery / research origin counts | Evidence-origin tallies |
+| `records_without_usable_email` | Missing/invalid email **assertion rows** |
+| `records_without_usable_organization_identity` | Assertion rows without usable org name and without institutional domain |
+| `*_origin_source_assertion_rows` | Assertion-row tallies by origin (may overlap across different rows for the same person) |
+| `canonical_contacts_with_*_origin` | Distinct contacts with at least one evidence origin of that plane |
+| `canonical_contacts_research_only` | Distinct contacts whose **only** origin is research |
 
-Label in metrics: `synthetic_or_local_fixture` unless operators document otherwise.
+Label in metrics: `synthetic_or_local_fixture` unless operators document otherwise. Metric definitions are also embedded in `metrics["metric_definitions"]`.
 
 ---
 
@@ -176,6 +208,7 @@ Label in metrics: `synthetic_or_local_fixture` unless operators document otherwi
 - Origin labeling from `emails` is best-effort and sender-based.
 - `lead_account_*` is not replaced; operators must not confuse the two layers.
 - Suppression/outreach state is not copied into this model.
+- Internal actors are represented but never treated as external commercial accounts.
 
 ---
 
