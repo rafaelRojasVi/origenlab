@@ -239,7 +239,9 @@ def classify_likely_bucket(rel_posix: str) -> str:
     ):
         return "campaigns"
 
-    if "commercial" in p and ("/commercial/" in f"/{p}/" or "commercial_intel" in p):
+    if "commercial_identity" in p or (
+        "commercial" in p and ("/commercial/" in f"/{p}/" or "commercial_intel" in p)
+    ):
         return "commercial_intel"
 
     if (
