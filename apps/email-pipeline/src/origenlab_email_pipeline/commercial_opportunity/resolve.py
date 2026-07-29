@@ -70,9 +70,10 @@ from origenlab_email_pipeline.commercial_opportunity.timestamps import (
 )
 
 # Closed provenance rows are kept as evidence but must not compete for stage
-# or manufacture regression conflicts against their own supporting terminals.
+# or manufacture regression conflicts against supporting terminals.
 _CLOSED_PROVENANCE_STAGES = frozenset({"closed", "deal_closed"})
 _CLOSED_SUPPORT_STAGES = frozenset({"won", "post_sale", "lost"})
+_TERMINAL_CLAIM_STAGES = frozenset({"won", "post_sale", "lost"})
 
 
 
@@ -287,6 +288,21 @@ def _deal_has_client_commitment(candidates: list[StageCandidate]) -> bool:
 
 def _is_closed_provenance_candidate(c: StageCandidate) -> bool:
     return (c.source_stage or "").strip().lower() in _CLOSED_PROVENANCE_STAGES
+
+
+def _is_undated_terminal_claim(winner: StageCandidate) -> bool:
+    """True when a terminal stage claim lacks an orderable timestamp (any source)."""
+    if winner.event_instant is not None:
+        return False
+    src = (winner.source_stage or "").strip().lower()
+    return bool(
+        winner.is_terminal
+        or winner.is_hard_terminal
+        or src in UNDATED_TERMINAL_SOURCE_STATUSES
+        or src in {"client_payment_received", "deal_cancelled", "payment_inbound"}
+        or winner.canonical_stage in HARD_TERMINAL_STAGES
+        or winner.canonical_stage in _TERMINAL_CLAIM_STAGES
+    )
 
 
 def _note_timestamp(
@@ -814,46 +830,79 @@ def resolve_opportunities(
                 reason_code="deal_payment",
             )
 
-        # closed: provenance only — stage from dated payment/delivery/cancellation support
+        # Closure claims (deal_status=closed and/or deal_closed events) are
+        # provenance-only — never compete in ordinary stage selection.
         closed_provenance = [
             c for c in candidates if _is_closed_provenance_candidate(c)
         ]
-        if (deal.deal_status or "").strip().lower() == "closed":
-            support = [
-                c
-                for c in candidates
-                if (
-                    not _is_closed_provenance_candidate(c)
-                    and c.canonical_stage in _CLOSED_SUPPORT_STAGES
-                    and c.event_instant is not None
-                )
-            ]
-            if support:
-                winner, stage_conflicts = select_stage(support)
-            else:
-                winner = None
-                stage_conflicts = []
-                _add_conflict(
-                    conflicts,
-                    reason_code="closed_without_supporting_evidence",
-                    opportunity_id=oid,
-                    subject_keys={"deal_key": deal.deal_key, "deal_status": "closed"},
-                    evidence_pointers=[
-                        {
-                            "source_table": c.source_table,
-                            "source_record_id": c.source_record_id,
-                        }
-                        for c in closed_provenance
-                    ]
-                    or [
-                        {
-                            "source_table": "commercial_deal",
-                            "source_record_id": str(deal.deal_id),
-                        }
-                    ],
-                )
+        competition = [
+            c for c in candidates if not _is_closed_provenance_candidate(c)
+        ]
+        header_closed = (deal.deal_status or "").strip().lower() == "closed"
+        event_closed = any(
+            (c.source_stage or "").strip().lower() == "deal_closed"
+            for c in closed_provenance
+        )
+        has_closure_claim = header_closed or event_closed
+        support = [
+            c
+            for c in competition
+            if c.canonical_stage in _CLOSED_SUPPORT_STAGES and c.event_instant is not None
+        ]
+
+        if has_closure_claim and support:
+            winner, stage_conflicts = select_stage(support)
+        elif header_closed and not support:
+            winner = None
+            stage_conflicts = []
+            _add_conflict(
+                conflicts,
+                reason_code="closed_without_supporting_evidence",
+                opportunity_id=oid,
+                subject_keys={
+                    "deal_key": deal.deal_key,
+                    "closure_claim_from_deal_status": True,
+                    "closure_claim_from_deal_closed_event": event_closed,
+                },
+                evidence_pointers=[
+                    {
+                        "source_table": c.source_table,
+                        "source_record_id": c.source_record_id,
+                    }
+                    for c in closed_provenance
+                ]
+                or [
+                    {
+                        "source_table": "commercial_deal",
+                        "source_record_id": str(deal.deal_id),
+                    }
+                ],
+            )
+        elif event_closed and not support:
+            # Header has a defensible nonclosed stage: keep it, flag the unsupported
+            # deal_closed claim, and never regress merely because of deal_closed.
+            winner, stage_conflicts = select_stage(competition)
+            _add_conflict(
+                conflicts,
+                reason_code="closed_without_supporting_evidence",
+                opportunity_id=oid,
+                subject_keys={
+                    "deal_key": deal.deal_key,
+                    "closure_claim_from_deal_status": False,
+                    "closure_claim_from_deal_closed_event": True,
+                    "retained_header_status": deal.deal_status,
+                },
+                evidence_pointers=[
+                    {
+                        "source_table": c.source_table,
+                        "source_record_id": c.source_record_id,
+                    }
+                    for c in closed_provenance
+                    if (c.source_stage or "").strip().lower() == "deal_closed"
+                ],
+            )
         else:
-            winner, stage_conflicts = select_stage(candidates)
+            winner, stage_conflicts = select_stage(competition)
 
         for reason, left, right in stage_conflicts:
             _add_conflict(
@@ -884,7 +933,7 @@ def resolve_opportunities(
             source_stage = deal.deal_status
             reason_code = (
                 "closed_without_supporting_evidence"
-                if (deal.deal_status or "").strip().lower() == "closed"
+                if header_closed
                 else "no_stage_evidence"
             )
             conf = "unavailable"
@@ -892,10 +941,7 @@ def resolve_opportunities(
             is_current = False
             evidence_at = None
             evidence_id = closed_provenance[0].evidence_id if closed_provenance else None
-            if (
-                (deal.deal_status or "").strip().lower() == "closed"
-                and evidence_id is None
-            ):
+            if header_closed and evidence_id is None:
                 evidence_id = status_eid
         else:
             canonical = winner.canonical_stage
@@ -906,25 +952,15 @@ def resolve_opportunities(
             evidence_at = winner.event_at
             evidence_id = winner.evidence_id
 
-            # Undated terminal policy (conservative)
-            undated_terminal_claim = (
-                not has_ts
-                and (
-                    winner.is_terminal
-                    or winner.is_hard_terminal
-                    or (winner.source_stage or "").lower() in UNDATED_TERMINAL_SOURCE_STATUSES
-                    or winner.canonical_stage in HARD_TERMINAL_STAGES
-                    or winner.canonical_stage in {"won", "lost", "post_sale"}
-                )
-            )
-            if undated_terminal_claim and winner.source_table == "commercial_deal":
+            # Undated terminal policy — every source table, not just commercial_deal.
+            if _is_undated_terminal_claim(winner):
                 canonical = "unknown"
                 is_terminal = False
                 is_current = False
                 conf = "unavailable"
                 reason_code = "undated_terminal_unproven"
                 evidence_at = None
-                # Keep evidence_id for provenance of the undated claim
+                # Keep evidence_id for provenance of the unproven claim
                 _add_conflict(
                     conflicts,
                     reason_code="undated_terminal_unproven",
@@ -933,6 +969,7 @@ def resolve_opportunities(
                         "deal_key": deal.deal_key,
                         "source_stage": winner.source_stage,
                         "claimed_stage": winner.canonical_stage,
+                        "source_table": winner.source_table,
                     },
                     evidence_pointers=[
                         {
@@ -966,7 +1003,7 @@ def resolve_opportunities(
             else:
                 is_terminal = bool(
                     winner.is_hard_terminal
-                    or (winner.is_terminal and winner.canonical_stage in {"won", "lost", "post_sale"})
+                    or (winner.is_terminal and winner.canonical_stage in _TERMINAL_CLAIM_STAGES)
                 )
                 if is_terminal:
                     is_current = False

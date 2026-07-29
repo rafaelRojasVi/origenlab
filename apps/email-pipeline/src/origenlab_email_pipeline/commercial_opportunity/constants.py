@@ -130,7 +130,15 @@ DOCUMENT_TYPE_STAGE_MAP: Final[dict[str, tuple[str | None, bool, bool]]] = {
 
 # Statuses that claim terminality but without a usable timestamp cannot prove it.
 UNDATED_TERMINAL_SOURCE_STATUSES: Final = frozenset(
-    {"client_paid", "delivered", "cancelled", "closed"}
+    {
+        "client_paid",
+        "delivered",
+        "cancelled",
+        "closed",
+        "client_payment_received",
+        "deal_cancelled",
+        "payment_inbound",
+    }
 )
 
 CONFIDENCE_RANK: Final[dict[str, int]] = {
