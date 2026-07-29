@@ -51,6 +51,58 @@ REQUIRED_CONTACT_MASTER_COMMERCIAL_COLS: frozenset[str] = frozenset(
     }
 )
 
+REQUIRED_COMMERCIAL_DEAL_COLS: frozenset[str] = frozenset(
+    {
+        "id",
+        "deal_key",
+        "deal_status",
+        "client_org_name",
+        "client_domain",
+        "client_contact_email",
+        "supplier_org_name",
+        "supplier_domain",
+        "confidence",
+        "created_at",
+        "updated_at",
+    }
+)
+
+# operator_confirmed is intentionally optional (fallback to 0 / confidence).
+REQUIRED_COMMERCIAL_DEAL_EVENT_COLS: frozenset[str] = frozenset(
+    {
+        "id",
+        "deal_id",
+        "event_type",
+        "event_at",
+        "confidence",
+        "summary",
+        "source_email_id",
+        "source_attachment_id",
+    }
+)
+
+REQUIRED_COMMERCIAL_DEAL_DOCUMENT_COLS: frozenset[str] = frozenset(
+    {
+        "id",
+        "deal_id",
+        "document_type",
+        "issued_at",
+        "confidence",
+        "source_email_id",
+        "source_attachment_id",
+    }
+)
+
+REQUIRED_COMMERCIAL_DEAL_PAYMENT_COLS: frozenset[str] = frozenset(
+    {
+        "id",
+        "deal_id",
+        "direction",
+        "paid_at",
+        "confidence",
+    }
+)
+
 
 class SourceSchemaError(RuntimeError):
     """Raised when a required source table exists but violates the production contract."""
@@ -103,6 +155,8 @@ def _bounded_details(raw: object) -> dict[str, Any]:
 def load_deals(conn: sqlite3.Connection) -> list[SourceDealRow]:
     if not _table_exists(conn, "commercial_deal"):
         return []
+    cols = _cols(conn, "commercial_deal")
+    _require_columns("commercial_deal", cols, REQUIRED_COMMERCIAL_DEAL_COLS)
     rows = conn.execute(
         """
         SELECT id, deal_key, deal_status, client_org_name, client_domain,
@@ -140,6 +194,7 @@ def load_deal_events(conn: sqlite3.Connection) -> list[SourceDealEventRow]:
     if not _table_exists(conn, "commercial_deal_event") or not _table_exists(conn, "commercial_deal"):
         return []
     cols = _cols(conn, "commercial_deal_event")
+    _require_columns("commercial_deal_event", cols, REQUIRED_COMMERCIAL_DEAL_EVENT_COLS)
     op_expr = "COALESCE(operator_confirmed, 0)" if "operator_confirmed" in cols else "0"
     rows = conn.execute(
         f"""
@@ -178,6 +233,8 @@ def load_deal_events(conn: sqlite3.Connection) -> list[SourceDealEventRow]:
 def load_deal_documents(conn: sqlite3.Connection) -> list[SourceDealDocumentRow]:
     if not _table_exists(conn, "commercial_deal_document") or not _table_exists(conn, "commercial_deal"):
         return []
+    cols = _cols(conn, "commercial_deal_document")
+    _require_columns("commercial_deal_document", cols, REQUIRED_COMMERCIAL_DEAL_DOCUMENT_COLS)
     rows = conn.execute(
         """
         SELECT doc.id AS document_id, doc.deal_id, d.deal_key, doc.document_type,
@@ -207,6 +264,8 @@ def load_deal_documents(conn: sqlite3.Connection) -> list[SourceDealDocumentRow]
 def load_deal_payments(conn: sqlite3.Connection) -> list[SourceDealPaymentRow]:
     if not _table_exists(conn, "commercial_deal_payment") or not _table_exists(conn, "commercial_deal"):
         return []
+    cols = _cols(conn, "commercial_deal_payment")
+    _require_columns("commercial_deal_payment", cols, REQUIRED_COMMERCIAL_DEAL_PAYMENT_COLS)
     rows = conn.execute(
         """
         SELECT p.id AS payment_id, p.deal_id, d.deal_key, p.direction, p.paid_at, p.confidence
