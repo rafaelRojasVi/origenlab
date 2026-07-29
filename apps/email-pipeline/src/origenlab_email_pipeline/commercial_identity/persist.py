@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from origenlab_email_pipeline.commercial_identity.constants import SCHEMA_VERSION
+from origenlab_email_pipeline.commercial_identity.fingerprint import FINGERPRINT_ALGORITHM_VERSION
 from origenlab_email_pipeline.commercial_identity.models import IdentityResolution
 from origenlab_email_pipeline.commercial_identity.schema import clear_rebuildable_identity_tables
 
@@ -187,6 +188,7 @@ def write_identity_resolution(
         "built_at": _now_iso(),
         "run_context": run_context,
         "identity_fingerprint": identity_fingerprint,
+        "identity_fingerprint_algorithm_version": FINGERPRINT_ALGORITHM_VERSION,
         "metrics_json": json.dumps(resolution.metrics, sort_keys=True),
     }
     for k, v in meta.items():

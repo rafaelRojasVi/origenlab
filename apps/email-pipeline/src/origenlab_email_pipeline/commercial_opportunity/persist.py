@@ -25,6 +25,9 @@ def write_opportunity_resolution(
     run_context: str,
     identity_fingerprint: str,
     identity_fingerprint_match_status: str,
+    identity_fingerprint_algorithm_version: str,
+    opportunity_source_fingerprint: str,
+    opportunity_source_fingerprint_algorithm_version: str,
 ) -> dict[str, int]:
     """Replace rebuildable opportunity *data* inside the caller's transaction.
 
@@ -160,7 +163,12 @@ def write_opportunity_resolution(
         "built_at": _now_iso(),
         "run_context": run_context,
         "identity_fingerprint": identity_fingerprint,
+        "identity_fingerprint_algorithm_version": identity_fingerprint_algorithm_version,
         "identity_fingerprint_match_status": identity_fingerprint_match_status,
+        "opportunity_source_fingerprint": opportunity_source_fingerprint,
+        "opportunity_source_fingerprint_algorithm_version": (
+            opportunity_source_fingerprint_algorithm_version
+        ),
         "metrics_json": json.dumps(resolution.metrics, sort_keys=True),
     }
     for k, v in meta.items():
