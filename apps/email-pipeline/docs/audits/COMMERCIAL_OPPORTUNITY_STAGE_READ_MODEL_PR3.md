@@ -119,9 +119,11 @@ Canonical stages: `qualifying`, `quote_requested`, `quote_preparing`, `quote_sen
 | `needs_review` | `unknown` | no |
 | `closed` | `unknown` unless supporting dated payment/delivery/cancel evidence | no (alone) |
 
-**Hard terminals** (`lost`, `post_sale`) cannot be overwritten by older quote/active stages. Contradictory hard terminals at any timestamps emit `conflicting_terminal_events` and require review; displayed stage is the latest hard-terminal timestamp.
+**`closed` with support:** `closed` / `deal_closed` rows stay provenance only. Dated supporting evidence selects stage (`client_payment_received` / inbound payment → `won`; `delivered` → `post_sale`; `deal_cancelled` → `lost`). `stage_evidence_id` points at that supporting evidence — never the generic closed status. Closed provenance must not manufacture `stage_regression_prevented` against its own support. Unsupported closed → `unknown` + `closed_without_supporting_evidence` + `needs_review`.
 
-**Undated terminal policy (conservative):** undated `closed` / `client_paid` / `delivered` / `cancelled` cannot prove a definitive terminal stage → `canonical_stage=unknown`, `stage_is_terminal=false`, `stage_is_current=false`, `confidence=unavailable`, conflict `undated_terminal_unproven`.
+**Hard terminals** (`lost`, `post_sale`) cannot be overwritten by older quote/active stages. Contradictory hard terminals at any timestamps emit `conflicting_terminal_events` and require review; displayed stage is the latest hard-terminal **UTC instant** (raw ISO strings are never compared lexicographically).
+
+**Undated terminal policy (conservative):** undated `client_paid` / `delivered` / `cancelled` cannot prove a definitive terminal stage → `canonical_stage=unknown`, `stage_is_terminal=false`, `stage_is_current=false`, `confidence=unavailable`, conflict `undated_terminal_unproven`. Undated unsupported `closed` uses `closed_without_supporting_evidence` instead.
 
 `won` may still be refined to fulfillment by later supplier/logistics evidence.
 
@@ -129,13 +131,14 @@ Canonical stages: `qualifying`, `quote_requested`, `quote_preparing`, `quote_sen
 
 ## 6. Evidence precedence
 
-Chronological compatible progression (not global operator-confirmation dominance):
+Chronological compatible progression (UTC instants — not raw ISO string order):
 
-1. Detect hard-terminal contradictions explicitly (`conflicting_terminal_events` / same-time conflicts).
-2. For compatible nonterminal progression, walk dated evidence in event chronology; later legitimate advances refine older stages.
+1. Detect hard-terminal contradictions explicitly (`conflicting_terminal_events` / same-time conflicts). Displayed hard terminal is the latest UTC instant; input order does not matter.
+2. For compatible nonterminal progression, walk dated evidence in UTC event chronology; later legitimate advances refine older stages.
 3. Operator confirmation strengthens evidence and breaks ties; it does not outrank every later lifecycle advance.
 4. Later lower-stage events emit `stage_regression_prevented` and do not regress the opportunity.
 5. Deterministic stable source keys break otherwise equal ties.
+6. Original source timestamp strings are preserved on stored records. Date-only values order as UTC midnight of that day without inventing sub-day precision. Malformed timestamps emit `malformed_event_timestamp` and never become current stage evidence.
 
 Document mapping notes:
 - `supplier_proforma` alone does not advance to fulfillment; may refine fulfillment only after client PO/payment/commitment evidence.
@@ -159,7 +162,9 @@ Build time never becomes stage evidence time. Every selected `stage_evidence_id`
 
 ## 8. Conflict reason codes
 
-Includes: `opportunity_identity_unresolved`, `opportunity_identity_ambiguous`, `deal_contact_account_mismatch`, `duplicate_deal_key_evidence`, `source_event_missing_timestamp`, `conflicting_terminal_events`, `stage_regression_prevented`, `same_timestamp_stage_conflict`, `unsupported_source_stage`, `undated_signal_history_only`, `stale_or_missing_identity_snapshot`, `supplier_only_not_client_opportunity`.
+Includes: `opportunity_identity_unresolved`, `opportunity_identity_ambiguous`, `deal_contact_account_mismatch`, `duplicate_deal_key_evidence`, `source_event_missing_timestamp`, `malformed_event_timestamp`, `conflicting_terminal_events`, `stage_regression_prevented`, `same_timestamp_stage_conflict`, `unsupported_source_stage`, `undated_signal_history_only`, `undated_terminal_unproven`, `closed_without_supporting_evidence`, `deal_status_without_usable_timestamp`, `stale_or_missing_identity_snapshot`, `stale_build_plan`, `supplier_only_not_client_opportunity`, `source_schema_incompatible`.
+
+**Review status** is derived centrally after resolution: any attached conflict in `REVIEW_REQUIRING_CONFLICT_REASONS`, plus `deal_status=needs_review`, forces `review_status=needs_review`. No opportunity may be `ok` while carrying a review-requiring attached conflict.
 
 Conflicts carry stable subject keys + source pointers — never email bodies, extracts, credentials, or unnecessary PII.
 
@@ -197,6 +202,11 @@ uv run python scripts/commercial/build_commercial_opportunity_read_model.py \
 - Default dry-run; explicit `--apply`
 - `--run-context` / `--json-summary`
 - Apply refuses absent/stale identity snapshot
+- Expected operator-contract failures print concise `error:` lines to stderr (no traceback) and exit:
+  - `2` — path / run-context / mode (`CommercialIdentityPathError`)
+  - `3` — missing/mismatched identity snapshot (`IdentitySnapshotError`)
+  - `4` — incompatible source schema (`SourceSchemaError`)
+  - `5` — stale build plan / source race (`StaleBuildPlanError`)
 
 **Do not run production apply or production opportunity dry-run without separate operator authorization after merge.**
 

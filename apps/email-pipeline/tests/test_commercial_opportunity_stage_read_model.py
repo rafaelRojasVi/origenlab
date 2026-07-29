@@ -947,11 +947,11 @@ def test_delivered_then_cancelled_conflict() -> None:
 
 def test_undated_terminal_statuses_unproven() -> None:
     identity = _base_identity()
-    for status, _claimed in (
-        ("closed", "won"),
-        ("client_paid", "won"),
-        ("delivered", "post_sale"),
-        ("cancelled", "lost"),
+    for status, expected_reason in (
+        ("closed", "closed_without_supporting_evidence"),
+        ("client_paid", "undated_terminal_unproven"),
+        ("delivered", "undated_terminal_unproven"),
+        ("cancelled", "undated_terminal_unproven"),
     ):
         res = resolve_opportunities(
             identity=identity,
@@ -965,7 +965,7 @@ def test_undated_terminal_statuses_unproven() -> None:
         assert opp.stage_is_terminal is False
         assert opp.stage_is_current is False
         assert opp.stage_confidence == "unavailable"
-        assert any(c.reason_code == "undated_terminal_unproven" for c in res.conflicts)
+        assert any(c.reason_code == expected_reason for c in res.conflicts), status
 
 
 def test_dated_terminal_statuses_proven() -> None:
@@ -993,23 +993,124 @@ def test_closed_without_support_needs_review() -> None:
     identity = _base_identity()
     res = resolve_opportunities(
         identity=identity,
-        deals=[_deal(deal_status="closed", updated_at="2026-04-01T00:00:00+00:00")],
+        deals=[
+            _deal(
+                deal_status="closed",
+                updated_at="2026-04-01T00:00:00+00:00",
+                client_contact_email="buyer@hospital.cl",
+                client_domain="hospital.cl",
+            )
+        ],
         events=[],
         documents=[],
         payments=[],
     )
-    assert res.opportunities[0].canonical_stage == "unknown"
-    assert res.opportunities[0].review_status == "needs_review"
+    opp = res.opportunities[0]
+    assert opp.canonical_stage == "unknown"
+    assert opp.review_status == "needs_review"
+    assert any(c.reason_code == "closed_without_supporting_evidence" for c in res.conflicts)
+    # Evidence points at closed deal status provenance
+    ev = next(e for e in res.evidence if e.evidence_id == opp.stage_evidence_id)
+    assert ev.source_table == "commercial_deal"
+    assert ev.evidence_type == "deal_status"
 
 
 def test_closed_with_payment_evidence_is_won() -> None:
     identity = _base_identity()
-    deals = [_deal(deal_status="closed", updated_at="2026-04-01T00:00:00+00:00")]
+    deals = [
+        _deal(
+            deal_status="closed",
+            updated_at="2026-04-01T00:00:00+00:00",
+            client_contact_email="buyer@hospital.cl",
+            client_domain="hospital.cl",
+        )
+    ]
     events = [
         _event(event_type="client_payment_received", event_at="2026-03-15T00:00:00+00:00", event_id=1)
     ]
     res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=[], payments=[])
-    assert res.opportunities[0].canonical_stage == "won"
+    opp = res.opportunities[0]
+    assert opp.canonical_stage == "won"
+    assert opp.review_status == "ok"
+    assert opp.stage_evidence_id is not None
+    ev = next(e for e in res.evidence if e.evidence_id == opp.stage_evidence_id)
+    assert ev.source_table == "commercial_deal_event"
+    assert ev.evidence_type == "client_payment_received"
+    assert not any(c.reason_code == "stage_regression_prevented" for c in res.conflicts)
+    assert not any(c.reason_code == "closed_without_supporting_evidence" for c in res.conflicts)
+
+
+def test_closed_with_delivered_evidence_is_post_sale() -> None:
+    identity = _base_identity()
+    deals = [
+        _deal(
+            deal_status="closed",
+            updated_at="2026-04-01T00:00:00+00:00",
+            client_contact_email="buyer@hospital.cl",
+            client_domain="hospital.cl",
+        )
+    ]
+    events = [_event(event_type="delivered", event_at="2026-03-20T00:00:00+00:00", event_id=1)]
+    res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=[], payments=[])
+    opp = res.opportunities[0]
+    assert opp.canonical_stage == "post_sale"
+    assert opp.review_status == "ok"
+    ev = next(e for e in res.evidence if e.evidence_id == opp.stage_evidence_id)
+    assert ev.evidence_type == "delivered"
+    assert not any(c.reason_code == "stage_regression_prevented" for c in res.conflicts)
+
+
+def test_closed_with_cancellation_evidence_is_lost() -> None:
+    identity = _base_identity()
+    deals = [
+        _deal(
+            deal_status="closed",
+            updated_at="2026-04-01T00:00:00+00:00",
+            client_contact_email="buyer@hospital.cl",
+            client_domain="hospital.cl",
+        )
+    ]
+    events = [
+        _event(event_type="deal_cancelled", event_at="2026-03-10T00:00:00+00:00", event_id=1)
+    ]
+    res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=[], payments=[])
+    opp = res.opportunities[0]
+    assert opp.canonical_stage == "lost"
+    assert opp.review_status == "ok"
+    ev = next(e for e in res.evidence if e.evidence_id == opp.stage_evidence_id)
+    assert ev.evidence_type == "deal_cancelled"
+    assert not any(c.reason_code == "stage_regression_prevented" for c in res.conflicts)
+
+
+def test_closed_with_inbound_payment_row_is_won() -> None:
+    identity = _base_identity()
+    deals = [
+        _deal(
+            deal_status="closed",
+            updated_at="2026-04-01T00:00:00+00:00",
+            client_contact_email="buyer@hospital.cl",
+            client_domain="hospital.cl",
+        )
+    ]
+    payments = [
+        SourceDealPaymentRow(
+            payment_id=1,
+            deal_id=1,
+            deal_key="deal-a",
+            direction="inbound",
+            paid_at="2026-03-12T00:00:00+00:00",
+            confidence="extracted_high",
+        )
+    ]
+    res = resolve_opportunities(
+        identity=identity, deals=deals, events=[], documents=[], payments=payments
+    )
+    opp = res.opportunities[0]
+    assert opp.canonical_stage == "won"
+    assert opp.review_status == "ok"
+    ev = next(e for e in res.evidence if e.evidence_id == opp.stage_evidence_id)
+    assert ev.source_table == "commercial_deal_payment"
+    assert not any(c.reason_code == "stage_regression_prevented" for c in res.conflicts)
 
 
 def test_supplier_proforma_alone_does_not_fulfill() -> None:
@@ -1416,3 +1517,288 @@ def test_incompatible_fingerprint_version_blocks_apply(tmp_path: Path) -> None:
         run_opportunity_build(
             sqlite_path=db, apply=True, run_context=RUN_CONTEXT_SYNTHETIC_FIXTURE
         )
+
+
+def test_utc_instant_order_overrides_lexical_iso_for_hard_terminals() -> None:
+    """Lexical ISO order disagrees with UTC: later lexical string is earlier instant."""
+    identity = _base_identity()
+    # Lexically: 2026-01-02T01:00:00+02:00 > 2026-01-01T23:30:00-04:00
+    # UTC:       2026-01-01T23:00:00Z      < 2026-01-02T03:30:00Z
+    earlier_lex_later_utc = "2026-01-01T23:30:00-04:00"  # 03:30Z next calendar day UTC
+    later_lex_earlier_utc = "2026-01-02T01:00:00+02:00"  # 23:00Z same calendar day UTC
+    assert later_lex_earlier_utc > earlier_lex_later_utc  # lexical trap
+
+    deals = [
+        _deal(
+            deal_status="quoted",
+            updated_at="2026-01-01T00:00:00+00:00",
+            client_contact_email="buyer@hospital.cl",
+            client_domain="hospital.cl",
+        )
+    ]
+    events_a = [
+        _event(event_type="delivered", event_at=later_lex_earlier_utc, event_id=1),
+        _event(event_type="deal_cancelled", event_at=earlier_lex_later_utc, event_id=2),
+    ]
+    events_b = list(reversed(events_a))
+    res_a = resolve_opportunities(
+        identity=identity, deals=deals, events=events_a, documents=[], payments=[]
+    )
+    res_b = resolve_opportunities(
+        identity=identity, deals=deals, events=events_b, documents=[], payments=[]
+    )
+    assert res_a.opportunities[0].canonical_stage == "lost"
+    assert res_b.opportunities[0].canonical_stage == "lost"
+    assert res_a.opportunities[0].stage_evidence_at == earlier_lex_later_utc
+    assert res_b.opportunities[0].stage_evidence_at == earlier_lex_later_utc
+    assert any(c.reason_code == "conflicting_terminal_events" for c in res_a.conflicts)
+    assert any(c.reason_code == "conflicting_terminal_events" for c in res_b.conflicts)
+    assert res_a.opportunities[0].review_status == "needs_review"
+
+
+def test_malformed_timestamp_emits_stable_conflict_not_current_evidence() -> None:
+    identity = _base_identity()
+    deals = [_deal(deal_status="quoted", updated_at="2026-01-01T00:00:00+00:00")]
+    events = [
+        _event(event_type="client_payment_received", event_at="not-a-timestamp", event_id=1),
+        _event(event_type="client_quote_sent", event_at="2026-02-01T00:00:00+00:00", event_id=2),
+    ]
+    res = resolve_opportunities(
+        identity=identity, deals=deals, events=events, documents=[], payments=[]
+    )
+    assert any(c.reason_code == "malformed_event_timestamp" for c in res.conflicts)
+    opp = res.opportunities[0]
+    assert opp.canonical_stage == "quote_sent"
+    assert opp.stage_is_current is True
+    assert opp.review_status == "needs_review"
+    # Malformed payment must not become current won evidence
+    assert opp.stage_evidence_at != "not-a-timestamp"
+
+
+def test_date_only_timestamp_orders_as_utc_midnight_without_inventing_time() -> None:
+    identity = _base_identity()
+    deals = [_deal(deal_status="quoted", updated_at="2026-01-01T00:00:00+00:00")]
+    events = [
+        _event(event_type="client_quote_sent", event_at="2026-02-01", event_id=1),
+        _event(event_type="client_po_received", event_at="2026-02-02T12:00:00+00:00", event_id=2),
+    ]
+    res = resolve_opportunities(
+        identity=identity, deals=deals, events=events, documents=[], payments=[]
+    )
+    opp = res.opportunities[0]
+    assert opp.canonical_stage == "purchase_pending"
+    # Original date-only string preserved on the earlier event record
+    quote_ev = next(e for e in res.events if e.source_event_type == "client_quote_sent")
+    assert quote_ev.event_at == "2026-02-01"
+
+
+def test_review_status_forced_by_attached_review_conflicts() -> None:
+    identity = _base_identity()
+    # Unsupported stage + missing event timestamp → needs_review via conflicts
+    deals = [_deal(deal_status="not_a_real_status", updated_at="2026-01-01T00:00:00+00:00")]
+    events = [_event(event_type="client_quote_sent", event_at=None, event_id=1)]
+    res = resolve_opportunities(
+        identity=identity, deals=deals, events=events, documents=[], payments=[]
+    )
+    opp = res.opportunities[0]
+    assert opp.review_status == "needs_review"
+    assert any(c.reason_code == "unsupported_source_stage" for c in res.conflicts)
+    assert any(c.reason_code == "source_event_missing_timestamp" for c in res.conflicts)
+
+    # Invariant: no opportunity may be ok while carrying a review-requiring conflict
+    from origenlab_email_pipeline.commercial_opportunity.constants import (
+        REVIEW_REQUIRING_CONFLICT_REASONS,
+    )
+
+    for o in res.opportunities:
+        attached = [c for c in res.conflicts if c.opportunity_id == o.opportunity_id]
+        if any(c.reason_code in REVIEW_REQUIRING_CONFLICT_REASONS for c in attached):
+            assert o.review_status == "needs_review"
+
+
+def test_deal_status_needs_review_forces_review_even_without_extra_conflict() -> None:
+    identity = _base_identity()
+    res = resolve_opportunities(
+        identity=identity,
+        deals=[_deal(deal_status="needs_review", updated_at="2026-01-01T00:00:00+00:00")],
+        events=[],
+        documents=[],
+        payments=[],
+    )
+    assert res.opportunities[0].canonical_stage == "unknown"
+    assert res.opportunities[0].review_status == "needs_review"
+
+
+def test_cli_operator_contract_errors_no_traceback(tmp_path: Path) -> None:
+    import importlib.util
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    script = root / "scripts/commercial/build_commercial_opportunity_read_model.py"
+
+    # Invalid production run-context/mode
+    db = tmp_path / "cli_mode.sqlite"
+    _seed_minimal_db(db)
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--sqlite-path",
+            str(db),
+            "--run-context",
+            "production_apply",
+        ],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 2
+    assert "error:" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+    # Missing identity snapshot on apply
+    proc2 = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--sqlite-path",
+            str(db),
+            "--apply",
+            "--run-context",
+            "synthetic_fixture",
+        ],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc2.returncode == 3
+    assert "error:" in proc2.stderr
+    assert "Traceback" not in proc2.stderr
+
+    # Incompatible source schema (opportunity_signals)
+    bad = tmp_path / "cli_schema.sqlite"
+    conn = sqlite3.connect(str(bad))
+    conn.executescript(
+        """
+        CREATE TABLE organization_master (
+          domain TEXT PRIMARY KEY,
+          organization_name_guess TEXT,
+          organization_type_guess TEXT,
+          first_seen_at TEXT, last_seen_at TEXT,
+          total_emails INTEGER, total_contacts INTEGER,
+          quote_email_count INTEGER, invoice_email_count INTEGER,
+          purchase_email_count INTEGER, business_doc_email_count INTEGER,
+          quote_doc_count INTEGER, invoice_doc_count INTEGER,
+          top_equipment_tags TEXT, key_contacts TEXT
+        );
+        CREATE TABLE contact_master (
+          email TEXT PRIMARY KEY,
+          display_name TEXT, organization_name_guess TEXT, domain TEXT,
+          first_seen_at TEXT, last_seen_at TEXT,
+          total_emails INTEGER, as_sender_count INTEGER, as_recipient_count INTEGER,
+          quote_email_count INTEGER, invoice_email_count INTEGER,
+          purchase_email_count INTEGER, business_doc_email_count INTEGER,
+          quote_doc_count INTEGER, invoice_doc_count INTEGER
+        );
+        CREATE TABLE emails (id INTEGER PRIMARY KEY, date_iso TEXT, sender TEXT, source_file TEXT);
+        CREATE TABLE commercial_deal (
+          id INTEGER PRIMARY KEY, deal_key TEXT NOT NULL UNIQUE, deal_status TEXT NOT NULL,
+          client_org_name TEXT NOT NULL, client_domain TEXT, client_contact_email TEXT,
+          supplier_org_name TEXT, supplier_domain TEXT,
+          confidence TEXT NOT NULL DEFAULT 'extracted_high', created_at TEXT, updated_at TEXT
+        );
+        CREATE TABLE commercial_deal_event (
+          id INTEGER PRIMARY KEY, deal_id INTEGER NOT NULL, event_type TEXT NOT NULL,
+          event_at TEXT, confidence TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '',
+          source_email_id INTEGER, source_attachment_id INTEGER, created_at TEXT
+        );
+        CREATE TABLE commercial_deal_document (
+          id INTEGER PRIMARY KEY, deal_id INTEGER NOT NULL, document_type TEXT NOT NULL,
+          issued_at TEXT, confidence TEXT NOT NULL, source_email_id INTEGER,
+          source_attachment_id INTEGER, created_at TEXT
+        );
+        CREATE TABLE commercial_deal_payment (
+          id INTEGER PRIMARY KEY, deal_id INTEGER NOT NULL, direction TEXT NOT NULL,
+          paid_at TEXT, confidence TEXT NOT NULL, created_at TEXT
+        );
+        CREATE TABLE opportunity_signals (
+          id INTEGER PRIMARY KEY, contact_email TEXT, created_at TEXT
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+    proc3 = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--sqlite-path",
+            str(bad),
+            "--run-context",
+            "synthetic_fixture",
+        ],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc3.returncode == 4
+    assert "error:" in proc3.stderr
+    assert "Traceback" not in proc3.stderr
+
+    # Stale build plan: plan then mutate sources before apply via library (exit path tested
+    # through CLI would require two-step; exercise StaleBuildPlanError mapping via import).
+    good = tmp_path / "cli_stale.sqlite"
+    _seed_minimal_db(good)
+    run_identity_build(sqlite_path=good, apply=True, run_context=RUN_CONTEXT_SYNTHETIC_FIXTURE)
+    # Import CLI main and simulate by catching through subprocess after identity apply
+    # with injected stale path: call apply_opportunity_build raises; CLI maps exit 5 when
+    # run_opportunity_build apply races — use library raise to confirm code path exists, then
+    # force via monkeypatch-free: mutate between plan+apply is library-only. Drive CLI by
+    # replacing fingerprint mid-flight is hard; instead invoke main with a db that fails
+    # stale check inside apply after identity is present — use inject via Python one-liner.
+    from origenlab_email_pipeline.commercial_opportunity.builder import (
+        apply_opportunity_build,
+        plan_opportunity_build,
+    )
+
+    plan = plan_opportunity_build(
+        sqlite_path=good, apply=True, run_context=RUN_CONTEXT_SYNTHETIC_FIXTURE
+    )
+
+    def _mutate(conn: sqlite3.Connection) -> None:
+        conn.execute(
+            "UPDATE commercial_deal SET deal_status='cancelled' WHERE deal_key=?",
+            ("fixture-deal",),
+        )
+
+    with pytest.raises(StaleBuildPlanError):
+        apply_opportunity_build(plan, inject_source_change=_mutate)
+
+    # CLI exit 5: import main and call with patched run that raises StaleBuildPlanError
+    spec = importlib.util.spec_from_file_location("opp_cli", script)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    def _raise_stale(*_a, **_k):
+        raise StaleBuildPlanError("stale plan test")
+
+    original = mod.run_opportunity_build
+    mod.run_opportunity_build = _raise_stale  # type: ignore[assignment]
+    try:
+        code = mod.main(
+            [
+                "--sqlite-path",
+                str(good),
+                "--apply",
+                "--run-context",
+                "synthetic_fixture",
+            ]
+        )
+    finally:
+        mod.run_opportunity_build = original  # type: ignore[assignment]
+    assert code == 5
