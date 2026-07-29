@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from origenlab_email_pipeline.commercial_identity.constants import SCHEMA_VERSION
+from origenlab_email_pipeline.commercial_identity.fingerprint import FINGERPRINT_ALGORITHM_VERSION
 from origenlab_email_pipeline.commercial_identity.models import IdentityResolution
 from origenlab_email_pipeline.commercial_identity.schema import clear_rebuildable_identity_tables
 
@@ -16,11 +17,18 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def write_identity_resolution(conn: sqlite3.Connection, resolution: IdentityResolution) -> dict[str, int]:
+def write_identity_resolution(
+    conn: sqlite3.Connection,
+    resolution: IdentityResolution,
+    *,
+    run_context: str,
+    identity_fingerprint: str,
+) -> dict[str, int]:
     """Replace rebuildable identity *data* with ``resolution`` inside the caller's transaction.
 
     Caller must already have ensured schema and opened a transaction with foreign_keys=ON.
     This function does not run executescript / DDL.
+    Persists ``identity_fingerprint`` and ``run_context`` in build meta for PR3 gating.
     """
     clear_rebuildable_identity_tables(conn)
 
@@ -178,6 +186,9 @@ def write_identity_resolution(conn: sqlite3.Connection, resolution: IdentityReso
     meta = {
         "schema_version": SCHEMA_VERSION,
         "built_at": _now_iso(),
+        "run_context": run_context,
+        "identity_fingerprint": identity_fingerprint,
+        "identity_fingerprint_algorithm_version": FINGERPRINT_ALGORITHM_VERSION,
         "metrics_json": json.dumps(resolution.metrics, sort_keys=True),
     }
     for k, v in meta.items():

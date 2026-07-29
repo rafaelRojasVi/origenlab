@@ -210,7 +210,7 @@ Keep safety tables authoritative. Add **separate read models** (later PRs):
 | --- | --- |
 | **PR1 (this)** | Read-only commercial truth audit + lineage docs + synthetic tests |
 | PR2 | Account/contact identity read model (no send changes) — see [`COMMERCIAL_IDENTITY_READ_MODEL_PR2.md`](COMMERCIAL_IDENTITY_READ_MODEL_PR2.md) |
-| PR3 | Opportunity stage model from existing mart/intel/deal evidence |
+| PR3 | Opportunity stage model from existing mart/intel/deal evidence — see [`COMMERCIAL_OPPORTUNITY_STAGE_READ_MODEL_PR3.md`](COMMERCIAL_OPPORTUNITY_STAGE_READ_MODEL_PR3.md) |
 | PR4 | Tender↔account linking with confidence + enrichment queue |
 | PR5 | Product-interest evidence object + batch builder (human review gate) |
 | PR6 | Dashboard queue redesign consuming the new dimensions (still GET-only) |
