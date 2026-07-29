@@ -8,26 +8,39 @@ from pathlib import Path
 import pytest
 
 from origenlab_email_pipeline.commercial_identity.builder import (
+    CommercialIdentityPathError,
     run_identity_build,
 )
 from origenlab_email_pipeline.commercial_identity.constants import (
     RUN_CONTEXT_LOCAL_FIXTURE,
+    RUN_CONTEXT_PRODUCTION_APPLY,
     RUN_CONTEXT_PRODUCTION_DRY_RUN,
     RUN_CONTEXT_SYNTHETIC_FIXTURE,
 )
-from origenlab_email_pipeline.commercial_identity.fingerprint import identity_resolution_fingerprint
+from origenlab_email_pipeline.commercial_identity.fingerprint import (
+    FINGERPRINT_ALGORITHM_VERSION,
+    identity_resolution_fingerprint,
+)
 from origenlab_email_pipeline.commercial_identity.ids import (
     stable_account_id_for_domain,
     stable_contact_id,
 )
-from origenlab_email_pipeline.commercial_identity.models import SourceIdentityRow
+from origenlab_email_pipeline.commercial_identity.models import (
+    AccountRecord,
+    ContactRecord,
+    IdentityResolution,
+    SourceIdentityRow,
+)
 from origenlab_email_pipeline.commercial_identity.resolve import resolve_identity
 from origenlab_email_pipeline.commercial_opportunity.builder import (
     apply_opportunity_build,
     plan_opportunity_build,
     run_opportunity_build,
 )
-from origenlab_email_pipeline.commercial_opportunity.identity_gate import IdentitySnapshotError
+from origenlab_email_pipeline.commercial_opportunity.identity_gate import (
+    IdentitySnapshotError,
+    StaleBuildPlanError,
+)
 from origenlab_email_pipeline.commercial_opportunity.ids import opportunity_id_for_deal
 from origenlab_email_pipeline.commercial_opportunity.resolve import resolve_opportunities
 from origenlab_email_pipeline.commercial_opportunity.models import (
@@ -37,6 +50,11 @@ from origenlab_email_pipeline.commercial_opportunity.models import (
     SourceDealPaymentRow,
     SourceDealRow,
     SourceSignalRow,
+)
+from origenlab_email_pipeline.commercial_opportunity.sources import (
+    SourceSchemaError,
+    load_contact_master_history,
+    load_opportunity_signals,
 )
 from origenlab_email_pipeline.lead_research.commercial_action_buckets import (
     BUCKET_ALREADY_CONTACTED,
@@ -214,7 +232,6 @@ def test_internal_actor_does_not_become_client_account() -> None:
 
 def test_ambiguous_identity_retains_opportunity_withholds_link() -> None:
     from origenlab_email_pipeline.commercial_identity.models import (
-        AccountRecord,
         IdentityResolution,
     )
 
@@ -397,9 +414,9 @@ def test_typed_dated_non_deal_evidence_is_candidate_not_current() -> None:
     signals = [
         SourceSignalRow(
             signal_id="sig-1",
-            contact_email="buyer@hospital.cl",
-            organization_name="Hospital Sur",
             signal_type="quote_signal",
+            entity_kind="contact",
+            entity_key="buyer@hospital.cl",
             created_at="2026-06-01T00:00:00+00:00",  # mart stamp
             email_id=99,
             email_date="2026-01-15T08:00:00+00:00",
@@ -451,8 +468,9 @@ def test_opportunity_signals_created_at_not_event_time() -> None:
     signals = [
         SourceSignalRow(
             signal_id="sig-2",
-            contact_email="buyer@hospital.cl",
             signal_type="quote_signal",
+            entity_kind="contact",
+            entity_key="buyer@hospital.cl",
             created_at="2026-06-01T00:00:00+00:00",
             email_id=None,
             email_date=None,
@@ -512,6 +530,7 @@ def test_no_next_action_tender_product_interest_inferred() -> None:
 
 
 def _seed_minimal_db(path: Path) -> None:
+    """Fixture matching production contact_master / opportunity_signals DDL exactly."""
     conn = sqlite3.connect(str(path))
     conn.executescript(
         """
@@ -524,11 +543,16 @@ def _seed_minimal_db(path: Path) -> None:
           first_seen_at TEXT,
           last_seen_at TEXT,
           total_emails INTEGER,
-          quote_email_count INTEGER DEFAULT 0,
-          invoice_email_count INTEGER DEFAULT 0,
-          purchase_email_count INTEGER DEFAULT 0,
-          gmail_sent_count INTEGER DEFAULT 0,
-          gmail_received_count INTEGER DEFAULT 0
+          inbound_emails INTEGER,
+          outbound_emails INTEGER,
+          quote_email_count INTEGER,
+          invoice_email_count INTEGER,
+          purchase_email_count INTEGER,
+          business_doc_email_count INTEGER,
+          quote_doc_count INTEGER,
+          invoice_doc_count INTEGER,
+          top_equipment_tags TEXT,
+          confidence_score REAL
         );
         CREATE TABLE organization_master (
           domain TEXT PRIMARY KEY,
@@ -537,7 +561,32 @@ def _seed_minimal_db(path: Path) -> None:
           first_seen_at TEXT,
           last_seen_at TEXT,
           total_emails INTEGER,
-          total_contacts INTEGER
+          total_contacts INTEGER,
+          quote_email_count INTEGER,
+          invoice_email_count INTEGER,
+          purchase_email_count INTEGER,
+          business_doc_email_count INTEGER,
+          quote_doc_count INTEGER,
+          invoice_doc_count INTEGER,
+          top_equipment_tags TEXT,
+          key_contacts TEXT
+        );
+        CREATE TABLE emails (
+          id INTEGER PRIMARY KEY,
+          date_iso TEXT,
+          sender TEXT,
+          source_file TEXT
+        );
+        CREATE TABLE opportunity_signals (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          signal_type TEXT NOT NULL,
+          entity_kind TEXT NOT NULL,
+          entity_key TEXT NOT NULL,
+          email_id INTEGER,
+          attachment_id INTEGER,
+          score REAL,
+          details_json TEXT,
+          created_at TEXT
         );
         CREATE TABLE commercial_deal (
           id INTEGER PRIMARY KEY,
@@ -563,15 +612,45 @@ def _seed_minimal_db(path: Path) -> None:
           source_attachment_id INTEGER,
           created_at TEXT
         );
-        INSERT INTO organization_master VALUES (
-          'hospital.cl', 'Hospital Sur', 'institution', '2023-01-01', '2024-01-01', 10, 1
+        CREATE TABLE commercial_deal_document (
+          id INTEGER PRIMARY KEY,
+          deal_id INTEGER NOT NULL,
+          document_type TEXT NOT NULL,
+          issued_at TEXT,
+          confidence TEXT NOT NULL,
+          source_email_id INTEGER,
+          source_attachment_id INTEGER,
+          created_at TEXT
+        );
+        CREATE TABLE commercial_deal_payment (
+          id INTEGER PRIMARY KEY,
+          deal_id INTEGER NOT NULL,
+          direction TEXT NOT NULL,
+          paid_at TEXT,
+          confidence TEXT NOT NULL,
+          created_at TEXT
+        );
+        INSERT INTO organization_master (
+          domain, organization_name_guess, organization_type_guess,
+          first_seen_at, last_seen_at, total_emails, total_contacts,
+          quote_email_count, invoice_email_count, purchase_email_count,
+          business_doc_email_count, quote_doc_count, invoice_doc_count,
+          top_equipment_tags, key_contacts
+        ) VALUES (
+          'hospital.cl', 'Hospital Sur', 'institution',
+          '2023-01-01', '2024-01-01', 10, 1,
+          0, 0, 0, 0, 0, 0, NULL, NULL
         );
         INSERT INTO contact_master (
           email, contact_name_best, domain, organization_name_guess, organization_type_guess,
-          first_seen_at, last_seen_at, total_emails
+          first_seen_at, last_seen_at, total_emails, inbound_emails, outbound_emails,
+          quote_email_count, invoice_email_count, purchase_email_count,
+          business_doc_email_count, quote_doc_count, invoice_doc_count,
+          top_equipment_tags, confidence_score
         ) VALUES (
           'buyer@hospital.cl', 'Buyer', 'hospital.cl', 'Hospital Sur', 'institution',
-          '2023-02-01', '2024-02-01', 3
+          '2023-02-01', '2024-02-01', 3, 1, 2,
+          0, 0, 0, 0, 0, 0, NULL, 0.5
         );
         INSERT INTO commercial_deal (
           id, deal_key, deal_status, client_org_name, client_domain,
@@ -815,3 +894,525 @@ def test_document_payment_dated_evidence(tmp_path: Path) -> None:
         identity=identity, deals=deals, events=[], documents=docs, payments=pays
     )
     assert res.opportunities[0].canonical_stage == "won"
+
+
+# --- PR3 hardening ---
+
+
+def test_chrono_older_operator_quote_later_shipment_fulfillment() -> None:
+    identity = _base_identity()
+    deals = [_deal(deal_status="quoted", updated_at="2026-01-01T00:00:00+00:00")]
+    events = [
+        _event(
+            event_type="client_quote_sent",
+            event_at="2026-01-05T00:00:00+00:00",
+            operator_confirmed=True,
+            event_id=1,
+        ),
+        _event(event_type="shipment_released", event_at="2026-03-01T00:00:00+00:00", event_id=2),
+    ]
+    res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=[], payments=[])
+    assert res.opportunities[0].canonical_stage == "fulfillment"
+
+
+def test_chrono_later_quote_does_not_regress_fulfillment() -> None:
+    identity = _base_identity()
+    deals = [_deal(deal_status="quoted", updated_at="2026-01-01T00:00:00+00:00")]
+    events = [
+        _event(event_type="shipment_released", event_at="2026-02-01T00:00:00+00:00", event_id=1),
+        _event(event_type="client_quote_sent", event_at="2026-03-01T00:00:00+00:00", event_id=2),
+    ]
+    res_a = resolve_opportunities(identity=identity, deals=deals, events=events, documents=[], payments=[])
+    res_b = resolve_opportunities(
+        identity=identity, deals=deals, events=list(reversed(events)), documents=[], payments=[]
+    )
+    assert res_a.opportunities[0].canonical_stage == "fulfillment"
+    assert res_b.opportunities[0].canonical_stage == "fulfillment"
+    assert any(c.reason_code == "stage_regression_prevented" for c in res_a.conflicts)
+
+
+def test_delivered_then_cancelled_conflict() -> None:
+    identity = _base_identity()
+    deals = [_deal(deal_status="quoted", updated_at="2026-01-01T00:00:00+00:00")]
+    events = [
+        _event(event_type="delivered", event_at="2026-02-01T00:00:00+00:00", event_id=1),
+        _event(event_type="deal_cancelled", event_at="2026-03-01T00:00:00+00:00", event_id=2),
+    ]
+    res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=[], payments=[])
+    assert any(c.reason_code == "conflicting_terminal_events" for c in res.conflicts)
+    assert res.opportunities[0].review_status == "needs_review"
+    # Deterministic display: latest hard terminal timestamp
+    assert res.opportunities[0].canonical_stage == "lost"
+
+
+def test_undated_terminal_statuses_unproven() -> None:
+    identity = _base_identity()
+    for status, _claimed in (
+        ("closed", "won"),
+        ("client_paid", "won"),
+        ("delivered", "post_sale"),
+        ("cancelled", "lost"),
+    ):
+        res = resolve_opportunities(
+            identity=identity,
+            deals=[_deal(deal_status=status, updated_at=None, created_at=None)],
+            events=[],
+            documents=[],
+            payments=[],
+        )
+        opp = res.opportunities[0]
+        assert opp.canonical_stage == "unknown", status
+        assert opp.stage_is_terminal is False
+        assert opp.stage_is_current is False
+        assert opp.stage_confidence == "unavailable"
+        assert any(c.reason_code == "undated_terminal_unproven" for c in res.conflicts)
+
+
+def test_dated_terminal_statuses_proven() -> None:
+    identity = _base_identity()
+    cases = (
+        ("client_paid", "won", True),
+        ("delivered", "post_sale", True),
+        ("cancelled", "lost", True),
+    )
+    for status, stage, terminal in cases:
+        res = resolve_opportunities(
+            identity=identity,
+            deals=[_deal(deal_status=status, updated_at="2026-04-01T00:00:00+00:00")],
+            events=[],
+            documents=[],
+            payments=[],
+        )
+        opp = res.opportunities[0]
+        assert opp.canonical_stage == stage, status
+        assert opp.stage_is_terminal is terminal
+        assert opp.stage_is_current is False
+
+
+def test_closed_without_support_needs_review() -> None:
+    identity = _base_identity()
+    res = resolve_opportunities(
+        identity=identity,
+        deals=[_deal(deal_status="closed", updated_at="2026-04-01T00:00:00+00:00")],
+        events=[],
+        documents=[],
+        payments=[],
+    )
+    assert res.opportunities[0].canonical_stage == "unknown"
+    assert res.opportunities[0].review_status == "needs_review"
+
+
+def test_closed_with_payment_evidence_is_won() -> None:
+    identity = _base_identity()
+    deals = [_deal(deal_status="closed", updated_at="2026-04-01T00:00:00+00:00")]
+    events = [
+        _event(event_type="client_payment_received", event_at="2026-03-15T00:00:00+00:00", event_id=1)
+    ]
+    res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=[], payments=[])
+    assert res.opportunities[0].canonical_stage == "won"
+
+
+def test_supplier_proforma_alone_does_not_fulfill() -> None:
+    identity = _base_identity()
+    deals = [_deal(deal_status="quoted", updated_at="2026-01-01T00:00:00+00:00")]
+    docs = [
+        SourceDealDocumentRow(
+            document_id=1,
+            deal_id=1,
+            deal_key="deal-a",
+            document_type="supplier_proforma",
+            issued_at="2026-02-01T00:00:00+00:00",
+            confidence="extracted_high",
+            source_email_id=None,
+            source_attachment_id=None,
+        )
+    ]
+    res = resolve_opportunities(identity=identity, deals=deals, events=[], documents=docs, payments=[])
+    assert res.opportunities[0].canonical_stage == "quote_sent"
+
+
+def test_supplier_proforma_refines_after_client_po() -> None:
+    identity = _base_identity()
+    deals = [_deal(deal_status="client_po_received", updated_at="2026-02-01T00:00:00+00:00")]
+    events = [
+        _event(event_type="client_po_received", event_at="2026-02-01T00:00:00+00:00", event_id=1)
+    ]
+    docs = [
+        SourceDealDocumentRow(
+            document_id=1,
+            deal_id=1,
+            deal_key="deal-a",
+            document_type="supplier_proforma",
+            issued_at="2026-02-10T00:00:00+00:00",
+            confidence="extracted_high",
+            source_email_id=None,
+            source_attachment_id=None,
+        )
+    ]
+    res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=docs, payments=[])
+    assert res.opportunities[0].canonical_stage == "fulfillment"
+
+
+def test_payment_voucher_alone_does_not_establish_won() -> None:
+    identity = _base_identity()
+    deals = [_deal(deal_status="quoted", updated_at="2026-01-01T00:00:00+00:00")]
+    docs = [
+        SourceDealDocumentRow(
+            document_id=1,
+            deal_id=1,
+            deal_key="deal-a",
+            document_type="payment_voucher",
+            issued_at="2026-02-01T00:00:00+00:00",
+            confidence="extracted_high",
+            source_email_id=None,
+            source_attachment_id=None,
+        )
+    ]
+    res = resolve_opportunities(identity=identity, deals=deals, events=[], documents=docs, payments=[])
+    assert res.opportunities[0].canonical_stage == "quote_sent"
+
+
+def test_outbound_payment_refines_fulfillment_not_won() -> None:
+    identity = _base_identity()
+    deals = [_deal(deal_status="client_paid", updated_at="2026-02-01T00:00:00+00:00")]
+    pays = [
+        SourceDealPaymentRow(
+            payment_id=1,
+            deal_id=1,
+            deal_key="deal-a",
+            direction="outbound",
+            paid_at="2026-02-15T00:00:00+00:00",
+            confidence="operator_confirmed",
+        )
+    ]
+    res = resolve_opportunities(identity=identity, deals=deals, events=[], documents=[], payments=pays)
+    assert res.opportunities[0].canonical_stage == "fulfillment"
+
+
+def test_stage_evidence_provenance_invariant() -> None:
+    identity = _base_identity()
+    deals = [_deal(updated_at="2026-01-10T00:00:00+00:00")]
+    events = [_event(event_at="2026-01-15T00:00:00+00:00", event_id=1)]
+    res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=[], payments=[])
+    opp = res.opportunities[0]
+    assert opp.stage_evidence_id is not None
+    matches = [e for e in res.evidence if e.evidence_id == opp.stage_evidence_id]
+    assert len(matches) == 1
+    assert matches[0].opportunity_id == opp.opportunity_id
+
+
+def test_fingerprint_detects_contact_account_move() -> None:
+    base = resolve_identity(
+        [
+            _identity_row(
+                email_raw="a@hospital.cl",
+                organization_name="Hospital Sur",
+                domain_raw="hospital.cl",
+            )
+        ]
+    )
+    fp1 = identity_resolution_fingerprint(base)
+    contact = base.contacts[0]
+    moved = IdentityResolution(
+        accounts=list(base.accounts),
+        contacts=[
+            ContactRecord(
+                contact_id=contact.contact_id,
+                normalized_email=contact.normalized_email,
+                display_name=contact.display_name,
+                role=contact.role,
+                account_id="a_other",
+                account_link_method="forced_test",
+                first_evidence_at=contact.first_evidence_at,
+                last_evidence_at=contact.last_evidence_at,
+                identity_confidence=contact.identity_confidence,
+                identity_status=contact.identity_status,
+                email_domain=contact.email_domain,
+            )
+        ],
+        evidence=list(base.evidence),
+        conflicts=list(base.conflicts),
+        metrics={},
+    )
+    assert identity_resolution_fingerprint(moved) != fp1
+
+
+def test_fingerprint_detects_status_change() -> None:
+    base = resolve_identity(
+        [
+            _identity_row(
+                email_raw="a@hospital.cl",
+                organization_name="Hospital Sur",
+                domain_raw="hospital.cl",
+            )
+        ]
+    )
+    fp1 = identity_resolution_fingerprint(base)
+    c0 = base.contacts[0]
+    changed = IdentityResolution(
+        accounts=list(base.accounts),
+        contacts=[
+            ContactRecord(
+                contact_id=c0.contact_id,
+                normalized_email=c0.normalized_email,
+                display_name=c0.display_name,
+                role=c0.role,
+                account_id=c0.account_id,
+                account_link_method=c0.account_link_method,
+                first_evidence_at=c0.first_evidence_at,
+                last_evidence_at=c0.last_evidence_at,
+                identity_confidence=c0.identity_confidence,
+                identity_status="needs_review",
+                email_domain=c0.email_domain,
+            )
+        ],
+        evidence=list(base.evidence),
+        conflicts=list(base.conflicts),
+        metrics={},
+    )
+    assert identity_resolution_fingerprint(changed) != fp1
+    assert FINGERPRINT_ALGORITHM_VERSION == "identity_fp_v2"
+
+
+def test_generic_email_history_not_opportunity() -> None:
+    identity = _base_identity()
+    cm = [
+        SourceContactMasterRow(
+            contact_id="1",
+            email="buyer@hospital.cl",
+            organization_name="Hospital Sur",
+            total_emails=50,
+            inbound_emails=20,
+            outbound_emails=30,
+        )
+    ]
+    res = resolve_opportunities(
+        identity=identity, deals=[], events=[], documents=[], payments=[], contact_master=cm
+    )
+    assert res.metrics["commercial_history_count"] == 0
+    assert res.metrics["canonical_opportunity_count"] == 0
+
+
+def test_signal_not_skipped_for_same_contact_different_email_id() -> None:
+    identity = _base_identity()
+    deals = [
+        _deal(
+            client_contact_email="buyer@hospital.cl",
+            updated_at="2026-01-10T00:00:00+00:00",
+        )
+    ]
+    events = [
+        _event(
+            event_at="2026-01-10T00:00:00+00:00",
+            source_email_id=10,
+            event_id=1,
+        )
+    ]
+    signals = [
+        SourceSignalRow(
+            signal_id="sig-indep",
+            signal_type="quote_signal",
+            entity_kind="contact",
+            entity_key="buyer@hospital.cl",
+            email_id=99,
+            email_date="2026-02-01T00:00:00+00:00",
+            created_at="2026-06-01T00:00:00+00:00",
+        )
+    ]
+    res = resolve_opportunities(
+        identity=identity, deals=deals, events=events, documents=[], payments=[], signals=signals
+    )
+    assert res.metrics["explicit_deal_opportunity_count"] == 1
+    assert res.metrics["evidence_candidate_count"] == 1
+
+
+def test_consumer_email_with_institutional_deal_domain_partial_link() -> None:
+    identity = resolve_identity(
+        [
+            _identity_row(
+                email_raw="person@gmail.com",
+                organization_name="Some Lab",
+                domain_raw="gmail.com",
+            ),
+            _identity_row(
+                email_raw="staff@hospital.cl",
+                organization_name="Hospital Sur",
+                domain_raw="hospital.cl",
+                source_record_id="inst",
+            ),
+        ]
+    )
+    deals = [
+        _deal(
+            client_contact_email="person@gmail.com",
+            client_domain="hospital.cl",
+            updated_at="2026-01-10T00:00:00+00:00",
+        )
+    ]
+    res = resolve_opportunities(identity=identity, deals=deals, events=[], documents=[], payments=[])
+    opp = res.opportunities[0]
+    assert opp.account_id == stable_account_id_for_domain("hospital.cl")
+    assert opp.primary_contact_id == stable_contact_id("person@gmail.com")
+    assert opp.identity_link_status == "account_via_deal_domain"
+
+
+def test_conflict_subject_keys_exclude_raw_email() -> None:
+    identity = _base_identity()
+    deals = [
+        _deal(
+            deal_key="no-id-deal",
+            client_contact_email="unknown@mystery.example",
+            client_domain=None,
+            updated_at="2026-01-10T00:00:00+00:00",
+        )
+    ]
+    res = resolve_opportunities(identity=identity, deals=deals, events=[], documents=[], payments=[])
+    blob = " ".join(c.subject_keys_json for c in res.conflicts)
+    assert "unknown@mystery.example" not in blob
+
+
+def test_dry_run_match_status_truthful(tmp_path: Path) -> None:
+    db = tmp_path / "match.sqlite"
+    _seed_minimal_db(db)
+    dry_missing = run_opportunity_build(
+        sqlite_path=db, apply=False, run_context=RUN_CONTEXT_SYNTHETIC_FIXTURE
+    )
+    assert dry_missing["identity_fingerprint_match_status"] == "missing"
+    run_identity_build(sqlite_path=db, apply=True, run_context=RUN_CONTEXT_SYNTHETIC_FIXTURE)
+    dry_ok = run_opportunity_build(
+        sqlite_path=db, apply=False, run_context=RUN_CONTEXT_SYNTHETIC_FIXTURE
+    )
+    assert dry_ok["identity_fingerprint_match_status"] == "matched"
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        """
+        INSERT INTO commercial_identity_build_meta(meta_key, meta_value)
+        VALUES ('identity_fingerprint_algorithm_version', 'identity_fp_v0')
+        ON CONFLICT(meta_key) DO UPDATE SET meta_value=excluded.meta_value
+        """
+    )
+    conn.commit()
+    conn.close()
+    dry_ver = run_opportunity_build(
+        sqlite_path=db, apply=False, run_context=RUN_CONTEXT_SYNTHETIC_FIXTURE
+    )
+    assert dry_ver["identity_fingerprint_match_status"] == "version_mismatch"
+
+
+def test_run_context_mode_combinations(tmp_path: Path) -> None:
+    db = tmp_path / "mode.sqlite"
+    _seed_minimal_db(db)
+    with pytest.raises(CommercialIdentityPathError):
+        run_opportunity_build(
+            sqlite_path=db, apply=False, run_context=RUN_CONTEXT_PRODUCTION_APPLY
+        )
+    with pytest.raises(CommercialIdentityPathError):
+        run_identity_build(
+            sqlite_path=db, apply=True, run_context=RUN_CONTEXT_PRODUCTION_DRY_RUN
+        )
+
+
+def test_stale_source_plan_blocks_apply(tmp_path: Path) -> None:
+    db = tmp_path / "stale_src.sqlite"
+    _seed_minimal_db(db)
+    run_identity_build(sqlite_path=db, apply=True, run_context=RUN_CONTEXT_SYNTHETIC_FIXTURE)
+    plan = plan_opportunity_build(
+        sqlite_path=db, apply=True, run_context=RUN_CONTEXT_SYNTHETIC_FIXTURE
+    )
+
+    def _mutate(conn: sqlite3.Connection) -> None:
+        conn.execute(
+            "UPDATE commercial_deal SET deal_status='cancelled', updated_at=? WHERE deal_key=?",
+            ("2026-09-01T00:00:00+00:00", "fixture-deal"),
+        )
+
+    with pytest.raises(StaleBuildPlanError):
+        apply_opportunity_build(plan, inject_source_change=_mutate)
+    conn = sqlite3.connect(str(db))
+    # Previous opportunity dataset may be absent on first apply; ensure no partial write
+    n = conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='commercial_opportunity'"
+    ).fetchone()[0]
+    if n:
+        # If schema exists from ensure, data must be empty or previous
+        count = conn.execute("SELECT COUNT(*) FROM commercial_opportunity").fetchone()[0]
+        assert count == 0
+    conn.close()
+
+
+def test_production_loaders_exact_row_counts(tmp_path: Path) -> None:
+    db = tmp_path / "prod_schema.sqlite"
+    _seed_minimal_db(db)
+    conn = sqlite3.connect(str(db))
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        INSERT INTO emails (id, date_iso, sender, source_file)
+        VALUES (7, '2026-01-20T10:00:00+00:00', 'buyer@hospital.cl', 'gmail')
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO opportunity_signals (
+          signal_type, entity_kind, entity_key, email_id, attachment_id,
+          score, details_json, created_at
+        ) VALUES (
+          'quote_signal', 'contact', 'buyer@hospital.cl', 7, NULL,
+          0.9, '{"k":"v"}', '2026-06-01T00:00:00+00:00'
+        )
+        """
+    )
+    conn.execute(
+        """
+        UPDATE contact_master SET quote_email_count=2, invoice_email_count=1
+        WHERE email='buyer@hospital.cl'
+        """
+    )
+    conn.commit()
+    signals = load_opportunity_signals(conn)
+    contacts = load_contact_master_history(conn)
+    assert len(signals) == 1
+    assert signals[0].email_date == "2026-01-20T10:00:00+00:00"
+    assert signals[0].contact_email == "buyer@hospital.cl"
+    assert len(contacts) == 1
+    assert contacts[0].has_typed_commercial_evidence is True
+    conn.close()
+
+
+def test_bad_opportunity_signals_schema_fails_closed(tmp_path: Path) -> None:
+    db = tmp_path / "bad_sig.sqlite"
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        """
+        CREATE TABLE opportunity_signals (
+          id INTEGER PRIMARY KEY,
+          contact_email TEXT,
+          created_at TEXT
+        )
+        """
+    )
+    conn.commit()
+    conn.row_factory = sqlite3.Row
+    with pytest.raises(SourceSchemaError):
+        load_opportunity_signals(conn)
+    conn.close()
+
+
+def test_incompatible_fingerprint_version_blocks_apply(tmp_path: Path) -> None:
+    db = tmp_path / "fpver.sqlite"
+    _seed_minimal_db(db)
+    run_identity_build(sqlite_path=db, apply=True, run_context=RUN_CONTEXT_SYNTHETIC_FIXTURE)
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        """
+        INSERT INTO commercial_identity_build_meta(meta_key, meta_value)
+        VALUES ('identity_fingerprint_algorithm_version', 'identity_fp_v0')
+        ON CONFLICT(meta_key) DO UPDATE SET meta_value=excluded.meta_value
+        """
+    )
+    conn.commit()
+    conn.close()
+    with pytest.raises(IdentitySnapshotError):
+        run_opportunity_build(
+            sqlite_path=db, apply=True, run_context=RUN_CONTEXT_SYNTHETIC_FIXTURE
+        )
