@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from origenlab_email_pipeline.business_mart import domain_of
-from origenlab_email_pipeline.commercial_identity.constants import CONSUMER_EMAIL_DOMAINS
+from origenlab_email_pipeline.commercial_identity.constants import (
+    CONSUMER_EMAIL_DOMAINS,
+    INTERNAL_DOMAINS,
+)
 from origenlab_email_pipeline.org_normalize import (
     is_junk_org_name,
     normalize_domain,
@@ -16,7 +19,7 @@ from origenlab_email_pipeline.qa.commercial_truth_audit.emails import (
 
 
 def normalize_identity_email(value: object) -> str | None:
-    """Strict valid email normalize (case + surrounding whitespace). No Gmail-dot/plus transforms."""
+    """Strict valid email normalize (case + trim). No Gmail-dot/plus transforms."""
     return normalize_valid_email(value)
 
 
@@ -35,11 +38,22 @@ def is_consumer_domain(domain: str | None) -> bool:
     return bool(d) and d in CONSUMER_EMAIL_DOMAINS
 
 
+def is_internal_domain(domain: str | None) -> bool:
+    """True for OrigenLab / Labdelivery actor domains (not external commercial accounts)."""
+    d = (domain or "").strip().lower()
+    return bool(d) and d in INTERNAL_DOMAINS
+
+
 def is_institutional_domain(domain: str | None) -> bool:
+    """External institutional domain eligible for automatic account linking."""
     d = (domain or "").strip().lower()
     if not d or "." not in d:
         return False
-    return d not in CONSUMER_EMAIL_DOMAINS
+    if d in CONSUMER_EMAIL_DOMAINS:
+        return False
+    if d in INTERNAL_DOMAINS:
+        return False
+    return True
 
 
 def safe_org_normalized(value: object) -> str | None:
@@ -67,6 +81,7 @@ __all__ = [
     "email_input_kind",
     "domain_from_email",
     "is_consumer_domain",
+    "is_internal_domain",
     "is_institutional_domain",
     "safe_org_normalized",
     "normalize_org_name",

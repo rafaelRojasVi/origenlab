@@ -48,8 +48,19 @@ def _origin_from_source_file(source_file: str | None) -> str:
     return ORIGIN_UNKNOWN
 
 
+def _pick_research_role(d: dict[str, Any], cols: set[str]) -> str | None:
+    """Prefer ``role_title`` (canonical schema); fall back to older ``role`` / ``title`` fixtures."""
+    for key in ("role_title", "role", "title"):
+        if key not in cols:
+            continue
+        val = str(d.get(key) or "").strip()
+        if val:
+            return val
+    return None
+
+
 def _load_email_origin_by_address(conn: sqlite3.Connection) -> dict[str, str]:
-    """Best-effort map of lowercased mailbox → origin from emails sender/recipients sample.
+    """Best-effort map of lowercased mailbox → origin from emails sender sample.
 
     Used only to label mart-derived rows when message evidence exists. Missing map entries
     stay as business_mart / unknown — never invent OrigenLab/Labdelivery labels.
@@ -60,7 +71,6 @@ def _load_email_origin_by_address(conn: sqlite3.Connection) -> dict[str, str]:
     cols = _columns(conn, "emails")
     if "source_file" not in cols:
         return {}
-    # Limit scan to source_file + sender for origin labeling (identity, not body).
     for row in conn.execute("SELECT source_file, sender FROM emails"):
         origin = _origin_from_source_file(row["source_file"] if row["source_file"] is not None else None)
         if origin == ORIGIN_UNKNOWN:
@@ -76,7 +86,6 @@ def _load_email_origin_by_address(conn: sqlite3.Connection) -> dict[str, str]:
             token = sender.split()[0] if sender else ""
         if "@" not in token:
             continue
-        # Prefer OrigenLab when both tiers are observed for the same address.
         if token not in out or origin == ORIGIN_ORIGENLAB_GMAIL:
             out[token] = origin
     return out
@@ -84,6 +93,8 @@ def _load_email_origin_by_address(conn: sqlite3.Connection) -> dict[str, str]:
 
 def load_source_identity_rows(conn: sqlite3.Connection) -> list[SourceIdentityRow]:
     """Collect identity assertions from available tables. Order is not semantically significant."""
+    if conn.row_factory is None:
+        conn.row_factory = sqlite3.Row
     rows: list[SourceIdentityRow] = []
     email_origins = _load_email_origin_by_address(conn)
 
@@ -92,31 +103,32 @@ def load_source_identity_rows(conn: sqlite3.Connection) -> list[SourceIdentityRo
             d = _row_dict(row)
             email = str(d.get("email") or "").strip()
             origin = email_origins.get(email.lower(), ORIGIN_BUSINESS_MART)
+            first_at = str(d.get("first_seen_at") or "").strip() or None
+            last_at = str(d.get("last_seen_at") or "").strip() or None
+            # Distinct source_record_id per assertion kind so evidence IDs cannot collide.
             rows.append(
                 SourceIdentityRow(
                     source_table="contact_master",
-                    source_record_id=email or "missing_email",
+                    source_record_id=f"email:{email or 'missing'}|first_seen",
                     source_plane=SOURCE_PLANE_CONTACT_MASTER,
                     origin_plane=origin,
                     email_raw=email or None,
                     display_name=(str(d.get("contact_name_best") or "").strip() or None),
                     organization_name=(str(d.get("organization_name_guess") or "").strip() or None),
                     domain_raw=(str(d.get("domain") or "").strip() or None),
-                    evidence_at=(str(d.get("first_seen_at") or "").strip() or None),
+                    evidence_at=first_at,
                     extra={
-                        "last_seen_at": (str(d.get("last_seen_at") or "").strip() or None),
+                        "last_seen_at": last_at,
                         "organization_type_guess": d.get("organization_type_guess"),
+                        "timestamp_kind": "first_seen_at",
                     },
                 )
             )
-            # Also surface last_seen as a separate timestamp observation when distinct.
-            last_at = str(d.get("last_seen_at") or "").strip() or None
-            first_at = str(d.get("first_seen_at") or "").strip() or None
             if last_at and last_at != first_at:
                 rows.append(
                     SourceIdentityRow(
                         source_table="contact_master",
-                        source_record_id=f"{email}|last_seen",
+                        source_record_id=f"email:{email or 'missing'}|last_seen",
                         source_plane=SOURCE_PLANE_CONTACT_MASTER,
                         origin_plane=origin,
                         email_raw=email or None,
@@ -132,28 +144,29 @@ def load_source_identity_rows(conn: sqlite3.Connection) -> list[SourceIdentityRo
         for row in conn.execute("SELECT * FROM organization_master"):
             d = _row_dict(row)
             dom = str(d.get("domain") or "").strip()
+            first_at = str(d.get("first_seen_at") or "").strip() or None
+            last_at = str(d.get("last_seen_at") or "").strip() or None
             rows.append(
                 SourceIdentityRow(
                     source_table="organization_master",
-                    source_record_id=dom or "missing_domain",
+                    source_record_id=f"domain:{dom or 'missing'}|first_seen",
                     source_plane=SOURCE_PLANE_ORG_MASTER,
                     origin_plane=ORIGIN_BUSINESS_MART,
                     organization_name=(str(d.get("organization_name_guess") or "").strip() or None),
                     domain_raw=dom or None,
-                    evidence_at=(str(d.get("first_seen_at") or "").strip() or None),
+                    evidence_at=first_at,
                     extra={
-                        "last_seen_at": (str(d.get("last_seen_at") or "").strip() or None),
+                        "last_seen_at": last_at,
                         "organization_type_guess": d.get("organization_type_guess"),
+                        "timestamp_kind": "first_seen_at",
                     },
                 )
             )
-            last_at = str(d.get("last_seen_at") or "").strip() or None
-            first_at = str(d.get("first_seen_at") or "").strip() or None
             if last_at and last_at != first_at:
                 rows.append(
                     SourceIdentityRow(
                         source_table="organization_master",
-                        source_record_id=f"{dom}|last_seen",
+                        source_record_id=f"domain:{dom or 'missing'}|last_seen",
                         source_plane=SOURCE_PLANE_ORG_MASTER,
                         origin_plane=ORIGIN_BUSINESS_MART,
                         organization_name=(str(d.get("organization_name_guess") or "").strip() or None),
@@ -171,12 +184,12 @@ def load_source_identity_rows(conn: sqlite3.Connection) -> list[SourceIdentityRo
             rows.append(
                 SourceIdentityRow(
                     source_table="lead_research_prospect",
-                    source_record_id=rid or "unknown",
+                    source_record_id=f"prospect:{rid or 'unknown'}",
                     source_plane=SOURCE_PLANE_RESEARCH,
                     origin_plane=ORIGIN_RESEARCH,
                     email_raw=(str(d.get("email") or "").strip() or None),
                     display_name=(str(d.get("contact_name") or d.get("full_name") or "").strip() or None),
-                    role=(str(d.get("role") or d.get("title") or "").strip() or None),
+                    role=_pick_research_role(d, cols),
                     organization_name=(str(d.get("organization_name") or d.get("org_name") or "").strip() or None),
                     domain_raw=(str(d.get("domain") or "").strip() or None),
                     evidence_at=(
@@ -197,7 +210,7 @@ def load_source_identity_rows(conn: sqlite3.Connection) -> list[SourceIdentityRo
             rows.append(
                 SourceIdentityRow(
                     source_table="commercial_deal",
-                    source_record_id=deal_key or "unknown",
+                    source_record_id=f"deal:{deal_key or 'unknown'}|client",
                     source_plane=SOURCE_PLANE_DEAL,
                     origin_plane=ORIGIN_COMMERCIAL_DEAL,
                     email_raw=(str(d.get("client_contact_email") or "").strip() or None),
