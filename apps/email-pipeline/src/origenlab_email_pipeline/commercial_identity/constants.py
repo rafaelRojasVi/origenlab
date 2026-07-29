@@ -17,6 +17,21 @@ from origenlab_email_pipeline.qa.commercial_truth_audit.constants import (
 
 SCHEMA_VERSION: Final = "commercial_identity_v1"
 
+# Run-context labels are metadata supplied by the CLI/orchestrator — never inferred
+# by the pure resolver. They describe how metrics were produced, not commercial evidence.
+RUN_CONTEXT_SYNTHETIC_FIXTURE: Final = "synthetic_fixture"
+RUN_CONTEXT_LOCAL_FIXTURE: Final = "local_fixture"
+RUN_CONTEXT_PRODUCTION_DRY_RUN: Final = "production_dry_run"
+RUN_CONTEXT_PRODUCTION_APPLY: Final = "production_apply"
+VALID_RUN_CONTEXTS: Final = frozenset(
+    {
+        RUN_CONTEXT_SYNTHETIC_FIXTURE,
+        RUN_CONTEXT_LOCAL_FIXTURE,
+        RUN_CONTEXT_PRODUCTION_DRY_RUN,
+        RUN_CONTEXT_PRODUCTION_APPLY,
+    }
+)
+
 # PR1 list plus explicit proton.me (keep protonmail.com from PR1 as well).
 CONSUMER_EMAIL_DOMAINS: Final = frozenset(
     set(_PR1_CONSUMER_EMAIL_DOMAINS)
@@ -114,6 +129,11 @@ TRANSACTION_CONTRACT: Final = "B_schema_additive_data_atomic"
 
 __all__ = [
     "SCHEMA_VERSION",
+    "RUN_CONTEXT_SYNTHETIC_FIXTURE",
+    "RUN_CONTEXT_LOCAL_FIXTURE",
+    "RUN_CONTEXT_PRODUCTION_DRY_RUN",
+    "RUN_CONTEXT_PRODUCTION_APPLY",
+    "VALID_RUN_CONTEXTS",
     "CONSUMER_EMAIL_DOMAINS",
     "INTERNAL_DOMAINS",
     "IDENTITY_CONFIDENCE_HIGH",

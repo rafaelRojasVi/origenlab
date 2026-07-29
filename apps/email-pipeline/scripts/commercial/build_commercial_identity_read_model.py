@@ -45,6 +45,10 @@ from origenlab_email_pipeline.commercial_identity import (  # noqa: E402
     require_explicit_sqlite_path,
     run_identity_build,
 )
+from origenlab_email_pipeline.commercial_identity.constants import (  # noqa: E402
+    RUN_CONTEXT_LOCAL_FIXTURE,
+    VALID_RUN_CONTEXTS,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -65,6 +69,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--run-context",
+        choices=sorted(VALID_RUN_CONTEXTS),
+        default=RUN_CONTEXT_LOCAL_FIXTURE,
+        help=(
+            "Orchestrator-supplied run context label (metadata only; not commercial evidence). "
+            f"Default: {RUN_CONTEXT_LOCAL_FIXTURE}. Use production_dry_run / production_apply "
+            "explicitly for production authorization paths."
+        ),
+    )
+    parser.add_argument(
         "--json-summary",
         action="store_true",
         help="Print machine-readable JSON summary to stdout.",
@@ -82,17 +96,25 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
-    summary = run_identity_build(sqlite_path=sqlite_path, apply=mode.apply)
+    summary = run_identity_build(
+        sqlite_path=sqlite_path,
+        apply=mode.apply,
+        run_context=args.run_context,
+    )
     if args.json_summary:
         print(json.dumps(summary, indent=2, sort_keys=True))
     else:
         print(f"mode={summary['mode']}")
         print(f"sqlite_path={summary['sqlite_path']}")
+        print(f"run_context={summary.get('run_context')}")
+        print(f"identity_fingerprint={summary.get('identity_fingerprint')}")
         print(f"transaction_contract={summary.get('transaction_contract')}")
         print("planned_writes:")
         for name, count in sorted(summary["planned_writes"].items()):
             print(f"  {name}: {count}")
         metrics = summary.get("metrics") or {}
+        label = metrics.get("label") or summary.get("run_context")
+        print(f"label={label}")
         print("metrics (fixture/local — not production unless explicitly authorized):")
         for key in (
             "source_identity_rows_inspected",

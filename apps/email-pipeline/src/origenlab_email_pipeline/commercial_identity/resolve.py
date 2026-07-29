@@ -153,7 +153,7 @@ def resolve_identity(source_rows: list[SourceIdentityRow]) -> IdentityResolution
         "records_without_usable_email": 0,
         "records_without_usable_organization_identity": 0,
         "consumer_domain_auto_link_refusals": 0,
-        "label": "synthetic_or_local_fixture",
+        # Run-context label is supplied by the CLI/orchestrator after resolve — never guessed here.
         "metric_definitions": {
             "consumer_domain_auto_link_refusals": (
                 "Count of distinct canonical contacts whose email domain is a consumer/public "

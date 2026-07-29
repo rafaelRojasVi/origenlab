@@ -14,7 +14,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from origenlab_email_pipeline.commercial_identity.constants import TRANSACTION_CONTRACT
+from origenlab_email_pipeline.commercial_identity.constants import (
+    RUN_CONTEXT_LOCAL_FIXTURE,
+    TRANSACTION_CONTRACT,
+    VALID_RUN_CONTEXTS,
+)
+from origenlab_email_pipeline.commercial_identity.fingerprint import identity_resolution_fingerprint
 from origenlab_email_pipeline.commercial_identity.models import IdentityResolution
 from origenlab_email_pipeline.commercial_identity.persist import write_identity_resolution
 from origenlab_email_pipeline.commercial_identity.resolve import resolve_identity
@@ -38,16 +43,34 @@ def require_explicit_sqlite_path(sqlite_path: Path | None) -> Path:
     return resolved
 
 
+def normalize_run_context(run_context: str | None) -> str:
+    """Validate orchestrator-supplied run context. Default is local_fixture (conservative)."""
+    ctx = (run_context or RUN_CONTEXT_LOCAL_FIXTURE).strip()
+    if ctx not in VALID_RUN_CONTEXTS:
+        raise CommercialIdentityPathError(
+            f"Invalid --run-context {ctx!r}; expected one of {sorted(VALID_RUN_CONTEXTS)}"
+        )
+    return ctx
+
+
 @dataclass(frozen=True)
 class IdentityBuildPlan:
     sqlite_path: Path
     apply: bool
     resolution: IdentityResolution
     planned_writes: dict[str, int]
+    run_context: str
+    identity_fingerprint: str
 
 
-def plan_identity_build(*, sqlite_path: Path, apply: bool) -> IdentityBuildPlan:
+def plan_identity_build(
+    *,
+    sqlite_path: Path,
+    apply: bool,
+    run_context: str | None = None,
+) -> IdentityBuildPlan:
     """Read sources and resolve identity. Never writes unless caller later applies."""
+    ctx = normalize_run_context(run_context)
     conn = sqlite3.connect(f"file:{sqlite_path.resolve()}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
@@ -56,6 +79,10 @@ def plan_identity_build(*, sqlite_path: Path, apply: bool) -> IdentityBuildPlan:
     finally:
         conn.close()
     resolution = resolve_identity(rows)
+    resolution.metrics["label"] = ctx
+    resolution.metrics["run_context"] = ctx
+    fingerprint = identity_resolution_fingerprint(resolution)
+    resolution.metrics["identity_fingerprint"] = fingerprint
     planned = {
         "commercial_identity_account": len(resolution.accounts),
         "commercial_identity_contact": len(resolution.contacts),
@@ -69,6 +96,8 @@ def plan_identity_build(*, sqlite_path: Path, apply: bool) -> IdentityBuildPlan:
         apply=apply,
         resolution=resolution,
         planned_writes=planned,
+        run_context=ctx,
+        identity_fingerprint=fingerprint,
     )
 
 
@@ -99,7 +128,12 @@ def apply_identity_build(
 
         conn.execute("BEGIN")
         try:
-            counts = write_identity_resolution(conn, plan.resolution)
+            counts = write_identity_resolution(
+                conn,
+                plan.resolution,
+                run_context=plan.run_context,
+                identity_fingerprint=plan.identity_fingerprint,
+            )
             if inject_failure is not None:
                 inject_failure(conn)
             conn.commit()
@@ -111,14 +145,21 @@ def apply_identity_build(
             "written": counts,
             "metrics": plan.resolution.metrics,
             "transaction_contract": TRANSACTION_CONTRACT,
+            "run_context": plan.run_context,
+            "identity_fingerprint": plan.identity_fingerprint,
         }
     finally:
         conn.close()
 
 
-def run_identity_build(*, sqlite_path: Path, apply: bool) -> dict[str, Any]:
+def run_identity_build(
+    *,
+    sqlite_path: Path,
+    apply: bool,
+    run_context: str | None = None,
+) -> dict[str, Any]:
     """Dry-run (default) or apply commercial identity rebuild."""
-    plan = plan_identity_build(sqlite_path=sqlite_path, apply=apply)
+    plan = plan_identity_build(sqlite_path=sqlite_path, apply=apply, run_context=run_context)
     summary: dict[str, Any] = {
         "sqlite_path": str(sqlite_path),
         "mode": "apply" if apply else "dry-run",
@@ -126,6 +167,8 @@ def run_identity_build(*, sqlite_path: Path, apply: bool) -> dict[str, Any]:
         "metrics": plan.resolution.metrics,
         "applied": False,
         "transaction_contract": TRANSACTION_CONTRACT,
+        "run_context": plan.run_context,
+        "identity_fingerprint": plan.identity_fingerprint,
     }
     if not apply:
         return summary
