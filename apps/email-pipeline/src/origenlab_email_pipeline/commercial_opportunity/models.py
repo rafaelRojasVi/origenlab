@@ -59,28 +59,61 @@ class SourceDealPaymentRow:
 
 @dataclass(frozen=True)
 class SourceSignalRow:
+    """Production opportunity_signals row (entity_kind/entity_key contract)."""
+
     signal_id: str
-    contact_email: str | None = None
-    organization_name: str | None = None
-    signal_type: str | None = None
-    created_at: str | None = None  # mart build stamp — never treat as business event time alone
+    signal_type: str | None
+    entity_kind: str  # contact | organization
+    entity_key: str
+    created_at: str | None = None  # mart build stamp — never stage evidence
     email_id: int | None = None
+    attachment_id: int | None = None
     email_date: str | None = None  # recovered business event time when available
-    quote_email_count: int = 0
-    invoice_email_count: int = 0
-    purchase_email_count: int = 0
+    score: float | None = None
+    details: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def contact_email(self) -> str | None:
+        if (self.entity_kind or "").strip().lower() != "contact":
+            return None
+        return (self.entity_key or "").strip().lower() or None
+
+    @property
+    def organization_key(self) -> str | None:
+        if (self.entity_kind or "").strip().lower() != "organization":
+            return None
+        return (self.entity_key or "").strip().lower() or None
 
 
 @dataclass(frozen=True)
 class SourceContactMasterRow:
+    """Production contact_master commercial-history fields."""
+
     contact_id: str
     email: str | None
     organization_name: str | None
     quote_email_count: int = 0
     invoice_email_count: int = 0
     purchase_email_count: int = 0
-    gmail_sent_count: int = 0
-    gmail_received_count: int = 0
+    business_doc_email_count: int = 0
+    quote_doc_count: int = 0
+    invoice_doc_count: int = 0
+    total_emails: int = 0
+    inbound_emails: int = 0
+    outbound_emails: int = 0
+    first_seen_at: str | None = None
+    last_seen_at: str | None = None
+
+    @property
+    def has_typed_commercial_evidence(self) -> bool:
+        return (
+            self.quote_email_count
+            + self.invoice_email_count
+            + self.purchase_email_count
+            + self.business_doc_email_count
+            + self.quote_doc_count
+            + self.invoice_doc_count
+        ) > 0
 
 
 @dataclass
@@ -91,6 +124,7 @@ class StageCandidate:
     confidence: str
     operator_confirmed: bool
     is_terminal: bool
+    is_hard_terminal: bool
     client_side: bool
     source_table: str
     source_record_id: str
