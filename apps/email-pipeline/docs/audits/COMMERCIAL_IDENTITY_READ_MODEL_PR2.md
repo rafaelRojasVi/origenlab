@@ -197,7 +197,9 @@ Emitted in dry-run/apply summaries (fixture/local unless a production run is exp
 | `canonical_contacts_with_*_origin` | Distinct contacts with at least one evidence origin of that plane |
 | `canonical_contacts_research_only` | Distinct contacts whose **only** origin is research |
 
-Label in metrics: `synthetic_or_local_fixture` unless operators document otherwise. Metric definitions are also embedded in `metrics["metric_definitions"]`.
+Label in metrics: orchestrator-supplied `--run-context` (`synthetic_fixture` | `local_fixture` | `production_dry_run` | `production_apply`). Default CLI value is `local_fixture`. **Run context is metadata, not commercial evidence** — the pure resolver never guesses environment. Metric definitions are also embedded in `metrics["metric_definitions"]`.
+
+Build meta also stores `identity_fingerprint` (order-independent SHA-256 over stable account/contact/evidence/conflict IDs) so PR3 apply can fail closed on missing/stale identity snapshots.
 
 ---
 
@@ -215,6 +217,8 @@ Label in metrics: `synthetic_or_local_fixture` unless operators document otherwi
 ## 13. Boundary with PR3
 
 PR3 may consume `commercial_identity_*` as the account/contact spine for **opportunity stage** evidence. PR2 must not invent stage, next action, or tender relevance.
+
+PR3 **dry-run** re-resolves identity in memory from the same source assertions (no dependency on persisted identity tables). PR3 **apply** requires a persisted PR2 snapshot whose `schema_version` and `identity_fingerprint` match the in-memory resolution used for the opportunity build.
 
 ---
 
