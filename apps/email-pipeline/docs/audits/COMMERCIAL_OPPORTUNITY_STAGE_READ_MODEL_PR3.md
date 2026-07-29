@@ -59,8 +59,8 @@ PR3 is **not** a dashboard redesign and **not** an autonomous CRM.
 | `commercial_deal_document` | Typed docs with `issued_at` | Supplier docs refine fulfillment only |
 | `commercial_deal_payment` | Dated payments | Inbound → won; outbound → fulfillment |
 | `commercial_deal_evidence` / field evidence | Provenance pointers | Not body text |
-| `opportunity_signals` | Evidence candidate **only** with recovered email event time | `created_at` is mart stamp — never stage evidence |
-| `contact_master` lifetime counts | `commercial_history` only | Never current / purchase_pending / fulfillment |
+| `opportunity_signals` | Evidence candidate **only** with recovered email event time | Production columns: `id`, `signal_type`, `entity_kind`, `entity_key`, `email_id`, `attachment_id`, `score`, `details_json`, `created_at`. `entity_kind=contact` → email key; `organization` is not an email. `created_at` is mart stamp — never stage evidence. Schema mismatches fail closed. |
+| `contact_master` lifetime counts | `commercial_history` only when typed commercial evidence exists | Production columns include quote/invoice/purchase/business-doc counts + `first_seen_at`/`last_seen_at`. Generic `total`/`inbound`/`outbound` alone never create history. |
 | `emails` | Optional recover of signal event time | Read-only |
 | PR2 identity sources / resolution | Account/contact linkage | Not reimplemented |
 
@@ -79,9 +79,11 @@ Production may lack persisted `commercial_identity_*` (PR2 validated dry-run onl
 | Mode | Behavior |
 |------|----------|
 | Dry-run | Load PR2 source assertions → `resolve_identity` in memory → link opportunities → **no writes** |
-| Apply | Fail closed unless persisted PR2 `schema_version` + `identity_fingerprint` match the in-memory resolution |
+| Apply | Fail closed unless persisted PR2 `schema_version` + `identity_fingerprint_algorithm_version` + `identity_fingerprint` match the in-memory resolution |
 
-Fingerprint: order-independent SHA-256 over sorted account/contact/evidence/conflict IDs (`commercial_identity.fingerprint.identity_resolution_fingerprint`). Stored in PR2 build meta on apply. Missing/stale/mismatched snapshots raise `IdentitySnapshotError` and block PR3 apply. PR3 never auto-rebuilds identity.
+Fingerprint algorithm: **`identity_fp_v2`** — canonical JSON over linkage-relevant account/contact fields (ids, domains, aliases, status, confidence, account_link_method) plus evidence/conflict IDs. Order-independent. Stored by PR2 apply. Missing/stale/mismatched snapshots raise `IdentitySnapshotError`.
+
+Apply also recomputes an **`opportunity_source_fp_v1`** source fingerprint inside the write transaction; identity or source drift between plan and apply raises `StaleBuildPlanError` and preserves the prior dataset.
 
 ---
 
@@ -115,26 +117,32 @@ Canonical stages: `qualifying`, `quote_requested`, `quote_preparing`, `quote_sen
 | `delivered` | `post_sale` | hard terminal |
 | `cancelled` | `lost` | hard terminal |
 | `needs_review` | `unknown` | no |
-| `closed` | `won` when dated | lifecycle terminal |
+| `closed` | `unknown` unless supporting dated payment/delivery/cancel evidence | no (alone) |
 
-**Hard terminals** (`lost`, `post_sale`) cannot be overwritten by older quote/active stages. `won` may still be refined to `fulfillment` by later supplier/logistics evidence.
+**Hard terminals** (`lost`, `post_sale`) cannot be overwritten by older quote/active stages. Contradictory hard terminals at any timestamps emit `conflicting_terminal_events` and require review; displayed stage is the latest hard-terminal timestamp.
 
-Original `source_stage` is always stored separately from `canonical_stage`.
+**Undated terminal policy (conservative):** undated `closed` / `client_paid` / `delivered` / `cancelled` cannot prove a definitive terminal stage → `canonical_stage=unknown`, `stage_is_terminal=false`, `stage_is_current=false`, `confidence=unavailable`, conflict `undated_terminal_unproven`.
+
+`won` may still be refined to fulfillment by later supplier/logistics evidence.
 
 ---
 
 ## 6. Evidence precedence
 
-1. Explicit hard-terminal status/event with usable timestamp  
-2. Operator-confirmed deal event / field evidence  
-3. Latest compatible high-confidence deal event  
-4. Typed deal document/payment with actual event timestamp  
-5. Timestamped explicit deal status  
-6. Timestamped typed commercial signal  
-7. Historical / undated cumulative evidence  
-8. Unknown  
+Chronological compatible progression (not global operator-confirmation dominance):
 
-Tie-breakers: event timestamp → confidence/confirmation → stable source keys. Input ordering must not change results. Build time never becomes stage evidence time. Contradictory same-time terminals emit conflicts.
+1. Detect hard-terminal contradictions explicitly (`conflicting_terminal_events` / same-time conflicts).
+2. For compatible nonterminal progression, walk dated evidence in event chronology; later legitimate advances refine older stages.
+3. Operator confirmation strengthens evidence and breaks ties; it does not outrank every later lifecycle advance.
+4. Later lower-stage events emit `stage_regression_prevented` and do not regress the opportunity.
+5. Deterministic stable source keys break otherwise equal ties.
+
+Document mapping notes:
+- `supplier_proforma` alone does not advance to fulfillment; may refine fulfillment only after client PO/payment/commitment evidence.
+- `payment_voucher` / `payment_confirmation` documents never establish won; only inbound payments / `client_payment_received` (or equivalent direction-aware evidence) do.
+- Outbound payments refine fulfillment, never client won.
+
+Build time never becomes stage evidence time. Every selected `stage_evidence_id` has exactly one matching `commercial_opportunity_evidence` row (provenance invariant).
 
 ---
 

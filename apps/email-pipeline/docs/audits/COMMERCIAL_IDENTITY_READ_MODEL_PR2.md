@@ -199,7 +199,7 @@ Emitted in dry-run/apply summaries (fixture/local unless a production run is exp
 
 Label in metrics: orchestrator-supplied `--run-context` (`synthetic_fixture` | `local_fixture` | `production_dry_run` | `production_apply`). Default CLI value is `local_fixture`. **Run context is metadata, not commercial evidence** — the pure resolver never guesses environment. Metric definitions are also embedded in `metrics["metric_definitions"]`.
 
-Build meta also stores `identity_fingerprint` (order-independent SHA-256 over stable account/contact/evidence/conflict IDs) so PR3 apply can fail closed on missing/stale identity snapshots.
+Build meta also stores `identity_fingerprint` and `identity_fingerprint_algorithm_version` (`identity_fp_v2`) so PR3 apply/dry-run can fail closed on missing/stale/version-mismatched identity snapshots.
 
 ---
 
