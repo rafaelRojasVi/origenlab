@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -1698,7 +1699,8 @@ def test_cli_operator_contract_errors_no_traceback(tmp_path: Path) -> None:
           email TEXT PRIMARY KEY,
           display_name TEXT, organization_name_guess TEXT, domain TEXT,
           first_seen_at TEXT, last_seen_at TEXT,
-          total_emails INTEGER, as_sender_count INTEGER, as_recipient_count INTEGER,
+          total_emails INTEGER, inbound_emails INTEGER, outbound_emails INTEGER,
+          as_sender_count INTEGER, as_recipient_count INTEGER,
           quote_email_count INTEGER, invoice_email_count INTEGER,
           purchase_email_count INTEGER, business_doc_email_count INTEGER,
           quote_doc_count INTEGER, invoice_doc_count INTEGER
@@ -1802,3 +1804,317 @@ def test_cli_operator_contract_errors_no_traceback(tmp_path: Path) -> None:
     finally:
         mod.run_opportunity_build = original  # type: ignore[assignment]
     assert code == 5
+
+
+def _linked_deal(**kwargs: object) -> SourceDealRow:
+    kwargs.setdefault("client_contact_email", "buyer@hospital.cl")
+    kwargs.setdefault("client_domain", "hospital.cl")
+    return _deal(**kwargs)
+
+
+def test_quoted_plus_deal_closed_without_support_retains_quote_sent() -> None:
+    identity = _base_identity()
+    deals = [_linked_deal(deal_status="quoted", updated_at="2026-01-01T00:00:00+00:00")]
+    events_a = [
+        _event(event_type="deal_closed", event_at="2026-03-01T00:00:00+00:00", event_id=1),
+    ]
+    events_b = list(events_a)  # single-event order invariant
+    for events in (events_a, events_b):
+        res = resolve_opportunities(
+            identity=identity, deals=deals, events=events, documents=[], payments=[]
+        )
+        opp = res.opportunities[0]
+        assert opp.canonical_stage == "quote_sent"
+        assert opp.review_status == "needs_review"
+        assert any(c.reason_code == "closed_without_supporting_evidence" for c in res.conflicts)
+        assert not any(c.reason_code == "stage_regression_prevented" for c in res.conflicts)
+        claim = next(
+            c for c in res.conflicts if c.reason_code == "closed_without_supporting_evidence"
+        )
+        keys = json.loads(claim.subject_keys_json)
+        assert keys.get("closure_claim_from_deal_closed_event") is True
+        assert keys.get("closure_claim_from_deal_status") is False
+
+
+def test_quoted_plus_deal_closed_plus_payment_is_won() -> None:
+    identity = _base_identity()
+    deals = [_linked_deal(deal_status="quoted", updated_at="2026-01-01T00:00:00+00:00")]
+    events_fwd = [
+        _event(event_type="deal_closed", event_at="2026-03-01T00:00:00+00:00", event_id=1),
+        _event(
+            event_type="client_payment_received",
+            event_at="2026-02-15T00:00:00+00:00",
+            event_id=2,
+        ),
+    ]
+    events_rev = list(reversed(events_fwd))
+    for events in (events_fwd, events_rev):
+        res = resolve_opportunities(
+            identity=identity, deals=deals, events=events, documents=[], payments=[]
+        )
+        opp = res.opportunities[0]
+        assert opp.canonical_stage == "won"
+        assert opp.review_status == "ok"
+        ev = next(e for e in res.evidence if e.evidence_id == opp.stage_evidence_id)
+        assert ev.evidence_type == "client_payment_received"
+        assert not any(c.reason_code == "stage_regression_prevented" for c in res.conflicts)
+        assert not any(
+            c.reason_code == "closed_without_supporting_evidence" for c in res.conflicts
+        )
+
+
+def test_header_closed_plus_deal_closed_plus_delivered_is_post_sale() -> None:
+    identity = _base_identity()
+    deals = [_linked_deal(deal_status="closed", updated_at="2026-04-01T00:00:00+00:00")]
+    events_fwd = [
+        _event(event_type="deal_closed", event_at="2026-03-01T00:00:00+00:00", event_id=1),
+        _event(event_type="delivered", event_at="2026-03-20T00:00:00+00:00", event_id=2),
+    ]
+    events_rev = list(reversed(events_fwd))
+    for events in (events_fwd, events_rev):
+        res = resolve_opportunities(
+            identity=identity, deals=deals, events=events, documents=[], payments=[]
+        )
+        opp = res.opportunities[0]
+        assert opp.canonical_stage == "post_sale"
+        assert opp.review_status == "ok"
+        ev = next(e for e in res.evidence if e.evidence_id == opp.stage_evidence_id)
+        assert ev.evidence_type == "delivered"
+        assert not any(c.reason_code == "stage_regression_prevented" for c in res.conflicts)
+
+
+def test_undated_terminal_claims_from_any_source_unproven() -> None:
+    identity = _base_identity()
+    cases = (
+        ("client_payment_received", "commercial_deal_event"),
+        ("delivered", "commercial_deal_event"),
+        ("deal_cancelled", "commercial_deal_event"),
+    )
+    for event_type, _table in cases:
+        res = resolve_opportunities(
+            identity=identity,
+            deals=[_linked_deal(deal_status="quoted", updated_at=None, created_at=None)],
+            events=[_event(event_type=event_type, event_at=None, event_id=1)],
+            documents=[],
+            payments=[],
+        )
+        opp = res.opportunities[0]
+        assert opp.canonical_stage == "unknown", event_type
+        assert opp.stage_is_current is False
+        assert opp.stage_is_terminal is False
+        assert opp.stage_confidence == "unavailable"
+        assert opp.review_status == "needs_review"
+        assert any(c.reason_code == "undated_terminal_unproven" for c in res.conflicts)
+        assert opp.stage_evidence_id is not None
+
+    # Undated inbound payment row
+    res_pay = resolve_opportunities(
+        identity=identity,
+        deals=[_linked_deal(deal_status="quoted", updated_at=None, created_at=None)],
+        events=[],
+        documents=[],
+        payments=[
+            SourceDealPaymentRow(
+                payment_id=1,
+                deal_id=1,
+                deal_key="deal-a",
+                direction="inbound",
+                paid_at=None,
+                confidence="extracted_high",
+            )
+        ],
+    )
+    opp = res_pay.opportunities[0]
+    assert opp.canonical_stage == "unknown"
+    assert opp.stage_is_terminal is False
+    assert opp.stage_confidence == "unavailable"
+    assert any(c.reason_code == "undated_terminal_unproven" for c in res_pay.conflicts)
+    assert opp.review_status == "needs_review"
+
+
+def test_dated_terminal_claims_from_events_and_payments_proven() -> None:
+    identity = _base_identity()
+    cases = (
+        ("client_payment_received", "won"),
+        ("delivered", "post_sale"),
+        ("deal_cancelled", "lost"),
+    )
+    for event_type, stage in cases:
+        res = resolve_opportunities(
+            identity=identity,
+            deals=[
+                _linked_deal(deal_status="quoted", updated_at="2026-01-01T00:00:00+00:00")
+            ],
+            events=[
+                _event(
+                    event_type=event_type,
+                    event_at="2026-02-01T00:00:00+00:00",
+                    event_id=1,
+                )
+            ],
+            documents=[],
+            payments=[],
+        )
+        opp = res.opportunities[0]
+        assert opp.canonical_stage == stage, event_type
+        assert opp.stage_is_terminal is True
+        assert opp.review_status == "ok"
+        assert not any(c.reason_code == "undated_terminal_unproven" for c in res.conflicts)
+
+    res_pay = resolve_opportunities(
+        identity=identity,
+        deals=[_linked_deal(deal_status="quoted", updated_at="2026-01-01T00:00:00+00:00")],
+        events=[],
+        documents=[],
+        payments=[
+            SourceDealPaymentRow(
+                payment_id=1,
+                deal_id=1,
+                deal_key="deal-a",
+                direction="inbound",
+                paid_at="2026-02-01T00:00:00+00:00",
+                confidence="extracted_high",
+            )
+        ],
+    )
+    opp = res_pay.opportunities[0]
+    assert opp.canonical_stage == "won"
+    assert opp.stage_is_terminal is True
+    assert opp.review_status == "ok"
+
+
+def test_cli_deal_ledger_schema_errors_exit_4(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    script = root / "scripts/commercial/build_commercial_opportunity_read_model.py"
+
+    base_tables = """
+        CREATE TABLE organization_master (
+          domain TEXT PRIMARY KEY,
+          organization_name_guess TEXT, organization_type_guess TEXT,
+          first_seen_at TEXT, last_seen_at TEXT,
+          total_emails INTEGER, total_contacts INTEGER,
+          quote_email_count INTEGER, invoice_email_count INTEGER,
+          purchase_email_count INTEGER, business_doc_email_count INTEGER,
+          quote_doc_count INTEGER, invoice_doc_count INTEGER,
+          top_equipment_tags TEXT, key_contacts TEXT
+        );
+        CREATE TABLE contact_master (
+          email TEXT PRIMARY KEY,
+          display_name TEXT, organization_name_guess TEXT, domain TEXT,
+          first_seen_at TEXT, last_seen_at TEXT,
+          total_emails INTEGER, inbound_emails INTEGER, outbound_emails INTEGER,
+          quote_email_count INTEGER, invoice_email_count INTEGER,
+          purchase_email_count INTEGER, business_doc_email_count INTEGER,
+          quote_doc_count INTEGER, invoice_doc_count INTEGER
+        );
+        CREATE TABLE emails (
+          id INTEGER PRIMARY KEY, date_iso TEXT, sender TEXT, source_file TEXT
+        );
+        CREATE TABLE opportunity_signals (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          signal_type TEXT NOT NULL, entity_kind TEXT NOT NULL, entity_key TEXT NOT NULL,
+          email_id INTEGER, attachment_id INTEGER, score REAL, details_json TEXT, created_at TEXT
+        );
+    """
+    good_deal = """
+        CREATE TABLE commercial_deal (
+          id INTEGER PRIMARY KEY, deal_key TEXT NOT NULL UNIQUE, deal_status TEXT NOT NULL,
+          client_org_name TEXT NOT NULL, client_domain TEXT, client_contact_email TEXT,
+          supplier_org_name TEXT, supplier_domain TEXT,
+          confidence TEXT NOT NULL DEFAULT 'extracted_high', created_at TEXT, updated_at TEXT
+        );
+    """
+    good_event = """
+        CREATE TABLE commercial_deal_event (
+          id INTEGER PRIMARY KEY, deal_id INTEGER NOT NULL, event_type TEXT NOT NULL,
+          event_at TEXT, confidence TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '',
+          source_email_id INTEGER, source_attachment_id INTEGER, created_at TEXT
+        );
+    """
+    good_doc = """
+        CREATE TABLE commercial_deal_document (
+          id INTEGER PRIMARY KEY, deal_id INTEGER NOT NULL, document_type TEXT NOT NULL,
+          issued_at TEXT, confidence TEXT NOT NULL, source_email_id INTEGER,
+          source_attachment_id INTEGER, created_at TEXT
+        );
+    """
+    good_pay = """
+        CREATE TABLE commercial_deal_payment (
+          id INTEGER PRIMARY KEY, deal_id INTEGER NOT NULL, direction TEXT NOT NULL,
+          paid_at TEXT, confidence TEXT NOT NULL, created_at TEXT
+        );
+    """
+    malformed = {
+        "commercial_deal": (
+            """
+            CREATE TABLE commercial_deal (
+              id INTEGER PRIMARY KEY, deal_key TEXT, status TEXT
+            );
+            """
+            + good_event
+            + good_doc
+            + good_pay,
+            "commercial_deal",
+        ),
+        "commercial_deal_event": (
+            good_deal
+            + """
+            CREATE TABLE commercial_deal_event (
+              id INTEGER PRIMARY KEY, deal_id INTEGER, kind TEXT
+            );
+            """
+            + good_doc
+            + good_pay,
+            "commercial_deal_event",
+        ),
+        "commercial_deal_document": (
+            good_deal
+            + good_event
+            + """
+            CREATE TABLE commercial_deal_document (
+              id INTEGER PRIMARY KEY, deal_id INTEGER, doc_kind TEXT
+            );
+            """
+            + good_pay,
+            "commercial_deal_document",
+        ),
+        "commercial_deal_payment": (
+            good_deal
+            + good_event
+            + good_doc
+            + """
+            CREATE TABLE commercial_deal_payment (
+              id INTEGER PRIMARY KEY, deal_id INTEGER, amount TEXT
+            );
+            """,
+            "commercial_deal_payment",
+        ),
+    }
+    for name, (ddl, expect_table) in malformed.items():
+        db = tmp_path / f"cli_schema_{name}.sqlite"
+        conn = sqlite3.connect(str(db))
+        conn.executescript(base_tables + ddl)
+        conn.commit()
+        conn.close()
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--sqlite-path",
+                str(db),
+                "--run-context",
+                "synthetic_fixture",
+            ],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert proc.returncode == 4, (name, proc.stderr)
+        assert "error:" in proc.stderr
+        assert f"source_schema_incompatible:{expect_table}:" in proc.stderr
+        assert "Traceback" not in proc.stderr
+        assert "OperationalError" not in proc.stderr

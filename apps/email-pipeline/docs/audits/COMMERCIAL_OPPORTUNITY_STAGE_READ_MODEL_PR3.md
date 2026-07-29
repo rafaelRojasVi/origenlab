@@ -119,11 +119,15 @@ Canonical stages: `qualifying`, `quote_requested`, `quote_preparing`, `quote_sen
 | `needs_review` | `unknown` | no |
 | `closed` | `unknown` unless supporting dated payment/delivery/cancel evidence | no (alone) |
 
-**`closed` with support:** `closed` / `deal_closed` rows stay provenance only. Dated supporting evidence selects stage (`client_payment_received` / inbound payment → `won`; `delivered` → `post_sale`; `deal_cancelled` → `lost`). `stage_evidence_id` points at that supporting evidence — never the generic closed status. Closed provenance must not manufacture `stage_regression_prevented` against its own support. Unsupported closed → `unknown` + `closed_without_supporting_evidence` + `needs_review`.
+**`closed` with support:** `closed` deal status and `deal_closed` events are always provenance-only — they never compete in ordinary stage selection. Dated supporting evidence selects stage (`client_payment_received` / inbound payment → `won`; `delivered` → `post_sale`; `deal_cancelled` → `lost`). `stage_evidence_id` points at that supporting evidence — never the closure claim. Closure provenance must not manufacture `stage_regression_prevented`.
+
+- Header `deal_status=closed` without support → `unknown` + `closed_without_supporting_evidence` + `needs_review`.
+- Only `deal_closed` event without support, with a defensible nonclosed header stage → retain that stage, emit `closed_without_supporting_evidence` + `needs_review` (no regression from `deal_closed` alone).
+- Conflict subject keys record whether the claim came from deal status, `deal_closed` event, or both.
 
 **Hard terminals** (`lost`, `post_sale`) cannot be overwritten by older quote/active stages. Contradictory hard terminals at any timestamps emit `conflicting_terminal_events` and require review; displayed stage is the latest hard-terminal **UTC instant** (raw ISO strings are never compared lexicographically).
 
-**Undated terminal policy (conservative):** undated `client_paid` / `delivered` / `cancelled` cannot prove a definitive terminal stage → `canonical_stage=unknown`, `stage_is_terminal=false`, `stage_is_current=false`, `confidence=unavailable`, conflict `undated_terminal_unproven`. Undated unsupported `closed` uses `closed_without_supporting_evidence` instead.
+**Undated terminal policy (conservative):** any winning terminal claim without an orderable timestamp — from deal status, events, or payments (`client_paid` / `client_payment_received` / inbound payment / `delivered` / `cancelled` / `deal_cancelled` / stages `won`|`post_sale`|`lost`) — becomes `canonical_stage=unknown`, `stage_is_terminal=false`, `stage_is_current=false`, `confidence=unavailable`, conflict `undated_terminal_unproven`, with `stage_evidence_id` retained as provenance only. Unsupported undated `closed` header uses `closed_without_supporting_evidence` instead.
 
 `won` may still be refined to fulfillment by later supplier/logistics evidence.
 
