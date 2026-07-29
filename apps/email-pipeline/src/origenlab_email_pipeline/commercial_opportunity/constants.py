@@ -163,6 +163,7 @@ CONFLICT_REASON_CODES: Final = frozenset(
         "deal_contact_account_mismatch",
         "duplicate_deal_key_evidence",
         "source_event_missing_timestamp",
+        "malformed_event_timestamp",
         "conflicting_terminal_events",
         "stage_regression_prevented",
         "same_timestamp_stage_conflict",
@@ -173,6 +174,32 @@ CONFLICT_REASON_CODES: Final = frozenset(
         "stale_build_plan",
         "supplier_only_not_client_opportunity",
         "source_schema_incompatible",
+        "closed_without_supporting_evidence",
+        "deal_status_without_usable_timestamp",
+    }
+)
+
+# Subset of CONFLICT_REASON_CODES that force review_status=needs_review.
+REVIEW_REQUIRING_CONFLICT_REASONS: Final = frozenset(
+    {
+        "opportunity_identity_unresolved",
+        "opportunity_identity_ambiguous",
+        "deal_contact_account_mismatch",
+        "duplicate_deal_key_evidence",
+        "source_event_missing_timestamp",
+        "malformed_event_timestamp",
+        "conflicting_terminal_events",
+        "stage_regression_prevented",
+        "same_timestamp_stage_conflict",
+        "unsupported_source_stage",
+        "undated_signal_history_only",
+        "undated_terminal_unproven",
+        "stale_or_missing_identity_snapshot",
+        "stale_build_plan",
+        "supplier_only_not_client_opportunity",
+        "source_schema_incompatible",
+        "closed_without_supporting_evidence",
+        "deal_status_without_usable_timestamp",
     }
 )
 
@@ -214,6 +241,7 @@ __all__ = [
     "REVIEW_STATUS_OK",
     "REVIEW_STATUS_REQUIRED",
     "CONFLICT_REASON_CODES",
+    "REVIEW_REQUIRING_CONFLICT_REASONS",
     "REQUIRED_IDENTITY_FINGERPRINT_ALGORITHM_VERSION",
     "OPPORTUNITY_SOURCE_FINGERPRINT_ALGORITHM_VERSION",
     "REBUILDABLE_DATA_TABLES",

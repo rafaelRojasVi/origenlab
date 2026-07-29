@@ -55,12 +55,25 @@ from origenlab_email_pipeline.commercial_opportunity.models import (
     SourceSignalRow,
     StageCandidate,
 )
+from origenlab_email_pipeline.commercial_opportunity.review_status import (
+    derive_opportunity_review_status,
+)
 from origenlab_email_pipeline.commercial_opportunity.stage_map import (
     map_deal_status,
     map_document_type,
     map_event_type,
     select_stage,
 )
+from origenlab_email_pipeline.commercial_opportunity.timestamps import (
+    MALFORMED_TIMESTAMP_REASON,
+    parse_event_time,
+)
+
+# Closed provenance rows are kept as evidence but must not compete for stage
+# or manufacture regression conflicts against their own supporting terminals.
+_CLOSED_PROVENANCE_STAGES = frozenset({"closed", "deal_closed"})
+_CLOSED_SUPPORT_STAGES = frozenset({"won", "post_sale", "lost"})
+
 
 
 def _json(obj: Any) -> str:
@@ -267,25 +280,62 @@ def _append_evidence(
 def _deal_has_client_commitment(candidates: list[StageCandidate]) -> bool:
     committed = {"purchase_pending", "won", "fulfillment", "post_sale"}
     return any(
-        c.canonical_stage in committed and (c.event_at or "").strip() and c.client_side
+        c.canonical_stage in committed and c.event_instant is not None and c.client_side
         for c in candidates
     )
 
 
-def _apply_closed_supporting_stage(
-    candidates: list[StageCandidate],
-) -> str | None:
-    """Promote closed/unknown with supporting dated evidence."""
-    dated = [c for c in candidates if (c.event_at or "").strip()]
-    if any(c.canonical_stage == "lost" for c in dated):
-        return "lost"
-    if any(c.canonical_stage == "post_sale" for c in dated):
-        return "post_sale"
-    if any(c.canonical_stage == "won" for c in dated):
-        return "won"
-    if any(c.canonical_stage in {"purchase_pending", "fulfillment"} for c in dated):
-        return None  # leave chronological select to decide
-    return None
+def _is_closed_provenance_candidate(c: StageCandidate) -> bool:
+    return (c.source_stage or "").strip().lower() in _CLOSED_PROVENANCE_STAGES
+
+
+def _note_timestamp(
+    *,
+    conflicts: list[OpportunityConflictRecord],
+    metrics: dict[str, Any],
+    opportunity_id: str,
+    raw: str | None,
+    subject_keys: dict[str, Any],
+    evidence_pointers: list[dict[str, Any]],
+    stage_bearing: bool,
+) -> tuple[str | None, Any]:
+    """Parse timestamp; emit missing/malformed conflicts for stage-bearing rows.
+
+    Returns (original_string_or_none, utc_instant_or_none).
+    """
+    parsed = parse_event_time(raw)
+    if stage_bearing and not (parsed.original or "").strip():
+        metrics["missing_event_timestamp_count"] += 1
+        _add_conflict(
+            conflicts,
+            reason_code="source_event_missing_timestamp",
+            opportunity_id=opportunity_id,
+            subject_keys=subject_keys,
+            evidence_pointers=evidence_pointers,
+        )
+        return None, None
+    if parsed.error == MALFORMED_TIMESTAMP_REASON:
+        _add_conflict(
+            conflicts,
+            reason_code=MALFORMED_TIMESTAMP_REASON,
+            opportunity_id=opportunity_id,
+            subject_keys={**subject_keys, "raw_timestamp": parsed.original},
+            evidence_pointers=evidence_pointers,
+        )
+        return parsed.original, None
+    return parsed.original, parsed.instant
+
+
+def _activity_bounds(raw_times: list[str | None]) -> tuple[str | None, str | None]:
+    """First/last activity using UTC instants; preserve original source strings."""
+    orderable = [
+        p for p in (parse_event_time(raw) for raw in raw_times) if p.is_orderable and p.instant
+    ]
+    if not orderable:
+        return None, None
+    first = min(orderable, key=lambda p: p.instant)  # type: ignore[arg-type, return-value]
+    last = max(orderable, key=lambda p: p.instant)  # type: ignore[arg-type, return-value]
+    return first.original, last.original
 
 
 def _assert_provenance(
@@ -391,9 +441,7 @@ def resolve_opportunities(
             by_email=by_email,
             by_domain=by_domain,
         )
-        review = REVIEW_STATUS_OK
         if link_status in {IDENTITY_LINK_UNRESOLVED, IDENTITY_LINK_AMBIGUOUS}:
-            review = REVIEW_STATUS_REQUIRED
             reason = (
                 "opportunity_identity_ambiguous"
                 if link_status == IDENTITY_LINK_AMBIGUOUS
@@ -428,7 +476,6 @@ def resolve_opportunities(
                 and len(domain_accounts) == 1
                 and domain_accounts[0].account_id != contact.account_id
             ):
-                review = REVIEW_STATUS_REQUIRED
                 _add_conflict(
                     conflicts,
                     reason_code="deal_contact_account_mismatch",
@@ -450,7 +497,6 @@ def resolve_opportunities(
 
         # --- deal status ---
         mapped, lifecycle_terminal, hard_terminal = map_deal_status(deal.deal_status)
-        status_ts = (deal.updated_at or "").strip() or None
         if mapped is None:
             _add_conflict(
                 conflicts,
@@ -464,6 +510,18 @@ def resolve_opportunities(
             mapped = "unknown"
             lifecycle_terminal = False
             hard_terminal = False
+        status_ts, status_instant = _note_timestamp(
+            conflicts=conflicts,
+            metrics=metrics,
+            opportunity_id=oid,
+            raw=deal.updated_at,
+            subject_keys={"deal_key": deal.deal_key, "deal_id": deal.deal_id},
+            evidence_pointers=[
+                {"source_table": "commercial_deal", "source_record_id": str(deal.deal_id)}
+            ],
+            # Deal status may be undated; undated-terminal policy handles claim vs proof.
+            stage_bearing=False,
+        )
         status_eid = stable_evidence_id(
             opportunity_id=oid,
             source_table="commercial_deal",
@@ -475,6 +533,7 @@ def resolve_opportunities(
                 canonical_stage=mapped,
                 source_stage=deal.deal_status,
                 event_at=status_ts,
+                event_instant=status_instant,
                 confidence=deal.confidence,
                 operator_confirmed=deal.confidence == "operator_confirmed",
                 is_terminal=lifecycle_terminal,
@@ -501,20 +560,20 @@ def resolve_opportunities(
         # --- events ---
         for ev in events_by_deal.get(deal.deal_key, []):
             stage, ev_terminal, ev_hard, client_side = map_event_type(ev.event_type)
-            if not (ev.event_at or "").strip() and stage is not None:
-                metrics["missing_event_timestamp_count"] += 1
-                _add_conflict(
-                    conflicts,
-                    reason_code="source_event_missing_timestamp",
-                    opportunity_id=oid,
-                    subject_keys={"deal_key": deal.deal_key, "event_id": ev.event_id},
-                    evidence_pointers=[
-                        {
-                            "source_table": "commercial_deal_event",
-                            "source_record_id": str(ev.event_id),
-                        }
-                    ],
-                )
+            event_at, event_instant = _note_timestamp(
+                conflicts=conflicts,
+                metrics=metrics,
+                opportunity_id=oid,
+                raw=ev.event_at,
+                subject_keys={"deal_key": deal.deal_key, "event_id": ev.event_id},
+                evidence_pointers=[
+                    {
+                        "source_table": "commercial_deal_event",
+                        "source_record_id": str(ev.event_id),
+                    }
+                ],
+                stage_bearing=stage is not None,
+            )
             eid = None
             if stage is not None:
                 conf = "operator_confirmed" if ev.operator_confirmed else ev.confidence
@@ -528,7 +587,8 @@ def resolve_opportunities(
                     StageCandidate(
                         canonical_stage=stage,
                         source_stage=ev.event_type,
-                        event_at=(ev.event_at or None),
+                        event_at=event_at,
+                        event_instant=event_instant,
                         confidence=conf,
                         operator_confirmed=ev.operator_confirmed,
                         is_terminal=ev_terminal,
@@ -547,7 +607,7 @@ def resolve_opportunities(
                     source_table="commercial_deal_event",
                     source_record_id=str(ev.event_id),
                     evidence_type=ev.event_type,
-                    evidence_at=(ev.event_at or None),
+                    evidence_at=event_at,
                     confidence=conf,
                     reason_code="deal_event",
                     source_email_id=ev.source_email_id,
@@ -565,7 +625,7 @@ def resolve_opportunities(
                     opportunity_id=oid,
                     canonical_event_type=stage or "note",
                     source_event_type=ev.event_type,
-                    event_at=(ev.event_at or None),
+                    event_at=event_at,
                     source_table="commercial_deal_event",
                     source_record_id=str(ev.event_id),
                     source_email_id=ev.source_email_id,
@@ -587,7 +647,7 @@ def resolve_opportunities(
                 if _deal_has_client_commitment(provisional) or any(
                     c.canonical_stage in {"purchase_pending", "won", "fulfillment", "post_sale"}
                     for c in provisional
-                    if (c.event_at or "").strip()
+                    if c.event_instant is not None
                 ):
                     stage = "fulfillment"
                     doc_terminal = False
@@ -603,6 +663,29 @@ def resolve_opportunities(
                     source_record_id=str(doc.document_id),
                     evidence_type=doc.document_type,
                 )
+                doc_at, _doc_instant = _note_timestamp(
+                    conflicts=conflicts,
+                    metrics=metrics,
+                    opportunity_id=oid,
+                    raw=doc.issued_at,
+                    subject_keys={
+                        "deal_key": deal.deal_key,
+                        "document_id": doc.document_id,
+                    },
+                    evidence_pointers=[
+                        {
+                            "source_table": "commercial_deal_document",
+                            "source_record_id": str(doc.document_id),
+                        }
+                    ],
+                    stage_bearing=doc.document_type
+                    not in {
+                        "payment_voucher",
+                        "payment_confirmation",
+                        "other",
+                        "supplier_proforma",
+                    },
+                )
                 _append_evidence(
                     opp_evidence,
                     evidence_id=eid,
@@ -610,49 +693,27 @@ def resolve_opportunities(
                     source_table="commercial_deal_document",
                     source_record_id=str(doc.document_id),
                     evidence_type=doc.document_type,
-                    evidence_at=(doc.issued_at or None),
+                    evidence_at=doc_at,
                     confidence=doc.confidence,
                     reason_code="deal_document_non_stage",
                     source_email_id=doc.source_email_id,
                     source_attachment_id=doc.source_attachment_id,
                 )
-                if not (doc.issued_at or "").strip() and doc.document_type not in {
-                    "payment_voucher",
-                    "payment_confirmation",
-                    "other",
-                    "supplier_proforma",
-                }:
-                    metrics["missing_event_timestamp_count"] += 1
-                    _add_conflict(
-                        conflicts,
-                        reason_code="source_event_missing_timestamp",
-                        opportunity_id=oid,
-                        subject_keys={
-                            "deal_key": deal.deal_key,
-                            "document_id": doc.document_id,
-                        },
-                        evidence_pointers=[
-                            {
-                                "source_table": "commercial_deal_document",
-                                "source_record_id": str(doc.document_id),
-                            }
-                        ],
-                    )
                 continue
-            if not (doc.issued_at or "").strip():
-                metrics["missing_event_timestamp_count"] += 1
-                _add_conflict(
-                    conflicts,
-                    reason_code="source_event_missing_timestamp",
-                    opportunity_id=oid,
-                    subject_keys={"deal_key": deal.deal_key, "document_id": doc.document_id},
-                    evidence_pointers=[
-                        {
-                            "source_table": "commercial_deal_document",
-                            "source_record_id": str(doc.document_id),
-                        }
-                    ],
-                )
+            doc_at, doc_instant = _note_timestamp(
+                conflicts=conflicts,
+                metrics=metrics,
+                opportunity_id=oid,
+                raw=doc.issued_at,
+                subject_keys={"deal_key": deal.deal_key, "document_id": doc.document_id},
+                evidence_pointers=[
+                    {
+                        "source_table": "commercial_deal_document",
+                        "source_record_id": str(doc.document_id),
+                    }
+                ],
+                stage_bearing=True,
+            )
             eid = stable_evidence_id(
                 opportunity_id=oid,
                 source_table="commercial_deal_document",
@@ -663,7 +724,8 @@ def resolve_opportunities(
                 StageCandidate(
                     canonical_stage=stage,
                     source_stage=doc.document_type,
-                    event_at=(doc.issued_at or None),
+                    event_at=doc_at,
+                    event_instant=doc_instant,
                     confidence=doc.confidence,
                     operator_confirmed=doc.confidence == "operator_confirmed",
                     is_terminal=doc_terminal,
@@ -682,7 +744,7 @@ def resolve_opportunities(
                 source_table="commercial_deal_document",
                 source_record_id=str(doc.document_id),
                 evidence_type=doc.document_type,
-                evidence_at=(doc.issued_at or None),
+                evidence_at=doc_at,
                 confidence=doc.confidence,
                 reason_code="deal_document",
                 source_email_id=doc.source_email_id,
@@ -703,20 +765,20 @@ def resolve_opportunities(
                 client_side = False
             else:
                 continue
-            if not (pay.paid_at or "").strip():
-                metrics["missing_event_timestamp_count"] += 1
-                _add_conflict(
-                    conflicts,
-                    reason_code="source_event_missing_timestamp",
-                    opportunity_id=oid,
-                    subject_keys={"deal_key": deal.deal_key, "payment_id": pay.payment_id},
-                    evidence_pointers=[
-                        {
-                            "source_table": "commercial_deal_payment",
-                            "source_record_id": str(pay.payment_id),
-                        }
-                    ],
-                )
+            pay_at, pay_instant = _note_timestamp(
+                conflicts=conflicts,
+                metrics=metrics,
+                opportunity_id=oid,
+                raw=pay.paid_at,
+                subject_keys={"deal_key": deal.deal_key, "payment_id": pay.payment_id},
+                evidence_pointers=[
+                    {
+                        "source_table": "commercial_deal_payment",
+                        "source_record_id": str(pay.payment_id),
+                    }
+                ],
+                stage_bearing=True,
+            )
             eid = stable_evidence_id(
                 opportunity_id=oid,
                 source_table="commercial_deal_payment",
@@ -727,7 +789,8 @@ def resolve_opportunities(
                 StageCandidate(
                     canonical_stage=stage,
                     source_stage=f"payment_{pay.direction}",
-                    event_at=(pay.paid_at or None),
+                    event_at=pay_at,
+                    event_instant=pay_instant,
                     confidence=pay.confidence,
                     operator_confirmed=pay.confidence == "operator_confirmed",
                     is_terminal=terminal,
@@ -746,21 +809,53 @@ def resolve_opportunities(
                 source_table="commercial_deal_payment",
                 source_record_id=str(pay.payment_id),
                 evidence_type=f"payment_{pay.direction}",
-                evidence_at=(pay.paid_at or None),
+                evidence_at=pay_at,
                 confidence=pay.confidence,
                 reason_code="deal_payment",
             )
 
-        # closed supporting promotion: inject mapped stage when evidence supports it
-        if deal.deal_status == "closed":
-            promoted = _apply_closed_supporting_stage(candidates)
-            if promoted:
-                # Ensure chronological select can see promoting evidence already present
-                pass
+        # closed: provenance only — stage from dated payment/delivery/cancellation support
+        closed_provenance = [
+            c for c in candidates if _is_closed_provenance_candidate(c)
+        ]
+        if (deal.deal_status or "").strip().lower() == "closed":
+            support = [
+                c
+                for c in candidates
+                if (
+                    not _is_closed_provenance_candidate(c)
+                    and c.canonical_stage in _CLOSED_SUPPORT_STAGES
+                    and c.event_instant is not None
+                )
+            ]
+            if support:
+                winner, stage_conflicts = select_stage(support)
+            else:
+                winner = None
+                stage_conflicts = []
+                _add_conflict(
+                    conflicts,
+                    reason_code="closed_without_supporting_evidence",
+                    opportunity_id=oid,
+                    subject_keys={"deal_key": deal.deal_key, "deal_status": "closed"},
+                    evidence_pointers=[
+                        {
+                            "source_table": c.source_table,
+                            "source_record_id": c.source_record_id,
+                        }
+                        for c in closed_provenance
+                    ]
+                    or [
+                        {
+                            "source_table": "commercial_deal",
+                            "source_record_id": str(deal.deal_id),
+                        }
+                    ],
+                )
+        else:
+            winner, stage_conflicts = select_stage(candidates)
 
-        winner, stage_conflicts = select_stage(candidates)
         for reason, left, right in stage_conflicts:
-            review = REVIEW_STATUS_REQUIRED
             _add_conflict(
                 conflicts,
                 reason_code=reason,
@@ -787,18 +882,27 @@ def resolve_opportunities(
         if winner is None:
             canonical = "unknown"
             source_stage = deal.deal_status
-            reason_code = "no_stage_evidence"
+            reason_code = (
+                "closed_without_supporting_evidence"
+                if (deal.deal_status or "").strip().lower() == "closed"
+                else "no_stage_evidence"
+            )
             conf = "unavailable"
             is_terminal = False
             is_current = False
             evidence_at = None
-            evidence_id = None
+            evidence_id = closed_provenance[0].evidence_id if closed_provenance else None
+            if (
+                (deal.deal_status or "").strip().lower() == "closed"
+                and evidence_id is None
+            ):
+                evidence_id = status_eid
         else:
             canonical = winner.canonical_stage
             source_stage = winner.source_stage
             reason_code = f"selected:{winner.source_table}:{winner.source_stage}"
             conf = winner.confidence
-            has_ts = bool((winner.event_at or "").strip())
+            has_ts = winner.event_instant is not None
             evidence_at = winner.event_at
             evidence_id = winner.evidence_id
 
@@ -837,7 +941,6 @@ def resolve_opportunities(
                         }
                     ],
                 )
-                review = REVIEW_STATUS_REQUIRED
             elif not has_ts:
                 is_current = False
                 is_terminal = False
@@ -845,6 +948,21 @@ def resolve_opportunities(
                     reason_code = "deal_status_without_usable_timestamp"
                     canonical = "unknown"
                     conf = "unavailable"
+                    _add_conflict(
+                        conflicts,
+                        reason_code="deal_status_without_usable_timestamp",
+                        opportunity_id=oid,
+                        subject_keys={
+                            "deal_key": deal.deal_key,
+                            "deal_status": deal.deal_status,
+                        },
+                        evidence_pointers=[
+                            {
+                                "source_table": winner.source_table,
+                                "source_record_id": winner.source_record_id,
+                            }
+                        ],
+                    )
             else:
                 is_terminal = bool(
                     winner.is_hard_terminal
@@ -857,23 +975,18 @@ def resolve_opportunities(
                 else:
                     is_current = has_ts and winner.client_side
 
-            # closed + only unknown with supporting dated won elsewhere already selected
-            if deal.deal_status == "closed" and canonical == "unknown" and has_ts:
-                review = REVIEW_STATUS_REQUIRED
-
-        if any(c.reason_code == "conflicting_terminal_events" for c in conflicts if c.opportunity_id == oid):
-            review = REVIEW_STATUS_REQUIRED
-
-        activity_times = [
-            t
-            for t in [deal.created_at, deal.updated_at]
+        first_at, last_at = _activity_bounds(
+            [deal.created_at, deal.updated_at]
             + [e.event_at for e in events_by_deal.get(deal.deal_key, [])]
             + [d.issued_at for d in docs_by_deal.get(deal.deal_key, [])]
             + [p.paid_at for p in pays_by_deal.get(deal.deal_key, [])]
-            if (t or "").strip()
-        ]
-        first_at = min(activity_times) if activity_times else None
-        last_at = max(activity_times) if activity_times else None
+        )
+
+        review = derive_opportunity_review_status(
+            opportunity_id=oid,
+            conflicts=conflicts,
+            deal_status=deal.deal_status,
+        )
 
         opportunities.append(
             OpportunityRecord(

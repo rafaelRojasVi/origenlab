@@ -16,11 +16,13 @@ from origenlab_email_pipeline.commercial_opportunity.resolve import resolve_oppo
 from origenlab_email_pipeline.commercial_opportunity.schema import (
     ensure_commercial_opportunity_tables,
 )
+from origenlab_email_pipeline.commercial_opportunity.sources import SourceSchemaError
 
 __all__ = [
     "CommercialIdentityPathError",
     "IdentitySnapshotError",
     "OpportunityBuildPlan",
+    "SourceSchemaError",
     "StaleBuildPlanError",
     "apply_opportunity_build",
     "ensure_commercial_opportunity_tables",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 
@@ -120,7 +121,7 @@ class SourceContactMasterRow:
 class StageCandidate:
     canonical_stage: str
     source_stage: str
-    event_at: str | None
+    event_at: str | None  # original source timestamp string — never invent build time
     confidence: str
     operator_confirmed: bool
     is_terminal: bool
@@ -130,6 +131,7 @@ class StageCandidate:
     source_record_id: str
     evidence_id: str
     precedence_tier: int
+    event_instant: datetime | None = None  # UTC instant for ordering only
     detail: dict[str, Any] = field(default_factory=dict)
 
 
