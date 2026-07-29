@@ -92,15 +92,14 @@ def main(argv: list[str] | None = None) -> int:
     mode = resolve_apply_dry_run_mode(parser, args)
     try:
         sqlite_path = require_explicit_sqlite_path(args.sqlite_path)
+        summary = run_identity_build(
+            sqlite_path=sqlite_path,
+            apply=mode.apply,
+            run_context=args.run_context,
+        )
     except CommercialIdentityPathError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-
-    summary = run_identity_build(
-        sqlite_path=sqlite_path,
-        apply=mode.apply,
-        run_context=args.run_context,
-    )
     if args.json_summary:
         print(json.dumps(summary, indent=2, sort_keys=True))
     else:

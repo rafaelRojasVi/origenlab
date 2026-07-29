@@ -6,23 +6,26 @@
 # Transaction contract B: additive schema may remain; DELETE+INSERT is atomic
 # with foreign_keys=ON. Does not mutate commercial_deal* or commercial_identity_*.
 # Do not run --apply against production SQLite without operator approval.
-# See docs/SCRIPT_MAP.md and docs/audits/COMMERCIAL_OPPORTUNITY_STAGE_READ_MODEL_PR3.md.
+# See docs/audits/COMMERCIAL_OPPORTUNITY_STAGE_READ_MODEL_PR3.md.
 # -----------------------------------------------------------------------------
 """Build the deterministic commercial opportunity stage read model (PR3).
 
 Stage + evidence only — does not infer next action, tender, or product interest.
 Does not mutate Gmail, suppressions, outreach state, classifications, or deals.
 
+Exit codes (expected operator-contract failures — no Python traceback)::
+
+  0  success
+  2  path / run-context / mode validation (CommercialIdentityPathError)
+  3  missing or mismatched identity snapshot (IdentitySnapshotError)
+  4  incompatible source schema (SourceSchemaError)
+  5  stale build plan / source race (StaleBuildPlanError)
+
 Example (dry-run)::
 
   uv run python scripts/commercial/build_commercial_opportunity_read_model.py \\
     --sqlite-path /explicit/path/to/emails.sqlite \\
     --run-context local_fixture
-
-Example (apply to a non-production fixture after identity --apply)::
-
-  uv run python scripts/commercial/build_commercial_opportunity_read_model.py \\
-    --sqlite-path /tmp/fixture.sqlite --apply --run-context synthetic_fixture
 """
 
 from __future__ import annotations
@@ -43,6 +46,8 @@ from origenlab_email_pipeline.cli_modes import (  # noqa: E402
 from origenlab_email_pipeline.commercial_opportunity import (  # noqa: E402
     CommercialIdentityPathError,
     IdentitySnapshotError,
+    SourceSchemaError,
+    StaleBuildPlanError,
     require_explicit_sqlite_path,
     run_opportunity_build,
 )
@@ -93,19 +98,23 @@ def main(argv: list[str] | None = None) -> int:
     mode = resolve_apply_dry_run_mode(parser, args)
     try:
         sqlite_path = require_explicit_sqlite_path(args.sqlite_path)
-    except CommercialIdentityPathError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-
-    try:
         summary = run_opportunity_build(
             sqlite_path=sqlite_path,
             apply=mode.apply,
             run_context=args.run_context,
         )
+    except CommercialIdentityPathError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     except IdentitySnapshotError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 3
+    except SourceSchemaError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 4
+    except StaleBuildPlanError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 5
 
     if args.json_summary:
         print(json.dumps(summary, indent=2, sort_keys=True))
