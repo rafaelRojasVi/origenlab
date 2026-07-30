@@ -1,6 +1,6 @@
 # Commercial Procurement Link Read Model — PR4
 
-Status: audit/design correction checkpoint (no production persistence yet)
+Status: final audit/design hardening checkpoint (no production persistence yet)
 Owner: email-pipeline-maintainers
 Date: 2026-07-30
 Branch: `feat/commercial-procurement-linking-pr4`
@@ -37,10 +37,10 @@ Terminology:
 | Term | Meaning |
 |------|---------|
 | procurement signal | Canonical verified tender/procurement observation |
-| account link | Optional link to `commercial_identity_account` |
-| procurement context | `none` / `tender_watch` / `tender_active` / `historical_tender` / `unknown` |
+| account resolution | One deterministic row per signal: linked / unlinked / ambiguous / refused |
+| procurement context | `none` / `tender_watch` / `tender_active` / `historical_tender` / `unknown` (build-plan derived) |
 | enrichment candidate | Rebuildable research hint (not mutable operator lifecycle) |
-| evidence | Exact source pointers for every link or refusal |
+| evidence | Exact source pointers for every resolution or refusal |
 
 ---
 
@@ -100,9 +100,9 @@ Requires explicit `--sqlite-path`, `--output-dir`, and `--as-of-date`. Opens SQL
 
 ---
 
-## 3. Production validation checkpoint (2026-07-30, corrected)
+## 3. Production validation checkpoint (2026-07-30, final design hardening)
 
-Dated read-only measurement against canonical production SQLite after Gate A/B persistence. **Checkpoint only** — not a shipped metric contract.
+Dated read-only measurement against canonical production SQLite after Gate A/B persistence. **Checkpoint only** — not a shipped metric contract. Fingerprints below supersede earlier checkpoint hashes (algorithms had not shipped).
 
 | Metric | Value |
 |--------|------:|
@@ -110,37 +110,34 @@ Dated read-only measurement against canonical production SQLite after Gate A/B p
 | `lead_chilecompra_rows` | 17643 |
 | `matched_raw_lead_rows` | 17643 |
 | `raw_only_rows` / `lead_only_rows` | 0 / 0 |
-| `duplicate_raw_source_keys` / `duplicate_lead_source_keys` | 0 / 0 |
-| `null_or_invalid_raw_json_rows` | 0 |
-| Raw key presence: `CodigoExterno` | 16448 |
-| Raw key presence: `Codigo` / `Correlativo` | 16448 / 16448 |
-| Raw key presence: `source_record_id_fallback` | 1195 |
 | `tender_key_kind`: `codigo_externo` | 16448 |
 | `tender_key_kind`: `unresolved_tender_key` | 1195 |
-| `verified_tender_level_key_rows` | 16448 |
-| `unresolved_tender_key_rows` | 1195 |
 | `coalesced_verified_tenders` | **16448** |
 | `multi_line_verified_tenders` | 0 |
 | Procurement context: `historical_tender` | 16448 |
-| Procurement context: active / watch / unknown (verified) | 0 / 0 / 0 |
 | Route A / C / F / I | 8 / 41 / 16398 / 1 |
+| Resolution linked / unlinked / ambiguous | 42 / 16405 / 1 |
 | Auto-link-allowed signals | 42 |
-| Unique auto-linkable PR2 accounts | 8 |
+| Unique linked PR2 accounts | 8 |
 | `account_not_linked_total` | 16406 |
 | `data_quality_conflict_total` | 1196 |
 | `enrichment_candidate_total` | 16406 |
 | `operator_queue_eligible_total` | **0** |
+| Source FP line count (all outcomes) | 17643 |
+| Verified component sha256 | `c3389e3a…` |
+| Unresolved component sha256 | `14ca9804…` |
 | Persisted PR2 identity fingerprint | `identity_fp_v2` / `6907341d…` |
-| Source fingerprint (`procurement_source_fp_v1`) | `84c9c6e7…` |
-| Build-plan fingerprint (`procurement_build_plan_fp_v1`) | `f29d945b…` |
+| Source fingerprint (`procurement_source_fp_v1`) | `77a43838a58fdfe4089e2a187a8b04d223e9185ed2bb9b6d385e74a026543541` |
+| Build-plan fingerprint (`procurement_build_plan_fp_v1`) | `afcbea179949ee4653e08040daaef1457a65ffca99af534f016bd67cd0c9be67` |
+| Resolver | `procurement_resolver_v3` |
 | As-of date | `2026-07-30` (UTC calendar date) |
 
 Notes:
 
-- The earlier headline “17,643 coalesced tenders” was **incorrect** as tender grain: 1,195 rows lack a verified tender-level key and are `unresolved_tender_key`.
-- This corpus has **one verified key ≈ one row** (no multi-line coalesce observed). Coalesce-by-verified-key remains mandatory for multi-line ChileCompra formats.
-- All verified rows in this checkpoint are **historical**; unresolved rows are data-quality conflicts, not active tenders.
-- Operator-queue eligible is **0** because unmatched historical tenders are market history, not immediate tasks.
+- Source fingerprint hashes **all** source-line outcomes (verified + unresolved + raw-only + lead-only + malformed), not only coalesced signals.
+- Derived `procurement_context` and account-resolution results are build-plan concerns (`as_of_date` + resolver version + identity FP).
+- Unresolved-key conflicts carry direct provenance (`source_system` + `source_record_id` + `subject_key`); conflict ID = hash of `v1|procurement-conflict|…`.
+- Operator-queue eligible remains **0** for unmatched historical tenders.
 
 Gitignored artifacts: `reports/out/active/current/commercial_procurement_link_audit_2026-07-30/`.
 
@@ -150,35 +147,40 @@ Gitignored artifacts: `reports/out/active/current/commercial_procurement_link_au
 
 Namespace: `commercial_procurement_*`
 `schema_version`: `commercial_procurement_v1`
-`build_contract`: `procurement_account_link_read_model_v1`
-`resolver`: `procurement_resolver_v2`
+`build_contract`: `procurement_account_resolution_read_model_v1`
+`resolver`: `procurement_resolver_v3`
 Transaction: **`B_schema_additive_data_atomic`**
 
-Prefer **separate** signal and account-link tables.
+Prefer **separate** signal and account-resolution tables.
 
 | Table | Purpose |
 |-------|---------|
 | `commercial_procurement_signal` | One verified tender observation |
-| `commercial_procurement_account_link` | Optional PR2 account link + route/confidence |
-| `commercial_procurement_evidence` | Source pointers (no bodies); multiple per signal |
-| `commercial_procurement_conflict` | Ambiguity / policy refusals / line conflicts |
-| `commercial_procurement_enrichment_candidate` | Rebuildable research candidates (**Option B**) |
-| `commercial_procurement_build_meta` | Schema, source FP, build-plan FP, as_of_date, metrics |
+| `commercial_procurement_account_resolution` | One resolution row per signal (`linked`/`unlinked`/`ambiguous`/`refused`) |
+| `commercial_procurement_evidence` | Source pointers; supports subjects without `procurement_id` |
+| `commercial_procurement_conflict` | Ambiguity / policy / line / unresolved-key conflicts |
+| `commercial_procurement_enrichment_candidate` | Rebuildable research candidates (Option B) |
+| `commercial_procurement_build_meta` | Schema, source FP, build-plan FP, as_of_date, identity FP |
 
-**Option B (chosen):** PR4 stays fully rebuildable. No mutable `open` / `in_progress` / `resolved` / `dismissed` lifecycle in PR4. Durable operator review events deferred to a later PR if needed.
+**Resolution CHECK semantics:**
 
-Production tables store usable `procurement_id`, `account_id`, and safe institution names. Redacted tokens are for audit CSV/JSON only.
+- `linked` ⇒ `account_id IS NOT NULL`, `auto_link_allowed=1`, route ∈ {A,B,C,E}
+- `unlinked` / `ambiguous` / `refused` ⇒ `account_id IS NULL`, `auto_link_allowed=0`
+- Ambiguity candidates live in `candidate_account_ids_json`, never as a selected `account_id`
 
-Stable IDs (evaluate; never autoincrement semantics):
+**PR2 reference:** logical account reference (not physical SQLite FK). Physical FKs remain required within `commercial_procurement_*`. Independent PR2 DELETE+INSERT rebuildability is the reason — see `schema_contract.py` / `PR2_LOGICAL_REFERENCE_NOTE`.
 
-- signal: `v1|procurement|{source_system}|{canonical_tender_key}` → `p_` + sha256[:32]
-- link/evidence/conflict/candidate: deterministic hashes of subject ids + reason + source pointers
+Apply-time validation: identity schema exists; `identity_fp_v2` matches; every linked `account_id` exists in `commercial_identity_account`; rechecked inside the write transaction; identity FP recorded in build_meta.
 
-**Non-relationship to PR3:** no writes to `commercial_opportunity_*`; procurement_context is independent of `canonical_stage`.
+Stable IDs (never autoincrement semantics):
 
-**Relationship to PR2:** soft FK to `commercial_identity_account.account_id` for links only; apply requires matching persisted `identity_fp_v2`.
+- signal: `v1|procurement|{source_system}|{canonical_tender_key}`
+- resolution / evidence / candidate: deterministic hashes of subject ids + reason + pointers
+- unresolved conflict: `v1|procurement-conflict|{source_system}|{source_record_id}|{reason_code}`
 
-Full column contract: see package `schema_contract.py` / audit `proposed_schema.md`.
+**Non-relationship to PR3:** no writes to `commercial_opportunity_*`.
+
+Full column contract: package `schema_contract.py` / audit `proposed_schema.md`.
 
 ---
 
@@ -188,13 +190,13 @@ Full column contract: see package `schema_contract.py` / audit `proposed_schema.
 2. Name vs institutional-domain conflict → no link (`I`).
 3. Exact institutional buyer domain, unique → high (`A`). Multiple domain accounts → ambiguity (`G`).
 4. Explicit contact email institutional domain, unique → high (`E`).
-5. Evaluate full **alias ∪ canonical** candidate set before name routes:
-   - multiple accounts → ambiguous (`G`) — including alias account A + canonical account B
-   - unique alias hit → medium (`C`); weak/generic public-unit names → review only
-   - unique canonical hit → medium (`B`); weak names → review
-6. Route **D removed** — unreachable once alias∪canonical is evaluated as one set.
-7. Route `H` only when no stronger independent institutional evidence remains.
-8. Else unlinked (`F`) with enrichment candidates.
+5. Exact unique alias → medium (`C`) → `linked` when auto-allowed; weak names → `unlinked` review
+6. Exact unique canonical name → medium (`B`) → same
+7. Route **D removed**
+8. Route `H` → `refused` only when no stronger institutional evidence remains
+9. Else `unlinked` (`F`) with enrichment candidates
+
+Routes A/B/C/E map to `linked` only when `auto_link_allowed`. F→unlinked, G/I→ambiguous, H→refused.
 
 Never: substring-only auto-link; merge distinct institutional domains by name; region-alone identity; attach consumer emails to institutions.
 
@@ -276,18 +278,20 @@ Priority uses evidence completeness only. No next-action / send-readiness fields
 
 ## 9. Fingerprint and apply gates (proposed)
 
-| Gate | Algorithm / rule |
-|------|------------------|
-| Procurement source FP | `procurement_source_fp_v1` over semantic verified-signal fields only (no `lead_id`, no build timestamps, order-independent) |
-| Build-plan FP | `procurement_build_plan_fp_v1` = source FP + identity FP + `as_of_date` + resolver version |
-| PR2 identity FP | Require persisted `identity_fp_v2` match |
+Three payload levels:
+
+| Level | Contents |
+|-------|----------|
+| A. Source-line semantic payload | One row per joined ChileCompra source outcome (verified, unresolved, raw-only, lead-only, malformed). Excludes `lead_id`, build timestamps, `as_of_date`, identity FP, derived `procurement_context`, resolver version. Contact emails enter as hashes only. |
+| B. `procurement_source_fp_v1` | Order-independent hash of **all** Level-A payloads (component hashes for verified vs unresolved). |
+| C. `procurement_build_plan_fp_v1` | Source FP + persisted `identity_fp_v2` + `as_of_date` + resolver version. |
+
+| Gate | Rule |
+|------|------|
 | Stale plan | Recompute FPs inside write txn; mismatch → refuse/rollback |
 | CLI | Explicit `--sqlite-path`; `--as-of-date`; dry-run default; `--apply`; `--run-context` |
-| Exit codes (proposed) | 2 path/context; 3 identity snapshot; 4 source schema; 5 stale plan |
 | Immutability | Assert deals, identity data, opportunity stages unchanged by PR4 apply |
-| PR3 | Must not require PR3 to link; must verify no stage mutation/reinterpretation |
-
-Source fingerprint includes: source system, verified tender key/kind, constituent source IDs, buyer raw/norm, institutional domain, contact email/domain where used, region, title, status code/name, raw+parsed dates, first/last seen, procurement context/reason, line count, material conflict inputs.
+| PR3 | Must not require PR3 to link; must verify no stage mutation |
 
 ---
 
@@ -329,12 +333,14 @@ Source fingerprint includes: source system, verified tender key/kind, constituen
 ## 13. Implementation plan (next commits / PRs)
 
 1. ~~Read-only source audit + synthetic tests + initial contract~~
-2. ~~Corrected tender-key grain, linking, fingerprints, Option B queue contract~~ (this checkpoint)
-3. Pure resolver + stable IDs (still no production apply)
-4. SQLite DDL + persist (dry-run default CLI)
-5. Focused + full tests; operator dry-run on production
-6. Separate Gate authorization for first `--apply`
-7. Optional later: join equipment API plane as secondary evidence without replacing SQLite corpus
+2. ~~Corrected tender-key grain, linking, fingerprints, Option B queue~~
+3. ~~Final design hardening: source-line FP, account_resolution, unresolved provenance~~ (this checkpoint)
+4. Pure resolver + stable IDs (still no production apply)
+5. SQLite DDL + persist (dry-run default CLI)
+6. Focused + full tests; operator dry-run on production
+7. Separate Gate authorization for first `--apply`
+
+PR #417 remains **audit/design only** until a future implementation PR.
 
 ---
 
