@@ -139,17 +139,55 @@ Chronological compatible progression (UTC instants — not raw ISO string order)
 
 1. Detect hard-terminal contradictions explicitly (`conflicting_terminal_events` / same-time conflicts). Displayed hard terminal is the latest UTC instant; input order does not matter.
 2. For compatible nonterminal progression, walk dated evidence in UTC event chronology; later legitimate advances refine older stages.
-3. Operator confirmation strengthens evidence and breaks ties; it does not outrank every later lifecycle advance.
-4. Later lower-stage events emit `stage_regression_prevented` and do not regress the opportunity.
-5. Deterministic stable source keys break otherwise equal ties.
-6. Original source timestamp strings are preserved on stored records. Date-only values order as UTC midnight of that day without inventing sub-day precision. Malformed timestamps emit `malformed_event_timestamp` and never become current stage evidence.
+3. **Same canonical stage:** later UTC instant always wins; at the same instant, operator confirmation / confidence / stable source key break ties. An earlier higher-confidence document must not retain the win over a later same-stage operational event.
+4. Operator confirmation strengthens evidence and breaks same-instant ties; it does not outrank every later lifecycle advance.
+5. Later lower-stage events emit `stage_regression_prevented` and do not regress the opportunity, **except** the narrow compatible-late-client rule below.
+6. Deterministic stable source keys break otherwise equal ties.
+7. Original source timestamp strings are preserved on stored records. Date-only values order as UTC midnight of that day without inventing sub-day precision. Malformed timestamps emit `malformed_event_timestamp` and never become current stage evidence.
+
+### Source-side classification (`commercial_deal.deal_status`)
+
+Every mapped deal status has an explicit `client` or `supplier` source side (`DEAL_STATUS_SOURCE_SIDE`). Supplier statuses (`supplier_po_sent`, `supplier_invoiced`, `supplier_paid`, `logistics_pending`, `in_transit`) never satisfy the client-commitment gate.
+
+### Causal supplier-fulfillment gate
+
+Dated **client commitment** = client-side evidence mapped to `purchase_pending` or `won` (e.g. `client_po_received`, `client_invoiced` / `client_invoice_sent`, `client_paid` / `client_payment_received`, inbound payment).
+
+A supplier-side fulfillment candidate may advance the canonical stage only when a dated client commitment exists with:
+
+`client_commitment_instant <= supplier_evidence_instant`
+
+When supplier evidence predates every client commitment:
+
+- preserve it as evidence (`reason_code=supplier_stage_withheld_before_client_commitment`);
+- do not let it select fulfillment;
+- do not classify the later client commitment as `stage_regression_prevented`;
+- do not invent a review conflict solely for source-time skew.
+
+No arbitrary hourly tolerance is applied — UTC instant comparison only.
+
+### Supplier proforma policy
+
+`supplier_proforma` is **provenance/supporting only**. It must never be the selected fulfillment stage evidence, even after client commitment. Fulfillment requires stronger execution evidence such as:
+
+`supplier_po_sent`, `supplier_invoice_received` / `supplier_invoiced`, `supplier_payment_sent` / `supplier_payment_confirmed` / `supplier_paid`, outbound structured payment, `logistics_pending`, `shipment_released`, `delivery_estimate_communicated`, `logistics_doc`, `in_transit`.
+
+### Compatible late client prerequisites
+
+When the selected stage is `fulfillment`, later dated client-side `purchase_pending` or `won` evidence is compatible corroboration:
+
+- do not downgrade fulfillment;
+- do not emit `stage_regression_prevented`;
+- retain the client evidence as normal provenance.
+
+Later `qualifying` / quote / `technical_review` after fulfillment still emit `stage_regression_prevented`. Terminal `lost` / `post_sale` handling is unchanged.
 
 Document mapping notes:
-- `supplier_proforma` alone does not advance to fulfillment; may refine fulfillment only after client PO/payment/commitment evidence.
+- `supplier_proforma` never advances or selects fulfillment (provenance only).
 - `payment_voucher` / `payment_confirmation` documents never establish won; only inbound payments / `client_payment_received` (or equivalent direction-aware evidence) do.
 - Outbound payments refine fulfillment, never client won.
 
-Build time never becomes stage evidence time. Every selected `stage_evidence_id` has exactly one matching `commercial_opportunity_evidence` row (provenance invariant).
+Build contract: `opportunity_stage_read_model_v2` (resolver semantics; schema tables unchanged). Build time never becomes stage evidence time. Every selected `stage_evidence_id` has exactly one matching `commercial_opportunity_evidence` row (provenance invariant).
 
 ---
 
@@ -220,6 +258,13 @@ uv run python scripts/commercial/build_commercial_opportunity_read_model.py \
 
 Exact metrics (definitions embedded in output):  
 `source_deals_inspected`, `source_events_inspected`, `source_documents_inspected`, `source_payments_inspected`, `source_signals_inspected`, `canonical_opportunity_count`, `explicit_deal_opportunity_count`, `evidence_candidate_count`, `commercial_history_count`, `current_opportunity_count`, `terminal_opportunity_count`, `linked_account_count`, `linked_contact_count`, `unresolved_identity_count`, `opportunity_conflict_count`, `missing_event_timestamp_count`, `undated_signal_history_count`, stage/confidence/conflict distributions, `identity_fingerprint_match_status`, and inference flags (`opportunity_stage_fields_inferred=true`; next-action/tender/product-interest=`false`).
+
+Causal fulfillment diagnostics (v2 resolver):
+- `supplier_stage_candidates_inspected` — supplier-side fulfillment candidates considered by the causal gate
+- `supplier_stage_candidates_withheld_before_commitment` — withheld because no dated client commitment precedes the supplier instant
+- `supplier_stage_candidates_eligible` — passed the commitment chronology gate into stage competition
+- `compatible_late_client_prerequisites` — later client `purchase_pending`/`won` after fulfillment treated as corroboration (no regression)
+- `same_stage_winner_advanced_to_later_evidence` — same-stage selection advanced to a later UTC instant
 
 Fixture results must not be described as production metrics. Run-context labels are metadata only.
 

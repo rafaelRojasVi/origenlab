@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from origenlab_email_pipeline.commercial_opportunity.constants import (
     CONFIDENCE_RANK,
+    DEAL_STATUS_SOURCE_SIDE,
     DEAL_STATUS_STAGE_MAP,
     DOCUMENT_TYPE_STAGE_MAP,
     EVENT_TYPE_STAGE_MAP,
+    FULFILLMENT_COMPATIBLE_LATE_CLIENT_STAGES,
     HARD_TERMINAL_STAGES,
+    SOURCE_SIDE_CLIENT,
+    SOURCE_SIDE_SUPPLIER,
     STAGE_RANK,
     TERMINAL_STAGES,
 )
@@ -32,6 +37,20 @@ def map_deal_status(status: str) -> tuple[str | None, bool, bool]:
     stage, lifecycle_terminal = DEAL_STATUS_STAGE_MAP[key]
     hard = stage in HARD_TERMINAL_STAGES if stage else False
     return stage, lifecycle_terminal, hard
+
+
+def deal_status_source_side(status: str) -> str:
+    """Return ``client`` or ``supplier`` for a mapped deal_status (default client)."""
+    key = (status or "").strip().lower()
+    return DEAL_STATUS_SOURCE_SIDE.get(key, SOURCE_SIDE_CLIENT)
+
+
+def deal_status_is_client_side(status: str) -> bool:
+    return deal_status_source_side(status) == SOURCE_SIDE_CLIENT
+
+
+def deal_status_is_supplier_side(status: str) -> bool:
+    return deal_status_source_side(status) == SOURCE_SIDE_SUPPLIER
 
 
 def map_event_type(event_type: str) -> tuple[str | None, bool, bool, bool]:
@@ -59,7 +78,7 @@ def _src_key(c: StageCandidate) -> str:
 
 
 def _tie_key(c: StageCandidate) -> tuple:
-    """Higher is better for same-timestamp / same-stage ties."""
+    """Higher is better for same-timestamp ties (not same-stage across time)."""
     return (
         1 if c.operator_confirmed else 0,
         CONFIDENCE_RANK.get(c.confidence, 0),
@@ -102,23 +121,51 @@ def _latest_key(c: StageCandidate) -> tuple:
     return (*instant_max_key(_parsed(c)), _tie_key(c))
 
 
+def _is_compatible_late_client_prerequisite(
+    selected: StageCandidate, later: StageCandidate
+) -> bool:
+    """Fulfillment + later dated client purchase_pending/won is corroboration, not regression."""
+    return (
+        selected.canonical_stage == "fulfillment"
+        and later.client_side
+        and later.canonical_stage in FULFILLMENT_COMPATIBLE_LATE_CLIENT_STAGES
+    )
+
+
+@dataclass
+class StageSelectionStats:
+    compatible_late_client_prerequisites: int = 0
+    same_stage_winner_advanced_to_later_evidence: int = 0
+
+
+@dataclass
+class StageSelectionResult:
+    winner: StageCandidate | None
+    conflicts: list[tuple[str, StageCandidate, StageCandidate]] = field(
+        default_factory=list
+    )
+    stats: StageSelectionStats = field(default_factory=StageSelectionStats)
+
+
 def select_stage(
     candidates: list[StageCandidate],
-) -> tuple[StageCandidate | None, list[tuple[str, StageCandidate, StageCandidate]]]:
+) -> StageSelectionResult:
     """Select stage chronologically with explicit terminal/regression conflicts.
 
     Rules:
     - Hard-terminal contradictions (any orderable timestamps) emit
       ``conflicting_terminal_events``. Displayed terminal is the latest UTC instant.
     - Compatible progression uses UTC event chronology; later advances refine older stages.
-    - Operator confirmation breaks ties; it does not outrank a later lifecycle advance.
-    - Later lower-stage events emit ``stage_regression_prevented`` and do not regress.
+    - Same canonical stage: later UTC instant wins; same-instant uses operator/confidence/key.
+    - Later client purchase_pending/won after fulfillment is compatible (no regression).
+    - Later lower-stage events otherwise emit ``stage_regression_prevented`` and do not regress.
     - Raw ISO strings are never compared lexicographically.
     """
     if not candidates:
-        return None, []
+        return StageSelectionResult(winner=None)
 
     conflicts: list[tuple[str, StageCandidate, StageCandidate]] = []
+    stats = StageSelectionStats()
     dated = [c for c in candidates if _is_orderable(c)]
     undated = [c for c in candidates if not _is_orderable(c)]
 
@@ -154,8 +201,11 @@ def select_stage(
                 and STAGE_RANK.get(c.canonical_stage, 0)
                 < STAGE_RANK.get(winner.canonical_stage, 0)
             ):
-                conflicts.append(("stage_regression_prevented", winner, c))
-        return winner, conflicts
+                if _is_compatible_late_client_prerequisite(winner, c):
+                    stats.compatible_late_client_prerequisites += 1
+                else:
+                    conflicts.append(("stage_regression_prevented", winner, c))
+        return StageSelectionResult(winner=winner, conflicts=conflicts, stats=stats)
 
     if dated:
         ordered = sorted(dated, key=_chrono_key)
@@ -166,16 +216,29 @@ def select_stage(
             if new_rank > cur_rank:
                 current = c
             elif new_rank < cur_rank:
-                conflicts.append(("stage_regression_prevented", current, c))
+                if _is_compatible_late_client_prerequisite(current, c):
+                    stats.compatible_late_client_prerequisites += 1
+                else:
+                    conflicts.append(("stage_regression_prevented", current, c))
             else:
-                if _tie_key(c) > _tie_key(current):
+                # Same stage: later UTC instant always advances; same instant → tie-breakers.
+                cur_inst = _parsed(current).instant
+                new_inst = _parsed(c).instant
+                if (
+                    new_inst is not None
+                    and cur_inst is not None
+                    and new_inst > cur_inst
+                ):
                     current = c
-        return current, conflicts
+                    stats.same_stage_winner_advanced_to_later_evidence += 1
+                elif new_inst == cur_inst and _tie_key(c) > _tie_key(current):
+                    current = c
+        return StageSelectionResult(winner=current, conflicts=conflicts, stats=stats)
 
     if undated:
         winner = max(undated, key=_tie_key)
-        return winner, conflicts
-    return None, conflicts
+        return StageSelectionResult(winner=winner, conflicts=conflicts, stats=stats)
+    return StageSelectionResult(winner=None, conflicts=conflicts, stats=stats)
 
 
 def is_terminal_stage(stage: str) -> bool:

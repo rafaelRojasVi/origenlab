@@ -21,7 +21,10 @@ from origenlab_email_pipeline.commercial_identity.constants import (
 )
 
 SCHEMA_VERSION: Final = "commercial_opportunity_v1"
-BUILD_CONTRACT: Final = "opportunity_stage_read_model_v1"
+# Resolver semantics v2: causal supplier fulfillment gating, source-side deal
+# classification, compatible late client prerequisites, same-stage latest-UTC wins.
+# Schema tables unchanged (PR3 not yet persisted in production).
+BUILD_CONTRACT: Final = "opportunity_stage_read_model_v2"
 TRANSACTION_CONTRACT: Final = "B_schema_additive_data_atomic"
 
 # Required PR2 identity schema for apply gating.
@@ -91,6 +94,68 @@ DEAL_STATUS_STAGE_MAP: Final[dict[str, tuple[str, bool]]] = {
     "closed": ("unknown", False),
 }
 
+# Deterministic source-side for commercial_deal.deal_status (never inferred from stage alone).
+# Supplier statuses must not satisfy the client-commitment gate.
+DEAL_STATUS_SOURCE_SIDE: Final[dict[str, str]] = {
+    "draft": "client",
+    "quoted": "client",
+    "client_po_received": "client",
+    "client_invoiced": "client",
+    "client_paid": "client",
+    "cancelled": "client",
+    "delivered": "client",
+    "needs_review": "client",
+    "closed": "client",
+    "supplier_po_sent": "supplier",
+    "supplier_invoiced": "supplier",
+    "supplier_paid": "supplier",
+    "logistics_pending": "supplier",
+    "in_transit": "supplier",
+}
+
+SOURCE_SIDE_CLIENT: Final = "client"
+SOURCE_SIDE_SUPPLIER: Final = "supplier"
+
+# Dated client-side evidence mapped to these stages counts as client commitment.
+CLIENT_COMMITMENT_STAGES: Final = frozenset({"purchase_pending", "won"})
+
+# Stages that are compatible late prerequisites when fulfillment is already selected.
+# Later client commitment/payment after fulfillment is corroboration, not regression.
+FULFILLMENT_COMPATIBLE_LATE_CLIENT_STAGES: Final = frozenset(
+    {"purchase_pending", "won"}
+)
+
+# Evidence that may select fulfillment after causal commitment (never supplier_proforma alone).
+FULFILLMENT_EXECUTION_SOURCE_STAGES: Final = frozenset(
+    {
+        # deal_status
+        "supplier_po_sent",
+        "supplier_invoiced",
+        "supplier_paid",
+        "logistics_pending",
+        "in_transit",
+        # events
+        "supplier_invoice_received",
+        "supplier_payment_sent",
+        "supplier_payment_confirmed",
+        "shipment_released",
+        "delivery_estimate_communicated",
+        # documents
+        "supplier_po",
+        "supplier_invoice",
+        "logistics_doc",
+        # payments
+        "payment_outbound",
+    }
+)
+
+# supplier_proforma is provenance/supporting only — never stage-bearing fulfillment.
+SUPPLIER_PROFORMA_DOCUMENT_TYPE: Final = "supplier_proforma"
+
+EVIDENCE_REASON_SUPPLIER_WITHHELD_BEFORE_COMMITMENT: Final = (
+    "supplier_stage_withheld_before_client_commitment"
+)
+
 # commercial_deal_event.event_type → (canonical_stage | None, is_terminal, client_side)
 EVENT_TYPE_STAGE_MAP: Final[dict[str, tuple[str | None, bool, bool]]] = {
     "deal_created": ("qualifying", False, True),
@@ -103,9 +168,9 @@ EVENT_TYPE_STAGE_MAP: Final[dict[str, tuple[str | None, bool, bool]]] = {
     "supplier_invoice_received": ("fulfillment", False, False),
     "supplier_payment_sent": ("fulfillment", False, False),
     "supplier_payment_confirmed": ("fulfillment", False, False),
-    "logistics_pending": ("fulfillment", False, True),
-    "shipment_released": ("fulfillment", False, True),
-    "delivery_estimate_communicated": ("fulfillment", False, True),
+    "logistics_pending": ("fulfillment", False, False),
+    "shipment_released": ("fulfillment", False, False),
+    "delivery_estimate_communicated": ("fulfillment", False, False),
     "delivered": ("post_sale", True, True),
     "deal_closed": ("unknown", False, True),  # requires supporting evidence
     "deal_cancelled": ("lost", True, True),
@@ -114,7 +179,7 @@ EVENT_TYPE_STAGE_MAP: Final[dict[str, tuple[str | None, bool, bool]]] = {
 }
 
 # Documents: payment_* never establish won without direction-aware payment/event.
-# supplier_proforma alone never advances to fulfillment.
+# supplier_proforma is provenance only — never stage-bearing fulfillment.
 DOCUMENT_TYPE_STAGE_MAP: Final[dict[str, tuple[str | None, bool, bool]]] = {
     "client_quote": ("quote_sent", False, True),
     "client_po": ("purchase_pending", False, True),
@@ -124,7 +189,7 @@ DOCUMENT_TYPE_STAGE_MAP: Final[dict[str, tuple[str | None, bool, bool]]] = {
     "supplier_invoice": ("fulfillment", False, False),
     "payment_voucher": (None, False, True),
     "payment_confirmation": (None, False, True),
-    "logistics_doc": ("fulfillment", False, True),
+    "logistics_doc": ("fulfillment", False, False),
     "other": (None, False, True),
 }
 
@@ -236,6 +301,14 @@ __all__ = [
     "HARD_TERMINAL_STAGES",
     "STAGE_RANK",
     "DEAL_STATUS_STAGE_MAP",
+    "DEAL_STATUS_SOURCE_SIDE",
+    "SOURCE_SIDE_CLIENT",
+    "SOURCE_SIDE_SUPPLIER",
+    "CLIENT_COMMITMENT_STAGES",
+    "FULFILLMENT_COMPATIBLE_LATE_CLIENT_STAGES",
+    "FULFILLMENT_EXECUTION_SOURCE_STAGES",
+    "SUPPLIER_PROFORMA_DOCUMENT_TYPE",
+    "EVIDENCE_REASON_SUPPLIER_WITHHELD_BEFORE_COMMITMENT",
     "EVENT_TYPE_STAGE_MAP",
     "DOCUMENT_TYPE_STAGE_MAP",
     "UNDATED_TERMINAL_SOURCE_STATUSES",

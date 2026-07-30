@@ -19,6 +19,9 @@ from origenlab_email_pipeline.commercial_identity.normalize import (
 )
 from origenlab_email_pipeline.commercial_opportunity.constants import (
     BUILD_CONTRACT,
+    CLIENT_COMMITMENT_STAGES,
+    EVIDENCE_REASON_SUPPLIER_WITHHELD_BEFORE_COMMITMENT,
+    FULFILLMENT_EXECUTION_SOURCE_STAGES,
     HARD_TERMINAL_STAGES,
     IDENTITY_LINK_ACCOUNT_VIA_DEAL_DOMAIN,
     IDENTITY_LINK_AMBIGUOUS,
@@ -32,6 +35,7 @@ from origenlab_email_pipeline.commercial_opportunity.constants import (
     REVIEW_STATUS_OK,
     REVIEW_STATUS_REQUIRED,
     SCHEMA_VERSION,
+    SUPPLIER_PROFORMA_DOCUMENT_TYPE,
     UNDATED_TERMINAL_SOURCE_STATUSES,
 )
 from origenlab_email_pipeline.commercial_opportunity.ids import (
@@ -59,6 +63,7 @@ from origenlab_email_pipeline.commercial_opportunity.review_status import (
     derive_opportunity_review_status,
 )
 from origenlab_email_pipeline.commercial_opportunity.stage_map import (
+    deal_status_is_client_side,
     map_deal_status,
     map_document_type,
     map_event_type,
@@ -117,6 +122,11 @@ def _empty_metrics() -> dict[str, Any]:
         "opportunity_conflict_count": 0,
         "missing_event_timestamp_count": 0,
         "undated_signal_history_count": 0,
+        "supplier_stage_candidates_inspected": 0,
+        "supplier_stage_candidates_withheld_before_commitment": 0,
+        "supplier_stage_candidates_eligible": 0,
+        "compatible_late_client_prerequisites": 0,
+        "same_stage_winner_advanced_to_later_evidence": 0,
         "stage_distribution": {},
         "confidence_distribution": {},
         "conflict_distribution": {},
@@ -143,6 +153,23 @@ def _empty_metrics() -> dict[str, Any]:
             "opportunity_conflict_count": "Conflict rows emitted",
             "missing_event_timestamp_count": "Stage-bearing events/docs/payments with empty timestamps",
             "undated_signal_history_count": "Signals treated as history because event time unrecovered",
+            "supplier_stage_candidates_inspected": (
+                "Supplier-side fulfillment candidates considered for causal gating"
+            ),
+            "supplier_stage_candidates_withheld_before_commitment": (
+                "Supplier fulfillment candidates withheld because no dated client "
+                "commitment exists at or before the supplier evidence instant"
+            ),
+            "supplier_stage_candidates_eligible": (
+                "Supplier fulfillment candidates admitted after causal commitment check"
+            ),
+            "compatible_late_client_prerequisites": (
+                "Later dated client purchase_pending/won after fulfillment treated as "
+                "compatible corroboration (no stage_regression_prevented)"
+            ),
+            "same_stage_winner_advanced_to_later_evidence": (
+                "Same canonical stage where a later UTC instant replaced earlier evidence"
+            ),
             "identity_fingerprint_match_status": "matched|mismatched|missing|schema_mismatch|version_mismatch|not_checked",
             "opportunity_stage_fields_inferred": "Always true for PR3 stage fields",
             "next_action_fields_inferred": "Always false — PR3 does not generate next actions",
@@ -278,12 +305,72 @@ def _append_evidence(
     )
 
 
-def _deal_has_client_commitment(candidates: list[StageCandidate]) -> bool:
-    committed = {"purchase_pending", "won", "fulfillment", "post_sale"}
-    return any(
-        c.canonical_stage in committed and c.event_instant is not None and c.client_side
+def _client_commitment_instants(candidates: list[StageCandidate]) -> list[Any]:
+    return sorted(
+        c.event_instant
         for c in candidates
+        if c.client_side
+        and c.canonical_stage in CLIENT_COMMITMENT_STAGES
+        and c.event_instant is not None
     )
+
+
+def _is_supplier_fulfillment_candidate(c: StageCandidate) -> bool:
+    if c.canonical_stage != "fulfillment" or c.client_side:
+        return False
+    src = (c.source_stage or "").strip().lower()
+    return src in FULFILLMENT_EXECUTION_SOURCE_STAGES or src.startswith("payment_outbound")
+
+
+def _apply_causal_supplier_fulfillment_gate(
+    candidates: list[StageCandidate],
+    *,
+    metrics: dict[str, Any],
+    opp_evidence: list[OpportunityEvidenceRecord],
+) -> list[StageCandidate]:
+    """Withhold supplier fulfillment that predates every client commitment.
+
+    Preserves evidence rows; does not invent review conflicts for time skew.
+    """
+    commitment_instants = _client_commitment_instants(candidates)
+    kept: list[StageCandidate] = []
+    for c in candidates:
+        if not _is_supplier_fulfillment_candidate(c):
+            kept.append(c)
+            continue
+        metrics["supplier_stage_candidates_inspected"] += 1
+        if c.event_instant is None:
+            # Undated supplier fulfillment cannot prove causal eligibility.
+            metrics["supplier_stage_candidates_withheld_before_commitment"] += 1
+            _retag_evidence_reason(
+                opp_evidence,
+                evidence_id=c.evidence_id,
+                reason_code=EVIDENCE_REASON_SUPPLIER_WITHHELD_BEFORE_COMMITMENT,
+            )
+            continue
+        if any(ci <= c.event_instant for ci in commitment_instants):
+            metrics["supplier_stage_candidates_eligible"] += 1
+            kept.append(c)
+        else:
+            metrics["supplier_stage_candidates_withheld_before_commitment"] += 1
+            _retag_evidence_reason(
+                opp_evidence,
+                evidence_id=c.evidence_id,
+                reason_code=EVIDENCE_REASON_SUPPLIER_WITHHELD_BEFORE_COMMITMENT,
+            )
+    return kept
+
+
+def _retag_evidence_reason(
+    opp_evidence: list[OpportunityEvidenceRecord],
+    *,
+    evidence_id: str,
+    reason_code: str,
+) -> None:
+    for row in opp_evidence:
+        if row.evidence_id == evidence_id:
+            row.reason_code = reason_code
+            return
 
 
 def _is_closed_provenance_candidate(c: StageCandidate) -> bool:
@@ -554,7 +641,7 @@ def resolve_opportunities(
                 operator_confirmed=deal.confidence == "operator_confirmed",
                 is_terminal=lifecycle_terminal,
                 is_hard_terminal=hard_terminal,
-                client_side=True,
+                client_side=deal_status_is_client_side(deal.deal_status),
                 source_table="commercial_deal",
                 source_record_id=str(deal.deal_id),
                 evidence_id=status_eid,
@@ -652,25 +739,12 @@ def resolve_opportunities(
                 )
             )
 
-        # provisional commitment check for supplier_proforma refinement
-        provisional = list(candidates)
-
         # --- documents ---
         for doc in docs_by_deal.get(deal.deal_key, []):
             stage, doc_terminal, doc_hard, client_side = map_document_type(doc.document_type)
-            # supplier_proforma may refine fulfillment only with prior client commitment
-            if doc.document_type == "supplier_proforma":
-                if _deal_has_client_commitment(provisional) or any(
-                    c.canonical_stage in {"purchase_pending", "won", "fulfillment", "post_sale"}
-                    for c in provisional
-                    if c.event_instant is not None
-                ):
-                    stage = "fulfillment"
-                    doc_terminal = False
-                    doc_hard = False
-                    client_side = False
-                else:
-                    stage = None
+            # supplier_proforma is provenance/supporting only — never stage-bearing.
+            if (doc.document_type or "").strip().lower() == SUPPLIER_PROFORMA_DOCUMENT_TYPE:
+                stage = None
             if stage is None:
                 # Still record provenance pointer without stage weight
                 eid = stable_evidence_id(
@@ -838,6 +912,13 @@ def resolve_opportunities(
         competition = [
             c for c in candidates if not _is_closed_provenance_candidate(c)
         ]
+        # Causal gate: supplier fulfillment requires dated client commitment at/before
+        # the supplier evidence instant. Withheld rows remain in evidence.
+        competition = _apply_causal_supplier_fulfillment_gate(
+            competition,
+            metrics=metrics,
+            opp_evidence=opp_evidence,
+        )
         header_closed = (deal.deal_status or "").strip().lower() == "closed"
         event_closed = any(
             (c.source_stage or "").strip().lower() == "deal_closed"
@@ -851,10 +932,11 @@ def resolve_opportunities(
         ]
 
         if has_closure_claim and support:
-            winner, stage_conflicts = select_stage(support)
+            selection = select_stage(support)
         elif header_closed and not support:
+            selection = None
             winner = None
-            stage_conflicts = []
+            stage_conflicts: list = []
             _add_conflict(
                 conflicts,
                 reason_code="closed_without_supporting_evidence",
@@ -881,7 +963,7 @@ def resolve_opportunities(
         elif event_closed and not support:
             # Header has a defensible nonclosed stage: keep it, flag the unsupported
             # deal_closed claim, and never regress merely because of deal_closed.
-            winner, stage_conflicts = select_stage(competition)
+            selection = select_stage(competition)
             _add_conflict(
                 conflicts,
                 reason_code="closed_without_supporting_evidence",
@@ -902,7 +984,17 @@ def resolve_opportunities(
                 ],
             )
         else:
-            winner, stage_conflicts = select_stage(competition)
+            selection = select_stage(competition)
+
+        if selection is not None:
+            winner = selection.winner
+            stage_conflicts = selection.conflicts
+            metrics["compatible_late_client_prerequisites"] += (
+                selection.stats.compatible_late_client_prerequisites
+            )
+            metrics["same_stage_winner_advanced_to_later_evidence"] += (
+                selection.stats.same_stage_winner_advanced_to_later_evidence
+            )
 
         for reason, left, right in stage_conflicts:
             _add_conflict(

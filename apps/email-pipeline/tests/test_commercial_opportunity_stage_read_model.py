@@ -910,7 +910,12 @@ def test_chrono_older_operator_quote_later_shipment_fulfillment() -> None:
             operator_confirmed=True,
             event_id=1,
         ),
-        _event(event_type="shipment_released", event_at="2026-03-01T00:00:00+00:00", event_id=2),
+        _event(
+            event_type="client_po_received",
+            event_at="2026-02-01T00:00:00+00:00",
+            event_id=2,
+        ),
+        _event(event_type="shipment_released", event_at="2026-03-01T00:00:00+00:00", event_id=3),
     ]
     res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=[], payments=[])
     assert res.opportunities[0].canonical_stage == "fulfillment"
@@ -920,8 +925,13 @@ def test_chrono_later_quote_does_not_regress_fulfillment() -> None:
     identity = _base_identity()
     deals = [_deal(deal_status="quoted", updated_at="2026-01-01T00:00:00+00:00")]
     events = [
-        _event(event_type="shipment_released", event_at="2026-02-01T00:00:00+00:00", event_id=1),
-        _event(event_type="client_quote_sent", event_at="2026-03-01T00:00:00+00:00", event_id=2),
+        _event(
+            event_type="client_po_received",
+            event_at="2026-01-15T00:00:00+00:00",
+            event_id=1,
+        ),
+        _event(event_type="shipment_released", event_at="2026-02-01T00:00:00+00:00", event_id=2),
+        _event(event_type="client_quote_sent", event_at="2026-03-01T00:00:00+00:00", event_id=3),
     ]
     res_a = resolve_opportunities(identity=identity, deals=deals, events=events, documents=[], payments=[])
     res_b = resolve_opportunities(
@@ -1131,9 +1141,14 @@ def test_supplier_proforma_alone_does_not_fulfill() -> None:
     ]
     res = resolve_opportunities(identity=identity, deals=deals, events=[], documents=docs, payments=[])
     assert res.opportunities[0].canonical_stage == "quote_sent"
+    assert res.opportunities[0].stage_is_current is True
+    proforma = [e for e in res.evidence if e.evidence_type == "supplier_proforma"]
+    assert len(proforma) == 1
+    assert proforma[0].reason_code == "deal_document_non_stage"
 
 
-def test_supplier_proforma_refines_after_client_po() -> None:
+def test_supplier_proforma_after_client_po_never_wins_fulfillment() -> None:
+    """Proforma remains provenance even after client commitment; cannot select fulfillment."""
     identity = _base_identity()
     deals = [_deal(deal_status="client_po_received", updated_at="2026-02-01T00:00:00+00:00")]
     events = [
@@ -1152,7 +1167,13 @@ def test_supplier_proforma_refines_after_client_po() -> None:
         )
     ]
     res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=docs, payments=[])
-    assert res.opportunities[0].canonical_stage == "fulfillment"
+    opp = res.opportunities[0]
+    assert opp.canonical_stage == "purchase_pending"
+    assert opp.stage_evidence_id is not None
+    winner_ev = next(e for e in res.evidence if e.evidence_id == opp.stage_evidence_id)
+    assert winner_ev.evidence_type != "supplier_proforma"
+    proforma = [e for e in res.evidence if e.evidence_type == "supplier_proforma"]
+    assert len(proforma) == 1
 
 
 def test_payment_voucher_alone_does_not_establish_won() -> None:
@@ -2118,3 +2139,394 @@ def test_cli_deal_ledger_schema_errors_exit_4(tmp_path: Path) -> None:
         assert f"source_schema_incompatible:{expect_table}:" in proc.stderr
         assert "Traceback" not in proc.stderr
         assert "OperationalError" not in proc.stderr
+
+
+# --- Causal fulfillment gating / source-side / same-stage (PR3 follow-up) ---
+
+
+def test_every_deal_status_has_explicit_source_side() -> None:
+    from origenlab_email_pipeline.commercial_opportunity.constants import (
+        DEAL_STATUS_SOURCE_SIDE,
+        DEAL_STATUS_STAGE_MAP,
+        SOURCE_SIDE_CLIENT,
+        SOURCE_SIDE_SUPPLIER,
+    )
+    from origenlab_email_pipeline.commercial_opportunity.stage_map import (
+        deal_status_is_client_side,
+        deal_status_is_supplier_side,
+        deal_status_source_side,
+    )
+
+    assert set(DEAL_STATUS_SOURCE_SIDE) == set(DEAL_STATUS_STAGE_MAP)
+    client_statuses = {
+        "draft",
+        "quoted",
+        "client_po_received",
+        "client_invoiced",
+        "client_paid",
+        "cancelled",
+        "delivered",
+        "needs_review",
+        "closed",
+    }
+    supplier_statuses = {
+        "supplier_po_sent",
+        "supplier_invoiced",
+        "supplier_paid",
+        "logistics_pending",
+        "in_transit",
+    }
+    for status in client_statuses:
+        assert deal_status_source_side(status) == SOURCE_SIDE_CLIENT
+        assert deal_status_is_client_side(status) is True
+        assert deal_status_is_supplier_side(status) is False
+    for status in supplier_statuses:
+        assert deal_status_source_side(status) == SOURCE_SIDE_SUPPLIER
+        assert deal_status_is_client_side(status) is False
+        assert deal_status_is_supplier_side(status) is True
+
+
+def test_supplier_deal_statuses_do_not_count_as_client_commitment() -> None:
+    identity = _base_identity()
+    for status in (
+        "supplier_po_sent",
+        "supplier_invoiced",
+        "supplier_paid",
+        "logistics_pending",
+        "in_transit",
+    ):
+        deals = [_deal(deal_status=status, updated_at="2026-02-01T12:00:00+00:00")]
+        docs = [
+            SourceDealDocumentRow(
+                document_id=1,
+                deal_id=1,
+                deal_key="deal-a",
+                document_type="supplier_proforma",
+                issued_at="2026-02-02T12:00:00+00:00",
+                confidence="extracted_high",
+                source_email_id=None,
+                source_attachment_id=None,
+            )
+        ]
+        res = resolve_opportunities(
+            identity=identity, deals=deals, events=[], documents=docs, payments=[]
+        )
+        # Supplier header alone is withheld without client commitment → unknown/undated path
+        # or non-fulfillment from proforma. Proforma must never win.
+        opp = res.opportunities[0]
+        if opp.stage_evidence_id:
+            winner = next(e for e in res.evidence if e.evidence_id == opp.stage_evidence_id)
+            assert winner.evidence_type != "supplier_proforma", status
+        assert status
+        withheld = [
+            e
+            for e in res.evidence
+            if e.reason_code == "supplier_stage_withheld_before_client_commitment"
+        ]
+        assert withheld, status
+        assert opp.canonical_stage != "fulfillment" or opp.stage_is_current is False
+
+
+def test_client_statuses_count_as_client_commitment() -> None:
+    identity = _base_identity()
+    deals = [_deal(deal_status="quoted", updated_at="2026-01-01T00:00:00+00:00")]
+    events = [
+        _event(event_type="client_po_received", event_at="2026-02-01T00:00:00+00:00", event_id=1),
+        _event(event_type="supplier_po_sent", event_at="2026-02-02T00:00:00+00:00", event_id=2),
+    ]
+    res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=[], payments=[])
+    assert res.opportunities[0].canonical_stage == "fulfillment"
+    assert res.metrics["supplier_stage_candidates_inspected"] == 1
+    assert res.metrics["supplier_stage_candidates_withheld_before_commitment"] == 0
+    assert res.metrics["supplier_stage_candidates_eligible"] == 1
+
+
+def test_supplier_execution_before_commitment_is_withheld() -> None:
+    identity = _base_identity()
+    deals = [_deal(deal_status="quoted", updated_at="2026-01-01T00:00:00+00:00")]
+    events = [
+        _event(event_type="supplier_po_sent", event_at="2026-02-01T12:00:00+02:00", event_id=1),
+        _event(event_type="client_po_received", event_at="2026-02-01T12:00:00-04:00", event_id=2),
+    ]
+    res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=[], payments=[])
+    opp = res.opportunities[0]
+    assert opp.canonical_stage == "purchase_pending"
+    assert not any(c.reason_code == "stage_regression_prevented" for c in res.conflicts)
+    assert res.metrics["supplier_stage_candidates_inspected"] == 1
+    assert res.metrics["supplier_stage_candidates_withheld_before_commitment"] == 1
+    assert res.metrics["supplier_stage_candidates_eligible"] == 0
+    assert any(
+        e.reason_code == "supplier_stage_withheld_before_client_commitment" for e in res.evidence
+    )
+
+
+def test_supplier_execution_after_commitment_advances_fulfillment() -> None:
+    identity = _base_identity()
+    deals = [_deal(deal_status="quoted", updated_at="2026-01-01T00:00:00+00:00")]
+    events = [
+        _event(event_type="client_po_received", event_at="2026-02-01T12:00:00-04:00", event_id=1),
+        _event(event_type="supplier_po_sent", event_at="2026-02-01T18:00:00+00:00", event_id=2),
+    ]
+    res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=[], payments=[])
+    assert res.opportunities[0].canonical_stage == "fulfillment"
+    assert res.metrics["supplier_stage_candidates_inspected"] == 1
+    assert res.metrics["supplier_stage_candidates_withheld_before_commitment"] == 0
+    assert res.metrics["supplier_stage_candidates_eligible"] == 1
+
+
+def test_early_supplier_plus_later_client_po_payment_no_regression() -> None:
+    identity = _base_identity()
+    deals = [_deal(deal_status="quoted", updated_at="2026-01-01T00:00:00+00:00")]
+    events = [
+        _event(event_type="supplier_po_sent", event_at="2026-02-01T12:00:00+02:00", event_id=1),
+        _event(event_type="client_po_received", event_at="2026-02-01T12:00:00-04:00", event_id=2),
+        _event(
+            event_type="client_payment_received",
+            event_at="2026-02-05T15:00:00-04:00",
+            event_id=3,
+        ),
+    ]
+    res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=[], payments=[])
+    opp = res.opportunities[0]
+    assert opp.canonical_stage in {"purchase_pending", "won"}
+    assert not any(c.reason_code == "stage_regression_prevented" for c in res.conflicts)
+
+
+def test_fulfillment_plus_later_client_payment_no_regression() -> None:
+    identity = _base_identity()
+    deals = [_deal(deal_status="quoted", updated_at="2026-01-01T00:00:00+00:00")]
+    events = [
+        _event(event_type="client_po_received", event_at="2026-02-01T00:00:00+00:00", event_id=1),
+        _event(event_type="supplier_po_sent", event_at="2026-02-02T00:00:00+00:00", event_id=2),
+        _event(
+            event_type="client_payment_received",
+            event_at="2026-02-10T00:00:00+00:00",
+            event_id=3,
+        ),
+    ]
+    res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=[], payments=[])
+    opp = res.opportunities[0]
+    assert opp.canonical_stage == "fulfillment"
+    assert not any(c.reason_code == "stage_regression_prevented" for c in res.conflicts)
+    assert res.metrics["compatible_late_client_prerequisites"] == 1
+
+
+def test_fulfillment_plus_later_quote_still_regressions() -> None:
+    identity = _base_identity()
+    deals = [_deal(deal_status="quoted", updated_at="2026-01-01T00:00:00+00:00")]
+    events = [
+        _event(event_type="client_po_received", event_at="2026-02-01T00:00:00+00:00", event_id=1),
+        _event(event_type="shipment_released", event_at="2026-02-02T00:00:00+00:00", event_id=2),
+        _event(event_type="client_quote_sent", event_at="2026-03-01T00:00:00+00:00", event_id=3),
+    ]
+    res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=[], payments=[])
+    assert res.opportunities[0].canonical_stage == "fulfillment"
+    assert any(c.reason_code == "stage_regression_prevented" for c in res.conflicts)
+
+
+def test_later_same_stage_logistics_replaces_earlier_supplier_evidence() -> None:
+    identity = _base_identity()
+    deals = [_deal(deal_status="quoted", updated_at="2026-01-01T00:00:00+00:00")]
+    events = [
+        _event(event_type="client_po_received", event_at="2026-02-01T00:00:00+00:00", event_id=1),
+        _event(
+            event_type="supplier_po_sent",
+            event_at="2026-02-02T00:00:00+00:00",
+            event_id=2,
+            confidence="operator_confirmed",
+            operator_confirmed=True,
+        ),
+        _event(
+            event_type="logistics_pending",
+            event_at="2026-02-20T00:00:00+00:00",
+            event_id=3,
+            confidence="extracted_low",
+        ),
+    ]
+    res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=[], payments=[])
+    opp = res.opportunities[0]
+    assert opp.canonical_stage == "fulfillment"
+    assert opp.stage_is_current is True
+    assert opp.stage_is_terminal is False
+    winner = next(e for e in res.evidence if e.evidence_id == opp.stage_evidence_id)
+    assert winner.evidence_type == "logistics_pending"
+    assert opp.stage_evidence_at == "2026-02-20T00:00:00+00:00"
+    assert res.metrics["same_stage_winner_advanced_to_later_evidence"] == 1
+
+
+def test_same_stage_uses_utc_instants_not_lexical_strings() -> None:
+    identity = _base_identity()
+    deals = [_deal(deal_status="quoted", updated_at="2026-01-01T00:00:00+00:00")]
+    # Lexically earlier string is actually later in UTC (+02 vs -04 on same wall clock).
+    events = [
+        _event(event_type="client_po_received", event_at="2026-05-14T10:00:00+00:00", event_id=1),
+        _event(
+            event_type="supplier_po_sent",
+            event_at="2026-05-14T12:00:00+02:00",  # 10:00Z
+            event_id=2,
+            confidence="operator_confirmed",
+            operator_confirmed=True,
+        ),
+        _event(
+            event_type="logistics_pending",
+            event_at="2026-05-14T12:00:00-04:00",  # 16:00Z — later UTC
+            event_id=3,
+            confidence="extracted_low",
+        ),
+    ]
+    res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=[], payments=[])
+    opp = res.opportunities[0]
+    assert opp.canonical_stage == "fulfillment"
+    winner = next(e for e in res.evidence if e.evidence_id == opp.stage_evidence_id)
+    assert winner.evidence_type == "logistics_pending"
+
+
+def test_currentness_true_for_dated_logistics_pending() -> None:
+    identity = _base_identity()
+    deals = [
+        _deal(deal_status="logistics_pending", updated_at="2026-03-01T00:00:00+00:00")
+    ]
+    events = [
+        _event(event_type="client_po_received", event_at="2026-02-01T00:00:00+00:00", event_id=1),
+        _event(event_type="logistics_pending", event_at="2026-03-01T00:00:00+00:00", event_id=2),
+    ]
+    res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=[], payments=[])
+    opp = res.opportunities[0]
+    assert opp.canonical_stage == "fulfillment"
+    assert opp.stage_is_current is True
+    assert opp.stage_is_terminal is False
+
+
+def test_proforma_only_never_current_fulfillment() -> None:
+    identity = _base_identity()
+    deals = [_deal(deal_status="quoted", updated_at="2026-01-01T00:00:00+00:00")]
+    events = [
+        _event(event_type="client_po_received", event_at="2026-02-01T00:00:00+00:00", event_id=1)
+    ]
+    docs = [
+        SourceDealDocumentRow(
+            document_id=1,
+            deal_id=1,
+            deal_key="deal-a",
+            document_type="supplier_proforma",
+            issued_at="2026-02-05T00:00:00+00:00",
+            confidence="extracted_high",
+            source_email_id=None,
+            source_attachment_id=None,
+        )
+    ]
+    res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=docs, payments=[])
+    opp = res.opportunities[0]
+    assert opp.canonical_stage != "fulfillment"
+    assert opp.stage_is_current is True  # purchase_pending from client PO is current
+
+
+def test_production_chronology_regression_fixture_redacted() -> None:
+    """Synthetic shape of the production dry-run defect (no real identifiers)."""
+    identity = _base_identity()
+    # Low-entropy synthetic key (historical tip used synthetic-oc-fixture-1;
+    # gitleaks fingerprints for that commit remain in .gitleaksignore).
+    deal_key = "case-one"
+    deals = [
+        _deal(
+            deal_key=deal_key,
+            deal_status="quoted",
+            updated_at="2026-05-01T00:00:00+00:00",
+            client_contact_email="buyer@hospital.cl",
+            client_domain="hospital.cl",
+        )
+    ]
+    events = [
+        # Early supplier evidence (UTC before client PO despite wall-clock appearance)
+        _event(
+            deal_key=deal_key,
+            event_type="supplier_po_sent",
+            event_at="2026-05-14T12:00:00+02:00",
+            event_id=10,
+            confidence="extracted_high",
+        ),
+        # Client PO later in UTC
+        _event(
+            deal_key=deal_key,
+            event_type="client_po_received",
+            event_at="2026-05-14T12:00:00-04:00",
+            event_id=20,
+        ),
+        # Client payment later
+        _event(
+            deal_key=deal_key,
+            event_type="client_payment_received",
+            event_at="2026-05-20T09:30:00-04:00",
+            event_id=30,
+        ),
+        # Later logistics
+        _event(
+            deal_key=deal_key,
+            event_type="logistics_pending",
+            event_at="2026-06-01T15:00:00-04:00",
+            event_id=40,
+            confidence="extracted_low",
+        ),
+        # Unrelated undated note (non-stage)
+        _event(deal_key=deal_key, event_type="note", event_at=None, event_id=50),
+    ]
+    docs = [
+        SourceDealDocumentRow(
+            document_id=1,
+            deal_id=1,
+            deal_key=deal_key,
+            document_type="supplier_proforma",
+            issued_at="2026-05-14T12:00:00+02:00",
+            confidence="extracted_high",
+            source_email_id=None,
+            source_attachment_id=None,
+        ),
+        SourceDealDocumentRow(
+            document_id=2,
+            deal_id=1,
+            deal_key=deal_key,
+            document_type="other",
+            issued_at=None,
+            confidence="extracted_low",
+            source_email_id=None,
+            source_attachment_id=None,
+        ),
+    ]
+    payments = [
+        SourceDealPaymentRow(
+            payment_id=1,
+            deal_id=1,
+            deal_key=deal_key,
+            direction="inbound",
+            paid_at="2026-05-20T10:00:00-04:00",
+            confidence="extracted_high",
+        )
+    ]
+
+    def _run(evs, docs_in):
+        return resolve_opportunities(
+            identity=identity,
+            deals=deals,
+            events=evs,
+            documents=docs_in,
+            payments=payments,
+        )
+
+    res_a = _run(events, docs)
+    res_b = _run(list(reversed(events)), list(reversed(docs)))
+    for res in (res_a, res_b):
+        opp = res.opportunities[0]
+        assert opp.canonical_stage == "fulfillment"
+        assert opp.stage_is_current is True
+        assert opp.stage_is_terminal is False
+        winner = next(e for e in res.evidence if e.evidence_id == opp.stage_evidence_id)
+        assert winner.evidence_type == "logistics_pending"
+        assert not any(c.reason_code == "stage_regression_prevented" for c in res.conflicts)
+        assert any(e.evidence_type == "supplier_proforma" for e in res.evidence)
+        assert winner.evidence_type != "supplier_proforma"
+        assert res.metrics["supplier_stage_candidates_inspected"] == 2
+        assert res.metrics["supplier_stage_candidates_withheld_before_commitment"] == 1
+        assert res.metrics["supplier_stage_candidates_eligible"] == 1
+        assert res.metrics["compatible_late_client_prerequisites"] == 0
+        assert res.metrics["same_stage_winner_advanced_to_later_evidence"] == 1
+    assert res_a.opportunities[0].stage_evidence_id == res_b.opportunities[0].stage_evidence_id
