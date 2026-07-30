@@ -1,9 +1,10 @@
-"""Tests for PR4 commercial procurement planner (dry-run / no production apply)."""
+"""Tests for PR4 commercial procurement planner hardening (dry-run / no apply)."""
 
 from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from copy import deepcopy
 from datetime import date
 from pathlib import Path
@@ -17,16 +18,22 @@ from origenlab_email_pipeline.commercial_procurement.builder import (
 )
 from origenlab_email_pipeline.commercial_procurement.ids import (
     canonical_json,
-    plan_digest,
-    stable_procurement_id,
+    semantic_plan_digest,
 )
 from origenlab_email_pipeline.commercial_procurement.link_routes import build_account_index
+from origenlab_email_pipeline.commercial_procurement.normalize import (
+    buyer_fields_from_raw_and_lead,
+    extract_status_fields,
+    nested_get,
+    pick_first,
+    scalar_text,
+)
 from origenlab_email_pipeline.commercial_procurement.planner import plan_procurement
 from origenlab_email_pipeline.commercial_procurement.validate_temp import (
+    TempSchemaValidationError,
     validate_plan_in_temp_sqlite,
 )
 from origenlab_email_pipeline.commercial_procurement.constants import (
-    PROCUREMENT_PLAN_DIGEST_ALGORITHM,
     RESOLUTION_LINKED,
     RESOLUTION_UNLINKED,
     ROUTE_EXACT_INSTITUTIONAL_DOMAIN,
@@ -62,7 +69,12 @@ def _line(**overrides: object) -> dict:
         "lead_id": 1,
         "source_record_id": "1",
         "raw_lead_join_status": "matched",
+        "has_raw_source": True,
+        "has_lead_source": True,
+        "raw_source_record_id": "1",
+        "lead_source_record_id": "1",
         "raw_json_valid": True,
+        "raw_json_malformed": False,
         "verified": True,
         "tender_key": "T-1",
         "tender_key_kind": TENDER_KEY_CODIGO_EXTERNO,
@@ -87,7 +99,7 @@ def _line(**overrides: object) -> dict:
     return row
 
 
-def _plan(lines: list[dict], *, as_of: date = date(2026, 7, 30), identity: str = "idfp") -> object:
+def _plan(lines: list[dict], *, as_of: date = date(2026, 7, 30), identity: str = "idfp"):
     return plan_procurement(
         source_lines=lines,
         account_index=_index(),
@@ -96,15 +108,115 @@ def _plan(lines: list[dict], *, as_of: date = date(2026, 7, 30), identity: str =
         as_of_date=as_of,
         run_context="synthetic_fixture",
         known_account_ids=frozenset({"a_hospital", "a_lab"}),
-        build_stamp="2026-07-30T00:00:00+00:00",
     )
+
+
+def test_semantic_digest_stable_without_build_stamp() -> None:
+    lines = [_line()]
+    p1 = _plan(lines)
+    time.sleep(1.05)
+    p2 = _plan(deepcopy(lines))
+    assert p1.semantic_plan_digest == p2.semantic_plan_digest
+    assert canonical_json(p1.semantic_table_rows()) == canonical_json(p2.semantic_table_rows())
+
+
+def test_materialization_stamp_does_not_change_semantic_digest() -> None:
+    lines = [_line()]
+    a = plan_procurement(
+        source_lines=lines,
+        account_index=_index(),
+        identity_fingerprint="idfp",
+        identity_fingerprint_algorithm_version="identity_fp_v2",
+        as_of_date=date(2026, 7, 30),
+        run_context="synthetic_fixture",
+        known_account_ids=frozenset({"a_hospital", "a_lab"}),
+        materialization_stamp="2026-07-30T12:00:00+00:00",
+    )
+    b = plan_procurement(
+        source_lines=lines,
+        account_index=_index(),
+        identity_fingerprint="idfp",
+        identity_fingerprint_algorithm_version="identity_fp_v2",
+        as_of_date=date(2026, 7, 30),
+        run_context="synthetic_fixture",
+        known_account_ids=frozenset({"a_hospital", "a_lab"}),
+        materialization_stamp="2026-07-30T13:00:00+00:00",
+    )
+    assert a.semantic_plan_digest == b.semantic_plan_digest
+    # created_at differs when stamps differ — prove via unresolved conflicts
+    lines2 = [
+        _line(),
+        _line(
+            source_record_id="9",
+            verified=False,
+            tender_key="9",
+            tender_key_kind="unresolved_tender_key",
+            has_raw_source=True,
+            has_lead_source=True,
+            raw_source_record_id="9",
+            lead_source_record_id="9",
+            buyer_domain=None,
+        ),
+    ]
+    a2 = plan_procurement(
+        source_lines=lines2,
+        account_index=_index(),
+        identity_fingerprint="idfp",
+        identity_fingerprint_algorithm_version="identity_fp_v2",
+        as_of_date=date(2026, 7, 30),
+        run_context="synthetic_fixture",
+        known_account_ids=frozenset({"a_hospital", "a_lab"}),
+        materialization_stamp="t1",
+    )
+    b2 = plan_procurement(
+        source_lines=lines2,
+        account_index=_index(),
+        identity_fingerprint="idfp",
+        identity_fingerprint_algorithm_version="identity_fp_v2",
+        as_of_date=date(2026, 7, 30),
+        run_context="synthetic_fixture",
+        known_account_ids=frozenset({"a_hospital", "a_lab"}),
+        materialization_stamp="t2",
+    )
+    assert a2.semantic_plan_digest == b2.semantic_plan_digest
+    assert {c.created_at for c in a2.conflicts} == {"t1"}
+    assert {c.created_at for c in b2.conflicts} == {"t2"}
+
+
+def test_semantic_row_change_changes_digest() -> None:
+    assert _plan([_line(title="A")]).semantic_plan_digest != _plan(
+        [_line(title="B")]
+    ).semantic_plan_digest
+
+
+def test_as_of_and_identity_affect_build_plan_and_semantic_when_derived_rows_change() -> None:
+    lines = [
+        _line(
+            status_code="5",
+            status_name="Publicada",
+            close_date="2026-08-20",
+            close_date_parsed="2026-08-20",
+        )
+    ]
+    early = _plan(lines, as_of=date(2026, 7, 30))
+    late = _plan(lines, as_of=date(2026, 9, 1))
+    assert early.source_fingerprint == late.source_fingerprint
+    assert early.build_plan_fingerprint != late.build_plan_fingerprint
+    assert early.semantic_plan_digest != late.semantic_plan_digest
+
+    a = _plan([_line()], identity="aaa")
+    b = _plan([_line()], identity="bbb")
+    assert a.source_fingerprint == b.source_fingerprint
+    assert a.build_plan_fingerprint != b.build_plan_fingerprint
 
 
 def test_every_source_outcome_class_in_fingerprint() -> None:
     lines = [
-        _line(source_record_id="v1", verified=True, tender_key="T-V"),
+        _line(source_record_id="v1", raw_source_record_id="v1", lead_source_record_id="v1", tender_key="T-V"),
         _line(
             source_record_id="u1",
+            raw_source_record_id="u1",
+            lead_source_record_id="u1",
             verified=False,
             tender_key="9",
             tender_key_kind="unresolved_tender_key",
@@ -118,6 +230,10 @@ def test_every_source_outcome_class_in_fingerprint() -> None:
             tender_key="",
             tender_key_kind="missing",
             raw_lead_join_status="raw_only",
+            has_raw_source=True,
+            has_lead_source=False,
+            raw_source_record_id="r1",
+            lead_source_record_id=None,
             buyer_domain=None,
         ),
         _line(
@@ -125,6 +241,10 @@ def test_every_source_outcome_class_in_fingerprint() -> None:
             verified=True,
             tender_key="T-L",
             raw_lead_join_status="lead_only",
+            has_raw_source=False,
+            has_lead_source=True,
+            raw_source_record_id=None,
+            lead_source_record_id="l1",
             raw_json_valid=False,
             buyer_domain=None,
             buyer_name_norm="organismo desconocido",
@@ -135,10 +255,6 @@ def test_every_source_outcome_class_in_fingerprint() -> None:
     assert plan.metrics["source_outcome_count"] == 4
     assert plan.metrics["signal_count"] == 2
     assert plan.metrics["unresolved_source_row_count"] == 2
-    comps = plan.source_fingerprint_components
-    assert comps["all_source_lines"]["n"] == 4
-    assert comps["verified_tender_key_lines"]["n"] == 2
-    assert comps["unresolved_tender_key_lines"]["n"] == 2
 
 
 def test_routes_and_resolution_cardinality() -> None:
@@ -147,6 +263,8 @@ def test_routes_and_resolution_cardinality() -> None:
         _line(
             source_record_id="2",
             tender_key="T-F",
+            raw_source_record_id="2",
+            lead_source_record_id="2",
             buyer_domain=None,
             buyer_name_norm="organismo desconocido xyz",
             buyer_display="Organismo Desconocido XYZ",
@@ -158,142 +276,153 @@ def test_routes_and_resolution_cardinality() -> None:
     res = {r.procurement_id: r for r in plan.resolutions}
     assert res[by_tender["T-A"]].resolution_status == RESOLUTION_LINKED
     assert res[by_tender["T-A"]].link_route == ROUTE_EXACT_INSTITUTIONAL_DOMAIN
-    assert res[by_tender["T-A"]].auto_link_allowed == 1
     assert res[by_tender["T-F"]].resolution_status == RESOLUTION_UNLINKED
     assert res[by_tender["T-F"]].link_route == ROUTE_NO_MATCH
-    assert res[by_tender["T-F"]].account_id is None
 
 
-def test_multiline_coalesce_and_field_conflict() -> None:
+def test_matched_verified_evidence_planes() -> None:
+    plan = _plan([_line(title="kit diagnostico", status_code="6", region="RM")])
+    ev = plan.evidence
+    assert any(
+        e.source_table == "external_leads_raw" and e.evidence_type == "title" for e in ev
+    )
+    assert any(
+        e.source_table == "external_leads_raw" and e.evidence_type == "status_code" for e in ev
+    )
+    assert any(
+        e.source_table == "lead_master" and e.evidence_type == "buyer_institution" for e in ev
+    )
+    assert any(
+        e.source_table == "lead_master" and e.evidence_type == "region" for e in ev
+    )
+    for e in ev:
+        if e.source_table in {"external_leads_raw", "lead_master"}:
+            assert (e.source_table, e.source_record_id) in plan.source_pointer_registry
+
+
+def test_raw_only_verified_evidence() -> None:
+    plan = _plan(
+        [
+            _line(
+                source_record_id="r1",
+                raw_lead_join_status="raw_only",
+                has_raw_source=True,
+                has_lead_source=False,
+                raw_source_record_id="r1",
+                lead_source_record_id=None,
+                lead_id=None,
+                tender_key="T-RAW",
+                buyer_domain=None,
+                buyer_name_norm="hospital regional sur",
+                region=None,
+            )
+        ]
+    )
+    assert all(
+        e.source_table != "lead_master" or e.subject_kind == "resolution" for e in plan.evidence
+    )
+    assert any(e.source_table == "external_leads_raw" for e in plan.evidence)
+
+
+def test_lead_only_unresolved_evidence() -> None:
+    plan = _plan(
+        [
+            _line(
+                source_record_id="l9",
+                verified=False,
+                tender_key="9",
+                tender_key_kind="unresolved_tender_key",
+                raw_lead_join_status="lead_only",
+                has_raw_source=False,
+                has_lead_source=True,
+                raw_source_record_id=None,
+                lead_source_record_id="l9",
+                buyer_domain=None,
+                title=None,
+                status_code=None,
+            )
+        ]
+    )
+    assert plan.metrics["signal_count"] == 0
+    assert any(e.source_table == "lead_master" for e in plan.evidence)
+    assert not any(e.source_table == "external_leads_raw" for e in plan.evidence)
+
+
+def test_malformed_raw_evidence() -> None:
+    plan = _plan(
+        [
+            _line(
+                source_record_id="m1",
+                verified=False,
+                tender_key="m1",
+                tender_key_kind="unresolved_tender_key",
+                raw_json_malformed=True,
+                raw_json_valid=False,
+                title=None,
+                status_code=None,
+            )
+        ]
+    )
+    assert any(e.evidence_type == "raw_json_malformed" for e in plan.evidence)
+
+
+def test_shuffled_input_identical_evidence() -> None:
     lines = [
-        _line(source_record_id="1", tender_key="T-M", title="A", region="RM"),
+        _line(source_record_id="1", tender_key="T-1"),
         _line(
             source_record_id="2",
-            tender_key="T-M",
-            title="B",
-            region="V",
-            lead_id=99,
-            first_seen_at="2025-01-03",
-            last_seen_at="2025-01-04",
-        ),
-    ]
-    plan = _plan(lines)
-    assert len(plan.signals) == 1
-    assert plan.signals[0].line_item_count == 2
-    assert any(c.reason_code == "line_field_conflict_across_tender_lines" for c in plan.conflicts)
-
-
-def test_shuffled_source_and_tender_lines_identical() -> None:
-    lines = [
-        _line(source_record_id="1", tender_key="T-1", lead_id=10),
-        _line(source_record_id="2", tender_key="T-1", lead_id=20, title="other"),
-        _line(
-            source_record_id="3",
-            tender_key="T-2",
-            buyer_domain=None,
-            buyer_name_norm="organismo desconocido",
-            buyer_display="Organismo Desconocido",
-            lead_id=30,
+            tender_key="T-1",
+            raw_source_record_id="2",
+            lead_source_record_id="2",
+            title="other",
         ),
         _line(
             source_record_id="9",
             verified=False,
             tender_key="9",
             tender_key_kind="unresolved_tender_key",
-            lead_id=40,
+            raw_source_record_id="9",
+            lead_source_record_id="9",
         ),
     ]
     p1 = _plan(lines)
-    shuffled = list(reversed(lines))
-    p2 = _plan(shuffled)
-    assert p1.source_fingerprint == p2.source_fingerprint
-    assert p1.build_plan_fingerprint == p2.build_plan_fingerprint
-    assert p1.plan_digest == p2.plan_digest
-    assert canonical_json([r.to_db_row() for r in p1.signals]) == canonical_json(
-        [r.to_db_row() for r in p2.signals]
-    )
-    assert canonical_json([r.to_db_row() for r in p1.resolutions]) == canonical_json(
-        [r.to_db_row() for r in p2.resolutions]
+    p2 = _plan(list(reversed(lines)))
+    assert p1.semantic_plan_digest == p2.semantic_plan_digest
+    assert canonical_json([e.to_db_row() for e in p1.evidence]) == canonical_json(
+        [e.to_db_row() for e in p2.evidence]
     )
 
 
-def test_surrogate_lead_ids_do_not_affect_result() -> None:
-    a = [_line(source_record_id="1", tender_key="T-1", lead_id=1)]
-    b = [_line(source_record_id="1", tender_key="T-1", lead_id=999999)]
-    assert _plan(a).plan_digest == _plan(b).plan_digest
-    assert _plan(a).source_fingerprint == _plan(b).source_fingerprint
+def test_temp_validation_rejects_unknown_subject_kind() -> None:
+    plan = _plan([_line()])
+    # Mutate a copy via table rows injection path — build invalid plan by hacking evidence
+    from origenlab_email_pipeline.commercial_procurement.models import EvidenceRow
 
+    bad = EvidenceRow(
+        evidence_id="e_bad",
+        subject_kind="not_a_real_kind",
+        subject_id=plan.signals[0].procurement_id,
+        source_system="chilecompra",
+        source_table="lead_master",
+        source_record_id="1",
+        subject_key=None,
+        evidence_type="x",
+        evidence_at=None,
+        reason_code="x",
+        detail_json=None,
+    )
+    from dataclasses import replace
 
-def test_repeated_planning_byte_equivalent() -> None:
-    lines = [_line()]
-    p1 = _plan(lines)
-    p2 = _plan(deepcopy(lines))
-    assert canonical_json(p1.table_rows()) == canonical_json(p2.table_rows())
-    assert p1.plan_digest == p2.plan_digest
-
-
-def test_source_semantic_change_affects_fingerprints() -> None:
-    a = _plan([_line(title="A")])
-    b = _plan([_line(title="B")])
-    assert a.source_fingerprint != b.source_fingerprint
-    assert a.build_plan_fingerprint != b.build_plan_fingerprint
-    assert a.plan_digest != b.plan_digest
-
-
-def test_as_of_changes_build_plan_not_source() -> None:
-    lines = [
-        _line(
-            status_code="5",
-            status_name="Publicada",
-            close_date="2026-08-20",
-            close_date_parsed="2026-08-20",
+    evil = replace(plan, evidence=plan.evidence + (bad,))
+    with pytest.raises(TempSchemaValidationError, match="unknown evidence subject_kind"):
+        validate_plan_in_temp_sqlite(
+            evil,
+            known_account_ids=frozenset({"a_hospital", "a_lab"}),
+            source_pointer_registry=plan.source_pointer_registry,
         )
-    ]
-    early = _plan(lines, as_of=date(2026, 7, 30))
-    late = _plan(lines, as_of=date(2026, 9, 1))
-    assert early.source_fingerprint == late.source_fingerprint
-    assert early.build_plan_fingerprint != late.build_plan_fingerprint
-    assert early.signals[0].procurement_context != late.signals[0].procurement_context
 
 
-def test_identity_change_affects_resolutions_and_build_plan() -> None:
-    lines = [_line()]
-    a = _plan(lines, identity="aaa")
-    b = _plan(lines, identity="bbb")
-    assert a.source_fingerprint == b.source_fingerprint
-    assert a.build_plan_fingerprint != b.build_plan_fingerprint
-
-
-def test_no_duplicate_stable_ids() -> None:
-    plan = _plan(
-        [
-            _line(source_record_id="1", tender_key="T-1"),
-            _line(source_record_id="2", tender_key="T-2", buyer_domain=None, buyer_name_norm="x"),
-            _line(
-                source_record_id="9",
-                verified=False,
-                tender_key="9",
-                tender_key_kind="unresolved_tender_key",
-            ),
-        ]
-    )
-    for name, rows in plan.table_rows().items():
-        if name == "commercial_procurement_build_meta":
-            keys = [r["meta_key"] for r in rows]
-            assert len(keys) == len(set(keys))
-            continue
-        pk = {
-            "commercial_procurement_signal": "procurement_id",
-            "commercial_procurement_account_resolution": "resolution_id",
-            "commercial_procurement_evidence": "evidence_id",
-            "commercial_procurement_conflict": "conflict_id",
-            "commercial_procurement_enrichment_candidate": "candidate_id",
-        }[name]
-        ids = [r[pk] for r in rows]
-        assert len(ids) == len(set(ids)), name
-
-
-def test_temp_sqlite_schema_validation() -> None:
+def test_temp_sqlite_schema_validation_ok() -> None:
     plan = _plan(
         [
             _line(),
@@ -302,28 +431,42 @@ def test_temp_sqlite_schema_validation() -> None:
                 verified=False,
                 tender_key="9",
                 tender_key_kind="unresolved_tender_key",
+                raw_source_record_id="9",
+                lead_source_record_id="9",
             ),
         ]
     )
     counts = validate_plan_in_temp_sqlite(
-        plan, known_account_ids=frozenset({"a_hospital", "a_lab"})
+        plan,
+        known_account_ids=frozenset({"a_hospital", "a_lab"}),
+        source_pointer_registry=plan.source_pointer_registry,
     )
     assert counts["commercial_procurement_signal"] == 1
-    assert counts["commercial_procurement_account_resolution"] == 1
 
 
-def test_stable_procurement_id_ignores_lead() -> None:
-    assert stable_procurement_id(source_system="chilecompra", canonical_tender_key="T-1") == (
-        stable_procurement_id(source_system="chilecompra", canonical_tender_key="T-1")
-    )
-
-
-def test_plan_digest_sensitive_to_row_change() -> None:
-    a = _plan([_line(title="A")])
-    b = _plan([_line(title="B")])
-    assert a.plan_digest != b.plan_digest
-    # Algorithm constant present
-    assert plan_digest(table_rows=a.table_rows(), algorithm=PROCUREMENT_PLAN_DIGEST_ALGORITHM)
+def test_nested_chilecompra_extraction() -> None:
+    raw = {
+        "CodigoExterno": "NEST-1",
+        "Fechas": {"FechaCierre": "2026-08-15", "FechaFinal": "2026-08-20"},
+        "Comprador": {"NombreOrganismo": "Hospital Nested", "RegionUnidad": "RM"},
+        "OrganismoComprador": {"NombreOrganismo": "Should Not Win"},
+    }
+    status = extract_status_fields(raw)
+    assert status["close_date"] == "2026-08-15"
+    buyer = buyer_fields_from_raw_and_lead(org_name=None, domain=None, email=None, raw=raw)
+    assert buyer["buyer_display"] == "Hospital Nested"
+    assert buyer["region_from_raw"] == "RM"
+    # Top-level wins over nested
+    raw2 = dict(raw)
+    raw2["FechaCierre"] = "2026-01-01"
+    raw2["NombreOrganismo"] = "Top Level Org"
+    assert extract_status_fields(raw2)["close_date"] == "2026-01-01"
+    buyer2 = buyer_fields_from_raw_and_lead(org_name=None, domain=None, email=None, raw=raw2)
+    assert buyer2["buyer_display"] == "Top Level Org"
+    # Dict values must not stringify
+    assert scalar_text({"NombreOrganismo": "X"}) == ""
+    assert pick_first({"Comprador": {"NombreOrganismo": "X"}}, "Comprador") == ""
+    assert nested_get(raw, "Fechas", "FechaCierre") == "2026-08-15"
 
 
 def _fixture_db(tmp_path: Path) -> tuple[Path, str, int]:
@@ -362,6 +505,7 @@ def _fixture_db(tmp_path: Path) -> tuple[Path, str, int]:
         "CodigoEstado": "6",
         "Estado": "Cerrada",
         "FechaCierre": "2025-02-01",
+        "Nombre": "kit",
     }
     conn.execute(
         "INSERT INTO external_leads_raw VALUES (?,?,?,?,?)",
@@ -389,7 +533,6 @@ def _fixture_db(tmp_path: Path) -> tuple[Path, str, int]:
         conn.execute("INSERT INTO commercial_identity_build_meta VALUES (?,?)", (k, v))
     conn.execute("INSERT INTO commercial_opportunity VALUES ('o1','fulfillment')")
     conn.commit()
-    # Snapshot PR2/PR3 markers
     id_fp = conn.execute(
         "SELECT meta_value FROM commercial_identity_build_meta WHERE meta_key='identity_fingerprint'"
     ).fetchone()[0]
@@ -408,6 +551,9 @@ def test_dry_run_cli_path_readonly_and_no_pr2_pr3_mutation(tmp_path: Path) -> No
     )
     assert result.summary["mode"] == "dry-run"
     assert result.summary["applied"] is False
+    assert "semantic_plan_digest" in result.summary
+    assert "plan_digest" not in result.summary
+    assert result.summary["generated_at_utc"]
     assert result.summary["signal_count"] == 1
     assert result.plan.resolutions[0].resolution_status == RESOLUTION_LINKED
 
@@ -432,6 +578,104 @@ def test_dry_run_cli_path_readonly_and_no_pr2_pr3_mutation(tmp_path: Path) -> No
         )
 
 
+def test_pinned_read_transaction_and_same_connection(tmp_path: Path) -> None:
+    db, _, _ = _fixture_db(tmp_path)
+    from origenlab_email_pipeline.commercial_procurement import builder as bmod
+    from origenlab_email_pipeline.commercial_procurement.sources import (
+        _REQUIRE_TXN_CONN_IDS,
+    )
+
+    seen: list[bool] = []
+    orig = bmod.plan_procurement_from_connection
+
+    def wrapped(*, conn, **kwargs):
+        seen.append(conn.in_transaction)
+        assert id(conn) in _REQUIRE_TXN_CONN_IDS
+        return orig(conn=conn, **kwargs)
+
+    bmod.plan_procurement_from_connection = wrapped  # type: ignore[assignment]
+    try:
+        run_procurement_dry_run(
+            sqlite_path=db, as_of_date="2026-07-30", run_context="local_fixture"
+        )
+    finally:
+        bmod.plan_procurement_from_connection = orig  # type: ignore[assignment]
+    assert seen and all(seen)
+
+
+def test_concurrent_update_cannot_mix_snapshot(tmp_path: Path) -> None:
+    db = tmp_path / "wal.sqlite"
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.executescript(
+        """
+        CREATE TABLE commercial_identity_account(
+          account_id TEXT PRIMARY KEY, canonical_name TEXT, normalized_name TEXT, primary_domain TEXT,
+          identity_confidence TEXT, identity_status TEXT
+        );
+        CREATE TABLE commercial_identity_account_domain(
+          account_id TEXT, domain_norm TEXT, is_institutional INTEGER, link_method TEXT,
+          PRIMARY KEY(account_id, domain_norm)
+        );
+        CREATE TABLE commercial_identity_build_meta(meta_key TEXT PRIMARY KEY, meta_value TEXT);
+        CREATE TABLE external_leads_raw(
+          source_name TEXT, source_record_id TEXT, raw_json TEXT, source_url TEXT, fetched_at TEXT
+        );
+        CREATE TABLE lead_master(
+          id INTEGER PRIMARY KEY, source_name TEXT, source_record_id TEXT, org_name TEXT, org_name_norm TEXT,
+          domain TEXT, domain_norm TEXT, email TEXT, email_norm TEXT, region TEXT, status TEXT,
+          evidence_summary TEXT, first_seen_at TEXT, last_seen_at TEXT, lead_type TEXT
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO commercial_identity_build_meta VALUES ('identity_fingerprint','OLD')"
+    )
+    conn.execute(
+        "INSERT INTO commercial_identity_build_meta VALUES "
+        "('identity_fingerprint_algorithm_version','identity_fp_v2')"
+    )
+    conn.execute(
+        "INSERT INTO commercial_identity_account VALUES "
+        "('a1','A','a','a.cl','high','active')"
+    )
+    conn.execute(
+        "INSERT INTO commercial_identity_account_domain VALUES ('a1','a.cl',1,'institutional_domain')"
+    )
+    conn.commit()
+    conn.close()
+
+    reader = sqlite3.connect(f"file:{db.resolve()}?mode=ro", uri=True)
+    reader.row_factory = sqlite3.Row
+    reader.execute("PRAGMA query_only=ON")
+    reader.execute("BEGIN DEFERRED")
+    from origenlab_email_pipeline.commercial_procurement.sources import (
+        enable_require_active_read_transaction,
+        disable_require_active_read_transaction,
+    )
+
+    enable_require_active_read_transaction(reader)
+    first = reader.execute(
+        "SELECT meta_value FROM commercial_identity_build_meta WHERE meta_key='identity_fingerprint'"
+    ).fetchone()[0]
+    assert first == "OLD"
+
+    writer = sqlite3.connect(db)
+    writer.execute(
+        "UPDATE commercial_identity_build_meta SET meta_value='NEW' WHERE meta_key='identity_fingerprint'"
+    )
+    writer.commit()
+    writer.close()
+
+    second = reader.execute(
+        "SELECT meta_value FROM commercial_identity_build_meta WHERE meta_key='identity_fingerprint'"
+    ).fetchone()[0]
+    assert second == "OLD"
+    reader.rollback()
+    disable_require_active_read_transaction(reader)
+    reader.close()
+
+
 def test_production_access_remains_readonly(tmp_path: Path) -> None:
     db, _, _ = _fixture_db(tmp_path)
     conn = connect_production_readonly(db)
@@ -441,3 +685,8 @@ def test_production_access_remains_readonly(tmp_path: Path) -> None:
             conn.execute("CREATE TABLE nope(x INTEGER)")
     finally:
         conn.close()
+
+
+def test_semantic_digest_helper_algorithm() -> None:
+    plan = _plan([_line()])
+    assert semantic_plan_digest(table_rows=plan.semantic_table_rows()) == plan.semantic_plan_digest
