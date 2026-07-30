@@ -8,6 +8,7 @@ foreign_keys=ON and BEGIN IMMEDIATE. Stale-plan checks run before any DELETE.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -21,7 +22,9 @@ from origenlab_email_pipeline.commercial_identity.builder import (
     validate_run_context_mode,
 )
 from origenlab_email_pipeline.commercial_identity.constants import (
+    RUN_CONTEXT_LOCAL_FIXTURE,
     RUN_CONTEXT_PRODUCTION_APPLY,
+    RUN_CONTEXT_SYNTHETIC_FIXTURE,
 )
 from origenlab_email_pipeline.commercial_procurement.constants import (
     AS_OF_TIMEZONE,
@@ -138,15 +141,26 @@ def _utc_now_iso() -> str:
 
 
 _PLACEHOLDER_EXPECTED = frozenset({"", "none", "null", "0", "placeholder", "todo"})
+_HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
-def _require_expected_value(name: str, value: str | None) -> str:
+def _require_expected_digest(name: str, value: str | None) -> str:
+    """Require exactly 64 lowercase hex chars (exit 6 on malformed)."""
     raw = (value or "").strip()
     if not raw or raw.lower() in _PLACEHOLDER_EXPECTED:
         raise UnsafeInvocationError(
             f"production_apply requires non-empty {name} from an approved dry-run"
         )
+    if raw != raw.lower() or not _HEX64_RE.fullmatch(raw):
+        raise UnsafeInvocationError(
+            f"{name} must be exactly 64 lowercase hexadecimal characters"
+        )
     return raw
+
+
+def _require_expected_value(name: str, value: str | None) -> str:
+    """Back-compat alias used by older call sites."""
+    return _require_expected_digest(name, value)
 
 
 def plan_to_json_summary(
@@ -197,6 +211,9 @@ def plan_to_json_summary(
         "procurement_context_distribution": plan.metrics["procurement_context_distribution"],
         "evidence_count": plan.metrics["evidence_count"],
         "conflict_distribution": plan.metrics["conflict_distribution"],
+        "field_plane_conflict_distribution": plan.metrics.get(
+            "field_plane_conflict_distribution", {}
+        ),
         "enrichment_distribution": plan.metrics["enrichment_distribution"],
         "operator_queue_eligible_count": plan.metrics["operator_queue_eligible_count"],
         "unique_linked_accounts": plan.metrics["unique_linked_accounts"],
@@ -845,6 +862,7 @@ def run_procurement_build(
     expected_identity_fingerprint: str | None = None,
     expected_build_plan_fingerprint: str | None = None,
     expected_semantic_plan_digest: str | None = None,
+    allow_fixture_apply: bool = False,
     inject_source_change: InjectHook = None,
     inject_identity_change: InjectHook = None,
     inject_after_schema: InjectHook = None,
@@ -861,31 +879,64 @@ def run_procurement_build(
     as_of = parse_as_of_date(as_of_date) if isinstance(as_of_date, str) else as_of_date
     generated_at = _utc_now_iso()
 
+    if apply and ctx == RUN_CONTEXT_PRODUCTION_APPLY and allow_fixture_apply:
+        raise UnsafeInvocationError(
+            "allow_fixture_apply is test-only and invalid with production_apply"
+        )
+
+    if apply and ctx != RUN_CONTEXT_PRODUCTION_APPLY:
+        if not allow_fixture_apply:
+            raise UnsafeInvocationError(
+                "non-production --apply requires allow_fixture_apply=True "
+                "(test-only capability; not available via CLI)"
+            )
+        if ctx not in {RUN_CONTEXT_LOCAL_FIXTURE, RUN_CONTEXT_SYNTHETIC_FIXTURE}:
+            raise UnsafeInvocationError(
+                f"fixture apply not permitted for run-context {ctx!r}"
+            )
+
     expected: dict[str, str] = {}
     if apply and ctx == RUN_CONTEXT_PRODUCTION_APPLY:
         expected = {
-            "source_fingerprint": _require_expected_value(
+            "source_fingerprint": _require_expected_digest(
                 "--expected-source-fingerprint", expected_source_fingerprint
             ),
-            "identity_fingerprint": _require_expected_value(
+            "identity_fingerprint": _require_expected_digest(
                 "--expected-identity-fingerprint", expected_identity_fingerprint
             ),
-            "build_plan_fingerprint": _require_expected_value(
+            "build_plan_fingerprint": _require_expected_digest(
                 "--expected-build-plan-fingerprint", expected_build_plan_fingerprint
             ),
-            "semantic_plan_digest": _require_expected_value(
+            "semantic_plan_digest": _require_expected_digest(
                 "--expected-semantic-plan-digest", expected_semantic_plan_digest
             ),
         }
-    elif apply:
-        if expected_source_fingerprint:
-            expected["source_fingerprint"] = expected_source_fingerprint.strip()
-        if expected_identity_fingerprint:
-            expected["identity_fingerprint"] = expected_identity_fingerprint.strip()
-        if expected_build_plan_fingerprint:
-            expected["build_plan_fingerprint"] = expected_build_plan_fingerprint.strip()
-        if expected_semantic_plan_digest:
-            expected["semantic_plan_digest"] = expected_semantic_plan_digest.strip()
+    elif apply and allow_fixture_apply:
+        # Optional expected values on fixture apply must still be well-formed if present.
+        for name, raw, key in (
+            (
+                "--expected-source-fingerprint",
+                expected_source_fingerprint,
+                "source_fingerprint",
+            ),
+            (
+                "--expected-identity-fingerprint",
+                expected_identity_fingerprint,
+                "identity_fingerprint",
+            ),
+            (
+                "--expected-build-plan-fingerprint",
+                expected_build_plan_fingerprint,
+                "build_plan_fingerprint",
+            ),
+            (
+                "--expected-semantic-plan-digest",
+                expected_semantic_plan_digest,
+                "semantic_plan_digest",
+            ),
+        ):
+            if raw is not None and str(raw).strip():
+                expected[key] = _require_expected_digest(name, raw)
 
     if apply:
         probe = connect_writable(path)
@@ -913,6 +964,9 @@ def run_procurement_build(
             extra={
                 "temp_schema_validation": {"ok": True, "row_counts": temp_counts},
                 "schema_creation_status": "skipped_dry_run",
+                "field_plane_conflict_distribution": plan.metrics.get(
+                    "field_plane_conflict_distribution", {}
+                ),
             },
         )
         return ProcurementBuildResult(
@@ -985,6 +1039,9 @@ def run_procurement_build(
             ],
             "temp_schema_validation": {"ok": True, "row_counts": temp_counts},
             "known_account_count": len(known),
+            "field_plane_conflict_distribution": live_plan.metrics.get(
+                "field_plane_conflict_distribution", {}
+            ),
         },
     )
     return ProcurementBuildResult(
@@ -1007,12 +1064,17 @@ def run_procurement_dry_run(
     expected_build_plan_fingerprint: str | None = None,
     expected_semantic_plan_digest: str | None = None,
 ) -> ProcurementBuildResult:
-    """Dry-run by default; forwards apply to run_procurement_build."""
+    """Always read-only. Refuse apply=True; use run_procurement_build for mutation."""
+    if apply:
+        raise UnsafeInvocationError(
+            "run_procurement_dry_run is read-only; use run_procurement_build(..., apply=True) "
+            "with production_apply + expected digests, or allow_fixture_apply=True in tests"
+        )
     return run_procurement_build(
         sqlite_path=sqlite_path,
         as_of_date=as_of_date,
         run_context=run_context,
-        apply=apply,
+        apply=False,
         validate_temp_schema=validate_temp_schema,
         expected_source_fingerprint=expected_source_fingerprint,
         expected_identity_fingerprint=expected_identity_fingerprint,

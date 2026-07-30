@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # -----------------------------------------------------------------------------
-# SAFETY: default is dry-run (mode=ro + query_only). --apply is implemented for
-# disposable / explicitly approved production paths only. This PR does not run
-# production --apply. Never mutate Gmail or Postgres.
+# SAFETY: default is dry-run (mode=ro + query_only). CLI --apply is permitted
+# only with --run-context production_apply and four approved --expected-* digests.
+# This PR does not run production --apply. Never mutate Gmail or Postgres.
 # See docs/audits/COMMERCIAL_PROCUREMENT_LINK_READ_MODEL_PR4.md.
 # -----------------------------------------------------------------------------
 """Deterministic commercial procurement planner / apply (PR4).
 
-Default dry-run produces the immutable build plan. --apply persists under
-transaction contract B with stale-plan enforcement.
+Default dry-run produces the immutable build plan. CLI --apply requires
+production_apply + expected digests (fixture apply is test-only via library).
 
 Exit codes::
 
@@ -19,23 +19,6 @@ Exit codes::
   5  stale build plan / expected approval mismatch
   6  unsupported or unsafe invocation
   7  plan / persistence validation failure
-
-Example (dry-run)::
-
-  uv run python scripts/commercial/build_commercial_procurement_read_model.py \\
-    --sqlite-path /explicit/path/to/emails.sqlite \\
-    --as-of-date 2026-07-30 \\
-    --run-context production_dry_run \\
-    --json-summary
-
-Example (fixture apply)::
-
-  uv run python scripts/commercial/build_commercial_procurement_read_model.py \\
-    --sqlite-path /tmp/fixture.sqlite \\
-    --as-of-date 2026-07-30 \\
-    --run-context local_fixture \\
-    --apply \\
-    --json-summary
 """
 
 from __future__ import annotations
@@ -93,8 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Orchestrator-supplied run context. "
             f"Default: {RUN_CONTEXT_LOCAL_FIXTURE}. "
             f"Dry-run production checkpoint: {RUN_CONTEXT_PRODUCTION_DRY_RUN}. "
-            f"Apply requires {RUN_CONTEXT_PRODUCTION_APPLY} (with expected fingerprints) "
-            "or local_fixture / synthetic_fixture."
+            f"CLI --apply requires {RUN_CONTEXT_PRODUCTION_APPLY}."
         ),
     )
     parser.add_argument(
@@ -105,27 +87,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--apply",
         action="store_true",
-        help="Persist rebuildable commercial_procurement_* tables (transaction contract B).",
+        help=(
+            "Persist rebuildable commercial_procurement_* tables. "
+            "CLI requires --run-context production_apply and four --expected-* digests."
+        ),
     )
     parser.add_argument(
         "--expected-source-fingerprint",
         default=None,
-        help="Required for production_apply: approved dry-run source fingerprint.",
+        help="Required for production_apply: 64 lowercase hex source fingerprint.",
     )
     parser.add_argument(
         "--expected-identity-fingerprint",
         default=None,
-        help="Required for production_apply: approved dry-run identity fingerprint.",
+        help="Required for production_apply: 64 lowercase hex identity fingerprint.",
     )
     parser.add_argument(
         "--expected-build-plan-fingerprint",
         default=None,
-        help="Required for production_apply: approved dry-run build-plan fingerprint.",
+        help="Required for production_apply: 64 lowercase hex build-plan fingerprint.",
     )
     parser.add_argument(
         "--expected-semantic-plan-digest",
         default=None,
-        help="Required for production_apply: approved dry-run semantic plan digest.",
+        help="Required for production_apply: 64 lowercase hex semantic plan digest.",
     )
     return parser
 
@@ -135,13 +120,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         sqlite_path = require_explicit_sqlite_path(args.sqlite_path)
-        if args.apply and args.run_context == RUN_CONTEXT_PRODUCTION_DRY_RUN:
-            raise CommercialIdentityPathError(
-                "run-context production_dry_run is valid only without --apply"
+        if args.apply and args.run_context != RUN_CONTEXT_PRODUCTION_APPLY:
+            raise UnsafeInvocationError(
+                "CLI --apply requires --run-context production_apply "
+                "(fixture apply is test-only via allow_fixture_apply=True)"
             )
         if (not args.apply) and args.run_context == RUN_CONTEXT_PRODUCTION_APPLY:
             raise CommercialIdentityPathError(
                 "run-context production_apply is valid only with --apply"
+            )
+        if args.apply and args.run_context == RUN_CONTEXT_PRODUCTION_DRY_RUN:
+            raise CommercialIdentityPathError(
+                "run-context production_dry_run is valid only without --apply"
             )
         result = run_procurement_build(
             sqlite_path=sqlite_path,
@@ -152,6 +142,7 @@ def main(argv: list[str] | None = None) -> int:
             expected_identity_fingerprint=args.expected_identity_fingerprint,
             expected_build_plan_fingerprint=args.expected_build_plan_fingerprint,
             expected_semantic_plan_digest=args.expected_semantic_plan_digest,
+            allow_fixture_apply=False,
         )
     except UnsafeInvocationError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -196,6 +187,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"evidence_count={summary['evidence_count']}")
         print(f"resolution_distribution={summary['resolution_distribution']}")
         print(f"route_distribution={summary['route_distribution']}")
+        print(
+            "field_plane_conflict_distribution="
+            f"{summary.get('field_plane_conflict_distribution')}"
+        )
         print(f"operator_queue_eligible_count={summary['operator_queue_eligible_count']}")
         if summary.get("applied"):
             print(f"materialized_at_utc={summary.get('materialized_at_utc')}")
