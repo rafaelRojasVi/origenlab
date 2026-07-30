@@ -116,12 +116,39 @@ def parse_raw_json(raw_json: str | None) -> dict[str, Any] | None:
     return obj if isinstance(obj, dict) else None
 
 
+def nested_get(raw: dict[str, Any] | None, *path: str) -> Any:
+    """Walk a nested dict path; return None if any step is missing or non-dict."""
+    cur: Any = raw
+    for key in path:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(key)
+    return cur
+
+
+def scalar_text(value: object) -> str:
+    """Coerce only scalar values to text — never stringify dict/list."""
+    if value is None or isinstance(value, (dict, list, tuple, set)):
+        return ""
+    s = str(value).strip()
+    return s
+
+
 def pick_first(raw: dict[str, Any], *keys: str) -> str:
+    """Top-level key precedence. Skips non-scalar values (nested dicts/lists)."""
     for k in keys:
-        v = raw.get(k)
-        if v is None:
-            continue
-        s = str(v).strip()
+        s = scalar_text(raw.get(k))
+        if s:
+            return s
+    return ""
+
+
+def pick_first_nested(raw: dict[str, Any] | None, *paths: tuple[str, ...]) -> str:
+    """Nested-path fallbacks after top-level misses. Each path is a key tuple."""
+    if not raw:
+        return ""
+    for path in paths:
+        s = scalar_text(nested_get(raw, *path))
         if s:
             return s
     return ""
@@ -210,7 +237,11 @@ def extract_status_fields(raw: dict[str, Any] | None) -> dict[str, str | None]:
             "FechaCierre",
             "fecha_cierre",
             "close_date",
-            "Fechas.FechaCierre",
+        )
+        or pick_first_nested(
+            raw,
+            ("Fechas", "FechaCierre"),
+            ("Fechas", "FechaFinal"),
         )
         or None
     )
@@ -221,6 +252,7 @@ def extract_status_fields(raw: dict[str, Any] | None) -> dict[str, str | None]:
             "fecha_publicacion",
             "FechaCreacion",
         )
+        or pick_first_nested(raw, ("Fechas", "FechaPublicacion"), ("Fechas", "FechaCreacion"))
         or None
     )
     title = pick_first(raw, "Nombre", "NombreLicitacion", "Titulo", "title", "Descripcion") or None
@@ -245,15 +277,29 @@ def buyer_fields_from_raw_and_lead(
         raw,
         "NombreOrganismo",
         "NombreUnidad",
-        "OrganismoComprador",
-        "Comprador",
         "NombreComprador",
     )
+    if not buyer_display:
+        # Nested institution names — never stringify Comprador/OrganismoComprador dicts.
+        buyer_display = pick_first_nested(
+            raw,
+            ("Comprador", "NombreOrganismo"),
+            ("Comprador", "NombreUnidad"),
+            ("OrganismoComprador", "NombreOrganismo"),
+            ("OrganismoComprador", "NombreUnidad"),
+        )
     buyer_norm = safe_org_normalized(buyer_display)
     email_n = extract_email(email) or extract_email(pick_first(raw, "Email", "Correo", "Mail", "email"))
     email_dom = domain_from_email(email_n) if email_n else None
     explicit_dom = sanitize_buyer_domain(domain) or sanitize_buyer_domain(
         pick_first(raw, "Dominio", "Website", "SitioWeb", "domain")
+    )
+    region_from_raw = pick_first(raw, "Region", "region") or pick_first_nested(
+        raw,
+        ("Comprador", "Region"),
+        ("Comprador", "RegionUnidad"),
+        ("OrganismoComprador", "Region"),
+        ("OrganismoComprador", "RegionUnidad"),
     )
     return {
         "buyer_display": buyer_display or None,
@@ -262,6 +308,7 @@ def buyer_fields_from_raw_and_lead(
         "email_domain": email_dom,
         "buyer_domain": explicit_dom,
         "weak_public_unit_name": is_weak_public_unit_name(buyer_norm, buyer_display),
+        "region_from_raw": region_from_raw or None,
     }
 
 
@@ -274,7 +321,11 @@ __all__ = [
     "is_marketplace_domain",
     "is_verified_tender_key_kind",
     "is_weak_public_unit_name",
+    "nested_get",
     "parse_raw_json",
+    "pick_first",
+    "pick_first_nested",
     "sanitize_buyer_domain",
+    "scalar_text",
     "stable_token",
 ]
