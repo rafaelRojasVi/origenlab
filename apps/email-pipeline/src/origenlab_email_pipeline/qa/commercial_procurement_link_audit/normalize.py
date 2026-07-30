@@ -18,10 +18,31 @@ from origenlab_email_pipeline.commercial_identity.normalize import (
 from origenlab_email_pipeline.org_normalize import normalize_domain
 from origenlab_email_pipeline.qa.commercial_procurement_link_audit.constants import (
     MARKETPLACE_DOMAINS,
+    RAW_KEY_INVENTORY_LABELS,
+    TENDER_KEY_CODIGO_EXTERNO,
+    TENDER_KEY_CODIGO_LICITACION,
+    TENDER_KEY_MISSING,
+    TENDER_KEY_NUMERO_ADQUISICION,
+    TENDER_KEY_UNRESOLVED,
+    VERIFIED_TENDER_KEY_KINDS,
     WEAK_NAME_TOKENS,
 )
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}", re.I)
+
+# Documented tender-level key names → kind (order = precedence).
+_VERIFIED_TENDER_KEY_SPECS: tuple[tuple[str, str], ...] = (
+    ("CodigoExterno", TENDER_KEY_CODIGO_EXTERNO),
+    ("codigo_externo", TENDER_KEY_CODIGO_EXTERNO),
+    ("CodigoLicitacion", TENDER_KEY_CODIGO_LICITACION),
+    ("codigo_licitacion", TENDER_KEY_CODIGO_LICITACION),
+    ("Número de Adquisición", TENDER_KEY_NUMERO_ADQUISICION),
+    ("Numero de Adquisicion", TENDER_KEY_NUMERO_ADQUISICION),
+    ("numero_adquisicion", TENDER_KEY_NUMERO_ADQUISICION),
+)
+
+# Line-level / non-canonical fallbacks — never become verified tender keys.
+_LINE_LEVEL_KEY_NAMES: tuple[str, ...] = ("Codigo", "Correlativo", "codigo", "correlativo")
 
 
 def stable_token(label: str, value: str | None, *, n: int = 12) -> str:
@@ -71,24 +92,28 @@ def is_weak_public_unit_name(name_norm: str | None, display: str | None = None) 
     blob = f"{name_norm or ''} {display or ''}".strip().lower()
     if not blob:
         return True
-    # Very short normalized names are weak.
     if name_norm and len(name_norm) < 8:
         return True
     hits = sum(1 for tok in WEAK_NAME_TOKENS if tok in blob)
-    # Single weak token + short remainder → review.
     if hits >= 1 and (not name_norm or len(name_norm) < 24):
         return True
     return False
 
 
-def parse_raw_json(raw_json: str | None) -> dict[str, Any]:
-    if not raw_json:
-        return {}
+def parse_raw_json(raw_json: str | None) -> dict[str, Any] | None:
+    """Parse raw_json; return None when missing/invalid (distinct from empty dict)."""
+    if raw_json is None:
+        return None
+    if isinstance(raw_json, dict):
+        return raw_json
+    s = str(raw_json).strip()
+    if not s:
+        return None
     try:
-        obj = json.loads(raw_json)
+        obj = json.loads(s)
     except (TypeError, json.JSONDecodeError):
-        return {}
-    return obj if isinstance(obj, dict) else {}
+        return None
+    return obj if isinstance(obj, dict) else None
 
 
 def pick_first(raw: dict[str, Any], *keys: str) -> str:
@@ -102,48 +127,109 @@ def pick_first(raw: dict[str, Any], *keys: str) -> str:
     return ""
 
 
+def inventory_raw_tender_key_presence(
+    raw: dict[str, Any] | None, *, source_record_id: str | None
+) -> dict[str, int]:
+    """Count presence of observed tender-related raw JSON keys (0/1 per row)."""
+    counts = {label: 0 for label in RAW_KEY_INVENTORY_LABELS}
+    if raw is None:
+        if (source_record_id or "").strip():
+            counts["source_record_id_fallback"] = 1
+        else:
+            counts["missing"] = 1
+        return counts
+    any_verified = False
+    for label, _kind in _VERIFIED_TENDER_KEY_SPECS:
+        if pick_first(raw, label):
+            counts[label] = 1
+            any_verified = True
+    for label in ("Codigo", "Correlativo"):
+        if pick_first(raw, label):
+            counts[label] = 1
+    has_line = any(pick_first(raw, k) for k in _LINE_LEVEL_KEY_NAMES)
+    if not any_verified and not has_line:
+        if (source_record_id or "").strip():
+            counts["source_record_id_fallback"] = 1
+        else:
+            counts["missing"] = 1
+    return counts
+
+
 def canonical_tender_key_from_raw(
     *,
     source_record_id: str | None,
-    raw: dict[str, Any],
-) -> tuple[str | None, str]:
-    """Return (canonical_tender_key, key_kind).
+    raw: dict[str, Any] | None,
+) -> tuple[str | None, str, bool]:
+    """Return (key, key_kind, is_verified_tender_level).
 
-    Prefer CodigoExterno (tender-level). Fall back to source_record_id (often line-level).
+    Only documented tender-level identifiers produce a verified canonical key.
+    Line-level Codigo / Correlativo / source_record_id are unresolved_tender_key.
     """
-    externo = pick_first(raw, "CodigoExterno", "codigo_externo", "CodigoLicitacion", "codigo_licitacion")
-    if externo:
-        return externo.strip(), "codigo_externo"
-    line = pick_first(raw, "Codigo", "Correlativo", "codigo", "tender_id", "id")
+    if raw is None:
+        sid = (source_record_id or "").strip()
+        if sid:
+            return sid, TENDER_KEY_UNRESOLVED, False
+        return None, TENDER_KEY_MISSING, False
+
+    for label, kind in _VERIFIED_TENDER_KEY_SPECS:
+        value = pick_first(raw, label)
+        if value:
+            return value.strip(), kind, True
+
+    line = pick_first(raw, *_LINE_LEVEL_KEY_NAMES)
     if line:
-        return line.strip(), "line_or_record_id"
+        return line.strip(), TENDER_KEY_UNRESOLVED, False
+
     sid = (source_record_id or "").strip()
     if sid:
-        return sid, "source_record_id"
-    return None, "missing"
+        return sid, TENDER_KEY_UNRESOLVED, False
+    return None, TENDER_KEY_MISSING, False
 
 
-def extract_status_fields(raw: dict[str, Any]) -> dict[str, str | None]:
-    code = pick_first(raw, "CodigoEstado", "codigo_estado", "chilecompra_status_code", "EstadoCodigo") or None
+def is_verified_tender_key_kind(kind: str | None) -> bool:
+    return (kind or "") in VERIFIED_TENDER_KEY_KINDS
+
+
+def extract_status_fields(raw: dict[str, Any] | None) -> dict[str, str | None]:
+    if not raw:
+        return {
+            "status_code": None,
+            "status_name": None,
+            "close_date": None,
+            "publication_date": None,
+            "title": None,
+        }
+    code = (
+        pick_first(raw, "CodigoEstado", "codigo_estado", "chilecompra_status_code", "EstadoCodigo")
+        or None
+    )
     name = pick_first(raw, "Estado", "estado", "chilecompra_status", "NombreEstado") or None
-    close = pick_first(
-        raw,
-        "FechaCierre",
-        "fecha_cierre",
-        "close_date",
-        "Fechas.FechaCierre",
-    ) or None
-    pub = pick_first(
-        raw,
-        "FechaPublicacion",
-        "fecha_publicacion",
-        "FechaCreacion",
-    ) or None
+    close = (
+        pick_first(
+            raw,
+            "FechaCierre",
+            "fecha_cierre",
+            "close_date",
+            "Fechas.FechaCierre",
+        )
+        or None
+    )
+    pub = (
+        pick_first(
+            raw,
+            "FechaPublicacion",
+            "fecha_publicacion",
+            "FechaCreacion",
+        )
+        or None
+    )
+    title = pick_first(raw, "Nombre", "NombreLicitacion", "Titulo", "title", "Descripcion") or None
     return {
         "status_code": code,
         "status_name": name,
         "close_date": close,
         "publication_date": pub,
+        "title": title,
     }
 
 
@@ -152,8 +238,9 @@ def buyer_fields_from_raw_and_lead(
     org_name: str | None,
     domain: str | None,
     email: str | None,
-    raw: dict[str, Any],
+    raw: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    raw = raw or {}
     buyer_display = (org_name or "").strip() or pick_first(
         raw,
         "NombreOrganismo",
@@ -183,7 +270,9 @@ __all__ = [
     "canonical_tender_key_from_raw",
     "extract_email",
     "extract_status_fields",
+    "inventory_raw_tender_key_presence",
     "is_marketplace_domain",
+    "is_verified_tender_key_kind",
     "is_weak_public_unit_name",
     "parse_raw_json",
     "sanitize_buyer_domain",

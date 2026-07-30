@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from origenlab_email_pipeline.commercial_identity.normalize import (
@@ -20,7 +20,9 @@ from origenlab_email_pipeline.qa.commercial_procurement_link_audit.constants imp
     REASON_BUYER_DOMAIN_CONFLICTS_WITH_NAME,
     REASON_BUYER_DOMAIN_MISSING,
     REASON_BUYER_NAME_AMBIGUOUS,
+    REASON_CONSUMER_EMAIL_IGNORED_FOR_ACCOUNT_IDENTITY,
     REASON_CONSUMER_EMAIL_LINK_WITHHELD,
+    REASON_INTERNAL_DOMAIN_IGNORED_FOR_ACCOUNT_IDENTITY,
     REASON_INTERNAL_DOMAIN_REFUSED,
     REASON_MARKETPLACE_DOMAIN_IGNORED,
     REASON_WEAK_PUBLIC_UNIT_NAME,
@@ -32,7 +34,6 @@ from origenlab_email_pipeline.qa.commercial_procurement_link_audit.constants imp
     ROUTE_EXPLICIT_EMAIL_DOMAIN,
     ROUTE_NAME_DOMAIN_CONFLICT,
     ROUTE_NO_MATCH,
-    ROUTE_UNIQUE_COMPATIBLE_NAME,
 )
 from origenlab_email_pipeline.qa.commercial_procurement_link_audit.normalize import (
     is_marketplace_domain,
@@ -57,6 +58,7 @@ class LinkRouteResult:
     auto_link_allowed: bool
     account_ids: tuple[str, ...]
     notes: str
+    auxiliary_reason_codes: tuple[str, ...] = field(default_factory=tuple)
 
 
 def build_account_index(
@@ -93,6 +95,16 @@ def build_account_index(
     )
 
 
+def _classify_refused_domain(candidate: str) -> str | None:
+    if is_marketplace_domain(candidate):
+        return REASON_MARKETPLACE_DOMAIN_IGNORED
+    if is_internal_domain(candidate):
+        return REASON_INTERNAL_DOMAIN_REFUSED
+    if is_consumer_domain(candidate):
+        return REASON_CONSUMER_EMAIL_LINK_WITHHELD
+    return None
+
+
 def classify_account_link_route(
     *,
     index: AccountIndex,
@@ -104,64 +116,74 @@ def classify_account_link_route(
 ) -> LinkRouteResult:
     """Classify one procurement buyer against PR2 accounts.
 
-    Precedence (first decisive win):
-    H refused domains → I name/domain conflict → A institutional domain →
-    E email institutional domain → C exact alias → B exact canonical name →
-    D unique compatible name → G ambiguous → F no match.
+    Refused consumer/internal/marketplace domains are ignored as institutional
+    evidence and recorded as auxiliary reasons; they do not block an independently
+    valid exact institutional domain or compatible exact-name match.
+
+    Route H is returned only when no stronger independent institutional evidence
+    remains. Route D (unique_compatible_name) is removed — alias∪canonical is
+    evaluated as one candidate set before B/C.
     """
     name = (buyer_name_norm or "").strip().lower() or None
-    dom = (buyer_domain or "").strip().lower() or None
-    edom = (email_domain or "").strip().lower() or None
+    raw_dom = (buyer_domain or "").strip().lower() or None
+    raw_edom = (email_domain or "").strip().lower() or None
+    aux: list[str] = []
 
-    # H — refuse consumer / internal / marketplace domains as institutional membership.
-    for candidate, label in ((dom, "buyer_domain"), (edom, "email_domain")):
-        if not candidate:
-            continue
-        if is_marketplace_domain(candidate):
-            return LinkRouteResult(
-                route=ROUTE_DOMAIN_REFUSED,
-                confidence=CONFIDENCE_NONE,
-                reason_code=REASON_MARKETPLACE_DOMAIN_IGNORED,
-                auto_link_allowed=False,
-                account_ids=(),
-                notes=f"{label} is marketplace; ignored for institutional membership",
-            )
-        if is_internal_domain(candidate):
-            return LinkRouteResult(
-                route=ROUTE_DOMAIN_REFUSED,
-                confidence=CONFIDENCE_NONE,
-                reason_code=REASON_INTERNAL_DOMAIN_REFUSED,
-                auto_link_allowed=False,
-                account_ids=(),
-                notes=f"{label} is internal actor domain",
-            )
-        if is_consumer_domain(candidate):
-            return LinkRouteResult(
-                route=ROUTE_DOMAIN_REFUSED,
-                confidence=CONFIDENCE_NONE,
-                reason_code=REASON_CONSUMER_EMAIL_LINK_WITHHELD,
-                auto_link_allowed=False,
-                account_ids=(),
-                notes=f"{label} is consumer; never establishes institutional membership",
-            )
+    # Institutional buyer domain only (already sanitized upstream, but defend).
+    dom: str | None = None
+    if raw_dom:
+        refused = _classify_refused_domain(raw_dom)
+        if refused:
+            if refused == REASON_MARKETPLACE_DOMAIN_IGNORED:
+                aux.append(REASON_MARKETPLACE_DOMAIN_IGNORED)
+            elif refused == REASON_INTERNAL_DOMAIN_REFUSED:
+                aux.append(REASON_INTERNAL_DOMAIN_IGNORED_FOR_ACCOUNT_IDENTITY)
+            else:
+                aux.append(REASON_CONSUMER_EMAIL_IGNORED_FOR_ACCOUNT_IDENTITY)
+        elif is_institutional_domain(raw_dom):
+            dom = raw_dom
 
-    name_hits = sorted(index.name_to_accounts.get(name, set()) | index.alias_to_accounts.get(name, set())) if name else []
+    # Contact email domain: institutional only for linking; refused → auxiliary.
+    edom: str | None = None
+    if raw_edom:
+        refused = _classify_refused_domain(raw_edom)
+        if refused:
+            if refused == REASON_MARKETPLACE_DOMAIN_IGNORED:
+                aux.append(REASON_MARKETPLACE_DOMAIN_IGNORED)
+            elif refused == REASON_INTERNAL_DOMAIN_REFUSED:
+                aux.append(REASON_INTERNAL_DOMAIN_IGNORED_FOR_ACCOUNT_IDENTITY)
+            else:
+                aux.append(REASON_CONSUMER_EMAIL_IGNORED_FOR_ACCOUNT_IDENTITY)
+        elif is_institutional_domain(raw_edom):
+            edom = raw_edom
+
+    aux_t = tuple(sorted(set(aux)))
+
+    alias_hits = sorted(index.alias_to_accounts.get(name, set())) if name else []
+    canon_hits = sorted(index.name_to_accounts.get(name, set())) if name else []
+    name_union = sorted(set(alias_hits) | set(canon_hits))
+
     domain_hits: list[str] = []
-    if dom and is_institutional_domain(dom):
+    if dom:
         domain_hits = sorted(index.domain_to_accounts.get(dom, set()))
 
-    # I — name points to account A, institutional domain points to distinct account B.
-    if name_hits and domain_hits and set(name_hits).isdisjoint(set(domain_hits)):
+    email_domain_hits: list[str] = []
+    if edom:
+        email_domain_hits = sorted(index.domain_to_accounts.get(edom, set()))
+
+    # I — name vs institutional domain disagreement.
+    if name_union and domain_hits and set(name_union).isdisjoint(set(domain_hits)):
         return LinkRouteResult(
             route=ROUTE_NAME_DOMAIN_CONFLICT,
             confidence=CONFIDENCE_NONE,
             reason_code=REASON_BUYER_DOMAIN_CONFLICTS_WITH_NAME,
             auto_link_allowed=False,
-            account_ids=tuple(sorted(set(name_hits) | set(domain_hits))),
+            account_ids=tuple(sorted(set(name_union) | set(domain_hits))),
             notes="buyer name and institutional domain resolve to different accounts",
+            auxiliary_reason_codes=aux_t,
         )
 
-    # A — exact institutional domain (compatible with name if present).
+    # A — exact institutional domain.
     if domain_hits:
         if len(domain_hits) > 1:
             return LinkRouteResult(
@@ -171,16 +193,7 @@ def classify_account_link_route(
                 auto_link_allowed=False,
                 account_ids=tuple(domain_hits),
                 notes="institutional domain maps to multiple accounts",
-            )
-        if name_hits and domain_hits[0] not in name_hits:
-            # Should have been caught by I; keep defensive.
-            return LinkRouteResult(
-                route=ROUTE_NAME_DOMAIN_CONFLICT,
-                confidence=CONFIDENCE_NONE,
-                reason_code=REASON_BUYER_DOMAIN_CONFLICTS_WITH_NAME,
-                auto_link_allowed=False,
-                account_ids=tuple(sorted(set(name_hits) | set(domain_hits))),
-                notes="domain/name conflict",
+                auxiliary_reason_codes=aux_t,
             )
         return LinkRouteResult(
             route=ROUTE_EXACT_INSTITUTIONAL_DOMAIN,
@@ -189,111 +202,131 @@ def classify_account_link_route(
             auto_link_allowed=True,
             account_ids=(domain_hits[0],),
             notes="exact institutional domain with compatible name evidence",
+            auxiliary_reason_codes=aux_t,
         )
 
     # E — explicit contact email institutional domain uniquely maps.
-    if edom and is_institutional_domain(edom):
-        e_hits = sorted(index.domain_to_accounts.get(edom, set()))
-        if len(e_hits) == 1:
-            if name_hits and e_hits[0] not in name_hits:
-                return LinkRouteResult(
-                    route=ROUTE_NAME_DOMAIN_CONFLICT,
-                    confidence=CONFIDENCE_NONE,
-                    reason_code=REASON_BUYER_DOMAIN_CONFLICTS_WITH_NAME,
-                    auto_link_allowed=False,
-                    account_ids=tuple(sorted(set(name_hits) | set(e_hits))),
-                    notes="email domain conflicts with buyer name accounts",
-                )
+    if email_domain_hits:
+        if name_union and set(name_union).isdisjoint(set(email_domain_hits)):
             return LinkRouteResult(
-                route=ROUTE_EXPLICIT_EMAIL_DOMAIN,
-                confidence=CONFIDENCE_HIGH,
-                reason_code="explicit_email_institutional_domain",
-                auto_link_allowed=True,
-                account_ids=(e_hits[0],),
-                notes="unique institutional domain from buyer contact email",
+                route=ROUTE_NAME_DOMAIN_CONFLICT,
+                confidence=CONFIDENCE_NONE,
+                reason_code=REASON_BUYER_DOMAIN_CONFLICTS_WITH_NAME,
+                auto_link_allowed=False,
+                account_ids=tuple(sorted(set(name_union) | set(email_domain_hits))),
+                notes="email domain conflicts with buyer name accounts",
+                auxiliary_reason_codes=aux_t,
             )
-        if len(e_hits) > 1:
+        if len(email_domain_hits) > 1:
             return LinkRouteResult(
                 route=ROUTE_AMBIGUOUS_MULTI_ACCOUNT,
                 confidence=CONFIDENCE_NONE,
                 reason_code=REASON_BUYER_NAME_AMBIGUOUS,
                 auto_link_allowed=False,
-                account_ids=tuple(e_hits),
+                account_ids=tuple(email_domain_hits),
                 notes="email institutional domain maps to multiple accounts",
+                auxiliary_reason_codes=aux_t,
             )
+        return LinkRouteResult(
+            route=ROUTE_EXPLICIT_EMAIL_DOMAIN,
+            confidence=CONFIDENCE_HIGH,
+            reason_code="explicit_email_institutional_domain",
+            auto_link_allowed=True,
+            account_ids=(email_domain_hits[0],),
+            notes="unique institutional domain from buyer contact email",
+            auxiliary_reason_codes=aux_t,
+        )
 
-    # C / B — exact alias then exact canonical name.
+    # Name routes: evaluate full alias∪canonical set first.
     if name:
-        alias_hits = sorted(index.alias_to_accounts.get(name, set()))
-        canon_hits = sorted(index.name_to_accounts.get(name, set()))
-        if len(alias_hits) == 1 and (not canon_hits or alias_hits[0] in canon_hits or set(alias_hits) == set(canon_hits)):
+        if len(name_union) > 1:
+            return LinkRouteResult(
+                route=ROUTE_AMBIGUOUS_MULTI_ACCOUNT,
+                confidence=CONFIDENCE_NONE,
+                reason_code=REASON_BUYER_NAME_AMBIGUOUS,
+                auto_link_allowed=False,
+                account_ids=tuple(name_union),
+                notes="alias∪canonical name resolves to multiple PR2 accounts",
+                auxiliary_reason_codes=aux_t,
+            )
+        if len(name_union) == 1:
+            account_id = name_union[0]
+            from_alias = account_id in alias_hits
+            from_canon = account_id in canon_hits
             if weak_public_unit_name:
+                route = ROUTE_EXACT_ALIAS if from_alias and not from_canon else ROUTE_EXACT_CANONICAL_NAME
+                if from_alias and from_canon:
+                    route = ROUTE_EXACT_ALIAS
+                return LinkRouteResult(
+                    route=route,
+                    confidence=CONFIDENCE_LOW,
+                    reason_code=REASON_WEAK_PUBLIC_UNIT_NAME,
+                    auto_link_allowed=False,
+                    account_ids=(account_id,),
+                    notes="exact name/alias but weak/generic public-unit name → needs review",
+                    auxiliary_reason_codes=aux_t,
+                )
+            if from_alias and not from_canon:
                 return LinkRouteResult(
                     route=ROUTE_EXACT_ALIAS,
-                    confidence=CONFIDENCE_LOW,
-                    reason_code=REASON_WEAK_PUBLIC_UNIT_NAME,
-                    auto_link_allowed=False,
-                    account_ids=(alias_hits[0],),
-                    notes="exact alias but weak/generic public-unit name → needs review",
+                    confidence=CONFIDENCE_MEDIUM,
+                    reason_code="exact_unique_alias",
+                    auto_link_allowed=True,
+                    account_ids=(account_id,),
+                    notes="exact unique account alias; no competing account in alias∪canonical",
+                    auxiliary_reason_codes=aux_t,
                 )
-            return LinkRouteResult(
-                route=ROUTE_EXACT_ALIAS,
-                confidence=CONFIDENCE_MEDIUM,
-                reason_code="exact_unique_alias",
-                auto_link_allowed=True,
-                account_ids=(alias_hits[0],),
-                notes="exact unique account alias; no competing domain conflict",
-            )
-        if len(canon_hits) == 1:
-            if weak_public_unit_name:
+            if from_canon:
+                # Prefer C when also present as alias (same account).
+                if from_alias:
+                    return LinkRouteResult(
+                        route=ROUTE_EXACT_ALIAS,
+                        confidence=CONFIDENCE_MEDIUM,
+                        reason_code="exact_unique_alias",
+                        auto_link_allowed=True,
+                        account_ids=(account_id,),
+                        notes="exact unique alias coinciding with canonical name",
+                        auxiliary_reason_codes=aux_t,
+                    )
                 return LinkRouteResult(
                     route=ROUTE_EXACT_CANONICAL_NAME,
-                    confidence=CONFIDENCE_LOW,
-                    reason_code=REASON_WEAK_PUBLIC_UNIT_NAME,
-                    auto_link_allowed=False,
-                    account_ids=(canon_hits[0],),
-                    notes="exact canonical name but weak/generic → needs review",
+                    confidence=CONFIDENCE_MEDIUM,
+                    reason_code="exact_unique_canonical_name",
+                    auto_link_allowed=True,
+                    account_ids=(account_id,),
+                    notes="exact unique canonical account name",
+                    auxiliary_reason_codes=aux_t,
                 )
-            return LinkRouteResult(
-                route=ROUTE_EXACT_CANONICAL_NAME,
-                confidence=CONFIDENCE_MEDIUM,
-                reason_code="exact_unique_canonical_name",
-                auto_link_allowed=True,
-                account_ids=(canon_hits[0],),
-                notes="exact unique canonical account name",
-            )
-        # D — unique compatible across alias∪name
-        union = sorted(set(alias_hits) | set(canon_hits))
-        if len(union) == 1:
-            if weak_public_unit_name:
-                return LinkRouteResult(
-                    route=ROUTE_UNIQUE_COMPATIBLE_NAME,
-                    confidence=CONFIDENCE_LOW,
-                    reason_code=REASON_WEAK_PUBLIC_UNIT_NAME,
-                    auto_link_allowed=False,
-                    account_ids=(union[0],),
-                    notes="unique compatible name but weak/generic → needs review",
-                )
-            return LinkRouteResult(
-                route=ROUTE_UNIQUE_COMPATIBLE_NAME,
-                confidence=CONFIDENCE_MEDIUM,
-                reason_code="unique_compatible_buyer_name",
-                auto_link_allowed=True,
-                account_ids=(union[0],),
-                notes="exactly one compatible account for normalized buyer name",
-            )
-        if len(union) > 1:
-            return LinkRouteResult(
-                route=ROUTE_AMBIGUOUS_MULTI_ACCOUNT,
-                confidence=CONFIDENCE_NONE,
-                reason_code=REASON_BUYER_NAME_AMBIGUOUS,
-                auto_link_allowed=False,
-                account_ids=tuple(union),
-                notes="multiple PR2 accounts share this normalized buyer name",
-            )
 
-    # F — no match / missing contact enrichment cues.
-    if not name and not dom and not email_norm:
+    # H — only when refused domain was the sole domain-like evidence and no name/domain link.
+    refused_only = bool(aux) and not dom and not edom and not name_union
+    if refused_only and (raw_dom or raw_edom) and not name:
+        primary = aux[0] if aux else REASON_CONSUMER_EMAIL_LINK_WITHHELD
+        return LinkRouteResult(
+            route=ROUTE_DOMAIN_REFUSED,
+            confidence=CONFIDENCE_NONE,
+            reason_code=primary,
+            auto_link_allowed=False,
+            account_ids=(),
+            notes="refused domain with no independent institutional name/domain evidence",
+            auxiliary_reason_codes=aux_t,
+        )
+    if refused_only and not name_union and (raw_dom or raw_edom) and name:
+        # Name present but unmatched; refused domain does not establish membership → F
+        # with auxiliary refusal evidence (not H).
+        pass
+
+    if not name and not dom and not edom and not email_norm:
+        if aux:
+            return LinkRouteResult(
+                route=ROUTE_DOMAIN_REFUSED,
+                confidence=CONFIDENCE_NONE,
+                reason_code=aux[0],
+                auto_link_allowed=False,
+                account_ids=(),
+                notes="only refused domain/email evidence present",
+                auxiliary_reason_codes=aux_t,
+            )
         return LinkRouteResult(
             route=ROUTE_NO_MATCH,
             confidence=CONFIDENCE_NONE,
@@ -301,15 +334,17 @@ def classify_account_link_route(
             auto_link_allowed=False,
             account_ids=(),
             notes="no buyer name, domain, or contact email",
+            auxiliary_reason_codes=aux_t,
         )
-    if name and not dom:
+    if name and not dom and not edom and not name_union:
         return LinkRouteResult(
             route=ROUTE_NO_MATCH,
             confidence=CONFIDENCE_NONE,
-            reason_code=REASON_BUYER_DOMAIN_MISSING,
+            reason_code=REASON_BUYER_DOMAIN_MISSING if not aux else REASON_BUYER_ACCOUNT_NOT_FOUND,
             auto_link_allowed=False,
             account_ids=(),
             notes="buyer name present but no institutional domain and no unique name match",
+            auxiliary_reason_codes=aux_t,
         )
     return LinkRouteResult(
         route=ROUTE_NO_MATCH,
@@ -318,6 +353,7 @@ def classify_account_link_route(
         auto_link_allowed=False,
         account_ids=(),
         notes="no compatible PR2 account",
+        auxiliary_reason_codes=aux_t,
     )
 
 

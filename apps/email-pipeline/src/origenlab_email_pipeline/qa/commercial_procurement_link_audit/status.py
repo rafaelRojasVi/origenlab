@@ -45,6 +45,7 @@ def classify_procurement_context(
     status_name: str | None,
     close_date: str | None,
     publication_date: str | None = None,
+    as_of_date: date | None = None,
     today: date | None = None,
 ) -> dict[str, Any]:
     """Map structured ChileCompra fields → procurement context.
@@ -54,14 +55,16 @@ def classify_procurement_context(
       with publicada status;
     - closed/awarded/cancelled → historical_tender;
     - missing/malformed dates with no usable status → unknown;
-    - never uses build/wall-clock as a substitute for missing dates except as the
-      comparison point for an already-parsed close_date (operator 'today').
+    - never uses build/wall-clock as a substitute for missing dates;
+    - ``as_of_date`` (preferred) is the sole comparison point for parsed close dates.
     """
     code = (status_code or "").strip()
     name = (status_name or "").strip().lower()
     close = _parse_date(close_date)
     pub = _parse_date(publication_date)
-    now = today or date.today()
+    now = as_of_date or today
+    if now is None:
+        raise ValueError("as_of_date is required for deterministic procurement status classification")
 
     if code in INACTIVE_STATUS_CODES or name in INACTIVE_STATUS_NAMES:
         return {
