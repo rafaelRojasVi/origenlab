@@ -737,7 +737,7 @@ def run_procurement_link_audit(
             as_of_date=as_of_date,
             run_context="audit",
             known_account_ids=known_account_ids or None,
-            build_stamp=_utc_now(),
+            generated_at_utc=_utc_now(),
         )
         fp = {
             "algorithm": plan.source_fingerprint and "procurement_source_fp_v1",
