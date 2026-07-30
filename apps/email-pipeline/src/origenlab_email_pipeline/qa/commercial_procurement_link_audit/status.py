@@ -18,7 +18,7 @@ from origenlab_email_pipeline.qa.commercial_procurement_link_audit.constants imp
 )
 
 
-def _parse_date(value: str | None) -> date | None:
+def parse_tender_date(value: str | None) -> date | None:
     if not value:
         return None
     s = str(value).strip()
@@ -60,8 +60,8 @@ def classify_procurement_context(
     """
     code = (status_code or "").strip()
     name = (status_name or "").strip().lower()
-    close = _parse_date(close_date)
-    pub = _parse_date(publication_date)
+    close = parse_tender_date(close_date)
+    pub = parse_tender_date(publication_date)
     now = as_of_date or today
     if now is None:
         raise ValueError("as_of_date is required for deterministic procurement status classification")
@@ -151,4 +151,4 @@ def classify_procurement_context(
     }
 
 
-__all__ = ["classify_procurement_context"]
+__all__ = ["classify_procurement_context", "parse_tender_date"]

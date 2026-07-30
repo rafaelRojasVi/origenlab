@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Final
 
 AUDIT_NAME: Final = "commercial_procurement_link_audit"
-AUDIT_VERSION: Final = "pr4_audit_v2"
+AUDIT_VERSION: Final = "pr4_audit_v3"
 DEFAULT_REPORT_ROOT_REL: Final = "reports/out"
 DEFAULT_OUTPUT_DIRNAME: Final = "commercial_procurement_link_audit_2026-07-30"
 
@@ -91,6 +91,30 @@ LINK_ROUTES: Final = frozenset(
     }
 )
 
+# Account-resolution status (one row per verified procurement signal).
+RESOLUTION_LINKED: Final = "linked"
+RESOLUTION_UNLINKED: Final = "unlinked"
+RESOLUTION_AMBIGUOUS: Final = "ambiguous"
+RESOLUTION_REFUSED: Final = "refused"
+
+RESOLUTION_STATUSES: Final = frozenset(
+    {
+        RESOLUTION_LINKED,
+        RESOLUTION_UNLINKED,
+        RESOLUTION_AMBIGUOUS,
+        RESOLUTION_REFUSED,
+    }
+)
+
+LINKED_ROUTES: Final = frozenset(
+    {
+        ROUTE_EXACT_INSTITUTIONAL_DOMAIN,
+        ROUTE_EXACT_CANONICAL_NAME,
+        ROUTE_EXACT_ALIAS,
+        ROUTE_EXPLICIT_EMAIL_DOMAIN,
+    }
+)
+
 CONFIDENCE_HIGH: Final = "high"
 CONFIDENCE_MEDIUM: Final = "medium"
 CONFIDENCE_LOW: Final = "low"
@@ -136,9 +160,9 @@ INACTIVE_STATUS_NAMES: Final = frozenset(
 # Fingerprint / build contracts (design only — not applied).
 PROCUREMENT_SOURCE_FP_ALGORITHM: Final = "procurement_source_fp_v1"
 PROCUREMENT_BUILD_PLAN_FP_ALGORITHM: Final = "procurement_build_plan_fp_v1"
-RESOLVER_BUILD_CONTRACT_VERSION: Final = "procurement_resolver_v2"
+RESOLVER_BUILD_CONTRACT_VERSION: Final = "procurement_resolver_v3"
 SCHEMA_VERSION_PROPOSED: Final = "commercial_procurement_v1"
-BUILD_CONTRACT_PROPOSED: Final = "procurement_account_link_read_model_v1"
+BUILD_CONTRACT_PROPOSED: Final = "procurement_account_resolution_read_model_v1"
 TRANSACTION_CONTRACT: Final = "B_schema_additive_data_atomic"
 AS_OF_TIMEZONE: Final = "UTC_calendar_date"
 AS_OF_INTERPRETATION: Final = (

@@ -33,8 +33,10 @@ from origenlab_email_pipeline.qa.commercial_procurement_link_audit.constants imp
     TENDER_KEY_UNRESOLVED,
 )
 from origenlab_email_pipeline.qa.commercial_procurement_link_audit.fingerprint import (
+    conflict_id_for_source_row,
     procurement_build_plan_fingerprint,
     procurement_source_fingerprint,
+    source_line_semantic_payload,
 )
 from origenlab_email_pipeline.qa.commercial_procurement_link_audit.link_routes import (
     build_account_index,
@@ -55,8 +57,15 @@ from origenlab_email_pipeline.qa.commercial_procurement_link_audit.output_redact
     redact_buyer_name,
     scrub_row,
 )
+from origenlab_email_pipeline.qa.commercial_procurement_link_audit.resolution import (
+    assert_resolution_invariants,
+    build_account_resolution,
+)
 from origenlab_email_pipeline.qa.commercial_procurement_link_audit.schema_contract import (
     schema_contract_markdown,
+)
+from origenlab_email_pipeline.qa.commercial_procurement_link_audit.status import (
+    parse_tender_date,
 )
 from origenlab_email_pipeline.qa.commercial_procurement_link_audit.sqlite_readonly import (
     assert_no_write_connection,
@@ -511,8 +520,11 @@ def run_procurement_link_audit(
                 internal_domain_n += 1
 
             line = {
+                "source_system": SOURCE_CHILECOMPRA,
                 "lead_id": r["lead_id"],
                 "source_record_id": r["source_record_id"],
+                "raw_lead_join_status": "matched" if r["raw_json"] is not None else "lead_only",
+                "raw_json_valid": raw is not None if r["raw_json"] is not None else False,
                 "tender_key": tender_key,
                 "tender_key_kind": key_kind,
                 "verified": verified,
@@ -528,6 +540,16 @@ def run_procurement_link_audit(
                 "status_name": status["status_name"],
                 "close_date": status["close_date"],
                 "publication_date": status["publication_date"],
+                "publication_date_parsed": (
+                    parse_tender_date(status["publication_date"]).isoformat()
+                    if status["publication_date"] and parse_tender_date(status["publication_date"])
+                    else ""
+                ),
+                "close_date_parsed": (
+                    parse_tender_date(status["close_date"]).isoformat()
+                    if status["close_date"] and parse_tender_date(status["close_date"])
+                    else ""
+                ),
                 "first_seen_at": r["first_seen_at"],
                 "last_seen_at": r["last_seen_at"],
                 "lead_workflow_status": r["lead_workflow_status"],
@@ -537,6 +559,59 @@ def run_procurement_link_audit(
                 by_verified_tender[(key_kind, tender_key)].append(line)
             else:
                 unresolved_lines.append(line)
+
+        # Raw-only rows (no lead) — included in source fingerprint components.
+        raw_only_source_lines: list[dict[str, Any]] = []
+        for r in conn.execute(
+            """
+            SELECT er.source_record_id, er.raw_json, er.fetched_at
+            FROM external_leads_raw er
+            WHERE lower(er.source_name)=?
+              AND NOT EXISTS (
+                SELECT 1 FROM lead_master lm
+                 WHERE lm.source_name = er.source_name
+                   AND lm.source_record_id = er.source_record_id
+              )
+            """,
+            (SOURCE_CHILECOMPRA,),
+        ):
+            raw = parse_raw_json(r["raw_json"])
+            tender_key, key_kind, verified = canonical_tender_key_from_raw(
+                source_record_id=r["source_record_id"],
+                raw=raw,
+            )
+            status = extract_status_fields(raw)
+            buyer = buyer_fields_from_raw_and_lead(
+                org_name=None, domain=None, email=None, raw=raw
+            )
+            raw_only_source_lines.append(
+                {
+                    "source_system": SOURCE_CHILECOMPRA,
+                    "source_record_id": r["source_record_id"],
+                    "raw_lead_join_status": "raw_only",
+                    "raw_json_valid": raw is not None,
+                    "tender_key": tender_key,
+                    "tender_key_kind": key_kind,
+                    "verified": verified,
+                    "buyer_display": buyer["buyer_display"],
+                    "buyer_name_norm": buyer["buyer_name_norm"],
+                    "buyer_domain": buyer["buyer_domain"],
+                    "email_norm": buyer["email_norm"],
+                    "email_domain": buyer["email_domain"],
+                    "weak_public_unit_name": buyer["weak_public_unit_name"],
+                    "region": None,
+                    "title": status.get("title"),
+                    "status_code": status["status_code"],
+                    "status_name": status["status_name"],
+                    "close_date": status["close_date"],
+                    "publication_date": status["publication_date"],
+                    "first_seen_at": r["fetched_at"],
+                    "last_seen_at": r["fetched_at"],
+                }
+            )
+
+        all_source_lines_for_fp = verified_lines + unresolved_lines + raw_only_source_lines
+        source_line_payloads = [source_line_semantic_payload(x) for x in all_source_lines_for_fp]
 
         coalesced_signals: list[dict[str, Any]] = []
         line_conflict_rows: list[dict[str, Any]] = []
@@ -561,7 +636,7 @@ def run_procurement_link_audit(
                     {
                         "tender_token": stable_token("tender", tender_key),
                         "tender_key_kind": key_kind,
-                        **c,
+                        **{k: v for k, v in c.items() if k != "normalized_values" or True},
                     }
                 )
             coalesced_signals.append(sig)
@@ -665,6 +740,7 @@ def run_procurement_link_audit(
 
         index = load_pr2_index(conn)
         route_counter: Counter[str] = Counter()
+        resolution_status_counter: Counter[str] = Counter()
         auto_link_n = 0
         linked_accounts: set[str] = set()
         route_examples: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -676,7 +752,7 @@ def run_procurement_link_audit(
         enrichment_candidate_total = 0
         operator_queue_eligible_total = 0
 
-        # Unresolved keys → conflicts + enrichment (not canonical signals)
+        # Unresolved keys → conflicts with direct provenance (no procurement_id)
         for line in unresolved_lines:
             reason = (
                 REASON_TENDER_KEY_UNRESOLVED
@@ -684,10 +760,23 @@ def run_procurement_link_audit(
                 else "tender_identifier_missing"
             )
             data_quality_conflict_total += 1
+            sid = str(line.get("source_record_id") or "")
+            cid = conflict_id_for_source_row(
+                source_system=SOURCE_CHILECOMPRA,
+                source_record_id=sid,
+                reason_code=reason,
+            )
+            subject_key = f"v1|procurement-source|{SOURCE_CHILECOMPRA}|{sid}"
             sample = {
+                "conflict_id": cid,
+                "subject_kind": "unresolved_source",
+                "subject_key": subject_key,
+                "source_system": SOURCE_CHILECOMPRA,
+                "source_record_id_token": stable_token("src", sid),
                 "tender_token": stable_token("tender", line.get("tender_key") or "missing"),
                 "buyer_token": redact_buyer_name(line.get("buyer_display") or line.get("buyer_name_norm")),
                 "route": "unresolved_tender_key",
+                "resolution_status": "n/a",
                 "confidence": "none",
                 "reason_code": reason,
                 "auto_link_allowed": 0,
@@ -702,6 +791,11 @@ def run_procurement_link_audit(
             if sig.get("line_conflicts"):
                 data_quality_conflict_total += len(sig["line_conflicts"])
 
+            procurement_id = "p_" + stable_token(
+                "procurement",
+                f"v1|procurement|{SOURCE_CHILECOMPRA}|{sig['tender_key']}",
+                n=32,
+            )
             result = classify_account_link_route(
                 index=index,
                 buyer_name_norm=sig["buyer_name_norm"],
@@ -710,11 +804,16 @@ def run_procurement_link_audit(
                 email_norm=sig["email_norm"],
                 weak_public_unit_name=bool(sig["weak_public_unit_name"]),
             )
+            resolution = build_account_resolution(
+                procurement_id=procurement_id, result=result
+            )
+            assert_resolution_invariants(resolution)
             route_counter[result.route] += 1
-            linked = bool(result.auto_link_allowed and result.account_ids)
-            if linked:
+            resolution_status_counter[resolution.resolution_status] += 1
+            linked = resolution.resolution_status == "linked"
+            if linked and resolution.account_id:
                 auto_link_n += 1
-                linked_accounts.update(result.account_ids)
+                linked_accounts.add(resolution.account_id)
             else:
                 account_not_linked_total += 1
 
@@ -722,10 +821,16 @@ def run_procurement_link_audit(
                 "tender_token": stable_token("tender", sig["tender_key"]),
                 "buyer_token": redact_buyer_name(sig.get("buyer_display") or sig.get("buyer_name_norm")),
                 "route": result.route,
+                "resolution_status": resolution.resolution_status,
                 "confidence": result.confidence,
                 "reason_code": result.reason_code,
-                "auto_link_allowed": int(result.auto_link_allowed),
-                "account_tokens": "|".join(redact_account_id(a) for a in result.account_ids),
+                "auto_link_allowed": int(resolution.auto_link_allowed),
+                "account_tokens": (
+                    redact_account_id(resolution.account_id) if resolution.account_id else ""
+                ),
+                "candidate_account_tokens": "|".join(
+                    redact_account_id(a) for a in resolution.candidate_account_ids
+                ),
                 "auxiliary_reason_codes": "|".join(result.auxiliary_reason_codes),
                 "notes": result.notes,
                 "procurement_context": sig["procurement_context"],
@@ -770,7 +875,6 @@ def run_procurement_link_audit(
                 eligible = _operator_eligible(
                     sig, link_auto=linked, has_ambiguity=has_ambiguity
                 )
-                # Historical unmatched → not operator tasks
                 if (
                     not linked
                     and sig["procurement_context"] == "historical_tender"
@@ -831,6 +935,11 @@ def run_procurement_link_audit(
             }
         )
         _write_csv(output_dir / "account_link_route_distribution.csv", route_dist)
+        resolution_dist = [
+            {"resolution_status": k, "signal_count": v}
+            for k, v in sorted(resolution_status_counter.items(), key=lambda kv: (-kv[1], kv[0]))
+        ]
+        _write_csv(output_dir / "account_resolution_distribution.csv", resolution_dist)
 
         conflict_out: list[dict[str, Any]] = []
         for route, samples in sorted(route_examples.items()):
@@ -851,9 +960,13 @@ def run_procurement_link_audit(
         _write_csv(output_dir / "account_link_conflicts_redacted.csv", conflict_dedup[:500])
 
         enrichment_rows.sort(
-            key=lambda r: (-int(r["operator_queue_eligible"]), -int(r["priority"]), r["route"], r["tender_token"])
+            key=lambda r: (
+                -int(r["operator_queue_eligible"]),
+                -int(r["priority"]),
+                r["route"],
+                r["tender_token"],
+            )
         )
-        # Prefer eligible rows in the redacted sample; include some historical for audit
         eligible_sample = [r for r in enrichment_rows if r["operator_queue_eligible"]][:500]
         other_sample = [r for r in enrichment_rows if not r["operator_queue_eligible"]][:200]
         _write_csv(
@@ -867,7 +980,7 @@ def run_procurement_link_audit(
         ]
         _write_csv(output_dir / "procurement_status_coverage.csv", status_rows)
 
-        fp = procurement_source_fingerprint(semantic_rows=coalesced_signals)
+        fp = procurement_source_fingerprint(source_line_payloads=source_line_payloads)
         id_meta = {}
         if _table_exists(conn, "commercial_identity_build_meta"):
             id_meta = {
@@ -954,12 +1067,21 @@ def run_procurement_link_audit(
                 "multi_line_verified_tenders": multi_line_verified,
                 "buyer_name_variants_on_same_tender": buyer_variants,
                 "route_distribution": dict(route_counter),
+                "resolution_status_distribution": dict(resolution_status_counter),
                 "auto_link_allowed_signals": auto_link_n,
                 "unique_accounts_auto_linkable": len(linked_accounts),
                 "account_not_linked_total": account_not_linked_total,
                 "data_quality_conflict_total": data_quality_conflict_total,
                 "enrichment_candidate_total": enrichment_candidate_total,
                 "operator_queue_eligible_total": operator_queue_eligible_total,
+                "source_fingerprint_line_count": len(source_line_payloads),
+                "source_fingerprint_components": {
+                    "all_source_lines_n": fp["components"]["all_source_lines"]["n"],
+                    "verified_n": fp["components"]["verified_tender_key_lines"]["n"],
+                    "unresolved_n": fp["components"]["unresolved_tender_key_lines"]["n"],
+                    "verified_sha256": fp["components"]["verified_tender_key_lines"]["sha256"],
+                    "unresolved_sha256": fp["components"]["unresolved_tender_key_lines"]["sha256"],
+                },
                 "procurement_context_distribution": dict(status_counter),
                 "missing_buyer_lines": missing_buyer,
                 "missing_status_lines": missing_status,
