@@ -11,11 +11,13 @@
 10af8fec667df0d382fc5a6bfec443cc3e9a250b:apps/email-pipeline/tests/test_dashboard_mirror_lifecycle_cas.py:generic-api-key:583
 
 # Synthetic PR #416 causal-stage fixture identifiers (NOT credentials).
-# Commit 0b2ebcf introduced deal_key="synthetic-oc-fixture-1" in
+# Commit 0b2ebcf introduced a hyphenated synthetic deal_key in
 # test_production_chronology_regression_fixture_redacted as a deliberately
 # synthetic shape of a production chronology defect. gitleaks generic-api-key
 # false-positives on that fixture string. CI scans the full PR commit range, so
 # these historical fingerprints remain required even if the tip renames the key.
+# Do not paste the historical fixture string into comments here: a prior tip
+# comment that quoted it was itself flagged (fingerprint below).
 0b2ebcf0ea2cdea7a18f436ae86f7a1107cc5736:apps/email-pipeline/tests/test_commercial_opportunity_stage_read_model.py:generic-api-key:2423
 0b2ebcf0ea2cdea7a18f436ae86f7a1107cc5736:apps/email-pipeline/tests/test_commercial_opportunity_stage_read_model.py:generic-api-key:2433
 0b2ebcf0ea2cdea7a18f436ae86f7a1107cc5736:apps/email-pipeline/tests/test_commercial_opportunity_stage_read_model.py:generic-api-key:2441
@@ -25,3 +27,4 @@
 0b2ebcf0ea2cdea7a18f436ae86f7a1107cc5736:apps/email-pipeline/tests/test_commercial_opportunity_stage_read_model.py:generic-api-key:2468
 0b2ebcf0ea2cdea7a18f436ae86f7a1107cc5736:apps/email-pipeline/tests/test_commercial_opportunity_stage_read_model.py:generic-api-key:2478
 0b2ebcf0ea2cdea7a18f436ae86f7a1107cc5736:apps/email-pipeline/tests/test_commercial_opportunity_stage_read_model.py:generic-api-key:2490
+093aa25081e049136247667952b81cd53d35a73b:.gitleaksignore:generic-api-key:14
