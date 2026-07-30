@@ -12,7 +12,6 @@ from pathlib import Path
 import pytest
 
 from origenlab_email_pipeline.commercial_procurement.builder import (
-    ApplyNotImplementedError,
     connect_production_readonly,
     run_procurement_dry_run,
 )
@@ -455,7 +454,7 @@ def test_nested_chilecompra_extraction() -> None:
     assert status["close_date"] == "2026-08-15"
     buyer = buyer_fields_from_raw_and_lead(org_name=None, domain=None, email=None, raw=raw)
     assert buyer["buyer_display"] == "Hospital Nested"
-    assert buyer["region_from_raw"] == "RM"
+    assert buyer["region"] == "RM"
     # Top-level wins over nested
     raw2 = dict(raw)
     raw2["FechaCierre"] = "2026-01-01"
@@ -569,13 +568,28 @@ def test_dry_run_cli_path_readonly_and_no_pr2_pr3_mutation(tmp_path: Path) -> No
     assert conn.execute("SELECT COUNT(*) FROM commercial_opportunity").fetchone()[0] == opp_n
     conn.close()
 
-    with pytest.raises(ApplyNotImplementedError):
-        run_procurement_dry_run(
-            sqlite_path=db,
-            as_of_date="2026-07-30",
-            run_context="local_fixture",
-            apply=True,
-        )
+    # --apply is implemented for fixtures (local_fixture); dry-run still creates no tables.
+    applied = run_procurement_dry_run(
+        sqlite_path=db,
+        as_of_date="2026-07-30",
+        run_context="local_fixture",
+        apply=True,
+    )
+    assert applied.summary["applied"] is True
+    assert applied.summary["signal_count"] == 1
+    conn = sqlite3.connect(db)
+    assert (
+        conn.execute("SELECT COUNT(*) FROM commercial_procurement_signal").fetchone()[0]
+        == 1
+    )
+    assert (
+        conn.execute(
+            "SELECT meta_value FROM commercial_identity_build_meta WHERE meta_key='identity_fingerprint'"
+        ).fetchone()[0]
+        == id_fp
+    )
+    assert conn.execute("SELECT COUNT(*) FROM commercial_opportunity").fetchone()[0] == opp_n
+    conn.close()
 
 
 def test_pinned_read_transaction_and_same_connection(tmp_path: Path) -> None:
