@@ -22,25 +22,16 @@ from origenlab_email_pipeline.qa.commercial_procurement_link_audit.constants imp
     AS_OF_TIMEZONE,
     AUDIT_NAME,
     AUDIT_VERSION,
-    OPERATOR_ELIGIBLE_CONTEXTS,
     RAW_KEY_INVENTORY_LABELS,
-    REASON_BUYER_ACCOUNT_NOT_FOUND,
-    REASON_LINE_FIELD_CONFLICT,
-    REASON_TENDER_KEY_UNRESOLVED,
     RESOLVER_BUILD_CONTRACT_VERSION,
     SOURCE_CHILECOMPRA,
-    TENDER_KEY_MISSING,
     TENDER_KEY_UNRESOLVED,
 )
 from origenlab_email_pipeline.qa.commercial_procurement_link_audit.fingerprint import (
-    conflict_id_for_source_row,
-    procurement_build_plan_fingerprint,
-    procurement_source_fingerprint,
     source_line_semantic_payload,
 )
 from origenlab_email_pipeline.qa.commercial_procurement_link_audit.link_routes import (
     build_account_index,
-    classify_account_link_route,
 )
 from origenlab_email_pipeline.qa.commercial_procurement_link_audit.normalize import (
     buyer_fields_from_raw_and_lead,
@@ -57,10 +48,7 @@ from origenlab_email_pipeline.qa.commercial_procurement_link_audit.output_redact
     redact_buyer_name,
     scrub_row,
 )
-from origenlab_email_pipeline.qa.commercial_procurement_link_audit.resolution import (
-    assert_resolution_invariants,
-    build_account_resolution,
-)
+from origenlab_email_pipeline.commercial_procurement.planner import plan_procurement
 from origenlab_email_pipeline.qa.commercial_procurement_link_audit.schema_contract import (
     schema_contract_markdown,
 )
@@ -336,19 +324,6 @@ def inventory_sources(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         notes="Filesystem/Postgres lineage only for this SQLite audit; inventory without mutating",
     )
     return rows
-
-
-def _operator_eligible(signal: dict[str, Any], *, link_auto: bool, has_ambiguity: bool) -> bool:
-    ctx = signal.get("procurement_context")
-    if ctx in OPERATOR_ELIGIBLE_CONTEXTS:
-        return True
-    if has_ambiguity and ctx != "historical_tender":
-        return True
-    # unresolved but recent structured procurement — last_seen within as_of year heuristic
-    # is handled by caller via has_ambiguity / unknown+recent flags when needed.
-    if not link_auto and ctx == "unknown" and signal.get("status_code"):
-        return True
-    return False
 
 
 def run_procurement_link_audit(
@@ -739,162 +714,140 @@ def run_procurement_link_audit(
         _write_csv(output_dir / "buyer_identity_coverage.csv", grain_metrics)
 
         index = load_pr2_index(conn)
-        route_counter: Counter[str] = Counter()
-        resolution_status_counter: Counter[str] = Counter()
-        auto_link_n = 0
-        linked_accounts: set[str] = set()
+        id_meta = {}
+        if _table_exists(conn, "commercial_identity_build_meta"):
+            id_meta = {
+                r["meta_key"]: r["meta_value"]
+                for r in conn.execute("SELECT meta_key, meta_value FROM commercial_identity_build_meta")
+            }
+        known_account_ids = frozenset(
+            r["account_id"]
+            for r in conn.execute("SELECT account_id FROM commercial_identity_account")
+        ) if _table_exists(conn, "commercial_identity_account") else frozenset()
+
+        # Single production resolver — audit reports derive from the immutable plan.
+        plan = plan_procurement(
+            source_lines=all_source_lines_for_fp,
+            account_index=index,
+            identity_fingerprint=id_meta.get("identity_fingerprint") or "",
+            identity_fingerprint_algorithm_version=id_meta.get(
+                "identity_fingerprint_algorithm_version"
+            )
+            or "unset",
+            as_of_date=as_of_date,
+            run_context="audit",
+            known_account_ids=known_account_ids or None,
+            generated_at_utc=_utc_now(),
+        )
+        fp = {
+            "algorithm": plan.source_fingerprint and "procurement_source_fp_v1",
+            "fingerprint": plan.source_fingerprint,
+            "components": plan.source_fingerprint_components,
+        }
+        # Ensure algorithm key present for summary consumers
+        fp["algorithm"] = "procurement_source_fp_v1"
+        build_plan = {
+            "algorithm": "procurement_build_plan_fp_v1",
+            "fingerprint": plan.build_plan_fingerprint,
+        }
+
+        route_counter: Counter[str] = Counter(
+            plan.metrics.get("route_distribution") or {}
+        )
+        resolution_status_counter: Counter[str] = Counter(
+            plan.metrics.get("resolution_distribution") or {}
+        )
+        status_counter: Counter[str] = Counter(
+            plan.metrics.get("procurement_context_distribution") or {}
+        )
+        auto_link_n = int(plan.metrics.get("linked_resolutions") or 0)
+        linked_accounts: set[str] = {
+            r.account_id for r in plan.resolutions if r.account_id
+        }
+        account_not_linked_total = int(plan.metrics.get("signal_count") or 0) - auto_link_n
+        data_quality_conflict_total = len(plan.conflicts)
+        enrichment_candidate_total = len(plan.enrichment_candidates)
+        operator_queue_eligible_total = int(
+            plan.metrics.get("operator_queue_eligible_count") or 0
+        )
+
+        signal_by_id = {s.procurement_id: s for s in plan.signals}
         route_examples: dict[str, list[dict[str, Any]]] = defaultdict(list)
         conflict_rows: list[dict[str, Any]] = []
         enrichment_rows: list[dict[str, Any]] = []
-        status_counter: Counter[str] = Counter()
-        account_not_linked_total = 0
-        data_quality_conflict_total = 0
-        enrichment_candidate_total = 0
-        operator_queue_eligible_total = 0
 
-        # Unresolved keys → conflicts with direct provenance (no procurement_id)
-        for line in unresolved_lines:
-            reason = (
-                REASON_TENDER_KEY_UNRESOLVED
-                if line["tender_key_kind"] != TENDER_KEY_MISSING
-                else "tender_identifier_missing"
-            )
-            data_quality_conflict_total += 1
-            sid = str(line.get("source_record_id") or "")
-            cid = conflict_id_for_source_row(
-                source_system=SOURCE_CHILECOMPRA,
-                source_record_id=sid,
-                reason_code=reason,
-            )
-            subject_key = f"v1|procurement-source|{SOURCE_CHILECOMPRA}|{sid}"
+        for cres in plan.conflicts:
+            if cres.subject_kind == "unresolved_source":
+                conflict_rows.append(
+                    {
+                        "conflict_id": cres.conflict_id,
+                        "subject_kind": cres.subject_kind,
+                        "subject_key": cres.subject_key,
+                        "source_system": cres.source_system,
+                        "source_record_id_token": stable_token(
+                            "src", cres.source_record_id or ""
+                        ),
+                        "tender_token": "",
+                        "buyer_token": "",
+                        "route": "unresolved_tender_key",
+                        "resolution_status": "n/a",
+                        "confidence": cres.confidence,
+                        "reason_code": cres.reason_code,
+                        "auto_link_allowed": 0,
+                        "account_tokens": "",
+                        "notes": "line/fallback key is not a verified tender-level identifier",
+                        "procurement_context": "unknown",
+                    }
+                )
+
+        for resolution in plan.resolutions:
+            sig = signal_by_id[resolution.procurement_id]
             sample = {
-                "conflict_id": cid,
-                "subject_kind": "unresolved_source",
-                "subject_key": subject_key,
-                "source_system": SOURCE_CHILECOMPRA,
-                "source_record_id_token": stable_token("src", sid),
-                "tender_token": stable_token("tender", line.get("tender_key") or "missing"),
-                "buyer_token": redact_buyer_name(line.get("buyer_display") or line.get("buyer_name_norm")),
-                "route": "unresolved_tender_key",
-                "resolution_status": "n/a",
-                "confidence": "none",
-                "reason_code": reason,
-                "auto_link_allowed": 0,
-                "account_tokens": "",
-                "notes": "line/fallback key is not a verified tender-level identifier",
-                "procurement_context": "unknown",
-            }
-            conflict_rows.append(sample)
-
-        for sig in coalesced_signals:
-            status_counter[sig["procurement_context"]] += 1
-            if sig.get("line_conflicts"):
-                data_quality_conflict_total += len(sig["line_conflicts"])
-
-            procurement_id = "p_" + stable_token(
-                "procurement",
-                f"v1|procurement|{SOURCE_CHILECOMPRA}|{sig['tender_key']}",
-                n=32,
-            )
-            result = classify_account_link_route(
-                index=index,
-                buyer_name_norm=sig["buyer_name_norm"],
-                buyer_domain=sig["buyer_domain"],
-                email_domain=sig["email_domain"],
-                email_norm=sig["email_norm"],
-                weak_public_unit_name=bool(sig["weak_public_unit_name"]),
-            )
-            resolution = build_account_resolution(
-                procurement_id=procurement_id, result=result
-            )
-            assert_resolution_invariants(resolution)
-            route_counter[result.route] += 1
-            resolution_status_counter[resolution.resolution_status] += 1
-            linked = resolution.resolution_status == "linked"
-            if linked and resolution.account_id:
-                auto_link_n += 1
-                linked_accounts.add(resolution.account_id)
-            else:
-                account_not_linked_total += 1
-
-            sample = {
-                "tender_token": stable_token("tender", sig["tender_key"]),
-                "buyer_token": redact_buyer_name(sig.get("buyer_display") or sig.get("buyer_name_norm")),
-                "route": result.route,
+                "tender_token": stable_token("tender", sig.canonical_tender_key),
+                "buyer_token": redact_buyer_name(sig.buyer_name_raw or sig.buyer_name_norm),
+                "route": resolution.link_route,
                 "resolution_status": resolution.resolution_status,
-                "confidence": result.confidence,
-                "reason_code": result.reason_code,
+                "confidence": resolution.confidence,
+                "reason_code": resolution.reason_code,
                 "auto_link_allowed": int(resolution.auto_link_allowed),
                 "account_tokens": (
                     redact_account_id(resolution.account_id) if resolution.account_id else ""
                 ),
-                "candidate_account_tokens": "|".join(
-                    redact_account_id(a) for a in resolution.candidate_account_ids
-                ),
-                "auxiliary_reason_codes": "|".join(result.auxiliary_reason_codes),
-                "notes": result.notes,
-                "procurement_context": sig["procurement_context"],
+                "candidate_account_tokens": "",
+                "auxiliary_reason_codes": "",
+                "notes": "",
+                "procurement_context": sig.procurement_context,
             }
-            if len(route_examples[result.route]) < 5:
-                route_examples[result.route].append(sample)
-
-            reasons: list[str] = []
-            if not linked:
-                reasons.append(result.reason_code or REASON_BUYER_ACCOUNT_NOT_FOUND)
-            reasons.extend(result.auxiliary_reason_codes)
-            if sig.get("line_conflicts"):
-                reasons.append(REASON_LINE_FIELD_CONFLICT)
-            if result.route in {"G_ambiguous_multiple_accounts", "I_name_domain_conflict"}:
+            if len(route_examples[resolution.link_route]) < 5:
+                route_examples[resolution.link_route].append(sample)
+            if resolution.resolution_status in {"ambiguous", "refused"}:
                 conflict_rows.append(sample)
-                data_quality_conflict_total += 1
 
-            # Multiple enrichment reasons per signal
-            for reason in sorted(set(reasons)):
-                research = "domain"
-                if "ambiguous" in reason or reason.endswith("ambiguous"):
-                    research = "account_disambiguation"
-                elif "contact" in reason or "email" in reason:
-                    research = "contact"
-                elif "status" in reason or "date" in reason:
-                    research = "status_or_dates"
-                elif "tender" in reason:
-                    research = "tender_id"
-                elif "conflict" in reason:
-                    research = "line_field_reconciliation"
-                priority = 0
-                if sig["line_item_count"] > 1:
-                    priority += 1
-                if sig.get("buyer_domain") or sig.get("email_norm"):
-                    priority += 1
-                if sig["procurement_context"] in OPERATOR_ELIGIBLE_CONTEXTS:
-                    priority += 2
-                has_ambiguity = result.route in {
-                    "G_ambiguous_multiple_accounts",
-                    "I_name_domain_conflict",
+        for cand in plan.enrichment_candidates:
+            sig = signal_by_id.get(cand.procurement_id) if cand.procurement_id else None
+            enrichment_rows.append(
+                {
+                    "tender_token": stable_token(
+                        "tender", sig.canonical_tender_key if sig else ""
+                    ),
+                    "buyer_token": redact_buyer_name(
+                        (sig.buyer_name_raw if sig else None)
+                        or cand.buyer_name_raw
+                        or (sig.buyer_name_norm if sig else None)
+                    ),
+                    "route": "",
+                    "resolution_status": "",
+                    "confidence": cand.confidence,
+                    "reason_code": cand.reason_code,
+                    "auto_link_allowed": 0,
+                    "account_tokens": "",
+                    "recommended_research_field": cand.recommended_research_field,
+                    "priority": cand.priority,
+                    "operator_queue_eligible": cand.operator_queue_eligible,
+                    "line_item_count": sig.line_item_count if sig else 0,
+                    "procurement_context": sig.procurement_context if sig else "",
                 }
-                eligible = _operator_eligible(
-                    sig, link_auto=linked, has_ambiguity=has_ambiguity
-                )
-                if (
-                    not linked
-                    and sig["procurement_context"] == "historical_tender"
-                    and not has_ambiguity
-                    and reason == (result.reason_code or REASON_BUYER_ACCOUNT_NOT_FOUND)
-                ):
-                    eligible = False
-                enrichment_candidate_total += 1
-                if eligible:
-                    operator_queue_eligible_total += 1
-                enrichment_rows.append(
-                    {
-                        **sample,
-                        "reason_code": reason,
-                        "recommended_research_field": research,
-                        "priority": priority,
-                        "operator_queue_eligible": int(eligible),
-                        "line_item_count": sig["line_item_count"],
-                    }
-                )
+            )
 
         route_dist = []
         for route, n in sorted(route_counter.items(), key=lambda kv: (-kv[1], kv[0])):
@@ -963,8 +916,8 @@ def run_procurement_link_audit(
             key=lambda r: (
                 -int(r["operator_queue_eligible"]),
                 -int(r["priority"]),
-                r["route"],
-                r["tender_token"],
+                r.get("route") or "",
+                r.get("tender_token") or "",
             )
         )
         eligible_sample = [r for r in enrichment_rows if r["operator_queue_eligible"]][:500]
@@ -979,19 +932,6 @@ def run_procurement_link_audit(
             for k, v in sorted(status_counter.items(), key=lambda kv: (-kv[1], kv[0]))
         ]
         _write_csv(output_dir / "procurement_status_coverage.csv", status_rows)
-
-        fp = procurement_source_fingerprint(source_line_payloads=source_line_payloads)
-        id_meta = {}
-        if _table_exists(conn, "commercial_identity_build_meta"):
-            id_meta = {
-                r["meta_key"]: r["meta_value"]
-                for r in conn.execute("SELECT meta_key, meta_value FROM commercial_identity_build_meta")
-            }
-        build_plan = procurement_build_plan_fingerprint(
-            source_fingerprint=fp["fingerprint"],
-            identity_fingerprint=id_meta.get("identity_fingerprint"),
-            as_of_date=as_of_date.isoformat(),
-        )
         fp_out = {
             "audit_name": AUDIT_NAME,
             "audit_version": AUDIT_VERSION,
