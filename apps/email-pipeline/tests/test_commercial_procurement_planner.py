@@ -12,7 +12,6 @@ from pathlib import Path
 import pytest
 
 from origenlab_email_pipeline.commercial_procurement.builder import (
-    ApplyNotImplementedError,
     connect_production_readonly,
     run_procurement_dry_run,
 )
@@ -455,7 +454,7 @@ def test_nested_chilecompra_extraction() -> None:
     assert status["close_date"] == "2026-08-15"
     buyer = buyer_fields_from_raw_and_lead(org_name=None, domain=None, email=None, raw=raw)
     assert buyer["buyer_display"] == "Hospital Nested"
-    assert buyer["region_from_raw"] == "RM"
+    assert buyer["region"] == "RM"
     # Top-level wins over nested
     raw2 = dict(raw)
     raw2["FechaCierre"] = "2026-01-01"
@@ -526,7 +525,7 @@ def _fixture_db(tmp_path: Path) -> tuple[Path, str, int]:
     )
     for k, v in [
         ("schema_version", "commercial_identity_v1"),
-        ("identity_fingerprint", "abc123"),
+        ("identity_fingerprint", "a" * 64),
         ("identity_fingerprint_algorithm_version", "identity_fp_v2"),
         ("run_context", "local_fixture"),
     ]:
@@ -569,13 +568,42 @@ def test_dry_run_cli_path_readonly_and_no_pr2_pr3_mutation(tmp_path: Path) -> No
     assert conn.execute("SELECT COUNT(*) FROM commercial_opportunity").fetchone()[0] == opp_n
     conn.close()
 
-    with pytest.raises(ApplyNotImplementedError):
+    # --apply via dry-run helper is refused; use run_procurement_build + fixture capability.
+    from origenlab_email_pipeline.commercial_procurement.builder import (
+        UnsafeInvocationError,
+        run_procurement_build,
+    )
+
+    with pytest.raises(UnsafeInvocationError):
         run_procurement_dry_run(
             sqlite_path=db,
             as_of_date="2026-07-30",
             run_context="local_fixture",
             apply=True,
         )
+
+    applied = run_procurement_build(
+        sqlite_path=db,
+        as_of_date="2026-07-30",
+        run_context="local_fixture",
+        apply=True,
+        allow_fixture_apply=True,
+    )
+    assert applied.summary["applied"] is True
+    assert applied.summary["signal_count"] == 1
+    conn = sqlite3.connect(db)
+    assert (
+        conn.execute("SELECT COUNT(*) FROM commercial_procurement_signal").fetchone()[0]
+        == 1
+    )
+    assert (
+        conn.execute(
+            "SELECT meta_value FROM commercial_identity_build_meta WHERE meta_key='identity_fingerprint'"
+        ).fetchone()[0]
+        == id_fp
+    )
+    assert conn.execute("SELECT COUNT(*) FROM commercial_opportunity").fetchone()[0] == opp_n
+    conn.close()
 
 
 def test_pinned_read_transaction_and_same_connection(tmp_path: Path) -> None:
@@ -690,3 +718,128 @@ def test_production_access_remains_readonly(tmp_path: Path) -> None:
 def test_semantic_digest_helper_algorithm() -> None:
     plan = _plan([_line()])
     assert semantic_plan_digest(table_rows=plan.semantic_table_rows()) == plan.semantic_plan_digest
+
+
+def test_field_plane_conflict_withholds_domain_routes() -> None:
+    from origenlab_email_pipeline.commercial_procurement.constants import (
+        FIELD_ORIGIN_CONFLICT,
+        REASON_FIELD_PLANE_CONFLICT,
+        ROUTE_EXACT_INSTITUTIONAL_DOMAIN,
+        ROUTE_EXPLICIT_EMAIL_DOMAIN,
+    )
+
+    line = _line(
+        buyer_domain="hrs.cl",
+        origin_buyer_domain=FIELD_ORIGIN_CONFLICT,
+        resolution_buyer_domain=None,
+        lead_buyer_domain="hrs.cl",
+        raw_buyer_domain="other.cl",
+        display_policy="prefer_lead_then_raw",
+    )
+    plan = _plan([line])
+    assert plan.resolutions[0].link_route != ROUTE_EXACT_INSTITUTIONAL_DOMAIN
+    assert plan.resolutions[0].link_route != ROUTE_EXPLICIT_EMAIL_DOMAIN
+    assert plan.signals[0].review_status == "needs_review"
+    plane = [c for c in plan.conflicts if c.reason_code == REASON_FIELD_PLANE_CONFLICT]
+    assert len(plane) >= 1
+    detail = json.loads(plane[0].detail_json or "{}")
+    assert detail["field"] == "buyer_domain"
+    assert "raw_value_hash" in detail and "lead_value_hash" in detail
+    assert "@" not in (plane[0].detail_json or "")
+
+
+def test_field_plane_conflict_withholds_name_routes() -> None:
+    from origenlab_email_pipeline.commercial_procurement.constants import (
+        FIELD_ORIGIN_CONFLICT,
+        REASON_FIELD_PLANE_CONFLICT,
+        RESOLUTION_UNLINKED,
+        ROUTE_EXACT_ALIAS,
+        ROUTE_EXACT_CANONICAL_NAME,
+    )
+
+    line = _line(
+        buyer_domain=None,
+        buyer_name_norm="hospital regional sur",
+        origin_buyer_display=FIELD_ORIGIN_CONFLICT,
+        resolution_buyer_name_norm=None,
+        lead_buyer_display="Hospital Regional Sur",
+        raw_buyer_display="Other Hospital",
+    )
+    plan = _plan([line])
+    assert plan.resolutions[0].link_route not in {
+        ROUTE_EXACT_CANONICAL_NAME,
+        ROUTE_EXACT_ALIAS,
+    }
+    assert plan.resolutions[0].resolution_status == RESOLUTION_UNLINKED or (
+        plan.resolutions[0].link_route
+        not in {ROUTE_EXACT_CANONICAL_NAME, ROUTE_EXACT_ALIAS}
+    )
+    assert any(c.reason_code == REASON_FIELD_PLANE_CONFLICT for c in plan.conflicts)
+
+
+def test_field_plane_email_conflict_nulls_resolution_email() -> None:
+    from origenlab_email_pipeline.commercial_procurement.constants import (
+        FIELD_ORIGIN_CONFLICT,
+        REASON_FIELD_PLANE_CONFLICT,
+    )
+
+    line = _line(
+        email_norm="a@hrs.cl",
+        email_domain="hrs.cl",
+        origin_contact_email=FIELD_ORIGIN_CONFLICT,
+        origin_email_domain=FIELD_ORIGIN_CONFLICT,
+        resolution_contact_email=None,
+        resolution_email_domain=None,
+        lead_email_norm="a@hrs.cl",
+        raw_email_norm="b@hrs.cl",
+        buyer_domain=None,
+    )
+    plan = _plan([line])
+    assert plan.metrics["field_plane_conflict_distribution"].get("contact_email") == 1
+    detail = json.loads(
+        next(c for c in plan.conflicts if c.reason_code == REASON_FIELD_PLANE_CONFLICT).detail_json
+    )
+    assert "a@hrs.cl" not in json.dumps(detail)
+
+
+def test_both_equal_remains_link_eligible() -> None:
+    from origenlab_email_pipeline.commercial_procurement.constants import (
+        FIELD_ORIGIN_BOTH_EQUAL,
+        RESOLUTION_LINKED,
+        ROUTE_EXACT_INSTITUTIONAL_DOMAIN,
+    )
+
+    line = _line(
+        buyer_domain="hrs.cl",
+        origin_buyer_domain=FIELD_ORIGIN_BOTH_EQUAL,
+        resolution_buyer_domain="hrs.cl",
+        lead_buyer_domain="hrs.cl",
+        raw_buyer_domain="hrs.cl",
+    )
+    plan = _plan([line])
+    assert plan.resolutions[0].resolution_status == RESOLUTION_LINKED
+    assert plan.resolutions[0].link_route == ROUTE_EXACT_INSTITUTIONAL_DOMAIN
+
+
+def test_plane_conflict_changes_fingerprints_and_is_order_stable() -> None:
+    from copy import deepcopy
+    from origenlab_email_pipeline.commercial_procurement.constants import FIELD_ORIGIN_CONFLICT
+
+    base = _line()
+    conflicted = _line(
+        source_record_id="1",
+        buyer_domain="hrs.cl",
+        origin_buyer_domain=FIELD_ORIGIN_CONFLICT,
+        resolution_buyer_domain=None,
+        lead_buyer_domain="hrs.cl",
+        raw_buyer_domain="x.cl",
+    )
+    p_ok = _plan([base])
+    p_bad = _plan([conflicted])
+    assert p_ok.source_fingerprint != p_bad.source_fingerprint
+    assert p_ok.build_plan_fingerprint != p_bad.build_plan_fingerprint
+    assert p_ok.semantic_plan_digest != p_bad.semantic_plan_digest
+    a = _plan([conflicted, _line(source_record_id="2", tender_key="T-2")])
+    b = _plan([_line(source_record_id="2", tender_key="T-2"), deepcopy(conflicted)])
+    assert a.semantic_plan_digest == b.semantic_plan_digest
+    assert a.source_fingerprint == b.source_fingerprint

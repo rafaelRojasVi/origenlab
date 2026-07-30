@@ -17,6 +17,10 @@ from origenlab_email_pipeline.commercial_identity.normalize import (
 )
 from origenlab_email_pipeline.org_normalize import normalize_domain
 from origenlab_email_pipeline.commercial_procurement.constants import (
+    FIELD_ORIGIN_ABSENT,
+    FIELD_ORIGIN_BOTH_EQUAL,
+    FIELD_ORIGIN_CONFLICT,
+    FIELD_ORIGIN_RAW,
     MARKETPLACE_DOMAINS,
     RAW_KEY_INVENTORY_LABELS,
     TENDER_KEY_CODIGO_EXTERNO,
@@ -217,7 +221,7 @@ def is_verified_tender_key_kind(kind: str | None) -> bool:
     return (kind or "") in VERIFIED_TENDER_KEY_KINDS
 
 
-def extract_status_fields(raw: dict[str, Any] | None) -> dict[str, str | None]:
+def extract_status_fields(raw: dict[str, Any] | None) -> dict[str, Any]:
     if not raw:
         return {
             "status_code": None,
@@ -225,6 +229,11 @@ def extract_status_fields(raw: dict[str, Any] | None) -> dict[str, str | None]:
             "close_date": None,
             "publication_date": None,
             "title": None,
+            "origin_status_code": FIELD_ORIGIN_ABSENT,
+            "origin_status_name": FIELD_ORIGIN_ABSENT,
+            "origin_close_date": FIELD_ORIGIN_ABSENT,
+            "origin_publication_date": FIELD_ORIGIN_ABSENT,
+            "origin_title": FIELD_ORIGIN_ABSENT,
         }
     code = (
         pick_first(raw, "CodigoEstado", "codigo_estado", "chilecompra_status_code", "EstadoCodigo")
@@ -262,6 +271,11 @@ def extract_status_fields(raw: dict[str, Any] | None) -> dict[str, str | None]:
         "close_date": close,
         "publication_date": pub,
         "title": title,
+        "origin_status_code": FIELD_ORIGIN_RAW if code else FIELD_ORIGIN_ABSENT,
+        "origin_status_name": FIELD_ORIGIN_RAW if name else FIELD_ORIGIN_ABSENT,
+        "origin_close_date": FIELD_ORIGIN_RAW if close else FIELD_ORIGIN_ABSENT,
+        "origin_publication_date": FIELD_ORIGIN_RAW if pub else FIELD_ORIGIN_ABSENT,
+        "origin_title": FIELD_ORIGIN_RAW if title else FIELD_ORIGIN_ABSENT,
     }
 
 
@@ -270,45 +284,130 @@ def buyer_fields_from_raw_and_lead(
     org_name: str | None,
     domain: str | None,
     email: str | None,
+    region: str | None = None,
     raw: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    from origenlab_email_pipeline.commercial_procurement.constants import (
+        DISPLAY_POLICY_PREFER_LEAD_THEN_RAW,
+    )
+    from origenlab_email_pipeline.commercial_procurement.provenance import resolve_field_origin
+
     raw = raw or {}
-    buyer_display = (org_name or "").strip() or pick_first(
+    raw_buyer = pick_first(
         raw,
         "NombreOrganismo",
         "NombreUnidad",
         "NombreComprador",
+    ) or pick_first_nested(
+        raw,
+        ("Comprador", "NombreOrganismo"),
+        ("Comprador", "NombreUnidad"),
+        ("OrganismoComprador", "NombreOrganismo"),
+        ("OrganismoComprador", "NombreUnidad"),
     )
-    if not buyer_display:
-        # Nested institution names — never stringify Comprador/OrganismoComprador dicts.
-        buyer_display = pick_first_nested(
-            raw,
-            ("Comprador", "NombreOrganismo"),
-            ("Comprador", "NombreUnidad"),
-            ("OrganismoComprador", "NombreOrganismo"),
-            ("OrganismoComprador", "NombreUnidad"),
-        )
-    buyer_norm = safe_org_normalized(buyer_display)
-    email_n = extract_email(email) or extract_email(pick_first(raw, "Email", "Correo", "Mail", "email"))
-    email_dom = domain_from_email(email_n) if email_n else None
-    explicit_dom = sanitize_buyer_domain(domain) or sanitize_buyer_domain(
+    lead_buyer = (org_name or "").strip() or None
+    raw_buyer = raw_buyer or None
+    selected_buyer, origin_buyer = resolve_field_origin(
+        lead_buyer,
+        raw_buyer,
+        normalize=lambda s: safe_org_normalized(s) or s.lower(),
+    )
+    display_policy = None
+    if origin_buyer == FIELD_ORIGIN_CONFLICT:
+        # Display-only: prefer lead then raw. Never used for auto-link.
+        buyer_display = lead_buyer or raw_buyer
+        display_policy = DISPLAY_POLICY_PREFER_LEAD_THEN_RAW
+        resolution_buyer_name_norm = None
+    elif origin_buyer == FIELD_ORIGIN_ABSENT:
+        buyer_display = None
+        resolution_buyer_name_norm = None
+    else:
+        buyer_display = selected_buyer
+        resolution_buyer_name_norm = safe_org_normalized(buyer_display)
+
+    lead_email = extract_email(email)
+    raw_email = extract_email(pick_first(raw, "Email", "Correo", "Mail", "email"))
+    selected_email, origin_email = resolve_field_origin(lead_email, raw_email)
+    if origin_email == FIELD_ORIGIN_CONFLICT:
+        email_n = lead_email or raw_email
+        display_policy = display_policy or DISPLAY_POLICY_PREFER_LEAD_THEN_RAW
+        resolution_contact_email = None
+        resolution_email_domain = None
+        email_dom = domain_from_email(email_n) if email_n else None
+        origin_email_domain = FIELD_ORIGIN_CONFLICT
+    elif origin_email == FIELD_ORIGIN_ABSENT:
+        email_n = None
+        email_dom = None
+        resolution_contact_email = None
+        resolution_email_domain = None
+        origin_email_domain = FIELD_ORIGIN_ABSENT
+    else:
+        email_n = selected_email
+        email_dom = domain_from_email(email_n) if email_n else None
+        resolution_contact_email = email_n
+        resolution_email_domain = email_dom
+        if origin_email == FIELD_ORIGIN_BOTH_EQUAL:
+            origin_email_domain = FIELD_ORIGIN_BOTH_EQUAL if email_dom else FIELD_ORIGIN_ABSENT
+        else:
+            origin_email_domain = origin_email if email_dom else FIELD_ORIGIN_ABSENT
+
+    lead_dom = sanitize_buyer_domain(domain)
+    raw_dom = sanitize_buyer_domain(
         pick_first(raw, "Dominio", "Website", "SitioWeb", "domain")
     )
-    region_from_raw = pick_first(raw, "Region", "region") or pick_first_nested(
+    selected_domain, origin_domain = resolve_field_origin(lead_dom, raw_dom)
+    if origin_domain == FIELD_ORIGIN_CONFLICT:
+        buyer_domain = lead_dom or raw_dom
+        display_policy = display_policy or DISPLAY_POLICY_PREFER_LEAD_THEN_RAW
+        resolution_buyer_domain = None
+    elif origin_domain == FIELD_ORIGIN_ABSENT:
+        buyer_domain = None
+        resolution_buyer_domain = None
+    else:
+        buyer_domain = selected_domain
+        resolution_buyer_domain = buyer_domain
+
+    raw_region = pick_first(raw, "Region", "region") or pick_first_nested(
         raw,
         ("Comprador", "Region"),
         ("Comprador", "RegionUnidad"),
         ("OrganismoComprador", "Region"),
         ("OrganismoComprador", "RegionUnidad"),
     )
+    region_val, origin_region = resolve_field_origin(region, raw_region or None)
+    if origin_region == FIELD_ORIGIN_CONFLICT:
+        region_val = (region or "").strip() or raw_region or None
+        display_policy = display_policy or DISPLAY_POLICY_PREFER_LEAD_THEN_RAW
+    elif origin_region == FIELD_ORIGIN_ABSENT:
+        region_val = None
+
+    buyer_norm = safe_org_normalized(buyer_display)
     return {
         "buyer_display": buyer_display or None,
         "buyer_name_norm": buyer_norm,
         "email_norm": email_n,
         "email_domain": email_dom,
-        "buyer_domain": explicit_dom,
+        "buyer_domain": buyer_domain,
+        "region": region_val,
         "weak_public_unit_name": is_weak_public_unit_name(buyer_norm, buyer_display),
-        "region_from_raw": region_from_raw or None,
+        "origin_buyer_display": origin_buyer,
+        "origin_buyer_domain": origin_domain,
+        "origin_contact_email": origin_email,
+        "origin_email_domain": origin_email_domain,
+        "origin_region": origin_region,
+        "resolution_buyer_name_norm": resolution_buyer_name_norm,
+        "resolution_buyer_domain": resolution_buyer_domain,
+        "resolution_contact_email": resolution_contact_email,
+        "resolution_email_domain": resolution_email_domain,
+        "display_policy": display_policy,
+        "lead_buyer_display": lead_buyer,
+        "raw_buyer_display": raw_buyer,
+        "lead_buyer_domain": lead_dom,
+        "raw_buyer_domain": raw_dom,
+        "lead_email_norm": lead_email,
+        "raw_email_norm": raw_email,
+        "lead_region": (region or "").strip() or None,
+        "raw_region": raw_region or None,
     }
 
 

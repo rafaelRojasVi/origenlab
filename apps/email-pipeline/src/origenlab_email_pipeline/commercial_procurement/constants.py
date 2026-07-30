@@ -141,6 +141,7 @@ REASON_TENDER_STATUS_UNKNOWN: Final = "tender_status_unknown"
 REASON_TENDER_DATES_MISSING_OR_MALFORMED: Final = "tender_dates_missing_or_malformed"
 REASON_DUPLICATE_SOURCE_RECORDS_NEED_REVIEW: Final = "duplicate_source_records_need_review"
 REASON_LINE_FIELD_CONFLICT: Final = "line_field_conflict_across_tender_lines"
+REASON_FIELD_PLANE_CONFLICT: Final = "source_field_plane_conflict"
 REASON_LINE_ITEMS_COALESCED: Final = "line_items_coalesced_to_tender"
 REASON_WEAK_PUBLIC_UNIT_NAME: Final = "weak_generic_public_unit_name"
 
@@ -166,7 +167,23 @@ PROCUREMENT_SEMANTIC_PLAN_DIGEST_ALGORITHM: Final = "procurement_semantic_plan_d
 PROCUREMENT_MATERIALIZATION_DIGEST_ALGORITHM: Final = (
     "procurement_materialization_digest_v1"
 )
-RESOLVER_BUILD_CONTRACT_VERSION: Final = "procurement_resolver_v3"
+RESOLVER_BUILD_CONTRACT_VERSION: Final = "procurement_resolver_v5"
+
+# Field-level source provenance markers (persisted evidence / fingerprints).
+FIELD_ORIGIN_RAW: Final = "external_leads_raw"
+FIELD_ORIGIN_LEAD: Final = "lead_master"
+FIELD_ORIGIN_BOTH_EQUAL: Final = "both_equal"
+FIELD_ORIGIN_ABSENT: Final = "absent"
+FIELD_ORIGIN_CONFLICT: Final = "conflict"
+FIELD_ORIGIN_VALUES: Final = frozenset(
+    {
+        FIELD_ORIGIN_RAW,
+        FIELD_ORIGIN_LEAD,
+        FIELD_ORIGIN_BOTH_EQUAL,
+        FIELD_ORIGIN_ABSENT,
+        FIELD_ORIGIN_CONFLICT,
+    }
+)
 
 # Evidence subject kinds (fail-closed validation enum).
 EVIDENCE_SUBJECT_KINDS: Final = frozenset(
@@ -178,8 +195,22 @@ EVIDENCE_SUBJECT_KINDS: Final = frozenset(
         "unresolved_source",
         "line_conflict",
         "resolution_conflict",
+        "field_plane_conflict",
     }
 )
+
+# Identity-bearing fields that must not auto-link on plane conflict.
+IDENTITY_PLANE_CONFLICT_FIELDS: Final = frozenset(
+    {
+        "buyer_display",
+        "buyer_domain",
+        "contact_email",
+        "email_domain",
+    }
+)
+
+# Display policy when origin=conflict (operator readability only; not for auto-link).
+DISPLAY_POLICY_PREFER_LEAD_THEN_RAW: Final = "prefer_lead_then_raw"
 
 SEMANTIC_PLAN_TABLES: Final = (
     "commercial_procurement_signal",
@@ -194,6 +225,25 @@ BUILD_CONTRACT: Final = "procurement_account_resolution_read_model_v1"
 SCHEMA_VERSION_PROPOSED: Final = SCHEMA_VERSION
 BUILD_CONTRACT_PROPOSED: Final = BUILD_CONTRACT
 TRANSACTION_CONTRACT: Final = "B_schema_additive_data_atomic"
+
+# Clear order (children first). Insert order is reverse of parents-first below.
+REBUILDABLE_DATA_TABLES: Final = (
+    "commercial_procurement_evidence",
+    "commercial_procurement_conflict",
+    "commercial_procurement_enrichment_candidate",
+    "commercial_procurement_account_resolution",
+    "commercial_procurement_signal",
+    "commercial_procurement_build_meta",
+)
+PROCUREMENT_TABLE_INSERT_ORDER: Final = (
+    "commercial_procurement_signal",
+    "commercial_procurement_account_resolution",
+    "commercial_procurement_evidence",
+    "commercial_procurement_conflict",
+    "commercial_procurement_enrichment_candidate",
+    "commercial_procurement_build_meta",
+)
+BUSY_TIMEOUT_MS: Final = 5000
 REQUIRED_IDENTITY_FINGERPRINT_ALGORITHM: Final = "identity_fp_v2"
 AS_OF_TIMEZONE: Final = "UTC_calendar_date"
 AS_OF_INTERPRETATION: Final = (

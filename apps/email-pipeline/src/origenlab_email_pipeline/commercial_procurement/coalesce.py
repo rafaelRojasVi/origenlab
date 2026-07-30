@@ -34,6 +34,14 @@ _CONFLICT_FIELDS = (
     "close_date",
 )
 
+# Resolver-safe identity fields (NULL when plane-conflicted).
+_RESOLUTION_FIELDS = (
+    "resolution_buyer_name_norm",
+    "resolution_buyer_domain",
+    "resolution_contact_email",
+    "resolution_email_domain",
+)
+
 
 def _nonzero_values(lines: list[dict[str, Any]], field: str) -> list[str]:
     out: list[str] = []
@@ -132,6 +140,13 @@ def coalesce_verified_tender_lines(
             conflicts.append(
                 _conflict_detail(field=field, values=values, source_ids=source_ids_unique)
             )
+            canonical[field] = None
+        else:
+            canonical[field] = _pick_deterministic(values)
+
+    for field in _RESOLUTION_FIELDS:
+        values = _nonzero_values(ordered, field)
+        if len(values) > 1:
             canonical[field] = None
         else:
             canonical[field] = _pick_deterministic(values)

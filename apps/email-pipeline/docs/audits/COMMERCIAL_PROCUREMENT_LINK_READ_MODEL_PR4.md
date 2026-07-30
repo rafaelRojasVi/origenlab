@@ -1,10 +1,10 @@
 # Commercial Procurement Link Read Model — PR4
 
-Status: final audit/design hardening checkpoint (no production persistence yet)
+Status: persistence implemented (fixture/apply gated); **no production --apply executed**
 Owner: email-pipeline-maintainers
 Date: 2026-07-30
-Branch: `feat/commercial-procurement-linking-pr4`
-Starting main: `d3ce0ae366a680f0ce77d9cecca1b7a10b37d99a`
+Branch: `feat/commercial-procurement-persistence-pr4`
+Starting merge (planner): `159e469188e492d25d0a6f625fcb1d6f4a67f53b`
 
 Related:
 
@@ -276,35 +276,44 @@ Priority uses evidence completeness only. No next-action / send-readiness fields
 
 ---
 
-## 9. Fingerprint and apply gates (proposed)
+## 9. Fingerprint and apply gates
 
 Three payload levels:
 
 | Level | Contents |
 |-------|----------|
-| A. Source-line semantic payload | One row per joined ChileCompra source outcome (verified, unresolved, raw-only, lead-only, malformed). Excludes `lead_id`, build timestamps, `as_of_date`, identity FP, derived `procurement_context`, resolver version. Contact emails enter as hashes only. |
+| A. Source-line semantic payload | One row per joined ChileCompra source outcome (verified, unresolved, raw-only, lead-only, malformed). Includes **field-level provenance markers** (`external_leads_raw` / `lead_master` / `both_equal` / `absent` / `conflict`). Excludes `lead_id`, build timestamps, `as_of_date`, identity FP, derived `procurement_context`, resolver version. Contact emails enter as hashes only. |
 | B. `procurement_source_fp_v1` | Order-independent hash of **all** Level-A payloads (component hashes for verified vs unresolved). |
-| C. `procurement_build_plan_fp_v1` | Source FP + persisted `identity_fp_v2` + `as_of_date` + resolver version. |
+| C. `procurement_build_plan_fp_v1` | Source FP + persisted `identity_fp_v2` + `as_of_date` + resolver version (`procurement_resolver_v4`). |
 
 | Gate | Rule |
 |------|------|
-| Stale plan | Recompute FPs inside write txn; mismatch → refuse/rollback |
+| Schema | Tables absent → additive first-run; present+compatible → continue; present+incompatible → refuse (exit 4); no silent ALTER |
+| Stale plan | Expected approvals vs preflight; preflight vs live `BEGIN IMMEDIATE` plan; readback semantic digest vs live — mismatch → exit 5, rollback, **no DELETE** until checks pass |
+| Production apply | `--run-context production_apply` + `--apply` + four `--expected-*` values from an approved dry-run |
 | CLI | Explicit `--sqlite-path`; `--as-of-date`; dry-run default; `--apply`; `--run-context` |
-| Immutability | Assert deals, identity data, opportunity stages unchanged by PR4 apply |
+| Immutability | Assert deals, identity data, opportunity stages, lead/raw sources unchanged by PR4 apply |
 | PR3 | Must not require PR3 to link; must verify no stage mutation |
+| Transaction | `B_schema_additive_data_atomic`: schema ensure outside data txn; `foreign_keys=ON`; `BEGIN IMMEDIATE`; clear children-first; insert parents-first; validate; commit |
+
+Exit codes: `0` success; `2` path/mode; `3` identity; `4` schema; `5` stale plan; `6` unsafe invocation; `7` plan/persistence validation.
+
+Resolver: `procurement_resolver_v5` (resolver-safe identity fields withheld on plane conflict; v4 added provenance markers).
+
+CLI `--apply` requires `--run-context production_apply` and four 64-lowercase-hex `--expected-*` digests. Fixture apply is test-only via `allow_fixture_apply=True` on `run_procurement_build` (not exposed on CLI). `run_procurement_dry_run` is always read-only.
 
 ---
 
-## 10. Validation metrics (future apply)
+## 10. Validation metrics (apply)
 
 - Signal count == coalesced **verified** tender keys
 - Unresolved keys recorded as conflicts, not signals
 - Link/conflict/candidate counts match dry-run plan
-- FK check empty
-- Source + build-plan + identity fingerprints recorded in build_meta
-- Explicit redacted samples for each route
+- FK check empty; every linked/candidate account exists in PR2 (logical, no physical FK)
+- Source + build-plan + identity fingerprints + semantic/materialization digests in build_meta
 - No PR3 stage distribution drift
 - No Gmail, Postgres, suppression, outreach, classification, or deal mutation
+- **No production `--apply` in this PR** — production checkpoint is dry-run only
 
 ---
 
@@ -325,28 +334,27 @@ Three payload levels:
 - Send path / ready-to-contact
 - PR5 product-interest
 - Fuzzy or LLM matching
-- Production `--apply` of `commercial_procurement_*` in this checkpoint
+- **First production `--apply` of `commercial_procurement_*`** (separate authorization)
 - Mutable operator lifecycle state in rebuildable enrichment tables
 
 ---
 
-## 13. Implementation plan (next commits / PRs)
+## 13. Implementation plan
 
 1. ~~Read-only source audit + synthetic tests + initial contract~~
 2. ~~Corrected tender-key grain, linking, fingerprints, Option B queue~~
-3. ~~Final design hardening: source-line FP, account_resolution, unresolved provenance~~ (this checkpoint)
-4. Pure resolver + stable IDs (still no production apply)
-5. SQLite DDL + persist (dry-run default CLI)
-6. Focused + full tests; operator dry-run on production
-7. Separate Gate authorization for first `--apply`
-
-PR #417 remains **audit/design only** until a future implementation PR.
+3. ~~Final design hardening: source-line FP, account_resolution, unresolved provenance~~
+4. ~~Pure resolver + stable IDs (planner dry-run; PR #418)~~
+5. ~~SQLite DDL + persist (dry-run default CLI; this PR)~~
+6. ~~Focused + full tests; operator dry-run on production~~
+7. Separate Gate authorization for first production `--apply`
 
 ---
 
-## 14. Safety confirmation (checkpoint)
+## 14. Safety confirmation (this PR)
 
-- Production SQLite opened read-only only
+- Production SQLite opened **read-only** for the dry-run checkpoint only
+- No production `--apply`; no `commercial_procurement_*` tables created in production by this PR
 - No PR2 or PR3 `--apply`
 - No mutation of identity, opportunity, deal, suppression, outreach, or classification records
 - No Gmail, Postgres, or dashboard behaviour change

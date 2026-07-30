@@ -1,30 +1,24 @@
 #!/usr/bin/env python3
 # -----------------------------------------------------------------------------
-# SAFETY: dry-run only. Opens production SQLite with mode=ro + query_only=ON.
-# Does not mutate SQLite, Gmail, or Postgres. --apply is refused in this PR.
+# SAFETY: default is dry-run (mode=ro + query_only). CLI --apply is permitted
+# only with --run-context production_apply and four approved --expected-* digests.
+# This PR does not run production --apply. Never mutate Gmail or Postgres.
 # See docs/audits/COMMERCIAL_PROCUREMENT_LINK_READ_MODEL_PR4.md.
 # -----------------------------------------------------------------------------
-"""Deterministic commercial procurement planner dry-run (PR4).
+"""Deterministic commercial procurement planner / apply (PR4).
 
-Produces the complete immutable build plan a later persistence PR would insert.
-Does not create commercial_procurement_* tables in production.
+Default dry-run produces the immutable build plan. CLI --apply requires
+production_apply + expected digests (fixture apply is test-only via library).
 
 Exit codes::
 
   0  success
   2  path / run-context / mode validation
   3  missing or mismatched identity snapshot
-  4  incompatible source schema
-  6  --apply refused / not implemented
-  7  temporary schema validation failure
-
-Example::
-
-  uv run python scripts/commercial/build_commercial_procurement_read_model.py \\
-    --sqlite-path /explicit/path/to/emails.sqlite \\
-    --as-of-date 2026-07-30 \\
-    --run-context production_dry_run \\
-    --json-summary
+  4  source or target schema incompatibility
+  5  stale build plan / expected approval mismatch
+  6  unsupported or unsafe invocation
+  7  plan / persistence validation failure
 """
 
 from __future__ import annotations
@@ -40,18 +34,22 @@ if str(_ROOT / "src") not in sys.path:
 
 from origenlab_email_pipeline.commercial_identity.constants import (  # noqa: E402
     RUN_CONTEXT_LOCAL_FIXTURE,
+    RUN_CONTEXT_PRODUCTION_APPLY,
     RUN_CONTEXT_PRODUCTION_DRY_RUN,
     VALID_RUN_CONTEXTS,
 )
 from origenlab_email_pipeline.commercial_procurement import (  # noqa: E402
-    ApplyNotImplementedError,
     CommercialIdentityPathError,
     IdentityGateError,
+    PersistenceValidationError,
     PlanValidationError,
+    SchemaIncompatibilityError,
     SourceSchemaError,
+    StaleProcurementBuildPlanError,
     TempSchemaValidationError,
+    UnsafeInvocationError,
     require_explicit_sqlite_path,
-    run_procurement_dry_run,
+    run_procurement_build,
 )
 
 
@@ -72,12 +70,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--run-context",
-        choices=sorted(VALID_RUN_CONTEXTS - {"production_apply"}),
+        choices=sorted(VALID_RUN_CONTEXTS),
         default=RUN_CONTEXT_LOCAL_FIXTURE,
         help=(
-            "Orchestrator-supplied run context (metadata only). "
+            "Orchestrator-supplied run context. "
             f"Default: {RUN_CONTEXT_LOCAL_FIXTURE}. "
-            f"Production checkpoint: {RUN_CONTEXT_PRODUCTION_DRY_RUN}."
+            f"Dry-run production checkpoint: {RUN_CONTEXT_PRODUCTION_DRY_RUN}. "
+            f"CLI --apply requires {RUN_CONTEXT_PRODUCTION_APPLY}."
         ),
     )
     parser.add_argument(
@@ -88,7 +87,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--apply",
         action="store_true",
-        help="Not implemented in this PR — always refused.",
+        help=(
+            "Persist rebuildable commercial_procurement_* tables. "
+            "CLI requires --run-context production_apply and four --expected-* digests."
+        ),
+    )
+    parser.add_argument(
+        "--expected-source-fingerprint",
+        default=None,
+        help="Required for production_apply: 64 lowercase hex source fingerprint.",
+    )
+    parser.add_argument(
+        "--expected-identity-fingerprint",
+        default=None,
+        help="Required for production_apply: 64 lowercase hex identity fingerprint.",
+    )
+    parser.add_argument(
+        "--expected-build-plan-fingerprint",
+        default=None,
+        help="Required for production_apply: 64 lowercase hex build-plan fingerprint.",
+    )
+    parser.add_argument(
+        "--expected-semantic-plan-digest",
+        default=None,
+        help="Required for production_apply: 64 lowercase hex semantic plan digest.",
     )
     return parser
 
@@ -98,15 +120,39 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         sqlite_path = require_explicit_sqlite_path(args.sqlite_path)
-        result = run_procurement_dry_run(
+        if args.apply and args.run_context != RUN_CONTEXT_PRODUCTION_APPLY:
+            raise UnsafeInvocationError(
+                "CLI --apply requires --run-context production_apply "
+                "(fixture apply is test-only via allow_fixture_apply=True)"
+            )
+        if (not args.apply) and args.run_context == RUN_CONTEXT_PRODUCTION_APPLY:
+            raise CommercialIdentityPathError(
+                "run-context production_apply is valid only with --apply"
+            )
+        if args.apply and args.run_context == RUN_CONTEXT_PRODUCTION_DRY_RUN:
+            raise CommercialIdentityPathError(
+                "run-context production_dry_run is valid only without --apply"
+            )
+        result = run_procurement_build(
             sqlite_path=sqlite_path,
             as_of_date=args.as_of_date,
             run_context=args.run_context,
             apply=bool(args.apply),
+            expected_source_fingerprint=args.expected_source_fingerprint,
+            expected_identity_fingerprint=args.expected_identity_fingerprint,
+            expected_build_plan_fingerprint=args.expected_build_plan_fingerprint,
+            expected_semantic_plan_digest=args.expected_semantic_plan_digest,
+            allow_fixture_apply=False,
         )
-    except ApplyNotImplementedError as exc:
+    except UnsafeInvocationError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 6
+    except StaleProcurementBuildPlanError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 5
+    except SchemaIncompatibilityError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 4
     except CommercialIdentityPathError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -116,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     except SourceSchemaError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 4
-    except (PlanValidationError, TempSchemaValidationError) as exc:
+    except (PlanValidationError, TempSchemaValidationError, PersistenceValidationError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 7
 
@@ -141,7 +187,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"evidence_count={summary['evidence_count']}")
         print(f"resolution_distribution={summary['resolution_distribution']}")
         print(f"route_distribution={summary['route_distribution']}")
+        print(
+            "field_plane_conflict_distribution="
+            f"{summary.get('field_plane_conflict_distribution')}"
+        )
         print(f"operator_queue_eligible_count={summary['operator_queue_eligible_count']}")
+        if summary.get("applied"):
+            print(f"materialized_at_utc={summary.get('materialized_at_utc')}")
+            print(f"written_rows={summary.get('written_rows')}")
+            print(f"stale_plan_recheck_status={summary.get('stale_plan_recheck_status')}")
     return 0
 
 
