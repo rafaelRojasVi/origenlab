@@ -2236,7 +2236,9 @@ def test_client_statuses_count_as_client_commitment() -> None:
     ]
     res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=[], payments=[])
     assert res.opportunities[0].canonical_stage == "fulfillment"
-    assert res.metrics["supplier_stage_candidates_eligible"] >= 1
+    assert res.metrics["supplier_stage_candidates_inspected"] == 1
+    assert res.metrics["supplier_stage_candidates_withheld_before_commitment"] == 0
+    assert res.metrics["supplier_stage_candidates_eligible"] == 1
 
 
 def test_supplier_execution_before_commitment_is_withheld() -> None:
@@ -2250,7 +2252,9 @@ def test_supplier_execution_before_commitment_is_withheld() -> None:
     opp = res.opportunities[0]
     assert opp.canonical_stage == "purchase_pending"
     assert not any(c.reason_code == "stage_regression_prevented" for c in res.conflicts)
-    assert res.metrics["supplier_stage_candidates_withheld_before_commitment"] >= 1
+    assert res.metrics["supplier_stage_candidates_inspected"] == 1
+    assert res.metrics["supplier_stage_candidates_withheld_before_commitment"] == 1
+    assert res.metrics["supplier_stage_candidates_eligible"] == 0
     assert any(
         e.reason_code == "supplier_stage_withheld_before_client_commitment" for e in res.evidence
     )
@@ -2265,7 +2269,9 @@ def test_supplier_execution_after_commitment_advances_fulfillment() -> None:
     ]
     res = resolve_opportunities(identity=identity, deals=deals, events=events, documents=[], payments=[])
     assert res.opportunities[0].canonical_stage == "fulfillment"
-    assert res.metrics["supplier_stage_candidates_eligible"] >= 1
+    assert res.metrics["supplier_stage_candidates_inspected"] == 1
+    assert res.metrics["supplier_stage_candidates_withheld_before_commitment"] == 0
+    assert res.metrics["supplier_stage_candidates_eligible"] == 1
 
 
 def test_early_supplier_plus_later_client_po_payment_no_regression() -> None:
@@ -2302,7 +2308,7 @@ def test_fulfillment_plus_later_client_payment_no_regression() -> None:
     opp = res.opportunities[0]
     assert opp.canonical_stage == "fulfillment"
     assert not any(c.reason_code == "stage_regression_prevented" for c in res.conflicts)
-    assert res.metrics["compatible_late_client_prerequisites"] >= 1
+    assert res.metrics["compatible_late_client_prerequisites"] == 1
 
 
 def test_fulfillment_plus_later_quote_still_regressions() -> None:
@@ -2345,7 +2351,7 @@ def test_later_same_stage_logistics_replaces_earlier_supplier_evidence() -> None
     winner = next(e for e in res.evidence if e.evidence_id == opp.stage_evidence_id)
     assert winner.evidence_type == "logistics_pending"
     assert opp.stage_evidence_at == "2026-02-20T00:00:00+00:00"
-    assert res.metrics["same_stage_winner_advanced_to_later_evidence"] >= 1
+    assert res.metrics["same_stage_winner_advanced_to_later_evidence"] == 1
 
 
 def test_same_stage_uses_utc_instants_not_lexical_strings() -> None:
@@ -2418,9 +2424,12 @@ def test_proforma_only_never_current_fulfillment() -> None:
 def test_production_chronology_regression_fixture_redacted() -> None:
     """Synthetic shape of the production dry-run defect (no real identifiers)."""
     identity = _base_identity()
+    # Low-entropy synthetic key (historical tip used synthetic-oc-fixture-1;
+    # gitleaks fingerprints for that commit remain in .gitleaksignore).
+    deal_key = "case-one"
     deals = [
         _deal(
-            deal_key="synthetic-oc-fixture-1",
+            deal_key=deal_key,
             deal_status="quoted",
             updated_at="2026-05-01T00:00:00+00:00",
             client_contact_email="buyer@hospital.cl",
@@ -2430,7 +2439,7 @@ def test_production_chronology_regression_fixture_redacted() -> None:
     events = [
         # Early supplier evidence (UTC before client PO despite wall-clock appearance)
         _event(
-            deal_key="synthetic-oc-fixture-1",
+            deal_key=deal_key,
             event_type="supplier_po_sent",
             event_at="2026-05-14T12:00:00+02:00",
             event_id=10,
@@ -2438,34 +2447,34 @@ def test_production_chronology_regression_fixture_redacted() -> None:
         ),
         # Client PO later in UTC
         _event(
-            deal_key="synthetic-oc-fixture-1",
+            deal_key=deal_key,
             event_type="client_po_received",
             event_at="2026-05-14T12:00:00-04:00",
             event_id=20,
         ),
         # Client payment later
         _event(
-            deal_key="synthetic-oc-fixture-1",
+            deal_key=deal_key,
             event_type="client_payment_received",
             event_at="2026-05-20T09:30:00-04:00",
             event_id=30,
         ),
         # Later logistics
         _event(
-            deal_key="synthetic-oc-fixture-1",
+            deal_key=deal_key,
             event_type="logistics_pending",
             event_at="2026-06-01T15:00:00-04:00",
             event_id=40,
             confidence="extracted_low",
         ),
         # Unrelated undated note (non-stage)
-        _event(deal_key="synthetic-oc-fixture-1", event_type="note", event_at=None, event_id=50),
+        _event(deal_key=deal_key, event_type="note", event_at=None, event_id=50),
     ]
     docs = [
         SourceDealDocumentRow(
             document_id=1,
             deal_id=1,
-            deal_key="synthetic-oc-fixture-1",
+            deal_key=deal_key,
             document_type="supplier_proforma",
             issued_at="2026-05-14T12:00:00+02:00",
             confidence="extracted_high",
@@ -2475,7 +2484,7 @@ def test_production_chronology_regression_fixture_redacted() -> None:
         SourceDealDocumentRow(
             document_id=2,
             deal_id=1,
-            deal_key="synthetic-oc-fixture-1",
+            deal_key=deal_key,
             document_type="other",
             issued_at=None,
             confidence="extracted_low",
@@ -2487,7 +2496,7 @@ def test_production_chronology_regression_fixture_redacted() -> None:
         SourceDealPaymentRow(
             payment_id=1,
             deal_id=1,
-            deal_key="synthetic-oc-fixture-1",
+            deal_key=deal_key,
             direction="inbound",
             paid_at="2026-05-20T10:00:00-04:00",
             confidence="extracted_high",
@@ -2515,4 +2524,9 @@ def test_production_chronology_regression_fixture_redacted() -> None:
         assert not any(c.reason_code == "stage_regression_prevented" for c in res.conflicts)
         assert any(e.evidence_type == "supplier_proforma" for e in res.evidence)
         assert winner.evidence_type != "supplier_proforma"
+        assert res.metrics["supplier_stage_candidates_inspected"] == 2
+        assert res.metrics["supplier_stage_candidates_withheld_before_commitment"] == 1
+        assert res.metrics["supplier_stage_candidates_eligible"] == 1
+        assert res.metrics["compatible_late_client_prerequisites"] == 0
+        assert res.metrics["same_stage_winner_advanced_to_later_evidence"] == 1
     assert res_a.opportunities[0].stage_evidence_id == res_b.opportunities[0].stage_evidence_id
