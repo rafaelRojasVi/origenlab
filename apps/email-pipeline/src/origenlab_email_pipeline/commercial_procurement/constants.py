@@ -160,8 +160,34 @@ INACTIVE_STATUS_NAMES: Final = frozenset(
 # Fingerprint / build contracts (design only — not applied).
 PROCUREMENT_SOURCE_FP_ALGORITHM: Final = "procurement_source_fp_v1"
 PROCUREMENT_BUILD_PLAN_FP_ALGORITHM: Final = "procurement_build_plan_fp_v1"
-PROCUREMENT_PLAN_DIGEST_ALGORITHM: Final = "procurement_plan_digest_v1"
+# Semantic stale-plan identity (excludes execution metadata / wall-clock fields).
+PROCUREMENT_SEMANTIC_PLAN_DIGEST_ALGORITHM: Final = "procurement_semantic_plan_digest_v1"
+# Optional digest over exact rows after one explicit materialization timestamp.
+PROCUREMENT_MATERIALIZATION_DIGEST_ALGORITHM: Final = (
+    "procurement_materialization_digest_v1"
+)
 RESOLVER_BUILD_CONTRACT_VERSION: Final = "procurement_resolver_v3"
+
+# Evidence subject kinds (fail-closed validation enum).
+EVIDENCE_SUBJECT_KINDS: Final = frozenset(
+    {
+        "signal",
+        "resolution",
+        "conflict",
+        "enrichment",
+        "unresolved_source",
+        "line_conflict",
+        "resolution_conflict",
+    }
+)
+
+SEMANTIC_PLAN_TABLES: Final = (
+    "commercial_procurement_signal",
+    "commercial_procurement_account_resolution",
+    "commercial_procurement_evidence",
+    "commercial_procurement_conflict",
+    "commercial_procurement_enrichment_candidate",
+)
 SCHEMA_VERSION: Final = "commercial_procurement_v1"
 BUILD_CONTRACT: Final = "procurement_account_resolution_read_model_v1"
 # Back-compat aliases used by older audit imports

@@ -134,14 +134,17 @@ class ProcurementPlan:
     source_fingerprint: str
     source_fingerprint_components: dict[str, Any]
     build_plan_fingerprint: str
-    plan_digest: str
+    semantic_plan_digest: str
     identity_fingerprint: str
     identity_fingerprint_algorithm_version: str
     as_of_date: str
     run_context: str
     metrics: dict[str, Any]
+    generated_at_utc: str | None = None
+    materialization_digest: str | None = None
+    source_pointer_registry: frozenset[tuple[str, str]] = frozenset()
 
-    def table_rows(self) -> dict[str, list[dict[str, Any]]]:
+    def semantic_table_rows(self) -> dict[str, list[dict[str, Any]]]:
         return {
             "commercial_procurement_signal": [r.to_db_row() for r in self.signals],
             "commercial_procurement_account_resolution": [r.to_db_row() for r in self.resolutions],
@@ -150,5 +153,9 @@ class ProcurementPlan:
             "commercial_procurement_enrichment_candidate": [
                 r.to_db_row() for r in self.enrichment_candidates
             ],
-            "commercial_procurement_build_meta": [r.to_db_row() for r in self.build_meta],
         }
+
+    def table_rows(self) -> dict[str, list[dict[str, Any]]]:
+        rows = self.semantic_table_rows()
+        rows["commercial_procurement_build_meta"] = [r.to_db_row() for r in self.build_meta]
+        return rows

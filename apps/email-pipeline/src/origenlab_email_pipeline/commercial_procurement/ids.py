@@ -1,10 +1,19 @@
-"""Deterministic stable IDs for commercial procurement (PR4)."""
+"""Deterministic stable IDs and digests for commercial procurement (PR4)."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 from typing import Any
+
+from origenlab_email_pipeline.commercial_procurement.constants import (
+    PROCUREMENT_MATERIALIZATION_DIGEST_ALGORITHM,
+    PROCUREMENT_SEMANTIC_PLAN_DIGEST_ALGORITHM,
+    SEMANTIC_PLAN_TABLES,
+)
+
+# Volatile conflict fields excluded from semantic hashing.
+_SEMANTIC_CONFLICT_EXCLUDE_FIELDS = frozenset({"created_at"})
 
 
 def _sha32(payload: str) -> str:
@@ -93,13 +102,57 @@ def canonical_json(obj: Any) -> str:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
-def plan_digest(*, table_rows: dict[str, list[dict[str, Any]]], algorithm: str) -> str:
-    """Order-independent digest over every planned row in every proposed table."""
+def _normalize_semantic_row(table: str, row: dict[str, Any]) -> dict[str, Any]:
+    out = dict(row)
+    if table == "commercial_procurement_conflict":
+        for field in _SEMANTIC_CONFLICT_EXCLUDE_FIELDS:
+            out.pop(field, None)
+    return out
+
+
+def table_rows_digest(
+    *,
+    table_rows: dict[str, list[dict[str, Any]]],
+    algorithm: str,
+    normalize_row=None,
+) -> str:
+    """Order-independent digest over the given table rows."""
     payload: dict[str, Any] = {"algorithm": algorithm, "tables": {}}
     for table in sorted(table_rows.keys()):
-        rows = sorted(table_rows[table], key=canonical_json)
+        rows = table_rows[table]
+        if normalize_row is not None:
+            rows = [normalize_row(table, r) for r in rows]
+        ordered = sorted(rows, key=canonical_json)
         payload["tables"][table] = {
-            "n": len(rows),
-            "sha256": hashlib.sha256(canonical_json(rows).encode("utf-8")).hexdigest(),
+            "n": len(ordered),
+            "sha256": hashlib.sha256(canonical_json(ordered).encode("utf-8")).hexdigest(),
         }
     return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def semantic_plan_digest(*, table_rows: dict[str, list[dict[str, Any]]]) -> str:
+    """Hash only deterministic semantic business tables (no build_meta / wall-clock)."""
+    semantic = {
+        name: table_rows[name]
+        for name in SEMANTIC_PLAN_TABLES
+        if name in table_rows
+    }
+    return table_rows_digest(
+        table_rows=semantic,
+        algorithm=PROCUREMENT_SEMANTIC_PLAN_DIGEST_ALGORITHM,
+        normalize_row=_normalize_semantic_row,
+    )
+
+
+def materialization_digest(*, table_rows: dict[str, list[dict[str, Any]]]) -> str:
+    """Exact-row digest after an explicit materialization timestamp is assigned."""
+    return table_rows_digest(
+        table_rows=table_rows,
+        algorithm=PROCUREMENT_MATERIALIZATION_DIGEST_ALGORITHM,
+        normalize_row=None,
+    )
+
+
+# Back-compat alias used by older call sites during transition.
+def plan_digest(*, table_rows: dict[str, list[dict[str, Any]]], algorithm: str) -> str:
+    return table_rows_digest(table_rows=table_rows, algorithm=algorithm)

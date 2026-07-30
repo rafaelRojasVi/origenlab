@@ -1,13 +1,14 @@
 """Orchestration for commercial procurement dry-run planning (PR4).
 
 This checkpoint is dry-run only. Production --apply is intentionally refused.
+Opens one deferred read transaction that pins the source/identity snapshot.
 """
 
 from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +24,7 @@ from origenlab_email_pipeline.commercial_identity.constants import (
 from origenlab_email_pipeline.commercial_procurement.constants import (
     BUILD_CONTRACT,
     PROCUREMENT_BUILD_PLAN_FP_ALGORITHM,
-    PROCUREMENT_PLAN_DIGEST_ALGORITHM,
+    PROCUREMENT_SEMANTIC_PLAN_DIGEST_ALGORITHM,
     PROCUREMENT_SOURCE_FP_ALGORITHM,
     REQUIRED_IDENTITY_FINGERPRINT_ALGORITHM,
     RESOLVER_BUILD_CONTRACT_VERSION,
@@ -37,6 +38,10 @@ from origenlab_email_pipeline.commercial_procurement.planner import (
     plan_procurement_from_connection,
 )
 from origenlab_email_pipeline.commercial_procurement.sources import SourceSchemaError
+from origenlab_email_pipeline.commercial_procurement.sources import (
+    disable_require_active_read_transaction,
+    enable_require_active_read_transaction,
+)
 from origenlab_email_pipeline.commercial_procurement.validate_temp import (
     TempSchemaValidationError,
     validate_plan_in_temp_sqlite,
@@ -82,7 +87,17 @@ def parse_as_of_date(value: str) -> date:
         ) from exc
 
 
-def plan_to_json_summary(plan: ProcurementPlan, *, sqlite_path: Path) -> dict[str, Any]:
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def plan_to_json_summary(
+    plan: ProcurementPlan,
+    *,
+    sqlite_path: Path,
+    generated_at_utc: str,
+    snapshot_diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "mode": "dry-run",
         "applied": False,
@@ -98,8 +113,10 @@ def plan_to_json_summary(plan: ProcurementPlan, *, sqlite_path: Path) -> dict[st
         "identity_fingerprint": plan.identity_fingerprint,
         "build_plan_fingerprint_algorithm": PROCUREMENT_BUILD_PLAN_FP_ALGORITHM,
         "build_plan_fingerprint": plan.build_plan_fingerprint,
-        "plan_digest_algorithm": PROCUREMENT_PLAN_DIGEST_ALGORITHM,
-        "plan_digest": plan.plan_digest,
+        "semantic_plan_digest_algorithm": PROCUREMENT_SEMANTIC_PLAN_DIGEST_ALGORITHM,
+        "semantic_plan_digest": plan.semantic_plan_digest,
+        "materialization_digest": plan.materialization_digest,
+        "generated_at_utc": generated_at_utc,
         "as_of_date": plan.as_of_date,
         "run_context": plan.run_context,
         "source_outcome_counts": {
@@ -126,6 +143,7 @@ def plan_to_json_summary(plan: ProcurementPlan, *, sqlite_path: Path) -> dict[st
             "commercial_procurement_build_meta": len(plan.build_meta),
         },
         "required_identity_fingerprint_algorithm": REQUIRED_IDENTITY_FINGERPRINT_ALGORITHM,
+        "snapshot_diagnostics": snapshot_diagnostics or {},
     }
 
 
@@ -137,7 +155,10 @@ def run_procurement_dry_run(
     apply: bool = False,
     validate_temp_schema: bool = True,
 ) -> ProcurementBuildResult:
-    """Read-only production dry-run. Refuses --apply."""
+    """Read-only production dry-run under one deferred read transaction.
+
+    Refuses --apply. Never writes production tables.
+    """
     if apply:
         raise ApplyNotImplementedError(
             "commercial procurement --apply is not implemented in this PR "
@@ -152,28 +173,60 @@ def run_procurement_dry_run(
         )
     validate_run_context_mode(run_context=ctx, apply=False)
     as_of = parse_as_of_date(as_of_date) if isinstance(as_of_date, str) else as_of_date
+    generated_at = _utc_now_iso()
 
     conn = connect_production_readonly(path)
+    plan: ProcurementPlan | None = None
+    known: frozenset[str] = frozenset()
+    snapshot_diagnostics: dict[str, Any] = {}
     try:
         assert_no_write_connection(conn)
-        # Capture PR2/PR3 fingerprints before planning for immutability proof in tests
-        plan = plan_procurement_from_connection(
+        conn.execute("BEGIN DEFERRED")
+        enable_require_active_read_transaction(conn)
+        if not conn.in_transaction:
+            raise CommercialIdentityPathError("failed to start deferred read transaction")
+        data_version_before = conn.execute("PRAGMA data_version").fetchone()[0]
+        plan, snap = plan_procurement_from_connection(
             conn=conn,
             as_of_date=as_of,
             run_context=ctx,
+            generated_at_utc=generated_at,
         )
-        known = frozenset(
-            r["account_id"]
-            for r in conn.execute("SELECT account_id FROM commercial_identity_account")
-        )
+        known = snap["known_account_ids"]
+        data_version_after = conn.execute("PRAGMA data_version").fetchone()[0]
+        snapshot_diagnostics = {
+            "read_transaction": "deferred",
+            "data_version_before": data_version_before,
+            "data_version_after": data_version_after,
+            "pr3_sentinel": snap["pr3_sentinel"],
+        }
+        conn.rollback()
+    except Exception:
+        try:
+            if conn.in_transaction:
+                conn.rollback()
+        except sqlite3.Error:
+            pass
+        raise
     finally:
+        disable_require_active_read_transaction(conn)
         conn.close()
 
+    assert plan is not None
     temp_counts: dict[str, int] = {}
     if validate_temp_schema:
-        temp_counts = validate_plan_in_temp_sqlite(plan, known_account_ids=known)
+        temp_counts = validate_plan_in_temp_sqlite(
+            plan,
+            known_account_ids=known,
+            source_pointer_registry=plan.source_pointer_registry,
+        )
 
-    summary = plan_to_json_summary(plan, sqlite_path=path)
+    summary = plan_to_json_summary(
+        plan,
+        sqlite_path=path,
+        generated_at_utc=generated_at,
+        snapshot_diagnostics=snapshot_diagnostics,
+    )
     summary["temp_schema_validation"] = {
         "ok": True,
         "row_counts": temp_counts,
