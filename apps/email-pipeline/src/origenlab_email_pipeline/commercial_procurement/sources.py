@@ -159,13 +159,23 @@ def _line_from_parts(
         org_name=org_name,
         domain=domain,
         email=email,
+        region=region,
         raw=raw,
     )
     pub = status.get("publication_date")
     close = status.get("close_date")
     pub_d = parse_tender_date(pub)
     close_d = parse_tender_date(close)
-    region_val = region or buyer.get("region_from_raw")
+    # Tender key originates from raw JSON when verified/unresolved from raw;
+    # source_record_id fallback is still plane-local but key extraction is raw-driven.
+    if raw is not None and verified:
+        origin_tender_key = "external_leads_raw"
+    elif raw is not None:
+        origin_tender_key = "external_leads_raw"
+    elif sid:
+        origin_tender_key = "lead_master" if has_lead_source else "absent"
+    else:
+        origin_tender_key = "absent"
     return {
         "source_system": SOURCE_CHILECOMPRA,
         "lead_id": lead_id,
@@ -186,7 +196,7 @@ def _line_from_parts(
         "email_norm": buyer["email_norm"],
         "email_domain": buyer["email_domain"],
         "weak_public_unit_name": buyer["weak_public_unit_name"],
-        "region": region_val,
+        "region": buyer.get("region"),
         "title": status.get("title"),
         "status_code": status["status_code"],
         "status_name": status["status_name"],
@@ -196,6 +206,25 @@ def _line_from_parts(
         "close_date_parsed": close_d.isoformat() if close_d else "",
         "first_seen_at": first_seen_at,
         "last_seen_at": last_seen_at,
+        "origin_buyer_display": buyer["origin_buyer_display"],
+        "origin_buyer_domain": buyer["origin_buyer_domain"],
+        "origin_contact_email": buyer["origin_contact_email"],
+        "origin_email_domain": buyer["origin_email_domain"],
+        "origin_region": buyer["origin_region"],
+        "origin_title": status["origin_title"],
+        "origin_status_code": status["origin_status_code"],
+        "origin_status_name": status["origin_status_name"],
+        "origin_publication_date": status["origin_publication_date"],
+        "origin_close_date": status["origin_close_date"],
+        "origin_tender_key": origin_tender_key,
+        "lead_buyer_display": buyer.get("lead_buyer_display"),
+        "raw_buyer_display": buyer.get("raw_buyer_display"),
+        "lead_buyer_domain": buyer.get("lead_buyer_domain"),
+        "raw_buyer_domain": buyer.get("raw_buyer_domain"),
+        "lead_email_norm": buyer.get("lead_email_norm"),
+        "raw_email_norm": buyer.get("raw_email_norm"),
+        "lead_region": buyer.get("lead_region"),
+        "raw_region": buyer.get("raw_region"),
     }
 
 

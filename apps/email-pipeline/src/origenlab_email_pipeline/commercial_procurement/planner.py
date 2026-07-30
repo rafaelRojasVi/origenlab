@@ -17,6 +17,9 @@ from origenlab_email_pipeline.commercial_procurement.coalesce import (
 from origenlab_email_pipeline.commercial_procurement.constants import (
     BUILD_CONTRACT,
     CONFIDENCE_NONE,
+    FIELD_ORIGIN_ABSENT,
+    FIELD_ORIGIN_LEAD,
+    FIELD_ORIGIN_RAW,
     OPERATOR_ELIGIBLE_CONTEXTS,
     PROCUREMENT_CONTEXT_HISTORICAL,
     PROCUREMENT_MATERIALIZATION_DIGEST_ALGORITHM,
@@ -64,6 +67,7 @@ from origenlab_email_pipeline.commercial_procurement.models import (
     ProcurementPlan,
     SignalRow,
 )
+from origenlab_email_pipeline.commercial_procurement.provenance import origins_for_evidence
 from origenlab_email_pipeline.commercial_procurement.resolution import (
     assert_resolution_invariants,
     build_account_resolution,
@@ -186,6 +190,46 @@ def _add_evidence(
     )
 
 
+def _emit_field_evidence(
+    *,
+    evidence: list[EvidenceRow],
+    evidence_ids: set[str],
+    subject_kind: str,
+    subject_id: str,
+    line: dict[str, Any],
+    evidence_type: str,
+    origin: str,
+    reason_code: str,
+) -> None:
+    sk = subject_key_for_source(
+        source_system=SOURCE_CHILECOMPRA,
+        source_record_id=str(line.get("source_record_id") or ""),
+    )
+    at = line.get("first_seen_at")
+    for table in origins_for_evidence(origin):
+        if table == "external_leads_raw":
+            if not line.get("has_raw_source") or not line.get("raw_source_record_id"):
+                continue
+            rid = str(line["raw_source_record_id"])
+        else:
+            if not line.get("has_lead_source") or not line.get("lead_source_record_id"):
+                continue
+            rid = str(line["lead_source_record_id"])
+        _add_evidence(
+            evidence=evidence,
+            evidence_ids=evidence_ids,
+            subject_kind=subject_kind,
+            subject_id=subject_id,
+            source_table=table,
+            source_record_id=rid,
+            evidence_type=evidence_type,
+            reason_code=reason_code,
+            subject_key=sk,
+            evidence_at=at,
+            detail={"field_origin": origin},
+        )
+
+
 def _emit_line_plane_evidence(
     *,
     evidence: list[EvidenceRow],
@@ -203,15 +247,13 @@ def _emit_line_plane_evidence(
     at = line.get("first_seen_at")
 
     if line.get("has_raw_source") and line.get("raw_source_record_id"):
-        rid = str(line["raw_source_record_id"])
-        table = "external_leads_raw"
         _add_evidence(
             evidence=evidence,
             evidence_ids=evidence_ids,
             subject_kind=subject_kind,
             subject_id=subject_id,
-            source_table=table,
-            source_record_id=rid,
+            source_table="external_leads_raw",
+            source_record_id=str(line["raw_source_record_id"]),
             evidence_type="raw_source_membership",
             reason_code=f"{reason_prefix}_raw_membership",
             subject_key=sk,
@@ -224,87 +266,79 @@ def _emit_line_plane_evidence(
                 evidence_ids=evidence_ids,
                 subject_kind=subject_kind,
                 subject_id=subject_id,
-                source_table=table,
-                source_record_id=rid,
+                source_table="external_leads_raw",
+                source_record_id=str(line["raw_source_record_id"]),
                 evidence_type="raw_json_malformed",
                 reason_code="raw_json_malformed",
                 subject_key=sk,
                 evidence_at=at,
             )
-        else:
-            for etype, reason in (
-                ("tender_key", "verified_tender_key" if line.get("verified") else "tender_key"),
-                ("tender_key_kind", "tender_key_kind"),
-                ("title", "title"),
-                ("status_code", "status_code"),
-                ("status_name", "status_name"),
-                ("publication_date", "publication_date"),
-                ("close_date", "close_date"),
-            ):
-                if etype == "tender_key" and not line.get("tender_key"):
-                    continue
-                if etype == "title" and not line.get("title"):
-                    continue
-                if etype == "status_code" and not line.get("status_code"):
-                    continue
-                if etype == "status_name" and not line.get("status_name"):
-                    continue
-                if etype == "publication_date" and not line.get("publication_date"):
-                    continue
-                if etype == "close_date" and not line.get("close_date"):
-                    continue
-                if etype == "tender_key_kind" and not line.get("tender_key_kind"):
-                    continue
-                _add_evidence(
-                    evidence=evidence,
-                    evidence_ids=evidence_ids,
-                    subject_kind=subject_kind,
-                    subject_id=subject_id,
-                    source_table=table,
-                    source_record_id=rid,
-                    evidence_type=etype,
-                    reason_code=reason,
-                    subject_key=sk,
-                    evidence_at=at,
-                )
 
     if line.get("has_lead_source") and line.get("lead_source_record_id"):
-        rid = str(line["lead_source_record_id"])
-        table = "lead_master"
         _add_evidence(
             evidence=evidence,
             evidence_ids=evidence_ids,
             subject_kind=subject_kind,
             subject_id=subject_id,
-            source_table=table,
-            source_record_id=rid,
+            source_table="lead_master",
+            source_record_id=str(line["lead_source_record_id"]),
             evidence_type="lead_source_membership",
             reason_code=f"{reason_prefix}_lead_membership",
             subject_key=sk,
             evidence_at=at,
             detail={"join_status": line.get("raw_lead_join_status")},
         )
-        for etype, field, reason in (
-            ("buyer_institution", "buyer_name_norm", "normalized_buyer_institution"),
-            ("buyer_domain", "buyer_domain", "normalized_buyer_domain"),
-            ("contact_email", "email_norm", "contact_email"),
-            ("contact_email_domain", "email_domain", "contact_email_domain"),
-            ("region", "region", "region"),
-        ):
-            if not line.get(field):
-                continue
-            _add_evidence(
-                evidence=evidence,
-                evidence_ids=evidence_ids,
-                subject_kind=subject_kind,
-                subject_id=subject_id,
-                source_table=table,
-                source_record_id=rid,
-                evidence_type=etype,
-                reason_code=reason,
-                subject_key=sk,
-                evidence_at=at,
-            )
+
+    field_specs = (
+        ("tender_key", "origin_tender_key", "tender_key", "tender_key"),
+        ("title", "origin_title", "title", "title"),
+        ("status_code", "origin_status_code", "status_code", "status_code"),
+        ("status_name", "origin_status_name", "status_name", "status_name"),
+        ("publication_date", "origin_publication_date", "publication_date", "publication_date"),
+        ("close_date", "origin_close_date", "close_date", "close_date"),
+        ("buyer_institution", "origin_buyer_display", "buyer_name_norm", "normalized_buyer_institution"),
+        ("buyer_domain", "origin_buyer_domain", "buyer_domain", "normalized_buyer_domain"),
+        ("contact_email", "origin_contact_email", "email_norm", "contact_email"),
+        ("contact_email_domain", "origin_email_domain", "email_domain", "contact_email_domain"),
+        ("region", "origin_region", "region", "region"),
+    )
+    for etype, origin_key, value_key, reason in field_specs:
+        origin = str(line.get(origin_key) or "absent")
+        if origin == "absent":
+            continue
+        if value_key == "tender_key" and not line.get("tender_key"):
+            continue
+        if value_key != "tender_key" and not line.get(value_key) and origin != "conflict":
+            continue
+        _emit_field_evidence(
+            evidence=evidence,
+            evidence_ids=evidence_ids,
+            subject_kind=subject_kind,
+            subject_id=subject_id,
+            line=line,
+            evidence_type=etype,
+            origin=origin,
+            reason_code=reason,
+        )
+
+
+def _default_raw_field_origin(line: dict[str, Any], present: bool) -> str:
+    if not present:
+        return FIELD_ORIGIN_ABSENT
+    if line.get("has_raw_source"):
+        return FIELD_ORIGIN_RAW
+    return FIELD_ORIGIN_ABSENT
+
+
+def _default_buyer_field_origin(line: dict[str, Any], present: bool) -> str:
+    """Synthetic fixtures historically attributed buyer fields to lead_master when present."""
+    if not present:
+        return FIELD_ORIGIN_ABSENT
+    if line.get("has_lead_source"):
+        return FIELD_ORIGIN_LEAD
+    if line.get("has_raw_source"):
+        return FIELD_ORIGIN_RAW
+    return FIELD_ORIGIN_ABSENT
 
 
 def _normalize_source_line_provenance(line: dict[str, Any]) -> dict[str, Any]:
@@ -316,7 +350,6 @@ def _normalize_source_line_provenance(line: dict[str, Any]) -> dict[str, Any]:
         out["has_raw_source"] = join in {"matched", "raw_only"} and bool(
             out.get("raw_json_valid") or out.get("raw_json") is not None or join == "matched"
         )
-        # lead_only / unresolved without raw: no raw plane
         if join == "lead_only":
             out["has_raw_source"] = False
         if join == "raw_only":
@@ -333,6 +366,38 @@ def _normalize_source_line_provenance(line: dict[str, Any]) -> dict[str, Any]:
         out["raw_json_malformed"] = bool(
             out.get("raw_json_valid") is False and join in {"matched", "raw_only"}
         )
+    # Default field origins for synthetic / incomplete lines (production source load sets these).
+    if "origin_title" not in out:
+        out["origin_title"] = _default_raw_field_origin(out, bool(out.get("title")))
+    if "origin_status_code" not in out:
+        out["origin_status_code"] = _default_raw_field_origin(out, bool(out.get("status_code")))
+    if "origin_status_name" not in out:
+        out["origin_status_name"] = _default_raw_field_origin(out, bool(out.get("status_name")))
+    if "origin_publication_date" not in out:
+        out["origin_publication_date"] = _default_raw_field_origin(
+            out, bool(out.get("publication_date"))
+        )
+    if "origin_close_date" not in out:
+        out["origin_close_date"] = _default_raw_field_origin(out, bool(out.get("close_date")))
+    if "origin_tender_key" not in out:
+        if out.get("tender_key") and out.get("has_raw_source"):
+            out["origin_tender_key"] = FIELD_ORIGIN_RAW
+        elif out.get("tender_key") and out.get("has_lead_source"):
+            out["origin_tender_key"] = FIELD_ORIGIN_LEAD
+        else:
+            out["origin_tender_key"] = FIELD_ORIGIN_ABSENT
+    if "origin_buyer_display" not in out:
+        out["origin_buyer_display"] = _default_buyer_field_origin(
+            out, bool(out.get("buyer_display") or out.get("buyer_name_norm"))
+        )
+    if "origin_buyer_domain" not in out:
+        out["origin_buyer_domain"] = _default_buyer_field_origin(out, bool(out.get("buyer_domain")))
+    if "origin_contact_email" not in out:
+        out["origin_contact_email"] = _default_buyer_field_origin(out, bool(out.get("email_norm")))
+    if "origin_email_domain" not in out:
+        out["origin_email_domain"] = _default_buyer_field_origin(out, bool(out.get("email_domain")))
+    if "origin_region" not in out:
+        out["origin_region"] = _default_buyer_field_origin(out, bool(out.get("region")))
     return out
 
 

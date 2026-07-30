@@ -51,6 +51,19 @@ def source_line_semantic_payload(line: dict[str, Any]) -> dict[str, Any]:
         d = parse_tender_date(str(close_raw))
         close_parsed = d.isoformat() if d else ""
     email_norm = line.get("email_norm") or ""
+    provenance = {
+        "origin_buyer_display": line.get("origin_buyer_display") or "",
+        "origin_buyer_domain": line.get("origin_buyer_domain") or "",
+        "origin_contact_email": line.get("origin_contact_email") or "",
+        "origin_email_domain": line.get("origin_email_domain") or "",
+        "origin_region": line.get("origin_region") or "",
+        "origin_title": line.get("origin_title") or "",
+        "origin_status_code": line.get("origin_status_code") or "",
+        "origin_status_name": line.get("origin_status_name") or "",
+        "origin_publication_date": line.get("origin_publication_date") or "",
+        "origin_close_date": line.get("origin_close_date") or "",
+        "origin_tender_key": line.get("origin_tender_key") or "",
+    }
     return {
         "source_system": line.get("source_system") or SOURCE_CHILECOMPRA,
         "source_record_id": str(line.get("source_record_id") or ""),
@@ -76,6 +89,7 @@ def source_line_semantic_payload(line: dict[str, Any]) -> dict[str, Any]:
         "first_seen_at": line.get("first_seen_at") or "",
         "last_seen_at": line.get("last_seen_at") or "",
         "weak_public_unit_name": bool(line.get("weak_public_unit_name", False)),
+        "field_provenance": provenance,
     }
 
 
