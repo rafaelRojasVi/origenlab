@@ -90,6 +90,14 @@ def source_line_semantic_payload(line: dict[str, Any]) -> dict[str, Any]:
         "last_seen_at": line.get("last_seen_at") or "",
         "weak_public_unit_name": bool(line.get("weak_public_unit_name", False)),
         "field_provenance": provenance,
+        "resolution_buyer_name_norm": line.get("resolution_buyer_name_norm") or "",
+        "resolution_buyer_domain": line.get("resolution_buyer_domain") or "",
+        "resolution_contact_email_hash": (
+            value_hash(str(line.get("resolution_contact_email") or ""))
+            if line.get("resolution_contact_email")
+            else ""
+        ),
+        "resolution_email_domain": line.get("resolution_email_domain") or "",
     }
 
 

@@ -17,7 +17,9 @@ from origenlab_email_pipeline.commercial_procurement.coalesce import (
 from origenlab_email_pipeline.commercial_procurement.constants import (
     BUILD_CONTRACT,
     CONFIDENCE_NONE,
+    DISPLAY_POLICY_PREFER_LEAD_THEN_RAW,
     FIELD_ORIGIN_ABSENT,
+    FIELD_ORIGIN_CONFLICT,
     FIELD_ORIGIN_LEAD,
     FIELD_ORIGIN_RAW,
     OPERATOR_ELIGIBLE_CONTEXTS,
@@ -25,6 +27,7 @@ from origenlab_email_pipeline.commercial_procurement.constants import (
     PROCUREMENT_MATERIALIZATION_DIGEST_ALGORITHM,
     PROCUREMENT_SEMANTIC_PLAN_DIGEST_ALGORITHM,
     REASON_BUYER_ACCOUNT_NOT_FOUND,
+    REASON_FIELD_PLANE_CONFLICT,
     REASON_LINE_FIELD_CONFLICT,
     REASON_TENDER_IDENTIFIER_MISSING,
     REASON_TENDER_KEY_UNRESOLVED,
@@ -43,6 +46,7 @@ from origenlab_email_pipeline.commercial_procurement.fingerprint import (
     procurement_build_plan_fingerprint,
     procurement_source_fingerprint,
     source_line_semantic_payload,
+    value_hash,
 )
 from origenlab_email_pipeline.commercial_procurement.ids import (
     canonical_json,
@@ -398,7 +402,138 @@ def _normalize_source_line_provenance(line: dict[str, Any]) -> dict[str, Any]:
         out["origin_email_domain"] = _default_buyer_field_origin(out, bool(out.get("email_domain")))
     if "origin_region" not in out:
         out["origin_region"] = _default_buyer_field_origin(out, bool(out.get("region")))
+    # Resolver-safe identity fields: NULL on conflict/absent; else mirror display norms.
+    if "resolution_buyer_name_norm" not in out:
+        if out.get("origin_buyer_display") == FIELD_ORIGIN_CONFLICT or not (
+            out.get("buyer_display") or out.get("buyer_name_norm")
+        ):
+            out["resolution_buyer_name_norm"] = None
+        else:
+            out["resolution_buyer_name_norm"] = out.get("buyer_name_norm")
+    if "resolution_buyer_domain" not in out:
+        if out.get("origin_buyer_domain") == FIELD_ORIGIN_CONFLICT or not out.get(
+            "buyer_domain"
+        ):
+            out["resolution_buyer_domain"] = None
+        else:
+            out["resolution_buyer_domain"] = out.get("buyer_domain")
+    if "resolution_contact_email" not in out:
+        if out.get("origin_contact_email") == FIELD_ORIGIN_CONFLICT or not out.get(
+            "email_norm"
+        ):
+            out["resolution_contact_email"] = None
+        else:
+            out["resolution_contact_email"] = out.get("email_norm")
+    if "resolution_email_domain" not in out:
+        if out.get("origin_email_domain") == FIELD_ORIGIN_CONFLICT or (
+            out.get("origin_contact_email") == FIELD_ORIGIN_CONFLICT
+        ) or not out.get("email_domain"):
+            out["resolution_email_domain"] = None
+        else:
+            out["resolution_email_domain"] = out.get("email_domain")
     return out
+
+
+_PLANE_CONFLICT_SPECS: tuple[tuple[str, str, str, str, str], ...] = (
+    # field_name, origin_key, lead_value_key, raw_value_key, hash_lead/raw (email=true)
+    ("buyer_display", "origin_buyer_display", "lead_buyer_display", "raw_buyer_display", "name"),
+    ("buyer_domain", "origin_buyer_domain", "lead_buyer_domain", "raw_buyer_domain", "domain"),
+    ("contact_email", "origin_contact_email", "lead_email_norm", "raw_email_norm", "email"),
+    ("email_domain", "origin_email_domain", "lead_email_norm", "raw_email_norm", "email_domain"),
+)
+
+
+def _plane_conflict_detail(line: dict[str, Any], field: str, origin_key: str,
+                           lead_key: str, raw_key: str, kind: str) -> dict[str, Any]:
+    lead_v = line.get(lead_key)
+    raw_v = line.get(raw_key)
+    if kind == "email":
+        lead_hash = value_hash(str(lead_v) if lead_v else "")
+        raw_hash = value_hash(str(raw_v) if raw_v else "")
+    elif kind == "email_domain":
+        from origenlab_email_pipeline.commercial_identity.normalize import domain_from_email
+
+        lead_dom = domain_from_email(str(lead_v)) if lead_v else None
+        raw_dom = domain_from_email(str(raw_v)) if raw_v else None
+        lead_hash = value_hash(str(lead_dom) if lead_dom else "")
+        raw_hash = value_hash(str(raw_dom) if raw_dom else "")
+    else:
+        lead_hash = value_hash(str(lead_v) if lead_v else "")
+        raw_hash = value_hash(str(raw_v) if raw_v else "")
+    return {
+        "field": field,
+        "reason_code": REASON_FIELD_PLANE_CONFLICT,
+        "origin": FIELD_ORIGIN_CONFLICT,
+        "raw_value_hash": raw_hash,
+        "lead_value_hash": lead_hash,
+        "raw_source_pointer": {
+            "source_table": "external_leads_raw",
+            "source_record_id": line.get("raw_source_record_id"),
+        },
+        "lead_source_pointer": {
+            "source_table": "lead_master",
+            "source_record_id": line.get("lead_source_record_id"),
+        },
+        "selected_display_policy": line.get("display_policy")
+        or DISPLAY_POLICY_PREFER_LEAD_THEN_RAW,
+    }
+
+
+def _emit_field_plane_conflicts_for_line(
+    *,
+    conflicts: list[ConflictRow],
+    conflict_ids: set[str],
+    conflict_reason_counter: Counter[str],
+    plane_conflict_by_field: Counter[str],
+    line: dict[str, Any],
+    procurement_id: str | None,
+    conflict_created_at: str,
+) -> bool:
+    """Emit deterministic source_field_plane_conflict rows. Returns True if any emitted."""
+    emitted = False
+    sid = str(line.get("source_record_id") or "")
+    for field, origin_key, lead_key, raw_key, kind in _PLANE_CONFLICT_SPECS:
+        if str(line.get(origin_key) or "") != FIELD_ORIGIN_CONFLICT:
+            continue
+        detail = _plane_conflict_detail(line, field, origin_key, lead_key, raw_key, kind)
+        if procurement_id:
+            cid = stable_conflict_id_for_signal(
+                procurement_id=procurement_id,
+                reason_code=REASON_FIELD_PLANE_CONFLICT,
+                detail_key=f"{field}|{sid}",
+            )
+            subject_kind = "field_plane_conflict"
+        else:
+            cid = conflict_id_for_source_row(
+                source_system=SOURCE_CHILECOMPRA,
+                source_record_id=sid,
+                reason_code=f"{REASON_FIELD_PLANE_CONFLICT}:{field}",
+            )
+            subject_kind = "field_plane_conflict"
+        if cid in conflict_ids:
+            continue
+        conflict_ids.add(cid)
+        conflict_reason_counter[REASON_FIELD_PLANE_CONFLICT] += 1
+        plane_conflict_by_field[field] += 1
+        emitted = True
+        conflicts.append(
+            ConflictRow(
+                conflict_id=cid,
+                procurement_id=procurement_id,
+                source_system=SOURCE_CHILECOMPRA,
+                source_record_id=sid,
+                subject_kind=subject_kind,
+                subject_key=subject_key_for_source(
+                    source_system=SOURCE_CHILECOMPRA, source_record_id=sid
+                ),
+                account_id=None,
+                reason_code=REASON_FIELD_PLANE_CONFLICT,
+                confidence=CONFIDENCE_NONE,
+                detail_json=canonical_json(detail),
+                created_at=conflict_created_at,
+            )
+        )
+    return emitted
 
 
 def classify_source_outcomes(
@@ -470,6 +605,7 @@ def plan_procurement(
     context_counter: Counter[str] = Counter()
     conflict_reason_counter: Counter[str] = Counter()
     enrichment_reason_counter: Counter[str] = Counter()
+    plane_conflict_by_field: Counter[str] = Counter()
     linked_accounts: set[str] = set()
     operator_eligible_n = 0
 
@@ -525,6 +661,15 @@ def plan_procurement(
             line=line,
             reason_prefix="unresolved",
         )
+        _emit_field_plane_conflicts_for_line(
+            conflicts=conflicts,
+            conflict_ids=conflict_ids,
+            conflict_reason_counter=conflict_reason_counter,
+            plane_conflict_by_field=plane_conflict_by_field,
+            line=line,
+            procurement_id=None,
+            conflict_created_at=conflict_created_at,
+        )
 
     for (key_kind, tender_key), lines in sorted(by_verified.items(), key=lambda kv: kv[0]):
         agg = coalesce_verified_tender_lines(
@@ -544,7 +689,33 @@ def plan_procurement(
 
         context_counter[sig["procurement_context"]] += 1
         conf = _signal_confidence(sig)
-        review = "needs_review" if sig.get("line_conflicts") else "ok"
+
+        plane_conflicted = False
+        lines_by_sid = {
+            str(x.get("source_record_id") or ""): x
+            for x in lines
+            if x.get("source_record_id")
+        }
+        for sid in sig["constituent_source_record_ids"]:
+            line = lines_by_sid.get(sid)
+            if line is None:
+                raise PlanValidationError(f"missing constituent line for {sid}")
+            if _emit_field_plane_conflicts_for_line(
+                conflicts=conflicts,
+                conflict_ids=conflict_ids,
+                conflict_reason_counter=conflict_reason_counter,
+                plane_conflict_by_field=plane_conflict_by_field,
+                line=line,
+                procurement_id=procurement_id,
+                conflict_created_at=conflict_created_at,
+            ):
+                plane_conflicted = True
+
+        review = (
+            "needs_review"
+            if sig.get("line_conflicts") or plane_conflicted
+            else "ok"
+        )
         signal_row = SignalRow(
             procurement_id=procurement_id,
             source_system=SOURCE_CHILECOMPRA,
@@ -572,11 +743,6 @@ def plan_procurement(
         )
         signals.append(signal_row)
 
-        lines_by_sid = {
-            str(x.get("source_record_id") or ""): x
-            for x in lines
-            if x.get("source_record_id")
-        }
         for sid in sig["constituent_source_record_ids"]:
             line = lines_by_sid.get(sid)
             if line is None:
@@ -618,12 +784,13 @@ def plan_procurement(
                     )
                 )
 
+        # Auto-link uses resolver-safe fields only (NULL when plane-conflicted).
         result = classify_account_link_route(
             index=account_index,
-            buyer_name_norm=sig.get("buyer_name_norm"),
-            buyer_domain=sig.get("buyer_domain"),
-            email_domain=sig.get("email_domain"),
-            email_norm=sig.get("email_norm"),
+            buyer_name_norm=sig.get("resolution_buyer_name_norm"),
+            buyer_domain=sig.get("resolution_buyer_domain"),
+            email_domain=sig.get("resolution_email_domain"),
+            email_norm=sig.get("resolution_contact_email"),
             weak_public_unit_name=bool(sig.get("weak_public_unit_name")),
         )
         resolution = build_account_resolution(
@@ -797,6 +964,7 @@ def plan_procurement(
         "evidence_count": len(evidence_t),
         "conflict_count": len(conflicts_t),
         "conflict_distribution": dict(sorted(conflict_reason_counter.items())),
+        "field_plane_conflict_distribution": dict(sorted(plane_conflict_by_field.items())),
         "enrichment_candidate_count": len(enrichment_t),
         "enrichment_distribution": dict(sorted(enrichment_reason_counter.items())),
         "operator_queue_eligible_count": operator_eligible_n,

@@ -167,7 +167,7 @@ PROCUREMENT_SEMANTIC_PLAN_DIGEST_ALGORITHM: Final = "procurement_semantic_plan_d
 PROCUREMENT_MATERIALIZATION_DIGEST_ALGORITHM: Final = (
     "procurement_materialization_digest_v1"
 )
-RESOLVER_BUILD_CONTRACT_VERSION: Final = "procurement_resolver_v4"
+RESOLVER_BUILD_CONTRACT_VERSION: Final = "procurement_resolver_v5"
 
 # Field-level source provenance markers (persisted evidence / fingerprints).
 FIELD_ORIGIN_RAW: Final = "external_leads_raw"
@@ -195,8 +195,22 @@ EVIDENCE_SUBJECT_KINDS: Final = frozenset(
         "unresolved_source",
         "line_conflict",
         "resolution_conflict",
+        "field_plane_conflict",
     }
 )
+
+# Identity-bearing fields that must not auto-link on plane conflict.
+IDENTITY_PLANE_CONFLICT_FIELDS: Final = frozenset(
+    {
+        "buyer_display",
+        "buyer_domain",
+        "contact_email",
+        "email_domain",
+    }
+)
+
+# Display policy when origin=conflict (operator readability only; not for auto-link).
+DISPLAY_POLICY_PREFER_LEAD_THEN_RAW: Final = "prefer_lead_then_raw"
 
 SEMANTIC_PLAN_TABLES: Final = (
     "commercial_procurement_signal",
