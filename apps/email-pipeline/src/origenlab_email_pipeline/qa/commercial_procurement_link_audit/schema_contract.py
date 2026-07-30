@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from origenlab_email_pipeline.qa.commercial_procurement_link_audit.constants import (
+from origenlab_email_pipeline.commercial_procurement.constants import (
     BUILD_CONTRACT_PROPOSED,
     PROCUREMENT_BUILD_PLAN_FP_ALGORITHM,
     PROCUREMENT_SOURCE_FP_ALGORITHM,

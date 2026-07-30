@@ -629,7 +629,13 @@ def test_fixture_audit_runner_resolution_and_source_fp(tmp_path: Path) -> None:
         "INSERT INTO commercial_identity_account_domain VALUES ('a_hospital','hrs.cl',1,'institutional_domain')"
     )
     conn.execute(
-        "INSERT INTO commercial_identity_build_meta VALUES ('identity_fingerprint','abc'), ('schema_version','commercial_identity_v1')"
+        "INSERT INTO commercial_identity_build_meta VALUES ('identity_fingerprint','abc')"
+    )
+    conn.execute(
+        "INSERT INTO commercial_identity_build_meta VALUES ('identity_fingerprint_algorithm_version','identity_fp_v2')"
+    )
+    conn.execute(
+        "INSERT INTO commercial_identity_build_meta VALUES ('schema_version','commercial_identity_v1')"
     )
     conn.execute("INSERT INTO commercial_opportunity VALUES ('o1','fulfillment')")
     conn.commit()
