@@ -298,7 +298,9 @@ Three payload levels:
 
 Exit codes: `0` success; `2` path/mode; `3` identity; `4` schema; `5` stale plan; `6` unsafe invocation; `7` plan/persistence validation.
 
-Resolver: `procurement_resolver_v4` (field provenance corrections vs v3).
+Resolver: `procurement_resolver_v5` (resolver-safe identity fields withheld on plane conflict; v4 added provenance markers).
+
+CLI `--apply` requires `--run-context production_apply` and four 64-lowercase-hex `--expected-*` digests. Fixture apply is test-only via `allow_fixture_apply=True` on `run_procurement_build` (not exposed on CLI). `run_procurement_dry_run` is always read-only.
 
 ---
 

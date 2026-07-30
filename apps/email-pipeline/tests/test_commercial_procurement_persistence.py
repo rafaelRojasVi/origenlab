@@ -21,6 +21,7 @@ from origenlab_email_pipeline.commercial_procurement.builder import (
     StaleProcurementBuildPlanError,
     UnsafeInvocationError,
     run_procurement_build,
+    run_procurement_dry_run,
 )
 from origenlab_email_pipeline.commercial_procurement.schema import (
     ensure_commercial_procurement_tables,
@@ -107,7 +108,7 @@ def _seed_fixture(db: Path, *, tender_key: str = "T-1", org: str = "Hospital Reg
     conn.execute("DELETE FROM commercial_identity_build_meta")
     for k, v in [
         ("schema_version", "commercial_identity_v1"),
-        ("identity_fingerprint", "fixture-id-fp"),
+        ("identity_fingerprint", "a" * 64),
         ("identity_fingerprint_algorithm_version", "identity_fp_v2"),
         ("run_context", "local_fixture"),
     ]:
@@ -179,6 +180,7 @@ def test_first_apply_creates_schema_and_rows(tmp_path: Path) -> None:
         as_of_date="2026-07-30",
         run_context=RUN_CONTEXT_LOCAL_FIXTURE,
         apply=True,
+        allow_fixture_apply=True,
     )
     assert result.summary["applied"] is True
     assert result.summary["written_rows"]["commercial_procurement_signal"] == 1
@@ -201,10 +203,10 @@ def test_identical_rebuild_idempotent_semantic(tmp_path: Path) -> None:
     db = tmp_path / "idem.sqlite"
     _seed_fixture(db)
     a = run_procurement_build(
-        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True
+        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True, allow_fixture_apply=True
     )
     b = run_procurement_build(
-        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True
+        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True, allow_fixture_apply=True
     )
     assert a.plan.semantic_plan_digest == b.plan.semantic_plan_digest
     assert a.summary["readback_semantic_digest"] == b.summary["readback_semantic_digest"]
@@ -214,12 +216,12 @@ def test_changed_valid_plan_replaces_atomically(tmp_path: Path) -> None:
     db = tmp_path / "change.sqlite"
     _seed_fixture(db, tender_key="T-OLD")
     first = run_procurement_build(
-        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True
+        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True, allow_fixture_apply=True
     )
     assert first.plan.signals[0].canonical_tender_key == "T-OLD"
     _seed_fixture(db, tender_key="T-NEW")
     second = run_procurement_build(
-        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True
+        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True, allow_fixture_apply=True
     )
     assert second.plan.signals[0].canonical_tender_key == "T-NEW"
     assert second.plan.semantic_plan_digest != first.plan.semantic_plan_digest
@@ -238,7 +240,7 @@ def test_stale_expected_refuses_before_delete(tmp_path: Path) -> None:
     db = tmp_path / "stale.sqlite"
     _seed_fixture(db)
     first = run_procurement_build(
-        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True
+        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True, allow_fixture_apply=True
     )
     conn = sqlite3.connect(db)
     before = _snapshot_pr4(conn)
@@ -263,7 +265,7 @@ def test_stale_source_mutation_rolls_back(tmp_path: Path) -> None:
     db = tmp_path / "mut.sqlite"
     _seed_fixture(db)
     first = run_procurement_build(
-        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True
+        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True, allow_fixture_apply=True
     )
     conn = sqlite3.connect(db)
     before = _snapshot_pr4(conn)
@@ -281,6 +283,7 @@ def test_stale_source_mutation_rolls_back(tmp_path: Path) -> None:
             as_of_date="2026-07-30",
             run_context=RUN_CONTEXT_LOCAL_FIXTURE,
             apply=True,
+            allow_fixture_apply=True,
             expected_source_fingerprint=first.plan.source_fingerprint,
             expected_identity_fingerprint=first.plan.identity_fingerprint,
             expected_build_plan_fingerprint=first.plan.build_plan_fingerprint,
@@ -300,7 +303,7 @@ def test_failure_after_delete_restores_prior_pr4(tmp_path: Path) -> None:
     db = tmp_path / "adel.sqlite"
     _seed_fixture(db)
     first = run_procurement_build(
-        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True
+        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True, allow_fixture_apply=True
     )
     conn = sqlite3.connect(db)
     before = _snapshot_pr4(conn)
@@ -315,6 +318,7 @@ def test_failure_after_delete_restores_prior_pr4(tmp_path: Path) -> None:
             as_of_date="2026-07-30",
             run_context=RUN_CONTEXT_LOCAL_FIXTURE,
             apply=True,
+            allow_fixture_apply=True,
             inject_after_delete=boom,
         )
     conn = sqlite3.connect(db)
@@ -330,7 +334,7 @@ def test_mid_insert_failure_rolls_back(tmp_path: Path) -> None:
     db = tmp_path / "mid.sqlite"
     _seed_fixture(db)
     first = run_procurement_build(
-        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True
+        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True, allow_fixture_apply=True
     )
     conn = sqlite3.connect(db)
     before = _snapshot_pr4(conn)
@@ -342,6 +346,7 @@ def test_mid_insert_failure_rolls_back(tmp_path: Path) -> None:
             as_of_date="2026-07-30",
             run_context=RUN_CONTEXT_LOCAL_FIXTURE,
             apply=True,
+            allow_fixture_apply=True,
             inject_mid_signal_insert=lambda _c: None,
         )
     conn = sqlite3.connect(db)
@@ -354,7 +359,7 @@ def test_failure_before_commit_rolls_back(tmp_path: Path) -> None:
     db = tmp_path / "bc.sqlite"
     _seed_fixture(db)
     run_procurement_build(
-        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True
+        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True, allow_fixture_apply=True
     )
     conn = sqlite3.connect(db)
     before = _snapshot_pr4(conn)
@@ -369,6 +374,7 @@ def test_failure_before_commit_rolls_back(tmp_path: Path) -> None:
             as_of_date="2026-07-30",
             run_context=RUN_CONTEXT_LOCAL_FIXTURE,
             apply=True,
+            allow_fixture_apply=True,
             inject_before_commit=boom,
         )
     conn = sqlite3.connect(db)
@@ -380,7 +386,7 @@ def test_bad_readback_digest_rolls_back(tmp_path: Path) -> None:
     db = tmp_path / "bad.sqlite"
     _seed_fixture(db)
     run_procurement_build(
-        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True
+        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True, allow_fixture_apply=True
     )
     conn = sqlite3.connect(db)
     before = _snapshot_pr4(conn)
@@ -398,6 +404,7 @@ def test_bad_readback_digest_rolls_back(tmp_path: Path) -> None:
             as_of_date="2026-07-30",
             run_context=RUN_CONTEXT_LOCAL_FIXTURE,
             apply=True,
+            allow_fixture_apply=True,
             inject_bad_readback=corrupt,
         )
     conn = sqlite3.connect(db)
@@ -420,6 +427,7 @@ def test_incompatible_schema_refuses(tmp_path: Path) -> None:
             as_of_date="2026-07-30",
             run_context=RUN_CONTEXT_LOCAL_FIXTURE,
             apply=True,
+            allow_fixture_apply=True,
         )
 
 
@@ -479,14 +487,11 @@ def test_apply_with_production_dry_run_rejected(tmp_path: Path) -> None:
         text=True,
         check=False,
     )
-    assert proc.returncode == 2
-
-
-def test_retry_after_stale_succeeds(tmp_path: Path) -> None:
+    assert proc.returncode == 6
     db = tmp_path / "retry.sqlite"
     _seed_fixture(db)
     first = run_procurement_build(
-        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True
+        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True, allow_fixture_apply=True
     )
 
     def mutate(c: sqlite3.Connection) -> None:
@@ -501,6 +506,7 @@ def test_retry_after_stale_succeeds(tmp_path: Path) -> None:
             as_of_date="2026-07-30",
             run_context=RUN_CONTEXT_LOCAL_FIXTURE,
             apply=True,
+            allow_fixture_apply=True,
             inject_source_change=mutate,
         )
     # Retry without mutation succeeds (same approved plan)
@@ -509,6 +515,7 @@ def test_retry_after_stale_succeeds(tmp_path: Path) -> None:
         as_of_date="2026-07-30",
         run_context=RUN_CONTEXT_LOCAL_FIXTURE,
         apply=True,
+        allow_fixture_apply=True,
         expected_source_fingerprint=first.plan.source_fingerprint,
         expected_identity_fingerprint=first.plan.identity_fingerprint,
         expected_build_plan_fingerprint=first.plan.build_plan_fingerprint,
@@ -530,6 +537,7 @@ def test_schema_remains_after_failed_first_apply(tmp_path: Path) -> None:
             as_of_date="2026-07-30",
             run_context=RUN_CONTEXT_LOCAL_FIXTURE,
             apply=True,
+            allow_fixture_apply=True,
             inject_after_schema=boom,
         )
     conn = sqlite3.connect(db)
@@ -540,7 +548,7 @@ def test_schema_remains_after_failed_first_apply(tmp_path: Path) -> None:
     conn.close()
     # Retry succeeds
     ok = run_procurement_build(
-        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True
+        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE, apply=True, allow_fixture_apply=True
     )
     assert ok.summary["applied"] is True
 
@@ -552,3 +560,215 @@ def test_ensure_schema_idempotent(tmp_path: Path) -> None:
     ensure_commercial_procurement_tables(conn)
     ensure_commercial_procurement_tables(conn)
     conn.close()
+
+
+def test_cli_local_fixture_apply_refuses_exit_6(tmp_path: Path) -> None:
+    db = tmp_path / "cli_refuse.sqlite"
+    _seed_fixture(db)
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(_SCRIPT),
+            "--sqlite-path",
+            str(db),
+            "--as-of-date",
+            "2026-07-30",
+            "--run-context",
+            RUN_CONTEXT_LOCAL_FIXTURE,
+            "--apply",
+        ],
+        cwd=str(_SCRIPT.parents[2]),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 6
+    conn = sqlite3.connect(db)
+    assert not procurement_tables_present(conn)
+    conn.close()
+
+
+def test_builder_fixture_apply_requires_capability(tmp_path: Path) -> None:
+    db = tmp_path / "cap.sqlite"
+    _seed_fixture(db)
+    with pytest.raises(UnsafeInvocationError):
+        run_procurement_build(
+            sqlite_path=db,
+            as_of_date="2026-07-30",
+            run_context=RUN_CONTEXT_LOCAL_FIXTURE,
+            apply=True,
+        )
+    ok = run_procurement_build(
+        sqlite_path=db,
+        as_of_date="2026-07-30",
+        run_context=RUN_CONTEXT_LOCAL_FIXTURE,
+        apply=True,
+        allow_fixture_apply=True,
+    )
+    assert ok.summary["applied"] is True
+
+
+def test_dry_run_helper_refuses_apply(tmp_path: Path) -> None:
+    db = tmp_path / "dry.sqlite"
+    _seed_fixture(db)
+    with pytest.raises(UnsafeInvocationError):
+        run_procurement_dry_run(
+            sqlite_path=db,
+            as_of_date="2026-07-30",
+            run_context=RUN_CONTEXT_LOCAL_FIXTURE,
+            apply=True,
+        )
+    dry = run_procurement_dry_run(
+        sqlite_path=db,
+        as_of_date="2026-07-30",
+        run_context=RUN_CONTEXT_LOCAL_FIXTURE,
+    )
+    assert dry.summary["applied"] is False
+    conn = sqlite3.connect(db)
+    assert not procurement_tables_present(conn)
+    conn.close()
+
+
+def test_malformed_expected_digest_exit_6(tmp_path: Path) -> None:
+    db = tmp_path / "mal.sqlite"
+    _seed_fixture(db)
+    dry = run_procurement_dry_run(
+        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE
+    )
+    with pytest.raises(UnsafeInvocationError):
+        run_procurement_build(
+            sqlite_path=db,
+            as_of_date="2026-07-30",
+            run_context=RUN_CONTEXT_PRODUCTION_APPLY,
+            apply=True,
+            expected_source_fingerprint=dry.plan.source_fingerprint.upper(),
+            expected_identity_fingerprint=dry.plan.identity_fingerprint,
+            expected_build_plan_fingerprint=dry.plan.build_plan_fingerprint,
+            expected_semantic_plan_digest=dry.plan.semantic_plan_digest,
+        )
+    with pytest.raises(UnsafeInvocationError):
+        run_procurement_build(
+            sqlite_path=db,
+            as_of_date="2026-07-30",
+            run_context=RUN_CONTEXT_PRODUCTION_APPLY,
+            apply=True,
+            expected_source_fingerprint="abc",
+            expected_identity_fingerprint=dry.plan.identity_fingerprint,
+            expected_build_plan_fingerprint=dry.plan.build_plan_fingerprint,
+            expected_semantic_plan_digest=dry.plan.semantic_plan_digest,
+        )
+
+
+def test_valid_but_wrong_expected_is_stale_exit_5(tmp_path: Path) -> None:
+    db = tmp_path / "wrong.sqlite"
+    _seed_fixture(db)
+    dry = run_procurement_dry_run(
+        sqlite_path=db, as_of_date="2026-07-30", run_context=RUN_CONTEXT_LOCAL_FIXTURE
+    )
+    with pytest.raises(StaleProcurementBuildPlanError):
+        run_procurement_build(
+            sqlite_path=db,
+            as_of_date="2026-07-30",
+            run_context=RUN_CONTEXT_PRODUCTION_APPLY,
+            apply=True,
+            expected_source_fingerprint=dry.plan.source_fingerprint,
+            expected_identity_fingerprint=dry.plan.identity_fingerprint,
+            expected_build_plan_fingerprint="b" * 64,
+            expected_semantic_plan_digest=dry.plan.semantic_plan_digest,
+        )
+
+
+def test_incompatible_check_or_fk_refuses_before_delete(tmp_path: Path) -> None:
+    db = tmp_path / "chk.sqlite"
+    _seed_fixture(db)
+    first = run_procurement_build(
+        sqlite_path=db,
+        as_of_date="2026-07-30",
+        run_context=RUN_CONTEXT_LOCAL_FIXTURE,
+        apply=True,
+        allow_fixture_apply=True,
+    )
+    conn = sqlite3.connect(db)
+    # Drop conflict FK by recreating conflict table without FK / CHECK
+    conn.executescript(
+        """
+        PRAGMA foreign_keys=OFF;
+        CREATE TABLE commercial_procurement_conflict_bad AS
+          SELECT * FROM commercial_procurement_conflict;
+        DROP TABLE commercial_procurement_conflict;
+        CREATE TABLE commercial_procurement_conflict (
+          conflict_id TEXT PRIMARY KEY,
+          procurement_id TEXT,
+          source_system TEXT,
+          source_record_id TEXT,
+          subject_kind TEXT NOT NULL,
+          subject_key TEXT,
+          account_id TEXT,
+          reason_code TEXT NOT NULL,
+          confidence TEXT NOT NULL,
+          detail_json TEXT,
+          created_at TEXT NOT NULL
+        );
+        INSERT INTO commercial_procurement_conflict SELECT * FROM commercial_procurement_conflict_bad;
+        DROP TABLE commercial_procurement_conflict_bad;
+        """
+    )
+    conn.commit()
+    conn.close()
+    with pytest.raises(SchemaIncompatibilityError):
+        run_procurement_build(
+            sqlite_path=db,
+            as_of_date="2026-07-30",
+            run_context=RUN_CONTEXT_LOCAL_FIXTURE,
+            apply=True,
+            allow_fixture_apply=True,
+        )
+    conn = sqlite3.connect(db)
+    # Prior signal rows still present (schema gate before DELETE)
+    assert (
+        conn.execute("SELECT COUNT(*) FROM commercial_procurement_signal").fetchone()[0]
+        == first.summary["signal_count"]
+    )
+    conn.close()
+
+
+def test_missing_required_index_refuses(tmp_path: Path) -> None:
+    db = tmp_path / "idx.sqlite"
+    _seed_fixture(db)
+    run_procurement_build(
+        sqlite_path=db,
+        as_of_date="2026-07-30",
+        run_context=RUN_CONTEXT_LOCAL_FIXTURE,
+        apply=True,
+        allow_fixture_apply=True,
+    )
+    conn = sqlite3.connect(db)
+    before = _snapshot_pr4(conn)
+    conn.execute("DROP INDEX idx_cps_region")
+    conn.commit()
+    conn.close()
+    with pytest.raises(SchemaIncompatibilityError):
+        run_procurement_build(
+            sqlite_path=db,
+            as_of_date="2026-07-30",
+            run_context=RUN_CONTEXT_LOCAL_FIXTURE,
+            apply=True,
+            allow_fixture_apply=True,
+        )
+    conn = sqlite3.connect(db)
+    assert _snapshot_pr4(conn) == before
+    conn.close()
+
+
+def test_production_path_cannot_bypass_with_local_fixture(tmp_path: Path) -> None:
+    # Canonical-looking path name is irrelevant; capability + run-context govern apply.
+    db = tmp_path / "emails.sqlite"
+    _seed_fixture(db)
+    with pytest.raises(UnsafeInvocationError):
+        run_procurement_build(
+            sqlite_path=db,
+            as_of_date="2026-07-30",
+            run_context=RUN_CONTEXT_LOCAL_FIXTURE,
+            apply=True,
+            allow_fixture_apply=False,
+        )
