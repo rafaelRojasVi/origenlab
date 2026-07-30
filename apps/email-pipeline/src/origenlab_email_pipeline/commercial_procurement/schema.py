@@ -184,109 +184,160 @@ _REQUIRED_TABLES: tuple[str, ...] = (
     "commercial_procurement_build_meta",
 )
 
-_REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
-    "commercial_procurement_signal": frozenset(
-        {
-            "procurement_id",
-            "source_system",
-            "canonical_tender_key",
-            "tender_key_kind",
-            "buyer_name_raw",
-            "buyer_name_norm",
-            "buyer_domain_norm",
-            "buyer_email_norm",
-            "region",
-            "title",
-            "status_code",
-            "status_name",
-            "publication_at",
-            "close_at",
-            "procurement_context",
-            "context_reason_code",
-            "confidence",
-            "line_item_count",
-            "constituent_source_ids_json",
-            "constituent_lines_fp",
-            "first_seen_at",
-            "last_seen_at",
-            "review_status",
-        }
-    ),
-    "commercial_procurement_account_resolution": frozenset(
-        {
-            "resolution_id",
-            "procurement_id",
-            "resolution_status",
-            "account_id",
-            "link_route",
-            "confidence",
-            "reason_code",
-            "auto_link_allowed",
-            "review_status",
-            "candidate_account_ids_json",
-        }
-    ),
-    "commercial_procurement_evidence": frozenset(
-        {
-            "evidence_id",
-            "subject_kind",
-            "subject_id",
-            "source_system",
-            "source_table",
-            "source_record_id",
-            "subject_key",
-            "evidence_type",
-            "evidence_at",
-            "reason_code",
-            "detail_json",
-        }
-    ),
-    "commercial_procurement_conflict": frozenset(
-        {
-            "conflict_id",
-            "procurement_id",
-            "source_system",
-            "source_record_id",
-            "subject_kind",
-            "subject_key",
-            "account_id",
-            "reason_code",
-            "confidence",
-            "detail_json",
-            "created_at",
-        }
-    ),
-    "commercial_procurement_enrichment_candidate": frozenset(
-        {
-            "candidate_id",
-            "procurement_id",
-            "source_system",
-            "source_record_id",
-            "buyer_name_raw",
-            "account_id",
-            "reason_code",
-            "confidence",
-            "recommended_research_field",
-            "priority",
-            "operator_queue_eligible",
-            "candidate_account_ids_json",
-        }
-    ),
-    "commercial_procurement_build_meta": frozenset({"meta_key", "meta_value"}),
-}
-
-_REQUIRED_PK: dict[str, str] = {
-    "commercial_procurement_signal": "procurement_id",
-    "commercial_procurement_account_resolution": "resolution_id",
-    "commercial_procurement_evidence": "evidence_id",
-    "commercial_procurement_conflict": "conflict_id",
-    "commercial_procurement_enrichment_candidate": "candidate_id",
-    "commercial_procurement_build_meta": "meta_key",
-}
-
-
 class SchemaIncompatibilityError(ValueError):
     """Existing commercial_procurement_* schema is incompatible; refuse migration."""
+
+
+# Structural manifest: name -> (affinity, notnull, pk_position 0=not pk else 1-based)
+# Affinity is normalized uppercase SQLite type affinity class.
+ColumnSpec = tuple[str, int, int]
+
+
+def _affinity(declared: str) -> str:
+    t = (declared or "").strip().upper()
+    if not t:
+        return "BLOB"
+    if "INT" in t:
+        return "INTEGER"
+    if any(x in t for x in ("CHAR", "CLOB", "TEXT")):
+        return "TEXT"
+    if "BLOB" in t:
+        return "BLOB"
+    if any(x in t for x in ("REAL", "FLOA", "DOUB")):
+        return "REAL"
+    return "NUMERIC"
+
+
+SCHEMA_COLUMN_MANIFEST: dict[str, dict[str, ColumnSpec]] = {
+    "commercial_procurement_signal": {
+        "procurement_id": ("TEXT", 0, 1),
+        "source_system": ("TEXT", 1, 0),
+        "canonical_tender_key": ("TEXT", 1, 0),
+        "tender_key_kind": ("TEXT", 1, 0),
+        "buyer_name_raw": ("TEXT", 0, 0),
+        "buyer_name_norm": ("TEXT", 0, 0),
+        "buyer_domain_norm": ("TEXT", 0, 0),
+        "buyer_email_norm": ("TEXT", 0, 0),
+        "region": ("TEXT", 0, 0),
+        "title": ("TEXT", 0, 0),
+        "status_code": ("TEXT", 0, 0),
+        "status_name": ("TEXT", 0, 0),
+        "publication_at": ("TEXT", 0, 0),
+        "close_at": ("TEXT", 0, 0),
+        "procurement_context": ("TEXT", 1, 0),
+        "context_reason_code": ("TEXT", 1, 0),
+        "confidence": ("TEXT", 1, 0),
+        "line_item_count": ("INTEGER", 1, 0),
+        "constituent_source_ids_json": ("TEXT", 1, 0),
+        "constituent_lines_fp": ("TEXT", 1, 0),
+        "first_seen_at": ("TEXT", 0, 0),
+        "last_seen_at": ("TEXT", 0, 0),
+        "review_status": ("TEXT", 1, 0),
+    },
+    "commercial_procurement_account_resolution": {
+        "resolution_id": ("TEXT", 0, 1),
+        "procurement_id": ("TEXT", 1, 0),
+        "resolution_status": ("TEXT", 1, 0),
+        "account_id": ("TEXT", 0, 0),
+        "link_route": ("TEXT", 1, 0),
+        "confidence": ("TEXT", 1, 0),
+        "reason_code": ("TEXT", 1, 0),
+        "auto_link_allowed": ("INTEGER", 1, 0),
+        "review_status": ("TEXT", 1, 0),
+        "candidate_account_ids_json": ("TEXT", 1, 0),
+    },
+    "commercial_procurement_evidence": {
+        "evidence_id": ("TEXT", 0, 1),
+        "subject_kind": ("TEXT", 1, 0),
+        "subject_id": ("TEXT", 1, 0),
+        "source_system": ("TEXT", 0, 0),
+        "source_table": ("TEXT", 1, 0),
+        "source_record_id": ("TEXT", 1, 0),
+        "subject_key": ("TEXT", 0, 0),
+        "evidence_type": ("TEXT", 1, 0),
+        "evidence_at": ("TEXT", 0, 0),
+        "reason_code": ("TEXT", 1, 0),
+        "detail_json": ("TEXT", 0, 0),
+    },
+    "commercial_procurement_conflict": {
+        "conflict_id": ("TEXT", 0, 1),
+        "procurement_id": ("TEXT", 0, 0),
+        "source_system": ("TEXT", 0, 0),
+        "source_record_id": ("TEXT", 0, 0),
+        "subject_kind": ("TEXT", 1, 0),
+        "subject_key": ("TEXT", 0, 0),
+        "account_id": ("TEXT", 0, 0),
+        "reason_code": ("TEXT", 1, 0),
+        "confidence": ("TEXT", 1, 0),
+        "detail_json": ("TEXT", 0, 0),
+        "created_at": ("TEXT", 1, 0),
+    },
+    "commercial_procurement_enrichment_candidate": {
+        "candidate_id": ("TEXT", 0, 1),
+        "procurement_id": ("TEXT", 0, 0),
+        "source_system": ("TEXT", 0, 0),
+        "source_record_id": ("TEXT", 0, 0),
+        "buyer_name_raw": ("TEXT", 0, 0),
+        "account_id": ("TEXT", 0, 0),
+        "reason_code": ("TEXT", 1, 0),
+        "confidence": ("TEXT", 1, 0),
+        "recommended_research_field": ("TEXT", 1, 0),
+        "priority": ("INTEGER", 1, 0),
+        "operator_queue_eligible": ("INTEGER", 1, 0),
+        "candidate_account_ids_json": ("TEXT", 0, 0),
+    },
+    "commercial_procurement_build_meta": {
+        "meta_key": ("TEXT", 0, 1),
+        "meta_value": ("TEXT", 1, 0),
+    },
+}
+
+REQUIRED_INDEXES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("idx_cps_tender_key", "commercial_procurement_signal", ("source_system", "canonical_tender_key")),
+    ("idx_cps_context", "commercial_procurement_signal", ("procurement_context",)),
+    ("idx_cps_buyer_norm", "commercial_procurement_signal", ("buyer_name_norm",)),
+    ("idx_cps_region", "commercial_procurement_signal", ("region",)),
+    ("idx_cpar_account", "commercial_procurement_account_resolution", ("account_id",)),
+    ("idx_cpar_status", "commercial_procurement_account_resolution", ("resolution_status",)),
+    ("idx_cpar_route", "commercial_procurement_account_resolution", ("link_route",)),
+    ("idx_cpe_subject", "commercial_procurement_evidence", ("subject_kind", "subject_id")),
+    ("idx_cpe_source_pointer", "commercial_procurement_evidence", ("source_table", "source_record_id")),
+    ("idx_cpc_reason", "commercial_procurement_conflict", ("reason_code",)),
+    ("idx_cpc_procurement", "commercial_procurement_conflict", ("procurement_id",)),
+    ("idx_cpec_eligible", "commercial_procurement_enrichment_candidate", ("operator_queue_eligible",)),
+    ("idx_cpec_reason", "commercial_procurement_enrichment_candidate", ("reason_code",)),
+    ("idx_cpec_procurement", "commercial_procurement_enrichment_candidate", ("procurement_id",)),
+)
+
+# Normalized CHECK substrings that must appear in CREATE TABLE SQL (whitespace-insensitive).
+REQUIRED_CHECK_FRAGMENTS: dict[str, tuple[str, ...]] = {
+    "commercial_procurement_signal": (
+        "tender_key_kind in ('codigo_externo','codigo_licitacion','numero_adquisicion')",
+        "procurement_context in ('none','tender_watch','tender_active','historical_tender','unknown')",
+        "confidence in ('high','medium','low','none')",
+        "line_item_count >= 1",
+    ),
+    "commercial_procurement_account_resolution": (
+        "resolution_status in ('linked','unlinked','ambiguous','refused')",
+        "confidence in ('high','medium','low','none')",
+        "auto_link_allowed in (0, 1)",
+        "resolution_status = 'linked'",
+        "account_id is not null",
+        "auto_link_allowed = 1",
+        "resolution_status in ('unlinked','ambiguous','refused')",
+        "account_id is null",
+        "auto_link_allowed = 0",
+    ),
+    "commercial_procurement_conflict": (
+        "confidence in ('high','medium','low','none')",
+        "procurement_id is not null",
+        "source_system is not null and source_record_id is not null",
+    ),
+    "commercial_procurement_enrichment_candidate": (
+        "confidence in ('high','medium','low','none')",
+        "operator_queue_eligible in (0, 1)",
+    ),
+}
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
@@ -297,50 +348,41 @@ def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
     return row is not None
 
 
-def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
-    return {str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})")}
+def _normalize_sql(sql: str) -> str:
+    """Lowercase and strip whitespace/punctuation noise for CHECK matching."""
+    compact = "".join((sql or "").lower().replace('"', "").replace("`", "").split())
+    return compact
 
 
-def _pk_columns(conn: sqlite3.Connection, table: str) -> list[str]:
-    cols = [
-        str(r[1])
-        for r in conn.execute(f"PRAGMA table_info({table})")
-        if int(r[5]) > 0
-    ]
-    return sorted(cols, key=lambda c: next(
-        int(r[5]) for r in conn.execute(f"PRAGMA table_info({table})") if str(r[1]) == c
-    ))
-
-
-def _unique_index_covers(conn: sqlite3.Connection, table: str, columns: tuple[str, ...]) -> bool:
+def _unique_covers(conn: sqlite3.Connection, table: str, columns: tuple[str, ...]) -> bool:
     for idx in conn.execute(f"PRAGMA index_list({table})"):
-        # idx: seq, name, unique, origin, partial
         if int(idx[2]) != 1:
             continue
-        idx_cols = tuple(
-            str(r[2]) for r in conn.execute(f"PRAGMA index_info({idx[1]})")
-        )
+        idx_cols = tuple(str(r[2]) for r in conn.execute(f"PRAGMA index_info({idx[1]})"))
         if idx_cols == columns:
             return True
-    # Also accept UNIQUE constraints surfaced as autoindexes
+        if set(idx_cols) == set(columns) and len(idx_cols) == len(columns):
+            return True
     return False
 
 
-def procurement_tables_present(conn: sqlite3.Connection) -> bool:
-    return any(_table_exists(conn, t) for t in _REQUIRED_TABLES)
+def _index_columns(conn: sqlite3.Connection, index_name: str) -> tuple[str, ...] | None:
+    rows = list(conn.execute(f"PRAGMA index_info({index_name})"))
+    if not rows:
+        return None
+    ordered = sorted(rows, key=lambda r: int(r[0]))
+    return tuple(str(r[2]) for r in ordered)
 
 
-def procurement_tables_complete(conn: sqlite3.Connection) -> bool:
-    return all(_table_exists(conn, t) for t in _REQUIRED_TABLES)
+def _fk_ok(conn: sqlite3.Connection, table: str, parent: str, column: str) -> bool:
+    for r in conn.execute(f"PRAGMA foreign_key_list({table})"):
+        if str(r[2]) == parent and str(r[3]) == column:
+            return True
+    return False
 
 
 def assert_schema_compatible(conn: sqlite3.Connection) -> dict[str, Any]:
-    """Fail-closed compatibility gate.
-
-    - no tables → first-run additive create permitted
-    - all present + compatible → ok
-    - partial or incompatible → refuse
-    """
+    """Fail-closed structural compatibility gate."""
     present = [t for t in _REQUIRED_TABLES if _table_exists(conn, t)]
     if not present:
         return {"status": "absent", "tables": []}
@@ -350,68 +392,106 @@ def assert_schema_compatible(conn: sqlite3.Connection) -> dict[str, Any]:
             "incompatible commercial_procurement schema: partial tables present "
             f"(missing={missing})"
         )
-    for table, required in _REQUIRED_COLUMNS.items():
-        cols = _column_names(conn, table)
-        if not required.issubset(cols):
-            raise SchemaIncompatibilityError(
-                f"incompatible {table}: missing columns "
-                f"{sorted(required - cols)}"
-            )
-        pk = _pk_columns(conn, table)
-        expected_pk = _REQUIRED_PK[table]
-        if pk != [expected_pk]:
-            raise SchemaIncompatibilityError(
-                f"incompatible {table}: primary key {pk!r} != {[expected_pk]!r}"
-            )
-    # Unique (source_system, canonical_tender_key)
-    if not _unique_index_covers(
+
+    for table, cols_manifest in SCHEMA_COLUMN_MANIFEST.items():
+        info = {str(r[1]): r for r in conn.execute(f"PRAGMA table_info({table})")}
+        for col, (aff, notnull, pkpos) in cols_manifest.items():
+            if col not in info:
+                raise SchemaIncompatibilityError(
+                    f"incompatible {table}: missing column {col}"
+                )
+            row = info[col]
+            got_aff = _affinity(str(row[2]))
+            if got_aff != aff:
+                raise SchemaIncompatibilityError(
+                    f"incompatible {table}.{col}: affinity {got_aff} != {aff}"
+                )
+            if int(row[3]) != int(notnull):
+                raise SchemaIncompatibilityError(
+                    f"incompatible {table}.{col}: NOT NULL {int(row[3])} != {notnull}"
+                )
+            if int(row[5]) != int(pkpos):
+                raise SchemaIncompatibilityError(
+                    f"incompatible {table}.{col}: pk position {int(row[5])} != {pkpos}"
+                )
+
+    if not _unique_covers(
         conn, "commercial_procurement_signal", ("source_system", "canonical_tender_key")
     ):
-        # SQLite may name UNIQUE as sqlite_autoindex_*; verify via index_list uniqueness
-        # on those two columns in any order of autoindex covering both.
-        ok = False
-        for idx in conn.execute("PRAGMA index_list(commercial_procurement_signal)"):
-            if int(idx[2]) != 1:
-                continue
-            idx_cols = {str(r[2]) for r in conn.execute(f"PRAGMA index_info({idx[1]})")}
-            if idx_cols == {"source_system", "canonical_tender_key"}:
-                ok = True
-                break
-        if not ok:
-            raise SchemaIncompatibilityError(
-                "incompatible commercial_procurement_signal: missing UNIQUE "
-                "(source_system, canonical_tender_key)"
-            )
-    if not _unique_index_covers(
+        raise SchemaIncompatibilityError(
+            "incompatible commercial_procurement_signal: missing UNIQUE "
+            "(source_system, canonical_tender_key)"
+        )
+    if not _unique_covers(
         conn, "commercial_procurement_account_resolution", ("procurement_id",)
     ):
-        ok = False
-        for idx in conn.execute(
-            "PRAGMA index_list(commercial_procurement_account_resolution)"
-        ):
-            if int(idx[2]) != 1:
-                continue
-            idx_cols = [str(r[2]) for r in conn.execute(f"PRAGMA index_info({idx[1]})")]
-            if idx_cols == ["procurement_id"]:
-                ok = True
-                break
-        if not ok:
-            raise SchemaIncompatibilityError(
-                "incompatible commercial_procurement_account_resolution: "
-                "missing UNIQUE(procurement_id)"
-            )
-    # Internal FKs
-    fk_res = list(
-        conn.execute("PRAGMA foreign_key_list(commercial_procurement_account_resolution)")
-    )
-    if not any(
-        str(r[2]) == "commercial_procurement_signal" and str(r[3]) == "procurement_id"
-        for r in fk_res
+        raise SchemaIncompatibilityError(
+            "incompatible commercial_procurement_account_resolution: "
+            "missing UNIQUE(procurement_id)"
+        )
+
+    if not _fk_ok(
+        conn,
+        "commercial_procurement_account_resolution",
+        "commercial_procurement_signal",
+        "procurement_id",
     ):
         raise SchemaIncompatibilityError(
             "incompatible account_resolution: missing FK to signal.procurement_id"
         )
+    if not _fk_ok(
+        conn,
+        "commercial_procurement_conflict",
+        "commercial_procurement_signal",
+        "procurement_id",
+    ):
+        raise SchemaIncompatibilityError(
+            "incompatible conflict: missing FK to signal.procurement_id"
+        )
+    if not _fk_ok(
+        conn,
+        "commercial_procurement_enrichment_candidate",
+        "commercial_procurement_signal",
+        "procurement_id",
+    ):
+        raise SchemaIncompatibilityError(
+            "incompatible enrichment_candidate: missing FK to signal.procurement_id"
+        )
+
+    for index_name, table, cols in REQUIRED_INDEXES:
+        got = _index_columns(conn, index_name)
+        if got is None:
+            raise SchemaIncompatibilityError(
+                f"incompatible schema: missing index {index_name}"
+            )
+        if got != cols:
+            raise SchemaIncompatibilityError(
+                f"incompatible index {index_name}: columns {got} != {cols}"
+            )
+
+    for table, fragments in REQUIRED_CHECK_FRAGMENTS.items():
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+            (table,),
+        ).fetchone()
+        if row is None or not row[0]:
+            raise SchemaIncompatibilityError(f"incompatible {table}: missing CREATE SQL")
+        norm = _normalize_sql(str(row[0]))
+        for frag in fragments:
+            if _normalize_sql(frag) not in norm:
+                raise SchemaIncompatibilityError(
+                    f"incompatible {table}: missing CHECK contract fragment {frag!r}"
+                )
+
     return {"status": "compatible", "tables": list(_REQUIRED_TABLES)}
+
+
+def procurement_tables_present(conn: sqlite3.Connection) -> bool:
+    return any(_table_exists(conn, t) for t in _REQUIRED_TABLES)
+
+
+def procurement_tables_complete(conn: sqlite3.Connection) -> bool:
+    return all(_table_exists(conn, t) for t in _REQUIRED_TABLES)
 
 
 def create_validation_schema(conn: sqlite3.Connection) -> None:
@@ -449,6 +529,9 @@ def clear_rebuildable_procurement_tables(conn: sqlite3.Connection) -> None:
 __all__ = [
     "COMMERCIAL_PROCUREMENT_SCHEMA_SQL",
     "COMMERCIAL_PROCUREMENT_VALIDATION_SCHEMA_SQL",
+    "REQUIRED_CHECK_FRAGMENTS",
+    "REQUIRED_INDEXES",
+    "SCHEMA_COLUMN_MANIFEST",
     "TABLE_INSERT_ORDER",
     "SchemaIncompatibilityError",
     "assert_schema_compatible",
