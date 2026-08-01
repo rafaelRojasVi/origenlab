@@ -27,6 +27,8 @@ from origenlab_email_pipeline.commercial_procurement_acquisition.provenance impo
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.redaction import (  # noqa: E402
     assert_no_ticket_leak,
+    is_ticket_configured_boolean_only,
+    ticket_safety_flags,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.snapshot import (  # noqa: E402
     build_acquisition_snapshot,
@@ -39,7 +41,9 @@ from origenlab_email_pipeline.commercial_procurement_acquisition.walkthrough imp
 
 
 def _ticket_configured_boolean_only() -> bool:
-    if (os.environ.get(TICKET_ENV_VAR) or "").strip():
+    """Boolean-only check — never returns, prints, hashes, or passes the ticket value."""
+    env_val = os.environ.get(TICKET_ENV_VAR)
+    if is_ticket_configured_boolean_only(env_val):
         return True
     for p in (_ROOT / ".env", Path.home() / ".config/origenlab/.env"):
         if not p.is_file():
@@ -49,7 +53,7 @@ def _ticket_configured_boolean_only() -> bool:
                 continue
             if line.strip().startswith(f"{TICKET_ENV_VAR}="):
                 val = line.split("=", 1)[1].strip().strip('"').strip("'")
-                if val:
+                if is_ticket_configured_boolean_only(val):
                     return True
     return False
 
@@ -110,9 +114,7 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(digest_difference_notes(), indent=2, sort_keys=True) + "\n"
         )
         proof = {
-            "authenticated_request_performed": False,
-            "ticket_configured": ticket_configured,
-            "ticket_value_accessed": False,
+            **ticket_safety_flags(ticket_configured=ticket_configured),
             "production_apply": False,
             "production_mutation": False,
             "scheduler_changed": False,
@@ -195,9 +197,7 @@ def main(argv: list[str] | None = None) -> int:
         + "\n"
     )
     proof = {
-        "authenticated_request_performed": False,
-        "ticket_configured": ticket_configured,
-        "ticket_value_accessed": False,
+        **ticket_safety_flags(ticket_configured=ticket_configured),
         "production_apply": False,
         "production_mutation": False,
         "input_path": str(src.name),

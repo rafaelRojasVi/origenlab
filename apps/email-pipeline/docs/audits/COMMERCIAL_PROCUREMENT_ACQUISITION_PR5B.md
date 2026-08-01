@@ -1,7 +1,7 @@
 # Commercial procurement acquisition — PR5B
 
-**Status:** Design + parsers + fixtures (draft)  
-**Branch:** `feat/commercial-procurement-acquisition-pr5b`  
+**Status:** Acquisition-contract correction pass (draft)
+**Branch:** `feat/commercial-procurement-acquisition-pr5b`
 **Base:** `9a78aebd06a8065e249284ae54fabdd46ff8069c` (PR5A merge)
 
 This document does **not** authorize authenticated Mercado Público requests,
@@ -51,78 +51,120 @@ Contract versions:
 
 - `commercial_procurement_acquisition_v1`
 - `procurement_acquisition_parser_v1`
+- `acquisition_run_v1`
 - fingerprint algorithms: `acquisition_source_fingerprint_v1`,
-  `acquisition_normalized_semantic_digest_v1`
+  `acquisition_normalized_semantic_digest_v1`,
+  `acquisition_run_source_fingerprint_v1`
 - raw digest: `sha256_canonical_json_v1`
 
-Grains: Acquisition run → Response page → Source observation → Tender /
-Line observation → Snapshot.
+Grains:
+
+- **AcquisitionSnapshot** — one sanitized query scope
+- **AcquisitionRun** — composite of child snapshots / detail attempts
+- Response page → Source observation → Tender / Line observation
+
+### Identity (correction)
+
+| Concept | Meaning |
+|---------|---------|
+| `source_native_tender_key` | Source-qualified (e.g. `ticket_api:codigo_externo:…`, `ocds:ocid|release|tender|kind`) |
+| `canonical_tender_key_candidate` | Source-neutral normalized Mercado Público CodigoExterno **without** `ticket:` / `ocds-tender:` prefixes |
+| `canonical_candidate_kind` / `reason` | Why a candidate was / was not emitted |
+
+OCDS emits a Mercado Público canonical candidate only when `tender.id` matches
+the documented CodigoExterno shape (or an explicit mapping exists). Ocid-only
+releases remain unresolved.
+
+### Records policy B (OCDS)
+
+Historical releases preferred. `compiledRelease` emitted only when its
+`(ocid, release.id)` is not already among historical releases. Provenance
+retains `record_id`, `release_kind`, tags, procurement method, classifications,
+and related processes as evidence only (not PR5 eligibility).
+
+### Ticket detail statuses
+
+`complete` | `malformed_response` | `detail_empty` | `detail_multiple_results` |
+`detail_code_mismatch` | `source_total_mismatch`
+
+### Monthly OCDS statuses
+
+`complete` | `terminal_empty_page` | `incomplete_range` | `duplicate_page` |
+`overlapping_range` | `source_total_mismatch` | `malformed_response` |
+`partial_page_failure`
+
+Single-page empty responses use neutral `empty_page` (not terminal).
 
 Cross-source coalescence is **deferred to PR5C**.
 
-## 4. Fixture origin
+## 4. Fixture origin vs completeness
 
-All committed fixtures under
-`tests/fixtures/commercial_procurement_acquisition/` are
-`fixture_origin=synthetic_official_shape`.
+Committed fixtures use `fixture_origin=synthetic_official_shape`.
 
-They follow documented Mercado Público / OCDS field contracts and the observed
-`Cantidad` / `Listado` / `Items.Listado` envelope shape. They are **not**
-production-derived. No ticket is present.
-
-Offline detail-cache JSON under `reports/out/` was inspected for shape only and
-was not committed.
+`fixture_origin` is **not** mixed into page/snapshot completeness. Content
+completeness statuses describe parse/assembly outcome only.
 
 ## 5. Data walkthrough (Cases A–E)
 
 Generated (gitignored) report example:
 
-`reports/out/active/current/commercial_procurement_acquisition_pr5b_<UTC>/`
+`reports/out/pr5b_walkthrough_correction/`
 
 ### Case A — Ticket summary
 
-| Stage | Source → result |
-|-------|-----------------|
-| Envelope | `Listado` → 2 source/tender observations, 0 lines |
-| Query | sanitized `estado=activas` (no ticket) |
-| Fingerprints | source + semantic (see table below) |
+Source-native vs canonical tender identity; malformed payloads fingerprint
+actual JSON input (not error text).
 
 ### Case B — Ticket detail
 
-Summary vs detail provenance remains distinct (`ticket_licitacion_detail`).
-Two stable line IDs after item shuffle. Compatibility with
-`normalize_licitacion_detail_items` verified for codigo/title/close/line fields.
+Code-detail query identity; multiple stable line IDs; compatibility adapter
+equals existing normalizer on locked fields.
 
-### Case C — OCDS package
+### Case C — OCDS
 
-Label: `synthetic_official_shape`. Retains `ocid` / release id / `tender.id` /
-items. `tender.status` stored as `source_status_system=ocds` — **not** PR5
-active eligibility.
+Records policy B provenance; procurementMethod; additional classifications;
+related processes; monthly page/range assembler.
 
-### Case D — Partial detail failure
+### Case D — AcquisitionRun
 
-Summary ok + one detail ok + one detail failed →
-`completeness_status=partial_detail_failure` (never false-complete).
+One summary child + detail A success + detail B failed attempt with its **own**
+`build_ticket_detail_query(tender_code=B)` query ID. Partial run completeness;
+successful evidence retained.
 
-### Case E — Cross-source keys
+### Case E — Cross-source canonical candidate
 
-Synthetic pair sharing tender code `9999-1-LE26`. Ticket key
-`ticket:…` vs OCDS key `ocds-tender:…`. **No coalescence** in PR5B.
+Parser-emitted equal candidates: `9999-1-le26` from Ticket CodigoExterno and
+OCDS `tender.id`. Source-native keys remain distinct. **No coalescence.**
 
-### Fingerprint values (walkthrough fixtures)
+### Fingerprint values (walkthrough fixtures — correction pass)
 
-| Case | source_fingerprint | normalized_semantic_digest | counts (src/tender/line) |
-|------|--------------------|----------------------------|---------------------------|
-| A | `3558bd644e84307457265317e6717af81cba3a088696395a16517953c4d7b3ed` | `681d6c47b933d5fd04434c9eb1a9377ac76abf436bd951ba38769b54cf9011ad` | 2/2/0 |
-| B | `67c6f33a640b2163603b49e5974137064b6ad49a8519bb9da54b40aa171e9432` | `a320fb7aa019e65aff3bc734a5d811aa74f6d1ad0b32faff4451820bbd4d34ac` | 1/1/2 |
-| C | `ea9fe239da18348a1a9500e701d8aa96b0ad7092192e1925391c3bbde51860c8` | `fd652d7b8b7baa3fa260815f947c7db8eb89758f398c73cf3048180e3fdbc8c3` | 1/1/1 |
-| D | `1ca285fb9f607d5ac2e1d68d48c84c1314b7be138aa6eee5345d684067657097` | `10d73decc294023e08c2d7bf43a23c8e2f6a7b24f48bfe26b87ab447bc58707c` | 3/3/2 |
+| Case | Fingerprint key | Value |
+|------|-----------------|-------|
+| A | source | `985b3ea0834198c9c008e4026e814d3807981a40d6bd8a9b67b6003e2ee33cdd` |
+| A | semantic | `038fd66b7dbd71af84b6283ab71489810dc1ae9e86d127f48114c2c27d55a010` |
+| A | malformed_raw | `da4030d94d7e021763a73475c7e0f434f7ce361882886e3c02ca576b275047d5` |
+| B | source | `c09e386252bfc97b591b62b515b0669995b916b07ea6ac03e497e2adceb07065` |
+| B | semantic | `9fc4a53a1308c240518da5b82fd5a93902889c91e1421447dd67d12981ffe0e9` |
+| C | monthly_source | `dba6adcead5268cdbd7aafe83aadfec2e153441e6310ef288a5d430d6581e572` |
+| C | monthly_semantic | `c879be2b7b595084ce28001238a24b92bd99989bf52a222f09880c3c29485e35` |
+| C | records_source | `08ccedd2361724cc77eec7dd3a22e6d07516d5ca07a23c36230b02fe6a18a9f4` |
+| C | records_semantic | `045eaa041f7086f3643d80c2b811c0717a76669e0d58bb091632eae465d46008` |
+| C | single_source | `82c94c9b222bd990014da9622e808ed5040ccae3c60c8e2d00bbaf4d068b0884` |
+| D | run_source | `d77de0bde939a35934afff0144e2b79c36539491b09997e2f12077929b83587e` |
+| D | summary_source | `985b3ea0834198c9c008e4026e814d3807981a40d6bd8a9b67b6003e2ee33cdd` |
+| D | detail_a_source | `c09e386252bfc97b591b62b515b0669995b916b07ea6ac03e497e2adceb07065` |
+| E | shared candidate | `9999-1-le26` (parser-equal; coalesced=false) |
 
 ## 6. Safety
 
-- No authenticated request (`authenticated_request_performed=false`)
-- Ticket: boolean configured only; never read into parser path; never hashed
+- `authenticated_request_performed=false`
+- `ticket_configured` (boolean only via shared helper)
+- `ticket_used_for_request=false`
+- `ticket_persisted=false`
+- `ticket_logged=false`
+- No `ticket_value_accessed` field (removed as inaccurate)
 - CLI rejects `--network` / `--apply` / `--ticket`
+- `AcquisitionQuery.extra` removed from v1
 - No production SQLite mutation; no PR2/PR3/PR4 mutation
 - No Gmail / Postgres / dashboard / outreach / scheduler changes
 - Reports remain gitignored
@@ -138,5 +180,5 @@ or outreach outcomes.
 ```bash
 uv run python scripts/commercial/build_commercial_procurement_acquisition_snapshot.py \
   --source-kind walkthrough \
-  --out-dir reports/out/active/current/commercial_procurement_acquisition_pr5b_<UTC>/
+  --out-dir reports/out/pr5b_walkthrough_correction/
 ```

@@ -2,6 +2,9 @@
 
 No authenticated Mercado Público requests. No PR5 candidate planning.
 No relevance, account, contact, or outreach logic.
+
+Records policy B (OCDS): historical releases preferred; compiledRelease emitted
+only when its (ocid, release.id) is not already present among historical releases.
 """
 
 from __future__ import annotations
@@ -20,11 +23,13 @@ from origenlab_email_pipeline.commercial_procurement_acquisition.fingerprint imp
     acquisition_source_fingerprint,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.ocds import (
+    build_ocds_month_snapshot,
     plan_ocds_ranges,
     parse_ocds_package,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.snapshot import (
     build_acquisition_snapshot,
+    build_partial_detail_run,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.ticket_api import (
     parse_ticket_detail_payload,
@@ -42,6 +47,8 @@ __all__ = [
     "acquisition_normalized_semantic_digest",
     "acquisition_source_fingerprint",
     "build_acquisition_snapshot",
+    "build_ocds_month_snapshot",
+    "build_partial_detail_run",
     "parse_ocds_package",
     "parse_ticket_detail_payload",
     "parse_ticket_summary_payload",

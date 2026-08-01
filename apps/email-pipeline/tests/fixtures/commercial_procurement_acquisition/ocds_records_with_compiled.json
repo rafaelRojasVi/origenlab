@@ -1,0 +1,153 @@
+{
+  "publishedDate": "2026-08-01T00:00:00Z",
+  "publisher": {
+    "name": "Synthetic OCDS Publisher"
+  },
+  "records": [
+    {
+      "compiledRelease": {
+        "buyer": {
+          "id": "CL-BUY-SYN-1",
+          "name": "Synthetic OCDS Buyer"
+        },
+        "date": "2026-07-29T12:00:00Z",
+        "id": "ocds-synth-0001-01",
+        "ocid": "ocds-synth-0001",
+        "tag": [
+          "tenderUpdate"
+        ],
+        "tender": {
+          "additionalClassifications": [
+            {
+              "description": "Lab equipment class",
+              "id": "41100000",
+              "scheme": "UNSPSC"
+            }
+          ],
+          "description": "Compiled synthetic description",
+          "id": "9999-1-LE26",
+          "items": [
+            {
+              "additionalClassifications": [
+                {
+                  "description": "Centrifuge accessory class",
+                  "id": "41101500",
+                  "scheme": "UNSPSC"
+                }
+              ],
+              "classification": {
+                "id": "41100000",
+                "scheme": "UNSPSC"
+              },
+              "description": "Synthetic centrifuge item",
+              "id": "item-1",
+              "quantity": 1,
+              "unit": {
+                "name": "UN"
+              }
+            }
+          ],
+          "procurementMethod": "open",
+          "procurementMethodDetails": "Licitacion Publica",
+          "relatedProcesses": [
+            {
+              "id": "rp-1",
+              "identifier": "9999-0-LE25",
+              "relationship": [
+                "prior"
+              ],
+              "scheme": "mercadoPublico",
+              "title": "Prior related process"
+            }
+          ],
+          "status": "active",
+          "tenderPeriod": {
+            "endDate": "2026-08-15T15:00:00Z",
+            "startDate": "2026-07-28T10:00:00Z"
+          },
+          "title": "Synthetic OCDS centrifuge tender (compiled)"
+        }
+      },
+      "id": "record-synth-0001",
+      "releases": [
+        {
+          "buyer": {
+            "id": "CL-BUY-SYN-1",
+            "name": "Synthetic OCDS Buyer"
+          },
+          "date": "2026-07-28T10:00:00Z",
+          "id": "ocds-synth-0001-01",
+          "ocid": "ocds-synth-0001",
+          "tag": [
+            "tender"
+          ],
+          "tender": {
+            "description": "Historical synthetic description",
+            "id": "9999-1-LE26",
+            "items": [
+              {
+                "additionalClassifications": [
+                  {
+                    "description": "Centrifuge accessory class",
+                    "id": "41101500",
+                    "scheme": "UNSPSC"
+                  }
+                ],
+                "classification": {
+                  "id": "41100000",
+                  "scheme": "UNSPSC"
+                },
+                "description": "Synthetic centrifuge item",
+                "id": "item-1",
+                "quantity": 1,
+                "unit": {
+                  "name": "UN"
+                }
+              }
+            ],
+            "procurementMethod": "open",
+            "procurementMethodDetails": "Licitacion Publica",
+            "relatedProcesses": [
+              {
+                "id": "rp-1",
+                "identifier": "9999-0-LE25",
+                "relationship": [
+                  "prior"
+                ],
+                "scheme": "mercadoPublico",
+                "title": "Prior related process"
+              }
+            ],
+            "status": "active",
+            "tenderPeriod": {
+              "endDate": "2026-08-15T15:00:00Z",
+              "startDate": "2026-07-28T10:00:00Z"
+            },
+            "title": "Synthetic OCDS centrifuge tender"
+          }
+        },
+        {
+          "buyer": {
+            "id": "CL-BUY-SYN-1",
+            "name": "Synthetic OCDS Buyer"
+          },
+          "date": "2026-07-29T11:00:00Z",
+          "id": "ocds-synth-0001-02",
+          "ocid": "ocds-synth-0001",
+          "tag": [
+            "tenderUpdate"
+          ],
+          "tender": {
+            "description": "Second historical release",
+            "id": "9999-1-LE26",
+            "procurementMethod": "open",
+            "status": "active",
+            "title": "Synthetic OCDS centrifuge tender (update)"
+          }
+        }
+      ]
+    }
+  ],
+  "uri": "https://example.invalid/ocds/package/synthetic-records-001",
+  "version": "1.1"
+}
