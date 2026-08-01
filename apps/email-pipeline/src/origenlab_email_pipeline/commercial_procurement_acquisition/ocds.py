@@ -293,31 +293,80 @@ def _validate_and_extract_typed_releases(
                 continue
             record_id = _as_str(rec.get("id"))
             historical: list[dict[str, Any]] = []
-            nested = rec.get("releases")
-            if isinstance(nested, list):
-                for nested_i, r in enumerate(nested):
-                    if isinstance(r, dict):
-                        historical.append(r)
-                    else:
-                        rejected.append(
-                            _rejected_entry(
-                                ordinal=ordinal,
-                                reason_code="nested_release_entry_not_object",
-                                digest_payload={
-                                    "record_ordinal": ordinal,
-                                    "nested_ordinal": nested_i,
-                                    "type": type(r).__name__,
-                                },
-                            )
+            nested_rejected = 0
+
+            if "releases" in rec:
+                nested = rec.get("releases")
+                if not isinstance(nested, list):
+                    rejected.append(
+                        _rejected_entry(
+                            ordinal=ordinal,
+                            reason_code="record_releases_invalid_collection_type",
+                            digest_payload={
+                                "record_ordinal": ordinal,
+                                "type": type(nested).__name__,
+                            },
                         )
+                    )
+                    nested_rejected += 1
+                else:
+                    for nested_i, r in enumerate(nested):
+                        if isinstance(r, dict):
+                            historical.append(r)
+                        else:
+                            rejected.append(
+                                _rejected_entry(
+                                    ordinal=ordinal,
+                                    reason_code="nested_release_entry_not_object",
+                                    digest_payload={
+                                        "record_ordinal": ordinal,
+                                        "nested_ordinal": nested_i,
+                                        "type": type(r).__name__,
+                                    },
+                                )
+                            )
+                            nested_rejected += 1
+
             seen = {_release_identity_key(r) for r in historical}
             for r in historical:
                 typed.append((r, RELEASE_KIND_HISTORICAL, record_id))
-            compiled = rec.get("compiledRelease")
-            if isinstance(compiled, dict):
-                key = _release_identity_key(compiled)
-                if key not in seen:
-                    typed.append((compiled, RELEASE_KIND_COMPILED, record_id))
+
+            compiled_emitted = False
+            if "compiledRelease" in rec:
+                compiled = rec.get("compiledRelease")
+                if compiled is None:
+                    pass
+                elif isinstance(compiled, dict):
+                    key = _release_identity_key(compiled)
+                    if key not in seen:
+                        typed.append((compiled, RELEASE_KIND_COMPILED, record_id))
+                        compiled_emitted = True
+                    else:
+                        compiled_emitted = True  # duplicate suppressed; still valid object
+                else:
+                    rejected.append(
+                        _rejected_entry(
+                            ordinal=ordinal,
+                            reason_code="compiled_release_not_object",
+                            digest_payload={
+                                "record_ordinal": ordinal,
+                                "type": type(compiled).__name__,
+                            },
+                        )
+                    )
+                    nested_rejected += 1
+
+            if nested_rejected and not historical and not compiled_emitted:
+                rejected.append(
+                    _rejected_entry(
+                        ordinal=ordinal,
+                        reason_code="record_without_valid_release_content",
+                        digest_payload={
+                            "record_ordinal": ordinal,
+                            "nested_rejected": nested_rejected,
+                        },
+                    )
+                )
         return None, typed, rejected
 
     if "ocid" in payload and ("tender" in payload or "id" in payload):
@@ -620,6 +669,7 @@ def parse_ocds_package(
     month: int = 1,
     range_start: int = 1,
     range_end: int = 1,
+    source_reported_total: int | None = None,
 ) -> tuple[
     AcquisitionQuery,
     AcquisitionPage,
@@ -628,7 +678,12 @@ def parse_ocds_package(
     list[ProcurementLineObservation],
     dict[str, Any],
 ]:
-    """Parse a single OCDS page/package. Empty single page → empty_page (not terminal)."""
+    """Parse a single OCDS page/package. Empty single page → empty_page (not terminal).
+
+    ``source_reported_total`` is set only when the caller supplies an authoritative
+    page/package total (or when the package itself includes a valid integer total
+    field). Observation counts are never used as a substitute.
+    """
     query = query or build_ocds_query(
         year=year, month=month, range_start=range_start, range_end=range_end
     )
@@ -668,6 +723,8 @@ def parse_ocds_package(
     )
     published = _as_str(payload.get("publishedDate") or payload.get("publicationDate"))
 
+    page_total = source_reported_total
+
     # empty list → empty_page; mixed/all-invalid list → partial_page_failure;
     # all valid → complete.
     if rejected and typed:
@@ -703,7 +760,7 @@ def parse_ocds_package(
         original_bytes_digest=bytes_digest,
         parser_input_digest=parser_digest,
         response_item_count=len(typed),
-        source_reported_total=None,
+        source_reported_total=page_total,
         http_status=http_status,
         parser_status=parser_status,
         error_classification=error_classification,
@@ -953,11 +1010,13 @@ def _empty_month_snapshot(
     month_query = build_ocds_month_query(year=year, month=month)
     identity = query_identity_from_model(month_query)
     completeness = "complete"
+    snapshot_total = 0
     source_fp = acquisition_source_fingerprint(
         source_kind=SOURCE_KIND_OCDS,
         query_identity=identity,
         pages=[],
         completeness_status=completeness,
+        source_reported_total=snapshot_total,
     )
     semantic = acquisition_normalized_semantic_digest(
         source_observations=[],
@@ -996,6 +1055,7 @@ def _empty_month_snapshot(
         },
         source_fingerprint=source_fp,
         normalized_semantic_digest=semantic,
+        source_reported_total=snapshot_total,
         materialized_at_utc=materialized,
     )
 
@@ -1108,6 +1168,7 @@ def build_ocds_month_snapshot(
         query_identity=identity,
         pages=pages,
         completeness_status=completeness,
+        source_reported_total=source_reported_total,
     )
     semantic = acquisition_normalized_semantic_digest(
         source_observations=sources,
@@ -1161,5 +1222,6 @@ def build_ocds_month_snapshot(
         diagnostics=diagnostics,
         source_fingerprint=source_fp,
         normalized_semantic_digest=semantic,
+        source_reported_total=source_reported_total,
         materialized_at_utc=materialized,
     )

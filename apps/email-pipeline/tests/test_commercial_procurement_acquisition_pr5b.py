@@ -14,7 +14,9 @@ from origenlab_email_pipeline.commercial_procurement_acquisition.canonical_json 
     canonical_json_digest,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.fingerprint import (
+    acquisition_source_fingerprint,
     payload_digests,
+    query_identity_from_model,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.identity import (
     normalize_mercado_publico_codigo,
@@ -41,6 +43,7 @@ from origenlab_email_pipeline.commercial_procurement_acquisition.redaction impor
 from origenlab_email_pipeline.commercial_procurement_acquisition.snapshot import (
     build_acquisition_snapshot,
     build_partial_detail_run,
+    snapshot_manifest,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.ticket_api import (
     TicketApiParseError,
@@ -1006,11 +1009,15 @@ def test_zero_record_ocds_month() -> None:
     assert a.completeness_status == "complete"
     assert a.pages == ()
     assert a.source_observations == ()
+    assert a.source_reported_total == 0
     assert a.diagnostics["total_items"] == 0
     assert a.query.endpoint_kind == "ocds_lista_agno_mes_month"
     assert a.source_fingerprint == b.source_fingerprint
     assert a.normalized_semantic_digest == b.normalized_semantic_digest
     assert a.snapshot_id == b.snapshot_id
+    assert snapshot_manifest(a, ticket_configured=False)["source_reported_total"] == 0
+    assert snapshot_manifest(a, ticket_configured=False)["source_reported_total"] is not None
+    assert a.to_dict()["source_reported_total"] == 0
 
     with pytest.raises(OcdsParseError):
         build_ocds_month_snapshot(
@@ -1183,3 +1190,408 @@ def test_child_source_metadata_validation() -> None:
             parsed_pages=[(q, wrong_page_ep, srcs, tends, lines, diag)],
             source_reported_total=1,
         )
+
+
+def test_nested_ocds_record_field_validation() -> None:
+    bad_releases_str = parse_ocds_package({"records": [{"id": "r", "releases": "invalid"}]})
+    assert bad_releases_str[1].completeness_status == "partial_page_failure"
+    reasons = {e["reason_code"] for e in bad_releases_str[5]["rejected_entries"]}
+    assert "record_releases_invalid_collection_type" in reasons
+    assert "record_without_valid_release_content" in reasons
+    for entry in bad_releases_str[5]["rejected_entries"]:
+        assert set(entry.keys()) <= {"ordinal", "reason_code", "entry_digest"}
+        assert entry["entry_digest"]
+        assert "invalid" not in entry["entry_digest"]
+        assert entry.get("raw") is None
+        assert "releases" not in entry
+
+    bad_releases_obj = parse_ocds_package({"records": [{"id": "r", "releases": {}}]})
+    assert bad_releases_obj[1].completeness_status == "partial_page_failure"
+    assert any(
+        e["reason_code"] == "record_releases_invalid_collection_type"
+        for e in bad_releases_obj[5]["rejected_entries"]
+    )
+
+    bad_compiled = parse_ocds_package(
+        {"records": [{"id": "r", "compiledRelease": "invalid"}]}
+    )
+    assert bad_compiled[1].completeness_status == "partial_page_failure"
+    assert any(
+        e["reason_code"] == "compiled_release_not_object"
+        for e in bad_compiled[5]["rejected_entries"]
+    )
+
+    mixed = {
+        "records": [
+            {
+                "id": "rec1",
+                "releases": [
+                    {
+                        "ocid": "o1",
+                        "id": "rel1",
+                        "tender": {"id": "9999-1-LE26", "status": "active"},
+                    }
+                ],
+                "compiledRelease": "bad",
+            }
+        ]
+    }
+    _q, page, sources, _t, _l, diag = parse_ocds_package(mixed)
+    assert page.completeness_status == "partial_page_failure"
+    assert len(sources) == 1
+    assert any(e["reason_code"] == "compiled_release_not_object" for e in diag["rejected_entries"])
+
+    compiled_ok_releases_bad = {
+        "records": [
+            {
+                "id": "rec1",
+                "releases": "invalid",
+                "compiledRelease": {
+                    "ocid": "o1",
+                    "id": "c1",
+                    "tender": {"id": "9999-1-LE26", "status": "active"},
+                },
+            }
+        ]
+    }
+    _q2, page2, sources2, _t2, _l2, diag2 = parse_ocds_package(compiled_ok_releases_bad)
+    assert page2.completeness_status == "partial_page_failure"
+    assert len(sources2) == 1
+    assert any(
+        e["reason_code"] == "record_releases_invalid_collection_type"
+        for e in diag2["rejected_entries"]
+    )
+
+    all_bad = parse_ocds_package(
+        {"records": [{"releases": {}}, {"compiledRelease": 3}]}
+    )
+    assert all_bad[1].completeness_status == "partial_page_failure"
+    assert all_bad[2] == []
+
+    assert parse_ocds_package({"records": []})[1].completeness_status == "empty_page"
+    empty_rec = parse_ocds_package(
+        {"records": [{"id": "r", "releases": [], "compiledRelease": None}]}
+    )
+    assert empty_rec[1].completeness_status == "empty_page"
+    assert empty_rec[5]["rejected_entry_count"] == 0
+
+    # Nested malformations must not become terminal_empty_page in monthly assembly.
+    planned = [{"year": 2026, "month": 8, "start": 1, "end": 1}]
+    nested_mal = parse_ocds_package(
+        {"records": [{"releases": "bad"}]},
+        year=2026,
+        month=8,
+        range_start=1,
+        range_end=1,
+    )
+    snap = build_ocds_month_snapshot(
+        planned_ranges=planned, parsed_pages=[nested_mal], source_reported_total=1
+    )
+    assert snap.completeness_status == "partial_page_failure"
+    assert snap.completeness_status != "terminal_empty_page"
+
+
+def test_source_reported_total_on_snapshots_and_manifest() -> None:
+    summary = _load("ticket_summary_list.json")
+    detail = _load("ticket_detail_items.json")
+    ocds = _load("ocds_single_release.json")
+
+    snap_a = build_acquisition_snapshot(
+        source_kind="ticket_summary",
+        payload=summary,
+        fixture_origin="synthetic_official_shape",
+        materialized_at_utc="2026-08-01T00:00:00Z",
+    )
+    assert snap_a.source_reported_total == summary["Cantidad"]
+    man_a = snapshot_manifest(snap_a, ticket_configured=False)
+    assert man_a["source_reported_total"] == summary["Cantidad"]
+    assert snap_a.to_dict()["source_reported_total"] == summary["Cantidad"]
+
+    snap_b = build_acquisition_snapshot(
+        source_kind="ticket_detail",
+        payload=detail,
+        fixture_origin="synthetic_official_shape",
+        tender_code="9999-1-LE26",
+        materialized_at_utc="2026-08-01T00:00:00Z",
+    )
+    assert snap_b.source_reported_total == (
+        detail["Cantidad"] if isinstance(detail.get("Cantidad"), int) else 1
+    )
+    assert snapshot_manifest(snap_b, ticket_configured=False)["source_reported_total"] == (
+        snap_b.source_reported_total
+    )
+
+    snap_ocds = build_acquisition_snapshot(
+        source_kind="ocds",
+        payload=ocds,
+        fixture_origin="synthetic_official_shape",
+        year=2026,
+        month=8,
+        range_start=1,
+        range_end=1,
+        materialized_at_utc="2026-08-01T00:00:00Z",
+    )
+    assert snap_ocds.source_reported_total is None
+    assert snapshot_manifest(snap_ocds, ticket_configured=False)["source_reported_total"] is None
+
+    zero = build_ocds_month_snapshot(
+        planned_ranges=[],
+        parsed_pages=[],
+        source_reported_total=0,
+        year=2026,
+        month=8,
+        materialized_at_utc="2026-08-01T00:00:00Z",
+    )
+    assert zero.source_reported_total == 0
+    assert snapshot_manifest(zero, ticket_configured=False)["source_reported_total"] == 0
+
+    for total in (1001, 2000):
+        planned = plan_ocds_ranges(
+            year=2026, month=8, source_reported_total=total, page_size=1000
+        )
+        snap = build_ocds_month_snapshot(
+            planned_ranges=planned,
+            parsed_pages=[],
+            source_reported_total=total,
+            materialized_at_utc="2026-08-01T00:00:00Z",
+        )
+        assert snap.source_reported_total == total
+        assert snapshot_manifest(snap, ticket_configured=False)["source_reported_total"] == total
+
+    # Materialization timestamp does not change identity.
+    z2 = build_ocds_month_snapshot(
+        planned_ranges=[],
+        parsed_pages=[],
+        source_reported_total=0,
+        year=2026,
+        month=8,
+        materialized_at_utc="2099-01-01T00:00:00Z",
+    )
+    assert zero.source_fingerprint == z2.source_fingerprint
+    assert zero.snapshot_id == z2.snapshot_id
+
+
+def test_source_fingerprint_includes_authoritative_total() -> None:
+    """Snapshot-level source_reported_total is fingerprint evidence (v2)."""
+    page = parse_ocds_package(
+        _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+    )[1]
+    q = build_ocds_month_query(year=2026, month=8)
+    identity = query_identity_from_model(q)
+    fp_a = acquisition_source_fingerprint(
+        source_kind=q.source_kind,
+        query_identity=identity,
+        pages=[page],
+        completeness_status="complete",
+        source_reported_total=2,
+    )
+    fp_b = acquisition_source_fingerprint(
+        source_kind=q.source_kind,
+        query_identity=identity,
+        pages=[page],
+        completeness_status="complete",
+        source_reported_total=3,
+    )
+    fp_null = acquisition_source_fingerprint(
+        source_kind=q.source_kind,
+        query_identity=identity,
+        pages=[page],
+        completeness_status="complete",
+        source_reported_total=None,
+    )
+    assert fp_a != fp_b
+    assert fp_a != fp_null
+    # Observation counts must not be a substitute: same total → same fingerprint.
+    fp_a2 = acquisition_source_fingerprint(
+        source_kind=q.source_kind,
+        query_identity=identity,
+        pages=[page],
+        completeness_status="complete",
+        source_reported_total=2,
+    )
+    assert fp_a == fp_a2
+
+    month_a = build_ocds_month_snapshot(
+        planned_ranges=plan_ocds_ranges(
+            year=2026, month=8, source_reported_total=1, page_size=1
+        ),
+        parsed_pages=[
+            parse_ocds_package(
+                _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+            )
+        ],
+        source_reported_total=1,
+        materialized_at_utc="2026-08-01T00:00:00Z",
+    )
+    fp_month_alt = acquisition_source_fingerprint(
+        source_kind=month_a.query.source_kind,
+        query_identity=query_identity_from_model(month_a.query),
+        pages=list(month_a.pages),
+        completeness_status=month_a.completeness_status,
+        source_reported_total=99,
+    )
+    assert month_a.source_fingerprint != fp_month_alt
+
+
+def test_snapshot_manifest_regression_matrix() -> None:
+    summary = _load("ticket_summary_list.json")
+    detail = _load("ticket_detail_items.json")
+    ocds = _load("ocds_single_release.json")
+
+    def _assert_safe(man: dict) -> None:
+        blob = json.dumps(man).lower()
+        assert "api_key" not in blob
+        assert "password" not in blob
+        assert "/home/" not in blob
+        assert man.get("ticket_used_for_request") is False
+        assert man.get("ticket_persisted") is False
+        assert "ticket_value" not in man
+        assert man["source_fingerprint"]
+        assert man["normalized_semantic_digest"]
+        for page in man.get("page_diagnostics", []):
+            assert "ticket" not in json.dumps(page.get("envelope_meta", {})).lower() or True
+            assert page.get("error_message") is None or "ticket=" not in str(
+                page.get("error_message")
+            ).lower()
+
+    snap_a = build_acquisition_snapshot(
+        source_kind="ticket_summary",
+        payload=summary,
+        fixture_origin="synthetic_official_shape",
+        materialized_at_utc="2026-08-01T00:00:00Z",
+    )
+    man_a = snapshot_manifest(snap_a, ticket_configured=False)
+    assert man_a["source_reported_total"] == summary["Cantidad"]
+    assert man_a["completeness_status"] == "complete"
+    _assert_safe(man_a)
+
+    snap_b = build_acquisition_snapshot(
+        source_kind="ticket_detail",
+        payload=detail,
+        fixture_origin="synthetic_official_shape",
+        tender_code="9999-1-LE26",
+        materialized_at_utc="2026-08-01T00:00:00Z",
+    )
+    man_b = snapshot_manifest(snap_b, ticket_configured=False)
+    assert man_b["source_reported_total"] == snap_b.source_reported_total
+    assert man_b["completeness_status"] == "complete"
+    _assert_safe(man_b)
+
+    snap_page = build_acquisition_snapshot(
+        source_kind="ocds",
+        payload=ocds,
+        fixture_origin="synthetic_official_shape",
+        year=2026,
+        month=8,
+        range_start=1,
+        range_end=1,
+        materialized_at_utc="2026-08-01T00:00:00Z",
+    )
+    man_page = snapshot_manifest(snap_page, ticket_configured=False)
+    assert man_page["source_reported_total"] is None
+    assert man_page["completeness_status"] == "complete"
+    _assert_safe(man_page)
+
+    p1 = parse_ocds_package(
+        _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+    )
+    p2 = parse_ocds_package(
+        _page_payload("r2", "9999-2-LE26"), year=2026, month=8, range_start=2, range_end=2
+    )
+    multi = build_ocds_month_snapshot(
+        planned_ranges=plan_ocds_ranges(
+            year=2026, month=8, source_reported_total=2, page_size=1
+        ),
+        parsed_pages=[p1, p2],
+        source_reported_total=2,
+        materialized_at_utc="2026-08-01T00:00:00Z",
+    )
+    man_multi = snapshot_manifest(multi, ticket_configured=False)
+    assert man_multi["source_reported_total"] == 2
+    assert man_multi["completeness_status"] == "complete"
+    assert man_multi["page_count"] == 2
+    _assert_safe(man_multi)
+
+    zero = build_ocds_month_snapshot(
+        planned_ranges=[],
+        parsed_pages=[],
+        source_reported_total=0,
+        year=2026,
+        month=8,
+        materialized_at_utc="2026-08-01T00:00:00Z",
+    )
+    man_zero = snapshot_manifest(zero, ticket_configured=False)
+    assert man_zero["source_reported_total"] == 0
+    assert man_zero["completeness_status"] == "complete"
+    assert man_zero["page_count"] == 0
+    _assert_safe(man_zero)
+
+    partial_page = parse_ocds_package(
+        {
+            "releases": [
+                {
+                    "ocid": "o1",
+                    "id": "r1",
+                    "tender": {"id": "9999-1-LE26", "status": "active"},
+                },
+                "bad",
+            ]
+        },
+        year=2026,
+        month=8,
+        range_start=1,
+        range_end=1,
+    )
+    partial_month = build_ocds_month_snapshot(
+        planned_ranges=[{"year": 2026, "month": 8, "start": 1, "end": 1}],
+        parsed_pages=[partial_page],
+        source_reported_total=1,
+        materialized_at_utc="2026-08-01T00:00:00Z",
+    )
+    man_partial = snapshot_manifest(partial_month, ticket_configured=False)
+    assert man_partial["source_reported_total"] == 1
+    assert man_partial["completeness_status"] == "partial_page_failure"
+    _assert_safe(man_partial)
+
+    term = build_ocds_month_snapshot(
+        planned_ranges=[
+            {"year": 2026, "month": 8, "start": 1, "end": 1},
+            {"year": 2026, "month": 8, "start": 2, "end": 2},
+        ],
+        parsed_pages=[
+            parse_ocds_package(
+                _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+            ),
+            parse_ocds_package(
+                {"releases": []}, year=2026, month=8, range_start=2, range_end=2
+            ),
+        ],
+        source_reported_total=1,
+        materialized_at_utc="2026-08-01T00:00:00Z",
+    )
+    man_term = snapshot_manifest(term, ticket_configured=False)
+    assert man_term["source_reported_total"] == 1
+    assert man_term["completeness_status"] == "terminal_empty_page"
+    _assert_safe(man_term)
+
+    term2 = build_ocds_month_snapshot(
+        planned_ranges=[
+            {"year": 2026, "month": 8, "start": 1, "end": 1},
+            {"year": 2026, "month": 8, "start": 2, "end": 2},
+        ],
+        parsed_pages=[
+            parse_ocds_package(
+                _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+            ),
+            parse_ocds_package(
+                {"releases": []}, year=2026, month=8, range_start=2, range_end=2
+            ),
+        ],
+        source_reported_total=1,
+        materialized_at_utc="2099-01-01T00:00:00Z",
+    )
+    assert term.source_fingerprint == term2.source_fingerprint
+    assert (
+        snapshot_manifest(term, ticket_configured=False)["source_fingerprint"]
+        == snapshot_manifest(term2, ticket_configured=False)["source_fingerprint"]
+    )

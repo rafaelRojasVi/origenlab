@@ -82,6 +82,7 @@ def build_acquisition_snapshot(
     month: int = 1,
     range_start: int = 1,
     range_end: int = 1,
+    source_reported_total: int | None = None,
     extra_diagnostics: dict[str, Any] | None = None,
     materialized_at_utc: str | None = None,
 ) -> AcquisitionSnapshot:
@@ -114,6 +115,7 @@ def build_acquisition_snapshot(
             month=month,
             range_start=range_start,
             range_end=range_end,
+            source_reported_total=source_reported_total,
         )
     else:
         raise ValueError(f"unsupported source_kind: {source_kind}")
@@ -123,6 +125,10 @@ def build_acquisition_snapshot(
 
     # fixture_origin is separate from content completeness — never rewrite status.
     snapshot_completeness = page.completeness_status
+    # Authoritative total for this single-scope snapshot is the page's
+    # source-reported total (Ticket Cantidad / detail result total / OCDS when
+    # supplied). Never derive from observation counts or diagnostics.
+    snapshot_total = page.source_reported_total
 
     identity = query_identity_from_model(q)
     source_fp = acquisition_source_fingerprint(
@@ -130,6 +136,7 @@ def build_acquisition_snapshot(
         query_identity=identity,
         pages=[page],
         completeness_status=snapshot_completeness,
+        source_reported_total=snapshot_total,
     )
     semantic = acquisition_normalized_semantic_digest(
         source_observations=sources,
@@ -156,6 +163,7 @@ def build_acquisition_snapshot(
         diagnostics=diag,
         source_fingerprint=source_fp,
         normalized_semantic_digest=semantic,
+        source_reported_total=snapshot_total,
         materialized_at_utc=materialized_at_utc or _utcnow(),
     )
 
@@ -358,9 +366,7 @@ def snapshot_manifest(
         "source_observation_count": len(snapshot.source_observations),
         "tender_observation_count": len(snapshot.tender_observations),
         "line_observation_count": len(snapshot.line_observations),
-        "source_reported_total": snapshot.pages[0].source_reported_total
-        if snapshot.pages
-        else None,
+        "source_reported_total": snapshot.source_reported_total,
         "completeness_status": snapshot.completeness_status,
         "page_diagnostics": [p.to_dict() for p in snapshot.pages],
         "source_fingerprint_algorithm": SOURCE_FINGERPRINT_ALGORITHM,

@@ -381,9 +381,10 @@ def build_walkthrough_cases(fixtures_dir: Path) -> dict[str, Any]:
                 {
                     "snapshot_id": snap_c.snapshot_id,
                     "completeness_status": snap_c.completeness_status,
+                    "source_reported_total": snap_c.source_reported_total,
                     "source_fingerprint": snap_c.source_fingerprint,
                 },
-                "monthly source fingerprint over sorted pages",
+                "monthly source fingerprint over sorted pages + authoritative total",
             ),
             _artifact_row(
                 "AcquisitionSnapshot(records)",

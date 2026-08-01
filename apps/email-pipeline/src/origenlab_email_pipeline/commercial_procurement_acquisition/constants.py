@@ -30,7 +30,8 @@ OCDS_MAX_PAGE_SIZE: Final = 1000
 
 RAW_PAYLOAD_DIGEST_ALGORITHM: Final = "sha256_canonical_json_v1"
 ORIGINAL_BYTES_DIGEST_ALGORITHM: Final = "sha256_utf8_bytes_v1"
-SOURCE_FINGERPRINT_ALGORITHM: Final = "acquisition_source_fingerprint_v1"
+# v2 includes authoritative snapshot-level source_reported_total (not observation counts).
+SOURCE_FINGERPRINT_ALGORITHM: Final = "acquisition_source_fingerprint_v2"
 NORMALIZED_SEMANTIC_DIGEST_ALGORITHM: Final = "acquisition_normalized_semantic_digest_v1"
 RUN_SOURCE_FINGERPRINT_ALGORITHM: Final = "acquisition_run_source_fingerprint_v1"
 

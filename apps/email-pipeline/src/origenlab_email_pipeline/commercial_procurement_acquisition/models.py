@@ -172,6 +172,9 @@ class AcquisitionSnapshot:
     diagnostics: dict[str, Any]
     source_fingerprint: str
     normalized_semantic_digest: str
+    # Authoritative source-reported total for this query scope (not page[0],
+    # diagnostics, page_count, or observation counts).
+    source_reported_total: int | None = None
     materialized_at_utc: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -189,6 +192,7 @@ class AcquisitionSnapshot:
             "diagnostics": self.diagnostics,
             "source_fingerprint": self.source_fingerprint,
             "normalized_semantic_digest": self.normalized_semantic_digest,
+            "source_reported_total": self.source_reported_total,
             "materialized_at_utc": self.materialized_at_utc,
         }
 

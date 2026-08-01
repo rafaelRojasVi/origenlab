@@ -131,7 +131,15 @@ def acquisition_source_fingerprint(
     query_identity: dict[str, Any],
     pages: Iterable[AcquisitionPage],
     completeness_status: str,
+    source_reported_total: int | None = None,
 ) -> str:
+    """Fingerprint authoritative acquisition evidence for one query scope.
+
+    Includes snapshot-level ``source_reported_total`` when it is authoritative
+    source evidence (Ticket Cantidad, detail result total, OCDS month assembler
+    total, or an explicitly supplied OCDS page/package total). Observation
+    counts and diagnostics-derived counts are never substituted.
+    """
     page_rows = [
         {
             "page_id": p.page_id,
@@ -151,6 +159,7 @@ def acquisition_source_fingerprint(
         "query_identity": query_identity,
         "pages": page_rows,
         "completeness_status": completeness_status,
+        "source_reported_total": source_reported_total,
     }
     return canonical_json_digest(payload)
 
