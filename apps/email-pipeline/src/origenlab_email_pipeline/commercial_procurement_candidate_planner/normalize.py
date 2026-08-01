@@ -21,6 +21,8 @@ from origenlab_email_pipeline.commercial_procurement_live_relevance.artifact_ope
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.constants import (
     AS_OF_TIMEZONE,
     CANONICAL_KIND_MERCADO_PUBLICO,
+    COALESCED_TENDER_ID_ALGORITHM,
+    PR4_VERIFIED_TENDER_KEY_KINDS,
     SOURCE_RANK_OCDS_LISTA_INDEX,
     SOURCE_RANK_OCDS_RECORD,
     SOURCE_RANK_OCDS_RELEASE,
@@ -28,6 +30,7 @@ from origenlab_email_pipeline.commercial_procurement_candidate_planner.constants
     SOURCE_RANK_TICKET_DETAIL,
     SOURCE_RANK_TICKET_SUMMARY,
     SOURCE_RANK_UNKNOWN,
+    STATUS_CODE_EXPECTED_NAMES,
 )
 
 SANTIAGO = ZoneInfo(AS_OF_TIMEZONE)
@@ -39,16 +42,24 @@ def stable_content_id(prefix: str, payload: dict[str, Any]) -> str:
     return f"{prefix}_{digest}"
 
 
+def coalesced_tender_id(*, canonical_tender_key: str, tender_key_kind: str) -> str:
+    """Stable ID from identity only — evidence refresh must not change it."""
+    return stable_content_id(
+        "coalesced_tender",
+        {
+            "algorithm": COALESCED_TENDER_ID_ALGORITHM,
+            "canonical_tender_key": canonical_tender_key,
+            "tender_key_kind": tender_key_kind,
+        },
+    )
+
+
 def accept_canonical_tender_key(
     *,
     candidate: str | None,
     candidate_kind: str | None,
 ) -> tuple[str | None, str | None]:
-    """Return (accepted_key, reject_reason).
-
-    Only mercado_publico_codigo_externo with exact shape validator may enter
-    canonical coalescence.
-    """
+    """Plane B: only exact mercado_publico_codigo_externo shape may join."""
     if not candidate or not str(candidate).strip():
         return None, "live_canonical_candidate_missing"
     if candidate_kind != CANONICAL_KIND_MERCADO_PUBLICO:
@@ -63,30 +74,42 @@ def accept_canonical_tender_key(
     return norm, None
 
 
-def accept_pr4_canonical_key(raw_key: str | None, tender_key_kind: str | None) -> str | None:
-    """PR4 verified tender keys are already Mercado Público codes (case preserved).
+def normalize_pr4_canonical_key(raw_key: str | None) -> str | None:
+    """Bounded whitespace/case normalization for Plane A PR4 keys (no MP regex)."""
+    return normalize_mercado_publico_codigo(raw_key)
 
-    Normalize with the shared Mercado Público normalizer + shape check.
+
+def accept_pr4_signal_identity(
+    *,
+    raw_key: str | None,
+    tender_key_kind: str | None,
+) -> tuple[str | None, str | None, str | None, bool]:
+    """Return (canonical_key, tender_key_kind, unresolved_reason, cross_source_eligible).
+
+    Verified PR4 kinds keep Plane A identity without requiring the stricter
+    PR5B Mercado Público CodigoExterno cross-source regex.
     """
-    if not raw_key or not tender_key_kind:
-        return None
-    if tender_key_kind not in {
-        "codigo_externo",
-        "codigo_licitacion",
-        "numero_adquisicion",
-    }:
-        return None
-    norm = normalize_mercado_publico_codigo(raw_key)
-    if norm and is_mercado_publico_codigo_shape(norm):
-        return norm
-    return None
+    kind = (tender_key_kind or "").strip()
+    if kind not in PR4_VERIFIED_TENDER_KEY_KINDS:
+        if not kind:
+            return None, None, "pr4_tender_key_kind_unsupported", False
+        return None, kind, "pr4_tender_key_kind_unsupported", False
+    if raw_key is None or not str(raw_key).strip():
+        return None, kind, "pr4_canonical_key_missing", False
+    norm = normalize_pr4_canonical_key(raw_key)
+    if not norm:
+        return None, kind, "pr4_canonical_key_missing", False
+    # Impossible identity: control characters / path separators after normalize.
+    if any(ch in norm for ch in ("/", "\\", "\x00", "\n", "\r", "\t")):
+        return None, kind, "pr4_canonical_identity_corrupt", False
+    cross = is_mercado_publico_codigo_shape(norm)
+    return norm, kind, None, cross
 
 
 def parse_as_of_utc(value: str) -> datetime:
     """Require timezone-aware ISO timestamp; normalize to UTC."""
     dt = parse_trusted_utc_timestamp(value)
     if dt is None:
-        # Allow explicit offset forms already rejected by trusted parser when naive.
         s = str(value).strip()
         if s.endswith("Z"):
             s = s[:-1] + "+00:00"
@@ -104,8 +127,9 @@ def as_of_america_santiago(as_of_utc: datetime) -> datetime:
     return as_of_utc.astimezone(SANTIAGO)
 
 
-def parse_acquisition_acquired_at(raw: str | None, *, as_of_utc: datetime) -> tuple[datetime | None, str | None]:
-    """Validate AcquisitionPage.acquired_at_utc (never file mtime)."""
+def parse_acquisition_acquired_at(
+    raw: str | None, *, as_of_utc: datetime
+) -> tuple[datetime | None, str | None]:
     if raw is None or not str(raw).strip():
         return None, "acquisition_timestamp_missing"
     dt = parse_trusted_utc_timestamp(raw)
@@ -116,12 +140,13 @@ def parse_acquisition_acquired_at(raw: str | None, *, as_of_utc: datetime) -> tu
     return dt, None
 
 
-def parse_tender_timestamp_raw(raw: str | None) -> tuple[datetime | None, str | None]:
-    """Parse tender publication/close timestamps.
+def parse_tender_timestamp_raw(
+    raw: str | None,
+) -> tuple[datetime | None, str | None]:
+    """Parse tender publication/close timestamps to UTC.
 
-    Timezone-aware ISO → UTC. Naive ChileCompra wall times → America/Santiago
-    (documented PR5A / equipment policy). Empty → (None, None).
-    Unparseable → (None, timezone_unresolved or parse failure reason).
+    Aware ISO → UTC. Naive ChileCompra wall times → America/Santiago.
+    Unparseable → (None, timezone_unresolved).
     """
     if raw is None or not str(raw).strip():
         return None, None
@@ -129,14 +154,21 @@ def parse_tender_timestamp_raw(raw: str | None) -> tuple[datetime | None, str | 
     aware = parse_trusted_utc_timestamp(s)
     if aware is not None:
         return aware, None
-    # Documented naive ChileCompra policy: America/Santiago wall clock.
     santiago_dt = parse_close_at_america_santiago(s)
     if santiago_dt is not None:
         return santiago_dt.astimezone(UTC), None
     return None, "timezone_unresolved"
 
 
-def rank_class_for_live(*, source_kind: str, endpoint_kind: str, release_kind: str | None) -> str:
+def utc_iso(dt: datetime | None) -> str | None:
+    if dt is None:
+        return None
+    return dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def rank_class_for_live(
+    *, source_kind: str, endpoint_kind: str, release_kind: str | None
+) -> str:
     sk = (source_kind or "").casefold()
     ek = (endpoint_kind or "").casefold()
     rk = (release_kind or "").casefold()
@@ -168,20 +200,36 @@ def rank_score(rank_class: str) -> int:
 
 
 def field_capable(rank_class: str, field_name: str) -> bool:
-    """Lista-index stubs cannot override detailed tender fields they lack."""
     if rank_class == "ocds_lista_index":
         return field_name in {"canonical_identity"}
     return True
 
 
-def redact_stable(kind: str, value: str | None) -> str | None:
-    from origenlab_email_pipeline.commercial_procurement.walkthrough_redaction import (
-        redact_token,
-    )
+def status_name_matches_expected(name: str | None, expected: frozenset[str]) -> bool:
+    """True when status_name equals or is a ChileCompra family prefix of expected.
 
-    if value is None or not str(value).strip():
-        return None
-    return redact_token(kind, str(value))
+    Production PR4 names often append legal citations, e.g.
+    ``Desierta (o art. 3 ó 9 Ley 19.886)``.
+    """
+    n = (name or "").strip().casefold()
+    if not n:
+        return False
+    if n in expected:
+        return True
+    return any(n.startswith(fam) for fam in expected)
+
+
+def status_internally_inconsistent(
+    status_code: str | None, status_name: str | None
+) -> bool:
+    code = (status_code or "").strip()
+    name = (status_name or "").strip()
+    if not code or not name:
+        return False
+    expected = STATUS_CODE_EXPECTED_NAMES.get(code)
+    if expected is None:
+        return False
+    return not status_name_matches_expected(name, expected)
 
 
 def hours_between(later: datetime, earlier: datetime) -> float:
@@ -205,3 +253,18 @@ def closing_bucket_for_delta(delta: timedelta) -> str:
 
 def sha256_text(text: str) -> str:
     return sha256_hex(text)
+
+
+def evidence_acquisition_is_current(
+    *,
+    acquired_at_utc: str | None,
+    as_of_utc: datetime,
+    freshness_threshold_hours: int,
+) -> tuple[bool, str]:
+    dt, err = parse_acquisition_acquired_at(acquired_at_utc, as_of_utc=as_of_utc)
+    if err or dt is None:
+        return False, err or "acquisition_timestamp_missing"
+    age = hours_between(as_of_utc, dt)
+    if age > float(freshness_threshold_hours):
+        return False, "stale_authoritative_snapshot"
+    return True, "current_authoritative_snapshot"

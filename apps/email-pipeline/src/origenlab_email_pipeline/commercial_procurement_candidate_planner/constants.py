@@ -5,9 +5,10 @@ from __future__ import annotations
 from typing import Final
 
 PLANNER_VERSION: Final = "procurement_candidate_planner_v1"
-COALESCENCE_POLICY_VERSION: Final = "procurement_coalescence_policy_v1"
-LIFECYCLE_POLICY_VERSION: Final = "procurement_lifecycle_policy_v1"
-FIELD_PRECEDENCE_VERSION: Final = "procurement_field_precedence_v1"
+COALESCENCE_POLICY_VERSION: Final = "procurement_coalescence_policy_v2"
+LIFECYCLE_POLICY_VERSION: Final = "procurement_lifecycle_policy_v2"
+FIELD_PRECEDENCE_VERSION: Final = "procurement_field_precedence_v2"
+COALESCED_TENDER_ID_ALGORITHM: Final = "coalesced_tender_id_v1"
 
 CANDIDATE_INPUT_SOURCE_FP_ALGORITHM: Final = "candidate_input_source_fp_v1"
 CANDIDATE_BUILD_PLAN_FP_ALGORITHM: Final = "candidate_build_plan_fp_v1"
@@ -37,7 +38,6 @@ COALESCENCE_STATUSES: Final = (
     "multiple_live_sources_conflict",
 )
 
-# Reuse PR5A documented lifecycle vocabulary (no relevance).
 LIFECYCLE_CLASSES: Final = (
     "active_open",
     "future_scheduled",
@@ -73,6 +73,9 @@ UNRESOLVED_REASONS: Final = (
     "unsupported_candidate_kind",
     "incomplete_or_failed_page",
     "timezone_unresolved",
+    "pr4_canonical_key_missing",
+    "pr4_tender_key_kind_unsupported",
+    "pr4_canonical_identity_corrupt",
 )
 
 CONFLICT_KINDS: Final = (
@@ -87,8 +90,14 @@ CONFLICT_KINDS: Final = (
 CANONICAL_KIND_MERCADO_PUBLICO: Final = "mercado_publico_codigo_externo"
 TENDER_KEY_KIND_MERCADO_PUBLICO: Final = "mercado_publico_codigo_externo"
 
-# Field precedence ranks (higher = preferred for display selection).
-# Lista-index stubs never override detailed tender fields they do not carry.
+PR4_VERIFIED_TENDER_KEY_KINDS: Final = frozenset(
+    {
+        "codigo_externo",
+        "codigo_licitacion",
+        "numero_adquisicion",
+    }
+)
+
 SOURCE_RANK_TICKET_DETAIL: Final = 100
 SOURCE_RANK_TICKET_SUMMARY: Final = 80
 SOURCE_RANK_OCDS_RELEASE: Final = 70
@@ -97,27 +106,26 @@ SOURCE_RANK_PR4: Final = 40
 SOURCE_RANK_OCDS_LISTA_INDEX: Final = 10
 SOURCE_RANK_UNKNOWN: Final = 0
 
-# ChileCompra status reuse (same codes as PR4 / PR5A).
+# Reuse PR4 ChileCompra code sets (single authoritative definition via import sites).
 ACTIVE_STATUS_CODE: Final = "5"
 AWARDED_STATUS_CODES: Final = frozenset({"8"})
-CANCELLED_STATUS_CODES: Final = frozenset({"7", "18", "19"})  # desierta/revocada/suspendida
+CANCELLED_STATUS_CODES: Final = frozenset({"7", "18", "19"})
 CLOSED_STATUS_CODES: Final = frozenset({"6"})
 INACTIVE_STATUS_CODES: Final = frozenset({"6", "7", "8", "18", "19"})
-INACTIVE_STATUS_NAMES: Final = frozenset(
-    {
-        "cerrada",
-        "desierta",
-        "adjudicada",
-        "revocada",
-        "suspendida",
-    }
-)
 AWARDED_STATUS_NAMES: Final = frozenset({"adjudicada"})
-CANCELLED_STATUS_NAMES: Final = frozenset(
-    {"desierta", "revocada", "suspendida"}
-)
+CANCELLED_STATUS_NAMES: Final = frozenset({"desierta", "revocada", "suspendida"})
 CLOSED_STATUS_NAMES: Final = frozenset({"cerrada"})
 PUBLICADA_STATUS_NAMES: Final = frozenset({"publicada", "publicada."})
+
+# Expected status-name families for codes (internal consistency checks).
+STATUS_CODE_EXPECTED_NAMES: Final = {
+    "5": PUBLICADA_STATUS_NAMES,
+    "6": CLOSED_STATUS_NAMES,
+    "7": frozenset({"desierta"}),
+    "8": AWARDED_STATUS_NAMES,
+    "18": frozenset({"revocada"}),
+    "19": frozenset({"suspendida"}),
+}
 
 REQUIRED_PR4_META_KEYS: Final = (
     "source_fingerprint",
@@ -139,3 +147,5 @@ FORBIDDEN_CLI_FLAGS: Final = (
     "--outreach",
     "--schedule",
 )
+
+REPORTS_OUT_REL: Final = "reports/out"
