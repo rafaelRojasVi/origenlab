@@ -1,4 +1,11 @@
-"""Official ChileCompra OCDS package parser and range planner (no network)."""
+"""Official ChileCompra OCDS package parser and monthly assembler (no network).
+
+Records policy B:
+- Prefer historical releases when present.
+- Emit compiledRelease only when its (ocid, release.id) is not already among
+  historical releases.
+- Never silently flatten compiled and nested releases into one indistinguishable list.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +13,6 @@ from typing import Any
 
 from origenlab_email_pipeline.commercial_procurement_acquisition.canonical_json import (
     canonical_json_digest,
-    original_bytes_digest,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.constants import (
     ENDPOINT_OCDS_MONTHLY_RANGE,
@@ -14,24 +20,39 @@ from origenlab_email_pipeline.commercial_procurement_acquisition.constants impor
     OCDS_MAX_PAGE_SIZE,
     PARSER_VERSION,
     QUERY_CONTRACT_VERSION,
+    RELEASE_KIND_COMPILED,
+    RELEASE_KIND_HISTORICAL,
     SOURCE_KIND_OCDS,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.fingerprint import (
     acquisition_page_id,
     acquisition_query_id,
+    acquisition_source_fingerprint,
+    acquisition_normalized_semantic_digest,
+    payload_digests,
     procurement_line_observation_id,
+    procurement_snapshot_id,
     procurement_source_observation_id,
     procurement_tender_observation_id,
+    query_identity_from_model,
+)
+from origenlab_email_pipeline.commercial_procurement_acquisition.identity import (
+    ocds_canonical_candidate,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.models import (
     AcquisitionPage,
     AcquisitionQuery,
+    AcquisitionSnapshot,
     ProcurementLineObservation,
     ProcurementSourceObservation,
     ProcurementTenderObservation,
 )
+from origenlab_email_pipeline.commercial_procurement_acquisition.constants import (
+    ACQUISITION_CONTRACT_VERSION,
+)
 from origenlab_email_pipeline.commercial_procurement_acquisition.redaction import (
     sanitize_error_message,
+    sanitize_mapping,
 )
 
 
@@ -47,28 +68,20 @@ def plan_ocds_ranges(
     source_reported_total: int,
     page_size: int = OCDS_MAX_PAGE_SIZE,
 ) -> list[dict[str, int]]:
-    """Deterministic non-overlapping [start, end] ranges (1-indexed inclusive).
-
-    Does not execute network calls. page_size max 1000.
-    """
+    """Deterministic non-overlapping [start, end] ranges (1-indexed inclusive)."""
     if page_size < 1 or page_size > OCDS_MAX_PAGE_SIZE:
         raise OcdsParseError(f"page_size must be 1..{OCDS_MAX_PAGE_SIZE}")
     if source_reported_total < 0:
         raise OcdsParseError("source_reported_total must be >= 0")
+    if not (1 <= month <= 12):
+        raise OcdsParseError("month must be 1..12")
     if source_reported_total == 0:
         return []
     ranges: list[dict[str, int]] = []
     start = 1
     while start <= source_reported_total:
         end = min(start + page_size - 1, source_reported_total)
-        ranges.append(
-            {
-                "year": year,
-                "month": month,
-                "start": start,
-                "end": end,
-            }
-        )
+        ranges.append({"year": year, "month": month, "start": start, "end": end})
         start = end + 1
     return ranges
 
@@ -85,7 +98,6 @@ def detect_range_anomalies(
         if key in seen:
             issues.append(f"duplicate_page:{key[0]}-{key[1]}")
         seen.add(key)
-    # Overlaps among observed
     ordered = sorted(seen)
     for i in range(1, len(ordered)):
         prev_s, prev_e = ordered[i - 1]
@@ -107,7 +119,14 @@ def build_ocds_query(
     range_start: int,
     range_end: int,
 ) -> AcquisitionQuery:
-    if range_end - range_start + 1 > OCDS_MAX_PAGE_SIZE:
+    if not (1 <= month <= 12):
+        raise OcdsParseError("month must be 1..12")
+    if range_start < 1:
+        raise OcdsParseError("range_start must be >= 1")
+    if range_end < range_start:
+        raise OcdsParseError("range_end must be >= range_start")
+    width = range_end - range_start + 1
+    if width > OCDS_MAX_PAGE_SIZE:
         raise OcdsParseError("OCDS range wider than 1000")
     path = ENDPOINT_PATH_OCDS_TEMPLATE.format(
         year=year, month=month, start=range_start, end=range_end
@@ -127,7 +146,17 @@ def build_ocds_query(
     }
     return AcquisitionQuery(
         acquisition_query_id=acquisition_query_id(identity),
-        **identity,  # type: ignore[arg-type]
+        source_kind=SOURCE_KIND_OCDS,
+        endpoint_kind=ENDPOINT_OCDS_MONTHLY_RANGE,
+        query_contract_version=QUERY_CONTRACT_VERSION,
+        estado=None,
+        fecha_ddmmaaaa=None,
+        tender_code=None,
+        year=year,
+        month=month,
+        range_start=range_start,
+        range_end=range_end,
+        endpoint_path=path,
     )
 
 
@@ -152,27 +181,51 @@ def _party_id(obj: Any) -> str | None:
     return None
 
 
-def _extract_releases(payload: dict[str, Any]) -> list[dict[str, Any]]:
+def _release_identity_key(release: dict[str, Any]) -> tuple[str, str]:
+    return (
+        (_as_str(release.get("ocid")) or "").casefold(),
+        (_as_str(release.get("id")) or "").casefold(),
+    )
+
+
+def _extract_typed_releases(
+    payload: dict[str, Any],
+) -> list[tuple[dict[str, Any], str, str | None]]:
+    """Return (release, release_kind, record_id) without silent flattening.
+
+    Policy B: historical releases first; compiledRelease only if not duplicate.
+    """
+    out: list[tuple[dict[str, Any], str, str | None]] = []
     releases = payload.get("releases")
     if isinstance(releases, list):
-        return [r for r in releases if isinstance(r, dict)]
+        for r in releases:
+            if isinstance(r, dict):
+                out.append((r, RELEASE_KIND_HISTORICAL, None))
+        return out
+
     records = payload.get("records")
     if isinstance(records, list):
-        out: list[dict[str, Any]] = []
         for rec in records:
             if not isinstance(rec, dict):
                 continue
-            compiled = rec.get("compiledRelease")
-            if isinstance(compiled, dict):
-                out.append(compiled)
+            record_id = _as_str(rec.get("id"))
+            historical: list[dict[str, Any]] = []
             nested = rec.get("releases")
             if isinstance(nested, list):
-                out.extend(r for r in nested if isinstance(r, dict))
+                historical = [r for r in nested if isinstance(r, dict)]
+            seen = {_release_identity_key(r) for r in historical}
+            for r in historical:
+                out.append((r, RELEASE_KIND_HISTORICAL, record_id))
+            compiled = rec.get("compiledRelease")
+            if isinstance(compiled, dict):
+                key = _release_identity_key(compiled)
+                if key not in seen:
+                    out.append((compiled, RELEASE_KIND_COMPILED, record_id))
         return out
-    # Single release document
-    if "ocid" in payload and "tender" in payload:
-        return [payload]
-    return []
+
+    if "ocid" in payload and ("tender" in payload or "id" in payload):
+        out.append((payload, RELEASE_KIND_HISTORICAL, None))
+    return out
 
 
 def _items_from_tender(tender: dict[str, Any]) -> list[dict[str, Any]]:
@@ -191,6 +244,258 @@ def _sort_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             canonical_json_digest(i),
         ),
     )
+
+
+def _bounded_related_processes(tender: dict[str, Any]) -> tuple[dict[str, str], ...]:
+    raw = tender.get("relatedProcesses")
+    if not isinstance(raw, list):
+        return ()
+    rows: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        row = {
+            "id": _as_str(item.get("id")) or "",
+            "relationship": "",
+            "title": _as_str(item.get("title")) or "",
+            "scheme": _as_str(item.get("scheme")) or "",
+            "identifier": _as_str(item.get("identifier")) or "",
+        }
+        rel = item.get("relationship")
+        if isinstance(rel, list):
+            row["relationship"] = ",".join(str(x) for x in rel if x is not None)
+        elif rel is not None:
+            row["relationship"] = str(rel)
+        rows.append(sanitize_mapping(row))
+    return tuple(sorted(rows, key=lambda r: (r["id"], r["identifier"], r["title"])))
+
+
+def _additional_classifications(item: dict[str, Any]) -> tuple[dict[str, str], ...]:
+    raw = item.get("additionalClassifications")
+    if not isinstance(raw, list):
+        return ()
+    rows: list[dict[str, str]] = []
+    for c in raw:
+        if not isinstance(c, dict):
+            continue
+        rows.append(
+            {
+                "scheme": _as_str(c.get("scheme")) or "",
+                "id": _as_str(c.get("id")) or "",
+                "description": _as_str(c.get("description")) or "",
+            }
+        )
+    return tuple(sorted(rows, key=lambda r: (r["scheme"], r["id"], r["description"])))
+
+
+def _tag_values(release: dict[str, Any]) -> tuple[str, ...]:
+    tags = release.get("tag")
+    if not isinstance(tags, list):
+        return ()
+    vals = [_as_str(t) for t in tags]
+    return tuple(sorted(v for v in vals if v))
+
+
+def _malformed_page(
+    *,
+    query: AcquisitionQuery,
+    payload: Any,
+    original_bytes: bytes | str | None,
+    http_status: int | None,
+    message: str,
+) -> AcquisitionPage:
+    raw_digest, parser_digest, bytes_digest = payload_digests(
+        payload, original_bytes=original_bytes
+    )
+    range_pos = {"start": query.range_start, "end": query.range_end}
+    return AcquisitionPage(
+        page_id=acquisition_page_id(
+            acquisition_query_id_value=query.acquisition_query_id,
+            range_position=range_pos,
+            raw_canonical_json_digest=raw_digest,
+        ),
+        source_kind=SOURCE_KIND_OCDS,
+        endpoint_kind=ENDPOINT_OCDS_MONTHLY_RANGE,
+        acquisition_query_id=query.acquisition_query_id,
+        range_position=range_pos,
+        acquired_at_utc=None,
+        raw_canonical_json_digest=raw_digest,
+        original_bytes_digest=bytes_digest,
+        parser_input_digest=parser_digest,
+        response_item_count=0,
+        source_reported_total=None,
+        http_status=http_status,
+        parser_status="malformed",
+        error_classification="malformed_response",
+        completeness_status="malformed_response",
+        envelope_meta={},
+        error_message=sanitize_error_message(message),
+    )
+
+
+def _emit_release_observations(
+    release: dict[str, Any],
+    *,
+    release_kind: str,
+    record_id: str | None,
+    snapshot_id: str,
+    page_id: str,
+    package_id: str | None,
+) -> tuple[
+    ProcurementSourceObservation,
+    ProcurementTenderObservation,
+    list[ProcurementLineObservation],
+]:
+    ocid = _as_str(release.get("ocid"))
+    release_id = _as_str(release.get("id"))
+    tender_obj = release.get("tender") if isinstance(release.get("tender"), dict) else {}
+    tender_id_src = _as_str(tender_obj.get("id")) if tender_obj else None
+    cand = ocds_canonical_candidate(
+        ocid=ocid,
+        release_id=release_id,
+        tender_id=tender_id_src,
+        release_kind=release_kind,
+    )
+    status_value = _as_str(tender_obj.get("status")) if tender_obj else None
+    buyer = release.get("buyer")
+    procuring = tender_obj.get("procuringEntity") if tender_obj else None
+    buyer_name = _party_name(buyer) or _party_name(procuring)
+    buyer_id = _party_id(buyer) or _party_id(procuring)
+    period = (
+        tender_obj.get("tenderPeriod")
+        if isinstance(tender_obj.get("tenderPeriod"), dict)
+        else {}
+    )
+    pub = _as_str(release.get("date")) or _as_str(period.get("startDate"))
+    close = _as_str(period.get("endDate"))
+    method = _as_str(tender_obj.get("procurementMethod")) if tender_obj else None
+    method_details = (
+        _as_str(tender_obj.get("procurementMethodDetails")) if tender_obj else None
+    )
+    related = _bounded_related_processes(tender_obj or {})
+    tags = _tag_values(release)
+    raw_digest = canonical_json_digest(release)
+    obs_id = procurement_source_observation_id(
+        source_kind=SOURCE_KIND_OCDS,
+        endpoint_kind=ENDPOINT_OCDS_MONTHLY_RANGE,
+        source_native_key=cand.source_native_tender_key,
+        package_id=package_id,
+        release_id=release_id,
+        release_kind=release_kind,
+        raw_payload_digest=raw_digest,
+    )
+    source = ProcurementSourceObservation(
+        observation_id=obs_id,
+        snapshot_id=snapshot_id,
+        source_kind=SOURCE_KIND_OCDS,
+        endpoint_kind=ENDPOINT_OCDS_MONTHLY_RANGE,
+        source_native_key=cand.source_native_tender_key,
+        source_native_tender_key=cand.source_native_tender_key,
+        canonical_tender_key_candidate=cand.canonical_tender_key_candidate,
+        canonical_candidate_kind=cand.canonical_candidate_kind,
+        canonical_candidate_reason=cand.canonical_candidate_reason,
+        source_status_code=None,
+        source_status_name=status_value,
+        source_status_system="ocds",
+        source_status_value=status_value,
+        publication_timestamp_raw=pub,
+        close_timestamp_raw=close,
+        buyer_display_raw=buyer_name,
+        buyer_source_id=buyer_id,
+        package_id=package_id,
+        release_id=release_id,
+        ocid=ocid,
+        record_id=record_id,
+        release_kind=release_kind,
+        release_tags=tags,
+        raw_payload_digest=raw_digest,
+        parser_version=PARSER_VERSION,
+        provenance_reason_codes=(f"ocds_{release_kind}",),
+        page_id=page_id,
+    )
+    tender_key = cand.source_native_tender_key
+    tender_obs_id = procurement_tender_observation_id(
+        source_observation_id=obs_id, normalized_tender_key=tender_key
+    )
+    stage = tags[0] if tags else None
+    value_obj = tender_obj.get("value") if isinstance(tender_obj.get("value"), dict) else {}
+    tender = ProcurementTenderObservation(
+        tender_observation_id=tender_obs_id,
+        source_observation_id=obs_id,
+        source_kind=SOURCE_KIND_OCDS,
+        normalized_tender_key=tender_key,
+        source_native_tender_key=cand.source_native_tender_key,
+        canonical_tender_key_candidate=cand.canonical_tender_key_candidate,
+        canonical_candidate_kind=cand.canonical_candidate_kind,
+        canonical_candidate_reason=cand.canonical_candidate_reason,
+        title=_as_str(tender_obj.get("title")) if tender_obj else None,
+        description=_as_str(tender_obj.get("description")) if tender_obj else None,
+        buyer_display=buyer_name,
+        buyer_source_id=buyer_id,
+        publication_timestamp_raw=pub,
+        close_timestamp_raw=close,
+        source_status_code=None,
+        source_status_name=status_value,
+        source_process_stage=stage,
+        region=None,
+        currency=_as_str(value_obj.get("currency")),
+        estimated_value=_as_str(value_obj.get("amount")),
+        procurement_method=method,
+        procurement_method_details=method_details,
+        related_processes=related,
+        field_provenance={
+            "canonical_tender_key_candidate": "tender.id when MP CodigoExterno shape",
+            "source_status_value": "tender.status",
+            "close_timestamp_raw": "tender.tenderPeriod.endDate",
+            "procurement_method": "tender.procurementMethod",
+            "related_processes": "tender.relatedProcesses",
+            "note": "OCDS fields are evidence only; not PR5 eligibility",
+        },
+    )
+    lines: list[ProcurementLineObservation] = []
+    items = _sort_items(_items_from_tender(tender_obj or {}))
+    seen: dict[str, int] = {}
+    for ordinal, item in enumerate(items):
+        native = _as_str(item.get("id"))
+        if native:
+            seen[native] = seen.get(native, 0) + 1
+            if seen[native] > 1:
+                native = f"{native}#occ{seen[native]}"
+        classification = item.get("classification")
+        class_id = None
+        if isinstance(classification, dict):
+            class_id = _as_str(classification.get("id"))
+        unit = item.get("unit")
+        unit_name = _as_str(unit.get("name") if isinstance(unit, dict) else unit)
+        desc = _as_str(item.get("description"))
+        addl = _additional_classifications(item)
+        line_id = procurement_line_observation_id(
+            tender_observation_id=tender_obs_id,
+            source_native_line_id=native,
+            ordinal=ordinal,
+            description=desc,
+        )
+        lines.append(
+            ProcurementLineObservation(
+                line_observation_id=line_id,
+                tender_observation_id=tender_obs_id,
+                source_native_line_id=native,
+                description=desc,
+                product=None,
+                category=class_id,
+                unspsc_or_classification=class_id,
+                additional_classifications=addl,
+                quantity=_as_str(item.get("quantity")),
+                unit=unit_name,
+                ordinal=ordinal,
+                field_provenance={
+                    "source_native_line_id": "item.id",
+                    "unspsc_or_classification": "item.classification.id",
+                    "additional_classifications": "item.additionalClassifications",
+                },
+            )
+        )
+    return source, tender, lines
 
 
 def parse_ocds_package(
@@ -213,40 +518,38 @@ def parse_ocds_package(
     list[ProcurementLineObservation],
     dict[str, Any],
 ]:
+    """Parse a single OCDS page/package. Empty single page → empty_page (not terminal)."""
     query = query or build_ocds_query(
         year=year, month=month, range_start=range_start, range_end=range_end
     )
     if not isinstance(payload, dict):
-        digest = canonical_json_digest({"error": "not_object"})
-        page = AcquisitionPage(
-            page_id=acquisition_page_id(
-                acquisition_query_id_value=query.acquisition_query_id,
-                range_position={
-                    "start": query.range_start,
-                    "end": query.range_end,
-                },
-                raw_canonical_json_digest=digest,
-            ),
-            source_kind=SOURCE_KIND_OCDS,
-            endpoint_kind=ENDPOINT_OCDS_MONTHLY_RANGE,
-            acquisition_query_id=query.acquisition_query_id,
-            range_position={"start": query.range_start, "end": query.range_end},
-            acquired_at_utc=acquired_at_utc,
-            raw_canonical_json_digest=digest,
-            original_bytes_digest=original_bytes_digest(original_bytes),
-            parser_input_digest=digest,
-            response_item_count=0,
-            source_reported_total=None,
+        page = _malformed_page(
+            query=query,
+            payload=payload,
+            original_bytes=original_bytes,
             http_status=http_status,
-            parser_status="malformed",
-            error_classification="malformed_response",
-            completeness_status="malformed_response",
-            envelope_meta={},
+            message="payload must be a JSON object",
         )
-        return query, page, [], [], [], {"error": "payload must be a JSON object"}
+        return query, page, [], [], [], {"error": page.error_message}
 
-    releases = _extract_releases(payload)
-    parser_digest = canonical_json_digest(payload)
+    # Distinguish a legitimate empty package (releases:[]) from a non-OCDS object.
+    has_releases_key = "releases" in payload
+    has_records_key = "records" in payload
+    looks_like_release = "ocid" in payload and ("tender" in payload or "id" in payload)
+    if not (has_releases_key or has_records_key or looks_like_release):
+        page = _malformed_page(
+            query=query,
+            payload=payload,
+            original_bytes=original_bytes,
+            http_status=http_status,
+            message="payload is not an OCDS package/release envelope",
+        )
+        return query, page, [], [], [], {"error": page.error_message}
+
+    typed = _extract_typed_releases(payload)
+    raw_digest, parser_digest, bytes_digest = payload_digests(
+        payload, original_bytes=original_bytes
+    )
     package_uri = _as_str(payload.get("uri"))
     publisher = payload.get("publisher")
     package_id = package_uri or (
@@ -254,28 +557,32 @@ def parse_ocds_package(
     )
     published = _as_str(payload.get("publishedDate") or payload.get("publicationDate"))
 
-    completeness = "complete"
-    if not releases:
-        completeness = "terminal_empty_page"
+    completeness = "complete" if typed else "empty_page"
+    expected_width = (query.range_end or 0) - (query.range_start or 0) + 1
+    # Count mismatch vs requested width is advisory at page level; monthly assembler
+    # owns terminal classification.
+    if typed and expected_width > 0 and len(typed) < expected_width:
+        # Partial fill relative to requested range — still a valid page parse.
+        pass
 
     page = AcquisitionPage(
         page_id=acquisition_page_id(
             acquisition_query_id_value=query.acquisition_query_id,
             range_position={"start": query.range_start, "end": query.range_end},
-            raw_canonical_json_digest=parser_digest,
+            raw_canonical_json_digest=raw_digest,
         ),
         source_kind=SOURCE_KIND_OCDS,
         endpoint_kind=ENDPOINT_OCDS_MONTHLY_RANGE,
         acquisition_query_id=query.acquisition_query_id,
         range_position={"start": query.range_start, "end": query.range_end},
         acquired_at_utc=acquired_at_utc,
-        raw_canonical_json_digest=parser_digest,
-        original_bytes_digest=original_bytes_digest(original_bytes),
+        raw_canonical_json_digest=raw_digest,
+        original_bytes_digest=bytes_digest,
         parser_input_digest=parser_digest,
-        response_item_count=len(releases),
+        response_item_count=len(typed),
         source_reported_total=None,
         http_status=http_status,
-        parser_status="ok" if releases or completeness == "terminal_empty_page" else "malformed",
+        parser_status="ok",
         error_classification=None,
         completeness_status=completeness,
         envelope_meta={
@@ -284,152 +591,246 @@ def parse_ocds_package(
             "publishedDate": published,
             "package_id": package_id,
         },
+        error_message=None,
     )
 
     sources: list[ProcurementSourceObservation] = []
     tenders: list[ProcurementTenderObservation] = []
     lines: list[ProcurementLineObservation] = []
-
-    for release in releases:
-        ocid = _as_str(release.get("ocid"))
-        release_id = _as_str(release.get("id"))
-        tender_obj = release.get("tender") if isinstance(release.get("tender"), dict) else {}
-        tender_id_src = _as_str(tender_obj.get("id")) if tender_obj else None
-        source_native = "|".join(
-            p for p in (ocid or "", release_id or "", tender_id_src or "") if p
-        ) or canonical_json_digest(release)[:24]
-        status_value = _as_str(tender_obj.get("status")) if tender_obj else None
-        buyer = release.get("buyer")
-        procuring = tender_obj.get("procuringEntity") if tender_obj else None
-        buyer_name = _party_name(buyer) or _party_name(procuring)
-        buyer_id = _party_id(buyer) or _party_id(procuring)
-        period = tender_obj.get("tenderPeriod") if isinstance(tender_obj.get("tenderPeriod"), dict) else {}
-        pub = _as_str(release.get("date")) or _as_str(period.get("startDate"))
-        close = _as_str(period.get("endDate"))
-        raw_digest = canonical_json_digest(release)
-        # Do not collapse different releases: observation key includes release id.
-        obs_id = procurement_source_observation_id(
-            source_kind=SOURCE_KIND_OCDS,
-            endpoint_kind=ENDPOINT_OCDS_MONTHLY_RANGE,
-            source_native_key=source_native,
+    for release, release_kind, record_id in typed:
+        src, tender, line_rows = _emit_release_observations(
+            release,
+            release_kind=release_kind,
+            record_id=record_id,
+            snapshot_id=snapshot_id,
+            page_id=page.page_id,
             package_id=package_id,
-            release_id=release_id,
-            raw_payload_digest=raw_digest,
         )
-        # Canonical tender-key candidate prefers tender.id then ocid.
-        if tender_id_src:
-            canon = f"ocds-tender:{tender_id_src.casefold()}"
-        elif ocid:
-            canon = f"ocds-ocid:{ocid.casefold()}"
-        else:
-            canon = f"ocds-release:{source_native.casefold()}"
-
-        sources.append(
-            ProcurementSourceObservation(
-                observation_id=obs_id,
-                snapshot_id=snapshot_id,
-                source_kind=SOURCE_KIND_OCDS,
-                endpoint_kind=ENDPOINT_OCDS_MONTHLY_RANGE,
-                source_native_key=source_native,
-                canonical_tender_key_candidate=canon,
-                source_status_code=None,
-                source_status_name=status_value,
-                source_status_system="ocds",
-                source_status_value=status_value,
-                publication_timestamp_raw=pub,
-                close_timestamp_raw=close,
-                buyer_display_raw=buyer_name,
-                buyer_source_id=buyer_id,
-                package_id=package_id,
-                release_id=release_id,
-                ocid=ocid,
-                raw_payload_digest=raw_digest,
-                parser_version=PARSER_VERSION,
-                provenance_reason_codes=("ocds_release",),
-                page_id=page.page_id,
-            )
-        )
-        tender_obs_id = procurement_tender_observation_id(
-            source_observation_id=obs_id, normalized_tender_key=canon
-        )
-        tags = release.get("tag")
-        stage = None
-        if isinstance(tags, list) and tags:
-            stage = _as_str(tags[0])
-        tenders.append(
-            ProcurementTenderObservation(
-                tender_observation_id=tender_obs_id,
-                source_observation_id=obs_id,
-                source_kind=SOURCE_KIND_OCDS,
-                normalized_tender_key=canon,
-                title=_as_str(tender_obj.get("title")) if tender_obj else None,
-                description=_as_str(tender_obj.get("description")) if tender_obj else None,
-                buyer_display=buyer_name,
-                buyer_source_id=buyer_id,
-                publication_timestamp_raw=pub,
-                close_timestamp_raw=close,
-                source_status_code=None,
-                source_status_name=status_value,
-                source_process_stage=stage,
-                region=None,
-                currency=_as_str(tender_obj.get("value", {}).get("currency"))
-                if isinstance(tender_obj.get("value"), dict)
-                else None,
-                estimated_value=_as_str(tender_obj.get("value", {}).get("amount"))
-                if isinstance(tender_obj.get("value"), dict)
-                else None,
-                field_provenance={
-                    "normalized_tender_key": "tender.id|ocid",
-                    "source_status_value": "tender.status",
-                    "close_timestamp_raw": "tender.tenderPeriod.endDate",
-                    "note": "OCDS status is not PR5 active eligibility",
-                },
-            )
-        )
-        items = _sort_items(_items_from_tender(tender_obj or {}))
-        seen: dict[str, int] = {}
-        for ordinal, item in enumerate(items):
-            native = _as_str(item.get("id"))
-            if native:
-                seen[native] = seen.get(native, 0) + 1
-                if seen[native] > 1:
-                    native = f"{native}#occ{seen[native]}"
-            classification = item.get("classification")
-            class_id = None
-            if isinstance(classification, dict):
-                class_id = _as_str(classification.get("id"))
-            unit = item.get("unit")
-            unit_name = _as_str(unit.get("name") if isinstance(unit, dict) else unit)
-            desc = _as_str(item.get("description"))
-            line_id = procurement_line_observation_id(
-                tender_observation_id=tender_obs_id,
-                source_native_line_id=native,
-                ordinal=ordinal,
-                description=desc,
-            )
-            lines.append(
-                ProcurementLineObservation(
-                    line_observation_id=line_id,
-                    tender_observation_id=tender_obs_id,
-                    source_native_line_id=native,
-                    description=desc,
-                    product=None,
-                    category=class_id,
-                    unspsc_or_classification=class_id,
-                    quantity=_as_str(item.get("quantity")),
-                    unit=unit_name,
-                    ordinal=ordinal,
-                    field_provenance={
-                        "source_native_line_id": "item.id",
-                        "unspsc_or_classification": "item.classification.id",
-                    },
-                )
-            )
+        sources.append(src)
+        tenders.append(tender)
+        lines.extend(line_rows)
 
     diagnostics = {
-        "release_count": len(releases),
+        "release_count": len(typed),
         "line_count": len(lines),
         "status_mapping": "source_status_system=ocds; not PR5 eligibility",
         "package_publishedDate": published,
+        "records_policy": "B_historical_preferred_compiled_if_unique",
+        "single_page_empty_status": "empty_page",
     }
     return query, page, sources, tenders, lines, diagnostics
+
+
+def _classify_monthly_completeness(
+    *,
+    planned: list[dict[str, int]],
+    pages: list[AcquisitionPage],
+    anomalies: list[str],
+    source_reported_total: int | None,
+    total_items: int,
+) -> str:
+    ordered = sorted(
+        pages, key=lambda p: (int(p.range_position["start"]), int(p.range_position["end"]))
+    )
+    if any(p.completeness_status == "malformed_response" for p in ordered):
+        return "malformed_response"
+    if any(p.parser_status not in {"ok"} for p in ordered):
+        return "partial_page_failure"
+    if any(a.startswith("duplicate_page:") for a in anomalies):
+        return "duplicate_page"
+    if any(a.startswith("overlapping_range:") for a in anomalies):
+        return "overlapping_range"
+    if any(a.startswith("missing_range:") for a in anomalies) or any(
+        a.startswith("unplanned_range:") for a in anomalies
+    ):
+        return "incomplete_range"
+    if len(ordered) != len(planned):
+        return "incomplete_range"
+
+    # Empty page that is not a valid terminal trailing empty → incomplete.
+    empty_idxs = [
+        i for i, p in enumerate(ordered) if p.response_item_count == 0 or p.completeness_status == "empty_page"
+    ]
+    terminal_empty = False
+    if empty_idxs:
+        # Only the final page may be empty for terminal classification.
+        if empty_idxs != [len(ordered) - 1]:
+            return "incomplete_range"
+        last = ordered[-1]
+        prior = ordered[:-1]
+        if prior and all(p.completeness_status == "complete" for p in prior):
+            start_last = int(last.range_position["start"])
+            if source_reported_total is not None:
+                prior_items = sum(p.response_item_count for p in prior)
+                if (
+                    prior_items == source_reported_total
+                    and last.response_item_count == 0
+                    and start_last == source_reported_total + 1
+                ):
+                    terminal_empty = True
+                elif (
+                    prior_items == source_reported_total
+                    and last.response_item_count == 0
+                    and start_last > source_reported_total
+                ):
+                    terminal_empty = True
+            elif all(
+                p.response_item_count
+                == int(p.range_position["end"]) - int(p.range_position["start"]) + 1
+                for p in prior
+            ):
+                terminal_empty = True
+        if not terminal_empty:
+            return "incomplete_range"
+        return "terminal_empty_page"
+
+    # Undersized non-empty pages relative to requested width.
+    for p in ordered:
+        start = int(p.range_position.get("start") or 0)
+        end = int(p.range_position.get("end") or 0)
+        expected = end - start + 1
+        if expected > 0 and 0 < p.response_item_count < expected:
+            return "incomplete_range"
+
+    if source_reported_total is not None and total_items != source_reported_total:
+        return "source_total_mismatch"
+
+    return "complete"
+
+
+def build_ocds_month_snapshot(
+    *,
+    planned_ranges: list[dict[str, int]],
+    parsed_pages: list[
+        tuple[
+            AcquisitionQuery,
+            AcquisitionPage,
+            list[ProcurementSourceObservation],
+            list[ProcurementTenderObservation],
+            list[ProcurementLineObservation],
+            dict[str, Any],
+        ]
+    ],
+    source_reported_total: int | None = None,
+    fixture_origin: str = "synthetic_official_shape",
+    materialized_at_utc: str | None = None,
+) -> AcquisitionSnapshot:
+    """Assemble a multi-page monthly OCDS snapshot from offline parse results.
+
+    Input page order does not affect fingerprints (pages sorted by range).
+    """
+    if not planned_ranges:
+        raise OcdsParseError("planned_ranges required")
+
+    # Validate planned widths.
+    for r in planned_ranges:
+        width = int(r["end"]) - int(r["start"]) + 1
+        if width < 1 or width > OCDS_MAX_PAGE_SIZE:
+            raise OcdsParseError("planned range width invalid")
+        if int(r["start"]) < 1:
+            raise OcdsParseError("planned range_start must be >= 1")
+
+    year = int(planned_ranges[0]["year"])
+    month = int(planned_ranges[0]["month"])
+
+    # Sort parsed pages by range.
+    sorted_pages = sorted(
+        parsed_pages,
+        key=lambda row: (
+            int(row[1].range_position.get("start") or 0),
+            int(row[1].range_position.get("end") or 0),
+            row[1].page_id,
+        ),
+    )
+    pages = [row[1] for row in sorted_pages]
+    observed = [
+        {
+            "start": int(p.range_position["start"]),
+            "end": int(p.range_position["end"]),
+        }
+        for p in pages
+    ]
+    anomalies = detect_range_anomalies(planned_ranges, observed)
+
+    sources: list[ProcurementSourceObservation] = []
+    tenders: list[ProcurementTenderObservation] = []
+    lines: list[ProcurementLineObservation] = []
+    for _q, _p, srcs, tends, lns, _d in sorted_pages:
+        sources.extend(srcs)
+        tenders.extend(tends)
+        lines.extend(lns)
+
+    total_items = sum(p.response_item_count for p in pages)
+    completeness = _classify_monthly_completeness(
+        planned=planned_ranges,
+        pages=pages,
+        anomalies=anomalies,
+        source_reported_total=source_reported_total,
+        total_items=total_items,
+    )
+
+    # Monthly query identity: whole-month span (first start .. last planned end).
+    month_start = min(int(r["start"]) for r in planned_ranges)
+    month_end = max(int(r["end"]) for r in planned_ranges)
+    month_query = build_ocds_query(
+        year=year, month=month, range_start=month_start, range_end=month_end
+    )
+    identity = query_identity_from_model(month_query)
+    source_fp = acquisition_source_fingerprint(
+        source_kind=SOURCE_KIND_OCDS,
+        query_identity=identity,
+        pages=pages,
+        completeness_status=completeness,
+    )
+    semantic = acquisition_normalized_semantic_digest(
+        source_observations=sources,
+        tender_observations=tenders,
+        line_observations=lines,
+        parser_version=PARSER_VERSION,
+        contract_version=ACQUISITION_CONTRACT_VERSION,
+    )
+    snap_id = procurement_snapshot_id(
+        acquisition_query_id_value=month_query.acquisition_query_id,
+        source_fingerprint=source_fp,
+    )
+    sources_t = tuple(
+        ProcurementSourceObservation(
+            **{
+                **o.to_dict(),
+                "snapshot_id": snap_id,
+                "provenance_reason_codes": tuple(o.provenance_reason_codes),
+                "release_tags": tuple(o.release_tags),
+            }
+        )
+        for o in sources
+    )
+    from datetime import datetime, timezone
+
+    materialized = materialized_at_utc or datetime.now(timezone.utc).isoformat().replace(
+        "+00:00", "Z"
+    )
+    diagnostics = {
+        "planned_ranges": planned_ranges,
+        "anomalies": anomalies,
+        "source_reported_total": source_reported_total,
+        "total_items": total_items,
+        "page_count": len(pages),
+        "shuffled_input_order_normalized": True,
+        "records_policy": "B_historical_preferred_compiled_if_unique",
+    }
+    return AcquisitionSnapshot(
+        snapshot_id=snap_id,
+        query=month_query,
+        pages=tuple(pages),
+        source_observations=sources_t,
+        tender_observations=tuple(tenders),
+        line_observations=tuple(lines),
+        completeness_status=completeness,
+        parser_version=PARSER_VERSION,
+        contract_version=ACQUISITION_CONTRACT_VERSION,
+        fixture_origin=fixture_origin,
+        diagnostics=diagnostics,
+        source_fingerprint=source_fp,
+        normalized_semantic_digest=semantic,
+        materialized_at_utc=materialized,
+    )
