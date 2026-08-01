@@ -2,6 +2,11 @@
 
 Automated operator step to refresh the equipment-first queue from the Mercado Público licitaciones API, publish the canonical dashboard CSV, and let the existing dashboard auto-mirror job push changes to Postgres.
 
+**PR5B note:** The acquisition snapshot parsers in
+[`COMMERCIAL_PROCUREMENT_ACQUISITION_PR5B.md`](../audits/COMMERCIAL_PROCUREMENT_ACQUISITION_PR5B.md)
+do **not** change this operational refresh path. Auto-refresh is not routed
+through PR5B.
+
 ## Required environment
 
 - `CHILECOMPRA_API_TICKET` — Mercado Público API ticket. Read from the environment only; never commit or print in logs.
