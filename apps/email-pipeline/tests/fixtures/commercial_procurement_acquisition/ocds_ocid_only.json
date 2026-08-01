@@ -1,0 +1,23 @@
+{
+  "publishedDate": "2026-08-01T00:00:00Z",
+  "publisher": {
+    "name": "Synthetic OCDS Publisher"
+  },
+  "releases": [
+    {
+      "date": "2026-07-28T10:00:00Z",
+      "id": "ocds-synth-ocid-only-01",
+      "ocid": "ocds-synth-ocid-only",
+      "tag": [
+        "tender"
+      ],
+      "tender": {
+        "description": "Ocid-only release without Mercado Publico CodigoExterno shape",
+        "status": "active",
+        "title": "Synthetic ocid-only tender"
+      }
+    }
+  ],
+  "uri": "https://example.invalid/ocds/package/synthetic-ocid-only",
+  "version": "1.1"
+}

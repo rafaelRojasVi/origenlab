@@ -1,0 +1,6 @@
+{
+  "authenticated_request_performed": false,
+  "fixture_origin": "synthetic_official_shape",
+  "note": "No production-derived identifiers. Ticket never present. Based on documented Mercado Publico / OCDS field contracts and observed Listado/Items envelope shapes.",
+  "ticket_present": false
+}

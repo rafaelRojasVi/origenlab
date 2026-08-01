@@ -1,0 +1,18 @@
+{
+  "Cantidad": 1,
+  "FechaCreacion": "2026-08-01T00:00:00",
+  "Listado": {
+    "Licitacion": {
+      "CodigoEstado": 5,
+      "CodigoExterno": "9999-3-LE26",
+      "Comprador": {
+        "NombreOrganismo": "Synthetic Nested Buyer"
+      },
+      "Descripcion": "Nested Licitacion envelope",
+      "Estado": "Publicada",
+      "FechaCierre": "2026-08-18T12:00:00",
+      "Nombre": "Synthetic nested listado single"
+    }
+  },
+  "Version": "v1"
+}

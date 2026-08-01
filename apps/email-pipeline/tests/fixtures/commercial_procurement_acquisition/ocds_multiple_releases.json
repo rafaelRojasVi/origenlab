@@ -1,0 +1,52 @@
+{
+  "publishedDate": "2026-08-01T00:00:00Z",
+  "releases": [
+    {
+      "date": "2026-07-01T00:00:00Z",
+      "id": "ocds-synth-0002-01",
+      "ocid": "ocds-synth-0002",
+      "tag": [
+        "tender"
+      ],
+      "tender": {
+        "id": "8888-1-LE26",
+        "items": [
+          {
+            "description": "Item A",
+            "id": "a",
+            "quantity": 1
+          }
+        ],
+        "status": "active",
+        "title": "Release one"
+      }
+    },
+    {
+      "date": "2026-07-15T00:00:00Z",
+      "id": "ocds-synth-0002-02",
+      "ocid": "ocds-synth-0002",
+      "tag": [
+        "award"
+      ],
+      "tender": {
+        "id": "8888-1-LE26",
+        "items": [
+          {
+            "description": "Item A",
+            "id": "a",
+            "quantity": 1
+          },
+          {
+            "description": "Item B",
+            "id": "b",
+            "quantity": 3
+          }
+        ],
+        "status": "complete",
+        "title": "Release two same ocid"
+      }
+    }
+  ],
+  "uri": "https://example.invalid/ocds/package/synthetic-002",
+  "version": "1.1"
+}
