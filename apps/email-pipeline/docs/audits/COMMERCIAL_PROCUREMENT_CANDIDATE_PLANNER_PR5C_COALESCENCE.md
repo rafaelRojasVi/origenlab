@@ -29,26 +29,40 @@ persistence, network acquisition.
 
 ## 2. Canonical identity
 
+### Identity namespaces
+
+Grouping and reconciliation use `(identity_namespace, canonical_tender_key)`,
+not bare key text:
+
+| Namespace | When |
+|-----------|------|
+| `mercado_publico_codigo_externo` | Plane B exact MP candidate; PR4 `codigo_externo` with exact MP shape |
+| `pr4_codigo_externo` | PR4 `codigo_externo` not matching MP shape |
+| `pr4_codigo_licitacion` | PR4 `codigo_licitacion` (never joins Plane B by text shape alone) |
+| `pr4_numero_adquisicion` | PR4 `numero_adquisicion` (never joins Plane B by text shape alone) |
+
+`coalesced_tender_id` derives from algorithm `coalesced_tender_id_v2` +
+namespace + key. Original Plane A `tender_key_kind` is preserved as
+provenance/display.
+
 ### Plane A (PR4)
 
 PR4 is the canonical persisted Plane A contract. For verified PR4
 `tender_key_kind` values (`codigo_externo`, `codigo_licitacion`,
 `numero_adquisicion`), preserve the PR4 `canonical_tender_key` after bounded
 whitespace/case normalization. **Do not** require the stricter PR5B Mercado
-Público `CodigoExterno` cross-source regex.
+Público `CodigoExterno` cross-source regex for Plane A acceptance.
 
 Separate:
 
 1. **Plane A canonical identity** — persisted PR4 key + original
-   `tender_key_kind`;
-2. **Cross-source join eligibility** — whether the key matches exact
-   `mercado_publico_codigo_externo` shape for Plane B joins.
+   `tender_key_kind` + identity namespace;
+2. **Cross-source join eligibility** — only `codigo_externo` + exact
+   `mercado_publico_codigo_externo` shape may join Plane B.
 
-Non-shape-compatible verified PR4 keys remain valid **`pr4_only`** tenders.
-They are never silently discarded and never falsely relabelled as
-`mercado_publico_codigo_externo` for kind preservation (except when
-cross-source eligible, coalesced identity uses the MP kind so PR4-only → both
-keeps a stable `coalesced_tender_id`).
+Non-shape-compatible verified PR4 keys remain valid **`pr4_only`** tenders
+under `pr4_codigo_externo` (or kind-specific namespaces). They are never
+silently discarded.
 
 Corrupt PR4 rows become typed unresolved evidence:
 
@@ -75,17 +89,27 @@ reasons (`live_canonical_candidate_missing`, `…_malformed`,
 `ocds_ocid_only_unresolved`, `source_native_identity_not_canonical`,
 `unsupported_candidate_kind`, `incomplete_or_failed_page`).
 
+### Acquisition instance identity (PR5C)
+
+PR5B `snapshot_id` remains **content** identity. PR5C adds
+`candidate_acquisition_instance_id_v1` from deterministic acquisition-event
+evidence (`snapshot_id`, `acquisition_query_id`, sorted page IDs,
+`acquired_at_utc`, http/parser/completeness/error). Same content captured at
+different `acquired_at_utc` values yields distinct instances; exact repeated
+serialized instances dedupe. Live `evidence_ref_id` includes
+`acquisition_instance_id` + `observation_id` + canonical identity.
+
 ## 3. Stable coalesced tender ID
 
 `coalesced_tender_id` derives only from:
 
-- ID algorithm/version (`coalesced_tender_id_v1`);
-- `canonical_tender_key`;
-- `tender_key_kind`.
+- `coalesced_tender_id_v2` algorithm id;
+- `identity_namespace`;
+- `canonical_tender_key`.
 
-It does **not** include evidence refs, snapshot IDs, acquisition timestamps,
+It does **not** include source plane, acquired_at, fingerprints, evidence refs,
 selected fields, lifecycle, or as-of. Adding/removing/refreshing evidence for
-the same identity must not change the ID.
+the same namespace+key must not change the ID.
 
 ## 4. Field precedence (no global best source)
 
@@ -94,15 +118,22 @@ See emitted `FIELD_PRECEDENCE_MATRIX.json`. High→low for detailed fields:
 `ticket_detail` → `ticket_summary` → `ocds_release` → `ocds_record` → `pr4` →
 `ocds_lista_index`
 
-Status **code and name are selected atomically** from the same evidence ref.
-Internally inconsistent code/name pairs (e.g. code `8` + Publicada) emit
-`status_conflict`. ChileCompra legal-citation suffixes on names (e.g.
-`Desierta (o art. …)`) match the expected family via prefix.
+Status **code and name are selected atomically** from the same evidence ref,
+but conflicts are decided by **normalized lifecycle meaning** (openish /
+awarded / cancelled / closed), not raw string pairs. Equivalent forms agree
+(e.g. `5`/`Publicada`, `5`/`Publicada.`, name-only Publicada, legal suffixes).
+Meaning disagreement or internal inconsistency (e.g. `5`/`Adjudicada`) is a
+`status_conflict`.
 
-Timestamps are parsed through the documented policy and compared as normalized
-UTC instants before conflict. Reason codes distinguish
-`close_timestamp_conflict` vs `publication_timestamp_conflict` under parent
-`date_conflict`.
+Timestamps carry precision metadata (`date_only`, `minute`, `second`,
+`offset_datetime`, `unresolved`). Compatible date-only vs precise values on
+the same America/Santiago calendar day are not conflicts; prefer higher
+precision. Unparseable values are timezone/date unresolved, not automatic
+contradictions. Malformed higher-ranked timestamps cannot override valid
+lower-ranked ones.
+
+Buyer identity prefers stable `buyer_source_id`. Same ID with display wording
+variance records `buyer_display_variance` without `buyer_identity_conflict`.
 
 Lista-index stubs cannot override status/dates/buyer/title. Package
 `creationDate` is never tender publication. File mtime / build time are never
@@ -203,38 +234,42 @@ only because suffix digit length is **3** (`letters_1_digits_3`), not the
 stricter `\d{2}`. They are valid Plane A `pr4_only` tenders
 (`tender_key_kind=codigo_externo`), not unresolved.
 
-### Corrected production-derived counts
+### Corrected production-derived counts (instance / equivalence slice)
 
 | Input / output | Value |
 |----------------|-------|
 | Acquisition snapshots | same prior ticket detail + OCDS lista sanitized fixtures |
+| Acquisition instances | **2** |
 | Coalesced tenders | **16448** |
 | PR4 unresolved | **0** |
 | Live unresolved | **1** (lista OCID-only) |
-| Conflicts | **3** (status=1, close date=1, buyer=1) |
+| Conflicts | **2** (status=1, close date=1; buyer display variance no longer identity conflict) |
 | `candidate_source_kind` | pr4=16447, both=1, live_snapshot=0 |
 | Lifecycle | awarded=6584, cancelled=2655, closed=7208, status_conflict=1 |
 | active_open | 0 |
 | no_silent_drop | true |
+| `pr4_codigo_externo` (suffix-length-3 Plane A) | **1758** remain represented |
 
-Fingerprints (changed with corrected semantics — expected):
+Fingerprints (changed with acquisition-instance + equivalence semantics — expected):
 
-- input: `5915fe6c4633b0a31a775547c047f1807dd59887dded9f4425669f088145f947`
-- build-plan: `66b2e7707e7f0b2ced464ea93ebf3c9ec1c5afcd5d5acb6efde223a1be6dc529`
-- semantic: `6afde87d765784405b86acab2cd5eda61bd20d584f8292d66d8a3874a3e8af8d`
+- input: `cde237600d2d6be07087531f000a262633ac7e39ef869253cf6ba71bb0e51ecd`
+- build-plan: `ebe246655ee993d40306dc958d86d0d2d12bf134817aaff54de338d97c67b7bc`
+- semantic: `c90ae03edadfa1a4d6acdcf01dfe277580b48f4333c31358f2662f83a74fc108`
 
-Former fingerprints (obsolete): input `6a2a873b…` · build `780d3057…` ·
-semantic `82da570c…`.
+Prior corrected fingerprints (obsolete after this slice): input `5915fe6c…` ·
+build `66b2e770…` · semantic `6afde87d…`.
 
 ## 10. Walkthrough cases
 
 | Case | Intent |
 |------|--------|
-| A | PR4-only historical (production-derived, redacted) |
-| B | Live-only Ticket via sanitized fixture + PR5B parser |
-| C | Two-plane agreement — `synthetic_overlap_through_production_code_path` unless real overlap |
-| D | Status/date/buyer conflict — synthetic through production path when needed |
+| A | PR4-only historical — prefers non-cross-source namespace when present; reports actual identity route |
+| B | Live-only Ticket via sanitized fixture through production path (`live_derived_sanitized_fixture_through_production_code_path`) |
+| C | Two-plane agreement — real overlap when present; else `synthetic_overlap_through_production_code_path` |
+| D | Conflict — real when present; else `synthetic_conflict_through_production_code_path` |
 | E | OCDS/lista without MP canonical → unresolved, not a candidate |
+
+No `case_unavailable` placeholders.
 
 ## 11. Next boundary
 
