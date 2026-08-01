@@ -181,11 +181,37 @@ def main(argv: list[str] | None = None) -> int:
             / "fixtures"
             / "commercial_procurement_acquisition",
         )
-    except Exception as exc:  # noqa: BLE001 — surface sanitized failure only
-        msg = str(exc)
-        if "ticket=" in msg.casefold():
-            msg = "live_validation_failed"
-        print(json.dumps({"ok": False, "error": type(exc).__name__, "message": msg}))
+    except Exception as exc:  # noqa: BLE001 — never print str(exc) / payload content
+        from origenlab_email_pipeline.chilecompra_api import ChileCompraTicketMissingError
+
+        classification = "live_contract_validation_failed"
+        if type(exc) is AssertionError and getattr(exc, "args", ()) == (
+            "identifier_leak_detected",
+        ):
+            classification = "identifier_leak_detected"
+        elif type(exc) is RuntimeError:
+            arg0 = (getattr(exc, "args", ()) or (None,))[0]
+            if isinstance(arg0, str) and arg0.endswith("_request_budget_exhausted"):
+                classification = "request_budget_exhausted"
+            else:
+                classification = "runtime_error"
+        elif isinstance(exc, ChileCompraTicketMissingError):
+            classification = "ticket_env_missing_or_invalid"
+        elif type(exc) is ValueError:
+            arg0 = (getattr(exc, "args", ()) or (None,))[0]
+            if arg0 == "unsafe_sanitized_query_fields":
+                classification = "unsafe_sanitized_query_fields"
+            else:
+                classification = "validation_error"
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": "live_contract_validation_failed",
+                    "error_classification": classification,
+                }
+            )
+        )
         return 1
 
     # Terminal output: digests/counts only — never tender codes or payloads.

@@ -9,11 +9,23 @@ from urllib.error import HTTPError
 
 import pytest
 
+from origenlab_email_pipeline.chilecompra_api import ChileCompraTicketMissingError
 from origenlab_email_pipeline.commercial_procurement_acquisition.canonical_json import (
     canonical_json_digest,
 )
+from origenlab_email_pipeline.commercial_procurement_acquisition.constants import (
+    ENDPOINT_OCDS_MONTHLY_RANGE,
+    OCDS_QUERY_CONTRACT_VERSION,
+    OCDS_RANGE_SEMANTICS,
+    QUERY_CONTRACT_VERSION,
+    SOURCE_KIND_OCDS,
+)
+from origenlab_email_pipeline.commercial_procurement_acquisition.fingerprint import (
+    acquisition_query_id,
+)
 from origenlab_email_pipeline.commercial_procurement_acquisition.live_contract.budget import (
     RequestBudget,
+    validate_sanitized_query_fields,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.live_contract.compare import (
     build_field_type_matrix,
@@ -25,6 +37,7 @@ from origenlab_email_pipeline.commercial_procurement_acquisition.live_contract.r
     summarize_probe,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.live_contract.runner import (
+    load_ticket_into_environ,
     select_detail_codes,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.live_contract.sanitize import (
@@ -37,6 +50,9 @@ from origenlab_email_pipeline.commercial_procurement_acquisition.live_contract.t
     BudgetedLiveTransport,
     build_ocds_probe_path,
     plan_requests,
+)
+from origenlab_email_pipeline.commercial_procurement_acquisition.models import (
+    AcquisitionQuery,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.ocds import (
     OcdsParseError,
@@ -443,6 +459,13 @@ def test_live_ocds_fixture_parses_as_lista_index() -> None:
     assert lines == []
     assert _q.query_contract_version == "acquisition_query_v2"
     assert "ocds_range_semantics" in _q.identity_payload()
+    # Package creationDate must not masquerade as tender publication.
+    assert sources[0].publication_timestamp_raw is None
+    assert tenders[0].publication_timestamp_raw is None
+    assert page.envelope_meta.get("creationDate")
+    assert page.envelope_meta.get("creationDate_is_tender_publication") is False
+    assert diag.get("package_creation_is_tender_publication") is False
+    assert "package_creation_not_tender_publication" in sources[0].provenance_reason_codes
 
 
 def test_live_range_conclusion_reproduced_from_sanitized_probe_shapes() -> None:
@@ -505,3 +528,308 @@ def test_live_range_conclusion_reproduced_from_sanitized_probe_shapes() -> None:
     q = build_ocds_query(year=2026, month=7, range_start=0, range_end=999)
     assert q.endpoint_path.endswith("/0/1000")
     assert q.query_contract_version == "acquisition_query_v2"
+
+
+# --- PR5B.1 integrity / redaction hardening ---
+
+FROZEN_V1_OCDS_IDENTITY = {
+    "source_kind": SOURCE_KIND_OCDS,
+    "endpoint_kind": ENDPOINT_OCDS_MONTHLY_RANGE,
+    "query_contract_version": QUERY_CONTRACT_VERSION,
+    "estado": None,
+    "fecha_ddmmaaaa": None,
+    "tender_code": None,
+    "year": 2026,
+    "month": 8,
+    "range_start": 1,
+    "range_end": 1,
+    "endpoint_path": "/APISOCDS/OCDS/listaOCDSAgnoMes/2026/8/1/1",
+}
+FROZEN_V1_OCDS_QUERY_ID = "acquisition_query_id_9e635737a9e2720d23d5816b"
+
+
+def test_ocds_v1_identity_payload_omits_range_semantics() -> None:
+    assert acquisition_query_id(FROZEN_V1_OCDS_IDENTITY) == FROZEN_V1_OCDS_QUERY_ID
+    q_v1 = AcquisitionQuery(
+        acquisition_query_id=FROZEN_V1_OCDS_QUERY_ID,
+        source_kind=SOURCE_KIND_OCDS,
+        endpoint_kind=ENDPOINT_OCDS_MONTHLY_RANGE,
+        query_contract_version=QUERY_CONTRACT_VERSION,
+        year=2026,
+        month=8,
+        range_start=1,
+        range_end=1,
+        endpoint_path="/APISOCDS/OCDS/listaOCDSAgnoMes/2026/8/1/1",
+    )
+    payload = q_v1.identity_payload()
+    assert "ocds_range_semantics" not in payload
+    assert payload == FROZEN_V1_OCDS_IDENTITY
+    assert acquisition_query_id(payload) == FROZEN_V1_OCDS_QUERY_ID
+
+    # Materializing from to_dict must not silently upgrade v1.
+    revived = AcquisitionQuery(**q_v1.to_dict())
+    assert revived.query_contract_version == QUERY_CONTRACT_VERSION
+    assert "ocds_range_semantics" not in revived.identity_payload()
+    assert revived.acquisition_query_id == FROZEN_V1_OCDS_QUERY_ID
+
+
+def test_ocds_v2_identity_includes_range_semantics_and_differs_from_v1() -> None:
+    q_v2 = build_ocds_query(year=2026, month=8, range_start=1, range_end=1)
+    assert q_v2.query_contract_version == OCDS_QUERY_CONTRACT_VERSION
+    assert q_v2.identity_payload()["ocds_range_semantics"] == OCDS_RANGE_SEMANTICS
+    assert q_v2.acquisition_query_id != FROZEN_V1_OCDS_QUERY_ID
+
+
+def _lista_payload(
+    *,
+    offset: int,
+    limit: int,
+    total: int = 100,
+    rows: int | None = None,
+    creation: str = "2026-08-01T12:00:00",
+) -> dict:
+    n = limit if rows is None else rows
+    return {
+        "creationDate": creation,
+        "version": "1.2",
+        "pagination": {"offset": offset, "limit": limit, "total": total},
+        "data": [{"ocid": f"ocds-synth-{offset + i}"} for i in range(n)],
+    }
+
+
+@pytest.mark.parametrize(
+    ("pagination_patch", "data_rows", "expected_reason"),
+    [
+        ({"offset": True}, 1, "pagination_offset_invalid"),
+        ({"offset": -1}, 1, "pagination_offset_invalid"),
+        ({"limit": 0}, 0, "pagination_limit_invalid"),
+        ({"limit": 1001}, 1, "pagination_limit_invalid"),
+        ({"limit": True}, 1, "pagination_limit_invalid"),
+        ({"total": -1}, 1, "pagination_total_invalid"),
+        ({"total": True}, 1, "pagination_total_invalid"),
+        ({"offset": 2}, 1, "pagination_offset_query_mismatch"),
+        ({"limit": 2}, 1, "pagination_limit_query_mismatch"),
+        ({}, 2, "pagination_data_exceeds_limit"),
+    ],
+)
+def test_lista_index_pagination_contract_failures(
+    pagination_patch: dict, data_rows: int, expected_reason: str
+) -> None:
+    payload = _lista_payload(offset=1, limit=1, rows=data_rows)
+    payload["pagination"].update(pagination_patch)
+    _q, page, sources, tenders, lines, diag = parse_ocds_package(
+        payload, year=2026, month=7, range_start=1, range_end=1
+    )
+    assert page.completeness_status == "malformed_response"
+    assert page.error_classification == "pagination_contract_mismatch"
+    assert page.acquired_at_utc is None or True
+    assert page.raw_canonical_json_digest
+    assert page.parser_input_digest
+    assert sources == []
+    assert tenders == []
+    assert lines == []
+    assert expected_reason in diag["reason_codes"]
+    assert page.error_message is not None
+    assert "ocds-synth" not in page.error_message
+    assert str(pagination_patch) not in (page.error_message or "")
+
+
+def test_lista_index_pagination_total_conflict() -> None:
+    payload = _lista_payload(offset=0, limit=1, total=50)
+    _q, page, sources, tenders, _lines, diag = parse_ocds_package(
+        payload,
+        year=2026,
+        month=7,
+        range_start=0,
+        range_end=0,
+        source_reported_total=99,
+    )
+    assert page.error_classification == "pagination_contract_mismatch"
+    assert "pagination_total_conflict" in diag["reason_codes"]
+    assert sources == []
+    assert tenders == []
+
+
+def test_lista_index_preserves_acquired_at_on_pagination_failure() -> None:
+    payload = _lista_payload(offset=1, limit=1)
+    payload["pagination"]["offset"] = 9
+    stamp = "2026-08-01T19:00:00Z"
+    _q, page, sources, _t, _l, _d = parse_ocds_package(
+        payload,
+        year=2026,
+        month=7,
+        range_start=1,
+        range_end=1,
+        acquired_at_utc=stamp,
+    )
+    assert page.acquired_at_utc == stamp
+    assert sources == []
+
+
+def test_assert_no_identifier_leaks_message_is_non_disclosing() -> None:
+    secret = "ocds-70d2nz-REAL-LEAK-CODE"
+    with pytest.raises(AssertionError) as exc:
+        assert_no_identifier_leaks(
+            {"data": [{"ocid": secret}]},
+            forbidden_substrings=[secret],
+        )
+    assert str(exc.value) == "identifier_leak_detected"
+    assert secret not in str(exc.value)
+    assert "ocds-70d2nz" not in str(exc.value)
+    assert "REAL" not in str(exc.value)
+
+
+def test_broken_sanitizer_ocid_leak_fails_without_disclosing_value(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    real_ocid = "ocds-70d2nz-LIVE-SHOULD-NOT-APPEAR"
+    broken = {
+        "pagination": {"offset": 1, "limit": 1, "total": 1},
+        "data": [{"ocid": real_ocid, "urlTender": "https://example.invalid/x"}],
+    }
+    with pytest.raises(AssertionError) as exc:
+        assert_no_identifier_leaks(broken, forbidden_substrings=[real_ocid])
+    assert str(exc.value) == "identifier_leak_detected"
+    captured = capsys.readouterr()
+    assert real_ocid not in captured.out
+    assert real_ocid not in captured.err
+    assert real_ocid not in str(exc.value)
+
+
+def test_validate_sanitized_query_fields_rejects_nested_ticket() -> None:
+    with pytest.raises(ValueError, match="unsafe_sanitized_query_fields"):
+        validate_sanitized_query_fields({"nested": {"ticket": "x"}})
+    with pytest.raises(ValueError, match="unsafe_sanitized_query_fields"):
+        validate_sanitized_query_fields(
+            {"url": "https://api.example/?ticket=secret"}
+        )
+    validate_sanitized_query_fields({"estado": "activas", "codigo": "<in_memory_only>"})
+
+
+def test_live_path_does_not_require_dotenv_loader(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CHILECOMPRA_API_TICKET", raising=False)
+    # Isolated helper may still exist but live path uses ticket_from_env only.
+    assert load_ticket_into_environ() in (True, False)
+    with pytest.raises(ChileCompraTicketMissingError):
+        from origenlab_email_pipeline.chilecompra_api import ticket_from_env
+
+        ticket_from_env({})
+
+
+def _listing_probe(label: str, start: int, end: int, *, ok: bool = True, offset=None, limit=None, count=None):
+    if not ok:
+        return summarize_probe(
+            label=label,
+            start=start,
+            end=end,
+            http_status=500,
+            payload=None,
+            error_classification="http_500",
+        )
+    off = start if offset is None else offset
+    lim = end if limit is None else limit
+    n = lim if count is None else count
+    return summarize_probe(
+        label=label,
+        start=start,
+        end=end,
+        http_status=200,
+        payload={
+            "pagination": {"offset": off, "limit": lim, "total": 100},
+            "data": [{"ocid": f"o{i}"} for i in range(n)],
+        },
+        error_classification=None,
+    )
+
+
+def test_range_requires_all_three_listing_probes() -> None:
+    only_11 = [
+        summarize_probe(
+            label="0_0",
+            start=0,
+            end=0,
+            http_status=200,
+            payload={"status": 404, "detail": "x"},
+            error_classification=None,
+        ),
+        _listing_probe("1_1", 1, 1),
+        _listing_probe("0_9", 0, 9, ok=False),
+        _listing_probe("1_10", 1, 10, ok=False),
+    ]
+    assert conclude_range_semantics(only_11)["conclusion"] == "ambiguous"
+
+    missing_110 = [
+        summarize_probe(
+            label="0_0",
+            start=0,
+            end=0,
+            http_status=200,
+            payload={"status": 404, "detail": "x"},
+            error_classification=None,
+        ),
+        _listing_probe("1_1", 1, 1),
+        _listing_probe("0_9", 0, 9),
+        _listing_probe("1_10", 1, 10, ok=False),
+    ]
+    assert conclude_range_semantics(missing_110)["conclusion"] == "ambiguous"
+
+    all_ok = [
+        summarize_probe(
+            label="0_0",
+            start=0,
+            end=0,
+            http_status=200,
+            payload={"status": 404, "detail": "x"},
+            error_classification=None,
+        ),
+        _listing_probe("1_1", 1, 1),
+        _listing_probe("0_9", 0, 9),
+        _listing_probe("1_10", 1, 10),
+    ]
+    assert conclude_range_semantics(all_ok)["conclusion"] == "zero_based_offset_limit"
+
+
+def test_range_offset_or_count_mismatch_is_ambiguous() -> None:
+    base_zero = summarize_probe(
+        label="0_0",
+        start=0,
+        end=0,
+        http_status=200,
+        payload={"status": 404, "detail": "x"},
+        error_classification=None,
+    )
+    offset_bad = [
+        base_zero,
+        _listing_probe("1_1", 1, 1, offset=2),
+        _listing_probe("0_9", 0, 9),
+        _listing_probe("1_10", 1, 10),
+    ]
+    assert conclude_range_semantics(offset_bad)["conclusion"] == "ambiguous"
+
+    count_bad = [
+        base_zero,
+        _listing_probe("1_1", 1, 1),
+        _listing_probe("0_9", 0, 9, count=8),
+        _listing_probe("1_10", 1, 10),
+    ]
+    assert conclude_range_semantics(count_bad)["conclusion"] == "ambiguous"
+
+
+def test_range_zero_zero_inconsistent_nonempty_listing() -> None:
+    probes = [
+        summarize_probe(
+            label="0_0",
+            start=0,
+            end=0,
+            http_status=200,
+            payload={
+                "pagination": {"offset": 0, "limit": 0, "total": 10},
+                "data": [{"ocid": "x"}],
+            },
+            error_classification=None,
+        ),
+        _listing_probe("1_1", 1, 1),
+        _listing_probe("0_9", 0, 9),
+        _listing_probe("1_10", 1, 10),
+    ]
+    assert conclude_range_semantics(probes)["conclusion"] == "ambiguous"

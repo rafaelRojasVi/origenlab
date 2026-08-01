@@ -40,12 +40,12 @@ or start PR5C.
 
 | Constant | Value | Why |
 |----------|-------|-----|
-| `ACQUISITION_CONTRACT_VERSION` | `commercial_procurement_acquisition_v1` | Normalized observation fields unchanged → **semantic digests preserved**. |
+| `ACQUISITION_CONTRACT_VERSION` | `commercial_procurement_acquisition_v1` | Normalized observation fields unchanged for Ticket/release packages → **semantic digests preserved**. |
 | `QUERY_CONTRACT_VERSION` (Ticket) | `acquisition_query_v1` | Ticket query semantics unchanged. |
 | `OCDS_QUERY_CONTRACT_VERSION` | `acquisition_query_v2` | Range wire meaning changed; do not reinterpret v1 OCDS range IDs. |
-| `OCDS_RANGE_SEMANTICS` | `zero_based_offset_limit_v1` | Explicit field on range query identity. |
+| `OCDS_RANGE_SEMANTICS` | `zero_based_offset_limit_v1` | Present on **v2 range** query identity only (not historical v1). |
 | Source fingerprint | `acquisition_source_fingerprint_v2` | Unchanged algorithm; OCDS fingerprints move with query identity. |
-| Semantic digest | `acquisition_normalized_semantic_digest_v1` | Unchanged. |
+| Semantic digest | `acquisition_normalized_semantic_digest_v1` | Unchanged algorithm. Lista-index observations no longer treat package `creationDate` as tender `publication_timestamp_raw` (envelope-only). |
 
 ## Raw response digests (SHA-256 of response bytes)
 

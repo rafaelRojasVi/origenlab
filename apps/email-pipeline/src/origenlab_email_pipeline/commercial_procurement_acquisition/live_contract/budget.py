@@ -8,9 +8,42 @@ from typing import Any, Literal
 
 AuthKind = Literal["ticket", "public"]
 
+_FORBIDDEN_QUERY_KEY_FRAGMENTS = (
+    "ticket",
+    "authorization",
+    "password",
+    "secret",
+    "token",
+    "credential",
+    "api_key",
+    "apikey",
+)
+
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def validate_sanitized_query_fields(value: Any, *, _path: str = "$") -> None:
+    """Reject nested credential-bearing keys/values before ledger persistence."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            key_l = str(key).casefold()
+            if any(frag in key_l for frag in _FORBIDDEN_QUERY_KEY_FRAGMENTS):
+                raise ValueError("unsafe_sanitized_query_fields")
+            validate_sanitized_query_fields(child, _path=f"{_path}.{key}")
+        return
+    if isinstance(value, list):
+        for idx, child in enumerate(value):
+            validate_sanitized_query_fields(child, _path=f"{_path}[{idx}]")
+        return
+    if isinstance(value, str):
+        text = value.casefold()
+        if "ticket=" in text or "authorization=" in text:
+            raise ValueError("unsafe_sanitized_query_fields")
+        if "http://" in text or "https://" in text:
+            if any(frag in text for frag in ("ticket", "authorization", "token=")):
+                raise ValueError("unsafe_sanitized_query_fields")
 
 
 @dataclass
@@ -59,6 +92,7 @@ class RequestBudget:
         error_classification: str | None,
         completed: bool,
     ) -> None:
+        validate_sanitized_query_fields(sanitized_query_fields)
         if completed:
             if authentication_kind == "ticket":
                 self.authenticated_completed += 1

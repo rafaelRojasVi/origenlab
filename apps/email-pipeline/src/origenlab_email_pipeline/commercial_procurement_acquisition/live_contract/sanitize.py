@@ -253,4 +253,5 @@ def assert_no_identifier_leaks(
             # Avoid false positives on tiny status vocabulary / ordinals.
             continue
         if token.casefold() in blob:
-            raise AssertionError(f"identifier_leak_detected:{token[:32]}")
+            # Never include the offending value, prefix/suffix, length, or hash.
+            raise AssertionError("identifier_leak_detected")

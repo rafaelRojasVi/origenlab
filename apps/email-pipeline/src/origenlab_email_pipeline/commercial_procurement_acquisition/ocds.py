@@ -490,6 +490,9 @@ def _malformed_page(
     http_status: int | None,
     message: str,
     acquired_at_utc: str | None = None,
+    error_classification: str = "malformed_response",
+    completeness_status: str = "malformed_response",
+    envelope_meta: dict[str, Any] | None = None,
 ) -> AcquisitionPage:
     raw_digest, parser_digest, bytes_digest = payload_digests(
         payload, original_bytes=original_bytes
@@ -513,11 +516,69 @@ def _malformed_page(
         source_reported_total=None,
         http_status=http_status,
         parser_status="malformed",
-        error_classification="malformed_response",
-        completeness_status="malformed_response",
-        envelope_meta={},
+        error_classification=error_classification,
+        completeness_status=completeness_status,
+        envelope_meta=dict(envelope_meta or {}),
         error_message=sanitize_error_message(message),
     )
+
+
+def _is_non_bool_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _validate_lista_index_pagination(
+    pagination: dict[str, Any],
+    *,
+    data: list[Any],
+    query: AcquisitionQuery,
+    source_reported_total: int | None,
+) -> list[str]:
+    """Return reason codes when lista-index pagination violates the live contract."""
+    reasons: list[str] = []
+    offset = pagination.get("offset")
+    limit = pagination.get("limit")
+    total = pagination.get("total")
+
+    if not _is_non_bool_int(offset) or int(offset) < 0:
+        reasons.append("pagination_offset_invalid")
+    if (
+        not _is_non_bool_int(limit)
+        or int(limit) < 1
+        or int(limit) > OCDS_MAX_PAGE_SIZE
+    ):
+        reasons.append("pagination_limit_invalid")
+    if not _is_non_bool_int(total) or int(total) < 0:
+        reasons.append("pagination_total_invalid")
+
+    if (
+        _is_non_bool_int(offset)
+        and query.range_start is not None
+        and int(offset) != int(query.range_start)
+    ):
+        reasons.append("pagination_offset_query_mismatch")
+
+    expected_limit = None
+    if query.range_start is not None and query.range_end is not None:
+        expected_limit = int(query.range_end) - int(query.range_start) + 1
+    if (
+        _is_non_bool_int(limit)
+        and expected_limit is not None
+        and int(limit) != expected_limit
+    ):
+        reasons.append("pagination_limit_query_mismatch")
+
+    if (
+        source_reported_total is not None
+        and _is_non_bool_int(total)
+        and int(total) != int(source_reported_total)
+    ):
+        reasons.append("pagination_total_conflict")
+
+    if _is_non_bool_int(limit) and len(data) > int(limit):
+        reasons.append("pagination_data_exceeds_limit")
+
+    return reasons
 
 
 def _emit_release_observations(
@@ -715,13 +776,68 @@ def _parse_ocds_lista_index(
     pagination = payload.get("pagination")
     assert isinstance(data, list)
     assert isinstance(pagination, dict)
+
+    package_creation = _as_str(payload.get("creationDate"))
+    envelope_base = {
+        "version": _as_str(payload.get("version")),
+        "creationDate": package_creation,
+        "lista_index": True,
+        "creationDate_is_tender_publication": False,
+    }
+
+    reason_codes = _validate_lista_index_pagination(
+        pagination,
+        data=data,
+        query=query,
+        source_reported_total=source_reported_total,
+    )
+    if reason_codes:
+        page = AcquisitionPage(
+            page_id=acquisition_page_id(
+                acquisition_query_id_value=query.acquisition_query_id,
+                range_position={"start": query.range_start, "end": query.range_end},
+                raw_canonical_json_digest=raw_digest,
+            ),
+            source_kind=SOURCE_KIND_OCDS,
+            endpoint_kind=ENDPOINT_OCDS_MONTHLY_RANGE,
+            acquisition_query_id=query.acquisition_query_id,
+            range_position={"start": query.range_start, "end": query.range_end},
+            acquired_at_utc=acquired_at_utc,
+            raw_canonical_json_digest=raw_digest,
+            original_bytes_digest=bytes_digest,
+            parser_input_digest=parser_digest,
+            response_item_count=0,
+            source_reported_total=None,
+            http_status=http_status,
+            parser_status="malformed",
+            error_classification="pagination_contract_mismatch",
+            completeness_status="malformed_response",
+            envelope_meta={
+                **envelope_base,
+                "pagination_validation_reasons": list(reason_codes),
+            },
+            error_message=sanitize_error_message(
+                "pagination_contract_mismatch:" + ",".join(reason_codes)
+            ),
+        )
+        diagnostics = {
+            "lista_index": True,
+            "pagination_contract_mismatch": True,
+            "reason_codes": list(reason_codes),
+            "package_creation_timestamp": package_creation,
+            "package_creation_is_tender_publication": False,
+            "note": "no observations emitted on pagination contract failure",
+        }
+        return query, page, [], [], [], diagnostics
+
     rows = [r for r in data if isinstance(r, dict)]
     rejected = len(data) - len(rows)
     pag_total = pagination.get("total")
+    assert _is_non_bool_int(pag_total)
     page_total = (
         source_reported_total
         if source_reported_total is not None
-        else (int(pag_total) if isinstance(pag_total, int) else None)
+        else int(pag_total)
     )
     if rejected and not rows:
         completeness, parser_status, error_classification = (
@@ -761,12 +877,10 @@ def _parse_ocds_lista_index(
         error_classification=error_classification,
         completeness_status=completeness,
         envelope_meta={
-            "version": _as_str(payload.get("version")),
-            "creationDate": _as_str(payload.get("creationDate")),
+            **envelope_base,
             "pagination_offset": pagination.get("offset"),
             "pagination_limit": pagination.get("limit"),
             "pagination_total": pag_total,
-            "lista_index": True,
         },
         error_message=None,
     )
@@ -821,7 +935,8 @@ def _parse_ocds_lista_index(
                 source_status_name=None,
                 source_status_system="ocds_lista_index",
                 source_status_value=None,
-                publication_timestamp_raw=_as_str(payload.get("creationDate")),
+                # Package creationDate is not tender publication evidence.
+                publication_timestamp_raw=None,
                 close_timestamp_raw=None,
                 buyer_display_raw=None,
                 buyer_source_id=None,
@@ -833,7 +948,10 @@ def _parse_ocds_lista_index(
                 release_tags=(),
                 raw_payload_digest=raw_row,
                 parser_version=PARSER_VERSION,
-                provenance_reason_codes=("lista_index_row",),
+                provenance_reason_codes=(
+                    "lista_index_row",
+                    "package_creation_not_tender_publication",
+                ),
                 page_id=page.page_id,
             )
         )
@@ -851,7 +969,7 @@ def _parse_ocds_lista_index(
                 description=None,
                 buyer_display=None,
                 buyer_source_id=None,
-                publication_timestamp_raw=_as_str(payload.get("creationDate")),
+                publication_timestamp_raw=None,
                 close_timestamp_raw=None,
                 source_status_code=None,
                 source_status_name=None,
@@ -862,7 +980,13 @@ def _parse_ocds_lista_index(
                 procurement_method=None,
                 procurement_method_details=None,
                 related_processes=(),
-                field_provenance={"ocid": "data[].ocid"},
+                field_provenance={
+                    "ocid": "data[].ocid",
+                    "publication_timestamp_raw": (
+                        "absent; package creationDate is envelope-only "
+                        "(not tender publication)"
+                    ),
+                },
             )
         )
     diagnostics = {
@@ -874,9 +998,12 @@ def _parse_ocds_lista_index(
             "limit": pagination.get("limit"),
             "total": pag_total,
         },
+        "package_creation_timestamp": package_creation,
+        "package_creation_is_tender_publication": False,
         "note": "index listing only; urlTender/urlAward not followed in PR5B.1",
     }
     return query, page, sources, tenders, [], diagnostics
+
 
 
 def parse_ocds_package(

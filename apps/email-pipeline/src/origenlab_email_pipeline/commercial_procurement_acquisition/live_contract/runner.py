@@ -77,8 +77,9 @@ def _write_bytes(path: Path, data: bytes) -> None:
 
 
 def load_ticket_into_environ() -> bool:
-    """Ensure CHILECOMPRA_API_TICKET is in os.environ if present in known .env files.
+    """Isolated helper — NOT used by the live CLI validation path.
 
+    Production CLI requires CHILECOMPRA_API_TICKET already exported.
     Never returns or logs the ticket value.
     """
     if (os.environ.get(TICKET_ENV_VAR) or "").strip():
@@ -153,7 +154,8 @@ def run_live_validation(
     if ticket_summary_limit_details > 3:
         raise ValueError("ticket_summary_limit_details maximum is 3")
 
-    load_ticket_into_environ()
+    # Ticket must already be in the process environment (CHILECOMPRA_API_TICKET).
+    # Do not auto-load .env files on the live CLI path.
     ticket_from_env()  # fail fast if missing
 
     paths = ValidationPaths.create(out_dir)
@@ -314,7 +316,20 @@ def run_live_validation(
         # Drop raw identity tokens list from committed sanitized output later;
         # keep tokens only for in-memory conclusion then redact file output.
         probe_summaries.append(summary)
-        if result.payload:
+        if result.payload and isinstance(result.payload, dict):
+            data_rows = result.payload.get("data")
+            if isinstance(data_rows, list):
+                for row in data_rows:
+                    if not isinstance(row, dict):
+                        continue
+                    for key in ("ocid", "urlTender", "urlAward"):
+                        if row.get(key):
+                            forbidden_for_fixtures.append(str(row.get(key)))
+                    for key, val in row.items():
+                        if isinstance(val, str) and (
+                            "url" in key.casefold() or val.casefold().startswith("http")
+                        ):
+                            forbidden_for_fixtures.append(val)
             for rel in (result.payload.get("releases") or []) if isinstance(
                 result.payload.get("releases"), list
             ) else []:
@@ -325,6 +340,11 @@ def run_live_validation(
                     tender = rel.get("tender")
                     if isinstance(tender, dict) and tender.get("id"):
                         forbidden_for_fixtures.append(str(tender.get("id")))
+            for rec in (result.payload.get("records") or []) if isinstance(
+                result.payload.get("records"), list
+            ) else []:
+                if isinstance(rec, dict) and rec.get("ocid"):
+                    forbidden_for_fixtures.append(str(rec.get("ocid")))
 
     range_conclusion = conclude_range_semantics(probe_summaries)
     # Redact token lists for sanitized output (keep first/last only).
@@ -481,12 +501,23 @@ def run_live_validation(
         }
     }
     _write_json(paths.sanitized / "DATA_WALKTHROUGH.json", walkthrough)
-    _write_json(
-        paths.sanitized / "DATA_WALKTHROUGH.md",
-        {
-            "markdown": True,
-            "note": "See COMMERCIAL_PROCUREMENT_REAL_CONTRACT_VALIDATION_PR5B1.md",
-        },
+    md_lines = [
+        "# PR5B.1 live contract walkthrough (redacted)",
+        "",
+        "Canonical narrative:",
+        "`docs/audits/COMMERCIAL_PROCUREMENT_REAL_CONTRACT_VALIDATION_PR5B1.md`.",
+        "",
+        f"- Range conclusion: `{range_public.get('conclusion')}`",
+        f"- PR5B correction required: `{range_public.get('pr5b_correction_required')}`",
+        f"- Detail validation: `{detail_validation.get('status')}`",
+        "- Cross-source: `real_cross_source_pair_not_observed`",
+        "",
+        "Raw capture digests remain in RUN_MANIFEST / FIXTURE_ORIGIN only.",
+        "This file is Markdown (not JSON).",
+        "",
+    ]
+    (paths.sanitized / "DATA_WALKTHROUGH.md").write_text(
+        "\n".join(md_lines), encoding="utf-8"
     )
 
     fixture_origin = {

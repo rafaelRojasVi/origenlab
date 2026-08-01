@@ -62,7 +62,8 @@ Live measurement conclusion: **`zero_based_offset_limit`**.
 | Planned span | inclusive `[start, end]` over **0-based** listing coordinates |
 | Wire path | `/{year}/{month}/{offset}/{limit}` with `offset=start`, `limit=end-start+1` |
 | Max page | `limit <= 1000` |
-| Query identity | `OCDS_QUERY_CONTRACT_VERSION=acquisition_query_v2` + `ocds_range_semantics` |
+| Query identity | `OCDS_QUERY_CONTRACT_VERSION=acquisition_query_v2` + `ocds_range_semantics` (**v2 only**; historical v1 range identities omit the field) |
+| Lista index timestamps | package `creationDate` is envelope-only — **not** tender `publication_timestamp_raw` |
 | Ticket queries | remain `acquisition_query_v1` |
 
 Do not reinterpret pre-correction OCDS range query IDs as offset/limit.

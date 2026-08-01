@@ -105,6 +105,35 @@ def summarize_probe(
     }
 
 
+def _probe_is_valid_lista_index(p: dict[str, Any]) -> bool:
+    if p.get("package_type") != "lista_index_pagination":
+        return False
+    pag = p.get("pagination") or {}
+    if not isinstance(pag, dict):
+        return False
+    if pag.get("offset") != p.get("start"):
+        return False
+    if pag.get("limit") != p.get("end"):
+        return False
+    try:
+        return int(p.get("returned_count") or -1) == int(p.get("end"))
+    except (TypeError, ValueError):
+        return False
+
+
+def _zero_limit_ok(p00: dict[str, Any]) -> tuple[bool, str]:
+    """Validate 0/0 independently for the offset/limit contract."""
+    count = int(p00.get("returned_count") or 0)
+    package = p00.get("package_type")
+    if package == "lista_index_pagination" and count > 0:
+        return False, "0/0_inconsistent_nonempty_listing"
+    if package == "error_envelope" or p00.get("body_status") == 404:
+        return True, "0/0_empty_or_error"
+    if count == 0:
+        return True, "0/0_empty_or_error"
+    return False, "0/0_inconsistent"
+
+
 def conclude_range_semantics(probes: list[dict[str, Any]]) -> dict[str, Any]:
     """Derive indexing conclusion from 0/0, 1/1, 0/9, 1/10 probe summaries."""
     by_label = {p["label"]: p for p in probes}
@@ -122,13 +151,13 @@ def conclude_range_semantics(probes: list[dict[str, Any]]) -> dict[str, Any]:
             "pr5b_correction_required": False,
         }
 
-    # Prefer pagination metadata when the live lista index envelope is present.
-    listing_probes = [
-        p
-        for p in (p11, p09, p110)
-        if p.get("package_type") == "lista_index_pagination" and p.get("pagination")
-    ]
-    if listing_probes:
+    listing_required = (p11, p09, p110)
+    listing_valid = [_probe_is_valid_lista_index(p) for p in listing_required]
+    any_lista = any(
+        p.get("package_type") == "lista_index_pagination" for p in listing_required
+    )
+
+    if any_lista:
         evidence.append("lista_index_pagination_envelope_observed")
         for p in (p00, p11, p09, p110):
             pag = p.get("pagination") or {}
@@ -140,49 +169,50 @@ def conclude_range_semantics(probes: list[dict[str, Any]]) -> dict[str, Any]:
                 f"package={p.get('package_type')} "
                 f"body_status={p.get('body_status')}"
             )
-        # Path params echoed as offset/limit.
-        echoes_ok = all(
-            p.get("pagination", {}).get("offset") == p["start"]
-            and p.get("pagination", {}).get("limit") == p["end"]
-            for p in listing_probes
-        )
-        evidence.append(f"path_echoes_pagination_offset_limit={echoes_ok}")
-        counts_match_limit = all(
-            int(p["returned_count"]) == int(p["end"]) for p in listing_probes
-        )
-        evidence.append(f"returned_count_equals_path_limit={counts_match_limit}")
-        zero_rejected = (
-            p00.get("package_type") == "error_envelope"
-            or p00.get("body_status") == 404
-            or int(p00.get("returned_count") or 0) == 0
-        )
-        evidence.append(f"0/0_empty_or_error={zero_rejected}")
-        if echoes_ok and counts_match_limit:
+        zero_ok, zero_note = _zero_limit_ok(p00)
+        evidence.append(zero_note)
+        evidence.append(f"listing_probes_valid={sum(listing_valid)}/3")
+
+        if not all(listing_valid):
             return {
-                "conclusion": "zero_based_offset_limit",
-                "evidence": evidence,
+                "conclusion": "ambiguous"
+                if any(listing_valid) or any_lista
+                else "contract_unavailable",
+                "evidence": evidence
+                + ["complete_listing_probe_set_required_for_zero_based_offset_limit"],
                 "probes": probes,
-                "width_interpretation": "second path param is limit (count), not inclusive end",
-                "advertised_max_1000": "limit <= 1000",
-                "pr5b_correction_required": True,
-                "merged_pr5b_assumption": {
-                    "start_ge_1": True,
-                    "inclusive": True,
-                    "width": "end - start + 1",
-                },
-                "observed_wire_contract": {
-                    "path": "/APISOCDS/OCDS/listaOCDSAgnoMes/{year}/{month}/{offset}/{limit}",
-                    "offset_base": 0,
-                    "second_param": "limit",
-                    "envelope": "creationDate/version/pagination/data",
-                },
+                "pr5b_correction_required": False,
+                "contract_validation_inconclusive": True,
             }
+        if not zero_ok:
+            return {
+                "conclusion": "ambiguous",
+                "evidence": evidence + ["0/0_must_be_empty_or_error_independently"],
+                "probes": probes,
+                "pr5b_correction_required": False,
+                "contract_validation_inconclusive": True,
+            }
+
+        evidence.append("path_echoes_pagination_offset_limit=True")
+        evidence.append("returned_count_equals_path_limit=True")
         return {
-            "conclusion": "ambiguous",
-            "evidence": evidence + ["lista_envelope_present_but_echo_or_counts_inconsistent"],
+            "conclusion": "zero_based_offset_limit",
+            "evidence": evidence,
             "probes": probes,
-            "pr5b_correction_required": False,
-            "contract_validation_inconclusive": True,
+            "width_interpretation": "second path param is limit (count), not inclusive end",
+            "advertised_max_1000": "limit <= 1000",
+            "pr5b_correction_required": True,
+            "merged_pr5b_assumption": {
+                "start_ge_1": True,
+                "inclusive": True,
+                "width": "end - start + 1",
+            },
+            "observed_wire_contract": {
+                "path": "/APISOCDS/OCDS/listaOCDSAgnoMes/{year}/{month}/{offset}/{limit}",
+                "offset_base": 0,
+                "second_param": "limit",
+                "envelope": "creationDate/version/pagination/data",
+            },
         }
 
     def rejected(p: dict[str, Any]) -> bool:
