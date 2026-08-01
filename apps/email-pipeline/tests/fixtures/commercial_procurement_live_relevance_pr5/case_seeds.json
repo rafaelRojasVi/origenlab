@@ -1,0 +1,48 @@
+{
+  "case_b_equipment_keyword_overlay": {
+    "procurement_id_redacted": "procurement_fixture_hist_equip_001",
+    "procurement_context": "historical_tender",
+    "close_at": "2026-03-01",
+    "status_name": "Cerrada",
+    "status_code": "6",
+    "equipment_keyword_hit": "centrifug",
+    "resolution_status": "linked",
+    "link_route": "A_exact_institutional_domain",
+    "account_id_redacted": "account_aaaaaaaaaaaa"
+  },
+  "case_c_exclusion_keyword_hit": {
+    "procurement_id_redacted": "procurement_fixture_excl_001",
+    "close_at": "2026-02-01",
+    "status_name": "Cerrada",
+    "exclusion_keyword": "reactivo",
+    "source_record_id_redacted": "source_bbbbbbbbbbbb"
+  },
+  "case_d_linked_contact_n": {
+    "procurement_id_redacted": "procurement_fixture_nocontact_001",
+    "procurement_context": "historical_tender",
+    "close_at": "2026-04-01",
+    "resolution_status": "linked",
+    "link_route": "B_exact_canonical_name",
+    "account_id_redacted": "account_cccccccccccc",
+    "contact_n": 0
+  },
+  "case_e_linked_with_contact": {
+    "procurement_id_redacted": "procurement_fixture_withcontact_001",
+    "procurement_context": "historical_tender",
+    "close_at": "2026-04-15",
+    "resolution_status": "linked",
+    "link_route": "A_exact_institutional_domain",
+    "account_id_redacted": "account_dddddddddddd",
+    "contact_n": 2,
+    "suppressed_email_count": 0,
+    "contacts_redacted": [
+      {
+        "contact_id_redacted": "contact_eeeeeeeeeeee",
+        "has_role": true,
+        "has_email": true,
+        "email_domain_redacted": "domain_ffffffffffff",
+        "has_display_name": true
+      }
+    ]
+  }
+}

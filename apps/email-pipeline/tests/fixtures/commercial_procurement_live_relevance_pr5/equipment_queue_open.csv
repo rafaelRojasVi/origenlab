@@ -1,0 +1,3 @@
+codigo_licitacion,buyer,region,close_date,title,item_description,equipment_category,fit_score,reason,next_action,validity_status,chilecompra_status_code,chilecompra_status,descripcion,mercado_publico_url
+9999-1-LE26,Hospital Demo Sur,Metropolitana,2026-08-10T16:00:00,Adquisicion centrifuga de laboratorio,Centrifuga refrigerada de banco,centrifuge,92,equipment_match,quote_now,open,5,Publicada,Equipo de laboratorio centrifugo,https://www.mercadopublico.cl/Procurement/Modules/RFB/DetailsAcquisition.aspx?idlicitacion=9999-1-LE26
+8888-2-LE26,Clinica Demo,Valparaiso,2026-07-01T16:00:00,Insumos reactivos,Reactivos de laboratorio,balance,10,weak,contact_after_close,expired,6,Cerrada,Reactivos,https://www.mercadopublico.cl/x
