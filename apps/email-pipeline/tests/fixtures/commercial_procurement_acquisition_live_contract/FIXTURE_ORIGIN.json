@@ -1,0 +1,42 @@
+{
+  "captured_at": "2026-08-01",
+  "contract_versions_after_correction": {
+    "acquisition_contract": "commercial_procurement_acquisition_v1",
+    "ocds_query_contract": "acquisition_query_v2",
+    "ocds_range_semantics": "zero_based_offset_limit_v1",
+    "ticket_query_contract": "acquisition_query_v1"
+  },
+  "endpoint_kinds": [
+    "ticket_licitaciones_summary",
+    "ticket_licitacion_detail",
+    "ocds_lista_agno_mes_range"
+  ],
+  "no_authenticated_url_retained": true,
+  "no_real_buyer_tender_contact_identifiers_retained": true,
+  "no_ticket_retained": true,
+  "origin": "live_response_sanitized",
+  "pr5b_correction_required": true,
+  "range_conclusion": "zero_based_offset_limit",
+  "raw_source_digests": {
+    "0_0": "16d0b2963f9c0ede10cc0b8f84643a37de89b51cfb459bafa54797f2ce18f585",
+    "0_9": "35f59c52563d1dccef363e82599aefff7c022d926383959a500f80703bd3a5a0",
+    "1_1": "8869d2b3928a6e7471c6b47afa582378a7255e89100acda44cfc4e5708af9a21",
+    "1_10": "d1c4b73a04ed373700c1acc5b247824f55945d114d5a97740c40c402e7171949",
+    "live_detail_selection_001": "26050cea60b7bb3a575efc6d247464fdf26daa3fcd49fa591146dbea40e76aad",
+    "live_detail_selection_002": "162c417c0b8258c6b16f5a6578d561edc6332b37d6ff20787892cc8c1c233f39",
+    "live_detail_selection_003": "f9dca0c4efe483155995b11bd8f97136d48f9d1906aa0ed45e582c42ac1dcdb7",
+    "ticket_summary": "63c45406e132205c234f678f31af062d0f3724fb571bc5cf878bcc2d5ea5107a"
+  },
+  "sanitized_fixture_digests": {
+    "ocds_range_live_shape_v1": "3b8a56493e7c5edde332ae14608c7fccbe6ec5b1317c81ad17557f40018ec02d",
+    "ticket_detail_alternate_live_shape_v1": "920c26ff5cd77b1aeb7e7da793b5c4942a2d2fc010190073935b19c060f00aba",
+    "ticket_detail_items_live_shape_v1": "2274e41d4c975ac03b39cf5e99b2fe6cc916c3b94ce9ddcab6fe4ffa774bd814",
+    "ticket_summary_live_shape_v1": "346792ab13a6d0b147204d41564b1f2698325591f114927f8f8a5d0ca6b7d5e7"
+  },
+  "sanitizer_version": "live_contract_sanitizer_v1",
+  "source_kinds": [
+    "ticket_summary",
+    "ticket_detail",
+    "ocds"
+  ]
+}
