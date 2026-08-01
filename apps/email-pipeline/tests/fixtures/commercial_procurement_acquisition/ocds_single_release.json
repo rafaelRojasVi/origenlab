@@ -1,0 +1,55 @@
+{
+  "publishedDate": "2026-08-01T00:00:00Z",
+  "publisher": {
+    "name": "Synthetic OCDS Publisher"
+  },
+  "releases": [
+    {
+      "buyer": {
+        "id": "CL-BUY-SYN-1",
+        "name": "Synthetic OCDS Buyer"
+      },
+      "date": "2026-07-28T10:00:00Z",
+      "id": "ocds-synth-0001-01",
+      "ocid": "ocds-synth-0001",
+      "tag": [
+        "tender"
+      ],
+      "tender": {
+        "description": "Synthetic OCDS description",
+        "id": "9999-1-LE26",
+        "items": [
+          {
+            "classification": {
+              "id": "41100000",
+              "scheme": "UNSPSC"
+            },
+            "description": "Synthetic centrifuge item",
+            "id": "item-1",
+            "quantity": 1,
+            "unit": {
+              "name": "UN"
+            }
+          }
+        ],
+        "procurementMethod": "open",
+        "procuringEntity": {
+          "id": "CL-BUY-SYN-1",
+          "name": "Synthetic OCDS Buyer"
+        },
+        "status": "active",
+        "tenderPeriod": {
+          "endDate": "2026-08-15T15:00:00Z",
+          "startDate": "2026-07-28T10:00:00Z"
+        },
+        "title": "Synthetic OCDS centrifuge tender",
+        "value": {
+          "amount": 1000000,
+          "currency": "CLP"
+        }
+      }
+    }
+  ],
+  "uri": "https://example.invalid/ocds/package/synthetic-001",
+  "version": "1.1"
+}

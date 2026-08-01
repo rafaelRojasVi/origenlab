@@ -1,0 +1,50 @@
+{
+  "Cantidad": 1,
+  "FechaCreacion": "2026-08-01T00:00:00",
+  "Listado": [
+    {
+      "CodigoEstado": 5,
+      "CodigoExterno": "9999-1-LE26",
+      "CodigoTipo": "LE",
+      "Comprador": {
+        "CodigoOrganismo": "ORG-SYN-001",
+        "NombreOrganismo": "Synthetic Demo Hospital Sur",
+        "Region": "Region Metropolitana"
+      },
+      "Descripcion": "Synthetic description for fixture only",
+      "Estado": "Publicada",
+      "FechaCierre": "2026-08-15T15:00:00",
+      "FechaPublicacion": "2026-07-28T10:00:00",
+      "Fechas": {
+        "FechaCierre": "2026-08-15T15:00:00"
+      },
+      "Items": {
+        "Cantidad": 2,
+        "Listado": [
+          {
+            "Cantidad": 1,
+            "Categoria": "Laboratory",
+            "CodigoCategoria": "41100000",
+            "CodigoProducto": "41100000",
+            "Correlativo": 1,
+            "Descripcion": "Synthetic centrifuge line item",
+            "NombreProducto": "Refrigerated centrifuge",
+            "UnidadMedida": "UN"
+          },
+          {
+            "Cantidad": 2,
+            "CodigoProducto": "41101500",
+            "Correlativo": 2,
+            "Descripcion": "Synthetic accessory line",
+            "NombreProducto": "Rotor accessory",
+            "UnidadMedida": "UN"
+          }
+        ]
+      },
+      "Moneda": "CLP",
+      "MontoEstimado": 1000000,
+      "Nombre": "Synthetic centrifuge purchase for lab demo"
+    }
+  ],
+  "Version": "v1"
+}
