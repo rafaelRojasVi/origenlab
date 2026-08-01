@@ -25,7 +25,12 @@ class AcquisitionQuery:
         return asdict(self)
 
     def identity_payload(self) -> dict[str, Any]:
-        return {
+        from origenlab_email_pipeline.commercial_procurement_acquisition.constants import (
+            ENDPOINT_OCDS_MONTHLY_RANGE,
+            OCDS_RANGE_SEMANTICS,
+        )
+
+        payload: dict[str, Any] = {
             "source_kind": self.source_kind,
             "endpoint_kind": self.endpoint_kind,
             "query_contract_version": self.query_contract_version,
@@ -38,6 +43,9 @@ class AcquisitionQuery:
             "range_end": self.range_end,
             "endpoint_path": self.endpoint_path,
         }
+        if self.endpoint_kind == ENDPOINT_OCDS_MONTHLY_RANGE:
+            payload["ocds_range_semantics"] = OCDS_RANGE_SEMANTICS
+        return payload
 
 
 @dataclass(frozen=True)

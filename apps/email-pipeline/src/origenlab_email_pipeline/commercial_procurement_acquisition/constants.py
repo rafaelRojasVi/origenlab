@@ -4,11 +4,19 @@ from __future__ import annotations
 
 from typing import Final
 
+# Snapshot/observation contract stays v1: normalized evidence fields unchanged.
+# OCDS range *query* identity is versioned separately (see OCDS_QUERY_CONTRACT_VERSION).
 ACQUISITION_CONTRACT_VERSION: Final = "commercial_procurement_acquisition_v1"
 PARSER_VERSION: Final = "procurement_acquisition_parser_v1"
 MANIFEST_VERSION: Final = "acquisition_snapshot_manifest_v1"
 QUERY_CONTRACT_VERSION: Final = "acquisition_query_v1"
+# ListaOCDSAgnoMes range wire semantics measured in PR5B.1 (offset/limit).
+OCDS_QUERY_CONTRACT_VERSION: Final = "acquisition_query_v2"
 RUN_CONTRACT_VERSION: Final = "acquisition_run_v1"
+
+# Live listaOCDSAgnoMes wire contract (PR5B.1 measurement):
+# path /{year}/{month}/{offset}/{limit} with offset>=0 and 1<=limit<=1000.
+OCDS_RANGE_SEMANTICS: Final = "zero_based_offset_limit_v1"
 
 SOURCE_KIND_TICKET_API: Final = "mercado_publico_ticket_api"
 SOURCE_KIND_OCDS: Final = "chilecompra_ocds"

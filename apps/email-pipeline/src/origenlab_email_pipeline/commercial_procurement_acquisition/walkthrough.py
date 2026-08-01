@@ -100,20 +100,20 @@ def build_walkthrough_cases(fixtures_dir: Path) -> dict[str, Any]:
         acquired_at_utc="2026-08-01T00:12:02Z",
         year=2026,
         month=8,
-        range_start=1,
-        range_end=1,
+        range_start=0,
+        range_end=0,
         materialized_at_utc="2026-08-01T00:12:02Z",
     )
     # Multi-page monthly provenance for Case C (two single-item pages).
     page1 = parse_ocds_package(
-        ocds, year=2026, month=8, range_start=1, range_end=1
+        ocds, year=2026, month=8, range_start=0, range_end=0
     )
     page2_payload = json.loads(json.dumps(ocds))
     page2_payload["releases"][0]["id"] = "ocds-synth-0001-02"
     page2_payload["releases"][0]["ocid"] = "ocds-synth-0002"
     page2_payload["releases"][0]["tender"]["id"] = "9999-9-LE26"
     page2 = parse_ocds_package(
-        page2_payload, year=2026, month=8, range_start=2, range_end=2
+        page2_payload, year=2026, month=8, range_start=1, range_end=1
     )
     planned = plan_ocds_ranges(
         year=2026, month=8, source_reported_total=2, page_size=1
@@ -131,8 +131,8 @@ def build_walkthrough_cases(fixtures_dir: Path) -> dict[str, Any]:
         fixture_origin=fixture_origin,
         year=2026,
         month=8,
-        range_start=1,
-        range_end=2,
+        range_start=0,
+        range_end=1,
         materialized_at_utc="2026-08-01T00:12:02Z",
     )
 
@@ -365,7 +365,7 @@ def build_walkthrough_cases(fixtures_dir: Path) -> dict[str, Any]:
                 ),
                 "no page width > 1000",
                 "month scope separate from child range queries",
-                "1-1000 + 1001-1001",
+                "0-999 + 1000-1000",
             ),
             _stage(
                 "monthly_range_provenance",
