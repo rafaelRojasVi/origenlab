@@ -179,6 +179,7 @@ def _malformed_page(
     classification: str,
     message: str,
     range_position: dict[str, Any],
+    acquired_at_utc: str | None = None,
 ) -> AcquisitionPage:
     raw_digest, parser_digest, bytes_digest = payload_digests(
         payload, original_bytes=original_bytes
@@ -193,7 +194,7 @@ def _malformed_page(
         endpoint_kind=endpoint_kind,
         acquisition_query_id=query.acquisition_query_id,
         range_position=range_position,
-        acquired_at_utc=None,
+        acquired_at_utc=acquired_at_utc,
         raw_canonical_json_digest=raw_digest,
         original_bytes_digest=bytes_digest,
         parser_input_digest=parser_digest,
@@ -206,6 +207,65 @@ def _malformed_page(
         envelope_meta={},
         error_message=sanitize_error_message(message),
     )
+
+
+def _strict_summary_listado(
+    payload: dict[str, Any],
+) -> tuple[str | None, list[dict[str, Any]], list[dict[str, str]]]:
+    """Validate Listado before legacy extraction.
+
+    Returns (malformed_reason, valid_entries, rejected_entries).
+    """
+    if "Listado" not in payload:
+        return "missing_listado", [], []
+    listado = payload.get("Listado")
+    if listado is None:
+        return None, [], []
+    if isinstance(listado, list):
+        raw_entries = listado
+    elif isinstance(listado, dict):
+        nested = listado.get("Licitacion")
+        if nested is None:
+            raw_entries = [listado]
+        elif isinstance(nested, list):
+            raw_entries = nested
+        elif isinstance(nested, dict):
+            raw_entries = [nested]
+        else:
+            return "invalid_nested_licitacion", [], []
+    else:
+        return "invalid_listado_scalar", [], []
+
+    valid: list[dict[str, Any]] = []
+    rejected: list[dict[str, str]] = []
+    for ordinal, entry in enumerate(raw_entries):
+        if not isinstance(entry, dict):
+            rejected.append(
+                {
+                    "ordinal": str(ordinal),
+                    "reason_code": "entry_not_object",
+                    "entry_digest": canonical_json_digest(
+                        {"ordinal": ordinal, "type": type(entry).__name__}
+                    ),
+                }
+            )
+            continue
+        if not _codigo_externo(entry):
+            rejected.append(
+                {
+                    "ordinal": str(ordinal),
+                    "reason_code": "missing_codigo_externo",
+                    "entry_digest": canonical_json_digest(
+                        {
+                            "ordinal": ordinal,
+                            "keys": sorted(str(k) for k in entry.keys()),
+                        }
+                    ),
+                }
+            )
+            continue
+        valid.append(entry)
+    return None, valid, rejected
 
 
 def _build_observations_from_licitacion(
@@ -378,6 +438,7 @@ def parse_ticket_summary_payload(
             classification="malformed_response",
             message="payload must be a JSON object",
             range_position=range_pos,
+            acquired_at_utc=acquired_at_utc,
         )
         return query, page, [], [], [], {"error": page.error_message}
     if any(str(k).lower() == "ticket" for k in payload.keys()):
@@ -390,18 +451,61 @@ def parse_ticket_summary_payload(
             classification="malformed_response",
             message="payload must not include ticket",
             range_position=range_pos,
+            acquired_at_utc=acquired_at_utc,
         )
         return query, page, [], [], [], {"error": page.error_message}
 
-    listado = _extract_listado(payload)
+    malformed_reason, listado, rejected = _strict_summary_listado(payload)
     raw_digest, parser_digest, bytes_digest = payload_digests(
         payload, original_bytes=original_bytes
     )
+    if malformed_reason is not None:
+        page = AcquisitionPage(
+            page_id=acquisition_page_id(
+                acquisition_query_id_value=query.acquisition_query_id,
+                range_position=range_pos,
+                raw_canonical_json_digest=raw_digest,
+            ),
+            source_kind=SOURCE_KIND_TICKET_API,
+            endpoint_kind=ENDPOINT_TICKET_LICITACIONES_SUMMARY,
+            acquisition_query_id=query.acquisition_query_id,
+            range_position=range_pos,
+            acquired_at_utc=acquired_at_utc,
+            raw_canonical_json_digest=raw_digest,
+            original_bytes_digest=bytes_digest,
+            parser_input_digest=parser_digest,
+            response_item_count=0,
+            source_reported_total=None,
+            http_status=http_status,
+            parser_status="malformed",
+            error_classification="malformed_response",
+            completeness_status="malformed_response",
+            envelope_meta=_envelope_meta(payload),
+            error_message=sanitize_error_message(malformed_reason),
+        )
+        return query, page, [], [], [], {
+            "error": page.error_message,
+            "rejected_entry_count": 0,
+        }
+
     reported = payload.get("Cantidad")
     reported_int = int(reported) if isinstance(reported, int) else None
-    completeness = "complete"
-    if reported_int is not None and reported_int != len(listado):
+    if rejected and listado:
+        completeness = "partial_page_failure"
+        parser_status = "partial"
+        error_classification = "partial_page_failure"
+    elif rejected and not listado:
+        completeness = "partial_page_failure"
+        parser_status = "partial"
+        error_classification = "partial_page_failure"
+    elif reported_int is not None and reported_int != len(listado):
         completeness = "source_total_mismatch"
+        parser_status = "ok"
+        error_classification = None
+    else:
+        completeness = "complete"
+        parser_status = "ok"
+        error_classification = None
 
     page = AcquisitionPage(
         page_id=acquisition_page_id(
@@ -420,8 +524,8 @@ def parse_ticket_summary_payload(
         response_item_count=len(listado),
         source_reported_total=reported_int,
         http_status=http_status,
-        parser_status="ok",
-        error_classification=None,
+        parser_status=parser_status,
+        error_classification=error_classification,
         completeness_status=completeness,
         envelope_meta=_envelope_meta(payload),
         error_message=None,
@@ -441,6 +545,8 @@ def parse_ticket_summary_payload(
     diagnostics = {
         "summary_snapshot_complete": completeness == "complete",
         "listado_count": len(listado),
+        "rejected_entry_count": len(rejected),
+        "rejected_entries": rejected,
         "lines_emitted": 0,
         "note": "summary snapshot does not require detail expansion",
     }
@@ -480,6 +586,7 @@ def parse_ticket_detail_payload(
             classification="malformed_response",
             message="payload must be a JSON object",
             range_position=range_pos,
+            acquired_at_utc=acquired_at_utc,
         )
         return query, page, [], [], [], {"error": page.error_message}
     if any(str(k).lower() == "ticket" for k in payload.keys()):
@@ -492,6 +599,7 @@ def parse_ticket_detail_payload(
             classification="malformed_response",
             message="payload must not include ticket",
             range_position=range_pos,
+            acquired_at_utc=acquired_at_utc,
         )
         return query, page, [], [], [], {"error": page.error_message}
 

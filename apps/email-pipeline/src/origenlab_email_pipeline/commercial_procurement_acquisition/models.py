@@ -260,3 +260,23 @@ class AcquisitionRun:
             "diagnostics": self.diagnostics,
             "materialized_at_utc": self.materialized_at_utc,
         }
+
+
+@dataclass(frozen=True)
+class PartialDetailRunResult:
+    """Typed Case D result — failed attempts are pages/attempts, never snapshots."""
+
+    run: AcquisitionRun
+    summary_snapshot: AcquisitionSnapshot
+    detail_success_snapshot: AcquisitionSnapshot
+    failed_detail_attempt: DetailAttempt
+    failed_page: AcquisitionPage
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run": self.run.to_dict(),
+            "summary_snapshot": self.summary_snapshot.to_dict(),
+            "detail_success_snapshot": self.detail_success_snapshot.to_dict(),
+            "failed_detail_attempt": self.failed_detail_attempt.to_dict(),
+            "failed_page": self.failed_page.to_dict(),
+        }

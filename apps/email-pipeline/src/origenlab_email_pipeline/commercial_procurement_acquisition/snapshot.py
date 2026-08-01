@@ -5,9 +5,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from origenlab_email_pipeline.commercial_procurement_acquisition.canonical_json import (
-    canonical_json_digest,
-)
 from origenlab_email_pipeline.commercial_procurement_acquisition.constants import (
     ACQUISITION_CONTRACT_VERSION,
     MANIFEST_VERSION,
@@ -32,6 +29,7 @@ from origenlab_email_pipeline.commercial_procurement_acquisition.models import (
     AcquisitionRun,
     AcquisitionSnapshot,
     DetailAttempt,
+    PartialDetailRunResult,
     ProcurementSourceObservation,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.ocds import (
@@ -182,10 +180,11 @@ def build_partial_detail_run(
     acquired_at_utc: str | None = None,
     materialized_at_utc: str | None = None,
     detail_success_code: str | None = None,
-) -> tuple[AcquisitionRun, dict[str, AcquisitionSnapshot]]:
+) -> PartialDetailRunResult:
     """Case D: one summary snapshot + detail A success + detail B failed attempt.
 
     Each detail attempt has its own AcquisitionQuery / query ID.
+    Failed attempts are pages/attempts only — never AcquisitionSnapshot.
     """
     summary = build_acquisition_snapshot(
         source_kind="ticket_summary",
@@ -207,8 +206,6 @@ def build_partial_detail_run(
     )
 
     fail_query = build_ticket_detail_query(tender_code=detail_failure_code)
-    # Simulated transport/parser failure — fingerprint the actual failure payload,
-    # not the error wording alone.
     fail_payload = {
         "simulated_failure": True,
         "codigo": detail_failure_code,
@@ -270,7 +267,6 @@ def build_partial_detail_run(
             }
         )
     )
-    # Distinct query IDs required: A success vs B failure.
     assert (
         detail_ok.query.acquisition_query_id != fail_query.acquisition_query_id
     ), "detail A and B must not share acquisition_query_id"
@@ -311,7 +307,8 @@ def build_partial_detail_run(
         "detail_a_query_id": detail_ok.query.acquisition_query_id,
         "detail_b_query_id": fail_query.acquisition_query_id,
         "failed_page_payload_digest": fail_page.raw_canonical_json_digest,
-        "note": "each AcquisitionSnapshot retains one query scope; run is composite",
+        "failed_attempt_snapshot_id": None,
+        "note": "each AcquisitionSnapshot retains one query scope; failed attempts are not snapshots",
     }
     run = AcquisitionRun(
         acquisition_run_id=run_id,
@@ -331,38 +328,13 @@ def build_partial_detail_run(
         diagnostics=diagnostics,
         materialized_at_utc=materialized_at_utc or _utcnow(),
     )
-    children = {
-        "summary": summary,
-        "detail_a": detail_ok,
-        "detail_b_failed_page": AcquisitionSnapshot(
-            snapshot_id=f"failed_attempt:{fail_page.page_id}",
-            query=fail_query,
-            pages=(fail_page,),
-            source_observations=(),
-            tender_observations=(),
-            line_observations=(),
-            completeness_status="partial_detail_failure",
-            parser_version=PARSER_VERSION,
-            contract_version=ACQUISITION_CONTRACT_VERSION,
-            fixture_origin=fixture_origin,
-            diagnostics={"simulated_failure": True, "codigo": fail_query.tender_code},
-            source_fingerprint=canonical_json_digest(
-                {
-                    "page_id": fail_page.page_id,
-                    "raw": fail_page.raw_canonical_json_digest,
-                }
-            ),
-            normalized_semantic_digest=canonical_json_digest({"empty": True}),
-            materialized_at_utc=materialized_at_utc or _utcnow(),
-        ),
-    }
-    return run, children
-
-
-# Backward-compatible alias used by older walkthrough imports during transition.
-def build_partial_detail_snapshot(**kwargs: Any) -> AcquisitionRun:
-    run, _ = build_partial_detail_run(**kwargs)
-    return run
+    return PartialDetailRunResult(
+        run=run,
+        summary_snapshot=summary,
+        detail_success_snapshot=detail_ok,
+        failed_detail_attempt=attempt_fail,
+        failed_page=fail_page,
+    )
 
 
 def snapshot_manifest(
