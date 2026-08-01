@@ -12,11 +12,13 @@ from origenlab_email_pipeline.commercial_procurement_acquisition.canonical_json 
 from origenlab_email_pipeline.commercial_procurement_acquisition.constants import (
     ID_ALGORITHMS,
     NORMALIZED_SEMANTIC_DIGEST_ALGORITHM,
+    RUN_SOURCE_FINGERPRINT_ALGORITHM,
     SOURCE_FINGERPRINT_ALGORITHM,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.models import (
     AcquisitionPage,
     AcquisitionQuery,
+    DetailAttempt,
     ProcurementLineObservation,
     ProcurementSourceObservation,
     ProcurementTenderObservation,
@@ -56,6 +58,7 @@ def procurement_source_observation_id(
     source_native_key: str,
     package_id: str | None,
     release_id: str | None,
+    release_kind: str | None,
     raw_payload_digest: str,
 ) -> str:
     return _id(
@@ -66,6 +69,7 @@ def procurement_source_observation_id(
             "source_native_key": source_native_key,
             "package_id": package_id or "",
             "release_id": release_id or "",
+            "release_kind": release_kind or "",
             "raw_payload_digest": raw_payload_digest,
         },
     )
@@ -117,6 +121,10 @@ def procurement_snapshot_id(
     )
 
 
+def acquisition_run_id(payload: dict[str, Any]) -> str:
+    return _id("acquisition_run_id", payload)
+
+
 def acquisition_source_fingerprint(
     *,
     source_kind: str,
@@ -124,19 +132,16 @@ def acquisition_source_fingerprint(
     pages: Iterable[AcquisitionPage],
     completeness_status: str,
 ) -> str:
-    """Hash of source kind + sanitized query + ordered page identities + digests.
-
-    Excludes ticket, retry sleep, machine path, PID, logging timestamps,
-    and materialization timestamp.
-    """
     page_rows = [
         {
             "page_id": p.page_id,
             "raw_canonical_json_digest": p.raw_canonical_json_digest,
+            "parser_input_digest": p.parser_input_digest,
             "range_position": p.range_position,
             "completeness_status": p.completeness_status,
             "response_item_count": p.response_item_count,
             "source_reported_total": p.source_reported_total,
+            "error_classification": p.error_classification,
         }
         for p in pages
     ]
@@ -144,8 +149,37 @@ def acquisition_source_fingerprint(
         "algorithm": SOURCE_FINGERPRINT_ALGORITHM,
         "source_kind": source_kind,
         "query_identity": query_identity,
-        "pages": page_rows,  # order preserved as acquired
+        "pages": page_rows,
         "completeness_status": completeness_status,
+    }
+    return canonical_json_digest(payload)
+
+
+def acquisition_run_source_fingerprint(
+    *,
+    run_kind: str,
+    summary_snapshot_ids: Iterable[str],
+    detail_attempts: Iterable[DetailAttempt],
+    run_completeness: str,
+) -> str:
+    attempts = [
+        {
+            "attempt_id": a.attempt_id,
+            "tender_code": a.tender_code,
+            "acquisition_query_id": a.query.acquisition_query_id,
+            "status": a.status,
+            "snapshot_id": a.snapshot_id,
+            "page_id": a.page_id,
+            "error_classification": a.error_classification,
+        }
+        for a in detail_attempts
+    ]
+    payload = {
+        "algorithm": RUN_SOURCE_FINGERPRINT_ALGORITHM,
+        "run_kind": run_kind,
+        "summary_snapshot_ids": sorted(summary_snapshot_ids),
+        "detail_attempts": sorted(attempts, key=lambda r: r["attempt_id"]),
+        "run_completeness": run_completeness,
     }
     return canonical_json_digest(payload)
 
@@ -158,7 +192,6 @@ def acquisition_normalized_semantic_digest(
     parser_version: str,
     contract_version: str,
 ) -> str:
-    """Order-independent semantic digest of normalized observations."""
     src = sorted(
         (
             {
@@ -166,17 +199,24 @@ def acquisition_normalized_semantic_digest(
                 "source_kind": o.source_kind,
                 "endpoint_kind": o.endpoint_kind,
                 "source_native_key": o.source_native_key,
+                "source_native_tender_key": o.source_native_tender_key,
                 "canonical_tender_key_candidate": o.canonical_tender_key_candidate,
+                "canonical_candidate_kind": o.canonical_candidate_kind,
+                "canonical_candidate_reason": o.canonical_candidate_reason,
                 "source_status_code": o.source_status_code,
                 "source_status_name": o.source_status_name,
                 "source_status_system": o.source_status_system,
                 "source_status_value": o.source_status_value,
                 "publication_timestamp_raw": o.publication_timestamp_raw,
                 "close_timestamp_raw": o.close_timestamp_raw,
+                "buyer_display_raw": o.buyer_display_raw,
                 "buyer_source_id": o.buyer_source_id,
                 "package_id": o.package_id,
                 "release_id": o.release_id,
                 "ocid": o.ocid,
+                "record_id": o.record_id,
+                "release_kind": o.release_kind,
+                "release_tags": list(o.release_tags),
                 "raw_payload_digest": o.raw_payload_digest,
                 "provenance_reason_codes": list(o.provenance_reason_codes),
             }
@@ -190,8 +230,13 @@ def acquisition_normalized_semantic_digest(
                 "tender_observation_id": t.tender_observation_id,
                 "source_observation_id": t.source_observation_id,
                 "normalized_tender_key": t.normalized_tender_key,
+                "source_native_tender_key": t.source_native_tender_key,
+                "canonical_tender_key_candidate": t.canonical_tender_key_candidate,
+                "canonical_candidate_kind": t.canonical_candidate_kind,
+                "canonical_candidate_reason": t.canonical_candidate_reason,
                 "title": t.title,
                 "description": t.description,
+                "buyer_display": t.buyer_display,
                 "buyer_source_id": t.buyer_source_id,
                 "publication_timestamp_raw": t.publication_timestamp_raw,
                 "close_timestamp_raw": t.close_timestamp_raw,
@@ -201,6 +246,9 @@ def acquisition_normalized_semantic_digest(
                 "region": t.region,
                 "currency": t.currency,
                 "estimated_value": t.estimated_value,
+                "procurement_method": t.procurement_method,
+                "procurement_method_details": t.procurement_method_details,
+                "related_processes": [dict(x) for x in t.related_processes],
                 "field_provenance": t.field_provenance,
             }
             for t in tender_observations
@@ -217,6 +265,9 @@ def acquisition_normalized_semantic_digest(
                 "product": line.product,
                 "category": line.category,
                 "unspsc_or_classification": line.unspsc_or_classification,
+                "additional_classifications": [
+                    dict(x) for x in line.additional_classifications
+                ],
                 "quantity": line.quantity,
                 "unit": line.unit,
                 "ordinal": line.ordinal,
@@ -239,3 +290,27 @@ def acquisition_normalized_semantic_digest(
 
 def query_identity_from_model(query: AcquisitionQuery) -> dict[str, Any]:
     return query.identity_payload()
+
+
+def payload_digests(
+    payload: Any,
+    *,
+    original_bytes: bytes | str | None = None,
+) -> tuple[str, str, str | None]:
+    """Return (raw_canonical_json_digest, parser_input_digest, original_bytes_digest).
+
+    For malformed/non-JSON-object inputs, digests still represent the actual supplied
+    value (wrapped when needed), never the error message.
+    """
+    from origenlab_email_pipeline.commercial_procurement_acquisition.canonical_json import (
+        original_bytes_digest,
+    )
+
+    try:
+        raw_digest = canonical_json_digest(payload)
+        parser_digest = raw_digest
+    except (TypeError, ValueError):
+        wrapped = {"__non_json_payload__": repr(payload)}
+        raw_digest = canonical_json_digest(wrapped)
+        parser_digest = raw_digest
+    return raw_digest, parser_digest, original_bytes_digest(original_bytes)

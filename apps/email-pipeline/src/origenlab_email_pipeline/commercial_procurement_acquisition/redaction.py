@@ -92,3 +92,19 @@ def assert_no_ticket_leak(text: str, *, forbidden: set[str] | frozenset[str] | N
     for raw in forbidden or ():
         if raw and len(raw) >= 6 and raw in text:
             raise AssertionError(f"forbidden value leaked: {raw[:48]}")
+
+
+def is_ticket_configured_boolean_only(env_value: str | None) -> bool:
+    """Shared boolean-only ticket configuration check — never returns the value."""
+    return bool(env_value and str(env_value).strip())
+
+
+def ticket_safety_flags(*, ticket_configured: bool) -> dict[str, bool]:
+    """Accurate PR5B ticket safety assertions (no ticket_value_accessed)."""
+    return {
+        "ticket_configured": bool(ticket_configured),
+        "ticket_used_for_request": False,
+        "ticket_persisted": False,
+        "ticket_logged": False,
+        "authenticated_request_performed": False,
+    }

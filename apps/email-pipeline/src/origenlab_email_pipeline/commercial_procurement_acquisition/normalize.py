@@ -30,13 +30,13 @@ def tender_observation_to_normalized_row(
 ) -> dict[str, str]:
     """Map a PR5B tender (+ optional line) observation to CHILECOMPRA_NORMALIZED_FIELDS."""
     row = empty_normalized_row()
-    # Prefer explicit tender code when provided (ticket CodigoExterno).
+    # Prefer explicit code, then source-neutral canonical candidate, then native.
     if tender_code:
         row["codigo"] = tender_code
-    elif tender.normalized_tender_key.startswith("ticket:"):
-        row["codigo"] = tender.normalized_tender_key.split(":", 1)[1]
-    elif tender.normalized_tender_key.startswith("ocds-tender:"):
-        row["codigo"] = tender.normalized_tender_key.split(":", 1)[1]
+    elif tender.canonical_tender_key_candidate:
+        row["codigo"] = tender.canonical_tender_key_candidate
+    elif tender.source_native_tender_key.startswith("ticket_api:codigo_externo:"):
+        row["codigo"] = tender.source_native_tender_key.rsplit(":", 1)[-1]
     row["title"] = tender.title or ""
     row["descripcion"] = tender.description or ""
     row["buyer"] = tender.buyer_display or ""
