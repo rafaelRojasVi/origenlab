@@ -1,6 +1,6 @@
 # Commercial procurement acquisition — PR5B
 
-**Status:** Final acquisition-contract hardening (draft)
+**Status:** Edge-contract correction (draft)
 **Branch:** `feat/commercial-procurement-acquisition-pr5b`
 **Base:** `9a78aebd06a8065e249284ae54fabdd46ff8069c` (PR5A merge)
 
@@ -41,6 +41,11 @@ Auto-refresh is **not** routed through PR5B in this PR.
 - OCDS records **policy B**; `relatedProcesses` at **release** level
 - Ticket summary strict Listado validation + partial_page_failure retention
 - Malformed pages retain `acquired_at_utc` as operational provenance
+- Zero-record OCDS months (`total=0`, empty plan/pages, explicit year/month) →
+  complete empty month via `build_ocds_month_query`
+- Strict `releases`/`records` collection types; rejected-entry digests only
+- Planned-range continuity (start at 1, no gap/overlap, width ≤1000) + child
+  source/endpoint/range metadata checks before monthly assembly
 
 ## 4. Fixture origin vs completeness
 

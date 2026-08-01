@@ -495,7 +495,7 @@ def test_ocds_month_empty_middle_and_terminal() -> None:
     mid = build_ocds_month_snapshot(
         planned_ranges=planned,
         parsed_pages=[p1, empty, p3],
-        source_reported_total=2,
+        source_reported_total=3,
     )
     assert mid.completeness_status == "incomplete_range"
 
@@ -540,32 +540,53 @@ def test_ocds_month_missing_duplicate_overlap() -> None:
             source_reported_total=2,
         )
 
-    overlap_pages = [
-        parse_ocds_package(
-            _page_payload("r1"), year=2026, month=8, range_start=1, range_end=2
-        ),
+    with pytest.raises(OcdsParseError, match="overlap"):
+        build_ocds_month_snapshot(
+            planned_ranges=[
+                {"year": 2026, "month": 8, "start": 1, "end": 2},
+                {"year": 2026, "month": 8, "start": 2, "end": 3},
+            ],
+            parsed_pages=[
+                parse_ocds_package(
+                    _page_payload("r1"), year=2026, month=8, range_start=1, range_end=2
+                ),
+            ],
+            source_reported_total=3,
+        )
+
+
+def test_ocds_month_source_total_mismatch() -> None:
+    planned = plan_ocds_ranges(year=2026, month=8, source_reported_total=2, page_size=1)
+    # Over-filled child pages: plan covers total=2, but item counts exceed it.
+    over = {
+        "releases": [
+            {
+                "ocid": "o-a",
+                "id": "r-a",
+                "tender": {"id": "9999-1-LE26", "status": "active"},
+            },
+            {
+                "ocid": "o-b",
+                "id": "r-b",
+                "tender": {"id": "9999-2-LE26", "status": "active"},
+            },
+        ]
+    }
+    pages = [
+        parse_ocds_package(over, year=2026, month=8, range_start=1, range_end=1),
         parse_ocds_package(
             _page_payload("r2", "9999-2-LE26"),
             year=2026,
             month=8,
             range_start=2,
-            range_end=3,
+            range_end=2,
         ),
     ]
-    overlap = build_ocds_month_snapshot(
-        planned_ranges=[
-            {"year": 2026, "month": 8, "start": 1, "end": 2},
-            {"year": 2026, "month": 8, "start": 2, "end": 3},
-        ],
-        parsed_pages=overlap_pages,
-        source_reported_total=3,
+    bad = build_ocds_month_snapshot(
+        planned_ranges=planned, parsed_pages=pages, source_reported_total=2
     )
-    assert overlap.completeness_status == "overlapping_range"
-
-
-def test_ocds_month_source_total_mismatch() -> None:
-    planned = plan_ocds_ranges(year=2026, month=8, source_reported_total=2, page_size=1)
-    pages = [
+    assert bad.completeness_status == "source_total_mismatch"
+    good_pages = [
         parse_ocds_package(
             _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
         ),
@@ -577,12 +598,8 @@ def test_ocds_month_source_total_mismatch() -> None:
             range_end=2,
         ),
     ]
-    bad = build_ocds_month_snapshot(
-        planned_ranges=planned, parsed_pages=pages, source_reported_total=99
-    )
-    assert bad.completeness_status == "source_total_mismatch"
     good = build_ocds_month_snapshot(
-        planned_ranges=planned, parsed_pages=pages, source_reported_total=2
+        planned_ranges=planned, parsed_pages=good_pages, source_reported_total=2
     )
     assert good.completeness_status == "complete"
 
@@ -905,7 +922,7 @@ def test_month_assembly_child_validation() -> None:
     )
 
     ticket_q = build_ticket_summary_query()
-    with pytest.raises(OcdsParseError, match="ocds_lista_agno_mes_range"):
+    with pytest.raises(OcdsParseError, match="source_kind"):
         build_ocds_month_snapshot(
             planned_ranges=planned,
             parsed_pages=[
@@ -967,3 +984,202 @@ def test_malformed_preserves_acquired_at() -> None:
     assert ticket_page.acquired_at_utc == ts
     ocds_page = parse_ocds_package({"not": "ocds"}, acquired_at_utc=ts)[1]
     assert ocds_page.acquired_at_utc == ts
+
+
+def test_zero_record_ocds_month() -> None:
+    a = build_ocds_month_snapshot(
+        planned_ranges=[],
+        parsed_pages=[],
+        source_reported_total=0,
+        year=2026,
+        month=8,
+        materialized_at_utc="2026-08-01T00:00:00Z",
+    )
+    b = build_ocds_month_snapshot(
+        planned_ranges=[],
+        parsed_pages=[],
+        source_reported_total=0,
+        year=2026,
+        month=8,
+        materialized_at_utc="2099-01-01T00:00:00Z",
+    )
+    assert a.completeness_status == "complete"
+    assert a.pages == ()
+    assert a.source_observations == ()
+    assert a.diagnostics["total_items"] == 0
+    assert a.query.endpoint_kind == "ocds_lista_agno_mes_month"
+    assert a.source_fingerprint == b.source_fingerprint
+    assert a.normalized_semantic_digest == b.normalized_semantic_digest
+    assert a.snapshot_id == b.snapshot_id
+
+    with pytest.raises(OcdsParseError):
+        build_ocds_month_snapshot(
+            planned_ranges=[], parsed_pages=[], source_reported_total=None, year=2026, month=8
+        )
+    with pytest.raises(OcdsParseError):
+        build_ocds_month_snapshot(
+            planned_ranges=[], parsed_pages=[], source_reported_total=5, year=2026, month=8
+        )
+    with pytest.raises(OcdsParseError):
+        build_ocds_month_snapshot(
+            planned_ranges=[],
+            parsed_pages=[
+                parse_ocds_package(
+                    _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+                )
+            ],
+            source_reported_total=0,
+            year=2026,
+            month=8,
+        )
+    with pytest.raises(OcdsParseError):
+        build_ocds_month_snapshot(
+            planned_ranges=[], parsed_pages=[], source_reported_total=0
+        )
+
+
+def test_ocds_envelope_collection_validation() -> None:
+    assert (
+        parse_ocds_package({"releases": "invalid"})[1].completeness_status
+        == "malformed_response"
+    )
+    assert (
+        parse_ocds_package({"releases": {}})[1].completeness_status == "malformed_response"
+    )
+    assert (
+        parse_ocds_package({"records": "invalid"})[1].completeness_status
+        == "malformed_response"
+    )
+    assert (
+        parse_ocds_package({"records": {}})[1].completeness_status == "malformed_response"
+    )
+
+    mixed = {
+        "releases": [
+            {
+                "ocid": "o1",
+                "id": "r1",
+                "tender": {"id": "9999-1-LE26", "status": "active"},
+            },
+            "not-an-object",
+        ]
+    }
+    _q, page, sources, tenders, _lines, diag = parse_ocds_package(mixed)
+    assert page.completeness_status == "partial_page_failure"
+    assert len(sources) == 1
+    assert diag["rejected_entry_count"] == 1
+    assert diag["rejected_entries"][0]["reason_code"] == "release_entry_not_object"
+    assert "not-an-object" not in json.dumps(diag)
+
+    all_bad = {"releases": ["x", 2]}
+    _q2, page2, sources2, _, _, diag2 = parse_ocds_package(all_bad)
+    assert page2.completeness_status == "partial_page_failure"
+    assert sources2 == []
+    assert diag2["rejected_entry_count"] == 2
+
+    assert parse_ocds_package({"releases": []})[1].completeness_status == "empty_page"
+    assert parse_ocds_package({"records": []})[1].completeness_status == "empty_page"
+
+    # Malformed collection must not become terminal_empty_page in monthly assembly.
+    planned = [{"year": 2026, "month": 8, "start": 1, "end": 1}]
+    mal = parse_ocds_package({"releases": "bad"}, year=2026, month=8, range_start=1, range_end=1)
+    snap = build_ocds_month_snapshot(
+        planned_ranges=planned, parsed_pages=[mal], source_reported_total=1
+    )
+    assert snap.completeness_status == "malformed_response"
+
+
+def test_planned_range_continuity() -> None:
+    with pytest.raises(OcdsParseError, match="gap"):
+        build_ocds_month_snapshot(
+            planned_ranges=[
+                {"year": 2026, "month": 8, "start": 1, "end": 1000},
+                {"year": 2026, "month": 8, "start": 2001, "end": 3000},
+            ],
+            parsed_pages=[],
+            source_reported_total=3000,
+        )
+    with pytest.raises(OcdsParseError, match="overlap"):
+        build_ocds_month_snapshot(
+            planned_ranges=[
+                {"year": 2026, "month": 8, "start": 1, "end": 1000},
+                {"year": 2026, "month": 8, "start": 1000, "end": 1001},
+            ],
+            parsed_pages=[],
+            source_reported_total=1001,
+        )
+    with pytest.raises(OcdsParseError, match="start at 1"):
+        build_ocds_month_snapshot(
+            planned_ranges=[{"year": 2026, "month": 8, "start": 2, "end": 2}],
+            parsed_pages=[],
+            source_reported_total=1,
+        )
+    with pytest.raises(OcdsParseError, match="incomplete"):
+        build_ocds_month_snapshot(
+            planned_ranges=[{"year": 2026, "month": 8, "start": 1, "end": 1000}],
+            parsed_pages=[],
+            source_reported_total=2000,
+        )
+
+    ok = plan_ocds_ranges(year=2026, month=8, source_reported_total=1001, page_size=1000)
+    assert ok == [
+        {"year": 2026, "month": 8, "start": 1, "end": 1000},
+        {"year": 2026, "month": 8, "start": 1001, "end": 1001},
+    ]
+    # Valid terminal empty probe plan accepted:
+    term_plan = [
+        {"year": 2026, "month": 8, "start": 1, "end": 1},
+        {"year": 2026, "month": 8, "start": 2, "end": 2},
+    ]
+    term = build_ocds_month_snapshot(
+        planned_ranges=term_plan,
+        parsed_pages=[
+            parse_ocds_package(
+                _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+            ),
+            parse_ocds_package(
+                {"releases": []}, year=2026, month=8, range_start=2, range_end=2
+            ),
+        ],
+        source_reported_total=1,
+    )
+    assert term.completeness_status == "terminal_empty_page"
+
+
+def test_child_source_metadata_validation() -> None:
+    from origenlab_email_pipeline.commercial_procurement_acquisition.models import (
+        AcquisitionPage,
+        AcquisitionQuery,
+    )
+
+    planned = plan_ocds_ranges(year=2026, month=8, source_reported_total=1, page_size=1)
+    good = parse_ocds_package(
+        _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+    )
+    q, page, srcs, tends, lines, diag = good
+
+    wrong_q_kind = AcquisitionQuery(**{**q.to_dict(), "source_kind": "other_source"})
+    with pytest.raises(OcdsParseError, match="query source_kind"):
+        build_ocds_month_snapshot(
+            planned_ranges=planned,
+            parsed_pages=[(wrong_q_kind, page, srcs, tends, lines, diag)],
+            source_reported_total=1,
+        )
+
+    wrong_page_kind = AcquisitionPage(**{**page.to_dict(), "source_kind": "other_source"})
+    with pytest.raises(OcdsParseError, match="page source_kind"):
+        build_ocds_month_snapshot(
+            planned_ranges=planned,
+            parsed_pages=[(q, wrong_page_kind, srcs, tends, lines, diag)],
+            source_reported_total=1,
+        )
+
+    wrong_page_ep = AcquisitionPage(
+        **{**page.to_dict(), "endpoint_kind": "ocds_lista_agno_mes_month"}
+    )
+    with pytest.raises(OcdsParseError, match="page endpoint_kind"):
+        build_ocds_month_snapshot(
+            planned_ranges=planned,
+            parsed_pages=[(q, wrong_page_ep, srcs, tends, lines, diag)],
+            source_reported_total=1,
+        )

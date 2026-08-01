@@ -222,44 +222,115 @@ def _release_identity_key(release: dict[str, Any]) -> tuple[str, str]:
     )
 
 
-def _extract_typed_releases(
+def _rejected_entry(
+    *,
+    ordinal: int,
+    reason_code: str,
+    digest_payload: dict[str, Any],
+) -> dict[str, str]:
+    return {
+        "ordinal": str(ordinal),
+        "reason_code": reason_code,
+        "entry_digest": canonical_json_digest(digest_payload),
+    }
+
+
+def _validate_and_extract_typed_releases(
     payload: dict[str, Any],
-) -> list[tuple[dict[str, Any], str, str | None]]:
-    """Return (release, release_kind, record_id) without silent flattening.
+) -> tuple[
+    str | None,
+    list[tuple[dict[str, Any], str, str | None]],
+    list[dict[str, str]],
+]:
+    """Validate releases/records collections before typed extraction.
 
-    Policy B: historical releases first; compiledRelease only if not duplicate.
+    Returns (malformed_reason, typed_releases, rejected_entries).
+    malformed_reason set → treat page as malformed_response.
     """
-    out: list[tuple[dict[str, Any], str, str | None]] = []
-    releases = payload.get("releases")
-    if isinstance(releases, list):
-        for r in releases:
-            if isinstance(r, dict):
-                out.append((r, RELEASE_KIND_HISTORICAL, None))
-        return out
+    has_releases = "releases" in payload
+    has_records = "records" in payload
 
-    records = payload.get("records")
-    if isinstance(records, list):
-        for rec in records:
+    if has_releases:
+        releases = payload.get("releases")
+        if not isinstance(releases, list):
+            return "invalid_releases_collection_type", [], []
+        typed: list[tuple[dict[str, Any], str, str | None]] = []
+        rejected: list[dict[str, str]] = []
+        for ordinal, entry in enumerate(releases):
+            if not isinstance(entry, dict):
+                rejected.append(
+                    _rejected_entry(
+                        ordinal=ordinal,
+                        reason_code="release_entry_not_object",
+                        digest_payload={
+                            "ordinal": ordinal,
+                            "type": type(entry).__name__,
+                        },
+                    )
+                )
+                continue
+            typed.append((entry, RELEASE_KIND_HISTORICAL, None))
+        return None, typed, rejected
+
+    if has_records:
+        records = payload.get("records")
+        if not isinstance(records, list):
+            return "invalid_records_collection_type", [], []
+        typed = []
+        rejected = []
+        for ordinal, rec in enumerate(records):
             if not isinstance(rec, dict):
+                rejected.append(
+                    _rejected_entry(
+                        ordinal=ordinal,
+                        reason_code="record_entry_not_object",
+                        digest_payload={
+                            "ordinal": ordinal,
+                            "type": type(rec).__name__,
+                        },
+                    )
+                )
                 continue
             record_id = _as_str(rec.get("id"))
             historical: list[dict[str, Any]] = []
             nested = rec.get("releases")
             if isinstance(nested, list):
-                historical = [r for r in nested if isinstance(r, dict)]
+                for nested_i, r in enumerate(nested):
+                    if isinstance(r, dict):
+                        historical.append(r)
+                    else:
+                        rejected.append(
+                            _rejected_entry(
+                                ordinal=ordinal,
+                                reason_code="nested_release_entry_not_object",
+                                digest_payload={
+                                    "record_ordinal": ordinal,
+                                    "nested_ordinal": nested_i,
+                                    "type": type(r).__name__,
+                                },
+                            )
+                        )
             seen = {_release_identity_key(r) for r in historical}
             for r in historical:
-                out.append((r, RELEASE_KIND_HISTORICAL, record_id))
+                typed.append((r, RELEASE_KIND_HISTORICAL, record_id))
             compiled = rec.get("compiledRelease")
             if isinstance(compiled, dict):
                 key = _release_identity_key(compiled)
                 if key not in seen:
-                    out.append((compiled, RELEASE_KIND_COMPILED, record_id))
-        return out
+                    typed.append((compiled, RELEASE_KIND_COMPILED, record_id))
+        return None, typed, rejected
 
     if "ocid" in payload and ("tender" in payload or "id" in payload):
-        out.append((payload, RELEASE_KIND_HISTORICAL, None))
-    return out
+        return None, [(payload, RELEASE_KIND_HISTORICAL, None)], []
+    return "not_an_ocds_package_or_release_envelope", [], []
+
+
+def _extract_typed_releases(
+    payload: dict[str, Any],
+) -> list[tuple[dict[str, Any], str, str | None]]:
+    """Compatibility wrapper — prefer _validate_and_extract_typed_releases."""
+    _reason, typed, _rejected = _validate_and_extract_typed_releases(payload)
+    return typed
 
 
 def _items_from_tender(tender: dict[str, Any]) -> list[dict[str, Any]]:
@@ -572,25 +643,24 @@ def parse_ocds_package(
         )
         return query, page, [], [], [], {"error": page.error_message}
 
-    # Distinguish a legitimate empty package (releases:[]) from a non-OCDS object.
-    has_releases_key = "releases" in payload
-    has_records_key = "records" in payload
-    looks_like_release = "ocid" in payload and ("tender" in payload or "id" in payload)
-    if not (has_releases_key or has_records_key or looks_like_release):
+    raw_digest, parser_digest, bytes_digest = payload_digests(
+        payload, original_bytes=original_bytes
+    )
+    malformed_reason, typed, rejected = _validate_and_extract_typed_releases(payload)
+    if malformed_reason is not None:
         page = _malformed_page(
             query=query,
             payload=payload,
             original_bytes=original_bytes,
             http_status=http_status,
-            message="payload is not an OCDS package/release envelope",
+            message=malformed_reason,
             acquired_at_utc=acquired_at_utc,
         )
-        return query, page, [], [], [], {"error": page.error_message}
+        return query, page, [], [], [], {
+            "error": page.error_message,
+            "rejected_entry_count": 0,
+        }
 
-    typed = _extract_typed_releases(payload)
-    raw_digest, parser_digest, bytes_digest = payload_digests(
-        payload, original_bytes=original_bytes
-    )
     package_uri = _as_str(payload.get("uri"))
     publisher = payload.get("publisher")
     package_id = package_uri or (
@@ -598,13 +668,25 @@ def parse_ocds_package(
     )
     published = _as_str(payload.get("publishedDate") or payload.get("publicationDate"))
 
-    completeness = "complete" if typed else "empty_page"
-    expected_width = (query.range_end or 0) - (query.range_start or 0) + 1
-    # Count mismatch vs requested width is advisory at page level; monthly assembler
-    # owns terminal classification.
-    if typed and expected_width > 0 and len(typed) < expected_width:
-        # Partial fill relative to requested range — still a valid page parse.
-        pass
+    # empty list → empty_page; mixed/all-invalid list → partial_page_failure;
+    # all valid → complete.
+    if rejected and typed:
+        completeness = "partial_page_failure"
+        parser_status = "partial"
+        error_classification = "partial_page_failure"
+    elif rejected and not typed:
+        # Documented rule: valid collection shape but every entry rejected.
+        completeness = "partial_page_failure"
+        parser_status = "partial"
+        error_classification = "partial_page_failure"
+    elif not typed:
+        completeness = "empty_page"
+        parser_status = "ok"
+        error_classification = None
+    else:
+        completeness = "complete"
+        parser_status = "ok"
+        error_classification = None
 
     page = AcquisitionPage(
         page_id=acquisition_page_id(
@@ -623,8 +705,8 @@ def parse_ocds_package(
         response_item_count=len(typed),
         source_reported_total=None,
         http_status=http_status,
-        parser_status="ok",
-        error_classification=None,
+        parser_status=parser_status,
+        error_classification=error_classification,
         completeness_status=completeness,
         envelope_meta={
             "uri": _as_str(payload.get("uri")),
@@ -654,10 +736,13 @@ def parse_ocds_package(
     diagnostics = {
         "release_count": len(typed),
         "line_count": len(lines),
+        "rejected_entry_count": len(rejected),
+        "rejected_entries": rejected,
         "status_mapping": "source_status_system=ocds; not PR5 eligibility",
         "package_publishedDate": published,
         "records_policy": "B_historical_preferred_compiled_if_unique",
         "single_page_empty_status": "empty_page",
+        "all_invalid_entries_rule": "partial_page_failure",
     }
     return query, page, sources, tenders, lines, diagnostics
 
@@ -675,6 +760,8 @@ def _classify_monthly_completeness(
     )
     if any(p.completeness_status == "malformed_response" for p in ordered):
         return "malformed_response"
+    if any(p.completeness_status == "partial_page_failure" for p in ordered):
+        return "partial_page_failure"
     if any(p.parser_status not in {"ok"} for p in ordered):
         return "partial_page_failure"
     if any(a.startswith("duplicate_page:") for a in anomalies):
@@ -690,7 +777,9 @@ def _classify_monthly_completeness(
 
     # Empty page that is not a valid terminal trailing empty → incomplete.
     empty_idxs = [
-        i for i, p in enumerate(ordered) if p.response_item_count == 0 or p.completeness_status == "empty_page"
+        i
+        for i, p in enumerate(ordered)
+        if p.response_item_count == 0 or p.completeness_status == "empty_page"
     ]
     terminal_empty = False
     if empty_idxs:
@@ -754,6 +843,7 @@ def _validate_month_assembly_inputs(
     ],
     year: int,
     month: int,
+    source_reported_total: int | None = None,
 ) -> list[dict[str, int]]:
     """Validate planned ranges and every child query/page pair. Raises OcdsParseError."""
     if not planned_ranges:
@@ -763,7 +853,7 @@ def _validate_month_assembly_inputs(
     months = {int(r["month"]) for r in planned_ranges}
     if len(years) != 1 or len(months) != 1:
         raise OcdsParseError("planned_ranges must share one year and month")
-    if int(planned_ranges[0]["year"]) != year or int(planned_ranges[0]["month"]) != month:
+    if int(next(iter(years))) != year or int(next(iter(months))) != month:
         raise OcdsParseError("planned_ranges year/month must match month scope")
 
     planned_keys = [(int(r["start"]), int(r["end"])) for r in planned_ranges]
@@ -781,15 +871,57 @@ def _validate_month_assembly_inputs(
         if int(r["start"]) < 1:
             raise OcdsParseError("planned range_start must be >= 1")
 
+    if int(ordered_planned[0]["start"]) != 1:
+        raise OcdsParseError("planned ranges must start at 1")
+
+    for i in range(1, len(ordered_planned)):
+        prev_end = int(ordered_planned[i - 1]["end"])
+        cur_start = int(ordered_planned[i]["start"])
+        if cur_start <= prev_end:
+            raise OcdsParseError("planned ranges overlap")
+        if cur_start != prev_end + 1:
+            raise OcdsParseError("planned ranges have a gap")
+
+    if source_reported_total is not None:
+        if source_reported_total < 0:
+            raise OcdsParseError("source_reported_total must be >= 0")
+        last_start = int(ordered_planned[-1]["start"])
+        last_end = int(ordered_planned[-1]["end"])
+        if source_reported_total == 0:
+            raise OcdsParseError("nonzero planned ranges inconsistent with source_reported_total=0")
+        if last_start == source_reported_total + 1:
+            # Trailing empty probe beyond total — prior coverage must end at total.
+            if len(ordered_planned) < 2:
+                raise OcdsParseError("terminal empty probe requires prior coverage")
+            if int(ordered_planned[-2]["end"]) != source_reported_total:
+                raise OcdsParseError(
+                    "terminal empty probe prior coverage must end at source_reported_total"
+                )
+        elif last_end < source_reported_total:
+            raise OcdsParseError("planned coverage incomplete vs source_reported_total")
+        elif last_end > source_reported_total and last_start <= source_reported_total:
+            raise OcdsParseError("planned coverage extends past source_reported_total")
+        elif last_end != source_reported_total and last_start != source_reported_total + 1:
+            raise OcdsParseError("planned coverage inconsistent with source_reported_total")
+
     planned_set = {(int(r["start"]), int(r["end"])) for r in ordered_planned}
     seen_page_ids: set[str] = set()
     seen_ranges: set[tuple[int, int]] = set()
 
     for query, page, *_rest in parsed_pages:
+        if query.source_kind != SOURCE_KIND_OCDS:
+            raise OcdsParseError("child query source_kind must be chilecompra_ocds")
+        if page.source_kind != SOURCE_KIND_OCDS:
+            raise OcdsParseError("child page source_kind must be chilecompra_ocds")
         if query.endpoint_kind != ENDPOINT_OCDS_MONTHLY_RANGE:
             raise OcdsParseError("child query must use ocds_lista_agno_mes_range")
+        if page.endpoint_kind != ENDPOINT_OCDS_MONTHLY_RANGE:
+            raise OcdsParseError("child page endpoint_kind must be ocds_lista_agno_mes_range")
         if query.year != year or query.month != month:
             raise OcdsParseError("child query year/month must match month scope")
+        recomputed = acquisition_query_id(query.identity_payload())
+        if recomputed != query.acquisition_query_id:
+            raise OcdsParseError("child query acquisition_query_id does not match identity")
         if page.acquisition_query_id != query.acquisition_query_id:
             raise OcdsParseError("page acquisition_query_id must equal tuple query ID")
         if page.range_position.get("start") != query.range_start or page.range_position.get(
@@ -807,6 +939,65 @@ def _validate_month_assembly_inputs(
         seen_ranges.add(key)
 
     return ordered_planned
+
+
+def _empty_month_snapshot(
+    *,
+    year: int,
+    month: int,
+    fixture_origin: str,
+    materialized_at_utc: str | None,
+) -> AcquisitionSnapshot:
+    from datetime import datetime, timezone
+
+    month_query = build_ocds_month_query(year=year, month=month)
+    identity = query_identity_from_model(month_query)
+    completeness = "complete"
+    source_fp = acquisition_source_fingerprint(
+        source_kind=SOURCE_KIND_OCDS,
+        query_identity=identity,
+        pages=[],
+        completeness_status=completeness,
+    )
+    semantic = acquisition_normalized_semantic_digest(
+        source_observations=[],
+        tender_observations=[],
+        line_observations=[],
+        parser_version=PARSER_VERSION,
+        contract_version=ACQUISITION_CONTRACT_VERSION,
+    )
+    snap_id = procurement_snapshot_id(
+        acquisition_query_id_value=month_query.acquisition_query_id,
+        source_fingerprint=source_fp,
+    )
+    materialized = materialized_at_utc or datetime.now(timezone.utc).isoformat().replace(
+        "+00:00", "Z"
+    )
+    return AcquisitionSnapshot(
+        snapshot_id=snap_id,
+        query=month_query,
+        pages=(),
+        source_observations=(),
+        tender_observations=(),
+        line_observations=(),
+        completeness_status=completeness,
+        parser_version=PARSER_VERSION,
+        contract_version=ACQUISITION_CONTRACT_VERSION,
+        fixture_origin=fixture_origin,
+        diagnostics={
+            "planned_ranges": [],
+            "anomalies": [],
+            "source_reported_total": 0,
+            "total_items": 0,
+            "page_count": 0,
+            "zero_record_month": True,
+            "month_scope_endpoint_kind": ENDPOINT_OCDS_MONTHLY_MONTH,
+            "child_endpoint_kind": ENDPOINT_OCDS_MONTHLY_RANGE,
+        },
+        source_fingerprint=source_fp,
+        normalized_semantic_digest=semantic,
+        materialized_at_utc=materialized,
+    )
 
 
 def build_ocds_month_snapshot(
@@ -833,16 +1024,46 @@ def build_ocds_month_snapshot(
     Snapshot identity uses build_ocds_month_query (no page width). Child pages
     remain ocds_lista_agno_mes_range with widths ≤ 1000.
     Input page order does not affect fingerprints (pages sorted by range).
+
+    Zero-record months: planned_ranges=[], parsed_pages=[], source_reported_total=0,
+    with explicit year/month → complete empty month snapshot.
     """
     if not planned_ranges:
+        if (
+            source_reported_total == 0
+            and not parsed_pages
+            and year is not None
+            and month is not None
+        ):
+            return _empty_month_snapshot(
+                year=int(year),
+                month=int(month),
+                fixture_origin=fixture_origin,
+                materialized_at_utc=materialized_at_utc,
+            )
+        if source_reported_total is None:
+            raise OcdsParseError("empty planned_ranges require source_reported_total=0")
+        if source_reported_total != 0:
+            raise OcdsParseError("empty planned_ranges require source_reported_total=0")
+        if parsed_pages:
+            raise OcdsParseError("empty planned_ranges cannot include parsed_pages")
+        if year is None or month is None:
+            raise OcdsParseError("empty planned_ranges require explicit year and month")
         raise OcdsParseError("planned_ranges required")
-    scope_year = int(year if year is not None else planned_ranges[0]["year"])
-    scope_month = int(month if month is not None else planned_ranges[0]["month"])
+
+    if year is None or month is None:
+        scope_year = int(planned_ranges[0]["year"])
+        scope_month = int(planned_ranges[0]["month"])
+    else:
+        scope_year = int(year)
+        scope_month = int(month)
+
     ordered_planned = _validate_month_assembly_inputs(
         planned_ranges=planned_ranges,
         parsed_pages=parsed_pages,
         year=scope_year,
         month=scope_month,
+        source_reported_total=source_reported_total,
     )
 
     sorted_pages = sorted(
