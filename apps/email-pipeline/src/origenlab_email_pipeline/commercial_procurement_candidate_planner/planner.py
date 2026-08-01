@@ -15,6 +15,8 @@ from origenlab_email_pipeline.commercial_procurement_candidate_planner.coalescen
     field_precedence_matrix,
 )
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.constants import (
+    EVIDENCE_PLANE_ACQUISITION,
+    EVIDENCE_PLANE_PR4,
     PLANNER_VERSION,
 )
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.fingerprint import (
@@ -36,11 +38,16 @@ from origenlab_email_pipeline.commercial_procurement_candidate_planner.models im
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.normalize import (
     parse_as_of_utc,
 )
+from origenlab_email_pipeline.commercial_procurement_candidate_planner.output_safety import (
+    ReportOutputError,
+    require_reports_out_dir,
+)
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.plane_a_pr4 import (
     load_pr4_plane,
-    pr4_signals_to_evidence_refs,
+    pr4_signals_to_evidence,
 )
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.plane_b_acquisition import (
+    dedupe_snapshots,
     load_acquisition_snapshot_json,
     snapshot_to_evidence,
 )
@@ -54,10 +61,16 @@ def _as_of_str(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _email_pipeline_root() -> Path:
+    # .../src/origenlab_email_pipeline/commercial_procurement_candidate_planner/planner.py
+    return Path(__file__).resolve().parents[3]
+
+
 def reconcile_aggregates(
     *,
     pr4_signal_ids: set[str],
-    accepted_pr4_procurement_ids: set[str],
+    pr4_coalesced_ids: set[str],
+    pr4_unresolved_ids: set[str],
     live_observation_ids_accepted: set[str],
     live_observation_ids_unresolved: set[str],
     all_live_observation_ids: set[str],
@@ -65,18 +78,62 @@ def reconcile_aggregates(
     evidence_refs: list[ProcurementEvidenceRef],
     unresolved: list[UnresolvedProcurementEvidence],
     conflicts: list[CoalescenceConflict],
+    snapshot_ids: list[str],
 ) -> dict[str, Any]:
-    # Every accepted PR4 signal in exactly one coalesced tender.
-    pr4_in_tenders: list[str] = []
-    for t in tenders:
-        if t.pr4_procurement_id:
-            pr4_in_tenders.append(t.pr4_procurement_id)
-    if len(pr4_in_tenders) != len(set(pr4_in_tenders)):
-        raise ReconciliationError("duplicate PR4 procurement_id across coalesced tenders")
-    if set(pr4_in_tenders) != accepted_pr4_procurement_ids:
-        raise ReconciliationError("PR4 signal ↔ coalesced tender membership mismatch")
+    # PR4 total = coalesced + unresolved (no silent drop).
+    if pr4_coalesced_ids & pr4_unresolved_ids:
+        raise ReconciliationError("PR4 id in both coalesced and unresolved")
+    accounted_pr4 = pr4_coalesced_ids | pr4_unresolved_ids
+    if accounted_pr4 != pr4_signal_ids:
+        missing = pr4_signal_ids - accounted_pr4
+        extra = accounted_pr4 - pr4_signal_ids
+        raise ReconciliationError(
+            f"PR4 silent drop or invent: missing={len(missing)} extra={len(extra)}"
+        )
 
-    # Live accepted observations appear once.
+    # Live total = accepted + unresolved.
+    if live_observation_ids_accepted & live_observation_ids_unresolved:
+        raise ReconciliationError("observation appears in both accepted and unresolved")
+    accounted_live = live_observation_ids_accepted | live_observation_ids_unresolved
+    if accounted_live != all_live_observation_ids:
+        raise ReconciliationError("live observation silently dropped or invented")
+
+    # Unique snapshot IDs.
+    if len(snapshot_ids) != len(set(snapshot_ids)):
+        raise ReconciliationError("duplicate snapshot IDs after dedupe")
+
+    # Unique evidence_ref_ids / unresolved IDs.
+    ref_ids = [e.evidence_ref_id for e in evidence_refs]
+    if len(ref_ids) != len(set(ref_ids)):
+        raise ReconciliationError("duplicate evidence_ref_id")
+    unresolved_ids = [u.unresolved_id for u in unresolved]
+    if len(unresolved_ids) != len(set(unresolved_ids)):
+        raise ReconciliationError("duplicate unresolved_id")
+
+    ref_id_set = set(ref_ids)
+    unresolved_ref_touch = {
+        u.source_record_id for u in unresolved
+    }  # informational only
+
+    # Every evidence ref referenced exactly once by one coalesced tender.
+    ref_owner: dict[str, str] = {}
+    for t in tenders:
+        for eid in t.evidence_ref_ids:
+            if eid not in ref_id_set:
+                raise ReconciliationError(f"missing evidence refs on tender: {eid}")
+            if eid in ref_owner:
+                raise ReconciliationError("evidence_ref referenced by multiple tenders")
+            ref_owner[eid] = t.coalesced_tender_id
+    if set(ref_owner.keys()) != ref_id_set:
+        raise ReconciliationError("evidence_ref not referenced by any tender")
+
+    # Unresolved evidence must not be referenced by a tender.
+    unresolved_obs = {u.observation_id for u in unresolved if u.observation_id}
+    for t in tenders:
+        if set(t.acquisition_observation_ids) & unresolved_obs:
+            raise ReconciliationError("unresolved observation referenced by tender")
+
+    # Live accepted observations appear once on tenders.
     live_in_tenders: list[str] = []
     for t in tenders:
         live_in_tenders.extend(t.acquisition_observation_ids)
@@ -85,41 +142,96 @@ def reconcile_aggregates(
     if set(live_in_tenders) != live_observation_ids_accepted:
         raise ReconciliationError("live observation ↔ coalesced tender membership mismatch")
 
-    unresolved_obs = {
-        u.observation_id for u in unresolved if u.observation_id
-    }
-    if unresolved_obs != live_observation_ids_unresolved:
-        raise ReconciliationError("unresolved live observation set mismatch")
-
-    if live_observation_ids_accepted & live_observation_ids_unresolved:
-        raise ReconciliationError("observation appears in both accepted and unresolved")
-
-    accounted = live_observation_ids_accepted | live_observation_ids_unresolved
-    if accounted != all_live_observation_ids:
-        raise ReconciliationError("live observation silently dropped or invented")
-
-    # Duplicate canonical keys must not produce duplicate coalesced rows.
+    # Stable canonical identity + unique keys.
     keys = [t.canonical_tender_key for t in tenders]
     if len(keys) != len(set(keys)):
         raise ReconciliationError("duplicate canonical keys in coalesced tenders")
-
-    # Evidence references exist.
-    ref_ids = {e.evidence_ref_id for e in evidence_refs}
     for t in tenders:
-        missing = set(t.evidence_ref_ids) - ref_ids
-        if missing:
-            raise ReconciliationError(f"missing evidence refs on tender: {missing}")
+        if not t.canonical_tender_key or not t.tender_key_kind:
+            raise ReconciliationError("coalesced tender missing stable canonical identity")
+        if not t.coalesced_tender_id:
+            raise ReconciliationError("coalesced tender missing id")
 
     conflict_ids = {c.conflict_id for c in conflicts}
     for t in tenders:
         missing_c = set(t.conflict_ids) - conflict_ids
         if missing_c:
             raise ReconciliationError(f"missing conflicts on tender: {missing_c}")
-    for c in conflicts:
-        if c.coalesced_tender_id and c.coalesced_tender_id not in {
-            t.coalesced_tender_id for t in tenders
-        }:
-            raise ReconciliationError("conflict subject tender missing")
+
+        # Selected-field provenance IDs exist.
+        for field, eid in t.selected_field_provenance.items():
+            if eid not in ref_id_set:
+                raise ReconciliationError(
+                    f"selected-field provenance missing evidence_ref: {field}"
+                )
+
+        # Atomic status provenance.
+        status_code_p = t.selected_field_provenance.get("status_code")
+        status_name_p = t.selected_field_provenance.get("status_name")
+        status_p = t.selected_field_provenance.get("status")
+        if status_code_p or status_name_p or status_p:
+            ids = {x for x in (status_code_p, status_name_p, status_p) if x}
+            if len(ids) > 1:
+                raise ReconciliationError("status code/name provenance not atomic")
+
+        # active_open provenance must be current acquisition evidence.
+        if t.lifecycle_class == "active_open":
+            if not t.lifecycle_status_evidence_ref_id or not t.lifecycle_close_evidence_ref_id:
+                raise ReconciliationError("active_open missing lifecycle provenance refs")
+            sref = next(
+                (e for e in evidence_refs if e.evidence_ref_id == t.lifecycle_status_evidence_ref_id),
+                None,
+            )
+            cref = next(
+                (e for e in evidence_refs if e.evidence_ref_id == t.lifecycle_close_evidence_ref_id),
+                None,
+            )
+            if sref is None or cref is None:
+                raise ReconciliationError("active_open provenance ref missing")
+            if sref.evidence_plane != EVIDENCE_PLANE_ACQUISITION:
+                raise ReconciliationError("active_open status provenance not acquisition")
+            if cref.evidence_plane != EVIDENCE_PLANE_ACQUISITION:
+                raise ReconciliationError("active_open close provenance not acquisition")
+            if t.lifecycle_evidence_currentness_class != "current_authoritative_snapshot":
+                raise ReconciliationError("active_open without current field provenance")
+
+        # Close-date conflict never active_open.
+        tender_conflicts = [
+            conflicts_by_id
+            for conflicts_by_id in (
+                next((c for c in conflicts if c.conflict_id == cid), None)
+                for cid in t.conflict_ids
+            )
+            if conflicts_by_id is not None
+        ]
+        if any(
+            c.conflict_kind == "date_conflict"
+            and (
+                c.field_name == "close_timestamp"
+                or "close_timestamp_conflict" in c.reason_codes
+            )
+            for c in tender_conflicts
+        ):
+            if t.lifecycle_class == "active_open":
+                raise ReconciliationError("close-date-conflict tender is active_open")
+
+        # candidate_source_kind agrees with plane membership.
+        planes = {
+            e.evidence_plane
+            for e in evidence_refs
+            if e.evidence_ref_id in set(t.evidence_ref_ids)
+        }
+        expected = (
+            "pr4"
+            if planes == {EVIDENCE_PLANE_PR4}
+            else (
+                "live_snapshot"
+                if planes == {EVIDENCE_PLANE_ACQUISITION}
+                else "both"
+            )
+        )
+        if t.candidate_source_kind != expected:
+            raise ReconciliationError("candidate_source_kind disagrees with plane membership")
 
     source_kind_counts = {
         "pr4": sum(1 for t in tenders if t.candidate_source_kind == "pr4"),
@@ -137,6 +249,13 @@ def reconcile_aggregates(
     if sum(life_counts.values()) != len(tenders):
         raise ReconciliationError("lifecycle counts do not sum")
 
+    conflict_by_kind: dict[str, int] = {}
+    conflict_by_field: dict[str, int] = {}
+    for c in conflicts:
+        conflict_by_kind[c.conflict_kind] = conflict_by_kind.get(c.conflict_kind, 0) + 1
+        field = c.field_name or "none"
+        conflict_by_field[field] = conflict_by_field.get(field, 0) + 1
+
     active = [t for t in tenders if t.lifecycle_class == "active_open"]
     closing_counts: dict[str, int] = {}
     for t in active:
@@ -149,18 +268,20 @@ def reconcile_aggregates(
         if t.lifecycle_class != "active_open" and t.closing_soon_bucket != "not_applicable":
             raise ReconciliationError("non-active tender has closing-soon bucket")
 
+    pr4_equation_ok = len(pr4_signal_ids) == len(pr4_coalesced_ids) + len(pr4_unresolved_ids)
+    live_equation_ok = (
+        len(all_live_observation_ids)
+        == len(live_observation_ids_accepted) + len(live_observation_ids_unresolved)
+    )
+    no_silent_drop = pr4_equation_ok and live_equation_ok
+
     return {
         "equations": {
-            "accepted_pr4_signals_eq_coalesced_with_pr4": (
-                f"{len(accepted_pr4_procurement_ids)} = {len(pr4_in_tenders)}"
+            "pr4_total_eq_coalesced_plus_unresolved": (
+                f"{len(pr4_signal_ids)} = "
+                f"{len(pr4_coalesced_ids)} + {len(pr4_unresolved_ids)}"
             ),
-            "accepted_live_obs_eq_coalesced_obs": (
-                f"{len(live_observation_ids_accepted)} = {len(live_in_tenders)}"
-            ),
-            "rejected_live_obs_eq_unresolved": (
-                f"{len(live_observation_ids_unresolved)} = {len(unresolved_obs)}"
-            ),
-            "no_silent_drop": (
+            "live_total_eq_accepted_plus_unresolved": (
                 f"{len(all_live_observation_ids)} = "
                 f"{len(live_observation_ids_accepted)} + "
                 f"{len(live_observation_ids_unresolved)}"
@@ -172,20 +293,32 @@ def reconcile_aggregates(
             "source_kind_sum": (
                 f"{sum(source_kind_counts.values())} = {len(tenders)}"
             ),
+            "no_silent_drop": no_silent_drop,
         },
         "counts": {
             "pr4_signals_total": len(pr4_signal_ids),
-            "pr4_signals_accepted": len(accepted_pr4_procurement_ids),
+            "pr4_coalesced": len(pr4_coalesced_ids),
+            "pr4_unresolved": len(pr4_unresolved_ids),
+            "live_observations_total": len(all_live_observation_ids),
+            "live_accepted": len(live_observation_ids_accepted),
+            "live_unresolved": len(live_observation_ids_unresolved),
             "evidence_refs": len(evidence_refs),
             "coalesced_tenders": len(tenders),
             "unresolved_evidence": len(unresolved),
             "conflicts": len(conflicts),
+            "conflict_by_kind": conflict_by_kind,
+            "conflict_by_field": conflict_by_field,
             "candidate_source_kind": source_kind_counts,
             "lifecycle": life_counts,
             "closing_soon_active_open": closing_counts,
             "active_open": len(active),
+            "unique_snapshot_ids": len(set(snapshot_ids)),
+            "unique_evidence_ref_ids": len(ref_id_set),
+            "unique_unresolved_ids": len(set(unresolved_ids)),
         },
         "ok": True,
+        "no_silent_drop": no_silent_drop,
+        "_debug_unresolved_touch": len(unresolved_ref_touch),
     }
 
 
@@ -197,20 +330,25 @@ def build_candidate_plan(
     freshness_threshold_hours: int,
     run_context: str,
 ) -> CandidatePlanResult:
+    if int(freshness_threshold_hours) <= 0:
+        raise ValueError("freshness_threshold_hours must be > 0")
+
     as_of = parse_as_of_utc(as_of_utc)
     as_of_token = _as_of_str(as_of)
 
     pr4 = load_pr4_plane(sqlite_path)
-    pr4_refs, _skipped = pr4_signals_to_evidence_refs(pr4)
+    pr4_refs, pr4_unresolved = pr4_signals_to_evidence(pr4)
 
-    snapshots: list[AcquisitionSnapshot] = []
+    loaded: list[AcquisitionSnapshot] = []
+    for path in acquisition_snapshot_paths:
+        loaded.append(load_acquisition_snapshot_json(path))
+    snapshots = dedupe_snapshots(loaded)
+
     live_refs: list[ProcurementEvidenceRef] = []
-    unresolved: list[UnresolvedProcurementEvidence] = []
+    unresolved: list[UnresolvedProcurementEvidence] = list(pr4_unresolved)
     all_live_obs: set[str] = set()
 
-    for path in acquisition_snapshot_paths:
-        snap = load_acquisition_snapshot_json(path)
-        snapshots.append(snap)
+    for snap in snapshots:
         for obs in snap.source_observations:
             all_live_obs.add(obs.observation_id)
         refs, unres = snapshot_to_evidence(snap)
@@ -218,7 +356,6 @@ def build_candidate_plan(
         unresolved.extend(unres)
 
     evidence_refs = list(pr4_refs) + list(live_refs)
-    # Stable order for determinism.
     evidence_refs.sort(key=lambda r: r.evidence_ref_id)
     unresolved.sort(key=lambda u: u.unresolved_id)
 
@@ -235,15 +372,23 @@ def build_candidate_plan(
     tenders.sort(key=lambda t: t.coalesced_tender_id)
     conflicts.sort(key=lambda c: c.conflict_id)
 
-    accepted_pr4 = {r.pr4_procurement_id for r in pr4_refs if r.pr4_procurement_id}
-    accepted_live = {
-        r.observation_id for r in live_refs if r.observation_id
+    pr4_coalesced: set[str] = set()
+    for t in tenders:
+        pr4_coalesced.update(t.pr4_procurement_ids)
+    pr4_unresolved_ids = {
+        u.pr4_procurement_id for u in unresolved if u.pr4_procurement_id
     }
-    unresolved_live = {u.observation_id for u in unresolved if u.observation_id}
+    accepted_live = {r.observation_id for r in live_refs if r.observation_id}
+    unresolved_live = {
+        u.observation_id
+        for u in unresolved
+        if u.observation_id and u.evidence_plane == EVIDENCE_PLANE_ACQUISITION
+    }
 
     reconciliation = reconcile_aggregates(
         pr4_signal_ids={str(s["procurement_id"]) for s in pr4.signals},
-        accepted_pr4_procurement_ids=accepted_pr4,
+        pr4_coalesced_ids=pr4_coalesced,
+        pr4_unresolved_ids=pr4_unresolved_ids,
         live_observation_ids_accepted=accepted_live,
         live_observation_ids_unresolved=unresolved_live,
         all_live_observation_ids=all_live_obs,
@@ -251,7 +396,10 @@ def build_candidate_plan(
         evidence_refs=evidence_refs,
         unresolved=unresolved,
         conflicts=conflicts,
+        snapshot_ids=[s.snapshot_id for s in snapshots],
     )
+    # Drop debug-only key from public reconciliation.
+    reconciliation.pop("_debug_unresolved_touch", None)
 
     snap_fp_rows = [
         {
@@ -300,11 +448,20 @@ def build_candidate_plan(
     )
 
 
-def write_plan_outputs(result: CandidatePlanResult, out_dir: Path) -> dict[str, str]:
-    out_dir.mkdir(parents=True, exist_ok=True)
+def write_plan_outputs(
+    result: CandidatePlanResult,
+    out_dir: Path,
+    *,
+    repo_email_pipeline_root: Path | None = None,
+) -> dict[str, str]:
+    safe = require_reports_out_dir(
+        out_dir,
+        repo_email_pipeline_root=repo_email_pipeline_root or _email_pipeline_root(),
+    )
+    safe.mkdir(parents=True, exist_ok=True)
 
     def dump(name: str, payload: Any) -> str:
-        path = out_dir / name
+        path = safe / name
         path.write_text(
             json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
             encoding="utf-8",
@@ -323,8 +480,13 @@ def write_plan_outputs(result: CandidatePlanResult, out_dir: Path) -> dict[str, 
             "build_plan_fingerprint": result.build_plan_fingerprint,
             "semantic_digest": result.semantic_digest,
             "acquisition_snapshot_ids": list(result.acquisition_snapshot_ids),
+            "pr4_identity_diagnostic": result.pr4.identity_diagnostic,
             "relevance_implemented": False,
             "product_classification_implemented": False,
+            "checkpoint_note": (
+                "production PR4 read-only data + committed live-derived "
+                "sanitized acquisition fixtures (not a fresh production acquisition run)"
+            ),
         },
     )
     written["INPUT_MANIFEST.json"] = dump(
@@ -334,6 +496,7 @@ def write_plan_outputs(result: CandidatePlanResult, out_dir: Path) -> dict[str, 
                 "source_fingerprint": result.pr4.source_fingerprint,
                 "build_plan_fingerprint": result.pr4.build_plan_fingerprint,
                 "semantic_plan_digest": result.pr4.semantic_plan_digest,
+                "readback_semantic_digest": result.pr4.readback_semantic_digest,
                 "identity_fingerprint": result.pr4.identity_fingerprint,
                 "schema_version": result.pr4.schema_version,
                 "build_contract": result.pr4.build_contract,
@@ -342,6 +505,7 @@ def write_plan_outputs(result: CandidatePlanResult, out_dir: Path) -> dict[str, 
                 "account_resolution_count": len(result.pr4.account_resolutions),
                 "evidence_count": len(result.pr4.evidence_rows),
                 "conflict_count": len(result.pr4.conflict_rows),
+                "identity_diagnostic": result.pr4.identity_diagnostic,
             },
             "acquisition_snapshot_ids": list(result.acquisition_snapshot_ids),
         },
@@ -390,6 +554,16 @@ def write_plan_outputs(result: CandidatePlanResult, out_dir: Path) -> dict[str, 
             "schedule": False,
             "relevance": False,
             "apply": False,
+            "output_contained_in_reports_out": True,
         },
     )
     return written
+
+
+__all__ = [
+    "ReconciliationError",
+    "ReportOutputError",
+    "build_candidate_plan",
+    "reconcile_aggregates",
+    "write_plan_outputs",
+]

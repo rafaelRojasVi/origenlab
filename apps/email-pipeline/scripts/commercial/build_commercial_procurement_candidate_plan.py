@@ -32,6 +32,7 @@ from origenlab_email_pipeline.commercial_procurement_candidate_planner.constants
 )
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.planner import (  # noqa: E402
     ReconciliationError,
+    ReportOutputError,
     build_candidate_plan,
     write_plan_outputs,
 )
@@ -108,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
         Pr4PlaneError,
         AcquisitionPlaneError,
         ReconciliationError,
+        ReportOutputError,
         CommercialIdentityPathError,
         ValueError,
     ) as exc:

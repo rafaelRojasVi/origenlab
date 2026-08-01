@@ -305,11 +305,25 @@ def walkthrough_markdown(bundle: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_walkthrough(bundle: dict[str, Any], out_dir: Path) -> dict[str, str]:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    json_path = out_dir / "DATA_WALKTHROUGH.json"
-    md_path = out_dir / "DATA_WALKTHROUGH.md"
-    proof_path = out_dir / "REDACTION_PROOF.json"
+def write_walkthrough(
+    bundle: dict[str, Any],
+    out_dir: Path,
+    *,
+    repo_email_pipeline_root: Path | None = None,
+) -> dict[str, str]:
+    from origenlab_email_pipeline.commercial_procurement_candidate_planner.output_safety import (
+        require_reports_out_dir,
+    )
+
+    root = repo_email_pipeline_root
+    if root is None:
+        # apps/email-pipeline/src/origenlab_email_pipeline/.../walkthrough.py
+        root = Path(__file__).resolve().parents[3]
+    safe = require_reports_out_dir(out_dir, repo_email_pipeline_root=root)
+    safe.mkdir(parents=True, exist_ok=True)
+    json_path = safe / "DATA_WALKTHROUGH.json"
+    md_path = safe / "DATA_WALKTHROUGH.md"
+    proof_path = safe / "REDACTION_PROOF.json"
     json_path.write_text(
         json.dumps(bundle, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
         encoding="utf-8",
