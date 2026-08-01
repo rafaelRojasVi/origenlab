@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from origenlab_email_pipeline.commercial_procurement_live_relevance.artifact_open import (
+    classify_artifact_row_open,
+    pick_best_open_row,
+)
 from origenlab_email_pipeline.commercial_procurement_live_relevance.constants import (
     ACTIVE_STATUS_CLASSES,
     CANDIDATE_OUTCOME_STATES,
@@ -21,5 +25,7 @@ __all__ = [
     "RELEVANCE_CLASSES",
     "RELEVANCE_CLASSIFIER_VERSION",
     "build_pr5_walkthrough_bundle",
+    "classify_artifact_row_open",
+    "pick_best_open_row",
     "select_case_ids",
 ]

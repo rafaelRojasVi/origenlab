@@ -10,10 +10,9 @@ CONTACT_RESOLVER_VERSION: Final = "procurement_contact_resolution_v1"
 PROPOSED_SCHEMA_VERSION: Final = "commercial_procurement_candidate_v1_design"
 AS_OF_TIMEZONE: Final = "America/Santiago"
 
-# Positive-evidence active / lifecycle classes (design vocabulary).
+# Lifecycle status (urgency is a separate closing_soon_bucket dimension).
 ACTIVE_STATUS_CLASSES: Final = (
     "active_open",
-    "active_closing_soon",
     "future_scheduled",
     "closed",
     "awarded",
@@ -23,12 +22,13 @@ ACTIVE_STATUS_CLASSES: Final = (
     "status_unknown",
 )
 
-# Analytical closing-soon buckets (not outreach gates).
+# Analytical closing-soon buckets (not lifecycle classes; not outreach gates).
 CLOSING_SOON_BUCKETS: Final = (
     "lt_24h",
     "d1_to_d3",
     "d4_to_d7",
     "gt_7d",
+    "not_applicable",
 )
 
 RELEVANCE_CLASSES: Final = (
@@ -74,9 +74,26 @@ CONTACT_RESOLUTION_STATUSES: Final = (
 
 CANDIDATE_OUTCOME_STATES: Final = (
     "relevant_tender",
+    "account_resolution_required",
     "contact_research_candidate",
     "outreach_review_candidate",
     "not_eligible",
+)
+
+CANDIDATE_SOURCE_KINDS: Final = (
+    "pr4",
+    "live_snapshot",
+    "both",
+)
+
+COALESCENCE_STATUSES: Final = (
+    "exact_agreement",
+    "live_source_newer",
+    "pr4_only",
+    "live_only",
+    "status_conflict",
+    "date_conflict",
+    "buyer_identity_conflict",
 )
 
 # Reuse ChileCompra codes already shared by PR4 / equipment-first API client.

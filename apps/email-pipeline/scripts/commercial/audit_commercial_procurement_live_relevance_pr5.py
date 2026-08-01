@@ -2,12 +2,14 @@
 # -----------------------------------------------------------------------------
 # SAFETY: production SQLite opened mode=ro + query_only only when --sqlite-path set.
 # Never --apply. Never prints ChileCompra API ticket values.
+# Never makes authenticated ChileCompra API requests.
 # -----------------------------------------------------------------------------
-"""Emit PR5A live-relevance design audit artifacts (read-only)."""
+"""Emit corrected PR5A live-relevance design audit artifacts (read-only)."""
 
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import sqlite3
@@ -24,18 +26,30 @@ from origenlab_email_pipeline.chilecompra_api import TICKET_ENV_VAR  # noqa: E40
 from origenlab_email_pipeline.commercial_identity.builder import (  # noqa: E402
     require_explicit_sqlite_path,
 )
+from origenlab_email_pipeline.commercial_procurement_live_relevance.artifact_open import (  # noqa: E402
+    inspect_artifact_provenance,
+    pick_best_open_row,
+    summarize_open_classes,
+)
 from origenlab_email_pipeline.commercial_procurement_live_relevance.paths import (  # noqa: E402
     existing_paths_document,
+)
+from origenlab_email_pipeline.commercial_procurement_live_relevance.production_cases import (  # noqa: E402
+    select_production_cases,
 )
 from origenlab_email_pipeline.commercial_procurement_live_relevance.schema_design import (  # noqa: E402
     proposed_schema_document,
 )
 from origenlab_email_pipeline.commercial_procurement_live_relevance.taxonomy import (  # noqa: E402
     taxonomy_mapping_document,
+    validate_taxonomy_mapping_completeness,
 )
 from origenlab_email_pipeline.commercial_procurement_live_relevance.walkthrough import (  # noqa: E402
     build_pr5_walkthrough_bundle,
     render_walkthrough_markdown,
+)
+from origenlab_email_pipeline.commercial_procurement_live_relevance.constants import (  # noqa: E402
+    CONTACT_RESOLUTION_STATUSES,
 )
 
 SANTIAGO = ZoneInfo("America/Santiago")
@@ -64,17 +78,63 @@ def _open_ro(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def _funnel_from_sqlite(conn: sqlite3.Connection, as_of_date: str) -> dict:
+def _acquisition_lanes_document() -> dict:
+    return {
+        "authenticated_requests_in_pr5a": False,
+        "rate_limits": "not found in official documentation (do not invent)",
+        "lanes": {
+            "legacy_ticket_mercado_publico_api": {
+                "base": "https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json",
+                "auth": "ticket query parameter (CHILECOMPRA_API_TICKET)",
+                "queries": [
+                    "codigo",
+                    "fecha (ddMMyyyy)",
+                    "estado (e.g. activas)",
+                    "codigo+detail for line items",
+                ],
+                "status_codes_documented": {
+                    "5": "Publicada (active published)",
+                    "6/7/8/18/19": "inactive family used in repo clients",
+                },
+                "role": "Active discovery + code detail",
+            },
+            "official_ocds_api": {
+                "notes": (
+                    "Official ChileCompra OCDS endpoints provide public tender "
+                    "documents suitable for reconciliation snapshots. Public docs "
+                    "describe monthly range queries and a 1,000-record maximum per "
+                    "request; no-registration public access is advertised for OCDS."
+                ),
+                "role": "Reconciliation and durable source snapshots",
+                "pagination": "Required for ranges exceeding 1,000 records",
+                "authenticated_in_pr5a": False,
+            },
+            "bulk_official_downloads": {
+                "example": "Licitacion_Publicada-style semicolon CSV exports",
+                "grain": "Often line-level rows grouped by tender code",
+                "role": "Historical backfill / reproducible corpus for PR4 rebuild",
+                "update_cadence": "Treat as batch; not a substitute for live open discovery",
+            },
+        },
+        "recommended_composition": {
+            "primary_discovery": "ticket API (estado=activas + code detail)",
+            "reconciliation": "OCDS snapshots",
+            "historical_backfill": "bulk official downloads / file ingest",
+            "do_not": "scrape Mercado Público HTML when official API/OCDS/files suffice",
+        },
+    }
+
+
+def _funnel(conn: sqlite3.Connection, as_of_date: str, open_counts: dict[str, int]) -> dict:
     def q1(sql: str, args: tuple = ()) -> int:
         return int(conn.execute(sql, args).fetchone()[0])
 
-    contexts = dict(
-        conn.execute(
-            "SELECT procurement_context, COUNT(*) FROM commercial_procurement_signal GROUP BY 1"
-        )
+    chilecompra_raw = q1(
+        "SELECT COUNT(*) FROM external_leads_raw WHERE source_name = 'chilecompra'"
     )
+    # Distinct tender candidates from PR4 verified keys is the stable grain we have
     verified = q1("SELECT COUNT(*) FROM commercial_procurement_signal")
-    active_positive = q1(
+    active_pr4 = q1(
         """
         SELECT COUNT(*) FROM commercial_procurement_signal
         WHERE (LOWER(COALESCE(status_name,'')) = 'publicada' OR status_code = '5')
@@ -83,10 +143,17 @@ def _funnel_from_sqlite(conn: sqlite3.Connection, as_of_date: str) -> dict:
         """,
         (as_of_date,),
     )
-    linked = q1(
+    linked_tenders = q1(
         "SELECT COUNT(*) FROM commercial_procurement_account_resolution WHERE resolution_status='linked'"
     )
-    linked_with_contact = q1(
+    linked_accounts = q1(
+        """
+        SELECT COUNT(DISTINCT account_id)
+        FROM commercial_procurement_account_resolution
+        WHERE resolution_status='linked' AND account_id IS NOT NULL
+        """
+    )
+    linked_tenders_with_any_contact = q1(
         """
         SELECT COUNT(*) FROM commercial_procurement_account_resolution r
         WHERE r.resolution_status='linked'
@@ -95,32 +162,77 @@ def _funnel_from_sqlite(conn: sqlite3.Connection, as_of_date: str) -> dict:
           )
         """
     )
+    linked_accounts_with_any_contact = q1(
+        """
+        SELECT COUNT(DISTINCT r.account_id)
+        FROM commercial_procurement_account_resolution r
+        WHERE r.resolution_status='linked'
+          AND EXISTS (
+            SELECT 1 FROM commercial_identity_contact c WHERE c.account_id=r.account_id
+          )
+        """
+    )
+
+    # Role-suitable / verified email — only count when role+email present; else null
+    ccols = [r[1] for r in conn.execute("PRAGMA table_info(commercial_identity_contact)")]
+    email_col = (
+        "normalized_email"
+        if "normalized_email" in ccols
+        else ("email" if "email" in ccols else None)
+    )
+    role_col = "role" if "role" in ccols else None
+    contacts_with_email = None
+    contacts_with_role = None
+    if email_col:
+        contacts_with_email = q1(
+            f"""
+            SELECT COUNT(*) FROM commercial_identity_contact
+            WHERE {email_col} IS NOT NULL AND TRIM({email_col}) != ''
+            """
+        )
+    if role_col:
+        contacts_with_role = q1(
+            f"""
+            SELECT COUNT(*) FROM commercial_identity_contact
+            WHERE {role_col} IS NOT NULL AND TRIM({role_col}) != ''
+            """
+        )
+
     return {
-        "source_tender_observations_external_leads_raw": q1(
-            "SELECT COUNT(*) FROM external_leads_raw"
+        "chilecompra_raw_observation_rows": chilecompra_raw,
+        "distinct_raw_canonical_tender_candidates": None,
+        "distinct_raw_canonical_tender_candidates_note": (
+            "not_evaluated in PR5A without a shared raw→canonical tender extractor "
+            "over external_leads_raw; PR4 verified tenders used as verified grain"
         ),
-        "verified_tenders_pr4_signals": verified,
-        "pr4_context_distribution": contexts,
-        "currently_active_tenders_pr4_positive_evidence": active_positive,
-        "active_tenders_with_any_equipment_hit": 0 if active_positive == 0 else None,
-        "active_tenders_passing_negative_exclusions": 0 if active_positive == 0 else None,
-        "active_strongly_relevant_tenders": 0 if active_positive == 0 else None,
-        "active_relevant_linked_to_pr2": 0 if active_positive == 0 else None,
-        "linked_active_with_pr2_contacts": 0 if active_positive == 0 else None,
-        "with_role_suitable_verified_contacts": 0 if active_positive == 0 else None,
-        "requiring_contact_research": 0 if active_positive == 0 else None,
-        "ambiguous_buyer_account": q1(
-            "SELECT COUNT(*) FROM commercial_procurement_account_resolution WHERE resolution_status='ambiguous'"
+        "pr4_verified_tenders": verified,
+        "pr4_currently_active_positive_evidence": active_pr4,
+        "artifact_declared_open_rows_any_validity_open": open_counts.get(
+            "_validity_open_raw", None
         ),
-        "blocked_by_suppression_or_outreach": 0 if active_positive == 0 else None,
-        "proposed_outreach_review_candidates": 0,
-        "historical_linked_signals": linked,
-        "historical_linked_signals_with_pr2_contact": linked_with_contact,
-        "note": (
-            "Active* funnel stages are zero when PR4 SQLite corpus has no positive "
-            "active evidence as of America/Santiago. Live open rows may still exist "
-            "in equipment-first API artifacts — reported separately."
+        "strict_recent_artifact_declared_open": open_counts.get(
+            "recent_artifact_declared_open", 0
         ),
+        "stale_artifact_declared_open": open_counts.get("stale_artifact_declared_open", 0),
+        "artifact_declared_open_unverified_provenance": open_counts.get(
+            "artifact_declared_open_unverified_provenance", 0
+        ),
+        "live_verified_open_tenders": 0,
+        "distinct_linked_tender_rows": linked_tenders,
+        "distinct_linked_accounts": linked_accounts,
+        "linked_tenders_whose_account_has_any_pr2_contact": linked_tenders_with_any_contact,
+        "distinct_linked_accounts_with_any_pr2_contact": linked_accounts_with_any_contact,
+        "contacts_with_known_relevant_roles": contacts_with_role,
+        "contacts_with_known_relevant_roles_note": (
+            "counts non-empty role field only; role suitability taxonomy not evaluated"
+        ),
+        "contacts_with_verified_email": contacts_with_email,
+        "suppression_passing_contacts": None,
+        "suppression_passing_contacts_note": "not_evaluated (would require full suppression join policy)",
+        "outreach_review_candidates": 0 if active_pr4 == 0 else None,
+        "open_class_counts": {
+            k: v for k, v in open_counts.items() if not k.startswith("_")
+        },
     }
 
 
@@ -128,13 +240,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sqlite-path", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
+    parser.add_argument("--equipment-queue-csv", type=Path, default=None)
     parser.add_argument(
-        "--equipment-queue-csv",
+        "--fixture-seeds-json",
         type=Path,
         default=None,
-        help="Optional equipment-first operator queue CSV for Case A",
+        help="Fixture/test mode only — never describe as production-derived",
     )
-    parser.add_argument("--seeds-json", type=Path, default=None)
     args = parser.parse_args(argv)
 
     db = require_explicit_sqlite_path(args.sqlite_path)
@@ -144,15 +256,60 @@ def main(argv: list[str] | None = None) -> int:
     now_utc = datetime.now(timezone.utc)
     now_scl = now_utc.astimezone(SANTIAGO)
     as_of_date = now_scl.date().isoformat()
-
     ticket_ok = _ticket_configured()
+
+    manifest_path = _ROOT / "reports/out/active/current/manifest.json"
+    manifest = (
+        json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest_path.is_file()
+        else None
+    )
+
+    queue_csv = args.equipment_queue_csv
+    if queue_csv is None:
+        current = _ROOT / "reports/out/active/current"
+        # Prefer chilecompra_api dated queues, then published non-api basename
+        api_cands = sorted(
+            current.glob("equipment_first_operator_queue_chilecompra_api_*.csv")
+        )
+        pub_cands = sorted(current.glob("equipment_first_operator_queue_20*.csv"))
+        queue_csv = (api_cands or pub_cands or [None])[-1]
+
+    open_counts: dict[str, int] = {}
+    validity_open_raw = 0
+    if queue_csv and queue_csv.is_file():
+        with queue_csv.open(newline="", encoding="utf-8", errors="replace") as fh:
+            rows = list(csv.DictReader(fh))
+        validity_open_raw = sum(
+            1 for r in rows if str(r.get("validity_status") or "").lower() == "open"
+        )
+        provenance = inspect_artifact_provenance(
+            queue_csv, as_of=now_scl, manifest=manifest
+        )
+        _, _, all_oc = pick_best_open_row(rows, as_of=now_scl, provenance=provenance)
+        open_counts = summarize_open_classes(all_oc)
+        open_counts["_validity_open_raw"] = validity_open_raw
+        (out / "ARTIFACT_PROVENANCE.json").write_text(
+            json.dumps(provenance.to_dict(), indent=2, sort_keys=True) + "\n"
+        )
+
+    fixture_mode = args.fixture_seeds_json is not None
+    seeds: dict = {}
+    forbidden: set[str] = set()
+    selection_meta: dict = {}
+
     conn = _open_ro(db)
     conn.execute("BEGIN")
-    funnel = _funnel_from_sqlite(conn, as_of_date)
     meta = {
         str(r["meta_key"]): str(r["meta_value"])
         for r in conn.execute(
             "SELECT meta_key, meta_value FROM commercial_procurement_build_meta"
+        )
+    }
+    pr2 = {
+        str(r["meta_key"]): str(r["meta_value"])
+        for r in conn.execute(
+            "SELECT meta_key, meta_value FROM commercial_identity_build_meta"
         )
     }
     pr4_counts = {
@@ -166,36 +323,40 @@ def main(argv: list[str] | None = None) -> int:
             "commercial_procurement_build_meta",
         )
     }
+    funnel = _funnel(conn, as_of_date, open_counts)
+
+    if fixture_mode:
+        seeds = json.loads(args.fixture_seeds_json.read_text(encoding="utf-8"))
+        selection_meta = {
+            "production_derived": False,
+            "fixture_seeds_used": True,
+            "fixture_path": str(args.fixture_seeds_json),
+        }
+    else:
+        selected = select_production_cases(
+            conn,
+            pr4_semantic_digest=str(meta.get("semantic_plan_digest") or ""),
+            pr2_identity_fingerprint=str(pr2.get("identity_fingerprint") or ""),
+        )
+        seeds = {
+            "case_b": selected.case_b,
+            "case_c": selected.case_c,
+            "case_d": selected.case_d,
+            "case_e": selected.case_e,
+        }
+        forbidden = selected.forbidden_values
+        selection_meta = selected.selection_meta
+
     conn.execute("COMMIT")
     conn.close()
 
-    seeds: dict = {}
-    if args.seeds_json and args.seeds_json.is_file():
-        seeds = json.loads(args.seeds_json.read_text())
-
-    queue_csv = args.equipment_queue_csv
-    if queue_csv is None:
-        # newest chilecompra api operator queue under active/current
-        current = _ROOT / "reports/out/active/current"
-        cands = sorted(current.glob("equipment_first_operator_queue_chilecompra_api_*.csv"))
-        queue_csv = cands[-1] if cands else None
-
-    open_in_artifact = 0
-    if queue_csv and queue_csv.is_file():
-        import csv
-
-        with queue_csv.open(newline="", encoding="utf-8", errors="replace") as fh:
-            rows = list(csv.DictReader(fh))
-        open_in_artifact = sum(1 for r in rows if r.get("validity_status") == "open")
-
-    funnel["live_open_rows_in_equipment_first_artifact"] = open_in_artifact
-    funnel["equipment_first_artifact"] = str(queue_csv) if queue_csv else None
-    funnel["genuine_active_tenders_exist_anywhere_in_repo_sources"] = (
-        funnel["currently_active_tenders_pr4_positive_evidence"] > 0 or open_in_artifact > 0
-    )
-
     bundle = build_pr5_walkthrough_bundle(
-        seeds=seeds, open_queue_csv=queue_csv, as_of=now_scl
+        seeds=seeds,
+        open_queue_csv=queue_csv,
+        as_of=now_scl,
+        manifest=manifest,
+        forbidden_values=forbidden,
+        fixture_mode=fixture_mode,
     )
     md = render_walkthrough_markdown(bundle)
 
@@ -205,11 +366,19 @@ def main(argv: list[str] | None = None) -> int:
     (out / "EXISTING_PATHS.json").write_text(
         json.dumps(existing_paths_document(), indent=2, sort_keys=True) + "\n"
     )
+    tax = taxonomy_mapping_document()
+    tax["completeness"] = validate_taxonomy_mapping_completeness()
     (out / "TAXONOMY_MAPPING.json").write_text(
-        json.dumps(taxonomy_mapping_document(), indent=2, sort_keys=True) + "\n"
+        json.dumps(tax, indent=2, sort_keys=True) + "\n"
     )
     (out / "PROPOSED_SCHEMA.json").write_text(
         json.dumps(proposed_schema_document(), indent=2, sort_keys=True) + "\n"
+    )
+    (out / "ACQUISITION_LANES.json").write_text(
+        json.dumps(_acquisition_lanes_document(), indent=2, sort_keys=True) + "\n"
+    )
+    (out / "CASE_SELECTION_META.json").write_text(
+        json.dumps(selection_meta, indent=2, sort_keys=True, default=str) + "\n"
     )
     (out / "DATA_WALKTHROUGH.json").write_text(
         json.dumps(
@@ -237,57 +406,64 @@ def main(argv: list[str] | None = None) -> int:
             "email participants / business-mart contacts",
             "no external lookup in PR5A–PR5C",
         ],
-        "statuses": list(
-            __import__(
-                "origenlab_email_pipeline.commercial_procurement_live_relevance.constants",
-                fromlist=["CONTACT_RESOLUTION_STATUSES"],
-            ).CONTACT_RESOLUTION_STATUSES
-        ),
-        "historical_linked_with_pr2_contact": funnel[
-            "historical_linked_signals_with_pr2_contact"
-        ],
-        "live_outreach_review_candidates": 0,
+        "statuses": list(CONTACT_RESOLUTION_STATUSES),
+        "table_grain": {
+            "commercial_procurement_contact_resolution": "exactly one summary row per candidate",
+            "commercial_procurement_contact_candidate": "zero or more considered contacts",
+        },
         "chilecompra_api_ticket_configured": ticket_ok,
+        "account_resolution_required_before_contact_search": True,
     }
     (out / "CONTACT_RESOLUTION_AUDIT.json").write_text(
         json.dumps(contact_audit, indent=2, sort_keys=True) + "\n"
     )
 
-    impl = """# PR5 implementation sequence
+    impl = """# PR5 implementation sequence (corrected)
 
-1. **PR5A** (this PR) — design, audit, redacted walkthrough, no persistence
-2. **PR5B** — deterministic planner + fixture validation (active/relevance/contact)
-3. **PR5C** — additive SQLite persistence + gated production apply
-4. **PR5D** — official live acquisition adapter + scheduling (API primary, file fallback)
-5. **PR6** — targeted external contact enrichment + human review
-6. **PR7** — API/dashboard read exposure
+1. **PR5A** — corrected design/audit (this branch)
+2. **PR5B** — acquisition source contract, ticket/OCDS parsers and captured fixtures
+3. **PR5C** — deterministic candidate planner
+4. **PR5D** — additive persistence and gated apply
+5. **PR5E** — production acquisition scheduling and refresh operations
+6. **PR6** — targeted external contact enrichment
+7. **PR7** — API/dashboard exposure
 
-Do not start PR5B in this branch.
+Do not implement PR5B in this branch.
 """
     (out / "IMPLEMENTATION_SEQUENCE.md").write_text(impl)
 
     summary = {
-        "checkpoint": "PR5A_DESIGN_AUDIT",
+        "checkpoint": "PR5A_DESIGN_AUDIT_CORRECTED",
         "generated_at_utc": now_utc.isoformat(),
         "as_of_america_santiago": now_scl.isoformat(),
         "pr4_counts": pr4_counts,
         "pr4_semantic_plan_digest": meta.get("semantic_plan_digest"),
-        "funnel_active_pr4": funnel["currently_active_tenders_pr4_positive_evidence"],
-        "funnel_live_open_equipment_artifact": open_in_artifact,
-        "genuine_active_tenders_exist": funnel[
-            "genuine_active_tenders_exist_anywhere_in_repo_sources"
-        ],
-        "proposed_outreach_review_candidates": 0,
+        "pr4_active_tenders": funnel["pr4_currently_active_positive_evidence"],
+        "recent_artifact_declared_open": funnel["strict_recent_artifact_declared_open"],
+        "live_verified_open": 0,
+        "current_status_independently_revalidated": False,
+        "case_a_open_classification": bundle.summary.get("case_a_open_classification"),
+        "outreach_review_candidates": funnel["outreach_review_candidates"],
         "chilecompra_api_ticket_configured": ticket_ok,
-        "canonical_acquisition_lane": "Mercado Público official API (estado/fecha/codigo)",
-        "fallback_acquisition_lane": "Official Licitacion_Publicada / file bulk ingest",
+        "canonical_acquisition_lane": "ticket Mercado Público API for active discovery + code detail",
+        "reconciliation_lane": "official OCDS snapshots",
+        "fallback_acquisition_lane": "bulk official downloads / file ingest",
+        "fixture_mode": fixture_mode,
         "no_production_mutation": True,
         "no_apply": True,
+        "no_authenticated_api_request": True,
         "no_pr5b": True,
+        "terminology_note": (
+            "Do not call artifact-only rows live/genuine active; use open_classification."
+        ),
     }
     (out / "SUMMARY.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     print(f"wrote_out_dir={out}")
-    print(f"genuine_active={summary['genuine_active_tenders_exist']}")
+    print("live_verified_open=0")
+    print(
+        f"recent_artifact_declared_open={summary['recent_artifact_declared_open']}"
+    )
+    print(f"case_a_class={summary['case_a_open_classification']}")
     print(f"ticket_configured={ticket_ok}")
     return 0
 

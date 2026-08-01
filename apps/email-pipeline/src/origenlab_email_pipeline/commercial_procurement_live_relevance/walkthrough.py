@@ -15,6 +15,12 @@ from origenlab_email_pipeline.commercial_procurement.walkthrough_redaction impor
     assert_no_pii_leaks,
     redact_mapping,
 )
+from origenlab_email_pipeline.commercial_procurement_live_relevance.artifact_open import (
+    classify_artifact_row_open,
+    inspect_artifact_provenance,
+    pick_best_open_row,
+    summarize_open_classes,
+)
 from origenlab_email_pipeline.commercial_procurement_live_relevance.constants import (
     ACTIVE_CLASSIFIER_VERSION,
     AS_OF_TIMEZONE,
@@ -25,26 +31,26 @@ from origenlab_email_pipeline.commercial_procurement_live_relevance.constants im
 SANTIAGO = ZoneInfo(AS_OF_TIMEZONE)
 
 SELECTION_RULES: dict[str, str] = {
-    "case_a_active_relevant": (
-        "Prefer a repository artifact row with positive active evidence "
-        "(validity_status=open OR status Publicada/code 5 AND close_at > America/Santiago now). "
-        "If none in PR4 SQLite, use equipment-first ChileCompra API operator queue. "
-        "Never invent an open tender."
+    "case_a_artifact_declared_open": (
+        "Select recent_artifact_declared_open rows only after strict status, "
+        "America/Santiago close_at, provenance, and freshness checks. "
+        "Never label artifact-only evidence as live_verified_open without an "
+        "authenticated API revalidation at the audit instant."
     ),
     "case_b_historical_equipment": (
-        "PR4 historical_tender with equipment keyword or linked multi-line signal; "
-        "must remain ineligible for current operator queue."
+        "PR4 historical_tender with equipment keyword; must remain not_eligible."
     ),
     "case_c_excluded": (
-        "Real source text hitting consumable/service/rental/non-lab exclusion keywords."
+        "Real source text hitting consumable/service/rental exclusion keywords; "
+        "emit relevance evidence + not_eligible_reason, not a conflict."
     ),
     "case_d_contact_research": (
-        "Relevant-shaped historical or active tender with clear buyer / PR2 link but "
-        "no verified suitable contact (contact_n=0 or no role-suitable email)."
+        "Historical linked account with no suitable contact; final outcome "
+        "not_eligible; hypothetical_contact_path may explain contact research."
     ),
     "case_e_existing_contact": (
-        "PR4 linked tender whose PR2 account has at least one contact row; "
-        "evaluate suppression/outreach conceptually without mutating state."
+        "Historical linked account with PR2 contacts; final outcome not_eligible; "
+        "hypothetical_contact_path may explain outreach-review."
     ),
 }
 
@@ -58,15 +64,18 @@ class Pr5WalkthroughBundle:
     case_d: dict[str, Any]
     case_e: dict[str, Any]
     forbidden_domains: frozenset[str]
+    forbidden_values: frozenset[str]
 
 
 def select_case_ids(seeds: dict[str, Any]) -> dict[str, str | None]:
-    """Deterministic IDs from a seeds document (fixture or audit output)."""
+    """Deterministic IDs from a seeds/fixture document."""
     a = seeds.get("case_a_open_row") or seeds.get("case_a")
-    b = seeds.get("case_b_equipment_keyword_overlay") or seeds.get("case_b_linked_historical")
-    c = seeds.get("case_c_exclusion_keyword_hit")
-    d = seeds.get("case_d_linked_contact_n")
-    e = seeds.get("case_e_linked_with_contact")
+    b = seeds.get("case_b_equipment_keyword_overlay") or seeds.get(
+        "case_b_linked_historical"
+    ) or seeds.get("case_b")
+    c = seeds.get("case_c_exclusion_keyword_hit") or seeds.get("case_c")
+    d = seeds.get("case_d_linked_contact_n") or seeds.get("case_d")
+    e = seeds.get("case_e_linked_with_contact") or seeds.get("case_e")
 
     def _id(obj: Any, *keys: str) -> str | None:
         if not isinstance(obj, dict):
@@ -108,17 +117,18 @@ def _planned_row(table: str, row: dict[str, Any], why: str) -> dict[str, Any]:
 def build_case_a_from_open_queue_row(
     row: dict[str, Any],
     *,
-    artifact_name: str,
+    artifact_path: Path,
     as_of: datetime,
+    classification: Any,
+    provenance: Any,
 ) -> dict[str, Any]:
-    """Case A from a genuinely open equipment-first queue row (already may be raw)."""
+    """Case A from a strictly classified artifact-declared-open row."""
     from origenlab_email_pipeline.commercial_procurement.walkthrough_redaction import (
         redact_org,
         redact_tender,
         redact_token,
     )
 
-    # Explicit redaction — queue CSV column names are not all covered by redact_mapping.
     redacted = {
         "codigo_licitacion": redact_tender(row.get("codigo_licitacion")),
         "buyer": redact_org(row.get("buyer")),
@@ -137,45 +147,40 @@ def build_case_a_from_open_queue_row(
         else None,
     }
     redacted = redact_mapping(redacted)
-    validity = row.get("validity_status")
-    status_name = row.get("chilecompra_status")
-    status_code = row.get("chilecompra_status_code")
-    close_date = row.get("close_date")
+
+    open_class = classification.open_class
+    is_recent_declared = open_class == "recent_artifact_declared_open"
     equipment_category = row.get("equipment_category")
-    is_open = validity == "open" and str(status_code) == "5"
-    active_class = "active_open" if is_open else "status_unknown"
     relevance = (
-        "strong_equipment_class"
-        if equipment_category
-        else "laboratory_context_only"
+        "strong_equipment_class" if equipment_category else "laboratory_context_only"
     )
-    # No PR4 account resolution for API-only rows unless separately linked
-    contact_status = "contact_research_required"
-    outcome = "contact_research_candidate" if is_open and relevance.startswith(
-        ("strong", "compatible", "exact")
-    ) else "not_eligible"
+    outcome = (
+        "account_resolution_required"
+        if is_recent_declared
+        else "not_eligible"
+    )
 
     stages = [
         _stage(
-            "source_artifact",
-            artifact_name,
-            artifact_name,
-            SELECTION_RULES["case_a_active_relevant"],
-            "selected",
+            "open_classification",
+            row.get("validity_status"),
+            open_class,
+            SELECTION_RULES["case_a_artifact_declared_open"],
+            open_class,
         ),
         _stage(
             "status",
-            f"{status_code}/{status_name}",
-            "publicada" if str(status_code) == "5" else status_name,
-            f"{ACTIVE_CLASSIFIER_VERSION}: code 5 + validity_status",
-            active_class,
+            f"{row.get('chilecompra_status_code')}/{row.get('chilecompra_status')}",
+            "publicada" if str(row.get("chilecompra_status_code")) == "5" else None,
+            f"{ACTIVE_CLASSIFIER_VERSION}: code 5 + Publicada + close>as_of",
+            classification.close_at_america_santiago,
         ),
         _stage(
-            "close_date_vs_santiago",
-            close_date,
-            close_date,
-            f"America/Santiago as_of={as_of.isoformat()}",
-            "future_close" if is_open else "not_open",
+            "live_api_revalidation",
+            False,
+            "not_performed",
+            "PR5A does not make authenticated ChileCompra requests",
+            "current_status_not_independently_revalidated",
         ),
         _stage(
             "relevance",
@@ -192,24 +197,24 @@ def build_case_a_from_open_queue_row(
             "equipment_class_only",
         ),
         _stage(
-            "pr4_account_resolution",
-            "not_in_pr4_sqlite_corpus",
-            "unlinked_pending_pr4_refresh",
-            "Live API observation not yet in PR4 file-backed corpus",
-            "account_resolution_deferred",
+            "candidate_source_kind",
+            "live_snapshot_artifact",
+            "live_snapshot",
+            "Absent from PR4 file-backed corpus → live-only coalescence",
+            "live_only",
         ),
         _stage(
-            "contact_search",
-            "skipped_until_account_clear",
-            contact_status,
-            CONTACT_RESOLVER_VERSION,
-            contact_status,
+            "account_resolution",
+            "not_in_pr4",
+            "unresolved",
+            "Contact search blocked until account resolved",
+            "account_resolution_required",
         ),
         _stage(
             "candidate_outcome",
             None,
             outcome,
-            "Active+relevant without verified contact → contact research",
+            "Live-only relevant tender without resolved account",
             outcome,
         ),
     ]
@@ -219,13 +224,19 @@ def build_case_a_from_open_queue_row(
             "commercial_procurement_candidate",
             {
                 "tender_key_redacted": redacted.get("codigo_licitacion"),
-                "active_status_class": active_class,
+                "candidate_source_kind": "live_snapshot",
+                "pr4_procurement_id": None,
+                "coalescence_status": "live_only",
+                "active_status_class": "active_open"
+                if is_recent_declared
+                else "status_unknown",
+                "closing_soon_bucket": "not_applicable",
                 "relevance_class": relevance,
                 "equipment_class": equipment_category,
                 "product_resolution_status": "equipment_class_only",
                 "candidate_outcome_state": outcome,
             },
-            "Live open relevant tender candidate",
+            "Artifact-declared open live-only candidate (not live-verified)",
         ),
         _planned_row(
             "commercial_procurement_line_relevance",
@@ -238,22 +249,29 @@ def build_case_a_from_open_queue_row(
         ),
         _planned_row(
             "commercial_procurement_contact_resolution",
-            {"contact_status": contact_status},
-            "No verified contact yet",
+            {
+                "final_contact_status": "no_contact_found",
+                "next_action": "resolve_account_first",
+                "reason_code": "account_unresolved",
+                "considered_contact_count": 0,
+            },
+            "Contact search not run until account resolution",
         ),
     ]
 
     return {
-        "case_id": "A_active_relevant",
-        "genuine_live_active": bool(is_open),
-        "synthetic_active_overlay": False,
-        "selection_rule": SELECTION_RULES["case_a_active_relevant"],
+        "case_id": "A_artifact_declared_open_relevant",
+        "live_verified_open": False,
+        "open_classification": open_class,
+        "current_status_independently_revalidated": False,
+        "selection_rule": SELECTION_RULES["case_a_artifact_declared_open"],
         "selection_id": redacted.get("codigo_licitacion"),
-        "source_artifact": artifact_name,
+        "source_artifact": artifact_path.name,
+        "artifact_provenance": provenance.to_dict() if provenance else None,
+        "classification": classification.to_dict(),
         "as_of_america_santiago": as_of.isoformat(),
         "redacted_fields": redacted,
         "equipment_category": equipment_category,
-        "validity_status": validity,
         "stages": stages,
         "planned_pr5_rows": planned,
     }
@@ -273,20 +291,20 @@ def build_case_b_historical(seed: dict[str, Any]) -> dict[str, Any]:
             seed.get("equipment_keyword_hit"),
             seed.get("equipment_keyword_hit"),
             f"{RELEVANCE_CLASSIFIER_VERSION}: keyword → equipment_class (not SKU)",
-            "strong_equipment_class_candidate",
+            "strong_equipment_class",
         ),
         _stage(
-            "active_eligibility",
+            "active_status_class",
             seed.get("close_at"),
-            "close_in_past",
-            f"{ACTIVE_CLASSIFIER_VERSION}: close_at < America/Santiago today",
+            "closed",
+            f"{ACTIVE_CLASSIFIER_VERSION}: close_at < America/Santiago as_of",
             "closed",
         ),
         _stage(
-            "operator_queue",
+            "candidate_outcome",
             "would_look_relevant",
-            "ineligible",
-            "Historical tenders must not enter current operator queue",
+            "not_eligible",
+            "Historical tenders must not enter the current operator queue",
             "not_eligible",
         ),
     ]
@@ -295,9 +313,12 @@ def build_case_b_historical(seed: dict[str, Any]) -> dict[str, Any]:
             "commercial_procurement_candidate",
             {
                 "procurement_id": seed.get("procurement_id"),
+                "candidate_source_kind": "pr4",
                 "active_status_class": "closed",
+                "closing_soon_bucket": "not_applicable",
                 "relevance_class": "strong_equipment_class",
                 "candidate_outcome_state": "not_eligible",
+                "not_eligible_reason": "historical_tender",
             },
             "Document historical relevance without queue admission",
         )
@@ -329,10 +350,10 @@ def build_case_c_excluded(seed: dict[str, Any]) -> dict[str, Any]:
             relevance,
         ),
         _stage(
-            "relevance_gate",
+            "candidate_outcome",
             "equipment_hit_possible",
-            "blocked",
-            "Negative class wins over weak lab context",
+            "not_eligible",
+            "Negative relevance class wins; not a conflict",
             "not_eligible",
         ),
     ]
@@ -343,13 +364,26 @@ def build_case_c_excluded(seed: dict[str, Any]) -> dict[str, Any]:
                 "procurement_id": seed.get("procurement_id"),
                 "relevance_class": relevance,
                 "candidate_outcome_state": "not_eligible",
+                "not_eligible_reason": relevance,
             },
             "Excluded by negative relevance rule",
         ),
         _planned_row(
-            "commercial_procurement_candidate_conflict",
-            {"conflict_kind": "negative_relevance", "reason_code": f"exclusion:{keyword}"},
-            "Explain exclusion",
+            "commercial_procurement_candidate_evidence",
+            {
+                "subject_kind": "candidate",
+                "reason_code": f"negative_relevance:{keyword}",
+                "evidence_type": "exclusion_keyword",
+            },
+            "Routine exclusion emits evidence, not conflict",
+        ),
+        _planned_row(
+            "commercial_procurement_line_relevance",
+            {
+                "relevance_class": relevance,
+                "negative_rules_json": [f"exclusion:{keyword}"],
+            },
+            "Line-level negative rule retention",
         ),
     ]
     return {
@@ -363,67 +397,59 @@ def build_case_c_excluded(seed: dict[str, Any]) -> dict[str, Any]:
 
 def build_case_d_contact_research(seed: dict[str, Any]) -> dict[str, Any]:
     contact_n = int(seed.get("contact_n") or 0)
-    status = "contact_research_required" if contact_n == 0 else "existing_contact_needs_role_review"
+    hypo_status = (
+        "contact_research_required"
+        if contact_n == 0
+        else "existing_contact_needs_role_review"
+    )
     stages = [
         _stage(
-            "account_resolution",
-            seed.get("resolution_status"),
+            "active_status_class",
+            seed.get("close_at"),
+            "closed",
+            "Historical PR4 tender",
+            "closed",
+        ),
+        _stage(
+            "candidate_outcome",
             seed.get("link_route"),
-            "PR4 linked account",
-            "linked",
-        ),
-        _stage(
-            "pr2_contacts",
-            contact_n,
-            contact_n,
-            "COUNT commercial_identity_contact for account",
-            "none" if contact_n == 0 else "present_needs_review",
-        ),
-        _stage(
-            "lead_master_contact",
-            "checked_conceptually",
-            "not_promoted_automatically",
-            "Search order step 2 — no invention",
-            "no_verified_suitable_contact",
-        ),
-        _stage(
-            "outcome",
-            None,
-            "contact_research_candidate",
-            "Relevant buyer clear; contact missing/unverified",
-            "contact_research_candidate",
+            "not_eligible",
+            "Historical gate — final outcome is not_eligible",
+            "not_eligible",
         ),
     ]
-    # Historical note
-    if (seed.get("procurement_context") or "historical_tender") == "historical_tender":
-        stages.append(
-            _stage(
-                "active_gate",
-                seed.get("close_at"),
-                "historical",
-                "Case demonstrates contact funnel on real linked account; "
-                "not admitted to live queue while historical",
-                "not_live_eligible",
-            )
-        )
     planned = [
+        _planned_row(
+            "commercial_procurement_candidate",
+            {
+                "procurement_id": seed.get("procurement_id"),
+                "candidate_source_kind": "pr4",
+                "candidate_outcome_state": "not_eligible",
+                "not_eligible_reason": "historical_tender",
+            },
+            "Final state remains not_eligible",
+        ),
         _planned_row(
             "commercial_procurement_contact_resolution",
             {
-                "account_id_redacted": seed.get("account_id_redacted"),
-                "contact_status": status,
+                "final_contact_status": hypo_status,
+                "considered_contact_count": contact_n,
+                "next_action": "research_contact_if_active",
             },
-            "Contact research required",
-        )
+            "Hypothetical path only — not an active outcome",
+        ),
     ]
     return {
-        "case_id": "D_contact_research",
+        "case_id": "D_contact_research_historical",
         "selection_rule": SELECTION_RULES["case_d_contact_research"],
         "seed_redacted": seed,
         "stages": stages,
         "planned_pr5_rows": planned,
-        "live_active": False,
-        "note": "Real PR4 linked account path; active admission requires live open tender.",
+        "hypothetical_contact_path": {
+            "if_active_and_relevant": "contact_research_candidate",
+            "contact_status": hypo_status,
+            "note": "Would require active_open + relevance before contact research queue",
+        },
     }
 
 
@@ -432,87 +458,65 @@ def build_case_e_existing_contact(seed: dict[str, Any]) -> dict[str, Any]:
     suppressed = int(seed.get("suppressed_email_count") or 0)
     has_email = any(c.get("has_email") for c in contacts)
     if suppressed and suppressed >= sum(1 for c in contacts if c.get("has_email")):
-        contact_status = "contact_blocked"
-        outcome = "relevant_tender"
+        hypo_status = "contact_blocked"
+        hypo_outcome = "relevant_tender"
     elif has_email:
-        contact_status = "existing_contact_needs_role_review"
-        outcome = "outreach_review_candidate"
+        hypo_status = "existing_contact_needs_role_review"
+        hypo_outcome = "outreach_review_candidate"
     else:
-        contact_status = "role_known_email_missing"
-        outcome = "contact_research_candidate"
+        hypo_status = "role_known_email_missing"
+        hypo_outcome = "contact_research_candidate"
     stages = [
         _stage(
-            "account_resolution",
-            seed.get("link_route"),
-            "linked",
-            "PR4 link_route",
-            "linked",
+            "active_status_class",
+            seed.get("close_at"),
+            "closed",
+            "Historical PR4 tender",
+            "closed",
         ),
         _stage(
-            "pr2_contacts",
+            "candidate_outcome",
             seed.get("contact_n"),
-            f"n={seed.get('contact_n')}",
-            "PR2 contact rows exist",
-            "existing_contact",
-        ),
-        _stage(
-            "role_suitability",
-            "unknown_until_review",
-            "needs_role_review",
-            "Do not treat generic mailbox as named person",
-            contact_status,
-        ),
-        _stage(
-            "suppression_outreach",
-            suppressed,
-            suppressed,
-            "Read-only check against suppression tables",
-            "blocked" if contact_status == "contact_blocked" else "not_auto_send",
-        ),
-        _stage(
-            "outcome",
-            None,
-            outcome,
-            "Human-reviewed outreach-review only; never auto-send",
-            outcome,
+            "not_eligible",
+            "Historical gate — final outcome is not_eligible",
+            "not_eligible",
         ),
     ]
-    if (seed.get("procurement_context") or "historical_tender") == "historical_tender":
-        stages.append(
-            _stage(
-                "active_gate",
-                seed.get("close_at"),
-                "historical",
-                "Existing contact path demonstrated; live queue requires active_open",
-                "not_live_eligible",
-            )
-        )
     planned = [
-        _planned_row(
-            "commercial_procurement_contact_resolution",
-            {
-                "contact_status": contact_status,
-                "contacts_redacted": contacts,
-            },
-            "Existing contact with human review required",
-        ),
         _planned_row(
             "commercial_procurement_candidate",
             {
-                "candidate_outcome_state": outcome
-                if seed.get("procurement_context") != "historical_tender"
-                else "not_eligible",
+                "procurement_id": seed.get("procurement_id"),
+                "candidate_outcome_state": "not_eligible",
+                "not_eligible_reason": "historical_tender",
             },
-            "Outreach-review only when also active+relevant",
+            "Final state remains not_eligible",
+        ),
+        _planned_row(
+            "commercial_procurement_contact_resolution",
+            {
+                "final_contact_status": hypo_status,
+                "considered_contact_count": len(contacts),
+            },
+            "Summary contact decision (hypothetical if active)",
+        ),
+        _planned_row(
+            "commercial_procurement_contact_candidate",
+            {"contacts_redacted": contacts, "suppressed_email_count": suppressed},
+            "Zero-or-more considered contacts",
         ),
     ]
     return {
-        "case_id": "E_existing_contact",
+        "case_id": "E_existing_contact_historical",
         "selection_rule": SELECTION_RULES["case_e_existing_contact"],
         "seed_redacted": seed,
         "stages": stages,
         "planned_pr5_rows": planned,
-        "live_active": False,
+        "hypothetical_contact_path": {
+            "if_active_and_relevant": hypo_outcome,
+            "contact_status": hypo_status,
+            "note": "Human-reviewed outreach-review only; never auto-send",
+        },
     }
 
 
@@ -521,79 +525,112 @@ def load_open_queue_rows(csv_path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(fh))
 
 
-def pick_best_open_row(rows: list[dict[str, str]]) -> dict[str, str] | None:
-    open_rows = [r for r in rows if r.get("validity_status") == "open"]
-    if not open_rows:
-        return None
-    prefer = {
-        "centrifuge",
-        "balance",
-        "sonicator",
-        "incubator",
-        "homogenizer",
-        "osmometer",
-        "lab_ultrasonic_processor",
-    }
-
-    def key(r: dict[str, str]) -> tuple[int, float]:
-        cat = (r.get("equipment_category") or "").lower()
-        try:
-            score = -float(r.get("fit_score") or 0)
-        except ValueError:
-            score = 0.0
-        return (0 if cat in prefer else 1, score)
-
-    return sorted(open_rows, key=key)[0]
-
-
 def build_pr5_walkthrough_bundle(
     *,
     seeds: dict[str, Any],
     open_queue_csv: Path | None,
     as_of: datetime | None = None,
+    manifest: dict[str, Any] | None = None,
+    forbidden_values: set[str] | frozenset[str] | None = None,
+    fixture_mode: bool = False,
 ) -> Pr5WalkthroughBundle:
     as_of = as_of or datetime.now(SANTIAGO)
+    as_of = as_of if as_of.tzinfo else as_of.replace(tzinfo=SANTIAGO)
+
     case_a: dict[str, Any]
-    genuine_active = False
+    open_summary: dict[str, int] = {}
+    provenance_dict: dict[str, Any] | None = None
+    selected_open_class: str | None = None
+
     if open_queue_csv and open_queue_csv.is_file():
         rows = load_open_queue_rows(open_queue_csv)
-        best = pick_best_open_row(rows)
-        if best is not None:
-            genuine_active = True
+        provenance = inspect_artifact_provenance(
+            open_queue_csv, as_of=as_of, manifest=manifest
+        )
+        provenance_dict = provenance.to_dict()
+        best, best_oc, all_oc = pick_best_open_row(
+            rows, as_of=as_of, provenance=provenance
+        )
+        open_summary = summarize_open_classes(all_oc)
+        if best is not None and best_oc is not None:
+            selected_open_class = best_oc.open_class
             case_a = build_case_a_from_open_queue_row(
-                best, artifact_name=open_queue_csv.name, as_of=as_of
+                best,
+                artifact_path=open_queue_csv,
+                as_of=as_of,
+                classification=best_oc,
+                provenance=provenance,
             )
         else:
+            # Still classify a sample for reporting when none selectable
+            sample_oc = (
+                classify_artifact_row_open(
+                    rows[0], as_of=as_of, provenance=provenance
+                )
+                if rows
+                else None
+            )
             case_a = {
-                "case_id": "A_active_relevant",
-                "genuine_live_active": False,
-                "synthetic_active_overlay": False,
-                "missing_reason": "No validity_status=open rows in provided artifact",
+                "case_id": "A_artifact_declared_open_relevant",
+                "live_verified_open": False,
+                "open_classification": None,
+                "current_status_independently_revalidated": False,
+                "missing_reason": (
+                    "No recent_artifact_declared_open rows after strict classifier"
+                ),
+                "open_class_counts": open_summary,
+                "sample_classification": sample_oc.to_dict() if sample_oc else None,
+                "artifact_provenance": provenance_dict,
                 "stages": [],
                 "planned_pr5_rows": [],
             }
     else:
         case_a = {
-            "case_id": "A_active_relevant",
-            "genuine_live_active": False,
-            "missing_reason": "No equipment-first open queue artifact provided",
+            "case_id": "A_artifact_declared_open_relevant",
+            "live_verified_open": False,
+            "open_classification": None,
+            "current_status_independently_revalidated": False,
+            "missing_reason": "No equipment-first operator queue artifact provided",
             "stages": [],
             "planned_pr5_rows": [],
         }
 
     case_b = build_case_b_historical(
-        seeds.get("case_b_equipment_keyword_overlay")
+        seeds.get("case_b")
+        or seeds.get("case_b_equipment_keyword_overlay")
         or seeds.get("case_b_linked_historical")
         or {}
     )
-    case_c = build_case_c_excluded(seeds.get("case_c_exclusion_keyword_hit") or {})
-    case_d = build_case_d_contact_research(seeds.get("case_d_linked_contact_n") or {})
-    case_e = build_case_e_existing_contact(seeds.get("case_e_linked_with_contact") or {})
+    case_c = build_case_c_excluded(
+        seeds.get("case_c") or seeds.get("case_c_exclusion_keyword_hit") or {}
+    )
+    case_d = build_case_d_contact_research(
+        seeds.get("case_d") or seeds.get("case_d_linked_contact_n") or {}
+    )
+    case_e = build_case_e_existing_contact(
+        seeds.get("case_e") or seeds.get("case_e_linked_with_contact") or {}
+    )
 
     summary = {
         "as_of_america_santiago": as_of.isoformat(),
         "redaction_algorithm": REDACTION_ALGORITHM,
-        "genuine_active_tenders_in_walkthrough": genuine_active,
+        "fixture_mode": fixture_mode,
+        "live_verified_open_count": 0,
+        "recent_artifact_declared_open_count": open_summary.get(
+            "recent_artifact_declared_open", 0
+        ),
+        "stale_artifact_declared_open_count": open_summary.get(
+            "stale_artifact_declared_open", 0
+        ),
+        "artifact_declared_open_unverified_provenance_count": open_summary.get(
+            "artifact_declared_open_unverified_provenance", 0
+        ),
+        "open_class_counts": open_summary,
+        "case_a_open_classification": selected_open_class
+        or case_a.get("open_classification"),
+        "case_a_live_verified_open": False,
+        "current_status_independently_revalidated": False,
+        "artifact_provenance": provenance_dict,
         "selection_rules": SELECTION_RULES,
         "classifier_versions": {
             "active": ACTIVE_CLASSIFIER_VERSION,
@@ -609,7 +646,13 @@ def build_pr5_walkthrough_bundle(
             }
         ),
     }
-    forbidden: set[str] = set()
+
+    forbidden_vals = frozenset(forbidden_values or ())
+    # Derive domain-like forbidden tokens for leak checks
+    forbidden_domains = frozenset(
+        v for v in forbidden_vals if "." in v and "@" not in v and " " not in v
+    )
+
     bundle = Pr5WalkthroughBundle(
         summary=summary,
         case_a=case_a,
@@ -617,9 +660,9 @@ def build_pr5_walkthrough_bundle(
         case_c=case_c,
         case_d=case_d,
         case_e=case_e,
-        forbidden_domains=frozenset(forbidden),
+        forbidden_domains=forbidden_domains,
+        forbidden_values=forbidden_vals,
     )
-    # Leak check on serialized forms
     for payload in (
         bundle.summary,
         bundle.case_a,
@@ -628,7 +671,13 @@ def build_pr5_walkthrough_bundle(
         bundle.case_d,
         bundle.case_e,
     ):
-        assert_no_pii_leaks(json.dumps(payload, default=str), forbidden_domains=bundle.forbidden_domains)
+        blob = json.dumps(payload, default=str)
+        assert_no_pii_leaks(blob, forbidden_domains=bundle.forbidden_domains)
+        for raw in bundle.forbidden_values:
+            if "@" in raw and raw in blob:
+                raise AssertionError(f"forbidden email leaked: {raw}")
+            if len(raw) >= 8 and " " in raw and raw in blob:
+                raise AssertionError(f"forbidden org/name leaked: {raw[:48]}")
     return bundle
 
 
@@ -637,7 +686,10 @@ def render_walkthrough_markdown(bundle: Pr5WalkthroughBundle) -> str:
         "# Commercial procurement live relevance — PR5A data walkthrough",
         "",
         f"As-of (America/Santiago): `{bundle.summary['as_of_america_santiago']}`",
-        f"Genuine active tender in walkthrough: **{bundle.summary['genuine_active_tenders_in_walkthrough']}**",
+        f"live_verified_open_count: **{bundle.summary['live_verified_open_count']}**",
+        f"recent_artifact_declared_open_count: **{bundle.summary['recent_artifact_declared_open_count']}**",
+        f"Case A open_classification: `{bundle.summary.get('case_a_open_classification')}`",
+        "Current status independently revalidated: **false** (no authenticated API call in PR5A)",
         "",
     ]
 
@@ -645,6 +697,12 @@ def render_walkthrough_markdown(bundle: Pr5WalkthroughBundle) -> str:
         lines.append(f"## {title}")
         lines.append("")
         lines.append(f"Selection rule: {case.get('selection_rule', '')}")
+        if case.get("hypothetical_contact_path"):
+            lines.append("")
+            lines.append(
+                f"Hypothetical contact path (not final outcome): "
+                f"`{json.dumps(case['hypothetical_contact_path'], sort_keys=True)}`"
+            )
         lines.append("")
         lines.append("| Stage | Source value | Normalized value | Rule/reason | Result |")
         lines.append("|-------|--------------|------------------|-------------|--------|")
@@ -663,9 +721,12 @@ def render_walkthrough_markdown(bundle: Pr5WalkthroughBundle) -> str:
             )
         lines.append("")
 
-    emit_case("Case A — strongest currently active and relevant", bundle.case_a)
+    emit_case(
+        "Case A — strongest recent artifact-declared open + relevant",
+        bundle.case_a,
+    )
     emit_case("Case B — historical equipment match", bundle.case_b)
     emit_case("Case C — false positive / excluded", bundle.case_c)
-    emit_case("Case D — relevant path without verified contact", bundle.case_d)
-    emit_case("Case E — existing contact path", bundle.case_e)
+    emit_case("Case D — historical linked path without suitable contact", bundle.case_d)
+    emit_case("Case E — historical linked path with existing contacts", bundle.case_e)
     return "\n".join(lines) + "\n"
