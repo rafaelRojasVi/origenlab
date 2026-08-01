@@ -21,7 +21,9 @@ from origenlab_email_pipeline.commercial_procurement_acquisition.constants impor
     ENDPOINT_PATH_OCDS_MONTH_TEMPLATE,
     ENDPOINT_PATH_OCDS_TEMPLATE,
     OCDS_MAX_PAGE_SIZE,
+    OCDS_RANGE_SEMANTICS,
     PARSER_VERSION,
+    OCDS_QUERY_CONTRACT_VERSION,
     QUERY_CONTRACT_VERSION,
     RELEASE_KIND_COMPILED,
     RELEASE_KIND_HISTORICAL,
@@ -68,7 +70,14 @@ def plan_ocds_ranges(
     source_reported_total: int,
     page_size: int = OCDS_MAX_PAGE_SIZE,
 ) -> list[dict[str, int]]:
-    """Deterministic non-overlapping [start, end] ranges (1-indexed inclusive)."""
+    """Deterministic non-overlapping pages for listaOCDSAgnoMes.
+
+    Live wire contract (PR5B.1): path uses zero-based ``offset`` and ``limit``.
+    Planned rows store inclusive span coordinates:
+    - start = offset
+    - end = offset + limit - 1
+    Path emission converts to ``/{offset}/{limit}`` via build_ocds_query.
+    """
     if page_size < 1 or page_size > OCDS_MAX_PAGE_SIZE:
         raise OcdsParseError(f"page_size must be 1..{OCDS_MAX_PAGE_SIZE}")
     if source_reported_total < 0:
@@ -78,11 +87,18 @@ def plan_ocds_ranges(
     if source_reported_total == 0:
         return []
     ranges: list[dict[str, int]] = []
-    start = 1
-    while start <= source_reported_total:
-        end = min(start + page_size - 1, source_reported_total)
-        ranges.append({"year": year, "month": month, "start": start, "end": end})
-        start = end + 1
+    offset = 0
+    while offset < source_reported_total:
+        limit = min(page_size, source_reported_total - offset)
+        ranges.append(
+            {
+                "year": year,
+                "month": month,
+                "start": offset,
+                "end": offset + limit - 1,
+            }
+        )
+        offset += limit
     return ranges
 
 
@@ -119,22 +135,34 @@ def build_ocds_query(
     range_start: int,
     range_end: int,
 ) -> AcquisitionQuery:
+    """Build a child page query for listaOCDSAgnoMes.
+
+    ``range_start``/``range_end`` are inclusive span coordinates over the
+    zero-based listing. Wire path uses offset/limit:
+
+    offset = range_start
+    limit = range_end - range_start + 1
+    path = /APISOCDS/OCDS/listaOCDSAgnoMes/{year}/{month}/{offset}/{limit}
+    """
     if not (1 <= month <= 12):
         raise OcdsParseError("month must be 1..12")
-    if range_start < 1:
-        raise OcdsParseError("range_start must be >= 1")
+    if range_start < 0:
+        raise OcdsParseError("range_start (offset) must be >= 0")
     if range_end < range_start:
         raise OcdsParseError("range_end must be >= range_start")
     width = range_end - range_start + 1
-    if width > OCDS_MAX_PAGE_SIZE:
-        raise OcdsParseError("OCDS range wider than 1000")
+    if width < 1 or width > OCDS_MAX_PAGE_SIZE:
+        raise OcdsParseError("OCDS limit/width must be 1..1000")
+    offset = range_start
+    limit = width
     path = ENDPOINT_PATH_OCDS_TEMPLATE.format(
-        year=year, month=month, start=range_start, end=range_end
+        year=year, month=month, start=offset, end=limit
     )
     identity = {
         "source_kind": SOURCE_KIND_OCDS,
         "endpoint_kind": ENDPOINT_OCDS_MONTHLY_RANGE,
-        "query_contract_version": QUERY_CONTRACT_VERSION,
+        "query_contract_version": OCDS_QUERY_CONTRACT_VERSION,
+        "ocds_range_semantics": OCDS_RANGE_SEMANTICS,
         "estado": None,
         "fecha_ddmmaaaa": None,
         "tender_code": None,
@@ -148,7 +176,7 @@ def build_ocds_query(
         acquisition_query_id=acquisition_query_id(identity),
         source_kind=SOURCE_KIND_OCDS,
         endpoint_kind=ENDPOINT_OCDS_MONTHLY_RANGE,
-        query_contract_version=QUERY_CONTRACT_VERSION,
+        query_contract_version=OCDS_QUERY_CONTRACT_VERSION,
         estado=None,
         fecha_ddmmaaaa=None,
         tender_code=None,
@@ -462,6 +490,9 @@ def _malformed_page(
     http_status: int | None,
     message: str,
     acquired_at_utc: str | None = None,
+    error_classification: str = "malformed_response",
+    completeness_status: str = "malformed_response",
+    envelope_meta: dict[str, Any] | None = None,
 ) -> AcquisitionPage:
     raw_digest, parser_digest, bytes_digest = payload_digests(
         payload, original_bytes=original_bytes
@@ -485,11 +516,186 @@ def _malformed_page(
         source_reported_total=None,
         http_status=http_status,
         parser_status="malformed",
-        error_classification="malformed_response",
-        completeness_status="malformed_response",
-        envelope_meta={},
+        error_classification=error_classification,
+        completeness_status=completeness_status,
+        envelope_meta=dict(envelope_meta or {}),
         error_message=sanitize_error_message(message),
     )
+
+
+def _is_non_bool_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _validate_lista_index_pagination(
+    pagination: dict[str, Any],
+    *,
+    data: list[Any],
+    query: AcquisitionQuery,
+    source_reported_total: int | None,
+) -> list[str]:
+    """Return reason codes when lista-index pagination violates the live contract."""
+    reasons: list[str] = []
+    offset = pagination.get("offset")
+    limit = pagination.get("limit")
+    total = pagination.get("total")
+
+    if not _is_non_bool_int(offset) or int(offset) < 0:
+        reasons.append("pagination_offset_invalid")
+    if (
+        not _is_non_bool_int(limit)
+        or int(limit) < 1
+        or int(limit) > OCDS_MAX_PAGE_SIZE
+    ):
+        reasons.append("pagination_limit_invalid")
+    if not _is_non_bool_int(total) or int(total) < 0:
+        reasons.append("pagination_total_invalid")
+
+    if (
+        _is_non_bool_int(offset)
+        and query.range_start is not None
+        and int(offset) != int(query.range_start)
+    ):
+        reasons.append("pagination_offset_query_mismatch")
+
+    expected_limit = None
+    if query.range_start is not None and query.range_end is not None:
+        expected_limit = int(query.range_end) - int(query.range_start) + 1
+    if (
+        _is_non_bool_int(limit)
+        and expected_limit is not None
+        and int(limit) != expected_limit
+    ):
+        reasons.append("pagination_limit_query_mismatch")
+
+    if (
+        source_reported_total is not None
+        and _is_non_bool_int(total)
+        and int(total) != int(source_reported_total)
+    ):
+        reasons.append("pagination_total_conflict")
+
+    if _is_non_bool_int(limit) and len(data) > int(limit):
+        reasons.append("pagination_data_exceeds_limit")
+
+    return reasons
+
+
+def _validate_lista_index_query(query: AcquisitionQuery) -> list[str]:
+    """Require a valid acquisition_query_v2 offset/limit page query for lista-index."""
+    reasons: list[str] = []
+    if query.source_kind != SOURCE_KIND_OCDS:
+        reasons.append("lista_index_source_kind_mismatch")
+    if query.endpoint_kind != ENDPOINT_OCDS_MONTHLY_RANGE:
+        reasons.append("lista_index_endpoint_kind_mismatch")
+    if query.query_contract_version != OCDS_QUERY_CONTRACT_VERSION:
+        reasons.append("lista_index_query_version_mismatch")
+
+    range_ok = True
+    if not _is_non_bool_int(query.range_start) or int(query.range_start) < 0:
+        reasons.append("lista_index_query_range_invalid")
+        range_ok = False
+    if not _is_non_bool_int(query.range_end):
+        if "lista_index_query_range_invalid" not in reasons:
+            reasons.append("lista_index_query_range_invalid")
+        range_ok = False
+    elif range_ok and int(query.range_end) < int(query.range_start):
+        reasons.append("lista_index_query_range_invalid")
+        range_ok = False
+    if range_ok:
+        width = int(query.range_end) - int(query.range_start) + 1
+        if width < 1 or width > OCDS_MAX_PAGE_SIZE:
+            reasons.append("lista_index_query_range_invalid")
+            range_ok = False
+
+    path_inputs_ok = (
+        _is_non_bool_int(query.year)
+        and _is_non_bool_int(query.month)
+        and 1 <= int(query.month) <= 12
+        and _is_non_bool_int(query.range_start)
+        and int(query.range_start) >= 0
+        and _is_non_bool_int(query.range_end)
+        and int(query.range_end) >= int(query.range_start)
+    )
+    if path_inputs_ok:
+        offset = int(query.range_start)
+        limit = int(query.range_end) - int(query.range_start) + 1
+        expected_path = ENDPOINT_PATH_OCDS_TEMPLATE.format(
+            year=int(query.year),
+            month=int(query.month),
+            start=offset,
+            end=limit,
+        )
+        if query.endpoint_path != expected_path:
+            reasons.append("lista_index_endpoint_path_mismatch")
+    else:
+        reasons.append("lista_index_endpoint_path_mismatch")
+
+    recomputed = acquisition_query_id(query.identity_payload())
+    if recomputed != query.acquisition_query_id:
+        reasons.append("lista_index_query_id_mismatch")
+
+    # Deduplicate while preserving order.
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for code in reasons:
+        if code not in seen:
+            seen.add(code)
+            ordered.append(code)
+    return ordered
+
+
+def _lista_index_contract_failure_page(
+    *,
+    query: AcquisitionQuery,
+    raw_digest: str,
+    parser_digest: str,
+    bytes_digest: str | None,
+    acquired_at_utc: str | None,
+    http_status: int | None,
+    envelope_base: dict[str, Any],
+    reason_codes: list[str],
+    error_classification: str,
+    package_creation: str | None,
+) -> tuple[AcquisitionPage, dict[str, Any]]:
+    page = AcquisitionPage(
+        page_id=acquisition_page_id(
+            acquisition_query_id_value=query.acquisition_query_id,
+            range_position={"start": query.range_start, "end": query.range_end},
+            raw_canonical_json_digest=raw_digest,
+        ),
+        source_kind=SOURCE_KIND_OCDS,
+        endpoint_kind=ENDPOINT_OCDS_MONTHLY_RANGE,
+        acquisition_query_id=query.acquisition_query_id,
+        range_position={"start": query.range_start, "end": query.range_end},
+        acquired_at_utc=acquired_at_utc,
+        raw_canonical_json_digest=raw_digest,
+        original_bytes_digest=bytes_digest,
+        parser_input_digest=parser_digest,
+        response_item_count=0,
+        source_reported_total=None,
+        http_status=http_status,
+        parser_status="malformed",
+        error_classification=error_classification,
+        completeness_status="malformed_response",
+        envelope_meta={
+            **envelope_base,
+            "contract_validation_reasons": list(reason_codes),
+        },
+        error_message=sanitize_error_message(
+            f"{error_classification}:" + ",".join(reason_codes)
+        ),
+    )
+    diagnostics = {
+        "lista_index": True,
+        error_classification: True,
+        "reason_codes": list(reason_codes),
+        "package_creation_timestamp": package_creation,
+        "package_creation_is_tender_publication": False,
+        "note": "no observations emitted on lista-index contract failure",
+    }
+    return page, diagnostics
+
 
 
 def _emit_release_observations(
@@ -657,6 +863,261 @@ def _emit_release_observations(
     return source, tender, lines
 
 
+
+def _parse_ocds_lista_index(
+    payload: dict[str, Any],
+    *,
+    query: AcquisitionQuery,
+    snapshot_id: str,
+    acquired_at_utc: str | None,
+    http_status: int | None,
+    raw_digest: str,
+    parser_digest: str,
+    bytes_digest: str | None,
+    source_reported_total: int | None,
+) -> tuple[
+    AcquisitionQuery,
+    AcquisitionPage,
+    list[ProcurementSourceObservation],
+    list[ProcurementTenderObservation],
+    list[ProcurementLineObservation],
+    dict[str, Any],
+]:
+    """Parse live listaOCDSAgnoMes index listing (not a full release package)."""
+    from origenlab_email_pipeline.commercial_procurement_acquisition.identity import (
+        CanonicalTenderCandidate,
+        ticket_canonical_candidate,
+    )
+
+    data = payload.get("data")
+    pagination = payload.get("pagination")
+    assert isinstance(data, list)
+    assert isinstance(pagination, dict)
+
+    package_creation = _as_str(payload.get("creationDate"))
+    envelope_base = {
+        "version": _as_str(payload.get("version")),
+        "creationDate": package_creation,
+        "lista_index": True,
+        "creationDate_is_tender_publication": False,
+    }
+
+    query_reasons = _validate_lista_index_query(query)
+    if query_reasons:
+        page, diagnostics = _lista_index_contract_failure_page(
+            query=query,
+            raw_digest=raw_digest,
+            parser_digest=parser_digest,
+            bytes_digest=bytes_digest,
+            acquired_at_utc=acquired_at_utc,
+            http_status=http_status,
+            envelope_base=envelope_base,
+            reason_codes=query_reasons,
+            error_classification="query_contract_mismatch",
+            package_creation=package_creation,
+        )
+        return query, page, [], [], [], diagnostics
+
+    reason_codes = _validate_lista_index_pagination(
+        pagination,
+        data=data,
+        query=query,
+        source_reported_total=source_reported_total,
+    )
+    if reason_codes:
+        page, diagnostics = _lista_index_contract_failure_page(
+            query=query,
+            raw_digest=raw_digest,
+            parser_digest=parser_digest,
+            bytes_digest=bytes_digest,
+            acquired_at_utc=acquired_at_utc,
+            http_status=http_status,
+            envelope_base={
+                **envelope_base,
+                "pagination_validation_reasons": list(reason_codes),
+            },
+            reason_codes=reason_codes,
+            error_classification="pagination_contract_mismatch",
+            package_creation=package_creation,
+        )
+        return query, page, [], [], [], diagnostics
+
+    rows = [r for r in data if isinstance(r, dict)]
+    rejected = len(data) - len(rows)
+    pag_total = pagination.get("total")
+    assert _is_non_bool_int(pag_total)
+    page_total = (
+        source_reported_total
+        if source_reported_total is not None
+        else int(pag_total)
+    )
+    if rejected and not rows:
+        completeness, parser_status, error_classification = (
+            "partial_page_failure",
+            "partial",
+            "partial_page_failure",
+        )
+    elif rejected and rows:
+        completeness, parser_status, error_classification = (
+            "partial_page_failure",
+            "partial",
+            "partial_page_failure",
+        )
+    elif not rows:
+        completeness, parser_status, error_classification = ("empty_page", "ok", None)
+    else:
+        completeness, parser_status, error_classification = ("complete", "ok", None)
+
+    page = AcquisitionPage(
+        page_id=acquisition_page_id(
+            acquisition_query_id_value=query.acquisition_query_id,
+            range_position={"start": query.range_start, "end": query.range_end},
+            raw_canonical_json_digest=raw_digest,
+        ),
+        source_kind=SOURCE_KIND_OCDS,
+        endpoint_kind=ENDPOINT_OCDS_MONTHLY_RANGE,
+        acquisition_query_id=query.acquisition_query_id,
+        range_position={"start": query.range_start, "end": query.range_end},
+        acquired_at_utc=acquired_at_utc,
+        raw_canonical_json_digest=raw_digest,
+        original_bytes_digest=bytes_digest,
+        parser_input_digest=parser_digest,
+        response_item_count=len(rows),
+        source_reported_total=page_total,
+        http_status=http_status,
+        parser_status=parser_status,
+        error_classification=error_classification,
+        completeness_status=completeness,
+        envelope_meta={
+            **envelope_base,
+            "pagination_offset": pagination.get("offset"),
+            "pagination_limit": pagination.get("limit"),
+            "pagination_total": pag_total,
+        },
+        error_message=None,
+    )
+    sources: list[ProcurementSourceObservation] = []
+    tenders: list[ProcurementTenderObservation] = []
+    for row in rows:
+        ocid = _as_str(row.get("ocid"))
+        code = None
+        if ocid and ocid.startswith("ocds-70d2nz-"):
+            code = ocid.split("ocds-70d2nz-", 1)[-1]
+        cand = ocds_canonical_candidate(
+            ocid=ocid,
+            release_id=None,
+            tender_id=code,
+            release_kind=RELEASE_KIND_HISTORICAL,
+        )
+        if code:
+            ticket_cand = ticket_canonical_candidate(code)
+            if ticket_cand.canonical_tender_key_candidate:
+                cand = CanonicalTenderCandidate(
+                    source_native_tender_key=cand.source_native_tender_key,
+                    canonical_tender_key_candidate=ticket_cand.canonical_tender_key_candidate,
+                    canonical_candidate_kind=ticket_cand.canonical_candidate_kind,
+                    canonical_candidate_reason="lista_index_ocid_suffix",
+                )
+        raw_row = canonical_json_digest(row)
+        obs_id = procurement_source_observation_id(
+            source_kind=SOURCE_KIND_OCDS,
+            endpoint_kind=ENDPOINT_OCDS_MONTHLY_RANGE,
+            source_native_key=cand.source_native_tender_key,
+            package_id=None,
+            release_id=None,
+            release_kind="lista_index",
+            raw_payload_digest=raw_row,
+        )
+        tender_obs_id = procurement_tender_observation_id(
+            source_observation_id=obs_id,
+            normalized_tender_key=cand.source_native_tender_key,
+        )
+        sources.append(
+            ProcurementSourceObservation(
+                observation_id=obs_id,
+                snapshot_id=snapshot_id,
+                source_kind=SOURCE_KIND_OCDS,
+                endpoint_kind=ENDPOINT_OCDS_MONTHLY_RANGE,
+                source_native_key=cand.source_native_tender_key,
+                source_native_tender_key=cand.source_native_tender_key,
+                canonical_tender_key_candidate=cand.canonical_tender_key_candidate,
+                canonical_candidate_kind=cand.canonical_candidate_kind,
+                canonical_candidate_reason=cand.canonical_candidate_reason,
+                source_status_code=None,
+                source_status_name=None,
+                source_status_system="ocds_lista_index",
+                source_status_value=None,
+                # Package creationDate is not tender publication evidence.
+                publication_timestamp_raw=None,
+                close_timestamp_raw=None,
+                buyer_display_raw=None,
+                buyer_source_id=None,
+                package_id=None,
+                release_id=None,
+                ocid=ocid,
+                record_id=None,
+                release_kind=None,
+                release_tags=(),
+                raw_payload_digest=raw_row,
+                parser_version=PARSER_VERSION,
+                provenance_reason_codes=(
+                    "lista_index_row",
+                    "package_creation_not_tender_publication",
+                ),
+                page_id=page.page_id,
+            )
+        )
+        tenders.append(
+            ProcurementTenderObservation(
+                tender_observation_id=tender_obs_id,
+                source_observation_id=obs_id,
+                source_kind=SOURCE_KIND_OCDS,
+                normalized_tender_key=cand.source_native_tender_key,
+                source_native_tender_key=cand.source_native_tender_key,
+                canonical_tender_key_candidate=cand.canonical_tender_key_candidate,
+                canonical_candidate_kind=cand.canonical_candidate_kind,
+                canonical_candidate_reason=cand.canonical_candidate_reason,
+                title=None,
+                description=None,
+                buyer_display=None,
+                buyer_source_id=None,
+                publication_timestamp_raw=None,
+                close_timestamp_raw=None,
+                source_status_code=None,
+                source_status_name=None,
+                source_process_stage=None,
+                region=None,
+                currency=None,
+                estimated_value=None,
+                procurement_method=None,
+                procurement_method_details=None,
+                related_processes=(),
+                field_provenance={
+                    "ocid": "data[].ocid",
+                    "publication_timestamp_raw": (
+                        "absent; package creationDate is envelope-only "
+                        "(not tender publication)"
+                    ),
+                },
+            )
+        )
+    diagnostics = {
+        "lista_index": True,
+        "row_count": len(rows),
+        "rejected_entry_count": rejected,
+        "pagination": {
+            "offset": pagination.get("offset"),
+            "limit": pagination.get("limit"),
+            "total": pag_total,
+        },
+        "package_creation_timestamp": package_creation,
+        "package_creation_is_tender_publication": False,
+        "note": "index listing only; urlTender/urlAward not followed in PR5B.1",
+    }
+    return query, page, sources, tenders, [], diagnostics
+
+
+
 def parse_ocds_package(
     payload: Any,
     *,
@@ -701,6 +1162,49 @@ def parse_ocds_package(
     raw_digest, parser_digest, bytes_digest = payload_digests(
         payload, original_bytes=original_bytes
     )
+
+    # Live listaOCDSAgnoMes index envelope (PR5B.1): pagination + data[{ocid,...}].
+    if isinstance(payload.get("data"), list) and isinstance(payload.get("pagination"), dict):
+        return _parse_ocds_lista_index(
+            payload,
+            query=query,
+            snapshot_id=snapshot_id,
+            acquired_at_utc=acquired_at_utc,
+            http_status=http_status,
+            raw_digest=raw_digest,
+            parser_digest=parser_digest,
+            bytes_digest=bytes_digest,
+            source_reported_total=source_reported_total,
+        )
+    if (
+        "status" in payload
+        and "detail" in payload
+        and "releases" not in payload
+        and "records" not in payload
+        and "ocid" not in payload
+    ):
+        page = _malformed_page(
+            query=query,
+            payload=payload,
+            original_bytes=original_bytes,
+            http_status=http_status,
+            message="lista_index_error_envelope",
+            acquired_at_utc=acquired_at_utc,
+        )
+        # Prefer empty_page when body reports no results (HTTP may still be 200).
+        if payload.get("status") == 404:
+            page = AcquisitionPage(
+                **{
+                    **page.to_dict(),
+                    "completeness_status": "empty_page",
+                    "parser_status": "ok",
+                    "error_classification": None,
+                    "error_message": sanitize_error_message(str(payload.get("detail") or "")),
+                    "response_item_count": 0,
+                }
+            )
+        return query, page, [], [], [], {"error": page.error_message, "lista_index": True}
+
     malformed_reason, typed, rejected = _validate_and_extract_typed_releases(payload)
     if malformed_reason is not None:
         page = _malformed_page(
@@ -852,7 +1356,7 @@ def _classify_monthly_completeness(
                 if (
                     prior_items == source_reported_total
                     and last.response_item_count == 0
-                    and start_last == source_reported_total + 1
+                    and start_last == source_reported_total
                 ):
                     terminal_empty = True
                 elif (
@@ -925,11 +1429,11 @@ def _validate_month_assembly_inputs(
         width = int(r["end"]) - int(r["start"]) + 1
         if width < 1 or width > OCDS_MAX_PAGE_SIZE:
             raise OcdsParseError("planned range width invalid")
-        if int(r["start"]) < 1:
-            raise OcdsParseError("planned range_start must be >= 1")
+        if int(r["start"]) < 0:
+            raise OcdsParseError("planned range_start (offset) must be >= 0")
 
-    if int(ordered_planned[0]["start"]) != 1:
-        raise OcdsParseError("planned ranges must start at 1")
+    if int(ordered_planned[0]["start"]) != 0:
+        raise OcdsParseError("planned ranges must start at offset 0")
 
     for i in range(1, len(ordered_planned)):
         prev_end = int(ordered_planned[i - 1]["end"])
@@ -946,19 +1450,19 @@ def _validate_month_assembly_inputs(
         last_end = int(ordered_planned[-1]["end"])
         if source_reported_total == 0:
             raise OcdsParseError("nonzero planned ranges inconsistent with source_reported_total=0")
-        if last_start == source_reported_total + 1:
-            # Trailing empty probe beyond total — prior coverage must end at total.
+        # Inclusive span covers offsets [0, total-1]. Terminal empty probe uses offset=total.
+        if last_start == source_reported_total:
             if len(ordered_planned) < 2:
                 raise OcdsParseError("terminal empty probe requires prior coverage")
-            if int(ordered_planned[-2]["end"]) != source_reported_total:
+            if int(ordered_planned[-2]["end"]) != source_reported_total - 1:
                 raise OcdsParseError(
-                    "terminal empty probe prior coverage must end at source_reported_total"
+                    "terminal empty probe prior coverage must end at source_reported_total-1"
                 )
-        elif last_end < source_reported_total:
+        elif last_end < source_reported_total - 1:
             raise OcdsParseError("planned coverage incomplete vs source_reported_total")
-        elif last_end > source_reported_total and last_start <= source_reported_total:
+        elif last_end > source_reported_total - 1 and last_start < source_reported_total:
             raise OcdsParseError("planned coverage extends past source_reported_total")
-        elif last_end != source_reported_total and last_start != source_reported_total + 1:
+        elif last_end != source_reported_total - 1 and last_start != source_reported_total:
             raise OcdsParseError("planned coverage inconsistent with source_reported_total")
 
     planned_set = {(int(r["start"]), int(r["end"])) for r in ordered_planned}

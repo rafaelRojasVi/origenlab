@@ -1,0 +1,15 @@
+{
+  "creationDate": "2026-08-01T22:05:02.000",
+  "data": [
+    {
+      "ocid": "ocds-synth-ocid_a16f98d2b0",
+      "urlTender": "<redacted_url>"
+    }
+  ],
+  "pagination": {
+    "limit": 1,
+    "offset": 1,
+    "total": 8004
+  },
+  "version": "1.2"
+}

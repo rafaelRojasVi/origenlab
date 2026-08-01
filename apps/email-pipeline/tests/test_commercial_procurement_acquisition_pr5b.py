@@ -267,13 +267,15 @@ def test_query_identity_validation() -> None:
     with pytest.raises(TicketApiParseError):
         build_ticket_detail_query(tender_code="  ")
     with pytest.raises(OcdsParseError):
-        build_ocds_query(year=2026, month=13, range_start=1, range_end=1)
+        build_ocds_query(year=2026, month=13, range_start=0, range_end=0)
+    q0 = build_ocds_query(year=2026, month=1, range_start=0, range_end=0)
+    assert q0.endpoint_path.endswith("/0/1")
     with pytest.raises(OcdsParseError):
-        build_ocds_query(year=2026, month=1, range_start=0, range_end=1)
+        build_ocds_query(year=2026, month=1, range_start=-1, range_end=0)
     with pytest.raises(OcdsParseError):
         build_ocds_query(year=2026, month=1, range_start=5, range_end=4)
     with pytest.raises(OcdsParseError):
-        build_ocds_query(year=2026, month=1, range_start=1, range_end=1001)
+        build_ocds_query(year=2026, month=1, range_start=0, range_end=1001)
 
 
 def test_sanitize_mapping_strips_ticket_url() -> None:
@@ -423,8 +425,8 @@ def test_ocds_records_policy_b_no_duplicate_compiled() -> None:
 def test_ocds_range_planner() -> None:
     assert plan_ocds_ranges(year=2026, month=1, source_reported_total=0) == []
     assert plan_ocds_ranges(year=2026, month=1, source_reported_total=1001) == [
-        {"year": 2026, "month": 1, "start": 1, "end": 1000},
-        {"year": 2026, "month": 1, "start": 1001, "end": 1001},
+        {"year": 2026, "month": 1, "start": 0, "end": 999},
+        {"year": 2026, "month": 1, "start": 1000, "end": 1000},
     ]
     with pytest.raises(OcdsParseError):
         plan_ocds_ranges(year=2026, month=1, source_reported_total=-1)
@@ -437,8 +439,8 @@ def test_range_anomaly_detection() -> None:
     issues = detect_range_anomalies(
         planned,
         [
-            {"start": 1, "end": 1000},
-            {"start": 1, "end": 1000},
+            {"start": 0, "end": 999},
+            {"start": 0, "end": 999},
             {"start": 900, "end": 1100},
         ],
     )
@@ -457,10 +459,10 @@ def _page_payload(release_id: str, tender_id: str = "9999-1-LE26") -> dict:
 def test_ocds_month_snapshot_complete_and_shuffled() -> None:
     planned = plan_ocds_ranges(year=2026, month=8, source_reported_total=2, page_size=1)
     p1 = parse_ocds_package(
-        _page_payload("r1", "9999-1-LE26"), year=2026, month=8, range_start=1, range_end=1
+        _page_payload("r1", "9999-1-LE26"), year=2026, month=8, range_start=0, range_end=0
     )
     p2 = parse_ocds_package(
-        _page_payload("r2", "9999-2-LE26"), year=2026, month=8, range_start=2, range_end=2
+        _page_payload("r2", "9999-2-LE26"), year=2026, month=8, range_start=1, range_end=1
     )
     a = build_ocds_month_snapshot(
         planned_ranges=planned,
@@ -482,18 +484,18 @@ def test_ocds_month_snapshot_complete_and_shuffled() -> None:
 
 def test_ocds_month_empty_middle_and_terminal() -> None:
     planned = [
+        {"year": 2026, "month": 8, "start": 0, "end": 0},
         {"year": 2026, "month": 8, "start": 1, "end": 1},
         {"year": 2026, "month": 8, "start": 2, "end": 2},
-        {"year": 2026, "month": 8, "start": 3, "end": 3},
     ]
     p1 = parse_ocds_package(
-        _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+        _page_payload("r1"), year=2026, month=8, range_start=0, range_end=0
     )
     empty = parse_ocds_package(
-        _load("ocds_empty_page.json"), year=2026, month=8, range_start=2, range_end=2
+        _load("ocds_empty_page.json"), year=2026, month=8, range_start=1, range_end=1
     )
     p3 = parse_ocds_package(
-        _page_payload("r3", "9999-3-LE26"), year=2026, month=8, range_start=3, range_end=3
+        _page_payload("r3", "9999-3-LE26"), year=2026, month=8, range_start=2, range_end=2
     )
     mid = build_ocds_month_snapshot(
         planned_ranges=planned,
@@ -504,21 +506,21 @@ def test_ocds_month_empty_middle_and_terminal() -> None:
 
     # Valid terminal empty: filled page then empty beyond total.
     planned2 = [
+        {"year": 2026, "month": 8, "start": 0, "end": 0},
         {"year": 2026, "month": 8, "start": 1, "end": 1},
-        {"year": 2026, "month": 8, "start": 2, "end": 2},
     ]
     term = build_ocds_month_snapshot(
         planned_ranges=planned2,
         parsed_pages=[
             parse_ocds_package(
-                _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+                _page_payload("r1"), year=2026, month=8, range_start=0, range_end=0
             ),
             parse_ocds_package(
                 _load("ocds_empty_page.json"),
                 year=2026,
                 month=8,
-                range_start=2,
-                range_end=2,
+                range_start=1,
+                range_end=1,
             ),
         ],
         source_reported_total=1,
@@ -529,7 +531,7 @@ def test_ocds_month_empty_middle_and_terminal() -> None:
 def test_ocds_month_missing_duplicate_overlap() -> None:
     planned = plan_ocds_ranges(year=2026, month=8, source_reported_total=2, page_size=1)
     p1 = parse_ocds_package(
-        _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+        _page_payload("r1"), year=2026, month=8, range_start=0, range_end=0
     )
     missing = build_ocds_month_snapshot(
         planned_ranges=planned, parsed_pages=[p1], source_reported_total=2
@@ -546,12 +548,12 @@ def test_ocds_month_missing_duplicate_overlap() -> None:
     with pytest.raises(OcdsParseError, match="overlap"):
         build_ocds_month_snapshot(
             planned_ranges=[
+                {"year": 2026, "month": 8, "start": 0, "end": 1},
                 {"year": 2026, "month": 8, "start": 1, "end": 2},
-                {"year": 2026, "month": 8, "start": 2, "end": 3},
             ],
             parsed_pages=[
                 parse_ocds_package(
-                    _page_payload("r1"), year=2026, month=8, range_start=1, range_end=2
+                    _page_payload("r1"), year=2026, month=8, range_start=0, range_end=1
                 ),
             ],
             source_reported_total=3,
@@ -576,13 +578,13 @@ def test_ocds_month_source_total_mismatch() -> None:
         ]
     }
     pages = [
-        parse_ocds_package(over, year=2026, month=8, range_start=1, range_end=1),
+        parse_ocds_package(over, year=2026, month=8, range_start=0, range_end=0),
         parse_ocds_package(
             _page_payload("r2", "9999-2-LE26"),
             year=2026,
             month=8,
-            range_start=2,
-            range_end=2,
+            range_start=1,
+            range_end=1,
         ),
     ]
     bad = build_ocds_month_snapshot(
@@ -591,14 +593,14 @@ def test_ocds_month_source_total_mismatch() -> None:
     assert bad.completeness_status == "source_total_mismatch"
     good_pages = [
         parse_ocds_package(
-            _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+            _page_payload("r1"), year=2026, month=8, range_start=0, range_end=0
         ),
         parse_ocds_package(
             _page_payload("r2", "9999-2-LE26"),
             year=2026,
             month=8,
-            range_start=2,
-            range_end=2,
+            range_start=1,
+            range_end=1,
         ),
     ]
     good = build_ocds_month_snapshot(
@@ -798,7 +800,7 @@ def test_ocds_month_query_identity_separate_from_page_width() -> None:
     assert month_q.endpoint_path == "/APISOCDS/OCDS/listaOCDSAgnoMes/2026/8"
     # Page queries still enforce max width.
     with pytest.raises(OcdsParseError):
-        build_ocds_query(year=2026, month=8, range_start=1, range_end=1001)
+        build_ocds_query(year=2026, month=8, range_start=0, range_end=1001)
     # Month assembly for totals > 1000 must not use a wide page query.
     for total, page_size in ((1001, 1000), (2000, 1000), (2001, 1000), (2000, 500)):
         planned = plan_ocds_ranges(
@@ -852,14 +854,14 @@ def test_ocds_month_query_identity_separate_from_page_width() -> None:
 def test_month_assembly_child_validation() -> None:
     planned = plan_ocds_ranges(year=2026, month=8, source_reported_total=2, page_size=1)
     p1 = parse_ocds_package(
-        _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+        _page_payload("r1"), year=2026, month=8, range_start=0, range_end=0
     )
     p2 = parse_ocds_package(
         _page_payload("r2", "9999-2-LE26"),
         year=2026,
         month=8,
-        range_start=2,
-        range_end=2,
+        range_start=1,
+        range_end=1,
     )
     # Shuffled valid children OK.
     ok = build_ocds_month_snapshot(
@@ -871,8 +873,8 @@ def test_month_assembly_child_validation() -> None:
         _page_payload("r2", "9999-2-LE26"),
         year=2026,
         month=7,
-        range_start=2,
-        range_end=2,
+        range_start=1,
+        range_end=1,
     )
     with pytest.raises(OcdsParseError, match="year/month"):
         build_ocds_month_snapshot(
@@ -883,8 +885,8 @@ def test_month_assembly_child_validation() -> None:
         _page_payload("r2", "9999-2-LE26"),
         year=2025,
         month=8,
-        range_start=2,
-        range_end=2,
+        range_start=1,
+        range_end=1,
     )
     with pytest.raises(OcdsParseError, match="year/month"):
         build_ocds_month_snapshot(
@@ -1032,7 +1034,7 @@ def test_zero_record_ocds_month() -> None:
             planned_ranges=[],
             parsed_pages=[
                 parse_ocds_package(
-                    _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+                    _page_payload("r1"), year=2026, month=8, range_start=0, range_end=0
                 )
             ],
             source_reported_total=0,
@@ -1088,8 +1090,8 @@ def test_ocds_envelope_collection_validation() -> None:
     assert parse_ocds_package({"records": []})[1].completeness_status == "empty_page"
 
     # Malformed collection must not become terminal_empty_page in monthly assembly.
-    planned = [{"year": 2026, "month": 8, "start": 1, "end": 1}]
-    mal = parse_ocds_package({"releases": "bad"}, year=2026, month=8, range_start=1, range_end=1)
+    planned = [{"year": 2026, "month": 8, "start": 0, "end": 0}]
+    mal = parse_ocds_package({"releases": "bad"}, year=2026, month=8, range_start=0, range_end=0)
     snap = build_ocds_month_snapshot(
         planned_ranges=planned, parsed_pages=[mal], source_reported_total=1
     )
@@ -1100,8 +1102,8 @@ def test_planned_range_continuity() -> None:
     with pytest.raises(OcdsParseError, match="gap"):
         build_ocds_month_snapshot(
             planned_ranges=[
-                {"year": 2026, "month": 8, "start": 1, "end": 1000},
-                {"year": 2026, "month": 8, "start": 2001, "end": 3000},
+                {"year": 2026, "month": 8, "start": 0, "end": 999},
+                {"year": 2026, "month": 8, "start": 2000, "end": 2999},
             ],
             parsed_pages=[],
             source_reported_total=3000,
@@ -1109,43 +1111,43 @@ def test_planned_range_continuity() -> None:
     with pytest.raises(OcdsParseError, match="overlap"):
         build_ocds_month_snapshot(
             planned_ranges=[
-                {"year": 2026, "month": 8, "start": 1, "end": 1000},
-                {"year": 2026, "month": 8, "start": 1000, "end": 1001},
+                {"year": 2026, "month": 8, "start": 0, "end": 999},
+                {"year": 2026, "month": 8, "start": 999, "end": 1000},
             ],
             parsed_pages=[],
             source_reported_total=1001,
         )
-    with pytest.raises(OcdsParseError, match="start at 1"):
+    with pytest.raises(OcdsParseError, match="start at offset 0"):
         build_ocds_month_snapshot(
-            planned_ranges=[{"year": 2026, "month": 8, "start": 2, "end": 2}],
+            planned_ranges=[{"year": 2026, "month": 8, "start": 1, "end": 1}],
             parsed_pages=[],
             source_reported_total=1,
         )
     with pytest.raises(OcdsParseError, match="incomplete"):
         build_ocds_month_snapshot(
-            planned_ranges=[{"year": 2026, "month": 8, "start": 1, "end": 1000}],
+            planned_ranges=[{"year": 2026, "month": 8, "start": 0, "end": 999}],
             parsed_pages=[],
             source_reported_total=2000,
         )
 
     ok = plan_ocds_ranges(year=2026, month=8, source_reported_total=1001, page_size=1000)
     assert ok == [
-        {"year": 2026, "month": 8, "start": 1, "end": 1000},
-        {"year": 2026, "month": 8, "start": 1001, "end": 1001},
+        {"year": 2026, "month": 8, "start": 0, "end": 999},
+        {"year": 2026, "month": 8, "start": 1000, "end": 1000},
     ]
     # Valid terminal empty probe plan accepted:
     term_plan = [
+        {"year": 2026, "month": 8, "start": 0, "end": 0},
         {"year": 2026, "month": 8, "start": 1, "end": 1},
-        {"year": 2026, "month": 8, "start": 2, "end": 2},
     ]
     term = build_ocds_month_snapshot(
         planned_ranges=term_plan,
         parsed_pages=[
             parse_ocds_package(
-                _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+                _page_payload("r1"), year=2026, month=8, range_start=0, range_end=0
             ),
             parse_ocds_package(
-                {"releases": []}, year=2026, month=8, range_start=2, range_end=2
+                {"releases": []}, year=2026, month=8, range_start=1, range_end=1
             ),
         ],
         source_reported_total=1,
@@ -1161,7 +1163,7 @@ def test_child_source_metadata_validation() -> None:
 
     planned = plan_ocds_ranges(year=2026, month=8, source_reported_total=1, page_size=1)
     good = parse_ocds_package(
-        _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+        _page_payload("r1"), year=2026, month=8, range_start=0, range_end=0
     )
     q, page, srcs, tends, lines, diag = good
 
@@ -1276,13 +1278,13 @@ def test_nested_ocds_record_field_validation() -> None:
     assert empty_rec[5]["rejected_entry_count"] == 0
 
     # Nested malformations must not become terminal_empty_page in monthly assembly.
-    planned = [{"year": 2026, "month": 8, "start": 1, "end": 1}]
+    planned = [{"year": 2026, "month": 8, "start": 0, "end": 0}]
     nested_mal = parse_ocds_package(
         {"records": [{"releases": "bad"}]},
         year=2026,
         month=8,
-        range_start=1,
-        range_end=1,
+        range_start=0,
+        range_end=0,
     )
     snap = build_ocds_month_snapshot(
         planned_ranges=planned, parsed_pages=[nested_mal], source_reported_total=1
@@ -1374,7 +1376,7 @@ def test_source_reported_total_on_snapshots_and_manifest() -> None:
 def test_source_fingerprint_includes_authoritative_total() -> None:
     """Snapshot-level source_reported_total is fingerprint evidence (v2)."""
     page = parse_ocds_package(
-        _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+        _page_payload("r1"), year=2026, month=8, range_start=0, range_end=0
     )[1]
     q = build_ocds_month_query(year=2026, month=8)
     identity = query_identity_from_model(q)
@@ -1417,7 +1419,7 @@ def test_source_fingerprint_includes_authoritative_total() -> None:
         ),
         parsed_pages=[
             parse_ocds_package(
-                _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+                _page_payload("r1"), year=2026, month=8, range_start=0, range_end=0
             )
         ],
         source_reported_total=1,
@@ -1449,10 +1451,15 @@ def test_snapshot_manifest_regression_matrix() -> None:
         assert man["source_fingerprint"]
         assert man["normalized_semantic_digest"]
         for page in man.get("page_diagnostics", []):
-            assert "ticket" not in json.dumps(page.get("envelope_meta", {})).lower() or True
-            assert page.get("error_message") is None or "ticket=" not in str(
-                page.get("error_message")
-            ).lower()
+            envelope_blob = json.dumps(page.get("envelope_meta", {})).casefold()
+            assert "ticket" not in envelope_blob
+            assert "ticket=" not in envelope_blob
+            err = page.get("error_message")
+            if err is not None:
+                err_l = str(err).casefold()
+                assert "ticket=" not in err_l
+                assert "?ticket" not in err_l
+                assert "authorization" not in err_l
 
     snap_a = build_acquisition_snapshot(
         source_kind="ticket_summary",
@@ -1493,10 +1500,10 @@ def test_snapshot_manifest_regression_matrix() -> None:
     _assert_safe(man_page)
 
     p1 = parse_ocds_package(
-        _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+        _page_payload("r1"), year=2026, month=8, range_start=0, range_end=0
     )
     p2 = parse_ocds_package(
-        _page_payload("r2", "9999-2-LE26"), year=2026, month=8, range_start=2, range_end=2
+        _page_payload("r2", "9999-2-LE26"), year=2026, month=8, range_start=1, range_end=1
     )
     multi = build_ocds_month_snapshot(
         planned_ranges=plan_ocds_ranges(
@@ -1539,11 +1546,11 @@ def test_snapshot_manifest_regression_matrix() -> None:
         },
         year=2026,
         month=8,
-        range_start=1,
-        range_end=1,
+        range_start=0,
+        range_end=0,
     )
     partial_month = build_ocds_month_snapshot(
-        planned_ranges=[{"year": 2026, "month": 8, "start": 1, "end": 1}],
+        planned_ranges=[{"year": 2026, "month": 8, "start": 0, "end": 0}],
         parsed_pages=[partial_page],
         source_reported_total=1,
         materialized_at_utc="2026-08-01T00:00:00Z",
@@ -1555,15 +1562,15 @@ def test_snapshot_manifest_regression_matrix() -> None:
 
     term = build_ocds_month_snapshot(
         planned_ranges=[
+            {"year": 2026, "month": 8, "start": 0, "end": 0},
             {"year": 2026, "month": 8, "start": 1, "end": 1},
-            {"year": 2026, "month": 8, "start": 2, "end": 2},
         ],
         parsed_pages=[
             parse_ocds_package(
-                _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+                _page_payload("r1"), year=2026, month=8, range_start=0, range_end=0
             ),
             parse_ocds_package(
-                {"releases": []}, year=2026, month=8, range_start=2, range_end=2
+                {"releases": []}, year=2026, month=8, range_start=1, range_end=1
             ),
         ],
         source_reported_total=1,
@@ -1576,15 +1583,15 @@ def test_snapshot_manifest_regression_matrix() -> None:
 
     term2 = build_ocds_month_snapshot(
         planned_ranges=[
+            {"year": 2026, "month": 8, "start": 0, "end": 0},
             {"year": 2026, "month": 8, "start": 1, "end": 1},
-            {"year": 2026, "month": 8, "start": 2, "end": 2},
         ],
         parsed_pages=[
             parse_ocds_package(
-                _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+                _page_payload("r1"), year=2026, month=8, range_start=0, range_end=0
             ),
             parse_ocds_package(
-                {"releases": []}, year=2026, month=8, range_start=2, range_end=2
+                {"releases": []}, year=2026, month=8, range_start=1, range_end=1
             ),
         ],
         source_reported_total=1,

@@ -1,0 +1,19 @@
+{
+  "Cantidad": 2,
+  "FechaCreacion": "2026-08-01T12:43:14",
+  "Listado": [
+    {
+      "CodigoEstado": 5,
+      "CodigoExterno": "7870-1-LE26",
+      "FechaCierre": "2026-08-06T16:30:33",
+      "Nombre": "Synthetic Org 9D8C18"
+    },
+    {
+      "CodigoEstado": 5,
+      "CodigoExterno": "4253-2-LE26",
+      "FechaCierre": "2026-08-03T23:14:12",
+      "Nombre": "Synthetic Org 8B8ACD"
+    }
+  ],
+  "Version": "v1"
+}
