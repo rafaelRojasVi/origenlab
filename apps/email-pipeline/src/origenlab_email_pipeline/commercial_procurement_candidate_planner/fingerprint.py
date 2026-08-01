@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Iterable
+from typing import Any, Iterable
 
 from origenlab_email_pipeline.commercial_procurement_acquisition.canonical_json import (
     canonical_json_digest,
+)
+from origenlab_email_pipeline.commercial_procurement_candidate_planner.acquisition_instance import (
+    event_observation_identity,
 )
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.constants import (
     CANDIDATE_BUILD_PLAN_FP_ALGORITHM,
     CANDIDATE_INPUT_SOURCE_FP_ALGORITHM,
     CANDIDATE_SEMANTIC_DIGEST_ALGORITHM,
     COALESCENCE_POLICY_VERSION,
+    EVIDENCE_PLANE_ACQUISITION,
     LIFECYCLE_POLICY_VERSION,
     PLANNER_VERSION,
 )
@@ -27,24 +31,44 @@ from origenlab_email_pipeline.commercial_procurement_candidate_planner.models im
 def candidate_input_source_fingerprint(
     *,
     pr4: Pr4PlaneBundle,
-    acquisition_snapshots: Iterable[dict[str, str]],
+    acquisition_instances: Iterable[dict[str, Any]],
     evidence_refs: Iterable[ProcurementEvidenceRef],
     unresolved: Iterable[UnresolvedProcurementEvidence],
 ) -> str:
-    """Hash PR4 deps + acquisition identities + accepted/unresolved observation ids.
+    """Hash PR4 deps + acquisition-instance event rows + accepted/unresolved ids.
 
-    Excludes build time, output path, file mtime, and row order.
+    Includes acquired_at_utc via acquisition instance rows. Excludes build time,
+    materialized_at_utc, file mtime, output path, and input order.
     """
-    accepted_ids = sorted(
+    accepted_event_obs = sorted(
         {
-            r.observation_id or r.pr4_procurement_id or r.evidence_ref_id
+            event_observation_identity(
+                acquisition_instance_id=r.acquisition_instance_id,
+                observation_id=r.observation_id,
+            )
+            or r.pr4_procurement_id
+            or r.evidence_ref_id
             for r in evidence_refs
         }
     )
-    unresolved_ids = sorted({u.unresolved_id for u in unresolved})
-    snaps = sorted(
-        acquisition_snapshots,
-        key=lambda s: (s.get("snapshot_id") or "", s.get("source_fingerprint") or ""),
+    unresolved_event_obs = sorted(
+        {
+            event_observation_identity(
+                acquisition_instance_id=u.acquisition_instance_id,
+                observation_id=u.observation_id,
+            )
+            or u.unresolved_id
+            for u in unresolved
+            if u.evidence_plane == EVIDENCE_PLANE_ACQUISITION or u.observation_id
+        }
+        | {u.unresolved_id for u in unresolved if u.evidence_plane != EVIDENCE_PLANE_ACQUISITION}
+    )
+    instances = sorted(
+        acquisition_instances,
+        key=lambda s: (
+            s.get("acquisition_instance_id") or "",
+            s.get("snapshot_id") or "",
+        ),
     )
     payload = {
         "algorithm": CANDIDATE_INPUT_SOURCE_FP_ALGORITHM,
@@ -58,9 +82,9 @@ def candidate_input_source_fingerprint(
             "as_of_date": pr4.as_of_date,
             "signal_ids": sorted(str(s["procurement_id"]) for s in pr4.signals),
         },
-        "acquisition_snapshots": snaps,
-        "accepted_source_observation_identities": accepted_ids,
-        "unresolved_evidence_ids": unresolved_ids,
+        "acquisition_instances": instances,
+        "accepted_event_observation_identities": accepted_event_obs,
+        "unresolved_event_observation_identities": sorted(unresolved_event_obs),
     }
     return canonical_json_digest(payload)
 
@@ -90,7 +114,6 @@ def candidate_semantic_digest(
     unresolved: Iterable[UnresolvedProcurementEvidence],
     conflicts: Iterable[CoalescenceConflict],
 ) -> str:
-    """Order-independent hash of coalesced rows / evidence / unresolved / conflicts."""
     payload = {
         "algorithm": CANDIDATE_SEMANTIC_DIGEST_ALGORITHM,
         "coalesced_tenders": sorted(

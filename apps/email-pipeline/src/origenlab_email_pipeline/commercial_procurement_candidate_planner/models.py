@@ -30,18 +30,26 @@ class ProcurementEvidenceRef:
     source_record_id: str
     canonical_tender_key: str | None
     tender_key_kind: str | None
+    identity_namespace: str | None
     cross_source_join_eligible: bool
     snapshot_id: str | None
+    acquisition_instance_id: str | None
+    page_id: str | None
     observation_id: str | None
     acquired_at_utc: str | None
     source_status_code: str | None
     source_status_name: str | None
     source_status_value: str | None
     source_status_system: str | None
+    normalized_status_meaning: str | None
     publication_timestamp_raw: str | None
     close_timestamp_raw: str | None
     publication_timestamp_utc: str | None
     close_timestamp_utc: str | None
+    publication_santiago_date: str | None
+    close_santiago_date: str | None
+    publication_precision: str | None
+    close_precision: str | None
     timestamp_parse_reasons: tuple[str, ...]
     buyer_display_raw: str | None
     buyer_source_id: str | None
@@ -80,6 +88,7 @@ class CoalescenceConflict:
     conflict_id: str
     conflict_kind: str
     canonical_tender_key: str | None
+    identity_namespace: str | None
     coalesced_tender_id: str | None
     evidence_ref_ids: tuple[str, ...]
     field_name: str | None
@@ -101,12 +110,14 @@ class UnresolvedProcurementEvidence:
     endpoint_kind: str
     source_record_id: str
     snapshot_id: str | None
+    acquisition_instance_id: str | None
     observation_id: str | None
     unresolved_reason: str
     canonical_candidate_kind: str | None
     canonical_tender_key_candidate: str | None
     source_native_tender_key: str | None
     tender_key_kind: str | None
+    identity_namespace: str | None
     pr4_procurement_id: str | None
     reason_codes: tuple[str, ...]
     source_payload_digest: str | None
@@ -122,11 +133,13 @@ class UnresolvedProcurementEvidence:
 class CoalescedProcurementTender:
     coalesced_tender_id: str
     canonical_tender_key: str
+    identity_namespace: str
     tender_key_kind: str
     candidate_source_kind: str
     pr4_procurement_id: str | None
     pr4_procurement_ids: tuple[str, ...]
     acquisition_snapshot_ids: tuple[str, ...]
+    acquisition_instance_ids: tuple[str, ...]
     acquisition_observation_ids: tuple[str, ...]
     coalescence_status: str
     source_precedence_reason: str
@@ -143,6 +156,7 @@ class CoalescedProcurementTender:
     buyer_source_id_selected: str | None
     title_selected: str | None
     selected_field_provenance: dict[str, str]
+    buyer_display_variance: bool
     lifecycle_status_evidence_ref_id: str | None
     lifecycle_close_evidence_ref_id: str | None
     lifecycle_publication_evidence_ref_id: str | None
@@ -155,6 +169,7 @@ class CoalescedProcurementTender:
         d = asdict(self)
         d["pr4_procurement_ids"] = list(self.pr4_procurement_ids)
         d["acquisition_snapshot_ids"] = list(self.acquisition_snapshot_ids)
+        d["acquisition_instance_ids"] = list(self.acquisition_instance_ids)
         d["acquisition_observation_ids"] = list(self.acquisition_observation_ids)
         d["lifecycle_reason_codes"] = list(self.lifecycle_reason_codes)
         d["evidence_ref_ids"] = list(self.evidence_ref_ids)
@@ -190,6 +205,7 @@ class CandidatePlanResult:
     conflicts: tuple[CoalescenceConflict, ...]
     pr4: Pr4PlaneBundle
     acquisition_snapshot_ids: tuple[str, ...]
+    acquisition_instance_ids: tuple[str, ...]
     as_of_utc: str
     freshness_threshold_hours: int
     input_source_fingerprint: str
@@ -200,3 +216,4 @@ class CandidatePlanResult:
     lifecycle_policy: dict[str, Any]
     run_context: str
     planner_version: str
+    case_construction_meta: dict[str, Any] = field(default_factory=dict)

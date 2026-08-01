@@ -8,9 +8,19 @@ from typing import Any
 
 from origenlab_email_pipeline.commercial_procurement_acquisition.constants import (
     ACQUISITION_CONTRACT_VERSION,
+    ENDPOINT_OCDS_MONTHLY_MONTH,
+    ENDPOINT_OCDS_MONTHLY_RANGE,
+    ENDPOINT_PATH_OCDS_MONTH_TEMPLATE,
+    ENDPOINT_PATH_OCDS_TEMPLATE,
+    ENDPOINT_PATH_TICKET,
+    ENDPOINT_TICKET_LICITACION_DETAIL,
+    ENDPOINT_TICKET_LICITACIONES_SUMMARY,
+    OCDS_MAX_PAGE_SIZE,
     OCDS_QUERY_CONTRACT_VERSION,
     PARSER_VERSION,
     QUERY_CONTRACT_VERSION,
+    SOURCE_KIND_OCDS,
+    SOURCE_KIND_TICKET_API,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.fingerprint import (
     acquisition_normalized_semantic_digest,
@@ -30,9 +40,14 @@ from origenlab_email_pipeline.commercial_procurement_acquisition.models import (
     ProcurementSourceObservation,
     ProcurementTenderObservation,
 )
+from origenlab_email_pipeline.commercial_procurement_candidate_planner.acquisition_instance import (
+    acquisition_instance_event_payload,
+    candidate_acquisition_instance_id,
+)
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.constants import (
     CANONICAL_KIND_MERCADO_PUBLICO,
     EVIDENCE_PLANE_ACQUISITION,
+    IDENTITY_NS_MERCADO_PUBLICO,
 )
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.models import (
     ProcurementEvidenceRef,
@@ -40,10 +55,10 @@ from origenlab_email_pipeline.commercial_procurement_candidate_planner.models im
 )
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.normalize import (
     accept_canonical_tender_key,
-    parse_tender_timestamp_raw,
+    normalize_tender_timestamp,
+    normalized_status_meaning,
     rank_class_for_live,
     stable_content_id,
-    utc_iso,
 )
 
 SUPPORTED_ACQUISITION_CONTRACTS = frozenset({ACQUISITION_CONTRACT_VERSION})
@@ -76,6 +91,12 @@ def _require_nonneg_int(value: Any, *, field: str) -> int:
     if n < 0:
         raise AcquisitionPlaneError(f"{field} must be a non-negative integer")
     return n
+
+
+def _optional_nonneg_int(value: Any, *, field: str) -> int | None:
+    if value is None:
+        return None
+    return _require_nonneg_int(value, field=field)
 
 
 def _query_from_dict(d: dict[str, Any]) -> AcquisitionQuery:
@@ -121,12 +142,8 @@ def _page_from_dict(d: dict[str, Any]) -> AcquisitionPage:
         response_item_count=_require_nonneg_int(
             d["response_item_count"], field="page.response_item_count"
         ),
-        source_reported_total=(
-            None
-            if d.get("source_reported_total") is None
-            else _require_nonneg_int(
-                d["source_reported_total"], field="page.source_reported_total"
-            )
+        source_reported_total=_optional_nonneg_int(
+            d.get("source_reported_total"), field="page.source_reported_total"
         ),
         http_status=(
             None
@@ -221,7 +238,9 @@ def _line_from_dict(d: dict[str, Any]) -> ProcurementLineObservation:
     )
 
 
-def _validate_versions(query: AcquisitionQuery, *, parser_version: str, contract_version: str) -> None:
+def _validate_versions(
+    query: AcquisitionQuery, *, parser_version: str, contract_version: str
+) -> None:
     if contract_version not in SUPPORTED_ACQUISITION_CONTRACTS:
         raise AcquisitionPlaneError(
             f"unsupported acquisition contract_version={contract_version!r}"
@@ -234,6 +253,213 @@ def _validate_versions(query: AcquisitionQuery, *, parser_version: str, contract
         raise AcquisitionPlaneError(
             f"unsupported query_contract_version={query.query_contract_version!r}"
         )
+
+
+def _require_year_month(query: AcquisitionQuery) -> tuple[int, int]:
+    if query.year is None or query.month is None:
+        raise AcquisitionPlaneError("OCDS query requires year and month")
+    year = _require_non_bool_int(query.year, field="query.year")
+    month = _require_non_bool_int(query.month, field="query.month")
+    if not (1 <= month <= 12):
+        raise AcquisitionPlaneError("query.month must be 1..12")
+    return year, month
+
+
+def _validate_ticket_range_position(
+    page: AcquisitionPage, *, expected: dict[str, Any]
+) -> None:
+    if page.range_position != expected:
+        raise AcquisitionPlaneError("ticket page range_position mismatch")
+
+
+def _validate_ticket_query_pages(
+    query: AcquisitionQuery, pages: tuple[AcquisitionPage, ...]
+) -> None:
+    if query.query_contract_version != QUERY_CONTRACT_VERSION:
+        raise AcquisitionPlaneError(
+            "ticket query_contract_version must be acquisition_query_v1"
+        )
+    if query.source_kind != SOURCE_KIND_TICKET_API:
+        raise AcquisitionPlaneError("ticket source_kind mismatch")
+    if query.endpoint_path != ENDPOINT_PATH_TICKET:
+        raise AcquisitionPlaneError("ticket endpoint_path mismatch")
+
+    if query.endpoint_kind == ENDPOINT_TICKET_LICITACIONES_SUMMARY:
+        expected_rp = {"page": 0}
+    elif query.endpoint_kind == ENDPOINT_TICKET_LICITACION_DETAIL:
+        tender_code = query.tender_code
+        if tender_code is None or not str(tender_code).strip():
+            raise AcquisitionPlaneError("ticket detail requires tender_code")
+        expected_rp = {"page": 0, "codigo": tender_code}
+    else:
+        raise AcquisitionPlaneError(
+            f"unsupported ticket endpoint_kind={query.endpoint_kind!r}"
+        )
+
+    for page in pages:
+        if page.source_kind != SOURCE_KIND_TICKET_API:
+            raise AcquisitionPlaneError("page source_kind mismatch vs ticket query")
+        if page.endpoint_kind != query.endpoint_kind:
+            raise AcquisitionPlaneError("page endpoint_kind mismatch vs ticket query")
+        _validate_ticket_range_position(page, expected=expected_rp)
+
+
+def _validate_ocds_lista_v2_query_pages(
+    query: AcquisitionQuery, pages: tuple[AcquisitionPage, ...]
+) -> None:
+    if query.query_contract_version != OCDS_QUERY_CONTRACT_VERSION:
+        raise AcquisitionPlaneError(
+            "OCDS lista range requires acquisition_query_v2"
+        )
+    if query.source_kind != SOURCE_KIND_OCDS:
+        raise AcquisitionPlaneError("OCDS lista range source_kind mismatch")
+    if query.endpoint_kind != ENDPOINT_OCDS_MONTHLY_RANGE:
+        raise AcquisitionPlaneError("OCDS lista range endpoint_kind mismatch")
+
+    year, month = _require_year_month(query)
+    if query.range_start is None or query.range_end is None:
+        raise AcquisitionPlaneError("OCDS lista range requires range_start/range_end")
+    range_start = _require_non_bool_int(query.range_start, field="query.range_start")
+    range_end = _require_non_bool_int(query.range_end, field="query.range_end")
+    if range_start < 0:
+        raise AcquisitionPlaneError("query.range_start must be >= 0")
+    if range_end < range_start:
+        raise AcquisitionPlaneError("query.range_end must be >= range_start")
+    limit = range_end - range_start + 1
+    if limit < 1 or limit > OCDS_MAX_PAGE_SIZE:
+        raise AcquisitionPlaneError(
+            f"OCDS lista limit must be 1..{OCDS_MAX_PAGE_SIZE}"
+        )
+    expected_path = ENDPOINT_PATH_OCDS_TEMPLATE.format(
+        year=year, month=month, start=range_start, end=limit
+    )
+    if query.endpoint_path != expected_path:
+        raise AcquisitionPlaneError("OCDS lista endpoint_path mismatch")
+
+    expected_rp = {"start": range_start, "end": range_end}
+    for page in pages:
+        if page.source_kind != SOURCE_KIND_OCDS:
+            raise AcquisitionPlaneError("page source_kind mismatch vs OCDS query")
+        if page.endpoint_kind != ENDPOINT_OCDS_MONTHLY_RANGE:
+            raise AcquisitionPlaneError("page endpoint_kind mismatch vs OCDS query")
+        if page.range_position != expected_rp:
+            raise AcquisitionPlaneError("OCDS page range_position mismatch vs query")
+
+
+def _validate_ocds_month_query_pages(
+    query: AcquisitionQuery, pages: tuple[AcquisitionPage, ...]
+) -> None:
+    if query.query_contract_version != QUERY_CONTRACT_VERSION:
+        raise AcquisitionPlaneError(
+            "OCDS month package requires acquisition_query_v1"
+        )
+    if query.source_kind != SOURCE_KIND_OCDS:
+        raise AcquisitionPlaneError("OCDS month source_kind mismatch")
+    if query.endpoint_kind != ENDPOINT_OCDS_MONTHLY_MONTH:
+        raise AcquisitionPlaneError("OCDS month endpoint_kind mismatch")
+    if query.range_start is not None or query.range_end is not None:
+        raise AcquisitionPlaneError(
+            "OCDS month package requires range_start/range_end None"
+        )
+    year, month = _require_year_month(query)
+    expected_path = ENDPOINT_PATH_OCDS_MONTH_TEMPLATE.format(year=year, month=month)
+    if query.endpoint_path != expected_path:
+        raise AcquisitionPlaneError("OCDS month endpoint_path mismatch")
+
+    for page in pages:
+        if page.source_kind != SOURCE_KIND_OCDS:
+            raise AcquisitionPlaneError("page source_kind mismatch vs OCDS month query")
+        if page.endpoint_kind not in {
+            ENDPOINT_OCDS_MONTHLY_RANGE,
+            ENDPOINT_OCDS_MONTHLY_MONTH,
+        }:
+            raise AcquisitionPlaneError(
+                "OCDS month child page endpoint_kind unsupported"
+            )
+
+
+def _validate_ocds_lista_v1_historical(
+    query: AcquisitionQuery, pages: tuple[AcquisitionPage, ...]
+) -> None:
+    """Accept historical acquisition_query_v1 range identities without offset/limit reinterpretation."""
+    if query.query_contract_version != QUERY_CONTRACT_VERSION:
+        raise AcquisitionPlaneError(
+            "historical OCDS range requires acquisition_query_v1"
+        )
+    if query.source_kind != SOURCE_KIND_OCDS:
+        raise AcquisitionPlaneError("OCDS range source_kind mismatch")
+    if query.endpoint_kind != ENDPOINT_OCDS_MONTHLY_RANGE:
+        raise AcquisitionPlaneError("OCDS range endpoint_kind mismatch")
+    for page in pages:
+        if page.source_kind != SOURCE_KIND_OCDS:
+            raise AcquisitionPlaneError("page source_kind mismatch vs OCDS query")
+        if page.endpoint_kind != ENDPOINT_OCDS_MONTHLY_RANGE:
+            raise AcquisitionPlaneError("page endpoint_kind mismatch vs OCDS query")
+
+
+def _validate_endpoint_contracts(
+    query: AcquisitionQuery, pages: tuple[AcquisitionPage, ...]
+) -> None:
+    ek = query.endpoint_kind
+    if ek in {ENDPOINT_TICKET_LICITACIONES_SUMMARY, ENDPOINT_TICKET_LICITACION_DETAIL}:
+        _validate_ticket_query_pages(query, pages)
+        return
+    if ek == ENDPOINT_OCDS_MONTHLY_MONTH:
+        _validate_ocds_month_query_pages(query, pages)
+        return
+    if ek == ENDPOINT_OCDS_MONTHLY_RANGE:
+        if query.query_contract_version == OCDS_QUERY_CONTRACT_VERSION:
+            _validate_ocds_lista_v2_query_pages(query, pages)
+        elif query.query_contract_version == QUERY_CONTRACT_VERSION:
+            _validate_ocds_lista_v1_historical(query, pages)
+        else:
+            raise AcquisitionPlaneError(
+                f"unsupported OCDS range query_contract_version="
+                f"{query.query_contract_version!r}"
+            )
+        return
+    raise AcquisitionPlaneError(f"unsupported endpoint_kind={ek!r}")
+
+
+def _page_links_to_query(
+    query: AcquisitionQuery, page: AcquisitionPage
+) -> None:
+    if query.endpoint_kind == ENDPOINT_OCDS_MONTHLY_MONTH:
+        return
+    if page.acquisition_query_id != query.acquisition_query_id:
+        raise AcquisitionPlaneError("page acquisition_query_id mismatch")
+    if page.source_kind != query.source_kind or page.endpoint_kind != query.endpoint_kind:
+        raise AcquisitionPlaneError("page source_kind/endpoint_kind mismatch vs query")
+
+
+def _recompute_source_observation_id(obs: ProcurementSourceObservation) -> str:
+    recomputed = procurement_source_observation_id(
+        source_kind=obs.source_kind,
+        endpoint_kind=obs.endpoint_kind,
+        source_native_key=obs.source_native_key,
+        package_id=obs.package_id,
+        release_id=obs.release_id,
+        release_kind=obs.release_kind,
+        raw_payload_digest=obs.raw_payload_digest,
+    )
+    if recomputed == obs.observation_id:
+        return recomputed
+    if (
+        "lista_index_row" in obs.provenance_reason_codes
+        and obs.release_kind is None
+    ):
+        alt = procurement_source_observation_id(
+            source_kind=obs.source_kind,
+            endpoint_kind=obs.endpoint_kind,
+            source_native_key=obs.source_native_key,
+            package_id=obs.package_id,
+            release_id=obs.release_id,
+            release_kind="lista_index",
+            raw_payload_digest=obs.raw_payload_digest,
+        )
+        if alt == obs.observation_id:
+            return alt
+    raise AcquisitionPlaneError("source observation_id recompute mismatch")
 
 
 def materialize_acquisition_snapshot(payload: dict[str, Any]) -> AcquisitionSnapshot:
@@ -271,11 +497,11 @@ def materialize_acquisition_snapshot(payload: dict[str, Any]) -> AcquisitionSnap
     page_ids = [p.page_id for p in pages]
     if len(page_ids) != len(set(page_ids)):
         raise AcquisitionPlaneError("duplicate page_id")
+
+    _validate_endpoint_contracts(query, pages)
+
     for page in pages:
-        if page.acquisition_query_id != query.acquisition_query_id:
-            raise AcquisitionPlaneError("page acquisition_query_id mismatch")
-        if page.source_kind != query.source_kind or page.endpoint_kind != query.endpoint_kind:
-            raise AcquisitionPlaneError("page source_kind/endpoint_kind mismatch vs query")
+        _page_links_to_query(query, page)
         recomputed_page = acquisition_page_id(
             acquisition_query_id_value=page.acquisition_query_id,
             range_position=page.range_position,
@@ -283,6 +509,19 @@ def materialize_acquisition_snapshot(payload: dict[str, Any]) -> AcquisitionSnap
         )
         if recomputed_page != page.page_id:
             raise AcquisitionPlaneError("page_id recompute mismatch")
+
+    source_reported_total = _optional_nonneg_int(
+        payload.get("source_reported_total"), field="source_reported_total"
+    )
+    for page in pages:
+        if (
+            source_reported_total is not None
+            and page.source_reported_total is not None
+            and page.source_reported_total != source_reported_total
+        ):
+            raise AcquisitionPlaneError(
+                "page/snapshot source_reported_total mismatch"
+            )
 
     sources = tuple(_source_from_dict(dict(o)) for o in payload["source_observations"])
     source_ids = [o.observation_id for o in sources]
@@ -303,31 +542,7 @@ def materialize_acquisition_snapshot(payload: dict[str, Any]) -> AcquisitionSnap
             raise AcquisitionPlaneError(
                 f"unsupported observation parser_version={obs.parser_version!r}"
             )
-        recomputed_obs = procurement_source_observation_id(
-            source_kind=obs.source_kind,
-            endpoint_kind=obs.endpoint_kind,
-            source_native_key=obs.source_native_key,
-            package_id=obs.package_id,
-            release_id=obs.release_id,
-            release_kind=obs.release_kind,
-            raw_payload_digest=obs.raw_payload_digest,
-        )
-        if recomputed_obs != obs.observation_id:
-            # PR5B lista-index rows mint IDs with release_kind="lista_index" while
-            # persisting release_kind=None on the observation model.
-            alt = None
-            if "lista_index_row" in obs.provenance_reason_codes:
-                alt = procurement_source_observation_id(
-                    source_kind=obs.source_kind,
-                    endpoint_kind=obs.endpoint_kind,
-                    source_native_key=obs.source_native_key,
-                    package_id=obs.package_id,
-                    release_id=obs.release_id,
-                    release_kind="lista_index",
-                    raw_payload_digest=obs.raw_payload_digest,
-                )
-            if alt != obs.observation_id:
-                raise AcquisitionPlaneError("source observation_id recompute mismatch")
+        _recompute_source_observation_id(obs)
 
     tenders = tuple(_tender_from_dict(dict(t)) for t in payload["tender_observations"])
     tender_ids = [t.tender_observation_id for t in tenders]
@@ -356,7 +571,6 @@ def materialize_acquisition_snapshot(payload: dict[str, Any]) -> AcquisitionSnap
         if recomputed_tender != tender.tender_observation_id:
             raise AcquisitionPlaneError("tender_observation_id recompute mismatch")
 
-    # Reject silent overwrite of duplicate tender-per-source mappings.
     tender_by_source: dict[str, ProcurementTenderObservation] = {}
     for tender in tenders:
         prior = tender_by_source.get(tender.source_observation_id)
@@ -385,7 +599,6 @@ def materialize_acquisition_snapshot(payload: dict[str, Any]) -> AcquisitionSnap
 
     completeness = str(payload["completeness_status"])
     page_statuses = {p.completeness_status for p in pages}
-    # Snapshot completeness must agree with page completeness contract at coarse level.
     if completeness == "complete" and any(
         s in {"malformed_response", "failed"} for s in page_statuses
     ):
@@ -396,7 +609,7 @@ def materialize_acquisition_snapshot(payload: dict[str, Any]) -> AcquisitionSnap
         query_identity=query.identity_payload(),
         pages=pages,
         completeness_status=completeness,
-        source_reported_total=payload.get("source_reported_total"),
+        source_reported_total=source_reported_total,
     )
     if recomputed_fp != str(payload["source_fingerprint"]):
         raise AcquisitionPlaneError("acquisition source_fingerprint mismatch")
@@ -432,7 +645,7 @@ def materialize_acquisition_snapshot(payload: dict[str, Any]) -> AcquisitionSnap
         diagnostics=dict(payload.get("diagnostics") or {}),
         source_fingerprint=str(payload["source_fingerprint"]),
         normalized_semantic_digest=str(payload["normalized_semantic_digest"]),
-        source_reported_total=payload.get("source_reported_total"),
+        source_reported_total=source_reported_total,
         materialized_at_utc=payload.get("materialized_at_utc"),
     )
 
@@ -443,24 +656,30 @@ def load_acquisition_snapshot_json(path: Path) -> AcquisitionSnapshot:
     return materialize_acquisition_snapshot(payload)
 
 
-def dedupe_snapshots(
+def dedupe_acquisition_instances(
     snapshots: list[AcquisitionSnapshot],
-) -> list[AcquisitionSnapshot]:
-    """Reject divergent duplicate snapshot_ids; keep exact duplicates once."""
+) -> list[tuple[str, AcquisitionSnapshot]]:
+    """Dedupe by acquisition_instance_id; keep distinct capture events separately.
+
+    Same snapshot_id with different acquired_at yields different instance IDs and
+    both are retained. Exact same instance payload is kept once. Same instance_id
+    with divergent event metadata is rejected.
+    """
     by_id: dict[str, AcquisitionSnapshot] = {}
     for snap in snapshots:
-        prior = by_id.get(snap.snapshot_id)
+        instance_id = candidate_acquisition_instance_id(snap)
+        prior = by_id.get(instance_id)
         if prior is None:
-            by_id[snap.snapshot_id] = snap
+            by_id[instance_id] = snap
             continue
-        if (
-            prior.source_fingerprint != snap.source_fingerprint
-            or prior.normalized_semantic_digest != snap.normalized_semantic_digest
-        ):
+        if acquisition_instance_event_payload(
+            prior
+        ) != acquisition_instance_event_payload(snap):
             raise AcquisitionPlaneError(
-                f"duplicate snapshot_id with divergent content: {snap.snapshot_id}"
+                f"duplicate acquisition_instance_id with divergent event metadata: "
+                f"{instance_id}"
             )
-    return [by_id[k] for k in sorted(by_id.keys())]
+    return [(iid, by_id[iid]) for iid in sorted(by_id.keys())]
 
 
 def _page_by_id(snap: AcquisitionSnapshot) -> dict[str, AcquisitionPage]:
@@ -484,6 +703,7 @@ def _unresolved(
     *,
     snap: AcquisitionSnapshot,
     obs: ProcurementSourceObservation,
+    acquisition_instance_id: str,
     reason: str,
     acquired: str | None,
     extra_codes: tuple[str, ...] = (),
@@ -492,7 +712,7 @@ def _unresolved(
         unresolved_id=stable_content_id(
             "unresolved",
             {
-                "snapshot_id": snap.snapshot_id,
+                "acquisition_instance_id": acquisition_instance_id,
                 "observation_id": obs.observation_id,
                 "reason": reason,
             },
@@ -502,12 +722,14 @@ def _unresolved(
         endpoint_kind=obs.endpoint_kind,
         source_record_id=obs.source_native_key,
         snapshot_id=snap.snapshot_id,
+        acquisition_instance_id=acquisition_instance_id,
         observation_id=obs.observation_id,
         unresolved_reason=reason,
         canonical_candidate_kind=obs.canonical_candidate_kind,
         canonical_tender_key_candidate=obs.canonical_tender_key_candidate,
         source_native_tender_key=obs.source_native_tender_key,
         tender_key_kind=None,
+        identity_namespace=None,
         pr4_procurement_id=None,
         reason_codes=(reason,) + extra_codes,
         source_payload_digest=obs.raw_payload_digest,
@@ -517,6 +739,8 @@ def _unresolved(
 
 def snapshot_to_evidence(
     snap: AcquisitionSnapshot,
+    *,
+    acquisition_instance_id: str,
 ) -> tuple[list[ProcurementEvidenceRef], list[UnresolvedProcurementEvidence]]:
     """Split source observations into accepted evidence refs vs unresolved."""
     pages = _page_by_id(snap)
@@ -528,6 +752,7 @@ def snapshot_to_evidence(
         page = pages.get(obs.page_id)
         page_status = page.completeness_status if page else "missing_page"
         acquired = page.acquired_at_utc if page else None
+        page_id = page.page_id if page else obs.page_id
         tender = tenders.get(obs.observation_id)
 
         incomplete = page_status not in {"complete", "empty_page", "partial_page_failure"}
@@ -542,6 +767,7 @@ def snapshot_to_evidence(
                 _unresolved(
                     snap=snap,
                     obs=obs,
+                    acquisition_instance_id=acquisition_instance_id,
                     reason="incomplete_or_failed_page",
                     acquired=acquired,
                     extra_codes=(page_status,),
@@ -571,6 +797,7 @@ def snapshot_to_evidence(
                 _unresolved(
                     snap=snap,
                     obs=obs,
+                    acquisition_instance_id=acquisition_instance_id,
                     reason=reason,
                     acquired=acquired,
                     extra_codes=(obs.canonical_candidate_reason or "",),
@@ -599,15 +826,15 @@ def snapshot_to_evidence(
         status_name = (
             (tender.source_status_name if tender else None) or obs.source_status_name
         )
-        pub_dt, pub_err = parse_tender_timestamp_raw(pub)
-        close_dt, close_err = parse_tender_timestamp_raw(close)
-        ts_reasons = tuple(r for r in (pub_err, close_err) if r)
+        pub_nt = normalize_tender_timestamp(pub)
+        close_nt = normalize_tender_timestamp(close)
+        ts_reasons = tuple(r for r in (pub_nt.reason, close_nt.reason) if r)
 
         ref_id = stable_content_id(
             "evidence_ref",
             {
                 "plane": EVIDENCE_PLANE_ACQUISITION,
-                "snapshot_id": snap.snapshot_id,
+                "acquisition_instance_id": acquisition_instance_id,
                 "observation_id": obs.observation_id,
                 "canonical_tender_key": key,
             },
@@ -621,18 +848,32 @@ def snapshot_to_evidence(
                 source_record_id=obs.source_native_key,
                 canonical_tender_key=key,
                 tender_key_kind=CANONICAL_KIND_MERCADO_PUBLICO,
+                identity_namespace=IDENTITY_NS_MERCADO_PUBLICO,
                 cross_source_join_eligible=True,
                 snapshot_id=snap.snapshot_id,
+                acquisition_instance_id=acquisition_instance_id,
+                page_id=page_id,
                 observation_id=obs.observation_id,
                 acquired_at_utc=acquired,
                 source_status_code=status_code,
                 source_status_name=status_name,
                 source_status_value=obs.source_status_value or status_name,
                 source_status_system=obs.source_status_system or None,
+                normalized_status_meaning=normalized_status_meaning(
+                    status_code, status_name
+                ),
                 publication_timestamp_raw=pub,
                 close_timestamp_raw=close,
-                publication_timestamp_utc=utc_iso(pub_dt),
-                close_timestamp_utc=utc_iso(close_dt),
+                publication_timestamp_utc=pub_nt.utc_iso,
+                close_timestamp_utc=close_nt.utc_iso,
+                publication_santiago_date=(
+                    pub_nt.santiago_date.isoformat() if pub_nt.santiago_date else None
+                ),
+                close_santiago_date=(
+                    close_nt.santiago_date.isoformat() if close_nt.santiago_date else None
+                ),
+                publication_precision=pub_nt.precision if pub else None,
+                close_precision=close_nt.precision if close else None,
                 timestamp_parse_reasons=ts_reasons,
                 buyer_display_raw=buyer,
                 buyer_source_id=buyer_id,
