@@ -26,6 +26,7 @@ from origenlab_email_pipeline.commercial_procurement_acquisition.normalize impor
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.ocds import (
     OcdsParseError,
+    build_ocds_month_query,
     build_ocds_month_snapshot,
     build_ocds_query,
     detect_range_anomalies,
@@ -349,7 +350,7 @@ def test_error_text_does_not_replace_payload_identity() -> None:
 def test_partial_detail_run_uses_distinct_query_ids() -> None:
     summary = _load("ticket_summary_list.json")
     detail = _load("ticket_detail_items.json")
-    run, children = build_partial_detail_run(
+    result = build_partial_detail_run(
         summary_payload=summary,
         detail_success_payload=detail,
         detail_failure_code="9999-2-LE26",
@@ -357,15 +358,17 @@ def test_partial_detail_run_uses_distinct_query_ids() -> None:
         fixture_origin="synthetic_official_shape",
         materialized_at_utc="2026-08-01T00:00:00Z",
     )
+    run = result.run
     assert run.run_completeness == "partial_detail_failure"
     assert run.completed_detail_count == 1
     assert run.failed_detail_count == 1
-    q_a = children["detail_a"].query.acquisition_query_id
-    q_b = run.detail_attempts[1].query.acquisition_query_id
+    q_a = result.detail_success_snapshot.query.acquisition_query_id
+    q_b = result.failed_detail_attempt.query.acquisition_query_id
     assert q_a != q_b
-    assert run.detail_attempts[1].query.tender_code == "9999-2-le26"
+    assert result.failed_detail_attempt.snapshot_id is None
+    assert result.failed_detail_attempt.query.tender_code == "9999-2-le26"
     assert build_ticket_detail_query(tender_code="9999-2-LE26").acquisition_query_id == q_b
-    run2, _ = build_partial_detail_run(
+    result2 = build_partial_detail_run(
         summary_payload=summary,
         detail_success_payload=detail,
         detail_failure_code="9999-2-LE26",
@@ -373,11 +376,9 @@ def test_partial_detail_run_uses_distinct_query_ids() -> None:
         fixture_origin="synthetic_official_shape",
         materialized_at_utc="2099-01-01T00:00:00Z",
     )
-    # Failure payload identity (codigo + status) drives fingerprint; error text separate.
-    assert (
-        run.detail_attempts[1].page_id is not None
-        and run2.detail_attempts[1].page_id is not None
-    )
+    assert result.failed_page.page_id is not None
+    assert result2.failed_page.page_id is not None
+    assert result.failed_page.page_id == result2.failed_page.page_id
 
 
 # --- OCDS ---
@@ -532,12 +533,12 @@ def test_ocds_month_missing_duplicate_overlap() -> None:
     )
     assert missing.completeness_status == "incomplete_range"
 
-    dup = build_ocds_month_snapshot(
-        planned_ranges=planned,
-        parsed_pages=[p1, p1],
-        source_reported_total=2,
-    )
-    assert dup.completeness_status == "duplicate_page"
+    with pytest.raises(OcdsParseError, match="duplicate child page"):
+        build_ocds_month_snapshot(
+            planned_ranges=planned,
+            parsed_pages=[p1, p1],
+            source_reported_total=2,
+        )
 
     overlap_pages = [
         parse_ocds_package(
@@ -692,12 +693,36 @@ def test_semantic_digest_sensitivity_matrix() -> None:
     )
     assert (
         digest_for(
-            lambda p: p["releases"][0]["tender"].__setitem__(
+            lambda p: p["releases"][0].__setitem__(
                 "relatedProcesses",
                 [{"id": "x", "identifier": "y", "title": "z", "scheme": "s"}],
             )
         )
         != baseline
+    )
+
+
+def test_tender_related_processes_ignored_for_canonical_location() -> None:
+    base = _load("ocds_single_release.json")
+    mutated = json.loads(json.dumps(base))
+    mutated["releases"][0]["tender"]["relatedProcesses"] = [
+        {"id": "nonstandard", "identifier": "ignored", "title": "tender-level"}
+    ]
+    other = build_acquisition_snapshot(
+        source_kind="ocds",
+        payload=mutated,
+        fixture_origin="synthetic_official_shape",
+        year=2026,
+        month=8,
+        range_start=1,
+        range_end=1,
+        materialized_at_utc="2026-08-01T00:00:00Z",
+    )
+    # Canonical relatedProcesses are release-level only; tender nesting is ignored.
+    assert other.tender_observations[0].related_processes == ()
+    assert (
+        other.tender_observations[0].field_provenance["related_processes"]
+        == "release.relatedProcesses"
     )
 
 
@@ -738,7 +763,207 @@ def test_walkthrough_bundle_no_ticket() -> None:
     assert bundle["cases"]["E"]["coalesced"] is False
     assert bundle["cases"]["E"]["candidates_equal"] is True
     assert "ticket_value_accessed" not in bundle
+    assert bundle["cases"]["D"]["stages"][-1]["result"] == "snapshot_id=None"
+    assert bundle["cases"]["C"]["stages"]
 
 
 def test_canonical_digest_length() -> None:
     assert len(canonical_json_digest({"b": 1, "a": 2})) == 64
+
+
+def test_ocds_month_query_identity_separate_from_page_width() -> None:
+    month_q = build_ocds_month_query(year=2026, month=8)
+    assert month_q.endpoint_kind == "ocds_lista_agno_mes_month"
+    assert month_q.range_start is None and month_q.range_end is None
+    assert month_q.endpoint_path == "/APISOCDS/OCDS/listaOCDSAgnoMes/2026/8"
+    # Page queries still enforce max width.
+    with pytest.raises(OcdsParseError):
+        build_ocds_query(year=2026, month=8, range_start=1, range_end=1001)
+    # Month assembly for totals > 1000 must not use a wide page query.
+    for total, page_size in ((1001, 1000), (2000, 1000), (2001, 1000), (2000, 500)):
+        planned = plan_ocds_ranges(
+            year=2026, month=8, source_reported_total=total, page_size=page_size
+        )
+        assert all(r["end"] - r["start"] + 1 <= 1000 for r in planned)
+        pages = []
+        for r in planned:
+            width = r["end"] - r["start"] + 1
+            # Compact synthetic page: one release representing the page fill count
+            # via response_item_count from parser (use empty + override via parse of N).
+            payload = {
+                "releases": [
+                    {
+                        "ocid": f"o-{r['start']}-{i}",
+                        "id": f"rel-{r['start']}-{i}",
+                        "tender": {"id": f"9999-{i % 97}-LE26", "status": "active"},
+                    }
+                    for i in range(width)
+                ]
+            }
+            pages.append(
+                parse_ocds_package(
+                    payload,
+                    year=2026,
+                    month=8,
+                    range_start=r["start"],
+                    range_end=r["end"],
+                )
+            )
+        snap = build_ocds_month_snapshot(
+            planned_ranges=planned,
+            parsed_pages=pages,
+            source_reported_total=total,
+            materialized_at_utc="2026-08-01T00:00:00Z",
+        )
+        assert snap.query.endpoint_kind == "ocds_lista_agno_mes_month"
+        assert snap.query.range_start is None
+        assert snap.completeness_status == "complete"
+        shuffled = list(reversed(pages))
+        snap2 = build_ocds_month_snapshot(
+            planned_ranges=planned,
+            parsed_pages=shuffled,
+            source_reported_total=total,
+            materialized_at_utc="2099-01-01T00:00:00Z",
+        )
+        assert snap.source_fingerprint == snap2.source_fingerprint
+        assert snap.snapshot_id == snap2.snapshot_id
+
+
+def test_month_assembly_child_validation() -> None:
+    planned = plan_ocds_ranges(year=2026, month=8, source_reported_total=2, page_size=1)
+    p1 = parse_ocds_package(
+        _page_payload("r1"), year=2026, month=8, range_start=1, range_end=1
+    )
+    p2 = parse_ocds_package(
+        _page_payload("r2", "9999-2-LE26"),
+        year=2026,
+        month=8,
+        range_start=2,
+        range_end=2,
+    )
+    # Shuffled valid children OK.
+    ok = build_ocds_month_snapshot(
+        planned_ranges=planned, parsed_pages=[p2, p1], source_reported_total=2
+    )
+    assert ok.completeness_status == "complete"
+
+    mixed_month = parse_ocds_package(
+        _page_payload("r2", "9999-2-LE26"),
+        year=2026,
+        month=7,
+        range_start=2,
+        range_end=2,
+    )
+    with pytest.raises(OcdsParseError, match="year/month"):
+        build_ocds_month_snapshot(
+            planned_ranges=planned, parsed_pages=[p1, mixed_month], source_reported_total=2
+        )
+
+    mixed_year = parse_ocds_package(
+        _page_payload("r2", "9999-2-LE26"),
+        year=2025,
+        month=8,
+        range_start=2,
+        range_end=2,
+    )
+    with pytest.raises(OcdsParseError, match="year/month"):
+        build_ocds_month_snapshot(
+            planned_ranges=planned, parsed_pages=[p1, mixed_year], source_reported_total=2
+        )
+
+    from origenlab_email_pipeline.commercial_procurement_acquisition.models import (
+        AcquisitionPage,
+    )
+
+    mismatched = AcquisitionPage(**{**p2[1].to_dict(), "range_position": {"start": 9, "end": 9}})
+    with pytest.raises(OcdsParseError, match="range_position"):
+        build_ocds_month_snapshot(
+            planned_ranges=planned,
+            parsed_pages=[p1, (p2[0], mismatched, p2[2], p2[3], p2[4], p2[5])],
+            source_reported_total=2,
+        )
+
+    id_mismatch = AcquisitionPage(
+        **{**p2[1].to_dict(), "acquisition_query_id": "acquisition_query_id_deadbeef"}
+    )
+    with pytest.raises(OcdsParseError, match="acquisition_query_id"):
+        build_ocds_month_snapshot(
+            planned_ranges=planned,
+            parsed_pages=[p1, (p2[0], id_mismatch, p2[2], p2[3], p2[4], p2[5])],
+            source_reported_total=2,
+        )
+
+    with pytest.raises(OcdsParseError, match="duplicate planned range"):
+        build_ocds_month_snapshot(
+            planned_ranges=[planned[0], planned[0]],
+            parsed_pages=[p1],
+            source_reported_total=1,
+        )
+
+    from origenlab_email_pipeline.commercial_procurement_acquisition.ticket_api import (
+        build_ticket_summary_query,
+    )
+
+    ticket_q = build_ticket_summary_query()
+    with pytest.raises(OcdsParseError, match="ocds_lista_agno_mes_range"):
+        build_ocds_month_snapshot(
+            planned_ranges=planned,
+            parsed_pages=[
+                p1,
+                (ticket_q, p2[1], p2[2], p2[3], p2[4], p2[5]),
+            ],
+            source_reported_total=2,
+        )
+
+
+def test_ticket_summary_envelope_hardening() -> None:
+    assert parse_ticket_summary_payload({})[1].completeness_status == "malformed_response"
+    assert (
+        parse_ticket_summary_payload({"foo": "bar"})[1].completeness_status
+        == "malformed_response"
+    )
+    assert (
+        parse_ticket_summary_payload({"Listado": "invalid"})[1].completeness_status
+        == "malformed_response"
+    )
+    nested_bad = {"Listado": {"Licitacion": "nope"}}
+    assert (
+        parse_ticket_summary_payload(nested_bad)[1].completeness_status
+        == "malformed_response"
+    )
+
+    valid = _load("ticket_summary_single.json")
+    mixed = json.loads(json.dumps(valid))
+    # Ensure Listado is a list with one valid + one missing code.
+    entry = mixed["Listado"]["Licitacion"] if isinstance(mixed["Listado"], dict) else mixed["Listado"][0]
+    if isinstance(mixed["Listado"], dict):
+        mixed["Listado"] = [entry, {"Nombre": "no-code"}]
+        mixed["Cantidad"] = 2
+    else:
+        mixed["Listado"] = [mixed["Listado"][0], {"Nombre": "no-code"}]
+        mixed["Cantidad"] = 2
+    _q, page, sources, tenders, _lines, diag = parse_ticket_summary_payload(mixed)
+    assert page.completeness_status == "partial_page_failure"
+    assert len(sources) == 1
+    assert diag["rejected_entry_count"] == 1
+    assert diag["rejected_entries"][0]["reason_code"] == "missing_codigo_externo"
+
+    all_bad = {"Listado": [{"Nombre": "a"}, {"Nombre": "b"}], "Cantidad": 2}
+    _q2, page2, sources2, _, _, diag2 = parse_ticket_summary_payload(all_bad)
+    assert page2.completeness_status == "partial_page_failure"
+    assert sources2 == []
+    assert diag2["rejected_entry_count"] == 2
+
+    empty = parse_ticket_summary_payload({"Listado": [], "Cantidad": 0})
+    assert empty[1].completeness_status == "complete"
+    assert empty[2] == []
+    null_listado = parse_ticket_summary_payload(_load("ticket_empty.json"))
+    assert null_listado[1].completeness_status == "complete"
+
+
+def test_malformed_preserves_acquired_at() -> None:
+    ts = "2026-08-01T12:00:00Z"
+    ticket_page = parse_ticket_summary_payload(["bad"], acquired_at_utc=ts)[1]
+    assert ticket_page.acquired_at_utc == ts
+    ocds_page = parse_ocds_package({"not": "ocds"}, acquired_at_utc=ts)[1]
+    assert ocds_page.acquired_at_utc == ts

@@ -136,7 +136,7 @@ def build_walkthrough_cases(fixtures_dir: Path) -> dict[str, Any]:
         materialized_at_utc="2026-08-01T00:12:02Z",
     )
 
-    run_d, children_d = build_partial_detail_run(
+    run_result = build_partial_detail_run(
         summary_payload=summary,
         detail_success_payload=detail,
         detail_failure_code="9999-2-LE26",
@@ -145,6 +145,11 @@ def build_walkthrough_cases(fixtures_dir: Path) -> dict[str, Any]:
         acquired_at_utc="2026-08-01T00:12:03Z",
         materialized_at_utc="2026-08-01T00:12:03Z",
     )
+    run_d = run_result.run
+    children_d = {
+        "summary": run_result.summary_snapshot,
+        "detail_a": run_result.detail_success_snapshot,
+    }
 
     lic = detail["Listado"][0]
     existing_rows = assert_compatible_with_existing_normalizer(lic, detail=True)
@@ -338,19 +343,35 @@ def build_walkthrough_cases(fixtures_dir: Path) -> dict[str, Any]:
             ),
             _stage(
                 "related_processes",
-                "tender.relatedProcesses",
+                "release.relatedProcesses",
                 [
                     list(t.related_processes)
                     for t in snap_c_records.tender_observations
                 ],
-                "tender-level bounded evidence",
+                "release-level bounded evidence",
                 "retained",
+            ),
+            _stage(
+                "month_scope_query",
+                snap_c.query.endpoint_kind,
+                snap_c.query.acquisition_query_id,
+                "build_ocds_month_query — range_start/end null",
+                f"child_pages={len(snap_c.pages)}",
+            ),
+            _stage(
+                "scaled_month_plan",
+                plan_ocds_ranges(
+                    year=2026, month=8, source_reported_total=1001, page_size=1000
+                ),
+                "no page width > 1000",
+                "month scope separate from child range queries",
+                "1-1000 + 1001-1001",
             ),
             _stage(
                 "monthly_range_provenance",
                 planned,
                 snap_c.completeness_status,
-                "build_ocds_month_snapshot",
+                "child pages use ocds_lista_agno_mes_range (≤1000)",
                 f"pages={len(snap_c.pages)}",
             ),
         ],
@@ -402,25 +423,25 @@ def build_walkthrough_cases(fixtures_dir: Path) -> dict[str, Any]:
                 run_d.run_kind,
             ),
             _stage(
-                "summary_child",
+                "summary_snapshot",
                 children_d["summary"].snapshot_id,
                 children_d["summary"].query.acquisition_query_id,
                 "one summary AcquisitionSnapshot",
                 children_d["summary"].completeness_status,
             ),
             _stage(
-                "detail_a_success",
+                "detail_success_snapshot",
                 children_d["detail_a"].snapshot_id,
                 children_d["detail_a"].query.acquisition_query_id,
                 "own detail query ID for code A",
                 "completed",
             ),
             _stage(
-                "detail_b_failed",
-                run_d.detail_attempts[1].query.acquisition_query_id,
-                run_d.detail_attempts[1].page_id,
-                "build_ticket_detail_query(tender_code=B) — never reuses A",
-                run_d.detail_attempts[1].status,
+                "failed_detail_attempt",
+                run_result.failed_detail_attempt.query.acquisition_query_id,
+                run_result.failed_page.page_id,
+                "build_ticket_detail_query(tender_code=B) — never a fake snapshot",
+                f"snapshot_id={run_result.failed_detail_attempt.snapshot_id}",
             ),
         ],
         "artifacts": [
@@ -433,8 +454,9 @@ def build_walkthrough_cases(fixtures_dir: Path) -> dict[str, Any]:
                     "completed_detail_count": run_d.completed_detail_count,
                     "failed_detail_count": run_d.failed_detail_count,
                     "run_source_fingerprint": run_d.run_source_fingerprint,
+                    "failed_attempt_snapshot_id": run_result.failed_detail_attempt.snapshot_id,
                 },
-                "run fingerprint excludes materialized_at",
+                "run fingerprint excludes materialized_at; failed attempt has snapshot_id=null",
             )
         ],
         "diagnostics": run_d.diagnostics,

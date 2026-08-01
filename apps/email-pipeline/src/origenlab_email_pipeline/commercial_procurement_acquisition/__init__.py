@@ -24,6 +24,7 @@ from origenlab_email_pipeline.commercial_procurement_acquisition.fingerprint imp
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.ocds import (
     build_ocds_month_snapshot,
+    build_ocds_month_query,
     plan_ocds_ranges,
     parse_ocds_package,
 )
@@ -47,6 +48,7 @@ __all__ = [
     "acquisition_normalized_semantic_digest",
     "acquisition_source_fingerprint",
     "build_acquisition_snapshot",
+    "build_ocds_month_query",
     "build_ocds_month_snapshot",
     "build_partial_detail_run",
     "parse_ocds_package",
