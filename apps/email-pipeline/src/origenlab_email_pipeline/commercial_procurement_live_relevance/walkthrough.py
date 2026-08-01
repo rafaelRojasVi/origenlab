@@ -24,8 +24,12 @@ from origenlab_email_pipeline.commercial_procurement_live_relevance.artifact_ope
 from origenlab_email_pipeline.commercial_procurement_live_relevance.constants import (
     ACTIVE_CLASSIFIER_VERSION,
     AS_OF_TIMEZONE,
+    CONTACT_RESOLUTION_DEFERRED,
     CONTACT_RESOLVER_VERSION,
     RELEVANCE_CLASSIFIER_VERSION,
+)
+from origenlab_email_pipeline.commercial_procurement_live_relevance.production_cases import (
+    assert_no_forbidden_identifier_leaks,
 )
 
 SANTIAGO = ZoneInfo(AS_OF_TIMEZONE)
@@ -86,11 +90,11 @@ def select_case_ids(seeds: dict[str, Any]) -> dict[str, str | None]:
         return None
 
     return {
-        "case_a": _id(a, "selection_id", "procurement_id", "codigo_licitacion_redacted"),
-        "case_b": _id(b, "procurement_id"),
-        "case_c": _id(c, "procurement_id"),
-        "case_d": _id(d, "procurement_id"),
-        "case_e": _id(e, "procurement_id"),
+        "case_a": _id(a, "selection_id", "procurement_id_redacted", "codigo_licitacion_redacted"),
+        "case_b": _id(b, "procurement_id_redacted", "procurement_id"),
+        "case_c": _id(c, "procurement_id_redacted", "procurement_id"),
+        "case_d": _id(d, "procurement_id_redacted", "procurement_id"),
+        "case_e": _id(e, "procurement_id_redacted", "procurement_id"),
     }
 
 
@@ -250,15 +254,17 @@ def build_case_a_from_open_queue_row(
         _planned_row(
             "commercial_procurement_contact_resolution",
             {
-                "final_contact_status": "no_contact_found",
-                "next_action": "resolve_account_first",
-                "reason_code": "account_unresolved",
+                "final_contact_status": CONTACT_RESOLUTION_DEFERRED,
+                "search_stages_completed": [],
                 "considered_contact_count": 0,
+                "next_action": "resolve_account",
+                "reason_code": "account_unresolved",
             },
-            "Contact search not run until account resolution",
+            "Contact search deferred — prerequisite account unresolved",
         ),
     ]
 
+    prov_dict = provenance.to_dict() if provenance else None
     return {
         "case_id": "A_artifact_declared_open_relevant",
         "live_verified_open": False,
@@ -267,13 +273,29 @@ def build_case_a_from_open_queue_row(
         "selection_rule": SELECTION_RULES["case_a_artifact_declared_open"],
         "selection_id": redacted.get("codigo_licitacion"),
         "source_artifact": artifact_path.name,
-        "artifact_provenance": provenance.to_dict() if provenance else None,
+        "artifact_provenance": prov_dict,
+        "effective_artifact_timestamp_utc": (
+            (prov_dict or {}).get("effective_artifact_timestamp_utc")
+        ),
+        "effective_timestamp_source": (prov_dict or {}).get("effective_timestamp_source"),
+        "artifact_age_seconds": (prov_dict or {}).get("artifact_age_seconds"),
+        "contact_resolution_status": CONTACT_RESOLUTION_DEFERRED,
+        "candidate_outcome_state": outcome,
         "classification": classification.to_dict(),
         "as_of_america_santiago": as_of.isoformat(),
         "redacted_fields": redacted,
         "equipment_category": equipment_category,
         "stages": stages,
         "planned_pr5_rows": planned,
+        "field_flow": [
+            "source artifact / PR4 row",
+            "provenance normalization",
+            "active classification",
+            "relevance classification",
+            "account resolution",
+            "contact resolution state",
+            "candidate outcome",
+        ],
     }
 
 
@@ -312,7 +334,8 @@ def build_case_b_historical(seed: dict[str, Any]) -> dict[str, Any]:
         _planned_row(
             "commercial_procurement_candidate",
             {
-                "procurement_id": seed.get("procurement_id"),
+                "procurement_id_redacted": seed.get("procurement_id_redacted")
+                or seed.get("procurement_id"),
                 "candidate_source_kind": "pr4",
                 "active_status_class": "closed",
                 "closing_soon_bucket": "not_applicable",
@@ -361,7 +384,8 @@ def build_case_c_excluded(seed: dict[str, Any]) -> dict[str, Any]:
         _planned_row(
             "commercial_procurement_candidate",
             {
-                "procurement_id": seed.get("procurement_id"),
+                "procurement_id_redacted": seed.get("procurement_id_redacted")
+                or seed.get("procurement_id"),
                 "relevance_class": relevance,
                 "candidate_outcome_state": "not_eligible",
                 "not_eligible_reason": relevance,
@@ -396,12 +420,28 @@ def build_case_c_excluded(seed: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_case_d_contact_research(seed: dict[str, Any]) -> dict[str, Any]:
+    if seed.get("unavailable"):
+        return {
+            "case_id": "D_contact_research_historical",
+            "selection_rule": SELECTION_RULES["case_d_contact_research"],
+            "unavailable": True,
+            "missing_reason": seed.get("missing_reason")
+            or "no_linked_account_with_zero_pr2_contacts",
+            "seed_redacted": seed,
+            "stages": [],
+            "planned_pr5_rows": [],
+            "note": (
+                "No qualifying zero-contact linked account in production; "
+                "audit continues without inventing a synthetic Case D."
+            ),
+        }
     contact_n = int(seed.get("contact_n") or 0)
-    hypo_status = (
-        "contact_research_required"
-        if contact_n == 0
-        else "existing_contact_needs_role_review"
-    )
+    if contact_n != 0:
+        raise ValueError(
+            "Case D requires exactly zero PR2 contacts; "
+            f"got contact_n={contact_n}"
+        )
+    hypo_status = "contact_research_required"
     stages = [
         _stage(
             "active_status_class",
@@ -422,7 +462,8 @@ def build_case_d_contact_research(seed: dict[str, Any]) -> dict[str, Any]:
         _planned_row(
             "commercial_procurement_candidate",
             {
-                "procurement_id": seed.get("procurement_id"),
+                "procurement_id_redacted": seed.get("procurement_id_redacted")
+                or seed.get("procurement_id"),
                 "candidate_source_kind": "pr4",
                 "candidate_outcome_state": "not_eligible",
                 "not_eligible_reason": "historical_tender",
@@ -486,7 +527,8 @@ def build_case_e_existing_contact(seed: dict[str, Any]) -> dict[str, Any]:
         _planned_row(
             "commercial_procurement_candidate",
             {
-                "procurement_id": seed.get("procurement_id"),
+                "procurement_id_redacted": seed.get("procurement_id_redacted")
+                or seed.get("procurement_id"),
                 "candidate_outcome_state": "not_eligible",
                 "not_eligible_reason": "historical_tender",
             },
@@ -673,11 +715,7 @@ def build_pr5_walkthrough_bundle(
     ):
         blob = json.dumps(payload, default=str)
         assert_no_pii_leaks(blob, forbidden_domains=bundle.forbidden_domains)
-        for raw in bundle.forbidden_values:
-            if "@" in raw and raw in blob:
-                raise AssertionError(f"forbidden email leaked: {raw}")
-            if len(raw) >= 8 and " " in raw and raw in blob:
-                raise AssertionError(f"forbidden org/name leaked: {raw[:48]}")
+        assert_no_forbidden_identifier_leaks(blob, set(bundle.forbidden_values))
     return bundle
 
 
@@ -691,12 +729,54 @@ def render_walkthrough_markdown(bundle: Pr5WalkthroughBundle) -> str:
         f"Case A open_classification: `{bundle.summary.get('case_a_open_classification')}`",
         "Current status independently revalidated: **false** (no authenticated API call in PR5A)",
         "",
+        "## Field flow",
+        "",
+        "```",
+        "source artifact / PR4 row",
+        "    ↓",
+        "provenance normalization",
+        "    ↓",
+        "active classification",
+        "    ↓",
+        "relevance classification",
+        "    ↓",
+        "account resolution",
+        "    ↓",
+        "contact resolution state",
+        "    ↓",
+        "candidate outcome",
+        "```",
+        "",
     ]
 
     def emit_case(title: str, case: dict[str, Any]) -> None:
         lines.append(f"## {title}")
         lines.append("")
         lines.append(f"Selection rule: {case.get('selection_rule', '')}")
+        if case.get("unavailable"):
+            lines.append("")
+            lines.append(f"Unavailable: `{case.get('missing_reason')}`")
+            if case.get("note"):
+                lines.append(case["note"])
+            lines.append("")
+            return
+        if case.get("live_verified_open") is False and case.get("open_classification"):
+            lines.append("")
+            lines.append(
+                f"- effective_timestamp_source: `{case.get('effective_timestamp_source')}`"
+            )
+            lines.append(
+                f"- effective_artifact_timestamp_utc: `{case.get('effective_artifact_timestamp_utc')}`"
+            )
+            lines.append(f"- artifact_age_seconds: `{case.get('artifact_age_seconds')}`")
+            lines.append(f"- open_classification: `{case.get('open_classification')}`")
+            lines.append("- live_verified_open: **false**")
+            lines.append(
+                f"- candidate_outcome_state: `{case.get('candidate_outcome_state')}`"
+            )
+            lines.append(
+                f"- contact_resolution_status: `{case.get('contact_resolution_status')}`"
+            )
         if case.get("hypothetical_contact_path"):
             lines.append("")
             lines.append(

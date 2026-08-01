@@ -1,6 +1,6 @@
 {
   "case_b_equipment_keyword_overlay": {
-    "procurement_id": "p_fixture_hist_equip_001",
+    "procurement_id_redacted": "procurement_fixture_hist_equip_001",
     "procurement_context": "historical_tender",
     "close_at": "2026-03-01",
     "status_name": "Cerrada",
@@ -11,14 +11,14 @@
     "account_id_redacted": "account_aaaaaaaaaaaa"
   },
   "case_c_exclusion_keyword_hit": {
-    "procurement_id": "p_fixture_excl_001",
+    "procurement_id_redacted": "procurement_fixture_excl_001",
     "close_at": "2026-02-01",
     "status_name": "Cerrada",
     "exclusion_keyword": "reactivo",
     "source_record_id_redacted": "source_bbbbbbbbbbbb"
   },
   "case_d_linked_contact_n": {
-    "procurement_id": "p_fixture_nocontact_001",
+    "procurement_id_redacted": "procurement_fixture_nocontact_001",
     "procurement_context": "historical_tender",
     "close_at": "2026-04-01",
     "resolution_status": "linked",
@@ -27,7 +27,7 @@
     "contact_n": 0
   },
   "case_e_linked_with_contact": {
-    "procurement_id": "p_fixture_withcontact_001",
+    "procurement_id_redacted": "procurement_fixture_withcontact_001",
     "procurement_context": "historical_tender",
     "close_at": "2026-04-15",
     "resolution_status": "linked",

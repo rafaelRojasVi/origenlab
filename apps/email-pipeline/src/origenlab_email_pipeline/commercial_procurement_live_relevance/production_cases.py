@@ -32,24 +32,34 @@ EQUIPMENT_KEYWORDS = (
     "incubador",
 )
 
+# Prose must match executable SQL / loop semantics exactly.
 SELECTION_ALGORITHMS = {
     "case_b": (
-        "Linked PR4 signals ordered by line_item_count DESC, procurement_id ASC; "
-        "first whose external_leads_raw.raw_json contains an equipment keyword."
+        "SQL: JOIN commercial_procurement_signal s + account_resolution r (linked) "
+        "+ evidence ev (external_leads_raw) ORDER BY s.line_item_count DESC, "
+        "s.procurement_id ASC LIMIT 400; first row whose external_leads_raw.raw_json "
+        "contains an equipment keyword."
     ),
     "case_c": (
-        "PR4 signals with external_leads_raw evidence ordered by procurement_id ASC; "
-        "first whose raw_json contains an exclusion keyword."
+        "SQL: JOIN commercial_procurement_signal s + evidence ev (external_leads_raw) "
+        "ORDER BY s.procurement_id ASC LIMIT 800; first row whose raw_json contains "
+        "an exclusion keyword."
     ),
     "case_d": (
-        "Linked PR4 resolutions ordered by PR2 contact_count ASC, procurement_id ASC; "
-        "first with contact_count=0."
+        "SQL: SELECT linked resolutions where NOT EXISTS any "
+        "commercial_identity_contact for r.account_id; ORDER BY s.procurement_id ASC "
+        "LIMIT 1. Requires exactly zero PR2 contacts. If none, Case D is unavailable."
     ),
     "case_e": (
-        "Linked PR4 resolutions with ≥1 PR2 contact ordered by contact_count DESC, "
-        "procurement_id ASC; first row."
+        "SQL: SELECT linked resolutions where EXISTS at least one "
+        "commercial_identity_contact for r.account_id; ORDER BY contact_n DESC, "
+        "s.procurement_id ASC LIMIT 1."
     ),
 }
+
+# Opaque IDs / values shorter than this are still collected but leak checks
+# require meaningful length before exact-match rejection in reports.
+MEANINGFUL_FORBIDDEN_MIN_LEN = 6
 
 
 @dataclass
@@ -72,15 +82,42 @@ def _collect_forbidden(values: list[Any], bucket: set[str]) -> None:
             bucket.add(s.lower())
 
 
+def assert_no_forbidden_identifier_leaks(
+    text: str,
+    forbidden_values: set[str] | frozenset[str],
+    *,
+    min_len: int = MEANINGFUL_FORBIDDEN_MIN_LEN,
+) -> None:
+    """Reject exact appearance of every meaningful forbidden production value."""
+    skip = {k.lower() for k in EXCLUSION_KEYWORDS + EQUIPMENT_KEYWORDS}
+    for raw in forbidden_values:
+        if not raw or len(raw) < min_len:
+            continue
+        if raw.lower() in skip:
+            continue
+        if raw in text:
+            raise AssertionError(
+                f"forbidden production value leaked in report output: {raw[:64]}"
+            )
+        if "@" in raw and raw.lower() in text.lower():
+            raise AssertionError(
+                f"forbidden email leaked in report output: {raw[:64]}"
+            )
+
+
 def select_production_cases(
     conn: sqlite3.Connection,
     *,
     pr4_semantic_digest: str,
     pr2_identity_fingerprint: str,
 ) -> ProductionCaseSelection:
-    """Select Cases B–E inside an already-open read-only transaction."""
+    """Select Cases B–E inside an already-open read-only transaction.
+
+    Raw production identifiers are used only transiently. Returned cases and
+    ``selection_meta`` contain only redacted tokens.
+    """
     forbidden: set[str] = set()
-    typed_ids: dict[str, Any] = {}
+    redacted_ids: dict[str, Any] = {}
 
     # Case B
     case_b_raw = None
@@ -121,16 +158,15 @@ def select_production_cases(
                 ],
                 forbidden,
             )
-            # org-ish from signal if present
             break
     if case_b_raw is None:
         raise RuntimeError("Case B selection failed: no historical equipment match")
 
-    typed_ids["case_b"] = {
-        "procurement_id": case_b_raw["procurement_id"],
-        "canonical_tender_key": case_b_raw["canonical_tender_key"],
-        "account_id": case_b_raw["account_id"],
-        "source_record_id": case_b_raw["source_record_id"],
+    redacted_ids["case_b"] = {
+        "procurement_id_redacted": redact_token("procurement", case_b_raw["procurement_id"]),
+        "tender_key_redacted": redact_tender(case_b_raw["canonical_tender_key"]),
+        "account_id_redacted": redact_account(case_b_raw["account_id"]),
+        "source_record_id_redacted": redact_source(case_b_raw["source_record_id"]),
     }
 
     # Case C
@@ -170,45 +206,61 @@ def select_production_cases(
     if case_c_raw is None:
         raise RuntimeError("Case C selection failed: no exclusion keyword hit")
 
-    typed_ids["case_c"] = {
-        "procurement_id": case_c_raw["procurement_id"],
-        "canonical_tender_key": case_c_raw["canonical_tender_key"],
-        "source_record_id": case_c_raw["source_record_id"],
+    redacted_ids["case_c"] = {
+        "procurement_id_redacted": redact_token("procurement", case_c_raw["procurement_id"]),
+        "tender_key_redacted": redact_tender(case_c_raw["canonical_tender_key"]),
+        "source_record_id_redacted": redact_source(case_c_raw["source_record_id"]),
     }
 
-    # Case D — linked, zero contacts
-    case_d_raw = conn.execute(
-        """
+    # Case D — linked account with exactly zero PR2 contacts (NOT EXISTS).
+    case_d_sql = """
         SELECT s.procurement_id, s.canonical_tender_key, s.close_at, s.status_name,
                s.procurement_context, r.account_id, r.link_route, r.resolution_status,
-               (
-                 SELECT COUNT(*) FROM commercial_identity_contact c
-                 WHERE c.account_id = r.account_id
-               ) AS contact_n
+               0 AS contact_n
         FROM commercial_procurement_signal s
         JOIN commercial_procurement_account_resolution r USING (procurement_id)
         WHERE r.resolution_status = 'linked'
-        ORDER BY contact_n ASC, s.procurement_id ASC
+          AND r.account_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM commercial_identity_contact c
+            WHERE c.account_id = r.account_id
+          )
+        ORDER BY s.procurement_id ASC
         LIMIT 1
         """
-    ).fetchone()
-    if case_d_raw is None:
-        raise RuntimeError("Case D selection failed")
-    case_d_raw = dict(case_d_raw)
-    _collect_forbidden(
-        [
-            case_d_raw["canonical_tender_key"],
-            case_d_raw["account_id"],
-            case_d_raw["procurement_id"],
-        ],
-        forbidden,
-    )
-    typed_ids["case_d"] = {
-        "procurement_id": case_d_raw["procurement_id"],
-        "canonical_tender_key": case_d_raw["canonical_tender_key"],
-        "account_id": case_d_raw["account_id"],
-        "contact_n": case_d_raw["contact_n"],
-    }
+    case_d_row = conn.execute(case_d_sql).fetchone()
+    case_d_unavailable = case_d_row is None
+    case_d_raw: dict[str, Any]
+    if case_d_unavailable:
+        case_d_raw = {
+            "unavailable": True,
+            "missing_reason": "no_linked_account_with_zero_pr2_contacts",
+            "contact_n": None,
+            "selection_sql": " ".join(case_d_sql.split()),
+        }
+        redacted_ids["case_d"] = {
+            "unavailable": True,
+            "missing_reason": "no_linked_account_with_zero_pr2_contacts",
+        }
+    else:
+        case_d_raw = dict(case_d_row)
+        assert int(case_d_raw["contact_n"]) == 0
+        _collect_forbidden(
+            [
+                case_d_raw["canonical_tender_key"],
+                case_d_raw["account_id"],
+                case_d_raw["procurement_id"],
+            ],
+            forbidden,
+        )
+        redacted_ids["case_d"] = {
+            "procurement_id_redacted": redact_token(
+                "procurement", case_d_raw["procurement_id"]
+            ),
+            "tender_key_redacted": redact_tender(case_d_raw["canonical_tender_key"]),
+            "account_id_redacted": redact_account(case_d_raw["account_id"]),
+            "contact_n": 0,
+        }
 
     # Case E — linked with contacts
     case_e_raw = conn.execute(
@@ -278,19 +330,31 @@ def select_production_cases(
         _collect_forbidden([c["contact_id"], c["display_name"], c["role"]], forbidden)
         contacts_raw.append(dict(c))
 
-    typed_ids["case_e"] = {
-        "procurement_id": case_e_raw["procurement_id"],
-        "canonical_tender_key": case_e_raw["canonical_tender_key"],
-        "account_id": case_e_raw["account_id"],
+    redacted_ids["case_e"] = {
+        "procurement_id_redacted": redact_token("procurement", case_e_raw["procurement_id"]),
+        "tender_key_redacted": redact_tender(case_e_raw["canonical_tender_key"]),
+        "account_id_redacted": redact_account(case_e_raw["account_id"]),
         "contact_n": case_e_raw["contact_n"],
-        "contact_ids": [c["contact_id"] for c in contacts_raw],
+        "contact_ids_redacted": [
+            redact_token("contact", c["contact_id"]) for c in contacts_raw
+        ],
     }
 
-    def redact_case(d: dict[str, Any], *, contacts: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-        out = {
-            "procurement_id": d.get("procurement_id"),
+    def redact_case(
+        d: dict[str, Any], *, contacts: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
+        if d.get("unavailable"):
+            return {
+                "unavailable": True,
+                "missing_reason": d.get("missing_reason"),
+                "selection_sql": d.get("selection_sql"),
+            }
+        out: dict[str, Any] = {
+            "procurement_id_redacted": redact_token("procurement", d.get("procurement_id")),
             "tender_key_redacted": redact_tender(d.get("canonical_tender_key")),
-            "account_id_redacted": redact_account(d.get("account_id")),
+            "account_id_redacted": redact_account(d.get("account_id"))
+            if d.get("account_id")
+            else None,
             "source_record_id_redacted": redact_source(d.get("source_record_id"))
             if d.get("source_record_id")
             else None,
@@ -326,13 +390,14 @@ def select_production_cases(
 
     meta = {
         "selection_algorithms": SELECTION_ALGORITHMS,
-        "stable_ordering": "documented in selection_algorithms",
-        "typed_ids_before_redaction": typed_ids,
+        "stable_ordering": "documented in selection_algorithms (matches SQL)",
+        "redacted_selection_ids": redacted_ids,
         "pr4_semantic_digest": pr4_semantic_digest,
         "pr2_identity_fingerprint": pr2_identity_fingerprint,
         "transaction_snapshot": "pinned BEGIN + query_only on caller connection",
         "production_derived": True,
         "fixture_seeds_used": False,
+        "case_d_available": not case_d_unavailable,
     }
     return ProductionCaseSelection(
         case_b=redact_case(case_b_raw),
