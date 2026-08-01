@@ -30,6 +30,7 @@ from origenlab_email_pipeline.commercial_procurement_candidate_planner.normalize
     hours_between,
     parse_acquisition_acquired_at,
     parse_tender_timestamp_raw,
+    status_name_matches_expected,
 )
 
 
@@ -56,21 +57,21 @@ def lifecycle_policy_document() -> dict[str, Any]:
             "open_or_publicada_status",
             "close_timestamp_strictly_after_as_of_utc",
         ],
+        "future_scheduled_requires": [
+            "current_capable_acquisition_provenance_for_driving_field",
+            "no_publication_conflict_when_driven_by_publication",
+            "no_close_conflict_when_driven_by_close",
+        ],
         "notes": [
             "close_timestamp <= as_of_utc cannot be active_open",
             "lista-index stubs cannot freshen PR4 status/date fields",
             "buyer/title-only live evidence cannot freshen lifecycle",
+            "stale PR4-only future dates are not currently scheduled",
             "status and close may come from different live refs when both current",
             "terminal PR4 historical statuses remain awarded/closed/cancelled without fresh live",
-            "line-item text cannot determine lifecycle",
-            "PR4 workflow/review_status cannot determine ChileCompra lifecycle",
             "buyer conflict does not by itself alter lifecycle",
         ],
     }
-
-
-def _name(value: str | None) -> str:
-    return (value or "").strip().casefold()
 
 
 def classify_currentness(
@@ -80,7 +81,6 @@ def classify_currentness(
     as_of_utc: datetime,
     freshness_threshold_hours: int,
 ) -> tuple[str, tuple[str, ...]]:
-    """Tender-level currentness (informational). Active_open uses field provenance."""
     live = [r for r in refs if r.evidence_plane == EVIDENCE_PLANE_ACQUISITION]
     pr4 = [r for r in refs if r.evidence_plane == EVIDENCE_PLANE_PR4]
     if not live:
@@ -126,10 +126,6 @@ def _status_lifecycle(
     status_code: str | None,
     status_name: str | None,
 ) -> tuple[str | None, str | None]:
-    from origenlab_email_pipeline.commercial_procurement_candidate_planner.normalize import (
-        status_name_matches_expected,
-    )
-
     code = (status_code or "").strip()
     if code in AWARDED_STATUS_CODES or status_name_matches_expected(
         status_name, AWARDED_STATUS_NAMES
@@ -188,7 +184,6 @@ def classify_lifecycle(
     publication_ref: ProcurementEvidenceRef | None = None,
     freshness_threshold_hours: int = 48,
 ) -> tuple[str, str, tuple[str, ...], str | None]:
-    """Return (lifecycle_class, closing_bucket, reasons, lifecycle_evidence_currentness)."""
     reasons: list[str] = []
     if has_status_conflict or tender.coalescence_status == "status_conflict":
         return (
@@ -222,10 +217,6 @@ def classify_lifecycle(
         return "status_unknown", "not_applicable", ("timezone_unresolved",), None
 
     code = (tender.status_code_selected or "").strip()
-    from origenlab_email_pipeline.commercial_procurement_candidate_planner.normalize import (
-        status_name_matches_expected,
-    )
-
     is_openish = code == ACTIVE_STATUS_CODE or status_name_matches_expected(
         tender.status_name_selected, PUBLICADA_STATUS_NAMES
     )
@@ -274,18 +265,39 @@ def classify_lifecycle(
         reasons.append(currentness_class)
         reasons.append(f"status_provenance={status_cls}")
         reasons.append(f"close_provenance={close_cls}")
-        if (
-            not has_publication_date_conflict
-            and pub_dt is not None
-            and pub_dt > as_of_utc
-        ):
+        return "status_unknown", "not_applicable", tuple(reasons), life_cur
+
+    # future_scheduled from publication — requires current pub provenance.
+    if pub_dt is not None and pub_dt > as_of_utc:
+        if has_publication_date_conflict:
+            return (
+                "status_unknown",
+                "not_applicable",
+                ("authoritative_publication_date_conflict",),
+                None,
+            )
+        pub_ok, pub_cls = _ref_current_and_capable(
+            ref=publication_ref,
+            field_name="publication_timestamp",
+            as_of_utc=as_of_utc,
+            freshness_threshold_hours=freshness_threshold_hours,
+        )
+        if pub_ok:
             return (
                 "future_scheduled",
                 "not_applicable",
-                tuple(reasons) + ("publication_after_as_of",),
-                life_cur,
+                ("publication_after_as_of", f"publication_provenance={pub_cls}"),
+                "current_authoritative_snapshot",
             )
-        return "status_unknown", "not_applicable", tuple(reasons), life_cur
+        return (
+            "status_unknown",
+            "not_applicable",
+            (
+                "stale_or_unverified_future_publication",
+                f"publication_provenance={pub_cls}",
+            ),
+            "stale_or_unverified_field_provenance",
+        )
 
     if has_publication_date_conflict:
         return (
@@ -295,18 +307,38 @@ def classify_lifecycle(
             None,
         )
 
-    if pub_dt is not None and pub_dt > as_of_utc:
-        return "future_scheduled", "not_applicable", ("publication_after_as_of",), None
-
     if not tender.status_code_selected and not tender.status_name_selected:
         if close_dt is None:
             return "status_unknown", "not_applicable", ("status_and_close_absent",), None
         if close_dt > as_of_utc:
+            if has_close_date_conflict:
+                return (
+                    "status_unknown",
+                    "not_applicable",
+                    ("authoritative_close_date_conflict",),
+                    None,
+                )
+            close_ok, close_cls = _ref_current_and_capable(
+                ref=close_ref,
+                field_name="close_timestamp",
+                as_of_utc=as_of_utc,
+                freshness_threshold_hours=freshness_threshold_hours,
+            )
+            if close_ok:
+                return (
+                    "future_scheduled",
+                    "not_applicable",
+                    ("future_close_status_unknown", f"close_provenance={close_cls}"),
+                    "current_authoritative_snapshot",
+                )
             return (
-                "future_scheduled",
+                "status_unknown",
                 "not_applicable",
-                ("future_close_status_unknown",),
-                None,
+                (
+                    "stale_or_unverified_future_close",
+                    f"close_provenance={close_cls}",
+                ),
+                "stale_or_unverified_field_provenance",
             )
         return "closed", "not_applicable", ("past_close_status_unknown",), None
 
@@ -383,11 +415,13 @@ def apply_lifecycle(
             CoalescedProcurementTender(
                 coalesced_tender_id=tender.coalesced_tender_id,
                 canonical_tender_key=tender.canonical_tender_key,
+                identity_namespace=tender.identity_namespace,
                 tender_key_kind=tender.tender_key_kind,
                 candidate_source_kind=tender.candidate_source_kind,
                 pr4_procurement_id=tender.pr4_procurement_id,
                 pr4_procurement_ids=tender.pr4_procurement_ids,
                 acquisition_snapshot_ids=tender.acquisition_snapshot_ids,
+                acquisition_instance_ids=tender.acquisition_instance_ids,
                 acquisition_observation_ids=tender.acquisition_observation_ids,
                 coalescence_status=tender.coalescence_status,
                 source_precedence_reason=tender.source_precedence_reason,
@@ -406,6 +440,7 @@ def apply_lifecycle(
                 buyer_source_id_selected=tender.buyer_source_id_selected,
                 title_selected=tender.title_selected,
                 selected_field_provenance=dict(tender.selected_field_provenance),
+                buyer_display_variance=tender.buyer_display_variance,
                 lifecycle_status_evidence_ref_id=status_ref_id,
                 lifecycle_close_evidence_ref_id=close_ref_id,
                 lifecycle_publication_evidence_ref_id=pub_ref_id,

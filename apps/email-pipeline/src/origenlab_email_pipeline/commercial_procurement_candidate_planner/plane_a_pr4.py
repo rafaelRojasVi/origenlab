@@ -35,9 +35,9 @@ from origenlab_email_pipeline.commercial_procurement_candidate_planner.models im
 )
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.normalize import (
     accept_pr4_signal_identity,
-    parse_tender_timestamp_raw,
+    normalize_tender_timestamp,
+    normalized_status_meaning,
     stable_content_id,
-    utc_iso,
 )
 
 
@@ -130,7 +130,7 @@ def _identity_diagnostic(signals: tuple[dict[str, Any], ...]) -> dict[str, Any]:
     for sig in signals:
         kind = str(sig.get("tender_key_kind") or "")
         kind_counts[kind or "missing"] += 1
-        key, _kind, reason, cross = accept_pr4_signal_identity(
+        key, _kind, reason, cross, _ns = accept_pr4_signal_identity(
             raw_key=sig.get("canonical_tender_key"),
             tender_key_kind=sig.get("tender_key_kind"),
         )
@@ -274,11 +274,11 @@ def pr4_signals_to_evidence(
 
     for sig in pr4.signals:
         proc_id = str(sig["procurement_id"])
-        key, kind, reason, cross = accept_pr4_signal_identity(
+        key, kind, reason, cross, namespace = accept_pr4_signal_identity(
             raw_key=sig.get("canonical_tender_key"),
             tender_key_kind=sig.get("tender_key_kind"),
         )
-        if key is None or kind is None or reason is not None:
+        if key is None or kind is None or reason is not None or namespace is None:
             unresolved.append(
                 UnresolvedProcurementEvidence(
                     unresolved_id=stable_content_id(
@@ -294,12 +294,14 @@ def pr4_signals_to_evidence(
                     endpoint_kind="pr4_persisted_signal",
                     source_record_id=proc_id,
                     snapshot_id=None,
+                    acquisition_instance_id=None,
                     observation_id=None,
                     unresolved_reason=reason or "pr4_canonical_identity_corrupt",
                     canonical_candidate_kind=None,
                     canonical_tender_key_candidate=None,
                     source_native_tender_key=None,
                     tender_key_kind=kind,
+                    identity_namespace=None,
                     pr4_procurement_id=proc_id,
                     reason_codes=(reason or "pr4_canonical_identity_corrupt",),
                     source_payload_digest=sig.get("constituent_lines_fp"),
@@ -321,17 +323,20 @@ def pr4_signals_to_evidence(
 
         pub_raw = sig.get("publication_at")
         close_raw = sig.get("close_at")
-        pub_dt, pub_err = parse_tender_timestamp_raw(pub_raw)
-        close_dt, close_err = parse_tender_timestamp_raw(close_raw)
+        pub_nt = normalize_tender_timestamp(pub_raw)
+        close_nt = normalize_tender_timestamp(close_raw)
         ts_reasons = tuple(
-            r for r in (pub_err, close_err) if r
+            r for r in (pub_nt.reason, close_nt.reason) if r
         )
+        status_code = sig.get("status_code")
+        status_name = sig.get("status_name")
 
         ref_id = stable_content_id(
             "evidence_ref",
             {
                 "plane": EVIDENCE_PLANE_PR4,
                 "procurement_id": proc_id,
+                "identity_namespace": namespace,
                 "canonical_tender_key": key,
                 "tender_key_kind": kind,
                 "source_fingerprint": pr4.source_fingerprint,
@@ -346,18 +351,32 @@ def pr4_signals_to_evidence(
                 source_record_id=source_record_id,
                 canonical_tender_key=key,
                 tender_key_kind=kind,
+                identity_namespace=namespace,
                 cross_source_join_eligible=cross,
                 snapshot_id=None,
+                acquisition_instance_id=None,
+                page_id=None,
                 observation_id=None,
                 acquired_at_utc=None,
-                source_status_code=sig.get("status_code"),
-                source_status_name=sig.get("status_name"),
-                source_status_value=sig.get("status_name"),
+                source_status_code=status_code,
+                source_status_name=status_name,
+                source_status_value=status_name,
                 source_status_system="chilecompra_pr4",
+                normalized_status_meaning=normalized_status_meaning(
+                    status_code, status_name
+                ),
                 publication_timestamp_raw=pub_raw,
                 close_timestamp_raw=close_raw,
-                publication_timestamp_utc=utc_iso(pub_dt),
-                close_timestamp_utc=utc_iso(close_dt),
+                publication_timestamp_utc=pub_nt.utc_iso,
+                close_timestamp_utc=close_nt.utc_iso,
+                publication_santiago_date=(
+                    pub_nt.santiago_date.isoformat() if pub_nt.santiago_date else None
+                ),
+                close_santiago_date=(
+                    close_nt.santiago_date.isoformat() if close_nt.santiago_date else None
+                ),
+                publication_precision=pub_nt.precision if pub_raw else None,
+                close_precision=close_nt.precision if close_raw else None,
                 timestamp_parse_reasons=ts_reasons,
                 buyer_display_raw=sig.get("buyer_name_raw"),
                 buyer_source_id=sig.get("buyer_domain_norm"),
@@ -385,7 +404,7 @@ def pr4_signals_to_evidence(
                     ),
                 ),
                 source_rank_class="pr4",
-                has_status=bool(sig.get("status_code") or sig.get("status_name")),
+                has_status=bool(status_code or status_name),
                 has_close=bool(close_raw),
                 has_publication=bool(pub_raw),
                 has_buyer_display=bool(sig.get("buyer_name_raw")),

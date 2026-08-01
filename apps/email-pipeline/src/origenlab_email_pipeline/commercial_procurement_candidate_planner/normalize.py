@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+import re
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -20,9 +22,21 @@ from origenlab_email_pipeline.commercial_procurement_live_relevance.artifact_ope
 )
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.constants import (
     AS_OF_TIMEZONE,
+    AWARDED_STATUS_CODES,
+    AWARDED_STATUS_NAMES,
+    ACTIVE_STATUS_CODE,
+    CANCELLED_STATUS_CODES,
+    CANCELLED_STATUS_NAMES,
     CANONICAL_KIND_MERCADO_PUBLICO,
+    CLOSED_STATUS_CODES,
+    CLOSED_STATUS_NAMES,
     COALESCED_TENDER_ID_ALGORITHM,
+    IDENTITY_NS_MERCADO_PUBLICO,
+    IDENTITY_NS_PR4_CODIGO_EXTERNO,
+    IDENTITY_NS_PR4_CODIGO_LICITACION,
+    IDENTITY_NS_PR4_NUMERO_ADQUISICION,
     PR4_VERIFIED_TENDER_KEY_KINDS,
+    PUBLICADA_STATUS_NAMES,
     SOURCE_RANK_OCDS_LISTA_INDEX,
     SOURCE_RANK_OCDS_RECORD,
     SOURCE_RANK_OCDS_RELEASE,
@@ -31,10 +45,24 @@ from origenlab_email_pipeline.commercial_procurement_candidate_planner.constants
     SOURCE_RANK_TICKET_SUMMARY,
     SOURCE_RANK_UNKNOWN,
     STATUS_CODE_EXPECTED_NAMES,
+    STATUS_MEANING_AWARDED,
+    STATUS_MEANING_CANCELLED,
+    STATUS_MEANING_CLOSED,
+    STATUS_MEANING_OPENISH,
+    STATUS_MEANING_UNKNOWN,
+    TIMESTAMP_PRECISION_DATE_ONLY,
+    TIMESTAMP_PRECISION_MINUTE,
+    TIMESTAMP_PRECISION_OFFSET_DATETIME,
+    TIMESTAMP_PRECISION_RANK,
+    TIMESTAMP_PRECISION_SECOND,
+    TIMESTAMP_PRECISION_UNRESOLVED,
 )
 
 SANTIAGO = ZoneInfo(AS_OF_TIMEZONE)
 UTC = timezone.utc
+
+_DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_DATE_DMY_RE = re.compile(r"^\d{2}[-/]\d{2}[-/]\d{4}$")
 
 
 def stable_content_id(prefix: str, payload: dict[str, Any]) -> str:
@@ -42,14 +70,18 @@ def stable_content_id(prefix: str, payload: dict[str, Any]) -> str:
     return f"{prefix}_{digest}"
 
 
-def coalesced_tender_id(*, canonical_tender_key: str, tender_key_kind: str) -> str:
-    """Stable ID from identity only — evidence refresh must not change it."""
+def coalesced_tender_id(
+    *,
+    identity_namespace: str,
+    canonical_tender_key: str,
+) -> str:
+    """Stable ID from identity namespace + key only."""
     return stable_content_id(
         "coalesced_tender",
         {
             "algorithm": COALESCED_TENDER_ID_ALGORITHM,
+            "identity_namespace": identity_namespace,
             "canonical_tender_key": canonical_tender_key,
-            "tender_key_kind": tender_key_kind,
         },
     )
 
@@ -79,31 +111,49 @@ def normalize_pr4_canonical_key(raw_key: str | None) -> str | None:
     return normalize_mercado_publico_codigo(raw_key)
 
 
+def pr4_identity_namespace(*, tender_key_kind: str, cross_source_eligible: bool) -> str:
+    """Namespace for PR4 signals. Only codigo_externo + MP shape joins Plane B."""
+    kind = (tender_key_kind or "").strip()
+    if kind == "codigo_externo" and cross_source_eligible:
+        return IDENTITY_NS_MERCADO_PUBLICO
+    if kind == "codigo_externo":
+        return IDENTITY_NS_PR4_CODIGO_EXTERNO
+    if kind == "codigo_licitacion":
+        return IDENTITY_NS_PR4_CODIGO_LICITACION
+    if kind == "numero_adquisicion":
+        return IDENTITY_NS_PR4_NUMERO_ADQUISICION
+    return IDENTITY_NS_PR4_CODIGO_EXTERNO
+
+
 def accept_pr4_signal_identity(
     *,
     raw_key: str | None,
     tender_key_kind: str | None,
-) -> tuple[str | None, str | None, str | None, bool]:
-    """Return (canonical_key, tender_key_kind, unresolved_reason, cross_source_eligible).
+) -> tuple[str | None, str | None, str | None, bool, str | None]:
+    """Return (key, kind, unresolved_reason, cross_source_eligible, identity_namespace).
 
-    Verified PR4 kinds keep Plane A identity without requiring the stricter
-    PR5B Mercado Público CodigoExterno cross-source regex.
+    Cross-source eligibility requires codigo_externo + exact MP CodigoExterno shape.
+    codigo_licitacion / numero_adquisicion never join Plane B by text shape alone.
     """
     kind = (tender_key_kind or "").strip()
     if kind not in PR4_VERIFIED_TENDER_KEY_KINDS:
         if not kind:
-            return None, None, "pr4_tender_key_kind_unsupported", False
-        return None, kind, "pr4_tender_key_kind_unsupported", False
+            return None, None, "pr4_tender_key_kind_unsupported", False, None
+        return None, kind, "pr4_tender_key_kind_unsupported", False, None
     if raw_key is None or not str(raw_key).strip():
-        return None, kind, "pr4_canonical_key_missing", False
+        return None, kind, "pr4_canonical_key_missing", False, None
     norm = normalize_pr4_canonical_key(raw_key)
     if not norm:
-        return None, kind, "pr4_canonical_key_missing", False
-    # Impossible identity: control characters / path separators after normalize.
+        return None, kind, "pr4_canonical_key_missing", False, None
     if any(ch in norm for ch in ("/", "\\", "\x00", "\n", "\r", "\t")):
-        return None, kind, "pr4_canonical_identity_corrupt", False
-    cross = is_mercado_publico_codigo_shape(norm)
-    return norm, kind, None, cross
+        return None, kind, "pr4_canonical_identity_corrupt", False, None
+    mp_shape = is_mercado_publico_codigo_shape(norm)
+    # Only codigo_externo may be cross-source eligible.
+    cross = bool(mp_shape and kind == "codigo_externo")
+    namespace = pr4_identity_namespace(
+        tender_key_kind=kind, cross_source_eligible=cross
+    )
+    return norm, kind, None, cross, namespace
 
 
 def parse_as_of_utc(value: str) -> datetime:
@@ -140,24 +190,152 @@ def parse_acquisition_acquired_at(
     return dt, None
 
 
+@dataclass(frozen=True)
+class NormalizedTimestamp:
+    raw: str | None
+    utc_instant: datetime | None
+    santiago_date: date | None
+    precision: str
+    reason: str | None = None
+
+    @property
+    def utc_iso(self) -> str | None:
+        if self.utc_instant is None:
+            return None
+        return self.utc_instant.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _parse_date_only(s: str) -> date | None:
+    if _DATE_ONLY_RE.match(s):
+        try:
+            return date.fromisoformat(s)
+        except ValueError:
+            return None
+    if _DATE_DMY_RE.match(s):
+        parts = re.split(r"[-/]", s)
+        try:
+            d, m, y = int(parts[0]), int(parts[1]), int(parts[2])
+            return date(y, m, d)
+        except ValueError:
+            return None
+    return None
+
+
+def normalize_tender_timestamp(raw: str | None) -> NormalizedTimestamp:
+    """Parse tender publication/close with precision metadata."""
+    if raw is None or not str(raw).strip():
+        return NormalizedTimestamp(
+            raw=None,
+            utc_instant=None,
+            santiago_date=None,
+            precision=TIMESTAMP_PRECISION_UNRESOLVED,
+            reason=None,
+        )
+    s = str(raw).strip()
+    date_only = _parse_date_only(s)
+    if date_only is not None and "T" not in s and " " not in s:
+        # Interpret ChileCompra date-only as America/Santiago calendar date.
+        return NormalizedTimestamp(
+            raw=s,
+            utc_instant=None,
+            santiago_date=date_only,
+            precision=TIMESTAMP_PRECISION_DATE_ONLY,
+            reason=None,
+        )
+
+    aware = parse_trusted_utc_timestamp(s)
+    if aware is not None:
+        precision = TIMESTAMP_PRECISION_OFFSET_DATETIME
+        if aware.second == 0 and "." not in s.split("+")[0].split("-")[-1]:
+            # Heuristic: no fractional seconds and minute-aligned → at least minute.
+            if re.search(r"T\d{2}:\d{2}(:\d{2})?", s):
+                if re.search(r"T\d{2}:\d{2}:\d{2}", s):
+                    precision = TIMESTAMP_PRECISION_SECOND
+                else:
+                    precision = TIMESTAMP_PRECISION_MINUTE
+        elif re.search(r"T\d{2}:\d{2}:\d{2}", s):
+            precision = TIMESTAMP_PRECISION_SECOND
+        return NormalizedTimestamp(
+            raw=s,
+            utc_instant=aware,
+            santiago_date=aware.astimezone(SANTIAGO).date(),
+            precision=precision,
+            reason=None,
+        )
+
+    santiago_dt = parse_close_at_america_santiago(s)
+    if santiago_dt is not None:
+        precision = TIMESTAMP_PRECISION_SECOND
+        if re.search(r"\d{2}:\d{2}$", s) and not re.search(r"\d{2}:\d{2}:\d{2}", s):
+            precision = TIMESTAMP_PRECISION_MINUTE
+        return NormalizedTimestamp(
+            raw=s,
+            utc_instant=santiago_dt.astimezone(UTC),
+            santiago_date=santiago_dt.astimezone(SANTIAGO).date(),
+            precision=precision,
+            reason=None,
+        )
+    return NormalizedTimestamp(
+        raw=s,
+        utc_instant=None,
+        santiago_date=None,
+        precision=TIMESTAMP_PRECISION_UNRESOLVED,
+        reason="timezone_unresolved",
+    )
+
+
 def parse_tender_timestamp_raw(
     raw: str | None,
 ) -> tuple[datetime | None, str | None]:
-    """Parse tender publication/close timestamps to UTC.
+    """Backward-compatible wrapper → (utc_instant_or_none, reason)."""
+    nt = normalize_tender_timestamp(raw)
+    if nt.precision == TIMESTAMP_PRECISION_DATE_ONLY and nt.santiago_date is not None:
+        # Represent date-only as start-of-day Santiago for legacy callers.
+        dt = datetime(
+            nt.santiago_date.year,
+            nt.santiago_date.month,
+            nt.santiago_date.day,
+            tzinfo=SANTIAGO,
+        ).astimezone(UTC)
+        return dt, None
+    return nt.utc_instant, nt.reason
 
-    Aware ISO → UTC. Naive ChileCompra wall times → America/Santiago.
-    Unparseable → (None, timezone_unresolved).
-    """
-    if raw is None or not str(raw).strip():
-        return None, None
-    s = str(raw).strip()
-    aware = parse_trusted_utc_timestamp(s)
-    if aware is not None:
-        return aware, None
-    santiago_dt = parse_close_at_america_santiago(s)
-    if santiago_dt is not None:
-        return santiago_dt.astimezone(UTC), None
-    return None, "timezone_unresolved"
+
+def timestamps_compatible(a: NormalizedTimestamp, b: NormalizedTimestamp) -> bool | None:
+    """Return True compatible, False conflict, None if either missing/unresolved."""
+    if a.raw is None or b.raw is None:
+        return None
+    if a.precision == TIMESTAMP_PRECISION_UNRESOLVED or b.precision == TIMESTAMP_PRECISION_UNRESOLVED:
+        return None
+    if (
+        a.precision == TIMESTAMP_PRECISION_DATE_ONLY
+        and b.precision == TIMESTAMP_PRECISION_DATE_ONLY
+    ):
+        return a.santiago_date == b.santiago_date
+    if a.precision == TIMESTAMP_PRECISION_DATE_ONLY or b.precision == TIMESTAMP_PRECISION_DATE_ONLY:
+        # date-only vs precise: same Santiago calendar date → compatible.
+        if a.santiago_date is None or b.santiago_date is None:
+            return None
+        return a.santiago_date == b.santiago_date
+    # Both precise.
+    if a.utc_instant is None or b.utc_instant is None:
+        return None
+    return a.utc_instant == b.utc_instant
+
+
+def prefer_higher_precision(
+    a: NormalizedTimestamp, b: NormalizedTimestamp
+) -> NormalizedTimestamp:
+    ra = TIMESTAMP_PRECISION_RANK.get(a.precision, 0)
+    rb = TIMESTAMP_PRECISION_RANK.get(b.precision, 0)
+    if rb > ra:
+        return b
+    if ra > rb:
+        return a
+    # Equal precision: prefer the one with utc instant.
+    if a.utc_instant is None and b.utc_instant is not None:
+        return b
+    return a
 
 
 def utc_iso(dt: datetime | None) -> str | None:
@@ -206,11 +384,6 @@ def field_capable(rank_class: str, field_name: str) -> bool:
 
 
 def status_name_matches_expected(name: str | None, expected: frozenset[str]) -> bool:
-    """True when status_name equals or is a ChileCompra family prefix of expected.
-
-    Production PR4 names often append legal citations, e.g.
-    ``Desierta (o art. 3 ó 9 Ley 19.886)``.
-    """
     n = (name or "").strip().casefold()
     if not n:
         return False
@@ -230,6 +403,35 @@ def status_internally_inconsistent(
     if expected is None:
         return False
     return not status_name_matches_expected(name, expected)
+
+
+def normalized_status_meaning(
+    status_code: str | None, status_name: str | None
+) -> str | None:
+    """Map code/name to lifecycle meaning; None if no status evidence."""
+    code = (status_code or "").strip()
+    name = (status_name or "").strip()
+    if not code and not name:
+        return None
+    if status_internally_inconsistent(code, name):
+        return STATUS_MEANING_UNKNOWN
+    if code in AWARDED_STATUS_CODES or status_name_matches_expected(
+        name, AWARDED_STATUS_NAMES
+    ):
+        return STATUS_MEANING_AWARDED
+    if code in CANCELLED_STATUS_CODES or status_name_matches_expected(
+        name, CANCELLED_STATUS_NAMES
+    ):
+        return STATUS_MEANING_CANCELLED
+    if code in CLOSED_STATUS_CODES or status_name_matches_expected(
+        name, CLOSED_STATUS_NAMES
+    ):
+        return STATUS_MEANING_CLOSED
+    if code == ACTIVE_STATUS_CODE or status_name_matches_expected(
+        name, PUBLICADA_STATUS_NAMES
+    ):
+        return STATUS_MEANING_OPENISH
+    return STATUS_MEANING_UNKNOWN
 
 
 def hours_between(later: datetime, earlier: datetime) -> float:
@@ -268,3 +470,12 @@ def evidence_acquisition_is_current(
     if age > float(freshness_threshold_hours):
         return False, "stale_authoritative_snapshot"
     return True, "current_authoritative_snapshot"
+
+
+def normalize_buyer_identity(value: str | None) -> str | None:
+    """Conservative display-independent buyer identity when source IDs absent."""
+    if value is None or not str(value).strip():
+        return None
+    text = str(value).strip().casefold()
+    text = re.sub(r"\s+", " ", text)
+    return text or None

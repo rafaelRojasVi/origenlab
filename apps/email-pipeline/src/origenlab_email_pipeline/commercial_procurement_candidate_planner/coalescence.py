@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 from typing import Any
 
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.constants import (
-    CANONICAL_KIND_MERCADO_PUBLICO,
     EVIDENCE_PLANE_ACQUISITION,
     EVIDENCE_PLANE_PR4,
     FIELD_PRECEDENCE_VERSION,
+    IDENTITY_NS_MERCADO_PUBLICO,
+    TIMESTAMP_PRECISION_UNRESOLVED,
 )
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.models import (
     CoalescenceConflict,
@@ -18,11 +20,18 @@ from origenlab_email_pipeline.commercial_procurement_candidate_planner.models im
     SelectedStatus,
 )
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.normalize import (
+    NormalizedTimestamp,
     coalesced_tender_id,
+    evidence_acquisition_is_current,
     field_capable,
+    normalize_buyer_identity,
+    normalize_tender_timestamp,
+    normalized_status_meaning,
+    prefer_higher_precision,
     rank_score,
     stable_content_id,
     status_internally_inconsistent,
+    timestamps_compatible,
 )
 
 SELECTABLE_FIELDS = (
@@ -46,69 +55,38 @@ def field_precedence_matrix() -> dict[str, Any]:
     return {
         "version": FIELD_PRECEDENCE_VERSION,
         "note": (
-            "Field-by-field selection; status code/name are atomic. "
-            "Timestamps compared as normalized UTC instants. "
-            "Lista-index stubs cannot override detailed tender fields."
+            "Field-by-field selection; status compared by normalized meaning. "
+            "Timestamps compared with precision-aware compatibility. "
+            "Grouping uses (identity_namespace, canonical_tender_key)."
         ),
         "fields": {
             field: {
                 "precedence_high_to_low": list(order),
                 "lista_index_capable": field == "canonical_identity",
             }
-            for field in ("canonical_identity", "status",) + SELECTABLE_FIELDS
+            for field in ("canonical_identity", "status") + SELECTABLE_FIELDS
         },
     }
 
 
-def _norm_text(value: str | None) -> str | None:
-    if value is None:
+def _identity_key(ref: ProcurementEvidenceRef) -> tuple[str, str] | None:
+    if not ref.canonical_tender_key or not ref.identity_namespace:
         return None
-    text = str(value).strip()
-    return text.casefold() if text else None
+    return (ref.identity_namespace, ref.canonical_tender_key)
 
 
-def _normalized_timestamp_key(ref: ProcurementEvidenceRef, field: str) -> str | None:
-    if field == "close_timestamp":
-        return ref.close_timestamp_utc
-    if field == "publication_timestamp":
-        return ref.publication_timestamp_utc
-    return None
-
-
-def _raw_timestamp(ref: ProcurementEvidenceRef, field: str) -> str | None:
-    if field == "close_timestamp":
-        return ref.close_timestamp_raw
-    if field == "publication_timestamp":
-        return ref.publication_timestamp_raw
-    return None
-
-
-def _field_value(ref: ProcurementEvidenceRef, field: str) -> str | None:
-    if field == "close_timestamp":
-        return ref.close_timestamp_utc or ref.close_timestamp_raw
-    if field == "publication_timestamp":
-        return ref.publication_timestamp_utc or ref.publication_timestamp_raw
-    if field == "buyer_display":
-        return ref.buyer_display_raw
-    if field == "buyer_source_id":
-        return ref.buyer_source_id
-    if field == "title":
-        return ref.title_raw
-    return None
-
-
-def _has_field(ref: ProcurementEvidenceRef, field: str) -> bool:
-    if field == "close_timestamp":
-        return ref.has_close
-    if field == "publication_timestamp":
-        return ref.has_publication
-    if field == "buyer_display":
-        return ref.has_buyer_display
-    if field == "buyer_source_id":
-        return ref.has_buyer_source_id
-    if field == "title":
-        return ref.has_title
-    return False
+def _select_among_equal_rank(
+    candidates: list[ProcurementEvidenceRef],
+) -> ProcurementEvidenceRef:
+    """At equal rank, prefer newest valid acquisition event, then evidence_ref_id."""
+    return max(
+        candidates,
+        key=lambda r: (
+            rank_score(r.source_rank_class),
+            r.acquired_at_utc or "",
+            r.evidence_ref_id,
+        ),
+    )
 
 
 def _select_status(
@@ -137,6 +115,7 @@ def _select_status(
                     ),
                     conflict_kind="status_conflict",
                     canonical_tender_key=r.canonical_tender_key,
+                    identity_namespace=r.identity_namespace,
                     coalesced_tender_id=None,
                     evidence_ref_ids=(r.evidence_ref_id,),
                     field_name="status",
@@ -149,17 +128,14 @@ def _select_status(
             )
 
     authoritative = [r for r in candidates if r.source_rank_class != "ocds_lista_index"]
-    by_pair: dict[tuple[str | None, str | None], list[ProcurementEvidenceRef]] = (
-        defaultdict(list)
-    )
+    by_meaning: dict[str, list[ProcurementEvidenceRef]] = defaultdict(list)
     for r in authoritative:
-        by_pair[
-            (
-                _norm_text(r.source_status_code),
-                _norm_text(r.source_status_name),
-            )
-        ].append(r)
-    if len(by_pair) > 1:
+        meaning = r.normalized_status_meaning or normalized_status_meaning(
+            r.source_status_code, r.source_status_name
+        )
+        if meaning:
+            by_meaning[meaning].append(r)
+    if len(by_meaning) > 1:
         conflicts.append(
             CoalescenceConflict(
                 conflict_id=stable_content_id(
@@ -168,44 +144,39 @@ def _select_status(
                         "kind": "status_conflict",
                         "field": "status",
                         "key": refs[0].canonical_tender_key,
+                        "namespace": refs[0].identity_namespace,
                         "refs": sorted(r.evidence_ref_id for r in authoritative),
                     },
                 ),
                 conflict_kind="status_conflict",
                 canonical_tender_key=refs[0].canonical_tender_key,
+                identity_namespace=refs[0].identity_namespace,
                 coalesced_tender_id=None,
                 evidence_ref_ids=tuple(
                     sorted(r.evidence_ref_id for r in authoritative)
                 ),
                 field_name="status",
-                reason_codes=("status_conflict", "atomic_status_pair"),
-                detail={
-                    "pairs": sorted(
-                        [
-                            f"{c or ''}|{n or ''}"
-                            for (c, n) in by_pair.keys()
-                        ]
-                    )
-                },
+                reason_codes=("status_conflict", "normalized_meaning_disagree"),
+                detail={"meanings": sorted(by_meaning.keys())},
             )
         )
 
+    # Prefer complete representation (code+name) at highest rank.
+    def completeness(r: ProcurementEvidenceRef) -> int:
+        return int(bool(r.source_status_code)) + int(bool(r.source_status_name))
+
     best = max(
         candidates,
-        key=lambda r: (rank_score(r.source_rank_class), r.evidence_ref_id),
+        key=lambda r: (
+            rank_score(r.source_rank_class),
+            completeness(r),
+            r.acquired_at_utc or "",
+            r.evidence_ref_id,
+        ),
     )
-    meaning = None
-    code = (best.source_status_code or "").strip()
-    name = _norm_text(best.source_status_name) or ""
-    if code == "8" or name == "adjudicada":
-        meaning = "awarded"
-    elif code in {"7", "18", "19"} or name in {"desierta", "revocada", "suspendida"}:
-        meaning = "cancelled"
-    elif code == "6" or name == "cerrada":
-        meaning = "closed"
-    elif code == "5" or name in {"publicada", "publicada."}:
-        meaning = "openish"
-
+    meaning = best.normalized_status_meaning or normalized_status_meaning(
+        best.source_status_code, best.source_status_name
+    )
     selected = SelectedStatus(
         status_code=best.source_status_code,
         status_name=best.source_status_name,
@@ -221,122 +192,206 @@ def _select_status(
     return selected, conflicts
 
 
+def _timestamp_for(ref: ProcurementEvidenceRef, field: str) -> NormalizedTimestamp:
+    if field == "close_timestamp":
+        return normalize_tender_timestamp(ref.close_timestamp_raw)
+    return normalize_tender_timestamp(ref.publication_timestamp_raw)
+
+
 def _select_field(
     refs: list[ProcurementEvidenceRef], field: str
-) -> tuple[str | None, str | None, list[CoalescenceConflict]]:
-    candidates = [
+) -> tuple[str | None, str | None, list[CoalescenceConflict], list[str]]:
+    """Return (selected_raw, provenance_ref_id, conflicts, secondary_provenance_ids)."""
+    capable = [
         r
         for r in refs
         if field_capable(r.source_rank_class, field)
-        and _has_field(r, field)
-        and _field_value(r, field) is not None
     ]
+    if field in {"close_timestamp", "publication_timestamp"}:
+        candidates = [
+            r
+            for r in capable
+            if (r.has_close if field == "close_timestamp" else r.has_publication)
+        ]
+    elif field == "buyer_display":
+        candidates = [r for r in capable if r.has_buyer_display]
+    elif field == "buyer_source_id":
+        candidates = [r for r in capable if r.has_buyer_source_id]
+    elif field == "title":
+        candidates = [r for r in capable if r.has_title]
+    else:
+        candidates = []
     if not candidates:
-        return None, None, []
+        return None, None, [], []
 
     conflicts: list[CoalescenceConflict] = []
+    secondary: list[str] = []
     authoritative = [
         r for r in candidates if r.source_rank_class != "ocds_lista_index"
     ]
 
     if field in {"close_timestamp", "publication_timestamp"}:
-        # Compare normalized UTC; timezone_unresolved refs do not auto-conflict.
-        by_instant: dict[str, list[ProcurementEvidenceRef]] = defaultdict(list)
-        unresolved_tz: list[ProcurementEvidenceRef] = []
+        valid: list[tuple[ProcurementEvidenceRef, NormalizedTimestamp]] = []
         for r in authoritative:
-            key = _normalized_timestamp_key(r, field)
-            if key is None:
-                if "timezone_unresolved" in r.timestamp_parse_reasons:
-                    unresolved_tz.append(r)
+            nt = _timestamp_for(r, field)
+            if nt.precision == TIMESTAMP_PRECISION_UNRESOLVED and nt.raw:
+                # Unparseable → skip pairwise conflict; selection prefers valid.
                 continue
-            by_instant[key].append(r)
-        if len(by_instant) > 1:
-            field_reason = (
-                "close_timestamp_conflict"
-                if field == "close_timestamp"
-                else "publication_timestamp_conflict"
+            if nt.raw is None:
+                continue
+            valid.append((r, nt))
+
+        # Precision-aware pairwise compatibility among valid values.
+        for i in range(len(valid)):
+            for j in range(i + 1, len(valid)):
+                ri, nti = valid[i]
+                rj, ntj = valid[j]
+                compat = timestamps_compatible(nti, ntj)
+                if compat is False:
+                    field_reason = (
+                        "close_timestamp_conflict"
+                        if field == "close_timestamp"
+                        else "publication_timestamp_conflict"
+                    )
+                    conflicts.append(
+                        CoalescenceConflict(
+                            conflict_id=stable_content_id(
+                                "conflict",
+                                {
+                                    "kind": "date_conflict",
+                                    "field": field,
+                                    "key": refs[0].canonical_tender_key,
+                                    "namespace": refs[0].identity_namespace,
+                                    "a": ri.evidence_ref_id,
+                                    "b": rj.evidence_ref_id,
+                                },
+                            ),
+                            conflict_kind="date_conflict",
+                            canonical_tender_key=refs[0].canonical_tender_key,
+                            identity_namespace=refs[0].identity_namespace,
+                            coalesced_tender_id=None,
+                            evidence_ref_ids=tuple(
+                                sorted([ri.evidence_ref_id, rj.evidence_ref_id])
+                            ),
+                            field_name=field,
+                            reason_codes=("date_conflict", field_reason),
+                            detail={
+                                "a_raw": nti.raw,
+                                "b_raw": ntj.raw,
+                                "a_precision": nti.precision,
+                                "b_precision": ntj.precision,
+                            },
+                        )
+                    )
+        # Select highest-ranked valid timestamp; malformed higher rank cannot override.
+        selectable = [
+            (r, nt)
+            for r, nt in (
+                (r, _timestamp_for(r, field)) for r in candidates
             )
-            conflicts.append(
-                CoalescenceConflict(
-                    conflict_id=stable_content_id(
-                        "conflict",
-                        {
-                            "kind": "date_conflict",
-                            "field": field,
-                            "key": refs[0].canonical_tender_key,
-                            "refs": sorted(r.evidence_ref_id for r in authoritative),
-                        },
-                    ),
-                    conflict_kind="date_conflict",
-                    canonical_tender_key=refs[0].canonical_tender_key,
-                    coalesced_tender_id=None,
-                    evidence_ref_ids=tuple(
-                        sorted(r.evidence_ref_id for r in authoritative)
-                    ),
-                    field_name=field,
-                    reason_codes=("date_conflict", field_reason),
-                    detail={"utc_instants": sorted(by_instant.keys())},
-                )
-            )
-        for r in unresolved_tz:
-            conflicts.append(
-                CoalescenceConflict(
-                    conflict_id=stable_content_id(
-                        "conflict",
-                        {
-                            "kind": "date_conflict",
-                            "field": field,
-                            "reason": "timezone_unresolved",
-                            "ref": r.evidence_ref_id,
-                        },
-                    ),
-                    conflict_kind="date_conflict",
-                    canonical_tender_key=r.canonical_tender_key,
-                    coalesced_tender_id=None,
-                    evidence_ref_ids=(r.evidence_ref_id,),
-                    field_name=field,
-                    reason_codes=("timezone_unresolved", field),
-                    detail={"raw": _raw_timestamp(r, field)},
-                )
-            )
-    else:
-        by_value: dict[str, list[ProcurementEvidenceRef]] = defaultdict(list)
-        for r in authoritative:
-            raw = _field_value(r, field)
-            assert raw is not None
-            by_value[_norm_text(raw) or raw].append(r)
-        if field in {"buyer_display", "buyer_source_id"} and len(by_value) > 1:
+            if nt.raw and nt.precision != TIMESTAMP_PRECISION_UNRESOLVED
+        ]
+        if not selectable:
+            return None, None, conflicts, []
+        best_ref, best_nt = max(
+            selectable,
+            key=lambda pair: (
+                rank_score(pair[0].source_rank_class),
+                pair[0].acquired_at_utc or "",
+                pair[0].evidence_ref_id,
+            ),
+        )
+        # Among compatible peers, prefer higher precision representation.
+        for r, nt in selectable:
+            if r.evidence_ref_id == best_ref.evidence_ref_id:
+                continue
+            if timestamps_compatible(best_nt, nt) is True:
+                preferred = prefer_higher_precision(best_nt, nt)
+                if preferred is nt and preferred.precision != best_nt.precision:
+                    secondary.append(best_ref.evidence_ref_id)
+                    best_ref, best_nt = r, nt
+                elif preferred is best_nt and nt.precision != best_nt.precision:
+                    secondary.append(r.evidence_ref_id)
+        raw = (
+            best_ref.close_timestamp_raw
+            if field == "close_timestamp"
+            else best_ref.publication_timestamp_raw
+        )
+        return raw, best_ref.evidence_ref_id, conflicts, secondary
+
+    if field in {"buyer_display", "buyer_source_id"}:
+        # Prefer source IDs for identity; display variance alone is not conflict.
+        id_refs = [r for r in authoritative if r.buyer_source_id]
+        by_id: dict[str, list[ProcurementEvidenceRef]] = defaultdict(list)
+        for r in id_refs:
+            by_id[str(r.buyer_source_id).strip().casefold()].append(r)
+        if len(by_id) > 1:
             conflicts.append(
                 CoalescenceConflict(
                     conflict_id=stable_content_id(
                         "conflict",
                         {
                             "kind": "buyer_identity_conflict",
-                            "field": field,
+                            "field": "buyer_source_id",
                             "key": refs[0].canonical_tender_key,
-                            "refs": sorted(r.evidence_ref_id for r in authoritative),
+                            "namespace": refs[0].identity_namespace,
+                            "refs": sorted(r.evidence_ref_id for r in id_refs),
                         },
                     ),
                     conflict_kind="buyer_identity_conflict",
                     canonical_tender_key=refs[0].canonical_tender_key,
+                    identity_namespace=refs[0].identity_namespace,
                     coalesced_tender_id=None,
-                    evidence_ref_ids=tuple(
-                        sorted(r.evidence_ref_id for r in authoritative)
-                    ),
-                    field_name=field,
-                    reason_codes=("buyer_identity_conflict", f"field_{field}"),
+                    evidence_ref_ids=tuple(sorted(r.evidence_ref_id for r in id_refs)),
+                    field_name="buyer_source_id",
+                    reason_codes=("buyer_identity_conflict", "buyer_source_id"),
                     detail={},
                 )
             )
+        elif not id_refs:
+            norms: dict[str, list[ProcurementEvidenceRef]] = defaultdict(list)
+            for r in authoritative:
+                if field == "buyer_display" and r.buyer_display_raw:
+                    n = normalize_buyer_identity(r.buyer_display_raw)
+                    if n:
+                        norms[n].append(r)
+            if len(norms) > 1:
+                conflicts.append(
+                    CoalescenceConflict(
+                        conflict_id=stable_content_id(
+                            "conflict",
+                            {
+                                "kind": "buyer_identity_conflict",
+                                "field": "buyer_display",
+                                "key": refs[0].canonical_tender_key,
+                                "namespace": refs[0].identity_namespace,
+                                "refs": sorted(r.evidence_ref_id for r in authoritative),
+                            },
+                        ),
+                        conflict_kind="buyer_identity_conflict",
+                        canonical_tender_key=refs[0].canonical_tender_key,
+                        identity_namespace=refs[0].identity_namespace,
+                        coalesced_tender_id=None,
+                        evidence_ref_ids=tuple(
+                            sorted(r.evidence_ref_id for r in authoritative)
+                        ),
+                        field_name="buyer_display",
+                        reason_codes=(
+                            "buyer_identity_conflict",
+                            "normalized_buyer_disagree",
+                        ),
+                        detail={},
+                    )
+                )
 
-    best = max(
-        candidates,
-        key=lambda r: (rank_score(r.source_rank_class), r.evidence_ref_id),
-    )
-    # Prefer raw for display provenance of timestamps.
-    if field in {"close_timestamp", "publication_timestamp"}:
-        return _raw_timestamp(best, field), best.evidence_ref_id, conflicts
-    return _field_value(best, field), best.evidence_ref_id, conflicts
+    best = _select_among_equal_rank(candidates)
+    if field == "buyer_display":
+        return best.buyer_display_raw, best.evidence_ref_id, conflicts, secondary
+    if field == "buyer_source_id":
+        return best.buyer_source_id, best.evidence_ref_id, conflicts, secondary
+    if field == "title":
+        return best.title_raw, best.evidence_ref_id, conflicts, secondary
+    return None, None, conflicts, secondary
 
 
 def _candidate_source_kind(refs: list[ProcurementEvidenceRef]) -> str:
@@ -348,25 +403,14 @@ def _candidate_source_kind(refs: list[ProcurementEvidenceRef]) -> str:
     return "both"
 
 
-def _select_tender_key_kind(refs: list[ProcurementEvidenceRef]) -> str:
-    """Stable kind for coalesced identity.
-
-    Cross-source-eligible keys (exact MP CodigoExterno shape) always use
-    ``mercado_publico_codigo_externo`` — including PR4-only — so PR4-only → both
-    keeps the same ``coalesced_tender_id``. Non-shape PR4 verified kinds keep
-    their persisted Plane A kind.
-    """
-    live = [r for r in refs if r.evidence_plane == EVIDENCE_PLANE_ACQUISITION]
+def _preserve_tender_key_kind(refs: list[ProcurementEvidenceRef]) -> str:
+    """Display/provenance kind: preserve PR4 kind when present."""
     pr4 = [r for r in refs if r.evidence_plane == EVIDENCE_PLANE_PR4]
-    if any(r.cross_source_join_eligible for r in refs):
-        return CANONICAL_KIND_MERCADO_PUBLICO
-    if live:
-        return CANONICAL_KIND_MERCADO_PUBLICO
     if pr4:
         kinds = sorted({r.tender_key_kind or "" for r in pr4 if r.tender_key_kind})
         if kinds:
             return kinds[0]
-    return CANONICAL_KIND_MERCADO_PUBLICO
+    return IDENTITY_NS_MERCADO_PUBLICO
 
 
 def _live_contributes_selected(
@@ -376,53 +420,43 @@ def _live_contributes_selected(
     return any(v in live_ids for v in provenance.values())
 
 
-def _valid_acquired(ref: ProcurementEvidenceRef, as_of_utc_token: str | None) -> bool:
-    # as_of not available in coalesce; require parseable aware timestamp string.
-    if not ref.acquired_at_utc:
-        return False
-    from datetime import datetime
-
-    try:
-        s = ref.acquired_at_utc
-        if s.endswith("Z"):
-            s = s[:-1] + "+00:00"
-        dt = datetime.fromisoformat(s)
-    except ValueError:
-        return False
-    return dt.tzinfo is not None
-
-
 def _overlapping_fields_agree(refs: list[ProcurementEvidenceRef]) -> bool:
-    """True when all overlapping normalized fields among refs agree."""
     if len(refs) < 2:
         return True
-    # status pair
-    status_pairs = {
-        (
-            _norm_text(r.source_status_code),
-            _norm_text(r.source_status_name),
-        )
+    meanings = {
+        r.normalized_status_meaning
+        or normalized_status_meaning(r.source_status_code, r.source_status_name)
         for r in refs
         if r.has_status
     }
-    if len(status_pairs) > 1:
+    meanings.discard(None)
+    if len(meanings) > 1:
         return False
     for field in ("close_timestamp", "publication_timestamp"):
-        instants = {
-            _normalized_timestamp_key(r, field)
+        nts = [
+            normalize_tender_timestamp(
+                r.close_timestamp_raw
+                if field == "close_timestamp"
+                else r.publication_timestamp_raw
+            )
             for r in refs
-            if _has_field(r, field) and _normalized_timestamp_key(r, field)
-        }
-        if len(instants) > 1:
-            return False
-    for field in ("buyer_display", "buyer_source_id", "title"):
-        vals = {
-            _norm_text(_field_value(r, field))
-            for r in refs
-            if _has_field(r, field) and _field_value(r, field)
-        }
-        if len(vals) > 1:
-            return False
+            if (
+                r.has_close
+                if field == "close_timestamp"
+                else r.has_publication
+            )
+        ]
+        for i in range(len(nts)):
+            for j in range(i + 1, len(nts)):
+                if timestamps_compatible(nts[i], nts[j]) is False:
+                    return False
+    id_vals = {
+        (r.buyer_source_id or "").strip().casefold()
+        for r in refs
+        if r.has_buyer_source_id and r.buyer_source_id
+    }
+    if len(id_vals) > 1:
+        return False
     return True
 
 
@@ -430,6 +464,9 @@ def _coalescence_status(
     refs: list[ProcurementEvidenceRef],
     conflicts: list[CoalescenceConflict],
     provenance: dict[str, str],
+    *,
+    as_of_utc: datetime | None,
+    freshness_threshold_hours: int | None,
 ) -> tuple[str, str]:
     planes = {r.evidence_plane for r in refs}
     live_refs = [r for r in refs if r.evidence_plane == EVIDENCE_PLANE_ACQUISITION]
@@ -463,45 +500,74 @@ def _coalescence_status(
             )
         return "live_only", "only_acquisition_evidence"
 
-    # both planes
-    valid_live = [r for r in live_refs if _valid_acquired(r, None)]
-    if (
-        valid_live
-        and _live_contributes_selected(valid_live, provenance)
-        and not conflicts
-    ):
-        return "live_source_newer", "live_timestamped_selected_field_without_contradiction"
+    # both planes — live_source_newer requires as-of-aware current acquisition.
+    if as_of_utc is not None and freshness_threshold_hours is not None:
+        current_live = []
+        for r in live_refs:
+            ok, _ = evidence_acquisition_is_current(
+                acquired_at_utc=r.acquired_at_utc,
+                as_of_utc=as_of_utc,
+                freshness_threshold_hours=freshness_threshold_hours,
+            )
+            if ok:
+                current_live.append(r)
+        if (
+            current_live
+            and _live_contributes_selected(current_live, provenance)
+            and not conflicts
+        ):
+            return (
+                "live_source_newer",
+                "live_timestamped_selected_field_without_contradiction",
+            )
     return "exact_agreement", "planes_agree_or_complement"
+
+
+def _dedupe_group(
+    group: list[ProcurementEvidenceRef],
+) -> list[ProcurementEvidenceRef]:
+    """Deduplicate identical acquisition-instance + observation + payload."""
+    by_event: dict[str, ProcurementEvidenceRef] = {}
+    for ref in sorted(group, key=lambda r: r.evidence_ref_id):
+        if ref.observation_id and ref.acquisition_instance_id:
+            key = f"{ref.acquisition_instance_id}|{ref.observation_id}"
+            prior = by_event.get(key)
+            if prior is not None:
+                if prior.source_payload_digest == ref.source_payload_digest:
+                    continue  # exact repeated instance observation
+                # Same event key with divergent payload should not happen; keep both
+                # under distinct evidence_ref_ids by falling through with unique key.
+                key = f"{key}|{ref.evidence_ref_id}"
+            by_event[key] = ref
+        elif ref.observation_id:
+            key = ref.observation_id
+            prior = by_event.get(key)
+            if prior is not None and prior.source_payload_digest == ref.source_payload_digest:
+                continue
+            by_event[ref.evidence_ref_id] = ref
+        else:
+            by_event[ref.evidence_ref_id] = ref
+    return sorted(by_event.values(), key=lambda r: r.evidence_ref_id)
 
 
 def coalesce_evidence_refs(
     refs: list[ProcurementEvidenceRef],
+    *,
+    as_of_utc: datetime | None = None,
+    freshness_threshold_hours: int | None = None,
 ) -> tuple[list[CoalescedProcurementTender], list[CoalescenceConflict]]:
-    by_key: dict[str, list[ProcurementEvidenceRef]] = defaultdict(list)
+    by_key: dict[tuple[str, str], list[ProcurementEvidenceRef]] = defaultdict(list)
     for ref in refs:
-        if not ref.canonical_tender_key:
+        ik = _identity_key(ref)
+        if ik is None:
             continue
-        by_key[ref.canonical_tender_key].append(ref)
+        by_key[ik].append(ref)
 
     tenders: list[CoalescedProcurementTender] = []
     all_conflicts: list[CoalescenceConflict] = []
 
-    for key in sorted(by_key.keys()):
-        # Deduplicate identical observation_id + identical payload digest.
-        deduped: dict[str, ProcurementEvidenceRef] = {}
-        for ref in sorted(by_key[key], key=lambda r: r.evidence_ref_id):
-            if ref.observation_id:
-                prior = deduped.get(ref.observation_id)
-                if prior is not None:
-                    if prior.source_payload_digest == ref.source_payload_digest:
-                        continue  # identical refresh evidence
-                    # Divergent content should have different observation IDs
-                    # under PR5B; treat as separate if IDs collide anyway.
-                deduped[ref.observation_id] = ref
-            else:
-                deduped[ref.evidence_ref_id] = ref
-        group = sorted(deduped.values(), key=lambda r: r.evidence_ref_id)
-
+    for namespace, key in sorted(by_key.keys()):
+        group = _dedupe_group(by_key[(namespace, key)])
         group_conflicts: list[CoalescenceConflict] = []
         selected_status, status_conflicts = _select_status(group)
         group_conflicts.extend(status_conflicts)
@@ -517,12 +583,29 @@ def coalesce_evidence_refs(
             provenance["status_code"] = selected_status.evidence_ref_id
             provenance["status_name"] = selected_status.evidence_ref_id
 
+        buyer_display_variance = False
         for field in SELECTABLE_FIELDS:
-            value, ref_id, field_conflicts = _select_field(group, field)
+            value, ref_id, field_conflicts, secondary = _select_field(group, field)
             selected[field] = value
             if ref_id:
                 provenance[field] = ref_id
+            if secondary:
+                provenance[f"{field}_compatible_refs"] = ",".join(sorted(secondary))
             group_conflicts.extend(field_conflicts)
+
+        # Detect buyer display variance when source IDs agree.
+        id_agree = {
+            (r.buyer_source_id or "").strip().casefold()
+            for r in group
+            if r.has_buyer_source_id and r.buyer_source_id
+        }
+        displays = {
+            (r.buyer_display_raw or "").strip().casefold()
+            for r in group
+            if r.has_buyer_display and r.buyer_display_raw
+        }
+        if len(id_agree) == 1 and len(displays) > 1:
+            buyer_display_variance = True
 
         uniq: dict[str, CoalescenceConflict] = {
             c.conflict_id: c for c in group_conflicts
@@ -530,16 +613,23 @@ def coalesce_evidence_refs(
         group_conflicts = list(uniq.values())
 
         status, precedence_reason = _coalescence_status(
-            group, group_conflicts, provenance
+            group,
+            group_conflicts,
+            provenance,
+            as_of_utc=as_of_utc,
+            freshness_threshold_hours=freshness_threshold_hours,
         )
-        kind = _select_tender_key_kind(group)
-        tender_id = coalesced_tender_id(canonical_tender_key=key, tender_key_kind=kind)
+        tender_id = coalesced_tender_id(
+            identity_namespace=namespace, canonical_tender_key=key
+        )
+        display_kind = _preserve_tender_key_kind(group)
 
         bound_conflicts = [
             CoalescenceConflict(
                 conflict_id=c.conflict_id,
                 conflict_kind=c.conflict_kind,
                 canonical_tender_key=c.canonical_tender_key,
+                identity_namespace=c.identity_namespace or namespace,
                 coalesced_tender_id=tender_id,
                 evidence_ref_ids=c.evidence_ref_ids,
                 field_name=c.field_name,
@@ -553,17 +643,22 @@ def coalesce_evidence_refs(
             {r.pr4_procurement_id for r in group if r.pr4_procurement_id}
         )
         snap_ids = sorted({r.snapshot_id for r in group if r.snapshot_id})
+        inst_ids = sorted(
+            {r.acquisition_instance_id for r in group if r.acquisition_instance_id}
+        )
         obs_ids = sorted({r.observation_id for r in group if r.observation_id})
 
         tenders.append(
             CoalescedProcurementTender(
                 coalesced_tender_id=tender_id,
                 canonical_tender_key=key,
-                tender_key_kind=kind,
+                identity_namespace=namespace,
+                tender_key_kind=display_kind,
                 candidate_source_kind=_candidate_source_kind(group),
                 pr4_procurement_id=pr4_ids[0] if pr4_ids else None,
                 pr4_procurement_ids=tuple(pr4_ids),
                 acquisition_snapshot_ids=tuple(snap_ids),
+                acquisition_instance_ids=tuple(inst_ids),
                 acquisition_observation_ids=tuple(obs_ids),
                 coalescence_status=status,
                 source_precedence_reason=precedence_reason,
@@ -580,6 +675,7 @@ def coalesce_evidence_refs(
                 buyer_source_id_selected=selected.get("buyer_source_id"),
                 title_selected=selected.get("title"),
                 selected_field_provenance=provenance,
+                buyer_display_variance=buyer_display_variance,
                 lifecycle_status_evidence_ref_id=None,
                 lifecycle_close_evidence_ref_id=None,
                 lifecycle_publication_evidence_ref_id=None,
