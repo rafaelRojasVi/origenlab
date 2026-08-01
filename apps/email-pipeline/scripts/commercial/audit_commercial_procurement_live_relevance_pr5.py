@@ -34,7 +34,12 @@ from origenlab_email_pipeline.commercial_procurement_live_relevance.artifact_ope
 from origenlab_email_pipeline.commercial_procurement_live_relevance.paths import (  # noqa: E402
     existing_paths_document,
 )
+from origenlab_email_pipeline.commercial_procurement_live_relevance.constants import (  # noqa: E402
+    CONTACT_RESOLUTION_STATUSES,
+    CONTACT_STATUS_SEMANTICS,
+)
 from origenlab_email_pipeline.commercial_procurement_live_relevance.production_cases import (  # noqa: E402
+    assert_no_forbidden_identifier_leaks,
     select_production_cases,
 )
 from origenlab_email_pipeline.commercial_procurement_live_relevance.schema_design import (  # noqa: E402
@@ -47,9 +52,6 @@ from origenlab_email_pipeline.commercial_procurement_live_relevance.taxonomy imp
 from origenlab_email_pipeline.commercial_procurement_live_relevance.walkthrough import (  # noqa: E402
     build_pr5_walkthrough_bundle,
     render_walkthrough_markdown,
-)
-from origenlab_email_pipeline.commercial_procurement_live_relevance.constants import (  # noqa: E402
-    CONTACT_RESOLUTION_STATUSES,
 )
 
 SANTIAGO = ZoneInfo("America/Santiago")
@@ -126,22 +128,27 @@ def _acquisition_lanes_document() -> dict:
 
 
 def _funnel(conn: sqlite3.Connection, as_of_date: str, open_counts: dict[str, int]) -> dict:
+    """Funnel grains. PR4 active uses persisted procurement_context (not date-only lexical)."""
     def q1(sql: str, args: tuple = ()) -> int:
         return int(conn.execute(sql, args).fetchone()[0])
 
     chilecompra_raw = q1(
         "SELECT COUNT(*) FROM external_leads_raw WHERE source_name = 'chilecompra'"
     )
-    # Distinct tender candidates from PR4 verified keys is the stable grain we have
     verified = q1("SELECT COUNT(*) FROM commercial_procurement_signal")
+    # Persisted PR4 context is the active-status contract for this audit.
+    # Do not use date-only lexical close_at comparisons as the future PR5 contract.
     active_pr4 = q1(
         """
         SELECT COUNT(*) FROM commercial_procurement_signal
-        WHERE (LOWER(COALESCE(status_name,'')) = 'publicada' OR status_code = '5')
-          AND close_at IS NOT NULL AND close_at != ''
-          AND close_at >= ?
-        """,
-        (as_of_date,),
+        WHERE procurement_context = 'tender_active'
+        """
+    )
+    historical_pr4 = q1(
+        """
+        SELECT COUNT(*) FROM commercial_procurement_signal
+        WHERE procurement_context = 'historical_tender'
+        """
     )
     linked_tenders = q1(
         "SELECT COUNT(*) FROM commercial_procurement_account_resolution WHERE resolution_status='linked'"
@@ -173,7 +180,6 @@ def _funnel(conn: sqlite3.Connection, as_of_date: str, open_counts: dict[str, in
         """
     )
 
-    # Role-suitable / verified email — only count when role+email present; else null
     ccols = [r[1] for r in conn.execute("PRAGMA table_info(commercial_identity_contact)")]
     email_col = (
         "normalized_email"
@@ -207,6 +213,13 @@ def _funnel(conn: sqlite3.Connection, as_of_date: str, open_counts: dict[str, in
         ),
         "pr4_verified_tenders": verified,
         "pr4_currently_active_positive_evidence": active_pr4,
+        "pr4_active_status_method": "procurement_context=tender_active",
+        "pr4_historical_tender_count": historical_pr4,
+        "pr4_active_note": (
+            "Date-only lexical close_at comparison is not the PR5 active contract; "
+            "this audit uses persisted PR4 procurement_context. "
+            f"as_of_date={as_of_date} recorded for operator context only."
+        ),
         "artifact_declared_open_rows_any_validity_open": open_counts.get(
             "_validity_open_raw", None
         ),
@@ -407,6 +420,7 @@ def main(argv: list[str] | None = None) -> int:
             "no external lookup in PR5A–PR5C",
         ],
         "statuses": list(CONTACT_RESOLUTION_STATUSES),
+        "status_semantics": CONTACT_STATUS_SEMANTICS,
         "table_grain": {
             "commercial_procurement_contact_resolution": "exactly one summary row per candidate",
             "commercial_procurement_contact_candidate": "zero or more considered contacts",
@@ -458,12 +472,36 @@ Do not implement PR5B in this branch.
         ),
     }
     (out / "SUMMARY.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+
+    # Identifier + ticket leak gate on all local report text artifacts.
+    report_blob = ""
+    for name in (
+        "SUMMARY.json",
+        "CASE_SELECTION_META.json",
+        "DATA_WALKTHROUGH.json",
+        "DATA_WALKTHROUGH.md",
+        "CURRENT_FUNNEL.json",
+        "ARTIFACT_PROVENANCE.json",
+        "CONTACT_RESOLUTION_AUDIT.json",
+    ):
+        p = out / name
+        if p.is_file():
+            report_blob += p.read_text(encoding="utf-8")
+    assert_no_forbidden_identifier_leaks(report_blob, forbidden)
+    for secret_token in ("ticket=", "Ticket=", "TICKET="):
+        # Structural keys like chilecompra_api_ticket_configured are boolean-only.
+        if "SECRET" in report_blob.upper() and "ticket=SECRET" in report_blob:
+            raise AssertionError("ticket secret leaked into report artifacts")
+        if f"{secret_token}SECRET" in report_blob:
+            raise AssertionError("ticket secret leaked into report artifacts")
+
     print(f"wrote_out_dir={out}")
     print("live_verified_open=0")
     print(
         f"recent_artifact_declared_open={summary['recent_artifact_declared_open']}"
     )
     print(f"case_a_class={summary['case_a_open_classification']}")
+    print(f"case_d_available={selection_meta.get('case_d_available', 'fixture')}")
     print(f"ticket_configured={ticket_ok}")
     return 0
 
