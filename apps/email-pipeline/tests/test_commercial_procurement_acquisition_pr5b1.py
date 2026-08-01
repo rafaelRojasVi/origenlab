@@ -622,7 +622,6 @@ def test_lista_index_pagination_contract_failures(
     )
     assert page.completeness_status == "malformed_response"
     assert page.error_classification == "pagination_contract_mismatch"
-    assert page.acquired_at_utc is None or True
     assert page.raw_canonical_json_digest
     assert page.parser_input_digest
     assert sources == []
@@ -632,6 +631,230 @@ def test_lista_index_pagination_contract_failures(
     assert page.error_message is not None
     assert "ocds-synth" not in page.error_message
     assert str(pagination_patch) not in (page.error_message or "")
+
+
+def test_lista_index_rejects_historical_v1_query() -> None:
+    """Frozen v1 identity is retained, but lista-index requires acquisition_query_v2."""
+    assert acquisition_query_id(FROZEN_V1_OCDS_IDENTITY) == FROZEN_V1_OCDS_QUERY_ID
+    q_v1 = AcquisitionQuery(
+        acquisition_query_id=FROZEN_V1_OCDS_QUERY_ID,
+        source_kind=SOURCE_KIND_OCDS,
+        endpoint_kind=ENDPOINT_OCDS_MONTHLY_RANGE,
+        query_contract_version=QUERY_CONTRACT_VERSION,
+        year=2026,
+        month=8,
+        range_start=1,
+        range_end=1,
+        endpoint_path="/APISOCDS/OCDS/listaOCDSAgnoMes/2026/8/1/1",
+    )
+    assert q_v1.acquisition_query_id == FROZEN_V1_OCDS_QUERY_ID
+    assert "ocds_range_semantics" not in q_v1.identity_payload()
+
+    payload = _lista_payload(offset=1, limit=1)
+    stamp = "2026-08-01T20:00:00Z"
+    raw_before = canonical_json_digest(payload)
+    _q, page, sources, tenders, lines, diag = parse_ocds_package(
+        payload,
+        query=q_v1,
+        acquired_at_utc=stamp,
+        original_bytes=json.dumps(payload, separators=(",", ":")).encode(),
+    )
+    assert page.completeness_status == "malformed_response"
+    assert page.error_classification == "query_contract_mismatch"
+    assert "lista_index_query_version_mismatch" in diag["reason_codes"]
+    assert page.acquired_at_utc == stamp
+    assert page.raw_canonical_json_digest == raw_before
+    assert page.parser_input_digest == raw_before
+    assert page.original_bytes_digest
+    assert sources == []
+    assert tenders == []
+    assert lines == []
+    assert page.error_message is not None
+    assert "acquisition_query_v1" not in page.error_message
+    assert FROZEN_V1_OCDS_QUERY_ID not in page.error_message
+
+
+def test_historical_v1_query_still_parses_release_package() -> None:
+    q_v1 = AcquisitionQuery(
+        acquisition_query_id=FROZEN_V1_OCDS_QUERY_ID,
+        source_kind=SOURCE_KIND_OCDS,
+        endpoint_kind=ENDPOINT_OCDS_MONTHLY_RANGE,
+        query_contract_version=QUERY_CONTRACT_VERSION,
+        year=2026,
+        month=8,
+        range_start=1,
+        range_end=1,
+        endpoint_path="/APISOCDS/OCDS/listaOCDSAgnoMes/2026/8/1/1",
+    )
+    payload = json.loads((FIXTURES / "ocds_single_release.json").read_text())
+    _q, page, sources, tenders, lines, diag = parse_ocds_package(payload, query=q_v1)
+    assert diag.get("lista_index") is not True
+    assert page.error_classification != "query_contract_mismatch"
+    assert page.completeness_status in {"complete", "partial_page_failure", "empty_page"}
+    assert len(sources) >= 1
+    assert len(tenders) >= 1
+    assert q_v1.acquisition_query_id == FROZEN_V1_OCDS_QUERY_ID
+
+
+def test_lista_index_rejects_inconsistent_path_or_query_id() -> None:
+    payload = _lista_payload(offset=1, limit=1)
+    good = build_ocds_query(year=2026, month=7, range_start=1, range_end=1)
+
+    bad_path = AcquisitionQuery(
+        **{
+            **good.to_dict(),
+            "endpoint_path": "/APISOCDS/OCDS/listaOCDSAgnoMes/2026/7/0/1",
+        }
+    )
+    _q, page, sources, tenders, lines, diag = parse_ocds_package(
+        payload, query=bad_path
+    )
+    assert page.error_classification == "query_contract_mismatch"
+    assert "lista_index_endpoint_path_mismatch" in diag["reason_codes"]
+    assert sources == []
+    assert tenders == []
+    assert lines == []
+    assert "/APISOCDS" not in (page.error_message or "")
+
+    bad_id = AcquisitionQuery(
+        **{**good.to_dict(), "acquisition_query_id": "acquisition_query_id_deadbeef"}
+    )
+    _q2, page2, sources2, tenders2, lines2, diag2 = parse_ocds_package(
+        payload, query=bad_id
+    )
+    assert page2.error_classification == "query_contract_mismatch"
+    assert "lista_index_query_id_mismatch" in diag2["reason_codes"]
+    assert sources2 == []
+    assert tenders2 == []
+    assert lines2 == []
+    assert "deadbeef" not in (page2.error_message or "")
+
+
+def _committed_zero_based_probes(
+    *,
+    listing_http: int = 200,
+    listing_error: str | None = None,
+    zero_http: int = 200,
+    zero_error: str | None = None,
+    zero_payload: dict | object = ...,
+) -> list[dict]:
+    listing = json.loads((LIVE_CONTRACT / "ocds_range_live_shape_v1.json").read_text())
+    total = listing["pagination"]["total"]
+
+    def listing_rows(offset: int, limit: int) -> dict:
+        return {
+            "creationDate": listing["creationDate"],
+            "version": listing["version"],
+            "pagination": {"offset": offset, "limit": limit, "total": total},
+            "data": [
+                {"ocid": f"ocds-synth-probe-{offset + i}", "urlTender": "<redacted_url>"}
+                for i in range(limit)
+            ],
+        }
+
+    if zero_payload is ...:
+        resolved_zero: dict | None = {
+            "status": 404,
+            "detail": "No se encontraron resultados.",
+        }
+    else:
+        resolved_zero = zero_payload  # type: ignore[assignment]
+
+    return [
+        summarize_probe(
+            label="0_0",
+            start=0,
+            end=0,
+            http_status=zero_http,
+            payload=resolved_zero,
+            error_classification=zero_error,
+        ),
+        summarize_probe(
+            label="1_1",
+            start=1,
+            end=1,
+            http_status=listing_http,
+            payload=listing_rows(1, 1),
+            error_classification=listing_error,
+        ),
+        summarize_probe(
+            label="0_9",
+            start=0,
+            end=9,
+            http_status=listing_http,
+            payload=listing_rows(0, 9),
+            error_classification=listing_error,
+        ),
+        summarize_probe(
+            label="1_10",
+            start=1,
+            end=10,
+            http_status=listing_http,
+            payload=listing_rows(1, 10),
+            error_classification=listing_error,
+        ),
+    ]
+
+
+def test_probe_http_500_with_lista_body_is_not_valid() -> None:
+    result = conclude_range_semantics(
+        _committed_zero_based_probes(listing_http=500, listing_error=None)
+    )
+    assert result["conclusion"] != "zero_based_offset_limit"
+    assert result["conclusion"] == "ambiguous"
+
+
+def test_probe_error_classification_with_lista_body_is_not_valid() -> None:
+    result = conclude_range_semantics(
+        _committed_zero_based_probes(listing_error="transport_timeout")
+    )
+    assert result["conclusion"] == "ambiguous"
+
+
+def test_zero_limit_http_500_without_payload_rejected() -> None:
+    probes = _committed_zero_based_probes(
+        zero_http=500,
+        zero_error="http_500",
+        zero_payload=None,
+    )
+    # Force returned_count 0 with no package when payload is None.
+    assert probes[0]["returned_count"] == 0
+    assert probes[0]["package_type"] is None
+    result = conclude_range_semantics(probes)
+    assert result["conclusion"] == "ambiguous"
+    assert any("0/0_transport_not_success" in e for e in result["evidence"])
+
+
+def test_zero_limit_2xx_unknown_empty_envelope_rejected() -> None:
+    probes = _committed_zero_based_probes(zero_payload={"unexpected": True})
+    assert probes[0]["package_type"] == "unknown"
+    assert probes[0]["returned_count"] == 0
+    result = conclude_range_semantics(probes)
+    assert result["conclusion"] == "ambiguous"
+    assert any("0/0_inconsistent" in e for e in result["evidence"])
+
+
+def test_zero_limit_committed_error_envelope_and_lista_empty_ok() -> None:
+    committed = conclude_range_semantics(_committed_zero_based_probes())
+    assert committed["conclusion"] == "zero_based_offset_limit"
+
+    lista_empty = _committed_zero_based_probes(
+        zero_payload={
+            "creationDate": "2026-08-01T12:00:00",
+            "version": "1.2",
+            "pagination": {"offset": 0, "limit": 0, "total": 100},
+            "data": [],
+        }
+    )
+    assert conclude_range_semantics(lista_empty)["conclusion"] == "zero_based_offset_limit"
+
+
+def test_all_four_committed_probe_shapes_still_zero_based_offset_limit() -> None:
+    result = conclude_range_semantics(_committed_zero_based_probes())
+    assert result["conclusion"] == "zero_based_offset_limit"
+    assert result["pr5b_correction_required"] is True
+    assert len(result["probes"]) == 4
+    assert {p["label"] for p in result["probes"]} == {"0_0", "1_1", "0_9", "1_10"}
 
 
 def test_lista_index_pagination_total_conflict() -> None:

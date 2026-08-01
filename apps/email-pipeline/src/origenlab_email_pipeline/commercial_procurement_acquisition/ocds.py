@@ -581,6 +581,123 @@ def _validate_lista_index_pagination(
     return reasons
 
 
+def _validate_lista_index_query(query: AcquisitionQuery) -> list[str]:
+    """Require a valid acquisition_query_v2 offset/limit page query for lista-index."""
+    reasons: list[str] = []
+    if query.source_kind != SOURCE_KIND_OCDS:
+        reasons.append("lista_index_source_kind_mismatch")
+    if query.endpoint_kind != ENDPOINT_OCDS_MONTHLY_RANGE:
+        reasons.append("lista_index_endpoint_kind_mismatch")
+    if query.query_contract_version != OCDS_QUERY_CONTRACT_VERSION:
+        reasons.append("lista_index_query_version_mismatch")
+
+    range_ok = True
+    if not _is_non_bool_int(query.range_start) or int(query.range_start) < 0:
+        reasons.append("lista_index_query_range_invalid")
+        range_ok = False
+    if not _is_non_bool_int(query.range_end):
+        if "lista_index_query_range_invalid" not in reasons:
+            reasons.append("lista_index_query_range_invalid")
+        range_ok = False
+    elif range_ok and int(query.range_end) < int(query.range_start):
+        reasons.append("lista_index_query_range_invalid")
+        range_ok = False
+    if range_ok:
+        width = int(query.range_end) - int(query.range_start) + 1
+        if width < 1 or width > OCDS_MAX_PAGE_SIZE:
+            reasons.append("lista_index_query_range_invalid")
+            range_ok = False
+
+    path_inputs_ok = (
+        _is_non_bool_int(query.year)
+        and _is_non_bool_int(query.month)
+        and 1 <= int(query.month) <= 12
+        and _is_non_bool_int(query.range_start)
+        and int(query.range_start) >= 0
+        and _is_non_bool_int(query.range_end)
+        and int(query.range_end) >= int(query.range_start)
+    )
+    if path_inputs_ok:
+        offset = int(query.range_start)
+        limit = int(query.range_end) - int(query.range_start) + 1
+        expected_path = ENDPOINT_PATH_OCDS_TEMPLATE.format(
+            year=int(query.year),
+            month=int(query.month),
+            start=offset,
+            end=limit,
+        )
+        if query.endpoint_path != expected_path:
+            reasons.append("lista_index_endpoint_path_mismatch")
+    else:
+        reasons.append("lista_index_endpoint_path_mismatch")
+
+    recomputed = acquisition_query_id(query.identity_payload())
+    if recomputed != query.acquisition_query_id:
+        reasons.append("lista_index_query_id_mismatch")
+
+    # Deduplicate while preserving order.
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for code in reasons:
+        if code not in seen:
+            seen.add(code)
+            ordered.append(code)
+    return ordered
+
+
+def _lista_index_contract_failure_page(
+    *,
+    query: AcquisitionQuery,
+    raw_digest: str,
+    parser_digest: str,
+    bytes_digest: str | None,
+    acquired_at_utc: str | None,
+    http_status: int | None,
+    envelope_base: dict[str, Any],
+    reason_codes: list[str],
+    error_classification: str,
+    package_creation: str | None,
+) -> tuple[AcquisitionPage, dict[str, Any]]:
+    page = AcquisitionPage(
+        page_id=acquisition_page_id(
+            acquisition_query_id_value=query.acquisition_query_id,
+            range_position={"start": query.range_start, "end": query.range_end},
+            raw_canonical_json_digest=raw_digest,
+        ),
+        source_kind=SOURCE_KIND_OCDS,
+        endpoint_kind=ENDPOINT_OCDS_MONTHLY_RANGE,
+        acquisition_query_id=query.acquisition_query_id,
+        range_position={"start": query.range_start, "end": query.range_end},
+        acquired_at_utc=acquired_at_utc,
+        raw_canonical_json_digest=raw_digest,
+        original_bytes_digest=bytes_digest,
+        parser_input_digest=parser_digest,
+        response_item_count=0,
+        source_reported_total=None,
+        http_status=http_status,
+        parser_status="malformed",
+        error_classification=error_classification,
+        completeness_status="malformed_response",
+        envelope_meta={
+            **envelope_base,
+            "contract_validation_reasons": list(reason_codes),
+        },
+        error_message=sanitize_error_message(
+            f"{error_classification}:" + ",".join(reason_codes)
+        ),
+    )
+    diagnostics = {
+        "lista_index": True,
+        error_classification: True,
+        "reason_codes": list(reason_codes),
+        "package_creation_timestamp": package_creation,
+        "package_creation_is_tender_publication": False,
+        "note": "no observations emitted on lista-index contract failure",
+    }
+    return page, diagnostics
+
+
+
 def _emit_release_observations(
     release: dict[str, Any],
     *,
@@ -785,6 +902,22 @@ def _parse_ocds_lista_index(
         "creationDate_is_tender_publication": False,
     }
 
+    query_reasons = _validate_lista_index_query(query)
+    if query_reasons:
+        page, diagnostics = _lista_index_contract_failure_page(
+            query=query,
+            raw_digest=raw_digest,
+            parser_digest=parser_digest,
+            bytes_digest=bytes_digest,
+            acquired_at_utc=acquired_at_utc,
+            http_status=http_status,
+            envelope_base=envelope_base,
+            reason_codes=query_reasons,
+            error_classification="query_contract_mismatch",
+            package_creation=package_creation,
+        )
+        return query, page, [], [], [], diagnostics
+
     reason_codes = _validate_lista_index_pagination(
         pagination,
         data=data,
@@ -792,42 +925,21 @@ def _parse_ocds_lista_index(
         source_reported_total=source_reported_total,
     )
     if reason_codes:
-        page = AcquisitionPage(
-            page_id=acquisition_page_id(
-                acquisition_query_id_value=query.acquisition_query_id,
-                range_position={"start": query.range_start, "end": query.range_end},
-                raw_canonical_json_digest=raw_digest,
-            ),
-            source_kind=SOURCE_KIND_OCDS,
-            endpoint_kind=ENDPOINT_OCDS_MONTHLY_RANGE,
-            acquisition_query_id=query.acquisition_query_id,
-            range_position={"start": query.range_start, "end": query.range_end},
+        page, diagnostics = _lista_index_contract_failure_page(
+            query=query,
+            raw_digest=raw_digest,
+            parser_digest=parser_digest,
+            bytes_digest=bytes_digest,
             acquired_at_utc=acquired_at_utc,
-            raw_canonical_json_digest=raw_digest,
-            original_bytes_digest=bytes_digest,
-            parser_input_digest=parser_digest,
-            response_item_count=0,
-            source_reported_total=None,
             http_status=http_status,
-            parser_status="malformed",
-            error_classification="pagination_contract_mismatch",
-            completeness_status="malformed_response",
-            envelope_meta={
+            envelope_base={
                 **envelope_base,
                 "pagination_validation_reasons": list(reason_codes),
             },
-            error_message=sanitize_error_message(
-                "pagination_contract_mismatch:" + ",".join(reason_codes)
-            ),
+            reason_codes=reason_codes,
+            error_classification="pagination_contract_mismatch",
+            package_creation=package_creation,
         )
-        diagnostics = {
-            "lista_index": True,
-            "pagination_contract_mismatch": True,
-            "reason_codes": list(reason_codes),
-            "package_creation_timestamp": package_creation,
-            "package_creation_is_tender_publication": False,
-            "note": "no observations emitted on pagination contract failure",
-        }
         return query, page, [], [], [], diagnostics
 
     rows = [r for r in data if isinstance(r, dict)]

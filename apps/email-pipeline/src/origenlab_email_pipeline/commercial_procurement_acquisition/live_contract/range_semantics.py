@@ -105,32 +105,72 @@ def summarize_probe(
     }
 
 
+def _is_non_bool_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _http_success(status: Any) -> bool:
+    return _is_non_bool_int(status) and 200 <= int(status) <= 299
+
+
 def _probe_is_valid_lista_index(p: dict[str, Any]) -> bool:
+    if not _http_success(p.get("http_status")):
+        return False
+    if p.get("error_classification") is not None:
+        return False
     if p.get("package_type") != "lista_index_pagination":
         return False
     pag = p.get("pagination") or {}
     if not isinstance(pag, dict):
         return False
-    if pag.get("offset") != p.get("start"):
+    offset = pag.get("offset")
+    limit = pag.get("limit")
+    total = pag.get("total")
+    if not _is_non_bool_int(offset) or not _is_non_bool_int(limit):
         return False
-    if pag.get("limit") != p.get("end"):
+    if not _is_non_bool_int(total) or int(total) < 0:
         return False
-    try:
-        return int(p.get("returned_count") or -1) == int(p.get("end"))
-    except (TypeError, ValueError):
+    if int(offset) != int(p.get("start")):
         return False
+    if int(limit) != int(p.get("end")):
+        return False
+    count = p.get("returned_count")
+    if not _is_non_bool_int(count):
+        return False
+    return int(count) == int(limit)
 
 
 def _zero_limit_ok(p00: dict[str, Any]) -> tuple[bool, str]:
     """Validate 0/0 independently for the offset/limit contract."""
-    count = int(p00.get("returned_count") or 0)
+    if not _http_success(p00.get("http_status")):
+        return False, "0/0_transport_not_success"
+    if p00.get("error_classification") is not None:
+        return False, "0/0_error_classification_set"
+
     package = p00.get("package_type")
-    if package == "lista_index_pagination" and count > 0:
-        return False, "0/0_inconsistent_nonempty_listing"
-    if package == "error_envelope" or p00.get("body_status") == 404:
+    count = p00.get("returned_count")
+    count_i = int(count) if _is_non_bool_int(count) else -1
+
+    # Observed live 0/0: HTTP 2xx error envelope with body status 404 and count 0.
+    if package == "error_envelope" and p00.get("body_status") == 404 and count_i == 0:
         return True, "0/0_empty_or_error"
-    if count == 0:
-        return True, "0/0_empty_or_error"
+
+    # Alternate empty listing: lista-index with offset=0, limit=0, count=0.
+    if package == "lista_index_pagination":
+        pag = p00.get("pagination") or {}
+        if (
+            isinstance(pag, dict)
+            and _is_non_bool_int(pag.get("offset"))
+            and int(pag.get("offset")) == 0
+            and _is_non_bool_int(pag.get("limit"))
+            and int(pag.get("limit")) == 0
+            and count_i == 0
+        ):
+            return True, "0/0_empty_or_error"
+        if count_i > 0:
+            return False, "0/0_inconsistent_nonempty_listing"
+        return False, "0/0_inconsistent"
+
     return False, "0/0_inconsistent"
 
 
