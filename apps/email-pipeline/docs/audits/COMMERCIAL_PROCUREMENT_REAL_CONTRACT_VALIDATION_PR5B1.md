@@ -1,7 +1,8 @@
 # Commercial procurement — PR5B.1 real source-contract validation
 
-**Status:** Draft PR checkpoint (validation + OCDS wire correction)
-**Branch:** `test/commercial-procurement-real-contract-pr5b1`
+**Status:** Merged as PR [#423](https://github.com/rafaelRojasVi/origenlab/pull/423)
+**Merge commit:** `9c78f8a0948e08466f8c09f51ed0ee16b13b2946`
+**Branch (historical):** `test/commercial-procurement-real-contract-pr5b1`
 **Base SHA:** `94a7668a6eb060f85fa579ff109616bb8ac5adf4` (PR #421 merge)
 **Capture UTC:** `2026-08-01T19:00:30Z` (day `2026-08-01`)
 
