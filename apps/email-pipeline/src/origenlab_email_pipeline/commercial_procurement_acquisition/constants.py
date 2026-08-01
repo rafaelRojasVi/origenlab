@@ -16,10 +16,14 @@ SOURCE_KIND_OCDS: Final = "chilecompra_ocds"
 ENDPOINT_TICKET_LICITACIONES_SUMMARY: Final = "ticket_licitaciones_summary"
 ENDPOINT_TICKET_LICITACION_DETAIL: Final = "ticket_licitacion_detail"
 ENDPOINT_OCDS_MONTHLY_RANGE: Final = "ocds_lista_agno_mes_range"
+ENDPOINT_OCDS_MONTHLY_MONTH: Final = "ocds_lista_agno_mes_month"
 
 ENDPOINT_PATH_TICKET: Final = "/servicios/v1/publico/licitaciones.json"
 ENDPOINT_PATH_OCDS_TEMPLATE: Final = (
     "/APISOCDS/OCDS/listaOCDSAgnoMes/{year}/{month}/{start}/{end}"
+)
+ENDPOINT_PATH_OCDS_MONTH_TEMPLATE: Final = (
+    "/APISOCDS/OCDS/listaOCDSAgnoMes/{year}/{month}"
 )
 
 OCDS_MAX_PAGE_SIZE: Final = 1000

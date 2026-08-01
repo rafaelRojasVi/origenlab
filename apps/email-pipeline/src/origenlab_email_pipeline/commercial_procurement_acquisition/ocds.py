@@ -15,7 +15,10 @@ from origenlab_email_pipeline.commercial_procurement_acquisition.canonical_json 
     canonical_json_digest,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.constants import (
+    ACQUISITION_CONTRACT_VERSION,
+    ENDPOINT_OCDS_MONTHLY_MONTH,
     ENDPOINT_OCDS_MONTHLY_RANGE,
+    ENDPOINT_PATH_OCDS_MONTH_TEMPLATE,
     ENDPOINT_PATH_OCDS_TEMPLATE,
     OCDS_MAX_PAGE_SIZE,
     PARSER_VERSION,
@@ -46,9 +49,6 @@ from origenlab_email_pipeline.commercial_procurement_acquisition.models import (
     ProcurementLineObservation,
     ProcurementSourceObservation,
     ProcurementTenderObservation,
-)
-from origenlab_email_pipeline.commercial_procurement_acquisition.constants import (
-    ACQUISITION_CONTRACT_VERSION,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.redaction import (
     sanitize_error_message,
@@ -160,6 +160,40 @@ def build_ocds_query(
     )
 
 
+def build_ocds_month_query(*, year: int, month: int) -> AcquisitionQuery:
+    """Month-scope query identity — no page range; widths live on child range queries."""
+    if not (1 <= month <= 12):
+        raise OcdsParseError("month must be 1..12")
+    path = ENDPOINT_PATH_OCDS_MONTH_TEMPLATE.format(year=year, month=month)
+    identity = {
+        "source_kind": SOURCE_KIND_OCDS,
+        "endpoint_kind": ENDPOINT_OCDS_MONTHLY_MONTH,
+        "query_contract_version": QUERY_CONTRACT_VERSION,
+        "estado": None,
+        "fecha_ddmmaaaa": None,
+        "tender_code": None,
+        "year": year,
+        "month": month,
+        "range_start": None,
+        "range_end": None,
+        "endpoint_path": path,
+    }
+    return AcquisitionQuery(
+        acquisition_query_id=acquisition_query_id(identity),
+        source_kind=SOURCE_KIND_OCDS,
+        endpoint_kind=ENDPOINT_OCDS_MONTHLY_MONTH,
+        query_contract_version=QUERY_CONTRACT_VERSION,
+        estado=None,
+        fecha_ddmmaaaa=None,
+        tender_code=None,
+        year=year,
+        month=month,
+        range_start=None,
+        range_end=None,
+        endpoint_path=path,
+    )
+
+
 def _as_str(value: Any) -> str | None:
     if value is None:
         return None
@@ -246,8 +280,9 @@ def _sort_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
-def _bounded_related_processes(tender: dict[str, Any]) -> tuple[dict[str, str], ...]:
-    raw = tender.get("relatedProcesses")
+def _bounded_related_processes(release: dict[str, Any]) -> tuple[dict[str, str], ...]:
+    """Canonical OCDS location is release.relatedProcesses (not tender)."""
+    raw = release.get("relatedProcesses")
     if not isinstance(raw, list):
         return ()
     rows: list[dict[str, str]] = []
@@ -260,6 +295,7 @@ def _bounded_related_processes(tender: dict[str, Any]) -> tuple[dict[str, str], 
             "title": _as_str(item.get("title")) or "",
             "scheme": _as_str(item.get("scheme")) or "",
             "identifier": _as_str(item.get("identifier")) or "",
+            "uri": _as_str(item.get("uri")) or "",
         }
         rel = item.get("relationship")
         if isinstance(rel, list):
@@ -267,7 +303,9 @@ def _bounded_related_processes(tender: dict[str, Any]) -> tuple[dict[str, str], 
         elif rel is not None:
             row["relationship"] = str(rel)
         rows.append(sanitize_mapping(row))
-    return tuple(sorted(rows, key=lambda r: (r["id"], r["identifier"], r["title"])))
+    return tuple(
+        sorted(rows, key=lambda r: (r["id"], r["identifier"], r["title"], r["uri"]))
+    )
 
 
 def _additional_classifications(item: dict[str, Any]) -> tuple[dict[str, str], ...]:
@@ -303,6 +341,7 @@ def _malformed_page(
     original_bytes: bytes | str | None,
     http_status: int | None,
     message: str,
+    acquired_at_utc: str | None = None,
 ) -> AcquisitionPage:
     raw_digest, parser_digest, bytes_digest = payload_digests(
         payload, original_bytes=original_bytes
@@ -318,7 +357,7 @@ def _malformed_page(
         endpoint_kind=ENDPOINT_OCDS_MONTHLY_RANGE,
         acquisition_query_id=query.acquisition_query_id,
         range_position=range_pos,
-        acquired_at_utc=None,
+        acquired_at_utc=acquired_at_utc,
         raw_canonical_json_digest=raw_digest,
         original_bytes_digest=bytes_digest,
         parser_input_digest=parser_digest,
@@ -372,7 +411,7 @@ def _emit_release_observations(
     method_details = (
         _as_str(tender_obj.get("procurementMethodDetails")) if tender_obj else None
     )
-    related = _bounded_related_processes(tender_obj or {})
+    related = _bounded_related_processes(release)
     tags = _tag_values(release)
     raw_digest = canonical_json_digest(release)
     obs_id = procurement_source_observation_id(
@@ -448,7 +487,7 @@ def _emit_release_observations(
             "source_status_value": "tender.status",
             "close_timestamp_raw": "tender.tenderPeriod.endDate",
             "procurement_method": "tender.procurementMethod",
-            "related_processes": "tender.relatedProcesses",
+            "related_processes": "release.relatedProcesses",
             "note": "OCDS fields are evidence only; not PR5 eligibility",
         },
     )
@@ -529,6 +568,7 @@ def parse_ocds_package(
             original_bytes=original_bytes,
             http_status=http_status,
             message="payload must be a JSON object",
+            acquired_at_utc=acquired_at_utc,
         )
         return query, page, [], [], [], {"error": page.error_message}
 
@@ -543,6 +583,7 @@ def parse_ocds_package(
             original_bytes=original_bytes,
             http_status=http_status,
             message="payload is not an OCDS package/release envelope",
+            acquired_at_utc=acquired_at_utc,
         )
         return query, page, [], [], [], {"error": page.error_message}
 
@@ -698,6 +739,76 @@ def _classify_monthly_completeness(
     return "complete"
 
 
+def _validate_month_assembly_inputs(
+    *,
+    planned_ranges: list[dict[str, int]],
+    parsed_pages: list[
+        tuple[
+            AcquisitionQuery,
+            AcquisitionPage,
+            list[ProcurementSourceObservation],
+            list[ProcurementTenderObservation],
+            list[ProcurementLineObservation],
+            dict[str, Any],
+        ]
+    ],
+    year: int,
+    month: int,
+) -> list[dict[str, int]]:
+    """Validate planned ranges and every child query/page pair. Raises OcdsParseError."""
+    if not planned_ranges:
+        raise OcdsParseError("planned_ranges required")
+
+    years = {int(r["year"]) for r in planned_ranges}
+    months = {int(r["month"]) for r in planned_ranges}
+    if len(years) != 1 or len(months) != 1:
+        raise OcdsParseError("planned_ranges must share one year and month")
+    if int(planned_ranges[0]["year"]) != year or int(planned_ranges[0]["month"]) != month:
+        raise OcdsParseError("planned_ranges year/month must match month scope")
+
+    planned_keys = [(int(r["start"]), int(r["end"])) for r in planned_ranges]
+    if len(planned_keys) != len(set(planned_keys)):
+        raise OcdsParseError("duplicate planned range")
+
+    ordered_planned = sorted(
+        planned_ranges,
+        key=lambda r: (int(r["start"]), int(r["end"])),
+    )
+    for r in ordered_planned:
+        width = int(r["end"]) - int(r["start"]) + 1
+        if width < 1 or width > OCDS_MAX_PAGE_SIZE:
+            raise OcdsParseError("planned range width invalid")
+        if int(r["start"]) < 1:
+            raise OcdsParseError("planned range_start must be >= 1")
+
+    planned_set = {(int(r["start"]), int(r["end"])) for r in ordered_planned}
+    seen_page_ids: set[str] = set()
+    seen_ranges: set[tuple[int, int]] = set()
+
+    for query, page, *_rest in parsed_pages:
+        if query.endpoint_kind != ENDPOINT_OCDS_MONTHLY_RANGE:
+            raise OcdsParseError("child query must use ocds_lista_agno_mes_range")
+        if query.year != year or query.month != month:
+            raise OcdsParseError("child query year/month must match month scope")
+        if page.acquisition_query_id != query.acquisition_query_id:
+            raise OcdsParseError("page acquisition_query_id must equal tuple query ID")
+        if page.range_position.get("start") != query.range_start or page.range_position.get(
+            "end"
+        ) != query.range_end:
+            raise OcdsParseError("page range_position must equal query range_start/range_end")
+        key = (int(query.range_start or 0), int(query.range_end or 0))
+        if key not in planned_set:
+            raise OcdsParseError("observed range not in planned_ranges")
+        if page.page_id in seen_page_ids:
+            raise OcdsParseError("duplicate child page")
+        if key in seen_ranges:
+            raise OcdsParseError("duplicate child page range")
+        seen_page_ids.add(page.page_id)
+        seen_ranges.add(key)
+
+    return ordered_planned
+
+
 def build_ocds_month_snapshot(
     *,
     planned_ranges: list[dict[str, int]],
@@ -714,26 +825,26 @@ def build_ocds_month_snapshot(
     source_reported_total: int | None = None,
     fixture_origin: str = "synthetic_official_shape",
     materialized_at_utc: str | None = None,
+    year: int | None = None,
+    month: int | None = None,
 ) -> AcquisitionSnapshot:
     """Assemble a multi-page monthly OCDS snapshot from offline parse results.
 
+    Snapshot identity uses build_ocds_month_query (no page width). Child pages
+    remain ocds_lista_agno_mes_range with widths ≤ 1000.
     Input page order does not affect fingerprints (pages sorted by range).
     """
     if not planned_ranges:
         raise OcdsParseError("planned_ranges required")
+    scope_year = int(year if year is not None else planned_ranges[0]["year"])
+    scope_month = int(month if month is not None else planned_ranges[0]["month"])
+    ordered_planned = _validate_month_assembly_inputs(
+        planned_ranges=planned_ranges,
+        parsed_pages=parsed_pages,
+        year=scope_year,
+        month=scope_month,
+    )
 
-    # Validate planned widths.
-    for r in planned_ranges:
-        width = int(r["end"]) - int(r["start"]) + 1
-        if width < 1 or width > OCDS_MAX_PAGE_SIZE:
-            raise OcdsParseError("planned range width invalid")
-        if int(r["start"]) < 1:
-            raise OcdsParseError("planned range_start must be >= 1")
-
-    year = int(planned_ranges[0]["year"])
-    month = int(planned_ranges[0]["month"])
-
-    # Sort parsed pages by range.
     sorted_pages = sorted(
         parsed_pages,
         key=lambda row: (
@@ -750,7 +861,7 @@ def build_ocds_month_snapshot(
         }
         for p in pages
     ]
-    anomalies = detect_range_anomalies(planned_ranges, observed)
+    anomalies = detect_range_anomalies(ordered_planned, observed)
 
     sources: list[ProcurementSourceObservation] = []
     tenders: list[ProcurementTenderObservation] = []
@@ -762,19 +873,14 @@ def build_ocds_month_snapshot(
 
     total_items = sum(p.response_item_count for p in pages)
     completeness = _classify_monthly_completeness(
-        planned=planned_ranges,
+        planned=ordered_planned,
         pages=pages,
         anomalies=anomalies,
         source_reported_total=source_reported_total,
         total_items=total_items,
     )
 
-    # Monthly query identity: whole-month span (first start .. last planned end).
-    month_start = min(int(r["start"]) for r in planned_ranges)
-    month_end = max(int(r["end"]) for r in planned_ranges)
-    month_query = build_ocds_query(
-        year=year, month=month, range_start=month_start, range_end=month_end
-    )
+    month_query = build_ocds_month_query(year=scope_year, month=scope_month)
     identity = query_identity_from_model(month_query)
     source_fp = acquisition_source_fingerprint(
         source_kind=SOURCE_KIND_OCDS,
@@ -810,13 +916,15 @@ def build_ocds_month_snapshot(
         "+00:00", "Z"
     )
     diagnostics = {
-        "planned_ranges": planned_ranges,
+        "planned_ranges": ordered_planned,
         "anomalies": anomalies,
         "source_reported_total": source_reported_total,
         "total_items": total_items,
         "page_count": len(pages),
         "shuffled_input_order_normalized": True,
         "records_policy": "B_historical_preferred_compiled_if_unique",
+        "month_scope_endpoint_kind": ENDPOINT_OCDS_MONTHLY_MONTH,
+        "child_endpoint_kind": ENDPOINT_OCDS_MONTHLY_RANGE,
     }
     return AcquisitionSnapshot(
         snapshot_id=snap_id,
