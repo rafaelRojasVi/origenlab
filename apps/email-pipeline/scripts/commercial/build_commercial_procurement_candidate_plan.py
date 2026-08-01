@@ -43,6 +43,8 @@ from origenlab_email_pipeline.commercial_procurement_candidate_planner.plane_b_a
     AcquisitionPlaneError,
 )
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.walkthrough import (  # noqa: E402
+    build_case_b_live_only_from_ticket_snapshot,
+    build_ticket_detail_snapshot_from_fixture,
     build_walkthrough_bundle,
     write_walkthrough,
 )
@@ -103,7 +105,93 @@ def main(argv: list[str] | None = None) -> int:
             run_context=args.run_context,
         )
         written = write_plan_outputs(result, args.out_dir)
-        bundle = build_walkthrough_bundle(result)
+        # Case B: disposable live-only path from first ticket-like snapshot or
+        # rebuild from committed sanitized Ticket fixture through production code.
+        case_b_tender = next(
+            (
+                t
+                for t in result.coalesced_tenders
+                if t.candidate_source_kind == "live_snapshot"
+            ),
+            None,
+        )
+        case_b_refs = None
+        if case_b_tender is None:
+            fixture = (
+                _ROOT
+                / "tests"
+                / "fixtures"
+                / "commercial_procurement_acquisition_live_contract"
+                / "ticket_detail_items_live_shape_v1.json"
+            )
+            snap_payload = build_ticket_detail_snapshot_from_fixture(fixture)
+            case_b_tender, case_b_refs = build_case_b_live_only_from_ticket_snapshot(
+                snap_payload,
+                as_of_utc=args.as_of_utc,
+                freshness_threshold_hours=int(args.freshness_threshold_hours),
+            )
+        case_hints: dict = {}
+        case_c_tender = next(
+            (
+                t
+                for t in result.coalesced_tenders
+                if t.coalescence_status in {"exact_agreement", "live_source_newer"}
+                or t.candidate_source_kind == "both"
+            ),
+            None,
+        )
+        case_d_tender = next(
+            (
+                t
+                for t in result.coalesced_tenders
+                if t.coalescence_status
+                in {
+                    "status_conflict",
+                    "date_conflict",
+                    "buyer_identity_conflict",
+                    "multiple_live_sources_conflict",
+                }
+            ),
+            None,
+        )
+        case_c_refs = None
+        case_d_refs = None
+        if case_c_tender is None:
+            from origenlab_email_pipeline.commercial_procurement_candidate_planner.walkthrough import (
+                build_case_c_overlap_through_production_path,
+            )
+
+            case_c_tender, case_c_refs = build_case_c_overlap_through_production_path(
+                as_of_utc=args.as_of_utc,
+                freshness_threshold_hours=int(args.freshness_threshold_hours),
+            )
+            case_hints["case_c_synthetic"] = True
+            case_hints["case_c_synthetic_label"] = (
+                "synthetic_overlap_through_production_code_path"
+            )
+        if case_d_tender is None:
+            from origenlab_email_pipeline.commercial_procurement_candidate_planner.walkthrough import (
+                build_case_d_conflict_through_production_path,
+            )
+
+            case_d_tender, case_d_refs = build_case_d_conflict_through_production_path(
+                as_of_utc=args.as_of_utc,
+                freshness_threshold_hours=int(args.freshness_threshold_hours),
+            )
+            case_hints["case_d_synthetic"] = True
+            case_hints["case_d_synthetic_label"] = (
+                "synthetic_conflict_through_production_code_path"
+            )
+        bundle = build_walkthrough_bundle(
+            result,
+            case_hints=case_hints,
+            case_b_tender=case_b_tender,
+            case_b_refs=case_b_refs,
+            case_c_tender=case_c_tender,
+            case_c_refs=case_c_refs,
+            case_d_tender=case_d_tender,
+            case_d_refs=case_d_refs,
+        )
         written.update(write_walkthrough(bundle, args.out_dir))
     except (
         Pr4PlaneError,
