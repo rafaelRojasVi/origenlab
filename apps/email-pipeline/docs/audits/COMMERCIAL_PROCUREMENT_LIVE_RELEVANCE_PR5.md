@@ -1,6 +1,6 @@
 # Commercial procurement live candidate relevance — PR5A design & audit
 
-**Status:** Corrected design / audit / dry-run planning only
+**Status:** Final safety/semantic hardening — design / audit / dry-run planning only
 **Branch:** `feat/commercial-procurement-live-relevance-pr5`
 **PR:** [#420](https://github.com/rafaelRojasVi/origenlab/pull/420) (draft)
 **PR4 gate:** `PR4_PERSISTENCE_VALIDATED_READY_FOR_SEPARATE_PR5_DIRECTION`
@@ -36,27 +36,32 @@ PR5A makes **no authenticated API call**, so:
 | Classification | Meaning |
 |----------------|---------|
 | `live_verified_open` | Revalidated against a current authoritative API response at the audit instant (**count must be 0 in PR5A**) |
-| `recent_artifact_declared_open` | Artifact row passes strict status/date/provenance/freshness checks |
-| `stale_artifact_declared_open` | Would be declared-open but artifact older than documented threshold (48h) |
-| `artifact_declared_open_unverified_provenance` | Status/date pass but provenance insufficient |
+| `recent_artifact_declared_open` | Artifact row passes strict status/date/**trusted provenance**/freshness checks |
+| `stale_artifact_declared_open` | Would be declared-open but trusted acquisition age exceeds documented threshold (48h) |
+| `artifact_declared_open_unverified_provenance` | Status/date pass but provenance insufficient (including **mtime-only**) |
 | `artifact_not_open` | Fails open checks (including close ≤ as_of) |
 | `status_or_date_conflict` | Contradictory status/code/name signals |
 | `date_unparseable` | Close date missing/unparseable |
 
 Do **not** call artifact-only rows “genuine live active” or “current active tender.”
 
-`recent_artifact_declared_open` requires all of:
+### Trusted freshness (not mtime)
 
-1. `validity_status=open`
-2. `chilecompra_status_code=5`
-3. status name Publicada or absent without contradiction
-4. close_date parses
-5. naive ChileCompra datetimes interpreted as **America/Santiago**
-6. `close_at` **strictly greater** than as_of
-7. valid artifact provenance
-8. freshness within 48h
+`effective_artifact_timestamp_utc` precedence:
 
-Shared helper: `artifact_open.classify_artifact_row_open` / `pick_best_open_row`.
+1. `api_checked_at_utc`
+2. `queried_at_utc`
+3. `generated_at_utc`
+4. `published_at_utc`
+5. other documented source-acquisition timestamps
+6. filename date (reduced precision/confidence)
+7. **mtime only as unverified fallback** — **cannot** qualify `recent_artifact_declared_open`
+
+Trusted timestamps must be timezone-aware UTC. Future / malformed / publication-order / filename disagreement / excessive generated-vs-mtime delta / stale manifest → downgrade.
+
+The **48-hour** window is an **analytical** threshold for “recent artifact-declared open.” It is **not** proof of current API status.
+
+`source_query_metadata` is allowlisted (`estado`, `fecha`, `source_kind`, `row_count`, `endpoint_kind` / normalized `endpoint_path`). Tickets, tokens, and secret query params are recursively redacted.
 
 ---
 
@@ -66,13 +71,14 @@ See regenerated report under:
 
 `apps/email-pipeline/reports/out/active/current/commercial_procurement_live_relevance_pr5_<UTC>/`
 
-Expected pattern at correction time:
+Expected pattern:
 
-- **PR4 active (positive evidence):** 0 (all historical)
+- **PR4 active (`procurement_context=tender_active`):** 0 (all historical)
 - **live_verified_open:** 0
-- **recent_artifact_declared_open:** may be nonzero if the newest operator-queue artifact passes strict checks
+- **recent_artifact_declared_open:** may be nonzero if trusted acquisition timestamp + strict checks pass
 - **Current status independently revalidated:** false
-- **Outreach-review candidates (PR4-active):** 0
+- **Case D:** real zero-contact linked account **or** explicitly `unavailable`
+- All report JSON/Markdown: **identifier-redacted** only (`redacted_selection_ids`)
 - `chilecompra_api_ticket_configured`: boolean only
 
 ---
@@ -87,7 +93,15 @@ Expected pattern at correction time:
 | `outreach_review_candidate` | Verified contact + suppression/outreach pass; human review still required |
 | `not_eligible` | Fails active and/or relevance and/or safety |
 
-Contact search **does not run** until the account is resolved.
+### Contact resolution statuses
+
+| Status | Meaning |
+|--------|---------|
+| `contact_resolution_deferred` | Prerequisite not satisfied (e.g. account unresolved); **search not run** |
+| `no_contact_found` | All allowed sources searched; no suitable contact |
+| `contact_research_required` | Internal search exhausted; external/human research is next |
+
+Case A emits `final_contact_status=contact_resolution_deferred`, empty `search_stages_completed`, `next_action=resolve_account`. Do **not** use `no_contact_found` when no search ran.
 
 Historical Cases D/E: final `candidate_outcome_state=not_eligible`; `hypothetical_contact_path` may explain what would happen if active.
 
@@ -95,16 +109,14 @@ Historical Cases D/E: final `candidate_outcome_state=not_eligible`; `hypothetica
 
 ## 5. Contact table grain
 
-- `commercial_procurement_contact_resolution` — **exactly one** summary row per candidate (includes no-contact)
+- `commercial_procurement_contact_resolution` — **exactly one** summary row per candidate (includes deferred / no-contact)
 - `commercial_procurement_contact_candidate` — **zero or more** considered contacts
 
 ---
 
 ## 6. Exclusions vs conflicts
 
-Routine negatives (`consumable_or_reagent`, `service_or_maintenance_only`, `rental_or_comodato`, `non_laboratory_false_positive`, `unrelated`) emit **relevance evidence** + `not_eligible_reason`.
-
-Conflicts only for contradictory/unresolved evidence (status/date conflicts, strong equipment vs consumable unresolved, incompatible classes, ambiguous exact product aliases).
+Routine negatives emit **relevance evidence** + `not_eligible_reason` (not conflicts).
 
 ---
 
@@ -113,29 +125,26 @@ Conflicts only for contradictory/unresolved evidence (status/date conflicts, str
 - `active_status_class`: `active_open` | `future_scheduled` | `closed` | `awarded` | `cancelled` | `status_conflict` | `date_missing` | `status_unknown`
 - `closing_soon_bucket`: `lt_24h` | `d1_to_d3` | `d4_to_d7` | `gt_7d` | `not_applicable`
 
-No `active_closing_soon` lifecycle class.
+PR4 active funnel count uses persisted `procurement_context=tender_active` (not date-only lexical close comparison).
 
 ---
 
 ## 8. Taxonomy
 
 - Canonical: `ultrasonic_processor`, `ultrasonic_bath` (not `sonicator`)
-- `sonicator` = source alias requiring contextual resolution
-- `shaker`, `vortex_mixer`, `magnetic_stirrer` distinct from `homogenizer` (equipment-first homogenizer regex currently risks absorbing agitador/vortex)
-
-Completeness checked by `validate_taxonomy_mapping_completeness`.
+- `sonicator` = `context_required` alias with candidate classes + disambiguation rules
+- equipment-first homogenizer regex hits = `context_required` across homogenizer / shaker / vortex_mixer / magnetic_stirrer
+- Exact aliases map to exactly one canonical; ambiguity is machine-readable in `CONTEXT_REQUIRED_ALIASES`
 
 ---
 
 ## 9. Acquisition lanes (docs only; no auth requests)
 
-Composed strategy:
+1. Ticket Mercado Público API — active discovery + code detail
+2. Official OCDS — reconciliation / durable snapshots
+3. Bulk official downloads — historical backfill
 
-1. **Ticket Mercado Público API** — active discovery + code detail
-2. **Official OCDS** — reconciliation / durable snapshots (docs cite ≤1000 records/request)
-3. **Bulk official downloads** — historical backfill
-
-Rate limits: **not found in official documentation** (do not invent).
+Rate limits: **not found in official documentation**.
 
 ---
 
@@ -143,13 +152,13 @@ Rate limits: **not found in official documentation** (do not invent).
 
 | Case | Source | Final outcome |
 |------|--------|---------------|
-| A | Strict recent artifact-declared open + relevant; live-only vs PR4 | `account_resolution_required` |
+| A | Strict recent artifact-declared open + relevant; live-only | `account_resolution_required` + deferred contact |
 | B | PR4 historical equipment | `not_eligible` |
-| C | Real exclusion keyword | `not_eligible` (+ evidence, not conflict) |
-| D | PR4 linked, no suitable contact | `not_eligible` (+ hypothetical contact path) |
-| E | PR4 linked with contacts | `not_eligible` (+ hypothetical outreach-review path) |
+| C | Real exclusion keyword | `not_eligible` (+ evidence) |
+| D | PR4 linked, **exactly zero** PR2 contacts (or unavailable) | `not_eligible` (+ hypothetical) |
+| E | PR4 linked with contacts | `not_eligible` (+ hypothetical) |
 
-Production audit selects B–E inside a pinned RO SQLite transaction (not `--seeds-json`). Fixture seeds only via `--fixture-seeds-json`.
+Production B–E selected inside pinned RO SQLite. Fixtures only via `--fixture-seeds-json`.
 
 ---
 
@@ -171,5 +180,6 @@ Production audit selects B–E inside a pinned RO SQLite transaction (not `--see
 - No PR2/PR3/PR4 mutation
 - No authenticated ChileCompra requests
 - No ticket values in logs/commits
+- No raw production identifiers in report artifacts
 - No Gmail/Postgres/dashboard/outreach mutation
 - Reports remain gitignored under `reports/out/`

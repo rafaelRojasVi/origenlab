@@ -62,6 +62,11 @@ NEGATIVE_RELEVANCE_CLASSES: Final = frozenset(
     }
 )
 
+# Deferred: prerequisite not satisfied (e.g. account unresolved) — search not run.
+# no_contact_found: all allowed sources searched; no suitable contact.
+# contact_research_required: internal search exhausted; external/human research next.
+CONTACT_RESOLUTION_DEFERRED: Final = "contact_resolution_deferred"
+
 CONTACT_RESOLUTION_STATUSES: Final = (
     "existing_verified_contact",
     "existing_contact_needs_role_review",
@@ -70,7 +75,21 @@ CONTACT_RESOLUTION_STATUSES: Final = (
     "ambiguous_contact",
     "no_contact_found",
     "contact_blocked",
+    CONTACT_RESOLUTION_DEFERRED,
 )
+
+CONTACT_STATUS_SEMANTICS: Final = {
+    CONTACT_RESOLUTION_DEFERRED: (
+        "Prerequisite not satisfied (typically account unresolved); "
+        "no contact search was performed."
+    ),
+    "no_contact_found": (
+        "All allowed internal sources were searched; no suitable contact found."
+    ),
+    "contact_research_required": (
+        "Internal search exhausted; external/human research is the next approved step."
+    ),
+}
 
 CANDIDATE_OUTCOME_STATES: Final = (
     "relevant_tender",

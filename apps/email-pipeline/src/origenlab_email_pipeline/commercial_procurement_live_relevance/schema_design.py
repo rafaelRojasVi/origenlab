@@ -130,11 +130,13 @@ def proposed_schema_document() -> dict[str, Any]:
                 "indexes": ["(candidate_id UNIQUE)", "(final_contact_status)"],
                 "checks": [
                     "exactly one row per candidate",
-                    "final_contact_status IN known set (includes no_contact_found)",
+                    "final_contact_status IN known set "
+                    "(includes contact_resolution_deferred and no_contact_found)",
                 ],
                 "semantic_fingerprint": True,
                 "notes": (
-                    "Represents the no-contact decision as a summary row. "
+                    "contact_resolution_deferred = prerequisite not satisfied "
+                    "(search not run). no_contact_found = sources searched, none suitable. "
                     "Individual contacts live in commercial_procurement_contact_candidate."
                 ),
             },

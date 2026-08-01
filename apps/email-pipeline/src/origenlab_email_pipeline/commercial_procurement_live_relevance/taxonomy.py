@@ -38,199 +38,228 @@ FUTURE_OR_UNIMPLEMENTED: Final = frozenset(
     }
 )
 
-TAXONOMY_MAPPING: Final[list[dict[str, Any]]] = [
+# Exact canonical-class mappings (one alias → one canonical).
+EXACT_CLASS_MAPPINGS: Final[list[dict[str, Any]]] = [
     {
         "canonical": "centrifuge",
-        "business_mart_leads": ["centrifuga"],
-        "equipment_first": ["centrifuge"],
-        "web_families_or_filters": ["centrifugas", "microcentrifugas", "microcentrífuga"],
-        "ambiguous": False,
-        "notes": "Spanish mart tag vs English queue category; web editorial family.",
+        "source_vocabulary": "business_mart_leads",
+        "source_aliases": ["centrifuga"],
+        "resolution_kind": "exact",
+    },
+    {
+        "canonical": "centrifuge",
+        "source_vocabulary": "equipment_first",
+        "source_aliases": ["centrifuge"],
+        "resolution_kind": "exact",
+    },
+    {
+        "canonical": "centrifuge",
+        "source_vocabulary": "web_families_or_filters",
+        "source_aliases": ["centrifugas", "microcentrifugas", "microcentrífuga"],
+        "resolution_kind": "exact",
     },
     {
         "canonical": "balance",
-        "business_mart_leads": ["balanza", "termobalanza"],
-        "equipment_first": ["balance"],
-        "web_families_or_filters": [],
-        "ambiguous": False,
-        "notes": "Non-lab balance exclusions already exist in equipment-first rules.",
+        "source_vocabulary": "business_mart_leads",
+        "source_aliases": ["balanza", "termobalanza"],
+        "resolution_kind": "exact",
+    },
+    {
+        "canonical": "balance",
+        "source_vocabulary": "equipment_first",
+        "source_aliases": ["balance"],
+        "resolution_kind": "exact",
     },
     {
         "canonical": "chromatography_hplc",
-        "business_mart_leads": ["cromatografia_hplc"],
-        "equipment_first": [],
-        "web_families_or_filters": [],
-        "ambiguous": False,
-        "notes": "Present in mart; absent from equipment-first EQUIPMENT_RULES.",
+        "source_vocabulary": "business_mart_leads",
+        "source_aliases": ["cromatografia_hplc"],
+        "resolution_kind": "exact",
     },
     {
         "canonical": "ultrasonic_processor",
-        "business_mart_leads": [],
-        "equipment_first": ["lab_ultrasonic_processor"],
-        "web_families_or_filters": [],
-        "ambiguous": False,
-        "notes": (
-            "Probe/processor class. Legacy equipment-first label `sonicator` is a "
-            "source alias requiring contextual resolution — not a canonical class."
-        ),
+        "source_vocabulary": "equipment_first",
+        "source_aliases": ["lab_ultrasonic_processor"],
+        "resolution_kind": "exact",
+        "notes": "Probe/processor class.",
     },
     {
         "canonical": "ultrasonic_bath",
-        "business_mart_leads": [],
-        "equipment_first": [],
-        "web_families_or_filters": [],
+        "source_vocabulary": "source_aliases",
         "source_aliases": ["lavadora_ultrasonica", "ultrasonic_bath"],
-        "ambiguous": False,
+        "resolution_kind": "exact",
         "notes": "Bath/washer class; must not collapse into ultrasonic_processor.",
     },
     {
-        "canonical": "ultrasonic_processor",
-        "business_mart_leads": [],
-        "equipment_first": ["sonicator"],
-        "web_families_or_filters": [],
-        "ambiguous": True,
-        "ambiguity_reason": (
-            "equipment-first `sonicator` regex also matches lavadora ultrasónica; "
-            "resolve contextually to ultrasonic_processor vs ultrasonic_bath"
-        ),
-        "notes": "Alias-only row; not a second canonical class.",
+        "canonical": "incubator",
+        "source_vocabulary": "business_mart_leads",
+        "source_aliases": ["incubadora"],
+        "resolution_kind": "exact",
     },
     {
         "canonical": "incubator",
-        "business_mart_leads": ["incubadora"],
-        "equipment_first": ["incubator"],
-        "web_families_or_filters": [],
-        "ambiguous": False,
-        "notes": "Neonatal incubator excluded in equipment-first; keep exclusion.",
+        "source_vocabulary": "equipment_first",
+        "source_aliases": ["incubator"],
+        "resolution_kind": "exact",
     },
     {
         "canonical": "homogenizer",
-        "business_mart_leads": [],
-        "equipment_first": ["homogenizer"],
-        "web_families_or_filters": [],
-        "ambiguous": False,
-        "notes": (
-            "Must NOT absorb shaker / vortex / magnetic stirrer. Current "
-            "equipment-first homogenizer regex includes agitador|vortex — treat "
-            "those hits as ambiguous until disambiguated to shaker/vortex_mixer/"
-            "magnetic_stirrer."
-        ),
+        "source_vocabulary": "equipment_first",
+        "source_aliases": ["homogenizer"],
+        "resolution_kind": "exact",
+        "notes": "Exact homogenizer spans only — not agitador/vortex/magnetic.",
     },
     {
         "canonical": "shaker",
-        "business_mart_leads": ["shaker"],
-        "equipment_first": [],
-        "web_families_or_filters": [],
-        "source_aliases": ["agitador", "agitador_orbital"],
-        "ambiguous": False,
-        "notes": "Split out from homogenizer absorption risk.",
+        "source_vocabulary": "business_mart_leads",
+        "source_aliases": ["shaker"],
+        "resolution_kind": "exact",
+    },
+    {
+        "canonical": "shaker",
+        "source_vocabulary": "source_aliases",
+        "source_aliases": ["agitador_orbital"],
+        "resolution_kind": "exact",
     },
     {
         "canonical": "vortex_mixer",
-        "business_mart_leads": [],
-        "equipment_first": [],
-        "web_families_or_filters": [],
+        "source_vocabulary": "source_aliases",
         "source_aliases": ["vortex"],
-        "ambiguous": False,
+        "resolution_kind": "exact",
         "notes": "Do not map vortex → homogenizer.",
     },
     {
         "canonical": "magnetic_stirrer",
-        "business_mart_leads": [],
-        "equipment_first": [],
-        "web_families_or_filters": [],
+        "source_vocabulary": "source_aliases",
         "source_aliases": ["agitador_magnetico", "magnetic_stirrer"],
-        "ambiguous": False,
+        "resolution_kind": "exact",
         "notes": "Do not map magnetic stirrer → homogenizer.",
     },
     {
         "canonical": "reactor",
-        "business_mart_leads": [],
-        "equipment_first": [],
-        "web_families_or_filters": [],
-        "ambiguous": False,
-        "notes": "Operator catalogue / deal evidence (CRTOP/Ollital) — gap vs equipment-first.",
+        "source_vocabulary": "future",
+        "source_aliases": [],
+        "resolution_kind": "exact",
         "future_or_unimplemented": True,
+        "notes": "Operator catalogue / deal evidence (CRTOP/Ollital) — gap vs equipment-first.",
     },
     {
         "canonical": "osmometer",
-        "business_mart_leads": ["osmometro"],
-        "equipment_first": ["osmometer"],
-        "web_families_or_filters": [],
-        "ambiguous": False,
-        "notes": "Aligned.",
+        "source_vocabulary": "business_mart_leads",
+        "source_aliases": ["osmometro"],
+        "resolution_kind": "exact",
+    },
+    {
+        "canonical": "osmometer",
+        "source_vocabulary": "equipment_first",
+        "source_aliases": ["osmometer"],
+        "resolution_kind": "exact",
     },
     {
         "canonical": "spectrophotometer",
-        "business_mart_leads": ["espectrofotometro", "fluorescencia"],
-        "equipment_first": [],
-        "web_families_or_filters": [],
-        "ambiguous": False,
-        "notes": "Mart-only.",
+        "source_vocabulary": "business_mart_leads",
+        "source_aliases": ["espectrofotometro", "fluorescencia"],
+        "resolution_kind": "exact",
     },
     {
         "canonical": "ph_meter",
-        "business_mart_leads": ["phmetro"],
-        "equipment_first": [],
-        "web_families_or_filters": [],
-        "ambiguous": False,
-        "notes": "Mart-only.",
+        "source_vocabulary": "business_mart_leads",
+        "source_aliases": ["phmetro"],
+        "resolution_kind": "exact",
     },
     {
         "canonical": "pipette",
-        "business_mart_leads": ["pipetas"],
-        "equipment_first": [],
-        "web_families_or_filters": [],
-        "ambiguous": False,
-        "notes": "Mart-only; watch consumable pipette tip exclusions separately.",
+        "source_vocabulary": "business_mart_leads",
+        "source_aliases": ["pipetas"],
+        "resolution_kind": "exact",
     },
     {
         "canonical": "plate_reader",
-        "business_mart_leads": ["lector_placas"],
-        "equipment_first": [],
-        "web_families_or_filters": [],
-        "ambiguous": False,
-        "notes": "Mart-only.",
+        "source_vocabulary": "business_mart_leads",
+        "source_aliases": ["lector_placas"],
+        "resolution_kind": "exact",
     },
     {
         "canonical": "lyophilizer",
-        "business_mart_leads": ["liofilizador"],
-        "equipment_first": [],
-        "web_families_or_filters": [],
-        "ambiguous": False,
-        "notes": "Mart-only.",
+        "source_vocabulary": "business_mart_leads",
+        "source_aliases": ["liofilizador"],
+        "resolution_kind": "exact",
     },
     {
         "canonical": "oven_muffle",
-        "business_mart_leads": ["horno_mufla"],
-        "equipment_first": [],
-        "web_families_or_filters": [],
-        "ambiguous": False,
-        "notes": "Mart-only.",
+        "source_vocabulary": "business_mart_leads",
+        "source_aliases": ["horno_mufla"],
+        "resolution_kind": "exact",
     },
     {
         "canonical": "titrator",
-        "business_mart_leads": ["titulador"],
-        "equipment_first": [],
-        "web_families_or_filters": [],
-        "ambiguous": False,
-        "notes": "Mart-only.",
+        "source_vocabulary": "business_mart_leads",
+        "source_aliases": ["titulador"],
+        "resolution_kind": "exact",
     },
     {
         "canonical": "autoclave",
-        "business_mart_leads": ["autoclave"],
-        "equipment_first": [],
-        "web_families_or_filters": [],
-        "ambiguous": False,
-        "notes": "Mart-only; add alias for PR5 relevance.",
+        "source_vocabulary": "business_mart_leads",
+        "source_aliases": ["autoclave"],
+        "resolution_kind": "exact",
     },
     {
         "canonical": "microscope",
-        "business_mart_leads": ["microscopio"],
-        "equipment_first": [],
-        "web_families_or_filters": [],
-        "ambiguous": False,
-        "notes": "Mart-only; equipment class, never exact SKU.",
+        "source_vocabulary": "business_mart_leads",
+        "source_aliases": ["microscopio"],
+        "resolution_kind": "exact",
+    },
+]
+
+# Ambiguous / context-required source-alias resolution (machine-readable).
+CONTEXT_REQUIRED_ALIASES: Final[list[dict[str, Any]]] = [
+    {
+        "source_vocabulary": "equipment_first",
+        "source_alias": "sonicator",
+        "resolution_kind": "context_required",
+        "candidate_classes": ["ultrasonic_processor", "ultrasonic_bath"],
+        "disambiguation_rules": [
+            "probe/processor/sonde/ultrasonic processor → ultrasonic_processor",
+            "bath/washer/lavadora ultrasónica → ultrasonic_bath",
+        ],
+        "negative_context_rules": [
+            "lavadora ultrasónica must not resolve to ultrasonic_processor",
+        ],
+    },
+    {
+        "source_vocabulary": "equipment_first",
+        "source_alias": "homogenizer_regex_hit",
+        "resolution_kind": "context_required",
+        "candidate_classes": [
+            "homogenizer",
+            "shaker",
+            "vortex_mixer",
+            "magnetic_stirrer",
+        ],
+        "disambiguation_rules": [
+            "exact homogenizer / homogeneizador spans → homogenizer",
+            "agitador / orbital spans → shaker",
+            "vortex spans → vortex_mixer",
+            "agitador magnético / magnetic stirrer → magnetic_stirrer",
+        ],
+        "negative_context_rules": [
+            "insufficient context remains ambiguous (do not default to homogenizer)",
+            "shaker/vortex/magnetic_stirrer must not silently become homogenizer",
+        ],
+    },
+    {
+        "source_vocabulary": "source_aliases",
+        "source_alias": "agitador",
+        "resolution_kind": "context_required",
+        "candidate_classes": ["shaker", "magnetic_stirrer", "homogenizer"],
+        "disambiguation_rules": [
+            "agitador orbital → shaker",
+            "agitador magnético → magnetic_stirrer",
+            "homogeneizador / homogenizer nearby → homogenizer",
+        ],
+        "negative_context_rules": [
+            "bare agitador without context remains ambiguous",
+        ],
     },
 ]
 
@@ -259,67 +288,103 @@ RECOMMENDATION: Final = {
     "product_resolution_status_when_no_sku": "equipment_class_only",
 }
 
+# Back-compat document shape used by audit JSON (exact + context rows).
+TAXONOMY_MAPPING: Final[list[dict[str, Any]]] = [
+    {
+        **row,
+        "business_mart_leads": row["source_aliases"]
+        if row.get("source_vocabulary") == "business_mart_leads"
+        else [],
+        "equipment_first": row["source_aliases"]
+        if row.get("source_vocabulary") == "equipment_first"
+        else [],
+        "web_families_or_filters": row["source_aliases"]
+        if row.get("source_vocabulary") == "web_families_or_filters"
+        else [],
+        "ambiguous": False,
+    }
+    for row in EXACT_CLASS_MAPPINGS
+] + [
+    {
+        "canonical": None,
+        "source_vocabulary": row["source_vocabulary"],
+        "source_alias": row["source_alias"],
+        "resolution_kind": row["resolution_kind"],
+        "candidate_classes": list(row["candidate_classes"]),
+        "disambiguation_rules": list(row["disambiguation_rules"]),
+        "negative_context_rules": list(row["negative_context_rules"]),
+        "ambiguous": True,
+        "business_mart_leads": [],
+        "equipment_first": [row["source_alias"]]
+        if row["source_vocabulary"] == "equipment_first"
+        else [],
+        "web_families_or_filters": [],
+        "source_aliases": [row["source_alias"]],
+        "notes": "context_required alias — not a single canonical mapping",
+    }
+    for row in CONTEXT_REQUIRED_ALIASES
+]
+
 
 def taxonomy_mapping_document() -> dict[str, Any]:
     return {
         "canonical_equipment_classes": list(CANONICAL_EQUIPMENT_CLASSES),
         "future_or_unimplemented": sorted(FUTURE_OR_UNIMPLEMENTED),
+        "exact_class_mappings": EXACT_CLASS_MAPPINGS,
+        "context_required_aliases": CONTEXT_REQUIRED_ALIASES,
         "mappings": TAXONOMY_MAPPING,
         "recommendation": RECOMMENDATION,
     }
 
 
 def validate_taxonomy_mapping_completeness(
-    mappings: list[dict[str, Any]] | None = None,
+    exact_mappings: list[dict[str, Any]] | None = None,
+    context_aliases: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return completeness diagnostics used by unit tests."""
-    rows = mappings if mappings is not None else TAXONOMY_MAPPING
+    exact = exact_mappings if exact_mappings is not None else EXACT_CLASS_MAPPINGS
+    context = context_aliases if context_aliases is not None else CONTEXT_REQUIRED_ALIASES
     canonical = set(CANONICAL_EQUIPMENT_CLASSES)
     errors: list[str] = []
     alias_to_canonical: dict[str, set[str]] = {}
-
     mapped_canonicals: set[str] = set()
-    for row in rows:
+
+    for row in exact:
         c = str(row.get("canonical") or "")
         if c not in canonical:
             errors.append(f"unknown_canonical:{c}")
             continue
         mapped_canonicals.add(c)
-        aliases: list[str] = []
-        for key in (
-            "business_mart_leads",
-            "equipment_first",
-            "web_families_or_filters",
-            "source_aliases",
-        ):
-            aliases.extend(str(a) for a in (row.get(key) or []))
-        for alias in aliases:
-            alias_l = alias.strip().lower()
+        kind = str(row.get("resolution_kind") or "exact")
+        if kind != "exact":
+            errors.append(f"exact_row_bad_kind:{c}:{kind}")
+        for alias in row.get("source_aliases") or []:
+            alias_l = str(alias).strip().lower()
             if not alias_l:
                 continue
             alias_to_canonical.setdefault(alias_l, set()).add(c)
 
     for alias, targets in sorted(alias_to_canonical.items()):
         if len(targets) > 1:
-            # Allowed only when every contributing row is marked ambiguous
-            ambiguous_ok = all(
-                bool(r.get("ambiguous"))
-                for r in rows
-                if str(r.get("canonical")) in targets
-                and alias
-                in {
-                    str(a).strip().lower()
-                    for key in (
-                        "business_mart_leads",
-                        "equipment_first",
-                        "web_families_or_filters",
-                        "source_aliases",
-                    )
-                    for a in (r.get(key) or [])
-                }
-            )
-            if not ambiguous_ok:
-                errors.append(f"alias_multi_canonical:{alias}->{sorted(targets)}")
+            errors.append(f"exact_alias_multi_canonical:{alias}->{sorted(targets)}")
+
+    for row in context:
+        alias = str(row.get("source_alias") or "").strip().lower()
+        kind = str(row.get("resolution_kind") or "")
+        if kind != "context_required":
+            errors.append(f"context_row_bad_kind:{alias}:{kind}")
+        candidates = [str(c) for c in (row.get("candidate_classes") or [])]
+        if len(candidates) < 2 and not row.get("disambiguation_rules"):
+            errors.append(f"context_alias_insufficient_contract:{alias}")
+        if len(candidates) < 2:
+            errors.append(f"context_alias_needs_two_candidates:{alias}")
+        for c in candidates:
+            if c not in canonical:
+                errors.append(f"context_unknown_candidate:{alias}->{c}")
+            else:
+                mapped_canonicals.add(c)
+        if not row.get("disambiguation_rules"):
+            errors.append(f"context_alias_missing_disambiguation:{alias}")
 
     unmapped = sorted(
         c
@@ -333,5 +398,6 @@ def validate_taxonomy_mapping_completeness(
         "ok": not errors,
         "errors": errors,
         "mapped_canonicals": sorted(mapped_canonicals),
-        "alias_count": len(alias_to_canonical),
+        "exact_alias_count": len(alias_to_canonical),
+        "context_required_alias_count": len(context),
     }
