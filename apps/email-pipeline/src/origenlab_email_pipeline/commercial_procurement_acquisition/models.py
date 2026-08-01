@@ -6,16 +6,6 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
-def _to_dict(obj: Any) -> Any:
-    if hasattr(obj, "to_dict"):
-        return obj.to_dict()
-    if isinstance(obj, list):
-        return [_to_dict(x) for x in obj]
-    if isinstance(obj, dict):
-        return {k: _to_dict(v) for k, v in obj.items()}
-    return obj
-
-
 @dataclass(frozen=True)
 class AcquisitionQuery:
     source_kind: str
@@ -30,13 +20,9 @@ class AcquisitionQuery:
     range_start: int | None = None
     range_end: int | None = None
     endpoint_path: str | None = None
-    extra: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        d = asdict(self)
-        # Never persist credentials.
-        d.pop("ticket", None)
-        return d
+        return asdict(self)
 
     def identity_payload(self) -> dict[str, Any]:
         return {
@@ -72,6 +58,7 @@ class AcquisitionPage:
     error_classification: str | None
     completeness_status: str
     envelope_meta: dict[str, Any] = field(default_factory=dict)
+    error_message: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -84,7 +71,10 @@ class ProcurementSourceObservation:
     source_kind: str
     endpoint_kind: str
     source_native_key: str
-    canonical_tender_key_candidate: str
+    source_native_tender_key: str
+    canonical_tender_key_candidate: str | None
+    canonical_candidate_kind: str
+    canonical_candidate_reason: str
     source_status_code: str | None
     source_status_name: str | None
     source_status_system: str
@@ -96,6 +86,9 @@ class ProcurementSourceObservation:
     package_id: str | None
     release_id: str | None
     ocid: str | None
+    record_id: str | None
+    release_kind: str | None
+    release_tags: tuple[str, ...]
     raw_payload_digest: str
     parser_version: str
     provenance_reason_codes: tuple[str, ...]
@@ -104,6 +97,7 @@ class ProcurementSourceObservation:
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["provenance_reason_codes"] = list(self.provenance_reason_codes)
+        d["release_tags"] = list(self.release_tags)
         return d
 
 
@@ -113,6 +107,10 @@ class ProcurementTenderObservation:
     source_observation_id: str
     source_kind: str
     normalized_tender_key: str
+    source_native_tender_key: str
+    canonical_tender_key_candidate: str | None
+    canonical_candidate_kind: str
+    canonical_candidate_reason: str
     title: str | None
     description: str | None
     buyer_display: str | None
@@ -125,10 +123,15 @@ class ProcurementTenderObservation:
     region: str | None
     currency: str | None
     estimated_value: str | None
+    procurement_method: str | None
+    procurement_method_details: str | None
+    related_processes: tuple[dict[str, str], ...]
     field_provenance: dict[str, str]
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        d["related_processes"] = [dict(x) for x in self.related_processes]
+        return d
 
 
 @dataclass(frozen=True)
@@ -140,13 +143,18 @@ class ProcurementLineObservation:
     product: str | None
     category: str | None
     unspsc_or_classification: str | None
+    additional_classifications: tuple[dict[str, str], ...]
     quantity: str | None
     unit: str | None
     ordinal: int
     field_provenance: dict[str, str]
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        d["additional_classifications"] = [
+            dict(x) for x in self.additional_classifications
+        ]
+        return d
 
 
 @dataclass(frozen=True)
@@ -181,5 +189,74 @@ class AcquisitionSnapshot:
             "diagnostics": self.diagnostics,
             "source_fingerprint": self.source_fingerprint,
             "normalized_semantic_digest": self.normalized_semantic_digest,
+            "materialized_at_utc": self.materialized_at_utc,
+        }
+
+
+@dataclass(frozen=True)
+class DetailAttempt:
+    """One detail query attempt within an AcquisitionRun (success or failure)."""
+
+    attempt_id: str
+    tender_code: str
+    query: AcquisitionQuery
+    status: str
+    snapshot_id: str | None
+    page_id: str | None
+    error_classification: str | None
+    error_message: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "attempt_id": self.attempt_id,
+            "tender_code": self.tender_code,
+            "query": self.query.to_dict(),
+            "status": self.status,
+            "snapshot_id": self.snapshot_id,
+            "page_id": self.page_id,
+            "error_classification": self.error_classification,
+            "error_message": self.error_message,
+            "acquisition_query_id": self.query.acquisition_query_id,
+        }
+
+
+@dataclass(frozen=True)
+class AcquisitionRun:
+    """Composite run spanning multiple single-scope snapshots/attempts."""
+
+    acquisition_run_id: str
+    run_kind: str
+    run_contract_version: str
+    summary_snapshot_ids: tuple[str, ...]
+    detail_attempts: tuple[DetailAttempt, ...]
+    child_query_ids: tuple[str, ...]
+    child_snapshot_ids: tuple[str, ...]
+    child_page_ids: tuple[str, ...]
+    requested_detail_count: int
+    completed_detail_count: int
+    failed_detail_count: int
+    run_completeness: str
+    run_source_fingerprint: str
+    fixture_origin: str
+    diagnostics: dict[str, Any]
+    materialized_at_utc: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "acquisition_run_id": self.acquisition_run_id,
+            "run_kind": self.run_kind,
+            "run_contract_version": self.run_contract_version,
+            "summary_snapshot_ids": list(self.summary_snapshot_ids),
+            "detail_attempts": [a.to_dict() for a in self.detail_attempts],
+            "child_query_ids": list(self.child_query_ids),
+            "child_snapshot_ids": list(self.child_snapshot_ids),
+            "child_page_ids": list(self.child_page_ids),
+            "requested_detail_count": self.requested_detail_count,
+            "completed_detail_count": self.completed_detail_count,
+            "failed_detail_count": self.failed_detail_count,
+            "run_completeness": self.run_completeness,
+            "run_source_fingerprint": self.run_source_fingerprint,
+            "fixture_origin": self.fixture_origin,
+            "diagnostics": self.diagnostics,
             "materialized_at_utc": self.materialized_at_utc,
         }
