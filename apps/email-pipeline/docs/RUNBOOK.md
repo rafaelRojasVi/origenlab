@@ -36,7 +36,7 @@ Single entrypoint for **how to run** the email pipeline. **Daily core contract (
 |----------|-----------------|
 | Sent / already contacted | Canonical Gmail ingested into SQLite `emails` (`[Gmail]/Enviados`) |
 | Anti-repeat / DNR | `origenlab_email_pipeline.cli refresh-safety` (or `scripts/qa/refresh_outbound_safety_memory.py`) → `do_not_repeat_master`, `outreach_contacted_all`, etc. |
-| Equipment-first tenders | `equipment_first_operator_queue_*` under `reports/out/active/current/` |
+| Equipment-first tenders | Live ChileCompra refresh (`auto-refresh-chilecompra-equipment`) plus audit CSVs under `reports/out/active/current/` |
 | Read-only doctor | See [Operator health matrix](#m-eprun-operator-health-matrix) |
 
 **Not daily truth:** Postgres dashboard mirror, FastAPI, React (`manifest.json`: `postgres_status` / `api_status` = `parked`). **LISTO / READY on dashboard or API is not send approval.**
@@ -145,7 +145,17 @@ uv run python -m origenlab_email_pipeline.cli refresh-safety
 <a id="m-eprun-equipment-first-opportunities"></a>
 ### Equipment-first public tender opportunities (2026-05+)
 
-Use when prioritizing **capital equipment** (centrifuges, balances, sonicators, homogenizers, incubators, osmometers) from ChileCompra **`Licitacion_Publicada.csv`**, not consumables-heavy SEREMI/hospital reagent lines.
+Use when prioritizing **capital equipment** (centrifuges, balances, sonicators, homogenizers, incubators, osmometers) from ChileCompra / Mercado Público tenders, not consumables-heavy SEREMI/hospital reagent lines.
+
+**Live operator path (preferred):**
+
+```bash
+cd apps/email-pipeline
+uv run origenlab auto-refresh-chilecompra-equipment --once          # dry-run; no API calls or writes
+uv run origenlab auto-refresh-chilecompra-equipment --once --apply  # fetch + publish when approved
+```
+
+With Postgres configured, `--apply` publishes typed rows to `commercial.equipment_opportunity_source` / `commercial.equipment_opportunity`, exposed to the API/dashboard by `api.v_equipment_opportunity_current`. CSVs and manifest entries under `reports/out/active/current/` remain audit and compatibility artifacts. See [`operator/CHILECOMPRA_EQUIPMENT_REFRESH.md`](operator/CHILECOMPRA_EQUIPMENT_REFRESH.md) and [`architecture/EQUIPMENT_DIRECT_ROW_LOADER.md`](architecture/EQUIPMENT_DIRECT_ROW_LOADER.md).
 
 **Canonical operator outputs** (under `reports/out/active/current/`):
 
@@ -157,7 +167,7 @@ Use when prioritizing **capital equipment** (centrifuges, balances, sonicators, 
 - `buyer_opportunity_crosscheck_YYYYMMDD.csv` after manual sends or equipment-first cutover — stale private-lab `clean_new_target` rows until regenerated
 - `tender_buyer_outreach_queue_*.md` — superseded narrative for consumables-era prioritization
 
-**Build (read-only on Gmail; writes reports only):**
+**Manual/offline CSV replay (read-only on Gmail; writes reports only):**
 
 ```bash
 cd apps/email-pipeline
@@ -165,6 +175,8 @@ cd apps/email-pipeline
 uv run python scripts/qa/build_equipment_first_opportunity_queue.py --date-suffix 20260518
 uv run python scripts/qa/build_equipment_first_operator_queue.py --date-suffix 20260518
 ```
+
+Use the manual builders for file-based replays and legacy workflows; they do not replace the live auto-refresh path for dashboard/API equipment.
 
 **Policy:**
 
@@ -1177,6 +1189,8 @@ Contract summary:
 - correctness uses idempotent rebuild/upsert and reconciliation checks
 
 Design/ownership: [`pipeline/COMMERCIAL_INTEL_V1.md`](pipeline/COMMERCIAL_INTEL_V1.md)
+
+**Commercial read-model stack (PR1–PR5B.1, audit / break-glass):** The newer identity, opportunity, procurement, acquisition snapshot, and live source-contract layers are separate rebuildable/audit paths, not part of the default daily `refresh-dashboard` or send-safety loop. Start from [`SCRIPT_MAP.md`](SCRIPT_MAP.md#debug--audit-scripts-keepaudit--keepdebug) for the current script rows and the linked `audits/COMMERCIAL_*` design docs. Builders default to dry-run; any `--apply` use requires explicit approval and the fingerprint/stale-plan gates documented in the matching audit doc.
 
 ---
 

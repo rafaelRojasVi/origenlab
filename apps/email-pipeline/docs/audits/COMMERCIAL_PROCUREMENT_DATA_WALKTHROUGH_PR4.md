@@ -266,7 +266,7 @@ Case D is **SYNTHETIC**, derived from Case A structure with mutated identity pla
 
 ```bash
 cd apps/email-pipeline
-DB=/home/rafael/data/origenlab-email/sqlite/emails.sqlite
+DB="${ORIGENLAB_SQLITE_PATH:-$HOME/data/origenlab-email/sqlite/emails.sqlite}"
 uv run python scripts/commercial/generate_commercial_procurement_data_walkthrough.py \
   --sqlite-path "$DB" \
   --as-of-date 2026-07-30 \

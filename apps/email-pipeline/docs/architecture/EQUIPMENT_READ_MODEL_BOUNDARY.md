@@ -24,7 +24,33 @@ Production **`GET /opportunities/equipment`** must read **`api.v_equipment_oppor
 
 ---
 
-## Current bridge (acceptable interim)
+## Current live path
+
+```
+ChileCompra API/detail builder rows
+        │
+        ▼
+normalized equipment rows in memory
+        │
+        ▼
+commercial.equipment_opportunity_source
+commercial.equipment_opportunity
+        │
+        ▼
+api.v_equipment_opportunity_current   (one row per opportunity_key)
+        │
+        ▼
+apps/api  PostgresEquipmentOpportunityRepository
+        │
+        ▼
+dashboard Today (read-only)
+```
+
+`auto-refresh-chilecompra-equipment --once --apply` also writes the active/current CSV and manifest artifacts for audit, debugging, and compatibility. With Postgres configured, the typed rows are the normal writer path for the production API/dashboard read model (`source_kind=typed_read_model`, `canonical_reason=chilecompra_api_direct_rows`).
+
+---
+
+## Legacy CSV bridge (backfill only)
 
 ```
 equipment_first_operator_queue_*.csv  (active/current artifact)
@@ -49,7 +75,7 @@ apps/api  PostgresEquipmentOpportunityRepository
 dashboard Today (read-only)
 ```
 
-CSV remains a valid **input** during the bridge: the mirror loader ingests the canonical queue file into `commercial.*`. The API does **not** open that CSV in production.
+CSV remains a valid **input** only for explicit legacy/backfill reloads, e.g. `mirror-dashboard --live -- --include-equipment-opportunities`. The API does **not** open that CSV in production.
 
 ---
 
@@ -88,7 +114,7 @@ typed Postgres read model (commercial.* / api.*)
 
 ## Correlation audit before uniqueness
 
-`opportunity_key` is **indexed but intentionally not unique** during the CSV bridge phase. The same stable key may appear on multiple `commercial.equipment_opportunity` rows when a new source load re-ingests the same `codigo_licitacion` or when canonical and non-canonical sources both contain the opportunity.
+`opportunity_key` is **indexed but intentionally not unique** during the direct-publish / legacy-backfill phase. The same stable key may appear on multiple `commercial.equipment_opportunity` rows when a new source load re-ingests the same `codigo_licitacion` or when canonical and non-canonical sources both contain the opportunity.
 
 **Audit views** (read-only; no public HTTP endpoint yet):
 
@@ -130,9 +156,9 @@ Production **`GET /opportunities/equipment`** queries `api.v_equipment_opportuni
 | Column | Role |
 |--------|------|
 | `csv_path`, `manifest_path`, `file_sha256`, `file_mtime` | Internal provenance for bridge loads and audit (paths remain in Postgres, not in public API JSON) |
-| `source_kind` | Kind of source artifact (bridge loads: `csv_artifact`) |
+| `source_kind` | Kind of source artifact (`typed_read_model` for live ChileCompra direct rows; `csv_artifact` for legacy bridge loads) |
 | `artifact_basename` | Safe basename only — no parent directories |
-| `canonical_reason` | Why this source was promoted (`manifest_canonical`, `resolved_active_current_queue`, etc.) |
+| `canonical_reason` | Why this source was promoted (`chilecompra_api_direct_rows`, `manifest_canonical`, `resolved_active_current_queue`, etc.) |
 
 `api.v_equipment_opportunity` exposes `source_kind`, `artifact_basename`, and `canonical_reason` alongside legacy `source_path` for compatibility.
 
