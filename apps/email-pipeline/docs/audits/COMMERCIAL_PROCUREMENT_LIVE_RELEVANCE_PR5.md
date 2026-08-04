@@ -1,11 +1,11 @@
 # Commercial procurement live candidate relevance — PR5A design & audit
 
-**Status:** Final safety/semantic hardening — design / audit / dry-run planning only
-**Branch:** `feat/commercial-procurement-live-relevance-pr5`
-**PR:** [#420](https://github.com/rafaelRojasVi/origenlab/pull/420) (draft)
+**Status:** Merged as PR [#420](https://github.com/rafaelRojasVi/origenlab/pull/420)
+**Merge commit:** `9a78aebd06a8065e249284ae54fabdd46ff8069c`
+**Branch (historical):** `feat/commercial-procurement-live-relevance-pr5`
 **PR4 gate:** `PR4_PERSISTENCE_VALIDATED_READY_FOR_SEPARATE_PR5_DIRECTION`
 
-This document does **not** authorize persistence, production `--apply`, authenticated ChileCompra requests, contact hunting, or PR5C+.
+This document does **not** authorize persistence, production `--apply`, authenticated ChileCompra requests, contact hunting, or later PR5 slices beyond what subsequent merged PRs document.
 
 **PR5B implemented separately:** acquisition snapshot contract + ticket/OCDS parsers — see [`COMMERCIAL_PROCUREMENT_ACQUISITION_PR5B.md`](COMMERCIAL_PROCUREMENT_ACQUISITION_PR5B.md). Existing equipment-first ChileCompra refresh remains unchanged and is not migrated in PR5B.
 
