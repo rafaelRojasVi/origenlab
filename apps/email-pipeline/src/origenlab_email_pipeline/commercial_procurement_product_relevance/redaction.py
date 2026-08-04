@@ -22,15 +22,20 @@ _CHILECOMPRA_CODE_RE = re.compile(
 )
 _LEGACY_TENDER_RE = re.compile(r"\b[A-Z]{2,5}-\d{4}-\d{4,}\b")
 _LONG_ID_RE = re.compile(r"\b\d{8,}\b")
-# Capture multiword Title-Case buyer names (e.g. "Hospital Base Valdivia"), not only
-# the first token; fall back to a single token for compact markers like BUYER:=X.
+# Capture the full buyer value until an explicit structural boundary (| ; newline)
+# or a defensible procurement-verb boundary. Prefer conservative redaction over
+# leaking suffixes like "de Chile" from "Universidad Austral de Chile".
+_PROCUREMENT_VERB_BOUNDARY = (
+    r"(?:compra|adquisici[oó]n|licitaci[oó]n|adquiere|suministro|"
+    r"contrataci[oó]n|adjudicaci[oó]n)"
+)
 _BUYER_MARKER_RE = re.compile(
     r"(?i:\b(?:buyer|organismo|comprador|rut\s*proveedor)\s*[:=]\s*)"
-    r"(?:"
-    r"[A-ZÁÉÍÓÚÑÜ][\wÁÉÍÓÚÑáéíóúñü]*"
-    r"(?:\s+[A-ZÁÉÍÓÚÑÜ][\wÁÉÍÓÚÑáéíóúñü]*)*"
+    r"(?P<value>[^\n|;]+?)"
+    r"(?="
+    r"\s*(?:\||;|$)"
     r"|"
-    r"[^\s,\n;|]+"
+    r"\s+" + _PROCUREMENT_VERB_BOUNDARY + r"\b"
     r")"
 )
 _SOURCE_RECORD_RE = re.compile(

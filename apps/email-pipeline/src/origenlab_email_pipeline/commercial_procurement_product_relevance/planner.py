@@ -26,7 +26,7 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.constants
     PRODUCT_RELEVANCE_PLANNER_VERSION,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.evaluation import (
-    assert_blind_sealed_record_id_join,
+    assert_blind_sealed_operational_record_id_join,
     build_labeling_queue,
     compute_evaluation_metrics,
     is_manual_review_prediction,
@@ -47,7 +47,11 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.fingerpri
     all_fingerprints,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.models import (
+    MaterializationRecord,
     ProductRelevancePlanResult,
+)
+from origenlab_email_pipeline.commercial_procurement_product_relevance.redaction import (
+    assert_human_packet_prediction_blind,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.rules import (
     classify_product_text_unit,
@@ -77,12 +81,13 @@ def reconcile_relevance(
     linked_unit_ids: list[str],
     unresolved_unit_ids: list[str],
     extraction_attempt_ids: list[str],
+    materialization_ledger: list[MaterializationRecord] | list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Independent reconciliation — attempt ledger is not derived from unit IDs.
+    """One-to-one attempt↔materialization reconciliation (not cardinality alone).
 
-    Each extraction attempt must materialize to exactly one linked or typed-unresolved
-    unit (by count). Duplicate attempt IDs in the ledger are a failure. Unit IDs and
-    attempt IDs are distinct namespaces.
+    Every enumerated attempt occurrence must map to exactly one materialization
+    result, and every materialization result must map to exactly one attempt
+    occurrence. Count equality alone is insufficient.
     """
     tender_set = set(coalesced_tender_ids)
     decision_set = set(decision_tender_ids)
@@ -104,15 +109,78 @@ def reconcile_relevance(
     )
     overlap = sorted(linked_set & unresolved_set)
 
-    attempt_count = len(extraction_attempt_ids)
-    unit_count = len(linked_unit_ids) + len(unresolved_unit_ids)
-    dropped_attempts_count = max(0, attempt_count - unit_count)
-    unexpected_units_count = max(0, unit_count - attempt_count)
-    attempts_units_aligned = (
-        attempt_count == unit_count
-        and not duplicate_attempts
-        and not overlap
-        and not duplicate_unit_ids
+    mats: list[dict[str, Any]] = []
+    for row in materialization_ledger or []:
+        if isinstance(row, MaterializationRecord):
+            mats.append(row.to_dict())
+        else:
+            mats.append(dict(row))
+
+    attempt_occurrences = list(range(len(extraction_attempt_ids)))
+    mat_occurrences = [int(m["attempt_occurrence"]) for m in mats]
+    mat_attempt_ids = [str(m["attempt_id"]) for m in mats]
+    mat_unit_ids = [str(m["unit_id"]) for m in mats]
+
+    missing_materializations = sorted(set(attempt_occurrences) - set(mat_occurrences))
+    extra_materializations = sorted(set(mat_occurrences) - set(attempt_occurrences))
+    duplicate_materialization_occurrences = sorted(
+        occ for occ, n in Counter(mat_occurrences).items() if n > 1
+    )
+    duplicate_materialized_unit_ids = sorted(
+        uid for uid, n in Counter(mat_unit_ids).items() if n > 1
+    )
+
+    # attempt_id at occurrence i must match materialization for that occurrence
+    wrong_attempt_association: list[dict[str, Any]] = []
+    by_occ = {int(m["attempt_occurrence"]): m for m in mats}
+    for occ, expected_aid in enumerate(extraction_attempt_ids):
+        row = by_occ.get(occ)
+        if row is None:
+            continue
+        if str(row["attempt_id"]) != expected_aid:
+            wrong_attempt_association.append(
+                {
+                    "attempt_occurrence": occ,
+                    "expected_attempt_id": expected_aid,
+                    "actual_attempt_id": row["attempt_id"],
+                    "unit_id": row["unit_id"],
+                }
+            )
+
+    # Partition membership must match linked/unresolved sets.
+    partition_mismatch: list[dict[str, Any]] = []
+    for m in mats:
+        uid = str(m["unit_id"])
+        part = str(m["partition"])
+        in_linked = uid in linked_set
+        in_unresolved = uid in unresolved_set
+        if part == "linked" and not in_linked:
+            partition_mismatch.append({**m, "error": "marked_linked_missing_from_linked"})
+        if part == "unresolved" and not in_unresolved:
+            partition_mismatch.append(
+                {**m, "error": "marked_unresolved_missing_from_unresolved"}
+            )
+        if part not in {"linked", "unresolved"}:
+            partition_mismatch.append({**m, "error": "invalid_partition"})
+
+    units_without_attempt = sorted(
+        (linked_set | unresolved_set) - set(mat_unit_ids)
+    )
+    attempts_without_unit = [
+        {"attempt_occurrence": occ, "attempt_id": extraction_attempt_ids[occ]}
+        for occ in missing_materializations
+    ]
+
+    bijection_ok = (
+        len(extraction_attempt_ids) == len(mats)
+        and not missing_materializations
+        and not extra_materializations
+        and not duplicate_materialization_occurrences
+        and not duplicate_materialized_unit_ids
+        and not wrong_attempt_association
+        and not partition_mismatch
+        and not units_without_attempt
+        and mat_attempt_ids == list(extraction_attempt_ids)
     )
 
     ok = not (
@@ -122,8 +190,7 @@ def reconcile_relevance(
         or duplicate_unit_ids
         or duplicate_attempts
         or overlap
-        or dropped_attempts_count
-        or unexpected_units_count
+        or not bijection_ok
         or len(coalesced_tender_ids) != len(decision_tender_ids)
     )
     return {
@@ -135,22 +202,29 @@ def reconcile_relevance(
                 and not extra_decisions
                 and not duplicate_tender_decisions
             ),
-            "attempts_eq_linked_plus_unresolved": attempts_units_aligned,
+            "attempt_occurrence_bijection_with_materialization": bijection_ok,
         },
         "coalesced_tender_count": len(coalesced_tender_ids),
         "decision_count": len(decision_tender_ids),
         "linked_unit_count": len(linked_unit_ids),
         "unresolved_unit_count": len(unresolved_unit_ids),
-        "extraction_attempt_count": attempt_count,
-        "materialized_unit_count": unit_count,
+        "extraction_attempt_count": len(extraction_attempt_ids),
+        "materialization_count": len(mats),
         "missing_decisions": missing_decisions[:50],
         "extra_decisions": extra_decisions[:50],
         "duplicate_tender_decisions": duplicate_tender_decisions[:50],
         "duplicate_unit_ids": duplicate_unit_ids[:50],
         "duplicate_extraction_attempts": duplicate_attempts[:50],
         "linked_unresolved_overlap": overlap[:50],
-        "dropped_extraction_attempts_count": dropped_attempts_count,
-        "unexpected_units_count": unexpected_units_count,
+        "missing_materializations": attempts_without_unit[:50],
+        "extra_materializations": extra_materializations[:50],
+        "duplicate_materialization_occurrences": duplicate_materialization_occurrences[
+            :50
+        ],
+        "duplicate_materialized_unit_ids": duplicate_materialized_unit_ids[:50],
+        "wrong_attempt_association": wrong_attempt_association[:50],
+        "partition_mismatch": partition_mismatch[:50],
+        "units_without_attempt": units_without_attempt[:50],
     }
 
 
@@ -172,8 +246,8 @@ def build_product_relevance_plan(
         run_context=run_context,
     )
 
-    linked, unresolved, adapter_meta, attempt_ids = extract_all_product_text_units(
-        plan, snapshot_paths=acquisition_snapshot_paths
+    linked, unresolved, adapter_meta, attempt_ids, materialization_ledger = (
+        extract_all_product_text_units(plan, snapshot_paths=acquisition_snapshot_paths)
     )
 
     unit_decisions = tuple(
@@ -239,6 +313,7 @@ def build_product_relevance_plan(
         linked_unit_ids=[u.unit_id for u in linked],
         unresolved_unit_ids=[u.unit_id for u in unresolved],
         extraction_attempt_ids=list(attempt_ids),
+        materialization_ledger=list(materialization_ledger),
     )
     if not reconciliation["ok"]:
         raise RelevanceReconciliationError(
@@ -289,10 +364,14 @@ def build_product_relevance_plan(
         "by_relevance_class": dict(sorted(class_counts.items())),
         "abstention_or_manual_review": abstain,
         "abstention_or_ambiguous": abstain,  # back-compat key
-        "labeling_queue_size": len(queue),
+        "proposed_evaluation_record_count": len(queue),
         "adapter": adapter_meta,
         "sampling": sampling_report,
     }
+
+    blind = tuple(r.to_dict() for r in to_blind_packet(queue))
+    sealed = tuple(r.to_dict() for r in to_sealed_scoring(queue))
+    operational = tuple(r.to_dict() for r in queue)
 
     return ProductRelevancePlanResult(
         product_text_units=linked,
@@ -312,13 +391,12 @@ def build_product_relevance_plan(
             "queue_record_count": len(queue),
             "metrics": metrics,
             "taxonomy_validation": validate_pr5d_taxonomy(),
-            "labeling_queue": [r.to_dict() for r in queue],
-            "blind_packet": [r.to_dict() for r in to_blind_packet(queue)],
-            "sealed_scoring_manifest": [
-                r.to_dict() for r in to_sealed_scoring(queue)
-            ],
             "sampling": sampling_report,
         },
+        human_review_packet=blind,
+        sealed_scoring_manifest=sealed,
+        operational_evaluation_records=operational,
+        materialization_ledger=tuple(m.to_dict() for m in materialization_ledger),
     )
 
 
@@ -386,10 +464,14 @@ def _write_plan_files(safe: Path, result: ProductRelevancePlanResult) -> dict[st
     )
 
     # Distinct artifacts — never a convenience file recombining blind + sealed.
-    blind = result.evaluation_meta.get("blind_packet") or []
-    sealed = result.evaluation_meta.get("sealed_scoring_manifest") or []
-    queue_dicts = result.evaluation_meta.get("labeling_queue") or []
-    assert_blind_sealed_record_id_join(blind, sealed)
+    blind = list(result.human_review_packet)
+    sealed = list(result.sealed_scoring_manifest)
+    operational = list(result.operational_evaluation_records)
+    assert_blind_sealed_operational_record_id_join(blind, sealed, operational)
+    assert_human_packet_prediction_blind(
+        {"schema": "pr5d_human_review_packet_v1", "records": blind},
+        context="human_review_packet_prepublish",
+    )
 
     human_path = safe / "human_review_packet.json"
     human_path.write_text(
@@ -434,7 +516,7 @@ def _write_plan_files(safe: Path, result: ProductRelevancePlanResult) -> dict[st
                 "schema": "pr5d_operational_evaluation_records_v1",
                 "sealed": True,
                 "not_for_human_reviewers": True,
-                "records": queue_dicts,
+                "records": operational,
             },
             indent=2,
             sort_keys=True,

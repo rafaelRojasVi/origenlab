@@ -23,6 +23,11 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.models im
     EvidenceUnitRelevanceDecision,
     TenderRelevanceDecision,
 )
+from origenlab_email_pipeline.commercial_procurement_product_relevance.semantic_payload import (
+    digest_tender_semantic_payload,
+    matched_rule_ids_from_spans,
+    tender_semantic_payload,
+)
 
 _STRONG = STRONG_RELEVANCE_CLASSES
 _NEGATIVE = NEGATIVE_RELEVANCE_CLASSES - {"unrelated"}  # unrelated is weak negative
@@ -78,22 +83,22 @@ def aggregate_tender_decision(
 ) -> TenderRelevanceDecision:
     units = sorted(unit_decisions, key=lambda d: d.unit_decision_id)
     if not units:
-        payload = {
-            "coalesced_tender_id": tender.coalesced_tender_id,
-            "relevance_class": "ambiguous",
-            "classes": [],
-            "resolution": "insufficient_product_text",
-            "evidence_tier": "no_usable_product_text",
-            "confidence_band": "abstain",
-            "positive": [],
-            "negative": [],
-            "ambiguity": ["insufficient_product_text"],
-            "aggregation": ["no_usable_units"],
-            "matched_rule_ids": [],
-            "unit_decision_ids": [],
-        }
+        payload = tender_semantic_payload(
+            coalesced_tender_id=tender.coalesced_tender_id,
+            relevance_class="ambiguous",
+            classes=[],
+            resolution="insufficient_product_text",
+            evidence_tier="no_usable_product_text",
+            confidence_band="abstain",
+            positive=[],
+            negative=[],
+            ambiguity=["insufficient_product_text"],
+            aggregation=["no_usable_units"],
+            matched_rule_ids=[],
+            unit_decision_ids=[],
+        )
         decision_id = f"trd_{canonical_json_digest(payload)[:32]}"
-        sem = canonical_json_digest(payload)
+        sem = digest_tender_semantic_payload(payload)
         return TenderRelevanceDecision(
             decision_id=decision_id,
             coalesced_tender_id=tender.coalesced_tender_id,
@@ -248,22 +253,22 @@ def aggregate_tender_decision(
         amb_codes.append("insufficient_product_text")
         agg_codes = ["no_usable_units"]
 
-    payload = {
-        "coalesced_tender_id": tender.coalesced_tender_id,
-        "relevance_class": relevance,
-        "classes": sorted(set(classes)),
-        "resolution": resolution,
-        "evidence_tier": tier,
-        "confidence_band": band,
-        "positive": sorted(set(pos_codes)),
-        "negative": sorted(set(neg_codes)),
-        "ambiguity": sorted(set(amb_codes)),
-        "aggregation": sorted(set(agg_codes)),
-        "matched_rule_ids": sorted({s.rule_id for s in spans}),
-        "unit_decision_ids": [u.unit_decision_id for u in units],
-    }
+    payload = tender_semantic_payload(
+        coalesced_tender_id=tender.coalesced_tender_id,
+        relevance_class=relevance,
+        classes=classes,
+        resolution=resolution,
+        evidence_tier=tier,
+        confidence_band=band,
+        positive=pos_codes,
+        negative=neg_codes,
+        ambiguity=amb_codes,
+        aggregation=agg_codes,
+        matched_rule_ids=matched_rule_ids_from_spans(spans),
+        unit_decision_ids=[u.unit_decision_id for u in units],
+    )
     decision_id = f"trd_{canonical_json_digest(payload)[:32]}"
-    sem = canonical_json_digest(payload)
+    sem = digest_tender_semantic_payload(payload)
     return TenderRelevanceDecision(
         decision_id=decision_id,
         coalesced_tender_id=tender.coalesced_tender_id,

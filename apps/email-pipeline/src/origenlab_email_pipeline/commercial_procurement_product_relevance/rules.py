@@ -24,6 +24,11 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.taxonomy_
     PROPOSED_CATALOG_ALIASES,
     taxonomy_fingerprint_payload,
 )
+from origenlab_email_pipeline.commercial_procurement_product_relevance.semantic_payload import (
+    digest_unit_semantic_payload,
+    matched_rule_ids_from_spans,
+    unit_semantic_payload,
+)
 
 CONSUMABLE_CENTRIFUGE_TUBE_RE = re.compile(
     r"\btubos?\s+(de\s+|para\s+)?(micro)?centrifug|"
@@ -110,6 +115,7 @@ def _span(
     )
 
 
+
 def _decision(
     unit: ProductTextUnit,
     *,
@@ -141,19 +147,18 @@ def _decision(
             "field_path": unit.field_path,
         }
     )
-    unit_sem_fp = canonical_json_digest(
-        {
-            "relevance_class": relevance_class,
-            "classes": sorted(set(classes)),
-            "resolution": resolution,
-            "evidence_tier": unit.evidence_tier,
-            "confidence_band": confidence_band,
-            "positive": sorted(positive),
-            "negative": sorted(negative),
-            "ambiguity": sorted(ambiguity),
-            # Rule IDs only — never raw matched_text (sensitive / non-semantic).
-            "matched_rule_ids": sorted({s.rule_id for s in spans}),
-        }
+    unit_sem_fp = digest_unit_semantic_payload(
+        unit_semantic_payload(
+            relevance_class=relevance_class,
+            classes=classes,
+            resolution=resolution,
+            evidence_tier=unit.evidence_tier,
+            confidence_band=confidence_band,
+            positive=positive,
+            negative=negative,
+            ambiguity=ambiguity,
+            matched_rule_ids=matched_rule_ids_from_spans(spans),
+        )
     )
     return EvidenceUnitRelevanceDecision(
         unit_decision_id=decision_id,

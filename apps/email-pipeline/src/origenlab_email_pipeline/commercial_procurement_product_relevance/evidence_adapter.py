@@ -29,6 +29,7 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.constants
     PRODUCT_TEXT_ADAPTER_VERSION,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.models import (
+    MaterializationRecord,
     ProductTextUnit,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.normalize import (
@@ -131,6 +132,8 @@ def _unit(
     line_observation_id: str | None,
     pr4_procurement_id: str | None,
     contributing_evidence_ref_ids: tuple[str, ...],
+    attempt_id: str | None = None,
+    attempt_occurrence: int | None = None,
 ) -> ProductTextUnit:
     text_norm = normalize_product_text(text_raw)
     unit_id = _stable_unit_id(
@@ -163,6 +166,8 @@ def _unit(
         line_observation_id=line_observation_id,
         pr4_procurement_id=pr4_procurement_id,
         contributing_evidence_ref_ids=contributing_evidence_ref_ids,
+        attempt_id=attempt_id,
+        attempt_occurrence=attempt_occurrence,
     )
 
 
@@ -578,29 +583,62 @@ def materialize_attempt(
     raise ProductTextAdapterError(f"unknown attempt_kind: {attempt.attempt_kind}")
 
 
+def _with_attempt(
+    unit: ProductTextUnit,
+    *,
+    attempt_id: str,
+    attempt_occurrence: int,
+) -> ProductTextUnit:
+    return ProductTextUnit(
+        unit_id=unit.unit_id,
+        coalesced_tender_id=unit.coalesced_tender_id,
+        evidence_ref_id=unit.evidence_ref_id,
+        link_status=unit.link_status,
+        unresolved_reason=unit.unresolved_reason,
+        field_path=unit.field_path,
+        text_raw=unit.text_raw,
+        text_normalized=unit.text_normalized,
+        evidence_tier=unit.evidence_tier,
+        source_plane=unit.source_plane,
+        snapshot_id=unit.snapshot_id,
+        observation_id=unit.observation_id,
+        tender_observation_id=unit.tender_observation_id,
+        line_observation_id=unit.line_observation_id,
+        pr4_procurement_id=unit.pr4_procurement_id,
+        contributing_evidence_ref_ids=unit.contributing_evidence_ref_ids,
+        attempt_id=attempt_id,
+        attempt_occurrence=attempt_occurrence,
+    )
+
+
 def extract_units_for_tender(
     tender: CoalescedProcurementTender,
     *,
     refs_by_id: Mapping[str, ProcurementEvidenceRef],
     snapshots_by_id: Mapping[str, AcquisitionSnapshot],
-) -> tuple[list[ProductTextUnit], list[ProductTextUnit], list[ExtractionAttempt]]:
-    """Return (linked, unresolved, attempt_ledger) for one coalesced tender.
+) -> tuple[
+    list[ProductTextUnit],
+    list[ProductTextUnit],
+    list[ExtractionAttempt],
+    list[MaterializationRecord],
+]:
+    """Return (linked, unresolved, attempts, materialization_ledger).
 
-    The attempt ledger is built before materialization. Duplicate attempt IDs are
-    retained in the ledger and materialized as typed unresolved units (not
-    silently suppressed).
+    The attempt ledger is built before materialization. Every attempt occurrence
+    produces exactly one materialization record associating attempt_id → unit_id.
+    Duplicate attempt IDs are retained and typed as unresolved (not silently dropped).
     """
     attempts = enumerate_extraction_attempts(
         tender, refs_by_id=refs_by_id, snapshots_by_id=snapshots_by_id
     )
     linked: list[ProductTextUnit] = []
     unresolved: list[ProductTextUnit] = []
+    materializations: list[MaterializationRecord] = []
     seen_attempt_ids: set[str] = set()
     emitted_unit_ids: set[str] = set()
 
-    for attempt in attempts:
+    for occurrence, attempt in enumerate(attempts):
         if attempt.attempt_id in seen_attempt_ids:
-            # Explicit typed resolution for duplicate ledger entries.
             dup = ExtractionAttempt(
                 attempt_id=attempt.attempt_id,
                 coalesced_tender_id=attempt.coalesced_tender_id,
@@ -612,25 +650,45 @@ def extract_units_for_tender(
                 snapshot_id=attempt.snapshot_id,
                 observation_id=attempt.observation_id,
             )
-            unit = materialize_attempt(
-                dup,
-                tender=tender,
-                refs_by_id=refs_by_id,
-                snapshots_by_id=snapshots_by_id,
+            unit = _with_attempt(
+                materialize_attempt(
+                    dup,
+                    tender=tender,
+                    refs_by_id=refs_by_id,
+                    snapshots_by_id=snapshots_by_id,
+                ),
+                attempt_id=attempt.attempt_id,
+                attempt_occurrence=occurrence,
             )
             unresolved.append(unit)
+            materializations.append(
+                MaterializationRecord(
+                    attempt_occurrence=occurrence,
+                    attempt_id=attempt.attempt_id,
+                    unit_id=unit.unit_id,
+                    partition="unresolved",
+                    materialization_status="duplicate_extraction_attempt",
+                    unresolved_reason="duplicate_extraction_attempt",
+                    field_path=attempt.field_path,
+                    attempt_kind="duplicate_extraction_attempt",
+                )
+            )
             continue
         seen_attempt_ids.add(attempt.attempt_id)
 
-        unit = materialize_attempt(
-            attempt,
-            tender=tender,
-            refs_by_id=refs_by_id,
-            snapshots_by_id=snapshots_by_id,
+        unit = _with_attempt(
+            materialize_attempt(
+                attempt,
+                tender=tender,
+                refs_by_id=refs_by_id,
+                snapshots_by_id=snapshots_by_id,
+            ),
+            attempt_id=attempt.attempt_id,
+            attempt_occurrence=occurrence,
         )
-        # Unit-id collision across distinct attempts → typed unresolved, not silent drop.
+
         if unit.unit_id in emitted_unit_ids:
-            unresolved.append(
+            collision = _with_attempt(
                 ProductTextUnit(
                     unit_id=unit.unit_id,
                     coalesced_tender_id=unit.coalesced_tender_id,
@@ -648,6 +706,21 @@ def extract_units_for_tender(
                     line_observation_id=unit.line_observation_id,
                     pr4_procurement_id=unit.pr4_procurement_id,
                     contributing_evidence_ref_ids=unit.contributing_evidence_ref_ids,
+                ),
+                attempt_id=attempt.attempt_id,
+                attempt_occurrence=occurrence,
+            )
+            unresolved.append(collision)
+            materializations.append(
+                MaterializationRecord(
+                    attempt_occurrence=occurrence,
+                    attempt_id=attempt.attempt_id,
+                    unit_id=collision.unit_id,
+                    partition="unresolved",
+                    materialization_status="duplicate_unit_id_collision",
+                    unresolved_reason="duplicate_unit_id_collision",
+                    field_path=attempt.field_path,
+                    attempt_kind=attempt.attempt_kind,
                 )
             )
             continue
@@ -655,8 +728,20 @@ def extract_units_for_tender(
 
         if unit.link_status == "linked" and unit.text_normalized:
             linked.append(unit)
+            materializations.append(
+                MaterializationRecord(
+                    attempt_occurrence=occurrence,
+                    attempt_id=attempt.attempt_id,
+                    unit_id=unit.unit_id,
+                    partition="linked",
+                    materialization_status="linked",
+                    unresolved_reason=None,
+                    field_path=attempt.field_path,
+                    attempt_kind=attempt.attempt_kind,
+                )
+            )
         elif unit.link_status == "linked" and not unit.text_normalized:
-            unresolved.append(
+            empty = _with_attempt(
                 ProductTextUnit(
                     unit_id=unit.unit_id,
                     coalesced_tender_id=unit.coalesced_tender_id,
@@ -674,14 +759,43 @@ def extract_units_for_tender(
                     line_observation_id=unit.line_observation_id,
                     pr4_procurement_id=unit.pr4_procurement_id,
                     contributing_evidence_ref_ids=unit.contributing_evidence_ref_ids,
+                ),
+                attempt_id=attempt.attempt_id,
+                attempt_occurrence=occurrence,
+            )
+            unresolved.append(empty)
+            materializations.append(
+                MaterializationRecord(
+                    attempt_occurrence=occurrence,
+                    attempt_id=attempt.attempt_id,
+                    unit_id=empty.unit_id,
+                    partition="unresolved",
+                    materialization_status="empty_normalized_product_text",
+                    unresolved_reason="empty_normalized_product_text",
+                    field_path=attempt.field_path,
+                    attempt_kind=attempt.attempt_kind,
                 )
             )
         else:
             unresolved.append(unit)
+            materializations.append(
+                MaterializationRecord(
+                    attempt_occurrence=occurrence,
+                    attempt_id=attempt.attempt_id,
+                    unit_id=unit.unit_id,
+                    partition="unresolved",
+                    materialization_status=unit.unresolved_reason
+                    or unit.link_status
+                    or "unresolved",
+                    unresolved_reason=unit.unresolved_reason,
+                    field_path=attempt.field_path,
+                    attempt_kind=attempt.attempt_kind,
+                )
+            )
 
     linked.sort(key=lambda u: u.unit_id)
     unresolved.sort(key=lambda u: u.unit_id)
-    return linked, unresolved, attempts
+    return linked, unresolved, attempts, materializations
 
 
 def extract_all_product_text_units(
@@ -693,21 +807,57 @@ def extract_all_product_text_units(
     tuple[ProductTextUnit, ...],
     dict[str, Any],
     tuple[str, ...],
+    tuple[MaterializationRecord, ...],
 ]:
-    """Extract units; return independent attempt ledger IDs (not derived from units)."""
+    """Extract units; return attempt IDs + materialization ledger (not derived from units)."""
     registry = build_snapshot_registry(snapshot_paths)
     refs_by_id = {r.evidence_ref_id: r for r in plan.evidence_refs}
     linked_all: list[ProductTextUnit] = []
     unresolved_all: list[ProductTextUnit] = []
     attempt_ids: list[str] = []
+    materializations_all: list[MaterializationRecord] = []
+    occurrence_offset = 0
     for tender in plan.coalesced_tenders:
-        linked, unresolved, attempts = extract_units_for_tender(
+        linked, unresolved, attempts, mats = extract_units_for_tender(
             tender, refs_by_id=refs_by_id, snapshots_by_id=registry
         )
-        # Ledger first — independent of linked/unresolved contents.
         attempt_ids.extend(a.attempt_id for a in attempts)
-        linked_all.extend(linked)
-        unresolved_all.extend(unresolved)
+        # Re-key occurrences to a global contiguous index across tenders.
+        for mat in mats:
+            materializations_all.append(
+                MaterializationRecord(
+                    attempt_occurrence=occurrence_offset + mat.attempt_occurrence,
+                    attempt_id=mat.attempt_id,
+                    unit_id=mat.unit_id,
+                    partition=mat.partition,
+                    materialization_status=mat.materialization_status,
+                    unresolved_reason=mat.unresolved_reason,
+                    field_path=mat.field_path,
+                    attempt_kind=mat.attempt_kind,
+                )
+            )
+        # Also re-stamp units with global occurrence.
+        remapped_linked = []
+        remapped_unresolved = []
+        for u in linked:
+            remapped_linked.append(
+                _with_attempt(
+                    u,
+                    attempt_id=u.attempt_id or "",
+                    attempt_occurrence=occurrence_offset + int(u.attempt_occurrence or 0),
+                )
+            )
+        for u in unresolved:
+            remapped_unresolved.append(
+                _with_attempt(
+                    u,
+                    attempt_id=u.attempt_id or "",
+                    attempt_occurrence=occurrence_offset + int(u.attempt_occurrence or 0),
+                )
+            )
+        linked_all.extend(remapped_linked)
+        unresolved_all.extend(remapped_unresolved)
+        occurrence_offset += len(attempts)
     linked_all.sort(key=lambda u: (u.coalesced_tender_id, u.unit_id))
     unresolved_all.sort(key=lambda u: (u.coalesced_tender_id, u.unit_id))
     meta = {
@@ -716,10 +866,12 @@ def extract_all_product_text_units(
         "linked_unit_count": len(linked_all),
         "unresolved_unit_count": len(unresolved_all),
         "extraction_attempt_count": len(attempt_ids),
+        "materialization_count": len(materializations_all),
     }
     return (
         tuple(linked_all),
         tuple(unresolved_all),
         meta,
         tuple(attempt_ids),
+        tuple(materializations_all),
     )

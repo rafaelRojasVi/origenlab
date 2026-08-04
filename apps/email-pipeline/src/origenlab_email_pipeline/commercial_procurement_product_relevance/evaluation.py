@@ -488,7 +488,7 @@ def assert_blind_sealed_record_id_join(
     blind: list[BlindReviewRecord] | list[dict[str, Any]],
     sealed: list[SealedScoringRecord] | list[dict[str, Any]],
 ) -> None:
-    """Require one-to-one record_id join with no missing, extra, or duplicate ids."""
+    """Require one-to-one record_id join between blind and sealed."""
 
     def _ids(rows: list[Any]) -> list[str]:
         out: list[str] = []
@@ -514,6 +514,33 @@ def assert_blind_sealed_record_id_join(
         )
 
 
+def assert_blind_sealed_operational_record_id_join(
+    blind: list[Any],
+    sealed: list[Any],
+    operational: list[Any],
+) -> None:
+    """Require identical unique record_id sets across blind, sealed, and operational."""
+    assert_blind_sealed_record_id_join(blind, sealed)
+
+    def _ids(rows: list[Any]) -> list[str]:
+        out: list[str] = []
+        for r in rows:
+            if isinstance(r, dict):
+                out.append(str(r["record_id"]))
+            else:
+                out.append(str(r.record_id))
+        return out
+
+    blind_ids = _ids(blind)
+    ops_ids = _ids(operational)
+    if len(ops_ids) != len(set(ops_ids)):
+        raise AssertionError("operational records have duplicate record_id values")
+    if sorted(blind_ids) != sorted(ops_ids):
+        raise AssertionError(
+            "blind/operational record_id join mismatch "
+            f"missing_from_blind={sorted(set(ops_ids) - set(blind_ids))[:20]} "
+            f"extra_in_blind={sorted(set(blind_ids) - set(ops_ids))[:20]}"
+        )
 def _role_counts(rows: list[EvaluationRecord]) -> dict[str, Any]:
     proposed = sum(1 for r in rows if r.label_status == "proposed")
     reviewed = sum(1 for r in rows if r.label_status == "reviewed")

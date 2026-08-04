@@ -26,6 +26,10 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.models im
 from origenlab_email_pipeline.commercial_procurement_product_relevance.rules import (
     rules_fingerprint_payload,
 )
+from origenlab_email_pipeline.commercial_procurement_product_relevance.semantic_payload import (
+    tender_semantic_payload_from_decision,
+    unit_semantic_payload_from_decision,
+)
 from origenlab_email_pipeline.commercial_procurement_product_relevance.taxonomy_extensions import (
     taxonomy_fingerprint_payload,
 )
@@ -116,21 +120,7 @@ def relevance_semantic_digest(
         (
             {
                 "decision_id": d.decision_id,
-                "coalesced_tender_id": d.coalesced_tender_id,
-                "relevance_class": d.relevance_class,
-                "classes": list(d.canonical_equipment_classes),
-                "resolution": d.product_resolution_status,
-                "evidence_tier": d.evidence_tier,
-                "confidence_band": d.confidence_band,
-                "positive": list(d.positive_reason_codes),
-                "negative": list(d.negative_reason_codes),
-                "ambiguity": list(d.ambiguity_reason_codes),
-                "aggregation": list(d.aggregation_reason_codes),
-                "matched_rule_ids": sorted({s.rule_id for s in d.matched_spans}),
-                "manual_review_semantics": {
-                    "confidence_band_abstain": d.confidence_band == "abstain",
-                    "resolution": d.product_resolution_status,
-                },
+                **tender_semantic_payload_from_decision(d),
             }
             for d in tender_decisions
         ),
@@ -141,15 +131,7 @@ def relevance_semantic_digest(
             {
                 "unit_decision_id": d.unit_decision_id,
                 "unit_id": d.unit_id,
-                "relevance_class": d.relevance_class,
-                "classes": list(d.canonical_equipment_classes),
-                "resolution": d.product_resolution_status,
-                "evidence_tier": d.evidence_tier,
-                "confidence_band": d.confidence_band,
-                "positive": list(d.positive_reason_codes),
-                "negative": list(d.negative_reason_codes),
-                "ambiguity": list(d.ambiguity_reason_codes),
-                "matched_rule_ids": sorted({s.rule_id for s in d.matched_spans}),
+                **unit_semantic_payload_from_decision(d),
             }
             for d in unit_decisions
         ),
