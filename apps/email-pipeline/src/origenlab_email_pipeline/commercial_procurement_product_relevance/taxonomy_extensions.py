@@ -23,9 +23,17 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.normalize
     normalize_product_text,
 )
 
-# Authoritative: PR5A taxonomy already includes tablet/dissolution/sedimentation.
+# Authoritative: PR5A objects used directly — no mutable PR5D copies.
 PR5D_CANONICAL_EQUIPMENT_CLASSES: Final = CANONICAL_EQUIPMENT_CLASSES
-PR5D_EXACT_CLASS_MAPPINGS: Final[list[dict[str, Any]]] = list(EXACT_CLASS_MAPPINGS)
+# Same object as PR5A — not list(EXACT_CLASS_MAPPINGS).
+PR5D_EXACT_CLASS_MAPPINGS: Final = EXACT_CLASS_MAPPINGS
+
+VALID_PROPOSED_VERIFICATION_STATUSES: Final[frozenset[str]] = frozenset(
+    {
+        "proposed_seed_not_verified",
+        "verified_against_sanitized_evidence",
+    }
+)
 
 # Capability seeds — NOT verified exact_catalog_product aliases until sanitized evidence exists.
 PROPOSED_CATALOG_ALIASES: Final[list[dict[str, Any]]] = [
@@ -109,7 +117,7 @@ def validate_taxonomy_uniqueness(
         canonical_classes if canonical_classes is not None else PR5D_CANONICAL_EQUIPMENT_CLASSES
     )
     mappings = (
-        exact_mappings if exact_mappings is not None else PR5D_EXACT_CLASS_MAPPINGS
+        exact_mappings if exact_mappings is not None else list(PR5D_EXACT_CLASS_MAPPINGS)
     )
     errors: list[str] = []
 
@@ -159,6 +167,69 @@ def validate_taxonomy_uniqueness(
     }
 
 
+def validate_proposed_catalog_aliases(
+    seeds: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Validate proposed capability seeds independently of PR5A exact mappings."""
+    rows = list(seeds if seeds is not None else PROPOSED_CATALOG_ALIASES)
+    errors: list[str] = []
+    canonical_set = set(PR5D_CANONICAL_EQUIPMENT_CLASSES)
+
+    alias_groups: list[str] = []
+    # (normalized_alias, canonical, verification_status, alias_group) — list, not set.
+    alias_bindings: list[tuple[str, str, str, str]] = []
+
+    for seed in rows:
+        group = str(seed.get("alias_group") or "")
+        if not group:
+            errors.append("missing_alias_group")
+            continue
+        if group in alias_groups:
+            errors.append(f"duplicate_alias_group:{group}")
+        alias_groups.append(group)
+
+        target = str(seed.get("canonical_class") or "")
+        if target not in canonical_set:
+            errors.append(f"invalid_canonical_target:{group}:{target}")
+
+        status = str(seed.get("verification_status") or "")
+        if status not in VALID_PROPOSED_VERIFICATION_STATUSES:
+            errors.append(f"invalid_verification_status:{group}:{status}")
+
+        for alias in seed.get("aliases") or []:
+            norm = normalize_product_text(str(alias))
+            if not norm:
+                continue
+            alias_bindings.append((norm, target, status, group))
+
+    # Conflicting normalized aliases across groups/targets (order-independent).
+    by_alias: dict[str, list[tuple[str, str, str]]] = {}
+    for norm, target, status, group in alias_bindings:
+        by_alias.setdefault(norm, []).append((target, status, group))
+
+    for norm, bindings in sorted(by_alias.items()):
+        targets = sorted({t for t, _s, _g in bindings})
+        if len(targets) > 1:
+            errors.append(
+                f"proposed_alias_conflicting_targets:{norm}->{targets}"
+            )
+        # Verified duplicates must not be list-order dependent: any repeated
+        # verified binding of the same alias is an error even to the same target.
+        verified = [(t, g) for t, s, g in bindings if s == "verified_against_sanitized_evidence"]
+        if len(verified) > 1:
+            errors.append(
+                f"verified_duplicate_alias_order_dependent:{norm}:"
+                f"{sorted({g for _t, g in verified})}"
+            )
+
+    return {
+        "ok": not errors,
+        "errors": errors,
+        "alias_group_count": len(alias_groups),
+        "normalized_alias_binding_count": len(alias_bindings),
+    }
+
+
 def pr5d_taxonomy_document() -> dict[str, Any]:
     base = taxonomy_mapping_document()
     return {
@@ -166,7 +237,7 @@ def pr5d_taxonomy_document() -> dict[str, Any]:
         "authoritative_source": "commercial_procurement_live_relevance.taxonomy",
         "base_pr5a": base,
         "canonical_equipment_classes": list(PR5D_CANONICAL_EQUIPMENT_CLASSES),
-        "exact_class_mappings": PR5D_EXACT_CLASS_MAPPINGS,
+        "exact_class_mappings": list(PR5D_EXACT_CLASS_MAPPINGS),
         "context_required_aliases": CONTEXT_REQUIRED_ALIASES,
         "future_or_unimplemented": sorted(FUTURE_OR_UNIMPLEMENTED),
         "proposed_catalog_aliases": PROPOSED_CATALOG_ALIASES,
@@ -176,6 +247,7 @@ def pr5d_taxonomy_document() -> dict[str, Any]:
             "taxonomy but are not PR5D procurement candidates."
         ),
         "uniqueness": validate_taxonomy_uniqueness(),
+        "proposed_alias_validation": validate_proposed_catalog_aliases(),
     }
 
 
@@ -183,7 +255,8 @@ def validate_pr5d_taxonomy() -> dict[str, Any]:
     """Validate PR5A completeness + uniqueness; seeds stay proposed."""
     base = validate_taxonomy_mapping_completeness()
     uniq = validate_taxonomy_uniqueness()
-    errors = list(base["errors"]) + list(uniq["errors"])
+    proposed = validate_proposed_catalog_aliases()
+    errors = list(base["errors"]) + list(uniq["errors"]) + list(proposed["errors"])
 
     for seed in PROPOSED_CATALOG_ALIASES:
         status = seed.get("verification_status")
@@ -207,6 +280,7 @@ def validate_pr5d_taxonomy() -> dict[str, Any]:
         "proposed_seed_count": len(PROPOSED_CATALOG_ALIASES),
         "verified_catalog_alias_count": verified,
         "uniqueness": uniq,
+        "proposed_alias_validation": proposed,
     }
 
 

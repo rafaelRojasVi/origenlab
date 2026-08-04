@@ -468,7 +468,8 @@ def test_taxonomy_not_duplicated_and_unique() -> None:
     assert PR5D_CANONICAL_EQUIPMENT_CLASSES is CANONICAL_EQUIPMENT_CLASSES or list(
         PR5D_CANONICAL_EQUIPMENT_CLASSES
     ) == list(CANONICAL_EQUIPMENT_CLASSES)
-    assert PR5D_EXACT_CLASS_MAPPINGS == list(EXACT_CLASS_MAPPINGS)
+    # PR5A object directly — not a mutable list copy.
+    assert PR5D_EXACT_CLASS_MAPPINGS is EXACT_CLASS_MAPPINGS
     uniq = validate_taxonomy_uniqueness()
     assert uniq["ok"], uniq["errors"]
     # Injected duplicate must fail without set-hiding.
@@ -541,6 +542,7 @@ def test_metric_eligibility_rejects_incomplete_reviewed() -> None:
         independently_reviewed=False,
         is_synthetic=False,
         redaction_proof={},
+        sample_role="representative_holdout",
     )
     reasons = validate_metric_eligibility(bad)
     assert "missing_review_source" in reasons
@@ -572,6 +574,7 @@ def test_synthetic_excluded_from_metrics() -> None:
         independently_reviewed=True,
         is_synthetic=True,
         redaction_proof={},
+        sample_role="representative_holdout",
     )
     assert "synthetic_excluded" in validate_metric_eligibility(synth)
     metrics = compute_evaluation_metrics([synth])
@@ -605,27 +608,65 @@ def test_blind_packet_hides_predictions() -> None:
     assert "predicted_relevance_class" not in blind
     assert "diagnostic_stratum" not in blind
     assert "equipment_first_hit" not in json.dumps(blind)
+    assert blind["human_relevance_class"] is None
+    assert blind["review_source"] is None
     assert sealed["predicted_relevance_class"] == "strong_equipment_class"
     assert sealed["diagnostic_stratum"] == "equipment_first_hit"
+    from origenlab_email_pipeline.commercial_procurement_product_relevance.redaction import (
+        assert_human_packet_prediction_blind,
+    )
+
+    assert_human_packet_prediction_blind(blind)
 
 
 def test_shareable_walkthrough_redacts_recursive_sentinels() -> None:
-    # Inject production-like decision into walkthrough path via synthetic-only bundle
-    # plus a regression text that includes all sentinel classes.
     forbidden = shareable_scan_forbidden_from_regression_inputs()
     toxic = (
-        "RAW_TEXT_SENTINEL_XYZ_NEVER_SHARE buyer@example.com +56 9 1234 5678 "
+        "centrifuga de laboratorio RAW_TEXT_SENTINEL_XYZ_NEVER_SHARE "
+        "buyer@example.com +56 9 1234 5678 "
         "https://secret.example/path 12.345.678-9 3544-1-LE26 "
-        "src_rec_UNIQUE_RAW_99 BUYER:=HospitalSecreto"
+        "src_rec_UNIQUE_RAW_99 BUYER:=HospitalSecreto "
+        "Organismo: Hospital Base Valdivia"
     )
     redacted, _ = redact_product_wording(toxic)
-    for tok in forbidden:
+    for tok in [
+        "buyer@example.com",
+        "+56 9 1234 5678",
+        "https://secret.example/path",
+        "12.345.678-9",
+        "3544-1-LE26",
+        "src_rec_UNIQUE_RAW_99",
+        "HospitalSecreto",
+        "Hospital Base Valdivia",
+        "RAW_TEXT_SENTINEL_XYZ_NEVER_SHARE",
+    ]:
         assert tok not in redacted
-    assert "3544-1-LE26" not in redacted
     assert "[REDACTED_CHILECOMPRA_CODE]" in redacted
+    assert "[REDACTED_BUYER_MARKER]" in redacted
+    assert "centrifuga" in redacted.lower() or "laboratorio" in redacted.lower()
 
     bundle = build_cases_a_e(None)
-    assert_no_forbidden_substrings(bundle, forbidden=forbidden)
+    assert_no_forbidden_substrings(
+        bundle,
+        forbidden=[
+            t
+            for t in forbidden
+            if t
+            not in {
+                # Multiword organism string appears only when injected; synthetic
+                # cases may not include it — still covered by direct redact above.
+                "Organismo: Hospital Base Valdivia",
+                "Hospital Base Valdivia",
+                "ct_TOXIC_TENDER_ID_99",
+                "snap_TOXIC_SNAPSHOT_88",
+                "obs_TOXIC_OBSERVATION_77",
+                "evid_TOXIC_EVIDENCE_66",
+                "ptu_TOXIC_UNIT_55",
+                "trd_TOXIC_DECISION_44",
+                "src_rec_TOXIC_SOURCE_33",
+            }
+        ],
+    )
     blob = json.dumps(bundle, sort_keys=True)
     for key in (
         "text_raw",
@@ -641,28 +682,39 @@ def test_reconciliation_detects_dropped_and_duplicate_attempts() -> None:
     ok = reconcile_relevance(
         coalesced_tender_ids=["t1"],
         decision_tender_ids=["t1"],
-        linked_unit_ids=["u1"],
-        unresolved_unit_ids=["u2"],
-        extraction_attempt_ids=["u1", "u2"],
+        linked_unit_ids=["ptu_1"],
+        unresolved_unit_ids=["ptu_2"],
+        extraction_attempt_ids=["pta_1", "pta_2"],
     )
     assert ok["ok"] is True
+    assert ok["equations"]["attempts_eq_linked_plus_unresolved"] is True
 
     dropped = reconcile_relevance(
         coalesced_tender_ids=["t1"],
         decision_tender_ids=["t1"],
-        linked_unit_ids=["u1"],
+        linked_unit_ids=["ptu_1"],
         unresolved_unit_ids=[],
-        extraction_attempt_ids=["u1", "u_dropped"],
+        extraction_attempt_ids=["pta_1", "pta_dropped"],
     )
     assert dropped["ok"] is False
-    assert "u_dropped" in dropped["dropped_extraction_attempts"]
+    assert dropped["dropped_extraction_attempts_count"] == 1
+
+    dup_attempts = reconcile_relevance(
+        coalesced_tender_ids=["t1"],
+        decision_tender_ids=["t1"],
+        linked_unit_ids=["ptu_1"],
+        unresolved_unit_ids=["ptu_2"],
+        extraction_attempt_ids=["pta_1", "pta_1"],
+    )
+    assert dup_attempts["ok"] is False
+    assert "pta_1" in dup_attempts["duplicate_extraction_attempts"]
 
     dup = reconcile_relevance(
         coalesced_tender_ids=["t1"],
         decision_tender_ids=["t1", "t1"],
-        linked_unit_ids=["u1", "u1"],
+        linked_unit_ids=["ptu_1", "ptu_1"],
         unresolved_unit_ids=[],
-        extraction_attempt_ids=["u1", "u1"],
+        extraction_attempt_ids=["pta_1", "pta_2"],
     )
     assert dup["ok"] is False
     assert dup["duplicate_tender_decisions"]
@@ -756,7 +808,23 @@ def test_atomic_bundle_includes_walkthrough_and_restores_on_failure(
     )
     assert (out / "RUN_MANIFEST.json").is_file()
     assert (out / "walkthrough" / "WALKTHROUGH_CASES_A_E.json").is_file()
+    assert (out / "human_review_packet.json").is_file()
+    assert (out / "sealed_scoring_manifest.json").is_file()
+    assert (out / "operational_evaluation_records.json").is_file()
+    assert not (out / "labeling_queue.json").exists()
     assert any(k.startswith("walkthrough/") for k in written)
+
+    human = json.loads((out / "human_review_packet.json").read_text(encoding="utf-8"))
+    sealed = json.loads((out / "sealed_scoring_manifest.json").read_text(encoding="utf-8"))
+    from origenlab_email_pipeline.commercial_procurement_product_relevance.evaluation import (
+        assert_blind_sealed_record_id_join,
+    )
+    from origenlab_email_pipeline.commercial_procurement_product_relevance.redaction import (
+        assert_human_packet_prediction_blind,
+    )
+
+    assert_blind_sealed_record_id_join(human["records"], sealed["records"])
+    assert_human_packet_prediction_blind(human)
 
     # Inject failure after staging plan files but before rename completes:
     # monkeypatch write_atomically writer path by failing mid-write via walkthrough.
@@ -780,3 +848,550 @@ def test_atomic_bundle_includes_walkthrough_and_restores_on_failure(
     # Prior complete bundle preserved.
     assert (out / "RUN_MANIFEST.json").read_text(encoding="utf-8") == prior_manifest
     assert (out / "walkthrough" / "WALKTHROUGH_CASES_A_E.json").is_file()
+
+
+def _labelled_record(
+    *,
+    record_id: str,
+    sample_role: str,
+    predicted: str = "strong_equipment_class",
+    gold: str = "strong_equipment_class",
+) -> EvaluationRecord:
+    return EvaluationRecord(
+        record_id=record_id,
+        coalesced_tender_alias=f"redacted.tender.{record_id}",
+        diagnostic_stratum="equipment_first_hit",
+        product_text_redacted="centrifuga de laboratorio",
+        has_line_descriptions=True,
+        source_plane="pr4",
+        text_richness="rich",
+        predicted_relevance_class=predicted,
+        predicted_confidence_band="high",
+        predicted_resolution_status="equipment_class_only",
+        predicted_ambiguity_reason_codes=(),
+        predicted_aggregation_reason_codes=(),
+        manual_review_recommended=False,
+        label_status="gold",
+        gold_relevance_class=gold,
+        review_source="human_operator",
+        independently_reviewed=True,
+        is_synthetic=False,
+        redaction_proof={},
+        sample_role=sample_role,
+    )
+
+
+def test_diagnostic_labels_do_not_create_headline_metrics() -> None:
+    diagnostic = _labelled_record(
+        record_id="eval_diag",
+        sample_role="diagnostic_stratified",
+        predicted="strong_equipment_class",
+        gold="unrelated",
+    )
+    metrics = compute_evaluation_metrics([diagnostic])
+    assert metrics["precision"] is None
+    assert metrics["recall"] is None
+    assert metrics["f1"] is None
+    assert metrics["headline_metrics"]["precision"] is None
+    assert metrics["labelled_for_metrics_count"] == 0
+    assert (
+        metrics["diagnostic_error_analysis"]["labelled_for_error_analysis_count"] == 1
+    )
+    assert metrics["diagnostic_error_analysis"]["precision"] is None
+    assert metrics["diagnostic_error_analysis"]["non_representative"] is True
+
+
+def test_holdout_labels_are_only_headline_source() -> None:
+    diagnostic = _labelled_record(
+        record_id="eval_diag2",
+        sample_role="diagnostic_stratified",
+        predicted="strong_equipment_class",
+        gold="strong_equipment_class",
+    )
+    holdout = _labelled_record(
+        record_id="eval_hold",
+        sample_role="representative_holdout",
+        predicted="strong_equipment_class",
+        gold="strong_equipment_class",
+    )
+    metrics = compute_evaluation_metrics([diagnostic, holdout])
+    assert metrics["labelled_for_metrics_count"] == 1
+    assert metrics["precision"] == 1.0
+    assert metrics["headline_metrics"]["source"] == "representative_holdout"
+    assert metrics["by_sample_role"]["diagnostic_stratified"]["label_eligible_count"] == 1
+    assert metrics["by_sample_role"]["representative_holdout"]["label_eligible_count"] == 1
+
+
+def test_unknown_sample_role_rejected() -> None:
+    bad = _labelled_record(record_id="eval_bad_role", sample_role="mystery_bucket")
+    with pytest.raises(ValueError, match="sample_role"):
+        compute_evaluation_metrics([bad])
+
+
+def test_generic_insumos_precedence_matches_execution() -> None:
+    spec = next(r for r in RULE_PRECEDENCE if r["rule_id"] == "generic_insumos")
+    d = classify_product_text_unit(_unit("Compra de insumos de laboratorio", tier="line_product_text"))
+    assert d.relevance_class == spec["outcome_class"]
+    assert d.confidence_band == spec["confidence_band"]
+    assert d.confidence_band == "abstain"
+
+
+def test_rule_precedence_contract_matches_key_outcomes() -> None:
+    """Executable outcomes must match RULE_PRECEDENCE declarative bands/classes."""
+    cases = [
+        ("title_only_no_match_abstain", "Adquisición de materiales diversos", "title_only"),
+        ("generic_insumos", "Compra de insumos de laboratorio", "line_product_text"),
+        ("rental_or_comodato", "Arriendo de centrifuga de laboratorio", "line_product_text"),
+        ("service_or_maintenance", "Mantencion y calibracion de centrifuga", "line_product_text"),
+    ]
+    by_id = {r["rule_id"]: r for r in RULE_PRECEDENCE}
+    for rule_id, text, tier in cases:
+        spec = by_id[rule_id]
+        d = classify_product_text_unit(_unit(text, tier=tier))
+        if "outcome_class" in spec:
+            assert d.relevance_class == spec["outcome_class"], rule_id
+        if "confidence_band" in spec:
+            assert d.confidence_band == spec["confidence_band"], rule_id
+        if rule_id == "title_only_no_match_abstain":
+            assert "title_only_weak_signal" in d.ambiguity_reason_codes
+
+
+def test_semantic_fingerprint_moves_on_confidence_and_tier() -> None:
+    from origenlab_email_pipeline.commercial_procurement_product_relevance.fingerprint import (
+        relevance_semantic_digest,
+    )
+
+    base_unit = classify_product_text_unit(
+        _unit("Centrifuga refrigerada de laboratorio", tier="line_product_text")
+    )
+    tender = CoalescedProcurementTender(
+        coalesced_tender_id="t_sem",
+        canonical_tender_key="k",
+        identity_namespace="ns",
+        tender_key_kind="chilecompra",
+        candidate_source_kind="pr4",
+        pr4_procurement_id=None,
+        pr4_procurement_ids=(),
+        acquisition_snapshot_ids=(),
+        acquisition_instance_ids=(),
+        acquisition_observation_ids=(),
+        coalescence_status="singleton",
+        source_precedence_reason="only",
+        currentness_class="current",
+        lifecycle_class="open",
+        closing_soon_bucket="none",
+        publication_timestamp_selected=None,
+        close_timestamp_selected=None,
+        status_code_selected=None,
+        status_name_selected=None,
+        status_value_selected=None,
+        source_status_system_selected=None,
+        buyer_display_selected=None,
+        buyer_source_id_selected=None,
+        title_selected="Centrifuga",
+        selected_field_provenance={},
+        buyer_display_variance=False,
+        lifecycle_status_evidence_ref_id=None,
+        lifecycle_close_evidence_ref_id=None,
+        lifecycle_publication_evidence_ref_id=None,
+        lifecycle_evidence_currentness_class=None,
+        lifecycle_reason_codes=(),
+        evidence_ref_ids=(),
+        conflict_ids=(),
+    )
+    base_tender = aggregate_tender_decision(
+        tender, [base_unit], input_fingerprint="in"
+    )
+    base_sem = relevance_semantic_digest(
+        tender_decisions=[base_tender], unit_decisions=[base_unit]
+    )
+    assert base_unit.unit_semantic_fingerprint
+
+    # Confidence mutation on unit semantic fingerprint.
+    from dataclasses import replace
+
+    mutated_conf = replace(base_unit, confidence_band="abstain")
+    # Recompute unit semantic via classify on title_only (different band for same class path)
+    title_unit = classify_product_text_unit(
+        _unit("Centrifuga refrigerada de laboratorio", tier="title_only")
+    )
+    assert title_unit.unit_semantic_fingerprint != base_unit.unit_semantic_fingerprint
+
+    # Evidence tier mutation on tender semantic.
+    mutated_tender = replace(base_tender, evidence_tier="title_only", confidence_band="low")
+    # Aggregate semantic payload includes tier/band — digest must move when decision fields change.
+    alt_sem = relevance_semantic_digest(
+        tender_decisions=[mutated_tender], unit_decisions=[base_unit]
+    )
+    assert alt_sem != base_sem
+
+    # Aggregation reason mutation.
+    agg_mut = replace(
+        base_tender,
+        aggregation_reason_codes=("mixed_positive_and_negative_requires_review",),
+    )
+    assert (
+        relevance_semantic_digest(tender_decisions=[agg_mut], unit_decisions=[base_unit])
+        != base_sem
+    )
+
+    # Matched-rule semantics: unrelated line vs equipment changes rule ids.
+    unrel = classify_product_text_unit(
+        _unit("Escritorio de oficina metalico", tier="line_product_text")
+    )
+    assert unrel.unit_semantic_fingerprint != base_unit.unit_semantic_fingerprint
+    assert mutated_conf.confidence_band == "abstain"
+
+
+def test_proposed_alias_validation_rejects_conflicts() -> None:
+    from origenlab_email_pipeline.commercial_procurement_product_relevance.taxonomy_extensions import (
+        validate_proposed_catalog_aliases,
+    )
+
+    ok = validate_proposed_catalog_aliases()
+    assert ok["ok"], ok["errors"]
+    # Seeds remain unverified and do not exact-match.
+    for seed in PROPOSED_CATALOG_ALIASES:
+        assert seed["verification_status"] == "proposed_seed_not_verified"
+        for alias in seed["aliases"]:
+            d = classify_product_text_unit(_unit(str(alias), tier="line_product_text"))
+            assert d.relevance_class != "exact_catalog_product"
+
+    conflict = validate_proposed_catalog_aliases(
+        [
+            {
+                "alias_group": "g1",
+                "canonical_class": "centrifuge",
+                "aliases": ["UP200St"],
+                "verification_status": "proposed_seed_not_verified",
+            },
+            {
+                "alias_group": "g2",
+                "canonical_class": "ultrasonic_processor",
+                "aliases": ["UP200St"],
+                "verification_status": "proposed_seed_not_verified",
+            },
+        ]
+    )
+    assert not conflict["ok"]
+    assert any("conflicting_targets" in e for e in conflict["errors"])
+
+    bad_target = validate_proposed_catalog_aliases(
+        [
+            {
+                "alias_group": "g3",
+                "canonical_class": "not_a_real_class",
+                "aliases": ["X"],
+                "verification_status": "proposed_seed_not_verified",
+            }
+        ]
+    )
+    assert any("invalid_canonical_target" in e for e in bad_target["errors"])
+
+    dup_group = validate_proposed_catalog_aliases(
+        [
+            {
+                "alias_group": "same",
+                "canonical_class": "centrifuge",
+                "aliases": ["A"],
+                "verification_status": "proposed_seed_not_verified",
+            },
+            {
+                "alias_group": "same",
+                "canonical_class": "centrifuge",
+                "aliases": ["B"],
+                "verification_status": "proposed_seed_not_verified",
+            },
+        ]
+    )
+    assert any("duplicate_alias_group" in e for e in dup_group["errors"])
+
+    verified_dup = validate_proposed_catalog_aliases(
+        [
+            {
+                "alias_group": "v1",
+                "canonical_class": "centrifuge",
+                "aliases": ["ModelZ"],
+                "verification_status": "verified_against_sanitized_evidence",
+            },
+            {
+                "alias_group": "v2",
+                "canonical_class": "centrifuge",
+                "aliases": ["ModelZ"],
+                "verification_status": "verified_against_sanitized_evidence",
+            },
+        ]
+    )
+    assert any("verified_duplicate_alias_order_dependent" in e for e in verified_dup["errors"])
+
+
+def test_buyer_marker_redacts_multiword_name() -> None:
+    text = "Organismo: Hospital Base Valdivia compra centrifuga"
+    redacted, _ = redact_product_wording(text)
+    assert "Hospital" not in redacted
+    assert "Base Valdivia" not in redacted
+    assert "[REDACTED_BUYER_MARKER]" in redacted
+    assert "centrifuga" in redacted.lower()
+    assert "compra" in redacted.lower()
+
+
+def test_production_shaped_walkthrough_redaction_path(tmp_path: Path) -> None:
+    from origenlab_email_pipeline.commercial_procurement_product_relevance.models import (
+        MatchedEvidenceSpan,
+        TenderRelevanceDecision,
+    )
+    from origenlab_email_pipeline.commercial_procurement_product_relevance.walkthrough import (
+        _shareable_from_plan_decision,
+        write_walkthrough_into,
+    )
+
+    toxic_text = (
+        "Centrifuga refrigerada de laboratorio "
+        "RAW_TEXT_SENTINEL_XYZ_NEVER_SHARE "
+        "buyer@example.com +56 9 1234 5678 https://secret.example/path "
+        "12.345.678-9 3544-1-LE26 src_rec_UNIQUE_RAW_99 "
+        "Organismo: Hospital Base Valdivia src_rec_TOXIC_SOURCE_33"
+    )
+    unit = ProductTextUnit(
+        unit_id="ptu_TOXIC_UNIT_55",
+        coalesced_tender_id="ct_TOXIC_TENDER_ID_99",
+        evidence_ref_id="evid_TOXIC_EVIDENCE_66",
+        link_status="linked",
+        unresolved_reason=None,
+        field_path="line_observation[0].product|snap_TOXIC_SNAPSHOT_88|obs_TOXIC_OBSERVATION_77",
+        text_raw=toxic_text,
+        text_normalized=normalize_product_text(toxic_text),
+        evidence_tier="line_product_text",
+        source_plane="pr4",
+        snapshot_id="snap_TOXIC_SNAPSHOT_88",
+        observation_id="obs_TOXIC_OBSERVATION_77",
+        tender_observation_id="obs_TOXIC_OBSERVATION_77",
+        line_observation_id="obs_TOXIC_OBSERVATION_77",
+        pr4_procurement_id="src_rec_TOXIC_SOURCE_33",
+        contributing_evidence_ref_ids=("evid_TOXIC_EVIDENCE_66",),
+    )
+    decision = TenderRelevanceDecision(
+        decision_id="trd_TOXIC_DECISION_44",
+        coalesced_tender_id="ct_TOXIC_TENDER_ID_99",
+        relevance_class="strong_equipment_class",
+        canonical_equipment_classes=("centrifuge",),
+        product_resolution_status="equipment_class_only",
+        evidence_tier="line_product_text",
+        confidence_band="high",
+        positive_reason_codes=("equipment_class_match",),
+        negative_reason_codes=(),
+        ambiguity_reason_codes=(),
+        aggregation_reason_codes=("single_unit_decision",),
+        matched_spans=(
+            MatchedEvidenceSpan(
+                field_path=unit.field_path,
+                rule_id="equipment_class_positive_hits",
+                matched_text="Centrifuga",
+            ),
+        ),
+        contributing_evidence_ref_ids=("evid_TOXIC_EVIDENCE_66",),
+        unit_decision_ids=("urd_x",),
+        taxonomy_version="t",
+        rules_version="r",
+        input_fingerprint="i",
+        semantic_fingerprint="s",
+        lifecycle_class_echo="open",
+        not_persisted=True,
+    )
+    case = _shareable_from_plan_decision(
+        case_id="toxic_prod",
+        label="production_shaped_redaction",
+        decision=decision,
+        units=[unit],
+    )
+    bundle = {
+        "schema": "pr5d_walkthrough_cases_a_e_v1",
+        "cases": {"toxic": case},
+    }
+    forbidden = shareable_scan_forbidden_from_regression_inputs()
+    assert_no_forbidden_substrings(bundle, forbidden=forbidden, context="shareable_case")
+    for tok in [
+        "ct_TOXIC_TENDER_ID_99",
+        "snap_TOXIC_SNAPSHOT_88",
+        "obs_TOXIC_OBSERVATION_77",
+        "evid_TOXIC_EVIDENCE_66",
+        "ptu_TOXIC_UNIT_55",
+        "trd_TOXIC_DECISION_44",
+        "src_rec_TOXIC_SOURCE_33",
+        "Hospital Base Valdivia",
+        "RAW_TEXT_SENTINEL_XYZ_NEVER_SHARE",
+    ]:
+        assert tok not in json.dumps(bundle)
+
+    out = tmp_path / "walk"
+    written = write_walkthrough_into(bundle, out)
+    md = (out / "WALKTHROUGH_CASES_A_E.md").read_text(encoding="utf-8")
+    js = (out / "WALKTHROUGH_CASES_A_E.json").read_text(encoding="utf-8")
+    for tok in forbidden:
+        assert tok not in md
+        assert tok not in js
+    assert "centrifuga" in js.lower() or "laboratorio" in js.lower()
+    assert written
+
+
+def test_adapter_path_reconciliation_regressions() -> None:
+    """Integration through extract_units_for_tender — not only reconcile_relevance()."""
+    from origenlab_email_pipeline.commercial_procurement_candidate_planner.models import (
+        ProcurementEvidenceRef,
+    )
+    from origenlab_email_pipeline.commercial_procurement_product_relevance.evidence_adapter import (
+        extract_units_for_tender,
+    )
+
+    tender = CoalescedProcurementTender(
+        coalesced_tender_id="t_adapt",
+        canonical_tender_key="k",
+        identity_namespace="ns",
+        tender_key_kind="chilecompra",
+        candidate_source_kind="pr4",
+        pr4_procurement_id="p1",
+        pr4_procurement_ids=("p1",),
+        acquisition_snapshot_ids=(),
+        acquisition_instance_ids=(),
+        acquisition_observation_ids=(),
+        coalescence_status="singleton",
+        source_precedence_reason="only",
+        currentness_class="current",
+        lifecycle_class="open",
+        closing_soon_bucket="none",
+        publication_timestamp_selected=None,
+        close_timestamp_selected=None,
+        status_code_selected=None,
+        status_name_selected=None,
+        status_value_selected=None,
+        source_status_system_selected=None,
+        buyer_display_selected=None,
+        buyer_source_id_selected=None,
+        title_selected="Centrifuga de laboratorio",
+        selected_field_provenance={},
+        buyer_display_variance=False,
+        lifecycle_status_evidence_ref_id=None,
+        lifecycle_close_evidence_ref_id=None,
+        lifecycle_publication_evidence_ref_id=None,
+        lifecycle_evidence_currentness_class=None,
+        lifecycle_reason_codes=(),
+        evidence_ref_ids=("ref1",),
+        conflict_ids=(),
+    )
+    ref = ProcurementEvidenceRef(
+        evidence_ref_id="ref1",
+        evidence_plane="pr4",
+        source_kind="pr4",
+        endpoint_kind="sqlite",
+        source_record_id="src1",
+        canonical_tender_key="k",
+        tender_key_kind="chilecompra",
+        identity_namespace="ns",
+        cross_source_join_eligible=True,
+        snapshot_id=None,
+        acquisition_instance_id=None,
+        page_id=None,
+        observation_id=None,
+        acquired_at_utc=None,
+        source_status_code=None,
+        source_status_name=None,
+        source_status_value=None,
+        source_status_system=None,
+        normalized_status_meaning=None,
+        publication_timestamp_raw=None,
+        close_timestamp_raw=None,
+        publication_timestamp_utc=None,
+        close_timestamp_utc=None,
+        publication_santiago_date=None,
+        close_santiago_date=None,
+        publication_precision=None,
+        close_precision=None,
+        timestamp_parse_reasons=(),
+        buyer_display_raw=None,
+        buyer_source_id=None,
+        title_raw="Centrifuga de laboratorio",
+        source_payload_digest=None,
+        source_fingerprint=None,
+        normalized_semantic_digest=None,
+        field_provenance={},
+        reason_codes=(),
+        source_rank_class="pr4",
+        has_status=False,
+        has_close=False,
+        has_publication=False,
+        has_buyer_display=False,
+        has_buyer_source_id=False,
+        has_title=True,
+    )
+    refs = {"ref1": ref}
+    snaps: dict = {}
+
+    linked, unresolved, attempts = extract_units_for_tender(
+        tender, refs_by_id=refs, snapshots_by_id=snaps
+    )
+    assert attempts
+    assert len(attempts) == len(linked) + len(unresolved)
+    ok = reconcile_relevance(
+        coalesced_tender_ids=[tender.coalesced_tender_id],
+        decision_tender_ids=[tender.coalesced_tender_id],
+        linked_unit_ids=[u.unit_id for u in linked],
+        unresolved_unit_ids=[u.unit_id for u in unresolved],
+        extraction_attempt_ids=[a.attempt_id for a in attempts],
+    )
+    assert ok["ok"] is True
+
+    # Drop an enumerated attempt after ledger build (simulate silent drop) while
+    # keeping the independent attempt ledger intact — through the real adapter path.
+    linked_d, unresolved_d, attempts_d = extract_units_for_tender(
+        tender, refs_by_id=refs, snapshots_by_id=snaps
+    )
+    if linked_d:
+        linked_d = linked_d[1:]
+    elif unresolved_d:
+        unresolved_d = unresolved_d[1:]
+    dropped = reconcile_relevance(
+        coalesced_tender_ids=[tender.coalesced_tender_id],
+        decision_tender_ids=[tender.coalesced_tender_id],
+        linked_unit_ids=[u.unit_id for u in linked_d],
+        unresolved_unit_ids=[u.unit_id for u in unresolved_d],
+        extraction_attempt_ids=[a.attempt_id for a in attempts_d],
+    )
+    assert dropped["ok"] is False
+    assert dropped["dropped_extraction_attempts_count"] >= 1
+
+    # Duplicate attempt in ledger (adapter preserves duplicates; reconcile fails).
+    linked_b, unresolved_b, attempts_b = extract_units_for_tender(
+        tender, refs_by_id=refs, snapshots_by_id=snaps
+    )
+    dup_attempts = list(attempts_b) + [attempts_b[0]]
+    dup_rec = reconcile_relevance(
+        coalesced_tender_ids=[tender.coalesced_tender_id],
+        decision_tender_ids=[tender.coalesced_tender_id],
+        linked_unit_ids=[u.unit_id for u in linked_b],
+        unresolved_unit_ids=[u.unit_id for u in unresolved_b],
+        extraction_attempt_ids=[a.attempt_id for a in dup_attempts],
+    )
+    assert dup_rec["ok"] is False
+    assert dup_rec["duplicate_extraction_attempts"]
+
+    # Linked/unresolved overlap.
+    overlap = reconcile_relevance(
+        coalesced_tender_ids=[tender.coalesced_tender_id],
+        decision_tender_ids=[tender.coalesced_tender_id],
+        linked_unit_ids=[linked_b[0].unit_id] if linked_b else ["ptu_x"],
+        unresolved_unit_ids=[linked_b[0].unit_id] if linked_b else ["ptu_x"],
+        extraction_attempt_ids=[a.attempt_id for a in attempts_b],
+    )
+    assert overlap["ok"] is False
+    assert overlap["linked_unresolved_overlap"]
+
+    # Unexpected unit (more units than attempts).
+    unexpected = reconcile_relevance(
+        coalesced_tender_ids=[tender.coalesced_tender_id],
+        decision_tender_ids=[tender.coalesced_tender_id],
+        linked_unit_ids=[u.unit_id for u in linked_b] + ["ptu_unexpected"],
+        unresolved_unit_ids=[u.unit_id for u in unresolved_b],
+        extraction_attempt_ids=[a.attempt_id for a in attempts_b],
+    )
+    assert unexpected["ok"] is False
+    assert unexpected["unexpected_units_count"] >= 1

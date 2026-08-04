@@ -22,12 +22,20 @@ _CHILECOMPRA_CODE_RE = re.compile(
 )
 _LEGACY_TENDER_RE = re.compile(r"\b[A-Z]{2,5}-\d{4}-\d{4,}\b")
 _LONG_ID_RE = re.compile(r"\b\d{8,}\b")
+# Capture multiword Title-Case buyer names (e.g. "Hospital Base Valdivia"), not only
+# the first token; fall back to a single token for compact markers like BUYER:=X.
 _BUYER_MARKER_RE = re.compile(
-    r"\b(buyer|organismo|comprador|rut\s*proveedor)\s*[:=]\s*\S+",
-    re.I,
+    r"(?i:\b(?:buyer|organismo|comprador|rut\s*proveedor)\s*[:=]\s*)"
+    r"(?:"
+    r"[A-ZÁÉÍÓÚÑÜ][\wÁÉÍÓÚÑáéíóúñü]*"
+    r"(?:\s+[A-ZÁÉÍÓÚÑÜ][\wÁÉÍÓÚÑáéíóúñü]*)*"
+    r"|"
+    r"[^\s,\n;|]+"
+    r")"
 )
 _SOURCE_RECORD_RE = re.compile(
-    r"\b(?:src_rec_|source_record_|evidence_ref_|snapshot_|obs_|procurement_)[A-Za-z0-9_\-]+\b",
+    r"\b(?:src_rec_|source_record_|evidence_ref_|snapshot_|snap_|obs_|"
+    r"procurement_|ct_|ptu_|trd_|evid_|urd_)[A-Za-z0-9_\-]+\b",
     re.I,
 )
 _RAW_SENTINEL_RE = re.compile(r"\bRAW_TEXT_SENTINEL_[A-Z0-9_]+\b")
@@ -101,5 +109,67 @@ def shareable_scan_forbidden_from_regression_inputs() -> list[str]:
         "3544-1-LE26",
         "src_rec_UNIQUE_RAW_99",
         "BUYER:=HospitalSecreto",
+        "HospitalSecreto",
+        "Hospital Base Valdivia",
+        "Organismo: Hospital Base Valdivia",
         "RAW_TEXT_SENTINEL_XYZ_NEVER_SHARE",
+        "ct_TOXIC_TENDER_ID_99",
+        "snap_TOXIC_SNAPSHOT_88",
+        "obs_TOXIC_OBSERVATION_77",
+        "evid_TOXIC_EVIDENCE_66",
+        "ptu_TOXIC_UNIT_55",
+        "trd_TOXIC_DECISION_44",
+        "src_rec_TOXIC_SOURCE_33",
     ]
+
+
+def assert_human_packet_prediction_blind(artifact: Any, *, context: str = "human_packet") -> None:
+    """Recursively assert a human-review packet reveals no prediction semantics."""
+    forbidden_keys = {
+        "predicted_relevance_class",
+        "predicted_confidence_band",
+        "predicted_resolution_status",
+        "predicted_ambiguity_reason_codes",
+        "predicted_aggregation_reason_codes",
+        "predicted_class",
+        "diagnostic_stratum",
+        "manual_review_recommended",
+        "positive_reason_codes",
+        "negative_reason_codes",
+        "ambiguity_reason_codes",
+        "aggregation_reason_codes",
+        "confidence_band",
+        "product_resolution_status",
+        "relevance_class",
+    }
+    forbidden_substrings = (
+        "equipment_first_hit",
+        "likely_hard_negative",
+        "ambiguous_or_manual_review",
+        "random_non_hit",
+        "title_only_weak_signal",
+        "conflicting_line_evidence",
+        "mixed_positive_and_negative_requires_review",
+        "predicted_",
+    )
+
+    def walk(node: Any, path: str) -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():
+                key = str(k)
+                if key in forbidden_keys or key.startswith("predicted_"):
+                    raise AssertionError(
+                        f"{context}: prediction-revealing key at {path}.{key}"
+                    )
+                walk(v, f"{path}.{key}")
+        elif isinstance(node, list):
+            for i, item in enumerate(node):
+                walk(item, f"{path}[{i}]")
+        elif isinstance(node, str):
+            for tok in forbidden_substrings:
+                if tok in node:
+                    raise AssertionError(
+                        f"{context}: prediction-revealing value {tok!r} at {path}"
+                    )
+
+    walk(artifact, "$")

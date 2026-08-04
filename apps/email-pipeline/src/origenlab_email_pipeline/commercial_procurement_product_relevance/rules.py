@@ -146,9 +146,13 @@ def _decision(
             "relevance_class": relevance_class,
             "classes": sorted(set(classes)),
             "resolution": resolution,
+            "evidence_tier": unit.evidence_tier,
+            "confidence_band": confidence_band,
             "positive": sorted(positive),
             "negative": sorted(negative),
             "ambiguity": sorted(ambiguity),
+            # Rule IDs only — never raw matched_text (sensitive / non-semantic).
+            "matched_rule_ids": sorted({s.rule_id for s in spans}),
         }
     )
     return EvidenceUnitRelevanceDecision(
@@ -569,7 +573,7 @@ RULE_PRECEDENCE: Final[list[dict[str, Any]]] = [
     {
         "rule_id": "generic_insumos",
         "outcome_class": "laboratory_context_only",
-        "confidence_band": "medium",
+        "confidence_band": "abstain",
         "manual_review_state": True,
     },
     {

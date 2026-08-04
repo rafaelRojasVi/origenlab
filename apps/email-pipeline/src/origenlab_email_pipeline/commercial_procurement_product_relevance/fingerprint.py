@@ -111,6 +111,7 @@ def relevance_semantic_digest(
     tender_decisions: Iterable[TenderRelevanceDecision],
     unit_decisions: Iterable[EvidenceUnitRelevanceDecision],
 ) -> str:
+    """Digest covering every material classification field (no raw matched text)."""
     tenders = sorted(
         (
             {
@@ -119,10 +120,17 @@ def relevance_semantic_digest(
                 "relevance_class": d.relevance_class,
                 "classes": list(d.canonical_equipment_classes),
                 "resolution": d.product_resolution_status,
+                "evidence_tier": d.evidence_tier,
+                "confidence_band": d.confidence_band,
                 "positive": list(d.positive_reason_codes),
                 "negative": list(d.negative_reason_codes),
                 "ambiguity": list(d.ambiguity_reason_codes),
                 "aggregation": list(d.aggregation_reason_codes),
+                "matched_rule_ids": sorted({s.rule_id for s in d.matched_spans}),
+                "manual_review_semantics": {
+                    "confidence_band_abstain": d.confidence_band == "abstain",
+                    "resolution": d.product_resolution_status,
+                },
             }
             for d in tender_decisions
         ),
@@ -135,6 +143,13 @@ def relevance_semantic_digest(
                 "unit_id": d.unit_id,
                 "relevance_class": d.relevance_class,
                 "classes": list(d.canonical_equipment_classes),
+                "resolution": d.product_resolution_status,
+                "evidence_tier": d.evidence_tier,
+                "confidence_band": d.confidence_band,
+                "positive": list(d.positive_reason_codes),
+                "negative": list(d.negative_reason_codes),
+                "ambiguity": list(d.ambiguity_reason_codes),
+                "matched_rule_ids": sorted({s.rule_id for s in d.matched_spans}),
             }
             for d in unit_decisions
         ),

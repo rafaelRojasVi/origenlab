@@ -42,9 +42,13 @@ def _shareable_unit(
     evidence_tier: str,
     field_path: str,
 ) -> dict[str, Any]:
+    # Redact identifiers that may appear inside operational field paths.
+    field_path_safe, _ = redact_product_wording(field_path or "")
     return {
-        "unit_alias": domain_redacted_alias("unit", f"{case_id}:{ordinal}:{field_path}"),
-        "field_path": field_path,
+        "unit_alias": domain_redacted_alias(
+            "unit", f"{case_id}:{ordinal}:{field_path_safe}"
+        ),
+        "field_path": field_path_safe,
         "text_redacted": text_redacted,
         "text_normalized": normalize_product_text(text_redacted),
         "evidence_tier": evidence_tier,

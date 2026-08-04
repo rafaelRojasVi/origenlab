@@ -21,6 +21,7 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.redaction
 
 LABEL_STATUSES_METRIC_ELIGIBLE = frozenset({"reviewed", "gold"})
 VALID_LABEL_STATUSES = frozenset({"proposed", "reviewed", "gold", "rejected"})
+VALID_SAMPLE_ROLES = frozenset({"diagnostic_stratified", "representative_holdout"})
 
 # Diagnostic stratum keys (prediction-aware — sealed only, never in blind packet).
 STRATUM_EQUIPMENT = "equipment_first_hit"
@@ -34,6 +35,12 @@ DEFAULT_STRATUM_QUOTAS: dict[str, int] = {
     STRATUM_AMBIGUOUS: 40,
     STRATUM_RANDOM: 80,
 }
+
+HUMAN_PACKET_INSTRUCTIONS = (
+    "Assign an independent relevance_class from the PR5A vocabulary. "
+    "Fill human_relevance_class and review_source. Leave predictions unseen. "
+    "Do not infer from any external scoring artifact."
+)
 
 
 @dataclass(frozen=True)
@@ -84,10 +91,12 @@ class BlindReviewRecord:
     text_richness: str
     sample_role: str
     label_status: str
-    instructions: str = (
-        "Assign an independent relevance_class from the PR5A vocabulary. "
-        "Do not infer from any external prediction."
-    )
+    # Blank human-label / provenance fields for independent labeling.
+    human_relevance_class: str | None = None
+    gold_relevance_class: str | None = None
+    review_source: str | None = None
+    independently_reviewed: bool = False
+    instructions: str = HUMAN_PACKET_INSTRUCTIONS
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -449,6 +458,10 @@ def to_blind_packet(records: Iterable[EvaluationRecord]) -> list[BlindReviewReco
             text_richness=r.text_richness,
             sample_role=r.sample_role,
             label_status=r.label_status,
+            human_relevance_class=None,
+            gold_relevance_class=None,
+            review_source=None,
+            independently_reviewed=False,
         )
         for r in records
     ]
@@ -471,55 +484,64 @@ def to_sealed_scoring(records: Iterable[EvaluationRecord]) -> list[SealedScoring
     ]
 
 
-def compute_evaluation_metrics(
-    records: Iterable[EvaluationRecord],
-) -> dict[str, Any]:
-    """Metrics only over independently labelled, non-synthetic gold/reviewed records."""
-    rows = list(records)
+def assert_blind_sealed_record_id_join(
+    blind: list[BlindReviewRecord] | list[dict[str, Any]],
+    sealed: list[SealedScoringRecord] | list[dict[str, Any]],
+) -> None:
+    """Require one-to-one record_id join with no missing, extra, or duplicate ids."""
+
+    def _ids(rows: list[Any]) -> list[str]:
+        out: list[str] = []
+        for r in rows:
+            if isinstance(r, dict):
+                out.append(str(r["record_id"]))
+            else:
+                out.append(str(r.record_id))
+        return out
+
+    blind_ids = _ids(blind)
+    sealed_ids = _ids(sealed)
+    if len(blind_ids) != len(set(blind_ids)):
+        raise AssertionError("blind packet has duplicate record_id values")
+    if len(sealed_ids) != len(set(sealed_ids)):
+        raise AssertionError("sealed manifest has duplicate record_id values")
+    if sorted(blind_ids) != sorted(sealed_ids):
+        missing = sorted(set(sealed_ids) - set(blind_ids))
+        extra = sorted(set(blind_ids) - set(sealed_ids))
+        raise AssertionError(
+            f"blind/sealed record_id join mismatch missing={missing[:20]} "
+            f"extra={extra[:20]}"
+        )
+
+
+def _role_counts(rows: list[EvaluationRecord]) -> dict[str, Any]:
     proposed = sum(1 for r in rows if r.label_status == "proposed")
     reviewed = sum(1 for r in rows if r.label_status == "reviewed")
     gold = sum(1 for r in rows if r.label_status == "gold")
-
-    rejected: list[dict[str, Any]] = []
-    eligible: list[EvaluationRecord] = []
-    for r in rows:
-        reasons = validate_metric_eligibility(r)
-        if reasons:
-            if r.label_status in LABEL_STATUSES_METRIC_ELIGIBLE or r.gold_relevance_class:
-                rejected.append({"record_id": r.record_id, "reasons": reasons})
-            continue
-        eligible.append(r)
-
-    base = {
+    eligible = [r for r in rows if not validate_metric_eligibility(r)]
+    abstain = sum(
+        1
+        for r in rows
+        if r.manual_review_recommended
+        or is_manual_review_prediction(
+            relevance_class=r.predicted_relevance_class,
+            confidence_band=r.predicted_confidence_band,
+            resolution_status=r.predicted_resolution_status,
+            ambiguity_reason_codes=r.predicted_ambiguity_reason_codes,
+            aggregation_reason_codes=r.predicted_aggregation_reason_codes,
+        )
+    )
+    return {
+        "record_count": len(rows),
         "proposed_count": proposed,
         "reviewed_count": reviewed,
         "gold_count": gold,
-        "labelled_for_metrics_count": len(eligible),
-        "rejected_from_metrics": rejected,
-        "insufficient_independent_labels": len(eligible) == 0,
-        "note": (
-            "Proposed and synthetic records are excluded. Metric-eligible records "
-            "require reviewed/gold status, non-empty review_source, "
-            "independently_reviewed=True, and a valid gold relevance class. "
-            "Do not claim production quality without eligible gold labels. "
-            "Stratified diagnostic samples must not be reported as production-wide "
-            "performance."
-        ),
+        "label_eligible_count": len(eligible),
+        "abstention_or_manual_review_count": abstain,
     }
-    if not eligible:
-        return {
-            **base,
-            "confusion_matrix": {},
-            "precision": None,
-            "recall": None,
-            "f1": None,
-            "abstention_rate": None,
-            "false_positives": [],
-            "false_negatives": [],
-            "by_relevance_class": {},
-            "by_evidence_completeness": {},
-        }
 
+
+def _confusion_and_binary(eligible: list[EvaluationRecord]) -> dict[str, Any]:
     strong = {
         "exact_catalog_product",
         "strong_equipment_class",
@@ -577,7 +599,6 @@ def compute_evaluation_metrics(
     )
     abstention_rate = abstain / len(eligible) if eligible else None
     return {
-        **base,
         "confusion_matrix": matrix,
         "precision": precision,
         "recall": recall,
@@ -591,12 +612,202 @@ def compute_evaluation_metrics(
     }
 
 
-def write_labeling_queue(path: Path, records: list[EvaluationRecord]) -> None:
+def compute_evaluation_metrics(
+    records: Iterable[EvaluationRecord],
+) -> dict[str, Any]:
+    """Separate diagnostic error-analysis from representative-holdout headline metrics.
+
+    Unweighted headline precision/recall/F1 come only from independently labelled
+    representative_holdout records. Diagnostic-stratified labels may contribute
+    confusion/error analysis only and must never become headline metrics.
+    """
+    rows = list(records)
+    unknown = [r.record_id for r in rows if r.sample_role not in VALID_SAMPLE_ROLES]
+    if unknown:
+        raise ValueError(
+            f"unknown or inconsistent sample_role on records: {unknown[:20]}"
+        )
+
+    diagnostic = [r for r in rows if r.sample_role == "diagnostic_stratified"]
+    holdout = [r for r in rows if r.sample_role == "representative_holdout"]
+
+    proposed = sum(1 for r in rows if r.label_status == "proposed")
+    reviewed = sum(1 for r in rows if r.label_status == "reviewed")
+    gold = sum(1 for r in rows if r.label_status == "gold")
+
+    rejected: list[dict[str, Any]] = []
+    diagnostic_eligible: list[EvaluationRecord] = []
+    holdout_eligible: list[EvaluationRecord] = []
+    for r in rows:
+        reasons = validate_metric_eligibility(r)
+        if reasons:
+            if r.label_status in LABEL_STATUSES_METRIC_ELIGIBLE or r.gold_relevance_class:
+                rejected.append(
+                    {
+                        "record_id": r.record_id,
+                        "sample_role": r.sample_role,
+                        "reasons": reasons,
+                    }
+                )
+            continue
+        if r.sample_role == "representative_holdout":
+            holdout_eligible.append(r)
+        else:
+            diagnostic_eligible.append(r)
+
+    diagnostic_analysis = {
+        "non_representative": True,
+        "purpose": "error_analysis_confusion_only",
+        "labelled_for_error_analysis_count": len(diagnostic_eligible),
+        **(
+            {
+                k: v
+                for k, v in _confusion_and_binary(diagnostic_eligible).items()
+                if k
+                in {
+                    "confusion_matrix",
+                    "by_relevance_class",
+                    "by_evidence_completeness",
+                    "false_positives",
+                    "false_negatives",
+                    "binary_counts",
+                    "abstention_rate",
+                }
+            }
+            if diagnostic_eligible
+            else {
+                "confusion_matrix": {},
+                "by_relevance_class": {},
+                "by_evidence_completeness": {},
+                "false_positives": [],
+                "false_negatives": [],
+                "binary_counts": {},
+                "abstention_rate": None,
+            }
+        ),
+        # Explicitly null — diagnostic must never be headline.
+        "precision": None,
+        "recall": None,
+        "f1": None,
+        "note": (
+            "Diagnostic-stratified evaluation is for error analysis only and is "
+            "not representative of production-wide performance."
+        ),
+    }
+
+    if holdout_eligible:
+        holdout_metrics = _confusion_and_binary(holdout_eligible)
+        headline = {
+            "source": "representative_holdout",
+            "labelled_for_metrics_count": len(holdout_eligible),
+            "precision": holdout_metrics["precision"],
+            "recall": holdout_metrics["recall"],
+            "f1": holdout_metrics["f1"],
+            "abstention_rate": holdout_metrics["abstention_rate"],
+            "confusion_matrix": holdout_metrics["confusion_matrix"],
+            "false_positives": holdout_metrics["false_positives"],
+            "false_negatives": holdout_metrics["false_negatives"],
+            "by_relevance_class": holdout_metrics["by_relevance_class"],
+            "by_evidence_completeness": holdout_metrics["by_evidence_completeness"],
+            "binary_counts": holdout_metrics["binary_counts"],
+        }
+    else:
+        headline = {
+            "source": "representative_holdout",
+            "labelled_for_metrics_count": 0,
+            "precision": None,
+            "recall": None,
+            "f1": None,
+            "abstention_rate": None,
+            "confusion_matrix": {},
+            "false_positives": [],
+            "false_negatives": [],
+            "by_relevance_class": {},
+            "by_evidence_completeness": {},
+            "binary_counts": {},
+            "note": (
+                "No independently labelled representative-holdout records; "
+                "headline precision/recall/F1 remain null even if diagnostic "
+                "records have labels."
+            ),
+        }
+
+    return {
+        "proposed_count": proposed,
+        "reviewed_count": reviewed,
+        "gold_count": gold,
+        "labelled_for_metrics_count": len(holdout_eligible),
+        "rejected_from_metrics": rejected,
+        "insufficient_independent_labels": len(holdout_eligible) == 0,
+        "by_sample_role": {
+            "diagnostic_stratified": _role_counts(diagnostic),
+            "representative_holdout": _role_counts(holdout),
+        },
+        "diagnostic_error_analysis": diagnostic_analysis,
+        "headline_metrics": headline,
+        # Top-level P/R/F1 are holdout headline only (null without holdout labels).
+        "precision": headline["precision"],
+        "recall": headline["recall"],
+        "f1": headline["f1"],
+        "abstention_rate": headline["abstention_rate"],
+        "confusion_matrix": headline["confusion_matrix"],
+        "false_positives": headline["false_positives"],
+        "false_negatives": headline["false_negatives"],
+        "by_relevance_class": headline["by_relevance_class"],
+        "by_evidence_completeness": headline["by_evidence_completeness"],
+        "binary_counts": headline.get("binary_counts") or {},
+        "note": (
+            "Proposed and synthetic records are excluded. Headline precision/"
+            "recall/F1 use only independently reviewed representative_holdout "
+            "gold/reviewed labels. Diagnostic-stratified labels are for error "
+            "analysis only and never become unweighted headline metrics."
+        ),
+    }
+
+
+def write_human_review_packet(path: Path, records: list[EvaluationRecord]) -> None:
+    """Write the separately distributable blind human-review packet only."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    blind = to_blind_packet(records)
+    payload = {
+        "schema": "pr5d_human_review_packet_v1",
+        "distributable": True,
+        "prediction_isolated": True,
+        "instructions": HUMAN_PACKET_INSTRUCTIONS,
+        "records": [r.to_dict() for r in blind],
+    }
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def write_sealed_scoring_manifest(path: Path, records: list[EvaluationRecord]) -> None:
+    """Write sealed predictions / strata / manual-review state for scoring join."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sealed = to_sealed_scoring(records)
+    payload = {
+        "schema": "pr5d_sealed_scoring_manifest_v1",
+        "sealed": True,
+        "not_for_human_reviewers": True,
+        "records": [r.to_dict() for r in sealed],
+    }
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def write_operational_evaluation_records(
+    path: Path, records: list[EvaluationRecord]
+) -> None:
+    """Sealed operational evaluation rows (may contain predictions) — not the human packet."""
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "schema": "pr5d_labeling_queue_v2",
-        "blind_packet": [r.to_dict() for r in to_blind_packet(records)],
-        "sealed_scoring_manifest": [r.to_dict() for r in to_sealed_scoring(records)],
+        "schema": "pr5d_operational_evaluation_records_v1",
+        "sealed": True,
+        "not_for_human_reviewers": True,
+        "records": [r.to_dict() for r in records],
         "metrics": compute_evaluation_metrics(records),
         "sampling": sampling_distribution_report(records),
     }
@@ -604,6 +815,15 @@ def write_labeling_queue(path: Path, records: list[EvaluationRecord]) -> None:
         json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
         encoding="utf-8",
     )
+
+
+def write_labeling_queue(path: Path, records: list[EvaluationRecord]) -> None:
+    """Deprecated combiner removed — write the human packet at the given path.
+
+    Callers that need sealed artifacts must write them to separate paths via
+    ``write_sealed_scoring_manifest`` / ``write_operational_evaluation_records``.
+    """
+    write_human_review_packet(path, records)
 
 
 # Back-compat alias used by older imports in planner.
