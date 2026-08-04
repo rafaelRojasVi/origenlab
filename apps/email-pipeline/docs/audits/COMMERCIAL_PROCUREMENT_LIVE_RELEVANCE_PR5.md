@@ -166,13 +166,17 @@ Production B–E selected inside pinned RO SQLite. Fixtures only via `--fixture-
 
 ## 11. Implementation sequence
 
-1. **PR5A** — corrected design/audit (this PR)
+Authoritative roadmap (supersedes any stale persistence/scheduling ordering):
+
+1. **PR5A** — corrected design/audit (this document; merged)
 2. **PR5B** — acquisition source contract, ticket/OCDS parsers + captured fixtures
-3. **PR5C** — deterministic candidate planner
-4. **PR5D** — additive persistence + gated apply
-5. **PR5E** — production acquisition scheduling/refresh
-6. **PR6** — targeted external contact enrichment
-7. **PR7** — API/dashboard exposure
+3. **PR5C** — deterministic coalescence / lifecycle candidate planner
+4. **PR5D** — procurement **product relevance** (does OrigenLab plausibly supply this?)
+5. **PR5E** — organization / contact resolution
+6. **PR5F** — lead persistence
+7. **PR5G** — agent-assisted adjudication / review
+
+Later API/dashboard exposure remains out of band from this PR5 sequence.
 
 ---
 

@@ -27,6 +27,9 @@ CANONICAL_EQUIPMENT_CLASSES: Final = (
     "oven_muffle",
     "titrator",
     "reactor",
+    "tablet_hardness_tester",
+    "dissolution_apparatus",
+    "sedimentation_settlometer",
     "other_lab_equipment",
 )
 
@@ -208,6 +211,27 @@ EXACT_CLASS_MAPPINGS: Final[list[dict[str, Any]]] = [
         "source_vocabulary": "business_mart_leads",
         "source_aliases": ["microscopio"],
         "resolution_kind": "exact",
+    },
+    {
+        "canonical": "tablet_hardness_tester",
+        "source_vocabulary": "commercial_capability_seed",
+        "source_aliases": ["dureza_comprimidos", "tablet_hardness", "ensayo_tabletas"],
+        "resolution_kind": "exact",
+        "notes": "PR5D gap fill — class-level; model aliases remain proposed until verified.",
+    },
+    {
+        "canonical": "dissolution_apparatus",
+        "source_vocabulary": "commercial_capability_seed",
+        "source_aliases": ["disolucion_comprimidos", "dissolution_apparatus"],
+        "resolution_kind": "exact",
+        "notes": "PR5D gap fill — class-level mapping.",
+    },
+    {
+        "canonical": "sedimentation_settlometer",
+        "source_vocabulary": "commercial_capability_seed",
+        "source_aliases": ["settlometer", "kit_sedimentacion", "nalgene_settlometer"],
+        "resolution_kind": "exact",
+        "notes": "PR5D gap fill — Nalgene settlometer is a capability seed, not auto-gold.",
     },
 ]
 
