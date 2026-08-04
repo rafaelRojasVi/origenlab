@@ -104,6 +104,7 @@ def reconcile_relevance(
     linked/unresolved partition. ID-list cardinality alone is insufficient.
     """
     from origenlab_email_pipeline.commercial_procurement_product_relevance.evidence_adapter import (
+        materialization_binding_digest,
         recompute_unit_id,
     )
 
@@ -156,6 +157,7 @@ def reconcile_relevance(
     wrong_attempt_association: list[dict[str, Any]] = []
     identity_binding_failures: list[dict[str, Any]] = []
     unit_id_semantic_mismatches: list[dict[str, Any]] = []
+    materialization_binding_mismatches: list[dict[str, Any]] = []
     by_occ = {int(m["attempt_occurrence"]): m for m in mats}
 
     for occ, attempt in enumerate(extraction_attempts):
@@ -280,6 +282,60 @@ def reconcile_relevance(
                 }
             )
 
+        # Frozen source expectation vs submitted unit (ledger alone is insufficient).
+        frozen = attempt.expected_materialization_digest
+        ledger_frozen = row.get("expected_materialization_digest")
+        if not frozen:
+            materialization_binding_mismatches.append(
+                {
+                    "attempt_occurrence": occ,
+                    "attempt_id": attempt.attempt_id,
+                    "unit_id": unit.unit_id,
+                    "error": "missing_frozen_expected_materialization_digest",
+                }
+            )
+        else:
+            kind = str(row.get("attempt_kind") or attempt.attempt_kind)
+            status = str(row.get("materialization_status") or "")
+            actual_digest = materialization_binding_digest(
+                unit=unit,
+                attempt_kind=kind,
+                materialization_status=status,
+            )
+            if actual_digest != frozen:
+                materialization_binding_mismatches.append(
+                    {
+                        "attempt_occurrence": occ,
+                        "attempt_id": attempt.attempt_id,
+                        "unit_id": unit.unit_id,
+                        "frozen_expected_digest": frozen,
+                        "unit_binding_digest": actual_digest,
+                        "error": "unit_diverges_from_frozen_materialization_expectation",
+                    }
+                )
+            if ledger_frozen and str(ledger_frozen) != frozen:
+                materialization_binding_mismatches.append(
+                    {
+                        "attempt_occurrence": occ,
+                        "attempt_id": attempt.attempt_id,
+                        "unit_id": unit.unit_id,
+                        "frozen_expected_digest": frozen,
+                        "ledger_expected_digest": ledger_frozen,
+                        "error": "ledger_frozen_digest_diverges_from_attempt",
+                    }
+                )
+            if ledger_frozen and str(ledger_frozen) != actual_digest:
+                materialization_binding_mismatches.append(
+                    {
+                        "attempt_occurrence": occ,
+                        "attempt_id": attempt.attempt_id,
+                        "unit_id": unit.unit_id,
+                        "ledger_expected_digest": ledger_frozen,
+                        "unit_binding_digest": actual_digest,
+                        "error": "unit_diverges_from_ledger_frozen_expectation",
+                    }
+                )
+
     # Partition membership must match linked/unresolved sets + typed status.
     partition_mismatch: list[dict[str, Any]] = []
     for m in mats:
@@ -307,7 +363,6 @@ def reconcile_relevance(
                 )
             status = str(m.get("materialization_status") or "")
             if part == "linked" and status not in {"linked", ""}:
-                # linked rows use materialization_status "linked"
                 if status != "linked":
                     partition_mismatch.append(
                         {**m, "error": "linked_partition_status_mismatch"}
@@ -324,7 +379,11 @@ def reconcile_relevance(
         for occ in missing_materializations
     ]
 
-    identity_ok = not identity_binding_failures and not unit_id_semantic_mismatches
+    identity_ok = (
+        not identity_binding_failures
+        and not unit_id_semantic_mismatches
+        and not materialization_binding_mismatches
+    )
 
     bijection_ok = (
         len(extraction_attempts) == len(mats)
@@ -360,6 +419,7 @@ def reconcile_relevance(
             ),
             "attempt_occurrence_bijection_with_materialization": bijection_ok,
             "attempt_unit_identity_binding": identity_ok,
+            "frozen_materialization_binding": not materialization_binding_mismatches,
         },
         "coalesced_tender_count": len(coalesced_tender_ids),
         "decision_count": len(decision_tender_ids),
@@ -382,6 +442,7 @@ def reconcile_relevance(
         "wrong_attempt_association": wrong_attempt_association[:50],
         "identity_binding_failures": identity_binding_failures[:50],
         "unit_id_semantic_mismatches": unit_id_semantic_mismatches[:50],
+        "materialization_binding_mismatches": materialization_binding_mismatches[:50],
         "partition_mismatch": partition_mismatch[:50],
         "units_without_attempt": units_without_attempt[:50],
     }

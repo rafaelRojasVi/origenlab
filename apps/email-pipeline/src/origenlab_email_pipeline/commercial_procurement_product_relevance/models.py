@@ -60,6 +60,8 @@ class MaterializationRecord:
     unresolved_reason: str | None = None
     field_path: str | None = None
     attempt_kind: str | None = None
+    # Frozen from source at materialization time — not derived from submitted units.
+    expected_materialization_digest: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

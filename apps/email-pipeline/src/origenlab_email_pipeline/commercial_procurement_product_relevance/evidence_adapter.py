@@ -5,7 +5,7 @@ Extraction attempts are ledgered independently of linked/unresolved partitioning
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -54,6 +54,8 @@ class ExtractionAttempt:
     tender_observation_id: str | None
     snapshot_id: str | None
     observation_id: str | None
+    # Frozen from source-derived materialization — not recomputed from submitted units.
+    expected_materialization_digest: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -66,6 +68,7 @@ class ExtractionAttempt:
             "tender_observation_id": self.tender_observation_id,
             "snapshot_id": self.snapshot_id,
             "observation_id": self.observation_id,
+            "expected_materialization_digest": self.expected_materialization_digest,
         }
 
 
@@ -92,6 +95,56 @@ def unit_id_semantic_payload(unit: ProductTextUnit) -> dict[str, Any]:
 def recompute_unit_id(unit: ProductTextUnit) -> str:
     """Independently recompute unit_id from material semantic fields."""
     return _stable_unit_id(unit_id_semantic_payload(unit))
+
+
+def materialization_binding_payload(
+    *,
+    unit: ProductTextUnit,
+    attempt_kind: str,
+    materialization_status: str,
+) -> dict[str, Any]:
+    """Canonical source-derived binding identity (includes classification-relevant fields).
+
+    Distinct from ``unit_id`` payload: covers evidence_tier, source_plane, attempt
+    kind, materialization status, and PR4 identity so a self-consistent fabricated
+    unit cannot satisfy reconciliation by recomputing only from itself.
+    """
+    return {
+        "adapter": PRODUCT_TEXT_ADAPTER_VERSION,
+        "binding_version": "materialization_binding_v1",
+        "coalesced_tender_id": unit.coalesced_tender_id,
+        "evidence_ref_id": unit.evidence_ref_id,
+        "field_path": unit.field_path,
+        "text_normalized": unit.text_normalized,
+        "text_normalized_digest": canonical_json_digest(unit.text_normalized or ""),
+        "evidence_tier": unit.evidence_tier,
+        "source_plane": unit.source_plane,
+        "link_status": unit.link_status,
+        "unresolved_reason": unit.unresolved_reason,
+        "snapshot_id": unit.snapshot_id,
+        "observation_id": unit.observation_id,
+        "tender_observation_id": unit.tender_observation_id,
+        "line_observation_id": unit.line_observation_id,
+        "pr4_procurement_id": unit.pr4_procurement_id,
+        "attempt_kind": attempt_kind,
+        "materialization_status": materialization_status,
+    }
+
+
+def materialization_binding_digest(
+    *,
+    unit: ProductTextUnit,
+    attempt_kind: str,
+    materialization_status: str,
+) -> str:
+    """Digest of the frozen materialization-binding payload."""
+    return canonical_json_digest(
+        materialization_binding_payload(
+            unit=unit,
+            attempt_kind=attempt_kind,
+            materialization_status=materialization_status,
+        )
+    )
 
 
 def _attempt_id(payload: Mapping[str, Any]) -> str:
@@ -642,11 +695,13 @@ def extract_units_for_tender(
     list[ExtractionAttempt],
     list[MaterializationRecord],
 ]:
-    """Return (linked, unresolved, attempts, materialization_ledger).
+    """Return (linked, unresolved, attempts_with_frozen_expectation, ledger).
 
     The attempt ledger is built before materialization. Every attempt occurrence
     produces exactly one materialization record associating attempt_id → unit_id.
-    Duplicate attempt IDs are retained and typed as unresolved (not silently dropped).
+    Expected materialization digests are frozen from source-derived units at
+    emission time and attached to both the attempt and the ledger row — not
+    recomputed solely from later-submitted units.
     """
     attempts = enumerate_extraction_attempts(
         tender, refs_by_id=refs_by_id, snapshots_by_id=snapshots_by_id
@@ -654,8 +709,39 @@ def extract_units_for_tender(
     linked: list[ProductTextUnit] = []
     unresolved: list[ProductTextUnit] = []
     materializations: list[MaterializationRecord] = []
+    attempts_out: list[ExtractionAttempt] = []
     seen_attempt_ids: set[str] = set()
     emitted_unit_ids: set[str] = set()
+
+    def _freeze(
+        *,
+        attempt: ExtractionAttempt,
+        occurrence: int,
+        unit: ProductTextUnit,
+        partition: str,
+        materialization_status: str,
+        unresolved_reason: str | None,
+        attempt_kind: str,
+    ) -> None:
+        digest = materialization_binding_digest(
+            unit=unit,
+            attempt_kind=attempt_kind,
+            materialization_status=materialization_status,
+        )
+        attempts_out.append(replace(attempt, expected_materialization_digest=digest))
+        materializations.append(
+            MaterializationRecord(
+                attempt_occurrence=occurrence,
+                attempt_id=attempt.attempt_id,
+                unit_id=unit.unit_id,
+                partition=partition,
+                materialization_status=materialization_status,
+                unresolved_reason=unresolved_reason,
+                field_path=attempt.field_path,
+                attempt_kind=attempt_kind,
+                expected_materialization_digest=digest,
+            )
+        )
 
     for occurrence, attempt in enumerate(attempts):
         if attempt.attempt_id in seen_attempt_ids:
@@ -681,17 +767,14 @@ def extract_units_for_tender(
                 attempt_occurrence=occurrence,
             )
             unresolved.append(unit)
-            materializations.append(
-                MaterializationRecord(
-                    attempt_occurrence=occurrence,
-                    attempt_id=attempt.attempt_id,
-                    unit_id=unit.unit_id,
-                    partition="unresolved",
-                    materialization_status="duplicate_extraction_attempt",
-                    unresolved_reason="duplicate_extraction_attempt",
-                    field_path=attempt.field_path,
-                    attempt_kind="duplicate_extraction_attempt",
-                )
+            _freeze(
+                attempt=attempt,
+                occurrence=occurrence,
+                unit=unit,
+                partition="unresolved",
+                materialization_status="duplicate_extraction_attempt",
+                unresolved_reason="duplicate_extraction_attempt",
+                attempt_kind="duplicate_extraction_attempt",
             )
             continue
         seen_attempt_ids.add(attempt.attempt_id)
@@ -731,34 +814,28 @@ def extract_units_for_tender(
                 attempt_occurrence=occurrence,
             )
             unresolved.append(collision)
-            materializations.append(
-                MaterializationRecord(
-                    attempt_occurrence=occurrence,
-                    attempt_id=attempt.attempt_id,
-                    unit_id=collision.unit_id,
-                    partition="unresolved",
-                    materialization_status="duplicate_unit_id_collision",
-                    unresolved_reason="duplicate_unit_id_collision",
-                    field_path=attempt.field_path,
-                    attempt_kind=attempt.attempt_kind,
-                )
+            _freeze(
+                attempt=attempt,
+                occurrence=occurrence,
+                unit=collision,
+                partition="unresolved",
+                materialization_status="duplicate_unit_id_collision",
+                unresolved_reason="duplicate_unit_id_collision",
+                attempt_kind=attempt.attempt_kind,
             )
             continue
         emitted_unit_ids.add(unit.unit_id)
 
         if unit.link_status == "linked" and unit.text_normalized:
             linked.append(unit)
-            materializations.append(
-                MaterializationRecord(
-                    attempt_occurrence=occurrence,
-                    attempt_id=attempt.attempt_id,
-                    unit_id=unit.unit_id,
-                    partition="linked",
-                    materialization_status="linked",
-                    unresolved_reason=None,
-                    field_path=attempt.field_path,
-                    attempt_kind=attempt.attempt_kind,
-                )
+            _freeze(
+                attempt=attempt,
+                occurrence=occurrence,
+                unit=unit,
+                partition="linked",
+                materialization_status="linked",
+                unresolved_reason=None,
+                attempt_kind=attempt.attempt_kind,
             )
         elif unit.link_status == "linked" and not unit.text_normalized:
             empty = _with_attempt(
@@ -784,38 +861,32 @@ def extract_units_for_tender(
                 attempt_occurrence=occurrence,
             )
             unresolved.append(empty)
-            materializations.append(
-                MaterializationRecord(
-                    attempt_occurrence=occurrence,
-                    attempt_id=attempt.attempt_id,
-                    unit_id=empty.unit_id,
-                    partition="unresolved",
-                    materialization_status="empty_normalized_product_text",
-                    unresolved_reason="empty_normalized_product_text",
-                    field_path=attempt.field_path,
-                    attempt_kind=attempt.attempt_kind,
-                )
+            _freeze(
+                attempt=attempt,
+                occurrence=occurrence,
+                unit=empty,
+                partition="unresolved",
+                materialization_status="empty_normalized_product_text",
+                unresolved_reason="empty_normalized_product_text",
+                attempt_kind=attempt.attempt_kind,
             )
         else:
             unresolved.append(unit)
-            materializations.append(
-                MaterializationRecord(
-                    attempt_occurrence=occurrence,
-                    attempt_id=attempt.attempt_id,
-                    unit_id=unit.unit_id,
-                    partition="unresolved",
-                    materialization_status=unit.unresolved_reason
-                    or unit.link_status
-                    or "unresolved",
-                    unresolved_reason=unit.unresolved_reason,
-                    field_path=attempt.field_path,
-                    attempt_kind=attempt.attempt_kind,
-                )
+            _freeze(
+                attempt=attempt,
+                occurrence=occurrence,
+                unit=unit,
+                partition="unresolved",
+                materialization_status=unit.unresolved_reason
+                or unit.link_status
+                or "unresolved",
+                unresolved_reason=unit.unresolved_reason,
+                attempt_kind=attempt.attempt_kind,
             )
 
     linked.sort(key=lambda u: u.unit_id)
     unresolved.sort(key=lambda u: u.unit_id)
-    return linked, unresolved, attempts, materializations
+    return linked, unresolved, attempts_out, materializations
 
 
 def extract_all_product_text_units(
@@ -842,7 +913,6 @@ def extract_all_product_text_units(
             tender, refs_by_id=refs_by_id, snapshots_by_id=registry
         )
         attempts_all.extend(attempts)
-        # Re-key occurrences to a global contiguous index across tenders.
         for mat in mats:
             materializations_all.append(
                 MaterializationRecord(
@@ -854,9 +924,9 @@ def extract_all_product_text_units(
                     unresolved_reason=mat.unresolved_reason,
                     field_path=mat.field_path,
                     attempt_kind=mat.attempt_kind,
+                    expected_materialization_digest=mat.expected_materialization_digest,
                 )
             )
-        # Also re-stamp units with global occurrence.
         remapped_linked = []
         remapped_unresolved = []
         for u in linked:

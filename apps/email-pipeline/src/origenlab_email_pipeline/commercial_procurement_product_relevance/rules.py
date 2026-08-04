@@ -40,6 +40,13 @@ CONSUMABLE_MICROSCOPE_RE = re.compile(
     r"\bportaobjetos\b|\bcubreobjetos\b|\blaminas?\s+para\s+microscop|"
     r"\bslides?\b|\bcoverslips?\b|\baceite\s+de\s+inmersion\b"
 )
+# Explicit microscope equipment purchase — overrides accessory-only consumable hit.
+MICROSCOPE_PURCHASE_RE = re.compile(
+    r"adquisicion\s+de\s+microscop|compra\s+de\s+microscop|microscopi[oa]\s+optico"
+)
+# Dynamic catalog-alias boundary template (alias contents live in taxonomy fingerprint).
+CATALOG_ALIAS_BOUNDARY_TEMPLATE = r"(?<!\w){alias}(?!\w)"
+CATALOG_ALIAS_BOUNDARY_FLAGS = 0
 SERVICE_ONLY_RE = re.compile(
     r"mantenimiento\s+preventiv|mantenimiento\s+correctiv|"
     r"mantencion\s+preventiv|mantencion\s+correctiv|"
@@ -181,6 +188,13 @@ def _decision(
     )
 
 
+def _catalog_alias_pattern(alias_normalized: str) -> re.Pattern[str]:
+    return re.compile(
+        CATALOG_ALIAS_BOUNDARY_TEMPLATE.format(alias=re.escape(alias_normalized)),
+        CATALOG_ALIAS_BOUNDARY_FLAGS,
+    )
+
+
 def _catalog_match(text: str) -> tuple[str | None, re.Match[str] | None]:
     for row in PROPOSED_CATALOG_ALIASES:
         if row.get("verification_status") != "verified_against_sanitized_evidence":
@@ -189,8 +203,7 @@ def _catalog_match(text: str) -> tuple[str | None, re.Match[str] | None]:
             alias_n = normalize_product_text(alias)
             if not alias_n:
                 continue
-            pat = re.compile(rf"(?<!\w){re.escape(alias_n)}(?!\w)")
-            m = pat.search(text)
+            m = _catalog_alias_pattern(alias_n).search(text)
             if m:
                 return str(row["canonical_class"]), m
     return None, None
@@ -244,10 +257,7 @@ def classify_product_text_unit(unit: ProductTextUnit) -> EvidenceUnitRelevanceDe
     m_micro_acc = CONSUMABLE_MICROSCOPE_RE.search(text)
     # Accessory wording wins over a bare "para microscopio" mention unless the
     # unit is an explicit microscope equipment purchase.
-    if m_micro_acc and not re.search(
-        r"adquisicion\s+de\s+microscop|compra\s+de\s+microscop|microscopi[oa]\s+optico",
-        text,
-    ):
+    if m_micro_acc and not MICROSCOPE_PURCHASE_RE.search(text):
         return _decision(
             unit,
             relevance_class="consumable_or_reagent",
@@ -609,6 +619,11 @@ def rules_fingerprint_payload() -> dict[str, Any]:
         {
             "consumable_centrifuge_tube": _pat(CONSUMABLE_CENTRIFUGE_TUBE_RE),
             "consumable_microscope": _pat(CONSUMABLE_MICROSCOPE_RE),
+            "microscope_purchase": _pat(MICROSCOPE_PURCHASE_RE),
+            "catalog_alias_boundary": {
+                "pattern": CATALOG_ALIAS_BOUNDARY_TEMPLATE,
+                "flags": int(CATALOG_ALIAS_BOUNDARY_FLAGS),
+            },
             "service_only": _pat(SERVICE_ONLY_RE),
             "equipment_purchase": _pat(EQUIPMENT_PURCHASE_RE),
             "rental": _pat(RENTAL_RE),
