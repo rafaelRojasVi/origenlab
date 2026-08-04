@@ -113,6 +113,8 @@ def write_atomically(
 ) -> dict[str, str]:
     """Validate destination, write complete bundle to a temp sibling, then rename.
 
+    Existing destination is moved aside first and restored if the final rename
+    fails, so a mid-flight failure cannot destroy both the prior and new bundles.
     On failure after temp creation, temp is removed so no partial plan remains
     at the destination.
     """
@@ -129,17 +131,37 @@ def write_atomically(
             dir=str(parent),
         )
     )
+    backup: Path | None = None
     try:
         written = writer(tmp)
         if safe.exists():
-            if safe.is_dir():
-                shutil.rmtree(safe)
-            else:
-                safe.unlink()
+            backup = Path(
+                tempfile.mkdtemp(
+                    prefix=f".{safe.name}.bak.",
+                    dir=str(parent),
+                )
+            )
+            # Replace empty backup dir with the prior bundle (same filesystem).
+            backup.rmdir()
+            os.replace(safe, backup)
         os.replace(tmp, safe)
+        if backup is not None and backup.exists():
+            if backup.is_dir():
+                shutil.rmtree(backup, ignore_errors=True)
+            else:
+                backup.unlink(missing_ok=True)
         # Rewrite paths to final destination.
         return {k: str(safe / Path(v).name) for k, v in written.items()}
     except Exception:
+        # Restore prior bundle if we moved it aside but failed to install tmp.
+        if backup is not None and backup.exists() and not safe.exists():
+            try:
+                os.replace(backup, safe)
+            except OSError:
+                pass
         if tmp.exists():
             shutil.rmtree(tmp, ignore_errors=True)
+        # Leftover backup after a failed restore should not mask the original error.
+        if backup is not None and backup.exists() and safe.exists():
+            shutil.rmtree(backup, ignore_errors=True)
         raise

@@ -1905,6 +1905,86 @@ def test_git_check_ignore_required(tmp_path: Path) -> None:
     assert resolved == dest.resolve()
 
 
+def test_write_atomically_restores_prior_bundle_on_replace_failure(tmp_path: Path) -> None:
+    """Regression: delete-then-replace must not destroy both prior and new bundles."""
+    import os
+
+    from origenlab_email_pipeline.commercial_procurement_candidate_planner.output_safety import (
+        write_atomically,
+    )
+
+    root, out = _reports_out(tmp_path)
+    out.mkdir(parents=True, exist_ok=True)
+    prior = out / "PRIOR.txt"
+    prior.write_text("prior-bundle\n", encoding="utf-8")
+
+    real_replace = os.replace
+
+    def flaky_replace(src, dst):  # type: ignore[no-untyped-def]
+        src_path = Path(src)
+        dst_path = Path(dst)
+        # Fail only when installing the temp bundle onto the destination path.
+        if (
+            src_path.name.startswith(f".{out.name}.tmp.")
+            and dst_path.resolve() == out.resolve()
+        ):
+            raise OSError("simulated final rename failure")
+        return real_replace(src, dst)
+
+    def writer(safe):  # type: ignore[no-untyped-def]
+        path = safe / "NEW.txt"
+        path.write_text("new-bundle\n", encoding="utf-8")
+        return {"NEW.txt": str(path)}
+
+    try:
+        os.replace = flaky_replace  # type: ignore[assignment]
+        with pytest.raises(OSError, match="simulated final rename failure"):
+            write_atomically(
+                out,
+                repo_email_pipeline_root=root,
+                writer=writer,
+                require_git_ignored=False,
+            )
+    finally:
+        os.replace = real_replace  # type: ignore[assignment]
+
+    assert out.exists()
+    assert (out / "PRIOR.txt").read_text(encoding="utf-8") == "prior-bundle\n"
+    assert not (out / "NEW.txt").exists()
+
+
+def test_write_walkthrough_stages_before_publishing(tmp_path: Path) -> None:
+    """Walkthrough must stage a complete bundle before publishing files."""
+    root, out = _reports_out(tmp_path)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "RUN_MANIFEST.json").write_text("{}\n", encoding="utf-8")
+
+    bundle = {
+        "walkthrough_version": "pr5c_coalescence_lifecycle_v2",
+        "planner_version": "procurement_candidate_planner_v1",
+        "as_of_utc": AS_OF,
+        "fingerprints": {
+            "candidate_input_source_fp_v1": "a" * 64,
+            "candidate_build_plan_fp_v1": "b" * 64,
+            "candidate_semantic_digest_v1": "c" * 64,
+        },
+        "aggregate_reconciliation": {},
+        "cases": [],
+        "product_relevance_implemented": False,
+    }
+    written = write_walkthrough(
+        bundle, out, repo_email_pipeline_root=root, require_git_ignored=False
+    )
+    assert set(written) == {
+        "DATA_WALKTHROUGH.json",
+        "DATA_WALKTHROUGH.md",
+        "REDACTION_PROOF.json",
+    }
+    assert (out / "DATA_WALKTHROUGH.json").is_file()
+    assert (out / "RUN_MANIFEST.json").is_file()
+    assert not (out / ".walkthrough_bundle").exists()
+
+
 def test_endpoint_contract_mismatches_rejected() -> None:
     snap = _ticket_detail_snapshot()
     bad = dict(snap)

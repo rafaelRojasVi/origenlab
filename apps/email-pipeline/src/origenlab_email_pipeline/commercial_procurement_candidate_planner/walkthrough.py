@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +18,7 @@ from origenlab_email_pipeline.commercial_procurement_candidate_planner.models im
 )
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.output_safety import (
     require_reports_out_dir,
+    write_atomically,
 )
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.redaction import (
     assert_no_pii_leaks,
@@ -422,17 +425,34 @@ def write_walkthrough(
             "REDACTION_PROOF.json": str(proof_path),
         }
 
-    # When writing into an already-populated plan dir (CLI), append without
-    # replacing the entire directory — validate containment first via atomic
-    # write into a nested walkthrough staging folder then move files.
-
+    # Stage the complete walkthrough under a temp sibling, then move the three
+    # files into the plan directory. Staging survives a mid-flight failure so a
+    # partial walkthrough is not the only copy of the new content.
     safe = require_reports_out_dir(
         out_dir,
         repo_email_pipeline_root=root,
         require_git_ignored=require_git_ignored,
     )
     safe.mkdir(parents=True, exist_ok=True)
-    return _write(safe)
+    staged = write_atomically(
+        safe / ".walkthrough_bundle",
+        repo_email_pipeline_root=root,
+        writer=_write,
+        require_git_ignored=require_git_ignored,
+    )
+    written: dict[str, str] = {}
+    try:
+        for name, staged_path in staged.items():
+            final_path = safe / name
+            os.replace(staged_path, final_path)
+            written[name] = str(final_path)
+    except Exception:
+        raise
+    else:
+        stage_dir = safe / ".walkthrough_bundle"
+        if stage_dir.exists():
+            shutil.rmtree(stage_dir, ignore_errors=True)
+    return written
 
 
 def build_case_b_live_only_from_ticket_snapshot(

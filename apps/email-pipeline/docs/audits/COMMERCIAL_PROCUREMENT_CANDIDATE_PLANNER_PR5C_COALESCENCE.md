@@ -273,7 +273,7 @@ No `case_unavailable` placeholders.
 
 ## 11. Next boundary
 
-Still within **PR5C**: deterministic product relevance classification.
+**PR5D** (next): deterministic product relevance classification.
 
-Not started: **PR5D** persistence, **PR5E** scheduling, **PR6** contacts,
-**PR7** API/dashboard.
+Not started in this PR: **PR5D** relevance, **PR5E** persistence/scheduling,
+**PR6** contacts, **PR7** API/dashboard.
