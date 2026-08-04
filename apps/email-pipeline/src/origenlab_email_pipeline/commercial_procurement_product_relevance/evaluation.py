@@ -792,6 +792,57 @@ def compute_evaluation_metrics(
     }
 
 
+_RECORD_BEARING_METRIC_KEYS = frozenset(
+    {
+        "false_positives",
+        "false_negatives",
+        "rejected_from_metrics",
+        "record_id",
+    }
+)
+
+
+def aggregate_only_metrics(metrics: Mapping[str, Any] | dict[str, Any]) -> dict[str, Any]:
+    """Project metrics to counts/rates/matrices — never record IDs or per-record rows.
+
+    Full FP/FN case references remain in sealed operational evaluation records.
+    summary.json and evaluation_metrics.json must stay aggregate-only even after
+    labeling.
+    """
+
+    def _scrub(obj: Any) -> Any:
+        if isinstance(obj, Mapping):
+            out: dict[str, Any] = {}
+            for key, value in obj.items():
+                if key == "false_positives":
+                    out["false_positive_count"] = (
+                        len(value) if isinstance(value, list) else value
+                    )
+                    continue
+                if key == "false_negatives":
+                    out["false_negative_count"] = (
+                        len(value) if isinstance(value, list) else value
+                    )
+                    continue
+                if key == "rejected_from_metrics":
+                    out["rejected_from_metrics_count"] = (
+                        len(value) if isinstance(value, list) else value
+                    )
+                    continue
+                if key in _RECORD_BEARING_METRIC_KEYS or key.endswith("_record_id"):
+                    continue
+                out[str(key)] = _scrub(value)
+            return out
+        if isinstance(obj, list):
+            # Drop per-record dicts; keep scalar aggregates only.
+            if obj and all(isinstance(x, Mapping) and "record_id" in x for x in obj):
+                return len(obj)
+            return [_scrub(x) for x in obj]
+        return obj
+
+    return _scrub(dict(metrics))
+
+
 def write_human_review_packet(path: Path, records: list[EvaluationRecord]) -> None:
     """Write the separately distributable blind human-review packet only."""
     path.parent.mkdir(parents=True, exist_ok=True)

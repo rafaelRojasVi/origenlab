@@ -26,6 +26,7 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.constants
     PRODUCT_RELEVANCE_PLANNER_VERSION,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.evaluation import (
+    aggregate_only_metrics,
     assert_blind_sealed_operational_record_id_join,
     build_labeling_queue,
     compute_evaluation_metrics,
@@ -38,6 +39,7 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.evaluatio
     write_sealed_scoring_manifest,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.evidence_adapter import (
+    ExtractionAttempt,
     extract_all_product_text_units,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.field_sufficiency import (
@@ -49,6 +51,7 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.fingerpri
 from origenlab_email_pipeline.commercial_procurement_product_relevance.models import (
     MaterializationRecord,
     ProductRelevancePlanResult,
+    ProductTextUnit,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.redaction import (
     assert_human_packet_prediction_blind,
@@ -74,25 +77,45 @@ def _email_pipeline_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+_ATTEMPT_UNIT_IDENTITY_FIELDS = (
+    "coalesced_tender_id",
+    "evidence_ref_id",
+    "field_path",
+    "snapshot_id",
+    "observation_id",
+    "tender_observation_id",
+    "line_observation_id",
+)
+
+
 def reconcile_relevance(
     *,
     coalesced_tender_ids: list[str],
     decision_tender_ids: list[str],
-    linked_unit_ids: list[str],
-    unresolved_unit_ids: list[str],
-    extraction_attempt_ids: list[str],
+    linked_units: list[ProductTextUnit],
+    unresolved_units: list[ProductTextUnit],
+    extraction_attempts: list[ExtractionAttempt],
     materialization_ledger: list[MaterializationRecord] | list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """One-to-one attempt↔materialization reconciliation (not cardinality alone).
+    """Independently prove each attempt↔unit binding (ledger is not sole truth).
 
-    Every enumerated attempt occurrence must map to exactly one materialization
-    result, and every materialization result must map to exactly one attempt
-    occurrence. Count equality alone is insufficient.
+    For every occurrence, validate attempt identity, unit attempt stamps, ledger
+    row, deterministic unit_id recomputed from material semantic fields, and
+    linked/unresolved partition. ID-list cardinality alone is insufficient.
     """
+    from origenlab_email_pipeline.commercial_procurement_product_relevance.evidence_adapter import (
+        recompute_unit_id,
+    )
+
+    linked_unit_ids = [u.unit_id for u in linked_units]
+    unresolved_unit_ids = [u.unit_id for u in unresolved_units]
+    extraction_attempt_ids = [a.attempt_id for a in extraction_attempts]
+
     tender_set = set(coalesced_tender_ids)
     decision_set = set(decision_tender_ids)
     linked_set = set(linked_unit_ids)
     unresolved_set = set(unresolved_unit_ids)
+    units_by_id = {u.unit_id: u for u in list(linked_units) + list(unresolved_units)}
 
     missing_decisions = sorted(tender_set - decision_set)
     extra_decisions = sorted(decision_set - tender_set)
@@ -116,7 +139,7 @@ def reconcile_relevance(
         else:
             mats.append(dict(row))
 
-    attempt_occurrences = list(range(len(extraction_attempt_ids)))
+    attempt_occurrences = list(range(len(extraction_attempts)))
     mat_occurrences = [int(m["attempt_occurrence"]) for m in mats]
     mat_attempt_ids = [str(m["attempt_id"]) for m in mats]
     mat_unit_ids = [str(m["unit_id"]) for m in mats]
@@ -130,30 +153,141 @@ def reconcile_relevance(
         uid for uid, n in Counter(mat_unit_ids).items() if n > 1
     )
 
-    # attempt_id at occurrence i must match materialization for that occurrence
     wrong_attempt_association: list[dict[str, Any]] = []
+    identity_binding_failures: list[dict[str, Any]] = []
+    unit_id_semantic_mismatches: list[dict[str, Any]] = []
     by_occ = {int(m["attempt_occurrence"]): m for m in mats}
-    for occ, expected_aid in enumerate(extraction_attempt_ids):
+
+    for occ, attempt in enumerate(extraction_attempts):
         row = by_occ.get(occ)
         if row is None:
             continue
-        if str(row["attempt_id"]) != expected_aid:
+        if str(row["attempt_id"]) != attempt.attempt_id:
             wrong_attempt_association.append(
                 {
                     "attempt_occurrence": occ,
-                    "expected_attempt_id": expected_aid,
+                    "expected_attempt_id": attempt.attempt_id,
                     "actual_attempt_id": row["attempt_id"],
                     "unit_id": row["unit_id"],
                 }
             )
+            continue
 
-    # Partition membership must match linked/unresolved sets.
+        unit = units_by_id.get(str(row["unit_id"]))
+        if unit is None:
+            identity_binding_failures.append(
+                {
+                    "attempt_occurrence": occ,
+                    "attempt_id": attempt.attempt_id,
+                    "unit_id": row["unit_id"],
+                    "error": "ledger_unit_missing_from_partitions",
+                }
+            )
+            continue
+
+        # Unit stamps must independently agree with attempt + occurrence.
+        if unit.attempt_id != attempt.attempt_id:
+            identity_binding_failures.append(
+                {
+                    "attempt_occurrence": occ,
+                    "attempt_id": attempt.attempt_id,
+                    "unit_id": unit.unit_id,
+                    "unit_attempt_id": unit.attempt_id,
+                    "error": "unit_attempt_id_mismatch",
+                }
+            )
+        if unit.attempt_occurrence != occ:
+            identity_binding_failures.append(
+                {
+                    "attempt_occurrence": occ,
+                    "attempt_id": attempt.attempt_id,
+                    "unit_id": unit.unit_id,
+                    "unit_attempt_occurrence": unit.attempt_occurrence,
+                    "error": "unit_attempt_occurrence_mismatch",
+                }
+            )
+        if int(row["attempt_occurrence"]) != occ:
+            identity_binding_failures.append(
+                {
+                    "attempt_occurrence": occ,
+                    "ledger_occurrence": row["attempt_occurrence"],
+                    "error": "ledger_occurrence_mismatch",
+                }
+            )
+
+        for attr in _ATTEMPT_UNIT_IDENTITY_FIELDS:
+            expected = getattr(attempt, attr)
+            actual = getattr(unit, attr)
+            if actual != expected:
+                identity_binding_failures.append(
+                    {
+                        "attempt_occurrence": occ,
+                        "attempt_id": attempt.attempt_id,
+                        "unit_id": unit.unit_id,
+                        "field": attr,
+                        "expected": expected,
+                        "actual": actual,
+                        "error": "attempt_unit_identity_field_mismatch",
+                    }
+                )
+
+        if row.get("field_path") is not None and str(row["field_path"]) != attempt.field_path:
+            identity_binding_failures.append(
+                {
+                    "attempt_occurrence": occ,
+                    "attempt_id": attempt.attempt_id,
+                    "unit_id": unit.unit_id,
+                    "error": "ledger_field_path_mismatch",
+                    "expected": attempt.field_path,
+                    "actual": row.get("field_path"),
+                }
+            )
+        if (
+            row.get("attempt_kind") is not None
+            and str(row["attempt_kind"]) != attempt.attempt_kind
+        ):
+            identity_binding_failures.append(
+                {
+                    "attempt_occurrence": occ,
+                    "attempt_id": attempt.attempt_id,
+                    "unit_id": unit.unit_id,
+                    "error": "ledger_attempt_kind_mismatch",
+                    "expected": attempt.attempt_kind,
+                    "actual": row.get("attempt_kind"),
+                }
+            )
+
+        # Deterministic unit_id from material semantic fields — not ledger claim.
+        expected_uid = recompute_unit_id(unit)
+        if unit.unit_id != expected_uid:
+            unit_id_semantic_mismatches.append(
+                {
+                    "attempt_occurrence": occ,
+                    "attempt_id": attempt.attempt_id,
+                    "claimed_unit_id": unit.unit_id,
+                    "recomputed_unit_id": expected_uid,
+                    "error": "unit_id_inconsistent_with_semantic_fields",
+                }
+            )
+        if str(row["unit_id"]) != expected_uid:
+            unit_id_semantic_mismatches.append(
+                {
+                    "attempt_occurrence": occ,
+                    "attempt_id": attempt.attempt_id,
+                    "ledger_unit_id": row["unit_id"],
+                    "recomputed_unit_id": expected_uid,
+                    "error": "ledger_unit_id_inconsistent_with_semantic_fields",
+                }
+            )
+
+    # Partition membership must match linked/unresolved sets + typed status.
     partition_mismatch: list[dict[str, Any]] = []
     for m in mats:
         uid = str(m["unit_id"])
         part = str(m["partition"])
         in_linked = uid in linked_set
         in_unresolved = uid in unresolved_set
+        unit = units_by_id.get(uid)
         if part == "linked" and not in_linked:
             partition_mismatch.append({**m, "error": "marked_linked_missing_from_linked"})
         if part == "unresolved" and not in_unresolved:
@@ -162,17 +296,38 @@ def reconcile_relevance(
             )
         if part not in {"linked", "unresolved"}:
             partition_mismatch.append({**m, "error": "invalid_partition"})
+        if unit is not None:
+            if part == "linked" and unit.link_status != "linked":
+                partition_mismatch.append(
+                    {**m, "error": "partition_linked_but_unit_not_linked"}
+                )
+            if part == "unresolved" and unit.link_status == "linked":
+                partition_mismatch.append(
+                    {**m, "error": "partition_unresolved_but_unit_linked"}
+                )
+            status = str(m.get("materialization_status") or "")
+            if part == "linked" and status not in {"linked", ""}:
+                # linked rows use materialization_status "linked"
+                if status != "linked":
+                    partition_mismatch.append(
+                        {**m, "error": "linked_partition_status_mismatch"}
+                    )
 
     units_without_attempt = sorted(
         (linked_set | unresolved_set) - set(mat_unit_ids)
     )
     attempts_without_unit = [
-        {"attempt_occurrence": occ, "attempt_id": extraction_attempt_ids[occ]}
+        {
+            "attempt_occurrence": occ,
+            "attempt_id": extraction_attempts[occ].attempt_id,
+        }
         for occ in missing_materializations
     ]
 
+    identity_ok = not identity_binding_failures and not unit_id_semantic_mismatches
+
     bijection_ok = (
-        len(extraction_attempt_ids) == len(mats)
+        len(extraction_attempts) == len(mats)
         and not missing_materializations
         and not extra_materializations
         and not duplicate_materialization_occurrences
@@ -181,6 +336,7 @@ def reconcile_relevance(
         and not partition_mismatch
         and not units_without_attempt
         and mat_attempt_ids == list(extraction_attempt_ids)
+        and identity_ok
     )
 
     ok = not (
@@ -203,6 +359,7 @@ def reconcile_relevance(
                 and not duplicate_tender_decisions
             ),
             "attempt_occurrence_bijection_with_materialization": bijection_ok,
+            "attempt_unit_identity_binding": identity_ok,
         },
         "coalesced_tender_count": len(coalesced_tender_ids),
         "decision_count": len(decision_tender_ids),
@@ -223,6 +380,8 @@ def reconcile_relevance(
         ],
         "duplicate_materialized_unit_ids": duplicate_materialized_unit_ids[:50],
         "wrong_attempt_association": wrong_attempt_association[:50],
+        "identity_binding_failures": identity_binding_failures[:50],
+        "unit_id_semantic_mismatches": unit_id_semantic_mismatches[:50],
         "partition_mismatch": partition_mismatch[:50],
         "units_without_attempt": units_without_attempt[:50],
     }
@@ -246,7 +405,7 @@ def build_product_relevance_plan(
         run_context=run_context,
     )
 
-    linked, unresolved, adapter_meta, attempt_ids, materialization_ledger = (
+    linked, unresolved, adapter_meta, extraction_attempts, materialization_ledger = (
         extract_all_product_text_units(plan, snapshot_paths=acquisition_snapshot_paths)
     )
 
@@ -310,9 +469,9 @@ def build_product_relevance_plan(
     reconciliation = reconcile_relevance(
         coalesced_tender_ids=[t.coalesced_tender_id for t in plan.coalesced_tenders],
         decision_tender_ids=[d.coalesced_tender_id for d in tender_decisions_t],
-        linked_unit_ids=[u.unit_id for u in linked],
-        unresolved_unit_ids=[u.unit_id for u in unresolved],
-        extraction_attempt_ids=list(attempt_ids),
+        linked_units=list(linked),
+        unresolved_units=list(unresolved),
+        extraction_attempts=list(extraction_attempts),
         materialization_ledger=list(materialization_ledger),
     )
     if not reconciliation["ok"]:
@@ -455,7 +614,7 @@ def _write_plan_files(safe: Path, result: ProductRelevancePlanResult) -> dict[st
     )
     written["evaluation_metrics.json"] = dump(
         "evaluation_metrics.json",
-        result.evaluation_meta.get("metrics") or {},
+        aggregate_only_metrics(result.evaluation_meta.get("metrics") or {}),
     )
     written["sampling_distribution.json"] = dump(
         "sampling_distribution.json",

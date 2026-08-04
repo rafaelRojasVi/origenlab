@@ -74,6 +74,26 @@ def _stable_unit_id(payload: Mapping[str, Any]) -> str:
     return f"ptu_{digest[:32]}"
 
 
+def unit_id_semantic_payload(unit: ProductTextUnit) -> dict[str, Any]:
+    """Material fields that deterministically define ``unit_id`` (no attempt stamps)."""
+    return {
+        "adapter": PRODUCT_TEXT_ADAPTER_VERSION,
+        "coalesced_tender_id": unit.coalesced_tender_id,
+        "evidence_ref_id": unit.evidence_ref_id,
+        "field_path": unit.field_path,
+        "text_normalized": unit.text_normalized,
+        "line_observation_id": unit.line_observation_id,
+        "tender_observation_id": unit.tender_observation_id,
+        "link_status": unit.link_status,
+        "unresolved_reason": unit.unresolved_reason,
+    }
+
+
+def recompute_unit_id(unit: ProductTextUnit) -> str:
+    """Independently recompute unit_id from material semantic fields."""
+    return _stable_unit_id(unit_id_semantic_payload(unit))
+
+
 def _attempt_id(payload: Mapping[str, Any]) -> str:
     digest = canonical_json_digest(
         {"adapter": PRODUCT_TEXT_ADAPTER_VERSION, "attempt": dict(payload)}
@@ -806,22 +826,22 @@ def extract_all_product_text_units(
     tuple[ProductTextUnit, ...],
     tuple[ProductTextUnit, ...],
     dict[str, Any],
-    tuple[str, ...],
+    tuple[ExtractionAttempt, ...],
     tuple[MaterializationRecord, ...],
 ]:
-    """Extract units; return attempt IDs + materialization ledger (not derived from units)."""
+    """Extract units; return full attempts + materialization ledger (not derived from units)."""
     registry = build_snapshot_registry(snapshot_paths)
     refs_by_id = {r.evidence_ref_id: r for r in plan.evidence_refs}
     linked_all: list[ProductTextUnit] = []
     unresolved_all: list[ProductTextUnit] = []
-    attempt_ids: list[str] = []
+    attempts_all: list[ExtractionAttempt] = []
     materializations_all: list[MaterializationRecord] = []
     occurrence_offset = 0
     for tender in plan.coalesced_tenders:
         linked, unresolved, attempts, mats = extract_units_for_tender(
             tender, refs_by_id=refs_by_id, snapshots_by_id=registry
         )
-        attempt_ids.extend(a.attempt_id for a in attempts)
+        attempts_all.extend(attempts)
         # Re-key occurrences to a global contiguous index across tenders.
         for mat in mats:
             materializations_all.append(
@@ -865,13 +885,13 @@ def extract_all_product_text_units(
         "snapshots_loaded": sorted(registry.keys()),
         "linked_unit_count": len(linked_all),
         "unresolved_unit_count": len(unresolved_all),
-        "extraction_attempt_count": len(attempt_ids),
+        "extraction_attempt_count": len(attempts_all),
         "materialization_count": len(materializations_all),
     }
     return (
         tuple(linked_all),
         tuple(unresolved_all),
         meta,
-        tuple(attempt_ids),
+        tuple(attempts_all),
         tuple(materializations_all),
     )

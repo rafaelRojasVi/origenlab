@@ -158,6 +158,10 @@ class ProductRelevancePlanResult:
 
     def to_summary_dict(self) -> dict[str, Any]:
         """Record-free summary — no blind/sealed/ops rows or product wording."""
+        from origenlab_email_pipeline.commercial_procurement_product_relevance.evaluation import (
+            aggregate_only_metrics,
+        )
+
         return {
             "planner_version": self.planner_version,
             "run_context": self.run_context,
@@ -168,7 +172,9 @@ class ProductRelevancePlanResult:
             "reconciliation": dict(self.reconciliation),
             "evaluation": {
                 "queue_record_count": self.evaluation_meta.get("queue_record_count"),
-                "metrics": self.evaluation_meta.get("metrics") or {},
+                "metrics": aggregate_only_metrics(
+                    self.evaluation_meta.get("metrics") or {}
+                ),
                 "sampling": self.evaluation_meta.get("sampling") or {},
                 "taxonomy_validation": self.evaluation_meta.get("taxonomy_validation")
                 or {},
@@ -180,6 +186,12 @@ class ProductRelevancePlanResult:
                 "sealed_scoring_file": "sealed_scoring_manifest.json",
                 "operational_records_file": "operational_evaluation_records.json",
                 "summary_is_record_free": True,
+                "evaluation_metrics_are_aggregate_only": True,
+                "evaluation_corpus_row_bearing_artifacts_only": [
+                    "human_review_packet.json",
+                    "sealed_scoring_manifest.json",
+                    "operational_evaluation_records.json",
+                ],
                 "no_recombined_blind_and_sealed_file": True,
             },
         }
