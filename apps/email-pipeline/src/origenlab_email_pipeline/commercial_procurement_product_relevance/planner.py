@@ -28,6 +28,10 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.constants
 from origenlab_email_pipeline.commercial_procurement_product_relevance.evaluation import (
     build_labeling_queue,
     compute_evaluation_metrics,
+    is_manual_review_prediction,
+    sampling_distribution_report,
+    to_blind_packet,
+    to_sealed_scoring,
     write_labeling_queue,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.evidence_adapter import (
@@ -49,6 +53,10 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.taxonomy_
     pr5d_taxonomy_document,
     validate_pr5d_taxonomy,
 )
+from origenlab_email_pipeline.commercial_procurement_product_relevance.walkthrough import (
+    build_cases_a_e,
+    write_walkthrough_into,
+)
 
 
 class RelevanceReconciliationError(ValueError):
@@ -61,35 +69,78 @@ def _email_pipeline_root() -> Path:
 
 def reconcile_relevance(
     *,
-    coalesced_tender_ids: set[str],
-    decision_tender_ids: set[str],
-    linked_unit_ids: set[str],
-    unresolved_unit_ids: set[str],
-    all_unit_ids: set[str],
+    coalesced_tender_ids: list[str],
+    decision_tender_ids: list[str],
+    linked_unit_ids: list[str],
+    unresolved_unit_ids: list[str],
+    extraction_attempt_ids: list[str],
 ) -> dict[str, Any]:
-    missing_decisions = sorted(coalesced_tender_ids - decision_tender_ids)
-    extra_decisions = sorted(decision_tender_ids - coalesced_tender_ids)
-    unit_union = linked_unit_ids | unresolved_unit_ids
-    missing_units = sorted(all_unit_ids - unit_union)
-    overlap = sorted(linked_unit_ids & unresolved_unit_ids)
-    ok = not (missing_decisions or extra_decisions or missing_units or overlap)
+    """Independent reconciliation — attempt IDs are not derived from linked∪unresolved."""
+    tender_set = set(coalesced_tender_ids)
+    decision_set = set(decision_tender_ids)
+    linked_set = set(linked_unit_ids)
+    unresolved_set = set(unresolved_unit_ids)
+    attempt_set = set(extraction_attempt_ids)
+
+    missing_decisions = sorted(tender_set - decision_set)
+    extra_decisions = sorted(decision_set - tender_set)
+    duplicate_tender_decisions = sorted(
+        tid
+        for tid, n in Counter(decision_tender_ids).items()
+        if n > 1
+    )
+    duplicate_unit_ids = sorted(
+        uid
+        for uid, n in Counter(linked_unit_ids + unresolved_unit_ids).items()
+        if n > 1
+    )
+    duplicate_attempts = sorted(
+        uid for uid, n in Counter(extraction_attempt_ids).items() if n > 1
+    )
+    overlap = sorted(linked_set & unresolved_set)
+    dropped_attempts = sorted(attempt_set - (linked_set | unresolved_set))
+    unexpected_units = sorted((linked_set | unresolved_set) - attempt_set)
+
+    ok = not (
+        missing_decisions
+        or extra_decisions
+        or duplicate_tender_decisions
+        or duplicate_unit_ids
+        or duplicate_attempts
+        or overlap
+        or dropped_attempts
+        or unexpected_units
+        or len(coalesced_tender_ids) != len(decision_tender_ids)
+    )
     return {
         "ok": ok,
         "equations": {
-            "coalesced_tenders_eq_decisions": len(coalesced_tender_ids)
-            == len(decision_tender_ids)
-            and not missing_decisions
-            and not extra_decisions,
-            "units_eq_linked_plus_unresolved": not missing_units and not overlap,
+            "coalesced_tenders_eq_decisions": (
+                len(coalesced_tender_ids) == len(decision_tender_ids)
+                and not missing_decisions
+                and not extra_decisions
+                and not duplicate_tender_decisions
+            ),
+            "attempts_eq_linked_plus_unresolved": (
+                not dropped_attempts
+                and not unexpected_units
+                and not overlap
+                and not duplicate_unit_ids
+            ),
         },
         "coalesced_tender_count": len(coalesced_tender_ids),
         "decision_count": len(decision_tender_ids),
         "linked_unit_count": len(linked_unit_ids),
         "unresolved_unit_count": len(unresolved_unit_ids),
+        "extraction_attempt_count": len(extraction_attempt_ids),
         "missing_decisions": missing_decisions[:50],
         "extra_decisions": extra_decisions[:50],
-        "missing_units": missing_units[:50],
+        "duplicate_tender_decisions": duplicate_tender_decisions[:50],
+        "duplicate_unit_ids": duplicate_unit_ids[:50],
+        "duplicate_extraction_attempts": duplicate_attempts[:50],
         "linked_unresolved_overlap": overlap[:50],
+        "dropped_extraction_attempts": dropped_attempts[:50],
+        "unexpected_units_not_in_attempts": unexpected_units[:50],
     }
 
 
@@ -111,7 +162,7 @@ def build_product_relevance_plan(
         run_context=run_context,
     )
 
-    linked, unresolved, adapter_meta = extract_all_product_text_units(
+    linked, unresolved, adapter_meta, attempt_ids = extract_all_product_text_units(
         plan, snapshot_paths=acquisition_snapshot_paths
     )
 
@@ -121,8 +172,6 @@ def build_product_relevance_plan(
             key=lambda d: d.unit_decision_id,
         )
     )
-    # Unresolved empty units still need explainable unit-level decisions
-    # so tenders never silently become unrelated.
     unresolved_decisions = tuple(
         sorted(
             (classify_product_text_unit(u) for u in unresolved),
@@ -137,21 +186,16 @@ def build_product_relevance_plan(
     )
 
     by_tender = group_unit_decisions_by_tender(all_unit_decisions)
-    # provisional input fp for per-tender (final fingerprints computed after)
     provisional_input = plan.semantic_digest
-    tender_decisions = []
-    for tender in plan.coalesced_tenders:
-        units = by_tender.get(tender.coalesced_tender_id, [])
-        tender_decisions.append(
-            aggregate_tender_decision(
-                tender,
-                units,
-                input_fingerprint=provisional_input,
-            )
+    tender_decisions = [
+        aggregate_tender_decision(
+            tender,
+            by_tender.get(tender.coalesced_tender_id, []),
+            input_fingerprint=provisional_input,
         )
-    tender_decisions_t = tuple(
-        sorted(tender_decisions, key=lambda d: d.decision_id)
-    )
+        for tender in plan.coalesced_tenders
+    ]
+    tender_decisions_t = tuple(sorted(tender_decisions, key=lambda d: d.decision_id))
 
     fps = all_fingerprints(
         pr5c_semantic_digest=plan.semantic_digest,
@@ -160,17 +204,14 @@ def build_product_relevance_plan(
         tender_decisions=tender_decisions_t,
         unit_decisions=all_unit_decisions,
     )
-    # Re-stamp tender decisions with final input fingerprint (identity stable on semantics).
-    tender_decisions_final = []
-    for tender in plan.coalesced_tenders:
-        units = by_tender.get(tender.coalesced_tender_id, [])
-        tender_decisions_final.append(
-            aggregate_tender_decision(
-                tender,
-                units,
-                input_fingerprint=fps["input_fingerprint"],
-            )
+    tender_decisions_final = [
+        aggregate_tender_decision(
+            tender,
+            by_tender.get(tender.coalesced_tender_id, []),
+            input_fingerprint=fps["input_fingerprint"],
         )
+        for tender in plan.coalesced_tenders
+    ]
     tender_decisions_t = tuple(
         sorted(tender_decisions_final, key=lambda d: d.decision_id)
     )
@@ -183,11 +224,11 @@ def build_product_relevance_plan(
     )
 
     reconciliation = reconcile_relevance(
-        coalesced_tender_ids={t.coalesced_tender_id for t in plan.coalesced_tenders},
-        decision_tender_ids={d.coalesced_tender_id for d in tender_decisions_t},
-        linked_unit_ids={u.unit_id for u in linked},
-        unresolved_unit_ids={u.unit_id for u in unresolved},
-        all_unit_ids={u.unit_id for u in linked} | {u.unit_id for u in unresolved},
+        coalesced_tender_ids=[t.coalesced_tender_id for t in plan.coalesced_tenders],
+        decision_tender_ids=[d.coalesced_tender_id for d in tender_decisions_t],
+        linked_unit_ids=[u.unit_id for u in linked],
+        unresolved_unit_ids=[u.unit_id for u in unresolved],
+        extraction_attempt_ids=list(attempt_ids),
     )
     if not reconciliation["ok"]:
         raise RelevanceReconciliationError(
@@ -198,10 +239,15 @@ def build_product_relevance_plan(
     abstain = sum(
         1
         for d in tender_decisions_t
-        if d.confidence_band == "abstain" or d.relevance_class == "ambiguous"
+        if is_manual_review_prediction(
+            relevance_class=d.relevance_class,
+            confidence_band=d.confidence_band,
+            resolution_status=d.product_resolution_status,
+            ambiguity_reason_codes=d.ambiguity_reason_codes,
+            aggregation_reason_codes=d.aggregation_reason_codes,
+        )
     )
 
-    # Labeling queue inputs
     text_by: dict[str, str] = {}
     lines_by: dict[str, bool] = {}
     plane_by: dict[str, str] = {}
@@ -215,7 +261,7 @@ def build_product_relevance_plan(
         )
         plane_by[tender.coalesced_tender_id] = tender.candidate_source_kind
 
-    queue = build_labeling_queue(
+    queue, sampling_report = build_labeling_queue(
         tender_decisions_t,
         product_text_by_tender=text_by,
         has_lines_by_tender=lines_by,
@@ -231,9 +277,11 @@ def build_product_relevance_plan(
         "unresolved_units": len(unresolved),
         "unit_decisions": len(all_unit_decisions),
         "by_relevance_class": dict(sorted(class_counts.items())),
-        "abstention_or_ambiguous": abstain,
+        "abstention_or_manual_review": abstain,
+        "abstention_or_ambiguous": abstain,  # back-compat key
         "labeling_queue_size": len(queue),
         "adapter": adapter_meta,
+        "sampling": sampling_report,
     }
 
     return ProductRelevancePlanResult(
@@ -255,8 +303,102 @@ def build_product_relevance_plan(
             "metrics": metrics,
             "taxonomy_validation": validate_pr5d_taxonomy(),
             "labeling_queue": [r.to_dict() for r in queue],
+            "blind_packet": [r.to_dict() for r in to_blind_packet(queue)],
+            "sealed_scoring_manifest": [
+                r.to_dict() for r in to_sealed_scoring(queue)
+            ],
+            "sampling": sampling_report,
         },
     )
+
+
+def _write_plan_files(safe: Path, result: ProductRelevancePlanResult) -> dict[str, str]:
+    def dump(name: str, payload: Any) -> str:
+        path = safe / name
+        path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
+            encoding="utf-8",
+        )
+        return str(path)
+
+    written: dict[str, str] = {}
+    written["RUN_MANIFEST.json"] = dump(
+        "RUN_MANIFEST.json",
+        {
+            "planner_version": result.planner_version,
+            "run_context": result.run_context,
+            "as_of_utc": result.as_of_utc,
+            "pr5c_semantic_digest": result.pr5c_semantic_digest,
+            "fingerprints": result.fingerprints,
+            "counts": result.counts,
+            "reconciliation": result.reconciliation,
+            "not_persisted": True,
+            "scope": "product_relevance_only",
+            "exclusions": [
+                "contact_resolution",
+                "lead_persistence",
+                "outreach",
+                "scheduling",
+                "gmail",
+                "postgres",
+                "llm",
+            ],
+        },
+    )
+    written["field_sufficiency.json"] = dump(
+        "field_sufficiency.json", result.field_sufficiency
+    )
+    written["taxonomy.json"] = dump("taxonomy.json", result.taxonomy_document)
+    written["tender_relevance_decisions.json"] = dump(
+        "tender_relevance_decisions.json",
+        [d.to_dict() for d in result.tender_decisions],
+    )
+    written["unit_relevance_decisions.json"] = dump(
+        "unit_relevance_decisions.json",
+        [d.to_dict() for d in result.unit_decisions],
+    )
+    written["product_text_units.json"] = dump(
+        "product_text_units.json",
+        {
+            "linked": [u.to_dict() for u in result.product_text_units],
+            "unresolved": [u.to_dict() for u in result.unresolved_units],
+            "note": "Operational full-detail bundle — not the shareable walkthrough.",
+        },
+    )
+    written["evaluation_metrics.json"] = dump(
+        "evaluation_metrics.json",
+        result.evaluation_meta.get("metrics") or {},
+    )
+    written["sampling_distribution.json"] = dump(
+        "sampling_distribution.json",
+        result.evaluation_meta.get("sampling")
+        or sampling_distribution_report([]),
+    )
+    queue_path = safe / "labeling_queue.json"
+    queue_path.write_text(
+        json.dumps(
+            {
+                "schema": "pr5d_labeling_queue_v2",
+                "blind_packet": result.evaluation_meta.get("blind_packet") or [],
+                "sealed_scoring_manifest": result.evaluation_meta.get(
+                    "sealed_scoring_manifest"
+                )
+                or [],
+                "operational_records": result.evaluation_meta.get("labeling_queue")
+                or [],
+                "metrics": result.evaluation_meta.get("metrics") or {},
+                "sampling": result.evaluation_meta.get("sampling") or {},
+            },
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    written["labeling_queue.json"] = str(queue_path)
+    written["summary.json"] = dump("summary.json", result.to_summary_dict())
+    return written
 
 
 def write_relevance_outputs(
@@ -265,94 +407,19 @@ def write_relevance_outputs(
     *,
     repo_email_pipeline_root: Path | None = None,
     require_git_ignored: bool = True,
+    include_walkthrough: bool = True,
 ) -> dict[str, str]:
+    """Publish plan (+ optional walkthrough) as one atomic staged bundle."""
     root = repo_email_pipeline_root or _email_pipeline_root()
+    walkthrough_bundle = build_cases_a_e(result) if include_walkthrough else None
 
     def _write(safe: Path) -> dict[str, str]:
-        def dump(name: str, payload: Any) -> str:
-            path = safe / name
-            path.write_text(
-                json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True)
-                + "\n",
-                encoding="utf-8",
-            )
-            return str(path)
-
-        written: dict[str, str] = {}
-        written["RUN_MANIFEST.json"] = dump(
-            "RUN_MANIFEST.json",
-            {
-                "planner_version": result.planner_version,
-                "run_context": result.run_context,
-                "as_of_utc": result.as_of_utc,
-                "pr5c_semantic_digest": result.pr5c_semantic_digest,
-                "fingerprints": result.fingerprints,
-                "counts": result.counts,
-                "reconciliation": result.reconciliation,
-                "not_persisted": True,
-                "scope": "product_relevance_only",
-                "exclusions": [
-                    "contact_resolution",
-                    "lead_persistence",
-                    "outreach",
-                    "scheduling",
-                    "gmail",
-                    "postgres",
-                    "llm",
-                ],
-            },
-        )
-        written["field_sufficiency.json"] = dump(
-            "field_sufficiency.json", result.field_sufficiency
-        )
-        written["taxonomy.json"] = dump("taxonomy.json", result.taxonomy_document)
-        written["tender_relevance_decisions.json"] = dump(
-            "tender_relevance_decisions.json",
-            [d.to_dict() for d in result.tender_decisions],
-        )
-        written["unit_relevance_decisions.json"] = dump(
-            "unit_relevance_decisions.json",
-            [d.to_dict() for d in result.unit_decisions],
-        )
-        written["product_text_units.json"] = dump(
-            "product_text_units.json",
-            {
-                "linked": [u.to_dict() for u in result.product_text_units],
-                "unresolved": [u.to_dict() for u in result.unresolved_units],
-            },
-        )
-        written["evaluation_metrics.json"] = dump(
-            "evaluation_metrics.json",
-            result.evaluation_meta.get("metrics") or {},
-        )
-        queue_path = safe / "labeling_queue.json"
-        # evaluation_meta embeds queue; also write dedicated file
-        from origenlab_email_pipeline.commercial_procurement_product_relevance.evaluation import (
-            EvaluationRecord,
-        )
-
-        records = [
-            EvaluationRecord(**r) if isinstance(r, dict) else r
-            for r in (result.evaluation_meta.get("labeling_queue") or [])
-        ]
-        # Records may already be dicts from to_dict — write raw
-        queue_path.write_text(
-            json.dumps(
-                {
-                    "schema": "pr5d_labeling_queue_v1",
-                    "records": result.evaluation_meta.get("labeling_queue") or [],
-                    "metrics": result.evaluation_meta.get("metrics") or {},
-                },
-                indent=2,
-                sort_keys=True,
-                ensure_ascii=True,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        written["labeling_queue.json"] = str(queue_path)
-        written["summary.json"] = dump("summary.json", result.to_summary_dict())
-        _ = records  # reserved for typed rewrite path
+        written = _write_plan_files(safe, result)
+        if walkthrough_bundle is not None:
+            walk_dir = safe / "walkthrough"
+            walk_written = write_walkthrough_into(walkthrough_bundle, walk_dir)
+            for k, v in walk_written.items():
+                written[f"walkthrough/{k}"] = v
         return written
 
     return write_atomically(
@@ -363,11 +430,11 @@ def write_relevance_outputs(
     )
 
 
-# Re-export for CLI convenience
 __all__ = [
     "RelevanceReconciliationError",
     "ReportOutputError",
     "build_product_relevance_plan",
+    "reconcile_relevance",
     "require_reports_out_dir",
     "write_relevance_outputs",
     "write_labeling_queue",

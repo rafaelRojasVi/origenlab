@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Iterable
+from typing import Any, Iterable
 
 from origenlab_email_pipeline.commercial_procurement_acquisition.canonical_json import (
     canonical_json_digest,
@@ -27,6 +27,47 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.models im
 _STRONG = STRONG_RELEVANCE_CLASSES
 _NEGATIVE = NEGATIVE_RELEVANCE_CLASSES - {"unrelated"}  # unrelated is weak negative
 _ABSTAIN = frozenset({"ambiguous", "laboratory_context_only"})
+
+
+def aggregation_policy_spec() -> dict[str, Any]:
+    """Declarative aggregation semantics shared by execution + fingerprints."""
+    return {
+        "version": "aggregation_policy_v1",
+        "strong_classes": sorted(_STRONG),
+        "negative_classes": sorted(_NEGATIVE),
+        "abstain_classes": sorted(_ABSTAIN),
+        "policies": [
+            {
+                "id": "no_usable_units",
+                "outcome": "ambiguous",
+                "confidence_band": "abstain",
+            },
+            {
+                "id": "strong_positive_survives_negative_lines",
+                "when": "strong_and_negative_present",
+                "outcome": "prefer_strongest_positive",
+                "note": "Independent durable-equipment line is not erased by a negative line",
+            },
+            {
+                "id": "mixed_positive_and_negative_requires_review",
+                "when": "conflicting_strong_classes_or_substantial_mix",
+                "outcome": "may_set_mixed_requires_review",
+            },
+            {
+                "id": "all_units_negative",
+                "outcome": "most_specific_negative",
+            },
+            {
+                "id": "all_units_ambiguous_or_empty",
+                "outcome": "ambiguous+abstain",
+            },
+            {
+                "id": "empty_never_silent_unrelated",
+                "when": "all_units_insufficient_product_text",
+                "force_outcome": "ambiguous",
+            },
+        ],
+    }
 
 
 def aggregate_tender_decision(

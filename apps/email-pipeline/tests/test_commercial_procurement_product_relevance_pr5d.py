@@ -12,6 +12,8 @@ from origenlab_email_pipeline.commercial_procurement_live_relevance.constants im
     RELEVANCE_CLASSES,
 )
 from origenlab_email_pipeline.commercial_procurement_live_relevance.taxonomy import (
+    CANONICAL_EQUIPMENT_CLASSES,
+    EXACT_CLASS_MAPPINGS,
     validate_taxonomy_mapping_completeness,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.aggregate import (
@@ -22,9 +24,17 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.constants
     RELEVANCE_CLASSES_V1,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.evaluation import (
+    EvaluationRecord,
     compute_evaluation_metrics,
-    redact_product_wording,
     stable_sample_key,
+    to_blind_packet,
+    to_sealed_scoring,
+    validate_metric_eligibility,
+)
+from origenlab_email_pipeline.commercial_procurement_product_relevance.redaction import (
+    assert_no_forbidden_substrings,
+    redact_product_wording,
+    shareable_scan_forbidden_from_regression_inputs,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.field_sufficiency import (
     field_sufficiency_document,
@@ -43,14 +53,24 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.normalize
     stable_token_sort_key,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.rules import (
+    RULE_PRECEDENCE,
     classify_product_text_unit,
+    rules_fingerprint_payload,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.taxonomy_extensions import (
     PROPOSED_CATALOG_ALIASES,
+    PR5D_CANONICAL_EQUIPMENT_CLASSES,
+    PR5D_EXACT_CLASS_MAPPINGS,
+    taxonomy_fingerprint_payload,
     validate_pr5d_taxonomy,
+    validate_taxonomy_uniqueness,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.walkthrough import (
     build_cases_a_e,
+)
+from origenlab_email_pipeline.commercial_procurement_product_relevance.planner import (
+    reconcile_relevance,
+    write_relevance_outputs,
 )
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.models import (
     CoalescedProcurementTender,
@@ -432,4 +452,331 @@ def test_integration_over_pr5c_fixture_sqlite(tmp_path: Path) -> None:
         len(result.product_text_units) + len(result.unresolved_units)
     ) >= result.counts["coalesced_tenders"] or result.counts["coalesced_tenders"] == 0
     # Units may be unresolved when snapshot observations lack usable text; never silent drop.
-    assert result.reconciliation["equations"]["units_eq_linked_plus_unresolved"] is True
+    assert result.reconciliation["equations"]["attempts_eq_linked_plus_unresolved"] is True
+
+
+def test_title_only_no_match_abstains_not_unrelated() -> None:
+    d = classify_product_text_unit(
+        _unit("Adquisición de materiales diversos", tier="title_only")
+    )
+    assert d.relevance_class == "ambiguous"
+    assert d.confidence_band == "abstain"
+    assert "title_only_weak_signal" in d.ambiguity_reason_codes
+
+
+def test_taxonomy_not_duplicated_and_unique() -> None:
+    assert PR5D_CANONICAL_EQUIPMENT_CLASSES is CANONICAL_EQUIPMENT_CLASSES or list(
+        PR5D_CANONICAL_EQUIPMENT_CLASSES
+    ) == list(CANONICAL_EQUIPMENT_CLASSES)
+    assert PR5D_EXACT_CLASS_MAPPINGS == list(EXACT_CLASS_MAPPINGS)
+    uniq = validate_taxonomy_uniqueness()
+    assert uniq["ok"], uniq["errors"]
+    # Injected duplicate must fail without set-hiding.
+    bad = validate_taxonomy_uniqueness(
+        canonical_classes=list(CANONICAL_EQUIPMENT_CLASSES) + ["centrifuge"],
+    )
+    assert not bad["ok"]
+    assert any("duplicate_canonical_class:centrifuge" in e for e in bad["errors"])
+
+
+def test_taxonomy_fingerprint_moves_on_alias_content_change(monkeypatch: pytest.MonkeyPatch) -> None:
+    base = relevance_taxonomy_fingerprint()
+    payload = taxonomy_fingerprint_payload()
+    # Mutate a nested alias without changing counts.
+    mutated = dict(payload)
+    mappings = [dict(r) for r in payload["exact_class_mappings"]]
+    mappings[0] = dict(mappings[0])
+    aliases = list(mappings[0]["source_aliases_normalized"])
+    aliases[0] = aliases[0] + "_mutated"
+    mappings[0]["source_aliases_normalized"] = aliases
+    mutated["exact_class_mappings"] = mappings
+
+    def _fake() -> dict:
+        return mutated
+
+    monkeypatch.setattr(
+        "origenlab_email_pipeline.commercial_procurement_product_relevance.fingerprint.taxonomy_fingerprint_payload",
+        _fake,
+    )
+    assert relevance_taxonomy_fingerprint() != base
+
+
+def test_rules_fingerprint_moves_on_precedence_change(monkeypatch: pytest.MonkeyPatch) -> None:
+    base = relevance_rules_fingerprint()
+    payload = rules_fingerprint_payload()
+    mutated = dict(payload)
+    precedence = list(payload["rule_precedence"])
+    precedence = list(reversed(precedence))
+    mutated["rule_precedence"] = precedence
+
+    def _fake() -> dict:
+        return mutated
+
+    monkeypatch.setattr(
+        "origenlab_email_pipeline.commercial_procurement_product_relevance.fingerprint.rules_fingerprint_payload",
+        _fake,
+    )
+    assert relevance_rules_fingerprint() != base
+    assert RULE_PRECEDENCE  # declarative spec present
+
+
+def test_metric_eligibility_rejects_incomplete_reviewed() -> None:
+    bad = EvaluationRecord(
+        record_id="eval_x",
+        coalesced_tender_alias="redacted.tender.abc",
+        diagnostic_stratum="random_non_hit",
+        product_text_redacted="text",
+        has_line_descriptions=False,
+        source_plane="pr4",
+        text_richness="sparse",
+        predicted_relevance_class="unrelated",
+        predicted_confidence_band="medium",
+        predicted_resolution_status="negative_class_only",
+        predicted_ambiguity_reason_codes=(),
+        predicted_aggregation_reason_codes=(),
+        manual_review_recommended=False,
+        label_status="reviewed",
+        gold_relevance_class="unrelated",
+        review_source=None,
+        independently_reviewed=False,
+        is_synthetic=False,
+        redaction_proof={},
+    )
+    reasons = validate_metric_eligibility(bad)
+    assert "missing_review_source" in reasons
+    assert "not_independently_reviewed" in reasons
+    metrics = compute_evaluation_metrics([bad])
+    assert metrics["insufficient_independent_labels"] is True
+    assert metrics["precision"] is None
+    assert metrics["rejected_from_metrics"]
+
+
+def test_synthetic_excluded_from_metrics() -> None:
+    synth = EvaluationRecord(
+        record_id="eval_s",
+        coalesced_tender_alias="redacted.tender.s",
+        diagnostic_stratum="equipment_first_hit",
+        product_text_redacted="centrifuga",
+        has_line_descriptions=True,
+        source_plane="pr4",
+        text_richness="rich",
+        predicted_relevance_class="strong_equipment_class",
+        predicted_confidence_band="high",
+        predicted_resolution_status="equipment_class_only",
+        predicted_ambiguity_reason_codes=(),
+        predicted_aggregation_reason_codes=(),
+        manual_review_recommended=False,
+        label_status="gold",
+        gold_relevance_class="strong_equipment_class",
+        review_source="human_operator",
+        independently_reviewed=True,
+        is_synthetic=True,
+        redaction_proof={},
+    )
+    assert "synthetic_excluded" in validate_metric_eligibility(synth)
+    metrics = compute_evaluation_metrics([synth])
+    assert metrics["labelled_for_metrics_count"] == 0
+
+
+def test_blind_packet_hides_predictions() -> None:
+    rec = EvaluationRecord(
+        record_id="eval_b",
+        coalesced_tender_alias="redacted.tender.b",
+        diagnostic_stratum="equipment_first_hit",
+        product_text_redacted="text",
+        has_line_descriptions=False,
+        source_plane="pr4",
+        text_richness="sparse",
+        predicted_relevance_class="strong_equipment_class",
+        predicted_confidence_band="high",
+        predicted_resolution_status="equipment_class_only",
+        predicted_ambiguity_reason_codes=("title_only_weak_signal",),
+        predicted_aggregation_reason_codes=(),
+        manual_review_recommended=False,
+        label_status="proposed",
+        gold_relevance_class=None,
+        review_source=None,
+        independently_reviewed=False,
+        is_synthetic=False,
+        redaction_proof={},
+    )
+    blind = to_blind_packet([rec])[0].to_dict()
+    sealed = to_sealed_scoring([rec])[0].to_dict()
+    assert "predicted_relevance_class" not in blind
+    assert "diagnostic_stratum" not in blind
+    assert "equipment_first_hit" not in json.dumps(blind)
+    assert sealed["predicted_relevance_class"] == "strong_equipment_class"
+    assert sealed["diagnostic_stratum"] == "equipment_first_hit"
+
+
+def test_shareable_walkthrough_redacts_recursive_sentinels() -> None:
+    # Inject production-like decision into walkthrough path via synthetic-only bundle
+    # plus a regression text that includes all sentinel classes.
+    forbidden = shareable_scan_forbidden_from_regression_inputs()
+    toxic = (
+        "RAW_TEXT_SENTINEL_XYZ_NEVER_SHARE buyer@example.com +56 9 1234 5678 "
+        "https://secret.example/path 12.345.678-9 3544-1-LE26 "
+        "src_rec_UNIQUE_RAW_99 BUYER:=HospitalSecreto"
+    )
+    redacted, _ = redact_product_wording(toxic)
+    for tok in forbidden:
+        assert tok not in redacted
+    assert "3544-1-LE26" not in redacted
+    assert "[REDACTED_CHILECOMPRA_CODE]" in redacted
+
+    bundle = build_cases_a_e(None)
+    assert_no_forbidden_substrings(bundle, forbidden=forbidden)
+    blob = json.dumps(bundle, sort_keys=True)
+    for key in (
+        "text_raw",
+        "coalesced_tender_id",
+        "evidence_ref_id",
+        "snapshot_id",
+        "decision_id",
+    ):
+        assert f'"{key}"' not in blob
+
+
+def test_reconciliation_detects_dropped_and_duplicate_attempts() -> None:
+    ok = reconcile_relevance(
+        coalesced_tender_ids=["t1"],
+        decision_tender_ids=["t1"],
+        linked_unit_ids=["u1"],
+        unresolved_unit_ids=["u2"],
+        extraction_attempt_ids=["u1", "u2"],
+    )
+    assert ok["ok"] is True
+
+    dropped = reconcile_relevance(
+        coalesced_tender_ids=["t1"],
+        decision_tender_ids=["t1"],
+        linked_unit_ids=["u1"],
+        unresolved_unit_ids=[],
+        extraction_attempt_ids=["u1", "u_dropped"],
+    )
+    assert dropped["ok"] is False
+    assert "u_dropped" in dropped["dropped_extraction_attempts"]
+
+    dup = reconcile_relevance(
+        coalesced_tender_ids=["t1"],
+        decision_tender_ids=["t1", "t1"],
+        linked_unit_ids=["u1", "u1"],
+        unresolved_unit_ids=[],
+        extraction_attempt_ids=["u1", "u1"],
+    )
+    assert dup["ok"] is False
+    assert dup["duplicate_tender_decisions"]
+    assert dup["duplicate_unit_ids"]
+
+
+def test_atomic_bundle_includes_walkthrough_and_restores_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from origenlab_email_pipeline.commercial_procurement.builder import (
+        _read_semantic_rows_from_db,
+    )
+    from origenlab_email_pipeline.commercial_procurement.constants import (
+        BUILD_CONTRACT,
+        SCHEMA_VERSION,
+    )
+    from origenlab_email_pipeline.commercial_procurement.ids import semantic_plan_digest
+    from origenlab_email_pipeline.commercial_procurement.schema import (
+        ensure_commercial_procurement_tables,
+    )
+    from origenlab_email_pipeline.commercial_procurement_acquisition.snapshot import (
+        build_acquisition_snapshot,
+    )
+    from origenlab_email_pipeline.commercial_procurement_product_relevance.planner import (
+        build_product_relevance_plan,
+    )
+
+    root = tmp_path / "email-pipeline"
+    reports = root / "reports" / "out"
+    reports.mkdir(parents=True)
+    # Make git-ignore check succeed by pointing require_git_ignored False.
+    db = tmp_path / "pr5d.sqlite"
+    conn = sqlite3.connect(str(db))
+    ensure_commercial_procurement_tables(conn)
+    meta = {
+        "source_fingerprint": "a" * 64,
+        "build_plan_fingerprint": "b" * 64,
+        "semantic_plan_digest": "c" * 64,
+        "schema_version": SCHEMA_VERSION,
+        "build_contract": BUILD_CONTRACT,
+        "identity_fingerprint": "d" * 64,
+        "as_of_date": "2026-07-30",
+        "source_fingerprint_algorithm": "procurement_source_fp_v1",
+        "build_plan_fingerprint_algorithm": "procurement_build_plan_fp_v1",
+        "semantic_plan_digest_algorithm": "procurement_semantic_plan_digest_v1",
+    }
+    for k, v in meta.items():
+        conn.execute(
+            "INSERT OR REPLACE INTO commercial_procurement_build_meta(meta_key, meta_value) "
+            "VALUES (?,?)",
+            (k, v),
+        )
+    rows = _read_semantic_rows_from_db(conn)
+    digest = semantic_plan_digest(table_rows=rows)
+    conn.execute(
+        "INSERT OR REPLACE INTO commercial_procurement_build_meta(meta_key, meta_value) "
+        "VALUES (?,?)",
+        ("semantic_plan_digest", digest),
+    )
+    conn.commit()
+    conn.close()
+    raw = json.loads(
+        (FIXTURES / "commercial_procurement_acquisition" / "ticket_detail_items.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    snap = build_acquisition_snapshot(
+        source_kind="ticket_detail",
+        payload=raw,
+        fixture_origin="synthetic_official_shape",
+        acquired_at_utc="2026-08-01T10:00:00Z",
+        tender_code="3544-1-LE26",
+    )
+    snap_path = tmp_path / "snap.json"
+    snap_path.write_text(json.dumps(snap.to_dict()) + "\n", encoding="utf-8")
+    result = build_product_relevance_plan(
+        sqlite_path=db,
+        acquisition_snapshot_paths=[snap_path],
+        as_of_utc="2026-08-01T19:00:30Z",
+        freshness_threshold_hours=48,
+        run_context="local_fixture",
+        labeling_queue_size=10,
+    )
+    out = reports / "pr5d_bundle"
+    written = write_relevance_outputs(
+        result,
+        out,
+        repo_email_pipeline_root=root,
+        require_git_ignored=False,
+        include_walkthrough=True,
+    )
+    assert (out / "RUN_MANIFEST.json").is_file()
+    assert (out / "walkthrough" / "WALKTHROUGH_CASES_A_E.json").is_file()
+    assert any(k.startswith("walkthrough/") for k in written)
+
+    # Inject failure after staging plan files but before rename completes:
+    # monkeypatch write_atomically writer path by failing mid-write via walkthrough.
+    prior_manifest = (out / "RUN_MANIFEST.json").read_text(encoding="utf-8")
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("injected walkthrough failure")
+
+    monkeypatch.setattr(
+        "origenlab_email_pipeline.commercial_procurement_product_relevance.planner.write_walkthrough_into",
+        _boom,
+    )
+    with pytest.raises(RuntimeError, match="injected walkthrough failure"):
+        write_relevance_outputs(
+            result,
+            out,
+            repo_email_pipeline_root=root,
+            require_git_ignored=False,
+            include_walkthrough=True,
+        )
+    # Prior complete bundle preserved.
+    assert (out / "RUN_MANIFEST.json").read_text(encoding="utf-8") == prior_manifest
+    assert (out / "walkthrough" / "WALKTHROUGH_CASES_A_E.json").is_file()

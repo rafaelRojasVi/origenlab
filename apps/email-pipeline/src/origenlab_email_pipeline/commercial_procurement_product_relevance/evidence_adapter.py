@@ -403,15 +403,28 @@ def extract_all_product_text_units(
     plan: CandidatePlanResult,
     *,
     snapshot_paths: list[Path],
-) -> tuple[tuple[ProductTextUnit, ...], tuple[ProductTextUnit, ...], dict[str, Any]]:
+) -> tuple[
+    tuple[ProductTextUnit, ...],
+    tuple[ProductTextUnit, ...],
+    dict[str, Any],
+    tuple[str, ...],
+]:
+    """Extract units and return independently tracked extraction-attempt IDs.
+
+    ``extraction_attempt_ids`` is collected before partitioning into linked vs
+    unresolved so reconciliation can detect silent drops.
+    """
     registry = build_snapshot_registry(snapshot_paths)
     refs_by_id = {r.evidence_ref_id: r for r in plan.evidence_refs}
     linked_all: list[ProductTextUnit] = []
     unresolved_all: list[ProductTextUnit] = []
+    attempt_ids: list[str] = []
     for tender in plan.coalesced_tenders:
         linked, unresolved = extract_units_for_tender(
             tender, refs_by_id=refs_by_id, snapshots_by_id=registry
         )
+        for u in linked + unresolved:
+            attempt_ids.append(u.unit_id)
         linked_all.extend(linked)
         unresolved_all.extend(unresolved)
     linked_all.sort(key=lambda u: (u.coalesced_tender_id, u.unit_id))
@@ -421,5 +434,11 @@ def extract_all_product_text_units(
         "snapshots_loaded": sorted(registry.keys()),
         "linked_unit_count": len(linked_all),
         "unresolved_unit_count": len(unresolved_all),
+        "extraction_attempt_count": len(attempt_ids),
     }
-    return tuple(linked_all), tuple(unresolved_all), meta
+    return (
+        tuple(linked_all),
+        tuple(unresolved_all),
+        meta,
+        tuple(attempt_ids),
+    )

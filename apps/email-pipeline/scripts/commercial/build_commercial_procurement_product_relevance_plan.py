@@ -38,10 +38,6 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.planner i
     build_product_relevance_plan,
     write_relevance_outputs,
 )
-from origenlab_email_pipeline.commercial_procurement_product_relevance.walkthrough import (  # noqa: E402
-    build_cases_a_e,
-    write_walkthrough,
-)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -105,14 +101,10 @@ def main(argv: list[str] | None = None) -> int:
             run_context=args.run_context,
             labeling_queue_size=int(args.labeling_queue_size),
         )
-        written = write_relevance_outputs(result, args.out_dir)
-        walk_dir = Path(str(args.out_dir) + "_walkthrough")
-        # Prefer sibling under same parent if out-dir already timestamped.
-        if args.out_dir.name.startswith("commercial_procurement_product_relevance"):
-            walk_dir = args.out_dir.parent / (args.out_dir.name + "_walkthrough")
-        bundle = build_cases_a_e(result)
-        walk_written = write_walkthrough(bundle, walk_dir)
-        written.update({f"walkthrough:{k}": v for k, v in walk_written.items()})
+        # Single atomic publish: plan + walkthrough under one out-dir.
+        written = write_relevance_outputs(
+            result, args.out_dir, include_walkthrough=True
+        )
     except (RelevanceReconciliationError, ReportOutputError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -128,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "PR5D product relevance plan written "
             f"(decisions={result.counts.get('relevance_decisions')}, "
-            f"abstain={result.counts.get('abstention_or_ambiguous')}, "
+            f"abstain={result.counts.get('abstention_or_manual_review')}, "
             f"not_persisted=true)"
         )
         for key, path in sorted(written.items()):

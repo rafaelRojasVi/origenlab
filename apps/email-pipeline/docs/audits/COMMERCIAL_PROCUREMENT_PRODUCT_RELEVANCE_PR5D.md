@@ -63,8 +63,18 @@ Forbidden: `--apply --persist --network --ticket --gmail --postgres --outreach -
 ## Evaluation
 
 - **Contract fixtures:** tracked synthetic cases (explicitly labelled).
-- **Real review corpus:** gitignored labeling queue via stable-hash sample; proposed ≠ gold.
-- Metrics only over independently labelled `reviewed`/`gold` records.
+- **Real review corpus:** gitignored labeling queue via **per-stratum stable-hash quotas** with documented exhaustion + redistribution; proposed ≠ gold.
+- **Blind packet** (human-facing) excludes predicted class / prediction-derived stratum; **sealed scoring manifest** joins by `record_id`.
+- Metric eligibility requires `reviewed|gold`, non-empty `review_source`, `independently_reviewed=True`, non-synthetic, valid gold class.
+- Metrics only over independently labelled `reviewed`/`gold` records. Zero eligible labels ⇒ no precision/recall/F1.
+
+## Contract corrections (audit pass)
+
+- Shareable walkthrough uses redacted DTOs only (no operational ID prefixes / `text_raw`).
+- Taxonomy classes live only in PR5A `taxonomy.py` (no PR5D duplicate append).
+- Title-only absence of keyword ⇒ `ambiguous` + abstain (not silent `unrelated`).
+- Plan + walkthrough publish as one atomic staged bundle.
+- Reconciliation uses independent extraction-attempt IDs.
 
 ## Roadmap note
 

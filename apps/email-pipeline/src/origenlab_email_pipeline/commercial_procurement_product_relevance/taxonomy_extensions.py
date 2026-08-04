@@ -1,4 +1,8 @@
-"""Taxonomy extensions and capability seeds for PR5D (builds on PR5A taxonomy)."""
+"""Taxonomy extensions for PR5D — single authoritative source is PR5A taxonomy.py.
+
+Capability seeds (proposed catalog aliases) live here only. Canonical classes and
+exact class mappings are NOT duplicated.
+"""
 
 from __future__ import annotations
 
@@ -15,40 +19,13 @@ from origenlab_email_pipeline.commercial_procurement_live_relevance.taxonomy imp
 from origenlab_email_pipeline.commercial_procurement_product_relevance.constants import (
     PRODUCT_RELEVANCE_TAXONOMY_VERSION,
 )
-
-# Additive canonical classes for known commercial gaps (tablet / dissolution / sedimentation).
-PR5D_CANONICAL_EQUIPMENT_CLASSES: Final = CANONICAL_EQUIPMENT_CLASSES + (
-    "tablet_hardness_tester",
-    "dissolution_apparatus",
-    "sedimentation_settlometer",
+from origenlab_email_pipeline.commercial_procurement_product_relevance.normalize import (
+    normalize_product_text,
 )
 
-PR5D_EXACT_CLASS_MAPPINGS: Final[list[dict[str, Any]]] = list(EXACT_CLASS_MAPPINGS) + [
-    {
-        "canonical": "tablet_hardness_tester",
-        "source_vocabulary": "commercial_capability_seed",
-        "source_aliases": [
-            "dureza_comprimidos",
-            "tablet_hardness",
-            "ensayo_tabletas",
-        ],
-        "resolution_kind": "exact",
-        "notes": "Class-level mapping; model aliases stay proposed until verified.",
-    },
-    {
-        "canonical": "dissolution_apparatus",
-        "source_vocabulary": "commercial_capability_seed",
-        "source_aliases": ["disolucion_comprimidos", "dissolution_apparatus"],
-        "resolution_kind": "exact",
-    },
-    {
-        "canonical": "sedimentation_settlometer",
-        "source_vocabulary": "commercial_capability_seed",
-        "source_aliases": ["settlometer", "kit_sedimentacion", "nalgene_settlometer"],
-        "resolution_kind": "exact",
-        "notes": "Nalgene settlometer is a capability seed, not auto-gold.",
-    },
-]
+# Authoritative: PR5A taxonomy already includes tablet/dissolution/sedimentation.
+PR5D_CANONICAL_EQUIPMENT_CLASSES: Final = CANONICAL_EQUIPMENT_CLASSES
+PR5D_EXACT_CLASS_MAPPINGS: Final[list[dict[str, Any]]] = list(EXACT_CLASS_MAPPINGS)
 
 # Capability seeds — NOT verified exact_catalog_product aliases until sanitized evidence exists.
 PROPOSED_CATALOG_ALIASES: Final[list[dict[str, Any]]] = [
@@ -88,17 +65,17 @@ PROPOSED_CATALOG_ALIASES: Final[list[dict[str, Any]]] = [
 TAXONOMY_GAPS_AUDITED: Final[list[dict[str, Any]]] = [
     {
         "gap": "tablet_hardness_testing",
-        "resolution": "added canonical tablet_hardness_tester",
+        "resolution": "canonical tablet_hardness_tester in PR5A taxonomy.py",
         "status": "addressed_class_level",
     },
     {
         "gap": "dissolution_equipment",
-        "resolution": "added canonical dissolution_apparatus",
+        "resolution": "canonical dissolution_apparatus in PR5A taxonomy.py",
         "status": "addressed_class_level",
     },
     {
         "gap": "sedimentation_settlometer",
-        "resolution": "added canonical sedimentation_settlometer",
+        "resolution": "canonical sedimentation_settlometer in PR5A taxonomy.py",
         "status": "addressed_class_level",
     },
     {
@@ -109,10 +86,84 @@ TAXONOMY_GAPS_AUDITED: Final[list[dict[str, Any]]] = [
 ]
 
 
+def _alias_rows_for_uniqueness(
+    mappings: list[dict[str, Any]],
+) -> list[tuple[str, str, str]]:
+    """Return (normalized_alias, canonical, source_vocabulary) preserving duplicates."""
+    rows: list[tuple[str, str, str]] = []
+    for row in mappings:
+        canonical = str(row.get("canonical") or "")
+        vocab = str(row.get("source_vocabulary") or "")
+        for alias in row.get("source_aliases") or []:
+            rows.append((normalize_product_text(str(alias)), canonical, vocab))
+    return rows
+
+
+def validate_taxonomy_uniqueness(
+    *,
+    canonical_classes: tuple[str, ...] | list[str] | None = None,
+    exact_mappings: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Fail on duplicate canonicals / duplicate normalized aliases (list scan, not set hide)."""
+    classes = list(
+        canonical_classes if canonical_classes is not None else PR5D_CANONICAL_EQUIPMENT_CLASSES
+    )
+    mappings = (
+        exact_mappings if exact_mappings is not None else PR5D_EXACT_CLASS_MAPPINGS
+    )
+    errors: list[str] = []
+
+    seen_classes: list[str] = []
+    for c in classes:
+        if c in seen_classes:
+            errors.append(f"duplicate_canonical_class:{c}")
+        seen_classes.append(c)
+
+    # Duplicate exact mapping rows for the same (canonical, vocab, sorted aliases).
+    mapping_keys: list[str] = []
+    for row in mappings:
+        key = (
+            f"{row.get('canonical')}|{row.get('source_vocabulary')}|"
+            f"{sorted(str(a) for a in (row.get('source_aliases') or []))}"
+        )
+        if key in mapping_keys:
+            errors.append(f"duplicate_exact_mapping_row:{key}")
+        mapping_keys.append(key)
+
+    alias_rows = _alias_rows_for_uniqueness(mappings)
+    seen_aliases: list[str] = []
+    for norm_alias, canonical, vocab in alias_rows:
+        if not norm_alias:
+            continue
+        # Same normalized alias mapping to more than one canonical is an error.
+        prior = [a for a in seen_aliases if a.split("->", 1)[0] == norm_alias]
+        for p in prior:
+            prior_canonical = p.split("->", 1)[1]
+            if prior_canonical != canonical:
+                errors.append(
+                    f"duplicate_normalized_alias_multi_canonical:"
+                    f"{norm_alias}->{sorted({prior_canonical, canonical})}"
+                )
+            else:
+                errors.append(
+                    f"duplicate_normalized_alias_same_canonical:{norm_alias}->{canonical}"
+                )
+        seen_aliases.append(f"{norm_alias}->{canonical}")
+
+    return {
+        "ok": not errors,
+        "errors": errors,
+        "canonical_class_count": len(classes),
+        "exact_mapping_row_count": len(mappings),
+        "normalized_alias_row_count": len(alias_rows),
+    }
+
+
 def pr5d_taxonomy_document() -> dict[str, Any]:
     base = taxonomy_mapping_document()
     return {
         "taxonomy_version": PRODUCT_RELEVANCE_TAXONOMY_VERSION,
+        "authoritative_source": "commercial_procurement_live_relevance.taxonomy",
         "base_pr5a": base,
         "canonical_equipment_classes": list(PR5D_CANONICAL_EQUIPMENT_CLASSES),
         "exact_class_mappings": PR5D_EXACT_CLASS_MAPPINGS,
@@ -124,70 +175,92 @@ def pr5d_taxonomy_document() -> dict[str, Any]:
             "Gmail supplier orders/dispatches/quotations may inform capability "
             "taxonomy but are not PR5D procurement candidates."
         ),
+        "uniqueness": validate_taxonomy_uniqueness(),
     }
 
 
 def validate_pr5d_taxonomy() -> dict[str, Any]:
-    """Validate PR5A completeness plus PR5D additive classes."""
+    """Validate PR5A completeness + uniqueness; seeds stay proposed."""
     base = validate_taxonomy_mapping_completeness()
-    errors = list(base["errors"])
-    canonical = set(PR5D_CANONICAL_EQUIPMENT_CLASSES)
-    mapped = set(base["mapped_canonicals"])
-    for row in PR5D_EXACT_CLASS_MAPPINGS:
-        c = str(row.get("canonical") or "")
-        if c not in canonical:
-            errors.append(f"pr5d_unknown_canonical:{c}")
-        else:
-            mapped.add(c)
+    uniq = validate_taxonomy_uniqueness()
+    errors = list(base["errors"]) + list(uniq["errors"])
+
     for seed in PROPOSED_CATALOG_ALIASES:
-        if seed.get("verification_status") == "verified_against_sanitized_evidence":
+        status = seed.get("verification_status")
+        if status == "verified_against_sanitized_evidence":
+            # Allowed only with explicit verification — currently none should be verified.
             continue
-        # Proposed seeds must not be treated as verified exact catalog.
-        if seed.get("verification_status") != "proposed_seed_not_verified":
+        if status != "proposed_seed_not_verified":
             errors.append(
-                f"seed_bad_status:{seed.get('alias_group')}:{seed.get('verification_status')}"
+                f"seed_bad_status:{seed.get('alias_group')}:{status}"
             )
-    unmapped = sorted(
-        c
-        for c in canonical
-        if c not in mapped and c not in FUTURE_OR_UNIMPLEMENTED
+
+    verified = sum(
+        1
+        for s in PROPOSED_CATALOG_ALIASES
+        if s.get("verification_status") == "verified_against_sanitized_evidence"
     )
-    # PR5A unmapped errors already cover base; only add PR5D-specific unmapped.
-    for c in unmapped:
-        if c in (
-            "tablet_hardness_tester",
-            "dissolution_apparatus",
-            "sedimentation_settlometer",
-        ):
-            errors.append(f"pr5d_unmapped_canonical:{c}")
-    # Filter base unmapped for classes we intentionally extended mapping for — keep base errors.
     return {
         "ok": not errors,
         "errors": errors,
-        "mapped_canonicals": sorted(mapped),
+        "mapped_canonicals": sorted(base["mapped_canonicals"]),
         "proposed_seed_count": len(PROPOSED_CATALOG_ALIASES),
-        "verified_catalog_alias_count": sum(
-            1
-            for s in PROPOSED_CATALOG_ALIASES
-            if s.get("verification_status") == "verified_against_sanitized_evidence"
-        ),
+        "verified_catalog_alias_count": verified,
+        "uniqueness": uniq,
     }
 
 
 def taxonomy_fingerprint_payload() -> dict[str, Any]:
+    """Full semantic taxonomy inputs — alias content changes must move the fingerprint."""
+    exact = []
+    for row in PR5D_EXACT_CLASS_MAPPINGS:
+        exact.append(
+            {
+                "canonical": row.get("canonical"),
+                "source_vocabulary": row.get("source_vocabulary"),
+                "resolution_kind": row.get("resolution_kind"),
+                "source_aliases_normalized": sorted(
+                    normalize_product_text(str(a))
+                    for a in (row.get("source_aliases") or [])
+                    if str(a).strip()
+                ),
+                "future_or_unimplemented": bool(row.get("future_or_unimplemented")),
+                "notes": row.get("notes"),
+            }
+        )
+    context = []
+    for row in CONTEXT_REQUIRED_ALIASES:
+        context.append(
+            {
+                "source_vocabulary": row.get("source_vocabulary"),
+                "source_alias_normalized": normalize_product_text(
+                    str(row.get("source_alias") or "")
+                ),
+                "resolution_kind": row.get("resolution_kind"),
+                "candidate_classes": list(row.get("candidate_classes") or []),
+                "disambiguation_rules": list(row.get("disambiguation_rules") or []),
+                "negative_context_rules": list(row.get("negative_context_rules") or []),
+            }
+        )
+    seeds = []
+    for seed in PROPOSED_CATALOG_ALIASES:
+        seeds.append(
+            {
+                "alias_group": seed.get("alias_group"),
+                "canonical_class": seed.get("canonical_class"),
+                "verification_status": seed.get("verification_status"),
+                "aliases_normalized": sorted(
+                    normalize_product_text(str(a))
+                    for a in (seed.get("aliases") or [])
+                    if str(a).strip()
+                ),
+            }
+        )
     return {
         "taxonomy_version": PRODUCT_RELEVANCE_TAXONOMY_VERSION,
         "canonical_equipment_classes": list(PR5D_CANONICAL_EQUIPMENT_CLASSES),
-        "exact_alias_count": sum(
-            len(r.get("source_aliases") or []) for r in PR5D_EXACT_CLASS_MAPPINGS
-        ),
-        "context_required_alias_count": len(CONTEXT_REQUIRED_ALIASES),
-        "proposed_catalog_alias_groups": sorted(
-            str(s["alias_group"]) for s in PROPOSED_CATALOG_ALIASES
-        ),
-        "verified_catalog_alias_count": sum(
-            1
-            for s in PROPOSED_CATALOG_ALIASES
-            if s.get("verification_status") == "verified_against_sanitized_evidence"
-        ),
+        "exact_class_mappings": exact,
+        "context_required_aliases": context,
+        "proposed_catalog_aliases": seeds,
+        "future_or_unimplemented": sorted(FUTURE_OR_UNIMPLEMENTED),
     }

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Final
 
 from origenlab_email_pipeline.commercial_procurement_acquisition.canonical_json import (
     canonical_json_digest,
@@ -474,20 +474,21 @@ def classify_product_text_unit(unit: ProductTextUnit) -> EvidenceUnitRelevanceDe
             relevance_class="laboratory_context_only",
             classes=[],
             resolution="negative_class_only",
-            confidence_band="medium",
+            confidence_band="abstain",
             positive=[],
             negative=["generic_insumos_without_equipment"],
             ambiguity=[],
             spans=[_span(field_path, "generic_insumos", m_ins)],
         )
 
+    # Absence of a known keyword is not proof of unrelatedness for title-only text.
     if unit.evidence_tier == "title_only":
         return _decision(
             unit,
-            relevance_class="unrelated",
+            relevance_class="ambiguous",
             classes=[],
-            resolution="negative_class_only",
-            confidence_band="low",
+            resolution="insufficient_product_text",
+            confidence_band="abstain",
             positive=[],
             negative=[],
             ambiguity=["title_only_weak_signal"],
@@ -507,7 +508,91 @@ def classify_product_text_unit(unit: ProductTextUnit) -> EvidenceUnitRelevanceDe
     )
 
 
+# Declarative rule/aggregation contract used by execution semantics + fingerprints.
+RULE_PRECEDENCE: Final[list[dict[str, Any]]] = [
+    {
+        "rule_id": "exact_catalog_model",
+        "outcome_class": "exact_catalog_product",
+        "confidence_band": "high",
+        "requires_verified_catalog_alias": True,
+    },
+    {
+        "rule_id": "consumable_centrifuge_tubes",
+        "outcome_class": "consumable_or_reagent",
+        "confidence_band": "high",
+    },
+    {
+        "rule_id": "consumable_microscope_accessories",
+        "outcome_class": "consumable_or_reagent",
+        "confidence_band": "high",
+    },
+    {
+        "rule_id": "rental_or_comodato",
+        "outcome_class": "rental_or_comodato",
+        "confidence_band": "high",
+        "override": "skipped_when_equipment_purchase_signal",
+    },
+    {
+        "rule_id": "service_or_maintenance",
+        "outcome_class": "service_or_maintenance_only",
+        "confidence_band": "high",
+        "override": "skipped_when_equipment_purchase_signal",
+    },
+    {
+        "rule_id": "non_lab_incubator",
+        "outcome_class": "non_laboratory_false_positive",
+        "confidence_band": "high",
+    },
+    {
+        "rule_id": "non_lab_false_positive",
+        "outcome_class": "non_laboratory_false_positive",
+        "confidence_band": "medium",
+    },
+    {
+        "rule_id": "context_required_sonicator",
+        "outcome_class": "ambiguous",
+        "confidence_band": "abstain",
+        "resolution": "context_required_unresolved",
+    },
+    {
+        "rule_id": "equipment_class_positive_hits",
+        "outcome_classes": ["strong_equipment_class", "compatible_equipment_class"],
+        "title_only_confidence_band": "low",
+        "line_confidence_band": "high",
+        "description_confidence_band": "medium",
+    },
+    {
+        "rule_id": "context_required_agitador",
+        "outcome_class": "ambiguous",
+        "confidence_band": "abstain",
+    },
+    {
+        "rule_id": "generic_insumos",
+        "outcome_class": "laboratory_context_only",
+        "confidence_band": "medium",
+        "manual_review_state": True,
+    },
+    {
+        "rule_id": "title_only_no_match_abstain",
+        "outcome_class": "ambiguous",
+        "confidence_band": "abstain",
+        "ambiguity": "title_only_weak_signal",
+        "note": "Absence of keyword is not proof of unrelatedness",
+    },
+    {
+        "rule_id": "line_or_description_no_match_unrelated",
+        "outcome_class": "unrelated",
+        "confidence_band": "medium",
+        "applies_when_evidence_tier_not": "title_only",
+    },
+]
+
+
 def rules_fingerprint_payload() -> dict[str, Any]:
+    from origenlab_email_pipeline.commercial_procurement_product_relevance.aggregate import (
+        aggregation_policy_spec,
+    )
+
     pattern_digest = canonical_json_digest(
         {
             "consumable_centrifuge_tube": CONSUMABLE_CENTRIFUGE_TUBE_RE.pattern,
@@ -541,31 +626,13 @@ def rules_fingerprint_payload() -> dict[str, Any]:
         "rules_version": PRODUCT_RELEVANCE_RULES_VERSION,
         "taxonomy": taxonomy_fingerprint_payload(),
         "pattern_digest": pattern_digest,
-        "rule_ids": sorted(
-            [
-                "exact_catalog_model",
-                "consumable_centrifuge_tubes",
-                "consumable_microscope_accessories",
-                "rental_or_comodato",
-                "service_or_maintenance",
-                "non_lab_incubator",
-                "non_lab_false_positive",
-                "context_required_sonicator",
-                "context_required_agitador",
-                "ultrasonic_processor",
-                "ultrasonic_bath",
-                "centrifuge",
-                "balance",
-                "microscope",
-                "incubator",
-                "homogenizer",
-                "shaker",
-                "vortex_mixer",
-                "magnetic_stirrer",
-                "tablet_hardness_tester",
-                "dissolution_apparatus",
-                "sedimentation_settlometer",
-                "generic_insumos",
-            ]
-        ),
+        "rule_precedence": RULE_PRECEDENCE,
+        "aggregation_policy": aggregation_policy_spec(),
+        "evidence_tier_behavior": {
+            "title_only_no_hard_negative": "ambiguous+abstain+title_only_weak_signal",
+            "title_only_with_equipment_hit": "class_match+low_confidence+title_only_weak_signal",
+            "line_no_match": "unrelated",
+            "empty_text": "ambiguous+insufficient_product_text",
+        },
+        "rule_ids": [r["rule_id"] for r in RULE_PRECEDENCE],
     }
