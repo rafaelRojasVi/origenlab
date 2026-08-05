@@ -31,9 +31,6 @@ from origenlab_email_pipeline.commercial_procurement.sources import (
     assert_active_read_transaction,
     load_pr2_account_index,
 )
-from origenlab_email_pipeline.commercial_procurement_acquisition.canonical_json import (
-    canonical_json_digest,
-)
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.models import (
     CoalescedProcurementTender,
 )
@@ -156,8 +153,11 @@ def assess_buyer_field_sufficiency(tender: CoalescedProcurementTender) -> str:
 
 
 def _org_id(payload: Mapping[str, Any]) -> str:
-    digest = canonical_json_digest({"kind": "organization_resolution", **dict(payload)})
-    return f"org_{digest[:32]}"
+    from origenlab_email_pipeline.commercial_procurement_contact_resolution.stable_ids import (
+        organization_resolution_id_from_payload,
+    )
+
+    return organization_resolution_id_from_payload(payload)
 
 
 def _deterministic_link_route(routes: list[str]) -> str | None:

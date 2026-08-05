@@ -462,6 +462,65 @@ def tender_allows_gated_lead_or_research(
     return True, ()
 
 
+def candidate_satisfies_feature_requirements(
+    candidate: Mapping[str, Any] | Any,
+    requirements: Sequence[str],
+) -> bool:
+    """Evaluate declarative feature requirements against a candidate's fields.
+
+    Accepted requirement names map to ContactCandidate fields / derived flags.
+    """
+    get = (
+        candidate.get
+        if isinstance(candidate, Mapping)
+        else (lambda k, default=None: getattr(candidate, k, default))
+    )
+    suitable = is_suitable_role(str(get("role_suitability") or ""))
+    verified = str(get("verification_status") or "") == "explicit_verification"
+    flags = {
+        "suitable_role": suitable,
+        "explicit_verification": verified,
+        "usable_email": bool(get("has_usable_email")),
+        "account_membership": True,
+        "identity_resolved": str(get("identity_status") or "")
+        in SELECTABLE_IDENTITY_STATUSES,
+        "not_safety_blocked": (not bool(get("safety_blocked")))
+        and (not bool(get("safety_unknown"))),
+        "safety_known": not bool(get("safety_unknown")),
+    }
+    return all(flags.get(req, False) for req in requirements)
+
+
+def exact_buyer_path_qualifies(
+    candidate: Any,
+    *,
+    policy: Mapping[str, Any] | None = None,
+) -> bool:
+    """True when candidate matches the exact-buyer verified path (executable)."""
+    spec = (policy or contact_resolution_policy_spec())["status_selection"]
+    exact_cfg = spec["exact_buyer_verified_path"]
+    get = (
+        candidate.get
+        if isinstance(candidate, Mapping)
+        else (lambda k, default=None: getattr(candidate, k, default))
+    )
+    if str(get("ranking_tier") or "") != str(exact_cfg["tier"]):
+        return False
+    return candidate_satisfies_feature_requirements(
+        candidate, list(exact_cfg.get("also_requires") or ())
+    )
+
+
+def is_role_review_tier(
+    ranking_tier: str,
+    *,
+    policy: Mapping[str, Any] | None = None,
+) -> bool:
+    """True when tier is in the executable role-review tier set."""
+    spec = (policy or contact_resolution_policy_spec())["status_selection"]
+    return ranking_tier in set(spec.get("role_review_tiers") or ())
+
+
 def next_action_for_status(
     status: str,
     *,

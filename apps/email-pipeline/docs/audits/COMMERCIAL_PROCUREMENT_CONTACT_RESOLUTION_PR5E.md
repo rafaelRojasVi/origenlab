@@ -101,30 +101,30 @@ Role tokens (smallest viable taxonomy from fixture/test audit): procurement (`co
 
 ## Reconciliation equations
 
-Binding over actual frozen objects (not parallel unrelated ID lists):
+Binding over an **independent source projection** (not parallel unrelated ID lists):
 
 ```text
-PR5D decision
-→ matching OrganizationResolution
-→ matching ContactResolutionSummary
-→ zero or more matching ContactCandidates
+Frozen PR5C tender + PR5D decision + PR2/PR4/Safety + policy
+→ expected OrganizationResolution / ContactResolutionSummary / candidates / evidence / conflicts
+→ compare emitted rows for exact equality
 ```
 
 Also enforced:
 
 - Organization/summary `relevance_decision_id` equals the actual decision for that tender
 - Summary organization ID/account matches its organization
-- Candidate summary, tender, and account all match
+- Candidate contact-ID set equals `frozen_index.contact_ids_for_account(account_id)`
+- Every candidate field recomputed from frozen + `evaluate_contact_safety` (never from emitted safety flags)
+- Candidate evidence IDs exactly equal frozen contact evidence IDs; plan evidence IDs exactly equal the union of candidate evidence IDs
+- Stable IDs from shared pure projectors (`stable_ids.py`); candidate IDs never encode a provisional parent CRS
+- Conflict set exactly equals `select_final_status` / projected conflicts
+- PR4 procurement IDs begin from the frozen tender constituents (not from emitted org)
 - `selected_candidate_id` resolves exactly once; selected contact agrees
 - Selected candidate satisfies role/identity/verification/safety for its status
 - Considered/suitable/blocked counts equal actual candidates
-- Ranks are deterministic, unique, and contiguous
-- Ambiguous status has competing candidates **and** a conflict row
-- Every candidate evidence ID resolves to frozen PR2 evidence for that contact
-- Every PR4 resolution pointer resolves when claimed
-- No duplicate `(contact_resolution_id, contact_id)`
+- Ranks are deterministic, unique, and contiguous; material rank swaps fail
+- Ambiguous status has competing candidates **and** a matching conflict row
 - Order-independent semantic digest; PII-safe fingerprints (hashed tokens, not raw emails/names/domains/buyer wording)
-
 ## SQLite load contract
 
 - URI `mode=ro` + `PRAGMA query_only=ON`
