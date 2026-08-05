@@ -176,6 +176,13 @@ def load_evidence_index(
     return {str(r["evidence_id"]): dict(r) for r in rows}
 
 
+def deferred_reason_for_organization(organization: OrganizationResolution) -> str:
+    """Deterministic deferred reason derived from organization status (not emitted)."""
+    if organization.resolution_status == "deferred_insufficient_buyer_fields":
+        return "insufficient_buyer_fields"
+    return "account_unresolved"
+
+
 def deferred_summary(
     *,
     tender_id: str,
@@ -429,6 +436,7 @@ def _build_candidate(
 
     return ContactCandidate(
         candidate_id=candidate_id_for(
+            coalesced_tender_id=tender_id,
             contact_id=contact_id,
             account_id=account_id,
             ranking_tier=tier,
@@ -716,12 +724,7 @@ def resolve_contacts_for_tender(
 ]:
     policy = contact_resolution_policy_spec()
     if organization.resolution_status != "linked" or not organization.account_id:
-        reason = (
-            "account_unresolved"
-            if organization.resolution_status
-            != "deferred_insufficient_buyer_fields"
-            else "insufficient_buyer_fields"
-        )
+        reason = deferred_reason_for_organization(organization)
         return (
             deferred_summary(
                 tender_id=tender_id,

@@ -63,14 +63,16 @@ def contact_resolution_id_linked(
 
 def candidate_id_for(
     *,
+    coalesced_tender_id: str,
     contact_id: str,
     account_id: str,
     ranking_tier: str,
 ) -> str:
-    """Candidate ID from source keys only — never from a provisional parent CRS."""
+    """Candidate ID from tender+account+contact+tier — never from a provisional CRS."""
     return _digest_id(
         "ccand",
         {
+            "coalesced_tender_id": coalesced_tender_id,
             "contact_id": contact_id,
             "account_id": account_id,
             "tier": ranking_tier,

@@ -116,10 +116,11 @@ Also enforced:
 - Candidate contact-ID set equals `frozen_index.contact_ids_for_account(account_id)`
 - Every candidate field recomputed from frozen + `evaluate_contact_safety` (never from emitted safety flags)
 - Candidate evidence IDs exactly equal frozen contact evidence IDs; plan evidence IDs exactly equal the union of candidate evidence IDs
-- Stable IDs from shared pure projectors (`stable_ids.py`); candidate IDs never encode a provisional parent CRS
+- Stable IDs from shared pure projectors (`stable_ids.py`); candidate IDs are `tender+account+contact+tier` and never encode a provisional parent CRS
+- Every summary field (including `input_fingerprint`, deferred reason/ID/semantic, and `not_persisted`) compared to an independently projected expected summary; deferred reason comes from the organization, never from emitted `reason_code`
+- Exact candidate/conflict row multiplicity and ownership (unique IDs, unique tender×contact pairs, global union equals projected union)
 - Conflict set exactly equals `select_final_status` / projected conflicts
-- PR4 procurement IDs begin from the frozen tender constituents (not from emitted org)
-- `selected_candidate_id` resolves exactly once; selected contact agrees
+- PR4 procurement IDs begin from the frozen tender constituents (not from emitted org)- `selected_candidate_id` resolves exactly once; selected contact agrees
 - Selected candidate satisfies role/identity/verification/safety for its status
 - Considered/suitable/blocked counts equal actual candidates
 - Ranks are deterministic, unique, and contiguous; material rank swaps fail

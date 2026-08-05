@@ -372,6 +372,7 @@ def build_contact_resolution_plan(
         conflicts=list(conflicts_t),
         frozen_index=frozen_index,
         safety=safety,
+        expected_input_fingerprint=fps["input_fingerprint"],
         account_index=account_index,
         known_account_ids=known_accounts,
         identity_fingerprint=identity_fp,

@@ -866,6 +866,7 @@ def test_reconcile_binding_counterexamples() -> None:
         conflicts=[],
         frozen_index=empty_frozen_source_index(),
         safety=_clear_safety(),
+        expected_input_fingerprint="x",
     )
     assert ok["ok"] is True
 
@@ -890,6 +891,7 @@ def test_reconcile_binding_counterexamples() -> None:
         conflicts=[],
         frozen_index=empty_frozen_source_index(),
         safety=_clear_safety(),
+        expected_input_fingerprint="x",
     )
     assert bad["ok"] is False
     assert any(
@@ -930,8 +932,18 @@ def test_reconcile_binding_counterexamples() -> None:
         conflicts=[],
         frozen_index=empty_frozen_source_index(),
         safety=_clear_safety(),
+        expected_input_fingerprint="x",
     )
-    assert any(f.get("error") == "deferred_has_candidates" for f in bad2["failures"])
+    assert any(
+        f.get("error")
+        in {
+            "deferred_has_candidates",
+            "candidate_row_count_mismatch",
+            "orphan_candidate",
+            "global_candidate_union_mismatch",
+        }
+        for f in bad2["failures"]
+    )
 
     # Linked path with mismatched candidate tender/account and bad selection.
     linked_org = _org(decision_id=decision.decision_id)
@@ -991,6 +1003,7 @@ def test_reconcile_binding_counterexamples() -> None:
         conflicts=[],
         frozen_index=empty_frozen_source_index(),
         safety=_clear_safety(),
+        expected_input_fingerprint="x",
     )
     errs = {f.get("error") for f in bad3["failures"]}
     assert bad3["ok"] is False
@@ -1048,6 +1061,7 @@ def test_reconcile_binding_counterexamples() -> None:
         conflicts=[],
         frozen_index=empty_frozen_source_index(),
         safety=_clear_safety(),
+        expected_input_fingerprint="x",
     )
     errs4 = {f.get("error") for f in bad4["failures"]}
     assert bad4["ok"] is False
@@ -1628,6 +1642,7 @@ def test_reconcile_fabricated_evidence_fields_fail() -> None:
         conflicts=[],
         frozen_index=frozen,
         safety=_clear_safety(),
+        expected_input_fingerprint="x",
     )
     assert result["ok"] is False
     assert any(f.get("error") == "evidence_field_mismatch" for f in result["failures"])
@@ -1690,6 +1705,7 @@ def test_reconcile_verification_claim_without_frozen_predicate_fails() -> None:
         conflicts=[],
         frozen_index=frozen,
         safety=_clear_safety(),
+        expected_input_fingerprint="x",
     )
     assert result["ok"] is False
     assert any(
@@ -1756,6 +1772,7 @@ def test_reconcile_swapped_evidence_pointer_fails() -> None:
         conflicts=[],
         frozen_index=frozen,
         safety=_clear_safety(),
+        expected_input_fingerprint="x",
     )
     assert result["ok"] is False
     errs = {f.get("error") for f in result["failures"]}
@@ -1849,6 +1866,7 @@ def test_reconcile_rank_order_inverted_vs_tier_fails() -> None:
         conflicts=[],
         frozen_index=frozen,
         safety=_clear_safety(),
+        expected_input_fingerprint="x",
     )
     assert result["ok"] is False
     assert any(
@@ -2065,6 +2083,7 @@ def test_reconcile_omitted_all_frozen_contacts_as_no_contact_found_fails() -> No
         conflicts=[],
         frozen_index=frozen,
         safety=_clear_safety(),
+        expected_input_fingerprint="x",
     )
     errs = {f.get("error") for f in result["failures"]}
     assert result["ok"] is False
@@ -2102,6 +2121,7 @@ def test_reconcile_highest_ranked_contact_omitted_fails() -> None:
         conflicts=confs,
         frozen_index=frozen,
         safety=_clear_safety(),
+        expected_input_fingerprint="x",
     )
     assert result["ok"] is False
     errs = {f.get("error") for f in result["failures"]}
@@ -2147,6 +2167,7 @@ def test_reconcile_omitted_verifying_evidence_while_claiming_verified_fails() ->
         conflicts=confs,
         frozen_index=frozen,
         safety=_clear_safety(),
+        expected_input_fingerprint="x",
     )
     assert result["ok"] is False
     errs = {f.get("error") for f in result["failures"]}
@@ -2182,6 +2203,7 @@ def test_reconcile_orphan_fabricated_plan_evidence_fails() -> None:
         conflicts=confs,
         frozen_index=frozen,
         safety=_clear_safety(),
+        expected_input_fingerprint="x",
     )
     assert result["ok"] is False
     errs = {f.get("error") for f in result["failures"]}
@@ -2221,6 +2243,7 @@ def test_reconcile_safety_clear_when_suppressed_fails() -> None:
         conflicts=confs,
         frozen_index=frozen,
         safety=safety,
+        expected_input_fingerprint="x",
     )
     assert result["ok"] is False
     assert any(
@@ -2264,6 +2287,7 @@ def test_reconcile_mutated_role_identity_email_selectability_fails() -> None:
         conflicts=confs,
         frozen_index=frozen,
         safety=_clear_safety(),
+        expected_input_fingerprint="x",
     )
     assert result["ok"] is False
     fields = {
@@ -2325,6 +2349,7 @@ def test_reconcile_fabricated_ids_with_recomputed_fingerprints_fails() -> None:
         conflicts=confs,
         frozen_index=frozen,
         safety=_clear_safety(),
+        expected_input_fingerprint="x",
     )
     assert result["ok"] is False
     errs = {f.get("error") for f in result["failures"]}
@@ -2356,10 +2381,11 @@ def test_reconcile_echo_drift_fails() -> None:
         conflicts=confs,
         frozen_index=frozen,
         safety=_clear_safety(),
+        expected_input_fingerprint="x",
     )
     assert result["ok"] is False
     assert any(
-        f.get("error") == "summary_echo_or_binding_mismatch"
+        f.get("error") == "summary_field_mismatch"
         and f.get("field")
         in {
             "relevance_class_echo",
@@ -2440,6 +2466,7 @@ def test_reconcile_org_pr4_ids_removed_or_swapped_fails() -> None:
         conflicts=[],
         frozen_index=frozen,
         safety=_clear_safety(),
+        expected_input_fingerprint="x",
     )
     assert result["ok"] is False
     assert any(
@@ -2500,6 +2527,7 @@ def test_reconcile_wrong_or_orphan_conflict_fails() -> None:
         conflicts=[orphan],
         frozen_index=frozen,
         safety=_clear_safety(),
+        expected_input_fingerprint="x",
     )
     assert result["ok"] is False
     assert any(f.get("error") == "conflict_set_mismatch" for f in result["failures"])
@@ -2535,6 +2563,7 @@ def test_candidate_id_independent_of_provisional_parent() -> None:
     assert {c.candidate_id for c in cands_a} == {c.candidate_id for c in cands_b}
     for c in cands_a:
         assert c.candidate_id == candidate_id_for(
+            coalesced_tender_id="t1",
             contact_id=c.contact_id,
             account_id=c.account_id,
             ranking_tier=c.ranking_tier,
@@ -2619,3 +2648,410 @@ def test_policy_also_requires_and_role_review_tiers_are_executable() -> None:
         assert reason == "contact_requires_role_review"
     finally:
         policy_mod.contact_resolution_policy_spec = original  # type: ignore[assignment]
+
+
+def test_reconcile_rejects_changed_input_fingerprint() -> None:
+    decision = _relevance()
+    tender = _tender()
+    org_u = _org(status="unlinked", account_id=None, decision_id=decision.decision_id)
+    summary = deferred_summary(
+        tender_id="t1",
+        relevance=decision,
+        organization=org_u,
+        input_fingerprint="expected_fp",
+        reason_code="account_unresolved",
+        currentness_class=tender.currentness_class or "",
+    )
+    from dataclasses import replace
+
+    mutated = replace(summary, input_fingerprint="mutated_fp")
+    result = reconcile_contact_resolution(
+        decisions=[decision],
+        tenders_by_id={"t1": tender},
+        organizations=[org_u],
+        summaries=[mutated],
+        candidates=[],
+        evidence=[],
+        conflicts=[],
+        frozen_index=empty_frozen_source_index(),
+        safety=_clear_safety(),
+        expected_input_fingerprint="expected_fp",
+    )
+    assert result["ok"] is False
+    assert any(
+        f.get("error") == "summary_field_mismatch"
+        and f.get("field") == "input_fingerprint"
+        for f in result["failures"]
+    )
+
+
+def test_reconcile_rejects_changed_deferred_reason_with_recomputed_ids() -> None:
+    decision = _relevance()
+    tender = _tender()
+    org_u = _org(status="unlinked", account_id=None, decision_id=decision.decision_id)
+    correct = deferred_summary(
+        tender_id="t1",
+        relevance=decision,
+        organization=org_u,
+        input_fingerprint="x",
+        reason_code="account_unresolved",
+        currentness_class=tender.currentness_class or "",
+    )
+    # Fabricate alternate reason and recompute ID + semantic as if honest
+    forged = deferred_summary(
+        tender_id="t1",
+        relevance=decision,
+        organization=org_u,
+        input_fingerprint="x",
+        reason_code="fabricated_reason",
+        currentness_class=tender.currentness_class or "",
+    )
+    assert forged.contact_resolution_id != correct.contact_resolution_id
+    assert forged.semantic_fingerprint != correct.semantic_fingerprint
+    result = reconcile_contact_resolution(
+        decisions=[decision],
+        tenders_by_id={"t1": tender},
+        organizations=[org_u],
+        summaries=[forged],
+        candidates=[],
+        evidence=[],
+        conflicts=[],
+        frozen_index=empty_frozen_source_index(),
+        safety=_clear_safety(),
+        expected_input_fingerprint="x",
+    )
+    assert result["ok"] is False
+    fields = {
+        f.get("field")
+        for f in result["failures"]
+        if f.get("error") == "summary_field_mismatch"
+    }
+    assert "reason_code" in fields
+    assert "contact_resolution_id" in fields or "semantic_fingerprint" in fields
+
+
+def test_reconcile_rejects_nonnull_deferred_account_or_selected() -> None:
+    decision = _relevance()
+    tender = _tender()
+    org_u = _org(status="unlinked", account_id=None, decision_id=decision.decision_id)
+    summary = deferred_summary(
+        tender_id="t1",
+        relevance=decision,
+        organization=org_u,
+        input_fingerprint="x",
+        reason_code="account_unresolved",
+        currentness_class=tender.currentness_class or "",
+    )
+    from dataclasses import replace
+
+    mutated = replace(
+        summary,
+        account_id="acct_a",
+        selected_contact_id="c1",
+        selected_candidate_id="cc_1",
+    )
+    result = reconcile_contact_resolution(
+        decisions=[decision],
+        tenders_by_id={"t1": tender},
+        organizations=[org_u],
+        summaries=[mutated],
+        candidates=[],
+        evidence=[],
+        conflicts=[],
+        frozen_index=empty_frozen_source_index(),
+        safety=_clear_safety(),
+        expected_input_fingerprint="x",
+    )
+    assert result["ok"] is False
+    fields = {
+        f.get("field")
+        for f in result["failures"]
+        if f.get("error") == "summary_field_mismatch"
+    }
+    assert fields & {"account_id", "selected_contact_id", "selected_candidate_id"}
+
+
+def test_reconcile_rejects_changed_deferred_counts_and_not_persisted() -> None:
+    decision = _relevance()
+    tender = _tender()
+    org_u = _org(status="unlinked", account_id=None, decision_id=decision.decision_id)
+    summary = deferred_summary(
+        tender_id="t1",
+        relevance=decision,
+        organization=org_u,
+        input_fingerprint="x",
+        reason_code="account_unresolved",
+        currentness_class=tender.currentness_class or "",
+    )
+    from dataclasses import replace
+
+    mutated = replace(
+        summary,
+        considered_contact_count=3,
+        suitable_contact_count=1,
+        blocked_contact_count=2,
+        not_persisted=False,
+    )
+    result = reconcile_contact_resolution(
+        decisions=[decision],
+        tenders_by_id={"t1": tender},
+        organizations=[org_u],
+        summaries=[mutated],
+        candidates=[],
+        evidence=[],
+        conflicts=[],
+        frozen_index=empty_frozen_source_index(),
+        safety=_clear_safety(),
+        expected_input_fingerprint="x",
+    )
+    assert result["ok"] is False
+    fields = {
+        f.get("field")
+        for f in result["failures"]
+        if f.get("error") == "summary_field_mismatch"
+    }
+    assert "considered_contact_count" in fields
+    assert "not_persisted" in fields
+
+
+def test_reconcile_rejects_duplicated_blocked_candidate() -> None:
+    frozen, org, decision, tender = _linked_frozen_pair()
+    summary, cands, evs, confs = _project_golden(frozen, org, decision, tender)
+    from dataclasses import replace
+
+    # Duplicate a non-selected / blocked-style row (same contact twice)
+    dup = replace(cands[0], rank=len(cands) + 1)
+    result = reconcile_contact_resolution(
+        decisions=[decision],
+        tenders_by_id={"t1": tender},
+        organizations=[org],
+        summaries=[replace(summary, considered_contact_count=len(cands) + 1)],
+        candidates=[*cands, dup],
+        evidence=evs,
+        conflicts=confs,
+        frozen_index=frozen,
+        safety=_clear_safety(),
+        expected_input_fingerprint="x",
+    )
+    assert result["ok"] is False
+    errs = {f.get("error") for f in result["failures"]}
+    assert (
+        "duplicate_candidate_ids_global" in errs
+        or "duplicate_tender_contact_pair" in errs
+        or "duplicate_tender_contact_pair_global" in errs
+        or "candidate_row_count_mismatch" in errs
+    )
+
+
+def test_reconcile_rejects_candidate_on_nonexistent_tender() -> None:
+    frozen, org, decision, tender = _linked_frozen_pair()
+    summary, cands, evs, confs = _project_golden(frozen, org, decision, tender)
+    from dataclasses import replace
+
+    orphan = replace(cands[0], coalesced_tender_id="t_missing", candidate_id="orphan_cand")
+    result = reconcile_contact_resolution(
+        decisions=[decision],
+        tenders_by_id={"t1": tender},
+        organizations=[org],
+        summaries=[summary],
+        candidates=[*cands, orphan],
+        evidence=evs,
+        conflicts=confs,
+        frozen_index=frozen,
+        safety=_clear_safety(),
+        expected_input_fingerprint="x",
+    )
+    assert result["ok"] is False
+    errs = {f.get("error") for f in result["failures"]}
+    assert (
+        "candidate_unknown_tender" in errs
+        or "global_candidate_union_mismatch" in errs
+    )
+
+
+def test_candidate_ids_differ_across_tenders_same_contact() -> None:
+    from origenlab_email_pipeline.commercial_procurement_contact_resolution.stable_ids import (
+        candidate_id_for,
+    )
+
+    a = candidate_id_for(
+        coalesced_tender_id="t1",
+        contact_id="c1",
+        account_id="acct_a",
+        ranking_tier="role_review",
+    )
+    b = candidate_id_for(
+        coalesced_tender_id="t2",
+        contact_id="c1",
+        account_id="acct_a",
+        ranking_tier="role_review",
+    )
+    assert a != b
+
+
+def test_reconcile_rejects_forced_old_style_same_candidate_id_across_tenders() -> None:
+    """Two tenders with forced identical candidate_id must fail global uniqueness."""
+    from origenlab_email_pipeline.commercial_procurement_contact_resolution.models import (
+        ContactCandidate,
+    )
+    from dataclasses import replace
+
+    d1 = _relevance(tid="t1", lifecycle_class_echo="active_open")
+    d2 = _relevance(tid="t2", lifecycle_class_echo="active_open")
+    # Fix decision ids for distinct tenders
+    d1 = replace(d1, coalesced_tender_id="t1", decision_id="trd_t1")
+    d2 = replace(d2, coalesced_tender_id="t2", decision_id="trd_t2")
+    tender1 = _tender(tid="t1")
+    tender2 = _tender(tid="t2")
+    org1 = _org(tid="t1", decision_id="trd_t1", status="unlinked", account_id=None)
+    org2 = _org(tid="t2", decision_id="trd_t2", status="unlinked", account_id=None)
+    s1 = deferred_summary(
+        tender_id="t1",
+        relevance=d1,
+        organization=org1,
+        input_fingerprint="x",
+        reason_code="account_unresolved",
+        currentness_class=tender1.currentness_class or "",
+    )
+    s2 = deferred_summary(
+        tender_id="t2",
+        relevance=d2,
+        organization=org2,
+        input_fingerprint="x",
+        reason_code="account_unresolved",
+        currentness_class=tender2.currentness_class or "",
+    )
+    # Force same old-style candidate id onto both (should be deferred-empty, so add extras)
+    shared = ContactCandidate(
+        candidate_id="old_style_shared",
+        contact_resolution_id=s1.contact_resolution_id,
+        coalesced_tender_id="t1",
+        account_id="acct_a",
+        contact_id="c1",
+        rank=1,
+        ranking_tier="role_review",
+        role_raw_digest="r",
+        role_suitability="unknown",
+        identity_status="resolved",
+        identity_confidence="high",
+        has_usable_email=True,
+        verification_status="unverified",
+        evidence_ids=(),
+        suppression_result="clear",
+        outreach_state_result="clear",
+        safety_blocked=False,
+        safety_unknown=False,
+        selectable=False,
+        ranking_reason_codes=(),
+    )
+    twin = replace(
+        shared,
+        contact_resolution_id=s2.contact_resolution_id,
+        coalesced_tender_id="t2",
+    )
+    result = reconcile_contact_resolution(
+        decisions=[d1, d2],
+        tenders_by_id={"t1": tender1, "t2": tender2},
+        organizations=[org1, org2],
+        summaries=[s1, s2],
+        candidates=[shared, twin],
+        evidence=[],
+        conflicts=[],
+        frozen_index=empty_frozen_source_index(),
+        safety=_clear_safety(),
+        expected_input_fingerprint="x",
+    )
+    assert result["ok"] is False
+    errs = {f.get("error") for f in result["failures"]}
+    assert "duplicate_candidate_ids_global" in errs
+
+
+def test_reconcile_rejects_duplicated_identical_conflict() -> None:
+    frozen, org, decision, tender = _linked_frozen_pair()
+    c1 = _frozen_contact(contact_id="c1", evidence_ids=("ev1",), role="Jefa de Adquisiciones")
+    c2 = FrozenContactProjection(
+        contact_id="c2",
+        account_id="acct_a",
+        email_digest="cafebabe",
+        has_usable_email=True,
+        role_digest="role2",
+        role_raw="Jefa de Compras",
+        identity_status="resolved",
+        identity_confidence="high",
+        evidence_ids=("ev2",),
+        email_norm="lab@hospital.demo.cl",
+    )
+    frozen = FrozenSourceIndex(
+        contacts_by_id={"c1": c1, "c2": c2},
+        evidence_by_id={
+            "ev1": _frozen_ev(evidence_id="ev1", contact_id="c1"),
+            "ev2": _frozen_ev(evidence_id="ev2", contact_id="c2"),
+        },
+        contacts_by_account={"acct_a": ("c1", "c2")},
+        pr4_by_procurement={},
+        known_account_ids=frozenset({"acct_a"}),
+        source_fingerprint="fp",
+    )
+    summary, cands, evs, confs = _project_golden(frozen, org, decision, tender)
+    assert confs
+    result = reconcile_contact_resolution(
+        decisions=[decision],
+        tenders_by_id={"t1": tender},
+        organizations=[org],
+        summaries=[summary],
+        candidates=cands,
+        evidence=evs,
+        conflicts=[*confs, confs[0]],
+        frozen_index=frozen,
+        safety=_clear_safety(),
+        expected_input_fingerprint="x",
+    )
+    assert result["ok"] is False
+    errs = {f.get("error") for f in result["failures"]}
+    assert (
+        "duplicate_conflict_ids_global" in errs
+        or "duplicate_identical_conflicts" in errs
+        or "global_conflict_union_mismatch" in errs
+        or "conflict_set_mismatch" in errs
+    )
+
+
+def test_reconcile_rejects_conflict_on_nonexistent_tender() -> None:
+    decision = _relevance()
+    tender = _tender()
+    org_u = _org(status="unlinked", account_id=None, decision_id=decision.decision_id)
+    summary = deferred_summary(
+        tender_id="t1",
+        relevance=decision,
+        organization=org_u,
+        input_fingerprint="x",
+        reason_code="account_unresolved",
+        currentness_class=tender.currentness_class or "",
+    )
+    from origenlab_email_pipeline.commercial_procurement_contact_resolution.models import (
+        ContactResolutionConflict,
+    )
+
+    conf = ContactResolutionConflict(
+        conflict_id="c_orphan",
+        coalesced_tender_id="t_missing",
+        conflict_type="ambiguous_contact",
+        reason_code="x",
+        subject_keys=("c1",),
+        evidence_ids=(),
+    )
+    result = reconcile_contact_resolution(
+        decisions=[decision],
+        tenders_by_id={"t1": tender},
+        organizations=[org_u],
+        summaries=[summary],
+        candidates=[],
+        evidence=[],
+        conflicts=[conf],
+        frozen_index=empty_frozen_source_index(),
+        safety=_clear_safety(),
+        expected_input_fingerprint="x",
+    )
+    assert result["ok"] is False
+    errs = {f.get("error") for f in result["failures"]}
+    assert "conflict_unknown_tender" in errs or "global_conflict_union_mismatch" in errs

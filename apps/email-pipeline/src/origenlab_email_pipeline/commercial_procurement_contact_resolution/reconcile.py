@@ -9,15 +9,10 @@ from origenlab_email_pipeline.commercial_procurement.link_routes import AccountI
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.models import (
     CoalescedProcurementTender,
 )
-from origenlab_email_pipeline.commercial_procurement_contact_resolution.constants import (
-    CONTACT_RESOLUTION_DEFERRED,
-    CONTACT_RESOLUTION_RULES_VERSION,
-    CONTACT_RESOLVER_VERSION,
-)
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.contact_search import (
+    deferred_reason_for_organization,
     deferred_summary,
     project_linked_contact_resolution,
-    recompute_summary_semantic_fingerprint,
 )
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.frozen_sources import (
     FrozenSourceIndex,
@@ -37,14 +32,12 @@ from origenlab_email_pipeline.commercial_procurement_contact_resolution.policy i
     contact_has_explicit_verification,
     contact_resolution_policy_spec,
     is_suitable_role,
-    next_action_for_status,
 )
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.safety import (
     SafetySnapshot,
 )
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.stable_ids import (
     candidate_id_for,
-    contact_resolution_id_deferred,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.models import (
     TenderRelevanceDecision,
@@ -94,6 +87,7 @@ def reconcile_contact_resolution(
     conflicts: Sequence[ContactResolutionConflict],
     frozen_index: FrozenSourceIndex,
     safety: SafetySnapshot,
+    expected_input_fingerprint: str,
     account_index: AccountIndex | None = None,
     known_account_ids: frozenset[str] | None = None,
     identity_fingerprint: str | None = None,
@@ -126,6 +120,10 @@ def reconcile_contact_resolution(
     conflicts_by_tender: dict[str, list[ContactResolutionConflict]] = {}
     for conf in conflicts:
         conflicts_by_tender.setdefault(conf.coalesced_tender_id, []).append(conf)
+
+    all_expected_cands: list[ContactCandidate] = []
+    all_expected_confs: list[ContactResolutionConflict] = []
+    expected_crs_by_tender: dict[str, str] = {}
 
     tender_ids = set(decision_by_tender)
     equations = {
@@ -279,36 +277,19 @@ def reconcile_contact_resolution(
         expected_confs: list[ContactResolutionConflict]
 
         if org.resolution_status != "linked" or not org.account_id:
-            reason = (
-                "account_unresolved"
-                if org.resolution_status != "deferred_insufficient_buyer_fields"
-                else "insufficient_buyer_fields"
-            )
+            reason = deferred_reason_for_organization(org)
             expected_summary = deferred_summary(
                 tender_id=tender_id,
                 relevance=decision,
                 organization=org,
-                input_fingerprint=summary.input_fingerprint,
+                input_fingerprint=expected_input_fingerprint,
                 reason_code=reason,
                 currentness_class=currentness,
                 label_status=label_status,
                 independently_reviewed=independently_reviewed,
             )
-            # Prefer deferred reason from emitted if org-driven reason differs
-            # only when status is deferred — still require deferred ID coherence.
-            expected_cands = []
-            expected_evs = []
-            expected_confs = []
-            # Recompute deferred ID/reason using emitted reason when deferred
-            # so hand-built tests with custom reason still bind IDs.
-            if summary.final_contact_status == CONTACT_RESOLUTION_DEFERRED:
-                expected_crs_id = contact_resolution_id_deferred(
-                    coalesced_tender_id=tender_id,
-                    organization_resolution_id=org.organization_resolution_id,
-                    reason=summary.reason_code,
-                )
-            else:
-                expected_crs_id = expected_summary.contact_resolution_id
+            expected_cands, expected_evs, expected_confs = [], [], []
+            expected_crs_id = expected_summary.contact_resolution_id
         else:
             (
                 expected_summary,
@@ -323,12 +304,29 @@ def reconcile_contact_resolution(
                 safety=safety,
                 buyer_email_norm=buyer_email_norm,
                 institution_name=institution_name,
-                input_fingerprint=summary.input_fingerprint,
+                input_fingerprint=expected_input_fingerprint,
                 currentness_class=currentness,
                 label_status=label_status,
                 independently_reviewed=independently_reviewed,
             )
             expected_crs_id = expected_summary.contact_resolution_id
+
+        all_expected_cands.extend(expected_cands)
+        all_expected_confs.extend(expected_confs)
+        expected_crs_by_tender[tender_id] = expected_crs_id
+
+        # Full summary field equality vs source projection.
+        for fname in _SUMMARY_COMPARE_FIELDS:
+            if getattr(summary, fname) != getattr(expected_summary, fname):
+                failures.append(
+                    {
+                        "error": "summary_field_mismatch",
+                        "tender": tender_id,
+                        "field": fname,
+                        "expected": getattr(expected_summary, fname),
+                        "got": getattr(summary, fname),
+                    }
+                )
 
         emitted_cands = sorted(
             cands_by_tender.get(tender_id, []),
@@ -339,6 +337,25 @@ def reconcile_contact_resolution(
             emitted_cands = sorted(
                 cands_by_summary.get(summary.contact_resolution_id, []),
                 key=lambda c: (c.rank, c.contact_id),
+            )
+
+        if len(emitted_cands) != len(expected_cands):
+            failures.append(
+                {
+                    "error": "candidate_row_count_mismatch",
+                    "tender": tender_id,
+                    "expected": len(expected_cands),
+                    "got": len(emitted_cands),
+                }
+            )
+
+        emitted_contact_ids_list = [c.contact_id for c in emitted_cands]
+        if len(emitted_contact_ids_list) != len(set(emitted_contact_ids_list)):
+            failures.append(
+                {
+                    "error": "duplicate_tender_contact_pair",
+                    "tender": tender_id,
+                }
             )
 
         # --- Candidate contact-ID set equality ---
@@ -383,21 +400,18 @@ def reconcile_contact_resolution(
                     }
                 )
                 continue
-            if c.contact_resolution_id != expected_crs_id and (
-                c.contact_resolution_id != summary.contact_resolution_id
-            ):
-                # Parent must equal final CRS (expected or emitted summary ID
-                # when summary ID itself is under test).
-                pass
-            if c.contact_resolution_id != summary.contact_resolution_id:
+            if c.contact_resolution_id != expected_crs_id:
                 failures.append(
                     {
-                        "error": "candidate_summary_mismatch",
+                        "error": "candidate_parent_crs_mismatch",
+                        "tender": tender_id,
                         "candidate_id": c.candidate_id,
+                        "expected": expected_crs_id,
+                        "got": c.contact_resolution_id,
                     }
                 )
-            # Expected candidate_id must not encode provisional parent.
             recomputed_id = candidate_id_for(
+                coalesced_tender_id=tender_id,
                 contact_id=c.contact_id,
                 account_id=c.account_id,
                 ranking_tier=exp.ranking_tier,
@@ -412,8 +426,6 @@ def reconcile_contact_resolution(
                         "got": c.candidate_id,
                     }
                 )
-            # If candidate_id still equals a hash that included provisional
-            # parent keys, the independent recomputation above already fails.
             for fname in _CANDIDATE_COMPARE_FIELDS:
                 if fname == "candidate_id":
                     continue
@@ -516,185 +528,6 @@ def reconcile_contact_resolution(
                 }
             )
 
-        # --- Summary exact bind ---
-        # Rebuild expected summary echoes from frozen tender/decision.
-        expected_echoes = {
-            "relevance_class_echo": decision.relevance_class,
-            "lifecycle_class_echo": decision.lifecycle_class_echo or "",
-            "currentness_class_echo": currentness,
-            "relevance_validation_status_echo": "",  # unvalidated join
-            "rules_version": CONTACT_RESOLUTION_RULES_VERSION,
-            "resolver_version": CONTACT_RESOLVER_VERSION,
-            "organization_resolution_id": org.organization_resolution_id,
-            "relevance_decision_id": decision.decision_id,
-            "coalesced_tender_id": tender_id,
-            "input_fingerprint": summary.input_fingerprint,
-        }
-        for fname, expected_val in expected_echoes.items():
-            if getattr(summary, fname) != expected_val:
-                failures.append(
-                    {
-                        "error": "summary_echo_or_binding_mismatch",
-                        "tender": tender_id,
-                        "field": fname,
-                        "expected": expected_val,
-                        "got": getattr(summary, fname),
-                    }
-                )
-
-        if org.resolution_status == "linked" and org.account_id:
-            # Compare status/selection/reason/counts/stages/next/ID to projection.
-            for fname in (
-                "final_contact_status",
-                "selected_contact_id",
-                "selected_candidate_id",
-                "reason_code",
-                "considered_contact_count",
-                "suitable_contact_count",
-                "blocked_contact_count",
-                "search_stages_completed",
-                "next_action",
-                "account_id",
-                "contact_resolution_id",
-            ):
-                if getattr(summary, fname) != getattr(expected_summary, fname):
-                    failures.append(
-                        {
-                            "error": "summary_field_mismatch",
-                            "tender": tender_id,
-                            "field": fname,
-                            "expected": getattr(expected_summary, fname),
-                            "got": getattr(summary, fname),
-                        }
-                    )
-            # Semantic fingerprint from expected projection identity.
-            expected_sem = recompute_summary_semantic_fingerprint(
-                contact_resolution_id=expected_summary.contact_resolution_id,
-                final_contact_status=expected_summary.final_contact_status,
-                account_id=expected_summary.account_id,
-                selected_contact_id=expected_summary.selected_contact_id,
-                selected_candidate_id=expected_summary.selected_candidate_id,
-                search_stages_completed=expected_summary.search_stages_completed,
-                next_action=expected_summary.next_action,
-                reason_code=expected_summary.reason_code,
-                candidate_ids=[c.candidate_id for c in expected_cands],
-            )
-            if summary.semantic_fingerprint != expected_sem:
-                # Also accept recomputation from emitted fields only if IDs match
-                # expected — otherwise fail (fabricated IDs + recomputed FP).
-                emitted_sem = recompute_summary_semantic_fingerprint(
-                    contact_resolution_id=summary.contact_resolution_id,
-                    final_contact_status=summary.final_contact_status,
-                    account_id=summary.account_id,
-                    selected_contact_id=summary.selected_contact_id,
-                    selected_candidate_id=summary.selected_candidate_id,
-                    search_stages_completed=summary.search_stages_completed,
-                    next_action=summary.next_action,
-                    reason_code=summary.reason_code,
-                    candidate_ids=[c.candidate_id for c in emitted_cands],
-                )
-                if summary.semantic_fingerprint == emitted_sem:
-                    failures.append(
-                        {
-                            "error": "semantic_fingerprint_not_bound_to_source_projection",
-                            "tender": tender_id,
-                        }
-                    )
-                else:
-                    failures.append(
-                        {
-                            "error": "semantic_fingerprint_mismatch",
-                            "tender": tender_id,
-                        }
-                    )
-        else:
-            # Deferred path
-            if summary.final_contact_status != CONTACT_RESOLUTION_DEFERRED:
-                failures.append(
-                    {
-                        "error": "expected_deferred_status",
-                        "tender": tender_id,
-                        "got": summary.final_contact_status,
-                    }
-                )
-            if emitted_cands:
-                failures.append(
-                    {"error": "deferred_has_candidates", "tender": tender_id}
-                )
-            if summary.search_stages_completed:
-                failures.append(
-                    {"error": "deferred_has_search_stages", "tender": tender_id}
-                )
-            expected_deferred_id = contact_resolution_id_deferred(
-                coalesced_tender_id=tender_id,
-                organization_resolution_id=org.organization_resolution_id,
-                reason=summary.reason_code,
-            )
-            if summary.contact_resolution_id != expected_deferred_id:
-                failures.append(
-                    {
-                        "error": "deferred_contact_resolution_id_mismatch",
-                        "tender": tender_id,
-                        "expected": expected_deferred_id,
-                        "got": summary.contact_resolution_id,
-                    }
-                )
-            expected_next = next_action_for_status(
-                CONTACT_RESOLUTION_DEFERRED,
-                lifecycle_class=decision.lifecycle_class_echo or "",
-                relevance_class=decision.relevance_class,
-                currentness_class=currentness,
-                label_status=label_status,
-                independently_reviewed=independently_reviewed,
-                policy=policy,
-            )
-            if summary.next_action != expected_next:
-                failures.append(
-                    {
-                        "error": "next_action_mismatch",
-                        "tender": tender_id,
-                        "expected": expected_next,
-                        "got": summary.next_action,
-                    }
-                )
-            expected_sem = recompute_summary_semantic_fingerprint(
-                contact_resolution_id=expected_deferred_id,
-                final_contact_status=CONTACT_RESOLUTION_DEFERRED,
-                account_id=None,
-                selected_contact_id=None,
-                selected_candidate_id=None,
-                search_stages_completed=(),
-                next_action=expected_next,
-                reason_code=summary.reason_code,
-            )
-            if summary.semantic_fingerprint != expected_sem:
-                emitted_sem = recompute_summary_semantic_fingerprint(
-                    contact_resolution_id=summary.contact_resolution_id,
-                    final_contact_status=summary.final_contact_status,
-                    account_id=None,
-                    selected_contact_id=None,
-                    selected_candidate_id=None,
-                    search_stages_completed=summary.search_stages_completed,
-                    next_action=summary.next_action,
-                    reason_code=summary.reason_code,
-                )
-                if summary.semantic_fingerprint == emitted_sem and (
-                    summary.contact_resolution_id != expected_deferred_id
-                ):
-                    failures.append(
-                        {
-                            "error": "semantic_fingerprint_not_bound_to_source_projection",
-                            "tender": tender_id,
-                        }
-                    )
-                elif summary.semantic_fingerprint != expected_sem:
-                    failures.append(
-                        {
-                            "error": "semantic_fingerprint_mismatch",
-                            "tender": tender_id,
-                        }
-                    )
-
         # Selected candidate invariants when claimed.
         if summary.selected_candidate_id:
             matches = [
@@ -726,6 +559,96 @@ def reconcile_contact_resolution(
                             "tender": tender_id,
                         }
                     )
+
+    # --- Global multiplicity / ownership ---
+    cand_ids = [c.candidate_id for c in candidates]
+    if len(cand_ids) != len(set(cand_ids)):
+        failures.append(
+            {
+                "error": "duplicate_candidate_ids_global",
+                "count": len(cand_ids),
+                "unique": len(set(cand_ids)),
+            }
+        )
+
+    pairs = [(c.coalesced_tender_id, c.contact_id) for c in candidates]
+    if len(pairs) != len(set(pairs)):
+        failures.append(
+            {
+                "error": "duplicate_tender_contact_pair_global",
+                "count": len(pairs),
+                "unique": len(set(pairs)),
+            }
+        )
+
+    for c in candidates:
+        if c.coalesced_tender_id not in decision_by_tender:
+            failures.append(
+                {
+                    "error": "candidate_unknown_tender",
+                    "tender": c.coalesced_tender_id,
+                    "candidate_id": c.candidate_id,
+                }
+            )
+        else:
+            exp_crs = expected_crs_by_tender.get(c.coalesced_tender_id)
+            if exp_crs is not None and c.contact_resolution_id != exp_crs:
+                failures.append(
+                    {
+                        "error": "candidate_parent_crs_mismatch",
+                        "tender": c.coalesced_tender_id,
+                        "candidate_id": c.candidate_id,
+                        "expected": exp_crs,
+                        "got": c.contact_resolution_id,
+                    }
+                )
+
+    expected_ids = [c.candidate_id for c in all_expected_cands]
+    emitted_ids = [c.candidate_id for c in candidates]
+    if sorted(expected_ids) != sorted(emitted_ids):
+        failures.append(
+            {
+                "error": "global_candidate_union_mismatch",
+                "missing": sorted(set(expected_ids) - set(emitted_ids)),
+                "extra": sorted(set(emitted_ids) - set(expected_ids)),
+                "expected_count": len(expected_ids),
+                "emitted_count": len(emitted_ids),
+            }
+        )
+
+    conf_ids = [c.conflict_id for c in conflicts]
+    if len(conf_ids) != len(set(conf_ids)):
+        failures.append({"error": "duplicate_conflict_ids_global"})
+
+    keys = [_conflict_key(c) for c in conflicts]
+    if len(keys) != len(set(keys)):
+        failures.append({"error": "duplicate_identical_conflicts"})
+
+    for c in conflicts:
+        if c.coalesced_tender_id not in decision_by_tender:
+            failures.append(
+                {
+                    "error": "conflict_unknown_tender",
+                    "tender": c.coalesced_tender_id,
+                }
+            )
+
+    expected_conf_keys = sorted(_conflict_key(c) for c in all_expected_confs)
+    emitted_conf_keys = sorted(_conflict_key(c) for c in conflicts)
+    if expected_conf_keys != emitted_conf_keys:
+        failures.append(
+            {
+                "error": "global_conflict_union_mismatch",
+                "expected_count": len(expected_conf_keys),
+                "emitted_count": len(emitted_conf_keys),
+                "missing": [
+                    k for k in expected_conf_keys if k not in set(emitted_conf_keys)
+                ],
+                "extra": [
+                    k for k in emitted_conf_keys if k not in set(expected_conf_keys)
+                ],
+            }
+        )
 
     # Plan evidence == union of candidate evidence IDs (exact).
     if plan_evidence_ids != union_candidate_evidence_ids:
