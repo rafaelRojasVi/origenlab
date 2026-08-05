@@ -6,8 +6,8 @@ import hashlib
 import sqlite3
 from typing import Any, Mapping
 
-from origenlab_email_pipeline.commercial_identity.normalize import (
-    normalize_identity_email,
+from origenlab_email_pipeline.commercial_procurement.sources import (
+    assert_active_read_transaction,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.canonical_json import (
     canonical_json_digest,
@@ -25,13 +25,18 @@ from origenlab_email_pipeline.commercial_procurement_contact_resolution.models i
     OrganizationResolution,
 )
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.policy import (
+    assign_ranking_tier,
     classify_role_suitability,
+    contact_has_explicit_verification,
     contact_resolution_policy_spec,
+    feature_flags_for_candidate,
     is_suitable_role,
+    next_action_for_status,
 )
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.safety import (
     SafetySnapshot,
     evaluate_contact_safety,
+    parse_usable_email,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.models import (
     TenderRelevanceDecision,
@@ -39,6 +44,7 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.models im
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    assert_active_read_transaction(conn)
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
         (name,),
@@ -59,6 +65,7 @@ def _stable_id(prefix: str, payload: Mapping[str, Any]) -> str:
 def load_contacts_for_account(
     conn: sqlite3.Connection, account_id: str
 ) -> list[dict[str, Any]]:
+    assert_active_read_transaction(conn)
     if not _table_exists(conn, "commercial_identity_contact"):
         return []
     rows = conn.execute(
@@ -77,6 +84,7 @@ def load_contacts_for_account(
 def load_contact_evidence(
     conn: sqlite3.Connection, contact_ids: list[str]
 ) -> dict[str, list[dict[str, Any]]]:
+    assert_active_read_transaction(conn)
     if not contact_ids or not _table_exists(conn, "commercial_identity_evidence"):
         return {}
     out: dict[str, list[dict[str, Any]]] = {cid: [] for cid in contact_ids}
@@ -84,7 +92,8 @@ def load_contact_evidence(
     rows = conn.execute(
         f"""
         SELECT evidence_id, subject_kind, subject_id, source_table, source_record_id,
-               evidence_type, matching_reason_code, confidence
+               source_plane, origin_plane, evidence_type, evidence_at,
+               matching_reason_code, confidence
         FROM commercial_identity_evidence
         WHERE subject_kind = 'contact' AND subject_id IN ({placeholders})
         ORDER BY evidence_id
@@ -96,56 +105,25 @@ def load_contact_evidence(
     return out
 
 
-def _has_explicit_verification(
-    *,
-    identity_status: str,
-    identity_confidence: str,
-    evidence_rows: list[dict[str, Any]],
-) -> bool:
-    """Conservative verification: high-confidence resolved identity evidence only."""
-    if identity_status != "resolved":
-        return False
-    if (identity_confidence or "").strip().lower() not in {"high", "high_confidence"}:
-        return False
-    for ev in evidence_rows:
-        conf = str(ev.get("confidence") or "").strip().lower()
-        if conf in {"high", "high_confidence"}:
-            return True
-    return False
-
-
-def _assign_tier(
-    *,
-    role_suitability: str,
-    has_email: bool,
-    verified: bool,
-    safety_blocked: bool,
-    buyer_email_exact: bool,
-) -> tuple[str, tuple[str, ...], bool]:
-    reasons: list[str] = []
-    if safety_blocked:
-        return "blocked", ("safety_blocked",), False
-    if buyer_email_exact and has_email:
-        reasons.append("exact_buyer_email_match")
-        selectable = True
-        return "exact_buyer_email", tuple(reasons), selectable
-    if not has_email and is_suitable_role(role_suitability):
-        return "role_known_email_missing", ("suitable_role", "email_missing"), False
-    if has_email and is_suitable_role(role_suitability) and verified:
-        return (
-            "verified_suitable",
-            ("suitable_role", "explicit_verification", "usable_email"),
-            True,
-        )
-    if has_email and is_suitable_role(role_suitability):
-        return (
-            "suitable_role_unverified",
-            ("suitable_role", "usable_email", "verification_absent"),
-            True,
-        )
-    if has_email:
-        return "role_review", ("usable_email", "role_unknown_or_unsuitable"), True
-    return "role_review", ("email_missing", "role_unknown"), False
+def load_evidence_index(
+    conn: sqlite3.Connection, evidence_ids: list[str]
+) -> dict[str, dict[str, Any]]:
+    """Frozen PR2 evidence rows keyed by evidence_id for pointer resolution."""
+    assert_active_read_transaction(conn)
+    if not evidence_ids or not _table_exists(conn, "commercial_identity_evidence"):
+        return {}
+    placeholders = ",".join("?" for _ in evidence_ids)
+    rows = conn.execute(
+        f"""
+        SELECT evidence_id, subject_kind, subject_id, source_table, source_record_id,
+               source_plane, origin_plane, evidence_type, evidence_at,
+               matching_reason_code, confidence
+        FROM commercial_identity_evidence
+        WHERE evidence_id IN ({placeholders})
+        """,
+        tuple(evidence_ids),
+    )
+    return {str(r["evidence_id"]): dict(r) for r in rows}
 
 
 def deferred_summary(
@@ -165,6 +143,12 @@ def deferred_summary(
         "reason": reason_code,
     }
     rid = _stable_id("crs", payload)
+    next_action = next_action_for_status(
+        status,
+        lifecycle_class=relevance.lifecycle_class_echo or "",
+        relevance_class=relevance.relevance_class,
+        policy=policy,
+    )
     sem = canonical_json_digest(
         {
             "contact_resolution_id": rid,
@@ -172,7 +156,7 @@ def deferred_summary(
             "account_id": None,
             "selected_contact_id": None,
             "search_stages_completed": [],
-            "next_action": policy["next_action_by_status"][status],
+            "next_action": next_action,
             "reason_code": reason_code,
         }
     )
@@ -186,7 +170,7 @@ def deferred_summary(
         selected_contact_id=None,
         selected_candidate_id=None,
         search_stages_completed=(),
-        next_action=str(policy["next_action_by_status"][status]),
+        next_action=next_action,
         reason_code=reason_code,
         considered_contact_count=0,
         suitable_contact_count=0,
@@ -197,6 +181,122 @@ def deferred_summary(
         semantic_fingerprint=sem,
         rules_version=CONTACT_RESOLUTION_RULES_VERSION,
         resolver_version=CONTACT_RESOLVER_VERSION,
+    )
+
+
+def _select_final_status(
+    *,
+    ranked: list[ContactCandidate],
+    policy: Mapping[str, Any],
+    tender_id: str,
+) -> tuple[str, ContactCandidate | None, str, list[ContactResolutionConflict]]:
+    """Policy-driven final status. Material ties become ambiguous before ID order."""
+    conflicts: list[ContactResolutionConflict] = []
+    material_tiers = set(policy["material_ambiguity_tiers"])
+    selectable = [c for c in ranked if c.selectable]
+    blocked = [c for c in ranked if c.safety_blocked or c.safety_unknown]
+
+    if not ranked:
+        return "no_contact_found", None, "internal_search_exhausted_empty", conflicts
+
+    if selectable:
+        top = selectable[0]
+        peers = [
+            c
+            for c in selectable
+            if c.ranking_tier == top.ranking_tier and c.ranking_tier in material_tiers
+        ]
+        if len(peers) > 1:
+            # Material equivalence → ambiguous; contact_id must not silently resolve.
+            conflicts.append(
+                ContactResolutionConflict(
+                    conflict_id=_stable_id(
+                        "cconf",
+                        {
+                            "tender": tender_id,
+                            "contacts": sorted(p.contact_id for p in peers),
+                            "tier": top.ranking_tier,
+                        },
+                    ),
+                    coalesced_tender_id=tender_id,
+                    conflict_type="ambiguous_contact",
+                    reason_code="multiple_competing_contacts",
+                    subject_keys=tuple(sorted(p.contact_id for p in peers)),
+                    evidence_ids=(),
+                )
+            )
+            return (
+                "ambiguous_contact",
+                None,
+                "multiple_competing_contacts",
+                conflicts,
+            )
+
+        verified_tiers = set(policy["status_selection"]["verified_requires_tier"])
+        exact_cfg = policy["status_selection"]["exact_buyer_verified_path"]
+        if top.ranking_tier in verified_tiers:
+            return (
+                "existing_verified_contact",
+                top,
+                "verified_suitable_contact_selected",
+                conflicts,
+            )
+        if top.ranking_tier == exact_cfg["tier"]:
+            if (
+                is_suitable_role(top.role_suitability)
+                and top.verification_status == "explicit_verification"
+            ):
+                return (
+                    "existing_verified_contact",
+                    top,
+                    "verified_suitable_contact_selected",
+                    conflicts,
+                )
+            return (
+                "existing_contact_needs_role_review",
+                top,
+                "contact_present_verification_or_role_incomplete",
+                conflicts,
+            )
+        if top.ranking_tier in set(policy["status_selection"]["role_review_tiers"]):
+            reason = (
+                "suitable_role_without_explicit_verification"
+                if top.ranking_tier == "suitable_role_unverified"
+                else "contact_requires_role_review"
+            )
+            return (
+                "existing_contact_needs_role_review",
+                top,
+                reason,
+                conflicts,
+            )
+        return (
+            "existing_contact_needs_role_review",
+            top,
+            "contact_requires_role_review",
+            conflicts,
+        )
+
+    if any(c.ranking_tier == "role_known_email_missing" for c in ranked):
+        return (
+            "role_known_email_missing",
+            None,
+            "suitable_role_email_missing",
+            conflicts,
+        )
+    if blocked and not selectable:
+        return (
+            "contact_blocked",
+            None,
+            "all_selectable_paths_blocked",
+            conflicts,
+        )
+    # Exhausted internal search with non-selectable non-blocked paths.
+    return (
+        "contact_research_required",
+        None,
+        "internal_search_exhausted_no_selectable",
+        conflicts,
     )
 
 
@@ -250,7 +350,6 @@ def resolve_contacts_for_tender(
     evidence_out: list[ContactResolutionEvidence] = []
     candidates: list[ContactCandidate] = []
 
-    # Provisional resolution id seed (finalized after status known).
     provisional_key = {
         "coalesced_tender_id": tender_id,
         "account_id": account_id,
@@ -260,9 +359,8 @@ def resolve_contacts_for_tender(
 
     for row in contacts:
         contact_id = str(row["contact_id"])
-        email = normalize_identity_email(row.get("normalized_email") or "") or None
-        if email is None and row.get("normalized_email"):
-            email = str(row["normalized_email"]).strip().lower() or None
+        # Canonical parse only — non-empty invalid strings are not usable.
+        email = parse_usable_email(row.get("normalized_email"))
         has_email = bool(email)
         role = row.get("role")
         suitability = classify_role_suitability(role if isinstance(role, str) else None)
@@ -271,36 +369,56 @@ def resolve_contacts_for_tender(
             evidence_out.append(
                 ContactResolutionEvidence(
                     evidence_id=str(ev["evidence_id"]),
-                    subject_kind="contact",
+                    subject_kind=str(ev.get("subject_kind") or "contact"),
                     subject_id=contact_id,
-                    source_table=str(ev.get("source_table") or "commercial_identity_evidence"),
-                    source_record_id=str(ev.get("source_record_id") or ev["evidence_id"]),
+                    source_table=str(ev.get("source_table") or ""),
+                    source_record_id=str(ev.get("source_record_id") or ""),
+                    source_plane=str(ev.get("source_plane") or ""),
+                    origin_plane=str(ev.get("origin_plane") or ""),
+                    evidence_type=str(ev.get("evidence_type") or ""),
+                    evidence_at=str(ev.get("evidence_at") or ""),
                     matching_reason_code=str(ev.get("matching_reason_code") or ""),
                     confidence=str(ev.get("confidence") or ""),
                 )
             )
-        verified = _has_explicit_verification(
+        verified = contact_has_explicit_verification(
             identity_status=str(row.get("identity_status") or ""),
             identity_confidence=str(row.get("identity_confidence") or ""),
             evidence_rows=ev_rows,
+            contact_id=contact_id,
+            policy=policy,
         )
         safety_result = evaluate_contact_safety(
             email_norm=email,
             institution_name=institution_name,
             safety=safety,
         )
-        buyer_exact = bool(
-            buyer_email_norm and email and email == buyer_email_norm
-        )
-        tier, reasons, selectable = _assign_tier(
+        buyer_exact = bool(buyer_email_norm and email and email == buyer_email_norm)
+        features = feature_flags_for_candidate(
+            has_usable_email=has_email,
+            account_membership=str(row.get("account_id") or "") == account_id,
+            identity_status=str(row.get("identity_status") or ""),
             role_suitability=suitability,
-            has_email=has_email,
             verified=verified,
-            safety_blocked=bool(safety_result["safety_blocked"]),
             buyer_email_exact=buyer_exact,
+            safety_blocked=bool(safety_result["safety_blocked"])
+            and not bool(safety_result.get("safety_unknown")),
+            safety_unknown=bool(safety_result.get("safety_unknown")),
         )
-        if safety_result["safety_blocked"]:
+        # Email-missing contacts: safety_blocked false but not selectable by safety.
+        if not has_email:
+            features = dict(features)
+            features["not_safety_blocked"] = True
+            features["safety_known"] = True
+            features["safety_blocked"] = False
+            features["safety_blocked_or_unknown"] = False
+
+        tier, reasons, selectable = assign_ranking_tier(features, policy=policy)
+        if not safety_result.get("selectable_by_safety", False) and has_email:
             selectable = False
+        if features.get("identity_not_resolved"):
+            selectable = False
+
         cand_payload = {
             "contact_resolution_id": contact_resolution_id,
             "contact_id": contact_id,
@@ -314,7 +432,7 @@ def resolve_contacts_for_tender(
                 coalesced_tender_id=tender_id,
                 account_id=account_id,
                 contact_id=contact_id,
-                rank=0,  # filled after sort
+                rank=0,
                 ranking_tier=tier,
                 role_raw_digest=_role_digest(role if isinstance(role, str) else None),
                 role_suitability=suitability,
@@ -328,14 +446,15 @@ def resolve_contacts_for_tender(
                 suppression_result=str(safety_result["suppression_result"]),
                 outreach_state_result=str(safety_result["outreach_state_result"]),
                 safety_blocked=bool(safety_result["safety_blocked"]),
-                selectable=selectable and not bool(safety_result["safety_blocked"]),
+                safety_unknown=bool(safety_result.get("safety_unknown")),
+                selectable=selectable,
                 ranking_reason_codes=reasons,
             )
         )
 
-    tier_rank = {
-        row["id"]: int(row["rank"]) for row in policy["ranking_tiers"]
-    }
+    tier_rank = {row["id"]: int(row["rank"]) for row in policy["ranking_tiers"]}
+    # Sort by material tier only; contact_id is a stable final tie-breaker AFTER
+    # material ambiguity is evaluated separately on equal top tiers.
     candidates.sort(
         key=lambda c: (
             tier_rank.get(c.ranking_tier, 99),
@@ -364,100 +483,43 @@ def resolve_contacts_for_tender(
                 suppression_result=c.suppression_result,
                 outreach_state_result=c.outreach_state_result,
                 safety_blocked=c.safety_blocked,
+                safety_unknown=c.safety_unknown,
                 selectable=c.selectable,
                 ranking_reason_codes=c.ranking_reason_codes,
             )
         )
 
-    conflicts: list[ContactResolutionConflict] = []
-    selectable = [c for c in ranked if c.selectable]
-    blocked = [c for c in ranked if c.safety_blocked]
+    status, selected, reason, conflicts = _select_final_status(
+        ranked=ranked, policy=policy, tender_id=tender_id
+    )
+
+    # contact_research_required only when search exhausted AND tender actionable.
+    if status == "contact_research_required":
+        from origenlab_email_pipeline.commercial_procurement_contact_resolution.policy import (
+            tender_allows_actionable_research,
+        )
+
+        if not tender_allows_actionable_research(
+            lifecycle_class=relevance.lifecycle_class_echo or "",
+            relevance_class=relevance.relevance_class,
+            policy=policy,
+        ):
+            # Keep analysis status but downgrade research claim to no_contact_found
+            # semantics for non-actionable tenders with exhausted non-selectable paths.
+            # Prefer explicit non-research status when no selectable contacts remain.
+            if any(c.safety_blocked or c.safety_unknown for c in ranked):
+                status = "contact_blocked"
+                reason = "all_selectable_paths_blocked_non_actionable_tender"
+            else:
+                status = "no_contact_found"
+                reason = "internal_search_exhausted_non_actionable_tender"
+
     suitable = [
         c
         for c in ranked
         if is_suitable_role(c.role_suitability) and c.has_usable_email
     ]
-
-    status: str
-    selected: ContactCandidate | None = None
-    reason: str
-    if not ranked:
-        status = "no_contact_found"
-        reason = "internal_search_exhausted_empty"
-    elif selectable:
-        top = selectable[0]
-        peers = [
-            c
-            for c in selectable
-            if c.ranking_tier == top.ranking_tier
-            and tier_rank.get(c.ranking_tier, 99) <= 2
-        ]
-        if len(peers) > 1 and top.ranking_tier in {
-            "exact_buyer_email",
-            "verified_suitable",
-            "suitable_role_unverified",
-        }:
-            status = "ambiguous_contact"
-            reason = "multiple_competing_contacts"
-            conflicts.append(
-                ContactResolutionConflict(
-                    conflict_id=_stable_id(
-                        "cconf",
-                        {
-                            "tender": tender_id,
-                            "contacts": sorted(p.contact_id for p in peers),
-                        },
-                    ),
-                    coalesced_tender_id=tender_id,
-                    conflict_type="ambiguous_contact",
-                    reason_code="multiple_competing_contacts",
-                    subject_keys=tuple(sorted(p.contact_id for p in peers)),
-                    evidence_ids=(),
-                )
-            )
-        elif top.ranking_tier == "verified_suitable" or top.ranking_tier == "exact_buyer_email":
-            # Exact buyer email still needs verification+suitable for verified status.
-            if (
-                top.ranking_tier == "exact_buyer_email"
-                and is_suitable_role(top.role_suitability)
-                and top.verification_status == "explicit_verification"
-            ):
-                status = "existing_verified_contact"
-                reason = "verified_suitable_contact_selected"
-                selected = top
-            elif top.ranking_tier == "verified_suitable":
-                status = "existing_verified_contact"
-                reason = "verified_suitable_contact_selected"
-                selected = top
-            else:
-                status = "existing_contact_needs_role_review"
-                reason = "contact_present_verification_or_role_incomplete"
-                selected = top
-        elif top.ranking_tier == "suitable_role_unverified":
-            status = "existing_contact_needs_role_review"
-            reason = "suitable_role_without_explicit_verification"
-            selected = top
-        else:
-            status = "existing_contact_needs_role_review"
-            reason = "contact_requires_role_review"
-            selected = top
-    elif any(
-        c.ranking_tier == "role_known_email_missing" for c in ranked
-    ) and not selectable:
-        status = "role_known_email_missing"
-        reason = "suitable_role_email_missing"
-    elif blocked and not selectable:
-        status = "contact_blocked"
-        reason = "all_selectable_paths_blocked"
-    else:
-        status = "contact_research_required"
-        reason = "internal_search_exhausted_no_selectable"
-
-    # Actionability note: research_required only when search exhausted with no selectable.
-    if status == "no_contact_found":
-        # Keep no_contact_found (searched, empty). contact_research_required is for
-        # non-empty but non-selectable without total block — already handled above.
-        pass
+    blocked = [c for c in ranked if c.safety_blocked or c.safety_unknown]
 
     final_payload = {
         "coalesced_tender_id": tender_id,
@@ -468,7 +530,6 @@ def resolve_contacts_for_tender(
         "reason": reason,
     }
     final_id = _stable_id("crs", final_payload)
-    # Rewrite candidate contact_resolution_id to final summary id.
     rewritten: list[ContactCandidate] = []
     for c in ranked:
         rewritten.append(
@@ -490,18 +551,25 @@ def resolve_contacts_for_tender(
                 suppression_result=c.suppression_result,
                 outreach_state_result=c.outreach_state_result,
                 safety_blocked=c.safety_blocked,
+                safety_unknown=c.safety_unknown,
                 selectable=c.selectable,
                 ranking_reason_codes=c.ranking_reason_codes,
             )
         )
 
-    next_action = str(policy["next_action_by_status"][status])
+    next_action = next_action_for_status(
+        status,
+        lifecycle_class=relevance.lifecycle_class_echo or "",
+        relevance_class=relevance.relevance_class,
+        policy=policy,
+    )
     sem = canonical_json_digest(
         {
             "contact_resolution_id": final_id,
             "final_contact_status": status,
             "account_id": account_id,
             "selected_contact_id": selected.contact_id if selected else None,
+            "selected_candidate_id": selected.candidate_id if selected else None,
             "search_stages_completed": stages,
             "next_action": next_action,
             "reason_code": reason,

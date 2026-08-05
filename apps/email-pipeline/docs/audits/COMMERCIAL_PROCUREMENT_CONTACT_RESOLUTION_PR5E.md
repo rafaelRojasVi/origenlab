@@ -1,7 +1,7 @@
 # COMMERCIAL_PROCUREMENT_CONTACT_RESOLUTION_PR5E
 
-**Status:** draft planning slice (read-only)  
-**Planner version:** `procurement_contact_resolution_planner_v1`  
+**Status:** draft planning slice (read-only)
+**Planner version:** `procurement_contact_resolution_planner_v1`
 **Resolver vocabulary:** PR5A `CONTACT_RESOLUTION_STATUSES` / `CONTACT_RESOLVER_VERSION`
 
 ## Sequence (authoritative)
@@ -42,71 +42,94 @@ Contact resolution is a separate dimension from lead eligibility. PR5D currently
 |-------|----------------|
 | `buyer_display_selected` | Normalized via `safe_org_normalized` for exact name/alias routes |
 | `buyer_source_id_selected` | **Provenance only.** Used as an institutional-domain *candidate* when it looks like a domain; **never** as a PR2 `account_id` |
-| `pr4_procurement_ids` | Carry forward linked PR4 resolutions only when all constituents agree on one PR2 account that still exists in the frozen identity input |
+| `pr4_procurement_ids` | Carry forward only when **every** constituent PR4 resolution exists, is `linked` to the **same** PR2 account still present in the frozen identity input, and no foreign `candidate_account_ids` remain |
 | `commercial_identity_contact.role` | Sole role-suitability authority (token audit below). Email local-parts and display names never establish suitability |
-| `commercial_identity_evidence` (contact subjects) | Explicit verification support for `existing_verified_contact` |
-| Suppression / outreach sidecars | Read-only via existing `marketing_export_context` + `candidate_export_gate` |
+| `commercial_identity_evidence` (contact subjects) | Explicit verification: audited production type is `contact_identity` + `exact_email` + high confidence from `contact_master` |
+| Suppression / outreach / Sent / suppliers | Full canonical `build_marketing_export_gate_context` → `GateContext` (not a subset) |
 
-If buyer fields cannot support a lossless live link and no consistent PR4 linked account exists, organization status is `deferred_insufficient_buyer_fields` / unlinked / ambiguous / refused — contact search is not run (`contact_resolution_deferred`).
+If buyer fields cannot support a lossless live link and no unanimous PR4 linked account exists, organization status is `deferred_insufficient_buyer_fields` / unlinked / ambiguous / refused — contact search is not run (`contact_resolution_deferred`).
 
 ## Source-of-truth decisions
 
-- **Accounts / contacts / evidence / conflicts:** PR2 `commercial_identity_*` (frozen fingerprint in `commercial_identity_build_meta`).
-- **Account link routes:** PR4 `classify_account_link_route` / `build_account_resolution` (no fuzzy / LLM / web).
-- **Tender coalescence + lifecycle:** PR5C.
+- **Accounts / contacts / evidence / conflicts:** PR2 `commercial_identity_*` (frozen fingerprint in `commercial_identity_build_meta`). Fail closed if the identity fingerprint is missing/malformed.
+- **Account link routes:** PR4 `classify_account_link_route` / `build_account_resolution` (no fuzzy / LLM / web). Constituent `candidate_account_ids_json` is preserved and can force ambiguity.
+- **Tender coalescence + lifecycle:** PR5C built **once** and injected into PR5D; PR5E asserts `pr5d.pr5c_semantic_digest == candidate_plan.semantic_digest`.
 - **Relevance class echo:** PR5D `TenderRelevanceDecision` (diagnostic only for actionability).
-- **Safety:** existing export gate policy — not a second suppression implementation.
+- **Safety:** complete outbound gate truth via `marketing_export_context` / `outbound_core` defaults — Sent recipients, internal blocked domains, email/domain suppression, blocking outreach states (`contacted`/`replied`/`snoozed`), supplier + noise filters. Missing required safety tables ⇒ `safety_unknown` / non-selectable (never represented as empty blocker sets).
+- **Usable email:** `normalize_export_email` / `emails_in` must succeed. Non-empty invalid strings are **not** usable.
 
 ## Status state machine
 
 | Status | Meaning |
 |--------|---------|
 | `contact_resolution_deferred` | Prerequisite failed; search not run; zero candidates; empty `search_stages_completed`; next action `resolve_account` |
-| `no_contact_found` | Allowed internal sources searched; empty result |
-| `contact_research_required` | Search exhausted; no selectable contact without total block |
-| `ambiguous_contact` | Multiple materially competing selectable contacts |
-| `contact_blocked` | Candidates exist; all selectable paths blocked by safety |
+| `no_contact_found` | Allowed internal sources searched; empty result (or exhausted non-actionable tender without research) |
+| `contact_research_required` | Internal search exhausted **and** tender is otherwise approved for human/external research |
+| `ambiguous_contact` | Multiple materially competing selectable contacts (same material tier); contact ID must not silently break the tie |
+| `contact_blocked` | Candidates exist; all selectable paths blocked / safety-unknown |
 | `existing_contact_needs_role_review` | Contact exists; suitability/verification incomplete |
 | `role_known_email_missing` | Suitable role known; usable email missing |
-| `existing_verified_contact` | Usable email + suitable role + explicit verification + clear safety + account membership |
+| `existing_verified_contact` | Usable email + suitable role + declarative verification evidence + clear safety + resolved identity + account membership |
 
-Historical / closed / negative / ambiguous tenders may still receive a contact-dimension resolution for audit, but must not become actionable leads.
+Historical / closed / negative / ambiguous tenders may still receive a contact-dimension resolution for audit, but must not receive actionable research/outreach next actions (`none` instead).
 
-## Ranking policy
+## Ranking / verification / actionability policy
 
-Declarative `contact_resolution_policy_v1` (execution + fingerprint):
+Declarative `contact_resolution_policy_v1` drives **both** execution and `rules_fingerprint`:
 
-1. Exact buyer email belonging to the resolved account  
-2. Verified suitable  
-3. Suitable role, unverified  
-4. Role review  
-5. Role known / email missing  
-6. Blocked  
+1. Exact buyer email belonging to the resolved account
+2. Verified suitable
+3. Suitable role, unverified
+4. Role review
+5. Role known / email missing
+6. Blocked / identity-incompatible
 
-Stable tie-breaker: `contact_id`.
+Stable tie-breaker (`contact_id`) applies only **after** material ambiguity is evaluated.
 
-Role tokens (smallest viable taxonomy from fixture/test audit): procurement (`compras`, `adquisiciones`, …), laboratory (`laboratorio`, …), unsuitable (`estudiante`, …). Unknown → abstain (`unknown`).
+Verification predicate (shared):
+
+- `evidence_type=contact_identity`
+- `matching_reason_code=exact_email`
+- `confidence=high`
+- `source_table=contact_master` and `source_plane=contact_master`
+- contact `identity_status=resolved` with high contact confidence
+- all pointer fields present and resolving to the frozen PR2 evidence row for that contact
+
+High confidence alone is insufficient. Mere presence in `commercial_identity_contact` is insufficient. Ambiguous / needs_review / unlinked / internal_actor identities are never selectable.
+
+Role tokens (smallest viable taxonomy from fixture/test audit): procurement (`compras`, `adquisiciones`, …), laboratory (`laboratorio`, …), unsuitable (`estudiante`, …). Unknown → abstain (`unknown`). Production roles are mostly null → suitable-role outcomes remain rare without inventing roles.
 
 ## Reconciliation equations
 
+Binding over actual frozen objects (not parallel unrelated ID lists):
+
 ```text
-PR5D tender decisions
-=
-organization resolutions
-=
-contact-resolution summaries
+PR5D decision
+→ matching OrganizationResolution
+→ matching ContactResolutionSummary
+→ zero or more matching ContactCandidates
 ```
 
 Also enforced:
 
-- Exactly one organization and one contact summary per tender  
-- Every candidate belongs to the summary’s resolved account  
-- No contact search when the account is not uniquely linked  
-- Deferred ⇒ no candidates and no completed search stages  
-- Existing-contact statuses have supporting candidates  
-- Selected contacts are selectable, not suppressed/blocked, account-compatible  
-- No duplicate `(contact_resolution_id, contact_id)`  
-- Order-independent semantic digest  
+- Organization/summary `relevance_decision_id` equals the actual decision for that tender
+- Summary organization ID/account matches its organization
+- Candidate summary, tender, and account all match
+- `selected_candidate_id` resolves exactly once; selected contact agrees
+- Selected candidate satisfies role/identity/verification/safety for its status
+- Considered/suitable/blocked counts equal actual candidates
+- Ranks are deterministic, unique, and contiguous
+- Ambiguous status has competing candidates **and** a conflict row
+- Every candidate evidence ID resolves to frozen PR2 evidence for that contact
+- Every PR4 resolution pointer resolves when claimed
+- No duplicate `(contact_resolution_id, contact_id)`
+- Order-independent semantic digest; PII-safe fingerprints (hashed tokens, not raw emails/names/domains/buyer wording)
+
+## SQLite load contract
+
+- URI `mode=ro` + `PRAGMA query_only=ON`
+- One `BEGIN DEFERRED` read transaction for the complete PR2/PR4/safety source load, with `enable_require_active_read_transaction`
+- Rollback/disable on exit; mtime must be unchanged
 
 ## Privacy / artifacts
 
@@ -126,9 +149,10 @@ Shareable `summary.json` / walkthrough are redacted (no raw names, emails, domai
 
 ## Known limitations
 
-- `existing_verified_contact` is rare until identity evidence routinely carries high-confidence contact verification.  
-- Title-only / sparse buyer provenance yields many deferred or unlinked organization outcomes.  
-- No Contact Master parallel truth — PR2 contacts only.  
+- `existing_verified_contact` requires suitable **role** text plus accepted verification evidence; production roles are mostly null, so zero verified rows is expected until roles are populated — do not weaken the rule.
+- Unanimous PR4 constituent linking is stricter than “any surviving linked account,” so linked organization counts may drop mechanically.
+- Title-only / sparse buyer provenance yields many deferred or unlinked organization outcomes.
+- No Contact Master parallel truth — PR2 contacts only.
 - No external research, Gmail, or outreach mutation.
 
 ## Explicit exclusions

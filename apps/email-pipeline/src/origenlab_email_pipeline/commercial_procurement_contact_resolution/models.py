@@ -40,6 +40,10 @@ class ContactResolutionEvidence:
     subject_id: str
     source_table: str
     source_record_id: str
+    source_plane: str
+    origin_plane: str
+    evidence_type: str
+    evidence_at: str
     matching_reason_code: str
     confidence: str
 
@@ -66,6 +70,7 @@ class ContactCandidate:
     suppression_result: str
     outreach_state_result: str
     safety_blocked: bool
+    safety_unknown: bool
     selectable: bool
     ranking_reason_codes: tuple[str, ...]
 

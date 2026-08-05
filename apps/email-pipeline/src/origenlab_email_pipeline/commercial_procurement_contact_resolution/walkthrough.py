@@ -91,6 +91,7 @@ def build_contact_resolution_walkthrough(
                     "suppression_result": c.suppression_result,
                     "outreach_state_result": c.outreach_state_result,
                     "safety_blocked": c.safety_blocked,
+                    "safety_unknown": c.safety_unknown,
                     "selectable": c.selectable,
                     "contact_token": redact_id("contact", c.contact_id),
                     "ranking_reason_codes": list(c.ranking_reason_codes),

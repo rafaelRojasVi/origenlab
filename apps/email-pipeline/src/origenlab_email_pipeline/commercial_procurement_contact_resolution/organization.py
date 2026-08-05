@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Any, Mapping
 
@@ -27,6 +28,7 @@ from origenlab_email_pipeline.commercial_procurement.resolution import (
     build_account_resolution,
 )
 from origenlab_email_pipeline.commercial_procurement.sources import (
+    assert_active_read_transaction,
     load_pr2_account_index,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.canonical_json import (
@@ -42,6 +44,7 @@ from origenlab_email_pipeline.org_normalize import normalize_domain
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    assert_active_read_transaction(conn)
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
         (name,),
@@ -49,10 +52,31 @@ def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
     return bool(row)
 
 
+def _parse_candidate_account_ids(raw: Any) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if isinstance(raw, (list, tuple)):
+        return tuple(sorted({str(x) for x in raw if str(x).strip()}))
+    text = str(raw).strip()
+    if not text or text in {"[]", "null", "None"}:
+        return ()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return ()
+    if not isinstance(parsed, list):
+        return ()
+    return tuple(sorted({str(x) for x in parsed if str(x).strip()}))
+
+
 def load_pr4_resolutions_by_procurement(
     conn: sqlite3.Connection,
 ) -> dict[str, dict[str, Any]]:
-    """Load PR4 account resolutions keyed by procurement_id (read-only)."""
+    """Load PR4 account resolutions keyed by procurement_id (read-only).
+
+    Preserves ``candidate_account_ids`` — conflicts must not be discarded.
+    """
+    assert_active_read_transaction(conn)
     if not _table_exists(conn, "commercial_procurement_account_resolution"):
         return {}
     out: dict[str, dict[str, Any]] = {}
@@ -64,6 +88,7 @@ def load_pr4_resolutions_by_procurement(
         """
     )
     for r in rows:
+        cands = _parse_candidate_account_ids(r["candidate_account_ids_json"])
         out[str(r["procurement_id"])] = {
             "resolution_id": str(r["resolution_id"]),
             "procurement_id": str(r["procurement_id"]),
@@ -71,6 +96,8 @@ def load_pr4_resolutions_by_procurement(
             "account_id": (str(r["account_id"]) if r["account_id"] else None),
             "link_route": (str(r["link_route"]) if r["link_route"] else None),
             "reason_code": str(r["reason_code"] or ""),
+            "candidate_account_ids": cands,
+            "candidate_account_ids_json": str(r["candidate_account_ids_json"] or "[]"),
         }
     return out
 
@@ -86,7 +113,6 @@ def buyer_domain_candidate(buyer_source_id: str | None) -> str | None:
     if is_marketplace_domain(dom) or is_consumer_domain(dom) or is_internal_domain(dom):
         return None
     if not is_institutional_domain(dom):
-        # Still allow exact index lookup; refused domains handled by link_routes.
         pass
     return dom
 
@@ -110,6 +136,16 @@ def _org_id(payload: Mapping[str, Any]) -> str:
     return f"org_{digest[:32]}"
 
 
+def _deterministic_link_route(routes: list[str]) -> str | None:
+    """Preserve multi-route provenance without arbitrary first-route selection."""
+    uniq = sorted({r for r in routes if r})
+    if not uniq:
+        return None
+    if len(uniq) == 1:
+        return uniq[0]
+    return "|".join(uniq)
+
+
 def resolve_organization_for_tender(
     tender: CoalescedProcurementTender,
     *,
@@ -126,75 +162,240 @@ def resolve_organization_for_tender(
     if tender.pr4_procurement_id and tender.pr4_procurement_id not in pr4_ids:
         pr4_ids = tuple(sorted({*pr4_ids, tender.pr4_procurement_id}))
 
-    # 1) Carry forward PR4 linked accounts only when consistent.
-    linked_accounts: list[str] = []
-    pr4_resolution_ids: list[str] = []
-    routes: list[str] = []
-    for pid in pr4_ids:
-        row = pr4_by_procurement.get(pid)
-        if not row:
-            continue
-        pr4_resolution_ids.append(str(row["resolution_id"]))
-        if row.get("resolution_status") == RESOLUTION_LINKED and row.get("account_id"):
-            aid = str(row["account_id"])
-            if aid not in known_account_ids:
-                # Selected account must exist in frozen PR2 input.
-                continue
-            linked_accounts.append(aid)
-            if row.get("link_route"):
-                routes.append(str(row["link_route"]))
+    if pr4_ids:
+        missing: list[str] = []
+        rows: list[Mapping[str, Any]] = []
+        for pid in pr4_ids:
+            row = pr4_by_procurement.get(pid)
+            if not row:
+                missing.append(pid)
+            else:
+                rows.append(row)
 
-    unique_linked = sorted(set(linked_accounts))
-    if len(unique_linked) > 1:
-        payload = {
-            "coalesced_tender_id": tender.coalesced_tender_id,
-            "status": "ambiguous",
-            "source": "pr4_linked_conflict",
-            "accounts": unique_linked,
-        }
-        return OrganizationResolution(
-            organization_resolution_id=_org_id(payload),
-            coalesced_tender_id=tender.coalesced_tender_id,
-            relevance_decision_id=relevance_decision_id,
-            resolution_status="ambiguous",
-            resolution_source="pr4_linked_conflict",
-            account_id=None,
-            link_route=None,
-            reason_code="conflicting_pr4_linked_accounts",
-            candidate_account_ids=tuple(unique_linked),
-            evidence_ref_ids=evidence_refs,
-            pr4_procurement_ids=pr4_ids,
-            pr4_resolution_ids=tuple(sorted(set(pr4_resolution_ids))),
-            buyer_field_sufficiency=sufficiency,
-            identity_fingerprint=identity_fingerprint,
-        )
-    if len(unique_linked) == 1:
-        payload = {
-            "coalesced_tender_id": tender.coalesced_tender_id,
-            "status": "linked",
-            "source": "pr4_linked_consistent",
-            "account_id": unique_linked[0],
-        }
-        return OrganizationResolution(
-            organization_resolution_id=_org_id(payload),
-            coalesced_tender_id=tender.coalesced_tender_id,
-            relevance_decision_id=relevance_decision_id,
-            resolution_status="linked",
-            resolution_source="pr4_linked_consistent",
-            account_id=unique_linked[0],
-            link_route=routes[0] if len(set(routes)) == 1 else (routes[0] if routes else None),
-            reason_code="pr4_linked_account_carried_forward",
-            candidate_account_ids=(),
-            evidence_ref_ids=evidence_refs,
-            pr4_procurement_ids=pr4_ids,
-            pr4_resolution_ids=tuple(sorted(set(pr4_resolution_ids))),
-            buyer_field_sufficiency=sufficiency,
-            identity_fingerprint=identity_fingerprint,
+        pr4_resolution_ids = tuple(
+            sorted({str(r["resolution_id"]) for r in rows if r.get("resolution_id")})
         )
 
-    # 2) Live / unresolved: reuse PR4 link_routes on coalesced buyer fields.
+        if missing:
+            payload = {
+                "coalesced_tender_id": tender.coalesced_tender_id,
+                "status": "unlinked",
+                "source": "pr4_constituent_incomplete",
+                "missing": sorted(missing),
+            }
+            return OrganizationResolution(
+                organization_resolution_id=_org_id(payload),
+                coalesced_tender_id=tender.coalesced_tender_id,
+                relevance_decision_id=relevance_decision_id,
+                resolution_status="unlinked",
+                resolution_source="pr4_constituent_incomplete",
+                account_id=None,
+                link_route=None,
+                reason_code="missing_pr4_constituent_resolution",
+                candidate_account_ids=(),
+                evidence_ref_ids=evidence_refs,
+                pr4_procurement_ids=pr4_ids,
+                pr4_resolution_ids=pr4_resolution_ids,
+                buyer_field_sufficiency=sufficiency,
+                identity_fingerprint=identity_fingerprint,
+            )
+
+        linked_accounts: list[str] = []
+        stale_accounts: list[str] = []
+        routes: list[str] = []
+        all_candidate_accounts: set[str] = set()
+        non_unanimous = False
+
+        for row in rows:
+            cands = _parse_candidate_account_ids(
+                row.get("candidate_account_ids")
+                if "candidate_account_ids" in row
+                else row.get("candidate_account_ids_json")
+            )
+            all_candidate_accounts.update(cands)
+            status = str(row.get("resolution_status") or "")
+            aid = str(row["account_id"]) if row.get("account_id") else None
+            if status == RESOLUTION_LINKED and aid:
+                if aid not in known_account_ids:
+                    stale_accounts.append(aid)
+                else:
+                    linked_accounts.append(aid)
+                    if row.get("link_route"):
+                        routes.append(str(row["link_route"]))
+            else:
+                non_unanimous = True
+
+        if stale_accounts:
+            payload = {
+                "coalesced_tender_id": tender.coalesced_tender_id,
+                "status": "unlinked",
+                "source": "pr4_linked_stale",
+                "stale": sorted(set(stale_accounts)),
+            }
+            return OrganizationResolution(
+                organization_resolution_id=_org_id(payload),
+                coalesced_tender_id=tender.coalesced_tender_id,
+                relevance_decision_id=relevance_decision_id,
+                resolution_status="unlinked",
+                resolution_source="pr4_linked_stale",
+                account_id=None,
+                link_route=None,
+                reason_code="linked_account_missing_from_pr2_identity",
+                candidate_account_ids=tuple(sorted(set(stale_accounts) | all_candidate_accounts)),
+                evidence_ref_ids=evidence_refs,
+                pr4_procurement_ids=pr4_ids,
+                pr4_resolution_ids=pr4_resolution_ids,
+                buyer_field_sufficiency=sufficiency,
+                identity_fingerprint=identity_fingerprint,
+            )
+
+        unique_linked = sorted(set(linked_accounts))
+        competing = sorted(all_candidate_accounts)
+
+        if len(unique_linked) > 1:
+            payload = {
+                "coalesced_tender_id": tender.coalesced_tender_id,
+                "status": "ambiguous",
+                "source": "pr4_linked_conflict",
+                "accounts": unique_linked,
+            }
+            return OrganizationResolution(
+                organization_resolution_id=_org_id(payload),
+                coalesced_tender_id=tender.coalesced_tender_id,
+                relevance_decision_id=relevance_decision_id,
+                resolution_status="ambiguous",
+                resolution_source="pr4_linked_conflict",
+                account_id=None,
+                link_route=None,
+                reason_code="conflicting_pr4_linked_accounts",
+                candidate_account_ids=tuple(
+                    sorted(set(unique_linked) | set(competing))
+                ),
+                evidence_ref_ids=evidence_refs,
+                pr4_procurement_ids=pr4_ids,
+                pr4_resolution_ids=pr4_resolution_ids,
+                buyer_field_sufficiency=sufficiency,
+                identity_fingerprint=identity_fingerprint,
+            )
+
+        if len(unique_linked) == 1:
+            aid = unique_linked[0]
+            # Candidate-account conflicts from any constituent must not be discarded.
+            foreign_cands = sorted(a for a in competing if a != aid)
+            if foreign_cands:
+                payload = {
+                    "coalesced_tender_id": tender.coalesced_tender_id,
+                    "status": "ambiguous",
+                    "source": "pr4_candidate_conflict",
+                    "account_id": aid,
+                    "foreign": foreign_cands,
+                }
+                return OrganizationResolution(
+                    organization_resolution_id=_org_id(payload),
+                    coalesced_tender_id=tender.coalesced_tender_id,
+                    relevance_decision_id=relevance_decision_id,
+                    resolution_status="ambiguous",
+                    resolution_source="pr4_candidate_conflict",
+                    account_id=None,
+                    link_route=None,
+                    reason_code="conflicting_pr4_candidate_accounts",
+                    candidate_account_ids=tuple(sorted({aid, *foreign_cands})),
+                    evidence_ref_ids=evidence_refs,
+                    pr4_procurement_ids=pr4_ids,
+                    pr4_resolution_ids=pr4_resolution_ids,
+                    buyer_field_sufficiency=sufficiency,
+                    identity_fingerprint=identity_fingerprint,
+                )
+            if non_unanimous:
+                # Genuine agreement requires every constituent to be linked to aid.
+                payload = {
+                    "coalesced_tender_id": tender.coalesced_tender_id,
+                    "status": "unlinked",
+                    "source": "pr4_constituents_not_unanimously_linked",
+                    "account_id": aid,
+                }
+                return OrganizationResolution(
+                    organization_resolution_id=_org_id(payload),
+                    coalesced_tender_id=tender.coalesced_tender_id,
+                    relevance_decision_id=relevance_decision_id,
+                    resolution_status="unlinked",
+                    resolution_source="pr4_constituents_not_unanimously_linked",
+                    account_id=None,
+                    link_route=None,
+                    reason_code="pr4_constituents_not_unanimously_linked",
+                    candidate_account_ids=(aid,),
+                    evidence_ref_ids=evidence_refs,
+                    pr4_procurement_ids=pr4_ids,
+                    pr4_resolution_ids=pr4_resolution_ids,
+                    buyer_field_sufficiency=sufficiency,
+                    identity_fingerprint=identity_fingerprint,
+                )
+            payload = {
+                "coalesced_tender_id": tender.coalesced_tender_id,
+                "status": "linked",
+                "source": "pr4_linked_consistent",
+                "account_id": aid,
+                "routes": sorted(set(routes)),
+            }
+            return OrganizationResolution(
+                organization_resolution_id=_org_id(payload),
+                coalesced_tender_id=tender.coalesced_tender_id,
+                relevance_decision_id=relevance_decision_id,
+                resolution_status="linked",
+                resolution_source="pr4_linked_consistent",
+                account_id=aid,
+                link_route=_deterministic_link_route(routes),
+                reason_code=(
+                    "pr4_linked_account_carried_forward"
+                    if len(set(routes)) <= 1
+                    else "pr4_linked_account_carried_forward_multi_route"
+                ),
+                candidate_account_ids=(),
+                evidence_ref_ids=evidence_refs,
+                pr4_procurement_ids=pr4_ids,
+                pr4_resolution_ids=pr4_resolution_ids,
+                buyer_field_sufficiency=sufficiency,
+                identity_fingerprint=identity_fingerprint,
+            )
+
+        # No linked constituents — candidate-only conflicts still matter.
+        if len(competing) > 1:
+            payload = {
+                "coalesced_tender_id": tender.coalesced_tender_id,
+                "status": "ambiguous",
+                "source": "pr4_candidate_conflict",
+                "accounts": competing,
+            }
+            return OrganizationResolution(
+                organization_resolution_id=_org_id(payload),
+                coalesced_tender_id=tender.coalesced_tender_id,
+                relevance_decision_id=relevance_decision_id,
+                resolution_status="ambiguous",
+                resolution_source="pr4_candidate_conflict",
+                account_id=None,
+                link_route=None,
+                reason_code="conflicting_pr4_candidate_accounts",
+                candidate_account_ids=tuple(competing),
+                evidence_ref_ids=evidence_refs,
+                pr4_procurement_ids=pr4_ids,
+                pr4_resolution_ids=pr4_resolution_ids,
+                buyer_field_sufficiency=sufficiency,
+                identity_fingerprint=identity_fingerprint,
+            )
+        # Fall through to live route when PR4 has no linked/candidate signal.
+
+    # Live / unresolved: reuse PR4 link_routes on coalesced buyer fields.
     name_norm = safe_org_normalized(tender.buyer_display_selected or "") or None
     domain = buyer_domain_candidate(tender.buyer_source_id_selected)
+    pr4_resolution_ids_live = tuple(
+        sorted(
+            {
+                str(pr4_by_procurement[pid]["resolution_id"])
+                for pid in pr4_ids
+                if pid in pr4_by_procurement and pr4_by_procurement[pid].get("resolution_id")
+            }
+        )
+    )
     if not name_norm and not domain:
         payload = {
             "coalesced_tender_id": tender.coalesced_tender_id,
@@ -213,7 +414,7 @@ def resolve_organization_for_tender(
             candidate_account_ids=(),
             evidence_ref_ids=evidence_refs,
             pr4_procurement_ids=pr4_ids,
-            pr4_resolution_ids=tuple(sorted(set(pr4_resolution_ids))),
+            pr4_resolution_ids=pr4_resolution_ids_live,
             buyer_field_sufficiency=sufficiency,
             identity_fingerprint=identity_fingerprint,
         )
@@ -227,9 +428,8 @@ def resolve_organization_for_tender(
         email_norm=None,
         weak_public_unit_name=weak,
     )
-    pseudo_procurement_id = tender.coalesced_tender_id
     resolution = build_account_resolution(
-        procurement_id=pseudo_procurement_id,
+        procurement_id=tender.coalesced_tender_id,
         result=route,
     )
     assert_resolution_invariants(resolution)
@@ -264,7 +464,7 @@ def resolve_organization_for_tender(
         candidate_account_ids=tuple(candidates),
         evidence_ref_ids=evidence_refs,
         pr4_procurement_ids=pr4_ids,
-        pr4_resolution_ids=tuple(sorted(set(pr4_resolution_ids))),
+        pr4_resolution_ids=pr4_resolution_ids_live,
         buyer_field_sufficiency=sufficiency,
         identity_fingerprint=identity_fingerprint,
     )
@@ -273,6 +473,7 @@ def resolve_organization_for_tender(
 def open_account_index(
     conn: sqlite3.Connection,
 ) -> tuple[AccountIndex, frozenset[str]]:
+    assert_active_read_transaction(conn)
     index = load_pr2_account_index(conn)
     known = frozenset(index.accounts_by_id.keys())
     return index, known
