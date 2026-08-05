@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -52,6 +53,7 @@ from origenlab_email_pipeline.commercial_procurement_candidate_planner.models im
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.normalize import (
     accept_canonical_tender_key,
     accept_pr4_signal_identity,
+    closing_bucket_for_delta,
     coalesced_tender_id,
     normalize_tender_timestamp,
     normalized_status_meaning,
@@ -1023,8 +1025,27 @@ def test_stale_open_not_active_and_current_open_active() -> None:
         freshness_threshold_hours=48,
     )
     assert out2[0].lifecycle_class == "active_open"
+    assert out2[0].closing_soon_bucket == "d4_to_d7"
     assert out2[0].lifecycle_status_evidence_ref_id == "e1"
     assert out2[0].lifecycle_close_evidence_ref_id == "e1"
+
+
+@pytest.mark.parametrize(
+    ("delta", "expected"),
+    [
+        (timedelta(seconds=-1), "not_applicable"),
+        (timedelta(hours=12), "lt_24h"),
+        (timedelta(hours=24), "d1_to_d3"),
+        (timedelta(days=3), "d1_to_d3"),
+        (timedelta(days=4), "d4_to_d7"),
+        (timedelta(days=7), "d4_to_d7"),
+        (timedelta(days=8), "gt_7d"),
+    ],
+)
+def test_closing_bucket_for_delta_operator_boundaries(
+    delta: timedelta, expected: str
+) -> None:
+    assert closing_bucket_for_delta(delta) == expected
 
 
 def test_close_exactly_at_as_of_is_closed() -> None:
@@ -1043,6 +1064,98 @@ def test_close_exactly_at_as_of_is_closed() -> None:
     )
     assert life == "closed"
     assert bucket == "not_applicable"
+
+
+def test_future_scheduled_publication_requires_current_publication_provenance() -> None:
+    as_of = parse_as_of_utc(AS_OF)
+    tender = _tender_shell(
+        status_code_selected=None,
+        status_name_selected=None,
+        status_value_selected=None,
+        source_status_system_selected=None,
+        close_timestamp_selected=None,
+        publication_timestamp_selected="2026-08-02T09:00:00Z",
+        selected_field_provenance={"publication_timestamp": "pub"},
+        evidence_ref_ids=("pub",),
+    )
+    fresh_pub_ref = _ref(
+        rid="pub",
+        plane="acquisition",
+        key="4000-1-le26",
+        rank="ticket_detail",
+        pub="2026-08-02T09:00:00Z",
+        acquired="2026-08-01T10:00:00Z",
+        obs="pub_obs",
+        snap="pub_snap",
+    )
+    out = apply_lifecycle(
+        [tender],
+        refs_by_id={"pub": fresh_pub_ref},
+        as_of_utc=as_of,
+        freshness_threshold_hours=48,
+    )
+    assert out[0].lifecycle_class == "future_scheduled"
+    assert out[0].lifecycle_publication_evidence_ref_id == "pub"
+    assert out[0].lifecycle_evidence_currentness_class == "current_authoritative_snapshot"
+    assert "publication_after_as_of" in out[0].lifecycle_reason_codes
+
+    stale_pub_ref = _ref(
+        rid="pub",
+        plane="acquisition",
+        key="4000-1-le26",
+        rank="ticket_detail",
+        pub="2026-08-02T09:00:00Z",
+        acquired="2026-07-29T10:00:00Z",
+        obs="pub_obs_stale",
+        snap="pub_snap_stale",
+    )
+    stale_out = apply_lifecycle(
+        [tender],
+        refs_by_id={"pub": stale_pub_ref},
+        as_of_utc=as_of,
+        freshness_threshold_hours=48,
+    )
+    assert stale_out[0].lifecycle_class == "status_unknown"
+    assert (
+        stale_out[0].lifecycle_evidence_currentness_class
+        == "stale_or_unverified_field_provenance"
+    )
+    assert "stale_or_unverified_future_publication" in stale_out[0].lifecycle_reason_codes
+
+
+def test_publication_date_conflict_blocks_future_scheduled() -> None:
+    as_of = parse_as_of_utc(AS_OF)
+    pub_ref = _ref(
+        rid="pub",
+        plane="acquisition",
+        key="4000-1-le26",
+        rank="ticket_detail",
+        pub="2026-08-02T09:00:00Z",
+        acquired="2026-08-01T10:00:00Z",
+        obs="pub_obs",
+        snap="pub_snap",
+    )
+    life, bucket, reasons, life_cur = classify_lifecycle(
+        tender=_tender_shell(
+            status_code_selected=None,
+            status_name_selected=None,
+            status_value_selected=None,
+            source_status_system_selected=None,
+            close_timestamp_selected=None,
+            publication_timestamp_selected="2026-08-02T09:00:00Z",
+            selected_field_provenance={"publication_timestamp": "pub"},
+            evidence_ref_ids=("pub",),
+        ),
+        currentness_class="current_authoritative_snapshot",
+        as_of_utc=as_of,
+        has_status_conflict=False,
+        has_publication_date_conflict=True,
+        publication_ref=pub_ref,
+    )
+    assert life == "status_unknown"
+    assert bucket == "not_applicable"
+    assert reasons == ("authoritative_publication_date_conflict",)
+    assert life_cur is None
 
 
 def test_awarded_and_cancelled_mappings() -> None:
