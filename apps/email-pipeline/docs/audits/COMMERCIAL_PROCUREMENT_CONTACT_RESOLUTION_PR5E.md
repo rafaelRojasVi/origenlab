@@ -71,11 +71,11 @@ If buyer fields cannot support a lossless live link and no unanimous PR4 linked 
 | `role_known_email_missing` | Suitable role known; usable email missing |
 | `existing_verified_contact` | Usable email + suitable role + declarative verification evidence + clear safety + resolved identity + account membership |
 
-Historical / closed / negative / ambiguous tenders may still receive a contact-dimension resolution for audit, but must not receive actionable research/outreach next actions (`none` instead).
+Historical / closed / negative / ambiguous / awarded / conflicting / date-missing / status-unknown tenders may still receive a contact-dimension resolution for audit, but must not receive gated lead or research/outreach next actions (`use_existing_contact`, `research_contact_if_active` → `none`). Unknown lifecycle/relevance/currentness fail closed. Unreviewed PR5D predictions (absence of reviewed/gold + independent review) fail closed — confidence/class alone is insufficient. Currentness truth comes from frozen PR5C, not lifecycle inference.
 
 ## Ranking / verification / actionability policy
 
-Declarative `contact_resolution_policy_v1` drives **both** execution and `rules_fingerprint`:
+Declarative `contact_resolution_policy_v2` drives **both** execution and `rules_fingerprint`:
 
 1. Exact buyer email belonging to the resolved account
 2. Verified suitable

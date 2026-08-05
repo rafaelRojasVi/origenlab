@@ -50,6 +50,7 @@ def contact_input_fingerprint(
     pr5d_semantic_digest: str,
     identity_fingerprint: str,
     safety_fingerprint: str,
+    frozen_source_fingerprint: str,
     organization_resolutions: Iterable[OrganizationResolution],
     pr4_resolution_ids: Iterable[str],
     pr2_contact_ids: Iterable[str],
@@ -90,6 +91,7 @@ def contact_input_fingerprint(
             "pr5d_semantic_digest": pr5d_semantic_digest,
             "identity_fingerprint": identity_fingerprint,
             "safety_fingerprint": safety_fingerprint,
+            "frozen_source_fingerprint": frozen_source_fingerprint,
             "organization_resolutions": orgs,
             "pr4_resolution_id_tokens": sorted(_tok(x) for x in pr4_resolution_ids),
             "pr2_contact_id_tokens": sorted(_tok(x) for x in pr2_contact_ids),
@@ -124,6 +126,8 @@ def contact_semantic_digest(
                 "blocked_contact_count": s.blocked_contact_count,
                 "relevance_class_echo": s.relevance_class_echo,
                 "lifecycle_class_echo": s.lifecycle_class_echo,
+                "currentness_class_echo": s.currentness_class_echo,
+                "relevance_validation_status_echo": s.relevance_validation_status_echo,
             }
             for s in summaries
         ),
@@ -231,6 +235,7 @@ def all_fingerprints(
     pr5d_semantic_digest: str,
     identity_fingerprint: str,
     safety_fingerprint: str,
+    frozen_source_fingerprint: str,
     organization_resolutions: Iterable[OrganizationResolution],
     summaries: Iterable[ContactResolutionSummary],
     candidates: Iterable[ContactCandidate],
@@ -246,6 +251,7 @@ def all_fingerprints(
         pr5d_semantic_digest=pr5d_semantic_digest,
         identity_fingerprint=identity_fingerprint,
         safety_fingerprint=safety_fingerprint,
+        frozen_source_fingerprint=frozen_source_fingerprint,
         organization_resolutions=organization_resolutions,
         pr4_resolution_ids=pr4_resolution_ids,
         pr2_contact_ids=pr2_contact_ids,
@@ -272,4 +278,5 @@ def all_fingerprints(
         "build_fingerprint": build,
         "semantic_digest": semantic,
         "safety_fingerprint": safety_fingerprint,
+        "frozen_source_fingerprint": frozen_source_fingerprint,
     }

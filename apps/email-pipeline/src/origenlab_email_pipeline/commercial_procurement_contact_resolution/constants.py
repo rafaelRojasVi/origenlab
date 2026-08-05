@@ -42,6 +42,8 @@ ORGANIZATION_RESOLUTION_SOURCES: Final = (
     "pr4_constituent_incomplete",
     "pr4_linked_stale",
     "pr4_constituents_not_unanimously_linked",
+    "pr4_constituents_unresolved",
+    "pr4_provenance_malformed",
     "live_link_route",
     "buyer_fields_insufficient",
 )

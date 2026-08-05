@@ -115,6 +115,8 @@ class ContactResolutionSummary:
     blocked_contact_count: int
     relevance_class_echo: str
     lifecycle_class_echo: str
+    currentness_class_echo: str
+    relevance_validation_status_echo: str
     input_fingerprint: str
     semantic_fingerprint: str
     rules_version: str

@@ -27,11 +27,18 @@ from origenlab_email_pipeline.commercial_procurement_contact_resolution.constant
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.contact_search import (
     deferred_summary,
     resolve_contacts_for_tender,
+    select_final_status,
 )
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.fingerprint import (
+    contact_input_fingerprint,
     contact_rules_fingerprint,
     contact_semantic_digest,
     rules_fingerprint_payload,
+)
+from origenlab_email_pipeline.commercial_procurement_contact_resolution.frozen_sources import (
+    FrozenContactProjection,
+    FrozenEvidenceProjection,
+    FrozenSourceIndex,
 )
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.models import (
     ContactCandidate,
@@ -40,11 +47,14 @@ from origenlab_email_pipeline.commercial_procurement_contact_resolution.models i
     OrganizationResolution,
 )
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.organization import (
+    Pr4ProvenanceError,
+    _parse_candidate_account_ids,
     assess_buyer_field_sufficiency,
     buyer_domain_candidate,
     resolve_organization_for_tender,
 )
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.planner import (
+    empty_frozen_source_index,
     reconcile_contact_resolution,
 )
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.policy import (
@@ -52,6 +62,8 @@ from origenlab_email_pipeline.commercial_procurement_contact_resolution.policy i
     contact_has_explicit_verification,
     contact_resolution_policy_spec,
     evidence_satisfies_verification_policy,
+    next_action_for_status,
+    tender_allows_gated_lead_or_research,
 )
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.safety import (
     evaluate_contact_safety,
@@ -401,6 +413,7 @@ def test_deferred_has_no_candidates_or_stages() -> None:
         organization=org,
         input_fingerprint="x",
         reason_code="account_unresolved",
+        currentness_class="current_authoritative_snapshot",
     )
     assert summary.final_contact_status == CONTACT_RESOLUTION_DEFERRED
     assert summary.search_stages_completed == ()
@@ -600,6 +613,7 @@ def test_contact_search_verified_and_safety_regressions(tmp_path: Path) -> None:
         buyer_email_norm=None,
         institution_name="Hospital Demo",
         input_fingerprint="x",
+        currentness_class="current_authoritative_snapshot",
     )
     # Without accepted verification evidence → role review, not verified.
     assert summary.final_contact_status == "existing_contact_needs_role_review"
@@ -620,6 +634,7 @@ def test_contact_search_verified_and_safety_regressions(tmp_path: Path) -> None:
         buyer_email_norm=None,
         institution_name="Hospital Demo",
         input_fingerprint="x",
+        currentness_class="current_authoritative_snapshot",
     )
     assert summary_v.final_contact_status == "existing_verified_contact"
     assert summary_v.selected_contact_id == "c_verified"
@@ -638,6 +653,7 @@ def test_contact_search_verified_and_safety_regressions(tmp_path: Path) -> None:
         buyer_email_norm=None,
         institution_name="Hospital Demo",
         input_fingerprint="x",
+        currentness_class="current_authoritative_snapshot",
     )
     verified_inv = next(c for c in cands_inv if c.contact_id == "c_verified")
     assert verified_inv.has_usable_email is False
@@ -663,6 +679,7 @@ def test_contact_search_verified_and_safety_regressions(tmp_path: Path) -> None:
         buyer_email_norm=None,
         institution_name="Hospital Demo",
         input_fingerprint="x",
+        currentness_class="current_authoritative_snapshot",
     )
     blocked_int = next(c for c in cands_int if c.contact_id == "c_verified")
     assert blocked_int.safety_blocked is True
@@ -691,6 +708,7 @@ def test_contact_search_verified_and_safety_regressions(tmp_path: Path) -> None:
         buyer_email_norm=None,
         institution_name="Hospital Demo",
         input_fingerprint="x",
+        currentness_class="current_authoritative_snapshot",
     )
     assert next(c for c in cands_sent if c.contact_id == "c_verified").selectable is False
 
@@ -705,6 +723,7 @@ def test_contact_search_verified_and_safety_regressions(tmp_path: Path) -> None:
         buyer_email_norm=None,
         institution_name="Hospital Demo",
         input_fingerprint="x",
+        currentness_class="current_authoritative_snapshot",
     )
     assert next(c for c in cands_supp if c.contact_id == "c_verified").selectable is False
 
@@ -721,6 +740,7 @@ def test_contact_search_verified_and_safety_regressions(tmp_path: Path) -> None:
         buyer_email_norm=None,
         institution_name="Hospital Demo",
         input_fingerprint="x",
+        currentness_class="current_authoritative_snapshot",
     )
     assert next(c for c in cands_d if c.contact_id == "c_verified").selectable is False
 
@@ -766,6 +786,7 @@ def test_contact_search_verified_and_safety_regressions(tmp_path: Path) -> None:
         buyer_email_norm=None,
         institution_name="Hospital Demo",
         input_fingerprint="x",
+        currentness_class="current_authoritative_snapshot",
     )
     amb = next(c for c in cands_amb if c.contact_id == "c_amb")
     assert amb.selectable is False
@@ -812,6 +833,7 @@ def test_material_ambiguity_does_not_use_contact_id_tiebreak(tmp_path: Path) -> 
         buyer_email_norm=None,
         institution_name="Hospital Demo",
         input_fingerprint="x",
+        currentness_class="current_authoritative_snapshot",
     )
     assert summary.final_contact_status == "ambiguous_contact"
     assert summary.selected_contact_id is None
@@ -832,6 +854,7 @@ def test_reconcile_binding_counterexamples() -> None:
         organization=org_u,
         input_fingerprint="x",
         reason_code="account_unresolved",
+        currentness_class="current_authoritative_snapshot",
     )
     ok = reconcile_contact_resolution(
         decisions=[decision],
@@ -841,8 +864,7 @@ def test_reconcile_binding_counterexamples() -> None:
         candidates=[],
         evidence=[],
         conflicts=[],
-        pr4_by_procurement={},
-        frozen_evidence_by_id={},
+        frozen_index=empty_frozen_source_index(),
     )
     assert ok["ok"] is True
 
@@ -859,13 +881,13 @@ def test_reconcile_binding_counterexamples() -> None:
                 organization=bad_org,
                 input_fingerprint="x",
                 reason_code="account_unresolved",
+                currentness_class="current_authoritative_snapshot",
             )
         ],
         candidates=[],
         evidence=[],
         conflicts=[],
-        pr4_by_procurement={},
-        frozen_evidence_by_id={},
+        frozen_index=empty_frozen_source_index(),
     )
     assert bad["ok"] is False
     assert any(
@@ -904,8 +926,7 @@ def test_reconcile_binding_counterexamples() -> None:
         candidates=[bad_cand],
         evidence=[],
         conflicts=[],
-        pr4_by_procurement={},
-        frozen_evidence_by_id={},
+        frozen_index=empty_frozen_source_index(),
     )
     assert any(f.get("error") == "deferred_has_candidates" for f in bad2["failures"])
 
@@ -928,6 +949,8 @@ def test_reconcile_binding_counterexamples() -> None:
         blocked_contact_count=0,
         relevance_class_echo=decision.relevance_class,
         lifecycle_class_echo="open",
+        currentness_class_echo="current_authoritative_snapshot",
+        relevance_validation_status_echo="",
         input_fingerprint="x",
         semantic_fingerprint="s",
         rules_version="r",
@@ -963,8 +986,7 @@ def test_reconcile_binding_counterexamples() -> None:
         candidates=[mismatch_cand],
         evidence=[],
         conflicts=[],
-        pr4_by_procurement={},
-        frozen_evidence_by_id={},
+        frozen_index=empty_frozen_source_index(),
     )
     errs = {f.get("error") for f in bad3["failures"]}
     assert "invalid_selected_candidate_pointer" in errs
@@ -991,6 +1013,8 @@ def test_reconcile_binding_counterexamples() -> None:
         blocked_contact_count=0,
         relevance_class_echo=decision.relevance_class,
         lifecycle_class_echo="open",
+        currentness_class_echo="current_authoritative_snapshot",
+        relevance_validation_status_echo="",
         input_fingerprint="x",
         semantic_fingerprint="s",
         rules_version="r",
@@ -1004,8 +1028,7 @@ def test_reconcile_binding_counterexamples() -> None:
         candidates=[],
         evidence=[],
         conflicts=[],
-        pr4_by_procurement={},
-        frozen_evidence_by_id={},
+        frozen_index=empty_frozen_source_index(),
     )
     errs4 = {f.get("error") for f in bad4["failures"]}
     assert "ambiguous_without_competing_candidates" in errs4
@@ -1031,6 +1054,8 @@ def test_semantic_digest_sensitive_to_safety_and_selection() -> None:
         blocked_contact_count=0,
         relevance_class_echo="strong_equipment_class",
         lifecycle_class_echo="open",
+        currentness_class_echo="current_authoritative_snapshot",
+        relevance_validation_status_echo="",
         input_fingerprint="i",
         semantic_fingerprint="s",
         rules_version="r",
@@ -1158,3 +1183,752 @@ def test_shuffle_equivalent_inputs_stable_org_id() -> None:
     )
     assert a.organization_resolution_id == b.organization_resolution_id
     assert a.account_id == b.account_id
+
+
+def _cand_for_status(
+    *,
+    contact_id: str,
+    tier: str,
+    selectable: bool,
+    safety_blocked: bool = False,
+    safety_unknown: bool = False,
+    role_suitability: str = "suitable_procurement",
+    verification_status: str = "unverified",
+    has_usable_email: bool = True,
+) -> ContactCandidate:
+    return ContactCandidate(
+        candidate_id=f"cc_{contact_id}",
+        contact_resolution_id="crs_x",
+        coalesced_tender_id="t1",
+        account_id="acct_a",
+        contact_id=contact_id,
+        rank=1,
+        ranking_tier=tier,
+        role_raw_digest="r",
+        role_suitability=role_suitability,
+        identity_status="resolved",
+        identity_confidence="high",
+        has_usable_email=has_usable_email,
+        verification_status=verification_status,
+        evidence_ids=(),
+        suppression_result="clear",
+        outreach_state_result="clear",
+        safety_blocked=safety_blocked,
+        safety_unknown=safety_unknown,
+        selectable=selectable,
+        ranking_reason_codes=(),
+    )
+
+
+def test_status_precedence_blocked_beats_role_known_email_missing() -> None:
+    """Mixed blocked + role_known_email_missing → contact_blocked via precedence."""
+    policy = contact_resolution_policy_spec()
+    ranked = [
+        _cand_for_status(
+            contact_id="c_missing",
+            tier="role_known_email_missing",
+            selectable=False,
+            has_usable_email=False,
+        ),
+        _cand_for_status(
+            contact_id="c_blocked",
+            tier="blocked",
+            selectable=False,
+            safety_blocked=True,
+        ),
+    ]
+    status, selected, reason, conflicts = select_final_status(
+        ranked=ranked, policy=policy, tender_id="t1"
+    )
+    assert status == "contact_blocked"
+    assert selected is None
+    assert reason == "all_selectable_paths_blocked"
+    assert conflicts == []
+
+
+def test_contact_research_required_keeps_status_when_research_gated(
+    tmp_path: Path,
+) -> None:
+    """Non-actionable tender keeps analysis status; next_action becomes none."""
+    db = tmp_path / "research.sqlite"
+    conn = sqlite3.connect(str(db))
+    conn.row_factory = sqlite3.Row
+    _seed_identity(conn)
+    # Unsuitable role with email → identity-compatible but non-selectable tier path
+    # that exhausts to contact_research_required (or role_review if selectable).
+    # Use identity_incompatible / non-suitable email-missing-like non-selectable:
+    # blocked=false, no email, unsuitable role → no role_known_email_missing (needs suitable),
+    # no blocked → contact_research_required.
+    _insert_contact(
+        conn,
+        contact_id="c_noise",
+        email="not-an-email",
+        role="estudiante",
+        identity_status="resolved",
+    )
+    conn.commit()
+    conn.execute("BEGIN")
+    enable_require_active_read_transaction(conn)
+    summary, cands, _, _ = resolve_contacts_for_tender(
+        tender_id="t1",
+        relevance=_relevance(lifecycle_class_echo="closed"),
+        organization=_org(),
+        conn=conn,
+        safety=_clear_safety(),
+        buyer_email_norm=None,
+        institution_name="Hospital Demo",
+        input_fingerprint="x",
+        currentness_class="historical_pr4_only",
+        label_status="proposed",
+        independently_reviewed=False,
+    )
+    assert summary.final_contact_status == "contact_research_required"
+    assert summary.next_action == "none"
+    assert summary.currentness_class_echo == "historical_pr4_only"
+    assert summary.relevance_validation_status_echo == "proposed"
+    assert cands
+    disable_require_active_read_transaction(conn)
+    conn.close()
+
+
+def test_actionability_gated_actions_fail_closed_matrix() -> None:
+    """tender_allows_gated_lead_or_research / next_action_for_status fail closed."""
+    cases = [
+        # lifecycle=awarded, relevance=unrelated → gated becomes none
+        dict(
+            lifecycle="awarded",
+            relevance="unrelated",
+            currentness="current_authoritative_snapshot",
+            label_status="reviewed",
+            independently_reviewed=True,
+        ),
+        # lifecycle=status_conflict, relevance=ambiguous → none
+        dict(
+            lifecycle="status_conflict",
+            relevance="ambiguous",
+            currentness="current_authoritative_snapshot",
+            label_status="reviewed",
+            independently_reviewed=True,
+        ),
+        # lifecycle=unknown, relevance=unknown → none
+        dict(
+            lifecycle="unknown",
+            relevance="unknown",
+            currentness="current_authoritative_snapshot",
+            label_status="reviewed",
+            independently_reviewed=True,
+        ),
+        # active_open + strong + historical → none
+        dict(
+            lifecycle="active_open",
+            relevance="strong_equipment_class",
+            currentness="historical_pr4_only",
+            label_status="reviewed",
+            independently_reviewed=True,
+        ),
+        # active_open + strong + current but unvalidated → none
+        dict(
+            lifecycle="active_open",
+            relevance="strong_equipment_class",
+            currentness="current_authoritative_snapshot",
+            label_status=None,
+            independently_reviewed=False,
+        ),
+        dict(
+            lifecycle="active_open",
+            relevance="strong_equipment_class",
+            currentness="current_authoritative_snapshot",
+            label_status="proposed",
+            independently_reviewed=False,
+        ),
+    ]
+    for case in cases:
+        allowed, _ = tender_allows_gated_lead_or_research(
+            lifecycle_class=case["lifecycle"],
+            relevance_class=case["relevance"],
+            currentness_class=case["currentness"],
+            label_status=case["label_status"],
+            independently_reviewed=case["independently_reviewed"],
+        )
+        assert allowed is False
+        action = next_action_for_status(
+            "no_contact_found",
+            lifecycle_class=case["lifecycle"],
+            relevance_class=case["relevance"],
+            currentness_class=case["currentness"],
+            label_status=case["label_status"],
+            independently_reviewed=case["independently_reviewed"],
+        )
+        assert action == "none"
+
+    # reviewed + independently_reviewed unlocks research for no_contact_found
+    allowed_ok, reasons = tender_allows_gated_lead_or_research(
+        lifecycle_class="active_open",
+        relevance_class="strong_equipment_class",
+        currentness_class="current_authoritative_snapshot",
+        label_status="reviewed",
+        independently_reviewed=True,
+    )
+    assert allowed_ok is True
+    assert reasons == ()
+    assert (
+        next_action_for_status(
+            "no_contact_found",
+            lifecycle_class="active_open",
+            relevance_class="strong_equipment_class",
+            currentness_class="current_authoritative_snapshot",
+            label_status="reviewed",
+            independently_reviewed=True,
+        )
+        == "research_contact_if_active"
+    )
+
+
+def test_pr4_malformed_candidate_account_ids_raises() -> None:
+    import pytest
+
+    with pytest.raises(Pr4ProvenanceError):
+        _parse_candidate_account_ids(None)
+    with pytest.raises(Pr4ProvenanceError):
+        _parse_candidate_account_ids("")
+    with pytest.raises(Pr4ProvenanceError):
+        _parse_candidate_account_ids("{not-json")
+    with pytest.raises(Pr4ProvenanceError):
+        _parse_candidate_account_ids('"string"')
+    with pytest.raises(Pr4ProvenanceError):
+        _parse_candidate_account_ids("null")
+
+    index = build_account_index(
+        accounts=[
+            {
+                "account_id": "acct_a",
+                "canonical_name_norm": "hospital demo",
+                "primary_domain_norm": "hospital.demo.cl",
+            }
+        ],
+        aliases=[],
+        domains=[{"account_id": "acct_a", "domain_norm": "hospital.demo.cl"}],
+    )
+    org = resolve_organization_for_tender(
+        _tender(pr4_ids=("p1",)),
+        relevance_decision_id="trd_t1",
+        account_index=index,
+        known_account_ids=frozenset({"acct_a"}),
+        pr4_by_procurement={
+            "p1": {
+                "resolution_id": "r1",
+                "resolution_status": "linked",
+                "account_id": "acct_a",
+                "link_route": "A_exact_institutional_domain",
+                "reason_code": "ok",
+                "candidate_account_ids_json": "{bad",
+            }
+        },
+        identity_fingerprint="ifp",
+    )
+    assert org.resolution_source == "pr4_provenance_malformed"
+    assert org.account_id is None
+
+
+def test_pr4_unresolved_constituents_do_not_live_link() -> None:
+    index = build_account_index(
+        accounts=[
+            {
+                "account_id": "acct_a",
+                "canonical_name_norm": "hospital demo",
+                "primary_domain_norm": "hospital.demo.cl",
+            }
+        ],
+        aliases=[],
+        domains=[{"account_id": "acct_a", "domain_norm": "hospital.demo.cl"}],
+    )
+    org = resolve_organization_for_tender(
+        _tender(pr4_ids=("p1", "p_missing")),
+        relevance_decision_id="trd_t1",
+        account_index=index,
+        known_account_ids=frozenset({"acct_a"}),
+        pr4_by_procurement={
+            "p1": {
+                "resolution_id": "r1",
+                "resolution_status": "linked",
+                "account_id": "acct_a",
+                "link_route": "A_exact_institutional_domain",
+                "reason_code": "ok",
+                "candidate_account_ids": (),
+            }
+        },
+        identity_fingerprint="ifp",
+    )
+    assert org.resolution_source == "pr4_constituent_incomplete"
+    assert org.account_id is None
+    assert not org.resolution_source.startswith("live_")
+
+
+def _frozen_ev(
+    *,
+    evidence_id: str = "ev1",
+    contact_id: str = "c1",
+    evidence_type: str = "contact_identity",
+    matching_reason: str = "exact_email",
+    source_table: str = "contact_master",
+    source_plane: str = "contact_master",
+) -> FrozenEvidenceProjection:
+    return FrozenEvidenceProjection(
+        evidence_id=evidence_id,
+        subject_kind="contact",
+        subject_id=contact_id,
+        source_table=source_table,
+        source_record_id="src1",
+        source_plane=source_plane,
+        origin_plane="business_mart",
+        evidence_type=evidence_type,
+        evidence_at="2026-01-01T00:00:00Z",
+        matching_reason_code=matching_reason,
+        confidence="high",
+    )
+
+
+def _frozen_contact(
+    *,
+    contact_id: str = "c1",
+    account_id: str = "acct_a",
+    evidence_ids: tuple[str, ...] = ("ev1",),
+    has_usable_email: bool = True,
+    role: str | None = "Jefa de Adquisiciones",
+) -> FrozenContactProjection:
+    return FrozenContactProjection(
+        contact_id=contact_id,
+        account_id=account_id,
+        email_digest="deadbeef" if has_usable_email else None,
+        has_usable_email=has_usable_email,
+        role_digest="role",
+        role_raw=role,
+        identity_status="resolved",
+        identity_confidence="high",
+        evidence_ids=evidence_ids,
+        email_norm="buyer@hospital.demo.cl" if has_usable_email else None,
+    )
+
+
+def _linked_summary_for_reconcile(
+    *,
+    status: str = "existing_contact_needs_role_review",
+    selected_candidate_id: str | None = "cc_1",
+    selected_contact_id: str | None = "c1",
+    next_action: str = "review_contact_role",
+    semantic: str = "s",
+    considered: int = 1,
+) -> ContactResolutionSummary:
+    decision = _relevance(lifecycle_class_echo="active_open")
+    org = _org(decision_id=decision.decision_id)
+    return ContactResolutionSummary(
+        contact_resolution_id="crs_1",
+        coalesced_tender_id="t1",
+        relevance_decision_id=decision.decision_id,
+        organization_resolution_id=org.organization_resolution_id,
+        account_id="acct_a",
+        final_contact_status=status,
+        selected_contact_id=selected_contact_id,
+        selected_candidate_id=selected_candidate_id,
+        search_stages_completed=("pr2_account_contacts", "safety_gate"),
+        next_action=next_action,
+        reason_code="contact_requires_role_review",
+        considered_contact_count=considered,
+        suitable_contact_count=0,
+        blocked_contact_count=0,
+        relevance_class_echo=decision.relevance_class,
+        lifecycle_class_echo="active_open",
+        currentness_class_echo="current_authoritative_snapshot",
+        relevance_validation_status_echo="",
+        input_fingerprint="x",
+        semantic_fingerprint=semantic,
+        rules_version="r",
+        resolver_version="v",
+    )
+
+
+def test_reconcile_fabricated_evidence_fields_fail() -> None:
+    decision = _relevance(lifecycle_class_echo="active_open")
+    tender = _tender()
+    org = _org(decision_id=decision.decision_id)
+    frozen = FrozenSourceIndex(
+        contacts_by_id={"c1": _frozen_contact()},
+        evidence_by_id={"ev1": _frozen_ev()},
+        contacts_by_account={"acct_a": ("c1",)},
+        pr4_by_procurement={},
+        known_account_ids=frozenset({"acct_a"}),
+        source_fingerprint="fp",
+    )
+    plan_ev = ContactResolutionEvidence(
+        evidence_id="ev1",
+        subject_kind="contact",
+        subject_id="c1",
+        source_table="fabricated_table",
+        source_record_id="src1",
+        source_plane="contact_master",
+        origin_plane="business_mart",
+        evidence_type="contact_identity",
+        evidence_at="2026-01-01T00:00:00Z",
+        matching_reason_code="exact_email",
+        confidence="high",
+    )
+    cand = ContactCandidate(
+        candidate_id="cc_1",
+        contact_resolution_id="crs_1",
+        coalesced_tender_id="t1",
+        account_id="acct_a",
+        contact_id="c1",
+        rank=1,
+        ranking_tier="suitable_role_unverified",
+        role_raw_digest="r",
+        role_suitability="suitable_procurement",
+        identity_status="resolved",
+        identity_confidence="high",
+        has_usable_email=True,
+        verification_status="unverified",
+        evidence_ids=("ev1",),
+        suppression_result="clear",
+        outreach_state_result="clear",
+        safety_blocked=False,
+        safety_unknown=False,
+        selectable=True,
+        ranking_reason_codes=(),
+    )
+    summary = _linked_summary_for_reconcile()
+    result = reconcile_contact_resolution(
+        decisions=[decision],
+        tenders_by_id={"t1": tender},
+        organizations=[org],
+        summaries=[summary],
+        candidates=[cand],
+        evidence=[plan_ev],
+        conflicts=[],
+        frozen_index=frozen,
+    )
+    assert result["ok"] is False
+    assert any(f.get("error") == "evidence_field_mismatch" for f in result["failures"])
+
+
+def test_reconcile_verification_claim_without_frozen_predicate_fails() -> None:
+    decision = _relevance(lifecycle_class_echo="active_open")
+    tender = _tender()
+    org = _org(decision_id=decision.decision_id)
+    # Frozen evidence is non-verifying type
+    frozen = FrozenSourceIndex(
+        contacts_by_id={"c1": _frozen_contact()},
+        evidence_by_id={
+            "ev1": _frozen_ev(
+                evidence_type="contact_link",
+                matching_reason="resolved_contact",
+                source_table="fixture",
+                source_plane="identity",
+            )
+        },
+        contacts_by_account={"acct_a": ("c1",)},
+        pr4_by_procurement={},
+        known_account_ids=frozenset({"acct_a"}),
+        source_fingerprint="fp",
+    )
+    plan_ev = ContactResolutionEvidence(**frozen.evidence_by_id["ev1"].to_dict())
+    cand = ContactCandidate(
+        candidate_id="cc_1",
+        contact_resolution_id="crs_1",
+        coalesced_tender_id="t1",
+        account_id="acct_a",
+        contact_id="c1",
+        rank=1,
+        ranking_tier="verified_suitable",
+        role_raw_digest="r",
+        role_suitability="suitable_procurement",
+        identity_status="resolved",
+        identity_confidence="high",
+        has_usable_email=True,
+        verification_status="explicit_verification",
+        evidence_ids=("ev1",),
+        suppression_result="clear",
+        outreach_state_result="clear",
+        safety_blocked=False,
+        safety_unknown=False,
+        selectable=True,
+        ranking_reason_codes=(),
+    )
+    summary = _linked_summary_for_reconcile(
+        status="existing_verified_contact",
+        next_action="none",
+    )
+    result = reconcile_contact_resolution(
+        decisions=[decision],
+        tenders_by_id={"t1": tender},
+        organizations=[org],
+        summaries=[summary],
+        candidates=[cand],
+        evidence=[plan_ev],
+        conflicts=[],
+        frozen_index=frozen,
+    )
+    assert result["ok"] is False
+    assert any(
+        f.get("error") == "verification_claim_without_frozen_predicate"
+        for f in result["failures"]
+    )
+
+
+def test_reconcile_swapped_evidence_pointer_fails() -> None:
+    decision = _relevance(lifecycle_class_echo="active_open")
+    tender = _tender()
+    org = _org(decision_id=decision.decision_id)
+    frozen = FrozenSourceIndex(
+        contacts_by_id={
+            "c1": _frozen_contact(evidence_ids=("ev1",)),
+            "c2": _frozen_contact(contact_id="c2", evidence_ids=("ev2",)),
+        },
+        evidence_by_id={
+            "ev1": _frozen_ev(evidence_id="ev1", contact_id="c1"),
+            "ev2": _frozen_ev(evidence_id="ev2", contact_id="c2"),
+        },
+        contacts_by_account={"acct_a": ("c1", "c2")},
+        pr4_by_procurement={},
+        known_account_ids=frozenset({"acct_a"}),
+        source_fingerprint="fp",
+    )
+    # Candidate c1 points at c2's evidence
+    plan_ev = ContactResolutionEvidence(**frozen.evidence_by_id["ev2"].to_dict())
+    cand = ContactCandidate(
+        candidate_id="cc_1",
+        contact_resolution_id="crs_1",
+        coalesced_tender_id="t1",
+        account_id="acct_a",
+        contact_id="c1",
+        rank=1,
+        ranking_tier="suitable_role_unverified",
+        role_raw_digest="r",
+        role_suitability="suitable_procurement",
+        identity_status="resolved",
+        identity_confidence="high",
+        has_usable_email=True,
+        verification_status="unverified",
+        evidence_ids=("ev2",),
+        suppression_result="clear",
+        outreach_state_result="clear",
+        safety_blocked=False,
+        safety_unknown=False,
+        selectable=True,
+        ranking_reason_codes=(),
+    )
+    summary = _linked_summary_for_reconcile()
+    result = reconcile_contact_resolution(
+        decisions=[decision],
+        tenders_by_id={"t1": tender},
+        organizations=[org],
+        summaries=[summary],
+        candidates=[cand],
+        evidence=[plan_ev],
+        conflicts=[],
+        frozen_index=frozen,
+    )
+    assert result["ok"] is False
+    errs = {f.get("error") for f in result["failures"]}
+    assert (
+        "frozen_evidence_subject_mismatch" in errs
+        or "candidate_evidence_ids_not_subset_of_frozen" in errs
+        or "evidence_contact_mismatch" in errs
+    )
+
+
+def test_reconcile_rank_order_inverted_vs_tier_fails() -> None:
+    decision = _relevance(lifecycle_class_echo="active_open")
+    tender = _tender()
+    org = _org(decision_id=decision.decision_id)
+    frozen = FrozenSourceIndex(
+        contacts_by_id={
+            "c_hi": _frozen_contact(contact_id="c_hi", evidence_ids=()),
+            "c_lo": _frozen_contact(contact_id="c_lo", evidence_ids=()),
+        },
+        evidence_by_id={},
+        contacts_by_account={"acct_a": ("c_hi", "c_lo")},
+        pr4_by_procurement={},
+        known_account_ids=frozenset({"acct_a"}),
+        source_fingerprint="fp",
+    )
+
+    def _c(cid: str, tier: str, rank: int) -> ContactCandidate:
+        return ContactCandidate(
+            candidate_id=f"cc_{cid}",
+            contact_resolution_id="crs_1",
+            coalesced_tender_id="t1",
+            account_id="acct_a",
+            contact_id=cid,
+            rank=rank,
+            ranking_tier=tier,
+            role_raw_digest="r",
+            role_suitability="suitable_procurement",
+            identity_status="resolved",
+            identity_confidence="high",
+            has_usable_email=True,
+            verification_status="unverified",
+            evidence_ids=(),
+            suppression_result="clear",
+            outreach_state_result="clear",
+            safety_blocked=False,
+            safety_unknown=False,
+            selectable=True,
+            ranking_reason_codes=(),
+        )
+
+    # Rank 1 is worse tier than rank 2 → inverted
+    cands = [
+        _c("c_lo", "role_review", 1),
+        _c("c_hi", "verified_suitable", 2),
+    ]
+    decision_id = decision.decision_id
+    org_id = org.organization_resolution_id
+    summary = ContactResolutionSummary(
+        contact_resolution_id="crs_1",
+        coalesced_tender_id="t1",
+        relevance_decision_id=decision_id,
+        organization_resolution_id=org_id,
+        account_id="acct_a",
+        final_contact_status="existing_contact_needs_role_review",
+        selected_contact_id="c_lo",
+        selected_candidate_id="cc_c_lo",
+        search_stages_completed=("pr2_account_contacts", "safety_gate"),
+        next_action="review_contact_role",
+        reason_code="contact_requires_role_review",
+        considered_contact_count=2,
+        suitable_contact_count=2,
+        blocked_contact_count=0,
+        relevance_class_echo=decision.relevance_class,
+        lifecycle_class_echo="active_open",
+        currentness_class_echo="current_authoritative_snapshot",
+        relevance_validation_status_echo="",
+        input_fingerprint="x",
+        semantic_fingerprint="s",
+        rules_version="r",
+        resolver_version="v",
+    )
+    result = reconcile_contact_resolution(
+        decisions=[decision],
+        tenders_by_id={"t1": tender},
+        organizations=[org],
+        summaries=[summary],
+        candidates=cands,
+        evidence=[],
+        conflicts=[],
+        frozen_index=frozen,
+    )
+    assert result["ok"] is False
+    assert any(
+        f.get("error") == "candidate_rank_order_inverted" for f in result["failures"]
+    )
+
+
+def test_policy_mutation_changes_execution_status_and_rules_fingerprint() -> None:
+    from origenlab_email_pipeline.commercial_procurement_contact_resolution import (
+        policy as policy_mod,
+    )
+
+    original = policy_mod.contact_resolution_policy_spec
+    base_fp = contact_rules_fingerprint()
+    ranked = [
+        _cand_for_status(
+            contact_id="c_missing",
+            tier="role_known_email_missing",
+            selectable=False,
+            has_usable_email=False,
+        ),
+        _cand_for_status(
+            contact_id="c_blocked",
+            tier="blocked",
+            selectable=False,
+            safety_blocked=True,
+        ),
+    ]
+    status_default, _, _, _ = select_final_status(
+        ranked=ranked, policy=original(), tender_id="t1"
+    )
+    assert status_default == "contact_blocked"
+
+    mutated = copy.deepcopy(original())
+    precedence = list(mutated["status_precedence"])
+    # Move role_known_email_missing before contact_blocked
+    precedence.remove("role_known_email_missing")
+    idx = precedence.index("contact_blocked")
+    precedence.insert(idx, "role_known_email_missing")
+    mutated["status_precedence"] = precedence
+
+    def _mut():
+        return mutated
+
+    policy_mod.contact_resolution_policy_spec = _mut  # type: ignore[assignment]
+    try:
+        status_mut, _, _, _ = select_final_status(
+            ranked=ranked, policy=mutated, tender_id="t1"
+        )
+        assert status_mut == "role_known_email_missing"
+        assert contact_rules_fingerprint() != base_fp
+    finally:
+        policy_mod.contact_resolution_policy_spec = original  # type: ignore[assignment]
+    assert contact_rules_fingerprint() == base_fp
+
+
+def test_frozen_source_fingerprint_moves_on_email_digest_change() -> None:
+    org = _org()
+    base_kwargs = dict(
+        pr5c_semantic_digest="a" * 64,
+        pr5d_semantic_digest="b" * 64,
+        identity_fingerprint="c" * 64,
+        safety_fingerprint="d" * 64,
+        organization_resolutions=[org],
+        pr4_resolution_ids=[],
+        pr2_contact_ids=["c1"],
+        pr2_evidence_ids=["ev1"],
+    )
+    fp1 = contact_input_fingerprint(
+        frozen_source_fingerprint="e" * 64,
+        **base_kwargs,
+    )
+    fp2 = contact_input_fingerprint(
+        frozen_source_fingerprint="f" * 64,
+        **base_kwargs,
+    )
+    assert fp1 != fp2
+
+    s1 = ContactResolutionSummary(
+        contact_resolution_id="crs_1",
+        coalesced_tender_id="t1",
+        relevance_decision_id="trd_t1",
+        organization_resolution_id="org_t1",
+        account_id="acct_a",
+        final_contact_status="no_contact_found",
+        selected_contact_id=None,
+        selected_candidate_id=None,
+        search_stages_completed=("pr2_account_contacts", "safety_gate"),
+        next_action="none",
+        reason_code="x",
+        considered_contact_count=0,
+        suitable_contact_count=0,
+        blocked_contact_count=0,
+        relevance_class_echo="strong_equipment_class",
+        lifecycle_class_echo="active_open",
+        currentness_class_echo="current_authoritative_snapshot",
+        relevance_validation_status_echo="",
+        input_fingerprint="i",
+        semantic_fingerprint="s",
+        rules_version="r",
+        resolver_version="v",
+    )
+    d1 = contact_semantic_digest(
+        summaries=[s1], candidates=[], evidence=[], conflicts=[]
+    )
+    s2 = ContactResolutionSummary(
+        **{
+            **s1.to_dict(),
+            "currentness_class_echo": "historical_pr4_only",
+            "relevance_validation_status_echo": "reviewed",
+            "selected_candidate_id": "cc_x",
+        }
+    )
+    d2 = contact_semantic_digest(
+        summaries=[s2], candidates=[], evidence=[], conflicts=[]
+    )
+    assert d1 != d2

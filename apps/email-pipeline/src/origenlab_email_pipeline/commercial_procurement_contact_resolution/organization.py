@@ -52,20 +52,37 @@ def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
     return bool(row)
 
 
-def _parse_candidate_account_ids(raw: Any) -> tuple[str, ...]:
+class Pr4ProvenanceError(ValueError):
+    """Malformed or incomplete PR4 provenance that must not be silently ignored."""
+
+
+def _parse_candidate_account_ids(
+    raw: Any,
+    *,
+    already_parsed: bool = False,
+) -> tuple[str, ...]:
+    """Parse candidate account IDs; never silently coerce malformed values to ()."""
+    if already_parsed and isinstance(raw, (list, tuple)):
+        return tuple(sorted({str(x) for x in raw if str(x).strip()}))
     if raw is None:
-        return ()
+        raise Pr4ProvenanceError("candidate_account_ids_json is null")
     if isinstance(raw, (list, tuple)):
         return tuple(sorted({str(x) for x in raw if str(x).strip()}))
     text = str(raw).strip()
-    if not text or text in {"[]", "null", "None"}:
-        return ()
+    if not text:
+        raise Pr4ProvenanceError("candidate_account_ids_json is empty")
     try:
         parsed = json.loads(text)
-    except json.JSONDecodeError:
-        return ()
+    except json.JSONDecodeError as exc:
+        raise Pr4ProvenanceError(
+            f"candidate_account_ids_json is not valid JSON: {exc}"
+        ) from exc
+    if parsed is None:
+        raise Pr4ProvenanceError("candidate_account_ids_json decoded to null")
     if not isinstance(parsed, list):
-        return ()
+        raise Pr4ProvenanceError(
+            f"candidate_account_ids_json must be a JSON list; got {type(parsed).__name__}"
+        )
     return tuple(sorted({str(x) for x in parsed if str(x).strip()}))
 
 
@@ -75,6 +92,7 @@ def load_pr4_resolutions_by_procurement(
     """Load PR4 account resolutions keyed by procurement_id (read-only).
 
     Preserves ``candidate_account_ids`` — conflicts must not be discarded.
+    Malformed JSON raises ``Pr4ProvenanceError``.
     """
     assert_active_read_transaction(conn)
     if not _table_exists(conn, "commercial_procurement_account_resolution"):
@@ -88,7 +106,13 @@ def load_pr4_resolutions_by_procurement(
         """
     )
     for r in rows:
-        cands = _parse_candidate_account_ids(r["candidate_account_ids_json"])
+        raw_json = r["candidate_account_ids_json"]
+        try:
+            cands = _parse_candidate_account_ids(raw_json)
+        except Pr4ProvenanceError as exc:
+            raise Pr4ProvenanceError(
+                f"procurement_id={r['procurement_id']}: {exc}"
+            ) from exc
         out[str(r["procurement_id"])] = {
             "resolution_id": str(r["resolution_id"]),
             "procurement_id": str(r["procurement_id"]),
@@ -97,7 +121,7 @@ def load_pr4_resolutions_by_procurement(
             "link_route": (str(r["link_route"]) if r["link_route"] else None),
             "reason_code": str(r["reason_code"] or ""),
             "candidate_account_ids": cands,
-            "candidate_account_ids_json": str(r["candidate_account_ids_json"] or "[]"),
+            "candidate_account_ids_json": str(raw_json if raw_json is not None else "[]"),
         }
     return out
 
@@ -207,11 +231,41 @@ def resolve_organization_for_tender(
         non_unanimous = False
 
         for row in rows:
-            cands = _parse_candidate_account_ids(
-                row.get("candidate_account_ids")
-                if "candidate_account_ids" in row
-                else row.get("candidate_account_ids_json")
-            )
+            try:
+                if row.get("candidate_account_ids_json") is None and "candidate_account_ids" in row:
+                    cands = _parse_candidate_account_ids(
+                        row.get("candidate_account_ids") or (),
+                        already_parsed=True,
+                    )
+                else:
+                    cands = _parse_candidate_account_ids(
+                        row.get("candidate_account_ids")
+                        if isinstance(row.get("candidate_account_ids"), (list, tuple))
+                        else row.get("candidate_account_ids_json")
+                    )
+            except Pr4ProvenanceError:
+                payload = {
+                    "coalesced_tender_id": tender.coalesced_tender_id,
+                    "status": "unlinked",
+                    "source": "pr4_provenance_malformed",
+                    "procurement_id": row.get("procurement_id"),
+                }
+                return OrganizationResolution(
+                    organization_resolution_id=_org_id(payload),
+                    coalesced_tender_id=tender.coalesced_tender_id,
+                    relevance_decision_id=relevance_decision_id,
+                    resolution_status="unlinked",
+                    resolution_source="pr4_provenance_malformed",
+                    account_id=None,
+                    link_route=None,
+                    reason_code="malformed_pr4_candidate_account_ids_json",
+                    candidate_account_ids=(),
+                    evidence_ref_ids=evidence_refs,
+                    pr4_procurement_ids=pr4_ids,
+                    pr4_resolution_ids=pr4_resolution_ids,
+                    buyer_field_sufficiency=sufficiency,
+                    identity_fingerprint=identity_fingerprint,
+                )
             all_candidate_accounts.update(cands)
             status = str(row.get("resolution_status") or "")
             aid = str(row["account_id"]) if row.get("account_id") else None
@@ -382,20 +436,34 @@ def resolve_organization_for_tender(
                 buyer_field_sufficiency=sufficiency,
                 identity_fingerprint=identity_fingerprint,
             )
-        # Fall through to live route when PR4 has no linked/candidate signal.
+        # PR4 constituents present but not unanimously linked — never live-reinterpret.
+        payload = {
+            "coalesced_tender_id": tender.coalesced_tender_id,
+            "status": "unlinked",
+            "source": "pr4_constituents_unresolved",
+            "candidates": competing,
+        }
+        return OrganizationResolution(
+            organization_resolution_id=_org_id(payload),
+            coalesced_tender_id=tender.coalesced_tender_id,
+            relevance_decision_id=relevance_decision_id,
+            resolution_status="unlinked",
+            resolution_source="pr4_constituents_unresolved",
+            account_id=None,
+            link_route=None,
+            reason_code="pr4_constituents_present_but_unresolved",
+            candidate_account_ids=tuple(competing),
+            evidence_ref_ids=evidence_refs,
+            pr4_procurement_ids=pr4_ids,
+            pr4_resolution_ids=pr4_resolution_ids,
+            buyer_field_sufficiency=sufficiency,
+            identity_fingerprint=identity_fingerprint,
+        )
 
-    # Live / unresolved: reuse PR4 link_routes on coalesced buyer fields.
+    # Live-only tenders (no PR4 constituents): reuse exact link routes.
     name_norm = safe_org_normalized(tender.buyer_display_selected or "") or None
     domain = buyer_domain_candidate(tender.buyer_source_id_selected)
-    pr4_resolution_ids_live = tuple(
-        sorted(
-            {
-                str(pr4_by_procurement[pid]["resolution_id"])
-                for pid in pr4_ids
-                if pid in pr4_by_procurement and pr4_by_procurement[pid].get("resolution_id")
-            }
-        )
-    )
+    pr4_resolution_ids_live: tuple[str, ...] = ()
     if not name_norm and not domain:
         payload = {
             "coalesced_tender_id": tender.coalesced_tender_id,

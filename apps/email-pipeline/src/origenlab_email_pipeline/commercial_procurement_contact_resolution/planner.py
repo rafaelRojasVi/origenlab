@@ -33,10 +33,16 @@ from origenlab_email_pipeline.commercial_procurement_contact_resolution.constant
     FORBIDDEN_CLI_FLAGS,
 )
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.contact_search import (
+    recompute_summary_semantic_fingerprint,
     resolve_contacts_for_tender,
+    select_final_status,
 )
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.fingerprint import (
     all_fingerprints,
+)
+from origenlab_email_pipeline.commercial_procurement_contact_resolution.frozen_sources import (
+    FrozenSourceIndex,
+    load_frozen_source_index,
 )
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.models import (
     ContactCandidate,
@@ -47,18 +53,26 @@ from origenlab_email_pipeline.commercial_procurement_contact_resolution.models i
     OrganizationResolution,
 )
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.organization import (
+    Pr4ProvenanceError,
     load_pr4_resolutions_by_procurement,
     open_account_index,
     resolve_organization_for_tender,
 )
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.policy import (
+    assign_ranking_tier,
+    classify_role_suitability,
+    contact_has_explicit_verification,
+    contact_resolution_policy_spec,
+    feature_flags_for_candidate,
     is_suitable_role,
+    next_action_for_status,
 )
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.redaction import (
     assert_no_raw_pii,
     redact_summary_for_share,
 )
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.safety import (
+    SafetySnapshot,
     load_safety_snapshot,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.models import (
@@ -70,6 +84,19 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.planner i
 )
 
 _HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+
+_EVIDENCE_COMPARE_FIELDS = (
+    "evidence_type",
+    "source_table",
+    "source_plane",
+    "source_record_id",
+    "origin_plane",
+    "evidence_at",
+    "matching_reason_code",
+    "confidence",
+    "subject_kind",
+    "subject_id",
+)
 
 
 class ContactReconciliationError(ValueError):
@@ -91,6 +118,77 @@ def _require_digest(name: str, value: str | None) -> str:
     return raw
 
 
+def empty_frozen_source_index() -> FrozenSourceIndex:
+    """Empty frozen index for unit tests that exercise deferred / binding paths."""
+    return FrozenSourceIndex(
+        contacts_by_id={},
+        evidence_by_id={},
+        contacts_by_account={},
+        pr4_by_procurement={},
+        known_account_ids=frozenset(),
+        source_fingerprint="",
+    )
+
+
+def _candidate_sort_key(
+    c: ContactCandidate, *, tier_rank: Mapping[str, int]
+) -> tuple[int, int, str]:
+    return (
+        tier_rank.get(c.ranking_tier, 99),
+        0 if c.selectable else 1,
+        c.contact_id,
+    )
+
+
+def _expected_linked_search_stages() -> tuple[str, ...]:
+    # Planner never passes buyer_email_norm today.
+    return ("pr2_account_contacts", "safety_gate")
+
+
+def _recompute_tier_from_frozen(
+    c: ContactCandidate,
+    *,
+    frozen_index: FrozenSourceIndex,
+    policy: Mapping[str, Any],
+) -> str | None:
+    proj = frozen_index.contacts_by_id.get(c.contact_id)
+    if proj is None:
+        return None
+    ev_rows = []
+    for eid in proj.evidence_ids:
+        fe = frozen_index.evidence_by_id.get(eid)
+        if fe is not None:
+            ev_rows.append(fe.to_dict())
+    verified = contact_has_explicit_verification(
+        identity_status=proj.identity_status,
+        identity_confidence=proj.identity_confidence,
+        evidence_rows=ev_rows,
+        contact_id=c.contact_id,
+        policy=policy,
+    )
+    suitability = classify_role_suitability(
+        proj.role_raw if isinstance(proj.role_raw, str) else None
+    )
+    features = feature_flags_for_candidate(
+        has_usable_email=proj.has_usable_email,
+        account_membership=True,
+        identity_status=proj.identity_status,
+        role_suitability=suitability,
+        verified=verified,
+        buyer_email_exact=False,
+        safety_blocked=bool(c.safety_blocked) and not bool(c.safety_unknown),
+        safety_unknown=bool(c.safety_unknown),
+    )
+    if not proj.has_usable_email:
+        features = dict(features)
+        features["not_safety_blocked"] = True
+        features["safety_known"] = True
+        features["safety_blocked"] = False
+        features["safety_blocked_or_unknown"] = False
+    tier, _, _ = assign_ranking_tier(features, policy=policy)
+    return tier
+
+
 def reconcile_contact_resolution(
     *,
     decisions: Sequence[TenderRelevanceDecision],
@@ -100,11 +198,16 @@ def reconcile_contact_resolution(
     candidates: Sequence[ContactCandidate],
     evidence: Sequence[ContactResolutionEvidence],
     conflicts: Sequence[ContactResolutionConflict],
-    pr4_by_procurement: Mapping[str, Mapping[str, Any]],
-    frozen_evidence_by_id: Mapping[str, Mapping[str, Any]],
+    frozen_index: FrozenSourceIndex,
+    safety: SafetySnapshot | None = None,
 ) -> dict[str, Any]:
-    """Binding reconciliation over actual frozen objects (not parallel ID lists)."""
+    """Complete binding reconciliation against independently frozen PR2/PR4 sources."""
+    del safety  # reserved; candidate safety flags checked via stored values
+    policy = contact_resolution_policy_spec()
+    tier_rank = {row["id"]: int(row["rank"]) for row in policy["ranking_tiers"]}
+    material_tiers = set(policy["material_ambiguity_tiers"])
     failures: list[dict[str, Any]] = []
+
     decision_by_tender = {d.coalesced_tender_id: d for d in decisions}
     org_by_tender = {o.coalesced_tender_id: o for o in organizations}
     summary_by_tender = {s.coalesced_tender_id: s for s in summaries}
@@ -115,6 +218,10 @@ def reconcile_contact_resolution(
     conflicts_by_tender: dict[str, list[ContactResolutionConflict]] = {}
     for conf in conflicts:
         conflicts_by_tender.setdefault(conf.coalesced_tender_id, []).append(conf)
+
+    frozen_contacts = frozen_index.contacts_by_id
+    frozen_evidence = frozen_index.evidence_by_id
+    pr4_by_procurement = frozen_index.pr4_by_procurement
 
     tender_ids = set(decision_by_tender)
     equations = {
@@ -139,6 +246,7 @@ def reconcile_contact_resolution(
                 {"error": "missing_coalesced_tender", "tender": tender_id}
             )
             continue
+        tender = tenders_by_id[tender_id]
         org = org_by_tender.get(tender_id)
         summary = summary_by_tender.get(tender_id)
         if org is None:
@@ -173,8 +281,10 @@ def reconcile_contact_resolution(
                     "tender": tender_id,
                 }
             )
-        if summary.account_id != org.account_id and summary.final_contact_status != CONTACT_RESOLUTION_DEFERRED:
-            # Deferred must have null account; linked search must match org account.
+        if (
+            summary.account_id != org.account_id
+            and summary.final_contact_status != CONTACT_RESOLUTION_DEFERRED
+        ):
             if org.resolution_status == "linked":
                 failures.append(
                     {
@@ -183,8 +293,11 @@ def reconcile_contact_resolution(
                     }
                 )
 
-        cands = cands_by_summary.get(summary.contact_resolution_id, [])
-        ranks = sorted(c.rank for c in cands)
+        cands = sorted(
+            cands_by_summary.get(summary.contact_resolution_id, []),
+            key=lambda c: c.rank,
+        )
+        ranks = [c.rank for c in cands]
         if cands and ranks != list(range(1, len(cands) + 1)):
             failures.append(
                 {
@@ -271,6 +384,221 @@ def reconcile_contact_resolution(
                     }
                 )
 
+        for i in range(len(cands) - 1):
+            a, b = cands[i], cands[i + 1]
+            ka = _candidate_sort_key(a, tier_rank=tier_rank)
+            kb = _candidate_sort_key(b, tier_rank=tier_rank)
+            if ka > kb:
+                failures.append(
+                    {
+                        "error": "candidate_rank_order_inverted",
+                        "tender": tender_id,
+                        "left": a.candidate_id,
+                        "right": b.candidate_id,
+                    }
+                )
+
+        for c in cands:
+            pair = (c.contact_resolution_id, c.contact_id)
+            if pair in seen_pairs:
+                failures.append(
+                    {
+                        "error": "duplicate_contact_resolution_contact_pair",
+                        "pair": list(pair),
+                    }
+                )
+            seen_pairs.add(pair)
+            if c.coalesced_tender_id != tender_id:
+                failures.append(
+                    {
+                        "error": "candidate_tender_mismatch",
+                        "candidate_id": c.candidate_id,
+                    }
+                )
+            if summary.account_id and c.account_id != summary.account_id:
+                failures.append(
+                    {
+                        "error": "candidate_account_mismatch",
+                        "candidate_id": c.candidate_id,
+                    }
+                )
+            if c.contact_resolution_id != summary.contact_resolution_id:
+                failures.append(
+                    {
+                        "error": "candidate_summary_mismatch",
+                        "candidate_id": c.candidate_id,
+                    }
+                )
+
+            if len(c.evidence_ids) != len(set(c.evidence_ids)):
+                failures.append(
+                    {
+                        "error": "duplicate_evidence_ids_on_candidate",
+                        "candidate_id": c.candidate_id,
+                    }
+                )
+
+            frozen_contact = frozen_contacts.get(c.contact_id)
+            if frozen_contact is None:
+                failures.append(
+                    {
+                        "error": "candidate_missing_frozen_contact",
+                        "candidate_id": c.candidate_id,
+                        "contact_id": c.contact_id,
+                    }
+                )
+            else:
+                if frozen_contact.account_id != c.account_id:
+                    failures.append(
+                        {
+                            "error": "candidate_frozen_account_mismatch",
+                            "candidate_id": c.candidate_id,
+                        }
+                    )
+                if summary.account_id and frozen_contact.account_id != summary.account_id:
+                    failures.append(
+                        {
+                            "error": "frozen_contact_summary_account_mismatch",
+                            "candidate_id": c.candidate_id,
+                        }
+                    )
+                frozen_eids = set(frozen_contact.evidence_ids)
+                cand_eids = set(c.evidence_ids)
+                if cand_eids != frozen_eids:
+                    for eid in c.evidence_ids:
+                        fe = frozen_evidence.get(eid)
+                        if fe is None:
+                            failures.append(
+                                {
+                                    "error": "evidence_pointer_unresolved",
+                                    "evidence_id": eid,
+                                    "candidate_id": c.candidate_id,
+                                }
+                            )
+                        elif fe.subject_id != c.contact_id:
+                            failures.append(
+                                {
+                                    "error": "frozen_evidence_subject_mismatch",
+                                    "evidence_id": eid,
+                                }
+                            )
+                    if not cand_eids.issubset(frozen_eids):
+                        failures.append(
+                            {
+                                "error": "candidate_evidence_ids_not_subset_of_frozen",
+                                "candidate_id": c.candidate_id,
+                            }
+                        )
+
+                recomputed_tier = _recompute_tier_from_frozen(
+                    c, frozen_index=frozen_index, policy=policy
+                )
+                if recomputed_tier is not None and recomputed_tier != c.ranking_tier:
+                    failures.append(
+                        {
+                            "error": "ranking_tier_mismatch_vs_frozen",
+                            "candidate_id": c.candidate_id,
+                            "expected": recomputed_tier,
+                            "got": c.ranking_tier,
+                        }
+                    )
+
+                frozen_ev_rows = [
+                    frozen_evidence[eid].to_dict()
+                    for eid in frozen_contact.evidence_ids
+                    if eid in frozen_evidence
+                ]
+                predicate_verified = contact_has_explicit_verification(
+                    identity_status=frozen_contact.identity_status,
+                    identity_confidence=frozen_contact.identity_confidence,
+                    evidence_rows=frozen_ev_rows,
+                    contact_id=c.contact_id,
+                    policy=policy,
+                )
+                if (
+                    c.verification_status == "explicit_verification"
+                    and not predicate_verified
+                ):
+                    failures.append(
+                        {
+                            "error": "verification_claim_without_frozen_predicate",
+                            "candidate_id": c.candidate_id,
+                        }
+                    )
+                if predicate_verified and c.verification_status != "explicit_verification":
+                    failures.append(
+                        {
+                            "error": "frozen_verification_without_candidate_claim",
+                            "candidate_id": c.candidate_id,
+                        }
+                    )
+
+            for eid in c.evidence_ids:
+                ev = evidence_by_id.get(eid)
+                if ev is None:
+                    failures.append(
+                        {
+                            "error": "missing_evidence",
+                            "evidence_id": eid,
+                            "candidate_id": c.candidate_id,
+                        }
+                    )
+                    continue
+                if ev.subject_id != c.contact_id:
+                    failures.append(
+                        {
+                            "error": "evidence_contact_mismatch",
+                            "evidence_id": eid,
+                        }
+                    )
+                frozen = frozen_evidence.get(eid)
+                if frozen is None:
+                    failures.append(
+                        {
+                            "error": "evidence_pointer_unresolved",
+                            "evidence_id": eid,
+                        }
+                    )
+                    continue
+                frozen_dict = frozen.to_dict()
+                for field in _EVIDENCE_COMPARE_FIELDS:
+                    plan_val = getattr(ev, field)
+                    frozen_val = frozen_dict.get(field)
+                    if str(plan_val or "") != str(frozen_val or ""):
+                        failures.append(
+                            {
+                                "error": "evidence_field_mismatch",
+                                "evidence_id": eid,
+                                "field": field,
+                                "plan": plan_val,
+                                "frozen": frozen_val,
+                            }
+                        )
+
+        if summary.final_contact_status != CONTACT_RESOLUTION_DEFERRED:
+            status_r, selected_r, _, _ = select_final_status(
+                ranked=cands, policy=policy, tender_id=tender_id
+            )
+            if status_r != summary.final_contact_status:
+                failures.append(
+                    {
+                        "error": "final_status_mismatch",
+                        "tender": tender_id,
+                        "expected": status_r,
+                        "got": summary.final_contact_status,
+                    }
+                )
+            sel_id = selected_r.candidate_id if selected_r else None
+            if sel_id != summary.selected_candidate_id:
+                failures.append(
+                    {
+                        "error": "selected_candidate_mismatch_vs_recompute",
+                        "tender": tender_id,
+                        "expected": sel_id,
+                        "got": summary.selected_candidate_id,
+                    }
+                )
+
         if summary.final_contact_status == "ambiguous_contact":
             if len(cands) < 2:
                 failures.append(
@@ -279,10 +607,116 @@ def reconcile_contact_resolution(
                         "tender": tender_id,
                     }
                 )
-            if not conflicts_by_tender.get(tender_id):
+            conf_rows = conflicts_by_tender.get(tender_id, [])
+            if not conf_rows:
                 failures.append(
                     {
                         "error": "ambiguous_without_conflict_row",
+                        "tender": tender_id,
+                    }
+                )
+            elif cands:
+                selectable = [c for c in cands if c.selectable]
+                if selectable:
+                    top = selectable[0]
+                    peers = [
+                        c
+                        for c in selectable
+                        if c.ranking_tier == top.ranking_tier
+                        and c.ranking_tier in material_tiers
+                    ]
+                    expected_subjects = tuple(sorted(p.contact_id for p in peers))
+                    for conf in conf_rows:
+                        if conf.conflict_type == "ambiguous_contact":
+                            if tuple(sorted(conf.subject_keys)) != expected_subjects:
+                                failures.append(
+                                    {
+                                        "error": "ambiguous_conflict_subjects_mismatch",
+                                        "tender": tender_id,
+                                        "expected": list(expected_subjects),
+                                        "got": list(conf.subject_keys),
+                                    }
+                                )
+
+        label_status = summary.relevance_validation_status_echo or None
+        if not label_status:
+            label_status = None
+        expected_next = next_action_for_status(
+            summary.final_contact_status,
+            lifecycle_class=summary.lifecycle_class_echo
+            or decision.lifecycle_class_echo
+            or "",
+            relevance_class=summary.relevance_class_echo
+            or decision.relevance_class
+            or "",
+            currentness_class=summary.currentness_class_echo
+            or (tender.currentness_class or ""),
+            label_status=label_status,
+            independently_reviewed=False,
+            policy=policy,
+        )
+        if summary.next_action != expected_next:
+            failures.append(
+                {
+                    "error": "next_action_mismatch",
+                    "tender": tender_id,
+                    "expected": expected_next,
+                    "got": summary.next_action,
+                }
+            )
+
+        if summary.final_contact_status == CONTACT_RESOLUTION_DEFERRED:
+            if summary.search_stages_completed:
+                failures.append(
+                    {"error": "deferred_has_search_stages", "tender": tender_id}
+                )
+        elif org.resolution_status == "linked" and org.account_id:
+            expected_stages = _expected_linked_search_stages()
+            if tuple(summary.search_stages_completed) != expected_stages:
+                failures.append(
+                    {
+                        "error": "search_stages_mismatch",
+                        "tender": tender_id,
+                        "expected": list(expected_stages),
+                        "got": list(summary.search_stages_completed),
+                    }
+                )
+
+        expected_pr4_rids: set[str] = set()
+        for pid in org.pr4_procurement_ids:
+            prow = pr4_by_procurement.get(pid)
+            if prow is None:
+                if org.resolution_source.startswith("pr4_") and (
+                    org.resolution_source != "pr4_constituent_incomplete"
+                ):
+                    failures.append(
+                        {
+                            "error": "pr4_procurement_pointer_unresolved",
+                            "procurement_id": pid,
+                            "tender": tender_id,
+                        }
+                    )
+            else:
+                expected_pr4_rids.add(prow.resolution_id)
+        if (
+            org.pr4_procurement_ids
+            and org.resolution_source != "pr4_constituent_incomplete"
+            and set(org.pr4_resolution_ids) != expected_pr4_rids
+        ):
+            failures.append(
+                {
+                    "error": "pr4_resolution_ids_mismatch",
+                    "tender": tender_id,
+                    "expected": sorted(expected_pr4_rids),
+                    "got": sorted(org.pr4_resolution_ids),
+                }
+            )
+        for rid in org.pr4_resolution_ids:
+            if not any(row.resolution_id == rid for row in pr4_by_procurement.values()):
+                failures.append(
+                    {
+                        "error": "pr4_resolution_pointer_unresolved",
+                        "resolution_id": rid,
                         "tender": tender_id,
                     }
                 )
@@ -352,97 +786,25 @@ def reconcile_contact_resolution(
                 }
             )
 
-        for c in cands:
-            pair = (c.contact_resolution_id, c.contact_id)
-            if pair in seen_pairs:
-                failures.append(
-                    {
-                        "error": "duplicate_contact_resolution_contact_pair",
-                        "pair": list(pair),
-                    }
-                )
-            seen_pairs.add(pair)
-            if c.coalesced_tender_id != tender_id:
-                failures.append(
-                    {
-                        "error": "candidate_tender_mismatch",
-                        "candidate_id": c.candidate_id,
-                    }
-                )
-            if summary.account_id and c.account_id != summary.account_id:
-                failures.append(
-                    {
-                        "error": "candidate_account_mismatch",
-                        "candidate_id": c.candidate_id,
-                    }
-                )
-            if c.contact_resolution_id != summary.contact_resolution_id:
-                failures.append(
-                    {
-                        "error": "candidate_summary_mismatch",
-                        "candidate_id": c.candidate_id,
-                    }
-                )
-            for eid in c.evidence_ids:
-                ev = evidence_by_id.get(eid)
-                if ev is None:
-                    failures.append(
-                        {
-                            "error": "missing_evidence",
-                            "evidence_id": eid,
-                            "candidate_id": c.candidate_id,
-                        }
-                    )
-                    continue
-                if ev.subject_id != c.contact_id:
-                    failures.append(
-                        {
-                            "error": "evidence_contact_mismatch",
-                            "evidence_id": eid,
-                        }
-                    )
-                frozen = frozen_evidence_by_id.get(eid)
-                if frozen is None:
-                    failures.append(
-                        {
-                            "error": "evidence_pointer_unresolved",
-                            "evidence_id": eid,
-                        }
-                    )
-                elif str(frozen.get("subject_id") or "") != c.contact_id:
-                    failures.append(
-                        {
-                            "error": "frozen_evidence_subject_mismatch",
-                            "evidence_id": eid,
-                        }
-                    )
+        recomputed_sem = recompute_summary_semantic_fingerprint(
+            contact_resolution_id=summary.contact_resolution_id,
+            final_contact_status=summary.final_contact_status,
+            account_id=summary.account_id,
+            selected_contact_id=summary.selected_contact_id,
+            selected_candidate_id=summary.selected_candidate_id,
+            search_stages_completed=summary.search_stages_completed,
+            next_action=summary.next_action,
+            reason_code=summary.reason_code,
+            candidate_ids=[c.candidate_id for c in cands],
+        )
+        if recomputed_sem != summary.semantic_fingerprint:
+            failures.append(
+                {
+                    "error": "semantic_fingerprint_mismatch",
+                    "tender": tender_id,
+                }
+            )
 
-        # PR4 resolution pointers must resolve when present.
-        for rid in org.pr4_resolution_ids:
-            if not any(
-                str(row.get("resolution_id")) == rid
-                for row in pr4_by_procurement.values()
-            ):
-                failures.append(
-                    {
-                        "error": "pr4_resolution_pointer_unresolved",
-                        "resolution_id": rid,
-                        "tender": tender_id,
-                    }
-                )
-        for pid in org.pr4_procurement_ids:
-            if pid not in pr4_by_procurement and org.resolution_source.startswith("pr4_"):
-                # Incomplete source already typed; pointer still recorded.
-                if org.resolution_source != "pr4_constituent_incomplete":
-                    failures.append(
-                        {
-                            "error": "pr4_procurement_pointer_unresolved",
-                            "procurement_id": pid,
-                            "tender": tender_id,
-                        }
-                    )
-
-    # Duplicate evidence ids across plan should still be unique rows.
     if len(evidence_by_id) != len(evidence):
         failures.append({"error": "duplicate_evidence_ids_in_plan"})
 
@@ -467,10 +829,14 @@ def _cross_tab(
 ) -> dict[str, Any]:
     key_counts: Counter[str] = Counter()
     for s in summaries:
-        key = f"{s.lifecycle_class_echo}|{s.relevance_class_echo}|{s.final_contact_status}"
+        validation = s.relevance_validation_status_echo or "unvalidated"
+        key = (
+            f"{s.lifecycle_class_echo}|{s.relevance_class_echo}|"
+            f"{validation}|{s.final_contact_status}"
+        )
         key_counts[key] += 1
     return {
-        "note": "lifecycle|relevance|contact_status",
+        "note": "lifecycle|relevance|validation|contact_status",
         "counts": dict(sorted(key_counts.items())),
     }
 
@@ -488,7 +854,6 @@ def build_contact_resolution_plan(
     gmail_user: str | None = None,
 ) -> ContactResolutionPlanResult:
     """Build a deterministic read-only contact-resolution plan for every PR5D tender."""
-    # Freeze PR5C once and inject into PR5D.
     candidate_plan = pr5c_plan or build_candidate_plan(
         sqlite_path=sqlite_path,
         acquisition_snapshot_paths=acquisition_snapshot_paths,
@@ -528,6 +893,11 @@ def build_contact_resolution_plan(
     }
     decisions: tuple[TenderRelevanceDecision, ...] = relevance_plan.tender_decisions
 
+    # PR5D operational evaluation records do not join to coalesced tender ids.
+    # Absence of per-tender validation fails closed for gated next actions.
+    _ = relevance_plan.operational_evaluation_records
+    _ = relevance_plan.evaluation_meta
+
     conn = connect_production_readonly(sqlite_path)
     try:
         assert_no_write_connection(conn)
@@ -544,15 +914,23 @@ def build_contact_resolution_plan(
                 ),
             )
             account_index, known_accounts = open_account_index(conn)
-            pr4_by_proc = load_pr4_resolutions_by_procurement(conn)
+            try:
+                pr4_by_proc = load_pr4_resolutions_by_procurement(conn)
+            except Pr4ProvenanceError as exc:
+                raise ContactDependencyError(
+                    f"PR4 provenance load failed: {exc}"
+                ) from exc
             safety = load_safety_snapshot(conn, gmail_user=gmail_user)
 
-            organizations: list[OrganizationResolution] = []
-            summaries: list[ContactResolutionSummary] = []
-            candidates: list[ContactCandidate] = []
-            evidence: list[ContactResolutionEvidence] = []
-            conflicts: list[ContactResolutionConflict] = []
-            frozen_evidence: dict[str, dict[str, Any]] = {}
+            pass1: list[
+                tuple[
+                    TenderRelevanceDecision,
+                    CoalescedProcurementTender,
+                    OrganizationResolution,
+                ]
+            ] = []
+            account_ids: set[str] = set()
+            pr4_procurement_ids: set[str] = set()
 
             for decision in sorted(decisions, key=lambda d: d.coalesced_tender_id):
                 tender = tenders_by_id.get(decision.coalesced_tender_id)
@@ -568,6 +946,27 @@ def build_contact_resolution_plan(
                     pr4_by_procurement=pr4_by_proc,
                     identity_fingerprint=identity_fp,
                 )
+                pass1.append((decision, tender, org))
+                if org.account_id:
+                    account_ids.add(org.account_id)
+                pr4_procurement_ids.update(tender.pr4_procurement_ids or ())
+                pr4_procurement_ids.update(org.pr4_procurement_ids or ())
+
+            frozen_index = load_frozen_source_index(
+                conn,
+                account_ids=account_ids,
+                pr4_procurement_ids=pr4_procurement_ids,
+                known_account_ids=known_accounts,
+            )
+
+            # Pass 2 — fail closed: no per-tender PR5D validation join.
+            organizations: list[OrganizationResolution] = []
+            summaries: list[ContactResolutionSummary] = []
+            candidates: list[ContactCandidate] = []
+            evidence: list[ContactResolutionEvidence] = []
+            conflicts: list[ContactResolutionConflict] = []
+
+            for decision, tender, org in pass1:
                 organizations.append(org)
                 summary, cands, evs, confs = resolve_contacts_for_tender(
                     tender_id=tender.coalesced_tender_id,
@@ -578,26 +977,15 @@ def build_contact_resolution_plan(
                     buyer_email_norm=None,
                     institution_name=tender.buyer_display_selected,
                     input_fingerprint="provisional",
+                    currentness_class=tender.currentness_class or "",
+                    label_status=None,
+                    independently_reviewed=False,
+                    frozen_index=frozen_index,
                 )
                 summaries.append(summary)
                 candidates.extend(cands)
                 evidence.extend(evs)
                 conflicts.extend(confs)
-                for ev in evs:
-                    # Pointer resolution against frozen PR2 rows already loaded via search.
-                    frozen_evidence[ev.evidence_id] = {
-                        "evidence_id": ev.evidence_id,
-                        "subject_kind": ev.subject_kind,
-                        "subject_id": ev.subject_id,
-                        "source_table": ev.source_table,
-                        "source_record_id": ev.source_record_id,
-                        "source_plane": ev.source_plane,
-                        "origin_plane": ev.origin_plane,
-                        "evidence_type": ev.evidence_type,
-                        "evidence_at": ev.evidence_at,
-                        "matching_reason_code": ev.matching_reason_code,
-                        "confidence": ev.confidence,
-                    }
         finally:
             if conn.in_transaction:
                 conn.rollback()
@@ -612,7 +1000,6 @@ def build_contact_resolution_plan(
         sorted(summaries, key=lambda s: s.contact_resolution_id)
     )
     candidates_t = tuple(sorted(candidates, key=lambda c: c.candidate_id))
-    # Evidence rows are PR2-global; dedupe when multiple tenders share contacts.
     evidence_dedup: dict[str, ContactResolutionEvidence] = {}
     for e in evidence:
         evidence_dedup.setdefault(e.evidence_id, e)
@@ -634,6 +1021,7 @@ def build_contact_resolution_plan(
         pr5d_semantic_digest=pr5d_semantic,
         identity_fingerprint=identity_fp,
         safety_fingerprint=safety.safety_fingerprint,
+        frozen_source_fingerprint=frozen_index.source_fingerprint,
         organization_resolutions=organizations_t,
         summaries=summaries_t,
         candidates=candidates_t,
@@ -661,6 +1049,8 @@ def build_contact_resolution_plan(
             blocked_contact_count=s.blocked_contact_count,
             relevance_class_echo=s.relevance_class_echo,
             lifecycle_class_echo=s.lifecycle_class_echo,
+            currentness_class_echo=s.currentness_class_echo,
+            relevance_validation_status_echo=s.relevance_validation_status_echo,
             input_fingerprint=fps["input_fingerprint"],
             semantic_fingerprint=s.semantic_fingerprint,
             rules_version=s.rules_version,
@@ -677,8 +1067,8 @@ def build_contact_resolution_plan(
         candidates=list(candidates_t),
         evidence=list(evidence_t),
         conflicts=list(conflicts_t),
-        pr4_by_procurement=pr4_by_proc,
-        frozen_evidence_by_id=frozen_evidence,
+        frozen_index=frozen_index,
+        safety=safety,
     )
     if not recon["ok"]:
         raise ContactReconciliationError(
@@ -721,6 +1111,10 @@ def build_contact_resolution_plan(
             "Incomplete truth → safety_unknown / non-selectable"
         ),
         "usable_email": "normalize_export_email / emails_in must succeed",
+        "relevance_validation": (
+            "Absence of per-tender PR5D validation (label_status=None, "
+            "independently_reviewed=False) fails closed for gated lead/research actions"
+        ),
     }
 
     counts = {
@@ -782,6 +1176,7 @@ def build_contact_resolution_plan(
                 str(relevance_plan.fingerprints.get("rules_fingerprint") or ""),
             ),
             "safety_fingerprint": safety.safety_fingerprint,
+            "frozen_source_fingerprint": frozen_index.source_fingerprint,
         },
         counts=counts,
         field_sufficiency_audit=field_audit,
@@ -875,6 +1270,7 @@ __all__ = [
     "ContactDependencyError",
     "ContactReconciliationError",
     "build_contact_resolution_plan",
+    "empty_frozen_source_index",
     "reconcile_contact_resolution",
     "write_contact_resolution_outputs",
     "FORBIDDEN_CLI_FLAGS",

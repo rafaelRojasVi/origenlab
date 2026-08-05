@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from origenlab_email_pipeline.commercial_procurement.sources import (
     assert_active_read_transaction,
@@ -16,6 +16,9 @@ from origenlab_email_pipeline.commercial_procurement_contact_resolution.constant
     CONTACT_RESOLUTION_DEFERRED,
     CONTACT_RESOLUTION_RULES_VERSION,
     CONTACT_RESOLVER_VERSION,
+)
+from origenlab_email_pipeline.commercial_procurement_contact_resolution.frozen_sources import (
+    FrozenSourceIndex,
 )
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.models import (
     ContactCandidate,
@@ -60,6 +63,50 @@ def _role_digest(role: str | None) -> str:
 def _stable_id(prefix: str, payload: Mapping[str, Any]) -> str:
     digest = canonical_json_digest(dict(payload))
     return f"{prefix}_{digest[:32]}"
+
+
+def _validation_status_echo(label_status: str | None) -> str:
+    return (label_status or "").strip()
+
+
+def recompute_summary_semantic_fingerprint(
+    *,
+    contact_resolution_id: str,
+    final_contact_status: str,
+    account_id: str | None,
+    selected_contact_id: str | None,
+    selected_candidate_id: str | None,
+    search_stages_completed: Sequence[str],
+    next_action: str,
+    reason_code: str,
+    candidate_ids: Sequence[str] | None = None,
+) -> str:
+    """Recompute the per-summary semantic fingerprint used by contact search."""
+    if final_contact_status == CONTACT_RESOLUTION_DEFERRED:
+        return canonical_json_digest(
+            {
+                "contact_resolution_id": contact_resolution_id,
+                "final_contact_status": final_contact_status,
+                "account_id": None,
+                "selected_contact_id": None,
+                "search_stages_completed": [],
+                "next_action": next_action,
+                "reason_code": reason_code,
+            }
+        )
+    return canonical_json_digest(
+        {
+            "contact_resolution_id": contact_resolution_id,
+            "final_contact_status": final_contact_status,
+            "account_id": account_id,
+            "selected_contact_id": selected_contact_id,
+            "selected_candidate_id": selected_candidate_id,
+            "search_stages_completed": list(search_stages_completed),
+            "next_action": next_action,
+            "reason_code": reason_code,
+            "candidate_ids": list(candidate_ids or ()),
+        }
+    )
 
 
 def load_contacts_for_account(
@@ -133,6 +180,9 @@ def deferred_summary(
     organization: OrganizationResolution,
     input_fingerprint: str,
     reason_code: str,
+    currentness_class: str,
+    label_status: str | None = None,
+    independently_reviewed: bool = False,
 ) -> ContactResolutionSummary:
     policy = contact_resolution_policy_spec()
     status = CONTACT_RESOLUTION_DEFERRED
@@ -147,6 +197,9 @@ def deferred_summary(
         status,
         lifecycle_class=relevance.lifecycle_class_echo or "",
         relevance_class=relevance.relevance_class,
+        currentness_class=currentness_class,
+        label_status=label_status,
+        independently_reviewed=independently_reviewed,
         policy=policy,
     )
     sem = canonical_json_digest(
@@ -177,6 +230,8 @@ def deferred_summary(
         blocked_contact_count=0,
         relevance_class_echo=relevance.relevance_class,
         lifecycle_class_echo=relevance.lifecycle_class_echo or "",
+        currentness_class_echo=currentness_class,
+        relevance_validation_status_echo=_validation_status_echo(label_status),
         input_fingerprint=input_fingerprint,
         semantic_fingerprint=sem,
         rules_version=CONTACT_RESOLUTION_RULES_VERSION,
@@ -190,16 +245,21 @@ def _select_final_status(
     policy: Mapping[str, Any],
     tender_id: str,
 ) -> tuple[str, ContactCandidate | None, str, list[ContactResolutionConflict]]:
-    """Policy-driven final status. Material ties become ambiguous before ID order."""
+    """Policy-driven final status via ``status_precedence``.
+
+    Build the set of applicable statuses, then return the first entry in
+    ``policy["status_precedence"]`` that is applicable. Material ties become
+    ambiguous before contact_id order can resolve them.
+    """
     conflicts: list[ContactResolutionConflict] = []
+    # status -> (selected_candidate, reason_code)
+    applicable: dict[str, tuple[ContactCandidate | None, str]] = {}
     material_tiers = set(policy["material_ambiguity_tiers"])
     selectable = [c for c in ranked if c.selectable]
-    blocked = [c for c in ranked if c.safety_blocked or c.safety_unknown]
 
     if not ranked:
-        return "no_contact_found", None, "internal_search_exhausted_empty", conflicts
-
-    if selectable:
+        applicable["no_contact_found"] = (None, "internal_search_exhausted_empty")
+    elif selectable:
         top = selectable[0]
         peers = [
             c
@@ -207,7 +267,6 @@ def _select_final_status(
             if c.ranking_tier == top.ranking_tier and c.ranking_tier in material_tiers
         ]
         if len(peers) > 1:
-            # Material equivalence → ambiguous; contact_id must not silently resolve.
             conflicts.append(
                 ContactResolutionConflict(
                     conflict_id=_stable_id(
@@ -225,233 +284,192 @@ def _select_final_status(
                     evidence_ids=(),
                 )
             )
-            return (
-                "ambiguous_contact",
+            applicable["ambiguous_contact"] = (
                 None,
                 "multiple_competing_contacts",
-                conflicts,
             )
-
-        verified_tiers = set(policy["status_selection"]["verified_requires_tier"])
-        exact_cfg = policy["status_selection"]["exact_buyer_verified_path"]
-        if top.ranking_tier in verified_tiers:
-            return (
-                "existing_verified_contact",
-                top,
-                "verified_suitable_contact_selected",
-                conflicts,
-            )
-        if top.ranking_tier == exact_cfg["tier"]:
-            if (
+        else:
+            verified_tiers = set(policy["status_selection"]["verified_requires_tier"])
+            exact_cfg = policy["status_selection"]["exact_buyer_verified_path"]
+            if top.ranking_tier in verified_tiers:
+                applicable["existing_verified_contact"] = (
+                    top,
+                    "verified_suitable_contact_selected",
+                )
+            elif top.ranking_tier == exact_cfg["tier"] and (
                 is_suitable_role(top.role_suitability)
                 and top.verification_status == "explicit_verification"
             ):
-                return (
-                    "existing_verified_contact",
+                applicable["existing_verified_contact"] = (
                     top,
                     "verified_suitable_contact_selected",
-                    conflicts,
                 )
-            return (
-                "existing_contact_needs_role_review",
-                top,
-                "contact_present_verification_or_role_incomplete",
-                conflicts,
+            else:
+                if top.ranking_tier == "suitable_role_unverified":
+                    reason = "suitable_role_without_explicit_verification"
+                else:
+                    reason = "contact_requires_role_review"
+                if (
+                    top.ranking_tier == exact_cfg["tier"]
+                    and not (
+                        is_suitable_role(top.role_suitability)
+                        and top.verification_status == "explicit_verification"
+                    )
+                ):
+                    reason = "contact_present_verification_or_role_incomplete"
+                applicable["existing_contact_needs_role_review"] = (top, reason)
+    else:
+        # Non-selectable ranked set — accumulate statuses; precedence chooses.
+        if any(c.ranking_tier == "role_known_email_missing" for c in ranked):
+            applicable["role_known_email_missing"] = (
+                None,
+                "suitable_role_email_missing",
             )
-        if top.ranking_tier in set(policy["status_selection"]["role_review_tiers"]):
-            reason = (
-                "suitable_role_without_explicit_verification"
-                if top.ranking_tier == "suitable_role_unverified"
-                else "contact_requires_role_review"
+        if any(c.safety_blocked or c.safety_unknown for c in ranked):
+            applicable["contact_blocked"] = (
+                None,
+                "all_selectable_paths_blocked",
             )
-            return (
-                "existing_contact_needs_role_review",
-                top,
-                reason,
-                conflicts,
+        if (
+            "role_known_email_missing" not in applicable
+            and "contact_blocked" not in applicable
+        ):
+            applicable["contact_research_required"] = (
+                None,
+                "internal_search_exhausted_no_selectable",
             )
-        return (
-            "existing_contact_needs_role_review",
-            top,
-            "contact_requires_role_review",
-            conflicts,
-        )
 
-    if any(c.ranking_tier == "role_known_email_missing" for c in ranked):
-        return (
-            "role_known_email_missing",
-            None,
-            "suitable_role_email_missing",
-            conflicts,
-        )
-    if blocked and not selectable:
-        return (
-            "contact_blocked",
-            None,
-            "all_selectable_paths_blocked",
-            conflicts,
-        )
-    # Exhausted internal search with non-selectable non-blocked paths.
-    return (
-        "contact_research_required",
-        None,
-        "internal_search_exhausted_no_selectable",
-        conflicts,
-    )
+    for status in policy["status_precedence"]:
+        if status in applicable:
+            selected, reason = applicable[status]
+            return status, selected, reason, conflicts
+
+    # Fail closed — should be unreachable when precedence covers all statuses.
+    return "no_contact_found", None, "status_precedence_exhausted", conflicts
 
 
-def resolve_contacts_for_tender(
+# Public alias for tests / call sites that prefer a non-underscore name.
+select_final_status = _select_final_status
+
+
+def _evidence_from_rows(
+    contact_id: str, ev_rows: list[Mapping[str, Any]]
+) -> list[ContactResolutionEvidence]:
+    out: list[ContactResolutionEvidence] = []
+    for ev in ev_rows:
+        out.append(
+            ContactResolutionEvidence(
+                evidence_id=str(ev["evidence_id"]),
+                subject_kind=str(ev.get("subject_kind") or "contact"),
+                subject_id=contact_id,
+                source_table=str(ev.get("source_table") or ""),
+                source_record_id=str(ev.get("source_record_id") or ""),
+                source_plane=str(ev.get("source_plane") or ""),
+                origin_plane=str(ev.get("origin_plane") or ""),
+                evidence_type=str(ev.get("evidence_type") or ""),
+                evidence_at=str(ev.get("evidence_at") or ""),
+                matching_reason_code=str(ev.get("matching_reason_code") or ""),
+                confidence=str(ev.get("confidence") or ""),
+            )
+        )
+    return out
+
+
+def _build_candidate(
     *,
+    contact_resolution_id: str,
     tender_id: str,
-    relevance: TenderRelevanceDecision,
-    organization: OrganizationResolution,
-    conn: sqlite3.Connection,
-    safety: SafetySnapshot,
+    account_id: str,
+    contact_id: str,
+    email: str | None,
+    role: str | None,
+    identity_status: str,
+    identity_confidence: str,
+    ev_rows: list[Mapping[str, Any]],
+    evidence_ids: tuple[str, ...],
     buyer_email_norm: str | None,
     institution_name: str | None,
-    input_fingerprint: str,
-) -> tuple[
-    ContactResolutionSummary,
-    list[ContactCandidate],
-    list[ContactResolutionEvidence],
-    list[ContactResolutionConflict],
-]:
-    policy = contact_resolution_policy_spec()
-    if organization.resolution_status != "linked" or not organization.account_id:
-        reason = (
-            "account_unresolved"
-            if organization.resolution_status
-            != "deferred_insufficient_buyer_fields"
-            else "insufficient_buyer_fields"
-        )
-        return (
-            deferred_summary(
-                tender_id=tender_id,
-                relevance=relevance,
-                organization=organization,
-                input_fingerprint=input_fingerprint,
-                reason_code=reason,
-            ),
-            [],
-            [],
-            [],
-        )
-
-    account_id = organization.account_id
-    contacts = load_contacts_for_account(conn, account_id)
-    stages = ["pr2_account_contacts"]
-    if buyer_email_norm:
-        stages.append("buyer_email_exact_match")
-    stages.append("safety_gate")
-
-    evidence_by_contact = load_contact_evidence(
-        conn, [str(c["contact_id"]) for c in contacts]
+    safety: SafetySnapshot,
+    policy: Mapping[str, Any],
+) -> ContactCandidate:
+    has_email = bool(email)
+    suitability = classify_role_suitability(role if isinstance(role, str) else None)
+    # Always recompute — never trust a pre-set verification_status.
+    verified = contact_has_explicit_verification(
+        identity_status=identity_status,
+        identity_confidence=identity_confidence,
+        evidence_rows=ev_rows,
+        contact_id=contact_id,
+        policy=policy,
     )
-    evidence_out: list[ContactResolutionEvidence] = []
-    candidates: list[ContactCandidate] = []
+    safety_result = evaluate_contact_safety(
+        email_norm=email,
+        institution_name=institution_name,
+        safety=safety,
+    )
+    buyer_exact = bool(buyer_email_norm and email and email == buyer_email_norm)
+    features = feature_flags_for_candidate(
+        has_usable_email=has_email,
+        account_membership=True,
+        identity_status=identity_status,
+        role_suitability=suitability,
+        verified=verified,
+        buyer_email_exact=buyer_exact,
+        safety_blocked=bool(safety_result["safety_blocked"])
+        and not bool(safety_result.get("safety_unknown")),
+        safety_unknown=bool(safety_result.get("safety_unknown")),
+    )
+    # Email-missing contacts: not selectable by safety, but not safety-blocked.
+    if not has_email:
+        features = dict(features)
+        features["not_safety_blocked"] = True
+        features["safety_known"] = True
+        features["safety_blocked"] = False
+        features["safety_blocked_or_unknown"] = False
 
-    provisional_key = {
-        "coalesced_tender_id": tender_id,
+    tier, reasons, selectable = assign_ranking_tier(features, policy=policy)
+    if not safety_result.get("selectable_by_safety", False) and has_email:
+        selectable = False
+    if features.get("identity_not_resolved"):
+        selectable = False
+
+    cand_payload = {
+        "contact_resolution_id": contact_resolution_id,
+        "contact_id": contact_id,
         "account_id": account_id,
-        "organization_resolution_id": organization.organization_resolution_id,
+        "tier": tier,
     }
-    contact_resolution_id = _stable_id("crs", provisional_key)
+    return ContactCandidate(
+        candidate_id=_stable_id("ccand", cand_payload),
+        contact_resolution_id=contact_resolution_id,
+        coalesced_tender_id=tender_id,
+        account_id=account_id,
+        contact_id=contact_id,
+        rank=0,
+        ranking_tier=tier,
+        role_raw_digest=_role_digest(role if isinstance(role, str) else None),
+        role_suitability=suitability,
+        identity_status=identity_status,
+        identity_confidence=identity_confidence,
+        has_usable_email=has_email,
+        verification_status=(
+            "explicit_verification" if verified else "unverified"
+        ),
+        evidence_ids=evidence_ids,
+        suppression_result=str(safety_result["suppression_result"]),
+        outreach_state_result=str(safety_result["outreach_state_result"]),
+        safety_blocked=bool(safety_result["safety_blocked"]),
+        safety_unknown=bool(safety_result.get("safety_unknown")),
+        selectable=selectable,
+        ranking_reason_codes=reasons,
+    )
 
-    for row in contacts:
-        contact_id = str(row["contact_id"])
-        # Canonical parse only — non-empty invalid strings are not usable.
-        email = parse_usable_email(row.get("normalized_email"))
-        has_email = bool(email)
-        role = row.get("role")
-        suitability = classify_role_suitability(role if isinstance(role, str) else None)
-        ev_rows = evidence_by_contact.get(contact_id, [])
-        for ev in ev_rows:
-            evidence_out.append(
-                ContactResolutionEvidence(
-                    evidence_id=str(ev["evidence_id"]),
-                    subject_kind=str(ev.get("subject_kind") or "contact"),
-                    subject_id=contact_id,
-                    source_table=str(ev.get("source_table") or ""),
-                    source_record_id=str(ev.get("source_record_id") or ""),
-                    source_plane=str(ev.get("source_plane") or ""),
-                    origin_plane=str(ev.get("origin_plane") or ""),
-                    evidence_type=str(ev.get("evidence_type") or ""),
-                    evidence_at=str(ev.get("evidence_at") or ""),
-                    matching_reason_code=str(ev.get("matching_reason_code") or ""),
-                    confidence=str(ev.get("confidence") or ""),
-                )
-            )
-        verified = contact_has_explicit_verification(
-            identity_status=str(row.get("identity_status") or ""),
-            identity_confidence=str(row.get("identity_confidence") or ""),
-            evidence_rows=ev_rows,
-            contact_id=contact_id,
-            policy=policy,
-        )
-        safety_result = evaluate_contact_safety(
-            email_norm=email,
-            institution_name=institution_name,
-            safety=safety,
-        )
-        buyer_exact = bool(buyer_email_norm and email and email == buyer_email_norm)
-        features = feature_flags_for_candidate(
-            has_usable_email=has_email,
-            account_membership=str(row.get("account_id") or "") == account_id,
-            identity_status=str(row.get("identity_status") or ""),
-            role_suitability=suitability,
-            verified=verified,
-            buyer_email_exact=buyer_exact,
-            safety_blocked=bool(safety_result["safety_blocked"])
-            and not bool(safety_result.get("safety_unknown")),
-            safety_unknown=bool(safety_result.get("safety_unknown")),
-        )
-        # Email-missing contacts: safety_blocked false but not selectable by safety.
-        if not has_email:
-            features = dict(features)
-            features["not_safety_blocked"] = True
-            features["safety_known"] = True
-            features["safety_blocked"] = False
-            features["safety_blocked_or_unknown"] = False
 
-        tier, reasons, selectable = assign_ranking_tier(features, policy=policy)
-        if not safety_result.get("selectable_by_safety", False) and has_email:
-            selectable = False
-        if features.get("identity_not_resolved"):
-            selectable = False
-
-        cand_payload = {
-            "contact_resolution_id": contact_resolution_id,
-            "contact_id": contact_id,
-            "account_id": account_id,
-            "tier": tier,
-        }
-        candidates.append(
-            ContactCandidate(
-                candidate_id=_stable_id("ccand", cand_payload),
-                contact_resolution_id=contact_resolution_id,
-                coalesced_tender_id=tender_id,
-                account_id=account_id,
-                contact_id=contact_id,
-                rank=0,
-                ranking_tier=tier,
-                role_raw_digest=_role_digest(role if isinstance(role, str) else None),
-                role_suitability=suitability,
-                identity_status=str(row.get("identity_status") or ""),
-                identity_confidence=str(row.get("identity_confidence") or ""),
-                has_usable_email=has_email,
-                verification_status=(
-                    "explicit_verification" if verified else "unverified"
-                ),
-                evidence_ids=tuple(sorted(str(e["evidence_id"]) for e in ev_rows)),
-                suppression_result=str(safety_result["suppression_result"]),
-                outreach_state_result=str(safety_result["outreach_state_result"]),
-                safety_blocked=bool(safety_result["safety_blocked"]),
-                safety_unknown=bool(safety_result.get("safety_unknown")),
-                selectable=selectable,
-                ranking_reason_codes=reasons,
-            )
-        )
-
+def _rank_candidates(
+    candidates: list[ContactCandidate],
+    *,
+    policy: Mapping[str, Any],
+) -> list[ContactCandidate]:
     tier_rank = {row["id"]: int(row["rank"]) for row in policy["ranking_tiers"]}
     # Sort by material tier only; contact_id is a stable final tie-breaker AFTER
     # material ambiguity is evaluated separately on equal top tiers.
@@ -488,31 +506,139 @@ def resolve_contacts_for_tender(
                 ranking_reason_codes=c.ranking_reason_codes,
             )
         )
+    return ranked
 
+
+def resolve_contacts_for_tender(
+    *,
+    tender_id: str,
+    relevance: TenderRelevanceDecision,
+    organization: OrganizationResolution,
+    conn: sqlite3.Connection,
+    safety: SafetySnapshot,
+    buyer_email_norm: str | None,
+    institution_name: str | None,
+    input_fingerprint: str,
+    currentness_class: str,
+    label_status: str | None = None,
+    independently_reviewed: bool = False,
+    frozen_index: FrozenSourceIndex | None = None,
+) -> tuple[
+    ContactResolutionSummary,
+    list[ContactCandidate],
+    list[ContactResolutionEvidence],
+    list[ContactResolutionConflict],
+]:
+    policy = contact_resolution_policy_spec()
+    if organization.resolution_status != "linked" or not organization.account_id:
+        reason = (
+            "account_unresolved"
+            if organization.resolution_status
+            != "deferred_insufficient_buyer_fields"
+            else "insufficient_buyer_fields"
+        )
+        return (
+            deferred_summary(
+                tender_id=tender_id,
+                relevance=relevance,
+                organization=organization,
+                input_fingerprint=input_fingerprint,
+                reason_code=reason,
+                currentness_class=currentness_class,
+                label_status=label_status,
+                independently_reviewed=independently_reviewed,
+            ),
+            [],
+            [],
+            [],
+        )
+
+    account_id = organization.account_id
+    stages = ["pr2_account_contacts"]
+    if buyer_email_norm:
+        stages.append("buyer_email_exact_match")
+    stages.append("safety_gate")
+
+    provisional_key = {
+        "coalesced_tender_id": tender_id,
+        "account_id": account_id,
+        "organization_resolution_id": organization.organization_resolution_id,
+    }
+    contact_resolution_id = _stable_id("crs", provisional_key)
+
+    evidence_out: list[ContactResolutionEvidence] = []
+    candidates: list[ContactCandidate] = []
+
+    if frozen_index is not None:
+        for contact_id in frozen_index.contact_ids_for_account(account_id):
+            proj = frozen_index.contacts_by_id.get(contact_id)
+            if proj is None:
+                continue
+            frozen_evs = []
+            for eid in proj.evidence_ids:
+                fe = frozen_index.evidence_by_id.get(eid)
+                if fe is not None:
+                    frozen_evs.append(fe)
+            ev_dicts = [fe.to_dict() for fe in frozen_evs]
+            evidence_out.extend(_evidence_from_rows(contact_id, ev_dicts))
+            email = proj.email_norm if proj.has_usable_email else None
+            role = proj.role_raw
+            candidates.append(
+                _build_candidate(
+                    contact_resolution_id=contact_resolution_id,
+                    tender_id=tender_id,
+                    account_id=account_id,
+                    contact_id=contact_id,
+                    email=email,
+                    role=role if isinstance(role, str) else None,
+                    identity_status=proj.identity_status,
+                    identity_confidence=proj.identity_confidence,
+                    ev_rows=ev_dicts,
+                    evidence_ids=tuple(sorted(proj.evidence_ids)),
+                    buyer_email_norm=buyer_email_norm,
+                    institution_name=institution_name,
+                    safety=safety,
+                    policy=policy,
+                )
+            )
+    else:
+        contacts = load_contacts_for_account(conn, account_id)
+        evidence_by_contact = load_contact_evidence(
+            conn, [str(c["contact_id"]) for c in contacts]
+        )
+        for row in contacts:
+            contact_id = str(row["contact_id"])
+            email = parse_usable_email(row.get("normalized_email"))
+            role = row.get("role")
+            ev_rows = evidence_by_contact.get(contact_id, [])
+            evidence_out.extend(_evidence_from_rows(contact_id, ev_rows))
+            candidates.append(
+                _build_candidate(
+                    contact_resolution_id=contact_resolution_id,
+                    tender_id=tender_id,
+                    account_id=account_id,
+                    contact_id=contact_id,
+                    email=email,
+                    role=role if isinstance(role, str) else None,
+                    identity_status=str(row.get("identity_status") or ""),
+                    identity_confidence=str(row.get("identity_confidence") or ""),
+                    ev_rows=ev_rows,
+                    evidence_ids=tuple(
+                        sorted(str(e["evidence_id"]) for e in ev_rows)
+                    ),
+                    buyer_email_norm=buyer_email_norm,
+                    institution_name=institution_name,
+                    safety=safety,
+                    policy=policy,
+                )
+            )
+
+    ranked = _rank_candidates(candidates, policy=policy)
     status, selected, reason, conflicts = _select_final_status(
         ranked=ranked, policy=policy, tender_id=tender_id
     )
-
-    # contact_research_required only when search exhausted AND tender actionable.
-    if status == "contact_research_required":
-        from origenlab_email_pipeline.commercial_procurement_contact_resolution.policy import (
-            tender_allows_actionable_research,
-        )
-
-        if not tender_allows_actionable_research(
-            lifecycle_class=relevance.lifecycle_class_echo or "",
-            relevance_class=relevance.relevance_class,
-            policy=policy,
-        ):
-            # Keep analysis status but downgrade research claim to no_contact_found
-            # semantics for non-actionable tenders with exhausted non-selectable paths.
-            # Prefer explicit non-research status when no selectable contacts remain.
-            if any(c.safety_blocked or c.safety_unknown for c in ranked):
-                status = "contact_blocked"
-                reason = "all_selectable_paths_blocked_non_actionable_tender"
-            else:
-                status = "no_contact_found"
-                reason = "internal_search_exhausted_non_actionable_tender"
+    # Do NOT rewrite contact_research_required based on actionability —
+    # next_action_for_status gates gated research to ``none``.
 
     suitable = [
         c
@@ -561,6 +687,9 @@ def resolve_contacts_for_tender(
         status,
         lifecycle_class=relevance.lifecycle_class_echo or "",
         relevance_class=relevance.relevance_class,
+        currentness_class=currentness_class,
+        label_status=label_status,
+        independently_reviewed=independently_reviewed,
         policy=policy,
     )
     sem = canonical_json_digest(
@@ -593,6 +722,8 @@ def resolve_contacts_for_tender(
         blocked_contact_count=len(blocked),
         relevance_class_echo=relevance.relevance_class,
         lifecycle_class_echo=relevance.lifecycle_class_echo or "",
+        currentness_class_echo=currentness_class,
+        relevance_validation_status_echo=_validation_status_echo(label_status),
         input_fingerprint=input_fingerprint,
         semantic_fingerprint=sem,
         rules_version=CONTACT_RESOLUTION_RULES_VERSION,

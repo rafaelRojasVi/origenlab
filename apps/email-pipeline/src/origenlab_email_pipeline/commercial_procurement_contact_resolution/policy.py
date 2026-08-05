@@ -1,15 +1,27 @@
-"""Declarative ranking and status policy shared by execution + fingerprints."""
+"""Declarative ranking, status precedence, verification, and actionability policy."""
 
 from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
+from origenlab_email_pipeline.commercial_procurement_candidate_planner.constants import (
+    CURRENTNESS_CLASSES,
+    LIFECYCLE_CLASSES,
+)
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.constants import (
     LABORATORY_ROLE_TOKENS,
     NEXT_ACTIONS,
     PROCUREMENT_ROLE_TOKENS,
     SEARCH_STAGES,
     UNSUITABLE_ROLE_TOKENS,
+)
+from origenlab_email_pipeline.commercial_procurement_live_relevance.constants import (
+    NEGATIVE_RELEVANCE_CLASSES,
+    RELEVANCE_CLASSES,
+    STRONG_RELEVANCE_CLASSES,
+)
+from origenlab_email_pipeline.commercial_procurement_product_relevance.evaluation import (
+    LABEL_STATUSES_METRIC_ELIGIBLE,
 )
 
 # Identity statuses that may never be selected (account-incompatible / unresolved).
@@ -25,31 +37,34 @@ NONSELECTABLE_IDENTITY_STATUSES: frozenset[str] = frozenset(
 
 SELECTABLE_IDENTITY_STATUSES: frozenset[str] = frozenset({"resolved"})
 
-# Lifecycle / relevance classes that must not receive actionable research/outreach.
-NON_ACTIONABLE_LIFECYCLE_CLASSES: frozenset[str] = frozenset(
+# Explicitly permitted deterministic eligibility (fail closed otherwise).
+ACTIONABLE_LIFECYCLE_CLASSES: frozenset[str] = frozenset({"active_open"})
+ACTIONABLE_CURRENTNESS_CLASSES: frozenset[str] = frozenset(
+    {"current_authoritative_snapshot"}
+)
+ACTIONABLE_RELEVANCE_CLASSES: frozenset[str] = frozenset(STRONG_RELEVANCE_CLASSES)
+
+# Next actions that imply approved lead / external research or outreach use.
+GATED_EXTERNAL_OR_LEAD_ACTIONS: frozenset[str] = frozenset(
     {
-        "closed",
-        "historical",
-        "expired",
-        "cancelled",
-        "negative",
+        "use_existing_contact",
+        "research_contact_if_active",
     }
 )
-NON_ACTIONABLE_RELEVANCE_CLASSES: frozenset[str] = frozenset(
+
+# Weak / non-strong relevance classes that remain in the canonical vocabulary.
+WEAK_RELEVANCE_CLASSES: frozenset[str] = frozenset(
     {
-        "out_of_scope",
-        "negative",
-        "not_relevant",
-        "ambiguous_relevance",
-        "insufficient_evidence",
+        "laboratory_context_only",
+        "ambiguous",
     }
-)
+) | frozenset(NEGATIVE_RELEVANCE_CLASSES)
 
 
 def contact_resolution_policy_spec() -> dict[str, Any]:
     """Authoritative policy for ranking, status precedence, verification, actionability."""
     return {
-        "version": "contact_resolution_policy_v1",
+        "version": "contact_resolution_policy_v2",
         "ranking_tiers": [
             {
                 "id": "exact_buyer_email",
@@ -120,12 +135,12 @@ def contact_resolution_policy_spec() -> dict[str, Any]:
                 "requires": ["account_membership", "identity_not_resolved"],
             },
         ],
-        # Material tiers where equal top candidates create ambiguity (before ID tie-break).
         "material_ambiguity_tiers": [
             "exact_buyer_email",
             "verified_suitable",
             "suitable_role_unverified",
         ],
+        # Executable final-status order — first matching applicable status wins.
         "status_precedence": [
             "contact_resolution_deferred",
             "ambiguous_contact",
@@ -160,7 +175,6 @@ def contact_resolution_policy_spec() -> dict[str, Any]:
         },
         "verification_policy": {
             "id": "explicit_pr2_contact_identity_evidence",
-            # Audited production PR2 types: only contact_identity is emitted for contacts.
             "accepted_evidence_types": ["contact_identity"],
             "accepted_matching_reason_codes": ["exact_email"],
             "accepted_confidence": ["high"],
@@ -183,32 +197,33 @@ def contact_resolution_policy_spec() -> dict[str, Any]:
             "note": (
                 "Mere presence in commercial_identity_contact is insufficient. "
                 "High confidence alone is insufficient. "
-                "existing_verified_contact requires usable email, suitable role, "
-                "resolved account-compatible identity, non-blocking safety, and at "
-                "least one frozen PR2 evidence row matching this predicate."
+                "Verification is recomputed from independently frozen PR2 evidence."
             ),
         },
         "identity_policy": {
             "selectable_statuses": sorted(SELECTABLE_IDENTITY_STATUSES),
             "nonselectable_statuses": sorted(NONSELECTABLE_IDENTITY_STATUSES),
-            "note": (
-                "Ambiguous, conflicting, unresolved, needs_review, unlinked, or "
-                "internal_actor identities must not be selected."
-            ),
         },
         "actionability_policy": {
-            "id": "historical_negative_not_actionable_leads",
-            "non_actionable_lifecycle_classes": sorted(NON_ACTIONABLE_LIFECYCLE_CLASSES),
-            "non_actionable_relevance_classes": sorted(NON_ACTIONABLE_RELEVANCE_CLASSES),
-            "actionable_research_statuses": [
-                "contact_research_required",
-                "role_known_email_missing",
-                "no_contact_found",
-            ],
+            "id": "canonical_pr5a_pr5c_fail_closed_v2",
+            "lifecycle_vocabulary": list(LIFECYCLE_CLASSES),
+            "relevance_vocabulary": list(RELEVANCE_CLASSES),
+            "currentness_vocabulary": list(CURRENTNESS_CLASSES),
+            "actionable_lifecycle_classes": sorted(ACTIONABLE_LIFECYCLE_CLASSES),
+            "actionable_relevance_classes": sorted(ACTIONABLE_RELEVANCE_CLASSES),
+            "actionable_currentness_classes": sorted(ACTIONABLE_CURRENTNESS_CLASSES),
+            "negative_relevance_classes": sorted(NEGATIVE_RELEVANCE_CLASSES),
+            "weak_relevance_classes": sorted(WEAK_RELEVANCE_CLASSES),
+            "required_validation_statuses": sorted(LABEL_STATUSES_METRIC_ELIGIBLE),
+            "gated_next_actions": sorted(GATED_EXTERNAL_OR_LEAD_ACTIONS),
+            "require_independently_reviewed": True,
+            "unknown_values_non_actionable": True,
             "note": (
-                "Contact dimension may be resolved for any PR5D tender for audit, "
-                "but historical/closed/negative/ambiguous tenders must not receive "
-                "actionable research/outreach next actions. PR5E never persists leads."
+                "Unknown lifecycle/relevance/currentness fail closed. "
+                "Only active_open + strong relevance + current authoritative "
+                "currentness + reviewed/gold independent validation can unlock "
+                "gated lead/research actions. Unreviewed PR5D predictions never "
+                "imply approved leads. Historical truth comes from PR5C currentness."
             ),
         },
         "status_selection": {
@@ -222,9 +237,6 @@ def contact_resolution_policy_spec() -> dict[str, Any]:
                 "role_review",
                 "exact_buyer_email",
             ],
-            "contact_research_required_when": (
-                "internal_search_exhausted_and_tender_approved_for_research"
-            ),
         },
     }
 
@@ -282,7 +294,6 @@ def evidence_satisfies_verification_policy(
         spec["accepted_source_planes"]
     ):
         return False
-    # Pointer fields must be present (evidence_at may be empty string but key present).
     for field in spec["required_pointer_fields"]:
         if field not in evidence_row:
             return False
@@ -356,7 +367,6 @@ def assign_ranking_tier(
 ) -> tuple[str, tuple[str, ...], bool]:
     """Assign the first matching ranking tier from declarative requires lists."""
     spec = policy or contact_resolution_policy_spec()
-    reasons: list[str] = []
     for tier in spec["ranking_tiers"]:
         reqs = list(tier["requires"])
         if all(features.get(r, False) for r in reqs):
@@ -374,20 +384,82 @@ def assign_ranking_tier(
     return "identity_incompatible", ("no_tier_matched",), False
 
 
-def tender_allows_actionable_research(
+def tender_passes_deterministic_eligibility(
     *,
     lifecycle_class: str,
     relevance_class: str,
+    currentness_class: str,
+    policy: Mapping[str, Any] | None = None,
+) -> tuple[bool, tuple[str, ...]]:
+    """Fail-closed eligibility from canonical PR5A/PR5C vocabularies."""
+    spec = (policy or contact_resolution_policy_spec())["actionability_policy"]
+    reasons: list[str] = []
+    life = (lifecycle_class or "").strip()
+    rel = (relevance_class or "").strip()
+    curr = (currentness_class or "").strip()
+
+    life_vocab = set(spec["lifecycle_vocabulary"])
+    rel_vocab = set(spec["relevance_vocabulary"])
+    curr_vocab = set(spec["currentness_vocabulary"])
+
+    if not life or life not in life_vocab:
+        reasons.append("lifecycle_unknown_or_noncanonical")
+    elif life not in set(spec["actionable_lifecycle_classes"]):
+        reasons.append(f"lifecycle_not_actionable:{life}")
+
+    if not rel or rel not in rel_vocab:
+        reasons.append("relevance_unknown_or_noncanonical")
+    elif rel not in set(spec["actionable_relevance_classes"]):
+        reasons.append(f"relevance_not_strong:{rel}")
+
+    if not curr or curr not in curr_vocab:
+        reasons.append("currentness_unknown_or_noncanonical")
+    elif curr not in set(spec["actionable_currentness_classes"]):
+        reasons.append(f"currentness_not_actionable:{curr}")
+
+    return (not reasons), tuple(reasons)
+
+
+def relevance_is_validated(
+    *,
+    label_status: str | None,
+    independently_reviewed: bool,
     policy: Mapping[str, Any] | None = None,
 ) -> bool:
     spec = (policy or contact_resolution_policy_spec())["actionability_policy"]
-    life = (lifecycle_class or "").strip().lower()
-    rel = (relevance_class or "").strip().lower()
-    if life in {c.lower() for c in spec["non_actionable_lifecycle_classes"]}:
+    status = (label_status or "").strip().lower()
+    if status not in {s.lower() for s in spec["required_validation_statuses"]}:
         return False
-    if rel in {c.lower() for c in spec["non_actionable_relevance_classes"]}:
+    if spec.get("require_independently_reviewed") and not independently_reviewed:
         return False
     return True
+
+
+def tender_allows_gated_lead_or_research(
+    *,
+    lifecycle_class: str,
+    relevance_class: str,
+    currentness_class: str,
+    label_status: str | None,
+    independently_reviewed: bool,
+    policy: Mapping[str, Any] | None = None,
+) -> tuple[bool, tuple[str, ...]]:
+    """Full fail-closed gate for lead/research next actions."""
+    ok, reasons = tender_passes_deterministic_eligibility(
+        lifecycle_class=lifecycle_class,
+        relevance_class=relevance_class,
+        currentness_class=currentness_class,
+        policy=policy,
+    )
+    if not ok:
+        return False, reasons
+    if not relevance_is_validated(
+        label_status=label_status,
+        independently_reviewed=independently_reviewed,
+        policy=policy,
+    ):
+        return False, ("relevance_unvalidated_or_unreviewed",)
+    return True, ()
 
 
 def next_action_for_status(
@@ -395,17 +467,44 @@ def next_action_for_status(
     *,
     lifecycle_class: str,
     relevance_class: str,
+    currentness_class: str,
+    label_status: str | None,
+    independently_reviewed: bool,
     policy: Mapping[str, Any] | None = None,
 ) -> str:
     spec = policy or contact_resolution_policy_spec()
     action = str(spec["next_action_by_status"][status])
-    actionable_statuses = set(
-        spec["actionability_policy"]["actionable_research_statuses"]
-    )
-    if status in actionable_statuses and not tender_allows_actionable_research(
+    gated = set(spec["actionability_policy"]["gated_next_actions"])
+    if action in gated:
+        allowed, _ = tender_allows_gated_lead_or_research(
+            lifecycle_class=lifecycle_class,
+            relevance_class=relevance_class,
+            currentness_class=currentness_class,
+            label_status=label_status,
+            independently_reviewed=independently_reviewed,
+            policy=spec,
+        )
+        if not allowed:
+            return str(spec["non_actionable_next_action"])
+    return action
+
+
+# Back-compat alias used by older call sites during transition.
+def tender_allows_actionable_research(
+    *,
+    lifecycle_class: str,
+    relevance_class: str,
+    currentness_class: str = "current_authoritative_snapshot",
+    label_status: str | None = None,
+    independently_reviewed: bool = False,
+    policy: Mapping[str, Any] | None = None,
+) -> bool:
+    ok, _ = tender_allows_gated_lead_or_research(
         lifecycle_class=lifecycle_class,
         relevance_class=relevance_class,
-        policy=spec,
-    ):
-        return str(spec["non_actionable_next_action"])
-    return action
+        currentness_class=currentness_class,
+        label_status=label_status,
+        independently_reviewed=independently_reviewed,
+        policy=policy,
+    )
+    return ok
