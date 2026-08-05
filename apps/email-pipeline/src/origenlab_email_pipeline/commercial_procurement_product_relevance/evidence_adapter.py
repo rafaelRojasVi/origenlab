@@ -97,38 +97,76 @@ def recompute_unit_id(unit: ProductTextUnit) -> str:
     return _stable_unit_id(unit_id_semantic_payload(unit))
 
 
+def materialization_binding_payload_from_fields(
+    *,
+    coalesced_tender_id: str,
+    evidence_ref_id: str | None,
+    field_path: str,
+    text_normalized: str,
+    evidence_tier: str,
+    source_plane: str,
+    link_status: str,
+    unresolved_reason: str | None,
+    snapshot_id: str | None,
+    observation_id: str | None,
+    tender_observation_id: str | None,
+    line_observation_id: str | None,
+    pr4_procurement_id: str | None,
+    contributing_evidence_ref_ids: tuple[str, ...] | list[str],
+    attempt_kind: str,
+    materialization_status: str,
+) -> dict[str, Any]:
+    """Canonical binding identity from authoritative source fields.
+
+    Omits raw product wording — only a digest of normalized text is included.
+    """
+    return {
+        "adapter": PRODUCT_TEXT_ADAPTER_VERSION,
+        "binding_version": "materialization_binding_v2",
+        "coalesced_tender_id": coalesced_tender_id,
+        "evidence_ref_id": evidence_ref_id,
+        "field_path": field_path,
+        "text_normalized_digest": canonical_json_digest(text_normalized or ""),
+        "evidence_tier": evidence_tier,
+        "source_plane": source_plane,
+        "link_status": link_status,
+        "unresolved_reason": unresolved_reason,
+        "snapshot_id": snapshot_id,
+        "observation_id": observation_id,
+        "tender_observation_id": tender_observation_id,
+        "line_observation_id": line_observation_id,
+        "pr4_procurement_id": pr4_procurement_id,
+        "contributing_evidence_ref_ids": sorted(contributing_evidence_ref_ids),
+        "attempt_kind": attempt_kind,
+        "materialization_status": materialization_status,
+    }
+
+
 def materialization_binding_payload(
     *,
     unit: ProductTextUnit,
     attempt_kind: str,
     materialization_status: str,
 ) -> dict[str, Any]:
-    """Canonical source-derived binding identity (includes classification-relevant fields).
-
-    Distinct from ``unit_id`` payload: covers evidence_tier, source_plane, attempt
-    kind, materialization status, and PR4 identity so a self-consistent fabricated
-    unit cannot satisfy reconciliation by recomputing only from itself.
-    """
-    return {
-        "adapter": PRODUCT_TEXT_ADAPTER_VERSION,
-        "binding_version": "materialization_binding_v1",
-        "coalesced_tender_id": unit.coalesced_tender_id,
-        "evidence_ref_id": unit.evidence_ref_id,
-        "field_path": unit.field_path,
-        "text_normalized": unit.text_normalized,
-        "text_normalized_digest": canonical_json_digest(unit.text_normalized or ""),
-        "evidence_tier": unit.evidence_tier,
-        "source_plane": unit.source_plane,
-        "link_status": unit.link_status,
-        "unresolved_reason": unit.unresolved_reason,
-        "snapshot_id": unit.snapshot_id,
-        "observation_id": unit.observation_id,
-        "tender_observation_id": unit.tender_observation_id,
-        "line_observation_id": unit.line_observation_id,
-        "pr4_procurement_id": unit.pr4_procurement_id,
-        "attempt_kind": attempt_kind,
-        "materialization_status": materialization_status,
-    }
+    """Binding payload projected from an emitted unit (for reconciliation compare)."""
+    return materialization_binding_payload_from_fields(
+        coalesced_tender_id=unit.coalesced_tender_id,
+        evidence_ref_id=unit.evidence_ref_id,
+        field_path=unit.field_path,
+        text_normalized=unit.text_normalized,
+        evidence_tier=unit.evidence_tier,
+        source_plane=unit.source_plane,
+        link_status=unit.link_status,
+        unresolved_reason=unit.unresolved_reason,
+        snapshot_id=unit.snapshot_id,
+        observation_id=unit.observation_id,
+        tender_observation_id=unit.tender_observation_id,
+        line_observation_id=unit.line_observation_id,
+        pr4_procurement_id=unit.pr4_procurement_id,
+        contributing_evidence_ref_ids=unit.contributing_evidence_ref_ids,
+        attempt_kind=attempt_kind,
+        materialization_status=materialization_status,
+    )
 
 
 def materialization_binding_digest(
@@ -137,7 +175,7 @@ def materialization_binding_digest(
     attempt_kind: str,
     materialization_status: str,
 ) -> str:
-    """Digest of the frozen materialization-binding payload."""
+    """Digest of the materialization-binding payload for a unit."""
     return canonical_json_digest(
         materialization_binding_payload(
             unit=unit,
@@ -145,6 +183,110 @@ def materialization_binding_digest(
             materialization_status=materialization_status,
         )
     )
+
+
+@dataclass(frozen=True)
+class MaterializationExpectation:
+    """Authoritative source projection — frozen before unit emission."""
+
+    coalesced_tender_id: str
+    evidence_ref_id: str | None
+    field_path: str
+    text_raw: str
+    text_normalized: str
+    evidence_tier: str
+    source_plane: str
+    link_status: str
+    unresolved_reason: str | None
+    materialization_status: str
+    partition: str
+    snapshot_id: str | None
+    observation_id: str | None
+    tender_observation_id: str | None
+    line_observation_id: str | None
+    pr4_procurement_id: str | None
+    contributing_evidence_ref_ids: tuple[str, ...]
+    attempt_kind: str
+
+    def binding_payload(self) -> dict[str, Any]:
+        return materialization_binding_payload_from_fields(
+            coalesced_tender_id=self.coalesced_tender_id,
+            evidence_ref_id=self.evidence_ref_id,
+            field_path=self.field_path,
+            text_normalized=self.text_normalized,
+            evidence_tier=self.evidence_tier,
+            source_plane=self.source_plane,
+            link_status=self.link_status,
+            unresolved_reason=self.unresolved_reason,
+            snapshot_id=self.snapshot_id,
+            observation_id=self.observation_id,
+            tender_observation_id=self.tender_observation_id,
+            line_observation_id=self.line_observation_id,
+            pr4_procurement_id=self.pr4_procurement_id,
+            contributing_evidence_ref_ids=self.contributing_evidence_ref_ids,
+            attempt_kind=self.attempt_kind,
+            materialization_status=self.materialization_status,
+        )
+
+    def binding_digest(self) -> str:
+        return canonical_json_digest(self.binding_payload())
+
+    def to_unit(
+        self,
+        *,
+        attempt_id: str | None = None,
+        attempt_occurrence: int | None = None,
+    ) -> ProductTextUnit:
+        unit_id = _stable_unit_id(
+            {
+                "adapter": PRODUCT_TEXT_ADAPTER_VERSION,
+                "coalesced_tender_id": self.coalesced_tender_id,
+                "evidence_ref_id": self.evidence_ref_id,
+                "field_path": self.field_path,
+                "text_normalized": self.text_normalized,
+                "line_observation_id": self.line_observation_id,
+                "tender_observation_id": self.tender_observation_id,
+                "link_status": self.link_status,
+                "unresolved_reason": self.unresolved_reason,
+            }
+        )
+        return ProductTextUnit(
+            unit_id=unit_id,
+            coalesced_tender_id=self.coalesced_tender_id,
+            evidence_ref_id=self.evidence_ref_id,
+            link_status=self.link_status,
+            unresolved_reason=self.unresolved_reason,
+            field_path=self.field_path,
+            text_raw=self.text_raw,
+            text_normalized=self.text_normalized,
+            evidence_tier=self.evidence_tier,
+            source_plane=self.source_plane,
+            snapshot_id=self.snapshot_id,
+            observation_id=self.observation_id,
+            tender_observation_id=self.tender_observation_id,
+            line_observation_id=self.line_observation_id,
+            pr4_procurement_id=self.pr4_procurement_id,
+            contributing_evidence_ref_ids=self.contributing_evidence_ref_ids,
+            attempt_id=attempt_id,
+            attempt_occurrence=attempt_occurrence,
+        )
+
+
+def finalize_expectation_partition(
+    expectation: MaterializationExpectation,
+) -> MaterializationExpectation:
+    """Apply linked→unresolved empty-text partition before freeze/emission."""
+    if expectation.link_status == "linked" and not expectation.text_normalized:
+        return replace(
+            expectation,
+            link_status="unresolved_empty_text",
+            unresolved_reason="empty_normalized_product_text",
+            evidence_tier="no_usable_product_text",
+            materialization_status="empty_normalized_product_text",
+            partition="unresolved",
+            text_normalized="",
+        )
+    return expectation
 
 
 def _attempt_id(payload: Mapping[str, Any]) -> str:
@@ -414,14 +556,83 @@ def enumerate_extraction_attempts(
     return attempts
 
 
-def materialize_attempt(
+def _expectation(
+    *,
+    coalesced_tender_id: str,
+    evidence_ref_id: str | None,
+    link_status: str,
+    unresolved_reason: str | None,
+    field_path: str,
+    text_raw: str,
+    evidence_tier: str,
+    source_plane: str,
+    snapshot_id: str | None,
+    observation_id: str | None,
+    tender_observation_id: str | None,
+    line_observation_id: str | None,
+    pr4_procurement_id: str | None,
+    contributing_evidence_ref_ids: tuple[str, ...],
+    attempt_kind: str,
+) -> MaterializationExpectation:
+    text_norm = normalize_product_text(text_raw)
+    if link_status == "linked" and text_norm:
+        partition = "linked"
+        status = "linked"
+    elif link_status == "linked" and not text_norm:
+        # Finalize empty-linked before freeze.
+        return MaterializationExpectation(
+            coalesced_tender_id=coalesced_tender_id,
+            evidence_ref_id=evidence_ref_id,
+            field_path=field_path,
+            text_raw=text_raw,
+            text_normalized="",
+            evidence_tier="no_usable_product_text",
+            source_plane=source_plane,
+            link_status="unresolved_empty_text",
+            unresolved_reason="empty_normalized_product_text",
+            materialization_status="empty_normalized_product_text",
+            partition="unresolved",
+            snapshot_id=snapshot_id,
+            observation_id=observation_id,
+            tender_observation_id=tender_observation_id,
+            line_observation_id=line_observation_id,
+            pr4_procurement_id=pr4_procurement_id,
+            contributing_evidence_ref_ids=tuple(contributing_evidence_ref_ids),
+            attempt_kind=attempt_kind,
+        )
+    else:
+        partition = "unresolved"
+        status = unresolved_reason or link_status or "unresolved"
+    return MaterializationExpectation(
+        coalesced_tender_id=coalesced_tender_id,
+        evidence_ref_id=evidence_ref_id,
+        field_path=field_path,
+        text_raw=text_raw,
+        text_normalized=text_norm,
+        evidence_tier=evidence_tier if text_norm or evidence_tier == "no_usable_product_text" else evidence_tier,
+        source_plane=source_plane,
+        link_status=link_status,
+        unresolved_reason=unresolved_reason,
+        materialization_status=status,
+        partition=partition,
+        snapshot_id=snapshot_id,
+        observation_id=observation_id,
+        tender_observation_id=tender_observation_id,
+        line_observation_id=line_observation_id,
+        pr4_procurement_id=pr4_procurement_id,
+        contributing_evidence_ref_ids=tuple(contributing_evidence_ref_ids),
+        attempt_kind=attempt_kind,
+    )
+
+
+def build_materialization_expectation(
     attempt: ExtractionAttempt,
     *,
     tender: CoalescedProcurementTender,
     refs_by_id: Mapping[str, ProcurementEvidenceRef],
     snapshots_by_id: Mapping[str, AcquisitionSnapshot],
-) -> ProductTextUnit:
-    """Materialize exactly one unit for one ledger attempt."""
+) -> MaterializationExpectation:
+    """Project authoritative materialization expectation from source (pre-emission)."""
     ref = (
         refs_by_id.get(attempt.evidence_ref_id)
         if attempt.evidence_ref_id
@@ -430,9 +641,10 @@ def materialize_attempt(
     contrib = (attempt.evidence_ref_id,) if attempt.evidence_ref_id else tuple(
         tender.evidence_ref_ids
     )
+    kind = attempt.attempt_kind
 
-    if attempt.attempt_kind == "missing_evidence_ref":
-        return _unit(
+    if kind == "missing_evidence_ref":
+        return _expectation(
             coalesced_tender_id=tender.coalesced_tender_id,
             evidence_ref_id=attempt.evidence_ref_id,
             link_status="unresolved_missing_observation",
@@ -447,10 +659,11 @@ def materialize_attempt(
             line_observation_id=None,
             pr4_procurement_id=None,
             contributing_evidence_ref_ids=contrib,
+            attempt_kind=kind,
         )
 
-    if attempt.attempt_kind == "title_raw" and ref is not None:
-        return _unit(
+    if kind == "title_raw" and ref is not None:
+        return _expectation(
             coalesced_tender_id=tender.coalesced_tender_id,
             evidence_ref_id=ref.evidence_ref_id,
             link_status="linked",
@@ -465,10 +678,11 @@ def materialize_attempt(
             line_observation_id=None,
             pr4_procurement_id=ref.pr4_procurement_id,
             contributing_evidence_ref_ids=contrib,
+            attempt_kind=kind,
         )
 
-    if attempt.attempt_kind == "missing_snapshot" and ref is not None:
-        return _unit(
+    if kind == "missing_snapshot" and ref is not None:
+        return _expectation(
             coalesced_tender_id=tender.coalesced_tender_id,
             evidence_ref_id=ref.evidence_ref_id,
             link_status="unresolved_missing_snapshot",
@@ -483,10 +697,11 @@ def materialize_attempt(
             line_observation_id=None,
             pr4_procurement_id=None,
             contributing_evidence_ref_ids=contrib,
+            attempt_kind=kind,
         )
 
-    if attempt.attempt_kind == "missing_tender_observation" and ref is not None:
-        return _unit(
+    if kind == "missing_tender_observation" and ref is not None:
+        return _expectation(
             coalesced_tender_id=tender.coalesced_tender_id,
             evidence_ref_id=ref.evidence_ref_id,
             link_status="unresolved_missing_observation",
@@ -501,9 +716,10 @@ def materialize_attempt(
             line_observation_id=None,
             pr4_procurement_id=None,
             contributing_evidence_ref_ids=contrib,
+            attempt_kind=kind,
         )
 
-    if attempt.attempt_kind == "tender_description" and ref is not None:
+    if kind == "tender_description" and ref is not None:
         snap = snapshots_by_id.get(ref.snapshot_id or "")
         tender_obs = (
             _tender_for_observation(snap, ref.observation_id or "")
@@ -511,7 +727,7 @@ def materialize_attempt(
             else None
         )
         text = (tender_obs.description if tender_obs else None) or ""
-        return _unit(
+        return _expectation(
             coalesced_tender_id=tender.coalesced_tender_id,
             evidence_ref_id=ref.evidence_ref_id,
             link_status="linked",
@@ -526,9 +742,10 @@ def materialize_attempt(
             line_observation_id=None,
             pr4_procurement_id=None,
             contributing_evidence_ref_ids=contrib,
+            attempt_kind=kind,
         )
 
-    if attempt.attempt_kind == "line_product_fields" and ref is not None:
+    if kind == "line_product_fields" and ref is not None:
         snap = snapshots_by_id.get(ref.snapshot_id or "")
         line = None
         if snap and attempt.line_observation_id:
@@ -548,7 +765,7 @@ def materialize_attempt(
         ]
         blob = " | ".join(p for p in parts if p)
         if not blob:
-            return _unit(
+            return _expectation(
                 coalesced_tender_id=tender.coalesced_tender_id,
                 evidence_ref_id=ref.evidence_ref_id,
                 link_status="unresolved_empty_text",
@@ -563,8 +780,9 @@ def materialize_attempt(
                 line_observation_id=attempt.line_observation_id,
                 pr4_procurement_id=None,
                 contributing_evidence_ref_ids=contrib,
+                attempt_kind=kind,
             )
-        return _unit(
+        return _expectation(
             coalesced_tender_id=tender.coalesced_tender_id,
             evidence_ref_id=ref.evidence_ref_id,
             link_status="linked",
@@ -579,10 +797,11 @@ def materialize_attempt(
             line_observation_id=attempt.line_observation_id,
             pr4_procurement_id=None,
             contributing_evidence_ref_ids=contrib,
+            attempt_kind=kind,
         )
 
-    if attempt.attempt_kind == "pr4_raw_deferred" and ref is not None:
-        return _unit(
+    if kind == "pr4_raw_deferred" and ref is not None:
+        return _expectation(
             coalesced_tender_id=tender.coalesced_tender_id,
             evidence_ref_id=ref.evidence_ref_id,
             link_status="unresolved_pr4_raw_not_loaded",
@@ -597,10 +816,11 @@ def materialize_attempt(
             line_observation_id=None,
             pr4_procurement_id=ref.pr4_procurement_id,
             contributing_evidence_ref_ids=contrib,
+            attempt_kind=kind,
         )
 
-    if attempt.attempt_kind == "title_selected":
-        return _unit(
+    if kind == "title_selected":
+        return _expectation(
             coalesced_tender_id=tender.coalesced_tender_id,
             evidence_ref_id=None,
             link_status="linked",
@@ -615,10 +835,11 @@ def materialize_attempt(
             line_observation_id=None,
             pr4_procurement_id=tender.pr4_procurement_id,
             contributing_evidence_ref_ids=tuple(tender.evidence_ref_ids),
+            attempt_kind=kind,
         )
 
-    if attempt.attempt_kind == "no_product_text_fields":
-        return _unit(
+    if kind == "no_product_text_fields":
+        return _expectation(
             coalesced_tender_id=tender.coalesced_tender_id,
             evidence_ref_id=None,
             link_status="unresolved_empty_text",
@@ -633,10 +854,11 @@ def materialize_attempt(
             line_observation_id=None,
             pr4_procurement_id=tender.pr4_procurement_id,
             contributing_evidence_ref_ids=tuple(tender.evidence_ref_ids),
+            attempt_kind=kind,
         )
 
-    if attempt.attempt_kind == "duplicate_extraction_attempt":
-        return _unit(
+    if kind == "duplicate_extraction_attempt":
+        return _expectation(
             coalesced_tender_id=tender.coalesced_tender_id,
             evidence_ref_id=attempt.evidence_ref_id,
             link_status="unresolved_empty_text",
@@ -651,9 +873,29 @@ def materialize_attempt(
             line_observation_id=attempt.line_observation_id,
             pr4_procurement_id=None,
             contributing_evidence_ref_ids=contrib,
+            attempt_kind=kind,
         )
 
-    raise ProductTextAdapterError(f"unknown attempt_kind: {attempt.attempt_kind}")
+    raise ProductTextAdapterError(
+        f"unhandled extraction attempt_kind={attempt.attempt_kind!r}"
+    )
+
+
+def materialize_attempt(
+    attempt: ExtractionAttempt,
+    *,
+    tender: CoalescedProcurementTender,
+    refs_by_id: Mapping[str, ProcurementEvidenceRef],
+    snapshots_by_id: Mapping[str, AcquisitionSnapshot],
+) -> ProductTextUnit:
+    """Materialize exactly one unit for one ledger attempt (from source expectation)."""
+    return build_materialization_expectation(
+        attempt,
+        tender=tender,
+        refs_by_id=refs_by_id,
+        snapshots_by_id=snapshots_by_id,
+    ).to_unit()
+
 
 
 def _with_attempt(
@@ -699,9 +941,13 @@ def extract_units_for_tender(
 
     The attempt ledger is built before materialization. Every attempt occurrence
     produces exactly one materialization record associating attempt_id → unit_id.
-    Expected materialization digests are frozen from source-derived units at
-    emission time and attached to both the attempt and the ledger row — not
-    recomputed solely from later-submitted units.
+
+    Authoritative materialization expectations are projected from source
+    (tender / evidence / snapshot / observations / attempt identity) *before*
+    unit emission and before linked/unresolved partitioning. The frozen binding
+    digest is always the expectation digest — never a hash of the final
+    submitted unit — so a fabricated-but-internally-valid materializer cannot
+    freeze itself.
     """
     attempts = enumerate_extraction_attempts(
         tender, refs_by_id=refs_by_id, snapshots_by_id=snapshots_by_id
@@ -713,34 +959,107 @@ def extract_units_for_tender(
     seen_attempt_ids: set[str] = set()
     emitted_unit_ids: set[str] = set()
 
-    def _freeze(
+    def _freeze_from_expectation(
         *,
         attempt: ExtractionAttempt,
         occurrence: int,
         unit: ProductTextUnit,
-        partition: str,
-        materialization_status: str,
-        unresolved_reason: str | None,
-        attempt_kind: str,
+        expectation: MaterializationExpectation,
     ) -> None:
-        digest = materialization_binding_digest(
-            unit=unit,
-            attempt_kind=attempt_kind,
-            materialization_status=materialization_status,
-        )
+        digest = expectation.binding_digest()
+        if not digest:
+            raise ProductTextAdapterError(
+                "empty materialization expectation binding digest"
+            )
         attempts_out.append(replace(attempt, expected_materialization_digest=digest))
         materializations.append(
             MaterializationRecord(
                 attempt_occurrence=occurrence,
                 attempt_id=attempt.attempt_id,
                 unit_id=unit.unit_id,
-                partition=partition,
-                materialization_status=materialization_status,
-                unresolved_reason=unresolved_reason,
+                partition=expectation.partition,
+                materialization_status=expectation.materialization_status,
+                unresolved_reason=expectation.unresolved_reason,
                 field_path=attempt.field_path,
-                attempt_kind=attempt_kind,
+                attempt_kind=expectation.attempt_kind,
                 expected_materialization_digest=digest,
             )
+        )
+
+    def _emit_and_partition(
+        *,
+        attempt: ExtractionAttempt,
+        occurrence: int,
+        materialize_from: ExtractionAttempt,
+        expectation: MaterializationExpectation,
+    ) -> None:
+        # Freeze from source expectation *before* emission / partitioning.
+        frozen_digest = expectation.binding_digest()
+        if not frozen_digest:
+            raise ProductTextAdapterError(
+                "empty materialization expectation binding digest"
+            )
+        # materialize_attempt is the emission hook (monkeypatchable). Default
+        # implementation rebuilds the same expectation; a fabricated return
+        # still reconciles against the frozen source digest.
+        unit = _with_attempt(
+            materialize_attempt(
+                materialize_from,
+                tender=tender,
+                refs_by_id=refs_by_id,
+                snapshots_by_id=snapshots_by_id,
+            ),
+            attempt_id=attempt.attempt_id,
+            attempt_occurrence=occurrence,
+        )
+
+        if unit.unit_id in emitted_unit_ids:
+            collision_exp = MaterializationExpectation(
+                coalesced_tender_id=expectation.coalesced_tender_id,
+                evidence_ref_id=expectation.evidence_ref_id,
+                field_path=expectation.field_path,
+                text_raw=expectation.text_raw,
+                text_normalized=expectation.text_normalized,
+                evidence_tier="no_usable_product_text",
+                source_plane=expectation.source_plane,
+                link_status="unresolved_empty_text",
+                unresolved_reason="duplicate_unit_id_collision",
+                materialization_status="duplicate_unit_id_collision",
+                partition="unresolved",
+                snapshot_id=expectation.snapshot_id,
+                observation_id=expectation.observation_id,
+                tender_observation_id=expectation.tender_observation_id,
+                line_observation_id=expectation.line_observation_id,
+                pr4_procurement_id=expectation.pr4_procurement_id,
+                contributing_evidence_ref_ids=expectation.contributing_evidence_ref_ids,
+                attempt_kind=expectation.attempt_kind,
+            )
+            collision = _with_attempt(
+                collision_exp.to_unit(),
+                attempt_id=attempt.attempt_id,
+                attempt_occurrence=occurrence,
+            )
+            # Preserve colliding unit_id for partition/reconcile visibility.
+            collision = replace(collision, unit_id=unit.unit_id)
+            unresolved.append(collision)
+            _freeze_from_expectation(
+                attempt=attempt,
+                occurrence=occurrence,
+                unit=collision,
+                expectation=collision_exp,
+            )
+            return
+
+        emitted_unit_ids.add(unit.unit_id)
+        if expectation.partition == "linked":
+            linked.append(unit)
+        else:
+            unresolved.append(unit)
+        _freeze_from_expectation(
+            attempt=attempt,
+            occurrence=occurrence,
+            unit=unit,
+            expectation=expectation,
         )
 
     for occurrence, attempt in enumerate(attempts):
@@ -756,133 +1075,37 @@ def extract_units_for_tender(
                 snapshot_id=attempt.snapshot_id,
                 observation_id=attempt.observation_id,
             )
-            unit = _with_attempt(
-                materialize_attempt(
+            expectation = finalize_expectation_partition(
+                build_materialization_expectation(
                     dup,
                     tender=tender,
                     refs_by_id=refs_by_id,
                     snapshots_by_id=snapshots_by_id,
-                ),
-                attempt_id=attempt.attempt_id,
-                attempt_occurrence=occurrence,
+                )
             )
-            unresolved.append(unit)
-            _freeze(
+            _emit_and_partition(
                 attempt=attempt,
                 occurrence=occurrence,
-                unit=unit,
-                partition="unresolved",
-                materialization_status="duplicate_extraction_attempt",
-                unresolved_reason="duplicate_extraction_attempt",
-                attempt_kind="duplicate_extraction_attempt",
+                materialize_from=dup,
+                expectation=expectation,
             )
             continue
         seen_attempt_ids.add(attempt.attempt_id)
 
-        unit = _with_attempt(
-            materialize_attempt(
+        expectation = finalize_expectation_partition(
+            build_materialization_expectation(
                 attempt,
                 tender=tender,
                 refs_by_id=refs_by_id,
                 snapshots_by_id=snapshots_by_id,
-            ),
-            attempt_id=attempt.attempt_id,
-            attempt_occurrence=occurrence,
+            )
         )
-
-        if unit.unit_id in emitted_unit_ids:
-            collision = _with_attempt(
-                ProductTextUnit(
-                    unit_id=unit.unit_id,
-                    coalesced_tender_id=unit.coalesced_tender_id,
-                    evidence_ref_id=unit.evidence_ref_id,
-                    link_status="unresolved_empty_text",
-                    unresolved_reason="duplicate_unit_id_collision",
-                    field_path=unit.field_path,
-                    text_raw=unit.text_raw,
-                    text_normalized=unit.text_normalized,
-                    evidence_tier="no_usable_product_text",
-                    source_plane=unit.source_plane,
-                    snapshot_id=unit.snapshot_id,
-                    observation_id=unit.observation_id,
-                    tender_observation_id=unit.tender_observation_id,
-                    line_observation_id=unit.line_observation_id,
-                    pr4_procurement_id=unit.pr4_procurement_id,
-                    contributing_evidence_ref_ids=unit.contributing_evidence_ref_ids,
-                ),
-                attempt_id=attempt.attempt_id,
-                attempt_occurrence=occurrence,
-            )
-            unresolved.append(collision)
-            _freeze(
-                attempt=attempt,
-                occurrence=occurrence,
-                unit=collision,
-                partition="unresolved",
-                materialization_status="duplicate_unit_id_collision",
-                unresolved_reason="duplicate_unit_id_collision",
-                attempt_kind=attempt.attempt_kind,
-            )
-            continue
-        emitted_unit_ids.add(unit.unit_id)
-
-        if unit.link_status == "linked" and unit.text_normalized:
-            linked.append(unit)
-            _freeze(
-                attempt=attempt,
-                occurrence=occurrence,
-                unit=unit,
-                partition="linked",
-                materialization_status="linked",
-                unresolved_reason=None,
-                attempt_kind=attempt.attempt_kind,
-            )
-        elif unit.link_status == "linked" and not unit.text_normalized:
-            empty = _with_attempt(
-                ProductTextUnit(
-                    unit_id=unit.unit_id,
-                    coalesced_tender_id=unit.coalesced_tender_id,
-                    evidence_ref_id=unit.evidence_ref_id,
-                    link_status="unresolved_empty_text",
-                    unresolved_reason="empty_normalized_product_text",
-                    field_path=unit.field_path,
-                    text_raw=unit.text_raw,
-                    text_normalized="",
-                    evidence_tier="no_usable_product_text",
-                    source_plane=unit.source_plane,
-                    snapshot_id=unit.snapshot_id,
-                    observation_id=unit.observation_id,
-                    tender_observation_id=unit.tender_observation_id,
-                    line_observation_id=unit.line_observation_id,
-                    pr4_procurement_id=unit.pr4_procurement_id,
-                    contributing_evidence_ref_ids=unit.contributing_evidence_ref_ids,
-                ),
-                attempt_id=attempt.attempt_id,
-                attempt_occurrence=occurrence,
-            )
-            unresolved.append(empty)
-            _freeze(
-                attempt=attempt,
-                occurrence=occurrence,
-                unit=empty,
-                partition="unresolved",
-                materialization_status="empty_normalized_product_text",
-                unresolved_reason="empty_normalized_product_text",
-                attempt_kind=attempt.attempt_kind,
-            )
-        else:
-            unresolved.append(unit)
-            _freeze(
-                attempt=attempt,
-                occurrence=occurrence,
-                unit=unit,
-                partition="unresolved",
-                materialization_status=unit.unresolved_reason
-                or unit.link_status
-                or "unresolved",
-                unresolved_reason=unit.unresolved_reason,
-                attempt_kind=attempt.attempt_kind,
-            )
+        _emit_and_partition(
+            attempt=attempt,
+            occurrence=occurrence,
+            materialize_from=attempt,
+            expectation=expectation,
+        )
 
     linked.sort(key=lambda u: u.unit_id)
     unresolved.sort(key=lambda u: u.unit_id)

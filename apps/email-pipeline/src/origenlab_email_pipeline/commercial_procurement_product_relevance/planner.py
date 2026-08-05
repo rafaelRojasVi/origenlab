@@ -107,6 +107,9 @@ def reconcile_relevance(
         materialization_binding_digest,
         recompute_unit_id,
     )
+    from origenlab_email_pipeline.commercial_procurement_product_relevance.normalize import (
+        normalize_product_text,
+    )
 
     linked_unit_ids = [u.unit_id for u in linked_units]
     unresolved_unit_ids = [u.unit_id for u in unresolved_units]
@@ -282,6 +285,17 @@ def reconcile_relevance(
                 }
             )
 
+        # Raw/normalized consistency (where text is present).
+        if normalize_product_text(unit.text_raw) != (unit.text_normalized or ""):
+            materialization_binding_mismatches.append(
+                {
+                    "attempt_occurrence": occ,
+                    "attempt_id": attempt.attempt_id,
+                    "unit_id": unit.unit_id,
+                    "error": "raw_normalized_text_inconsistency",
+                }
+            )
+
         # Frozen source expectation vs submitted unit (ledger alone is insufficient).
         frozen = attempt.expected_materialization_digest
         ledger_frozen = row.get("expected_materialization_digest")
@@ -294,7 +308,16 @@ def reconcile_relevance(
                     "error": "missing_frozen_expected_materialization_digest",
                 }
             )
-        else:
+        if not ledger_frozen:
+            materialization_binding_mismatches.append(
+                {
+                    "attempt_occurrence": occ,
+                    "attempt_id": attempt.attempt_id,
+                    "unit_id": unit.unit_id,
+                    "error": "missing_ledger_frozen_expected_materialization_digest",
+                }
+            )
+        if frozen:
             kind = str(row.get("attempt_kind") or attempt.attempt_kind)
             status = str(row.get("materialization_status") or "")
             actual_digest = materialization_binding_digest(

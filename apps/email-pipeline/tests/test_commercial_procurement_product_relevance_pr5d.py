@@ -1121,6 +1121,261 @@ def test_reconciliation_detects_dropped_and_duplicate_attempts() -> None:
     assert dup["duplicate_tender_decisions"]
     assert dup["duplicate_unit_ids"]
 
+    # Only contributing_evidence_ref_ids changes — binding must fail.
+    contrib_changed = replace(u1, contributing_evidence_ref_ids=("evid_OTHER",))
+    contrib_trap = reconcile_relevance(
+        coalesced_tender_ids=["t1"],
+        decision_tender_ids=["t1"],
+        linked_units=[u0, contrib_changed],
+        unresolved_units=[],
+        extraction_attempts=[a0, a1],
+        materialization_ledger=[
+            _mat(0, a0, u0),
+            MaterializationRecord(
+                1,
+                a1.attempt_id,
+                contrib_changed.unit_id,
+                "linked",
+                "linked",
+                field_path=a1.field_path,
+                attempt_kind=a1.attempt_kind,
+                expected_materialization_digest=materialization_binding_digest(
+                    unit=contrib_changed,
+                    attempt_kind=a1.attempt_kind,
+                    materialization_status="linked",
+                ),
+            ),
+        ],
+    )
+    assert contrib_trap["ok"] is False
+    assert contrib_trap["materialization_binding_mismatches"]
+
+    # Raw vs normalized disagreement.
+    raw_norm = replace(u1, text_normalized="not_the_normalized_form_of_raw")
+    # Keep unit_id stamp consistent with claimed semantic fields for this trap.
+    raw_norm = replace(raw_norm, unit_id=recompute_unit_id(raw_norm))
+    raw_norm_trap = reconcile_relevance(
+        coalesced_tender_ids=["t1"],
+        decision_tender_ids=["t1"],
+        linked_units=[u0, raw_norm],
+        unresolved_units=[],
+        extraction_attempts=[a0, a1],
+        materialization_ledger=[
+            _mat(0, a0, u0),
+            MaterializationRecord(
+                1,
+                a1.attempt_id,
+                raw_norm.unit_id,
+                "linked",
+                "linked",
+                field_path=a1.field_path,
+                attempt_kind=a1.attempt_kind,
+                expected_materialization_digest=a1.expected_materialization_digest,
+            ),
+        ],
+    )
+    assert raw_norm_trap["ok"] is False
+    assert any(
+        e.get("error") == "raw_normalized_text_inconsistency"
+        for e in raw_norm_trap["materialization_binding_mismatches"]
+    )
+
+    # Ledger frozen digest missing.
+    missing_ledger = reconcile_relevance(
+        coalesced_tender_ids=["t1"],
+        decision_tender_ids=["t1"],
+        linked_units=[u0, u1],
+        unresolved_units=[],
+        extraction_attempts=[a0, a1],
+        materialization_ledger=[
+            _mat(0, a0, u0),
+            MaterializationRecord(
+                1,
+                a1.attempt_id,
+                u1.unit_id,
+                "linked",
+                "linked",
+                field_path=a1.field_path,
+                attempt_kind=a1.attempt_kind,
+                expected_materialization_digest=None,
+            ),
+        ],
+    )
+    assert missing_ledger["ok"] is False
+    assert any(
+        e.get("error") == "missing_ledger_frozen_expected_materialization_digest"
+        for e in missing_ledger["materialization_binding_mismatches"]
+    )
+
+
+def test_adapter_path_expectation_survives_fabricated_materializer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Freeze is from source expectation — fabricated materialize_attempt must fail."""
+    from origenlab_email_pipeline.commercial_procurement_candidate_planner.models import (
+        ProcurementEvidenceRef,
+    )
+    from origenlab_email_pipeline.commercial_procurement_product_relevance import (
+        evidence_adapter as adapter_mod,
+    )
+    from origenlab_email_pipeline.commercial_procurement_product_relevance.evidence_adapter import (
+        extract_units_for_tender,
+        materialization_binding_digest,
+        recompute_unit_id,
+    )
+
+    tender = CoalescedProcurementTender(
+        coalesced_tender_id="t_fab",
+        canonical_tender_key="k",
+        identity_namespace="ns",
+        tender_key_kind="chilecompra",
+        candidate_source_kind="pr4",
+        pr4_procurement_id="p1",
+        pr4_procurement_ids=("p1",),
+        acquisition_snapshot_ids=(),
+        acquisition_instance_ids=(),
+        acquisition_observation_ids=(),
+        coalescence_status="singleton",
+        source_precedence_reason="only",
+        currentness_class="current",
+        lifecycle_class="open",
+        closing_soon_bucket="none",
+        publication_timestamp_selected=None,
+        close_timestamp_selected=None,
+        status_code_selected=None,
+        status_name_selected=None,
+        status_value_selected=None,
+        source_status_system_selected=None,
+        buyer_display_selected=None,
+        buyer_source_id_selected=None,
+        title_selected="Centrifuga de laboratorio",
+        selected_field_provenance={},
+        buyer_display_variance=False,
+        lifecycle_status_evidence_ref_id=None,
+        lifecycle_close_evidence_ref_id=None,
+        lifecycle_publication_evidence_ref_id=None,
+        lifecycle_evidence_currentness_class=None,
+        lifecycle_reason_codes=(),
+        evidence_ref_ids=("ref1",),
+        conflict_ids=(),
+    )
+    ref = ProcurementEvidenceRef(
+        evidence_ref_id="ref1",
+        evidence_plane="pr4",
+        source_kind="pr4",
+        endpoint_kind="sqlite",
+        source_record_id="src1",
+        canonical_tender_key="k",
+        tender_key_kind="chilecompra",
+        identity_namespace="ns",
+        cross_source_join_eligible=True,
+        snapshot_id=None,
+        acquisition_instance_id=None,
+        page_id=None,
+        observation_id=None,
+        acquired_at_utc=None,
+        source_status_code=None,
+        source_status_name=None,
+        source_status_value=None,
+        source_status_system=None,
+        normalized_status_meaning=None,
+        publication_timestamp_raw=None,
+        close_timestamp_raw=None,
+        publication_timestamp_utc=None,
+        close_timestamp_utc=None,
+        publication_santiago_date=None,
+        close_santiago_date=None,
+        publication_precision=None,
+        close_precision=None,
+        timestamp_parse_reasons=(),
+        buyer_display_raw=None,
+        buyer_source_id=None,
+        title_raw="Centrifuga de laboratorio",
+        source_payload_digest=None,
+        source_fingerprint=None,
+        normalized_semantic_digest=None,
+        field_provenance={},
+        reason_codes=(),
+        source_rank_class="pr4",
+        has_status=False,
+        has_close=False,
+        has_publication=False,
+        has_buyer_display=False,
+        has_buyer_source_id=False,
+        has_title=True,
+    )
+    refs = {"ref1": ref}
+    snaps: dict = {}
+
+    real_materialize = adapter_mod.materialize_attempt
+
+    def _fabricate(attempt, *, tender, refs_by_id, snapshots_by_id):
+        real = real_materialize(
+            attempt, tender=tender, refs_by_id=refs_by_id, snapshots_by_id=snapshots_by_id
+        )
+        from dataclasses import replace as _replace
+
+        fabricated = _replace(
+            real,
+            text_raw="FABRICATED_PRODUCT_TEXT_XYZ",
+            text_normalized=normalize_product_text("FABRICATED_PRODUCT_TEXT_XYZ"),
+        )
+        return _replace(fabricated, unit_id=recompute_unit_id(fabricated))
+
+    monkeypatch.setattr(adapter_mod, "materialize_attempt", _fabricate)
+    linked, unresolved, attempts, mats = extract_units_for_tender(
+        tender, refs_by_id=refs, snapshots_by_id=snaps
+    )
+    assert attempts
+    assert all(a.expected_materialization_digest for a in attempts)
+    assert all(m.expected_materialization_digest for m in mats)
+    # Frozen digests must NOT equal fabricated unit bindings.
+    for attempt, mat in zip(attempts, mats, strict=True):
+        unit = next(
+            u
+            for u in list(linked) + list(unresolved)
+            if u.unit_id == mat.unit_id
+        )
+        fab_digest = materialization_binding_digest(
+            unit=unit,
+            attempt_kind=mat.attempt_kind or attempt.attempt_kind,
+            materialization_status=mat.materialization_status,
+        )
+        assert attempt.expected_materialization_digest != fab_digest
+    bad = reconcile_relevance(
+        coalesced_tender_ids=[tender.coalesced_tender_id],
+        decision_tender_ids=[tender.coalesced_tender_id],
+        linked_units=linked,
+        unresolved_units=unresolved,
+        extraction_attempts=attempts,
+        materialization_ledger=mats,
+    )
+    assert bad["ok"] is False
+    assert bad["materialization_binding_mismatches"]
+
+    # Binding payload must not serialize raw product wording.
+    from origenlab_email_pipeline.commercial_procurement_product_relevance.evidence_adapter import (
+        build_materialization_expectation,
+        finalize_expectation_partition,
+    )
+
+    monkeypatch.setattr(adapter_mod, "materialize_attempt", real_materialize)
+    attempts_clean = adapter_mod.enumerate_extraction_attempts(
+        tender, refs_by_id=refs, snapshots_by_id=snaps
+    )
+    exp = finalize_expectation_partition(
+        build_materialization_expectation(
+            attempts_clean[0],
+            tender=tender,
+            refs_by_id=refs,
+            snapshots_by_id=snaps,
+        )
+    )
+    payload = exp.binding_payload()
+    blob = json.dumps(payload)
+    assert "text_raw" not in payload
+    assert "Centrifuga" not in blob
+    assert "text_normalized_digest" in payload
 
 
 def test_atomic_bundle_includes_walkthrough_and_restores_on_failure(
@@ -2615,6 +2870,279 @@ def test_rule_precedence_exhaustive_contract() -> None:
         resolution="negative_class_only",
         band="high",
     )
+
+    # Same canonical class, different strength — strong_class_precedence, no conflict.
+    import origenlab_email_pipeline.commercial_procurement_product_relevance.rules as rules_mod
+
+    prior_aliases = list(rules_mod.PROPOSED_CATALOG_ALIASES)
+    rules_mod.PROPOSED_CATALOG_ALIASES = list(prior_aliases) + [
+        {
+            "alias_group": "test_only_verified_alias_pr5d_agg",
+            "canonical_class": "centrifuge",
+            "aliases": ["TESTONLYCENTMODEL99"],
+            "verification_status": "verified_against_sanitized_evidence",
+        }
+    ]
+    try:
+        exact_u = classify_product_text_unit(
+            _unit("Adquisicion TESTONLYCENTMODEL99", tier="line_product_text")
+        )
+        assert exact_u.relevance_class == "exact_catalog_product"
+        assert exact_u.canonical_equipment_classes == ("centrifuge",)
+        strong_cent = classify_product_text_unit(
+            _unit("Centrifuga refrigerada", tier="title_only")
+        )
+        assert strong_cent.relevance_class == "strong_equipment_class"
+        assert strong_cent.canonical_equipment_classes == ("centrifuge",)
+
+        # Build a compatible-strength unit with the same canonical class.
+        from dataclasses import replace as _replace
+
+        compatible_cent = _replace(
+            strong_cent,
+            relevance_class="compatible_equipment_class",
+            product_resolution_status="equipment_class_only",
+            confidence_band="medium",
+            unit_decision_id=strong_cent.unit_decision_id + "_compat",
+        )
+
+        for units, expected_band in (
+            ([exact_u, strong_cent], "high"),
+            ([exact_u, compatible_cent], "high"),
+        ):
+            d = aggregate_tender_decision(tender, units, input_fingerprint="x")
+            assert d.relevance_class == "exact_catalog_product"
+            assert d.product_resolution_status == "exact_catalog_verified"
+            assert d.confidence_band == expected_band
+            assert "strong_class_precedence" in d.aggregation_reason_codes
+            assert "conflicting_canonical_equipment_classes" not in d.ambiguity_reason_codes
+            assert "mixed_positive_and_negative_requires_review" not in d.aggregation_reason_codes
+            assert "centrifuge" in d.canonical_equipment_classes
+
+        # Same agreement survives an independent hard-negative line.
+        for units in ([exact_u, strong_cent, neg], [exact_u, compatible_cent, neg]):
+            d = aggregate_tender_decision(tender, units, input_fingerprint="x")
+            assert d.relevance_class == "exact_catalog_product"
+            assert "strong_positive_survives_negative_lines" in d.aggregation_reason_codes
+            assert "strong_class_precedence" in d.aggregation_reason_codes
+            assert "conflicting_canonical_equipment_classes" not in d.ambiguity_reason_codes
+    finally:
+        rules_mod.PROPOSED_CATALOG_ALIASES = prior_aliases
+
+    # Behavioral mutation: policy changes move both outcome and fingerprint.
+    import copy
+
+    from origenlab_email_pipeline.commercial_procurement_product_relevance import (
+        aggregate as agg_mod,
+    )
+    from origenlab_email_pipeline.commercial_procurement_product_relevance import rules as rules_mod2
+
+    base_fp = relevance_rules_fingerprint()
+    original_spec = aggregation_policy_spec
+
+    # Strong precedence mutation: reverse so strong_equipment beats exact.
+    mutated_strong = copy.deepcopy(aggregation_policy_spec())
+    mutated_strong["strong_class_precedence"] = list(
+        reversed(mutated_strong["strong_class_precedence"])
+    )
+
+    def _mut_strong():
+        return mutated_strong
+
+    rules_mod.PROPOSED_CATALOG_ALIASES = list(prior_aliases) + [
+        {
+            "alias_group": "test_only_verified_alias_pr5d_agg",
+            "canonical_class": "centrifuge",
+            "aliases": ["TESTONLYCENTMODEL99"],
+            "verification_status": "verified_against_sanitized_evidence",
+        }
+    ]
+    try:
+        exact_for_mut = classify_product_text_unit(
+            _unit("Adquisicion TESTONLYCENTMODEL99", tier="line_product_text")
+        )
+        strong_for_mut = classify_product_text_unit(
+            _unit("Centrifuga refrigerada", tier="line_product_text")
+        )
+        base_prec = aggregate_tender_decision(
+            tender, [exact_for_mut, strong_for_mut], input_fingerprint="x"
+        )
+        assert base_prec.relevance_class == "exact_catalog_product"
+        agg_mod.aggregation_policy_spec = _mut_strong  # type: ignore[assignment]
+        try:
+            assert relevance_rules_fingerprint() != base_fp
+            flipped = aggregate_tender_decision(
+                tender, [exact_for_mut, strong_for_mut], input_fingerprint="x"
+            )
+            assert flipped.relevance_class == "strong_equipment_class"
+        finally:
+            agg_mod.aggregation_policy_spec = original_spec  # type: ignore[assignment]
+    finally:
+        rules_mod.PROPOSED_CATALOG_ALIASES = prior_aliases
+
+    # Negative precedence mutation changes all-negative outcome.
+    base_neg = aggregate_tender_decision(
+        tender, [neg, rental_u], input_fingerprint="x"
+    )
+    assert base_neg.relevance_class == "consumable_or_reagent"
+    mutated_neg_prec = copy.deepcopy(aggregation_policy_spec())
+    mutated_neg_prec["negative_class_precedence"] = list(
+        reversed(mutated_neg_prec["negative_class_precedence"])
+    )
+
+    def _mut_neg_prec():
+        return mutated_neg_prec
+
+    agg_mod.aggregation_policy_spec = _mut_neg_prec  # type: ignore[assignment]
+    try:
+        assert relevance_rules_fingerprint() != base_fp
+        flipped_neg = aggregate_tender_decision(
+            tender, [neg, rental_u], input_fingerprint="x"
+        )
+        assert flipped_neg.relevance_class == "rental_or_comodato"
+    finally:
+        agg_mod.aggregation_policy_spec = original_spec  # type: ignore[assignment]
+
+    # Evidence-tier ranking mutation among equal strength.
+    from dataclasses import replace as _replace2
+
+    same_strength_a = _replace2(
+        pos,
+        evidence_tier="title_only",
+        confidence_band="low",
+        unit_decision_id="u_tier_a",
+    )
+    same_strength_b = _replace2(
+        pos,
+        evidence_tier="line_product_text",
+        confidence_band="high",
+        unit_decision_id="u_tier_b",
+    )
+    default_tier = aggregate_tender_decision(
+        tender, [same_strength_a, same_strength_b], input_fingerprint="x"
+    )
+    assert default_tier.evidence_tier == "line_product_text"
+    assert default_tier.confidence_band == "high"
+    # Exact (weak tier) must not borrow the strong unit's high-tier confidence.
+    low_tier_exact = _replace2(
+        pos,
+        evidence_tier="title_only",
+        confidence_band="medium",
+        unit_decision_id="u_exact_title",
+        relevance_class="exact_catalog_product",
+        product_resolution_status="exact_catalog_verified",
+        canonical_equipment_classes=("centrifuge",),
+    )
+    high_tier_strong = _replace2(
+        pos,
+        evidence_tier="line_product_text",
+        confidence_band="high",
+        unit_decision_id="u_strong_line",
+        relevance_class="strong_equipment_class",
+    )
+    default_choice = aggregate_tender_decision(
+        tender, [low_tier_exact, high_tier_strong], input_fingerprint="x"
+    )
+    assert default_choice.relevance_class == "exact_catalog_product"
+    assert default_choice.evidence_tier == "title_only"
+    assert default_choice.confidence_band == "medium"
+
+    mutated_tier_rank = copy.deepcopy(aggregation_policy_spec())
+    mutated_tier_rank["evidence_tier_rank"] = {
+        **mutated_tier_rank["evidence_tier_rank"],
+        "title_only": 99,
+        "line_product_text": 1,
+    }
+
+    def _mut_tier_rank():
+        return mutated_tier_rank
+
+    agg_mod.aggregation_policy_spec = _mut_tier_rank  # type: ignore[assignment]
+    try:
+        assert relevance_rules_fingerprint() != base_fp
+        flipped_tier = aggregate_tender_decision(
+            tender, [same_strength_a, same_strength_b], input_fingerprint="x"
+        )
+        assert flipped_tier.evidence_tier == "title_only"
+        assert flipped_tier.confidence_band == "low"
+    finally:
+        agg_mod.aggregation_policy_spec = original_spec  # type: ignore[assignment]
+
+    # Strong-plus-negative policy id mutation moves fingerprint + aggregation codes.
+    mutated_snp = copy.deepcopy(aggregation_policy_spec())
+    mutated_snp["mixed_conflict_behavior"]["strong_plus_hard_negative"]["id"] = (
+        "mutated_strong_survives_id"
+    )
+    mutated_snp["policies"] = [
+        (
+            {**p, "id": "mutated_strong_survives_id"}
+            if p["id"] == "strong_positive_survives_negative_lines"
+            else p
+        )
+        for p in mutated_snp["policies"]
+    ]
+
+    def _mut_snp():
+        return mutated_snp
+
+    agg_mod.aggregation_policy_spec = _mut_snp  # type: ignore[assignment]
+    try:
+        assert relevance_rules_fingerprint() != base_fp
+        snp = aggregate_tender_decision(tender, [pos, neg], input_fingerprint="x")
+        assert "mutated_strong_survives_id" in snp.aggregation_reason_codes
+        assert "strong_positive_survives_negative_lines" not in snp.aggregation_reason_codes
+    finally:
+        agg_mod.aggregation_policy_spec = original_spec  # type: ignore[assignment]
+
+    # Mixed/conflict policy mutation changes negative+abstention outcome.
+    mutated_conflict = copy.deepcopy(aggregation_policy_spec())
+    mutated_conflict["mixed_conflict_behavior"]["negative_plus_abstention"][
+        "relevance_class"
+    ] = "unrelated"
+    mutated_conflict["mixed_conflict_behavior"]["negative_plus_abstention"][
+        "product_resolution_status"
+    ] = "negative_class_only"
+    mutated_conflict["manual_review_outcomes"]["relevance_class"] = "unrelated"
+
+    def _mut_conflict():
+        return mutated_conflict
+
+    base_neg_abs = aggregate_tender_decision(
+        tender, [neg, amb], input_fingerprint="x"
+    )
+    assert base_neg_abs.relevance_class == "ambiguous"
+    agg_mod.aggregation_policy_spec = _mut_conflict  # type: ignore[assignment]
+    try:
+        assert relevance_rules_fingerprint() != base_fp
+        flipped_conflict = aggregate_tender_decision(
+            tender, [neg, amb], input_fingerprint="x"
+        )
+        assert flipped_conflict.relevance_class == "unrelated"
+    finally:
+        agg_mod.aggregation_policy_spec = original_spec  # type: ignore[assignment]
+
+    # Microscope-purchase pattern change affects classification AND fingerprint.
+    import re as _re
+
+    original_micro = rules_mod2.MICROSCOPE_PURCHASE_RE
+    accessory_text = "Aceite de inmersion para microscopio"
+    before_cls = classify_product_text_unit(
+        _unit(accessory_text, tier="line_product_text")
+    )
+    assert before_cls.relevance_class == "consumable_or_reagent"
+    rules_mod2.MICROSCOPE_PURCHASE_RE = _re.compile(
+        original_micro.pattern + r"|aceite\s+de\s+inmersion\s+para\s+microscop"
+    )
+    try:
+        assert relevance_rules_fingerprint() != base_fp
+        after_cls = classify_product_text_unit(
+            _unit(accessory_text, tier="line_product_text")
+        )
+        assert after_cls.relevance_class == "strong_equipment_class"
+        assert "microscope" in after_cls.canonical_equipment_classes
+    finally:
+        rules_mod2.MICROSCOPE_PURCHASE_RE = original_micro
+    assert relevance_rules_fingerprint() == base_fp
 
 
 

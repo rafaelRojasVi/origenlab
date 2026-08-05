@@ -384,10 +384,7 @@ def classify_product_text_unit(unit: ProductTextUnit) -> EvidenceUnitRelevanceDe
     m = MICROSCOPE_EQ_RE.search(text)
     if m and (
         not CONSUMABLE_MICROSCOPE_RE.search(text)
-        or re.search(
-            r"adquisicion\s+de\s+microscop|compra\s+de\s+microscop|microscopi[oa]\s+optico",
-            text,
-        )
+        or MICROSCOPE_PURCHASE_RE.search(text)
     ):
         spans.append(_span(field_path, "microscope", m))
         classes.append("microscope")

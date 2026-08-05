@@ -123,35 +123,59 @@ def aggregation_policy_spec() -> dict[str, Any]:
                 "when": "all_units_insufficient_product_text",
                 "force_outcome": "ambiguous",
             },
+            {
+                "id": "strong_class_precedence",
+                "when": "same_canonical_class_different_strength",
+                "outcome": "prefer_strongest_positive_class",
+            },
         ],
     }
+
+
+def _policy_by_id(policy_id: str) -> dict[str, Any]:
+    for row in aggregation_policy_spec()["policies"]:
+        if row["id"] == policy_id:
+            return dict(row)
+    raise KeyError(policy_id)
 
 
 def _tier_rank(tier: str) -> int:
     return int(aggregation_policy_spec()["evidence_tier_rank"].get(tier, 0))
 
 
-def _strong_sort_key(u: EvidenceUnitRelevanceDecision) -> tuple[int, str]:
+def _strong_sort_key(u: EvidenceUnitRelevanceDecision) -> tuple[int, int, str]:
+    """Prefer stronger class, then higher evidence tier, then stable id."""
     order = aggregation_policy_spec()["strong_class_precedence"]
     try:
         idx = order.index(u.relevance_class)
     except ValueError:
         idx = 99
-    return (idx, u.unit_decision_id)
+    return (idx, -_tier_rank(u.evidence_tier), u.unit_decision_id)
 
 
-def _negative_sort_key(u: EvidenceUnitRelevanceDecision) -> tuple[int, str]:
+def _negative_sort_key(u: EvidenceUnitRelevanceDecision) -> tuple[int, int, str]:
     order = aggregation_policy_spec()["negative_class_precedence"]
     try:
         idx = order.index(u.relevance_class)
     except ValueError:
         idx = 99
-    return (idx, u.unit_decision_id)
+    return (idx, -_tier_rank(u.evidence_tier), u.unit_decision_id)
+
+
+def _best_tier_unit(
+    units: list[EvidenceUnitRelevanceDecision],
+) -> EvidenceUnitRelevanceDecision:
+    return max(units, key=lambda u: (_tier_rank(u.evidence_tier), u.unit_decision_id))
 
 
 def _canonical_class_sets_conflict(
     strong: list[EvidenceUnitRelevanceDecision],
 ) -> bool:
+    """Conflict only when strong units disagree on canonical equipment classes.
+
+    Different strength levels (exact vs strong vs compatible) with the same
+    canonical class set are *not* a conflict — strong_class_precedence applies.
+    """
     sets = {frozenset(u.canonical_equipment_classes) for u in strong}
     return len(sets) > 1
 
@@ -245,6 +269,13 @@ def aggregate_tender_decision(
         contrib.extend(u.contributing_evidence_ref_ids)
 
     policy = aggregation_policy_spec()
+    strong_survives_id = str(
+        policy["mixed_conflict_behavior"]["strong_plus_hard_negative"]["id"]
+    )
+    all_negative_id = str(_policy_by_id("all_units_negative")["id"])
+    all_ambiguous_id = str(_policy_by_id("all_units_ambiguous_or_empty")["id"])
+    strong_precedence_id = str(_policy_by_id("strong_class_precedence")["id"])
+    no_usable_id = str(_policy_by_id("no_usable_units")["id"])
 
     if len(units) == 1:
         agg_codes.append(str(policy["single_unit_behavior"]["id"]))
@@ -255,15 +286,17 @@ def aggregate_tender_decision(
         band = chosen.confidence_band
     elif strong and negatives:
         # Strong durable equipment survives independent negative lines.
-        agg_codes.append("strong_positive_survives_negative_lines")
+        agg_codes.append(strong_survives_id)
         chosen = sorted(strong, key=_strong_sort_key)[0]
         relevance = chosen.relevance_class
         resolution = chosen.product_resolution_status
         tier = chosen.evidence_tier
         band = chosen.confidence_band
-        if _canonical_class_sets_conflict(strong) or any(
-            u.relevance_class != chosen.relevance_class for u in strong
+        if len({u.relevance_class for u in strong}) > 1 and not _canonical_class_sets_conflict(
+            strong
         ):
+            agg_codes.append(strong_precedence_id)
+        if _canonical_class_sets_conflict(strong):
             relevance, resolution, band = _apply_mixed_review(
                 amb_codes=amb_codes,
                 agg_codes=agg_codes,
@@ -274,15 +307,20 @@ def aggregate_tender_decision(
                 ),
             )
     elif strong:
-        agg_codes.append(str(policy["single_unit_behavior"]["id"]))
         chosen = sorted(strong, key=_strong_sort_key)[0]
         relevance = chosen.relevance_class
         resolution = chosen.product_resolution_status
-        tier = max((u.evidence_tier for u in strong), key=_tier_rank)
+        # Tier and band always come from the same chosen unit — never mix a
+        # high-ranked tier with an unrelated lower-ranked unit's confidence.
+        tier = chosen.evidence_tier
         band = chosen.confidence_band
-        if _canonical_class_sets_conflict(strong) or (
-            len(strong) > 1 and len({u.relevance_class for u in strong}) > 1
+        if len({u.relevance_class for u in strong}) > 1 and not _canonical_class_sets_conflict(
+            strong
         ):
+            agg_codes.append(strong_precedence_id)
+        else:
+            agg_codes.append(str(policy["single_unit_behavior"]["id"]))
+        if _canonical_class_sets_conflict(strong):
             relevance, resolution, band = _apply_mixed_review(
                 amb_codes=amb_codes,
                 agg_codes=agg_codes,
@@ -301,20 +339,16 @@ def aggregate_tender_decision(
         band = str(neg_abs["confidence_band"])
         for code in neg_abs["ambiguity_reason_codes"]:
             amb_codes.append(str(code))
-        tier = (
-            "line_product_text"
-            if any(u.evidence_tier == "line_product_text" for u in units)
-            else units[0].evidence_tier
-        )
+        tier = _best_tier_unit(units).evidence_tier
     elif negatives and not abstain:
-        agg_codes.append("all_units_negative")
+        agg_codes.append(all_negative_id)
         chosen = sorted(negatives, key=_negative_sort_key)[0]
         relevance = chosen.relevance_class
         resolution = "negative_class_only"
         tier = chosen.evidence_tier
         band = chosen.confidence_band
     elif abstain:
-        agg_codes.append("all_units_ambiguous_or_empty")
+        agg_codes.append(all_ambiguous_id)
         relevance = "ambiguous"
         resolution = (
             "insufficient_product_text"
@@ -328,26 +362,25 @@ def aggregate_tender_decision(
             u.product_resolution_status == "context_required_unresolved" for u in units
         ):
             resolution = "context_required_unresolved"
+        # Lowest usable tier when all abstain (prefer declaring weak evidence).
         tier = min((u.evidence_tier for u in units), key=_tier_rank)
         band = "abstain"
         if not amb_codes:
             amb_codes.append("insufficient_product_text")
     elif unrelated and not strong and not negatives and not abstain:
-        agg_codes.append("all_units_negative")
+        agg_codes.append(all_negative_id)
+        chosen = _best_tier_unit(units)
         relevance = "unrelated"
         resolution = "negative_class_only"
-        tier = units[0].evidence_tier
+        tier = chosen.evidence_tier
         band = "low"
     else:
         neg_abs = policy["mixed_conflict_behavior"]["negative_plus_abstention"]
         agg_codes.append(str(neg_abs["id"]))
         relevance = str(neg_abs["relevance_class"])
         resolution = str(neg_abs["product_resolution_status"])
-        tier = (
-            "line_product_text"
-            if any(u.evidence_tier == "line_product_text" for u in units)
-            else units[0].evidence_tier
-        )
+        chosen = _best_tier_unit(units)
+        tier = chosen.evidence_tier
         band = str(neg_abs["confidence_band"])
         amb_codes.append("conflicting_line_evidence")
 
@@ -361,7 +394,7 @@ def aggregate_tender_decision(
         resolution = "insufficient_product_text"
         band = "abstain"
         amb_codes.append("insufficient_product_text")
-        agg_codes = ["no_usable_units"]
+        agg_codes = [no_usable_id]
 
     payload = tender_semantic_payload(
         coalesced_tender_id=tender.coalesced_tender_id,
