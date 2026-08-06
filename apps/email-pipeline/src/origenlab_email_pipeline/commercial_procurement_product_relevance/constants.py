@@ -11,7 +11,7 @@ from origenlab_email_pipeline.commercial_procurement_live_relevance.constants im
 )
 
 PRODUCT_RELEVANCE_PLANNER_VERSION: Final = "procurement_product_relevance_planner_v1"
-PRODUCT_RELEVANCE_RULES_VERSION: Final = "procurement_product_relevance_rules_v1"
+PRODUCT_RELEVANCE_RULES_VERSION: Final = "procurement_product_relevance_rules_v2"
 PRODUCT_RELEVANCE_TAXONOMY_VERSION: Final = "procurement_product_relevance_taxonomy_v1"
 PRODUCT_TEXT_ADAPTER_VERSION: Final = "procurement_product_text_adapter_v1"
 
@@ -84,6 +84,9 @@ NEGATIVE_REASON_CODES: Final = (
     "rental_or_comodato_only",
     "non_laboratory_incubator",
     "non_laboratory_false_positive",
+    "centrifugal_pump_not_lab_centrifuge",
+    "anthropometric_or_veterinary_scale_not_analytical_balance",
+    "microscope_cover_or_accessory_not_purchase",
     "generic_insumos_without_equipment",
 )
 
@@ -94,6 +97,7 @@ AMBIGUITY_REASON_CODES: Final = (
     "insufficient_product_text",
     "conflicting_line_evidence",
     "title_only_weak_signal",
+    "anthropometric_or_veterinary_scale_not_analytical_balance",
 )
 
 AGGREGATION_REASON_CODES: Final = (

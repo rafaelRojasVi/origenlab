@@ -1,4 +1,4 @@
-"""PR5E.1 planner: institution prospect intelligence over PR5C/D/E."""
+"""PR5E.2 planner: institution prospect recognition over PR5C/D/E."""
 
 from __future__ import annotations
 
@@ -33,18 +33,39 @@ from origenlab_email_pipeline.commercial_procurement_contact_resolution.models i
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.planner import (
     build_contact_resolution_plan,
 )
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.adjudication import (
+    evaluate_reviewed_adjudication_fixture,
+)
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.catalog_scope import (
+    classify_provisional_disposition,
+    refine_commercial_signal,
+)
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.clusters import (
+    build_institution_review_clusters,
+)
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.constants import (
     CONTRACT_VERSION,
+    EXCLUDED_RELEVANCE,
     IDENTITY_KIND_UNRESOLVED,
+    OPERATOR_QUEUE_NAMES,
     PLANNER_VERSION,
+    RECOGNITION_LAYER_VERSION,
+    REVIEW_RELEVANCE,
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.equipment_history import (
     aggregate_equipment_history,
+)
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.event_families import (
+    resolve_procurement_event_families,
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.identity import (
     InstitutionIdentity,
     detect_name_identifier_conflicts,
     institution_identity_from_tender,
+)
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.lifecycle_precedence import (
+    KNOWN_OPEN,
+    apply_lifecycle_precedence,
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.overlay import (
     build_contact_overlay,
@@ -54,14 +75,16 @@ from origenlab_email_pipeline.commercial_procurement_institution_prospects.overl
     score_opportunity_urgency,
     score_prospect_strength,
 )
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.queues import (
+    build_operator_queues,
+)
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.reconcile import (
     InstitutionReconciliationError,
     reconcile_institution_prospects,
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.signals import (
-    classify_commercial_evidence_signal,
+    RECURRENCE_REPEATED,
     is_equipment_purchase_signal,
-    recurrence_label,
 )
 from origenlab_email_pipeline.commercial_procurement_live_feed_bridge.adapter import (
     adapt_detail_cache_directory,
@@ -110,16 +133,71 @@ class InstitutionProspectPlanResult:
     contact_gap_queue: list[dict[str, Any]]
     walkthrough: dict[str, Any] = field(default_factory=dict)
     not_persisted: bool = True
+    operator_queues: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    review_clusters: list[dict[str, Any]] = field(default_factory=list)
+    event_families: list[dict[str, Any]] = field(default_factory=list)
+    lifecycle_projections: list[dict[str, Any]] = field(default_factory=list)
+    line_reconciliation: dict[str, Any] = field(default_factory=dict)
+    tender_rows: list[dict[str, Any]] = field(default_factory=list)
+    line_rows: list[dict[str, Any]] = field(default_factory=list)
+    # Filled only when an analyst-reviewed adjudication fixture is applied by a
+    # dry-run helper; never produced by production classification.
+    reviewed_adjudication_results: list[dict[str, Any]] = field(default_factory=list)
+    recognition_layer_version: str = RECOGNITION_LAYER_VERSION
 
     def to_summary_dict(self) -> dict[str, Any]:
         return {
-            "ok": bool(self.reconciliation.get("ok")),
+            "ok": bool(self.reconciliation.get("ok"))
+            and bool(self.line_reconciliation.get("ok", True)),
             "as_of_utc": self.as_of_utc,
             "run_context": self.run_context,
             "planner_version": self.planner_version,
+            "recognition_layer_version": self.recognition_layer_version,
             "contract_version": CONTRACT_VERSION,
             "not_persisted": True,
             "counts": self.counts,
+            "operator_queue_sizes": {
+                name: len(self.operator_queues.get(name, []))
+                for name in OPERATOR_QUEUE_NAMES
+            },
+            "procurement_event_families": {
+                "family_count": len(self.event_families),
+                "retender_review_family_count": sum(
+                    1
+                    for f in self.event_families
+                    if f.get("family_resolution_status") == "retender_review_required"
+                ),
+                "independent_demand_event_count": sum(
+                    int(f.get("independent_demand_event_count") or 0)
+                    for f in self.event_families
+                ),
+                "raw_tender_count": sum(
+                    int(f.get("raw_tender_count") or 0) for f in self.event_families
+                ),
+            },
+            "institution_review_clusters": {
+                "cluster_count": len(self.review_clusters),
+                "clustered_profile_count": sum(
+                    len(c.get("member_profile_ids") or []) for c in self.review_clusters
+                ),
+            },
+            "line_reconciliation": {
+                "ok": self.line_reconciliation.get("ok"),
+                "equation": self.line_reconciliation.get("equation"),
+                "unit_decision_count": self.line_reconciliation.get(
+                    "unit_decision_count"
+                ),
+                "assigned_line_count": self.line_reconciliation.get(
+                    "assigned_line_count"
+                ),
+                "review_required_line_count": self.line_reconciliation.get(
+                    "review_required_line_count"
+                ),
+                "excluded_line_count": self.line_reconciliation.get(
+                    "excluded_line_count"
+                ),
+            },
+            "reviewed_adjudication_applied": bool(self.reviewed_adjudication_results),
             "fingerprints": self.fingerprints,
             "dependency_fingerprints": self.dependency_fingerprints,
             "reconciliation": {
@@ -144,10 +222,114 @@ class InstitutionProspectPlanResult:
                 "closed_relevant_tender_eq_historical_buying_intent": True,
                 "account_match_ne_usable_contact": True,
                 "usable_contact_ne_outreach_authorization": True,
+                "retender_ne_independent_demand_event": True,
+                "status_unknown_does_not_overwrite_known_lifecycle": True,
+                "lifecycle_independent_of_commercial_relevance": True,
+                "review_cluster_ne_confirmed_account": True,
                 "contact_authorization": False,
                 "outreach_authorization": False,
             },
         }
+
+
+def _unit_text(unit: Any) -> str | None:
+    parts: list[str] = []
+    for span in getattr(unit, "matched_spans", ())[:5]:
+        text = getattr(span, "matched_text", None) or getattr(span, "span_text", None)
+        if text:
+            parts.append(str(text))
+    return " ".join(parts) or None
+
+
+LINE_DISPOSITION_ASSIGNED = "assigned"
+LINE_DISPOSITION_REVIEW = "review_required"
+LINE_DISPOSITION_EXCLUDED = "excluded"
+
+
+def _build_line_rows(
+    *,
+    pr5d: ProductRelevancePlanResult,
+    tender_by_id: dict[str, CoalescedProcurementTender],
+    institution_id_by_tender: dict[str, str],
+    identity_by_institution: dict[str, InstitutionIdentity],
+    projected_lifecycle: dict[str, str],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Reconcile every PR5D evidence unit into assigned / review / excluded."""
+    rows: list[dict[str, Any]] = []
+    for unit in sorted(
+        pr5d.unit_decisions, key=lambda u: (u.coalesced_tender_id, u.unit_decision_id)
+    ):
+        tid = unit.coalesced_tender_id
+        tender = tender_by_id.get(tid)
+        code = _tender_code(tender) if tender is not None else tid
+        text = _unit_text(unit) or (tender.title_selected if tender else None)
+        signal, signal_reasons = refine_commercial_signal(
+            relevance_class=unit.relevance_class,
+            title=text,
+            negative_reason_codes=unit.negative_reason_codes,
+        )
+        if signal == "excluded_unrelated" or unit.relevance_class in EXCLUDED_RELEVANCE:
+            disposition = LINE_DISPOSITION_EXCLUDED
+            reasons = ["line_excluded_not_commercially_relevant"]
+        elif (
+            signal == "review_required_signal"
+            or unit.relevance_class in REVIEW_RELEVANCE
+            or not unit.canonical_equipment_classes
+        ):
+            disposition = LINE_DISPOSITION_REVIEW
+            reasons = ["line_requires_operator_review"]
+        else:
+            disposition = LINE_DISPOSITION_ASSIGNED
+            reasons = ["line_assigned_commercial_signal"]
+        iid = institution_id_by_tender.get(tid)
+        ident = identity_by_institution.get(iid) if iid else None
+        rows.append(
+            {
+                "unit_decision_id": unit.unit_decision_id,
+                "unit_id": unit.unit_id,
+                "coalesced_tender_id": tid,
+                "tender_code": code,
+                "institution_id": iid,
+                "display_name": ident.display_name if ident else None,
+                "projected_lifecycle_class": projected_lifecycle.get(
+                    tid, tender.lifecycle_class if tender else None
+                ),
+                "relevance_class": unit.relevance_class,
+                "canonical_equipment_classes": list(unit.canonical_equipment_classes),
+                "commercial_signal_type": signal,
+                "line_disposition": disposition,
+                "evidence_tier": unit.evidence_tier,
+                "confidence_band": unit.confidence_band,
+                "line_reason_codes": reasons + list(signal_reasons),
+                "positive_reason_codes": list(unit.positive_reason_codes),
+                "negative_reason_codes": list(unit.negative_reason_codes),
+                "ambiguity_reason_codes": list(unit.ambiguity_reason_codes),
+                "contact_authorization": False,
+                "outreach_authorization": False,
+            }
+        )
+
+    counts = Counter(r["line_disposition"] for r in rows)
+    assigned = counts.get(LINE_DISPOSITION_ASSIGNED, 0)
+    review = counts.get(LINE_DISPOSITION_REVIEW, 0)
+    excluded = counts.get(LINE_DISPOSITION_EXCLUDED, 0)
+    total = len(pr5d.unit_decisions)
+    reconciliation = {
+        "ok": total == assigned + review + excluded and total == len(rows),
+        "equation": (
+            "unit_decision_count = assigned_line_count + review_required_line_count "
+            "+ excluded_line_count"
+        ),
+        "unit_decision_count": total,
+        "line_row_count": len(rows),
+        "assigned_line_count": assigned,
+        "review_required_line_count": review,
+        "excluded_line_count": excluded,
+        "unresolved_unit_count": len(pr5d.unresolved_units),
+        "line_disposition_counts": dict(sorted(counts.items())),
+        "no_silent_line_drop": True,
+    }
+    return rows, reconciliation
 
 
 def build_institution_prospects_from_plans(
@@ -172,6 +354,63 @@ def build_institution_prospects_from_plans(
     decisions_by_tender: dict[str, TenderRelevanceDecision] = {
         d.coalesced_tender_id: d for d in pr5d.tender_decisions
     }
+    tender_by_id: dict[str, CoalescedProcurementTender] = {
+        t.coalesced_tender_id: t for t in pr5c.coalesced_tenders
+    }
+
+    # Recognition layer inputs: lifecycle precedence and procurement-event families
+    # are both independent of commercial relevance.
+    lifecycle_projections = apply_lifecycle_precedence(
+        list(pr5c.coalesced_tenders), as_of_utc=as_of_utc
+    )
+    projected_lifecycle: dict[str, str] = {
+        tid: proj.projected_lifecycle_class
+        for tid, proj in lifecycle_projections.items()
+    }
+    families, tender_to_family = resolve_procurement_event_families(
+        pr5c.coalesced_tenders
+    )
+    family_by_id = {f.family_id: f for f in families}
+    family_meta_by_tender: dict[str, dict[str, Any]] = {
+        tid: family_by_id[fid].to_dict()
+        for tid, fid in tender_to_family.items()
+        if fid in family_by_id
+    }
+
+    def _lifecycle(tid: str) -> str:
+        tender = tender_by_id.get(tid)
+        return projected_lifecycle.get(
+            tid, tender.lifecycle_class if tender else "status_unknown"
+        )
+
+    # Provisional per-tender commercial signal + catalog-scope disposition.
+    disposition_by_tender: dict[str, dict[str, Any]] = {}
+    for tender in sorted(pr5c.coalesced_tenders, key=lambda t: t.coalesced_tender_id):
+        decision = decisions_by_tender.get(tender.coalesced_tender_id)
+        if decision is None:
+            continue
+        signal, signal_reasons = refine_commercial_signal(
+            relevance_class=decision.relevance_class,
+            title=tender.title_selected,
+            negative_reason_codes=decision.negative_reason_codes,
+        )
+        disposition = classify_provisional_disposition(
+            relevance_class=decision.relevance_class,
+            commercial_signal=signal,
+            canonical_equipment_classes=decision.canonical_equipment_classes,
+            title=tender.title_selected,
+            positive_reason_codes=decision.positive_reason_codes,
+            negative_reason_codes=decision.negative_reason_codes,
+            ambiguity_reason_codes=decision.ambiguity_reason_codes,
+        )
+        disposition["signal_reason_codes"] = list(signal_reasons)
+        disposition_by_tender[tender.coalesced_tender_id] = disposition
+
+    def _signal(tid: str) -> str:
+        disposition = disposition_by_tender.get(tid)
+        if disposition:
+            return str(disposition["commercial_signal_type"])
+        return "review_required_signal"
 
     source_ids = {t.coalesced_tender_id for t in pr5c.coalesced_tenders}
     excluded: dict[str, str] = {}
@@ -233,11 +472,14 @@ def build_institution_prospects_from_plans(
         tenders=pr5c.coalesced_tenders,
         decisions_by_tender=decisions_by_tender,
         institution_id_by_tender=institution_id_by_tender,
+        lifecycle_by_tender=projected_lifecycle,
+        family_by_tender=family_meta_by_tender,
     )
 
     profiles: list[dict[str, Any]] = []
     match_review: list[dict[str, Any]] = []
     contact_gaps: list[dict[str, Any]] = []
+    tender_rows: list[dict[str, Any]] = []
     assigned: set[str] = set()
     unresolved: set[str] = set()
 
@@ -274,11 +516,10 @@ def build_institution_prospects_from_plans(
         open_purchase = 0
         historical_purchase = 0
         for t in tenders:
-            d = decisions_by_tender[t.coalesced_tender_id]
-            sig = classify_commercial_evidence_signal(d.relevance_class)
+            sig = _signal(t.coalesced_tender_id)
             if is_equipment_purchase_signal(sig):
                 purchase_tender_count += 1
-                if is_open_lifecycle(t.lifecycle_class):
+                if is_open_lifecycle(_lifecycle(t.coalesced_tender_id)):
                     open_purchase += 1
                 else:
                     historical_purchase += 1
@@ -286,7 +527,7 @@ def build_institution_prospects_from_plans(
         repeated_category_count = sum(
             1
             for h in history
-            if h.get("demand_recurrence") == recurrence_label(2)
+            if h.get("demand_recurrence") == RECURRENCE_REPEATED
             and h.get("has_equipment_purchase_signal")
         )
         dates = [
@@ -296,21 +537,23 @@ def build_institution_prospects_from_plans(
         ]
         recent_signal = bool(dates)
 
-        open_tenders = [t for t in tenders if is_open_lifecycle(t.lifecycle_class)]
+        open_tenders = [
+            t for t in tenders if is_open_lifecycle(_lifecycle(t.coalesced_tender_id))
+        ]
         closing_soon = [
             t
             for t in open_tenders
-            if (t.closing_soon_bucket or "")
-            not in {"", "not_closing_soon", "unknown", "n_a"}
+            if (
+                lifecycle_projections[t.coalesced_tender_id].closing_soon_bucket
+                if t.coalesced_tender_id in lifecycle_projections
+                else (t.closing_soon_bucket or "")
+            )
+            not in {"", "not_closing_soon", "unknown", "n_a", "not_applicable"}
         ]
         current_opportunity_like = sum(
             1
             for t in open_tenders
-            if is_equipment_purchase_signal(
-                classify_commercial_evidence_signal(
-                    decisions_by_tender[t.coalesced_tender_id].relevance_class
-                )
-            )
+            if is_equipment_purchase_signal(_signal(t.coalesced_tender_id))
         )
 
         strength = score_prospect_strength(
@@ -324,6 +567,7 @@ def build_institution_prospects_from_plans(
             open_tender_count=len(open_tenders),
             closing_soon_count=len(closing_soon),
             current_opportunity_like=current_opportunity_like,
+            projected_lifecycle_applied=True,
         )
         readiness = score_contact_readiness(overlay)
         next_action = operator_next_action(overlay, urgency)
@@ -331,24 +575,67 @@ def build_institution_prospects_from_plans(
         current_ops = []
         historical_signals = []
         for t in sorted(tenders, key=lambda x: x.coalesced_tender_id):
-            d = decisions_by_tender[t.coalesced_tender_id]
+            tid = t.coalesced_tender_id
+            d = decisions_by_tender[tid]
             code = _tender_code(t)
+            projection = lifecycle_projections.get(tid)
+            disposition = disposition_by_tender.get(tid, {})
+            family = family_meta_by_tender.get(tid, {})
+            life = _lifecycle(tid)
             row = {
-                "coalesced_tender_id": t.coalesced_tender_id,
+                "coalesced_tender_id": tid,
                 "tender_code": code,
                 "tender_title": t.title_selected,
-                "lifecycle_class": t.lifecycle_class,
+                "lifecycle_class": life,
+                "source_lifecycle_class": t.lifecycle_class,
+                "projected_lifecycle_class": life,
+                "lifecycle_precedence_reason": projection.precedence_reason
+                if projection
+                else None,
+                "lifecycle_reason_codes": list(projection.reason_codes)
+                if projection
+                else [],
+                "closing_soon_bucket": projection.closing_soon_bucket
+                if projection
+                else t.closing_soon_bucket,
                 "currentness_class": t.currentness_class,
                 "candidate_source_kind": t.candidate_source_kind,
                 "relevance_class": d.relevance_class,
                 "canonical_equipment_classes": list(d.canonical_equipment_classes),
+                "commercial_signal_type": disposition.get("commercial_signal_type"),
+                "review_disposition": disposition.get("review_disposition"),
+                "catalog_fit_status": disposition.get("catalog_fit_status"),
+                "canonical_equipment_category": disposition.get(
+                    "canonical_equipment_category"
+                ),
+                "reason_codes": list(disposition.get("reason_codes") or [])
+                + list(disposition.get("signal_reason_codes") or []),
+                "procurement_event_family_id": family.get("family_id"),
+                "family_resolution_status": family.get("family_resolution_status"),
+                "independent_demand_event_count": family.get(
+                    "independent_demand_event_count"
+                ),
                 "mercado_publico_url": build_mercado_publico_search_url(code)
                 if code
                 else None,
                 "publication_timestamp": t.publication_timestamp_selected,
                 "close_timestamp": t.close_timestamp_selected,
             }
-            if is_open_lifecycle(t.lifecycle_class):
+            tender_rows.append(
+                {
+                    **row,
+                    "institution_id": iid,
+                    "display_name": ident.display_name,
+                    "prospect_strength_band": strength.band,
+                    "opportunity_urgency_band": urgency.band,
+                    "eligibility_reason_codes": list(projection.reason_codes)
+                    if projection
+                    else [],
+                    "contact_authorization": False,
+                    "outreach_authorization": False,
+                }
+            )
+            if is_open_lifecycle(life):
                 current_ops.append(row)
             else:
                 historical_signals.append(row)
@@ -372,6 +659,21 @@ def build_institution_prospects_from_plans(
                 "equipment_purchase_tender_count": purchase_tender_count,
                 "equipment_category_count": len(history),
                 "repeated_equipment_category_count": repeated_category_count,
+                "procurement_event_family_count": len(
+                    {
+                        family_meta_by_tender[t.coalesced_tender_id]["family_id"]
+                        for t in tenders
+                        if t.coalesced_tender_id in family_meta_by_tender
+                    }
+                ),
+                "retender_review_tender_count": sum(
+                    1
+                    for t in tenders
+                    if family_meta_by_tender.get(t.coalesced_tender_id, {}).get(
+                        "family_resolution_status"
+                    )
+                    == "retender_review_required"
+                ),
             },
             "operator_next_action": next_action,
             "contact_authorization": False,
@@ -395,6 +697,10 @@ def build_institution_prospects_from_plans(
                     "identity_review_required": ident.identity_review_required,
                     "prospect_strength_band": strength.band,
                     "operator_next_action": next_action,
+                    "queue": "institution_match_review",
+                    "confirmed_account": False,
+                    "contact_authorization": False,
+                    "outreach_authorization": False,
                 }
             )
 
@@ -414,6 +720,9 @@ def build_institution_prospects_from_plans(
                     "verified_contact_count": overlay.verified_contact_count,
                     "equipment_purchase_tender_count": purchase_tender_count,
                     "operator_next_action": next_action,
+                    "queue": "contact_gap",
+                    "contact_authorization": False,
+                    "outreach_authorization": False,
                 }
             )
 
@@ -438,6 +747,37 @@ def build_institution_prospects_from_plans(
         key=lambda r: (-int(r["prospect_strength_score"]), r["institution_id"])
     )
     match_review.sort(key=lambda r: r["institution_id"])
+    tender_rows.sort(key=lambda r: (str(r["tender_code"]), r["coalesced_tender_id"]))
+
+    line_rows, line_reconciliation = _build_line_rows(
+        pr5d=pr5d,
+        tender_by_id=tender_by_id,
+        institution_id_by_tender=institution_id_by_tender,
+        identity_by_institution=identity_by_institution,
+        projected_lifecycle=projected_lifecycle,
+    )
+
+    contact_gap_by_institution = {
+        p["institution_id"]: p["account_contact_overlay"]["contact_gap_status"]
+        for p in profiles
+    }
+    clusters = [
+        c.to_dict()
+        for c in build_institution_review_clusters(
+            identity_by_institution,
+            contact_gap_by_institution=contact_gap_by_institution,
+        )
+    ]
+    family_dicts = [f.to_dict() for f in families]
+    operator_queues = build_operator_queues(
+        profiles=profiles,
+        tender_rows=tender_rows,
+        line_rows=line_rows,
+        families=family_dicts,
+        clusters=clusters,
+        match_review=match_review,
+        contact_gaps=contact_gaps,
+    )
 
     # Counts
     linked_n = sum(
@@ -485,9 +825,23 @@ def build_institution_prospects_from_plans(
         for h in p["equipment_history"]:
             cat_dist[h["canonical_equipment_category"]] += 1
 
-    # Auth must stay false
+    # Auth must stay false — profiles and every operator queue row.
     if any(p["contact_authorization"] or p["outreach_authorization"] for p in profiles):
         raise InstitutionReconciliationError("authorization flags must remain false")
+    for queue_rows in operator_queues.values():
+        if any(
+            r.get("contact_authorization", True) is not False
+            or r.get("outreach_authorization", True) is not False
+            for r in queue_rows
+        ):
+            raise InstitutionReconciliationError(
+                "every operator queue row must carry explicit false authorization"
+            )
+    if not line_reconciliation["ok"]:
+        raise InstitutionReconciliationError(
+            "line-level evidence reconciliation failed: "
+            f"{line_reconciliation['equation']}"
+        )
 
     fingerprints = {
         "semantic_digest": canonical_json_digest(
@@ -523,17 +877,25 @@ def build_institution_prospects_from_plans(
     walkthrough = {
         "pipeline": [
             "tender evidence",
+            "lifecycle precedence projection",
+            "procurement event family resolution",
+            "line-level commercial signal and catalog scope",
             "procurement buyer identity",
+            "institution review clustering",
             "existing OrigenLab account comparison",
             "existing contact comparison",
             "accumulated equipment history",
             "institution-level prospect profile",
+            "separate operator queues",
         ],
         "separations": {
             "closed_tender": "not current opportunity",
             "closed_relevant_tender": "historical buying-intent evidence",
             "account_match": "not usable contact",
             "usable_contact": "not outreach authorization",
+            "retender_or_reissue": "not an independent demand event",
+            "status_unknown": "does not overwrite a known lifecycle",
+            "review_cluster": "not a confirmed merged account",
         },
         "example_institution": profiles[0] if profiles else None,
     }
@@ -555,6 +917,33 @@ def build_institution_prospects_from_plans(
         "contact_gap_queue_size": len(contact_gaps),
         "source_tenders": len(source_ids),
         "excluded_tenders": len(excluded),
+        "operator_queue_sizes": {
+            name: len(operator_queues.get(name, [])) for name in OPERATOR_QUEUE_NAMES
+        },
+        "procurement_event_family_count": len(family_dicts),
+        "retender_review_family_count": sum(
+            1
+            for f in family_dicts
+            if f["family_resolution_status"] == "retender_review_required"
+        ),
+        "institution_review_cluster_count": len(clusters),
+        "review_disposition_counts": dict(
+            sorted(Counter(r["review_disposition"] for r in tender_rows).items())
+        ),
+        "commercial_signal_counts": dict(
+            sorted(Counter(r["commercial_signal_type"] for r in tender_rows).items())
+        ),
+        "projected_lifecycle_counts": dict(
+            sorted(Counter(projected_lifecycle.values()).items())
+        ),
+        "lifecycle_precedence_reason_counts": dict(
+            sorted(
+                Counter(
+                    p.precedence_reason for p in lifecycle_projections.values()
+                ).items()
+            )
+        ),
+        "line_disposition_counts": line_reconciliation["line_disposition_counts"],
     }
 
     return InstitutionProspectPlanResult(
@@ -566,10 +955,34 @@ def build_institution_prospects_from_plans(
         fingerprints=fingerprints,
         dependency_fingerprints=dependency_fingerprints,
         counts=counts,
-        match_review_queue=match_review,
-        contact_gap_queue=contact_gaps,
+        match_review_queue=list(
+            operator_queues.get("institution_match_review_queue", match_review)
+        ),
+        contact_gap_queue=list(
+            operator_queues.get("contact_gap_queue", contact_gaps)
+        ),
         walkthrough=walkthrough,
         not_persisted=True,
+        operator_queues=operator_queues,
+        review_clusters=clusters,
+        event_families=family_dicts,
+        lifecycle_projections=[
+            {
+                "coalesced_tender_id": tid,
+                "tender_code": _tender_code(tender_by_id[tid])
+                if tid in tender_by_id
+                else tid,
+                **proj.to_dict(),
+            }
+            for tid, proj in sorted(lifecycle_projections.items())
+        ],
+        line_reconciliation=line_reconciliation,
+        tender_rows=tender_rows,
+        line_rows=line_rows,
+        reviewed_adjudication_results=evaluate_reviewed_adjudication_fixture()[
+            "results"
+        ],
+        recognition_layer_version=RECOGNITION_LAYER_VERSION,
     )
 
 
@@ -615,8 +1028,13 @@ def build_institution_prospect_plan(
                 max_age_hours=max_feed_age_hours,
                 allow_stale=allow_stale_feed,
             )
-            acquired_at = resolve_acquired_at_utc(
+            raw_acquired_at = resolve_acquired_at_utc(
                 manifest=manifest, refresh_state=refresh_state
+            )
+            acquired_at = resolve_acquired_at_utc(
+                manifest=manifest,
+                refresh_state=refresh_state,
+                as_of_utc=as_of_utc,
             )
             staging = dest / "_bridge_snapshots"
             adapter = adapt_detail_cache_directory(
@@ -629,6 +1047,19 @@ def build_institution_prospect_plan(
             )
             snapshot_paths = list(adapter.snapshot_paths)
             adapter_records = [r.__dict__ for r in adapter.records]
+            if raw_acquired_at != acquired_at:
+                adapter_records.append(
+                    {
+                        "record_kind": "acquired_at_clamped_to_as_of",
+                        "raw_acquired_at_utc": raw_acquired_at,
+                        "acquired_at_utc": acquired_at,
+                        "as_of_utc": as_of_utc,
+                        "reason": (
+                            "feed manifest generation stamp was later than the review "
+                            "as_of; acquisition cannot be pinned in the future"
+                        ),
+                    }
+                )
             if not snapshot_paths:
                 raise ValueError("no accepted acquisition snapshots from detail cache")
 
@@ -695,19 +1126,29 @@ def _write_bundle(
         "as_of_utc": result.as_of_utc,
         "run_context": result.run_context,
         "planner_version": result.planner_version,
+        "recognition_layer_version": result.recognition_layer_version,
         "contract_version": CONTRACT_VERSION,
         "not_persisted": True,
         "contact_authorization": False,
         "outreach_authorization": False,
         "profiles": result.profiles,
         "counts": result.counts,
+        "procurement_event_families": result.event_families,
+        "institution_review_clusters": result.review_clusters,
         "fingerprints": result.fingerprints,
         "dependency_fingerprints": result.dependency_fingerprints,
     }
     reconciliation = {
         "ok": result.reconciliation.get("ok"),
         "reconciliation": result.reconciliation,
+        "line_reconciliation": result.line_reconciliation,
         "adapter_records_count": len(adapter_records or []),
+        "acquired_at_clamp_records": [
+            {k: str(v) for k, v in r.items()}
+            for r in (adapter_records or [])
+            if isinstance(r, dict)
+            and r.get("record_kind") == "acquired_at_clamped_to_as_of"
+        ],
         "dependency_fingerprints": result.dependency_fingerprints,
     }
 
@@ -765,13 +1206,70 @@ def _write_bundle(
     )
     paths["institution_prospect.csv"] = str(prospect_csv)
 
-    match_csv = dest / "institution_match_review_queue.csv"
-    _write_csv(match_csv, result.match_review_queue)
-    paths["institution_match_review_queue.csv"] = str(match_csv)
+    queues = result.operator_queues
+    for queue_name in OPERATOR_QUEUE_NAMES:
+        csv_path = dest / f"{queue_name}.csv"
+        _write_csv(csv_path, queues.get(queue_name, []))
+        paths[f"{queue_name}.csv"] = str(csv_path)
 
-    gap_csv = dest / "contact_gap_queue.csv"
-    _write_csv(gap_csv, result.contact_gap_queue)
-    paths["contact_gap_queue.csv"] = str(gap_csv)
+    lifecycle_path = dest / "lifecycle_reconciliation.json"
+    lifecycle_path.write_text(
+        json.dumps(
+            _lifecycle_reconciliation_document(result),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    paths["lifecycle_reconciliation.json"] = str(lifecycle_path)
+
+    adjudication_path = dest / "reviewed_adjudication_results.json"
+    adjudication_path.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "as_of_utc": result.as_of_utc,
+                "recognition_layer_version": result.recognition_layer_version,
+                "fixture_applied": bool(result.reviewed_adjudication_results),
+                "provenance": "analyst_reviewed_provisional",
+                "not_gold_truth": True,
+                "not_classifier_output": True,
+                "results": result.reviewed_adjudication_results,
+                "note": (
+                    "Populated only when a reviewed adjudication fixture is applied "
+                    "by a dry-run comparison helper; production classification never "
+                    "reads reviewed labels."
+                ),
+                "contact_authorization": False,
+                "outreach_authorization": False,
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    paths["reviewed_adjudication_results.json"] = str(adjudication_path)
+
+    families_path = dest / "procurement_event_families.json"
+    families_path.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "families": result.event_families,
+                "retender_ne_independent_demand_event": True,
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    paths["procurement_event_families.json"] = str(families_path)
 
     walk_path = dest / "walkthrough.md"
     walk_path.write_text(_render_walkthrough(result), encoding="utf-8")
@@ -779,13 +1277,68 @@ def _write_bundle(
     return paths
 
 
+def _lifecycle_reconciliation_document(
+    result: InstitutionProspectPlanResult,
+) -> dict[str, Any]:
+    projections = result.lifecycle_projections
+    restored = [
+        p
+        for p in projections
+        if p.get("projected_lifecycle_class") in KNOWN_OPEN
+        and p.get("source_lifecycle_class") not in KNOWN_OPEN
+    ]
+    overridden = [
+        p
+        for p in projections
+        if p.get("source_lifecycle_class") in KNOWN_OPEN
+        and p.get("projected_lifecycle_class") not in KNOWN_OPEN
+    ]
+    return {
+        "ok": True,
+        "as_of_utc": result.as_of_utc,
+        "recognition_layer_version": result.recognition_layer_version,
+        "projection_count": len(projections),
+        "source_lifecycle_counts": dict(
+            sorted(Counter(p.get("source_lifecycle_class") for p in projections).items())
+        ),
+        "projected_lifecycle_counts": dict(
+            sorted(
+                Counter(p.get("projected_lifecycle_class") for p in projections).items()
+            )
+        ),
+        "precedence_reason_counts": dict(
+            sorted(Counter(p.get("precedence_reason") for p in projections).items())
+        ),
+        "changed_projection_count": sum(
+            1
+            for p in projections
+            if p.get("source_lifecycle_class") != p.get("projected_lifecycle_class")
+        ),
+        "active_open_restored": restored,
+        "open_overridden_by_terminal": overridden,
+        "status_unknown_does_not_overwrite_known_lifecycle": True,
+        "lifecycle_independent_of_relevance": True,
+        "projections": projections,
+        "contact_authorization": False,
+        "outreach_authorization": False,
+    }
+
+
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         path.write_text("", encoding="utf-8")
         return
-    fieldnames = list(rows[0].keys())
+    # Queue rows are heterogeneous (e.g. identity review mixes profile and cluster
+    # rows), so the header is the union of keys in first-seen order.
+    fieldnames: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in fieldnames:
+                fieldnames.append(key)
     buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+    writer = csv.DictWriter(
+        buf, fieldnames=fieldnames, extrasaction="ignore", restval=""
+    )
     writer.writeheader()
     for row in rows:
         writer.writerow(row)
@@ -794,9 +1347,10 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def _render_walkthrough(result: InstitutionProspectPlanResult) -> str:
     lines = [
-        "# Institution prospect intelligence (PR5E.1)",
+        "# Institution prospect recognition (PR5E.2)",
         "",
         f"Planner: `{result.planner_version}`",
+        f"Recognition layer: `{result.recognition_layer_version}`",
         f"as_of_utc: `{result.as_of_utc}`",
         f"run_context: `{result.run_context}`",
         "",
@@ -804,11 +1358,16 @@ def _render_walkthrough(result: InstitutionProspectPlanResult) -> str:
         "",
         "```text",
         "tender evidence",
+        "→ lifecycle precedence projection (known status wins over status_unknown)",
+        "→ procurement event family resolution (retender ≠ new demand)",
+        "→ line-level commercial signal + catalog scope disposition",
         "→ procurement buyer identity",
+        "→ institution review clustering (review-only, no auto-merge)",
         "→ existing OrigenLab account comparison",
         "→ existing contact comparison",
         "→ accumulated equipment history",
         "→ institution-level prospect profile",
+        "→ separate operator queues (no combined lead score)",
         "```",
         "",
         "## Separations",
@@ -817,6 +1376,34 @@ def _render_walkthrough(result: InstitutionProspectPlanResult) -> str:
         "- closed relevant tender = historical buying-intent evidence",
         "- account match ≠ usable contact",
         "- usable contact ≠ outreach authorization",
+        "- retender or reissue ≠ independent demand event",
+        "- `status_unknown` never overwrites a known lifecycle",
+        "- lifecycle is independent of commercial relevance",
+        "- review cluster ≠ confirmed merged account",
+        "",
+        "## Operator queues",
+        "",
+        "```json",
+        json.dumps(
+            {
+                name: len(result.operator_queues.get(name, []))
+                for name in OPERATOR_QUEUE_NAMES
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ),
+        "```",
+        "",
+        "No queue implies contact or outreach authorization.",
+        "",
+        "## Line-level evidence reconciliation",
+        "",
+        "```json",
+        json.dumps(
+            result.line_reconciliation, ensure_ascii=False, indent=2, sort_keys=True
+        ),
+        "```",
         "",
         "## Aggregate counts",
         "",
@@ -864,6 +1451,9 @@ def _render_walkthrough(result: InstitutionProspectPlanResult) -> str:
 
 
 __all__ = [
+    "LINE_DISPOSITION_ASSIGNED",
+    "LINE_DISPOSITION_EXCLUDED",
+    "LINE_DISPOSITION_REVIEW",
     "InstitutionProspectPlanResult",
     "build_institution_prospect_plan",
     "build_institution_prospects_from_plans",

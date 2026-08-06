@@ -204,16 +204,28 @@ def score_opportunity_urgency(
     open_tender_count: int,
     closing_soon_count: int,
     current_opportunity_like: int,
+    projected_lifecycle_applied: bool = False,
 ) -> AxisScore:
+    """Urgency over open tenders only.
+
+    ``projected_lifecycle_applied`` records that the caller counted openness from
+    the PR5E.2 lifecycle projection rather than the raw PR5C lifecycle class.
+    """
     score = 0
     reasons: list[str] = []
+    provenance = (
+        ("projected_lifecycle_precedence_applied",)
+        if projected_lifecycle_applied
+        else ()
+    )
     if open_tender_count <= 0:
         return AxisScore(
             axis="opportunity_urgency",
             band="none",
             score=0,
-            reason_codes=("no_open_tender",),
+            reason_codes=("no_open_tender",) + provenance,
         )
+    reasons.extend(provenance)
     score += 2
     reasons.append("open_tender_present")
     if current_opportunity_like > 0:

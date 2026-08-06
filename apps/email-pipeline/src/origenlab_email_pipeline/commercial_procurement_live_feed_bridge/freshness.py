@@ -120,8 +120,15 @@ def resolve_acquired_at_utc(
     *,
     manifest: dict[str, Any] | None,
     refresh_state: dict[str, Any] | None,
+    as_of_utc: str | None = None,
 ) -> str | None:
-    """Prefer manifest generation time as shared acquisition stamp for cache hits."""
+    """Prefer manifest generation time as shared acquisition stamp for cache hits.
+
+    When ``as_of_utc`` is supplied, a manifest stamp later than the review as-of is
+    clamped to the as-of so downstream currentness never treats evidence as
+    acquired in the future. Omitting ``as_of_utc`` keeps the un-clamped behavior.
+    """
+    as_of = _parse_flexible_utc(as_of_utc) if as_of_utc else None
     for src in (manifest, refresh_state):
         if not src:
             continue
@@ -132,5 +139,7 @@ def resolve_acquired_at_utc(
         ):
             dt = _parse_flexible_utc(str(src.get(key) or "") or None)
             if dt is not None:
+                if as_of is not None and dt > as_of:
+                    return as_of.strftime("%Y-%m-%dT%H:%M:%SZ")
                 return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     return None

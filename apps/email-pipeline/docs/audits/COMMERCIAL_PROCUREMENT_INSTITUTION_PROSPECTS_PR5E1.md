@@ -27,6 +27,9 @@ tender evidence (PR5C live_snapshot / both / pr4)
 
 Contact and outreach authorization remain **false**. Profiles are **not persisted** (`not_persisted=True`).
 
+**Follow-on:** PR5E.2 recognition corrections —
+[`COMMERCIAL_PROCUREMENT_PROSPECT_RECOGNITION_PR5E2.md`](COMMERCIAL_PROCUREMENT_PROSPECT_RECOGNITION_PR5E2.md).
+
 ## What already existed (PR5B.2 audit)
 
 Verified from the fixed PR5B.2 packet

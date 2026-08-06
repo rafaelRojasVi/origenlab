@@ -9,6 +9,11 @@ from typing import Any, Iterable
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.models import (
     CoalescedProcurementTender,
 )
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.event_families import (
+    FAMILY_CONFIRMED,
+    FAMILY_REVIEW,
+    FAMILY_SINGLE,
+)
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.overlay import (
     is_historical_lifecycle,
     is_open_lifecycle,
@@ -42,6 +47,15 @@ def _observation_date(tender: CoalescedProcurementTender) -> str | None:
     )
 
 
+FAMILY_NOT_APPLIED = "family_resolution_not_applied"
+
+
+def _fam_field(family: Any, key: str, default: Any = None) -> Any:
+    if isinstance(family, dict):
+        return family.get(key, default)
+    return getattr(family, key, default)
+
+
 @dataclass
 class _CategoryAcc:
     category: str
@@ -60,6 +74,10 @@ class _CategoryAcc:
     ambiguity_reason_codes: set[str] = field(default_factory=set)
     commercial_signals: set[str] = field(default_factory=set)
     catalog_fit_statuses: set[str] = field(default_factory=set)
+    family_ids: set[str] = field(default_factory=set)
+    family_independent_events: dict[str, int] = field(default_factory=dict)
+    family_statuses: set[str] = field(default_factory=set)
+    family_reason_codes: set[str] = field(default_factory=set)
 
 
 def aggregate_equipment_history(
@@ -67,13 +85,22 @@ def aggregate_equipment_history(
     tenders: Iterable[CoalescedProcurementTender],
     decisions_by_tender: dict[str, TenderRelevanceDecision],
     institution_id_by_tender: dict[str, str],
+    lifecycle_by_tender: dict[str, str] | None = None,
+    family_by_tender: dict[str, Any] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """
     Return institution_id → list of category history dicts.
+
     Consumables / maintenance / rental are recorded but do not inflate purchase counts
     at the profile level (caller uses commercial_signal).
+
+    ``lifecycle_by_tender`` supplies the PR5E.2 projected lifecycle class per
+    coalesced tender id; when omitted the tender's own ``lifecycle_class`` is used.
+    ``family_by_tender`` supplies procurement-event family metadata per tender so
+    recurrence is driven by independent demand events rather than raw tender count.
     """
     acc: dict[str, dict[str, _CategoryAcc]] = defaultdict(dict)
+    families_applied = family_by_tender is not None
 
     for tender in sorted(tenders, key=lambda t: t.coalesced_tender_id):
         iid = institution_id_by_tender.get(tender.coalesced_tender_id)
@@ -97,15 +124,20 @@ def aggregate_equipment_history(
             if text:
                 snippets.append(str(text)[:240])
 
+        lifecycle = (lifecycle_by_tender or {}).get(
+            tender.coalesced_tender_id, tender.lifecycle_class
+        )
+        family = (family_by_tender or {}).get(tender.coalesced_tender_id)
+
         for category in classes:
             bucket = acc[iid].setdefault(category, _CategoryAcc(category=category))
             bucket.tender_ids.add(tender.coalesced_tender_id)
             bucket.line_evidence_ids |= line_ids
             if obs:
                 bucket.dates.append(obs)
-            if is_open_lifecycle(tender.lifecycle_class):
+            if is_open_lifecycle(lifecycle):
                 bucket.open_tender_ids.add(tender.coalesced_tender_id)
-            if is_historical_lifecycle(tender.lifecycle_class):
+            if is_historical_lifecycle(lifecycle):
                 bucket.historical_tender_ids.add(tender.coalesced_tender_id)
             bucket.tender_codes.add(code)
             if url:
@@ -118,6 +150,19 @@ def aggregate_equipment_history(
             bucket.ambiguity_reason_codes.update(decision.ambiguity_reason_codes)
             bucket.commercial_signals.add(signal)
             bucket.catalog_fit_statuses.add(decision.product_resolution_status)
+            if family is not None:
+                fid = str(_fam_field(family, "family_id") or "")
+                if fid:
+                    bucket.family_ids.add(fid)
+                    bucket.family_independent_events[fid] = int(
+                        _fam_field(family, "independent_demand_event_count", 0) or 0
+                    )
+                status = _fam_field(family, "family_resolution_status")
+                if status:
+                    bucket.family_statuses.add(str(status))
+                bucket.family_reason_codes.update(
+                    str(c) for c in (_fam_field(family, "family_reason_codes") or ())
+                )
 
     out: dict[str, list[dict[str, Any]]] = {}
     for iid, cats in acc.items():
@@ -129,10 +174,34 @@ def aggregate_equipment_history(
             purchase_signals = {
                 s for s in a.commercial_signals if is_equipment_purchase_signal(s)
             }
+            if families_applied:
+                family_count = len(a.family_ids)
+                independent = sum(a.family_independent_events.values())
+                if FAMILY_REVIEW in a.family_statuses:
+                    family_status = FAMILY_REVIEW
+                elif FAMILY_CONFIRMED in a.family_statuses:
+                    family_status = FAMILY_CONFIRMED
+                else:
+                    family_status = FAMILY_SINGLE
+                recurrence = recurrence_label(
+                    distinct,
+                    independent_demand_event_count=independent,
+                    family_resolution_status=family_status,
+                )
+            else:
+                family_count = distinct
+                independent = distinct
+                family_status = FAMILY_NOT_APPLIED
+                recurrence = recurrence_label(distinct)
             rows.append(
                 {
                     "canonical_equipment_category": category,
                     "distinct_tender_count": distinct,
+                    "raw_tender_count": distinct,
+                    "procurement_event_family_count": family_count,
+                    "independent_demand_event_count": independent,
+                    "family_resolution_status": family_status,
+                    "family_reason_codes": sorted(a.family_reason_codes),
                     "distinct_line_evidence_count": len(a.line_evidence_ids),
                     "first_observed_date": dates_sorted[0] if dates_sorted else None,
                     "most_recent_observed_date": dates_sorted[-1]
@@ -151,11 +220,11 @@ def aggregate_equipment_history(
                     "catalog_fit_statuses": sorted(a.catalog_fit_statuses),
                     "commercial_evidence_signals": sorted(a.commercial_signals),
                     "has_equipment_purchase_signal": bool(purchase_signals),
-                    "demand_recurrence": recurrence_label(distinct),
+                    "demand_recurrence": recurrence,
                 }
             )
         out[iid] = rows
     return out
 
 
-__all__ = ["aggregate_equipment_history"]
+__all__ = ["FAMILY_NOT_APPLIED", "aggregate_equipment_history"]
