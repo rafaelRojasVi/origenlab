@@ -7,7 +7,12 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from origenlab_email_pipeline.candidate_export_gate import GateContext
+from origenlab_email_pipeline.commercial_procurement_contact_resolution import (
+    planner as contact_planner,
+)
 from origenlab_email_pipeline.commercial_identity.schema import (
     ensure_commercial_identity_tables,
 )
@@ -58,7 +63,6 @@ from origenlab_email_pipeline.commercial_procurement_contact_resolution.organiza
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.planner import (
     empty_frozen_source_index,
     reconcile_contact_resolution,
-    write_contact_resolution_outputs,
 )
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.policy import (
     classify_role_suitability,
@@ -272,7 +276,9 @@ def test_forbidden_flags_include_label_and_send() -> None:
     assert "--apply" in FORBIDDEN_CLI_FLAGS
 
 
-def test_shareable_outputs_redact_contact_resolution_identifiers(tmp_path: Path) -> None:
+def test_shareable_outputs_redact_contact_resolution_identifiers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     raw_tender_id = "1234-56-LE26"
     raw_relevance_id = "trd_hospital_demo_real"
     raw_org_id = "org_hospital_demo_real"
@@ -364,9 +370,22 @@ def test_shareable_outputs_redact_contact_resolution_identifiers(tmp_path: Path)
         ),
     )
 
-    written = write_contact_resolution_outputs(
+    synthetic_root = tmp_path / "email-pipeline"
+    (synthetic_root / "reports" / "out").mkdir(parents=True)
+    fake_planner_file = (
+        synthetic_root
+        / "src"
+        / "origenlab_email_pipeline"
+        / "commercial_procurement_contact_resolution"
+        / "planner.py"
+    )
+    fake_planner_file.parent.mkdir(parents=True)
+    fake_planner_file.write_text("# synthetic planner path\n", encoding="utf-8")
+    monkeypatch.setattr(contact_planner, "__file__", str(fake_planner_file))
+
+    written = contact_planner.write_contact_resolution_outputs(
         result,
-        tmp_path / "pr5e",
+        synthetic_root / "reports" / "out" / "pr5e",
         require_git_ignored=False,
     )
 
