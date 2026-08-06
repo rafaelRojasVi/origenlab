@@ -151,3 +151,17 @@ cover exactly the live-backed population.
 Artifact directory (gitignored):
 
 `apps/email-pipeline/reports/out/active/current/commercial_procurement_live_feed_review_pr5b2_20260806T021500Z/`
+
+## Related: independent PR5D prospect-quality review (diagnostic)
+
+A separate, aggregate-only audit of an external **title-only** independent PR5D
+review (200 diagnostic-stratified records; `reviewed_not_gold`; sealed
+predictions not accessed) is recorded in:
+
+[`COMMERCIAL_PROCUREMENT_PR5D_INDEPENDENT_PROSPECT_QUALITY_REVIEW_2026-08-05.md`](COMMERCIAL_PROCUREMENT_PR5D_INDEPENDENT_PROSPECT_QUALITY_REVIEW_2026-08-05.md)
+
+That packet answers a different question than this live-feed bridge. Do not
+treat its four clear title matches as the same population as this document’s
+six `current_opportunity` rows unless tender identity is explicitly joined.
+PR #434 does not validate classifier accuracy; a separate calibration +
+representative holdout remain required before precision/recall/F1 claims.
