@@ -1,15 +1,19 @@
-"""Read-only client for Mercado Público licitaciones JSON API."""
+"""Read-only client for Mercado Público licitaciones JSON API and portal anexos."""
 
 from __future__ import annotations
 
+import html
 import json
 import os
 import re
+from dataclasses import dataclass
 from datetime import datetime
+from http.cookiejar import CookieJar
+from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlparse, urlunparse
-from urllib.request import Request, urlopen
+from urllib.parse import unquote, urlencode, urljoin, urlparse, urlunparse
+from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen
 
 from origenlab_email_pipeline.equipment_first_licitacion_queue import CSV_COLUMNS, parse_close_date
 
@@ -21,6 +25,40 @@ DEFAULT_TIMEOUT_SECONDS = 30.0
 FECHA_PATTERN = re.compile(r"^\d{8}$")
 _TICKET_IN_URL_RE = re.compile(r"([?&]ticket=)[^&]*", re.IGNORECASE)
 _UNSAFE_ATTACHMENT_URL_RE = re.compile(r"ticket|api\.chilecompra|api\.mercadopublico\.cl", re.IGNORECASE)
+
+# --- Public portal (anexos) -------------------------------------------------
+# The JSON API exposes anexo *metadata* only; the files themselves live behind
+# the ASP.NET portal, where each listing row downloads via a WebForms postback.
+PORTAL_BASE_URL = "https://www.mercadopublico.cl/Procurement/Modules/"
+PORTAL_DETAIL_PATH = "RFB/DetailsAcquisition.aspx"
+PORTAL_ALLOWED_HOSTS = frozenset({"www.mercadopublico.cl", "mercadopublico.cl"})
+PORTAL_USER_AGENT = "origenlab-chilecompra-api/1.0"
+DEFAULT_ATTACHMENT_MAX_BYTES = 64 * 1024 * 1024
+_ATTACHMENT_FALLBACK_FILENAME = "anexo.bin"
+_MAX_ATTACHMENT_FILENAME_LENGTH = 180
+
+_LISTING_HREF_RE = re.compile(
+    r"""href=["']((?:\.\./)*Attachment/VerAntecedentes\.aspx\?enc=[^"'#]+)["']""",
+    re.IGNORECASE,
+)
+_HIDDEN_INPUT_RE = re.compile(r"""<input\b[^>]*type=["']hidden["'][^>]*>""", re.IGNORECASE)
+_INPUT_NAME_RE = re.compile(r"""\bname=["']([^"']+)["']""", re.IGNORECASE)
+_INPUT_VALUE_RE = re.compile(r"""\bvalue=["']([^"']*)["']""", re.IGNORECASE)
+_GRID_ROW_RE = re.compile(r"<tr\b.*?</tr>", re.IGNORECASE | re.DOTALL)
+_VIEW_BUTTON_RE = re.compile(
+    r"""\bname=["'](grdAttachment\$ctl\d+\$grdIbtnView)["']""", re.IGNORECASE
+)
+_TABLE_CELL_RE = re.compile(r"<td\b[^>]*>(.*?)</td>", re.IGNORECASE | re.DOTALL)
+_TAG_RE = re.compile(r"<[^>]+>")
+_CONTENT_DISPOSITION_FILENAME_RE = re.compile(
+    r"""filename\*?=(?:UTF-8''|["'])?([^"';]+)""", re.IGNORECASE
+)
+_UNSAFE_FILENAME_RE = re.compile(r"""[\\/:*?"<>|\x00-\x1f]""")
+_ROW_LABEL_IDS = {
+    "nombre": "grdLblSourceFileName",
+    "descripcion": "grdLblFileDescription",
+    "fecha_adjunto": "grdLblFileDate",
+}
 
 _ANEXOS_CONTAINER_KEYS = (
     "Anexos",
@@ -65,6 +103,7 @@ VALIDITY_STATUS_NOT_PUBLICADA = "status_not_publicada"
 VALIDITY_STATUS_MISSING_CLOSE_DATE = "missing_close_date"
 
 UrlopenFn = Callable[..., Any]
+PortalOpenFn = Callable[..., Any]
 
 
 class ChileCompraApiError(Exception):
@@ -81,6 +120,10 @@ class ChileCompraHttpError(ChileCompraApiError):
 
 class ChileCompraJsonError(ChileCompraApiError):
     """Raised when the API response is not valid JSON or has an unexpected shape."""
+
+
+class ChileCompraPortalError(ChileCompraApiError):
+    """Raised when the public portal returns markup we cannot turn into a download."""
 
 
 def ticket_from_env(environ: dict[str, str] | None = None) -> str:
@@ -524,3 +567,302 @@ def fetch_licitacion_by_codigo(
     resolved_ticket = ticket or ticket_from_env()
     url = build_licitaciones_url(ticket=resolved_ticket, codigo=codigo)
     return _fetch_json(url, ticket=resolved_ticket, timeout=timeout, urlopen_fn=urlopen_fn)
+
+
+# --- Public portal anexo downloads ------------------------------------------
+
+
+@dataclass(frozen=True)
+class PortalAttachment:
+    """One anexo row on a ``VerAntecedentes.aspx`` listing page."""
+
+    nombre: str
+    tipo: str
+    descripcion: str
+    fecha_adjunto: str
+    listing_url: str
+    control_name: str
+
+
+@dataclass(frozen=True)
+class DownloadedAttachment:
+    """An anexo whose bytes were fetched from the portal."""
+
+    attachment: PortalAttachment
+    filename: str
+    content_type: str
+    content: bytes
+
+    @property
+    def is_pdf(self) -> bool:
+        return self.content.startswith(b"%PDF")
+
+
+def build_licitacion_detail_url(qs: str) -> str:
+    """Build the portal ficha URL from the ``qs`` token in a Mercado Público link."""
+    token = (qs or "").strip()
+    if not token:
+        raise ValueError("qs is required")
+    return f"{PORTAL_BASE_URL}{PORTAL_DETAIL_PATH}?{urlencode({'qs': token})}"
+
+
+def is_portal_url(url: str) -> bool:
+    """Return True when ``url`` is an https Mercado Público portal URL."""
+    text = (url or "").strip()
+    if not text:
+        return False
+    parsed = urlparse(text)
+    if parsed.scheme.lower() != "https":
+        return False
+    return parsed.hostname is not None and parsed.hostname.lower() in PORTAL_ALLOWED_HOSTS
+
+
+def _require_portal_url(url: str) -> str:
+    if not is_portal_url(url):
+        raise ChileCompraPortalError(
+            f"Refusing to fetch non-portal URL: {url!r} "
+            f"(expected https on one of {sorted(PORTAL_ALLOWED_HOSTS)})"
+        )
+    return url
+
+
+def _cell_text(fragment: str) -> str:
+    return html.unescape(_TAG_RE.sub(" ", fragment)).strip()
+
+
+def _row_label_text(row_html: str, label_id: str) -> str:
+    match = re.search(
+        rf"""id=["'][^"']*_{re.escape(label_id)}["'][^>]*>(.*?)</span>""",
+        row_html,
+        re.IGNORECASE | re.DOTALL,
+    )
+    return _cell_text(match.group(1)) if match else ""
+
+
+def extract_attachment_listing_urls(page_html: str, *, base_url: str = PORTAL_BASE_URL) -> list[str]:
+    """Extract the ``VerAntecedentes.aspx`` listing URLs linked from a ficha page."""
+    urls: list[str] = []
+    for match in _LISTING_HREF_RE.finditer(page_html or ""):
+        href = html.unescape(match.group(1))
+        # Hrefs are relative to .../Modules/RFB/; normalize onto the Modules root.
+        absolute = urljoin(base_url, href.replace("../", "", 1) if href.startswith("../") else href)
+        if is_portal_url(absolute) and absolute not in urls:
+            urls.append(absolute)
+    return urls
+
+
+def parse_attachment_listing(listing_html: str, *, listing_url: str) -> list[PortalAttachment]:
+    """Parse the anexo rows (name, tipo, postback control) off a listing page."""
+    rows: list[PortalAttachment] = []
+    for row_html in _GRID_ROW_RE.findall(listing_html or ""):
+        button = _VIEW_BUTTON_RE.search(row_html)
+        if not button:
+            continue
+        cells = [_cell_text(cell) for cell in _TABLE_CELL_RE.findall(row_html)]
+        rows.append(
+            PortalAttachment(
+                nombre=_row_label_text(row_html, _ROW_LABEL_IDS["nombre"]),
+                # "Tipo" is the only column rendered as a bare cell, without a label id.
+                tipo=cells[1] if len(cells) > 1 else "",
+                descripcion=_row_label_text(row_html, _ROW_LABEL_IDS["descripcion"]),
+                fecha_adjunto=_row_label_text(row_html, _ROW_LABEL_IDS["fecha_adjunto"]),
+                listing_url=listing_url,
+                control_name=html.unescape(button.group(1)),
+            )
+        )
+    return rows
+
+
+def extract_aspnet_form_fields(page_html: str) -> dict[str, str]:
+    """Collect the hidden WebForms fields (``__VIEWSTATE`` and friends) from a page."""
+    fields: dict[str, str] = {}
+    for tag in _HIDDEN_INPUT_RE.findall(page_html or ""):
+        name = _INPUT_NAME_RE.search(tag)
+        if not name:
+            continue
+        value = _INPUT_VALUE_RE.search(tag)
+        fields[html.unescape(name.group(1))] = html.unescape(value.group(1)) if value else ""
+    return fields
+
+
+def build_attachment_postback_body(fields: dict[str, str], control_name: str) -> bytes:
+    """Build the urlencoded postback body that makes the portal serve one anexo."""
+    if not (control_name or "").strip():
+        raise ValueError("control_name is required")
+    payload = dict(fields)
+    # The download trigger is an <input type="image">, so it posts x/y instead of a value.
+    payload[f"{control_name}.x"] = "10"
+    payload[f"{control_name}.y"] = "10"
+    return urlencode(payload, encoding="utf-8").encode("utf-8")
+
+
+def safe_attachment_filename(name: str, *, fallback: str = _ATTACHMENT_FALLBACK_FILENAME) -> str:
+    """Sanitize a portal-supplied filename so it is safe to write to disk."""
+    candidate = unquote((name or "").strip()).replace("\\", "/").split("/")[-1]
+    candidate = _UNSAFE_FILENAME_RE.sub("_", candidate).strip().strip(".").strip()
+    if not candidate:
+        return fallback
+    if len(candidate) > _MAX_ATTACHMENT_FILENAME_LENGTH:
+        stem, dot, suffix = candidate.rpartition(".")
+        if dot and len(suffix) <= 8:
+            keep = _MAX_ATTACHMENT_FILENAME_LENGTH - len(suffix) - 1
+            candidate = f"{stem[:keep]}.{suffix}"
+        else:
+            candidate = candidate[:_MAX_ATTACHMENT_FILENAME_LENGTH]
+    return candidate or fallback
+
+
+def _repair_latin1_mojibake(text: str) -> str:
+    """Undo the latin-1 decode urllib applies to UTF-8 bytes in response headers."""
+    try:
+        return text.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return text
+
+
+def _filename_from_headers(headers: dict[str, str]) -> str:
+    disposition = headers.get("Content-Disposition") or headers.get("content-disposition") or ""
+    match = _CONTENT_DISPOSITION_FILENAME_RE.search(disposition)
+    if not match:
+        return ""
+    return _repair_latin1_mojibake(match.group(1).strip().strip('"'))
+
+
+def new_portal_opener() -> PortalOpenFn:
+    """Build a cookie-aware opener; the portal ties ``__VIEWSTATE`` to a session cookie."""
+    return build_opener(HTTPCookieProcessor(CookieJar())).open
+
+
+def _portal_request(
+    url: str,
+    *,
+    opener: PortalOpenFn,
+    timeout: float,
+    data: bytes | None = None,
+    referer: str | None = None,
+    max_bytes: int | None = None,
+) -> tuple[bytes, dict[str, str]]:
+    _require_portal_url(url)
+    headers = {"User-Agent": PORTAL_USER_AGENT}
+    if referer:
+        headers["Referer"] = referer
+    if data is not None:
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+    request = Request(url, data=data, headers=headers, method="POST" if data else "GET")
+    try:
+        with opener(request, timeout=timeout) as response:
+            status = getattr(response, "status", None) or response.getcode()
+            final_url = getattr(response, "url", None) or url
+            body = response.read() if max_bytes is None else response.read(max_bytes + 1)
+            response_headers = dict(getattr(response, "headers", {}) or {})
+    except HTTPError as exc:
+        raise ChileCompraHttpError(f"HTTP {exc.code} while fetching {url}") from exc
+    except URLError as exc:
+        raise ChileCompraHttpError(f"Network error while fetching {url}: {exc.reason}") from exc
+
+    if status is not None and int(status) >= 400:
+        raise ChileCompraHttpError(f"HTTP {status} while fetching {url}")
+    # A crafted ``enc`` token could redirect off-host; urllib already followed it.
+    _require_portal_url(str(final_url))
+    if max_bytes is not None and len(body) > max_bytes:
+        raise ChileCompraPortalError(
+            f"Attachment at {url} exceeds max_bytes={max_bytes}"
+        )
+    return body, response_headers
+
+
+def _decode_portal_html(raw: bytes) -> str:
+    return raw.decode("utf-8", errors="replace")
+
+
+def download_portal_attachment(
+    attachment: PortalAttachment,
+    form_fields: dict[str, str],
+    *,
+    opener: PortalOpenFn,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    max_bytes: int = DEFAULT_ATTACHMENT_MAX_BYTES,
+) -> DownloadedAttachment:
+    """Post back one listing row and return the file the portal serves."""
+    body, headers = _portal_request(
+        attachment.listing_url,
+        opener=opener,
+        timeout=timeout,
+        data=build_attachment_postback_body(form_fields, attachment.control_name),
+        referer=attachment.listing_url,
+        max_bytes=max_bytes,
+    )
+    content_type = (headers.get("Content-Type") or headers.get("content-type") or "").strip()
+    if body[:1024].lstrip().lower().startswith((b"<!doctype html", b"<html")):
+        raise ChileCompraPortalError(
+            f"Portal returned HTML instead of a file for {attachment.nombre or attachment.control_name!r}"
+        )
+    # The listing name is decoded from the page's UTF-8 markup, so it keeps accents and
+    # spaces the portal mangles in Content-Disposition; fall back to the header otherwise.
+    return DownloadedAttachment(
+        attachment=attachment,
+        filename=safe_attachment_filename(attachment.nombre or _filename_from_headers(headers)),
+        content_type=content_type,
+        content=body,
+    )
+
+
+def fetch_licitacion_attachments(
+    detail_url: str,
+    *,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    max_bytes: int = DEFAULT_ATTACHMENT_MAX_BYTES,
+    opener: PortalOpenFn | None = None,
+) -> list[DownloadedAttachment]:
+    """Download every anexo published on a licitación ficha page.
+
+    ``detail_url`` is the ``DetailsAcquisition.aspx?qs=...`` link; use
+    :func:`build_licitacion_detail_url` when you only have the ``qs`` token.
+    """
+    session = opener or new_portal_opener()
+    detail_raw, _ = _portal_request(detail_url, opener=session, timeout=timeout)
+    listing_urls = extract_attachment_listing_urls(_decode_portal_html(detail_raw))
+
+    downloads: list[DownloadedAttachment] = []
+    for listing_url in listing_urls:
+        listing_raw, _ = _portal_request(
+            listing_url, opener=session, timeout=timeout, referer=detail_url
+        )
+        listing_html = _decode_portal_html(listing_raw)
+        form_fields = extract_aspnet_form_fields(listing_html)
+        for attachment in parse_attachment_listing(listing_html, listing_url=listing_url):
+            downloads.append(
+                download_portal_attachment(
+                    attachment,
+                    form_fields,
+                    opener=session,
+                    timeout=timeout,
+                    max_bytes=max_bytes,
+                )
+            )
+    return downloads
+
+
+def save_licitacion_attachments(
+    detail_url: str,
+    dest_dir: str | Path,
+    *,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    max_bytes: int = DEFAULT_ATTACHMENT_MAX_BYTES,
+    opener: PortalOpenFn | None = None,
+) -> list[Path]:
+    """Download a ficha's anexos and write them into ``dest_dir``."""
+    destination = Path(dest_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    for download in fetch_licitacion_attachments(
+        detail_url, timeout=timeout, max_bytes=max_bytes, opener=opener
+    ):
+        path = destination / download.filename
+        counter = 2
+        while path.exists():
+            path = destination / f"{Path(download.filename).stem} ({counter}){path.suffix}"
+            counter += 1
+        path.write_bytes(download.content)
+        written.append(path)
+    return written
