@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import sqlite3
 from pathlib import Path
 
@@ -43,6 +44,7 @@ from origenlab_email_pipeline.commercial_procurement_contact_resolution.frozen_s
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.models import (
     ContactCandidate,
     ContactResolutionEvidence,
+    ContactResolutionPlanResult,
     ContactResolutionSummary,
     OrganizationResolution,
 )
@@ -56,6 +58,7 @@ from origenlab_email_pipeline.commercial_procurement_contact_resolution.organiza
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.planner import (
     empty_frozen_source_index,
     reconcile_contact_resolution,
+    write_contact_resolution_outputs,
 )
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.policy import (
     classify_role_suitability,
@@ -69,6 +72,9 @@ from origenlab_email_pipeline.commercial_procurement_contact_resolution.safety i
     evaluate_contact_safety,
     parse_usable_email,
     safety_snapshot_from_gate_context,
+)
+from origenlab_email_pipeline.commercial_procurement_contact_resolution.walkthrough import (
+    build_contact_resolution_walkthrough,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.models import (
     TenderRelevanceDecision,
@@ -264,6 +270,137 @@ def test_forbidden_flags_include_label_and_send() -> None:
     assert "--label" in FORBIDDEN_CLI_FLAGS
     assert "--send" in FORBIDDEN_CLI_FLAGS
     assert "--apply" in FORBIDDEN_CLI_FLAGS
+
+
+def test_shareable_outputs_redact_contact_resolution_identifiers(tmp_path: Path) -> None:
+    raw_tender_id = "1234-56-LE26"
+    raw_relevance_id = "trd_hospital_demo_real"
+    raw_org_id = "org_hospital_demo_real"
+    raw_account_id = "acct_hospital_demo_real"
+    raw_contact_id = "contact_buyer_real"
+    raw_candidate_id = "cand_buyer_real"
+    raw_resolution_id = "cr_hospital_demo_real"
+
+    organization = OrganizationResolution(
+        organization_resolution_id=raw_org_id,
+        coalesced_tender_id=raw_tender_id,
+        relevance_decision_id=raw_relevance_id,
+        resolution_status="linked",
+        resolution_source="live_link_route",
+        account_id=raw_account_id,
+        link_route="A_exact_institutional_domain",
+        reason_code="ok",
+        candidate_account_ids=(),
+        evidence_ref_ids=("eref_real",),
+        pr4_procurement_ids=(),
+        pr4_resolution_ids=(),
+        buyer_field_sufficiency="name_and_domain",
+        identity_fingerprint="identity_fp",
+    )
+    summary = ContactResolutionSummary(
+        contact_resolution_id=raw_resolution_id,
+        coalesced_tender_id=raw_tender_id,
+        relevance_decision_id=raw_relevance_id,
+        organization_resolution_id=raw_org_id,
+        account_id=raw_account_id,
+        final_contact_status="existing_verified_contact",
+        selected_contact_id=raw_contact_id,
+        selected_candidate_id=raw_candidate_id,
+        search_stages_completed=("commercial_identity_contact",),
+        next_action="use_existing_contact",
+        reason_code="verified_suitable_contact_selected",
+        considered_contact_count=1,
+        suitable_contact_count=1,
+        blocked_contact_count=0,
+        relevance_class_echo="strong_equipment_class",
+        lifecycle_class_echo="open",
+        currentness_class_echo="current_authoritative_snapshot",
+        relevance_validation_status_echo="validated",
+        input_fingerprint="input_fp",
+        semantic_fingerprint="semantic_fp",
+        rules_version="rules_v1",
+        resolver_version="resolver_v1",
+    )
+    candidate = ContactCandidate(
+        candidate_id=raw_candidate_id,
+        contact_resolution_id=raw_resolution_id,
+        coalesced_tender_id=raw_tender_id,
+        account_id=raw_account_id,
+        contact_id=raw_contact_id,
+        rank=1,
+        ranking_tier="verified_suitable_clear",
+        role_raw_digest="role_digest",
+        role_suitability="suitable_procurement",
+        identity_status="resolved",
+        identity_confidence="high",
+        has_usable_email=True,
+        verification_status="explicitly_verified",
+        evidence_ids=("evidence_real",),
+        suppression_result="clear",
+        outreach_state_result="clear",
+        safety_blocked=False,
+        safety_unknown=False,
+        selectable=True,
+        ranking_reason_codes=("verified_suitable_clear",),
+    )
+    result = ContactResolutionPlanResult(
+        as_of_utc="2026-01-01T00:00:00Z",
+        run_context="test",
+        planner_version="pr5e_test",
+        organization_resolutions=(organization,),
+        contact_summaries=(summary,),
+        contact_candidates=(candidate,),
+        evidence=(),
+        conflicts=(),
+        reconciliation={"ok": True, "equations": {"summaries_match": True}},
+        fingerprints={"input": "input_fp", "semantic": "semantic_fp"},
+        dependency_fingerprints={"safety": "safety_fp"},
+        counts={"contact_summaries": 1, "selected_contacts": 1},
+        field_sufficiency_audit={"name_and_domain": 1},
+        walkthrough=build_contact_resolution_walkthrough(
+            organizations=(organization,),
+            summaries=(summary,),
+            candidates=(candidate,),
+        ),
+    )
+
+    written = write_contact_resolution_outputs(
+        result,
+        tmp_path / "pr5e",
+        require_git_ignored=False,
+    )
+
+    shareable_blob = "\n".join(
+        [
+            Path(written["summary"]).read_text(encoding="utf-8"),
+            Path(written["walkthrough_json"]).read_text(encoding="utf-8"),
+            Path(written["walkthrough_md"]).read_text(encoding="utf-8"),
+        ]
+    )
+    for raw in (
+        raw_tender_id,
+        raw_relevance_id,
+        raw_org_id,
+        raw_account_id,
+        raw_contact_id,
+        raw_candidate_id,
+        raw_resolution_id,
+    ):
+        assert raw not in shareable_blob
+
+    walkthrough = json.loads(
+        Path(written["walkthrough_json"]).read_text(encoding="utf-8")
+    )
+    case_b = next(case for case in walkthrough["cases"] if case["case"] == "B")
+    assert case_b["source_evidence_redacted"]["coalesced_tender_token"].startswith(
+        "tender_"
+    )
+    assert case_b["source_evidence_redacted"]["relevance_decision_token"].startswith(
+        "trd_"
+    )
+    assert case_b["organization"]["account_token"].startswith("account_")
+    assert case_b["selected_contact_token"].startswith("contact_")
+    assert case_b["considered_contacts"][0]["contact_token"].startswith("contact_")
 
 
 def test_buyer_source_id_never_treated_as_account_id() -> None:
