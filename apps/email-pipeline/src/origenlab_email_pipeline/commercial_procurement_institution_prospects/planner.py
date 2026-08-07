@@ -71,7 +71,7 @@ from origenlab_email_pipeline.commercial_procurement_institution_prospects.line_
     SCOPE_COMPLETE_EQUIPMENT,
     aggregate_category_scoped_claims,
     aggregate_tender_axes,
-    build_line_claims,
+    build_claims_for_units,
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.overlay import (
     build_contact_overlay,
@@ -99,9 +99,11 @@ from origenlab_email_pipeline.commercial_procurement_live_feed_bridge.adapter im
     adapt_detail_cache_directory,
 )
 from origenlab_email_pipeline.commercial_procurement_live_feed_bridge.freshness import (
+    OBSERVATION_ELIGIBLE,
+    OBSERVATION_FUTURE,
+    OBSERVATION_INVALID_CHRONOLOGY,
+    OBSERVATION_MISSING_CHRONOLOGY,
     evaluate_feed_freshness,
-    is_future_observation,
-    is_temporally_eligible_observation,
     load_json_object,
     observation_temporal_status,
     resolve_acquired_at_utc,
@@ -116,10 +118,6 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.planner i
 from origenlab_email_pipeline.equipment_first_chilecompra_publish import (
     build_mercado_publico_search_url,
 )
-
-# Temporal eligibility helpers are part of the public recognition contract; keep
-# them imported so planners and audits share one fail-closed vocabulary.
-_ = (is_temporally_eligible_observation, observation_temporal_status)
 
 
 def _email_pipeline_root() -> Path:
@@ -210,7 +208,138 @@ def reconcile_line_partition(
         "classified_unit_count": len(classified),
         "unresolved_unit_count": len(unresolved),
         "claim_count": len(claim_refs),
+        "orphan_decision_ids": orphan_decisions,
+        "orphan_unresolved_unit_ids": orphan_unresolved,
     }
+
+
+def reconcile_event_family_coverage(
+    *,
+    eligible_tender_ids: list[str],
+    family_member_tender_ids: list[str],
+) -> dict[str, Any]:
+    """Exact-once coverage of temporally eligible tenders by event families.
+
+    Multiplicity matters: converting to a set would hide duplicate memberships.
+    """
+    eligible = Counter(str(tid) for tid in eligible_tender_ids)
+    members = Counter(str(tid) for tid in family_member_tender_ids)
+    # Every eligible tender is expected exactly once.
+    expected = Counter({tid: 1 for tid in eligible})
+
+    missing_eligible_tender_ids = sorted(tid for tid in expected if members[tid] == 0)
+    duplicate_member_tender_ids = sorted(tid for tid in members if members[tid] > 1)
+    extra_tender_ids = sorted(tid for tid in members if tid not in expected)
+    under_covered = sorted(
+        tid for tid in expected if 0 < members[tid] < expected[tid]
+    )
+
+    failure_codes: list[str] = []
+    if missing_eligible_tender_ids:
+        failure_codes.append("missing_eligible_tenders")
+    if duplicate_member_tender_ids:
+        failure_codes.append("duplicate_family_memberships")
+    if extra_tender_ids:
+        failure_codes.append("extra_family_members")
+    if under_covered:
+        failure_codes.append("under_covered_eligible_tenders")
+    if eligible != expected:
+        # eligible_tender_ids themselves must be unique identities.
+        failure_codes.append("duplicate_eligible_tender_ids")
+
+    ok = not failure_codes and members == expected
+    return {
+        "ok": ok,
+        "failure_codes": sorted(set(failure_codes)),
+        "equation": (
+            "event_family_reconciliation covers exactly the temporally "
+            "eligible source tenders once each"
+        ),
+        "temporally_eligible_tender_count": len(expected),
+        "family_member_tender_ids": sorted(members.elements()),
+        "family_member_counts": dict(sorted(members.items())),
+        "missing_eligible_tender_ids": missing_eligible_tender_ids,
+        "duplicate_member_tender_ids": duplicate_member_tender_ids,
+        "extra_tender_ids": extra_tender_ids,
+        "covered_exactly_once": ok,
+    }
+
+
+def classify_acquisition_snapshots(
+    snapshot_paths: list[Path],
+    *,
+    as_of_utc: str,
+) -> dict[str, Any]:
+    """Classify every acquisition snapshot's chronology against ``as_of_utc``.
+
+    Only ``eligible`` snapshots may contribute to PR5E.2 recognition. Future,
+    missing, and invalid chronology are quarantined without rewriting stamps.
+    """
+    classifications: list[dict[str, Any]] = []
+    by_status: dict[str, list[str]] = {
+        OBSERVATION_ELIGIBLE: [],
+        OBSERVATION_FUTURE: [],
+        OBSERVATION_MISSING_CHRONOLOGY: [],
+        OBSERVATION_INVALID_CHRONOLOGY: [],
+    }
+
+    for path in snapshot_paths:
+        try:
+            payload = load_json_object(Path(path))
+        except (OSError, ValueError):
+            continue
+        snapshot_id = str(payload.get("snapshot_id") or "")
+        if not snapshot_id:
+            continue
+        stamps = _snapshot_acquisition_stamps(payload)
+        status = _classify_snapshot_stamps(stamps, as_of_utc=as_of_utc)
+        classifications.append(
+            {
+                "snapshot_id": snapshot_id,
+                "temporal_status": status,
+                "acquisition_stamps": [str(s) for s in stamps],
+                "path": str(path),
+            }
+        )
+        by_status.setdefault(status, []).append(snapshot_id)
+
+    for key in by_status:
+        by_status[key] = sorted(set(by_status[key]))
+
+    return {
+        "as_of_utc": as_of_utc,
+        "by_status": by_status,
+        "eligible_snapshot_ids": list(by_status[OBSERVATION_ELIGIBLE]),
+        "future_snapshot_ids": list(by_status[OBSERVATION_FUTURE]),
+        "missing_chronology_snapshot_ids": list(
+            by_status[OBSERVATION_MISSING_CHRONOLOGY]
+        ),
+        "invalid_chronology_snapshot_ids": list(
+            by_status[OBSERVATION_INVALID_CHRONOLOGY]
+        ),
+        "classifications": classifications,
+        "counts": {status: len(ids) for status, ids in sorted(by_status.items())},
+    }
+
+
+def _classify_snapshot_stamps(
+    stamps: list[Any], *, as_of_utc: str
+) -> str:
+    """Fail-closed status for one snapshot's acquisition stamps."""
+    if not stamps:
+        return OBSERVATION_MISSING_CHRONOLOGY
+    statuses = [
+        observation_temporal_status(stamp, as_of_utc=as_of_utc) for stamp in stamps
+    ]
+    if all(status == OBSERVATION_ELIGIBLE for status in statuses):
+        return OBSERVATION_ELIGIBLE
+    if any(status == OBSERVATION_INVALID_CHRONOLOGY for status in statuses):
+        return OBSERVATION_INVALID_CHRONOLOGY
+    if any(status == OBSERVATION_MISSING_CHRONOLOGY for status in statuses):
+        return OBSERVATION_MISSING_CHRONOLOGY
+    if any(status == OBSERVATION_FUTURE for status in statuses):
+        return OBSERVATION_FUTURE
+    return OBSERVATION_MISSING_CHRONOLOGY
 
 
 REQUIRED_HARDENING_ARTIFACTS = (
@@ -262,7 +391,10 @@ class InstitutionProspectPlanResult:
     def to_summary_dict(self) -> dict[str, Any]:
         return {
             "ok": bool(self.reconciliation.get("ok"))
-            and bool(self.line_reconciliation.get("ok", True)),
+            and bool(self.line_reconciliation.get("ok", True))
+            and bool(self.event_family_reconciliation.get("ok", True))
+            and bool(self.operator_queue_reconciliation.get("ok", True))
+            and bool(self.temporal_reconciliation.get("ok", True)),
             "as_of_utc": self.as_of_utc,
             "run_context": self.run_context,
             "planner_version": self.planner_version,
@@ -390,19 +522,45 @@ def _build_line_rows(
     institution_id_by_tender: dict[str, str],
     identity_by_institution: dict[str, InstitutionIdentity],
     projected_lifecycle: dict[str, str],
+    eligible_tender_ids: set[str],
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, list[LineClaim]]]:
-    """Reconcile every PR5D evidence unit into assigned / review / excluded."""
+    """Reconcile every PR5D evidence unit into assigned / review / excluded.
+
+    Commercial claims are emitted only for temporally eligible, linked units via
+    :func:`build_claims_for_units`. Unresolved units are accounted in
+    reconciliation but never become demand.
+    """
     text_unit_by_id = {u.unit_id: u for u in pr5d.product_text_units}
-    claims_by_unit: dict[str, tuple[LineClaim, ...]] = {}
+
+    eligible_decisions = [
+        unit
+        for unit in pr5d.unit_decisions
+        if unit.coalesced_tender_id in eligible_tender_ids
+    ]
+    decided_unit_id_set = {unit.unit_id for unit in eligible_decisions}
+
+    # Claims only from temporally eligible, linked, classified units.
+    claim_source_units = [
+        u
+        for u in pr5d.product_text_units
+        if u.unit_id in decided_unit_id_set
+        and u.link_status != "unresolved"
+        and u.coalesced_tender_id
+        and u.coalesced_tender_id in eligible_tender_ids
+    ]
+    claims_by_unit = build_claims_for_units(claim_source_units)
+    for unit in pr5d.product_text_units:
+        claims_by_unit.setdefault(unit.unit_id, ())
+
     claims_by_tender: dict[str, list[LineClaim]] = defaultdict(list)
-    for unit in sorted(pr5d.product_text_units, key=lambda u: u.unit_id):
-        claims = build_line_claims(unit)
-        claims_by_unit[unit.unit_id] = claims
-        claims_by_tender[unit.coalesced_tender_id].extend(claims)
+    for claims in claims_by_unit.values():
+        for claim in claims:
+            if claim.coalesced_tender_id in eligible_tender_ids:
+                claims_by_tender[claim.coalesced_tender_id].append(claim)
 
     rows: list[dict[str, Any]] = []
     for unit in sorted(
-        pr5d.unit_decisions, key=lambda u: (u.coalesced_tender_id, u.unit_decision_id)
+        eligible_decisions, key=lambda u: (u.coalesced_tender_id, u.unit_decision_id)
     ):
         tid = unit.coalesced_tender_id
         tender = tender_by_id.get(tid)
@@ -464,26 +622,82 @@ def _build_line_rows(
     assigned = counts.get(LINE_DISPOSITION_ASSIGNED, 0)
     review = counts.get(LINE_DISPOSITION_REVIEW, 0)
     excluded = counts.get(LINE_DISPOSITION_EXCLUDED, 0)
-    total = len(pr5d.unit_decisions)
+    total = len(eligible_decisions)
 
-    decided_unit_ids = {u.unit_id for u in pr5d.unit_decisions}
-    text_unit_ids = set(text_unit_by_id)
-    unresolved_unit_ids = {u.unit_id for u in pr5d.unresolved_units}
-    dropped_unit_ids = sorted(text_unit_ids - decided_unit_ids - unresolved_unit_ids)
-    decisions_without_text_unit = sorted(decided_unit_ids - text_unit_ids)
+    assigned_unit_ids = [
+        r["unit_id"] for r in rows if r["line_disposition"] == LINE_DISPOSITION_ASSIGNED
+    ]
+    review_unit_ids = [
+        r["unit_id"] for r in rows if r["line_disposition"] == LINE_DISPOSITION_REVIEW
+    ]
+    excluded_unit_ids = [
+        r["unit_id"]
+        for r in rows
+        if r["line_disposition"] == LINE_DISPOSITION_EXCLUDED
+    ]
+
+    unresolved_unit_ids: set[str] = {u.unit_id for u in pr5d.unresolved_units}
+    for unit in pr5d.product_text_units:
+        if unit.link_status == "unresolved" or not unit.coalesced_tender_id:
+            unresolved_unit_ids.add(unit.unit_id)
+
+    text_unit_ids: list[str] = []
+    seen_text: set[str] = set()
+    for unit in pr5d.product_text_units:
+        uid = unit.unit_id
+        if uid in seen_text:
+            continue
+        if unit.link_status == "unresolved" or not unit.coalesced_tender_id:
+            text_unit_ids.append(uid)
+            seen_text.add(uid)
+        elif unit.coalesced_tender_id in eligible_tender_ids:
+            text_unit_ids.append(uid)
+            seen_text.add(uid)
+    for unit in pr5d.unresolved_units:
+        if unit.unit_id not in seen_text:
+            text_unit_ids.append(unit.unit_id)
+            seen_text.add(unit.unit_id)
+
+    # Decision-only fixtures (no PR5D text plane): treat decisions as the universe.
+    if not text_unit_ids and not unresolved_unit_ids and eligible_decisions:
+        text_unit_ids = [u.unit_id for u in eligible_decisions]
+
+    decided_unit_ids = {u.unit_id for u in eligible_decisions}
+    dropped_unit_ids = sorted(
+        set(text_unit_ids) - decided_unit_ids - unresolved_unit_ids
+    )
+    decisions_without_text_unit = sorted(decided_unit_ids - set(text_unit_ids))
+
+    claim_refs = [
+        {
+            "claim_id": claim.claim_id,
+            "unit_id": claim.unit_id,
+            "coalesced_tender_id": claim.coalesced_tender_id,
+        }
+        for claims in claims_by_tender.values()
+        for claim in claims
+    ]
+
+    partition = reconcile_line_partition(
+        text_unit_ids=text_unit_ids,
+        assigned_unit_ids=assigned_unit_ids,
+        review_unit_ids=review_unit_ids,
+        excluded_unit_ids=excluded_unit_ids,
+        unresolved_unit_ids=sorted(unresolved_unit_ids),
+        claim_refs=claim_refs,
+        decision_unit_ids=[u.unit_id for u in eligible_decisions],
+        unresolved_declared_unit_ids=[u.unit_id for u in pr5d.unresolved_units],
+        eligible_tender_ids=sorted(eligible_tender_ids),
+    )
 
     partition_holds = total == assigned + review + excluded and total == len(rows)
     no_silent_line_drop = not dropped_unit_ids
-    coverage_holds = (
-        len(text_unit_ids) == len(text_unit_ids & (decided_unit_ids | unresolved_unit_ids))
+    coverage_holds = set(text_unit_ids) <= (decided_unit_ids | unresolved_unit_ids) or (
+        not text_unit_ids and not unresolved_unit_ids
     )
+
     reconciliation = {
-        "ok": bool(partition_holds and no_silent_line_drop and coverage_holds),
-        "equation": (
-            "unit_decision_count = assigned_line_count + review_required_line_count "
-            "+ excluded_line_count; product_text_unit_count = decided_unit_count "
-            "+ unresolved_unit_count + dropped_unit_count"
-        ),
+        **partition,
         "unit_decision_count": total,
         "line_row_count": len(rows),
         "assigned_line_count": assigned,
@@ -491,7 +705,6 @@ def _build_line_rows(
         "excluded_line_count": excluded,
         "product_text_unit_count": len(text_unit_ids),
         "decided_unit_count": len(decided_unit_ids),
-        "unresolved_unit_count": len(unresolved_unit_ids),
         "dropped_unit_count": len(dropped_unit_ids),
         "dropped_unit_ids": dropped_unit_ids[:50],
         "decisions_without_text_unit_count": len(decisions_without_text_unit),
@@ -499,7 +712,21 @@ def _build_line_rows(
         "partition_holds": partition_holds,
         "coverage_holds": coverage_holds,
         "no_silent_line_drop": no_silent_line_drop,
+        "temporally_eligible_tender_count": len(eligible_tender_ids),
     }
+    # Authoritative ok comes from reconcile_line_partition; also require the
+    # operational partition equations that operator summaries still expose.
+    reconciliation["ok"] = bool(
+        partition["ok"] and partition_holds and no_silent_line_drop and coverage_holds
+    )
+    if not partition_holds:
+        reconciliation["failure_codes"] = sorted(
+            set(reconciliation.get("failure_codes") or []) | {"partition_count_mismatch"}
+        )
+    if not no_silent_line_drop:
+        reconciliation["failure_codes"] = sorted(
+            set(reconciliation.get("failure_codes") or []) | {"silent_unit_drop"}
+        )
     return rows, reconciliation, dict(claims_by_tender)
 
 
@@ -511,15 +738,38 @@ def build_institution_prospects_from_plans(
     as_of_utc: str,
     run_context: str,
     future_observation_snapshot_ids: frozenset[str] | None = None,
+    snapshot_temporal_report: dict[str, Any] | None = None,
     reviewed_adjudication_results: list[dict[str, Any]] | None = None,
 ) -> InstitutionProspectPlanResult:
     """Pure aggregation over already-built PR5C/D/E results.
 
-    ``future_observation_snapshot_ids`` names acquisition snapshots stamped after
-    ``as_of_utc``. Tenders sourced only from those snapshots are quarantined as
-    ``future_observation_excluded`` — their timestamps are never rewritten.
+    Temporal classification decides which acquisition snapshots may inform
+    recognition. Future / missing / invalid chronology are quarantined; their
+    timestamps are never rewritten. ``future_observation_snapshot_ids`` remains
+    as a legacy narrow input; prefer ``snapshot_temporal_report`` from
+    :func:`classify_acquisition_snapshots`.
     """
-    future_snapshots = frozenset(future_observation_snapshot_ids or ())
+    if snapshot_temporal_report is not None:
+        future_snapshots = frozenset(
+            snapshot_temporal_report.get("future_snapshot_ids") or ()
+        )
+        missing_snapshots = frozenset(
+            snapshot_temporal_report.get("missing_chronology_snapshot_ids") or ()
+        )
+        invalid_snapshots = frozenset(
+            snapshot_temporal_report.get("invalid_chronology_snapshot_ids") or ()
+        )
+        eligible_snapshots: frozenset[str] | None = frozenset(
+            snapshot_temporal_report.get("eligible_snapshot_ids") or ()
+        )
+    else:
+        future_snapshots = frozenset(future_observation_snapshot_ids or ())
+        missing_snapshots = frozenset()
+        invalid_snapshots = frozenset()
+        eligible_snapshots = None
+
+    quarantine_snapshots = future_snapshots | missing_snapshots | invalid_snapshots
+
     orgs_by_tender: dict[str, OrganizationResolution] = {
         o.coalesced_tender_id: o for o in pr5e.organization_resolutions
     }
@@ -544,12 +794,59 @@ def build_institution_prospects_from_plans(
     temporally_eligible_tenders: list[CoalescedProcurementTender] = []
     excluded: dict[str, str] = {}
     quarantined_future: list[dict[str, Any]] = []
+    quarantined_missing: list[dict[str, Any]] = []
+    quarantined_invalid: list[dict[str, Any]] = []
     mixed_temporal_review: list[dict[str, Any]] = []
-    missing_chronology: list[dict[str, Any]] = []
 
     for tender in sorted(pr5c.coalesced_tenders, key=lambda t: t.coalesced_tender_id):
         tid = tender.coalesced_tender_id
         snapshot_ids = set(tender.acquisition_snapshot_ids or ())
+        if not snapshot_ids:
+            temporally_eligible_tenders.append(tender)
+            continue
+
+        future_hit = snapshot_ids & future_snapshots
+        missing_hit = snapshot_ids & missing_snapshots
+        invalid_hit = snapshot_ids & invalid_snapshots
+        if eligible_snapshots is None:
+            eligible_hit = snapshot_ids - quarantine_snapshots
+        else:
+            eligible_hit = snapshot_ids & eligible_snapshots
+            unknown = snapshot_ids - eligible_snapshots - quarantine_snapshots
+            if unknown:
+                # Explicit report did not classify these IDs — fail closed.
+                excluded[tid] = "mixed_temporal_provenance_review"
+                mixed_temporal_review.append(
+                    {
+                        "coalesced_tender_id": tid,
+                        "tender_code": _tender_code(tender),
+                        "eligible_snapshot_ids": sorted(eligible_hit),
+                        "future_snapshot_ids": sorted(future_hit),
+                        "missing_chronology_snapshot_ids": sorted(missing_hit),
+                        "invalid_chronology_snapshot_ids": sorted(invalid_hit),
+                        "unclassified_snapshot_ids": sorted(unknown),
+                        "as_of_utc": as_of_utc,
+                        "reason": "mixed_temporal_provenance_review",
+                    }
+                )
+                continue
+
+        non_eligible_hits = bool(future_hit or missing_hit or invalid_hit)
+        if eligible_hit and non_eligible_hits:
+            excluded[tid] = "mixed_temporal_provenance_review"
+            mixed_temporal_review.append(
+                {
+                    "coalesced_tender_id": tid,
+                    "tender_code": _tender_code(tender),
+                    "eligible_snapshot_ids": sorted(eligible_hit),
+                    "future_snapshot_ids": sorted(future_hit),
+                    "missing_chronology_snapshot_ids": sorted(missing_hit),
+                    "invalid_chronology_snapshot_ids": sorted(invalid_hit),
+                    "as_of_utc": as_of_utc,
+                    "reason": "mixed_temporal_provenance_review",
+                }
+            )
+            continue
         if snapshot_ids and snapshot_ids <= future_snapshots:
             excluded[tid] = "future_observation_excluded"
             quarantined_future.append(
@@ -562,16 +859,41 @@ def build_institution_prospects_from_plans(
                 }
             )
             continue
-        if future_snapshots and snapshot_ids & future_snapshots and snapshot_ids - future_snapshots:
-            # Mixed eligible + future evidence: quarantine unless we can safely
-            # reconstruct from eligible observations alone.
+        if snapshot_ids and snapshot_ids <= missing_snapshots:
+            excluded[tid] = "missing_chronology_excluded"
+            quarantined_missing.append(
+                {
+                    "coalesced_tender_id": tid,
+                    "tender_code": _tender_code(tender),
+                    "acquisition_snapshot_ids": sorted(snapshot_ids),
+                    "as_of_utc": as_of_utc,
+                    "reason": "missing_acquisition_chronology",
+                }
+            )
+            continue
+        if snapshot_ids and snapshot_ids <= invalid_snapshots:
+            excluded[tid] = "invalid_chronology_excluded"
+            quarantined_invalid.append(
+                {
+                    "coalesced_tender_id": tid,
+                    "tender_code": _tender_code(tender),
+                    "acquisition_snapshot_ids": sorted(snapshot_ids),
+                    "as_of_utc": as_of_utc,
+                    "reason": "invalid_acquisition_chronology",
+                }
+            )
+            continue
+        if non_eligible_hits and not eligible_hit:
+            # Mix of quarantine classes with no eligible observation.
             excluded[tid] = "mixed_temporal_provenance_review"
             mixed_temporal_review.append(
                 {
                     "coalesced_tender_id": tid,
                     "tender_code": _tender_code(tender),
-                    "eligible_snapshot_ids": sorted(snapshot_ids - future_snapshots),
-                    "future_snapshot_ids": sorted(snapshot_ids & future_snapshots),
+                    "eligible_snapshot_ids": [],
+                    "future_snapshot_ids": sorted(future_hit),
+                    "missing_chronology_snapshot_ids": sorted(missing_hit),
+                    "invalid_chronology_snapshot_ids": sorted(invalid_hit),
                     "as_of_utc": as_of_utc,
                     "reason": "mixed_temporal_provenance_review",
                 }
@@ -697,6 +1019,7 @@ def build_institution_prospects_from_plans(
         institution_id_by_tender=institution_id_by_tender,
         identity_by_institution=identity_by_institution,
         projected_lifecycle=projected_lifecycle,
+        eligible_tender_ids=eligible_tender_ids,
     )
     claim_axes_by_tender = {
         tid: aggregate_tender_axes(claims)
@@ -1109,6 +1432,7 @@ def build_institution_prospects_from_plans(
         clusters=clusters,
         match_review=match_review,
         contact_gaps=contact_gaps,
+        as_of_utc=as_of_utc,
     )
     operator_queue_reconciliation = reconcile_operator_queues(
         operator_queues, eligible_tender_ids=eligible_tender_ids
@@ -1175,7 +1499,28 @@ def build_institution_prospects_from_plans(
     if not line_reconciliation["ok"]:
         raise InstitutionReconciliationError(
             "line-level evidence reconciliation failed: "
-            f"{line_reconciliation['equation']}"
+            f"{line_reconciliation.get('failure_codes') or line_reconciliation['equation']}"
+        )
+
+    family_member_tender_ids = [
+        str(tid)
+        for f in family_dicts
+        for tid in (f.get("member_tender_ids") or [])
+    ]
+    event_family_reconciliation = reconcile_event_family_coverage(
+        eligible_tender_ids=sorted(eligible_tender_ids),
+        family_member_tender_ids=family_member_tender_ids,
+    )
+    event_family_reconciliation["family_count"] = len(family_dicts)
+    event_family_reconciliation["retender_review_family_count"] = sum(
+        1
+        for f in family_dicts
+        if f.get("family_resolution_status") == "retender_review_required"
+    )
+    if not event_family_reconciliation["ok"]:
+        raise InstitutionReconciliationError(
+            "event-family exact-once reconciliation failed: "
+            f"{event_family_reconciliation.get('failure_codes')}"
         )
 
     fingerprints = {
@@ -1216,9 +1561,9 @@ def build_institution_prospects_from_plans(
         "pipeline": [
             "temporally eligible tender population",
             "lifecycle precedence projection",
+            "procurement event family resolution",
             "category-scoped line claims",
             "catalog capability match",
-            "procurement event family resolution",
             "procurement buyer identity",
             "institution review clustering",
             "existing OrigenLab account comparison",
@@ -1236,6 +1581,9 @@ def build_institution_prospects_from_plans(
             "status_unknown": "does not overwrite a known lifecycle",
             "review_cluster": "not a confirmed merged account",
             "future_observation": "not temporally eligible",
+            "missing_chronology": "not temporally eligible",
+            "invalid_chronology": "not temporally eligible",
+            "unresolved_product_text": "not commercial line claim",
             "title_fallback": "only when no detailed line evidence",
         },
         "example_institution": profiles[0] if profiles else None,
@@ -1268,6 +1616,9 @@ def build_institution_prospects_from_plans(
         "source_tenders": len(source_ids),
         "excluded_tenders": len(excluded),
         "future_observation_excluded_tenders": len(quarantined_future),
+        "missing_chronology_excluded_tenders": len(quarantined_missing),
+        "invalid_chronology_excluded_tenders": len(quarantined_invalid),
+        "mixed_temporal_provenance_review_tenders": len(mixed_temporal_review),
         "operator_queue_sizes": {
             name: len(operator_queues.get(name, [])) for name in OPERATOR_QUEUE_NAMES
         },
@@ -1332,45 +1683,55 @@ def build_institution_prospects_from_plans(
         line_rows=line_rows,
         line_claims=[c.to_dict() for cl in claims_by_tender.values() for c in cl],
         temporal_reconciliation={
-            "ok": True,
+            "ok": (
+                len(quarantined_future)
+                == sum(
+                    1
+                    for reason in excluded.values()
+                    if reason == "future_observation_excluded"
+                )
+                and len(quarantined_missing)
+                == sum(
+                    1
+                    for reason in excluded.values()
+                    if reason == "missing_chronology_excluded"
+                )
+                and len(quarantined_invalid)
+                == sum(
+                    1
+                    for reason in excluded.values()
+                    if reason == "invalid_chronology_excluded"
+                )
+                and len(mixed_temporal_review)
+                == sum(
+                    1
+                    for reason in excluded.values()
+                    if reason == "mixed_temporal_provenance_review"
+                )
+            ),
             "as_of_utc": as_of_utc,
             "acquisition_timestamps_immutable": True,
             "temporally_eligible_tender_count": len(temporally_eligible_tenders),
             "temporally_eligible_tender_ids": sorted(eligible_tender_ids),
+            "eligible_snapshot_ids": sorted(eligible_snapshots or ()),
             "future_observation_snapshot_ids": sorted(future_snapshots),
+            "missing_chronology_snapshot_ids": sorted(missing_snapshots),
+            "invalid_chronology_snapshot_ids": sorted(invalid_snapshots),
             "future_observation_excluded_count": len(quarantined_future),
             "future_observation_excluded": quarantined_future,
             "mixed_temporal_provenance_review_count": len(mixed_temporal_review),
             "mixed_temporal_provenance_review": mixed_temporal_review,
-            "missing_chronology_count": len(missing_chronology),
-            "missing_chronology": missing_chronology,
-            "reason": "acquisition_stamp_after_as_of",
+            "missing_chronology_count": len(quarantined_missing),
+            "missing_chronology": quarantined_missing,
+            "invalid_chronology_count": len(quarantined_invalid),
+            "invalid_chronology": quarantined_invalid,
+            "reason": "temporal_eligibility_before_recognition",
         },
         reviewed_adjudication_results=list(reviewed_adjudication_results or []),
         catalog_capability_digest=catalog_digest(),
         recognition_layer_version=RECOGNITION_LAYER_VERSION,
         operator_queue_reconciliation=operator_queue_reconciliation,
-        event_family_reconciliation={
-            "ok": True,
-            "equation": (
-                "event_family_reconciliation covers exactly the temporally "
-                "eligible source tenders once each"
-            ),
-            "temporally_eligible_tender_count": len(eligible_tender_ids),
-            "family_member_tender_ids": sorted(
-                {tid for f in family_dicts for tid in (f.get("member_tender_ids") or [])}
-            ),
-            "covered_exactly_once": sorted(eligible_tender_ids)
-            == sorted(
-                {tid for f in family_dicts for tid in (f.get("member_tender_ids") or [])}
-            ),
-            "family_count": len(family_dicts),
-            "retender_review_family_count": sum(
-                1
-                for f in family_dicts
-                if f.get("family_resolution_status") == "retender_review_required"
-            ),
-        },
+        event_family_reconciliation=event_family_reconciliation,
         source_set_reconciliation={
             "ok": True,
             "note": (
@@ -1411,26 +1772,13 @@ def build_institution_prospects_from_plans(
 def _future_observation_snapshot_ids(
     snapshot_paths: list[Path], *, as_of_utc: str
 ) -> frozenset[str]:
-    """Acquisition snapshots stamped after the review as-of, read from the files.
+    """Compatibility wrapper: future-stamped snapshot IDs only.
 
-    Their timestamps stay exactly as acquired; only the downstream evaluation is
-    quarantined so a future-stamped observation cannot pose as current evidence.
+    Prefer :func:`classify_acquisition_snapshots` for production wiring; this
+    helper remains for callers that only need the future subset.
     """
-    future: set[str] = set()
-    for path in snapshot_paths:
-        try:
-            payload = load_json_object(Path(path))
-        except (OSError, ValueError):
-            continue
-        snapshot_id = str(payload.get("snapshot_id") or "")
-        if not snapshot_id:
-            continue
-        if any(
-            is_future_observation(stamp, as_of_utc=as_of_utc)
-            for stamp in _snapshot_acquisition_stamps(payload)
-        ):
-            future.add(snapshot_id)
-    return frozenset(future)
+    report = classify_acquisition_snapshots(snapshot_paths, as_of_utc=as_of_utc)
+    return frozenset(report.get("future_snapshot_ids") or ())
 
 
 def _snapshot_acquisition_stamps(payload: dict[str, Any]) -> list[Any]:
@@ -1548,15 +1896,16 @@ def build_institution_prospect_plan(
                 pr5c_plan=pr5c_plan,
             )
 
+        temporal_report = classify_acquisition_snapshots(
+            snapshot_paths, as_of_utc=as_of_utc
+        )
         result = build_institution_prospects_from_plans(
             pr5c=pr5c_plan,
             pr5d=pr5d_plan,
             pr5e=pr5e_plan,
             as_of_utc=as_of_utc,
             run_context=run_context,
-            future_observation_snapshot_ids=_future_observation_snapshot_ids(
-                snapshot_paths, as_of_utc=as_of_utc
-            ),
+            snapshot_temporal_report=temporal_report,
         )
         return _write_bundle(dest, result, adapter_records=adapter_records)
 
@@ -1908,10 +2257,10 @@ def _write_bundle(
                     (result.line_reconciliation or {}).get("ok")
                 ),
                 "operator_queue_reconciliation_ok": bool(
-                    (result.operator_queue_reconciliation or {}).get("ok", True)
+                    (result.operator_queue_reconciliation or {}).get("ok")
                 ),
                 "event_family_reconciliation_ok": bool(
-                    (result.event_family_reconciliation or {}).get("ok", True)
+                    (result.event_family_reconciliation or {}).get("ok")
                 ),
                 "required_artifacts": list(REQUIRED_HARDENING_ARTIFACTS),
             },

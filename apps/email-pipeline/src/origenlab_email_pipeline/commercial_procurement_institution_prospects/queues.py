@@ -311,7 +311,7 @@ def build_operator_queues(
         )
         evidence_count = line_evidence_by_tender.get(tid, 0)
 
-        if _is_current_opportunity(row, evidence_count):
+        if _is_current_opportunity(row, evidence_count, as_of_utc=as_of_utc):
             current_institutions.add(institution_id)
             current.append(
                 canonical_queue_row(
