@@ -2,7 +2,7 @@
 
 > **Status: historical design document.** The **active** read-only HTTP API is [`apps/api`](../../../api/README.md) on port **8001** (`GET /mirror/*` for Postgres mirror reporting; operator routes for Dashboard Today). Legacy email-pipeline FastAPI on **:8000** (`apps/email-pipeline/src/origenlab_api`) was **removed** in API-3 Phase 6. **Current architecture:** [`docs/PROJECT_CONTEXT.md`](../../../../docs/PROJECT_CONTEXT.md) · [`apps/api/README.md`](../../../api/README.md) · [API-3 removal note](../../../api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md). Body text below may still name removed paths for design history.
 
-> **Active equipment boundary (2026-06):** Production `GET /opportunities/equipment` reads **`api.v_equipment_opportunity`** via Postgres only; CSV under `active/current` is a bridge ingest artifact, not the public API contract. See [`EQUIPMENT_READ_MODEL_BOUNDARY.md`](EQUIPMENT_READ_MODEL_BOUNDARY.md).
+> **Active equipment boundary (2026-06):** Production `GET /opportunities/equipment` reads **`api.v_equipment_opportunity_current`** via Postgres only; CSV under `active/current` is a bridge ingest / audit artifact, not the public API contract. See [`EQUIPMENT_READ_MODEL_BOUNDARY.md`](EQUIPMENT_READ_MODEL_BOUNDARY.md).
 
 **Status:** historical design (no production cutover; superseded by apps/api)  
 **Date:** 2026-05-15  

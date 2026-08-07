@@ -1,6 +1,6 @@
 # ChileCompra equipment queue refresh (operator)
 
-Automated operator step to refresh the equipment-first queue from the Mercado Público licitaciones API, publish the canonical dashboard CSV, and let the existing dashboard auto-mirror job push changes to Postgres.
+Automated operator step to refresh the equipment-first queue from the Mercado Público licitaciones API, publish the canonical dashboard CSV/audit artifacts, and direct-publish the typed equipment read model to Postgres when `--apply` runs with Postgres configured.
 
 **PR5B note:** The acquisition snapshot parsers in
 [`COMMERCIAL_PROCUREMENT_ACQUISITION_PR5B.md`](../audits/COMMERCIAL_PROCUREMENT_ACQUISITION_PR5B.md)
@@ -94,7 +94,7 @@ Complete these steps **in order** before installing cron:
    cd apps/email-pipeline
    uv run origenlab operator-automation-status
    ```
-4. **Mirror dashboard manually once** — confirm Postgres mirror after publish:
+4. **Mirror dashboard manually once** — confirm the non-equipment dashboard mirror sections after the equipment publish:
    ```bash
    cd apps/email-pipeline
    uv run origenlab auto-mirror-dashboard --once --apply --allow-non-scratch-postgres

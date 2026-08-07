@@ -156,10 +156,10 @@ Default `campaign_mode` in [`manifest.json`](../reports/out/active/current/manif
 
 | Step | Script | Output |
 |------|--------|--------|
-| Filter tenders | `scripts/qa/build_equipment_first_opportunity_queue.py` | `equipment_first_opportunity_queue_YYYYMMDD.csv` |
-| Operator queue | `scripts/qa/build_equipment_first_operator_queue.py` | `equipment_first_operator_queue_YYYYMMDD.csv` + aligned `buyer_opportunity_ab_queue_YYYYMMDD.csv` |
+| Live refresh (dry-run / apply) | `uv run origenlab auto-refresh-chilecompra-equipment --once [--apply]` | `api.v_equipment_opportunity_current` via Postgres when configured, plus active/current CSV + manifest audit artifacts |
+| Offline/manual replay | `scripts/qa/build_equipment_first_opportunity_queue.py` → `scripts/qa/build_equipment_first_operator_queue.py` | `equipment_first_operator_queue_YYYYMMDD.csv` + aligned `buyer_opportunity_ab_queue_YYYYMMDD.csv` |
 
-**Makefile:** `make equipment-queue` or `make equipment-queue DATE_SUFFIX=YYYYMMDD`.
+**Makefile (offline/manual replay):** `make equipment-queue` or `make equipment-queue DATE_SUFFIX=YYYYMMDD`.
 
 **Rules:** equipment-first only; consumables SEREMI/hospital codes excluded; **no invented buyer emails**; active tenders via **Mercado Público** / supplier quotes — **not** cold send-ready. See [`RUNBOOK.md`](RUNBOOK.md#m-eprun-equipment-first-opportunities) and [`reports/out/active/current/README_ACTIVE_CURRENT.md`](../reports/out/active/current/README_ACTIVE_CURRENT.md).
 
