@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import copy
+import json
 import sqlite3
 from pathlib import Path
 
 from origenlab_email_pipeline.candidate_export_gate import GateContext
+from origenlab_email_pipeline.commercial_procurement_contact_resolution import (
+    planner as contact_resolution_planner,
+)
 from origenlab_email_pipeline.commercial_identity.schema import (
     ensure_commercial_identity_tables,
 )
@@ -43,6 +47,7 @@ from origenlab_email_pipeline.commercial_procurement_contact_resolution.frozen_s
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.models import (
     ContactCandidate,
     ContactResolutionEvidence,
+    ContactResolutionPlanResult,
     ContactResolutionSummary,
     OrganizationResolution,
 )
@@ -69,6 +74,13 @@ from origenlab_email_pipeline.commercial_procurement_contact_resolution.safety i
     evaluate_contact_safety,
     parse_usable_email,
     safety_snapshot_from_gate_context,
+)
+from origenlab_email_pipeline.commercial_procurement_contact_resolution.redaction import (
+    assert_no_raw_pii,
+    redact_text_blob,
+)
+from origenlab_email_pipeline.commercial_procurement_contact_resolution.walkthrough import (
+    build_contact_resolution_walkthrough,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.models import (
     TenderRelevanceDecision,
@@ -1582,6 +1594,142 @@ def _linked_summary_for_reconcile(
         rules_version="r",
         resolver_version="v",
     )
+
+
+def test_redact_text_blob_removes_raw_email_and_domain() -> None:
+    redacted = redact_text_blob(
+        "Escalate to compras.secret@example-hospital.cl via portal.example-hospital.cl"
+    )
+
+    assert "compras.secret@example-hospital.cl" not in redacted
+    assert "example-hospital.cl" not in redacted
+    assert "email_" in redacted
+    assert "domain_" in redacted
+    assert_no_raw_pii(redacted, forbidden_substrings=["example-hospital.cl"])
+
+
+def test_write_contact_resolution_outputs_redacts_shareable_walkthrough(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_root = tmp_path / "synthetic-email-pipeline"
+    (repo_root / "reports" / "out").mkdir(parents=True)
+    monkeypatch.setattr(
+        contact_resolution_planner,
+        "__file__",
+        str(
+            repo_root
+            / "src"
+            / "origenlab_email_pipeline"
+            / "commercial_procurement_contact_resolution"
+            / "planner.py"
+        ),
+    )
+
+    tender_id = "raw-tender-id-98765"
+    decision_id = "raw-decision-id-98765"
+    account_id = "raw-account-id-98765"
+    contact_id = "raw-contact-id-98765"
+    candidate_id = "raw-candidate-id-98765"
+    resolution_id = "raw-resolution-id-98765"
+    org = _org(tid=tender_id, decision_id=decision_id, account_id=account_id)
+    summary = ContactResolutionSummary(
+        contact_resolution_id=resolution_id,
+        coalesced_tender_id=tender_id,
+        relevance_decision_id=decision_id,
+        organization_resolution_id=org.organization_resolution_id,
+        account_id=account_id,
+        final_contact_status="existing_verified_contact",
+        selected_contact_id=contact_id,
+        selected_candidate_id=candidate_id,
+        search_stages_completed=("pr2_account_contacts", "safety_gate"),
+        next_action="review_and_confirm_contact",
+        reason_code="verified_contact_available",
+        considered_contact_count=1,
+        suitable_contact_count=1,
+        blocked_contact_count=0,
+        relevance_class_echo="strong_equipment_class",
+        lifecycle_class_echo="active_open",
+        currentness_class_echo="current_authoritative_snapshot",
+        relevance_validation_status_echo="unreviewed_prediction",
+        input_fingerprint="input-fp",
+        semantic_fingerprint="semantic-fp",
+        rules_version="rules-v1",
+        resolver_version="resolver-v1",
+    )
+    candidate = ContactCandidate(
+        candidate_id=candidate_id,
+        contact_resolution_id=resolution_id,
+        coalesced_tender_id=tender_id,
+        account_id=account_id,
+        contact_id=contact_id,
+        rank=1,
+        ranking_tier="suitable_role_verified",
+        role_raw_digest="role-digest",
+        role_suitability="suitable_procurement",
+        identity_status="resolved",
+        identity_confidence="high",
+        has_usable_email=True,
+        verification_status="explicitly_verified",
+        evidence_ids=("raw-evidence-id-98765",),
+        suppression_result="clear",
+        outreach_state_result="clear",
+        safety_blocked=False,
+        safety_unknown=False,
+        selectable=True,
+        ranking_reason_codes=("verified_role_contact",),
+    )
+    walkthrough = build_contact_resolution_walkthrough(
+        organizations=(org,),
+        summaries=(summary,),
+        candidates=(candidate,),
+    )
+    result = ContactResolutionPlanResult(
+        as_of_utc="2026-01-01T00:00:00Z",
+        run_context="pytest",
+        planner_version="test-version",
+        organization_resolutions=(org,),
+        contact_summaries=(summary,),
+        contact_candidates=(candidate,),
+        evidence=(),
+        conflicts=(),
+        reconciliation={"ok": True, "equations": {}},
+        fingerprints={"semantic_digest": "semantic-fp"},
+        dependency_fingerprints={"safety_fingerprint": "safety-fp"},
+        counts={"contact_summaries": 1},
+        field_sufficiency_audit={},
+        walkthrough=walkthrough,
+    )
+
+    written = contact_resolution_planner.write_contact_resolution_outputs(
+        result,
+        repo_root / "reports" / "out" / "pr5e-shareable-regression",
+        require_git_ignored=False,
+    )
+
+    summary_blob = Path(written["summary"]).read_text(encoding="utf-8")
+    walkthrough_blob = (
+        Path(written["walkthrough_json"]).read_text(encoding="utf-8")
+        + Path(written["walkthrough_md"]).read_text(encoding="utf-8")
+    )
+    assert json.loads(summary_blob)["not_persisted"] is True
+    assert json.loads(Path(written["walkthrough_json"]).read_text(encoding="utf-8"))[
+        "not_persisted"
+    ] is True
+    assert "selected_contact_token" in walkthrough_blob
+    assert "contact_" in walkthrough_blob
+
+    for forbidden in (
+        tender_id,
+        decision_id,
+        account_id,
+        contact_id,
+        candidate_id,
+        resolution_id,
+        "compras.secret@example-hospital.cl",
+        "example-hospital.cl",
+    ):
+        assert forbidden not in summary_blob
+        assert forbidden not in walkthrough_blob
 
 
 def test_reconcile_fabricated_evidence_fields_fail() -> None:
