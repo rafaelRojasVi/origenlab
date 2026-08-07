@@ -36,6 +36,11 @@ CONSUMABLE_CENTRIFUGE_TUBE_RE = re.compile(
     r"\btubos?\s+centrifug|"
     r"centrifug\w*\s+tubos?\b"
 )
+# Pump cone / centrifugal-pump supply accessory (consumable path before pump FP).
+CENTRIFUGAL_PUMP_CONE_ACCESSORY_RE = re.compile(
+    r"\bcono\s+centrifuga\s+bomba\b|\bcono\s+(de\s+)?bomba\s+centrifug|"
+    r"revolution\s+centrifugal\s+pump"
+)
 CONSUMABLE_MICROSCOPE_RE = re.compile(
     r"\bportaobjetos\b|\bcubreobjetos\b|\blaminas?\s+para\s+microscop|"
     r"\bslides?\b|\bcoverslips?\b|\baceite\s+de\s+inmersion\b"
@@ -50,6 +55,8 @@ CATALOG_ALIAS_BOUNDARY_FLAGS = 0
 SERVICE_ONLY_RE = re.compile(
     r"mantenimiento\s+preventiv|mantenimiento\s+correctiv|"
     r"mantencion\s+preventiv|mantencion\s+correctiv|"
+    r"\bmantenimiento\s+de\b|\bmantencion\s+de\b|"
+    r"\bserv\.\s*mtto\b|\bservicio\s+de\s+mant|"
     r"\breparacion\b|\bcalibracion\b|servicio\s+tecnico|"
     r"servicio\s+de\s+mantenimiento|instalacion\s+de\s+equipo\s+existente|"
     r"contratar\s+el\s+servicio"
@@ -65,11 +72,30 @@ GENERIC_INSUMOS_RE = re.compile(
 )
 NON_LAB_INCUBATOR_RE = re.compile(
     r"incubadora\s+de\s+transporte|neonatolog|modelo\s+giraffe|"
-    r"incubadora\s+empresarial|business\s+incubator|incubadora\s+de\s+negocios"
+    r"incubadora\s+empresarial|business\s+incubator|"
+    r"incubadoras?\s+de\s+negocios|incubadora\s+de\s+emprendimiento|"
+    r"\bincubadora\b.*\b(feria|programacion|cbb)\b|"
+    r"\b(feria|programacion|cbb).*\bincubadora\b"
 )
 NON_LAB_FALSE_POSITIVE_RE = re.compile(
     r"\becograf\b|\bultrasonograf\b|\bpozo\b|\bsala\s+de\s+bombas\b|"
     r"\bparvulario\b|\bdidactic"
+)
+# Industrial / fluid pumps — not laboratory centrifuges (line-scoped veto).
+CENTRIFUGAL_PUMP_RE = re.compile(
+    r"\bbombas?\s+centrifug|\bcono\s+(de\s+)?(centrifuga\s+)?bomba|"
+    r"\bcentrifugal\s+pump\b|\brevolution\s+centrifugal\s+pump\b|"
+    r"bombas?\s+sumergibles?\s+y\s+centrifug|bomba\s+centrifuga\s+horizontal"
+)
+ANTHROPOMETRIC_OR_VET_SCALE_RE = re.compile(
+    r"\btallimetro|\bcaliper\b|\bcintas?\s+metricas?\b|"
+    r"balanza\s+(digital\s+)?veterinari|"
+    r"antropometr|atencion\s+en\s+box|box\s+veterinari"
+)
+MICROSCOPE_COVER_OR_ACCESSORY_RE = re.compile(
+    r"\bmanga\s+protectora\s+microscop|funda\s+esteril\s+para\s+microscop|"
+    r"cubierta\s+(para\s+)?microscop|protector\s+(de\s+)?microscop|"
+    r"cover\s+(for\s+)?microscope"
 )
 CENTRIFUGE_EQ_RE = re.compile(r"\bcentrifug(a|adora|adoras|as)?\b|\bmicrocentrifug")
 BALANCE_EQ_RE = re.compile(r"\bbalanza\b")
@@ -254,6 +280,20 @@ def classify_product_text_unit(unit: ProductTextUnit) -> EvidenceUnitRelevanceDe
             spans=[_span(field_path, "consumable_centrifuge_tubes", m_tube)],
         )
 
+    m_pump_cone = CENTRIFUGAL_PUMP_CONE_ACCESSORY_RE.search(text)
+    if m_pump_cone:
+        return _decision(
+            unit,
+            relevance_class="consumable_or_reagent",
+            classes=[],
+            resolution="negative_class_only",
+            confidence_band="high",
+            positive=[],
+            negative=["consumable_or_reagent_only"],
+            ambiguity=[],
+            spans=[_span(field_path, "centrifugal_pump_cone_accessory", m_pump_cone)],
+        )
+
     m_micro_acc = CONSUMABLE_MICROSCOPE_RE.search(text)
     # Accessory wording wins over a bare "para microscopio" mention unless the
     # unit is an explicit microscope equipment purchase.
@@ -310,6 +350,36 @@ def classify_product_text_unit(unit: ProductTextUnit) -> EvidenceUnitRelevanceDe
             negative=["non_laboratory_incubator"],
             ambiguity=[],
             spans=[_span(field_path, "non_lab_incubator", m_nonlab_inc)],
+        )
+
+    # Line-scoped veto: centrifugal pumps / blood-pump cones ≠ lab centrifuges.
+    m_pump = CENTRIFUGAL_PUMP_RE.search(text)
+    if m_pump:
+        return _decision(
+            unit,
+            relevance_class="non_laboratory_false_positive",
+            classes=[],
+            resolution="negative_class_only",
+            confidence_band="high",
+            positive=[],
+            negative=["centrifugal_pump_not_lab_centrifuge"],
+            ambiguity=[],
+            spans=[_span(field_path, "centrifugal_pump", m_pump)],
+        )
+
+    # Line-scoped veto: microscope covers / protective sleeves ≠ microscope purchase.
+    m_micro_cover = MICROSCOPE_COVER_OR_ACCESSORY_RE.search(text)
+    if m_micro_cover and not MICROSCOPE_PURCHASE_RE.search(text):
+        return _decision(
+            unit,
+            relevance_class="consumable_or_reagent",
+            classes=[],
+            resolution="negative_class_only",
+            confidence_band="high",
+            positive=[],
+            negative=["microscope_cover_or_accessory_not_purchase"],
+            ambiguity=[],
+            spans=[_span(field_path, "microscope_cover_accessory", m_micro_cover)],
         )
 
     m_fp = NON_LAB_FALSE_POSITIVE_RE.search(text)
@@ -370,22 +440,33 @@ def classify_product_text_unit(unit: ProductTextUnit) -> EvidenceUnitRelevanceDe
         positive.append("strong_equipment_class_match")
 
     m = CENTRIFUGE_EQ_RE.search(text)
-    if m and not CONSUMABLE_CENTRIFUGE_TUBE_RE.search(text):
+    if (
+        m
+        and not CONSUMABLE_CENTRIFUGE_TUBE_RE.search(text)
+        and not CENTRIFUGAL_PUMP_RE.search(text)
+    ):
         spans.append(_span(field_path, "centrifuge", m))
         classes.append("centrifuge")
         positive.append("strong_equipment_class_match")
 
     m = BALANCE_EQ_RE.search(text)
     if m:
-        spans.append(_span(field_path, "balance", m))
-        classes.append("balance")
-        positive.append("compatible_equipment_class_match")
+        if ANTHROPOMETRIC_OR_VET_SCALE_RE.search(text):
+            # Keep as equipment-class evidence but flag: not analytical-balance catalog fit.
+            spans.append(_span(field_path, "balance_non_analytical_context", m))
+            classes.append("balance")
+            positive.append("compatible_equipment_class_match")
+            ambiguity.append("anthropometric_or_veterinary_scale_not_analytical_balance")
+        else:
+            spans.append(_span(field_path, "balance", m))
+            classes.append("balance")
+            positive.append("compatible_equipment_class_match")
 
     m = MICROSCOPE_EQ_RE.search(text)
     if m and (
         not CONSUMABLE_MICROSCOPE_RE.search(text)
         or MICROSCOPE_PURCHASE_RE.search(text)
-    ):
+    ) and not MICROSCOPE_COVER_OR_ACCESSORY_RE.search(text):
         spans.append(_span(field_path, "microscope", m))
         classes.append("microscope")
         positive.append("strong_equipment_class_match")
@@ -558,6 +639,18 @@ RULE_PRECEDENCE: Final[list[dict[str, Any]]] = [
         "rule_id": "non_lab_incubator",
         "outcome_class": "non_laboratory_false_positive",
         "confidence_band": "high",
+    },
+    {
+        "rule_id": "centrifugal_pump",
+        "outcome_class": "non_laboratory_false_positive",
+        "confidence_band": "high",
+        "note": "line_scoped_veto_centrifugal_pump_ne_lab_centrifuge",
+    },
+    {
+        "rule_id": "microscope_cover_accessory",
+        "outcome_class": "consumable_or_reagent",
+        "confidence_band": "high",
+        "note": "line_scoped_veto_cover_ne_microscope_purchase",
     },
     {
         "rule_id": "non_lab_false_positive",

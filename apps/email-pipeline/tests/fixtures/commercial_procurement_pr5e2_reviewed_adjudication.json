@@ -1,0 +1,884 @@
+{
+  "cases": [
+    {
+      "analyst_rationale": "Clinical lab centrifuge purchase",
+      "buyer_identity_provenance": {
+        "display_name": "CORP MUNICIPAL DE DESARROLLO SOCIAL DE IQUIQUE",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": "centrifuge",
+      "catalog_fit_status": "catalog_fit_candidate",
+      "commercial_signal_type": "equipment_purchase_signal",
+      "public_evidence": {
+        "tender_title": "ADQUISICIÓN DE CENTRÍFUGAS CLÍNICAS PARA EL LABORATORIO APS DE CORMUDESI"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "ADQUISICIÓN DE CENTRÍFUGAS CLÍNICAS PARA EL LABORATORIO APS DE CORMUDESI"
+        }
+      ],
+      "review_disposition": "catalog_fit_candidate",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "1417913-73-le26"
+    },
+    {
+      "analyst_rationale": "ISP lab equipment including centrifuge; private invitation eligibility review",
+      "buyer_identity_provenance": {
+        "display_name": "INSTITUTO DE SALUD PUBLICA DE CHILE",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": "centrifuge",
+      "catalog_fit_status": "catalog_fit_candidate",
+      "commercial_signal_type": "equipment_purchase_signal",
+      "public_evidence": {
+        "line_texts": [
+          "Centrifuga de laboratorio clinica refrigerada"
+        ],
+        "tender_title": "PPRIV 05- Adquisición de Equipos de Laboratorio Proyecto CORFO"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "PPRIV 05- Adquisición de Equipos de Laboratorio Proyecto CORFO"
+        },
+        {
+          "field_path": "line",
+          "text": "Centrifuga de laboratorio clinica refrigerada"
+        }
+      ],
+      "review_disposition": "catalog_fit_candidate",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "1093303-5-co26"
+    },
+    {
+      "analyst_rationale": "High-speed lab centrifuge",
+      "buyer_identity_provenance": {
+        "display_name": "UNIVERSIDAD DE LOS LAGOS",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": "centrifuge",
+      "catalog_fit_status": "catalog_fit_candidate",
+      "commercial_signal_type": "equipment_purchase_signal",
+      "public_evidence": {
+        "tender_title": "ADQUISICIÓN DE CENTRIFUGA DE ALTA VELOCIDAD PARA LABORATORIO DE ANÁLISIS EN ACUICULTURA FINANCIADO POR LEASING FINANCIERO"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "ADQUISICIÓN DE CENTRIFUGA DE ALTA VELOCIDAD PARA LABORATORIO DE ANÁLISIS EN ACUICULTURA FINANCIADO POR LEASING FINANCIERO"
+        }
+      ],
+      "review_disposition": "catalog_fit_candidate",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "5413-13-le26"
+    },
+    {
+      "analyst_rationale": "University centrifuge purchase",
+      "buyer_identity_provenance": {
+        "display_name": "UNIVERSIDAD DE O'HIGGINS",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": "centrifuge",
+      "catalog_fit_status": "catalog_fit_candidate",
+      "commercial_signal_type": "equipment_purchase_signal",
+      "public_evidence": {
+        "tender_title": "SC 6618 - Adquisición de Centrifugas UOH"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "SC 6618 - Adquisición de Centrifugas UOH"
+        }
+      ],
+      "review_disposition": "catalog_fit_candidate",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "889473-2-le26"
+    },
+    {
+      "analyst_rationale": "Mixed lab tender retains centrifuge/incubator/microscope lines",
+      "buyer_identity_provenance": {
+        "display_name": "UNIVERSIDAD DE LA SERENA",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": "centrifuge",
+      "catalog_fit_status": "catalog_fit_candidate",
+      "commercial_signal_type": "equipment_purchase_signal",
+      "public_evidence": {
+        "line_texts": [
+          "Centrifuga de laboratorio",
+          "Incubadora de laboratorio",
+          "Microscopio optico"
+        ],
+        "tender_title": "Equipos para Laboratorios ULS 23991"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "Equipos para Laboratorios ULS 23991"
+        },
+        {
+          "field_path": "line",
+          "text": "Centrifuga de laboratorio"
+        },
+        {
+          "field_path": "line",
+          "text": "Incubadora de laboratorio"
+        },
+        {
+          "field_path": "line",
+          "text": "Microscopio optico"
+        }
+      ],
+      "review_disposition": "catalog_fit_candidate",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "1232565-27-lp26"
+    },
+    {
+      "analyst_rationale": "Mixed SAG lab equipment tender retains catalog-class lines",
+      "buyer_identity_provenance": {
+        "display_name": "SERVICIO AGRICOLA Y GANADERO",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": "centrifuge",
+      "catalog_fit_status": "catalog_fit_candidate",
+      "commercial_signal_type": "equipment_purchase_signal",
+      "public_evidence": {
+        "line_texts": [
+          "Centrifuga de laboratorio",
+          "Balanza analitica",
+          "Incubadora de laboratorio",
+          "Agitador magnetico"
+        ],
+        "tender_title": "SC 6732026- Equipos de laboratorio- RED SAG de Laboratorios"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "SC 6732026- Equipos de laboratorio- RED SAG de Laboratorios"
+        },
+        {
+          "field_path": "line",
+          "text": "Centrifuga de laboratorio"
+        },
+        {
+          "field_path": "line",
+          "text": "Balanza analitica"
+        },
+        {
+          "field_path": "line",
+          "text": "Incubadora de laboratorio"
+        },
+        {
+          "field_path": "line",
+          "text": "Agitador magnetico"
+        }
+      ],
+      "review_disposition": "catalog_fit_candidate",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "745712-19-lp26"
+    },
+    {
+      "analyst_rationale": "Mixed university lab tender retains catalog-class lines",
+      "buyer_identity_provenance": {
+        "display_name": "UNIVERSIDAD DE ATACAMA",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": "centrifuge",
+      "catalog_fit_status": "catalog_fit_candidate",
+      "commercial_signal_type": "equipment_purchase_signal",
+      "public_evidence": {
+        "line_texts": [
+          "Centrifuga de laboratorio",
+          "Homogeneizador",
+          "Microscopio optico"
+        ],
+        "tender_title": "ADQUISICIÓN DE EQUIPOS DE LABORATORIO"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "ADQUISICIÓN DE EQUIPOS DE LABORATORIO"
+        },
+        {
+          "field_path": "line",
+          "text": "Centrifuga de laboratorio"
+        },
+        {
+          "field_path": "line",
+          "text": "Homogeneizador"
+        },
+        {
+          "field_path": "line",
+          "text": "Microscopio optico"
+        }
+      ],
+      "review_disposition": "catalog_fit_candidate",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "2859-19-lp26"
+    },
+    {
+      "analyst_rationale": "ISP lab equipment with balance/microscope classes",
+      "buyer_identity_provenance": {
+        "display_name": "INSTITUTO DE SALUD PUBLICA DE CHILE",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": "balance",
+      "catalog_fit_status": "catalog_fit_candidate",
+      "commercial_signal_type": "equipment_purchase_signal",
+      "public_evidence": {
+        "line_texts": [
+          "Balanza analitica de laboratorio",
+          "Microscopio optico"
+        ],
+        "tender_title": "PP 66 Equipos de Laboratorio para el ISP E1O2RT9"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "PP 66 Equipos de Laboratorio para el ISP E1O2RT9"
+        },
+        {
+          "field_path": "line",
+          "text": "Balanza analitica de laboratorio"
+        },
+        {
+          "field_path": "line",
+          "text": "Microscopio optico"
+        }
+      ],
+      "review_disposition": "catalog_fit_candidate",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "813-71-lr26"
+    },
+    {
+      "analyst_rationale": "Veterinary clinic package; specs required",
+      "buyer_identity_provenance": {
+        "display_name": "I MUNICIPALIDAD DE RENGO",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": "balance",
+      "catalog_fit_status": "possible_fit_needs_specs",
+      "commercial_signal_type": "equipment_purchase_signal",
+      "public_evidence": {
+        "tender_title": "IMPLEMENTACIÓN Y EQUIPAMIENTO CLÍNICA VETERINARIA: ADQUISICIÓN DE EQUIPOS DE LABORATORIO Y MONITOREO PARA ATENCIÓN EN VETERINARIA MUNICIPAL."
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "IMPLEMENTACIÓN Y EQUIPAMIENTO CLÍNICA VETERINARIA: ADQUISICIÓN DE EQUIPOS DE LABORATORIO Y MONITOREO PARA ATENCIÓN EN VETERINARIA MUNICIPAL."
+        }
+      ],
+      "review_disposition": "possible_fit_needs_specs",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "2775-73-le26"
+    },
+    {
+      "analyst_rationale": "Likely retender of 2775-73; specs required; recurrence not established",
+      "buyer_identity_provenance": {
+        "display_name": "I MUNICIPALIDAD DE RENGO",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": "balance",
+      "catalog_fit_status": "possible_fit_needs_specs",
+      "commercial_signal_type": "equipment_purchase_signal",
+      "public_evidence": {
+        "tender_title": "IMPLEMENTACIÓN Y EQUIPAMIENTO CLÍNICA VETERINARIA: ADQUISICIÓN DE EQUIPOS DE LABORATORIO Y MONITOREO PARA ATENCIÓN EN VETERINARIA MUNICIPAL DE RENGO"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "IMPLEMENTACIÓN Y EQUIPAMIENTO CLÍNICA VETERINARIA: ADQUISICIÓN DE EQUIPOS DE LABORATORIO Y MONITOREO PARA ATENCIÓN EN VETERINARIA MUNICIPAL DE RENGO"
+        }
+      ],
+      "review_disposition": "possible_fit_needs_specs",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "2775-92-le26"
+    },
+    {
+      "analyst_rationale": "Communal lab supply contract; specs required",
+      "buyer_identity_provenance": {
+        "display_name": "I MUNICIPALIDAD DE RENGO",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": "centrifuge",
+      "catalog_fit_status": "possible_fit_needs_specs",
+      "commercial_signal_type": "equipment_purchase_signal",
+      "public_evidence": {
+        "tender_title": "Contrato de suministro de Insumos para Laboratorio Comunal año 2026"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "Contrato de suministro de Insumos para Laboratorio Comunal año 2026"
+        }
+      ],
+      "review_disposition": "possible_fit_needs_specs",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "2777-10-le26"
+    },
+    {
+      "analyst_rationale": "Surgical/neurosurgery microscope outside verified catalog",
+      "buyer_identity_provenance": {
+        "display_name": "FONDO HOSPITAL DE LA DIRECCION DE PREVISION DE CARABINEROS DE CHILE",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": "microscope",
+      "catalog_fit_status": "outside_verified_catalog",
+      "commercial_signal_type": "equipment_purchase_signal",
+      "public_evidence": {
+        "tender_title": "ADQUISICIÓN DE MICROSCOPIO PARA EL SERVICIO DE NEUROCIRUGÍA DEL HOSPITAL DIPRECA"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "ADQUISICIÓN DE MICROSCOPIO PARA EL SERVICIO DE NEUROCIRUGÍA DEL HOSPITAL DIPRECA"
+        }
+      ],
+      "review_disposition": "valid_equipment_outside_catalog",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "948354-8-lr26"
+    },
+    {
+      "analyst_rationale": "Veterinary digital scale outside analytical-balance catalog",
+      "buyer_identity_provenance": {
+        "display_name": "I MUNICIPALIDAD DE CUNCO",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": "balance",
+      "catalog_fit_status": "outside_verified_catalog",
+      "commercial_signal_type": "equipment_purchase_signal",
+      "public_evidence": {
+        "tender_title": "Adquisición de balanza digital veterinaria y equipos lectores de microchip desarrollo de actividades de educación ambiental implementación box veterinario y fortalecer la fiscalización de la ley 21.020 enmarcadas en la ejecución del proyecto FNDR 8% 2025"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "Adquisición de balanza digital veterinaria y equipos lectores de microchip desarrollo de actividades de educación ambiental implementación box veterinario y fortalecer la fiscalización de la ley 21.020 enmarcadas en la ejecución del proyecto FNDR 8% 2025"
+        }
+      ],
+      "review_disposition": "valid_equipment_outside_catalog",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "4284-6-l126"
+    },
+    {
+      "analyst_rationale": "Anthropometric kit not analytical balance",
+      "buyer_identity_provenance": {
+        "display_name": "I MUNICIPALIDAD DE LOS ANGELES",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": "balance",
+      "catalog_fit_status": "outside_verified_catalog",
+      "commercial_signal_type": "equipment_purchase_signal",
+      "public_evidence": {
+        "tender_title": "Adquisición de balanzas tallímetros caliper y cintas métricas para atención en box"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "Adquisición de balanzas tallímetros caliper y cintas métricas para atención en box"
+        }
+      ],
+      "review_disposition": "valid_equipment_outside_catalog",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "2410-66-lp26"
+    },
+    {
+      "analyst_rationale": "School science lab materials outside verified catalog",
+      "buyer_identity_provenance": {
+        "display_name": "I MUNICIPALIDAD DE YUMBEL",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": "microscope",
+      "catalog_fit_status": "outside_verified_catalog",
+      "commercial_signal_type": "equipment_purchase_signal",
+      "public_evidence": {
+        "tender_title": "MATERIALES PARA LABORATORIO DE CIENCIAS LGG Y EDP"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "MATERIALES PARA LABORATORIO DE CIENCIAS LGG Y EDP"
+        }
+      ],
+      "review_disposition": "valid_equipment_outside_catalog",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "4074-17-le26"
+    },
+    {
+      "analyst_rationale": "Specular microscopy / corneal topography",
+      "buyer_identity_provenance": {
+        "display_name": "SERVICIO DE SALUD ANTOFAGASTA HOSPITAL L",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": "microscope",
+      "catalog_fit_status": "outside_verified_catalog",
+      "commercial_signal_type": "equipment_purchase_signal",
+      "public_evidence": {
+        "tender_title": "MICROSCOPIA ESPECULAR Y TOPOGRAFIA CORNEAL PARAHRA"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "MICROSCOPIA ESPECULAR Y TOPOGRAFIA CORNEAL PARAHRA"
+        }
+      ],
+      "review_disposition": "valid_equipment_outside_catalog",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "2258-272-le25"
+    },
+    {
+      "analyst_rationale": "Clinical stretchers/refrigerators context",
+      "buyer_identity_provenance": {
+        "display_name": "SERVICIO DE SALUD SUR UNIDAD HOSPITALARI",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": "balance",
+      "catalog_fit_status": "outside_verified_catalog",
+      "commercial_signal_type": "equipment_purchase_signal",
+      "public_evidence": {
+        "tender_title": "“ADQUISICIÓN DE BALANZAS CAMILLAS DE TRANSPORTE Y REFRIGERADORES CLÍNICOS PARA EL PROYECTO REPOSICIÓN CESFAM HAYDEE LOPEZ COMUNA DEL BOSQUE CÓDIGO BIP 30128998-0”."
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "“ADQUISICIÓN DE BALANZAS CAMILLAS DE TRANSPORTE Y REFRIGERADORES CLÍNICOS PARA EL PROYECTO REPOSICIÓN CESFAM HAYDEE LOPEZ COMUNA DEL BOSQUE CÓDIGO BIP 30128998-0”."
+        }
+      ],
+      "review_disposition": "valid_equipment_outside_catalog",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "1057499-37-le26"
+    },
+    {
+      "analyst_rationale": "Blood-bag centrifuge outside verified catalog",
+      "buyer_identity_provenance": {
+        "display_name": "SERVICIO SALUD DEL RELONCAVI",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": "centrifuge",
+      "catalog_fit_status": "outside_verified_catalog",
+      "commercial_signal_type": "equipment_purchase_signal",
+      "public_evidence": {
+        "tender_title": "CENTRÍFUGA DE BOLSAS DE SANGRE - CENTRO DE SANGRE"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "CENTRÍFUGA DE BOLSAS DE SANGRE - CENTRO DE SANGRE"
+        }
+      ],
+      "review_disposition": "valid_equipment_outside_catalog",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "1057536-80-lp26"
+    },
+    {
+      "analyst_rationale": "Inverted microscope outside verified catalog",
+      "buyer_identity_provenance": {
+        "display_name": "UNIVERSIDAD DE TALCA",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": "microscope",
+      "catalog_fit_status": "outside_verified_catalog",
+      "commercial_signal_type": "equipment_purchase_signal",
+      "public_evidence": {
+        "tender_title": "ADQUISICIÓN DE MICROSCOPIO INVERTIDO - UTALCA"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "ADQUISICIÓN DE MICROSCOPIO INVERTIDO - UTALCA"
+        }
+      ],
+      "review_disposition": "valid_equipment_outside_catalog",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "1469-2-le26"
+    },
+    {
+      "analyst_rationale": "Microscope maintenance service",
+      "buyer_identity_provenance": {
+        "display_name": "COMPLEJO ASISTENCIAL DR. SOTERO DEL RIO",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": null,
+      "catalog_fit_status": "not_purchase",
+      "commercial_signal_type": "installed_base_signal",
+      "public_evidence": {
+        "tender_title": "SERVICIO MANTENCIÓN DE EQUIPOS MICROSCOPIOS"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "SERVICIO MANTENCIÓN DE EQUIPOS MICROSCOPIOS"
+        }
+      ],
+      "review_disposition": "installed_base_or_rental",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "1057501-650-lp25"
+    },
+    {
+      "analyst_rationale": "Clinical lab supply/service context treated as installed-base review bucket in adjudication",
+      "buyer_identity_provenance": {
+        "display_name": "Instituto de Neurocirugía",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": null,
+      "catalog_fit_status": "not_purchase",
+      "commercial_signal_type": "installed_base_signal",
+      "public_evidence": {
+        "tender_title": "SUMINISTRO DE INSUMOS PARA LABORATORIO CLÍNICO Y PARA LOS SERVICIOS CLÍNICOS"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "SUMINISTRO DE INSUMOS PARA LABORATORIO CLÍNICO Y PARA LOS SERVICIOS CLÍNICOS"
+        }
+      ],
+      "review_disposition": "installed_base_or_rental",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "1058086-34-lp26"
+    },
+    {
+      "analyst_rationale": "Sampling consumables/service context",
+      "buyer_identity_provenance": {
+        "display_name": "POLICIA DE INVESTIGACIONES DE CHILE",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": null,
+      "catalog_fit_status": "not_purchase",
+      "commercial_signal_type": "installed_base_signal",
+      "public_evidence": {
+        "tender_title": "INSUMOS DE LABORATORIO Y TOMA DE MUESTRAS"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "INSUMOS DE LABORATORIO Y TOMA DE MUESTRAS"
+        }
+      ],
+      "review_disposition": "installed_base_or_rental",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "2981-162-le26"
+    },
+    {
+      "analyst_rationale": "Centrifuge rental/comodato",
+      "buyer_identity_provenance": {
+        "display_name": "SERVICIO DE SALUD CHILOE",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": "centrifuge",
+      "catalog_fit_status": "not_purchase",
+      "commercial_signal_type": "rental_or_comodato_signal",
+      "public_evidence": {
+        "tender_title": "arriendo centrifuga inmunohematología lavadora"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "arriendo centrifuga inmunohematología lavadora"
+        }
+      ],
+      "review_disposition": "installed_base_or_rental",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "1663-102-le26"
+    },
+    {
+      "analyst_rationale": "Surgical microscope maintenance",
+      "buyer_identity_provenance": {
+        "display_name": "SERVICIO DE SALUD DEL LIBERTADOR B O'HIGGINS HOSPITAL REG RANCAGUA",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": null,
+      "catalog_fit_status": "not_purchase",
+      "commercial_signal_type": "installed_base_signal",
+      "public_evidence": {
+        "tender_title": "SERV. MTTO MICROSCOPIOS QUIRURGICOS SEGUNDA LIC"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "SERV. MTTO MICROSCOPIOS QUIRURGICOS SEGUNDA LIC"
+        }
+      ],
+      "review_disposition": "installed_base_or_rental",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "2080-11-le26"
+    },
+    {
+      "analyst_rationale": "Lab unit repair",
+      "buyer_identity_provenance": {
+        "display_name": "SERVICIO NACIONAL DE GEOLOGIA Y MINERIA",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": null,
+      "catalog_fit_status": "not_purchase",
+      "commercial_signal_type": "installed_base_signal",
+      "public_evidence": {
+        "tender_title": "REPARACION Y MEJORAS UNIDADES DEPTO LABORATORIOS"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "REPARACION Y MEJORAS UNIDADES DEPTO LABORATORIOS"
+        }
+      ],
+      "review_disposition": "installed_base_or_rental",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "1562-27-le26"
+    },
+    {
+      "analyst_rationale": "Centrifugal pump cone accessory / supply — also lexical pump context",
+      "buyer_identity_provenance": {
+        "display_name": "FONDO HOSPITAL DE LA DIRECCION DE PREVISION DE CARABINEROS DE CHILE",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": null,
+      "catalog_fit_status": "not_purchase",
+      "commercial_signal_type": "consumable_or_reagent_signal",
+      "public_evidence": {
+        "tender_title": "ADQUISICIÓN DE CONO CENTRÍFUGA BOMBA PARA SANGRE TIPO REVOLUTION CENTRIFUGAL PUMP POR SISTEMA DE SUMINISTRO PARA EL HOSPITAL DIPRECA"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "ADQUISICIÓN DE CONO CENTRÍFUGA BOMBA PARA SANGRE TIPO REVOLUTION CENTRIFUGAL PUMP POR SISTEMA DE SUMINISTRO PARA EL HOSPITAL DIPRECA"
+        }
+      ],
+      "review_disposition": "consumable_or_accessory",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "948355-60-le26"
+    },
+    {
+      "analyst_rationale": "Microscope protective sleeve",
+      "buyer_identity_provenance": {
+        "display_name": "HOSPITAL PROVINCIAL   DEL HUASCO MSR FERNANDO ARIZTIA RUIZ",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": null,
+      "catalog_fit_status": "not_purchase",
+      "commercial_signal_type": "consumable_or_reagent_signal",
+      "public_evidence": {
+        "tender_title": "SUMINISTRO DE MANGA PROTECTORA MICROSCOPIO"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "SUMINISTRO DE MANGA PROTECTORA MICROSCOPIO"
+        }
+      ],
+      "review_disposition": "consumable_or_accessory",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "1555-11-le26"
+    },
+    {
+      "analyst_rationale": "Reagents",
+      "buyer_identity_provenance": {
+        "display_name": "SERVICIO DE SALUD DEL MAULE HOSPITAL DE PARRAL",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": null,
+      "catalog_fit_status": "not_purchase",
+      "commercial_signal_type": "consumable_or_reagent_signal",
+      "public_evidence": {
+        "tender_title": "Reactivos Laboratorio 2026"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "Reactivos Laboratorio 2026"
+        }
+      ],
+      "review_disposition": "consumable_or_accessory",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "1464-54-le26"
+    },
+    {
+      "analyst_rationale": "Sterile microscope cover among accessories",
+      "buyer_identity_provenance": {
+        "display_name": "SERVICIO DE SALUD DEL MAULE HOSPITAL DE TALCA",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": null,
+      "catalog_fit_status": "not_purchase",
+      "commercial_signal_type": "consumable_or_reagent_signal",
+      "public_evidence": {
+        "tender_title": "ADQUISICIÓN DE BALONES DE CONTRAPULSACION SET DE INTUBACIÓN LAGRIMAL Y FUNDA ESTERIL PARA MICROSCOPÍO"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "ADQUISICIÓN DE BALONES DE CONTRAPULSACION SET DE INTUBACIÓN LAGRIMAL Y FUNDA ESTERIL PARA MICROSCOPÍO"
+        }
+      ],
+      "review_disposition": "consumable_or_accessory",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "699866-174-lp25"
+    },
+    {
+      "analyst_rationale": "Reagents and lab supplies",
+      "buyer_identity_provenance": {
+        "display_name": "SERVICIO DE SALUD OSORNO HOSPITAL PURRANQUE",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": null,
+      "catalog_fit_status": "not_purchase",
+      "commercial_signal_type": "consumable_or_reagent_signal",
+      "public_evidence": {
+        "tender_title": "Reactivos e Insumos laboratorio Junio"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "Reactivos e Insumos laboratorio Junio"
+        }
+      ],
+      "review_disposition": "consumable_or_accessory",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "1057534-30-le26"
+    },
+    {
+      "analyst_rationale": "Lab supplies program",
+      "buyer_identity_provenance": {
+        "display_name": "SUBSECRETARIA DE SALUD PUBLICA",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": null,
+      "catalog_fit_status": "not_purchase",
+      "commercial_signal_type": "consumable_or_reagent_signal",
+      "public_evidence": {
+        "tender_title": "Adquisición de insumos de laboratorio - Prog. VPM"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "Adquisición de insumos de laboratorio - Prog. VPM"
+        }
+      ],
+      "review_disposition": "consumable_or_accessory",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "1080289-10-le26"
+    },
+    {
+      "analyst_rationale": "Centrifugal pumps not lab centrifuges",
+      "buyer_identity_provenance": {
+        "display_name": "HOSPITAL GUILLERMO GRANT BENAVENTE DE CO",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": null,
+      "catalog_fit_status": "not_applicable",
+      "commercial_signal_type": "excluded_unrelated",
+      "public_evidence": {
+        "tender_title": "REEMPLAZO E INSTALACIÓN DE BOMBAS CENTRIFUGAS CAA"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "REEMPLAZO E INSTALACIÓN DE BOMBAS CENTRIFUGAS CAA"
+        }
+      ],
+      "review_disposition": "lexical_false_positive",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "407-115-co26"
+    },
+    {
+      "analyst_rationale": "Centrifugal pumps not lab centrifuges; retender pair with 407-115",
+      "buyer_identity_provenance": {
+        "display_name": "HOSPITAL GUILLERMO GRANT BENAVENTE DE CO",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": null,
+      "catalog_fit_status": "not_applicable",
+      "commercial_signal_type": "excluded_unrelated",
+      "public_evidence": {
+        "tender_title": "REEMPLAZO E INSTALACIÓN DE BOMBAS CENTRIFUGAS CAA"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "REEMPLAZO E INSTALACIÓN DE BOMBAS CENTRIFUGAS CAA"
+        }
+      ],
+      "review_disposition": "lexical_false_positive",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "407-89-le26"
+    },
+    {
+      "analyst_rationale": "Submersible and centrifugal pumps",
+      "buyer_identity_provenance": {
+        "display_name": "I MUNICIPALIDAD DE ARICA",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": null,
+      "catalog_fit_status": "not_applicable",
+      "commercial_signal_type": "excluded_unrelated",
+      "public_evidence": {
+        "tender_title": "ADQ. BOMBAS SUMERGIBLES Y CENTRIFUGAS DIMAO ORD N° 3302026 LSV IMA"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "ADQ. BOMBAS SUMERGIBLES Y CENTRIFUGAS DIMAO ORD N° 3302026 LSV IMA"
+        }
+      ],
+      "review_disposition": "lexical_false_positive",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "2585-77-le26"
+    },
+    {
+      "analyst_rationale": "Business/programming incubator not lab incubator",
+      "buyer_identity_provenance": {
+        "display_name": "SUBSECRETARÍA DE LAS CULTURAS Y LAS ARTES",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": null,
+      "catalog_fit_status": "not_applicable",
+      "commercial_signal_type": "excluded_unrelated",
+      "public_evidence": {
+        "tender_title": "FERIA DE PROGRAMACIÓN CBB-INCUBADORA"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "FERIA DE PROGRAMACIÓN CBB-INCUBADORA"
+        }
+      ],
+      "review_disposition": "lexical_false_positive",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "4886-5-le26"
+    },
+    {
+      "analyst_rationale": "Horizontal centrifugal pump",
+      "buyer_identity_provenance": {
+        "display_name": "UNIVERSIDAD DE LOS LAGOS",
+        "identifier_kind": "public_buyer_display"
+      },
+      "canonical_equipment_category": null,
+      "catalog_fit_status": "not_applicable",
+      "commercial_signal_type": "excluded_unrelated",
+      "public_evidence": {
+        "tender_title": "ADQUISICION BOMBA CENTRIFUGA HORIZONTAL MONOBLOC"
+      },
+      "relevant_line_references": [
+        {
+          "field_path": "title",
+          "text": "ADQUISICION BOMBA CENTRIFUGA HORIZONTAL MONOBLOC"
+        }
+      ],
+      "review_disposition": "lexical_false_positive",
+      "review_status": "analyst_reviewed_provisional",
+      "tender_code": "5413-14-le26"
+    }
+  ],
+  "description": "Public-procurement-only provisional adjudication for PR5E.2 regression. Not reviewed gold truth; do not replace labels with classifier predictions.",
+  "expected_disposition_counts": {
+    "catalog_fit_candidate": 8,
+    "consumable_or_accessory": 6,
+    "installed_base_or_rental": 6,
+    "lexical_false_positive": 5,
+    "possible_fit_needs_specs": 3,
+    "valid_equipment_outside_catalog": 8
+  },
+  "fixture_id": "commercial_procurement_pr5e2_reviewed_adjudication_v1",
+  "not_classifier_output": true,
+  "not_gold_truth": true,
+  "provenance": "analyst_reviewed_provisional"
+}

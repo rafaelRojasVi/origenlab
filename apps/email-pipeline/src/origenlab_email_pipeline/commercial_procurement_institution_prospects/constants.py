@@ -1,11 +1,12 @@
-"""Constants for PR5E.1 institution prospect intelligence."""
+"""Constants for PR5E.1/PR5E.2 institution prospect intelligence."""
 
 from __future__ import annotations
 
 from typing import Final
 
-PLANNER_VERSION: Final[str] = "procurement_institution_prospect_planner_v1"
-CONTRACT_VERSION: Final[str] = "institution_prospect_contract_v1"
+PLANNER_VERSION: Final[str] = "procurement_institution_prospect_planner_v2"
+CONTRACT_VERSION: Final[str] = "institution_prospect_contract_v2"
+RECOGNITION_LAYER_VERSION: Final[str] = "procurement_prospect_recognition_pr5e2_v1"
 
 FORBIDDEN_CLI_FLAGS: Final[tuple[str, ...]] = (
     "--apply",
@@ -36,8 +37,24 @@ COMMERCIAL_EVIDENCE_SIGNALS: Final[tuple[str, ...]] = (
     "excluded_unrelated",
 )
 
+# Raw-count vocabulary (used only when no event-family evidence is available).
 RECURRENCE_OBSERVED_ONCE: Final[str] = "observed_once"
 RECURRENCE_REPEATED: Final[str] = "repeated_observed_demand"
+RECURRENCE_NOT_ESTABLISHED: Final[str] = "recurrence_not_established"
+
+# Event-family vocabulary: recurrence is only claimed when independence is proven.
+RECURRENCE_OBSERVED_ONCE_CONFIRMED: Final[str] = "observed_once_confirmed"
+RECURRENCE_REPEATED_CONFIRMED: Final[str] = "repeated_observed_demand_confirmed"
+RECURRENCE_REPEATED_UNRESOLVED: Final[str] = (
+    "repeated_confirmed_with_unresolved_relationships"
+)
+REPEATED_RECURRENCE_STATUSES: Final[frozenset[str]] = frozenset(
+    {
+        RECURRENCE_REPEATED,
+        RECURRENCE_REPEATED_CONFIRMED,
+        RECURRENCE_REPEATED_UNRESOLVED,
+    }
+)
 
 CONTACT_GAP_STATUSES: Final[tuple[str, ...]] = (
     "existing_verified_contact",
@@ -75,6 +92,15 @@ EXCLUDED_RELEVANCE: Final[frozenset[str]] = frozenset(
 
 AXIS_BANDS: Final[tuple[str, ...]] = ("none", "low", "medium", "high")
 
+OPERATOR_QUEUE_NAMES: Final[tuple[str, ...]] = (
+    "current_opportunity_queue",
+    "historical_prospect_queue",
+    "institution_match_review_queue",
+    "contact_gap_queue",
+    "line_evidence_review_queue",
+    "retender_review_queue",
+)
+
 __all__ = [
     "AXIS_BANDS",
     "COMMERCIAL_EVIDENCE_SIGNALS",
@@ -91,10 +117,17 @@ __all__ = [
     "IDENTITY_KIND_UNRESOLVED",
     "INSTALLED_BASE_RELEVANCE",
     "OPEN_LIFECYCLE",
+    "OPERATOR_QUEUE_NAMES",
     "PLANNER_VERSION",
     "PURCHASE_RELEVANCE",
+    "RECOGNITION_LAYER_VERSION",
+    "RECURRENCE_NOT_ESTABLISHED",
     "RECURRENCE_OBSERVED_ONCE",
+    "RECURRENCE_OBSERVED_ONCE_CONFIRMED",
     "RECURRENCE_REPEATED",
+    "RECURRENCE_REPEATED_CONFIRMED",
+    "RECURRENCE_REPEATED_UNRESOLVED",
+    "REPEATED_RECURRENCE_STATUSES",
     "RENTAL_RELEVANCE",
     "REVIEW_RELEVANCE",
 ]

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -----------------------------------------------------------------------------
-# SAFETY: read-only institution prospect map over PR5C→PR5D→PR5E.
+# SAFETY: read-only institution prospect recognition over PR5C→PR5D→PR5E (PR5E.2).
 # No network. No --apply DB writes. Rejects --ticket/--gmail/--postgres/--send.
 # Does not authorize outreach or persist institution profiles.
+# Operator queues are review-only; no queue implies contact/outreach approval.
 # See docs/audits/COMMERCIAL_PROCUREMENT_INSTITUTION_PROSPECTS_PR5E1.md
 # -----------------------------------------------------------------------------
-"""Build institution-level prospect intelligence from live+historical tenders."""
+"""Build institution-level prospect recognition from live+historical tenders."""
 
 from __future__ import annotations
 
@@ -31,6 +32,8 @@ from origenlab_email_pipeline.commercial_procurement_candidate_planner.output_sa
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.constants import (  # noqa: E402
     FORBIDDEN_CLI_FLAGS,
+    PLANNER_VERSION,
+    RECOGNITION_LAYER_VERSION,
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.planner import (  # noqa: E402
     build_institution_prospect_plan,
@@ -104,7 +107,9 @@ def main(argv: list[str] | None = None) -> int:
             "error: provide --detail-cache-dir and/or --acquisition-snapshot-json"
         )
 
-    print("PR5E.1 institution prospect inputs:")
+    print("PR5E.2 institution prospect recognition inputs:")
+    print(f"  planner_version={PLANNER_VERSION}")
+    print(f"  recognition_layer_version={RECOGNITION_LAYER_VERSION}")
     print(f"  sqlite_path={args.sqlite_path.resolve()}")
     if args.detail_cache_dir:
         print(f"  detail_cache_dir={args.detail_cache_dir.resolve()}")
@@ -136,6 +141,22 @@ def main(argv: list[str] | None = None) -> int:
     print("Wrote:")
     for name, path in sorted(written.items()):
         print(f"  {name}: {path}")
+    print(
+        "recognition_layer_version:",
+        summary.get("recognition_layer_version", RECOGNITION_LAYER_VERSION),
+    )
+    print(
+        "operator_queue_sizes:",
+        json.dumps(
+            summary.get("operator_queue_sizes", {}), ensure_ascii=False, sort_keys=True
+        ),
+    )
+    print(
+        "line_reconciliation:",
+        json.dumps(
+            summary.get("line_reconciliation", {}), ensure_ascii=False, sort_keys=True
+        ),
+    )
     print(
         "counts:",
         json.dumps(summary.get("counts", {}), ensure_ascii=False, sort_keys=True),

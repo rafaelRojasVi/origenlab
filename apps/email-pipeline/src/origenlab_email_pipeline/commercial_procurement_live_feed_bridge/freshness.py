@@ -15,6 +15,19 @@ from origenlab_email_pipeline.commercial_procurement_live_feed_bridge.constants 
 )
 
 
+OBSERVATION_ELIGIBLE = "eligible"
+OBSERVATION_FUTURE = "future_observation"
+OBSERVATION_MISSING_CHRONOLOGY = "missing_chronology"
+OBSERVATION_INVALID_CHRONOLOGY = "invalid_chronology"
+
+OBSERVATION_TEMPORAL_STATUSES = (
+    OBSERVATION_ELIGIBLE,
+    OBSERVATION_FUTURE,
+    OBSERVATION_MISSING_CHRONOLOGY,
+    OBSERVATION_INVALID_CHRONOLOGY,
+)
+
+
 class LiveFeedFreshnessError(ValueError):
     """Feed is too stale for a current-opportunity review."""
 
@@ -73,8 +86,15 @@ def evaluate_feed_freshness(
         )
     anchor = last_refresh or generated
     age_hours = None
+    anchor_temporal_status = OBSERVATION_MISSING_CHRONOLOGY
     if anchor is not None:
-        age_hours = (as_of - anchor).total_seconds() / 3600.0
+        if anchor > as_of:
+            # A refresh stamped after the review as-of is not "negative age"; it is
+            # an unusable anchor. Quarantine it instead of calling the feed fresh.
+            anchor_temporal_status = OBSERVATION_FUTURE
+        else:
+            anchor_temporal_status = OBSERVATION_ELIGIBLE
+            age_hours = (as_of - anchor).total_seconds() / 3600.0
     fresh_enough = age_hours is not None and age_hours <= float(max_age_hours)
     report = {
         "as_of_utc": as_of_utc,
@@ -88,6 +108,7 @@ def evaluate_feed_freshness(
             anchor.strftime("%Y-%m-%dT%H:%M:%SZ") if anchor else None
         ),
         "age_hours_at_as_of": age_hours,
+        "freshness_anchor_temporal_status": anchor_temporal_status,
         "max_age_hours": max_age_hours,
         "fresh_enough": fresh_enough,
         "fetched_summaries": (manifest or {}).get("fetched_summaries")
@@ -120,8 +141,15 @@ def resolve_acquired_at_utc(
     *,
     manifest: dict[str, Any] | None,
     refresh_state: dict[str, Any] | None,
+    as_of_utc: str | None = None,
 ) -> str | None:
-    """Prefer manifest generation time as shared acquisition stamp for cache hits."""
+    """Prefer manifest generation time as shared acquisition stamp for cache hits.
+
+    The returned stamp is the observed acquisition fact and is never rewritten.
+    ``as_of_utc`` is accepted for call-site symmetry only; observations later than
+    the review as-of are quarantined downstream, not moved backwards in time.
+    """
+    del as_of_utc
     for src in (manifest, refresh_state):
         if not src:
             continue
@@ -134,3 +162,55 @@ def resolve_acquired_at_utc(
             if dt is not None:
                 return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     return None
+
+
+def is_future_observation(
+    acquired_at_utc: str | None, *, as_of_utc: str | None
+) -> bool:
+    """True when an acquisition stamp is later than the review as-of.
+
+    A ``False`` here only means "not proven to be in the future"; it is not an
+    eligibility verdict. Use :func:`is_temporally_eligible_observation` to decide
+    whether an observation may inform current-opportunity recognition.
+    """
+    acquired = _parse_flexible_utc(acquired_at_utc)
+    as_of = _parse_flexible_utc(as_of_utc)
+    if acquired is None or as_of is None:
+        return False
+    return acquired > as_of
+
+
+def observation_temporal_status(
+    acquired_at_utc: str | None, *, as_of_utc: str | None
+) -> str:
+    """Classify one acquisition stamp against the review as-of, failing closed.
+
+    Missing or unparseable chronology is never silently eligible: it is reported
+    as ``missing_chronology`` / ``invalid_chronology`` so the caller quarantines
+    the observation instead of treating absence of proof as proof of currency.
+    """
+    as_of = _parse_flexible_utc(as_of_utc)
+    if as_of is None:
+        return (
+            OBSERVATION_MISSING_CHRONOLOGY
+            if not as_of_utc
+            else OBSERVATION_INVALID_CHRONOLOGY
+        )
+    if acquired_at_utc is None or not str(acquired_at_utc).strip():
+        return OBSERVATION_MISSING_CHRONOLOGY
+    acquired = _parse_flexible_utc(acquired_at_utc)
+    if acquired is None:
+        return OBSERVATION_INVALID_CHRONOLOGY
+    if acquired > as_of:
+        return OBSERVATION_FUTURE
+    return OBSERVATION_ELIGIBLE
+
+
+def is_temporally_eligible_observation(
+    acquired_at_utc: str | None, *, as_of_utc: str | None
+) -> bool:
+    """True only when the acquisition stamp is present, valid and not future."""
+    return (
+        observation_temporal_status(acquired_at_utc, as_of_utc=as_of_utc)
+        == OBSERVATION_ELIGIBLE
+    )
