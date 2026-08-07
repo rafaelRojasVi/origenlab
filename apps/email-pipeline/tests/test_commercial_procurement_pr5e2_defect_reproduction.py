@@ -6,27 +6,16 @@ They must not weaken existing assertions merely to preserve the first implementa
 
 from __future__ import annotations
 
-import ast
 import inspect
 import re
 from pathlib import Path
 
-import pytest
 
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.models import (
     CoalescedProcurementTender,
 )
-from origenlab_email_pipeline.commercial_procurement_institution_prospects import (
-    adjudication as adjudication_mod,
-)
-from origenlab_email_pipeline.commercial_procurement_institution_prospects import (
-    event_families as event_families_mod,
-)
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.adjudication import (
     adjudicate_public_evidence,
-)
-from origenlab_email_pipeline.commercial_procurement_institution_prospects.catalog_scope import (
-    VERIFIED_CATALOG_CLASSES,
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.event_families import (
     FAMILY_REVIEW,
@@ -215,10 +204,6 @@ def test_defect_maintenance_without_equipment_class_is_assigned_not_review() -> 
     """Valid rental/maintenance/consumable signals must not auto-enter line review."""
     from origenlab_email_pipeline.commercial_procurement_institution_prospects.planner import (
         _build_line_rows,
-    )
-    from origenlab_email_pipeline.commercial_procurement_product_relevance.models import (
-        EvidenceUnitRelevanceDecision,
-        ProductRelevancePlanResult,
     )
 
     # Prefer asserting via helper if signature stable; otherwise scan source contract.
