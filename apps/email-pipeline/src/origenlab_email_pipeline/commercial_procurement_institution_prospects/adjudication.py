@@ -1,10 +1,12 @@
-"""Apply provisional dispositions to public procurement evidence (no tender-code rules)."""
+"""Apply provisional dispositions to public procurement evidence (no tender-code rules).
+
+Production classification never reads analyst-reviewed labels. The comparison
+harness that scores this module against a reviewed fixture lives in
+``tests/helpers/pr5e2_adjudication.py``.
+"""
 
 from __future__ import annotations
 
-import json
-from collections import Counter
-from pathlib import Path
 from typing import Any
 
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.catalog_scope import (
@@ -113,70 +115,11 @@ def adjudicate_public_evidence(
         ambiguity_reason_codes=ambs,
     )
     disposition["relevance_class"] = relevance
-    disposition["canonical_equipment_classes"] = [
-        c for c in classes if c in VERIFIED_CATALOG_CLASSES or True
+    disposition["canonical_equipment_classes"] = list(classes)
+    disposition["catalog_equipment_classes"] = [
+        c for c in classes if c in VERIFIED_CATALOG_CLASSES
     ]
     return disposition
 
 
-def load_reviewed_adjudication_fixture(
-    path: Path | None = None,
-) -> dict[str, Any]:
-    if path is None:
-        # .../src/origenlab_email_pipeline/commercial_procurement_institution_prospects
-        # parents[3] == apps/email-pipeline
-        path = (
-            Path(__file__).resolve().parents[3]
-            / "tests"
-            / "fixtures"
-            / "commercial_procurement_pr5e2_reviewed_adjudication.json"
-        )
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def evaluate_reviewed_adjudication_fixture(
-    fixture: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Compare deterministic dispositions to analyst_reviewed_provisional labels."""
-    fixture = fixture or load_reviewed_adjudication_fixture()
-    results: list[dict[str, Any]] = []
-    for case in fixture["cases"]:
-        lines = list(case.get("public_evidence", {}).get("line_texts") or [])
-        for ref in case.get("relevant_line_references") or []:
-            if ref.get("field_path") == "line" and ref.get("text"):
-                if ref["text"] not in lines:
-                    lines.append(ref["text"])
-        predicted = adjudicate_public_evidence(
-            title=case["public_evidence"]["tender_title"],
-            line_texts=lines,
-        )
-        expected = case["review_disposition"]
-        results.append(
-            {
-                "tender_code": case["tender_code"],
-                "expected_disposition": expected,
-                "predicted_disposition": predicted["review_disposition"],
-                "match": predicted["review_disposition"] == expected,
-                "predicted": predicted,
-                "review_status": case.get("review_status"),
-                "provenance": fixture.get("provenance"),
-            }
-        )
-    counts = Counter(r["predicted_disposition"] for r in results)
-    return {
-        "provenance": fixture.get("provenance"),
-        "not_gold_truth": True,
-        "fixture_id": fixture.get("fixture_id"),
-        "total": len(results),
-        "matches": sum(1 for r in results if r["match"]),
-        "predicted_disposition_counts": dict(sorted(counts.items())),
-        "expected_disposition_counts": fixture.get("expected_disposition_counts"),
-        "results": results,
-    }
-
-
-__all__ = [
-    "adjudicate_public_evidence",
-    "evaluate_reviewed_adjudication_fixture",
-    "load_reviewed_adjudication_fixture",
-]
+__all__ = ["adjudicate_public_evidence"]

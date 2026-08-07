@@ -55,6 +55,8 @@ CATALOG_ALIAS_BOUNDARY_FLAGS = 0
 SERVICE_ONLY_RE = re.compile(
     r"mantenimiento\s+preventiv|mantenimiento\s+correctiv|"
     r"mantencion\s+preventiv|mantencion\s+correctiv|"
+    r"\bmantenimiento\s+de\b|\bmantencion\s+de\b|"
+    r"\bserv\.\s*mtto\b|\bservicio\s+de\s+mant|"
     r"\breparacion\b|\bcalibracion\b|servicio\s+tecnico|"
     r"servicio\s+de\s+mantenimiento|instalacion\s+de\s+equipo\s+existente|"
     r"contratar\s+el\s+servicio"

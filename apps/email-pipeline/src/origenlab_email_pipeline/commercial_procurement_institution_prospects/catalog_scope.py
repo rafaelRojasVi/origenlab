@@ -6,6 +6,12 @@ import re
 import unicodedata
 from typing import Any
 
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.catalog_capability import (
+    catalog_digest as _catalog_digest,
+    catalog_equipment_classes_needing_confirmation as _needs_confirmation_classes,
+    match_catalog_status,
+    verified_catalog_equipment_classes as _verified_catalog_equipment_classes,
+)
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.constants import (
     CONSUMABLE_RELEVANCE,
     EXCLUDED_RELEVANCE,
@@ -26,24 +32,11 @@ DISPOSITION_CONSUMABLE = "consumable_or_accessory"
 DISPOSITION_LEXICAL_FP = "lexical_false_positive"
 DISPOSITION_REVIEW = "review_required"
 
-# Verified current catalog equipment classes (OrigenLab commercial scope).
-VERIFIED_CATALOG_CLASSES = frozenset(
-    {
-        "centrifuge",
-        "incubator",
-        "microscope",
-        "balance",
-        "homogenizer",
-        "shaker",
-        "magnetic_stirrer",
-        "vortex_mixer",
-        "ultrasonic_processor",
-        "ultrasonic_bath",
-        "tablet_hardness_tester",
-        "dissolution_apparatus",
-        "sedimentation_settlometer",
-    }
-)
+# Verified catalog equipment classes, derived from the recorded catalog seed.
+# Kept as a module constant for callers that only need the verified set.
+VERIFIED_CATALOG_CLASSES = _verified_catalog_equipment_classes()
+NEEDS_CONFIRMATION_CATALOG_CLASSES = _needs_confirmation_classes()
+CATALOG_CAPABILITY_DIGEST = _catalog_digest()
 
 OUTSIDE_CATALOG_RE = re.compile(
     r"neurocirug|microscopi[oa]\s+invertid|microscopia\s+especular|"
@@ -140,6 +133,39 @@ def classify_provisional_disposition(
     negative_reason_codes: tuple[str, ...] | list[str] = (),
     ambiguity_reason_codes: tuple[str, ...] | list[str] = (),
 ) -> dict[str, Any]:
+    """Provisional disposition plus the catalog-capability match behind it."""
+    disposition = _provisional_disposition(
+        relevance_class=relevance_class,
+        commercial_signal=commercial_signal,
+        canonical_equipment_classes=canonical_equipment_classes,
+        title=title,
+        positive_reason_codes=positive_reason_codes,
+        negative_reason_codes=negative_reason_codes,
+        ambiguity_reason_codes=ambiguity_reason_codes,
+    )
+    text = _norm(title)
+    disposition["catalog_match_status"] = match_catalog_status(
+        disposition.get("canonical_equipment_category"),
+        text=title,
+        is_purchase_signal=disposition["commercial_signal_type"]
+        == "equipment_purchase_signal",
+        outside_catalog_context=bool(OUTSIDE_CATALOG_RE.search(text)),
+        specs_required=disposition["review_disposition"] == DISPOSITION_POSSIBLE_FIT,
+    )
+    disposition["catalog_capability_digest"] = CATALOG_CAPABILITY_DIGEST
+    return disposition
+
+
+def _provisional_disposition(
+    *,
+    relevance_class: str,
+    commercial_signal: str,
+    canonical_equipment_classes: tuple[str, ...] | list[str],
+    title: str | None,
+    positive_reason_codes: tuple[str, ...] | list[str] = (),
+    negative_reason_codes: tuple[str, ...] | list[str] = (),
+    ambiguity_reason_codes: tuple[str, ...] | list[str] = (),
+) -> dict[str, Any]:
     """
     Deterministic provisional disposition for operator review.
 
@@ -217,6 +243,9 @@ def classify_provisional_disposition(
         }
 
     catalog_classes = [c for c in classes if c in VERIFIED_CATALOG_CLASSES]
+    unconfirmed_classes = [
+        c for c in classes if c in NEEDS_CONFIRMATION_CATALOG_CLASSES
+    ]
     if (
         commercial_signal == "equipment_purchase_signal"
         and catalog_classes
@@ -228,6 +257,19 @@ def classify_provisional_disposition(
             "catalog_fit_status": "catalog_fit_candidate",
             "canonical_equipment_category": catalog_classes[0],
             "reason_codes": ["verified_catalog_class_and_purchase_signal"],
+        }
+
+    if (
+        commercial_signal == "equipment_purchase_signal"
+        and unconfirmed_classes
+        and relevance_class in PURCHASE_RELEVANCE
+    ):
+        return {
+            "review_disposition": DISPOSITION_POSSIBLE_FIT,
+            "commercial_signal_type": commercial_signal,
+            "catalog_fit_status": "catalog_equipment_class_needs_confirmation",
+            "canonical_equipment_category": unconfirmed_classes[0],
+            "reason_codes": ["catalog_equipment_class_needs_confirmation"],
         }
 
     if commercial_signal == "equipment_purchase_signal" and classes:
@@ -296,6 +338,8 @@ def classify_provisional_disposition(
 
 
 __all__ = [
+    "CATALOG_CAPABILITY_DIGEST",
+    "NEEDS_CONFIRMATION_CATALOG_CLASSES",
     "DISPOSITION_CATALOG_FIT",
     "DISPOSITION_CONSUMABLE",
     "DISPOSITION_INSTALLED_OR_RENTAL",

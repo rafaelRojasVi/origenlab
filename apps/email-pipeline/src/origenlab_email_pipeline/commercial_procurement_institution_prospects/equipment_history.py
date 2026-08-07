@@ -76,8 +76,10 @@ class _CategoryAcc:
     catalog_fit_statuses: set[str] = field(default_factory=set)
     family_ids: set[str] = field(default_factory=set)
     family_independent_events: dict[str, int] = field(default_factory=dict)
+    family_unresolved_relationships: dict[str, int] = field(default_factory=dict)
     family_statuses: set[str] = field(default_factory=set)
     family_reason_codes: set[str] = field(default_factory=set)
+    equipment_scopes: set[str] = field(default_factory=set)
 
 
 def aggregate_equipment_history(
@@ -87,6 +89,7 @@ def aggregate_equipment_history(
     institution_id_by_tender: dict[str, str],
     lifecycle_by_tender: dict[str, str] | None = None,
     family_by_tender: dict[str, Any] | None = None,
+    claim_axes_by_tender: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """
     Return institution_id → list of category history dicts.
@@ -111,9 +114,20 @@ def aggregate_equipment_history(
             continue
 
         signal = classify_commercial_evidence_signal(decision.relevance_class)
-        classes = list(decision.canonical_equipment_classes) or [
-            f"relevance:{decision.relevance_class}"
+        axes = (claim_axes_by_tender or {}).get(tender.coalesced_tender_id) or {}
+        # Line claims name what was actually requested; fall back to the tender
+        # decision. Equipment history holds equipment classes only — a relevance
+        # verdict is not an equipment category.
+        classes = [
+            c
+            for c in (
+                list(axes.get("canonical_equipment_classes") or ())
+                or list(decision.canonical_equipment_classes)
+            )
+            if c and not str(c).startswith("relevance:")
         ]
+        if not classes:
+            continue
         code = _tender_code(tender)
         url = build_mercado_publico_search_url(code) if code else None
         obs = _observation_date(tender)
@@ -150,12 +164,18 @@ def aggregate_equipment_history(
             bucket.ambiguity_reason_codes.update(decision.ambiguity_reason_codes)
             bucket.commercial_signals.add(signal)
             bucket.catalog_fit_statuses.add(decision.product_resolution_status)
+            bucket.equipment_scopes.update(
+                str(s) for s in (axes.get("equipment_scopes") or ())
+            )
             if family is not None:
                 fid = str(_fam_field(family, "family_id") or "")
                 if fid:
                     bucket.family_ids.add(fid)
                     bucket.family_independent_events[fid] = int(
                         _fam_field(family, "independent_demand_event_count", 0) or 0
+                    )
+                    bucket.family_unresolved_relationships[fid] = int(
+                        _fam_field(family, "unresolved_relationship_count", 0) or 0
                     )
                 status = _fam_field(family, "family_resolution_status")
                 if status:
@@ -177,6 +197,7 @@ def aggregate_equipment_history(
             if families_applied:
                 family_count = len(a.family_ids)
                 independent = sum(a.family_independent_events.values())
+                unresolved = sum(a.family_unresolved_relationships.values())
                 if FAMILY_REVIEW in a.family_statuses:
                     family_status = FAMILY_REVIEW
                 elif FAMILY_CONFIRMED in a.family_statuses:
@@ -187,10 +208,12 @@ def aggregate_equipment_history(
                     distinct,
                     independent_demand_event_count=independent,
                     family_resolution_status=family_status,
+                    unresolved_relationship_count=unresolved,
                 )
             else:
                 family_count = distinct
                 independent = distinct
+                unresolved = 0
                 family_status = FAMILY_NOT_APPLIED
                 recurrence = recurrence_label(distinct)
             rows.append(
@@ -200,6 +223,8 @@ def aggregate_equipment_history(
                     "raw_tender_count": distinct,
                     "procurement_event_family_count": family_count,
                     "independent_demand_event_count": independent,
+                    "unresolved_relationship_count": unresolved,
+                    "equipment_scopes": sorted(a.equipment_scopes),
                     "family_resolution_status": family_status,
                     "family_reason_codes": sorted(a.family_reason_codes),
                     "distinct_line_evidence_count": len(a.line_evidence_ids),

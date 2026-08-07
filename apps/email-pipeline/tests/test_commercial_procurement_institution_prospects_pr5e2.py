@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.models import (
     CandidatePlanResult,
     CoalescedProcurementTender,
@@ -30,6 +33,7 @@ from origenlab_email_pipeline.commercial_procurement_institution_prospects.plann
     build_institution_prospects_from_plans,
 )
 from origenlab_email_pipeline.commercial_procurement_live_feed_bridge.freshness import (
+    is_future_observation,
     resolve_acquired_at_utc,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.models import (
@@ -317,7 +321,9 @@ def test_equipment_history_backward_compatible_without_optional_args() -> None:
 
 
 def test_equipment_history_uses_families_and_projected_lifecycle() -> None:
-    # Same buyer + identical procurement object → one independent demand event.
+    # Same buyer + identical procurement object a few weeks apart, with no
+    # reissue marker: the relationship is unresolved, so recurrence is not
+    # established and the pair must not be collapsed into a confirmed event.
     tenders = [
         _tender(tid="A", lifecycle="closed"),
         _tender(tid="B", lifecycle="closed"),
@@ -340,12 +346,46 @@ def test_equipment_history_uses_families_and_projected_lifecycle() -> None:
     )[next(iter(iids.values()))][0]
     assert row["raw_tender_count"] == 2
     assert row["procurement_event_family_count"] == 1
-    assert row["independent_demand_event_count"] == 1
-    assert row["demand_recurrence"] == "observed_once"
-    assert row["family_resolution_status"] == "confirmed_family"
+    assert row["independent_demand_event_count"] == 0
+    assert row["demand_recurrence"] == "recurrence_not_established"
+    assert row["family_resolution_status"] == "retender_review_required"
     assert row["family_reason_codes"]
     assert row["open_current_tender_count"] == 1
     assert row["historical_tender_count"] == 1
+
+
+def test_equipment_history_confirmed_family_from_explicit_reissue_marker() -> None:
+    # An explicit replacement marker is authoritative evidence of one event.
+    base_title = "Adquisicion de centrifugas clinicas para laboratorio APS"
+    tenders = [
+        _tender(tid="A", lifecycle="closed", title=base_title),
+        _tender(
+            tid="B",
+            lifecycle="closed",
+            title=f"{base_title} EN REEMPLAZO",
+            pub="2026-02-01T00:00:00Z",
+        ),
+    ]
+    decisions = {
+        t.coalesced_tender_id: _decision(tid=t.coalesced_tender_id) for t in tenders
+    }
+    iids = {
+        t.coalesced_tender_id: institution_identity_from_tender(t, None).institution_id
+        for t in tenders
+    }
+    families, tender_to_family = resolve_procurement_event_families(tenders)
+    family_by_id = {f.family_id: f.to_dict() for f in families}
+    family_by_tender = {t: family_by_id[f] for t, f in tender_to_family.items()}
+    row = aggregate_equipment_history(
+        tenders=tenders,
+        decisions_by_tender=decisions,
+        institution_id_by_tender=iids,
+        lifecycle_by_tender={"A": "active_open", "B": "closed"},
+        family_by_tender=family_by_tender,
+    )[next(iter(iids.values()))][0]
+    assert row["family_resolution_status"] == "confirmed_family"
+    assert row["independent_demand_event_count"] == 1
+    assert row["demand_recurrence"] == "observed_once_confirmed"
 
 
 # --- lifecycle precedence wiring --------------------------------------------
@@ -482,11 +522,16 @@ def test_summary_reports_recognition_layer_and_queue_sizes() -> None:
     assert summary["recognition_layer_version"] == RECOGNITION_LAYER_VERSION
     assert set(summary["operator_queue_sizes"]) == set(OPERATOR_QUEUE_NAMES)
     assert summary["line_reconciliation"]["ok"] is True
-    assert summary["reviewed_adjudication_applied"] is True
+    # Production classification never reads analyst-reviewed labels; the fixture
+    # comparison is a test-only harness.
+    assert summary["reviewed_adjudication_applied"] is False
+    assert result.reviewed_adjudication_results == []
     assert summary["separations"]["retender_ne_independent_demand_event"] is True
     assert summary["separations"]["outreach_authorization"] is False
-    assert len(result.reviewed_adjudication_results) == 36
-    assert all(r["match"] for r in result.reviewed_adjudication_results)
+    assert summary["temporal_reconciliation"][
+        "acquisition_timestamps_immutable"
+    ] is True
+    assert set(summary["queue_grains"]) == set(OPERATOR_QUEUE_NAMES)
 
 
 def test_recognition_output_is_order_stable() -> None:
@@ -513,7 +558,8 @@ def test_recognition_output_is_order_stable() -> None:
 # --- acquired_at pinning -----------------------------------------------------
 
 
-def test_acquired_at_clamped_to_as_of_when_manifest_is_ahead() -> None:
+def test_acquired_at_is_never_rewritten_when_manifest_is_ahead_of_as_of() -> None:
+    """Acquisition stamps are observed facts; a later stamp is quarantined, not moved."""
     manifest = {"generated_at_utc": "2026-08-06T09:00:00Z"}
     assert (
         resolve_acquired_at_utc(manifest=manifest, refresh_state=None)
@@ -521,16 +567,66 @@ def test_acquired_at_clamped_to_as_of_when_manifest_is_ahead() -> None:
     )
     assert (
         resolve_acquired_at_utc(manifest=manifest, refresh_state=None, as_of_utc=AS_OF)
-        == AS_OF
+        == "2026-08-06T09:00:00Z"
     )
+    assert is_future_observation("2026-08-06T09:00:00Z", as_of_utc=AS_OF) is True
 
 
-def test_acquired_at_not_clamped_when_already_before_as_of() -> None:
+def test_acquired_at_before_as_of_is_not_a_future_observation() -> None:
     manifest = {"generated_at_utc": "2026-08-05T09:00:00Z"}
     assert (
         resolve_acquired_at_utc(manifest=manifest, refresh_state=None, as_of_utc=AS_OF)
         == "2026-08-05T09:00:00Z"
     )
+    assert is_future_observation("2026-08-05T09:00:00Z", as_of_utc=AS_OF) is False
+
+
+def test_future_snapshot_detection_reads_page_level_acquisition_stamps(
+    tmp_path,
+) -> None:
+    """Acquisition snapshots record fetch time per page, not at the top level."""
+    from origenlab_email_pipeline.commercial_procurement_institution_prospects.planner import (
+        _future_observation_snapshot_ids,
+    )
+
+    def _write(name: str, snapshot_id: str, page_stamp: str) -> Path:
+        path = tmp_path / name
+        path.write_text(
+            json.dumps(
+                {
+                    "snapshot_id": snapshot_id,
+                    "materialized_at_utc": "2026-08-06T21:02:56Z",
+                    "pages": [{"acquired_at_utc": page_stamp}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    ahead = _write("ahead.json", "snap-ahead", "2026-08-06T09:00:00Z")
+    behind = _write("behind.json", "snap-behind", "2026-08-05T09:00:00Z")
+    assert _future_observation_snapshot_ids(
+        [ahead, behind], as_of_utc=AS_OF
+    ) == frozenset({"snap-ahead"})
+
+
+def test_future_stamped_snapshot_tenders_are_quarantined_not_rewritten() -> None:
+    tenders = (_tender(tid="FUT", lifecycle="active_open"),)
+    pr5c, pr5d, pr5e = _plans(tenders, (_decision(tid="FUT"),))
+    result = build_institution_prospects_from_plans(
+        pr5c=pr5c,
+        pr5d=pr5d,
+        pr5e=pr5e,
+        as_of_utc=AS_OF,
+        run_context="local_fixture",
+        future_observation_snapshot_ids=frozenset({"snap-1"}),
+    )
+    assert result.counts["future_observation_excluded_tenders"] == 1
+    assert result.profiles == []
+    quarantined = result.temporal_reconciliation["future_observation_excluded"]
+    assert quarantined[0]["coalesced_tender_id"] == "FUT"
+    assert quarantined[0]["reason"] == "acquisition_stamp_after_as_of"
+    assert result.reconciliation["ok"] is True
 
 
 # --- lifecycle precedence & false positives ---------------------------------
@@ -639,9 +735,16 @@ def test_retender_pair_not_repeated_demand() -> None:
         ),
     )
     families, _ = resolve_procurement_event_families(tenders)
-    confirmed = [f for f in families if f.raw_tender_count == 2]
-    assert confirmed
-    assert confirmed[0].independent_demand_event_count == 1
+    # Identical buyer + title is a suspicion, not proof of one procurement event:
+    # the pair is held for operator review and recurrence stays unestablished.
+    paired = [f for f in families if f.raw_tender_count == 2]
+    assert paired
+    assert paired[0].family_resolution_status == "retender_review_required"
+    assert paired[0].independent_demand_event_count == 0
+    assert paired[0].independent_event_count_lower_bound == 1
+    assert paired[0].independent_event_count_upper_bound == 2
+    assert paired[0].unresolved_relationship_count == 1
+    assert paired[0].recurrence_status == "recurrence_not_established"
     decisions = (
         _decision(tid="407-115-co26", relevance="non_laboratory_false_positive", classes=()),
         _decision(tid="407-89-le26", relevance="non_laboratory_false_positive", classes=()),
@@ -680,9 +783,12 @@ def test_rengo_retender_recurrence_not_established() -> None:
         ),
     )
     families, _ = resolve_procurement_event_families(tenders)
+    # The second title only extends the first with a locality suffix — near
+    # identical, no authoritative relationship evidence, so it stays unresolved.
     assert any(
-        f.family_resolution_status in {"confirmed_family", "retender_review_required"}
-        and f.independent_demand_event_count <= 1
+        f.family_resolution_status == "retender_review_required"
+        and f.independent_demand_event_count == 0
+        and f.recurrence_status == "recurrence_not_established"
         for f in families
     )
     decisions = (
@@ -694,9 +800,7 @@ def test_rengo_retender_recurrence_not_established() -> None:
 
 
 def test_reviewed_adjudication_fixture_distribution() -> None:
-    from origenlab_email_pipeline.commercial_procurement_institution_prospects.adjudication import (
-        evaluate_reviewed_adjudication_fixture,
-    )
+    from helpers.pr5e2_adjudication import evaluate_reviewed_adjudication_fixture
 
     report = evaluate_reviewed_adjudication_fixture()
     assert report["total"] == 36

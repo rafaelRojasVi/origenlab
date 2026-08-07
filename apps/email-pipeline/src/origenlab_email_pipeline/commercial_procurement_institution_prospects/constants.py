@@ -37,9 +37,24 @@ COMMERCIAL_EVIDENCE_SIGNALS: Final[tuple[str, ...]] = (
     "excluded_unrelated",
 )
 
+# Raw-count vocabulary (used only when no event-family evidence is available).
 RECURRENCE_OBSERVED_ONCE: Final[str] = "observed_once"
 RECURRENCE_REPEATED: Final[str] = "repeated_observed_demand"
 RECURRENCE_NOT_ESTABLISHED: Final[str] = "recurrence_not_established"
+
+# Event-family vocabulary: recurrence is only claimed when independence is proven.
+RECURRENCE_OBSERVED_ONCE_CONFIRMED: Final[str] = "observed_once_confirmed"
+RECURRENCE_REPEATED_CONFIRMED: Final[str] = "repeated_observed_demand_confirmed"
+RECURRENCE_REPEATED_UNRESOLVED: Final[str] = (
+    "repeated_confirmed_with_unresolved_relationships"
+)
+REPEATED_RECURRENCE_STATUSES: Final[frozenset[str]] = frozenset(
+    {
+        RECURRENCE_REPEATED,
+        RECURRENCE_REPEATED_CONFIRMED,
+        RECURRENCE_REPEATED_UNRESOLVED,
+    }
+)
 
 CONTACT_GAP_STATUSES: Final[tuple[str, ...]] = (
     "existing_verified_contact",
@@ -108,7 +123,11 @@ __all__ = [
     "RECOGNITION_LAYER_VERSION",
     "RECURRENCE_NOT_ESTABLISHED",
     "RECURRENCE_OBSERVED_ONCE",
+    "RECURRENCE_OBSERVED_ONCE_CONFIRMED",
     "RECURRENCE_REPEATED",
+    "RECURRENCE_REPEATED_CONFIRMED",
+    "RECURRENCE_REPEATED_UNRESOLVED",
+    "REPEATED_RECURRENCE_STATUSES",
     "RENTAL_RELEVANCE",
     "REVIEW_RELEVANCE",
 ]

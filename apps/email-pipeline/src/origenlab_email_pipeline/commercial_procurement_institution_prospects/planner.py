@@ -33,8 +33,8 @@ from origenlab_email_pipeline.commercial_procurement_contact_resolution.models i
 from origenlab_email_pipeline.commercial_procurement_contact_resolution.planner import (
     build_contact_resolution_plan,
 )
-from origenlab_email_pipeline.commercial_procurement_institution_prospects.adjudication import (
-    evaluate_reviewed_adjudication_fixture,
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.catalog_capability import (
+    catalog_digest,
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.catalog_scope import (
     classify_provisional_disposition,
@@ -50,7 +50,6 @@ from origenlab_email_pipeline.commercial_procurement_institution_prospects.const
     OPERATOR_QUEUE_NAMES,
     PLANNER_VERSION,
     RECOGNITION_LAYER_VERSION,
-    REVIEW_RELEVANCE,
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.equipment_history import (
     aggregate_equipment_history,
@@ -67,6 +66,11 @@ from origenlab_email_pipeline.commercial_procurement_institution_prospects.lifec
     KNOWN_OPEN,
     apply_lifecycle_precedence,
 )
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.line_claims import (
+    LineClaim,
+    aggregate_tender_axes,
+    build_line_claims,
+)
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.overlay import (
     build_contact_overlay,
     is_open_lifecycle,
@@ -76,6 +80,8 @@ from origenlab_email_pipeline.commercial_procurement_institution_prospects.overl
     score_prospect_strength,
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.queues import (
+    EMPTY_QUEUE_HEADERS,
+    QUEUE_GRAINS,
     build_operator_queues,
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.reconcile import (
@@ -83,14 +89,15 @@ from origenlab_email_pipeline.commercial_procurement_institution_prospects.recon
     reconcile_institution_prospects,
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.signals import (
-    RECURRENCE_REPEATED,
     is_equipment_purchase_signal,
+    is_repeated_recurrence,
 )
 from origenlab_email_pipeline.commercial_procurement_live_feed_bridge.adapter import (
     adapt_detail_cache_directory,
 )
 from origenlab_email_pipeline.commercial_procurement_live_feed_bridge.freshness import (
     evaluate_feed_freshness,
+    is_future_observation,
     load_json_object,
     resolve_acquired_at_utc,
 )
@@ -140,9 +147,12 @@ class InstitutionProspectPlanResult:
     line_reconciliation: dict[str, Any] = field(default_factory=dict)
     tender_rows: list[dict[str, Any]] = field(default_factory=list)
     line_rows: list[dict[str, Any]] = field(default_factory=list)
-    # Filled only when an analyst-reviewed adjudication fixture is applied by a
-    # dry-run helper; never produced by production classification.
+    line_claims: list[dict[str, Any]] = field(default_factory=list)
+    temporal_reconciliation: dict[str, Any] = field(default_factory=dict)
+    # Filled only when a caller passes analyst-reviewed comparison results from a
+    # dry-run helper; production classification never reads reviewed labels.
     reviewed_adjudication_results: list[dict[str, Any]] = field(default_factory=list)
+    catalog_capability_digest: str = ""
     recognition_layer_version: str = RECOGNITION_LAYER_VERSION
 
     def to_summary_dict(self) -> dict[str, Any]:
@@ -187,6 +197,9 @@ class InstitutionProspectPlanResult:
                 "unit_decision_count": self.line_reconciliation.get(
                     "unit_decision_count"
                 ),
+                "product_text_unit_count": self.line_reconciliation.get(
+                    "product_text_unit_count"
+                ),
                 "assigned_line_count": self.line_reconciliation.get(
                     "assigned_line_count"
                 ),
@@ -196,7 +209,21 @@ class InstitutionProspectPlanResult:
                 "excluded_line_count": self.line_reconciliation.get(
                     "excluded_line_count"
                 ),
+                "dropped_unit_count": self.line_reconciliation.get(
+                    "dropped_unit_count"
+                ),
+                "no_silent_line_drop": self.line_reconciliation.get(
+                    "no_silent_line_drop"
+                ),
             },
+            "temporal_reconciliation": {
+                "acquisition_timestamps_immutable": True,
+                "future_observation_excluded_count": self.temporal_reconciliation.get(
+                    "future_observation_excluded_count", 0
+                ),
+            },
+            "catalog_capability_digest": self.catalog_capability_digest,
+            "queue_grains": dict(QUEUE_GRAINS),
             "reviewed_adjudication_applied": bool(self.reviewed_adjudication_results),
             "fingerprints": self.fingerprints,
             "dependency_fingerprints": self.dependency_fingerprints,
@@ -233,17 +260,23 @@ class InstitutionProspectPlanResult:
 
 
 def _unit_text(unit: Any) -> str | None:
-    parts: list[str] = []
-    for span in getattr(unit, "matched_spans", ())[:5]:
-        text = getattr(span, "matched_text", None) or getattr(span, "span_text", None)
-        if text:
-            parts.append(str(text))
-    return " ".join(parts) or None
+    """Full product text for a unit — never a concatenation of matched spans."""
+    text = getattr(unit, "text_raw", None) or getattr(unit, "text_normalized", None)
+    return str(text) if text else None
 
 
 LINE_DISPOSITION_ASSIGNED = "assigned"
 LINE_DISPOSITION_REVIEW = "review_required"
 LINE_DISPOSITION_EXCLUDED = "excluded"
+
+_ASSIGNABLE_SIGNALS = frozenset(
+    {
+        "equipment_purchase_signal",
+        "installed_base_signal",
+        "rental_or_comodato_signal",
+        "consumable_or_reagent_signal",
+    }
+)
 
 
 def _build_line_rows(
@@ -253,8 +286,16 @@ def _build_line_rows(
     institution_id_by_tender: dict[str, str],
     identity_by_institution: dict[str, InstitutionIdentity],
     projected_lifecycle: dict[str, str],
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, list[LineClaim]]]:
     """Reconcile every PR5D evidence unit into assigned / review / excluded."""
+    text_unit_by_id = {u.unit_id: u for u in pr5d.product_text_units}
+    claims_by_unit: dict[str, tuple[LineClaim, ...]] = {}
+    claims_by_tender: dict[str, list[LineClaim]] = defaultdict(list)
+    for unit in sorted(pr5d.product_text_units, key=lambda u: u.unit_id):
+        claims = build_line_claims(unit)
+        claims_by_unit[unit.unit_id] = claims
+        claims_by_tender[unit.coalesced_tender_id].extend(claims)
+
     rows: list[dict[str, Any]] = []
     for unit in sorted(
         pr5d.unit_decisions, key=lambda u: (u.coalesced_tender_id, u.unit_decision_id)
@@ -262,7 +303,13 @@ def _build_line_rows(
         tid = unit.coalesced_tender_id
         tender = tender_by_id.get(tid)
         code = _tender_code(tender) if tender is not None else tid
-        text = _unit_text(unit) or (tender.title_selected if tender else None)
+        text_unit = text_unit_by_id.get(unit.unit_id)
+        text = (_unit_text(text_unit) if text_unit else None) or (
+            tender.title_selected if tender else None
+        )
+        claims = claims_by_unit.get(unit.unit_id, ())
+        axes = aggregate_tender_axes(claims) if claims else {}
+        scopes = list(axes.get("equipment_scopes") or [])
         signal, signal_reasons = refine_commercial_signal(
             relevance_class=unit.relevance_class,
             title=text,
@@ -271,16 +318,14 @@ def _build_line_rows(
         if signal == "excluded_unrelated" or unit.relevance_class in EXCLUDED_RELEVANCE:
             disposition = LINE_DISPOSITION_EXCLUDED
             reasons = ["line_excluded_not_commercially_relevant"]
-        elif (
-            signal == "review_required_signal"
-            or unit.relevance_class in REVIEW_RELEVANCE
-            or not unit.canonical_equipment_classes
-        ):
-            disposition = LINE_DISPOSITION_REVIEW
-            reasons = ["line_requires_operator_review"]
-        else:
+        elif signal in _ASSIGNABLE_SIGNALS:
+            # A maintenance, rental or consumable line is a resolved commercial
+            # fact; it does not need an equipment class to leave review.
             disposition = LINE_DISPOSITION_ASSIGNED
             reasons = ["line_assigned_commercial_signal"]
+        else:
+            disposition = LINE_DISPOSITION_REVIEW
+            reasons = ["line_requires_operator_review"]
         iid = institution_id_by_tender.get(tid)
         ident = identity_by_institution.get(iid) if iid else None
         rows.append(
@@ -296,6 +341,8 @@ def _build_line_rows(
                 ),
                 "relevance_class": unit.relevance_class,
                 "canonical_equipment_classes": list(unit.canonical_equipment_classes),
+                "equipment_scopes": scopes,
+                "claim_count": int(axes.get("claim_count") or 0),
                 "commercial_signal_type": signal,
                 "line_disposition": disposition,
                 "evidence_tier": unit.evidence_tier,
@@ -314,22 +361,42 @@ def _build_line_rows(
     review = counts.get(LINE_DISPOSITION_REVIEW, 0)
     excluded = counts.get(LINE_DISPOSITION_EXCLUDED, 0)
     total = len(pr5d.unit_decisions)
+
+    decided_unit_ids = {u.unit_id for u in pr5d.unit_decisions}
+    text_unit_ids = set(text_unit_by_id)
+    unresolved_unit_ids = {u.unit_id for u in pr5d.unresolved_units}
+    dropped_unit_ids = sorted(text_unit_ids - decided_unit_ids - unresolved_unit_ids)
+    decisions_without_text_unit = sorted(decided_unit_ids - text_unit_ids)
+
+    partition_holds = total == assigned + review + excluded and total == len(rows)
+    no_silent_line_drop = not dropped_unit_ids
+    coverage_holds = (
+        len(text_unit_ids) == len(text_unit_ids & (decided_unit_ids | unresolved_unit_ids))
+    )
     reconciliation = {
-        "ok": total == assigned + review + excluded and total == len(rows),
+        "ok": bool(partition_holds and no_silent_line_drop and coverage_holds),
         "equation": (
             "unit_decision_count = assigned_line_count + review_required_line_count "
-            "+ excluded_line_count"
+            "+ excluded_line_count; product_text_unit_count = decided_unit_count "
+            "+ unresolved_unit_count + dropped_unit_count"
         ),
         "unit_decision_count": total,
         "line_row_count": len(rows),
         "assigned_line_count": assigned,
         "review_required_line_count": review,
         "excluded_line_count": excluded,
-        "unresolved_unit_count": len(pr5d.unresolved_units),
+        "product_text_unit_count": len(text_unit_ids),
+        "decided_unit_count": len(decided_unit_ids),
+        "unresolved_unit_count": len(unresolved_unit_ids),
+        "dropped_unit_count": len(dropped_unit_ids),
+        "dropped_unit_ids": dropped_unit_ids[:50],
+        "decisions_without_text_unit_count": len(decisions_without_text_unit),
         "line_disposition_counts": dict(sorted(counts.items())),
-        "no_silent_line_drop": True,
+        "partition_holds": partition_holds,
+        "coverage_holds": coverage_holds,
+        "no_silent_line_drop": no_silent_line_drop,
     }
-    return rows, reconciliation
+    return rows, reconciliation, dict(claims_by_tender)
 
 
 def build_institution_prospects_from_plans(
@@ -339,8 +406,16 @@ def build_institution_prospects_from_plans(
     pr5e: ContactResolutionPlanResult,
     as_of_utc: str,
     run_context: str,
+    future_observation_snapshot_ids: frozenset[str] | None = None,
+    reviewed_adjudication_results: list[dict[str, Any]] | None = None,
 ) -> InstitutionProspectPlanResult:
-    """Pure aggregation over already-built PR5C/D/E results."""
+    """Pure aggregation over already-built PR5C/D/E results.
+
+    ``future_observation_snapshot_ids`` names acquisition snapshots stamped after
+    ``as_of_utc``. Tenders sourced only from those snapshots are quarantined as
+    ``future_observation_excluded`` — their timestamps are never rewritten.
+    """
+    future_snapshots = frozenset(future_observation_snapshot_ids or ())
     orgs_by_tender: dict[str, OrganizationResolution] = {
         o.coalesced_tender_id: o for o in pr5e.organization_resolutions
     }
@@ -415,9 +490,23 @@ def build_institution_prospects_from_plans(
     source_ids = {t.coalesced_tender_id for t in pr5c.coalesced_tenders}
     excluded: dict[str, str] = {}
     identities_by_tender: dict[str, InstitutionIdentity] = {}
+    quarantined_future: list[dict[str, Any]] = []
 
     for tender in sorted(pr5c.coalesced_tenders, key=lambda t: t.coalesced_tender_id):
         tid = tender.coalesced_tender_id
+        snapshot_ids = set(tender.acquisition_snapshot_ids or ())
+        if snapshot_ids and snapshot_ids <= future_snapshots:
+            excluded[tid] = "future_observation_excluded"
+            quarantined_future.append(
+                {
+                    "coalesced_tender_id": tid,
+                    "tender_code": _tender_code(tender),
+                    "acquisition_snapshot_ids": sorted(snapshot_ids),
+                    "as_of_utc": as_of_utc,
+                    "reason": "acquisition_stamp_after_as_of",
+                }
+            )
+            continue
         if tid not in decisions_by_tender:
             excluded[tid] = "missing_relevance_decision"
             continue
@@ -468,12 +557,26 @@ def build_institution_prospects_from_plans(
     institution_id_by_tender = {
         tid: ident.institution_id for tid, ident in identities_by_tender.items()
     }
+
+    line_rows, line_reconciliation, claims_by_tender = _build_line_rows(
+        pr5d=pr5d,
+        tender_by_id=tender_by_id,
+        institution_id_by_tender=institution_id_by_tender,
+        identity_by_institution=identity_by_institution,
+        projected_lifecycle=projected_lifecycle,
+    )
+    claim_axes_by_tender = {
+        tid: aggregate_tender_axes(claims)
+        for tid, claims in sorted(claims_by_tender.items())
+    }
+
     history_by_institution = aggregate_equipment_history(
         tenders=pr5c.coalesced_tenders,
         decisions_by_tender=decisions_by_tender,
         institution_id_by_tender=institution_id_by_tender,
         lifecycle_by_tender=projected_lifecycle,
         family_by_tender=family_meta_by_tender,
+        claim_axes_by_tender=claim_axes_by_tender,
     )
 
     profiles: list[dict[str, Any]] = []
@@ -527,7 +630,7 @@ def build_institution_prospects_from_plans(
         repeated_category_count = sum(
             1
             for h in history
-            if h.get("demand_recurrence") == RECURRENCE_REPEATED
+            if is_repeated_recurrence(h.get("demand_recurrence"))
             and h.get("has_equipment_purchase_signal")
         )
         dates = [
@@ -605,8 +708,12 @@ def build_institution_prospects_from_plans(
                 "commercial_signal_type": disposition.get("commercial_signal_type"),
                 "review_disposition": disposition.get("review_disposition"),
                 "catalog_fit_status": disposition.get("catalog_fit_status"),
+                "catalog_match_status": disposition.get("catalog_match_status"),
                 "canonical_equipment_category": disposition.get(
                     "canonical_equipment_category"
+                ),
+                "equipment_scopes": list(
+                    (claim_axes_by_tender.get(tid) or {}).get("equipment_scopes") or []
                 ),
                 "reason_codes": list(disposition.get("reason_codes") or [])
                 + list(disposition.get("signal_reason_codes") or []),
@@ -749,14 +856,6 @@ def build_institution_prospects_from_plans(
     match_review.sort(key=lambda r: r["institution_id"])
     tender_rows.sort(key=lambda r: (str(r["tender_code"]), r["coalesced_tender_id"]))
 
-    line_rows, line_reconciliation = _build_line_rows(
-        pr5d=pr5d,
-        tender_by_id=tender_by_id,
-        institution_id_by_tender=institution_id_by_tender,
-        identity_by_institution=identity_by_institution,
-        projected_lifecycle=projected_lifecycle,
-    )
-
     contact_gap_by_institution = {
         p["institution_id"]: p["account_contact_overlay"]["contact_gap_status"]
         for p in profiles
@@ -810,7 +909,7 @@ def build_institution_prospects_from_plans(
         for p in profiles
         if p["counts"]["repeated_equipment_category_count"] > 0
     )
-    open_opp_n = sum(1 for p in profiles if p["counts"]["open_tender_count"] > 0)
+    open_source_tender_n = sum(1 for p in profiles if p["counts"]["open_tender_count"] > 0)
     historical_prospect_n = sum(
         1
         for p in profiles
@@ -910,13 +1009,23 @@ def build_institution_prospects_from_plans(
         "contact_gap_status_counts": dict(sorted(gap_counts.items())),
         "profiles_with_equipment_purchase_evidence": purchase_n,
         "profiles_with_repeated_equipment_demand": repeated_n,
-        "profiles_with_open_opportunity": open_opp_n,
+        # An open tender in the source feed is not the same claim as a live
+        # opportunity for something OrigenLab actually sells.
+        "profiles_with_open_source_tenders": open_source_tender_n,
+        "profiles_with_current_catalog_opportunities": len(
+            {
+                str(r.get("institution_id") or "")
+                for r in operator_queues.get("current_opportunity_queue", [])
+            }
+        ),
         "historical_prospect_profiles": historical_prospect_n,
         "equipment_category_distribution": dict(cat_dist.most_common(50)),
         "match_review_queue_size": len(match_review),
-        "contact_gap_queue_size": len(contact_gaps),
+        "contact_gap_candidate_count": len(contact_gaps),
+        "contact_gap_queue_size": len(operator_queues.get("contact_gap_queue", [])),
         "source_tenders": len(source_ids),
         "excluded_tenders": len(excluded),
+        "future_observation_excluded_tenders": len(quarantined_future),
         "operator_queue_sizes": {
             name: len(operator_queues.get(name, [])) for name in OPERATOR_QUEUE_NAMES
         },
@@ -979,11 +1088,65 @@ def build_institution_prospects_from_plans(
         line_reconciliation=line_reconciliation,
         tender_rows=tender_rows,
         line_rows=line_rows,
-        reviewed_adjudication_results=evaluate_reviewed_adjudication_fixture()[
-            "results"
-        ],
+        line_claims=[c.to_dict() for cl in claims_by_tender.values() for c in cl],
+        temporal_reconciliation={
+            "ok": True,
+            "as_of_utc": as_of_utc,
+            "acquisition_timestamps_immutable": True,
+            "future_observation_snapshot_ids": sorted(future_snapshots),
+            "future_observation_excluded_count": len(quarantined_future),
+            "future_observation_excluded": quarantined_future,
+            "reason": "acquisition_stamp_after_as_of",
+        },
+        reviewed_adjudication_results=list(reviewed_adjudication_results or []),
+        catalog_capability_digest=catalog_digest(),
         recognition_layer_version=RECOGNITION_LAYER_VERSION,
     )
+
+
+def _future_observation_snapshot_ids(
+    snapshot_paths: list[Path], *, as_of_utc: str
+) -> frozenset[str]:
+    """Acquisition snapshots stamped after the review as-of, read from the files.
+
+    Their timestamps stay exactly as acquired; only the downstream evaluation is
+    quarantined so a future-stamped observation cannot pose as current evidence.
+    """
+    future: set[str] = set()
+    for path in snapshot_paths:
+        try:
+            payload = load_json_object(Path(path))
+        except (OSError, ValueError):
+            continue
+        snapshot_id = str(payload.get("snapshot_id") or "")
+        if not snapshot_id:
+            continue
+        if any(
+            is_future_observation(stamp, as_of_utc=as_of_utc)
+            for stamp in _snapshot_acquisition_stamps(payload)
+        ):
+            future.add(snapshot_id)
+    return frozenset(future)
+
+
+def _snapshot_acquisition_stamps(payload: dict[str, Any]) -> list[Any]:
+    """Every acquisition stamp an acquisition snapshot records.
+
+    Fetch time is recorded per page; the snapshot-level stamps only describe when
+    the snapshot was materialized, so a page-level stamp is the acquisition fact
+    that decides whether the observation is ahead of the review as-of.
+    """
+    stamps: list[Any] = []
+    pages = payload.get("pages")
+    if isinstance(pages, list):
+        stamps.extend(
+            page.get("acquired_at_utc") for page in pages if isinstance(page, dict)
+        )
+    if not any(stamp for stamp in stamps):
+        stamps.extend(
+            payload.get(key) for key in ("acquired_at_utc", "materialized_at_utc")
+        )
+    return [stamp for stamp in stamps if stamp]
 
 
 def build_institution_prospect_plan(
@@ -1028,13 +1191,8 @@ def build_institution_prospect_plan(
                 max_age_hours=max_feed_age_hours,
                 allow_stale=allow_stale_feed,
             )
-            raw_acquired_at = resolve_acquired_at_utc(
-                manifest=manifest, refresh_state=refresh_state
-            )
             acquired_at = resolve_acquired_at_utc(
-                manifest=manifest,
-                refresh_state=refresh_state,
-                as_of_utc=as_of_utc,
+                manifest=manifest, refresh_state=refresh_state
             )
             staging = dest / "_bridge_snapshots"
             adapter = adapt_detail_cache_directory(
@@ -1047,19 +1205,6 @@ def build_institution_prospect_plan(
             )
             snapshot_paths = list(adapter.snapshot_paths)
             adapter_records = [r.__dict__ for r in adapter.records]
-            if raw_acquired_at != acquired_at:
-                adapter_records.append(
-                    {
-                        "record_kind": "acquired_at_clamped_to_as_of",
-                        "raw_acquired_at_utc": raw_acquired_at,
-                        "acquired_at_utc": acquired_at,
-                        "as_of_utc": as_of_utc,
-                        "reason": (
-                            "feed manifest generation stamp was later than the review "
-                            "as_of; acquisition cannot be pinned in the future"
-                        ),
-                    }
-                )
             if not snapshot_paths:
                 raise ValueError("no accepted acquisition snapshots from detail cache")
 
@@ -1105,6 +1250,9 @@ def build_institution_prospect_plan(
             pr5e=pr5e_plan,
             as_of_utc=as_of_utc,
             run_context=run_context,
+            future_observation_snapshot_ids=_future_observation_snapshot_ids(
+                snapshot_paths, as_of_utc=as_of_utc
+            ),
         )
         return _write_bundle(dest, result, adapter_records=adapter_records)
 
@@ -1138,17 +1286,20 @@ def _write_bundle(
         "fingerprints": result.fingerprints,
         "dependency_fingerprints": result.dependency_fingerprints,
     }
+    temporal = result.temporal_reconciliation or {}
     reconciliation = {
         "ok": result.reconciliation.get("ok"),
         "reconciliation": result.reconciliation,
         "line_reconciliation": result.line_reconciliation,
+        "temporal_reconciliation": temporal,
+        "acquisition_timestamps_immutable": True,
+        "future_observation_excluded_count": temporal.get(
+            "future_observation_excluded_count", 0
+        ),
+        "future_observation_excluded": temporal.get("future_observation_excluded", []),
         "adapter_records_count": len(adapter_records or []),
-        "acquired_at_clamp_records": [
-            {k: str(v) for k, v in r.items()}
-            for r in (adapter_records or [])
-            if isinstance(r, dict)
-            and r.get("record_kind") == "acquired_at_clamped_to_as_of"
-        ],
+        "catalog_capability_digest": result.catalog_capability_digest,
+        "queue_grains": dict(QUEUE_GRAINS),
         "dependency_fingerprints": result.dependency_fingerprints,
     }
 
@@ -1209,7 +1360,11 @@ def _write_bundle(
     queues = result.operator_queues
     for queue_name in OPERATOR_QUEUE_NAMES:
         csv_path = dest / f"{queue_name}.csv"
-        _write_csv(csv_path, queues.get(queue_name, []))
+        _write_csv(
+            csv_path,
+            queues.get(queue_name, []),
+            empty_header=EMPTY_QUEUE_HEADERS.get(queue_name),
+        )
         paths[f"{queue_name}.csv"] = str(csv_path)
 
     lifecycle_path = dest / "lifecycle_reconciliation.json"
@@ -1324,17 +1479,23 @@ def _lifecycle_reconciliation_document(
     }
 
 
-def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    if not rows:
-        path.write_text("", encoding="utf-8")
-        return
+def _write_csv(
+    path: Path,
+    rows: list[dict[str, Any]],
+    *,
+    empty_header: list[str] | None = None,
+) -> None:
     # Queue rows are heterogeneous (e.g. identity review mixes profile and cluster
-    # rows), so the header is the union of keys in first-seen order.
-    fieldnames: list[str] = []
+    # rows), so the header is the union of keys in first-seen order. An empty queue
+    # still writes its declared header so the file is readable, not zero-byte.
+    fieldnames: list[str] = list(empty_header or []) if not rows else []
     for row in rows:
         for key in row:
             if key not in fieldnames:
                 fieldnames.append(key)
+    if not fieldnames:
+        path.write_text("", encoding="utf-8")
+        return
     buf = io.StringIO()
     writer = csv.DictWriter(
         buf, fieldnames=fieldnames, extrasaction="ignore", restval=""

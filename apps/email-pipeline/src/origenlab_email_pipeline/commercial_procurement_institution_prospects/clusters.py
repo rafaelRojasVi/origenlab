@@ -27,6 +27,7 @@ class InstitutionReviewCluster:
     linked_account_candidates: tuple[str, ...]
     contact_overlay_summary: dict[str, Any]
     cluster_reason_codes: tuple[str, ...]
+    cluster_membership_digest: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -39,7 +40,19 @@ class InstitutionReviewCluster:
             "linked_account_candidates": list(self.linked_account_candidates),
             "contact_overlay_summary": dict(self.contact_overlay_summary),
             "cluster_reason_codes": list(self.cluster_reason_codes),
+            "cluster_membership_digest": self.cluster_membership_digest,
         }
+
+
+def _buyer_unit_key(ident: InstitutionIdentity) -> str:
+    """Typed buyer unit identity — a display name alone is not an identifier."""
+    if ident.chilecompra_buyer_source_id:
+        return f"chilecompra_buyer_source_id:{ident.chilecompra_buyer_source_id}"
+    if ident.account_id:
+        return f"origenlab_account_id:{ident.account_id}"
+    if ident.normalized_name:
+        return f"normalized_buyer_name:{ident.normalized_name}"
+    return f"institution_id:{ident.institution_id}"
 
 
 def build_institution_review_clusters(
@@ -96,7 +109,11 @@ def build_institution_review_clusters(
         ]
         if conflicts:
             reasons.extend(conflicts)
-        cid = _digest("institution_review_cluster", name, *sorted(uniq))
+        buyer_units = tuple(sorted({_buyer_unit_key(m) for m in member_list}))
+        # Cluster key is the membership itself, so the id is stable across runs
+        # even when a display name is edited upstream.
+        cid = _digest("institution_review_cluster", *sorted(uniq))
+        membership_digest = _digest("cluster_membership", *sorted(uniq), *buyer_units)
         gap_summary = {
             iid: contact_gap_by_institution.get(iid, "unknown")
             for iid in sorted(uniq)
@@ -106,14 +123,7 @@ def build_institution_review_clusters(
                 institution_review_cluster_id=cid,
                 cluster_resolution_status="review_only_fragmented_identity",
                 member_profile_ids=tuple(sorted(uniq)),
-                member_buyer_units=tuple(
-                    sorted(
-                        {
-                            (m.display_name or m.normalized_name or "")
-                            for m in member_list
-                        }
-                    )
-                ),
+                member_buyer_units=buyer_units,
                 source_identifiers=tuple(buyer_ids),
                 identifier_conflicts=tuple(sorted(set(conflicts))),
                 linked_account_candidates=tuple(account_ids),
@@ -122,6 +132,7 @@ def build_institution_review_clusters(
                     "linked_account_does_not_authorize_siblings": True,
                 },
                 cluster_reason_codes=tuple(sorted(set(reasons))),
+                cluster_membership_digest=membership_digest,
             )
         )
     clusters.sort(key=lambda c: c.institution_review_cluster_id)

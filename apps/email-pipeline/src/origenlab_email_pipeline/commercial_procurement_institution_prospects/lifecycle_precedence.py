@@ -67,6 +67,24 @@ def _terminal_from_status(tender: CoalescedProcurementTender) -> str | None:
 
 
 @dataclass(frozen=True)
+class LifecycleCandidate:
+    """One competing lifecycle value and the observation time behind it."""
+
+    candidate_lifecycle_class: str
+    candidate_source: str
+    observed_at_utc: str | None
+    reason_codes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "candidate_lifecycle_class": self.candidate_lifecycle_class,
+            "candidate_source": self.candidate_source,
+            "observed_at_utc": self.observed_at_utc,
+            "reason_codes": list(self.reason_codes),
+        }
+
+
+@dataclass(frozen=True)
 class LifecycleProjection:
     """Projected lifecycle with full provenance for operator review."""
 
@@ -81,6 +99,11 @@ class LifecycleProjection:
     observation_plane: str
     lifecycle_independent_of_relevance: bool = True
     reason_codes: tuple[str, ...] = ()
+    status_observed_at_utc: str | None = None
+    lifecycle_observed_at_utc: str | None = None
+    selected_observation_at_utc: str | None = None
+    temporal_resolution_status: str = "not_applicable"
+    candidates: tuple[LifecycleCandidate, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -95,13 +118,155 @@ class LifecycleProjection:
             "observation_plane": self.observation_plane,
             "lifecycle_independent_of_relevance": True,
             "reason_codes": list(self.reason_codes),
+            "status_observed_at_utc": self.status_observed_at_utc,
+            "lifecycle_observed_at_utc": self.lifecycle_observed_at_utc,
+            "selected_observation_at_utc": self.selected_observation_at_utc,
+            "temporal_resolution_status": self.temporal_resolution_status,
+            "candidates": [c.to_dict() for c in self.candidates],
         }
+
+
+def _timestamp_text(dt: datetime | None) -> str | None:
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ") if dt is not None else None
+
+
+def _parse_observation(raw: str | None) -> datetime | None:
+    if not raw:
+        return None
+    dt, _ = parse_tender_timestamp_raw(str(raw))
+    if dt is not None:
+        return dt
+    try:
+        parsed = datetime.fromisoformat(str(raw).strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _lifecycle_candidates(
+    tender: CoalescedProcurementTender,
+    *,
+    terminal: str | None,
+    status_observed: datetime | None,
+    lifecycle_observed: datetime | None,
+) -> tuple[LifecycleCandidate, ...]:
+    """Every competing lifecycle value considered, with its observation time."""
+    candidates = [
+        LifecycleCandidate(
+            candidate_lifecycle_class=tender.lifecycle_class,
+            candidate_source="coalesced_lifecycle_class",
+            observed_at_utc=_timestamp_text(lifecycle_observed),
+            reason_codes=tuple(tender.lifecycle_reason_codes),
+        )
+    ]
+    if terminal is not None:
+        candidates.append(
+            LifecycleCandidate(
+                candidate_lifecycle_class=terminal,
+                candidate_source="selected_status_value",
+                observed_at_utc=_timestamp_text(status_observed),
+                reason_codes=("terminal_status_selected",),
+            )
+        )
+    elif _is_openish(tender):
+        candidates.append(
+            LifecycleCandidate(
+                candidate_lifecycle_class="active_open",
+                candidate_source="selected_status_value",
+                observed_at_utc=_timestamp_text(status_observed),
+                reason_codes=("open_status_selected",),
+            )
+        )
+    return tuple(candidates)
+
+
+@dataclass(frozen=True)
+class _TerminalChronology:
+    terminal_wins: bool
+    precedence_reason: str
+    temporal_resolution_status: str
+    reason_codes: tuple[str, ...]
+    selected_at: datetime | None
+
+
+def _terminal_chronology(
+    *,
+    source: str,
+    terminal: str,
+    status_observed: datetime | None,
+    lifecycle_observed: datetime | None,
+    close_dt: datetime | None,
+    as_of: datetime,
+) -> _TerminalChronology:
+    """Decide whether a terminal status may override the source lifecycle."""
+    if source not in KNOWN_OPEN:
+        # Unknown or already-terminal sources carry no open claim to protect.
+        return _TerminalChronology(
+            terminal_wins=True,
+            precedence_reason="authoritative_terminal_overrides_open_or_unknown",
+            temporal_resolution_status="terminal_over_unknown",
+            reason_codes=("authoritative_terminal_overrides_open_or_unknown",),
+            selected_at=status_observed,
+        )
+
+    if status_observed is not None and lifecycle_observed is not None:
+        if status_observed >= lifecycle_observed:
+            return _TerminalChronology(
+                terminal_wins=True,
+                precedence_reason="newer_terminal_observation_overrides_open",
+                temporal_resolution_status="observed_chronology_applied",
+                reason_codes=(
+                    "authoritative_terminal_overrides_open_or_unknown",
+                    "newer_terminal_observation_overrides_open",
+                ),
+                selected_at=status_observed,
+            )
+        return _TerminalChronology(
+            terminal_wins=False,
+            precedence_reason="fail_closed_older_terminal_observation",
+            temporal_resolution_status="temporal_review_required",
+            reason_codes=(
+                "older_terminal_observation_must_not_override_newer_open",
+                "temporal_review_required",
+            ),
+            selected_at=lifecycle_observed,
+        )
+
+    if close_dt is not None and close_dt > as_of:
+        # The tender's own values still describe an open bidding window, and no
+        # observation timestamp proves the terminal claim is newer.
+        return _TerminalChronology(
+            terminal_wins=False,
+            precedence_reason="fail_closed_missing_observation_chronology",
+            temporal_resolution_status="temporal_review_required",
+            reason_codes=(
+                "missing_observation_chronology",
+                "temporal_review_required",
+                "terminal_status_conflicts_with_future_close",
+            ),
+            selected_at=None,
+        )
+
+    return _TerminalChronology(
+        terminal_wins=True,
+        precedence_reason="authoritative_terminal_consistent_with_elapsed_close",
+        temporal_resolution_status="value_chronology_applied",
+        reason_codes=(
+            "authoritative_terminal_overrides_open_or_unknown",
+            "terminal_consistent_with_elapsed_or_missing_close",
+        ),
+        selected_at=close_dt,
+    )
 
 
 def project_tender_lifecycle(
     tender: CoalescedProcurementTender,
     *,
     as_of_utc: str,
+    status_observed_at_utc: str | None = None,
+    lifecycle_observed_at_utc: str | None = None,
 ) -> LifecycleProjection:
     """
     Apply general lifecycle precedence:
@@ -109,9 +274,15 @@ def project_tender_lifecycle(
     * A known lifecycle must not be replaced by ``status_unknown``.
     * Same-snapshot live open values may restore ``active_open`` when PR5C
       fail-closed to ``status_unknown`` solely on provenance/as-of pinning.
-    * A newer authoritative terminal status may override an older open status
-      (represented here by selected terminal status codes/names).
+    * A terminal status overrides a known-open lifecycle only when the terminal
+      observation is demonstrably at least as new. When a caller supplies no
+      observation chronology and the tender's own values contradict the terminal
+      claim (a close date still in the future), the projection fails closed to
+      ``status_conflict`` instead of inventing a newer observation.
     * Lifecycle remains independent of commercial relevance.
+
+    Acquisition stamps in the future are handled by the planner's temporal
+    quarantine, never by rewriting timestamps here.
     """
     as_of = _parse_as_of(as_of_utc)
     source = tender.lifecycle_class
@@ -121,12 +292,27 @@ def project_tender_lifecycle(
     close_dt, _ = parse_tender_timestamp_raw(close_raw)
     bucket = tender.closing_soon_bucket or "not_applicable"
 
+    status_observed = _parse_observation(status_observed_at_utc)
+    lifecycle_observed = _parse_observation(lifecycle_observed_at_utc) or (
+        _parse_observation(tender.publication_timestamp_selected)
+    )
+    terminal = _terminal_from_status(tender)
+    candidates = _lifecycle_candidates(
+        tender,
+        terminal=terminal,
+        status_observed=status_observed,
+        lifecycle_observed=lifecycle_observed,
+    )
+
     base_kwargs = dict(
         source_lifecycle_class=source,
         source_status_code=tender.status_code_selected,
         source_status_name=tender.status_name_selected,
         source_close_timestamp=close_raw,
         observation_plane=plane,
+        status_observed_at_utc=_timestamp_text(status_observed),
+        lifecycle_observed_at_utc=_timestamp_text(lifecycle_observed),
+        candidates=candidates,
     )
 
     if source == "status_conflict":
@@ -136,27 +322,44 @@ def project_tender_lifecycle(
             precedence_reason="preserve_status_conflict",
             conflict_reason="authoritative_status_conflict",
             reason_codes=tuple(reasons + ["preserve_status_conflict"]),
+            temporal_resolution_status="source_status_conflict",
             **base_kwargs,
         )
 
-    terminal = _terminal_from_status(tender)
-    if terminal is not None:
-        # Newer/authoritative terminal overrides any open or unknown projection.
-        if source in KNOWN_OPEN or source in WEAK_LIFECYCLES or source != terminal:
+    if terminal is not None and source != terminal:
+        chronology = _terminal_chronology(
+            source=source,
+            terminal=terminal,
+            status_observed=status_observed,
+            lifecycle_observed=lifecycle_observed,
+            close_dt=close_dt,
+            as_of=as_of,
+        )
+        if chronology.terminal_wins:
             return LifecycleProjection(
                 projected_lifecycle_class=terminal,
                 closing_soon_bucket="not_applicable",
-                precedence_reason="authoritative_terminal_overrides_open_or_unknown",
+                precedence_reason=chronology.precedence_reason,
                 conflict_reason=None,
                 reason_codes=tuple(
-                    reasons
-                    + [
-                        "authoritative_terminal_overrides_open_or_unknown",
-                        f"terminal={terminal}",
-                    ]
+                    reasons + list(chronology.reason_codes) + [f"terminal={terminal}"]
                 ),
+                selected_observation_at_utc=_timestamp_text(chronology.selected_at),
+                temporal_resolution_status=chronology.temporal_resolution_status,
                 **base_kwargs,
             )
+        return LifecycleProjection(
+            projected_lifecycle_class="status_conflict",
+            closing_soon_bucket="not_applicable",
+            precedence_reason=chronology.precedence_reason,
+            conflict_reason="terminal_status_conflicts_with_open_values",
+            reason_codes=tuple(
+                reasons + list(chronology.reason_codes) + [f"terminal={terminal}"]
+            ),
+            selected_observation_at_utc=_timestamp_text(chronology.selected_at),
+            temporal_resolution_status=chronology.temporal_resolution_status,
+            **base_kwargs,
+        )
 
     if source in KNOWN_LIFECYCLES and source not in WEAK_LIFECYCLES:
         return LifecycleProjection(
@@ -165,6 +368,8 @@ def project_tender_lifecycle(
             precedence_reason="preserve_known_lifecycle",
             conflict_reason=None,
             reason_codes=tuple(reasons + ["preserve_known_lifecycle"]),
+            selected_observation_at_utc=_timestamp_text(lifecycle_observed),
+            temporal_resolution_status="no_competing_terminal_status",
             **base_kwargs,
         )
 
@@ -188,6 +393,10 @@ def project_tender_lifecycle(
                         f"plane={plane}",
                     ]
                 ),
+                selected_observation_at_utc=_timestamp_text(
+                    status_observed or lifecycle_observed
+                ),
+                temporal_resolution_status="open_values_restored",
                 **base_kwargs,
             )
         if _is_openish(tender) and close_dt is None:
@@ -199,6 +408,10 @@ def project_tender_lifecycle(
                 reason_codes=tuple(
                     reasons + ["openish_status_missing_close_after_unknown"]
                 ),
+                selected_observation_at_utc=_timestamp_text(
+                    status_observed or lifecycle_observed
+                ),
+                temporal_resolution_status="close_timestamp_missing",
                 **base_kwargs,
             )
 
@@ -208,6 +421,8 @@ def project_tender_lifecycle(
         precedence_reason="passthrough_unresolved_lifecycle",
         conflict_reason=None,
         reason_codes=tuple(reasons + ["passthrough_unresolved_lifecycle"]),
+        selected_observation_at_utc=_timestamp_text(lifecycle_observed),
+        temporal_resolution_status="passthrough",
         **base_kwargs,
     )
 
@@ -216,12 +431,20 @@ def apply_lifecycle_precedence(
     tenders: list[CoalescedProcurementTender],
     *,
     as_of_utc: str,
+    status_observed_at_by_tender: dict[str, str] | None = None,
+    lifecycle_observed_at_by_tender: dict[str, str] | None = None,
 ) -> dict[str, LifecycleProjection]:
     """Map coalesced_tender_id → lifecycle projection (deterministic order)."""
+    status_observed = status_observed_at_by_tender or {}
+    lifecycle_observed = lifecycle_observed_at_by_tender or {}
     out: dict[str, LifecycleProjection] = {}
     for tender in sorted(tenders, key=lambda t: t.coalesced_tender_id):
-        out[tender.coalesced_tender_id] = project_tender_lifecycle(
-            tender, as_of_utc=as_of_utc
+        tid = tender.coalesced_tender_id
+        out[tid] = project_tender_lifecycle(
+            tender,
+            as_of_utc=as_of_utc,
+            status_observed_at_utc=status_observed.get(tid),
+            lifecycle_observed_at_utc=lifecycle_observed.get(tid),
         )
     return out
 
@@ -230,6 +453,7 @@ __all__ = [
     "KNOWN_LIFECYCLES",
     "KNOWN_OPEN",
     "KNOWN_TERMINAL",
+    "LifecycleCandidate",
     "LifecycleProjection",
     "WEAK_LIFECYCLES",
     "apply_lifecycle_precedence",
