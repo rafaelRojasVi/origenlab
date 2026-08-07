@@ -62,6 +62,24 @@ def _as_optional_str(value: Any) -> str | None:
     return text or None
 
 
+def _extract_publication_date(licitacion: dict[str, Any]) -> str:
+    """Mirror close-date extraction: top-level first, then Fechas nested object.
+
+    Live Ticket detail envelopes place FechaPublicacion under Fechas only.
+    """
+    for key in ("FechaPublicacion", "FechaCreacion"):
+        text = _as_str(licitacion.get(key))
+        if text:
+            return text
+    fechas = licitacion.get("Fechas")
+    if isinstance(fechas, dict):
+        for key in ("FechaPublicacion", "FechaCreacion"):
+            text = _as_str(fechas.get(key))
+            if text:
+                return text
+    return ""
+
+
 def _normalize_estado(estado: str | None) -> str | None:
     if estado is None:
         return None
@@ -292,9 +310,7 @@ def _build_observations_from_licitacion(
         buyer_id = _as_optional_str(
             comprador.get("CodigoOrganismo") or comprador.get("RutUnidad")
         )
-    pub = _as_optional_str(
-        licitacion.get("FechaPublicacion") or licitacion.get("FechaCreacion")
-    )
+    pub = _extract_publication_date(licitacion) or None
     close = _extract_close_date(licitacion) or None
     raw_digest = canonical_json_digest(licitacion)
     obs_id = procurement_source_observation_id(
@@ -367,6 +383,9 @@ def _build_observations_from_licitacion(
         field_provenance={
             "canonical_tender_key_candidate": "CodigoExterno",
             "title": "Nombre|Titulo",
+            "publication_timestamp_raw": (
+                "FechaPublicacion|FechaCreacion|Fechas.FechaPublicacion|Fechas.FechaCreacion"
+            ),
             "close_timestamp_raw": "FechaCierre|Fechas.FechaCierre",
             "buyer_display": "Comprador.NombreOrganismo",
         },
