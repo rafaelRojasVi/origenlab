@@ -68,6 +68,8 @@ from origenlab_email_pipeline.commercial_procurement_institution_prospects.lifec
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.line_claims import (
     LineClaim,
+    SCOPE_COMPLETE_EQUIPMENT,
+    aggregate_category_scoped_claims,
     aggregate_tender_axes,
     build_line_claims,
 )
@@ -702,12 +704,13 @@ def build_institution_prospects_from_plans(
     }
 
     history_by_institution = aggregate_equipment_history(
-        tenders=pr5c.coalesced_tenders,
+        tenders=[t for t in pr5c.coalesced_tenders if t.coalesced_tender_id in eligible_tender_ids],
         decisions_by_tender=decisions_by_tender,
         institution_id_by_tender=institution_id_by_tender,
         lifecycle_by_tender=projected_lifecycle,
         family_by_tender=family_meta_by_tender,
         claim_axes_by_tender=claim_axes_by_tender,
+        claims_by_tender=claims_by_tender,
     )
 
     profiles: list[dict[str, Any]] = []
@@ -813,70 +816,169 @@ def build_institution_prospects_from_plans(
             d = decisions_by_tender[tid]
             code = _tender_code(t)
             projection = lifecycle_projections.get(tid)
-            disposition = disposition_by_tender.get(tid, {})
             family = family_meta_by_tender.get(tid, {})
             life = _lifecycle(tid)
-            row = {
-                "coalesced_tender_id": tid,
-                "tender_code": code,
-                "tender_title": t.title_selected,
-                "lifecycle_class": life,
-                "source_lifecycle_class": t.lifecycle_class,
-                "projected_lifecycle_class": life,
-                "lifecycle_precedence_reason": projection.precedence_reason
-                if projection
-                else None,
-                "lifecycle_reason_codes": list(projection.reason_codes)
-                if projection
-                else [],
-                "closing_soon_bucket": projection.closing_soon_bucket
-                if projection
-                else t.closing_soon_bucket,
-                "currentness_class": t.currentness_class,
-                "candidate_source_kind": t.candidate_source_kind,
-                "relevance_class": d.relevance_class,
-                "canonical_equipment_classes": list(d.canonical_equipment_classes),
-                "commercial_signal_type": disposition.get("commercial_signal_type"),
-                "review_disposition": disposition.get("review_disposition"),
-                "catalog_fit_status": disposition.get("catalog_fit_status"),
-                "catalog_match_status": disposition.get("catalog_match_status"),
-                "canonical_equipment_category": disposition.get(
-                    "canonical_equipment_category"
-                ),
-                "equipment_scopes": list(
-                    (claim_axes_by_tender.get(tid) or {}).get("equipment_scopes") or []
-                ),
-                "reason_codes": list(disposition.get("reason_codes") or [])
-                + list(disposition.get("signal_reason_codes") or []),
-                "procurement_event_family_id": family.get("family_id"),
-                "family_resolution_status": family.get("family_resolution_status"),
-                "independent_demand_event_count": family.get(
-                    "independent_demand_event_count"
-                ),
-                "mercado_publico_url": build_mercado_publico_search_url(code)
-                if code
-                else None,
-                "publication_timestamp": t.publication_timestamp_selected,
-                "close_timestamp": t.close_timestamp_selected,
-            }
-            tender_rows.append(
-                {
-                    **row,
-                    "institution_id": iid,
-                    "display_name": ident.display_name,
-                    "prospect_strength_band": strength.band,
-                    "opportunity_urgency_band": urgency.band,
-                    "eligibility_reason_codes": list(projection.reason_codes)
+            claims = list(claims_by_tender.get(tid) or ())
+            title_disposition = disposition_by_tender.get(tid, {})
+            category_groups = [
+                g
+                for g in aggregate_category_scoped_claims(claims)
+                if g.get("purchase_intent")
+                or g.get("commercial_signal") == "equipment_purchase_signal"
+                or SCOPE_COMPLETE_EQUIPMENT in (g.get("scopes") or [])
+            ]
+            # Title disposition is only a fallback when no detailed product lines
+            # produced category-scoped claims for this tender.
+            row_specs: list[dict[str, Any]] = []
+            if category_groups:
+                for group in category_groups:
+                    group_claims = [
+                        c
+                        for c in claims
+                        if c.claim_id in set(group.get("claim_ids") or [])
+                    ]
+                    amb = sorted(
+                        {
+                            a
+                            for c in group_claims
+                            for a in (c.ambiguity_reason_codes or ())
+                        }
+                    )
+                    pos = sorted(
+                        {
+                            a
+                            for c in group_claims
+                            for a in (c.positive_reason_codes or ())
+                        }
+                    )
+                    neg = sorted(
+                        {
+                            a
+                            for c in group_claims
+                            for a in (c.negative_reason_codes or ())
+                        }
+                    )
+                    clause_text = " | ".join(
+                        c.clause_text for c in group_claims[:3] if c.clause_text
+                    )
+                    relevance = next(
+                        (c.relevance_class for c in group_claims if c.relevance_class),
+                        d.relevance_class,
+                    )
+                    signal = str(
+                        group.get("commercial_signal") or "equipment_purchase_signal"
+                    )
+                    disposition = classify_provisional_disposition(
+                        relevance_class=relevance,
+                        commercial_signal=signal,
+                        canonical_equipment_classes=(group["equipment_category"],),
+                        title=clause_text or t.title_selected,
+                        positive_reason_codes=pos,
+                        negative_reason_codes=neg,
+                        ambiguity_reason_codes=amb,
+                    )
+                    row_specs.append(
+                        {
+                            "disposition": disposition,
+                            "category": group["equipment_category"],
+                            "scopes": list(group.get("scopes") or []),
+                            "claim_ids": list(group.get("claim_ids") or []),
+                            "purchase_intent": bool(group.get("purchase_intent")),
+                            "source": "category_scoped_line_claim",
+                        }
+                    )
+            else:
+                row_specs.append(
+                    {
+                        "disposition": {
+                            **title_disposition,
+                            "reason_codes": list(
+                                title_disposition.get("reason_codes") or []
+                            )
+                            + ["title_fallback_no_line_evidence"],
+                        },
+                        "category": title_disposition.get(
+                            "canonical_equipment_category"
+                        ),
+                        "scopes": list(
+                            (claim_axes_by_tender.get(tid) or {}).get(
+                                "equipment_scopes"
+                            )
+                            or []
+                        ),
+                        "claim_ids": [],
+                        "purchase_intent": False,
+                        "source": "title_fallback_no_line_evidence",
+                    }
+                )
+
+            for spec in row_specs:
+                disposition = spec["disposition"]
+                row = {
+                    "coalesced_tender_id": tid,
+                    "tender_code": code,
+                    "tender_title": t.title_selected,
+                    "lifecycle_class": life,
+                    "source_lifecycle_class": t.lifecycle_class,
+                    "projected_lifecycle_class": life,
+                    "lifecycle_precedence_reason": projection.precedence_reason
+                    if projection
+                    else None,
+                    "lifecycle_reason_codes": list(projection.reason_codes)
                     if projection
                     else [],
-                    "contact_authorization": False,
-                    "outreach_authorization": False,
+                    "closing_soon_bucket": projection.closing_soon_bucket
+                    if projection
+                    else t.closing_soon_bucket,
+                    "currentness_class": t.currentness_class,
+                    "candidate_source_kind": t.candidate_source_kind,
+                    "relevance_class": d.relevance_class,
+                    "canonical_equipment_classes": (
+                        [spec["category"]]
+                        if spec.get("category")
+                        else list(d.canonical_equipment_classes)
+                    ),
+                    "commercial_signal_type": disposition.get("commercial_signal_type"),
+                    "review_disposition": disposition.get("review_disposition"),
+                    "catalog_fit_status": disposition.get("catalog_fit_status"),
+                    "catalog_match_status": disposition.get("catalog_match_status"),
+                    "canonical_equipment_category": spec.get("category")
+                    or disposition.get("canonical_equipment_category"),
+                    "equipment_scopes": list(spec.get("scopes") or []),
+                    "purchase_intent": bool(spec.get("purchase_intent")),
+                    "claim_ids": list(spec.get("claim_ids") or []),
+                    "commercial_truth_source": spec.get("source"),
+                    "reason_codes": list(disposition.get("reason_codes") or [])
+                    + list(disposition.get("signal_reason_codes") or []),
+                    "procurement_event_family_id": family.get("family_id"),
+                    "family_resolution_status": family.get("family_resolution_status"),
+                    "independent_demand_event_count": family.get(
+                        "independent_demand_event_count"
+                    ),
+                    "mercado_publico_url": build_mercado_publico_search_url(code)
+                    if code
+                    else None,
+                    "publication_timestamp": t.publication_timestamp_selected,
+                    "close_timestamp": t.close_timestamp_selected,
                 }
-            )
-            if is_open_lifecycle(life):
-                current_ops.append(row)
-            else:
-                historical_signals.append(row)
+                tender_rows.append(
+                    {
+                        **row,
+                        "institution_id": iid,
+                        "display_name": ident.display_name,
+                        "prospect_strength_band": strength.band,
+                        "opportunity_urgency_band": urgency.band,
+                        "eligibility_reason_codes": list(projection.reason_codes)
+                        if projection
+                        else [],
+                        "contact_authorization": False,
+                        "outreach_authorization": False,
+                    }
+                )
+                if is_open_lifecycle(life):
+                    current_ops.append(row)
+                else:
+                    historical_signals.append(row)
 
         profile = {
             "institution_id": iid,

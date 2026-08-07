@@ -221,8 +221,9 @@ def _provisional_disposition(
 
     if OUTSIDE_CATALOG_RE.search(text) or (
         "anthropometric_or_veterinary_scale_not_analytical_balance" in ambs
-        and not VETERINARY_CLINIC_RE.search(text)
     ):
+        # A veterinary / anthropometric scale is never OrigenLab analytical-balance
+        # capability, even when the surrounding tender is a veterinary clinic.
         return {
             "review_disposition": DISPOSITION_OUTSIDE_CATALOG,
             "commercial_signal_type": commercial_signal

@@ -392,6 +392,13 @@ def test_equipment_history_confirmed_family_from_explicit_reissue_marker() -> No
 
 
 def test_status_unknown_with_open_values_restored_to_current_queue() -> None:
+    from origenlab_email_pipeline.commercial_procurement_product_relevance.models import (
+        ProductTextUnit,
+    )
+    from origenlab_email_pipeline.commercial_procurement_product_relevance.normalize import (
+        normalize_product_text,
+    )
+
     restored = _tender(
         tid="R",
         lifecycle="status_unknown",
@@ -399,11 +406,51 @@ def test_status_unknown_with_open_values_restored_to_current_queue() -> None:
         status_name="publicada",
         close_ts="2026-09-01T00:00:00Z",
     )
-    # Current queue requires category-scoped line evidence, not title alone.
-    result = _build(
+    text = "centrifuga clinica de laboratorio"
+    unit = ProductTextUnit(
+        unit_id="u-r",
+        coalesced_tender_id="R",
+        evidence_ref_id="ev-r",
+        link_status="linked",
+        unresolved_reason=None,
+        field_path="line",
+        text_raw=text,
+        text_normalized=normalize_product_text(text),
+        evidence_tier="line_product_text",
+        source_plane="test",
+        snapshot_id="snap-1",
+        observation_id=None,
+        tender_observation_id=None,
+        line_observation_id=None,
+        pr4_procurement_id=None,
+        contributing_evidence_ref_ids=(),
+    )
+    pr5c, pr5d, pr5e = _plans(
         (restored,),
         (_decision(tid="R"),),
         units=(_unit(uid="u-r", tid="R", relevance="strong_equipment_class"),),
+    )
+    pr5d = ProductRelevancePlanResult(
+        product_text_units=(unit,),
+        unresolved_units=(),
+        unit_decisions=pr5d.unit_decisions,
+        tender_decisions=pr5d.tender_decisions,
+        field_sufficiency=pr5d.field_sufficiency,
+        reconciliation=pr5d.reconciliation,
+        taxonomy_document=pr5d.taxonomy_document,
+        fingerprints=pr5d.fingerprints,
+        counts=pr5d.counts,
+        run_context=pr5d.run_context,
+        planner_version=pr5d.planner_version,
+        as_of_utc=pr5d.as_of_utc,
+        pr5c_semantic_digest=pr5d.pr5c_semantic_digest,
+    )
+    result = build_institution_prospects_from_plans(
+        pr5c=pr5c,
+        pr5d=pr5d,
+        pr5e=pr5e,
+        as_of_utc=AS_OF,
+        run_context="local_fixture",
     )
     projections = {p["coalesced_tender_id"]: p for p in result.lifecycle_projections}
     assert projections["R"]["projected_lifecycle_class"] == "active_open"

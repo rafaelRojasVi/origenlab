@@ -30,6 +30,7 @@ from origenlab_email_pipeline.commercial_procurement_institution_prospects.lifec
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.line_claims import (
     SCOPE_AMBIGUOUS,
+    SCOPE_COMPLETE_EQUIPMENT,
 )
 
 # Only a demonstrably live tender is a current opportunity: future_scheduled,
@@ -244,6 +245,16 @@ def current_opportunity_blockers(
         blockers.append("missing_equipment_category")
     if line_evidence <= 0:
         blockers.append("no_line_evidence_for_tender")
+    scopes = row.get("equipment_scopes") or []
+    if isinstance(scopes, str):
+        try:
+            scopes = json.loads(scopes)
+        except json.JSONDecodeError:
+            scopes = [scopes]
+    if SCOPE_COMPLETE_EQUIPMENT not in set(scopes) and not row.get("purchase_intent"):
+        blockers.append("no_complete_equipment_purchase_claim")
+    if row.get("commercial_truth_source") == "title_fallback_no_line_evidence":
+        blockers.append("title_fallback_not_current_opportunity")
     close_dt = _parse_utc(row.get("close_timestamp"))
     as_of = _parse_utc(as_of_utc)
     if close_dt is not None and as_of is not None and close_dt <= as_of:

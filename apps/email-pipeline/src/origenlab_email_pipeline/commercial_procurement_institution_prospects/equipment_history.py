@@ -62,11 +62,16 @@ def _fam_field(family: Any, key: str, default: Any = None) -> Any:
 def _claims_for(
     claims_by_tender: dict[str, Any] | None, tender_id: str
 ) -> list[LineClaim] | None:
-    """Claims recorded for one tender, or None when the caller supplied none."""
+    """Claims recorded for one tender, or None when the caller supplied none.
+
+    An empty claim list for a tender that was never claim-classified must fall
+    back to the tender decision. Only an explicit empty list for a tender that
+    *was* claim-classified (key present) means "lines named no category".
+    """
     if claims_by_tender is None:
         return None
     if tender_id not in claims_by_tender:
-        return []
+        return None
     return list(claims_by_tender.get(tender_id) or ())
 
 
@@ -172,7 +177,7 @@ def aggregate_equipment_history(
             continue
 
         claims = _claims_for(claims_by_tender, tender.coalesced_tender_id)
-        claims_drive = claims is not None
+        claims_drive = claims is not None and len(claims) > 0
         axes = (claim_axes_by_tender or {}).get(tender.coalesced_tender_id) or {}
         if claims_drive:
             per_category = _category_claim_facts(claims or ())
@@ -180,8 +185,7 @@ def aggregate_equipment_history(
         else:
             per_category = {}
             # Line claims name what was actually requested; fall back to the tender
-            # decision. Equipment history holds equipment classes only — a relevance
-            # verdict is not an equipment category.
+            # decision when no category-scoped claims exist for this tender.
             classes = [
                 c
                 for c in (
