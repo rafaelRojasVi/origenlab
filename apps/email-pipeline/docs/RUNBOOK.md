@@ -36,7 +36,7 @@ Single entrypoint for **how to run** the email pipeline. **Daily core contract (
 |----------|-----------------|
 | Sent / already contacted | Canonical Gmail ingested into SQLite `emails` (`[Gmail]/Enviados`) |
 | Anti-repeat / DNR | `origenlab_email_pipeline.cli refresh-safety` (or `scripts/qa/refresh_outbound_safety_memory.py`) → `do_not_repeat_master`, `outreach_contacted_all`, etc. |
-| Equipment-first tenders | `equipment_first_operator_queue_*` under `reports/out/active/current/` |
+| Equipment-first tenders | Live ChileCompra refresh (`auto-refresh-chilecompra-equipment`) plus audit CSVs under `reports/out/active/current/` |
 | Read-only doctor | See [Operator health matrix](#m-eprun-operator-health-matrix) |
 
 **Not daily truth:** Postgres dashboard mirror, FastAPI, React (`manifest.json`: `postgres_status` / `api_status` = `parked`). **LISTO / READY on dashboard or API is not send approval.**
@@ -145,7 +145,17 @@ uv run python -m origenlab_email_pipeline.cli refresh-safety
 <a id="m-eprun-equipment-first-opportunities"></a>
 ### Equipment-first public tender opportunities (2026-05+)
 
-Use when prioritizing **capital equipment** (centrifuges, balances, sonicators, homogenizers, incubators, osmometers) from ChileCompra **`Licitacion_Publicada.csv`**, not consumables-heavy SEREMI/hospital reagent lines.
+Use when prioritizing **capital equipment** (centrifuges, balances, sonicators, homogenizers, incubators, osmometers) from ChileCompra / Mercado Público tenders, not consumables-heavy SEREMI/hospital reagent lines.
+
+**Live operator path (preferred):**
+
+```bash
+cd apps/email-pipeline
+uv run origenlab auto-refresh-chilecompra-equipment --once          # dry-run; no API calls or writes
+uv run origenlab auto-refresh-chilecompra-equipment --once --apply  # fetch + publish when approved
+```
+
+With Postgres configured, `--apply` publishes typed rows to `commercial.equipment_opportunity_source` / `commercial.equipment_opportunity`, exposed to the API/dashboard by `api.v_equipment_opportunity_current`. CSVs and manifest entries under `reports/out/active/current/` remain audit and compatibility artifacts. See [`operator/CHILECOMPRA_EQUIPMENT_REFRESH.md`](operator/CHILECOMPRA_EQUIPMENT_REFRESH.md) and [`architecture/EQUIPMENT_DIRECT_ROW_LOADER.md`](architecture/EQUIPMENT_DIRECT_ROW_LOADER.md).
 
 **Canonical operator outputs** (under `reports/out/active/current/`):
 
@@ -157,7 +167,7 @@ Use when prioritizing **capital equipment** (centrifuges, balances, sonicators, 
 - `buyer_opportunity_crosscheck_YYYYMMDD.csv` after manual sends or equipment-first cutover — stale private-lab `clean_new_target` rows until regenerated
 - `tender_buyer_outreach_queue_*.md` — superseded narrative for consumables-era prioritization
 
-**Build (read-only on Gmail; writes reports only):**
+**Manual/offline CSV replay (read-only on Gmail; writes reports only):**
 
 ```bash
 cd apps/email-pipeline
@@ -165,6 +175,8 @@ cd apps/email-pipeline
 uv run python scripts/qa/build_equipment_first_opportunity_queue.py --date-suffix 20260518
 uv run python scripts/qa/build_equipment_first_operator_queue.py --date-suffix 20260518
 ```
+
+Use the manual builders for file-based replays and legacy workflows; they do not replace the live auto-refresh path for dashboard/API equipment.
 
 **Policy:**
 
@@ -1177,6 +1189,19 @@ Contract summary:
 - correctness uses idempotent rebuild/upsert and reconciliation checks
 
 Design/ownership: [`pipeline/COMMERCIAL_INTEL_V1.md`](pipeline/COMMERCIAL_INTEL_V1.md)
+
+**Commercial read-model / recognition stack (audit / break-glass; not daily send truth):** Identity, opportunity, procurement, acquisition, live-feed bridge, and institution-prospect recognition layers are separate rebuildable/audit paths — not part of the default daily `refresh-dashboard` or send-safety loop, and **not** outreach authorization or PR5F persistence. Start from [`SCRIPT_MAP.md`](SCRIPT_MAP.md#debug--audit-scripts-keepaudit--keepdebug) and the linked audits:
+
+| Layer | Package / entry | Design audit |
+|-------|-----------------|--------------|
+| PR2–PR4 identity / opportunity / procurement | `commercial_identity/`, `commercial_opportunity/`, `commercial_procurement/` | `audits/COMMERCIAL_*_PR2.md` … `PR4.md` |
+| PR5B / PR5B.1 acquisition + live contract | `commercial_procurement_acquisition/` | `audits/COMMERCIAL_PROCUREMENT_ACQUISITION_PR5B.md`, `…_PR5B1.md` |
+| PR5B.2 live equipment detail-cache bridge | `commercial_procurement_live_feed_bridge/` | [`COMMERCIAL_PROCUREMENT_LIVE_FEED_BRIDGE_PR5B2.md`](audits/COMMERCIAL_PROCUREMENT_LIVE_FEED_BRIDGE_PR5B2.md) |
+| PR5C–PR5E coalescence / relevance / contact | `commercial_procurement_candidate_planner/`, `…_product_relevance/`, `…_contact_resolution/` | matching `audits/COMMERCIAL_PROCUREMENT_*` docs |
+| PR5E.1 institution prospect map | `commercial_procurement_institution_prospects/` | [`COMMERCIAL_PROCUREMENT_INSTITUTION_PROSPECTS_PR5E1.md`](audits/COMMERCIAL_PROCUREMENT_INSTITUTION_PROSPECTS_PR5E1.md) |
+| PR5E.2 hardened recognition | same package (temporal eligibility, line claims, catalog capability, event families, operator queues) | [`COMMERCIAL_PROCUREMENT_PROSPECT_RECOGNITION_PR5E2.md`](audits/COMMERCIAL_PROCUREMENT_PROSPECT_RECOGNITION_PR5E2.md) |
+
+Builders default to dry-run / read-only artifacts; any `--apply` use requires explicit approval and the fingerprint/stale-plan gates in the matching audit doc. Authorization flags remain false.
 
 ---
 

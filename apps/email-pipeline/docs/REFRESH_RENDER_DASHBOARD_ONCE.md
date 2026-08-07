@@ -194,7 +194,7 @@ After sync, assertions require:
 |-------|----------|
 | `archive.emails` | `0` (mirror does not load full archive bodies) |
 | `api.v_warm_case` | `> 0` |
-| `api.v_equipment_opportunity` | `9` (override: `ORIGENLAB_EXPECT_EQUIPMENT_COUNT`) |
+| `api.v_equipment_opportunity_current` | `9` after direct ChileCompra refresh or explicit legacy/backfill equipment reload (override: `ORIGENLAB_EXPECT_EQUIPMENT_COUNT`) |
 | `reporting.dashboard_sync_run` latest | `status = success`, `finished_at` set |
 
 JSON artifact: `/tmp/render_dashboard_mirror_verify.json`
