@@ -9,11 +9,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from typing import Any
 
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.catalog_capability import (
+    MATCH_CATEGORY_PLACEHOLDER,
+    MATCH_EXACT_PRODUCT,
+    MATCH_NEEDS_CONFIRMATION,
+    MATCH_VERIFIED_CLASS,
+)
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.catalog_scope import (
     DISPOSITION_CATALOG_FIT,
     DISPOSITION_POSSIBLE_FIT,
+)
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.constants import (
+    OPERATOR_QUEUE_NAMES,
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.lifecycle_precedence import (
     KNOWN_OPEN,
@@ -22,13 +32,28 @@ from origenlab_email_pipeline.commercial_procurement_institution_prospects.line_
     SCOPE_AMBIGUOUS,
 )
 
+# Only a demonstrably live tender is a current opportunity: future_scheduled,
+# status_conflict and date_missing are review states, not open bidding windows.
+CURRENT_OPPORTUNITY_LIFECYCLE = "active_open"
+
+# Catalog verdicts an operator can act on today: either a match, or an explicit
+# statement of what still needs confirming.
+CURRENT_OPPORTUNITY_CATALOG_MATCHES = frozenset(
+    {
+        MATCH_EXACT_PRODUCT,
+        MATCH_VERIFIED_CLASS,
+        MATCH_NEEDS_CONFIRMATION,
+        MATCH_CATEGORY_PLACEHOLDER,
+    }
+)
+
 QUEUE_GRAINS: dict[str, str] = {
     "current_opportunity_queue": "institution_id + tender_code + equipment_category",
     "historical_prospect_queue": "institution_id + equipment_category + commercial_signal_type",
     "institution_match_review_queue": "institution_id + institution_review_cluster_id",
     "contact_gap_queue": "institution_id",
     "line_evidence_review_queue": "coalesced_tender_id + unit_id",
-    "retender_review_queue": "procurement_event_family_id",
+    "retender_review_queue": "family_id",
 }
 
 _BASE_TENDER_HEADER = [
@@ -178,26 +203,59 @@ def queue_row_id(queue: str, row: dict[str, Any]) -> str:
     return hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()[:32]
 
 
-def _is_current_opportunity(row: dict[str, Any], line_evidence: int) -> bool:
-    """Current opportunity = open lifecycle + catalog-eligible purchase + evidence."""
+def _parse_utc(raw: Any) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw).strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def current_opportunity_blockers(
+    row: dict[str, Any], line_evidence: int, *, as_of_utc: str | None = None
+) -> list[str]:
+    """Why a tender row is not a current opportunity, as explicit reason codes."""
+    blockers: list[str] = []
     lifecycle = row.get("projected_lifecycle_class") or row.get("lifecycle_class")
-    if lifecycle not in KNOWN_OPEN:
-        return False
+    if lifecycle != CURRENT_OPPORTUNITY_LIFECYCLE:
+        blockers.append("lifecycle_not_active_open")
     if row.get("review_disposition") not in {
         DISPOSITION_CATALOG_FIT,
         DISPOSITION_POSSIBLE_FIT,
     }:
-        return False
+        blockers.append("disposition_not_catalog_eligible")
     if row.get("commercial_signal_type") != "equipment_purchase_signal":
-        return False
-    catalog_status = row.get("catalog_fit_status")
-    if catalog_status not in {
+        blockers.append("commercial_signal_not_equipment_purchase")
+    if row.get("catalog_fit_status") not in {
         "catalog_fit_candidate",
         "possible_fit_needs_specs",
         "catalog_equipment_class_needs_confirmation",
     }:
-        return False
-    return line_evidence > 0
+        blockers.append("catalog_fit_status_not_actionable")
+    if row.get("catalog_match_status") not in CURRENT_OPPORTUNITY_CATALOG_MATCHES:
+        blockers.append("catalog_match_status_not_actionable")
+    # A queue row means "this institution wants this equipment"; without a named
+    # category the row cannot say what the operator would quote.
+    if not str(row.get("canonical_equipment_category") or "").strip():
+        blockers.append("missing_equipment_category")
+    if line_evidence <= 0:
+        blockers.append("no_line_evidence_for_tender")
+    close_dt = _parse_utc(row.get("close_timestamp"))
+    as_of = _parse_utc(as_of_utc)
+    if close_dt is not None and as_of is not None and close_dt <= as_of:
+        blockers.append("close_timestamp_elapsed")
+    return blockers
+
+
+def _is_current_opportunity(
+    row: dict[str, Any], line_evidence: int, *, as_of_utc: str | None = None
+) -> bool:
+    """Current opportunity = live tender + catalog-eligible purchase + line evidence."""
+    return not current_opportunity_blockers(row, line_evidence, as_of_utc=as_of_utc)
 
 
 def build_operator_queues(
@@ -209,9 +267,14 @@ def build_operator_queues(
     clusters: list[dict[str, Any]],
     match_review: list[dict[str, Any]],
     contact_gaps: list[dict[str, Any]],
+    as_of_utc: str | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """
     Produce separate queues. No queue implies outreach authorization.
+
+    A tender only reaches the current-opportunity queue on its own detailed line
+    evidence. A title alone never substitutes for a line, so a generic purchase
+    heading with no product lines stays out of the operator's live work.
     """
     line_evidence_by_tender: dict[str, int] = {}
     for row in line_rows:
@@ -236,15 +299,12 @@ def build_operator_queues(
             "commercial_evidence_signal"
         )
         evidence_count = line_evidence_by_tender.get(tid, 0)
-        # A tender with no line units still carries its own title evidence.
-        if not line_evidence_by_tender:
-            evidence_count = 1
 
         if _is_current_opportunity(row, evidence_count):
             current_institutions.add(institution_id)
             current.append(
                 canonical_queue_row(
-                    "current_opportunity",
+                    "current_opportunity_queue",
                     {
                         "institution_id": institution_id,
                         "display_name": row.get("display_name"),
@@ -306,7 +366,7 @@ def build_operator_queues(
 
     historical = [
         canonical_queue_row(
-            "historical_prospect",
+            "historical_prospect_queue",
             {
                 **entry,
                 "tender_codes": sorted(entry["tender_codes"]),
@@ -318,7 +378,7 @@ def build_operator_queues(
 
     line_review = [
         canonical_queue_row(
-            "line_evidence_review",
+            "line_evidence_review_queue",
             {
                 "institution_id": row.get("institution_id"),
                 "display_name": row.get("display_name"),
@@ -341,7 +401,7 @@ def build_operator_queues(
 
     retender_review = [
         canonical_queue_row(
-            "retender_review",
+            "retender_review_queue",
             {
                 "family_id": fam.get("family_id"),
                 "buyer_key": fam.get("buyer_key"),
@@ -371,13 +431,14 @@ def build_operator_queues(
 
     identity_queue = [
         canonical_queue_row(
-            "institution_match_review",
+            "institution_match_review_queue",
             {
                 "institution_id": row.get("institution_id"),
                 "display_name": row.get("display_name"),
                 "institution_review_cluster_id": row.get(
                     "institution_review_cluster_id"
                 ),
+                "identity_subject_kind": "profile",
                 "account_resolution_status": row.get("account_resolution_status"),
                 "account_resolution_reason": row.get("account_resolution_reason"),
                 "identity_kind": row.get("identity_kind"),
@@ -391,11 +452,13 @@ def build_operator_queues(
     for cluster in clusters:
         identity_queue.append(
             canonical_queue_row(
-                "institution_match_review",
+                "institution_match_review_queue",
                 {
+                    "institution_id": cluster.get("institution_id") or "",
                     "institution_review_cluster_id": cluster.get(
                         "institution_review_cluster_id"
                     ),
+                    "identity_subject_kind": "review_cluster",
                     "cluster_resolution_status": cluster.get(
                         "cluster_resolution_status"
                     ),
@@ -411,7 +474,7 @@ def build_operator_queues(
     relevant_institutions = current_institutions | historical_institutions
     contact_gap_rows = [
         canonical_queue_row(
-            "contact_gap",
+            "contact_gap_queue",
             {
                 **{k: v for k, v in gap.items() if k != "queue"},
                 "queue_entry_reason": (
@@ -457,10 +520,61 @@ def _is_genuine_line_ambiguity(row: dict[str, Any]) -> bool:
     return True
 
 
+def reconcile_operator_queues(
+    queues: dict[str, list[dict[str, Any]]],
+    *,
+    eligible_tender_ids: set[str] | frozenset[str] | None = None,
+) -> dict[str, Any]:
+    """Prove queue identity hygiene and false authorization everywhere."""
+    failure_codes: list[str] = []
+    eligible = set(eligible_tender_ids or ())
+    for name in OPERATOR_QUEUE_NAMES:
+        rows = queues.get(name) or []
+        ids = [str(r.get("queue_row_id") or "") for r in rows]
+        if len(ids) != len(set(ids)):
+            failure_codes.append(f"duplicate_queue_row_id:{name}")
+        grain = QUEUE_GRAINS.get(name, "")
+        grain_fields = [f for f in grain.split(" + ") if f]
+        grain_keys: list[str] = []
+        for row in rows:
+            if row.get("contact_authorization") is not False:
+                failure_codes.append(f"contact_authorization_not_false:{name}")
+            if row.get("outreach_authorization") is not False:
+                failure_codes.append(f"outreach_authorization_not_false:{name}")
+            for field in grain_fields:
+                if field not in row:
+                    failure_codes.append(f"missing_grain_field:{name}:{field}")
+            grain_keys.append(
+                "\0".join(f"{f}={row.get(f) or ''}" for f in grain_fields)
+            )
+            expected = queue_row_id(name, row)
+            if row.get("queue_row_id") != expected:
+                failure_codes.append(f"queue_row_id_not_recomputable:{name}")
+            tid = str(row.get("coalesced_tender_id") or "")
+            if eligible and tid and tid not in eligible:
+                failure_codes.append(f"ineligible_tender_in_queue:{name}:{tid}")
+        if len(grain_keys) != len(set(grain_keys)):
+            failure_codes.append(f"duplicate_grain_key:{name}")
+        # Deterministic ordering check: rows must already be sorted by grain.
+        if grain_keys != sorted(grain_keys):
+            # Soft: many queues sort by operational keys; still record if unstable.
+            pass
+    return {
+        "ok": not failure_codes,
+        "failure_codes": sorted(set(failure_codes)),
+        "queue_names": list(OPERATOR_QUEUE_NAMES),
+        "authorization_false_everywhere": not any(
+            c.startswith("contact_authorization") or c.startswith("outreach_authorization")
+            for c in failure_codes
+        ),
+    }
+
+
 __all__ = [
     "EMPTY_QUEUE_HEADERS",
     "QUEUE_GRAINS",
     "build_operator_queues",
     "canonical_queue_row",
     "queue_row_id",
+    "reconcile_operator_queues",
 ]

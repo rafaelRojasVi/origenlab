@@ -58,6 +58,10 @@ UNCONFIRMED_PRODUCT_CONFIDENCE = frozenset(
     {"extracted_needs_review", "website_editorial"}
 )
 
+# An alias short enough to appear inside unrelated wording (a bare volume such as
+# "5L") cannot identify a product on its own.
+MIN_PRODUCT_ALIAS_LENGTH = 4
+
 _EQUIPMENT_PRODUCT_KIND = "equipment"
 
 
@@ -97,12 +101,16 @@ class CatalogCapability:
         product_names: dict[str, str],
         seed_version: str | None,
         validated: bool,
+        products: tuple[dict[str, Any], ...] = (),
+        confirmed_product_names: dict[str, str] | None = None,
     ) -> None:
         self.category_classes = category_classes
         self.confirmed_product_classes = confirmed_product_classes
         self.unconfirmed_product_classes = unconfirmed_product_classes
         self.placeholder_category_keys = placeholder_category_keys
         self.product_names = product_names
+        self.confirmed_product_names = confirmed_product_names or {}
+        self.products = products
         self.seed_version = seed_version
         self.validated = validated
 
@@ -110,6 +118,21 @@ class CatalogCapability:
     def from_seed(
         cls, data: dict[str, Any], *, validated: bool = True
     ) -> "CatalogCapability":
+        if not validated:
+            # A seed that failed validation proves nothing about what OrigenLab
+            # sells, so it must expose zero capability rather than a partial one.
+            return cls(
+                category_classes=frozenset(),
+                confirmed_product_classes=frozenset(),
+                unconfirmed_product_classes=frozenset(),
+                placeholder_category_keys=frozenset(),
+                product_names={},
+                confirmed_product_names={},
+                products=(),
+                seed_version=data.get("seed_version"),
+                validated=False,
+            )
+
         category_classes: set[str] = set()
         placeholders: set[str] = set()
         for category in data.get("categories") or []:
@@ -124,6 +147,8 @@ class CatalogCapability:
         confirmed: set[str] = set()
         unconfirmed: set[str] = set()
         names: dict[str, str] = {}
+        confirmed_names: dict[str, str] = {}
+        products: list[dict[str, Any]] = []
         for product in data.get("products") or []:
             if str(product.get("product_kind") or "") != _EQUIPMENT_PRODUCT_KIND:
                 continue
@@ -131,14 +156,27 @@ class CatalogCapability:
             if not equipment_class:
                 continue
             confidence = str(product.get("confidence") or "")
-            target = (
-                unconfirmed
-                if confidence in UNCONFIRMED_PRODUCT_CONFIDENCE
-                else confirmed
+            is_confirmed = confidence not in UNCONFIRMED_PRODUCT_CONFIDENCE
+            (confirmed if is_confirmed else unconfirmed).add(str(equipment_class))
+            product_key = str(product.get("product_key"))
+            aliases = _product_lookup_names(product)
+            for alias in aliases:
+                names[alias] = product_key
+                if is_confirmed:
+                    confirmed_names[alias] = product_key
+            products.append(
+                {
+                    "product_key": product_key,
+                    "product_kind": str(product.get("product_kind") or ""),
+                    "equipment_class": str(equipment_class),
+                    "display_name": product.get("display_name"),
+                    "model_number": product.get("model_number"),
+                    "aliases": sorted(aliases),
+                    "confidence": confidence,
+                    "confirmed": is_confirmed,
+                    "category_key": product.get("category_key"),
+                }
             )
-            target.add(str(equipment_class))
-            for alias in _product_lookup_names(product):
-                names[alias] = str(product.get("product_key"))
 
         return cls(
             category_classes=frozenset(category_classes),
@@ -146,6 +184,8 @@ class CatalogCapability:
             unconfirmed_product_classes=frozenset(unconfirmed),
             placeholder_category_keys=frozenset(placeholders),
             product_names=names,
+            confirmed_product_names=confirmed_names,
+            products=tuple(sorted(products, key=lambda p: p["product_key"])),
             seed_version=data.get("seed_version"),
             validated=validated,
         )
@@ -162,10 +202,15 @@ class CatalogCapability:
         return self._expand(self.category_classes | self.confirmed_product_classes)
 
     @property
+    def product_confirmed_equipment_classes(self) -> frozenset[str]:
+        """Classes backed by at least one product with confirmed specifications."""
+        return self._expand(self.confirmed_product_classes)
+
+    @property
     def needs_confirmation_equipment_classes(self) -> frozenset[str]:
         """Classes seen only on products whose specifications are unreviewed."""
         return self._expand(self.unconfirmed_product_classes) - (
-            self.verified_equipment_classes
+            self.product_confirmed_equipment_classes
         )
 
     def digest(self) -> str:
@@ -179,6 +224,10 @@ class CatalogCapability:
                     self.unconfirmed_product_classes
                 ),
                 "placeholder_category_keys": sorted(self.placeholder_category_keys),
+                # Every product field that can move a match: product_key, kind,
+                # equipment_class, display_name, model_number, aliases, confidence
+                # and the category link.
+                "products": [dict(p) for p in self.products],
                 "class_aliases": {
                     k: list(v) for k, v in sorted(CATALOG_TO_TAXONOMY_CLASS_ALIASES.items())
                 },
@@ -193,7 +242,8 @@ def _product_lookup_names(product: dict[str, Any]) -> list[str]:
             names.append(alias.get("alias_code") or alias.get("alias_text"))
         else:
             names.append(alias)
-    return [_norm(n) for n in names if n and _norm(n)]
+    normalized = [_norm(n) for n in names if n and _norm(n)]
+    return [n for n in normalized if len(n) >= MIN_PRODUCT_ALIAS_LENGTH]
 
 
 def verified_catalog_equipment_classes() -> frozenset[str]:
@@ -211,6 +261,23 @@ def catalog_digest() -> str:
     return load_catalog_capability().digest()
 
 
+def matched_catalog_product_key(text: str | None) -> str | None:
+    """Product key whose confirmed alias appears in ``text``, if any.
+
+    Only operator-confirmed products can identify an exact match: an alias taken
+    from an unreviewed extraction records an intent to sell, not a specification
+    OrigenLab can quote against a tender.
+    """
+    normalized_text = _norm(text)
+    if not normalized_text:
+        return None
+    capability = load_catalog_capability()
+    for alias, product_key in sorted(capability.confirmed_product_names.items()):
+        if alias and alias in normalized_text:
+            return product_key
+    return None
+
+
 def match_catalog_status(
     category: str | None,
     *,
@@ -223,18 +290,25 @@ def match_catalog_status(
     if not is_purchase_signal:
         return MATCH_NOT_APPLICABLE
     capability = load_catalog_capability()
-    normalized_text = _norm(text)
-    if normalized_text:
-        for alias, _product_key in sorted(capability.product_names.items()):
-            if alias and alias in normalized_text:
-                return MATCH_EXACT_PRODUCT
+    if matched_catalog_product_key(text) is not None:
+        return MATCH_EXACT_PRODUCT
     if outside_catalog_context:
         return MATCH_OUTSIDE_CATALOG
     if not category:
         return MATCH_CATEGORY_PLACEHOLDER if specs_required else MATCH_NO_CATALOG_MATCH
     name = str(category)
+    known = (
+        name in capability.verified_equipment_classes
+        or name in capability.needs_confirmation_equipment_classes
+    )
+    if specs_required and known:
+        return MATCH_CATEGORY_PLACEHOLDER
+    if name in capability.product_confirmed_equipment_classes:
+        return MATCH_VERIFIED_CLASS
     if name in capability.verified_equipment_classes:
-        return MATCH_CATEGORY_PLACEHOLDER if specs_required else MATCH_VERIFIED_CLASS
+        # A recorded category with no confirmed product behind it is capability we
+        # intend to have, not capability we can prove against a specification.
+        return MATCH_NEEDS_CONFIRMATION
     if name in capability.needs_confirmation_equipment_classes:
         return MATCH_NEEDS_CONFIRMATION
     if specs_required:
@@ -245,6 +319,7 @@ def match_catalog_status(
 __all__ = [
     "CATALOG_MATCH_STATUSES",
     "CATALOG_TO_TAXONOMY_CLASS_ALIASES",
+    "MIN_PRODUCT_ALIAS_LENGTH",
     "CatalogCapability",
     "MATCH_CATEGORY_PLACEHOLDER",
     "MATCH_EXACT_PRODUCT",
@@ -258,5 +333,6 @@ __all__ = [
     "catalog_equipment_classes_needing_confirmation",
     "load_catalog_capability",
     "match_catalog_status",
+    "matched_catalog_product_key",
     "verified_catalog_equipment_classes",
 ]

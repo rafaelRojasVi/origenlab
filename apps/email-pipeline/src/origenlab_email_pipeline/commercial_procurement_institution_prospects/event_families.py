@@ -66,6 +66,18 @@ MIN_CONTAINMENT_LENGTH = 40
 REISSUE_WINDOW_DAYS = 120
 INDEPENDENT_EVENT_WINDOW_DAYS = 300
 
+# Generic procurement titles that must not create review components by themselves.
+GENERIC_PROCUREMENT_OBJECTS = frozenset(
+    {
+        "adquisicion de equipos",
+        "adquisicion de equipo",
+        "compra de equipos",
+        "compra de equipo",
+        "adquisicion de bienes",
+        "contratacion de equipos",
+    }
+)
+
 RELATION_CONFIRMED = "confirmed_same_event"
 RELATION_REVIEW = "unresolved_relationship"
 RELATION_INDEPENDENT = "independent"
@@ -140,12 +152,21 @@ def _gap_days(
 def _near_identical(a_obj: str, b_obj: str) -> tuple[bool, str | None]:
     if not a_obj or not b_obj:
         return False, None
+    if a_obj in GENERIC_PROCUREMENT_OBJECTS or b_obj in GENERIC_PROCUREMENT_OBJECTS:
+        # Generic titles create review noise, not a defensible relationship.
+        return False, None
     if a_obj == b_obj and len(a_obj) >= MIN_EQUAL_OBJECT_LENGTH:
         return True, "normalized_object_equality"
     shorter, longer = (a_obj, b_obj) if len(a_obj) <= len(b_obj) else (b_obj, a_obj)
     if len(shorter) >= MIN_CONTAINMENT_LENGTH and shorter in longer:
         return True, "normalized_object_containment"
     return False, None
+
+
+def is_generic_procurement_object(text: str | None) -> bool:
+    """True when the title is a generic procurement phrase with no product signal."""
+    norm = normalize_procurement_object(text)
+    return bool(norm and norm in GENERIC_PROCUREMENT_OBJECTS)
 
 
 @dataclass(frozen=True)
@@ -347,11 +368,21 @@ def _tender_code(tender: CoalescedProcurementTender) -> str:
 
 def _buyer_key(tender: CoalescedProcurementTender) -> str | None:
     buyer_id = (tender.buyer_source_id_selected or "").strip()
+    purchasing_unit = ""
+    provenance = tender.selected_field_provenance or {}
+    if isinstance(provenance, dict):
+        purchasing_unit = str(provenance.get("purchasing_unit") or "").strip()
+    if not purchasing_unit and tender.buyer_display_selected:
+        # Preserve distinct buying units encoded after a slash when present.
+        display = str(tender.buyer_display_selected)
+        if "/" in display:
+            purchasing_unit = display.split("/", 1)[1].strip()
+    unit_suffix = f"|unit:{safe_org_normalized(purchasing_unit)}" if purchasing_unit else ""
     if buyer_id:
-        return f"buyer_id:{buyer_id}"
+        return f"buyer_id:{buyer_id}{unit_suffix}"
     name = safe_org_normalized(tender.buyer_display_selected or "")
     if name:
-        return f"buyer_name:{name}"
+        return f"buyer_name:{name}{unit_suffix}"
     return None
 
 
@@ -459,13 +490,14 @@ def resolve_procurement_event_families(
                 {"retender_review_required", "independence_not_established"}
                 | {c for e in cluster_edges for c in e.reason_codes}
             )
+            # Unresolved relationships are not factual retenders.
             family = ProcurementEventFamily(
                 family_id=_digest("event_family_review", *member_ids),
                 member_tender_ids=tuple(member_ids),
                 member_tender_codes=codes,
                 raw_tender_count=len(member_ids),
                 procurement_event_family_count=1,
-                retender_or_reissue_count=len(member_ids) - confirmed_group_count,
+                retender_or_reissue_count=0,
                 independent_demand_event_count=0,
                 family_resolution_status=FAMILY_REVIEW,
                 family_reason_codes=tuple(reasons),

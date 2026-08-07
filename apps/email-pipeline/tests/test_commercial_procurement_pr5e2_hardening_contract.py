@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import ast
 import inspect
-import json
 import re
 from pathlib import Path
 from typing import Any
@@ -486,11 +485,14 @@ def test_c_publication_not_lifecycle_observation_fallback() -> None:
 def test_c_future_tenders_excluded_from_event_family_resolution() -> None:
     """Family resolution must receive only temporally eligible tenders."""
     planner_src = (SRC / "planner.py").read_text(encoding="utf-8")
-    # Must build eligible population before resolve_procurement_event_families.
-    fam_pos = planner_src.find("resolve_procurement_event_families")
-    eligible_pos = planner_src.find("temporally_eligible")
+    # Locate the call inside build_institution_prospects_from_plans, not import.
+    build_pos = planner_src.find("def build_institution_prospects_from_plans")
+    assert build_pos >= 0
+    body = planner_src[build_pos:]
+    fam_pos = body.find("resolve_procurement_event_families(")
+    eligible_pos = body.find("temporally_eligible")
     if eligible_pos < 0:
-        eligible_pos = planner_src.find("eligible_tenders")
+        eligible_pos = body.find("eligible_tenders")
     assert eligible_pos >= 0, "planner must build a temporally eligible population"
     assert eligible_pos < fam_pos, (
         "temporal eligibility must occur before event-family resolution"
@@ -563,7 +565,6 @@ def test_d_generic_analytical_balance_is_placeholder_not_verified() -> None:
 
 
 def test_d_catalog_digest_includes_product_semantic_fields() -> None:
-    cap = load_catalog_capability()
     # Digest must change when aliases/confidence change — inspect digest payload.
     digest_src = inspect.getsource(CatalogCapability.digest)
     for field in (
@@ -578,16 +579,18 @@ def test_d_catalog_digest_includes_product_semantic_fields() -> None:
             f"catalog digest omits semantic field {field!r}"
         )
     assert len(catalog_digest()) == 64
+    assert load_catalog_capability().validated is True
 
 
 def test_d_catalog_digest_in_planner_fingerprints() -> None:
     planner_src = (SRC / "planner.py").read_text(encoding="utf-8")
     assert "catalog_digest" in planner_src or "catalog_capability_digest" in planner_src
-    # Must appear inside build_fingerprint / semantic fingerprint construction.
-    fp_block = planner_src[
-        planner_src.find("fingerprints") : planner_src.find("fingerprints") + 800
-    ]
-    assert "catalog" in fp_block.lower(), (
+    # Must appear inside build_fingerprint / dependency fingerprint construction.
+    build_pos = planner_src.find('"build_fingerprint"')
+    dep_pos = planner_src.find("dependency_fingerprints")
+    assert build_pos >= 0 and dep_pos >= 0
+    window = planner_src[min(build_pos, dep_pos) : max(build_pos, dep_pos) + 500]
+    assert "catalog" in window.lower(), (
         "catalog digest absent from dependency/build semantic fingerprints"
     )
 

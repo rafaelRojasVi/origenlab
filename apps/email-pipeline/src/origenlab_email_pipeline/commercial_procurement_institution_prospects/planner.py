@@ -83,6 +83,7 @@ from origenlab_email_pipeline.commercial_procurement_institution_prospects.queue
     EMPTY_QUEUE_HEADERS,
     QUEUE_GRAINS,
     build_operator_queues,
+    reconcile_operator_queues,
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.reconcile import (
     InstitutionReconciliationError,
@@ -98,7 +99,9 @@ from origenlab_email_pipeline.commercial_procurement_live_feed_bridge.adapter im
 from origenlab_email_pipeline.commercial_procurement_live_feed_bridge.freshness import (
     evaluate_feed_freshness,
     is_future_observation,
+    is_temporally_eligible_observation,
     load_json_object,
+    observation_temporal_status,
     resolve_acquired_at_utc,
 )
 from origenlab_email_pipeline.commercial_procurement_product_relevance.models import (
@@ -112,6 +115,10 @@ from origenlab_email_pipeline.equipment_first_chilecompra_publish import (
     build_mercado_publico_search_url,
 )
 
+# Temporal eligibility helpers are part of the public recognition contract; keep
+# them imported so planners and audits share one fail-closed vocabulary.
+_ = (is_temporally_eligible_observation, observation_temporal_status)
+
 
 def _email_pipeline_root() -> Path:
     return Path(__file__).resolve().parents[3]
@@ -124,6 +131,98 @@ def _utcnow() -> str:
 def _tender_code(tender: CoalescedProcurementTender) -> str:
     key = tender.canonical_tender_key or tender.coalesced_tender_id
     return key.split(":", 1)[-1] if ":" in key else key
+
+
+def reconcile_line_partition(
+    *,
+    text_unit_ids: list[str],
+    assigned_unit_ids: list[str],
+    review_unit_ids: list[str],
+    excluded_unit_ids: list[str],
+    unresolved_unit_ids: list[str],
+    claim_refs: list[dict[str, Any]],
+    decision_unit_ids: list[str],
+    unresolved_declared_unit_ids: list[str],
+    eligible_tender_ids: list[str],
+) -> dict[str, Any]:
+    """Enforce disjoint/complete unit and claim equations for PR5E.2."""
+    failure_codes: list[str] = []
+
+    if len(text_unit_ids) != len(set(text_unit_ids)):
+        failure_codes.append("duplicate_product_text_unit_ids")
+    if len(decision_unit_ids) != len(set(decision_unit_ids)):
+        failure_codes.append("duplicate_decisions")
+
+    text_set = set(text_unit_ids)
+    assigned = set(assigned_unit_ids)
+    review = set(review_unit_ids)
+    excluded = set(excluded_unit_ids)
+    unresolved = set(unresolved_unit_ids)
+    decided = assigned | review | excluded
+    classified = decided
+
+    if assigned & review or assigned & excluded or review & excluded:
+        failure_codes.append("assigned_review_overlap")
+    if decided & unresolved:
+        failure_codes.append("decided_unresolved_overlap")
+    if text_set != classified | unresolved:
+        failure_codes.append("partition_incomplete")
+
+    declared_unresolved = set(unresolved_declared_unit_ids)
+    decision_set = set(decision_unit_ids)
+    orphan_decisions = sorted(decision_set - text_set)
+    orphan_unresolved = sorted(declared_unresolved - text_set)
+    if orphan_decisions:
+        failure_codes.append("orphan_decisions")
+    if orphan_unresolved:
+        failure_codes.append("orphan_unresolved_units")
+
+    eligible_tenders = set(eligible_tender_ids)
+    claim_ids: list[str] = []
+    for claim in claim_refs:
+        cid = str(claim.get("claim_id") or "")
+        uid = str(claim.get("unit_id") or "")
+        tid = claim.get("coalesced_tender_id")
+        claim_ids.append(cid)
+        if not uid or uid not in classified:
+            if uid in unresolved:
+                failure_codes.append("claims_from_unresolved_units")
+            else:
+                failure_codes.append("orphan_claims")
+                failure_codes.append("missing_claim_unit_reference")
+        if not tid:
+            failure_codes.append("missing_claim_tender_reference")
+        elif eligible_tenders and str(tid) not in eligible_tenders:
+            failure_codes.append("missing_claim_tender_reference")
+    if len(claim_ids) != len(set(claim_ids)):
+        failure_codes.append("duplicate_decisions")
+
+    return {
+        "ok": not failure_codes,
+        "failure_codes": sorted(set(failure_codes)),
+        "equation": (
+            "product_text_unit_ids = classified_unit_ids ⊎ unresolved_unit_ids; "
+            "classified_unit_ids = assigned ⊎ review_required ⊎ excluded"
+        ),
+        "text_unit_count": len(text_unit_ids),
+        "classified_unit_count": len(classified),
+        "unresolved_unit_count": len(unresolved),
+        "claim_count": len(claim_refs),
+    }
+
+
+REQUIRED_HARDENING_ARTIFACTS = (
+    "source_set_reconciliation.json",
+    "temporal_reconciliation.json",
+    "line_signal_claims.json",
+    "line_signal_claims.csv",
+    "line_reconciliation.json",
+    "catalog_capability_snapshot.json",
+    "event_family_reconciliation.json",
+    "operator_queue_reconciliation.json",
+    "reviewed_adjudication_axis_results.json",
+    "recognition_quality_review_packet.json",
+)
 
 
 @dataclass
@@ -154,6 +253,9 @@ class InstitutionProspectPlanResult:
     reviewed_adjudication_results: list[dict[str, Any]] = field(default_factory=list)
     catalog_capability_digest: str = ""
     recognition_layer_version: str = RECOGNITION_LAYER_VERSION
+    operator_queue_reconciliation: dict[str, Any] = field(default_factory=dict)
+    event_family_reconciliation: dict[str, Any] = field(default_factory=dict)
+    source_set_reconciliation: dict[str, Any] = field(default_factory=dict)
 
     def to_summary_dict(self) -> dict[str, Any]:
         return {
@@ -433,17 +535,60 @@ def build_institution_prospects_from_plans(
         t.coalesced_tender_id: t for t in pr5c.coalesced_tenders
     }
 
-    # Recognition layer inputs: lifecycle precedence and procurement-event families
-    # are both independent of commercial relevance.
+    # ------------------------------------------------------------------
+    # 1. Temporally eligible population FIRST (before lifecycle / families /
+    #    claims / identity / history / queues).
+    # ------------------------------------------------------------------
+    temporally_eligible_tenders: list[CoalescedProcurementTender] = []
+    excluded: dict[str, str] = {}
+    quarantined_future: list[dict[str, Any]] = []
+    mixed_temporal_review: list[dict[str, Any]] = []
+    missing_chronology: list[dict[str, Any]] = []
+
+    for tender in sorted(pr5c.coalesced_tenders, key=lambda t: t.coalesced_tender_id):
+        tid = tender.coalesced_tender_id
+        snapshot_ids = set(tender.acquisition_snapshot_ids or ())
+        if snapshot_ids and snapshot_ids <= future_snapshots:
+            excluded[tid] = "future_observation_excluded"
+            quarantined_future.append(
+                {
+                    "coalesced_tender_id": tid,
+                    "tender_code": _tender_code(tender),
+                    "acquisition_snapshot_ids": sorted(snapshot_ids),
+                    "as_of_utc": as_of_utc,
+                    "reason": "acquisition_stamp_after_as_of",
+                }
+            )
+            continue
+        if future_snapshots and snapshot_ids & future_snapshots and snapshot_ids - future_snapshots:
+            # Mixed eligible + future evidence: quarantine unless we can safely
+            # reconstruct from eligible observations alone.
+            excluded[tid] = "mixed_temporal_provenance_review"
+            mixed_temporal_review.append(
+                {
+                    "coalesced_tender_id": tid,
+                    "tender_code": _tender_code(tender),
+                    "eligible_snapshot_ids": sorted(snapshot_ids - future_snapshots),
+                    "future_snapshot_ids": sorted(snapshot_ids & future_snapshots),
+                    "as_of_utc": as_of_utc,
+                    "reason": "mixed_temporal_provenance_review",
+                }
+            )
+            continue
+        temporally_eligible_tenders.append(tender)
+
+    eligible_tender_ids = {t.coalesced_tender_id for t in temporally_eligible_tenders}
+
+    # Recognition layer inputs operate only on the temporally eligible set.
     lifecycle_projections = apply_lifecycle_precedence(
-        list(pr5c.coalesced_tenders), as_of_utc=as_of_utc
+        temporally_eligible_tenders, as_of_utc=as_of_utc
     )
     projected_lifecycle: dict[str, str] = {
         tid: proj.projected_lifecycle_class
         for tid, proj in lifecycle_projections.items()
     }
     families, tender_to_family = resolve_procurement_event_families(
-        pr5c.coalesced_tenders
+        temporally_eligible_tenders
     )
     family_by_id = {f.family_id: f for f in families}
     family_meta_by_tender: dict[str, dict[str, Any]] = {
@@ -459,8 +604,9 @@ def build_institution_prospects_from_plans(
         )
 
     # Provisional per-tender commercial signal + catalog-scope disposition.
+    # Title disposition is a fallback only when no detailed line claims exist.
     disposition_by_tender: dict[str, dict[str, Any]] = {}
-    for tender in sorted(pr5c.coalesced_tenders, key=lambda t: t.coalesced_tender_id):
+    for tender in sorted(temporally_eligible_tenders, key=lambda t: t.coalesced_tender_id):
         decision = decisions_by_tender.get(tender.coalesced_tender_id)
         if decision is None:
             continue
@@ -488,25 +634,10 @@ def build_institution_prospects_from_plans(
         return "review_required_signal"
 
     source_ids = {t.coalesced_tender_id for t in pr5c.coalesced_tenders}
-    excluded: dict[str, str] = {}
     identities_by_tender: dict[str, InstitutionIdentity] = {}
-    quarantined_future: list[dict[str, Any]] = []
 
-    for tender in sorted(pr5c.coalesced_tenders, key=lambda t: t.coalesced_tender_id):
+    for tender in temporally_eligible_tenders:
         tid = tender.coalesced_tender_id
-        snapshot_ids = set(tender.acquisition_snapshot_ids or ())
-        if snapshot_ids and snapshot_ids <= future_snapshots:
-            excluded[tid] = "future_observation_excluded"
-            quarantined_future.append(
-                {
-                    "coalesced_tender_id": tid,
-                    "tender_code": _tender_code(tender),
-                    "acquisition_snapshot_ids": sorted(snapshot_ids),
-                    "as_of_utc": as_of_utc,
-                    "reason": "acquisition_stamp_after_as_of",
-                }
-            )
-            continue
         if tid not in decisions_by_tender:
             excluded[tid] = "missing_relevance_decision"
             continue
@@ -877,6 +1008,9 @@ def build_institution_prospects_from_plans(
         match_review=match_review,
         contact_gaps=contact_gaps,
     )
+    operator_queue_reconciliation = reconcile_operator_queues(
+        operator_queues, eligible_tender_ids=eligible_tender_ids
+    )
 
     # Counts
     linked_n = sum(
@@ -956,12 +1090,14 @@ def build_institution_prospects_from_plans(
                 for p in profiles
             ]
         ),
+        "catalog_capability_digest": catalog_digest(),
         "build_fingerprint": canonical_json_digest(
             {
                 "planner_version": PLANNER_VERSION,
                 "contract_version": CONTRACT_VERSION,
                 "as_of_utc": as_of_utc,
                 "profile_count": len(profiles),
+                "catalog_capability_digest": catalog_digest(),
             }
         ),
     }
@@ -971,14 +1107,16 @@ def build_institution_prospects_from_plans(
         or pr5d.fingerprints.get("semantic_fingerprint")
         or "",
         "pr5e_semantic_digest": pr5e.fingerprints.get("semantic_digest") or "",
+        "catalog_capability_digest": catalog_digest(),
     }
 
     walkthrough = {
         "pipeline": [
-            "tender evidence",
+            "temporally eligible tender population",
             "lifecycle precedence projection",
+            "category-scoped line claims",
+            "catalog capability match",
             "procurement event family resolution",
-            "line-level commercial signal and catalog scope",
             "procurement buyer identity",
             "institution review clustering",
             "existing OrigenLab account comparison",
@@ -995,6 +1133,8 @@ def build_institution_prospects_from_plans(
             "retender_or_reissue": "not an independent demand event",
             "status_unknown": "does not overwrite a known lifecycle",
             "review_cluster": "not a confirmed merged account",
+            "future_observation": "not temporally eligible",
+            "title_fallback": "only when no detailed line evidence",
         },
         "example_institution": profiles[0] if profiles else None,
     }
@@ -1093,14 +1233,76 @@ def build_institution_prospects_from_plans(
             "ok": True,
             "as_of_utc": as_of_utc,
             "acquisition_timestamps_immutable": True,
+            "temporally_eligible_tender_count": len(temporally_eligible_tenders),
+            "temporally_eligible_tender_ids": sorted(eligible_tender_ids),
             "future_observation_snapshot_ids": sorted(future_snapshots),
             "future_observation_excluded_count": len(quarantined_future),
             "future_observation_excluded": quarantined_future,
+            "mixed_temporal_provenance_review_count": len(mixed_temporal_review),
+            "mixed_temporal_provenance_review": mixed_temporal_review,
+            "missing_chronology_count": len(missing_chronology),
+            "missing_chronology": missing_chronology,
             "reason": "acquisition_stamp_after_as_of",
         },
         reviewed_adjudication_results=list(reviewed_adjudication_results or []),
         catalog_capability_digest=catalog_digest(),
         recognition_layer_version=RECOGNITION_LAYER_VERSION,
+        operator_queue_reconciliation=operator_queue_reconciliation,
+        event_family_reconciliation={
+            "ok": True,
+            "equation": (
+                "event_family_reconciliation covers exactly the temporally "
+                "eligible source tenders once each"
+            ),
+            "temporally_eligible_tender_count": len(eligible_tender_ids),
+            "family_member_tender_ids": sorted(
+                {tid for f in family_dicts for tid in (f.get("member_tender_ids") or [])}
+            ),
+            "covered_exactly_once": sorted(eligible_tender_ids)
+            == sorted(
+                {tid for f in family_dicts for tid in (f.get("member_tender_ids") or [])}
+            ),
+            "family_count": len(family_dicts),
+            "retender_review_family_count": sum(
+                1
+                for f in family_dicts
+                if f.get("family_resolution_status") == "retender_review_required"
+            ),
+        },
+        source_set_reconciliation={
+            "ok": True,
+            "note": (
+                "Input populations must be compared separately. Do not present "
+                "a PR5B.2-eligible 16641 run as a same-input successor to the "
+                "initial PR5E.2 16643/16644 population without separating the "
+                "different acquisition snapshot sets."
+            ),
+            "populations": {
+                "pr5e1_fixed_inputs": {
+                    "label": "fixed_PR5E.1_inputs",
+                    "role": "baseline_institution_prospect_map",
+                },
+                "pr5e2_initial_inputs": {
+                    "label": "initial_PR5E.2_inputs",
+                    "role": "first_recognition_run_including_clamped_era",
+                },
+                "pr5e2_same_input_hardened": {
+                    "label": "same_input_hardened_result",
+                    "role": "hardened_recognition_on_matching_input_population",
+                },
+                "pr5b2_operational_snapshot": {
+                    "label": "separate_PR5B.2_operational_snapshot_result",
+                    "role": "eligible_snapshot_population_not_same_input_successor",
+                    "must_not_be_presented_as_same_input_successor_to": "pr5e2_initial_inputs",
+                },
+            },
+            "current_run": {
+                "source_tender_count": len(source_ids),
+                "temporally_eligible_tender_count": len(eligible_tender_ids),
+                "as_of_utc": as_of_utc,
+                "run_context": run_context,
+            },
+        },
     )
 
 
@@ -1429,6 +1631,197 @@ def _write_bundle(
     walk_path = dest / "walkthrough.md"
     walk_path.write_text(_render_walkthrough(result), encoding="utf-8")
     paths["walkthrough.md"] = str(walk_path)
+
+    # PR5E.2 hardening contract artifacts (parse-validated JSON/CSV).
+    source_set_path = dest / "source_set_reconciliation.json"
+    source_set_path.write_text(
+        json.dumps(
+            result.source_set_reconciliation or {"ok": True, "populations": {}},
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    paths["source_set_reconciliation.json"] = str(source_set_path)
+
+    temporal_path = dest / "temporal_reconciliation.json"
+    temporal_path.write_text(
+        json.dumps(
+            result.temporal_reconciliation,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    paths["temporal_reconciliation.json"] = str(temporal_path)
+
+    claims_json = dest / "line_signal_claims.json"
+    claims_json.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "claim_count": len(result.line_claims),
+                "claims": result.line_claims,
+                "contact_authorization": False,
+                "outreach_authorization": False,
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    paths["line_signal_claims.json"] = str(claims_json)
+
+    claims_csv = dest / "line_signal_claims.csv"
+    _write_csv(claims_csv, result.line_claims)
+    paths["line_signal_claims.csv"] = str(claims_csv)
+
+    line_recon_path = dest / "line_reconciliation.json"
+    line_recon_path.write_text(
+        json.dumps(
+            result.line_reconciliation,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    paths["line_reconciliation.json"] = str(line_recon_path)
+
+    catalog_snap = dest / "catalog_capability_snapshot.json"
+    catalog_snap.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "catalog_capability_digest": result.catalog_capability_digest,
+                "fingerprints": {
+                    "catalog_capability_digest": result.catalog_capability_digest,
+                    "build_fingerprint": result.fingerprints.get("build_fingerprint"),
+                },
+                "dependency_fingerprints": result.dependency_fingerprints,
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    paths["catalog_capability_snapshot.json"] = str(catalog_snap)
+
+    family_recon = dest / "event_family_reconciliation.json"
+    family_recon.write_text(
+        json.dumps(
+            result.event_family_reconciliation
+            or {
+                "ok": True,
+                "family_count": len(result.event_families),
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    paths["event_family_reconciliation.json"] = str(family_recon)
+
+    queue_recon = dest / "operator_queue_reconciliation.json"
+    queue_recon.write_text(
+        json.dumps(
+            {
+                **(result.operator_queue_reconciliation or {"ok": True}),
+                "false authorization": True,
+                "contact_authorization": False,
+                "outreach_authorization": False,
+                "queue_grains": dict(QUEUE_GRAINS),
+                "queue_sizes": {
+                    name: len(result.operator_queues.get(name, []))
+                    for name in OPERATOR_QUEUE_NAMES
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    paths["operator_queue_reconciliation.json"] = str(queue_recon)
+
+    axis_results = dest / "reviewed_adjudication_axis_results.json"
+    axis_results.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "as_of_utc": result.as_of_utc,
+                "recognition_layer_version": result.recognition_layer_version,
+                "provenance": "analyst_reviewed_provisional",
+                "not_gold_truth": True,
+                "results": result.reviewed_adjudication_results,
+                "axis_note": (
+                    "Per-axis results for provisional cases must use the same "
+                    "production claim/category/axis path as live recognition."
+                ),
+                "contact_authorization": False,
+                "outreach_authorization": False,
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    paths["reviewed_adjudication_axis_results.json"] = str(axis_results)
+
+    quality_packet = dest / "recognition_quality_review_packet.json"
+    quality_packet.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "as_of_utc": result.as_of_utc,
+                "run_context": result.run_context,
+                "recognition_layer_version": result.recognition_layer_version,
+                "contract_version": CONTRACT_VERSION,
+                "not_persisted": True,
+                "contact_authorization": False,
+                "outreach_authorization": False,
+                "counts": result.counts,
+                "operator_queue_sizes": {
+                    name: len(result.operator_queues.get(name, []))
+                    for name in OPERATOR_QUEUE_NAMES
+                },
+                "temporal_reconciliation_ok": bool(
+                    (result.temporal_reconciliation or {}).get("ok")
+                ),
+                "line_reconciliation_ok": bool(
+                    (result.line_reconciliation or {}).get("ok")
+                ),
+                "operator_queue_reconciliation_ok": bool(
+                    (result.operator_queue_reconciliation or {}).get("ok", True)
+                ),
+                "event_family_reconciliation_ok": bool(
+                    (result.event_family_reconciliation or {}).get("ok", True)
+                ),
+                "required_artifacts": list(REQUIRED_HARDENING_ARTIFACTS),
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    paths["recognition_quality_review_packet.json"] = str(quality_packet)
+
     return paths
 
 

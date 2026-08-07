@@ -399,7 +399,12 @@ def test_status_unknown_with_open_values_restored_to_current_queue() -> None:
         status_name="publicada",
         close_ts="2026-09-01T00:00:00Z",
     )
-    result = _build((restored,), (_decision(tid="R"),))
+    # Current queue requires category-scoped line evidence, not title alone.
+    result = _build(
+        (restored,),
+        (_decision(tid="R"),),
+        units=(_unit(uid="u-r", tid="R", relevance="strong_equipment_class"),),
+    )
     projections = {p["coalesced_tender_id"]: p for p in result.lifecycle_projections}
     assert projections["R"]["projected_lifecycle_class"] == "active_open"
     assert projections["R"]["source_lifecycle_class"] == "status_unknown"
@@ -419,13 +424,14 @@ def test_status_unknown_with_open_values_restored_to_current_queue() -> None:
 
 
 def test_terminal_status_overrides_stale_open_lifecycle() -> None:
+    # Without observation chronology, open+terminal fails closed to conflict —
+    # it must not invent a terminal win from elapsed close alone.
     stale = _tender(tid="S", lifecycle="active_open", status_code="6")
     result = _build((stale,), (_decision(tid="S"),))
     projections = {p["coalesced_tender_id"]: p for p in result.lifecycle_projections}
-    assert projections["S"]["projected_lifecycle_class"] == "closed"
+    assert projections["S"]["projected_lifecycle_class"] == "status_conflict"
     assert result.profiles[0]["counts"]["open_tender_count"] == 0
     assert not result.operator_queues["current_opportunity_queue"]
-    assert result.operator_queues["historical_prospect_queue"]
 
 
 # --- event families ----------------------------------------------------------
@@ -661,8 +667,30 @@ def test_newer_terminal_overrides_older_open() -> None:
         status_name="Cerrada",
         close_ts="2026-07-01T00:00:00Z",
     )
-    proj = project_tender_lifecycle(tender, as_of_utc=AS_OF)
+    proj = project_tender_lifecycle(
+        tender,
+        as_of_utc=AS_OF,
+        status_observed_at_utc="2026-07-15T12:00:00Z",
+        lifecycle_observed_at_utc="2026-06-01T12:00:00Z",
+    )
     assert proj.projected_lifecycle_class == "closed"
+
+
+def test_missing_chronology_open_plus_terminal_is_conflict() -> None:
+    from origenlab_email_pipeline.commercial_procurement_institution_prospects.lifecycle_precedence import (
+        project_tender_lifecycle,
+    )
+
+    tender = _tender(
+        tid="L2b",
+        lifecycle="active_open",
+        status_code="6",
+        status_name="Cerrada",
+        close_ts="2026-07-01T00:00:00Z",
+    )
+    proj = project_tender_lifecycle(tender, as_of_utc=AS_OF)
+    assert proj.projected_lifecycle_class == "status_conflict"
+    assert proj.temporal_resolution_status == "temporal_review_required"
 
 
 def test_centrifugal_pump_not_centrifuge() -> None:

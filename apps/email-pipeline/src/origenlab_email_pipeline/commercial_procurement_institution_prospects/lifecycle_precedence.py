@@ -212,7 +212,7 @@ def _terminal_chronology(
         )
 
     if status_observed is not None and lifecycle_observed is not None:
-        if status_observed >= lifecycle_observed:
+        if status_observed > lifecycle_observed:
             return _TerminalChronology(
                 terminal_wins=True,
                 precedence_reason="newer_terminal_observation_overrides_open",
@@ -220,6 +220,19 @@ def _terminal_chronology(
                 reason_codes=(
                     "authoritative_terminal_overrides_open_or_unknown",
                     "newer_terminal_observation_overrides_open",
+                ),
+                selected_at=status_observed,
+            )
+        if status_observed == lifecycle_observed:
+            # Two contradictory claims observed at the same instant cannot be
+            # ordered; neither may silently win.
+            return _TerminalChronology(
+                terminal_wins=False,
+                precedence_reason="fail_closed_same_instant_open_and_terminal",
+                temporal_resolution_status="temporal_review_required",
+                reason_codes=(
+                    "same_instant_open_and_terminal_observation",
+                    "temporal_review_required",
                 ),
                 selected_at=status_observed,
             )
@@ -234,30 +247,20 @@ def _terminal_chronology(
             selected_at=lifecycle_observed,
         )
 
+    # No observation chronology at all: the terminal claim is not demonstrably
+    # newer than the open claim, whatever the tender's own close date says.
+    reason_codes = [
+        "missing_observation_chronology",
+        "temporal_review_required",
+    ]
     if close_dt is not None and close_dt > as_of:
-        # The tender's own values still describe an open bidding window, and no
-        # observation timestamp proves the terminal claim is newer.
-        return _TerminalChronology(
-            terminal_wins=False,
-            precedence_reason="fail_closed_missing_observation_chronology",
-            temporal_resolution_status="temporal_review_required",
-            reason_codes=(
-                "missing_observation_chronology",
-                "temporal_review_required",
-                "terminal_status_conflicts_with_future_close",
-            ),
-            selected_at=None,
-        )
-
+        reason_codes.append("terminal_status_conflicts_with_future_close")
     return _TerminalChronology(
-        terminal_wins=True,
-        precedence_reason="authoritative_terminal_consistent_with_elapsed_close",
-        temporal_resolution_status="value_chronology_applied",
-        reason_codes=(
-            "authoritative_terminal_overrides_open_or_unknown",
-            "terminal_consistent_with_elapsed_or_missing_close",
-        ),
-        selected_at=close_dt,
+        terminal_wins=False,
+        precedence_reason="fail_closed_missing_observation_chronology",
+        temporal_resolution_status="temporal_review_required",
+        reason_codes=tuple(reason_codes),
+        selected_at=None,
     )
 
 
@@ -293,9 +296,9 @@ def project_tender_lifecycle(
     bucket = tender.closing_soon_bucket or "not_applicable"
 
     status_observed = _parse_observation(status_observed_at_utc)
-    lifecycle_observed = _parse_observation(lifecycle_observed_at_utc) or (
-        _parse_observation(tender.publication_timestamp_selected)
-    )
+    # A publication date says when the tender was announced, not when its
+    # lifecycle was observed; it must never stand in for observation chronology.
+    lifecycle_observed = _parse_observation(lifecycle_observed_at_utc)
     terminal = _terminal_from_status(tender)
     candidates = _lifecycle_candidates(
         tender,
@@ -358,6 +361,26 @@ def project_tender_lifecycle(
             ),
             selected_observation_at_utc=_timestamp_text(chronology.selected_at),
             temporal_resolution_status=chronology.temporal_resolution_status,
+            **base_kwargs,
+        )
+
+    if source in KNOWN_OPEN and close_dt is not None and close_dt <= as_of:
+        # An open claim whose own bidding window already elapsed, with no terminal
+        # status to explain it, is stale evidence — not a current opportunity.
+        return LifecycleProjection(
+            projected_lifecycle_class="status_conflict",
+            closing_soon_bucket="not_applicable",
+            precedence_reason="fail_closed_stale_open_close_elapsed",
+            conflict_reason="stale_open_close_elapsed_without_terminal_status",
+            reason_codes=tuple(
+                reasons
+                + [
+                    "stale_open_close_elapsed_without_terminal_status",
+                    "temporal_review_required",
+                ]
+            ),
+            selected_observation_at_utc=_timestamp_text(lifecycle_observed),
+            temporal_resolution_status="temporal_review_required",
             **base_kwargs,
         )
 
