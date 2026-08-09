@@ -49,6 +49,16 @@ REASON_ARCHIVE_RATIO_LIMIT: Final = "archive_ratio_limit"
 REASON_ARCHIVE_SUSPICIOUS_MEMBER: Final = "archive_suspicious_member"
 REASON_OOXML_CONTAINER_UNSAFE: Final = "ooxml_container_unsafe"
 
+# Actual (decompressed-stream) bounds, as opposed to the declared header bounds
+# above. A central directory can understate a member's true expansion.
+REASON_ARCHIVE_ACTUAL_MEMBER_BYTES_LIMIT: Final = "archive_actual_member_bytes_limit"
+REASON_ARCHIVE_ACTUAL_TOTAL_BYTES_LIMIT: Final = "archive_actual_total_bytes_limit"
+REASON_ARCHIVE_ACTUAL_RATIO_LIMIT: Final = "archive_actual_ratio_limit"
+REASON_ARCHIVE_ACTUAL_SIZE_MISMATCH: Final = "archive_actual_size_mismatch"
+
+# Streaming verification reads this much at a time, bounding verifier memory.
+DEFAULT_ARCHIVE_VERIFY_CHUNK_BYTES: Final = 64 * 1024
+
 # --- Detected formats --------------------------------------------------------
 FORMAT_PDF: Final = "pdf"
 FORMAT_DOCX: Final = "docx"

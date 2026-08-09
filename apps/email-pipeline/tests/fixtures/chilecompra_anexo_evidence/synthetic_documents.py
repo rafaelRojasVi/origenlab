@@ -228,6 +228,75 @@ def make_diluted_ratio_bomb() -> bytes:
     return make_zip(entries)
 
 
+def forge_member_header(
+    container: bytes,
+    member: str,
+    *,
+    declared_size: int | None = None,
+    declared_compressed: int | None = None,
+) -> bytes:
+    """Rewrite a member's declared sizes in both ZIP headers.
+
+    The CRC is re-pointed at the truncated prefix so the lie survives zipfile's
+    integrity check; only real decompression can expose it.
+    """
+    import binascii
+    import struct
+    import zipfile as _zipfile
+
+    with _zipfile.ZipFile(io.BytesIO(container)) as archive:
+        real = archive.read(member)
+
+    data = bytearray(container)
+    offset = 0
+    while True:
+        central = data.find(b"PK\x01\x02", offset)
+        if central == -1:
+            break
+        name_len = struct.unpack_from("<H", data, central + 28)[0]
+        if bytes(data[central + 46 : central + 46 + name_len]).decode() == member:
+            local = struct.unpack_from("<I", data, central + 42)[0]
+            if declared_size is not None:
+                crc = binascii.crc32(real[:declared_size]) & 0xFFFFFFFF
+                struct.pack_into("<I", data, central + 16, crc)
+                struct.pack_into("<I", data, central + 24, declared_size)
+                struct.pack_into("<I", data, local + 14, crc)
+                struct.pack_into("<I", data, local + 22, declared_size)
+            if declared_compressed is not None:
+                struct.pack_into("<I", data, central + 20, declared_compressed)
+                struct.pack_into("<I", data, local + 18, declared_compressed)
+        offset = central + 1
+    return bytes(data)
+
+
+def replace_member(container: bytes, member: str, body: bytes) -> bytes:
+    """Rebuild an OOXML container with one part swapped out."""
+    import zipfile as _zipfile
+
+    with _zipfile.ZipFile(io.BytesIO(container)) as archive:
+        names = archive.namelist()
+        parts = {name: archive.read(name) for name in names}
+    buffer = io.BytesIO()
+    with _zipfile.ZipFile(buffer, "w", _zipfile.ZIP_DEFLATED) as archive:
+        for name in names:
+            archive.writestr(name, body if name == member else parts[name])
+    return buffer.getvalue()
+
+
+def make_understated_ooxml(
+    container: bytes,
+    member: str,
+    *,
+    real_size: int,
+    declared_size: int = 2_000,
+) -> bytes:
+    """OOXML part that really expands to ``real_size`` but declares far less."""
+    body = b"<x>" + b"A" * real_size + b"</x>"
+    return forge_member_header(
+        replace_member(container, member, body), member, declared_size=declared_size
+    )
+
+
 def make_truncated_zip(kind: str = "docx") -> bytes:
     """Valid prefix with the central directory chopped off."""
     payload = make_ooxml_bomb(kind, "members")

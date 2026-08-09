@@ -141,6 +141,27 @@ All limits are parameters and are tested with intentionally tiny values.
   budget only applies *after* decompression. A container that fails preflight
   yields `partial_due_to_safety_limit` (or `encrypted` for encrypted members)
   with `extraction_complete = false` — never a silent "corrupt" or "empty".
+- **Declared bounds are not enough.** The central directory is attacker
+  controlled: a member can declare 2 KB, carry a CRC matching that truncated
+  prefix, and really expand to tens of megabytes. Such a container passes
+  preflight, and the parsers then issue their own *unbounded* reads —
+  `openpyxl` reads `workbook.xml`, `styles.xml`, the rels and
+  `[Content_Types].xml` eagerly, and `python-docx` reads `document.xml`,
+  headers, and footers. Measured from an ~80 KB container: **161 MB** peak for
+  XLSX and **134 MB** for DOCX, with DOCX still reporting
+  `extraction_success`. `verify_actual_expansion()` therefore walks the real
+  deflate streams in 64 KiB chunks before any parser runs, counting true output
+  and aborting the moment a per-member or aggregate bound is crossed. It reads
+  the raw member bytes with `zlib` rather than through `ZipExtFile`, which
+  stops at the *declared* size and so can never reveal an understated header.
+  The verifier holds one chunk at a time (measured under 4 MB while walking a
+  40 MB member), and the same two-stage envelope covers DOCX and XLSX alike.
+  Reasons are explicit: `archive_actual_member_bytes_limit`,
+  `archive_actual_total_bytes_limit`, `archive_actual_ratio_limit`,
+  `archive_actual_size_mismatch`.
+- Accepted parts are additionally read in fixed chunks rather than one large
+  capped read, since `read(cap + 1)` lets zipfile decompress greedily and spike
+  far past the part's real size before the cap applies.
 - Members are read through a capped stream, so an understated size header still
   gets truncated and flagged rather than trusted.
 - Path traversal, absolute paths, and drive-qualified members yield no bytes but
@@ -152,6 +173,12 @@ All limits are parameters and are tested with intentionally tiny values.
   external entity resolution, no network).
 - Opaque portal tokens (`qs`, `enc`, `ticket`) are redacted, and every artifact is
   scanned before publication — publication fails rather than leaking.
+
+Known cost: verifying actual expansion decompresses every OOXML member once
+before parsing, so an accepted document is decoded twice. Real anexos are small
+(largest observed member 257 KB, largest aggregate 820 KB across 23 cached real
+files, worst real expansion ratio 28:1 against a 200:1 policy), and hostile
+input aborts early, so the cost is bounded and paid only on container formats.
 
 ## Cache and output
 
