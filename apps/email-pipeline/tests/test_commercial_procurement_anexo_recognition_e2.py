@@ -39,9 +39,6 @@ from origenlab_email_pipeline.commercial_procurement_anexo_recognition.planner i
     AnexoComparisonError,
     assert_read_only_invariants,
 )
-from origenlab_email_pipeline.commercial_procurement_anexo_recognition.risk import (
-    RISK_ACCESSORY_HEADED,
-)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
 
@@ -473,16 +470,21 @@ def test_api_centrifuge_plus_annex_balance_yields_multi_category_evidence():
 # 14-16: equipment scope edges annex reading amplifies
 # --------------------------------------------------------------------------
 def test_accessory_only_annex_line_is_flagged_as_false_positive_risk():
-    """PR5D still recognizes equipment here; E2 must surface the risk, not hide it."""
+    """H1: headed accessory/replacement is vetoed at PR5D recognition (no claim).
+
+    Prior E2 advisory-only behavior (accessory_headed_line risk on a still-emitted
+    ultrasonic claim) is superseded: sonotrodo de repuesto must not create an
+    equipment claim. Complete processor purchases remain claimable elsewhere.
+    """
     evidence = make_evidence(
         [make_chunk("C-1", "Sonotrodo de repuesto para procesador ultrasónico")],
         [make_attachment("A-1")],
         [make_bundle()],
     )
     result = run_comparison([make_tender()], anexo=evidence)
-    claim = only(result.claims)
-    assert claim.risk_reason_codes == (RISK_ACCESSORY_HEADED,)
-    assert build_summary(result)["claims_with_accessory_risk"] == 1
+    assert result.claims == ()
+    assert build_summary(result)["claims_with_accessory_risk"] == 0
+    assert build_summary(result)["annex_claims"] == 0
 
 
 def test_equipment_line_mentioning_an_accessory_is_not_flagged():

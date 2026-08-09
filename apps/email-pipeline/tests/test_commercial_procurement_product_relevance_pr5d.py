@@ -2409,6 +2409,18 @@ def test_rule_precedence_exhaustive_contract() -> None:
             "Portaobjetos y cubreobjetos",
             "line_product_text",
         ),
+        "microscope_optics_or_camera_accessory": (
+            "PAPEL LIMPIA LENTES PARA MICROSCOPIO",
+            "line_product_text",
+        ),
+        "ultrasonic_accessory_or_replacement": (
+            "Sonotrodo de repuesto para procesador ultrasónico",
+            "line_product_text",
+        ),
+        "diagnostic_sedimentation_exam": (
+            "Velocidad de sedimentación (proc. aut.)",
+            "line_product_text",
+        ),
         "rental_or_comodato": (
             "Arriendo de centrifuga de laboratorio",
             "line_product_text",
@@ -2431,6 +2443,10 @@ def test_rule_precedence_exhaustive_contract() -> None:
             "line_product_text",
         ),
         "context_required_agitador": ("Agitador", "line_product_text"),
+        "supplier_required_equipment": (
+            "El oferente debe disponer a su costo de un Microscopio Óptico",
+            "line_product_text",
+        ),
         "generic_insumos": (
             "Compra de insumos de laboratorio",
             "line_product_text",
@@ -2523,9 +2539,11 @@ def test_rule_precedence_exhaustive_contract() -> None:
     assert "ultrasonic_processor" in specific.canonical_equipment_classes
 
     # Bare agitator vs shaker / stirrer / vortex / homogenizer — exact.
+    # Generic agitador is ambiguous and must NOT fan out into three classes.
     bare_ag = classify_product_text_unit(_unit("Agitador", tier="line_product_text"))
     assert bare_ag.relevance_class == "ambiguous"
     assert "context_required_agitador" in bare_ag.ambiguity_reason_codes
+    assert bare_ag.canonical_equipment_classes == ()
     for text, expected_class in (
         ("Agitador orbital de laboratorio", "shaker"),
         ("Agitador magnetico", "magnetic_stirrer"),
