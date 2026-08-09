@@ -6,11 +6,11 @@ import html
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from http.cookiejar import CookieJar
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlparse, urlunparse
 from urllib.request import (
@@ -60,6 +60,11 @@ _WINDOWS_RESERVED_FILENAMES = frozenset(
     }
 )
 _SENSITIVE_PORTAL_QUERY_KEYS = frozenset({"qs", "enc", "ticket"})
+# A ficha is addressable by the opaque token or by the public tender code.
+_PORTAL_DETAIL_QUERY_KEYS = ("qs", "idlicitacion")
+# Budget breaches are named so callers can record why a bundle is incomplete.
+ATTACHMENT_COUNT_BUDGET_EXCEEDED = "attachment_count_budget_exceeded"
+TOTAL_BYTES_BUDGET_EXCEEDED = "total_bytes_budget_exceeded"
 
 _LISTING_HREF_RE = re.compile(
     r"""href=["']((?:\.\./)*Attachment/VerAntecedentes\.aspx\?enc=[^"'#]+)["']""",
@@ -678,15 +683,32 @@ def _normalized_portal_path(url: str) -> str:
     return path.rstrip("/")
 
 
+def build_licitacion_detail_url_for_codigo(codigo: str) -> str:
+    """Build the ficha URL from a public ``CodigoExterno``.
+
+    The portal answers this form with a redirect to the opaque ``qs`` variant on
+    the same endpoint, so callers holding only a tender code can still reach a
+    ficha without an authenticated ticket.
+    """
+    token = (codigo or "").strip()
+    if not token:
+        raise ValueError("codigo is required")
+    return f"{PORTAL_BASE_URL}{PORTAL_DETAIL_PATH}?{urlencode({'idlicitacion': token})}"
+
+
 def is_portal_detail_url(url: str) -> bool:
-    """True when ``url`` is a Mercado Público licitación ficha endpoint with ``qs``."""
+    """True for a licitación ficha endpoint keyed by ``qs`` or ``idlicitacion``."""
     if not is_portal_url(url):
         return False
     path = _normalized_portal_path(url)
     if not path.endswith(_PORTAL_DETAIL_PATH_SUFFIX):
         return False
-    qs_values = parse_qs(urlparse(url).query).get("qs") or []
-    return bool(qs_values and str(qs_values[0]).strip())
+    query = parse_qs(urlparse(url).query)
+    for key in _PORTAL_DETAIL_QUERY_KEYS:
+        values = query.get(key) or []
+        if values and str(values[0]).strip():
+            return True
+    return False
 
 
 def is_portal_listing_url(url: str) -> bool:
@@ -705,7 +727,7 @@ def _require_portal_detail_url(url: str) -> str:
         raise ChileCompraPortalError(
             "Refusing non-detail portal URL: "
             f"{sanitize_portal_url_for_error(url)!r} "
-            "(expected https DetailsAcquisition.aspx with qs=...)"
+            "(expected https DetailsAcquisition.aspx with qs=... or idlicitacion=...)"
         )
     return url
 
@@ -1050,6 +1072,147 @@ def fetch_licitacion_attachments(
             downloads.append(download)
             total_bytes = next_total
     return downloads
+
+
+@dataclass(frozen=True)
+class PortalAttachmentInventory:
+    """Every anexo row a ficha exposes, discovered without downloading any body.
+
+    ``__VIEWSTATE`` and the anexo postbacks are bound to the cookie session that
+    produced them, so the inventory carries the opener it was built with. That
+    binding is runtime-only: it is excluded from ``repr``/equality and is never
+    serialized into a shareable artifact.
+    """
+
+    detail_url: str
+    listing_urls: tuple[str, ...]
+    attachments: tuple[PortalAttachment, ...]
+    listing_form_fields: dict[str, dict[str, str]]
+    session: PortalOpenFn | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def attachments_discovered(self) -> int:
+        return len(self.attachments)
+
+    def listing_ordinal_of(self, attachment: PortalAttachment) -> int:
+        try:
+            return self.listing_urls.index(attachment.listing_url)
+        except ValueError:
+            return -1
+
+
+def list_licitacion_attachments(
+    detail_url: str,
+    *,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    html_max_bytes: int = DEFAULT_PORTAL_HTML_MAX_BYTES,
+    opener: PortalOpenFn | None = None,
+) -> PortalAttachmentInventory:
+    """Enumerate all anexo rows with GETs only; issues zero attachment postbacks.
+
+    Knowing the true discovered count before downloading is what lets callers
+    fail a budget check up front instead of silently keeping the first N rows.
+    """
+    session = opener or new_portal_opener()
+    detail_raw, _ = _portal_request(
+        detail_url,
+        opener=session,
+        timeout=timeout,
+        max_bytes=html_max_bytes,
+        url_kind="detail",
+    )
+    listing_urls = tuple(extract_attachment_listing_urls(_decode_portal_html(detail_raw)))
+
+    attachments: list[PortalAttachment] = []
+    form_fields: dict[str, dict[str, str]] = {}
+    for listing_url in listing_urls:
+        listing_raw, _ = _portal_request(
+            listing_url,
+            opener=session,
+            timeout=timeout,
+            referer=detail_url,
+            max_bytes=html_max_bytes,
+            url_kind="listing",
+        )
+        listing_html = _decode_portal_html(listing_raw)
+        form_fields[listing_url] = extract_aspnet_form_fields(listing_html)
+        # Rows with identical names are distinct documents; never dedupe here.
+        attachments.extend(parse_attachment_listing(listing_html, listing_url=listing_url))
+
+    return PortalAttachmentInventory(
+        detail_url=detail_url,
+        listing_urls=listing_urls,
+        attachments=tuple(attachments),
+        listing_form_fields=form_fields,
+        session=session,
+    )
+
+
+def iter_licitacion_attachments(
+    detail_url: str,
+    *,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    max_bytes: int = DEFAULT_ATTACHMENT_MAX_BYTES,
+    html_max_bytes: int = DEFAULT_PORTAL_HTML_MAX_BYTES,
+    max_attachment_count: int = DEFAULT_MAX_ATTACHMENT_COUNT,
+    max_total_bytes: int = DEFAULT_MAX_TOTAL_ATTACHMENT_BYTES,
+    opener: PortalOpenFn | None = None,
+    inventory: PortalAttachmentInventory | None = None,
+) -> Iterator[DownloadedAttachment]:
+    """Yield anexos one at a time so callers never hold every body at once.
+
+    The count budget is checked against the discovered inventory *before* any
+    body is fetched, so exceeding it raises instead of truncating the corpus.
+
+    A supplied ``inventory`` is always consumed through the session that built
+    it; the portal's ``__VIEWSTATE`` would otherwise be replayed against a fresh
+    cookie jar and every postback would fail or serve the wrong file.
+    """
+    if inventory is not None:
+        if inventory.session is None:
+            raise ChileCompraPortalError(
+                "Refusing to consume an inventory with no bound portal session; "
+                "build it with list_licitacion_attachments()"
+            )
+        if opener is not None and opener is not inventory.session:
+            raise ChileCompraPortalError(
+                "Refusing to consume an inventory through a different portal session "
+                "than the one that produced its __VIEWSTATE"
+            )
+        session = inventory.session
+        resolved = inventory
+    else:
+        session = opener or new_portal_opener()
+        resolved = list_licitacion_attachments(
+            detail_url,
+            timeout=timeout,
+            html_max_bytes=html_max_bytes,
+            opener=session,
+        )
+    discovered = resolved.attachments_discovered
+    if discovered > max_attachment_count:
+        raise ChileCompraPortalError(
+            f"{ATTACHMENT_COUNT_BUDGET_EXCEEDED}: discovered {discovered} attachments "
+            f"but max_attachment_count={max_attachment_count}"
+        )
+
+    total_bytes = 0
+    for attachment in resolved.attachments:
+        fields = resolved.listing_form_fields.get(attachment.listing_url, {})
+        download = download_portal_attachment(
+            attachment,
+            fields,
+            opener=session,
+            timeout=timeout,
+            max_bytes=max_bytes,
+        )
+        total_bytes += len(download.content)
+        if total_bytes > max_total_bytes:
+            raise ChileCompraPortalError(
+                f"{TOTAL_BYTES_BUDGET_EXCEEDED}: attachment bytes exceed "
+                f"max_total_bytes={max_total_bytes}"
+            )
+        yield download
 
 
 def save_licitacion_attachments(

@@ -267,6 +267,12 @@ def classify_likely_bucket(rel_posix: str) -> str:
     if "ndr_" in p or "reported_non_delivery" in p:
         return "ndr"
 
+    # Scoped to the portal/anexo modules on purpose: a bare "chilecompra"
+    # substring would out-rank the later lead_research and qa_reports rules and
+    # steal paths like scripts/leads/fetch_chilecompra.py.
+    if base == "chilecompra_api.py" or "/chilecompra_anexo_evidence/" in f"/{p}":
+        return "equipment"
+
     if "equipment" in p or "licitacion" in p:
         return "equipment"
 
