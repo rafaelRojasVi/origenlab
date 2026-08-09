@@ -2598,7 +2598,7 @@ def test_rule_precedence_exhaustive_contract() -> None:
     )
 
     agg = aggregation_policy_spec()
-    assert agg["version"] == "aggregation_policy_v2"
+    assert agg["version"] == "aggregation_policy_v3"
     assert "strong_class_precedence" in agg
     assert "negative_class_precedence" in agg
     assert "evidence_tier_rank" in agg
@@ -2832,18 +2832,19 @@ def test_rule_precedence_exhaustive_contract() -> None:
         band="low",
     )
 
-    # Conflicting strong canonical classes.
+    # Independent single-class strong units with distinct classes are
+    # legitimate multi-equipment (H2) — not conflicting_canonical_equipment_classes.
     _expect(
         [pos, micro],
-        policy_id="mixed_positive_and_negative_requires_review",
-        relevance="ambiguous",
-        resolution="mixed_requires_review",
-        band="abstain",
-        ambiguity={"conflicting_line_evidence", "conflicting_canonical_equipment_classes"},
+        policy_id="multiple_distinct_equipment_classes_combined",
+        relevance="strong_equipment_class",
+        resolution="equipment_class_only",
+        band="high",
         classes={"centrifuge", "microscope"},
     )
 
-    # Negative plus abstention.
+    # Negative + equipment-bearing abstention (bare sonicator carries classes)
+    # still requires review (H2).
     _expect(
         [neg, amb],
         policy_id="mixed_positive_and_negative_requires_review",
@@ -2851,6 +2852,40 @@ def test_rule_precedence_exhaustive_contract() -> None:
         resolution="mixed_requires_review",
         band="abstain",
         ambiguity={"conflicting_line_evidence"},
+        classes={"ultrasonic_processor", "ultrasonic_bath"},
+    )
+
+    # Negative + empty abstention → negative survives (H2).
+    _expect(
+        [neg, empty_u],
+        policy_id="negative_survives_empty_abstentions",
+        relevance="consumable_or_reagent",
+        resolution="negative_class_only",
+        band="high",
+    )
+
+    # Negative plus supplier-required microscope context still requires review.
+    from dataclasses import replace as _replace_eq
+
+    equip_abstain = _replace_eq(
+        amb,
+        relevance_class="laboratory_context_only",
+        canonical_equipment_classes=("microscope",),
+        product_resolution_status="negative_class_only",
+        confidence_band="medium",
+        positive_reason_codes=(),
+        negative_reason_codes=("supplier_required_equipment_not_buyer_purchase",),
+        ambiguity_reason_codes=(),
+        unit_decision_id=amb.unit_decision_id + "_equip_ctx",
+    )
+    _expect(
+        [neg, equip_abstain],
+        policy_id="mixed_positive_and_negative_requires_review",
+        relevance="ambiguous",
+        resolution="mixed_requires_review",
+        band="abstain",
+        ambiguity={"conflicting_line_evidence"},
+        classes={"microscope"},
     )
 
     # Empty evidence never becomes unrelated.
@@ -3112,14 +3147,16 @@ def test_rule_precedence_exhaustive_contract() -> None:
     finally:
         agg_mod.aggregation_policy_spec = original_spec  # type: ignore[assignment]
 
-    # Mixed/conflict policy mutation changes negative+abstention outcome.
+    # Mixed/conflict policy mutation changes negative+equipment-bearing abstention.
     mutated_conflict = copy.deepcopy(aggregation_policy_spec())
-    mutated_conflict["mixed_conflict_behavior"]["negative_plus_abstention"][
-        "relevance_class"
-    ] = "unrelated"
-    mutated_conflict["mixed_conflict_behavior"]["negative_plus_abstention"][
-        "product_resolution_status"
-    ] = "negative_class_only"
+    for key in (
+        "negative_plus_abstention",
+        "negative_plus_equipment_bearing_abstention",
+    ):
+        mutated_conflict["mixed_conflict_behavior"][key]["relevance_class"] = "unrelated"
+        mutated_conflict["mixed_conflict_behavior"][key][
+            "product_resolution_status"
+        ] = "negative_class_only"
     mutated_conflict["manual_review_outcomes"]["relevance_class"] = "unrelated"
 
     def _mut_conflict():

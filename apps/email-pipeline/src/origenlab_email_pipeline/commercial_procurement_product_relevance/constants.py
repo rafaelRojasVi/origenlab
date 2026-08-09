@@ -108,6 +108,8 @@ AGGREGATION_REASON_CODES: Final = (
     "single_unit_decision",
     "strong_positive_survives_negative_lines",
     "mixed_positive_and_negative_requires_review",
+    "multiple_distinct_equipment_classes_combined",
+    "negative_survives_empty_abstentions",
     "all_units_negative",
     "all_units_ambiguous_or_empty",
     "no_usable_units",

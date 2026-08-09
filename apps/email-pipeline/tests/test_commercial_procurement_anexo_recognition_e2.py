@@ -567,25 +567,48 @@ def test_role_tag_does_not_gate_recognition(role):
 
 
 def test_conflicting_annex_evidence_yields_an_explicit_conflict_state():
-    tender = make_tender(
-        lines=[
-            {
-                "ordinal": 1,
-                "product": "Centrífuga de sobremesa",
-                "description": "",
-                "category": "",
-                "classification": "",
-            }
-        ]
-    )
+    """One annex unit asserting multiple competing strong classes remains conflict.
+
+    Independent single-class units (centrifuge sheet + microscope sheet) are
+    legitimate multi-equipment under H2 and must not use this path.
+    """
     evidence = make_evidence(
-        [make_chunk("C-1", "Baño ultrasónico de 10 litros para laboratorio")],
+        [
+            make_chunk(
+                "C-1",
+                "Centrífuga refrigerada y microscopio óptico de laboratorio",
+            )
+        ],
         [make_attachment("A-1")],
         [make_bundle()],
     )
-    row = only(run_comparison([tender], anexo=evidence).comparisons)
+    row = only(run_comparison([make_tender()], anexo=evidence).comparisons)
     assert row.change_class == CHANGE_ANNEX_CREATED_CONFLICT
     assert row.augmented_resolution_status == "mixed_requires_review"
+    assert set(row.augmented_categories) == {"centrifuge", "microscope"}
+
+
+def test_independent_annex_equipment_classes_are_not_automatic_conflict():
+    """Distinct single-class annex units combine as multi-equipment (H2)."""
+    evidence = make_evidence(
+        [
+            make_chunk("C-1", "Centrífuga refrigerada de sobremesa 15.000 rpm", ordinal=1),
+            make_chunk(
+                "C-2",
+                "Microscopio binocular planacromático de laboratorio",
+                ordinal=2,
+                attachment_id="A-2",
+            ),
+        ],
+        [make_attachment("A-1"), make_attachment("A-2")],
+        [make_bundle()],
+    )
+    result = run_comparison([make_tender()], anexo=evidence)
+    row = only(result.comparisons)
+    assert row.change_class == CHANGE_NEW_ANNEX_POSITIVE
+    assert row.augmented_resolution_status != "mixed_requires_review"
+    assert set(row.augmented_categories) == {"centrifuge", "microscope"}
+    assert {c.matched_category for c in result.claims} == {"centrifuge", "microscope"}
 
 
 # --------------------------------------------------------------------------

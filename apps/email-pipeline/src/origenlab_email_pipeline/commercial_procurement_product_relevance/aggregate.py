@@ -33,11 +33,22 @@ _STRONG = STRONG_RELEVANCE_CLASSES
 _NEGATIVE = NEGATIVE_RELEVANCE_CLASSES - {"unrelated"}  # unrelated is weak negative
 _ABSTAIN = frozenset({"ambiguous", "laboratory_context_only"})
 
+# Aggregation reason codes (also listed in AGGREGATION_REASON_CODES).
+AGG_MULTI_EQUIPMENT = "multiple_distinct_equipment_classes_combined"
+AGG_NEGATIVE_SURVIVES_EMPTY_ABSTAIN = "negative_survives_empty_abstentions"
+
 
 def aggregation_policy_spec() -> dict[str, Any]:
-    """Declarative aggregation semantics shared by execution + fingerprints."""
+    """Declarative aggregation semantics shared by execution + fingerprints.
+
+    Version history:
+    - v2: any differing strong class sets → conflict; any negative+abstain → conflict
+    - v3: complementary single-class strong units may combine as multi-equipment;
+      negative + empty (no-class) abstentions prefer the negative (not mixed review);
+      equipment-bearing abstentions with negatives still require review
+    """
     return {
-        "version": "aggregation_policy_v2",
+        "version": "aggregation_policy_v3",
         "strong_classes": sorted(_STRONG),
         "negative_classes": sorted(_NEGATIVE),
         "abstain_classes": sorted(_ABSTAIN),
@@ -64,12 +75,42 @@ def aggregation_policy_spec() -> dict[str, Any]:
             "outcome": "pass_through_unit_decision",
         },
         "mixed_conflict_behavior": {
+            "negative_plus_empty_abstention": {
+                "id": AGG_NEGATIVE_SURVIVES_EMPTY_ABSTAIN,
+                "outcome": "prefer_most_specific_negative",
+                "note": (
+                    "Empty abstentions (no canonical equipment classes) do not "
+                    "contradict negative evidence"
+                ),
+            },
+            "negative_plus_equipment_bearing_abstention": {
+                "id": "mixed_positive_and_negative_requires_review",
+                "relevance_class": "ambiguous",
+                "product_resolution_status": "mixed_requires_review",
+                "confidence_band": "abstain",
+                "ambiguity_reason_codes": ["conflicting_line_evidence"],
+                "note": (
+                    "Abstention units that still carry equipment classes may "
+                    "require human interpretation alongside negatives"
+                ),
+            },
+            # Backward-compatible alias used by older fingerprint mutation tests.
             "negative_plus_abstention": {
                 "id": "mixed_positive_and_negative_requires_review",
                 "relevance_class": "ambiguous",
                 "product_resolution_status": "mixed_requires_review",
                 "confidence_band": "abstain",
                 "ambiguity_reason_codes": ["conflicting_line_evidence"],
+                "note": "alias_for_equipment_bearing_or_legacy_mixed_path",
+            },
+            "legitimate_multi_equipment": {
+                "id": AGG_MULTI_EQUIPMENT,
+                "outcome": "prefer_strongest_positive_with_class_union",
+                "requires": [
+                    "more_than_one_strong_unit",
+                    "each_strong_unit_exactly_one_canonical_class",
+                    "at_least_two_distinct_canonical_classes",
+                ],
             },
             "conflicting_strong_canonical_classes": {
                 "id": "mixed_positive_and_negative_requires_review",
@@ -104,9 +145,20 @@ def aggregation_policy_spec() -> dict[str, Any]:
                 "note": "Independent durable-equipment line is not erased by a negative line",
             },
             {
+                "id": AGG_MULTI_EQUIPMENT,
+                "when": "independent_single_class_strong_units_with_distinct_classes",
+                "outcome": "prefer_strongest_positive_with_class_union",
+            },
+            {
+                "id": AGG_NEGATIVE_SURVIVES_EMPTY_ABSTAIN,
+                "when": "negatives_plus_empty_abstentions_only",
+                "outcome": "prefer_most_specific_negative",
+            },
+            {
                 "id": "mixed_positive_and_negative_requires_review",
                 "when": (
-                    "conflicting_strong_canonical_classes_or_negative_plus_abstention"
+                    "true_conflicting_strong_classes_or_negative_plus_"
+                    "equipment_bearing_abstention"
                 ),
                 "outcome": "ambiguous+abstain+mixed_requires_review",
             },
@@ -168,14 +220,35 @@ def _best_tier_unit(
     return max(units, key=lambda u: (_tier_rank(u.evidence_tier), u.unit_decision_id))
 
 
-def _canonical_class_sets_conflict(
+def _is_legitimate_multi_equipment(
     strong: list[EvidenceUnitRelevanceDecision],
 ) -> bool:
-    """Conflict only when strong units disagree on canonical equipment classes.
+    """Independent single-class strong units with distinct classes are complementary.
 
-    Different strength levels (exact vs strong vs compatible) with the same
-    canonical class set are *not* a conflict — strong_class_precedence applies.
+    unit A → centrifuge + unit B → microscope is multi-equipment, not conflict.
+    A single unit asserting several classes is *not* proven multi-equipment.
     """
+    if len(strong) < 2:
+        return False
+    if any(len(u.canonical_equipment_classes) != 1 for u in strong):
+        return False
+    distinct = {next(iter(u.canonical_equipment_classes)) for u in strong}
+    return len(distinct) >= 2
+
+
+def _strong_units_true_conflict(
+    strong: list[EvidenceUnitRelevanceDecision],
+) -> bool:
+    """True conflict: multi-class unit(s) or incompatible class-set disagreement.
+
+    Legitimate multi-equipment (independent single-class units) is *not* conflict.
+    """
+    if not strong:
+        return False
+    if any(len(u.canonical_equipment_classes) > 1 for u in strong):
+        return True
+    if _is_legitimate_multi_equipment(strong):
+        return False
     sets = {frozenset(u.canonical_equipment_classes) for u in strong}
     return len(sets) > 1
 
@@ -198,6 +271,46 @@ def _apply_mixed_review(
         str(spec["product_resolution_status"]),
         str(spec["confidence_band"]),
     )
+
+
+def _apply_strong_outcome(
+    strong: list[EvidenceUnitRelevanceDecision],
+    *,
+    amb_codes: list[str],
+    agg_codes: list[str],
+    policy: dict[str, Any],
+    prepend_codes: list[str] | None = None,
+    allow_single_unit_fallback: bool = True,
+) -> tuple[str, str, str, str]:
+    """Return relevance, resolution, tier, band for a strong-unit outcome."""
+    if prepend_codes:
+        agg_codes.extend(prepend_codes)
+    chosen = sorted(strong, key=_strong_sort_key)[0]
+    relevance = chosen.relevance_class
+    resolution = chosen.product_resolution_status
+    tier = chosen.evidence_tier
+    band = chosen.confidence_band
+    strong_precedence_id = str(_policy_by_id("strong_class_precedence")["id"])
+
+    if _is_legitimate_multi_equipment(strong):
+        agg_codes.append(AGG_MULTI_EQUIPMENT)
+        if len({u.relevance_class for u in strong}) > 1:
+            agg_codes.append(strong_precedence_id)
+    elif _strong_units_true_conflict(strong):
+        relevance, resolution, band = _apply_mixed_review(
+            amb_codes=amb_codes,
+            agg_codes=agg_codes,
+            extra_ambiguity=list(
+                policy["mixed_conflict_behavior"][
+                    "conflicting_strong_canonical_classes"
+                ]["ambiguity_reason_codes"]
+            ),
+        )
+    elif len({u.relevance_class for u in strong}) > 1:
+        agg_codes.append(strong_precedence_id)
+    elif allow_single_unit_fallback:
+        agg_codes.append(str(policy["single_unit_behavior"]["id"]))
+    return relevance, resolution, tier, band
 
 
 def aggregate_tender_decision(
@@ -274,7 +387,6 @@ def aggregate_tender_decision(
     )
     all_negative_id = str(_policy_by_id("all_units_negative")["id"])
     all_ambiguous_id = str(_policy_by_id("all_units_ambiguous_or_empty")["id"])
-    strong_precedence_id = str(_policy_by_id("strong_class_precedence")["id"])
     no_usable_id = str(_policy_by_id("no_usable_units")["id"])
 
     if len(units) == 1:
@@ -284,62 +396,59 @@ def aggregate_tender_decision(
         resolution = chosen.product_resolution_status
         tier = chosen.evidence_tier
         band = chosen.confidence_band
+        # One strong unit asserting multiple competing classes still needs review.
+        if (
+            chosen.relevance_class in _STRONG
+            and len(chosen.canonical_equipment_classes) > 1
+        ):
+            relevance, resolution, band = _apply_mixed_review(
+                amb_codes=amb_codes,
+                agg_codes=agg_codes,
+                extra_ambiguity=list(
+                    policy["mixed_conflict_behavior"][
+                        "conflicting_strong_canonical_classes"
+                    ]["ambiguity_reason_codes"]
+                ),
+            )
     elif strong and negatives:
         # Strong durable equipment survives independent negative lines.
-        agg_codes.append(strong_survives_id)
-        chosen = sorted(strong, key=_strong_sort_key)[0]
-        relevance = chosen.relevance_class
-        resolution = chosen.product_resolution_status
-        tier = chosen.evidence_tier
-        band = chosen.confidence_band
-        if len({u.relevance_class for u in strong}) > 1 and not _canonical_class_sets_conflict(
-            strong
-        ):
-            agg_codes.append(strong_precedence_id)
-        if _canonical_class_sets_conflict(strong):
-            relevance, resolution, band = _apply_mixed_review(
-                amb_codes=amb_codes,
-                agg_codes=agg_codes,
-                extra_ambiguity=list(
-                    policy["mixed_conflict_behavior"][
-                        "conflicting_strong_canonical_classes"
-                    ]["ambiguity_reason_codes"]
-                ),
-            )
+        relevance, resolution, tier, band = _apply_strong_outcome(
+            strong,
+            amb_codes=amb_codes,
+            agg_codes=agg_codes,
+            policy=policy,
+            prepend_codes=[strong_survives_id],
+            allow_single_unit_fallback=False,
+        )
     elif strong:
-        chosen = sorted(strong, key=_strong_sort_key)[0]
-        relevance = chosen.relevance_class
-        resolution = chosen.product_resolution_status
-        # Tier and band always come from the same chosen unit — never mix a
-        # high-ranked tier with an unrelated lower-ranked unit's confidence.
-        tier = chosen.evidence_tier
-        band = chosen.confidence_band
-        if len({u.relevance_class for u in strong}) > 1 and not _canonical_class_sets_conflict(
-            strong
-        ):
-            agg_codes.append(strong_precedence_id)
-        else:
-            agg_codes.append(str(policy["single_unit_behavior"]["id"]))
-        if _canonical_class_sets_conflict(strong):
-            relevance, resolution, band = _apply_mixed_review(
-                amb_codes=amb_codes,
-                agg_codes=agg_codes,
-                extra_ambiguity=list(
-                    policy["mixed_conflict_behavior"][
-                        "conflicting_strong_canonical_classes"
-                    ]["ambiguity_reason_codes"]
-                ),
-            )
+        relevance, resolution, tier, band = _apply_strong_outcome(
+            strong,
+            amb_codes=amb_codes,
+            agg_codes=agg_codes,
+            policy=policy,
+        )
     elif negatives and abstain:
-        # Negative + abstention must not collapse into all_units_ambiguous_or_empty.
-        neg_abs = policy["mixed_conflict_behavior"]["negative_plus_abstention"]
-        agg_codes.append(str(neg_abs["id"]))
-        relevance = str(neg_abs["relevance_class"])
-        resolution = str(neg_abs["product_resolution_status"])
-        band = str(neg_abs["confidence_band"])
-        for code in neg_abs["ambiguity_reason_codes"]:
-            amb_codes.append(str(code))
-        tier = _best_tier_unit(units).evidence_tier
+        equipment_bearing = [u for u in abstain if u.canonical_equipment_classes]
+        if equipment_bearing:
+            # Negative + real equipment context (e.g. supplier-required microscope).
+            neg_abs = policy["mixed_conflict_behavior"][
+                "negative_plus_equipment_bearing_abstention"
+            ]
+            agg_codes.append(str(neg_abs["id"]))
+            relevance = str(neg_abs["relevance_class"])
+            resolution = str(neg_abs["product_resolution_status"])
+            band = str(neg_abs["confidence_band"])
+            for code in neg_abs["ambiguity_reason_codes"]:
+                amb_codes.append(str(code))
+            tier = _best_tier_unit(units).evidence_tier
+        else:
+            # Empty abstentions do not contradict negatives.
+            agg_codes.append(AGG_NEGATIVE_SURVIVES_EMPTY_ABSTAIN)
+            chosen = sorted(negatives, key=_negative_sort_key)[0]
+            relevance = chosen.relevance_class
+            resolution = "negative_class_only"
+            tier = chosen.evidence_tier
+            band = chosen.confidence_band
     elif negatives and not abstain:
         agg_codes.append(all_negative_id)
         chosen = sorted(negatives, key=_negative_sort_key)[0]
@@ -375,7 +484,9 @@ def aggregate_tender_decision(
         tier = chosen.evidence_tier
         band = "low"
     else:
-        neg_abs = policy["mixed_conflict_behavior"]["negative_plus_abstention"]
+        neg_abs = policy["mixed_conflict_behavior"][
+            "negative_plus_equipment_bearing_abstention"
+        ]
         agg_codes.append(str(neg_abs["id"]))
         relevance = str(neg_abs["relevance_class"])
         resolution = str(neg_abs["product_resolution_status"])
