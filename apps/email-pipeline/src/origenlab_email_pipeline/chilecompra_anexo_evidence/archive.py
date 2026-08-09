@@ -7,15 +7,22 @@ capped stream so a lying uncompressed-size header cannot bypass the budget.
 from __future__ import annotations
 
 import io
+import struct
+import zlib
 import zipfile
 from dataclasses import dataclass, field
 
 from origenlab_email_pipeline.chilecompra_anexo_evidence.constants import (
+    DEFAULT_ARCHIVE_VERIFY_CHUNK_BYTES,
     DEFAULT_MAX_ARCHIVE_COMPRESSION_RATIO,
     DEFAULT_MAX_ARCHIVE_DEPTH,
     DEFAULT_MAX_ARCHIVE_MEMBER_UNCOMPRESSED_BYTES,
     DEFAULT_MAX_ARCHIVE_MEMBERS,
     DEFAULT_MAX_ARCHIVE_TOTAL_UNCOMPRESSED_BYTES,
+    REASON_ARCHIVE_ACTUAL_MEMBER_BYTES_LIMIT,
+    REASON_ARCHIVE_ACTUAL_RATIO_LIMIT,
+    REASON_ARCHIVE_ACTUAL_SIZE_MISMATCH,
+    REASON_ARCHIVE_ACTUAL_TOTAL_BYTES_LIMIT,
     REASON_ARCHIVE_BYTES_LIMIT,
     REASON_ARCHIVE_MEMBER_LIMIT,
     REASON_ARCHIVE_RATIO_LIMIT,
@@ -130,6 +137,174 @@ def preflight_archive(payload: bytes, *, limits: ArchiveLimits) -> ArchivePrefli
     )
 
 
+@dataclass
+class ArchiveActualExpansion:
+    """What the members really decompress to, independent of their headers."""
+
+    members_verified: int
+    actual_total_bytes: int
+    largest_member_bytes: int
+    worst_actual_ratio: float
+    rejected: bool = False
+    reason_codes: tuple[str, ...] = ()
+    offending_member: str | None = None
+
+
+def _member_data_offset(payload: bytes, info: zipfile.ZipInfo) -> int | None:
+    """Locate a member's raw compressed bytes via its local header."""
+    start = int(info.header_offset)
+    if start < 0 or start + 30 > len(payload):
+        return None
+    if bytes(payload[start : start + 4]) != b"PK\x03\x04":
+        return None
+    name_len, extra_len = struct.unpack_from("<HH", payload, start + 26)
+    offset = start + 30 + name_len + extra_len
+    return offset if offset <= len(payload) else None
+
+
+def _actual_member_bytes(
+    payload: bytes,
+    info: zipfile.ZipInfo,
+    *,
+    abort_above: int,
+    chunk_bytes: int,
+) -> tuple[int, bool]:
+    """Stream one member and count true output bytes.
+
+    Decompresses the raw deflate stream directly rather than through
+    ``ZipExtFile``, which stops at the *declared* size and would therefore never
+    reveal an understated header. Returns ``(actual_bytes, aborted)`` and holds
+    at most one chunk of output at a time.
+    """
+    compressed = int(info.compress_size)
+    data_start = _member_data_offset(payload, info)
+    if data_start is None or data_start + max(compressed, 0) > len(payload):
+        return 0, False
+
+    if info.compress_type == zipfile.ZIP_STORED:
+        return max(compressed, 0), False
+
+    if info.compress_type != zipfile.ZIP_DEFLATED:
+        # Rare in OOXML; fall back to bounded reads through zipfile.
+        actual = 0
+        try:
+            with zipfile.ZipFile(io.BytesIO(payload)) as archive, archive.open(info) as handle:
+                while True:
+                    block = handle.read(chunk_bytes)
+                    if not block:
+                        break
+                    actual += len(block)
+                    if actual > abort_above:
+                        return actual, True
+        except (zipfile.BadZipFile, RuntimeError, OSError, EOFError, NotImplementedError):
+            return actual, False
+        return actual, False
+
+    view = memoryview(payload)
+    decompressor = zlib.decompressobj(-zlib.MAX_WBITS)
+    actual = 0
+    position = data_start
+    end = data_start + compressed
+    try:
+        while position < end:
+            block = view[position : min(position + chunk_bytes, end)]
+            position += len(block)
+            out = decompressor.decompress(block, chunk_bytes)
+            actual += len(out)
+            if actual > abort_above:
+                return actual, True
+            while decompressor.unconsumed_tail:
+                out = decompressor.decompress(decompressor.unconsumed_tail, chunk_bytes)
+                actual += len(out)
+                if actual > abort_above:
+                    return actual, True
+    except zlib.error:
+        # A stream we cannot decode is handled by the parser's corrupt path.
+        return actual, False
+    finally:
+        view.release()
+    return actual, False
+
+
+def verify_actual_expansion(
+    payload: bytes,
+    *,
+    limits: ArchiveLimits,
+    chunk_bytes: int = DEFAULT_ARCHIVE_VERIFY_CHUNK_BYTES,
+) -> ArchiveActualExpansion:
+    """Bound what an archive *really* expands to before a parser touches it.
+
+    ``preflight_archive`` can only trust the central directory. This walks the
+    real decompressed streams in fixed-size chunks, so a member that understates
+    its size is caught before any parser performs its own unbounded read.
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            infos = [i for i in archive.infolist() if not i.is_dir()]
+    except zipfile.BadZipFile as exc:
+        raise ArchiveSafetyError(f"unreadable zip container: {exc}") from exc
+
+    reasons: list[str] = []
+    offender: str | None = None
+    total = 0
+    largest = 0
+    worst_ratio = 0.0
+    verified = 0
+
+    def _flag(code: str, member: str) -> None:
+        nonlocal offender
+        reasons.append(code)
+        if offender is None:
+            offender = member
+
+    for info in infos:
+        if info.flag_bits & 0x1:
+            continue  # encrypted members are refused elsewhere; never decoded here
+        compressed = int(info.compress_size)
+        remaining_total = max(limits.max_total_uncompressed_bytes - total, 0)
+        abort_above = min(limits.max_member_uncompressed_bytes, remaining_total)
+
+        actual, aborted = _actual_member_bytes(
+            payload, info, abort_above=abort_above, chunk_bytes=chunk_bytes
+        )
+        verified += 1
+        total += actual
+        largest = max(largest, actual)
+
+        if aborted:
+            if actual > limits.max_member_uncompressed_bytes:
+                _flag(REASON_ARCHIVE_ACTUAL_MEMBER_BYTES_LIMIT, info.filename)
+            else:
+                _flag(REASON_ARCHIVE_ACTUAL_TOTAL_BYTES_LIMIT, info.filename)
+            break
+
+        if actual > limits.max_member_uncompressed_bytes:
+            _flag(REASON_ARCHIVE_ACTUAL_MEMBER_BYTES_LIMIT, info.filename)
+        if total > limits.max_total_uncompressed_bytes:
+            _flag(REASON_ARCHIVE_ACTUAL_TOTAL_BYTES_LIMIT, info.filename)
+        if actual > 0:
+            if compressed <= 0:
+                _flag(REASON_ARCHIVE_SUSPICIOUS_MEMBER, info.filename)
+            else:
+                ratio = actual / compressed
+                worst_ratio = max(worst_ratio, ratio)
+                if ratio > limits.max_compression_ratio:
+                    _flag(REASON_ARCHIVE_ACTUAL_RATIO_LIMIT, info.filename)
+        # A truthful archive declares exactly what it expands to.
+        if actual != int(info.file_size):
+            _flag(REASON_ARCHIVE_ACTUAL_SIZE_MISMATCH, info.filename)
+
+    return ArchiveActualExpansion(
+        members_verified=verified,
+        actual_total_bytes=total,
+        largest_member_bytes=largest,
+        worst_actual_ratio=worst_ratio,
+        rejected=bool(reasons),
+        reason_codes=tuple(sorted(set(reasons))),
+        offending_member=offender,
+    )
+
+
 def _read_member_bounded(
     archive: zipfile.ZipFile,
     info: zipfile.ZipInfo,
@@ -237,6 +412,7 @@ def archive_depth_exceeded(depth: int, *, limits: ArchiveLimits) -> bool:
 
 
 __all__ = [
+    "ArchiveActualExpansion",
     "ArchiveLimits",
     "ArchiveMemberPayload",
     "ArchivePreflight",
@@ -246,4 +422,5 @@ __all__ = [
     "is_unsafe_member_path",
     "iter_archive_members",
     "preflight_archive",
+    "verify_actual_expansion",
 ]

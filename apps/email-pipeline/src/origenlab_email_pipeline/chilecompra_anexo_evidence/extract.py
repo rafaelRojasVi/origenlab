@@ -19,8 +19,10 @@ from origenlab_email_pipeline.chilecompra_anexo_evidence.archive import (
     ArchiveLimits,
     ArchiveSafetyError,
     preflight_archive,
+    verify_actual_expansion,
 )
 from origenlab_email_pipeline.chilecompra_anexo_evidence.constants import (
+    DEFAULT_ARCHIVE_VERIFY_CHUNK_BYTES,
     DEFAULT_CSV_ROWS_PER_CHUNK,
     DEFAULT_MAX_CHARS_PER_ATTACHMENT,
     DEFAULT_MAX_CHUNK_CHARS,
@@ -256,7 +258,10 @@ def ooxml_container_guard(
 
     DOCX/XLSX/PPTX are ZIP containers, so without this a malicious OOXML file
     would reach ``zipfile``/``openpyxl`` directly and decompress unbounded bytes.
-    Returns an explicit incomplete outcome, or ``None`` when parsing may proceed.
+    Runs in two stages: the declared central-directory preflight, then bounded
+    verification of what the members *actually* expand to, because a lying
+    header passes the first stage and the parsers issue their own unbounded
+    reads. Returns an explicit incomplete outcome, or ``None`` to proceed.
     """
     try:
         preflight = preflight_archive(payload, limits=archive_limits)
@@ -282,6 +287,19 @@ def ooxml_container_guard(
             extractor=extractor,
             warnings=[REASON_OOXML_CONTAINER_UNSAFE, *preflight.reason_codes],
         )
+
+    expansion = verify_actual_expansion(payload, limits=archive_limits)
+    if expansion.rejected:
+        return ExtractionOutput(
+            outcome=OUTCOME_PARTIAL_DUE_TO_SAFETY_LIMIT,
+            extractor=extractor,
+            warnings=[REASON_OOXML_CONTAINER_UNSAFE, *expansion.reason_codes],
+            error_message=(
+                f"actual expansion rejected at member {expansion.offending_member!r}"
+                if expansion.offending_member
+                else None
+            ),
+        )
     return None
 
 
@@ -290,10 +308,24 @@ def _read_member_capped(
     name: str,
     *,
     max_bytes: int,
+    chunk_bytes: int = DEFAULT_ARCHIVE_VERIFY_CHUNK_BYTES,
 ) -> tuple[bytes, bool]:
-    """Read one part through a cap so an understated header cannot overrun it."""
+    """Read one part through a cap so an understated header cannot overrun it.
+
+    Accumulates fixed-size chunks rather than issuing one large read: a single
+    ``read(max_bytes + 1)`` lets zipfile decompress greedily and spike well past
+    the part's real size before the cap is applied.
+    """
+    collected: list[bytes] = []
+    total = 0
     with archive.open(name) as handle:
-        data = handle.read(max_bytes + 1)
+        while total <= max_bytes:
+            block = handle.read(min(chunk_bytes, max_bytes + 1 - total))
+            if not block:
+                break
+            collected.append(block)
+            total += len(block)
+    data = b"".join(collected)
     if len(data) > max_bytes:
         return data[:max_bytes], True
     return data, False
