@@ -25,8 +25,35 @@ Default **`uv sync`** is intentionally small and supports **daily SQLite / docum
 | Pandas / xlrd (read tests, draft helpers, legacy .xls) | `uv sync --group data-tools` |
 | Postgres mirror / Alembic / verifiers | `uv sync --group postgres` |
 | Legacy FastAPI slice in this package (historical) | `uv sync --group api --group postgres` |
+| **Running the test suite** | **`./scripts/test.sh`** (see below — do not use a bare `uv run pytest`) |
 | Full CI-style local test install | `uv sync --group dev --group data-tools --group postgres --group lab --frozen` |
 | Full local kitchen-sink install (only when needed) | `uv sync --group dev --group data-tools --group postgres --group lab --group gmail --group ml` |
+
+---
+
+## Running tests: use `./scripts/test.sh`
+
+`uv sync` **prunes** the virtualenv to exactly the groups you pass it. Syncing a
+narrower set — `uv sync --group dev --group gmail`, for example — uninstalls
+pandas (`data-tools`) and openai (`lab`). A later bare `uv run pytest -q` then
+*under-collects*: several test modules fail at import time and the reported pass
+count is smaller but still looks authoritative. This has repeatedly produced
+misleading suite-count comparisons across sessions.
+
+Always bootstrap and run through the canonical wrapper, from `apps/email-pipeline/`:
+
+```bash
+./scripts/test.sh                     # full suite
+./scripts/test.sh tests/test_foo.py   # focused run
+```
+
+It calls `scripts/sync_test_env.sh` — the single source of truth for the test
+group list — and then `pytest`. `scripts/validate.sh` bootstraps through the same
+script, so running it can no longer prune the suite's dependencies.
+
+`tests/test_test_environment_contract.py` enforces this: if the venv is missing a
+collection-critical dependency, the suite fails with an explicit message instead
+of quietly shrinking.
 
 ---
 

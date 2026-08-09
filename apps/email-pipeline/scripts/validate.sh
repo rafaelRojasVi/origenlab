@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-uv sync --group dev --group gmail --frozen
+./scripts/sync_test_env.sh
 
 uv run pytest \
   tests/test_operator_cli.py \
