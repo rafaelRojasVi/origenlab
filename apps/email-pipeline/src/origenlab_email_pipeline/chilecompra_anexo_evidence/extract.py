@@ -12,8 +12,14 @@ import csv as _csv
 import io
 import re
 import xml.etree.ElementTree as ET
+import zipfile
 from dataclasses import dataclass, field
 
+from origenlab_email_pipeline.chilecompra_anexo_evidence.archive import (
+    ArchiveLimits,
+    ArchiveSafetyError,
+    preflight_archive,
+)
 from origenlab_email_pipeline.chilecompra_anexo_evidence.constants import (
     DEFAULT_CSV_ROWS_PER_CHUNK,
     DEFAULT_MAX_CHARS_PER_ATTACHMENT,
@@ -48,6 +54,7 @@ from origenlab_email_pipeline.chilecompra_anexo_evidence.constants import (
     OUTCOME_PARTIAL_DUE_TO_SAFETY_LIMIT,
     OUTCOME_UNSUPPORTED_FORMAT,
     REASON_EMBEDDED_CONTENT_UNPROCESSED,
+    REASON_OOXML_CONTAINER_UNSAFE,
 )
 
 _WS_RE = re.compile(r"[ \t\r\f\v]+")
@@ -236,6 +243,62 @@ def extract_pdf(payload: bytes, *, limits: ExtractionLimits) -> ExtractionOutput
             pass
 
 
+# --- OOXML container safety --------------------------------------------------
+
+
+def ooxml_container_guard(
+    payload: bytes,
+    *,
+    archive_limits: ArchiveLimits,
+    extractor: str,
+) -> ExtractionOutput | None:
+    """Apply the generic-ZIP safety envelope before any OOXML part is decompressed.
+
+    DOCX/XLSX/PPTX are ZIP containers, so without this a malicious OOXML file
+    would reach ``zipfile``/``openpyxl`` directly and decompress unbounded bytes.
+    Returns an explicit incomplete outcome, or ``None`` when parsing may proceed.
+    """
+    try:
+        preflight = preflight_archive(payload, limits=archive_limits)
+    except ArchiveSafetyError as exc:
+        return ExtractionOutput(
+            outcome=OUTCOME_CORRUPT,
+            extractor=extractor,
+            warnings=["ooxml_container_unreadable"],
+            error_message=str(exc)[:300],
+        )
+    if preflight.encrypted_member_count:
+        return ExtractionOutput(
+            outcome=OUTCOME_ENCRYPTED,
+            extractor=extractor,
+            warnings=[
+                REASON_OOXML_CONTAINER_UNSAFE,
+                f"encrypted_members:{preflight.encrypted_member_count}",
+            ],
+        )
+    if preflight.rejected:
+        return ExtractionOutput(
+            outcome=OUTCOME_PARTIAL_DUE_TO_SAFETY_LIMIT,
+            extractor=extractor,
+            warnings=[REASON_OOXML_CONTAINER_UNSAFE, *preflight.reason_codes],
+        )
+    return None
+
+
+def _read_member_capped(
+    archive: zipfile.ZipFile,
+    name: str,
+    *,
+    max_bytes: int,
+) -> tuple[bytes, bool]:
+    """Read one part through a cap so an understated header cannot overrun it."""
+    with archive.open(name) as handle:
+        data = handle.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        return data[:max_bytes], True
+    return data, False
+
+
 # --- DOCX --------------------------------------------------------------------
 
 _W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -321,9 +384,19 @@ def _docx_part_chunks(
     return chunks
 
 
-def extract_docx(payload: bytes, *, limits: ExtractionLimits) -> ExtractionOutput:
+def extract_docx(
+    payload: bytes,
+    *,
+    limits: ExtractionLimits,
+    archive_limits: ArchiveLimits | None = None,
+) -> ExtractionOutput:
     """Read body paragraphs, tables, headers, and footers (specs hide in all four)."""
-    import zipfile
+    active_archive = archive_limits or ArchiveLimits()
+    blocked = ooxml_container_guard(
+        payload, archive_limits=active_archive, extractor="ooxml_docx"
+    )
+    if blocked is not None:
+        return blocked
 
     out = ExtractionOutput(outcome="", extractor="ooxml_docx")
     budget = _Budget(limits.max_chars_per_attachment)
@@ -349,7 +422,13 @@ def extract_docx(payload: bytes, *, limits: ExtractionLimits) -> ExtractionOutpu
                     if part == "word/document.xml"
                     else part.removeprefix("word/").removesuffix(".xml")
                 )
-                data = archive.read(part)
+                data, truncated = _read_member_capped(
+                    archive,
+                    part,
+                    max_bytes=active_archive.max_member_uncompressed_bytes,
+                )
+                if truncated:
+                    out.warnings.append(f"ooxml_part_truncated:{section}")
                 out.chunks.extend(
                     _docx_part_chunks(
                         data,
@@ -371,7 +450,11 @@ def extract_docx(payload: bytes, *, limits: ExtractionLimits) -> ExtractionOutpu
         out.error_message = str(exc)[:300]
         return out
 
-    result = _finalize(out, budget=budget, hit_limit=False)
+    result = _finalize(
+        out,
+        budget=budget,
+        hit_limit=any(w.startswith("ooxml_part_truncated:") for w in out.warnings),
+    )
     if REASON_EMBEDDED_CONTENT_UNPROCESSED in out.warnings and result.outcome in {
         OUTCOME_EXTRACTION_SUCCESS,
         OUTCOME_EXTRACTED_EMPTY,
@@ -389,8 +472,21 @@ def _cell_to_text(value: object) -> str:
     return str(value).replace("\n", " ").strip()
 
 
-def extract_xlsx(payload: bytes, *, limits: ExtractionLimits) -> ExtractionOutput:
+def extract_xlsx(
+    payload: bytes,
+    *,
+    limits: ExtractionLimits,
+    archive_limits: ArchiveLimits | None = None,
+) -> ExtractionOutput:
     """Walk every worksheet including hidden ones; no sheet/row/column sampling."""
+    blocked = ooxml_container_guard(
+        payload,
+        archive_limits=archive_limits or ArchiveLimits(),
+        extractor="openpyxl_all_sheets",
+    )
+    if blocked is not None:
+        return blocked
+
     out = ExtractionOutput(outcome="", extractor="openpyxl_all_sheets")
     try:
         from openpyxl import load_workbook  # type: ignore
@@ -719,15 +815,17 @@ def extract_payload(
     *,
     detected_format: str,
     limits: ExtractionLimits | None = None,
+    archive_limits: ArchiveLimits | None = None,
 ) -> ExtractionOutput:
     """Route to the right bounded extractor; unknown formats are named, not skipped."""
     active = limits or ExtractionLimits()
+    active_archive = archive_limits or ArchiveLimits()
     if detected_format == FORMAT_PDF:
         return extract_pdf(payload, limits=active)
     if detected_format == FORMAT_DOCX:
-        return extract_docx(payload, limits=active)
+        return extract_docx(payload, limits=active, archive_limits=active_archive)
     if detected_format == FORMAT_XLSX:
-        return extract_xlsx(payload, limits=active)
+        return extract_xlsx(payload, limits=active, archive_limits=active_archive)
     if detected_format == FORMAT_XLS:
         return extract_xls(payload, limits=active)
     if detected_format == FORMAT_CSV:

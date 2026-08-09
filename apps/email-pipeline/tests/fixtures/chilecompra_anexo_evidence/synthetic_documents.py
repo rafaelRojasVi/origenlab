@@ -180,6 +180,60 @@ def make_encrypted_member_zip() -> bytes:
     return _set_encrypted_flag(payload, "secreto.txt")
 
 
+def _incompressible(size: int, *, seed: int = 0) -> bytes:
+    """Deterministic high-entropy filler so aggregate ratios stay near 1:1."""
+    import random
+
+    rng = random.Random(seed)
+    return bytes(rng.getrandbits(8) for _ in range(size))
+
+
+_DOCX_MIN_DOCUMENT = (
+    b"<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'>"
+    b"<w:body><w:p><w:r><w:t>contenido</w:t></w:r></w:p></w:body></w:document>"
+)
+
+
+def make_ooxml_bomb(kind: str, mode: str) -> bytes:
+    """OOXML-shaped container that violates one archive bound.
+
+    ``kind`` is ``docx`` or ``xlsx``; ``mode`` is ``bytes``, ``ratio``, or
+    ``members``. Fixtures stay small — tests pair them with tiny limits.
+    """
+    prefix = "word" if kind == "docx" else "xl"
+    main = f"{prefix}/document.xml" if kind == "docx" else f"{prefix}/workbook.xml"
+    entries: list[tuple[str, bytes]] = [("[Content_Types].xml", b"<Types/>")]
+
+    if mode == "bytes":
+        entries.append((main, _incompressible(200_000, seed=1)))
+    elif mode == "ratio":
+        entries.append((main, b"A" * 200_000))
+    elif mode == "members":
+        entries.append((main, _DOCX_MIN_DOCUMENT))
+        entries.extend((f"{prefix}/part{i}.xml", b"<x/>") for i in range(40))
+    else:  # pragma: no cover - guard against typos in tests
+        raise ValueError(f"unknown mode {mode!r}")
+    return make_zip(entries)
+
+
+def make_diluted_ratio_bomb() -> bytes:
+    """One bomb member hidden behind incompressible members.
+
+    The whole-archive ratio stays near 1:1, so only a per-member ratio check
+    catches it.
+    """
+    entries: list[tuple[str, bytes]] = [("bomba.txt", b"A" * 400_000)]
+    for index in range(8):
+        entries.append((f"relleno_{index}.bin", _incompressible(80_000, seed=index)))
+    return make_zip(entries)
+
+
+def make_truncated_zip(kind: str = "docx") -> bytes:
+    """Valid prefix with the central directory chopped off."""
+    payload = make_ooxml_bomb(kind, "members")
+    return payload[: len(payload) // 2]
+
+
 OLE_HEADER = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 

@@ -19,6 +19,7 @@ from origenlab_email_pipeline.chilecompra_anexo_evidence.constants import (
     REASON_ARCHIVE_BYTES_LIMIT,
     REASON_ARCHIVE_MEMBER_LIMIT,
     REASON_ARCHIVE_RATIO_LIMIT,
+    REASON_ARCHIVE_SUSPICIOUS_MEMBER,
 )
 
 
@@ -57,6 +58,7 @@ class ArchivePreflight:
     rejected: bool = False
     reason_codes: tuple[str, ...] = ()
     warnings: list[str] = field(default_factory=list)
+    worst_member_ratio: float = 0.0
 
 
 def is_unsafe_member_path(name: str) -> bool:
@@ -93,6 +95,23 @@ def preflight_archive(payload: bytes, *, limits: ArchiveLimits) -> ArchivePrefli
         reasons.append(REASON_ARCHIVE_BYTES_LIMIT)
     if compressed > 0 and declared / compressed > limits.max_compression_ratio:
         reasons.append(REASON_ARCHIVE_RATIO_LIMIT)
+
+    # A single bomb member can hide behind ordinary members that dilute the
+    # whole-archive ratio, so every member is also checked on its own.
+    worst_ratio = 0.0
+    for info in infos:
+        size = int(info.file_size)
+        if size <= 0:
+            continue
+        member_compressed = int(info.compress_size)
+        if member_compressed <= 0:
+            reasons.append(REASON_ARCHIVE_SUSPICIOUS_MEMBER)
+            continue
+        ratio = size / member_compressed
+        worst_ratio = max(worst_ratio, ratio)
+        if ratio > limits.max_compression_ratio:
+            reasons.append(REASON_ARCHIVE_RATIO_LIMIT)
+
     if encrypted:
         warnings.append(f"encrypted_members:{encrypted}")
     unsafe = [i.filename for i in infos if is_unsafe_member_path(i.filename)]
@@ -107,6 +126,7 @@ def preflight_archive(payload: bytes, *, limits: ArchiveLimits) -> ArchivePrefli
         rejected=bool(reasons),
         reason_codes=tuple(sorted(set(reasons))),
         warnings=warnings,
+        worst_member_ratio=worst_ratio,
     )
 
 

@@ -6,7 +6,7 @@ import html
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from http.cookiejar import CookieJar
 from pathlib import Path
@@ -1076,12 +1076,19 @@ def fetch_licitacion_attachments(
 
 @dataclass(frozen=True)
 class PortalAttachmentInventory:
-    """Every anexo row a ficha exposes, discovered without downloading any body."""
+    """Every anexo row a ficha exposes, discovered without downloading any body.
+
+    ``__VIEWSTATE`` and the anexo postbacks are bound to the cookie session that
+    produced them, so the inventory carries the opener it was built with. That
+    binding is runtime-only: it is excluded from ``repr``/equality and is never
+    serialized into a shareable artifact.
+    """
 
     detail_url: str
     listing_urls: tuple[str, ...]
     attachments: tuple[PortalAttachment, ...]
     listing_form_fields: dict[str, dict[str, str]]
+    session: PortalOpenFn | None = field(default=None, repr=False, compare=False)
 
     @property
     def attachments_discovered(self) -> int:
@@ -1137,6 +1144,7 @@ def list_licitacion_attachments(
         listing_urls=listing_urls,
         attachments=tuple(attachments),
         listing_form_fields=form_fields,
+        session=session,
     )
 
 
@@ -1155,14 +1163,32 @@ def iter_licitacion_attachments(
 
     The count budget is checked against the discovered inventory *before* any
     body is fetched, so exceeding it raises instead of truncating the corpus.
+
+    A supplied ``inventory`` is always consumed through the session that built
+    it; the portal's ``__VIEWSTATE`` would otherwise be replayed against a fresh
+    cookie jar and every postback would fail or serve the wrong file.
     """
-    session = opener or new_portal_opener()
-    resolved = inventory or list_licitacion_attachments(
-        detail_url,
-        timeout=timeout,
-        html_max_bytes=html_max_bytes,
-        opener=session,
-    )
+    if inventory is not None:
+        if inventory.session is None:
+            raise ChileCompraPortalError(
+                "Refusing to consume an inventory with no bound portal session; "
+                "build it with list_licitacion_attachments()"
+            )
+        if opener is not None and opener is not inventory.session:
+            raise ChileCompraPortalError(
+                "Refusing to consume an inventory through a different portal session "
+                "than the one that produced its __VIEWSTATE"
+            )
+        session = inventory.session
+        resolved = inventory
+    else:
+        session = opener or new_portal_opener()
+        resolved = list_licitacion_attachments(
+            detail_url,
+            timeout=timeout,
+            html_max_bytes=html_max_bytes,
+            opener=session,
+        )
     discovered = resolved.attachments_discovered
     if discovered > max_attachment_count:
         raise ChileCompraPortalError(

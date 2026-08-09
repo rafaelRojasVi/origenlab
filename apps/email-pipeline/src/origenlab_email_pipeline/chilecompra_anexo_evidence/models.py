@@ -171,6 +171,10 @@ class AttachmentRecord:
     warnings: tuple[str, ...] = ()
     duplicate_of_attachment_id: str | None = None
     duplicate_kind: str | None = None
+    # Structured extraction provenance: downstream resolves evidence by joining
+    # chunks on ``evidence_attachment_id`` instead of parsing warning strings.
+    extraction_reused_from_attachment_id: str | None = None
+    evidence_attachment_id: str | None = None
     extraction: AttachmentExtraction | None = None
     archive_members: tuple[ArchiveMemberRecord, ...] = ()
     error_message: str | None = None
@@ -197,6 +201,8 @@ class AttachmentRecord:
             "warnings": list(self.warnings),
             "duplicate_of_attachment_id": self.duplicate_of_attachment_id,
             "duplicate_kind": self.duplicate_kind,
+            "extraction_reused_from_attachment_id": self.extraction_reused_from_attachment_id,
+            "evidence_attachment_id": self.evidence_attachment_id,
             "extraction": self.extraction.to_dict() if self.extraction else None,
             "archive_members": [m.to_dict() for m in self.archive_members],
             "error_message": self.error_message,

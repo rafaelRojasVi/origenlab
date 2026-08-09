@@ -36,6 +36,8 @@ def attachment_semantic_payload(record: AttachmentRecord) -> dict[str, object]:
         "role_tag": record.role_tag,
         "duplicate_of_attachment_id": record.duplicate_of_attachment_id,
         "duplicate_kind": record.duplicate_kind,
+        "extraction_reused_from_attachment_id": record.extraction_reused_from_attachment_id,
+        "evidence_attachment_id": record.evidence_attachment_id,
         "warnings": sorted(record.warnings),
         "archive_members": sorted(
             (

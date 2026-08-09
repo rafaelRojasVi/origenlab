@@ -8,6 +8,8 @@ whole pipeline testable without network access.
 from __future__ import annotations
 
 import os
+import stat
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Protocol
@@ -188,6 +190,8 @@ class PortalAttachmentSource:
                 discovered=discovered,
             )
         total = 0
+        # Always post back through the session that produced the __VIEWSTATE.
+        session = portal.session or self._session
         for stub in inventory.stubs:
             attachment = portal.attachments[stub.row_ordinal]
             fields = portal.listing_form_fields.get(attachment.listing_url, {})
@@ -195,7 +199,7 @@ class PortalAttachmentSource:
                 download = download_portal_attachment(
                     attachment,
                     fields,
-                    opener=self._session,
+                    opener=session,
                     timeout=self.timeout,
                     max_bytes=self.max_bytes,
                 )
@@ -220,34 +224,66 @@ class PortalAttachmentSource:
 
 @dataclass
 class ContentAddressedCache:
-    """SHA-256 addressed raw payload store; writes are exclusive and atomic."""
+    """SHA-256 addressed raw payload store.
+
+    A stored object is trusted only when it is a regular, non-symlink file whose
+    bytes hash to the digest in its own name. Anything else (symlink, directory,
+    device, truncated or tampered content) is treated as untrusted and is
+    atomically replaced by the verified bytes on the next ``put``; ``read``
+    fails closed and returns ``None``.
+    """
 
     root: Path
 
     def path_for(self, digest: str) -> Path:
         return self.root / digest[:2] / f"{digest}.bin"
 
+    def _read_regular_file(self, path: Path) -> bytes | None:
+        """Read without ever traversing a symlink at the final path component."""
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            fd = os.open(os.fspath(path), flags)
+        except OSError:
+            return None
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return None
+            with os.fdopen(fd, "rb") as handle:
+                return handle.read()
+        except OSError:
+            return None
+
+    def verified_bytes(self, digest: str) -> bytes | None:
+        """Return stored bytes only if they still hash to ``digest``."""
+        data = self._read_regular_file(self.path_for(digest))
+        if data is None:
+            return None
+        return data if sha256_bytes(data) == digest else None
+
     def has(self, digest: str) -> bool:
-        return self.path_for(digest).is_file()
+        return self.verified_bytes(digest) is not None
 
     def put(self, payload: bytes) -> tuple[str, Path]:
         digest = sha256_bytes(payload)
         target = self.path_for(digest)
-        if target.is_file():
+        if self.verified_bytes(digest) is not None:
             return digest, target
+
         target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_name(f".{target.name}.tmp.{os.getpid()}")
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        try:
-            fd = os.open(os.fspath(tmp), flags, 0o644)
-        except FileExistsError:
-            tmp.unlink(missing_ok=True)
-            fd = os.open(os.fspath(tmp), flags, 0o644)
+        # mkstemp creates a uniquely named file exclusively, so two concurrent
+        # writers can never collide on, or delete, each other's temp path.
+        fd, tmp_name = tempfile.mkstemp(
+            dir=os.fspath(target.parent), prefix=f".{target.name}.tmp."
+        )
+        tmp = Path(tmp_name)
         try:
             with os.fdopen(fd, "wb") as handle:
                 handle.write(payload)
+            os.chmod(tmp, 0o644)
+            # Same-directory rename: atomic, and racing writers publish identical
+            # verified bytes, so the winner's content is still correct.
             os.replace(tmp, target)
         except Exception:
             tmp.unlink(missing_ok=True)
@@ -255,12 +291,7 @@ class ContentAddressedCache:
         return digest, target
 
     def read(self, digest: str) -> bytes | None:
-        target = self.path_for(digest)
-        if not target.is_file():
-            return None
-        data = target.read_bytes()
-        # Never trust a cached file that no longer hashes to its own name.
-        return data if sha256_bytes(data) == digest else None
+        return self.verified_bytes(digest)
 
 
 __all__ = [

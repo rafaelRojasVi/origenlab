@@ -46,6 +46,8 @@ REASON_ARCHIVE_DEPTH_LIMIT: Final = "archive_depth_limit"
 REASON_ARCHIVE_MEMBER_LIMIT: Final = "archive_member_limit"
 REASON_ARCHIVE_BYTES_LIMIT: Final = "archive_bytes_limit"
 REASON_ARCHIVE_RATIO_LIMIT: Final = "archive_ratio_limit"
+REASON_ARCHIVE_SUSPICIOUS_MEMBER: Final = "archive_suspicious_member"
+REASON_OOXML_CONTAINER_UNSAFE: Final = "ooxml_container_unsafe"
 
 # --- Detected formats --------------------------------------------------------
 FORMAT_PDF: Final = "pdf"

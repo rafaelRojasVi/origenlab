@@ -78,6 +78,16 @@ single cookie session, so aggregate body memory stays bounded to the current fil
 The #438 `fetch_licitacion_attachments()` and `save_licitacion_attachments()`
 entry points are untouched and remain list-returning.
 
+### Session binding
+
+The portal is ASP.NET WebForms, so `__VIEWSTATE` and the anexo postbacks are only
+valid inside the cookie session that produced them. An inventory therefore carries
+the opener it was built with, and `iter_licitacion_attachments()` consumes it
+through exactly that session: passing a different opener raises, and an inventory
+with no bound session is refused rather than silently retried on a fresh cookie
+jar. The binding is a runtime object reference only — excluded from `repr` and
+equality, and never serialized into a shareable artifact.
+
 ## Provenance and chunk model
 
 - `TenderAttachmentBundle` — counts, completeness flags, incomplete reason codes,
@@ -100,12 +110,18 @@ stable IDs and hashes chunk text rather than embedding it.
 ## Duplicates and revisions
 
 - same filename + same bytes → both provenance rows kept, extraction reused by
-  SHA-256 with an `extraction_reused_from:` marker.
+  SHA-256.
 - different filename + same bytes → both rows kept, extraction reused.
 - same filename + different bytes → distinct documents, both extracted, flagged
   `same_name_different_content`, never overwritten.
 - contradictory requirements across revisions are preserved. Conflict resolution
   belongs to a later layer, not to extraction.
+
+Reuse is structured, not a string to be parsed. Every record exposes
+`duplicate_of_attachment_id`, `extraction_reused_from_attachment_id`, and
+`evidence_attachment_id`; downstream code joins chunks on
+`chunk.attachment_id == record.evidence_attachment_id`. Originals point at
+themselves, duplicates point at the original, and text is stored once.
 
 ## Security limits
 
@@ -114,6 +130,17 @@ All limits are parameters and are tested with intentionally tiny values.
 - Archive preflight reads the central directory only: member count, cumulative
   and per-member uncompressed bytes, compression ratio, and recursion depth.
   A zip bomb is rejected before decompression.
+- The compression ratio is checked **per member as well as whole-archive**, so a
+  single bomb member cannot hide behind ordinary members that dilute the
+  aggregate. A member declaring `file_size > 0` with `compress_size <= 0` is
+  treated as suspicious and fails closed.
+- DOCX, XLSX, and PPTX are ZIP containers, so they run the *same* preflight
+  before any part is decompressed. Without it a malicious OOXML file would reach
+  `zipfile`/`openpyxl` directly and bypass the archive envelope entirely: a
+  117 KB fixture drove 374 MB of peak memory, because the downstream character
+  budget only applies *after* decompression. A container that fails preflight
+  yields `partial_due_to_safety_limit` (or `encrypted` for encrypted members)
+  with `extraction_complete = false` — never a silent "corrupt" or "empty".
 - Members are read through a capped stream, so an understated size header still
   gets truncated and flagged rather than trusted.
 - Path traversal, absolute paths, and drive-qualified members yield no bytes but
@@ -129,8 +156,16 @@ All limits are parameters and are tested with intentionally tiny values.
 ## Cache and output
 
 Raw payloads go to a SHA-256 content-addressed cache under gitignored
-`reports/out/`, written exclusively (`O_EXCL`, `O_NOFOLLOW`) via temp + rename,
-and re-verified against their own hash on read. The review bundle is published
+`reports/out/`. A stored object is trusted only when it is a regular,
+non-symlink file (opened `O_NOFOLLOW`, `S_ISREG` checked) whose bytes hash to the
+digest in its own name; `read()` fails closed and returns `None` otherwise.
+The documented replacement policy is that an object failing self-verification is
+untrusted and is atomically replaced by the verified bytes on the next `put()`.
+Staging uses a uniquely and exclusively created `mkstemp` path rather than a
+PID-derived name, so concurrent writers can never collide on — or delete — each
+other's temp file, and publication is a same-directory `os.replace`. Racing
+writers for one digest therefore always leave exactly the expected bytes.
+The review bundle is published
 with `write_atomically`, so a half-finished run never installs a manifest
 claiming `bundle_complete=true`:
 

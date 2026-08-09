@@ -297,6 +297,26 @@ def test_likely_bucket_warm_cases_and_operator_cli() -> None:
     assert m.classify_likely_bucket("scripts/qa/audit_institution_grouping.py") == "qa_reports"
 
 
+def test_chilecompra_rule_does_not_steal_more_specific_buckets() -> None:
+    """A bare "chilecompra" substring would out-rank later, narrower rules."""
+    m = _load()
+    cases = {
+        "scripts/leads/fetch_chilecompra.py": "lead_research",
+        "scripts/qa/extract_chilecompra_lab_buyers_from_xlsx.py": "qa_reports",
+        "scripts/qa/audit_chilecompra_links.py": "qa_reports",
+        "scripts/ingest/03_chilecompra_gmail_imap.py": "gmail_ingest",
+        "src/origenlab_email_pipeline/operator_cli/chilecompra_auto_refresh.py": (
+            "operator_cli"
+        ),
+        "src/origenlab_email_pipeline/chilecompra_to_postgres_mirror.py": (
+            "postgres_mirror"
+        ),
+        "src/origenlab_email_pipeline/warm_case_chilecompra.py": "warm_cases",
+    }
+    for path, expected in cases.items():
+        assert m.classify_likely_bucket(path) == expected, path
+
+
 def test_retagged_buckets_from_unknown_review_audit() -> None:
     m = _load()
     assert (
@@ -325,6 +345,21 @@ def test_retagged_buckets_from_unknown_review_audit() -> None:
         m.classify_likely_bucket("src/origenlab_email_pipeline/catalog/catalog_builder.py")
         == "catalog"
     )
+    for module in (
+        "acquire",
+        "archive",
+        "detect",
+        "extract",
+        "models",
+        "redaction",
+        "walkthrough",
+    ):
+        assert (
+            m.classify_likely_bucket(
+                f"src/origenlab_email_pipeline/chilecompra_anexo_evidence/{module}.py"
+            )
+            == "equipment"
+        )
     assert (
         m.classify_likely_bucket("src/origenlab_email_pipeline/read/today_workspace.py")
         == "read_modules"

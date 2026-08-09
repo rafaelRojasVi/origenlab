@@ -237,6 +237,7 @@ def _expand_archive(
             member.payload,
             detected_format=detection.detected_format,
             limits=config.extraction_limits,
+            archive_limits=config.archive_limits,
         )
         member_warnings.extend(output.warnings)
         if member.truncated and output.outcome in COMPLETE_OUTCOMES:
@@ -404,6 +405,8 @@ def build_tender_bundle(
                         warnings=tuple(warnings),
                         duplicate_of_attachment_id=previous_id,
                         duplicate_kind=duplicate_kind,
+                        extraction_reused_from_attachment_id=previous_id,
+                        evidence_attachment_id=previous_id,
                         extraction=reused,
                     )
                 )
@@ -457,6 +460,7 @@ def build_tender_bundle(
                     payload,
                     detected_format=detection.detected_format,
                     limits=active.extraction_limits,
+                    archive_limits=active.archive_limits,
                 )
                 warnings.extend(output.warnings)
                 new_chunks = _chunks_from_output(
@@ -502,6 +506,7 @@ def build_tender_bundle(
                     outcome=outcome,
                     role_tag=role,
                     warnings=tuple(warnings),
+                    evidence_attachment_id=attachment_id,
                     extraction=extraction,
                     archive_members=members,
                     error_message=extraction.error_message,
