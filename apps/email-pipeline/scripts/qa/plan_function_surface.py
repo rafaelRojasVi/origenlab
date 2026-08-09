@@ -267,7 +267,7 @@ def classify_likely_bucket(rel_posix: str) -> str:
     if "ndr_" in p or "reported_non_delivery" in p:
         return "ndr"
 
-    if "equipment" in p or "licitacion" in p:
+    if "equipment" in p or "licitacion" in p or "chilecompra" in p:
         return "equipment"
 
     if (

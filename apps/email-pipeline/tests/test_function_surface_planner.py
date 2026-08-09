@@ -312,6 +312,16 @@ def test_retagged_buckets_from_unknown_review_audit() -> None:
         == "equipment"
     )
     assert (
+        m.classify_likely_bucket("src/origenlab_email_pipeline/chilecompra_api.py")
+        == "equipment"
+    )
+    assert (
+        m.classify_likely_bucket(
+            "src/origenlab_email_pipeline/chilecompra_anexo_evidence/planner.py"
+        )
+        == "equipment"
+    )
+    assert (
         m.classify_likely_bucket("src/origenlab_email_pipeline/catalog/catalog_builder.py")
         == "catalog"
     )
