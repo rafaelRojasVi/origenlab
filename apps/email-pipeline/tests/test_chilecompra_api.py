@@ -23,6 +23,7 @@ from origenlab_email_pipeline.chilecompra_api import (
     VALIDITY_STATUS_MISSING_CLOSE_DATE,
     VALIDITY_STATUS_NOT_PUBLICADA,
     VALIDITY_STATUS_OPEN,
+    _ValidatedPortalRedirectHandler,
     build_attachment_postback_body,
     build_licitacion_detail_url,
     build_licitaciones_url,
@@ -35,8 +36,11 @@ from origenlab_email_pipeline.chilecompra_api import (
     fetch_licitacion_by_codigo,
     fetch_licitaciones,
     is_active_chilecompra_licitacion,
+    is_portal_detail_url,
+    is_portal_listing_url,
     is_portal_url,
     is_safe_public_attachment_url,
+    new_portal_opener,
     normalize_licitacion_detail_items,
     normalize_licitacion_summary,
     normalize_licitaciones_response,
@@ -44,6 +48,7 @@ from origenlab_email_pipeline.chilecompra_api import (
     redact_ticket,
     redact_ticket_in_url,
     safe_attachment_filename,
+    sanitize_portal_url_for_error,
     save_licitacion_attachments,
     ticket_from_env,
     validate_fecha,
@@ -543,7 +548,33 @@ def test_is_portal_url_rejects_other_hosts_and_schemes() -> None:
     assert not is_portal_url("http://www.mercadopublico.cl/Procurement/Modules/x.aspx")
     assert not is_portal_url("https://evil.example.com/Procurement/Modules/x.aspx")
     assert not is_portal_url("https://mercadopublico.cl.evil.example.com/x.aspx")
+    assert not is_portal_url("https://user:pass@www.mercadopublico.cl/Procurement/Modules/x.aspx")
     assert not is_portal_url("")
+
+
+def test_portal_endpoint_helpers_require_expected_paths_and_query() -> None:
+    assert is_portal_detail_url(_DETAIL_URL)
+    assert is_portal_listing_url(_LISTING_URL)
+    assert not is_portal_detail_url(
+        "https://www.mercadopublico.cl/Procurement/Modules/RFB/DetailsAcquisition.aspx"
+    )
+    assert not is_portal_listing_url(
+        "https://www.mercadopublico.cl/Procurement/Modules/Attachment/VerAntecedentes.aspx"
+    )
+    assert not is_portal_detail_url(_LISTING_URL)
+    assert not is_portal_listing_url(_DETAIL_URL)
+    assert not is_portal_detail_url(
+        "https://www.mercadopublico.cl/Procurement/Modules/Other/Page.aspx?qs=abc"
+    )
+
+
+def test_sanitize_portal_url_for_error_redacts_opaque_tokens() -> None:
+    redacted = sanitize_portal_url_for_error(_DETAIL_URL)
+    assert "6kaRy83zbKUYD9NMoSijTg" not in redacted
+    assert "qs=%3Credacted%3E" in redacted or "qs=<redacted>" in redacted
+    listing = sanitize_portal_url_for_error(_LISTING_URL)
+    assert "AAA" not in listing
+    assert "enc=" in listing
 
 
 def test_extract_attachment_listing_urls_dedupes_and_drops_off_host_links() -> None:
@@ -590,6 +621,8 @@ def test_safe_attachment_filename_strips_paths_and_control_characters() -> None:
     assert safe_attachment_filename("ANEXO%20N%C2%B01.pdf") == "ANEXO N°1.pdf"
     assert safe_attachment_filename("bad\x00name\n.pdf") == "bad_name_.pdf"
     assert safe_attachment_filename("   ") == "anexo.bin"
+    assert safe_attachment_filename("CON.pdf") == "_CON.pdf"
+    assert safe_attachment_filename("nul") == "_nul"
     long_name = safe_attachment_filename("a" * 400 + ".pdf")
     assert len(long_name) <= 180
     assert long_name.endswith(".pdf")
@@ -636,8 +669,18 @@ def test_download_portal_attachment_falls_back_to_sanitized_header_filename() ->
 
 def test_fetch_licitacion_attachments_rejects_non_portal_detail_url() -> None:
     opener = _fake_portal_opener()
-    with pytest.raises(ChileCompraPortalError, match="non-portal URL"):
+    with pytest.raises(ChileCompraPortalError, match="non-detail portal URL"):
         fetch_licitacion_attachments("https://evil.example.com/DetailsAcquisition.aspx", opener=opener)
+    assert opener.calls == []
+
+
+def test_fetch_licitacion_attachments_rejects_portal_path_without_detail_contract() -> None:
+    opener = _fake_portal_opener()
+    with pytest.raises(ChileCompraPortalError, match="non-detail portal URL"):
+        fetch_licitacion_attachments(
+            "https://www.mercadopublico.cl/Procurement/Modules/Other/Page.aspx?qs=abc",
+            opener=opener,
+        )
     assert opener.calls == []
 
 
@@ -647,7 +690,7 @@ def test_fetch_licitacion_attachments_rejects_off_host_redirect() -> None:
             _DETAIL_HTML.encode("utf-8"), url="https://evil.example.com/landing"
         )
 
-    with pytest.raises(ChileCompraPortalError, match="non-portal URL"):
+    with pytest.raises(ChileCompraPortalError, match="non-detail portal URL"):
         fetch_licitacion_attachments(_DETAIL_URL, opener=opener)
 
 
@@ -661,6 +704,43 @@ def test_download_portal_attachment_raises_when_portal_serves_html() -> None:
         download_portal_attachment(attachment, {"__VIEWSTATE": "abc"}, opener=opener)
 
 
+def test_download_portal_attachment_detects_html_via_content_type_and_bom() -> None:
+    attachment = parse_attachment_listing(_LISTING_HTML, listing_url=_LISTING_URL)[0]
+
+    def opener_ct(request, timeout=None):
+        return _portal_response(
+            b"%PDF-not-really",
+            headers={"Content-Type": "text/html; charset=utf-8"},
+        )
+
+    with pytest.raises(ChileCompraPortalError, match="HTML instead of a file"):
+        download_portal_attachment(attachment, {"__VIEWSTATE": "abc"}, opener=opener_ct)
+
+    def opener_bom(request, timeout=None):
+        return _portal_response(b"\xef\xbb\xbf<!-- x -->\n<html><body>expired</body></html>")
+
+    with pytest.raises(ChileCompraPortalError, match="HTML instead of a file"):
+        download_portal_attachment(attachment, {"__VIEWSTATE": "abc"}, opener=opener_bom)
+
+    def opener_xml(request, timeout=None):
+        return _portal_response(b'<?xml version="1.0"?><html><body>x</body></html>')
+
+    with pytest.raises(ChileCompraPortalError, match="HTML instead of a file"):
+        download_portal_attachment(attachment, {"__VIEWSTATE": "abc"}, opener=opener_xml)
+
+
+def test_download_portal_attachment_allows_non_pdf_binary() -> None:
+    attachment = parse_attachment_listing(_LISTING_HTML, listing_url=_LISTING_URL)[0]
+    zip_bytes = b"PK\x03\x04" + b"\x00" * 20
+
+    def opener(request, timeout=None):
+        return _portal_response(zip_bytes, headers={"Content-Type": "application/zip"})
+
+    download = download_portal_attachment(attachment, {"__VIEWSTATE": "abc"}, opener=opener)
+    assert download.content == zip_bytes
+    assert download.content_type == "application/zip"
+
+
 def test_download_portal_attachment_enforces_max_bytes() -> None:
     attachment = parse_attachment_listing(_LISTING_HTML, listing_url=_LISTING_URL)[0]
 
@@ -671,14 +751,64 @@ def test_download_portal_attachment_enforces_max_bytes() -> None:
         download_portal_attachment(attachment, {"__VIEWSTATE": "abc"}, opener=opener, max_bytes=1024)
 
 
-def test_download_portal_attachment_surfaces_http_errors() -> None:
+def test_download_portal_attachment_surfaces_http_errors_without_enc_token() -> None:
     attachment = parse_attachment_listing(_LISTING_HTML, listing_url=_LISTING_URL)[0]
 
     def opener(request, timeout=None):
         raise HTTPError(_LISTING_URL, 500, "Server Error", {}, io.BytesIO(b""))
 
-    with pytest.raises(ChileCompraHttpError, match="HTTP 500"):
+    with pytest.raises(ChileCompraHttpError, match="HTTP 500") as exc_info:
         download_portal_attachment(attachment, {"__VIEWSTATE": "abc"}, opener=opener)
+    assert "AAA" not in str(exc_info.value)
+    assert "enc=" in str(exc_info.value)
+
+
+def test_fetch_licitacion_attachments_rejects_oversized_detail_html() -> None:
+    def opener(request, timeout=None):
+        return _portal_response(b"x" * 200, url=_DETAIL_URL)
+
+    with pytest.raises(ChileCompraPortalError, match="max_bytes=100"):
+        fetch_licitacion_attachments(_DETAIL_URL, opener=opener, html_max_bytes=100)
+
+
+def test_fetch_licitacion_attachments_rejects_oversized_listing_html() -> None:
+    detail_body = _DETAIL_HTML.encode("utf-8")
+
+    def opener(request, timeout=None):
+        if "DetailsAcquisition" in request.full_url:
+            return _portal_response(detail_body, url=_DETAIL_URL)
+        return _portal_response(b"y" * (len(detail_body) + 500), url=_LISTING_URL)
+
+    with pytest.raises(ChileCompraPortalError, match="max_bytes="):
+        fetch_licitacion_attachments(
+            _DETAIL_URL,
+            opener=opener,
+            html_max_bytes=len(detail_body) + 50,
+        )
+
+
+def test_fetch_licitacion_attachments_accepts_html_under_limit() -> None:
+    opener = _fake_portal_opener()
+    downloads = fetch_licitacion_attachments(
+        _DETAIL_URL, opener=opener, html_max_bytes=50_000
+    )
+    assert len(downloads) == 2
+
+
+def test_fetch_licitacion_attachments_enforces_count_cap_fail_closed() -> None:
+    opener = _fake_portal_opener()
+    with pytest.raises(ChileCompraPortalError, match="max_attachment_count=1"):
+        fetch_licitacion_attachments(_DETAIL_URL, opener=opener, max_attachment_count=1)
+
+
+def test_fetch_licitacion_attachments_enforces_total_byte_cap_fail_closed() -> None:
+    opener = _fake_portal_opener()
+    with pytest.raises(ChileCompraPortalError, match="max_total_bytes="):
+        fetch_licitacion_attachments(
+            _DETAIL_URL,
+            opener=opener,
+            max_total_bytes=len(_PDF_BYTES),
+        )
 
 
 def test_save_licitacion_attachments_writes_files_to_destination(tmp_path) -> None:
@@ -690,6 +820,7 @@ def test_save_licitacion_attachments_writes_files_to_destination(tmp_path) -> No
         "ANEXO N°2 REQUERIMIENTOS.pdf",
     ]
     assert all(p.read_bytes() == _PDF_BYTES for p in written)
+    assert all(p.resolve().parent == (tmp_path / "anexos").resolve() for p in written)
 
 
 def test_save_licitacion_attachments_suffixes_duplicate_names(tmp_path) -> None:
@@ -707,3 +838,114 @@ def test_save_licitacion_attachments_suffixes_duplicate_names(tmp_path) -> None:
         "BASES ADMINISTRATIVAS.pdf",
         "BASES ADMINISTRATIVAS (2).pdf",
     ]
+
+
+def test_save_licitacion_attachments_does_not_overwrite_existing_file(tmp_path) -> None:
+    dest = tmp_path / "anexos"
+    dest.mkdir()
+    existing = dest / "BASES ADMINISTRATIVAS.pdf"
+    existing.write_bytes(b"original-content")
+
+    written = save_licitacion_attachments(_DETAIL_URL, dest, opener=_fake_portal_opener())
+    assert existing.read_bytes() == b"original-content"
+    assert (dest / "BASES ADMINISTRATIVAS (2).pdf") in written
+    assert (dest / "ANEXO N°2 REQUERIMIENTOS.pdf") in written
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "O_NOFOLLOW"), reason="O_NOFOLLOW unavailable")
+def test_save_licitacion_attachments_does_not_follow_symlink(tmp_path) -> None:
+    import os
+
+    dest = tmp_path / "anexos"
+    dest.mkdir()
+    target = tmp_path / "outside-target.bin"
+    target.write_bytes(b"do-not-touch")
+    link = dest / "BASES ADMINISTRATIVAS.pdf"
+    os.symlink(target, link)
+
+    written = save_licitacion_attachments(_DETAIL_URL, dest, opener=_fake_portal_opener())
+
+    assert target.read_bytes() == b"do-not-touch"
+    assert link.is_symlink()
+    assert any(p.name == "BASES ADMINISTRATIVAS (2).pdf" for p in written)
+    assert all(not p.is_symlink() for p in written)
+
+
+def test_validated_redirect_handler_allows_same_host_https() -> None:
+    from urllib.request import Request
+
+    handler = _ValidatedPortalRedirectHandler()
+    req = Request(_DETAIL_URL)
+    next_url = (
+        "https://www.mercadopublico.cl/Procurement/Modules/RFB/"
+        "DetailsAcquisition.aspx?qs=other-token"
+    )
+    redirected = handler.redirect_request(
+        req, fp=None, code=302, msg="Found", headers={"Location": next_url}, newurl=next_url
+    )
+    assert redirected is not None
+    assert redirected.full_url == next_url
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "https://evil.example.com/steal",
+        "http://www.mercadopublico.cl/Procurement/Modules/RFB/DetailsAcquisition.aspx?qs=x",
+        "https://127.0.0.1/internal",
+        "https://localhost/internal",
+        "https://[::1]/internal",
+        "https://169.254.169.254/latest/meta-data/",
+        "https://mercadopublico.cl.evil.example/x",
+        "https://user:pass@www.mercadopublico.cl/Procurement/Modules/RFB/DetailsAcquisition.aspx?qs=x",
+    ],
+)
+def test_validated_redirect_handler_rejects_unsafe_targets(location: str) -> None:
+    from urllib.request import Request
+
+    handler = _ValidatedPortalRedirectHandler()
+    req = Request(_DETAIL_URL)
+    with pytest.raises(ChileCompraPortalError):
+        handler.redirect_request(
+            req, fp=None, code=302, msg="Found", headers={"Location": location}, newurl=location
+        )
+
+
+def test_portal_opener_rejects_redirect_before_second_request() -> None:
+    """SSRF guard: blocked Location must not trigger a follow-up HTTPS open."""
+    from email.message import EmailMessage
+    from io import BytesIO
+    from urllib.request import HTTPSHandler, build_opener
+    from urllib.response import addinfourl
+
+    from origenlab_email_pipeline.chilecompra_api import _ValidatedPortalRedirectHandler
+
+    calls: list[str] = []
+    start = "https://www.mercadopublico.cl/Procurement/Modules/RFB/DetailsAcquisition.aspx?qs=start"
+    evil = "https://evil.example.com/internal"
+
+    class ScriptedHTTPSHandler(HTTPSHandler):
+        def https_open(self, req):  # noqa: ANN001
+            calls.append(req.full_url)
+            headers = EmailMessage()
+            if req.full_url == start:
+                headers["Location"] = evil
+                resp = addinfourl(BytesIO(b""), headers, req.full_url, code=302)
+                resp.msg = "Found"
+                return resp
+            resp = addinfourl(BytesIO(b"should-not-fetch"), headers, req.full_url, code=200)
+            resp.msg = "OK"
+            return resp
+
+    opener = build_opener(_ValidatedPortalRedirectHandler(), ScriptedHTTPSHandler()).open
+    from urllib.request import Request
+
+    with pytest.raises(ChileCompraPortalError):
+        opener(Request(start), timeout=5)
+    assert calls == [start]
+    assert evil not in calls
+
+
+def test_new_portal_opener_includes_redirect_validation() -> None:
+    opener = new_portal_opener()
+    assert callable(opener)
