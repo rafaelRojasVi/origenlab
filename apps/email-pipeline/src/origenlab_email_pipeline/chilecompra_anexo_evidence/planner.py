@@ -25,6 +25,7 @@ from origenlab_email_pipeline.chilecompra_anexo_evidence.archive import (
     ArchiveSafetyError,
     iter_archive_members,
     preflight_archive,
+    verify_actual_expansion,
 )
 from origenlab_email_pipeline.chilecompra_anexo_evidence.constants import (
     ANEXO_EVIDENCE_BUILDER_VERSION,
@@ -146,6 +147,17 @@ def _expand_archive(
     warnings.extend(preflight.warnings)
     if preflight.rejected:
         warnings.extend(preflight.reason_codes)
+        return members, chunks, warnings
+
+    try:
+        actual_expansion = verify_actual_expansion(
+            payload, limits=config.archive_limits
+        )
+    except ArchiveSafetyError as exc:
+        warnings.append(f"archive_unreadable:{exc}"[:120])
+        return members, chunks, warnings
+    if actual_expansion.rejected:
+        warnings.extend(actual_expansion.reason_codes)
         return members, chunks, warnings
 
     try:

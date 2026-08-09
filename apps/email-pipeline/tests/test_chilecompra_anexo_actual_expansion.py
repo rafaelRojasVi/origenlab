@@ -25,7 +25,13 @@ from chilecompra_anexo_evidence.synthetic_documents import (  # noqa: E402
     make_docx,
     make_understated_ooxml,
     make_xlsx,
+    make_zip,
     replace_member,
+)
+from origenlab_email_pipeline.chilecompra_anexo_evidence import (  # noqa: E402
+    EvidenceBuildConfig,
+    LocalAttachmentSource,
+    build_tender_bundle,
 )
 from origenlab_email_pipeline.chilecompra_anexo_evidence.archive import (  # noqa: E402
     ArchiveLimits,
@@ -284,6 +290,35 @@ def test_understated_member_no_longer_spikes_parser_memory(member, kind) -> None
         extract_payload(payload, detected_format=kind, archive_limits=limits).outcome
         == OUTCOME_PARTIAL_DUE_TO_SAFETY_LIMIT
     )
+
+
+def test_understated_generic_zip_member_keeps_bundle_incomplete() -> None:
+    member_name = "specs.txt"
+    payload = forge_member_header(
+        make_zip([(member_name, (_SPEC + "\n").encode() * 20_000)]),
+        member_name,
+        declared_size=32,
+    )
+    limits = ArchiveLimits(
+        max_member_uncompressed_bytes=50_000,
+        max_total_uncompressed_bytes=1_000_000,
+        max_compression_ratio=10_000.0,
+    )
+    assert preflight_archive(payload, limits=limits).rejected is False
+
+    bundle = build_tender_bundle(
+        "T-ZIP-ACTUAL",
+        LocalAttachmentSource(items=[("anexos.zip", "application/zip", payload)]),
+        config=EvidenceBuildConfig(archive_limits=limits),
+    )
+
+    record = bundle.attachments[0]
+    assert record.outcome == OUTCOME_PARTIAL_DUE_TO_SAFETY_LIMIT
+    assert record.archive_members == ()
+    assert REASON_ARCHIVE_ACTUAL_MEMBER_BYTES_LIMIT in record.extraction.warnings
+    assert REASON_ARCHIVE_ACTUAL_MEMBER_BYTES_LIMIT in bundle.incomplete_reason_codes
+    assert bundle.chunks == ()
+    assert bundle.bundle_complete is False
 
 
 def test_bounded_part_read_does_not_spike_on_an_accepted_container() -> None:
