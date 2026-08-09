@@ -316,7 +316,7 @@ def test_understated_generic_zip_member_keeps_bundle_incomplete() -> None:
     assert record.outcome == OUTCOME_PARTIAL_DUE_TO_SAFETY_LIMIT
     assert record.archive_members == ()
     assert REASON_ARCHIVE_ACTUAL_MEMBER_BYTES_LIMIT in record.extraction.warnings
-    assert REASON_ARCHIVE_ACTUAL_MEMBER_BYTES_LIMIT in bundle.incomplete_reason_codes
+    assert OUTCOME_PARTIAL_DUE_TO_SAFETY_LIMIT in bundle.incomplete_reason_codes
     assert bundle.chunks == ()
     assert bundle.bundle_complete is False
 
