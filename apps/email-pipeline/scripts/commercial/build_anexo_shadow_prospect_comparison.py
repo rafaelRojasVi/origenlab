@@ -141,11 +141,27 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
     else:
         print(f"wrote shadow packet to {args.out_dir}")
-        print(f"current prospects: {summary['current_prospect_count']}")
-        print(f"shadow prospects: {summary['shadow_prospect_count']}")
-        print(f"new in-scope: {summary['new_in_scope_opportunities']}")
+        print(
+            "equipment-signal rows "
+            f"{summary['current_equipment_purchase_signal_rows']} -> "
+            f"{summary['shadow_equipment_purchase_signal_rows']}"
+        )
+        print(
+            "unique equipment-signal tenders "
+            f"{summary['current_equipment_purchase_tender_count']} -> "
+            f"{summary['shadow_equipment_purchase_tender_count']}"
+        )
+        print(
+            "current opportunity queue rows "
+            f"{summary['current_current_opportunity_queue_count']} -> "
+            f"{summary['shadow_current_opportunity_queue_count']}"
+        )
+        print(
+            "would-enter tenders: "
+            + ", ".join(summary.get("would_enter_current_opportunity_tender_ids") or [])
+        )
         print(f"partial capability: {summary['partial_capability_opportunities']}")
-        print(f"queue entries: {summary['queue_entries']}")
+        print(f"queue entry row-deltas: {summary['queue_entries']}")
         for key, path in sorted(paths.items()):
             print(f"  {key}: {path}")
     return 0

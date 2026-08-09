@@ -30,6 +30,7 @@ from origenlab_email_pipeline.commercial_procurement_anexo_shadow_prospects.cons
     CAPABILITY_OUT_OF_SCOPE,
     INTENT_ACCESSORY_OR_CONSUMABLE,
     INTENT_BUYER_EQUIPMENT_ACQUISITION,
+    INTENT_CONFLICT_OR_REVIEW,
     INTENT_METHOD_OR_EXAM,
     INTENT_SERVICE_OR_MAINTENANCE,
     INTENT_SUPPLIER_REQUIRED_EQUIPMENT,
@@ -233,6 +234,21 @@ def test_intent_suppressions() -> None:
     )
     assert (
         commercial_intent_class(
+            relevance_class="service_or_maintenance_only",
+            negative_reason_codes=(
+                "diagnostic_method_or_exam_term_not_equipment",
+                "service_or_maintenance_only",
+            ),
+            positive_reason_codes=(),
+            ambiguity_reason_codes=(),
+            coverage_complete=True,
+            has_anexo_bundle=True,
+            equipment_classes=(),
+        )
+        == INTENT_METHOD_OR_EXAM
+    )
+    assert (
+        commercial_intent_class(
             relevance_class="laboratory_context_only",
             negative_reason_codes=("supplier_required_equipment_not_buyer_purchase",),
             positive_reason_codes=(),
@@ -242,6 +258,43 @@ def test_intent_suppressions() -> None:
             equipment_classes=("microscope",),
         )
         == INTENT_SUPPLIER_REQUIRED_EQUIPMENT
+    )
+    # Fail-closed: residual classes do not auto-promote acquisition.
+    assert (
+        commercial_intent_class(
+            relevance_class="service_or_maintenance_only",
+            negative_reason_codes=("service_or_maintenance_only",),
+            positive_reason_codes=(),
+            ambiguity_reason_codes=(),
+            coverage_complete=True,
+            has_anexo_bundle=True,
+            equipment_classes=("centrifuge",),
+        )
+        == INTENT_SERVICE_OR_MAINTENANCE
+    )
+    assert (
+        commercial_intent_class(
+            relevance_class="ambiguous",
+            negative_reason_codes=(),
+            positive_reason_codes=(),
+            ambiguity_reason_codes=("conflicting_line_evidence",),
+            coverage_complete=True,
+            has_anexo_bundle=True,
+            equipment_classes=("microscope",),
+        )
+        == INTENT_CONFLICT_OR_REVIEW
+    )
+    assert (
+        commercial_intent_class(
+            relevance_class="strong_equipment_class",
+            negative_reason_codes=(),
+            positive_reason_codes=("strong_equipment_class_match",),
+            ambiguity_reason_codes=(),
+            coverage_complete=True,
+            has_anexo_bundle=True,
+            equipment_classes=("balance", "microscope"),
+        )
+        == INTENT_BUYER_EQUIPMENT_ACQUISITION
     )
     assert (
         classify_shadow_change(
@@ -376,6 +429,14 @@ def _anexo_for_cases() -> AnexoEvidenceBundleSet:
         tender_id="T-AUTO",
         attachment_id="A-auto",
     )
+    # Diagnostic method/exam (explicit H1 reason path)
+    exam_att = make_attachment("A-exam", "T-EXAM", content="exam")
+    exam_chunk = make_chunk(
+        "C-exam",
+        "Velocidad de sedimentacion (proc. aut.) ensayo diagnostico automatizado",
+        tender_id="T-EXAM",
+        attachment_id="A-exam",
+    )
     # Incomplete coverage (needs OCR), no positive text
     inc_att = make_attachment(
         "A-inc",
@@ -392,6 +453,7 @@ def _anexo_for_cases() -> AnexoEvidenceBundleSet:
             mnt_chunk,
             sup_chunk,
             auto_chunk,
+            exam_chunk,
         ],
         attachments=[
             bal_att,
@@ -400,6 +462,7 @@ def _anexo_for_cases() -> AnexoEvidenceBundleSet:
             mnt_att,
             sup_att,
             auto_att,
+            exam_att,
             inc_att,
         ],
         bundles=[
@@ -409,6 +472,7 @@ def _anexo_for_cases() -> AnexoEvidenceBundleSet:
             make_bundle("T-MNT"),
             make_bundle("T-SUP"),
             make_bundle("T-AUTO"),
+            make_bundle("T-EXAM"),
             make_bundle(
                 "T-INC",
                 extraction_complete=False,
@@ -427,6 +491,7 @@ def _corpus() -> list[dict]:
         tender("T-MNT", title="Servicio de mantencion de equipos instalados"),
         tender("T-SUP", title="Servicios de laboratorio clinico"),
         tender("T-AUTO", title="Adquisicion de equipos de observacion"),
+        tender("T-EXAM", title="Servicio de examenes de laboratorio clinico"),
         tender("T-INC", title="Licitacion sin texto util"),
     ]
 
@@ -446,6 +511,11 @@ def test_shadow_isolation_and_safety(tmp_path: Path) -> None:
     assert summary["annex_production_integration"] is False
     assert summary["shadow_results_are_not_production"] is True
     assert summary["canonical_production_queues_untouched"] is True
+    assert "suppressed_service_or_maintenance_cases" in summary
+    assert "suppressed_service_cases" not in summary
+    assert "suppressed_maintenance_cases" not in summary
+    assert "current_prospect_count" not in summary
+    assert "shadow_prospect_count" not in summary
 
     # CURRENT fingerprint must be stable when recomputed from same CURRENT plan.
     from origenlab_email_pipeline.commercial_procurement_anexo_shadow_prospects.fingerprint import (
@@ -465,14 +535,19 @@ def test_shadow_isolation_and_safety(tmp_path: Path) -> None:
         c.equipment_class == "balance" and c.capability == CAPABILITY_IN_SCOPE
         for c in by["T-BAL"].claim_level_capability
     )
+    assert by["T-BAL"].commercial_intent_class == INTENT_BUYER_EQUIPMENT_ACQUISITION
 
     assert by["T-BUN"].change_class == SHADOW_BUNDLED_PARTIAL_CAPABILITY
     assert "centrifuge" in by["T-BUN"].shadow_equipment_classes
     assert "microscope" in by["T-BUN"].shadow_equipment_classes
+    assert by["T-BUN"].commercial_intent_class == INTENT_BUYER_EQUIPMENT_ACQUISITION
 
     assert by["T-ACC"].change_class == SHADOW_ACCESSORY_OR_CONSUMABLE_ONLY
     assert by["T-MNT"].change_class == SHADOW_SERVICE_OR_MAINTENANCE_ONLY
     assert by["T-SUP"].change_class == SHADOW_SUPPLIER_REQUIRED_EQUIPMENT
+    assert by["T-EXAM"].change_class == SHADOW_METHOD_OR_EXAM_ONLY
+    assert by["T-EXAM"].commercial_intent_class == INTENT_METHOD_OR_EXAM
+    assert QUEUE_WOULD_ENTER_CURRENT not in by["T-EXAM"].queue_delta
     assert by["T-AUTO"].change_class == SHADOW_NEW_OUT_OF_SCOPE_EQUIPMENT
     assert "microscope" in by["T-AUTO"].shadow_equipment_classes
     assert all(
@@ -493,16 +568,26 @@ def test_shadow_isolation_and_safety(tmp_path: Path) -> None:
         if d.tender_id == "T-BAL"
     ) or QUEUE_WOULD_ENTER_CURRENT in by["T-BAL"].queue_delta
 
+    # Multi-class tender: signal ROWS can exceed unique tender count.
+    assert summary["shadow_equipment_purchase_signal_rows"] >= summary[
+        "shadow_equipment_purchase_tender_count"
+    ]
+    # T-BUN alone contributes centrifuge+microscope rows but one unique tender.
+    assert summary["shadow_equipment_purchase_tender_count"] >= 1
+    assert "T-BAL" in summary["would_enter_current_opportunity_tender_ids"] or any(
+        d.tender_id == "T-BAL" and d.delta_class == QUEUE_WOULD_ENTER_CURRENT
+        for d in result.queue_deltas
+    )
+
     # Deterministic digests across re-run.
     result2, _, _ = run_shadow_comparison(tenders, anexo=anexo)
     assert result2.semantic_digest == result.semantic_digest
     assert result2.corpus_digest == result.corpus_digest
 
-    # Write gitignored packet under tmp (tests may disable ignore gate).
-    # Use a reports/out-like path under tmp by monkeypatching is awkward;
-    # call writer internals via require_git_ignored=False only if API allows —
-    # the helper requires reports/out. Skip disk write here; CLI pilot covers it.
-    assert summary["shadow_prospect_count"] >= summary["current_prospect_count"]
+    assert (
+        summary["shadow_equipment_purchase_signal_rows"]
+        >= summary["current_equipment_purchase_signal_rows"]
+    )
 
 
 def test_relevance_plan_pair_only_varies_annex_units() -> None:

@@ -85,13 +85,33 @@ def assert_shadow_invariants(result: ShadowProspectComparisonResult) -> None:
             )
 
 
-def _count_prospect_rows(plan: InstitutionProspectPlanResult) -> int:
-    """Count category-scoped tender rows that carry an equipment purchase signal."""
-    return sum(
-        1
+def _equipment_purchase_signal_metrics(
+    plan: InstitutionProspectPlanResult,
+) -> dict[str, int]:
+    """Grain-explicit counts over category-scoped tender rows.
+
+    ``equipment_purchase_signal_rows`` is a *row* count (institution × tender ×
+    equipment category). It is not unique tenders, institutions, or queue
+    memberships.
+    """
+    rows = [
+        row
         for row in plan.tender_rows
         if row.get("commercial_signal_type") == "equipment_purchase_signal"
-    )
+    ]
+    tender_ids = {
+        str(row.get("coalesced_tender_id"))
+        for row in rows
+        if row.get("coalesced_tender_id")
+    }
+    institution_ids = {
+        str(row.get("institution_id")) for row in rows if row.get("institution_id")
+    }
+    return {
+        "equipment_purchase_signal_rows": len(rows),
+        "equipment_purchase_tender_count": len(tender_ids),
+        "equipment_purchase_institution_count": len(institution_ids),
+    }
 
 
 def run_shadow_comparison(
@@ -138,6 +158,16 @@ def run_shadow_comparison(
         queue_deltas=queue_deltas,
     )
 
+    current_metrics = _equipment_purchase_signal_metrics(current)
+    shadow_metrics = _equipment_purchase_signal_metrics(shadow)
+    would_enter_tenders = sorted(
+        {
+            str(d.tender_id)
+            for d in queue_deltas
+            if d.delta_class == QUEUE_WOULD_ENTER_CURRENT and d.tender_id
+        }
+    )
+
     result = ShadowProspectComparisonResult(
         comparison_version=COMPARISON_VERSION,
         corpus_digest=relevance.input_digest,
@@ -153,14 +183,47 @@ def run_shadow_comparison(
         shadow_fingerprint=plan_fingerprint(shadow),
         e2_semantic_digest=e2.semantic_digest,
         notes={
-            "current_prospect_count": _count_prospect_rows(current),
-            "shadow_prospect_count": _count_prospect_rows(shadow),
-            "current_current_opportunity_queue": len(
+            "current_equipment_purchase_signal_rows": current_metrics[
+                "equipment_purchase_signal_rows"
+            ],
+            "shadow_equipment_purchase_signal_rows": shadow_metrics[
+                "equipment_purchase_signal_rows"
+            ],
+            "current_equipment_purchase_tender_count": current_metrics[
+                "equipment_purchase_tender_count"
+            ],
+            "shadow_equipment_purchase_tender_count": shadow_metrics[
+                "equipment_purchase_tender_count"
+            ],
+            "current_equipment_purchase_institution_count": current_metrics[
+                "equipment_purchase_institution_count"
+            ],
+            "shadow_equipment_purchase_institution_count": shadow_metrics[
+                "equipment_purchase_institution_count"
+            ],
+            "current_current_opportunity_queue_count": len(
                 current.operator_queues.get("current_opportunity_queue", [])
             ),
-            "shadow_current_opportunity_queue": len(
+            "shadow_current_opportunity_queue_count": len(
                 shadow.operator_queues.get("current_opportunity_queue", [])
             ),
+            "would_enter_current_opportunity_tender_ids": would_enter_tenders,
+            "metric_grain": {
+                "equipment_purchase_signal_rows": (
+                    "category-scoped tender_rows with "
+                    "commercial_signal_type=equipment_purchase_signal "
+                    "(not unique tenders / not queue membership)"
+                ),
+                "equipment_purchase_tender_count": (
+                    "distinct coalesced_tender_id among those rows"
+                ),
+                "equipment_purchase_institution_count": (
+                    "distinct institution_id among those rows"
+                ),
+                "current_opportunity_queue_count": (
+                    "rows in operator_queues['current_opportunity_queue']"
+                ),
+            },
             "variable": "product_evidence_only",
             "pr5c_shared": True,
             "pr5e_frozen": True,
@@ -180,6 +243,7 @@ def build_summary(
         for cls in SHADOW_CHANGE_CLASSES
     }
     queue_counts = Counter(d.delta_class for d in result.queue_deltas)
+    service_or_maintenance = change_counts[SHADOW_SERVICE_OR_MAINTENANCE_ONLY]
     return {
         "algorithm": "anexo_shadow_prospect_comparison_v1",
         "comparison_version": result.comparison_version,
@@ -192,13 +256,33 @@ def build_summary(
         "current_fingerprint": result.current_fingerprint,
         "shadow_fingerprint": result.shadow_fingerprint,
         "tenders_evaluated": len(result.tender_deltas),
-        "current_prospect_count": result.notes.get("current_prospect_count"),
-        "shadow_prospect_count": result.notes.get("shadow_prospect_count"),
-        "current_current_opportunity_queue": result.notes.get(
-            "current_current_opportunity_queue"
+        "metric_grain": result.notes.get("metric_grain"),
+        "current_equipment_purchase_signal_rows": result.notes.get(
+            "current_equipment_purchase_signal_rows"
         ),
-        "shadow_current_opportunity_queue": result.notes.get(
-            "shadow_current_opportunity_queue"
+        "shadow_equipment_purchase_signal_rows": result.notes.get(
+            "shadow_equipment_purchase_signal_rows"
+        ),
+        "current_equipment_purchase_tender_count": result.notes.get(
+            "current_equipment_purchase_tender_count"
+        ),
+        "shadow_equipment_purchase_tender_count": result.notes.get(
+            "shadow_equipment_purchase_tender_count"
+        ),
+        "current_equipment_purchase_institution_count": result.notes.get(
+            "current_equipment_purchase_institution_count"
+        ),
+        "shadow_equipment_purchase_institution_count": result.notes.get(
+            "shadow_equipment_purchase_institution_count"
+        ),
+        "current_current_opportunity_queue_count": result.notes.get(
+            "current_current_opportunity_queue_count"
+        ),
+        "shadow_current_opportunity_queue_count": result.notes.get(
+            "shadow_current_opportunity_queue_count"
+        ),
+        "would_enter_current_opportunity_tender_ids": list(
+            result.notes.get("would_enter_current_opportunity_tender_ids") or []
         ),
         "change_class_counts": change_counts,
         "new_in_scope_opportunities": change_counts[SHADOW_NEW_IN_SCOPE_OPPORTUNITY],
@@ -209,8 +293,7 @@ def build_summary(
             SHADOW_NEW_OUT_OF_SCOPE_EQUIPMENT
         ],
         "strengthened_prospects": change_counts[SHADOW_STRENGTHENED_EXISTING_OPPORTUNITY],
-        "suppressed_service_cases": change_counts[SHADOW_SERVICE_OR_MAINTENANCE_ONLY],
-        "suppressed_maintenance_cases": change_counts[SHADOW_SERVICE_OR_MAINTENANCE_ONLY],
+        "suppressed_service_or_maintenance_cases": service_or_maintenance,
         "suppressed_accessory_cases": change_counts[SHADOW_ACCESSORY_OR_CONSUMABLE_ONLY],
         "suppressed_method_exam_cases": change_counts[SHADOW_METHOD_OR_EXAM_ONLY],
         "supplier_required_equipment_cases": change_counts[

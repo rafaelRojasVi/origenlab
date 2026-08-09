@@ -23,6 +23,7 @@ def render_walkthrough(
     result: ShadowProspectComparisonResult, summary: dict[str, Any]
 ) -> str:
     by = {d.tender_id: d for d in result.tender_deltas}
+    would_enter = summary.get("would_enter_current_opportunity_tender_ids") or []
     lines: list[str] = [
         "# ANEXO-P1 shadow prospect walkthrough",
         "",
@@ -30,14 +31,42 @@ def render_walkthrough(
         "",
         f"- corpus_digest: `{result.corpus_digest}`",
         f"- semantic_digest: `{result.semantic_digest}`",
-        f"- current_prospect_count: {summary.get('current_prospect_count')}",
-        f"- shadow_prospect_count: {summary.get('shadow_prospect_count')}",
-        f"- new_in_scope: {summary.get('new_in_scope_opportunities')}",
-        f"- partial_capability: {summary.get('partial_capability_opportunities')}",
-        f"- out_of_scope_equipment: {summary.get('out_of_scope_equipment_detections')}",
-        f"- queue_entries: {summary.get('queue_entries')}",
-        f"- queue_exits: {summary.get('queue_exits')}",
-        f"- institution_profiles_changed: {summary.get('institution_profiles_changed')}",
+        "",
+        "## Metric grain (do not conflate)",
+        "",
+        "- `equipment_purchase_signal_rows` = category-scoped tender rows with "
+        "`commercial_signal_type=equipment_purchase_signal` "
+        "(not unique tenders; not queue membership).",
+        f"- current equipment-signal rows: "
+        f"{summary.get('current_equipment_purchase_signal_rows')}",
+        f"- shadow equipment-signal rows: "
+        f"{summary.get('shadow_equipment_purchase_signal_rows')}",
+        f"- current unique equipment-signal tenders: "
+        f"{summary.get('current_equipment_purchase_tender_count')}",
+        f"- shadow unique equipment-signal tenders: "
+        f"{summary.get('shadow_equipment_purchase_tender_count')}",
+        f"- current unique equipment-signal institutions: "
+        f"{summary.get('current_equipment_purchase_institution_count')}",
+        f"- shadow unique equipment-signal institutions: "
+        f"{summary.get('shadow_equipment_purchase_institution_count')}",
+        f"- current opportunity queue rows: "
+        f"{summary.get('current_current_opportunity_queue_count')}",
+        f"- shadow opportunity queue rows: "
+        f"{summary.get('shadow_current_opportunity_queue_count')}",
+        f"- would-enter current opportunity tenders: "
+        f"{', '.join(f'`{t}`' for t in would_enter) or '(none)'}",
+        f"- queue_entries (row deltas): {summary.get('queue_entries')}",
+        f"- queue_exits (row deltas): {summary.get('queue_exits')}",
+        f"- partial_capability change-class count: "
+        f"{summary.get('partial_capability_opportunities')}",
+        f"- out_of_scope_equipment change-class count: "
+        f"{summary.get('out_of_scope_equipment_detections')}",
+        f"- suppressed_service_or_maintenance_cases: "
+        f"{summary.get('suppressed_service_or_maintenance_cases')}",
+        f"- suppressed_method_exam_cases: "
+        f"{summary.get('suppressed_method_exam_cases')}",
+        f"- institution_profiles_changed: "
+        f"{summary.get('institution_profiles_changed')}",
         "",
         "## Safety",
         "",

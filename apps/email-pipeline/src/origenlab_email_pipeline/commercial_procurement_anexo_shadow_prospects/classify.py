@@ -31,14 +31,18 @@ from .constants import (
 )
 from .models import ClaimCapability
 
-
-_METHOD_EXAM_MARKERS = (
-    "diagnostic",
-    "sedimentation",
-    "method_or_exam",
-    "examen",
-    "ensayo",
+# Affirmative PR5D acquisition-compatible relevance classes.
+_ACQUISITION_RELEVANCE = frozenset(
+    {
+        "strong_equipment_class",
+        "possible_equipment_class",
+        "compatible_equipment_class",
+    }
 )
+
+# Explicit H1 reason — preferred over generic service/maintenance fallback.
+_METHOD_EXAM_REASON = "diagnostic_method_or_exam_term_not_equipment"
+_SUPPLIER_REQUIRED_REASON = "supplier_required_equipment_not_buyer_purchase"
 
 
 def commercial_intent_class(
@@ -53,55 +57,49 @@ def commercial_intent_class(
 ) -> str:
     """Map PR5D aggregate semantics to a commercial-intent label.
 
-    Annex-proven equipment classes take precedence over a service/consumable
-    baseline title signal. Supplier-required equipment remains non-acquisition.
+    Fail-closed: residual equipment classes alone never promote service,
+    ambiguous, mixed, consumable, or laboratory-context aggregates into buyer
+    acquisition. Affirmative acquisition-compatible relevance (or an explicit
+    trusted strong-class positive under that relevance) is required.
     """
+    del ambiguity_reason_codes  # reserved for future conflict nuance
     neg = set(negative_reason_codes or ())
-    amb = set(ambiguity_reason_codes or ())
     pos = set(positive_reason_codes or ())
     rel = relevance_class or ""
     classes = tuple(c for c in equipment_classes if c)
 
-    if "supplier_required_equipment_not_buyer_purchase" in neg:
+    if _SUPPLIER_REQUIRED_REASON in neg:
         return INTENT_SUPPLIER_REQUIRED_EQUIPMENT
 
-    # Buyer-acquisition equipment evidence wins over title-level service /
-    # consumable echoes once annex classes are present.
-    if classes and rel in {
-        "strong_equipment_class",
-        "possible_equipment_class",
-        "compatible_equipment_class",
-    }:
+    # Explicit method/exam reason beats generic service/maintenance fallback.
+    if not classes and _METHOD_EXAM_REASON in neg:
+        return INTENT_METHOD_OR_EXAM
+
+    # Affirmative acquisition only — never "classes exist ⇒ buyable".
+    if classes and rel in _ACQUISITION_RELEVANCE:
         return INTENT_BUYER_EQUIPMENT_ACQUISITION
-    if classes and "strong_equipment_class_match" in pos:
+    if (
+        classes
+        and "strong_equipment_class_match" in pos
+        and rel in _ACQUISITION_RELEVANCE
+    ):
         return INTENT_BUYER_EQUIPMENT_ACQUISITION
-    if classes and rel not in {
-        "service_or_maintenance_only",
-        "consumable_or_reagent",
-        "laboratory_context_only",
-    }:
-        return INTENT_BUYER_EQUIPMENT_ACQUISITION
-    # Mixed annex positives under a service-labelled aggregate still represent
-    # equipment acquisition for shadow commercial measurement.
+
+    if classes and rel == "laboratory_context_only":
+        return INTENT_LABORATORY_CONTEXT
     if classes and rel == "service_or_maintenance_only":
-        return INTENT_BUYER_EQUIPMENT_ACQUISITION
+        return INTENT_SERVICE_OR_MAINTENANCE
+    if classes and rel in {"ambiguous", "mixed_requires_review"}:
+        return INTENT_CONFLICT_OR_REVIEW
     if classes and rel == "consumable_or_reagent":
-        # Consumable aggregate with residual classes is review, not acquisition.
         return INTENT_ACCESSORY_OR_CONSUMABLE
 
     if rel == "laboratory_context_only":
-        return (
-            INTENT_SUPPLIER_REQUIRED_EQUIPMENT
-            if classes
-            else INTENT_LABORATORY_CONTEXT
-        )
+        return INTENT_LABORATORY_CONTEXT
     if rel == "service_or_maintenance_only" or "service_or_maintenance_only" in neg:
         return INTENT_SERVICE_OR_MAINTENANCE
     if rel == "consumable_or_reagent" or "consumable_or_reagent_only" in neg:
         return INTENT_ACCESSORY_OR_CONSUMABLE
-    joined = " ".join(sorted(neg | amb | pos | {rel})).casefold()
-    if any(m in joined for m in _METHOD_EXAM_MARKERS) and not classes:
-        return INTENT_METHOD_OR_EXAM
     if has_anexo_bundle and not coverage_complete and not classes:
         return INTENT_INCOMPLETE
     if not classes:
@@ -164,7 +162,10 @@ def classify_shadow_change(
     ):
         return SHADOW_INCOMPLETE_NO_CONCLUSION
     if intent == INTENT_CONFLICT_OR_REVIEW or human_review_required:
-        if e2_change_class == "annex_created_conflict" or intent == INTENT_CONFLICT_OR_REVIEW:
+        if (
+            e2_change_class == "annex_created_conflict"
+            or intent == INTENT_CONFLICT_OR_REVIEW
+        ):
             return SHADOW_CONFLICT_OR_REVIEW
 
     if shadow_queue_keys - current_queue_keys and in_scope:

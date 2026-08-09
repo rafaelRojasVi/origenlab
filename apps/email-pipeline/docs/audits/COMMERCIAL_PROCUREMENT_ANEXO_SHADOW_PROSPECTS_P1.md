@@ -55,11 +55,33 @@ Claim-level capability uses the catalog seed API
 from tender text. Multi-equipment tenders are scored per class
 (`in_scope` / `out_of_scope` / `unclear`).
 
-## Commercial intent
+## Commercial intent (fail-closed)
 
 Shadow opportunities preserve H1 semantics: accessory, maintenance,
 method/exam, and supplier-required equipment do not become sellable-equipment
 prospects.
+
+Buyer acquisition requires affirmative PR5D acquisition-compatible relevance
+(`strong` / `possible` / `compatible` equipment class). Residual classes under
+`service_or_maintenance_only`, `ambiguous`, `consumable_or_reagent`, or
+`laboratory_context_only` do **not** auto-promote.
+
+Explicit `diagnostic_method_or_exam_term_not_equipment` (no classes) maps to
+method/exam before generic service fallback.
+
+## Metric grain
+
+Do **not** call category-scoped `equipment_purchase_signal` row counts
+“prospect count”. Summary fields are explicit:
+
+| Field | Grain |
+|-------|-------|
+| `*_equipment_purchase_signal_rows` | category-scoped tender rows |
+| `*_equipment_purchase_tender_count` | distinct tenders among those rows |
+| `*_equipment_purchase_institution_count` | distinct institutions among those rows |
+| `*_current_opportunity_queue_count` | rows in `current_opportunity_queue` |
+| `would_enter_current_opportunity_tender_ids` | distinct tenders that would enter |
+| `suppressed_service_or_maintenance_cases` | one combined change-class bucket |
 
 ## Pilot
 
