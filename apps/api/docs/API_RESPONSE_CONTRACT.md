@@ -194,9 +194,9 @@ When `ORIGENLAB_API_CORS_ORIGINS` is configured, credentialed dashboard/browser 
 
 | Header                          | Value          |
 | ------------------------------- | -------------- |
-| `Access-Control-Expose-Headers` | `X-Request-ID` |
+| `Access-Control-Expose-Headers` | `X-Request-ID`, `Server-Timing`, `X-Process-Time-Ms` |
 
-Browser JavaScript on allowed origins can read the request/correlation id from response headers (including error responses). CORS methods remain read-only: **`GET`**, **`HEAD`**, **`OPTIONS`** only.
+Browser JavaScript on allowed origins can read the request/correlation id and read-only duration headers from response headers (including error responses). CORS methods remain read-only: **`GET`**, **`HEAD`**, **`OPTIONS`** only.
 
 **CORS is not authentication.** Allowed origins may send credentialed browser requests; private routes still require production bearer auth (below).
 
@@ -340,7 +340,7 @@ Raw absolute paths (`/home/…`, `/mnt/…`, parent directories) must **not** ap
 | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 2026-07 | `GET /operator/automation-status`: additive `ndr_pending_review` (pending NDR review counts/paths/status); nested paths basename-redacted like other automation sections.                                                                                          |
 | 2026-07 | Production bearer auth: `ORIGENLAB_API_AUTH_TOKEN` required when `ORIGENLAB_ENV=production`; public routes are `GET /health` and `OPTIONS` only.                                                                                                                   |
-| 2026-07 | CORS: `Access-Control-Expose-Headers: X-Request-ID` for configured dashboard origins; methods remain `GET` / `HEAD` / `OPTIONS`.                                                                                                                                   |
+| 2026-07 | CORS: `Access-Control-Expose-Headers` includes `X-Request-ID`, `Server-Timing`, and `X-Process-Time-Ms` for configured dashboard origins; methods remain `GET` / `HEAD` / `OPTIONS`.                                                                              |
 | 2026-07 | Postgres read-model failures map to **503** `backend_unavailable` without leaking DSNs, passwords, SQL, or tracebacks.                                                                                                                                             |
 | 2026-07 | `GET /cases/warm`: additive `meta.canonical_categories` and `meta.legacy_category_aliases` for CLI clients; legacy category filters remain accepted and normalized.                                                                                                |
 | 2026-07 | `GET /opportunities/equipment`: empty Postgres read-model note now points to `auto-refresh-chilecompra-equipment --once --apply`; CSV reload is documented as legacy/backfill only.                                                                                |
