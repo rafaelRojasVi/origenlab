@@ -137,6 +137,14 @@ AUTOCLAVE_ACCESSORY_OR_REPLACEMENT_RE = re.compile(
     r"\baccesorios?\s+(para|de)\s+autoclaves?\b|"
     r"\bpiezas?\s+de\s+repuesto\b.{0,40}\bautoclaves?\b"
 )
+# Direct purchase of the autoclave instrument (not of parts/accessories for it).
+# Distinct from BUYER_ACQUISITION_EXPLICIT_RE, which also matches
+# "adquisicion de repuestos para autoclave".
+AUTOCLAVE_PURCHASE_RE = re.compile(
+    r"\b(adquisicion|compra|suministro|provision)\s+de\s+"
+    r"((un|una|\d+)\s+)?"
+    r"autoclaves?\b"
+)
 # Exam / procedure wording that mentions sedimentacion without an instrument.
 DIAGNOSTIC_SEDIMENTATION_EXAM_RE = re.compile(
     r"velocidad\s+de\s+sedimentacion|"
@@ -399,7 +407,11 @@ def classify_product_text_unit(unit: ProductTextUnit) -> EvidenceUnitRelevanceDe
         )
 
     m_auto_acc = AUTOCLAVE_ACCESSORY_OR_REPLACEMENT_RE.search(text)
-    if m_auto_acc and not BUYER_ACQUISITION_EXPLICIT_RE.search(text):
+    # Accessory/replacement as the subject of purchase (e.g. "adquisicion de
+    # repuestos para autoclave") must not become autoclave equipment merely
+    # because a broad buyer-acquisition verb is present. A direct autoclave
+    # instrument purchase ("adquisicion de autoclave y accesorios…") keeps going.
+    if m_auto_acc and not AUTOCLAVE_PURCHASE_RE.search(text):
         return _decision(
             unit,
             relevance_class="consumable_or_reagent",
@@ -605,7 +617,11 @@ def classify_product_text_unit(unit: ProductTextUnit) -> EvidenceUnitRelevanceDe
         positive.append("strong_equipment_class_match")
 
     m = AUTOCLAVE_EQ_RE.search(text)
-    if m and not AUTOCLAVE_ACCESSORY_OR_REPLACEMENT_RE.search(text):
+    # Keep autoclave when the unit is a direct instrument purchase even if an
+    # accessory phrase also appears ("autoclave y accesorios para autoclave").
+    accessory_subject = AUTOCLAVE_ACCESSORY_OR_REPLACEMENT_RE.search(text)
+    direct_autoclave_purchase = AUTOCLAVE_PURCHASE_RE.search(text)
+    if m and (not accessory_subject or direct_autoclave_purchase):
         spans.append(_span(field_path, "autoclave", m))
         classes.append("autoclave")
         positive.append("strong_equipment_class_match")
@@ -791,6 +807,7 @@ RULE_PRECEDENCE: Final[list[dict[str, Any]]] = [
         "outcome_class": "consumable_or_reagent",
         "confidence_band": "high",
         "note": "repuesto_or_accesorio_para_autoclave_ne_complete_purchase",
+        "override": "skipped_when_direct_autoclave_purchase",
     },
     {
         "rule_id": "diagnostic_sedimentation_exam",
@@ -901,6 +918,7 @@ def rules_fingerprint_payload() -> dict[str, Any]:
             "autoclave_accessory_or_replacement": _pat(
                 AUTOCLAVE_ACCESSORY_OR_REPLACEMENT_RE
             ),
+            "autoclave_purchase": _pat(AUTOCLAVE_PURCHASE_RE),
             "diagnostic_sedimentation_exam": _pat(DIAGNOSTIC_SEDIMENTATION_EXAM_RE),
             "microscope_purchase": _pat(MICROSCOPE_PURCHASE_RE),
             "catalog_alias_boundary": {

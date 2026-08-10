@@ -80,6 +80,10 @@ def test_h3_versioning_bumps_rules_only() -> None:
         "adquisición de autoclave",
         "ADQUISICION DE AUTOCLAVE LABORATORIO",
         "compra de autoclaves",
+        "adquisición de un autoclave",
+        "adquisición de 2 autoclaves",
+        "suministro de autoclave",
+        "provisión de autoclave",
     ],
 )
 def test_h3_autoclave_acquisition_is_strong_equipment(text: str) -> None:
@@ -110,6 +114,11 @@ def test_h3_autoclave_service_is_not_buyer_acquisition(text: str) -> None:
         "repuesto para autoclave",
         "accesorio para autoclave",
         "repuestos de autoclave",
+        "adquisición de repuestos para autoclave",
+        "compra de accesorios para autoclave",
+        "suministro de piezas de repuesto para autoclave",
+        "adquisición de piezas de repuesto para autoclave",
+        "suministro de repuestos de autoclave",
     ],
 )
 def test_h3_autoclave_accessory_not_complete_equipment(text: str) -> None:
@@ -119,6 +128,29 @@ def test_h3_autoclave_accessory_not_complete_equipment(text: str) -> None:
     assert (
         "autoclave_accessory_or_replacement_not_purchase" in d.negative_reason_codes
     )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "adquisición de autoclave y accesorios para autoclave",
+        "compra de un autoclave con accesorios",
+    ],
+)
+def test_h3_complete_autoclave_plus_accessories_keeps_equipment(text: str) -> None:
+    d = _classify(text)
+    assert d.canonical_equipment_classes == ("autoclave",)
+    assert d.relevance_class == "strong_equipment_class"
+    assert "strong_equipment_class_match" in d.positive_reason_codes
+    assert "autoclave_accessory_or_replacement_not_purchase" not in d.negative_reason_codes
+
+
+def test_h3_autoclave_with_singular_accessory_keeps_durable_bundle_flag() -> None:
+    d = _classify("adquisición de autoclave y accesorio para autoclave")
+    assert d.canonical_equipment_classes == ("autoclave",)
+    assert d.relevance_class == "strong_equipment_class"
+    assert "durable_equipment_with_accessories" in d.positive_reason_codes
+    assert "autoclave_accessory_or_replacement_not_purchase" not in d.negative_reason_codes
 
 
 def test_h3_supplier_required_autoclave_keeps_class_not_buyer_purchase() -> None:

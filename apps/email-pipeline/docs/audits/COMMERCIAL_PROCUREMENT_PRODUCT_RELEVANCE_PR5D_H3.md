@@ -29,7 +29,11 @@ start PR5F.
 
 - Detector: `\bautoclaves?\b` on normalized text
 - Accessory veto: headed `repuesto/accesorio para autoclave` → consumable (not complete equipment)
+  unless a **direct** autoclave purchase shape matches (`AUTOCLAVE_PURCHASE_RE`), e.g.
+  `adquisición de autoclave y accesorios…` keeps the autoclave class.
 - Existing H1 gates still apply: service/maintenance, supplier-required, purchase overrides
+- Broad `BUYER_ACQUISITION_EXPLICIT_RE` alone does **not** override accessory-subject units
+  (`adquisición de repuestos para autoclave` stays accessory-only).
 
 Central contract for `986278-12-LE26`:
 
