@@ -11,7 +11,7 @@ from origenlab_email_pipeline.commercial_procurement_live_relevance.constants im
 )
 
 PRODUCT_RELEVANCE_PLANNER_VERSION: Final = "procurement_product_relevance_planner_v1"
-PRODUCT_RELEVANCE_RULES_VERSION: Final = "procurement_product_relevance_rules_v3"
+PRODUCT_RELEVANCE_RULES_VERSION: Final = "procurement_product_relevance_rules_v4"
 PRODUCT_RELEVANCE_TAXONOMY_VERSION: Final = "procurement_product_relevance_taxonomy_v1"
 PRODUCT_TEXT_ADAPTER_VERSION: Final = "procurement_product_text_adapter_v1"
 
@@ -89,6 +89,7 @@ NEGATIVE_REASON_CODES: Final = (
     "microscope_cover_or_accessory_not_purchase",
     "microscope_optics_or_camera_accessory_not_purchase",
     "ultrasonic_accessory_or_replacement_not_purchase",
+    "autoclave_accessory_or_replacement_not_purchase",
     "diagnostic_method_or_exam_term_not_equipment",
     "supplier_required_equipment_not_buyer_purchase",
     "generic_insumos_without_equipment",

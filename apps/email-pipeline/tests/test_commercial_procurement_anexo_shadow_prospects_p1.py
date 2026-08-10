@@ -182,6 +182,52 @@ def test_capability_uses_catalog_seed_not_tender_text() -> None:
     assert microscope.capability == CAPABILITY_OUT_OF_SCOPE
     assert microscope.catalog_match_status == MATCH_OUTSIDE_CATALOG
     assert autoclave.capability == CAPABILITY_OUT_OF_SCOPE
+    assert autoclave.catalog_match_status == MATCH_OUTSIDE_CATALOG
+
+
+def test_autoclave_recognition_outside_catalog_not_sellable_queue() -> None:
+    """H3 contract: autoclave intelligence ≠ OrigenLab sellable opportunity."""
+    att = make_attachment("A-acl", "T-ACL", outcome="needs_ocr", content="acl")
+    chunk = make_chunk(
+        "C-acl",
+        "ADQUISICION DE AUTOCLAVE LABORATORIO DE TNS EN PODOLOGIA CLINICA",
+        tender_id="T-ACL",
+        attachment_id="A-acl",
+    )
+    anexo = make_anexo(
+        chunks=[chunk],
+        attachments=[att],
+        bundles=[
+            make_bundle(
+                "T-ACL",
+                extraction_complete=False,
+                outcome_counts={"needs_ocr": 1, "extraction_success": 1},
+                incomplete_reason_codes=("needs_ocr",),
+            )
+        ],
+    )
+    tenders = [
+        tender(
+            "T-ACL",
+            title="ADQUISICION DE AUTOCLAVE LABORATORIO",
+            buyer="CFT ARAUCANIA",
+        )
+    ]
+    result, _, _ = run_shadow_comparison(tenders, anexo=anexo)
+    by = {d.tender_id: d for d in result.tender_deltas}
+    row = by["T-ACL"]
+    assert "autoclave" in row.shadow_equipment_classes
+    assert row.commercial_intent_class == INTENT_BUYER_EQUIPMENT_ACQUISITION
+    assert row.coverage_debt.get("needs_ocr", 0) >= 1
+    assert all(
+        c.equipment_class == "autoclave" and c.capability == CAPABILITY_OUT_OF_SCOPE
+        for c in row.claim_level_capability
+    )
+    assert QUEUE_WOULD_ENTER_CURRENT not in row.queue_delta
+    summary = build_summary(result)
+    assert "T-ACL" not in (summary.get("would_enter_current_opportunity_tender_ids") or [])
+    assert summary["production_queue_mutated"] is False
+    assert summary["pr5f_started"] is False
 
 
 def test_partial_capability_change_class() -> None:
