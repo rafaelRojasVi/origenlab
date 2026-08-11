@@ -1,0 +1,11 @@
+# El repo es público. Nada con secretos ni binarios pesados entra aquí.
+
+# Master password del gestor de BD. Se genera con scripts/bootstrap_config.sh
+# a partir de config/odoo.conf.example + .env.
+config/odoo.conf
+config/*.bak
+
+# Guía de tarifas DHL: 5,8 MB, documento de DHL, y se puede volver a bajar.
+# El dato útil ya está extraído en data/dhl/*.json, que sí se versiona.
+data/dhl/*.pdf
+data/dhl/*.txt

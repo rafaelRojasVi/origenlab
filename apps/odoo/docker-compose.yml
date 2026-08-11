@@ -1,0 +1,44 @@
+name: origenlab-odoo-trial
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: odoo
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - odoo-db-data:/var/lib/postgresql/data
+    ports:
+      # 5433 is taken by shinkansen-postgres; 5434 keeps this trial isolated.
+      - "127.0.0.1:5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U odoo -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  odoo:
+    image: odoo:19
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      HOST: db
+      USER: odoo
+      PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - odoo-web-data:/var/lib/odoo
+      - ./config:/etc/odoo:ro
+      - ./addons:/mnt/extra-addons
+    ports:
+      - "127.0.0.1:8069:8069"
+      # Longpolling / websocket (chatter live updates)
+      - "127.0.0.1:8072:8072"
+    restart: unless-stopped
+
+volumes:
+  odoo-db-data:
+  odoo-web-data:

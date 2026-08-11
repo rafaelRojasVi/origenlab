@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+  <record id="origenlab_dhl_freight_wizard_form" model="ir.ui.view">
+    <field name="name">origenlab.dhl.freight.wizard.form</field>
+    <field name="model">origenlab.dhl.freight.wizard</field>
+    <field name="arch" type="xml">
+      <form string="Calcular flete DHL">
+        <group col="2">
+          <group string="Origen">
+            <field name="order_id" invisible="1"/>
+            <field name="cost_line_id" invisible="1"/>
+            <field name="country_id" options="{'no_create': True}"/>
+            <field name="zone"/>
+          </group>
+          <group string="Bulto">
+            <field name="pieces"/>
+            <field name="actual_kg"/>
+            <label for="length_cm" string="Dimensiones por pieza (cm)"/>
+            <div class="o_row">
+              <field name="length_cm" class="oe_inline"/> ×
+              <field name="width_cm" class="oe_inline"/> ×
+              <field name="height_cm" class="oe_inline"/>
+            </div>
+          </group>
+        </group>
+        <group col="2">
+          <group string="Recargos">
+            <field name="dangerous"/>
+            <field name="remote_delivery"/>
+            <field name="formal_clearance"/>
+            <field name="fuel_pct"/>
+          </group>
+          <group string="Resultado">
+            <field name="chargeable_kg" class="fs-5"/>
+            <field name="base_usd" class="fs-5"/>
+            <field name="extras_usd"/>
+            <field name="fuel_usd"/>
+            <field name="total_usd" class="fs-4 fw-bold"/>
+          </group>
+        </group>
+        <div class="alert alert-warning" role="alert" invisible="fuel_pct != 0">
+          Falta el <b>recargo por combustible</b>: DHL lo fija cada mes y no viene
+          en la guía de tarifas. Sin él este estimado queda corto del orden de
+          20-30%.
+        </div>
+        <group string="Detalle del cálculo">
+          <field name="breakdown" nolabel="1" readonly="1"/>
+        </group>
+        <footer>
+          <button name="action_apply" type="object" string="Usar como costo de flete" class="btn-primary"/>
+          <button special="cancel" string="Cancelar" class="btn-secondary"/>
+        </footer>
+      </form>
+    </field>
+  </record>
+
+</odoo>

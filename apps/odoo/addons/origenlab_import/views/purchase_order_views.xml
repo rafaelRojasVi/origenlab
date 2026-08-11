@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+  <record id="purchase_order_form_origenlab_import" model="ir.ui.view">
+    <field name="name">purchase.order.form.origenlab.import</field>
+    <field name="model">purchase.order</field>
+    <field name="inherit_id" ref="purchase.purchase_order_form"/>
+    <field name="arch" type="xml">
+      <xpath expr="//notebook" position="inside">
+        <page string="Importación" name="origenlab_import">
+          <group>
+            <group string="Embarque">
+              <field name="origenlab_bl_number"/>
+              <field name="origenlab_etd"/>
+              <field name="origenlab_eta"/>
+              <field name="origenlab_transit_days"/>
+            </group>
+            <group string="Aduana">
+              <field name="origenlab_customs_agent_id"
+                     options="{'no_create_edit': True}"/>
+              <field name="origenlab_customs_entry"/>
+              <field name="origenlab_nationalization_date"/>
+            </group>
+          </group>
+          <group>
+            <group string="Entrega final">
+              <field name="origenlab_final_delivery" widget="radio"/>
+              <field name="origenlab_final_delivery_partner_id"
+                     invisible="origenlab_final_delivery != 'client'"
+                     required="origenlab_final_delivery == 'client'"
+                     options="{'no_create_edit': True}"/>
+            </group>
+            <group string="Etiquetas de precio (aduana)">
+              <field name="origenlab_label_removal_state"/>
+              <field name="origenlab_label_removal_contact"
+                     invisible="origenlab_label_removal_state in ('pending', 'not_applicable')"/>
+              <field name="origenlab_label_removal_date"
+                     invisible="origenlab_label_removal_state in ('pending', 'not_applicable')"/>
+            </group>
+          </group>
+          <div class="alert alert-warning" role="alert"
+               invisible="origenlab_final_delivery != 'client' or origenlab_label_removal_state in ('confirmed', 'not_applicable')">
+            Este envío va <b>directo al cliente</b>. Hay que pedir en aduana que
+            retiren las etiquetas con precios y costos antes de que el equipo
+            salga: de lo contrario el cliente ve lo que pagamos al proveedor.
+            No se podrá registrar la nacionalización hasta resolverlo.
+          </div>
+          <group string="Notas">
+            <field name="origenlab_import_notes" nolabel="1"
+                   placeholder="Requisitos especiales, incidencias con el agente, documentación pendiente…"/>
+          </group>
+          <div class="text-muted">
+            Los costos de internación (flete, seguro, aranceles, honorarios de
+            agente) se registran en <b>Inventario → Operaciones → Costos en
+            destino</b> y se reparten sobre la recepción de esta orden.
+          </div>
+        </page>
+      </xpath>
+    </field>
+  </record>
+
+  <record id="purchase_order_view_search_origenlab_import" model="ir.ui.view">
+    <field name="name">purchase.order.search.origenlab.import</field>
+    <field name="model">purchase.order</field>
+    <field name="inherit_id" ref="purchase.view_purchase_order_filter"/>
+    <field name="arch" type="xml">
+      <xpath expr="//field[@name='name']" position="after">
+        <field name="origenlab_bl_number" string="N° BL / AWB"/>
+        <field name="origenlab_customs_entry" string="N° DIN"/>
+      </xpath>
+    </field>
+  </record>
+
+</odoo>

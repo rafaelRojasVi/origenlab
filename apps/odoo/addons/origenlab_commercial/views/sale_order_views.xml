@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+  <record id="sale_order_form_origenlab_commercial" model="ir.ui.view">
+    <field name="name">sale.order.form.origenlab.commercial</field>
+    <field name="model">sale.order</field>
+    <field name="inherit_id" ref="sale.view_order_form"/>
+    <field name="arch" type="xml">
+
+      <!-- Arriba del todo, como los avisos nativos de Odoo: el desvío de margen
+           tiene que verse desde cualquier pestaña, no solo desde Costeo. -->
+      <xpath expr="//sheet" position="before">
+
+        <div class="alert alert-danger w-100 d-flex align-items-center gap-1" role="alert"
+             invisible="origenlab_margin_state != 'loss'">
+          <span>El precio está <b>por debajo del costo</b>: este negocio pierde plata.</span>
+        </div>
+
+        <div class="alert alert-warning w-100 d-flex align-items-center gap-1" role="alert"
+             invisible="origenlab_margin_state != 'below'">
+          <span>El precio <b>no alcanza el margen objetivo</b>:</span>
+          <field name="origenlab_margin_real_pct" readonly="1" nolabel="1" class="oe_inline"/>
+          <span>% real contra</span>
+          <field name="origenlab_margin_pct" readonly="1" nolabel="1" class="oe_inline"/>
+          <span>% objetivo. Aplica el precio sugerido en <b>Costeo</b> o ajusta el objetivo.</span>
+        </div>
+
+        <div class="alert alert-warning w-100 d-flex align-items-center gap-1" role="alert"
+             invisible="origenlab_margin_state != 'above'">
+          <span>El precio está <b>sobre el margen objetivo</b>:</span>
+          <field name="origenlab_margin_real_pct" readonly="1" nolabel="1" class="oe_inline"/>
+          <span>% real. Puede ser deliberado; revisa que no falte un costo por cargar.</span>
+        </div>
+
+        <div class="alert alert-info w-100 d-flex align-items-center gap-1" role="alert"
+             invisible="origenlab_margin_state != 'no_price'">
+          <span>Hay costos cargados pero las líneas van en cero. Usa <b>Aplicar a la línea</b> en <b>Costeo</b>.</span>
+        </div>
+
+      </xpath>
+
+
+      <!-- Resumen de costo y margen arriba, antes de las pestañas: es el número
+           que decide si el negocio se manda o no, y no debería exigir abrir
+           una pestaña para verlo. -->
+      <!-- Tres columnas que siguen la lógica del negocio: qué cuesta, qué
+           cobramos, qué queda. Se usa el <group> nativo de Odoo: una grilla
+           Bootstrap dentro del sheet no respeta el layout del formulario. -->
+      <xpath expr="//group[@name='sale_header']" position="after">
+        <group name="origenlab_costing_summary" col="3">
+          <group string="Lo que cuesta">
+            <field name="company_currency_id" invisible="1"/>
+            <field name="origenlab_cost_total" string="Costo total" class="fs-5 fw-bold"/>
+            <field name="origenlab_price_suggested" string="Precio sugerido" class="fs-5"/>
+            <button name="action_origenlab_open_dhl_calculator"
+                    type="object"
+                    string="Calcular flete DHL"
+                    class="btn-secondary"
+                    colspan="2"/>
+            <button name="action_origenlab_apply_suggested_price"
+                    type="object"
+                    string="Aplicar precio sugerido a la línea"
+                    class="btn-primary"
+                    colspan="2"
+                    invisible="origenlab_cost_total &lt;= 0"/>
+          </group>
+          <group string="Lo que cobramos">
+            <field name="amount_untaxed" string="Precio neto" class="fs-5 fw-bold"/>
+            <field name="amount_total" string="Total con IVA" class="fs-5"/>
+          </group>
+          <group string="Lo que queda">
+            <field name="origenlab_margin_amount" string="Ganancia" class="fs-4 fw-bold"/>
+            <field name="origenlab_margin_real_pct" string="Margen real (%)" class="fs-4 fw-bold"/>
+            <field name="origenlab_margin_pct" string="Objetivo (%)"/>
+            <field name="origenlab_margin_gap_pct" string="Desvío (pp)"/>
+            <field name="origenlab_margin_state" string="Estado" widget="badge"
+                   decoration-success="origenlab_margin_state == 'on_target'"
+                   decoration-danger="origenlab_margin_state == 'loss'"
+                   decoration-warning="origenlab_margin_state in ('below', 'above')"
+                   decoration-muted="origenlab_margin_state in ('no_cost', 'no_price')"/>
+          </group>
+        </group>
+      </xpath>
+
+      <!-- Costeo va primero: el precio se arma antes de escribirlo en las
+           líneas. Después las líneas, y al final el plan de pagos, que
+           depende del total ya fijado. -->
+      <xpath expr="//page[@name='order_lines']" position="before">
+
+        <page string="Costeo" name="origenlab_costing">
+
+          <div class="text-muted mb-2">
+            Arma el precio desde lo que realmente cuesta el negocio: el equipo
+            que cotizó el proveedor, el flete, y lo que se vaya sumando.
+            Cada línea va <b>en su divisa</b> y se convierte a CLP con el tipo
+            de cambio de la fecha de la cotización.
+          </div>
+
+          <field name="origenlab_cost_line_ids">
+            <list editable="bottom">
+              <field name="sequence" widget="handle"/>
+              <field name="kind" width="150px"/>
+              <field name="product_id" width="320px"
+                     readonly="kind != 'supplier'"
+                     options="{'no_create_edit': True}"/>
+              <field name="quantity" width="80px" readonly="kind != 'supplier'"/>
+              <field name="amount" width="120px"/>
+              <field name="currency_id" width="90px" options="{'no_create': True}"/>
+              <field name="company_currency_id" column_invisible="True"/>
+              <field name="amount_company" width="140px" sum="Costo total"/>
+              <field name="name" string="Detalle" width="220px"/>
+              <field name="note" optional="hide"/>
+              <field name="sale_line_id" string="Línea del pedido" readonly="1" optional="hide"/>
+            </list>
+          </field>
+
+          <div class="mt-2 text-muted">
+            Los totales, el margen y el botón para aplicar el precio sugerido
+            están arriba, sobre las pestañas.
+          </div>
+
+          <div class="alert alert-info" role="alert"
+               invisible="origenlab_margin_state != 'no_cost'">
+            Sin costos cargados no hay margen que mostrar. Parte por el equipo
+            del proveedor y el flete.
+          </div>
+
+        </page>
+      </xpath>
+
+      <!-- Plan de pagos justo después de las líneas. -->
+      <xpath expr="//page[@name='order_lines']" position="after">
+        <page string="Plan de pagos" name="origenlab_payment_plan">
+
+          <div class="text-muted mb-2">
+            El plan parte en <b>50% / 50%</b> apenas la cotización tiene precio
+            final; edítalo libremente si el negocio se pactó en más pagos.
+            Cada hito lleva su <b>fecha de pago</b> y se factura por separado:
+            usa <b>Crear factura → Anticipo</b> y enlaza aquí la factura.
+            Los <i>términos de pago</i> de Odoo no sirven para esto — generan
+            una sola factura con varios vencimientos.
+          </div>
+
+          <button name="action_origenlab_load_default_payment_plan"
+                  type="object"
+                  string="Cargar plan 50/50"
+                  class="btn-secondary mb-2"
+                  invisible="origenlab_payment_milestone_ids != []"/>
+
+          <field name="origenlab_payment_milestone_ids">
+            <list editable="bottom">
+              <field name="sequence" widget="handle"/>
+              <field name="name"/>
+              <field name="percentage"/>
+              <field name="trigger"/>
+              <field name="days_after"
+                     readonly="trigger != 'days_after'"/>
+              <field name="payment_date"/>
+              <field name="currency_id" column_invisible="True"/>
+              <field name="amount_planned" sum="Total planificado"/>
+              <field name="invoice_id"
+                     domain="[('move_type','=','out_invoice'),('partner_id','=',parent.partner_id)]"
+                     options="{'no_create': True}"/>
+              <field name="invoice_status" widget="badge"
+                     decoration-success="invoice_status == 'paid'"
+                     decoration-info="invoice_status == 'invoiced'"
+                     decoration-warning="invoice_status in ('pending', 'draft')"/>
+            </list>
+          </field>
+
+          <group>
+            <field name="origenlab_payment_plan_pct" string="Suma del plan (%)"/>
+            <field name="origenlab_payment_plan_balanced" invisible="1"/>
+          </group>
+
+          <div class="alert alert-warning" role="alert"
+               invisible="origenlab_payment_milestone_ids == [] or origenlab_payment_plan_balanced">
+            Los hitos no suman 100%. Así queda saldo del negocio sin facturar.
+          </div>
+
+        </page>
+      </xpath>
+    </field>
+  </record>
+
+  <!-- Que el desvío de margen se vea desde la lista, sin abrir cada
+       cotización: es donde se detecta un negocio mal precificado. -->
+  <record id="sale_order_list_origenlab_commercial" model="ir.ui.view">
+    <field name="name">sale.order.list.origenlab.commercial</field>
+    <field name="model">sale.order</field>
+    <field name="inherit_id" ref="sale.view_order_tree"/>
+    <field name="arch" type="xml">
+      <xpath expr="//field[@name='amount_total']" position="after">
+        <field name="origenlab_margin_amount" string="Ganancia" sum="Ganancia total" optional="show"/>
+        <field name="origenlab_margin_real_pct" string="Margen %" optional="show"/>
+        <field name="origenlab_margin_state" string="Margen" widget="badge" optional="show"
+               decoration-success="origenlab_margin_state == 'on_target'"
+               decoration-danger="origenlab_margin_state == 'loss'"
+               decoration-warning="origenlab_margin_state in ('below', 'above')"
+               decoration-muted="origenlab_margin_state in ('no_cost', 'no_price')"/>
+      </xpath>
+    </field>
+  </record>
+
+</odoo>
