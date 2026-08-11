@@ -1,5 +1,8 @@
+from markupsafe import Markup
+
 from odoo import _, api, fields, models
 from odoo.exceptions import UserError
+from odoo.tools.misc import formatLang
 
 from ..models.dhl_rates import DANGEROUS_GOODS, quote_freight, zone_for_country
 
@@ -59,7 +62,7 @@ class OrigenlabDhlFreightWizard(models.TransientModel):
     extras_usd = fields.Float(string="Recargos (USD)", compute="_compute_quote")
     fuel_usd = fields.Float(string="Combustible (USD)", compute="_compute_quote")
     total_usd = fields.Float(string="Flete estimado (USD)", compute="_compute_quote")
-    breakdown = fields.Text(string="Detalle", compute="_compute_quote")
+    breakdown = fields.Html(string="Detalle del cálculo", compute="_compute_quote", sanitize=False)
 
     @api.model
     def default_get(self, fields_list):
@@ -110,22 +113,47 @@ class OrigenlabDhlFreightWizard(models.TransientModel):
             wizard.fuel_usd = result["fuel_usd"]
             wizard.total_usd = result["total_usd"]
 
-            lines = [
-                _("Peso facturable: %.1f kg (real %.1f, volumétrico %.1f)")
-                % (result["chargeable_kg"], wizard.actual_kg, result["volumetric_kg"]),
-                _("Tarifa base zona %s: %.2f USD") % (wizard.zone, result["base_usd"]),
-            ]
-            lines += ["  + %s: %.2f USD" % (label, amount) for label, amount in result["extras"]]
+            def usd(amount):
+                return formatLang(self.env, amount, digits=2)
+
+            rows = [(_("Tarifa base — zona %s") % wizard.zone, result["base_usd"], "")]
+            rows += [(label, amount, "") for label, amount in result["extras"]]
             if wizard.fuel_pct:
-                lines.append(
-                    _("  + Combustible %.1f%%: %.2f USD") % (wizard.fuel_pct, result["fuel_usd"])
+                rows.append(
+                    (_("Combustible (%s%%)") % formatLang(self.env, wizard.fuel_pct, digits=1),
+                     result["fuel_usd"], "")
                 )
-            else:
-                lines.append(
-                    _("  ! Sin recargo por combustible: el estimado queda corto (20-30%).")
-                )
-            lines.append(_("No incluye: %s.") % ", ".join(result["excludes"]))
-            wizard.breakdown = "\n".join(lines)
+
+            body = Markup("").join(
+                Markup(
+                    '<tr><td class="ps-0">%s</td>'
+                    '<td class="text-end pe-0" style="white-space:nowrap">%s USD</td></tr>'
+                ) % (label, usd(amount))
+                for label, amount, _extra in rows
+            )
+            total = Markup(
+                '<tr class="border-top fw-bold"><td class="ps-0">%s</td>'
+                '<td class="text-end pe-0" style="white-space:nowrap">%s USD</td></tr>'
+            ) % (_("Flete estimado"), usd(result["total_usd"]))
+
+            peso = Markup('<div class="text-muted small mb-2">%s</div>') % (
+                _("Peso facturable %(cobrado)s kg — real %(real)s, volumétrico %(vol)s. "
+                  "Se cobra el mayor de los dos.")
+                % {
+                    "cobrado": formatLang(self.env, result["chargeable_kg"], digits=1),
+                    "real": formatLang(self.env, wizard.actual_kg, digits=1),
+                    "vol": formatLang(self.env, result["volumetric_kg"], digits=1),
+                }
+            )
+            excluye = Markup('<div class="text-muted small mt-2">%s</div>') % (
+                _("No incluye %s.") % ", ".join(result["excludes"])
+            )
+            wizard.breakdown = (
+                peso
+                + Markup('<table class="table table-sm mb-0" style="max-width:32rem">%s%s</table>')
+                % (body, total)
+                + excluye
+            )
 
     def action_apply(self):
         """Escribir el estimado en la línea de flete, con su supuesto."""

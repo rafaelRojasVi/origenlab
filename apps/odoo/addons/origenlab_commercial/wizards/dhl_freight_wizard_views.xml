@@ -33,10 +33,10 @@
           </group>
           <group string="Resultado">
             <field name="chargeable_kg" class="fs-5"/>
-            <field name="base_usd" class="fs-5"/>
-            <field name="extras_usd"/>
-            <field name="fuel_usd"/>
-            <field name="total_usd" class="fs-4 fw-bold"/>
+            <field name="total_usd" string="Flete estimado (USD)" class="fs-4 fw-bold"/>
+            <field name="base_usd" invisible="1"/>
+            <field name="extras_usd" invisible="1"/>
+            <field name="fuel_usd" invisible="1"/>
           </group>
         </group>
         <div class="alert alert-warning" role="alert" invisible="fuel_pct != 0">
@@ -44,9 +44,7 @@
           en la guía de tarifas. Sin él este estimado queda corto del orden de
           20-30%.
         </div>
-        <group string="Detalle del cálculo">
-          <field name="breakdown" nolabel="1" readonly="1"/>
-        </group>
+        <field name="breakdown" nolabel="1" readonly="1"/>
         <footer>
           <button name="action_apply" type="object" string="Usar como costo de flete" class="btn-primary"/>
           <button special="cancel" string="Cancelar" class="btn-secondary"/>
