@@ -131,6 +131,20 @@ ULTRASONIC_ACCESSORY_OR_REPLACEMENT_RE = re.compile(
     r"\bsonotrodo\b.{0,50}\bpara\b.{0,50}(procesador|ultrason)|"
     r"\baccesorio\b.{0,50}\bpara\b.{0,50}(procesador|ultrason)"
 )
+# Headed autoclave accessory/replacement — not a complete autoclave purchase.
+AUTOCLAVE_ACCESSORY_OR_REPLACEMENT_RE = re.compile(
+    r"\brepuestos?\s+(para|de)\s+autoclaves?\b|"
+    r"\baccesorios?\s+(para|de)\s+autoclaves?\b|"
+    r"\bpiezas?\s+de\s+repuesto\b.{0,40}\bautoclaves?\b"
+)
+# Direct purchase of the autoclave instrument (not of parts/accessories for it).
+# Distinct from BUYER_ACQUISITION_EXPLICIT_RE, which also matches
+# "adquisicion de repuestos para autoclave".
+AUTOCLAVE_PURCHASE_RE = re.compile(
+    r"\b(adquisicion|compra|suministro|provision)\s+de\s+"
+    r"((un|una|\d+)\s+)?"
+    r"autoclaves?\b"
+)
 # Exam / procedure wording that mentions sedimentacion without an instrument.
 DIAGNOSTIC_SEDIMENTATION_EXAM_RE = re.compile(
     r"velocidad\s+de\s+sedimentacion|"
@@ -141,6 +155,9 @@ CENTRIFUGE_EQ_RE = re.compile(r"\bcentrifug(a|adora|adoras|as)?\b|\bmicrocentrif
 BALANCE_EQ_RE = re.compile(r"\bbalanza\b")
 MICROSCOPE_EQ_RE = re.compile(r"\bmicroscopi[oa]s?\b")
 INCUBATOR_EQ_RE = re.compile(r"\bincubadora\b|estufa\s+de\s+incubacion")
+# Complete autoclave instrument wording only (H3). Do not infer from
+# "esterilizacion" / "vapor" / biosafety alone — those are too broad.
+AUTOCLAVE_EQ_RE = re.compile(r"\bautoclaves?\b")
 ULTRASONIC_PROCESSOR_RE = re.compile(
     r"procesador\s+ultrasonico|ultrasonic\s+processor|"
     r"sonicador\s+de\s+sonda|\bprobe\s+sonicator\b|"
@@ -389,6 +406,26 @@ def classify_product_text_unit(unit: ProductTextUnit) -> EvidenceUnitRelevanceDe
             ],
         )
 
+    m_auto_acc = AUTOCLAVE_ACCESSORY_OR_REPLACEMENT_RE.search(text)
+    # Accessory/replacement as the subject of purchase (e.g. "adquisicion de
+    # repuestos para autoclave") must not become autoclave equipment merely
+    # because a broad buyer-acquisition verb is present. A direct autoclave
+    # instrument purchase ("adquisicion de autoclave y accesorios…") keeps going.
+    if m_auto_acc and not AUTOCLAVE_PURCHASE_RE.search(text):
+        return _decision(
+            unit,
+            relevance_class="consumable_or_reagent",
+            classes=[],
+            resolution="negative_class_only",
+            confidence_band="high",
+            positive=[],
+            negative=["autoclave_accessory_or_replacement_not_purchase"],
+            ambiguity=[],
+            spans=[
+                _span(field_path, "autoclave_accessory_or_replacement", m_auto_acc)
+            ],
+        )
+
     m_sed_exam = DIAGNOSTIC_SEDIMENTATION_EXAM_RE.search(text)
     if m_sed_exam and not SEDIMENTATION_RE.search(text):
         # Abstain-class (not hard unrelated): exam rows must not create settlometer
@@ -487,6 +524,7 @@ def classify_product_text_unit(unit: ProductTextUnit) -> EvidenceUnitRelevanceDe
             ULTRASONIC_BATH_RE,
             MICROSCOPE_EQ_RE,
             BALANCE_EQ_RE,
+            AUTOCLAVE_EQ_RE,
         )
     ):
         return _decision(
@@ -576,6 +614,16 @@ def classify_product_text_unit(unit: ProductTextUnit) -> EvidenceUnitRelevanceDe
     if m and not NON_LAB_INCUBATOR_RE.search(text):
         spans.append(_span(field_path, "incubator", m))
         classes.append("incubator")
+        positive.append("strong_equipment_class_match")
+
+    m = AUTOCLAVE_EQ_RE.search(text)
+    # Keep autoclave when the unit is a direct instrument purchase even if an
+    # accessory phrase also appears ("autoclave y accesorios para autoclave").
+    accessory_subject = AUTOCLAVE_ACCESSORY_OR_REPLACEMENT_RE.search(text)
+    direct_autoclave_purchase = AUTOCLAVE_PURCHASE_RE.search(text)
+    if m and (not accessory_subject or direct_autoclave_purchase):
+        spans.append(_span(field_path, "autoclave", m))
+        classes.append("autoclave")
         positive.append("strong_equipment_class_match")
 
     m = HOMOGENIZER_RE.search(text)
@@ -755,6 +803,13 @@ RULE_PRECEDENCE: Final[list[dict[str, Any]]] = [
         "note": "sonotrodo_repuesto_headed_accessory_ne_processor_purchase",
     },
     {
+        "rule_id": "autoclave_accessory_or_replacement",
+        "outcome_class": "consumable_or_reagent",
+        "confidence_band": "high",
+        "note": "repuesto_or_accesorio_para_autoclave_ne_complete_purchase",
+        "override": "skipped_when_direct_autoclave_purchase",
+    },
+    {
         "rule_id": "diagnostic_sedimentation_exam",
         "outcome_class": "laboratory_context_only",
         "confidence_band": "high",
@@ -860,6 +915,10 @@ def rules_fingerprint_payload() -> dict[str, Any]:
             "ultrasonic_accessory_or_replacement": _pat(
                 ULTRASONIC_ACCESSORY_OR_REPLACEMENT_RE
             ),
+            "autoclave_accessory_or_replacement": _pat(
+                AUTOCLAVE_ACCESSORY_OR_REPLACEMENT_RE
+            ),
+            "autoclave_purchase": _pat(AUTOCLAVE_PURCHASE_RE),
             "diagnostic_sedimentation_exam": _pat(DIAGNOSTIC_SEDIMENTATION_EXAM_RE),
             "microscope_purchase": _pat(MICROSCOPE_PURCHASE_RE),
             "catalog_alias_boundary": {
@@ -878,6 +937,7 @@ def rules_fingerprint_payload() -> dict[str, Any]:
             "balance": _pat(BALANCE_EQ_RE),
             "microscope": _pat(MICROSCOPE_EQ_RE),
             "incubator": _pat(INCUBATOR_EQ_RE),
+            "autoclave": _pat(AUTOCLAVE_EQ_RE),
             "ultrasonic_processor": _pat(ULTRASONIC_PROCESSOR_RE),
             "ultrasonic_bath": _pat(ULTRASONIC_BATH_RE),
             "bare_sonicator": _pat(BARE_SONICATOR_RE),
