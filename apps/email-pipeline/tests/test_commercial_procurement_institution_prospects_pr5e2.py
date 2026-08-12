@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.models import (
@@ -16,6 +18,7 @@ from origenlab_email_pipeline.commercial_procurement_contact_resolution.models i
     OrganizationResolution,
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.constants import (
+    FORBIDDEN_CLI_FLAGS,
     OPERATOR_QUEUE_NAMES,
     RECOGNITION_LAYER_VERSION,
 )
@@ -44,6 +47,85 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.models im
 )
 
 AS_OF = "2026-08-06T02:00:00Z"
+
+
+def _institution_prospect_cli() -> Path:
+    return (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "commercial"
+        / "build_commercial_procurement_institution_prospect_plan.py"
+    )
+
+
+def test_cli_forbidden_flags_include_mutation_paths() -> None:
+    for flag in (
+        "--apply",
+        "--persist",
+        "--network",
+        "--ticket",
+        "--gmail",
+        "--postgres",
+        "--outreach",
+        "--send",
+        "--schedule",
+        "--label",
+    ):
+        assert flag in FORBIDDEN_CLI_FLAGS
+
+
+def test_cli_rejects_forbidden_mutation_flags_before_planning(tmp_path: Path) -> None:
+    app_root = Path(__file__).resolve().parents[1]
+    script = _institution_prospect_cli()
+
+    for flag in ("--apply", "--send", "--postgres"):
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                flag,
+                "--sqlite-path",
+                str(tmp_path / "x.sqlite"),
+                "--acquisition-snapshot-json",
+                str(tmp_path / "missing-snapshot.json"),
+                "--as-of-utc",
+                AS_OF,
+                "--out-dir",
+                str(tmp_path / "out"),
+            ],
+            cwd=str(app_root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert proc.returncode != 0
+        assert f"forbidden flag {flag}" in (proc.stderr + proc.stdout)
+
+
+def test_cli_requires_snapshot_or_detail_cache_input(tmp_path: Path) -> None:
+    app_root = Path(__file__).resolve().parents[1]
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(_institution_prospect_cli()),
+            "--sqlite-path",
+            str(tmp_path / "x.sqlite"),
+            "--as-of-utc",
+            AS_OF,
+            "--out-dir",
+            str(tmp_path / "out"),
+        ],
+        cwd=str(app_root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode != 0
+    assert "provide --detail-cache-dir and/or --acquisition-snapshot-json" in (
+        proc.stderr + proc.stdout
+    )
 
 
 def _tender(
