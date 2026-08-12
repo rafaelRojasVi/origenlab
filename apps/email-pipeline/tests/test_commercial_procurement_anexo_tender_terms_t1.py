@@ -75,6 +75,51 @@ def test_missing_is_not_false_when_coverage_is_incomplete() -> None:
     assert fact.value is None
 
 
+def test_incomplete_outcome_counts_force_coverage_to_fail_closed() -> None:
+    coverage = TenderTermsCoverage(
+        has_source_bundle=True,
+        extraction_complete=True,
+        attachments_discovered=2,
+        attachments_downloaded=2,
+        outcome_counts={
+            "extraction_success": 1,
+            "needs_ocr": 1,
+        },
+    )
+
+    assert coverage.debt_outcome_counts == {"needs_ocr": 1}
+    assert coverage.is_complete is False
+    assert coverage.fact_coverage_status == COVERAGE_INCOMPLETE
+
+    with pytest.raises(
+        ValueError,
+        match="not_explicitly_found requires complete extraction coverage",
+    ):
+        TenderTermFact(
+            fact_id="f-invalid-absence",
+            field_name="bid_security_requirement",
+            state=FACT_STATE_NOT_EXPLICITLY_FOUND,
+            coverage_status=coverage.fact_coverage_status,
+        )
+
+
+def test_complete_outcome_counts_do_not_create_false_coverage_debt() -> None:
+    coverage = TenderTermsCoverage(
+        has_source_bundle=True,
+        extraction_complete=True,
+        attachments_discovered=2,
+        attachments_downloaded=2,
+        outcome_counts={
+            "extraction_success": 1,
+            "extracted_empty": 1,
+        },
+    )
+
+    assert coverage.debt_outcome_counts == {}
+    assert coverage.is_complete is True
+    assert coverage.fact_coverage_status == COVERAGE_COMPLETE
+
+
 def test_not_explicitly_found_is_allowed_only_with_complete_coverage() -> None:
     fact = TenderTermFact(
         fact_id="f-not-found",

@@ -14,6 +14,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from origenlab_email_pipeline.chilecompra_anexo_evidence.constants import (
+    COMPLETE_OUTCOMES,
+)
+
 from .constants import (
     COVERAGE_COMPLETE,
     COVERAGE_INCOMPLETE,
@@ -189,12 +193,23 @@ class TenderTermsCoverage:
     outcome_counts: dict[str, int] = field(default_factory=dict)
 
     @property
+    def debt_outcome_counts(self) -> dict[str, int]:
+        """Unread or otherwise incomplete source outcomes, fail-closed."""
+
+        return {
+            code: int(count)
+            for code, count in sorted(self.outcome_counts.items())
+            if int(count) > 0 and code not in COMPLETE_OUTCOMES
+        }
+
+    @property
     def is_complete(self) -> bool:
         return (
             self.has_source_bundle
             and self.extraction_complete
             and not self.incomplete_reason_codes
             and not self.unread_attachment_ids
+            and not self.debt_outcome_counts
         )
 
     @property
@@ -210,6 +225,7 @@ class TenderTermsCoverage:
             "incomplete_reason_codes": list(self.incomplete_reason_codes),
             "unread_attachment_ids": list(self.unread_attachment_ids),
             "outcome_counts": dict(self.outcome_counts),
+            "debt_outcome_counts": dict(self.debt_outcome_counts),
             "is_complete": self.is_complete,
             "fact_coverage_status": self.fact_coverage_status,
         }
