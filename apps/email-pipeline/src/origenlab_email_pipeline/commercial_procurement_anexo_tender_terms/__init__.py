@@ -10,6 +10,7 @@ from .constants import (
     FACT_STATE_UNKNOWN,
     TENDER_TERMS_VERSION,
 )
+from .extract import extract_tender_terms
 from .fingerprint import finalize_bundle, tender_terms_semantic_digest
 from .models import (
     FactCandidate,
@@ -44,6 +45,7 @@ __all__ = [
     "TenderTermsCoverage",
     "TermEvidence",
     "coverage_from_bundle",
+    "extract_tender_terms",
     "finalize_bundle",
     "resolve_evidence_chunk",
     "resolve_evidence_chunks",
