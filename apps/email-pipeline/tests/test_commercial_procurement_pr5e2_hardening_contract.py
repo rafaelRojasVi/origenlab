@@ -42,8 +42,11 @@ from origenlab_email_pipeline.commercial_procurement_institution_prospects.lifec
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.line_claims import (
     SCOPE_COMPLETE_EQUIPMENT,
     SCOPE_MAINTENANCE_OR_CALIBRATION,
+    aggregate_category_scoped_claims,
     aggregate_tender_axes,
     build_line_claims,
+    split_clause_spans,
+    split_clauses,
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.queues import (
     EMPTY_QUEUE_HEADERS,
@@ -279,6 +282,95 @@ def test_b_mixed_title_scopes_are_category_paired_not_cross_product() -> None:
     assert sonicator_cats
     for cat in sonicator_cats:
         assert SCOPE_COMPLETE_EQUIPMENT in by_cat[cat]
+
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "mantención preventiva y correctiva de Centrifuga",
+        "mantenimiento preventivo y correctivo de centrifuga",
+        "mantención preventiva y/o correctiva de centrífuga",
+        "reparación preventiva y correctiva del equipo",
+        "mantenimiento de hardware y software del equipo",
+    ],
+)
+def test_b_coordinated_service_phrases_remain_one_clause(text: str) -> None:
+    assert split_clauses(text) == [text]
+    assert split_clause_spans(text) == [(text, 0, len(text))]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "mantención de centrífuga y adquisición de procesador ultrasónico",
+            [
+                "mantención de centrífuga",
+                "adquisición de procesador ultrasónico",
+            ],
+        ),
+        (
+            "reparación de microscopio y compra de centrífuga",
+            [
+                "reparación de microscopio",
+                "compra de centrífuga",
+            ],
+        ),
+        (
+            "servicio técnico de incubadora y suministro de un sonicador",
+            [
+                "servicio técnico de incubadora",
+                "suministro de un sonicador",
+            ],
+        ),
+        (
+            "mantención de centrífuga/adquisición de sonicador",
+            [
+                "mantención de centrífuga",
+                "adquisición de sonicador",
+            ],
+        ),
+    ],
+)
+def test_b_genuine_mixed_intents_still_split(
+    text: str,
+    expected: list[str],
+) -> None:
+    assert split_clauses(text) == expected
+
+
+def test_b_slash_inside_equipment_spec_is_not_a_clause_boundary() -> None:
+    text = "centrífuga 220 V 50/60Hz"
+
+    assert split_clauses(text) == [text]
+    assert split_clause_spans(text) == [(text, 0, len(text))]
+
+
+def test_b_745712_maintenance_phrase_cannot_manufacture_purchase_claim() -> None:
+    """Regression for the maintenance-only false opportunity found during P2A."""
+    text = "mantención preventiva y correctiva de Centrifuga"
+
+    claims = build_line_claims(_unit(text))
+
+    assert len(claims) == 1
+    claim = claims[0]
+
+    assert claim.clause_text == text
+    assert claim.equipment_scope == SCOPE_MAINTENANCE_OR_CALIBRATION
+    assert claim.purchase_intent is False
+    assert "centrifuge" in claim.canonical_equipment_classes
+    assert claim.commercial_signal_type == "installed_base_signal"
+
+    category_rows = aggregate_category_scoped_claims(claims)
+
+    assert category_rows
+    assert all(
+        row["commercial_signal"] != "equipment_purchase_signal"
+        for row in category_rows
+    )
+    assert all(row["purchase_intent"] is False for row in category_rows)
+
 
 
 def test_b_accessory_only_lines_do_not_enter_purchase_history() -> None:

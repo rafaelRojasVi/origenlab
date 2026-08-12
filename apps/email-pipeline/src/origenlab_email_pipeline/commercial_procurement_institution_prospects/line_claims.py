@@ -22,6 +22,7 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.normalize
 from origenlab_email_pipeline.commercial_procurement_product_relevance.rules import (
     BALANCE_EQ_RE,
     BARE_SONICATOR_RE,
+    BUYER_ACQUISITION_EXPLICIT_RE,
     CENTRIFUGE_EQ_RE,
     DISSOLUTION_RE,
     HOMOGENIZER_RE,
@@ -30,6 +31,7 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.rules imp
     MICROSCOPE_EQ_RE,
     ORBITAL_SHAKER_RE,
     SEDIMENTATION_RE,
+    SERVICE_ONLY_RE,
     TABLET_TEST_RE,
     ULTRASONIC_BATH_RE,
     ULTRASONIC_PROCESSOR_RE,
@@ -94,7 +96,34 @@ INSTALLED_BASE_RE = re.compile(
     r"\bequipamiento\s+instalado\b|\bequipos?\s+en\s+uso\b|"
     r"\bequipos?\s+de\s+propiedad\s+del\s+(hospital|servicio|establecimiento)\b"
 )
-CLAUSE_SPLIT_RE = re.compile(r"\s+y\s+|;|/")
+# Semicolons are unambiguous clause boundaries.
+#
+# Coordinating conjunctions and "/" are conditional boundaries. A bare "y"
+# is not enough to prove that a new commercial intent begins:
+#
+#   "mantención preventiva y correctiva de centrífuga"
+#
+# must remain one service claim, while:
+#
+#   "mantención de centrífuga y adquisición de sonicador"
+#
+# must become two independently classified claims.
+#
+# "/" is also conditional because it commonly appears inside non-clause text
+# such as "y/o", "50/60 Hz", ratios, model names, etc.
+_HARD_CLAUSE_SPLIT_RE = re.compile(r";")
+_CONDITIONAL_CLAUSE_SPLIT_RE = re.compile(
+    r"\s+(?:y/o|y)\s+|/",
+    re.IGNORECASE,
+)
+
+# Segmentation needs a slightly broader acquisition-start vocabulary than the
+# final PR5D purchase verdict. Downstream classification still decides whether
+# the resulting clause is actually a buyer-equipment purchase.
+_ACQUISITION_CLAUSE_START_RE = re.compile(
+    r"^(?:adquisicion|compra|comprar|suministro|provision|reposicion)\b"
+)
+
 _MIN_CLAUSE_LENGTH = 6
 _CLAUSE_TRIM_CHARS = " -–—,."
 
@@ -152,16 +181,51 @@ def _digest(*parts: str) -> str:
     return hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()[:32]
 
 
+def _starts_new_commercial_intent(text: str) -> bool:
+    """Return whether a conditional separator starts a new commercial intent."""
+    normalized = normalize_product_text(text).lstrip()
+    if not normalized:
+        return False
+
+    return bool(
+        BUYER_ACQUISITION_EXPLICIT_RE.match(normalized)
+        or SERVICE_ONLY_RE.match(normalized)
+        or _ACQUISITION_CLAUSE_START_RE.match(normalized)
+    )
+
+
 def split_clause_spans(text: str | None) -> list[tuple[str, int, int]]:
-    """Split mixed-intent line text into clauses with their source offsets."""
+    """Split mixed-intent line text into clauses with their source offsets.
+
+    Semicolons always split. ``y``, ``y/o`` and ``/`` split only when the
+    right-hand side starts another independently classifiable commercial
+    intent.
+    """
     raw = text or ""
     if not raw.strip():
         return []
-    spans: list[tuple[str, int, int]] = []
+
+    boundaries: list[tuple[int, int]] = [
+        (match.start(), match.end())
+        for match in _HARD_CLAUSE_SPLIT_RE.finditer(raw)
+    ]
+
+    for match in _CONDITIONAL_CLAUSE_SPLIT_RE.finditer(raw):
+        rhs = raw[match.end() :]
+        if _starts_new_commercial_intent(rhs):
+            boundaries.append((match.start(), match.end()))
+
+    boundaries.sort()
+
+    spans: list[tuple[str, int]] = []
     cursor = 0
-    for match in CLAUSE_SPLIT_RE.finditer(raw):
-        spans.append((raw[cursor : match.start()], cursor))
-        cursor = match.end()
+
+    for start, end in boundaries:
+        if start < cursor:
+            continue
+        spans.append((raw[cursor:start], cursor))
+        cursor = end
+
     spans.append((raw[cursor:], cursor))
 
     trimmed: list[tuple[str, int, int]] = []
@@ -171,9 +235,11 @@ def split_clause_spans(text: str | None) -> list[tuple[str, int, int]]:
             continue
         start = offset + piece.index(stripped)
         trimmed.append((stripped, start, start + len(stripped)))
-    kept = [s for s in trimmed if len(s[0]) >= _MIN_CLAUSE_LENGTH]
+
+    kept = [span for span in trimmed if len(span[0]) >= _MIN_CLAUSE_LENGTH]
     if kept:
         return kept
+
     whole = raw.strip()
     start = raw.index(whole) if whole else 0
     return [(whole, start, start + len(whole))] if whole else []
