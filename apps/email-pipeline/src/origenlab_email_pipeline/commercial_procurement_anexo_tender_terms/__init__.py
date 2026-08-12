@@ -19,6 +19,13 @@ from .models import (
     TenderTermsCoverage,
     TermEvidence,
 )
+from .source import (
+    ResolvedEvidenceChunk,
+    coverage_from_bundle,
+    resolve_evidence_chunk,
+    resolve_evidence_chunks,
+    term_evidence_from_span,
+)
 
 __all__ = [
     "COVERAGE_COMPLETE",
@@ -30,11 +37,16 @@ __all__ = [
     "FACT_STATE_UNKNOWN",
     "TENDER_TERMS_VERSION",
     "FactCandidate",
+    "ResolvedEvidenceChunk",
     "TenderItemTerms",
     "TenderTermFact",
     "TenderTermsBundle",
     "TenderTermsCoverage",
     "TermEvidence",
+    "coverage_from_bundle",
     "finalize_bundle",
+    "resolve_evidence_chunk",
+    "resolve_evidence_chunks",
     "tender_terms_semantic_digest",
+    "term_evidence_from_span",
 ]
