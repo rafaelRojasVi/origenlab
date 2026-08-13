@@ -33,6 +33,7 @@ from .constants import (
     FACT_STATE_UNKNOWN,
 )
 from .fingerprint import finalize_bundle
+from .items import extract_item_terms
 from .models import (
     FactCandidate,
     TenderTermFact,
@@ -71,11 +72,13 @@ _RULES: tuple[_Rule, ...] = (
     _Rule(
         field_name="total_budget",
         pattern=re.compile(
-            r"\bPresupuesto\s+Disponible\b"
-            r".{0,100}?"
+            r"\bPresupuesto\s+(?:Disponible|Estimado)\b"
+            r".{0,180}?"
             r"\$\s*(?P<value>\d[\d.\s]{2,20})"
-            r"\s*(?:\.-)?\s*CLP\b"
-            r".{0,80}?\bimpuestos\s+incluidos\b",
+            r"\s*(?:\.-)?"
+            r"(?:\s*CLP\b)?"
+            r".{0,80}?"
+            r"\b(?:impuestos|IVA)\s+incluid[oa]s?\b",
             _FLAGS,
         ),
         parser="clp_integer",
@@ -86,7 +89,12 @@ _RULES: tuple[_Rule, ...] = (
     _Rule(
         field_name="offer_validity_days",
         pattern=re.compile(
+            r"(?:"
             r"\bLas\s+ofertas\s+tendr[aá]n\s+una\s+validez\s+de\s+"
+            r"|"
+            r"\bValidez\s+de\s+la\s+oferta\b"
+            r"\s*(?:\||:|-)\s*"
+            r")"
             r"(?P<value>\d{1,4})\s+d[ií]as\b",
             _FLAGS,
         ),
@@ -97,9 +105,22 @@ _RULES: tuple[_Rule, ...] = (
     _Rule(
         field_name="contract_duration_months",
         pattern=re.compile(
+            r"(?:"
             r"\bTiempo\s+m[aá]ximo\s+de\s+duraci[oó]n\s+del\s+contrato\b"
             r".{0,150}?"
-            r"\bpor\s+(?P<value>\d{1,3})\s+meses\b",
+            r"\bpor\s+"
+            r"|"
+            r"\bVigencia\s+(?:del\s+)?contrato\b"
+            r"\s*(?:\||:|-)\s*"
+            r"|"
+            r"\bVigencia\s+del\s+contrato\s+"
+            r"se\s+extender[aá]\s+por\s+el\s+periodo\s+de\s+"
+            r"|"
+            r"\bDuraci[oó]n\s+del\s+Contrato\b"
+            r".{0,100}?"
+            r"\bTiempo\s+de\s+Duraci[oó]n\s*:\s*"
+            r")"
+            r"(?P<value>\d{1,3})\s+meses\b",
             _FLAGS,
         ),
         parser="integer",
@@ -121,27 +142,71 @@ _RULES: tuple[_Rule, ...] = (
     _Rule(
         field_name="maximum_delivery_days",
         pattern=re.compile(
-            r"\bDe\s+superar\s+los\s+(?P<value>\d{1,4})\s+"
-            r"d[ií]as\s+corridos\b"
-            r".{0,160}?"
+            r"(?:"
+            r"\bplazo\s+m[aá]ximo\s+"
+            r"(?:de\s+entrega|para\s+la\s+entrega)\b"
+            r".{0,120}?"
+            r"(?:[a-záéíóúñ]+\s*\(\s*)?"
+            r"(?P<delivery_max_days>\d{1,4})"
+            r"\s*\)?\s*d[ií]as?"
+            r"(?:\s+(?P<delivery_max_basis>h[aá]biles|corridos))?"
+            r"|"
+            r"\bplazo\s+de\s+entrega\s+superior\s+a\s+"
+            r"(?P<delivery_threshold_days>\d{1,4})\s*d[ií]as?"
+            r"(?:\s+(?P<delivery_threshold_basis>h[aá]biles|corridos))?"
+            r".{0,260}?"
+            r"\b(?:"
+            r"inadmisible"
+            r"|fuera\s+de\s+bases"
+            r"|no\s+continuar[aá]\s+con\s+el\s+proceso"
+            r")\b"
+            r"|"
+            r"\b(?:"
+            r"plazo\s+de\s+entrega\s+ofertado"
+            r"|plazo\s+de\s+entrega\s+de\s+los\s+equipos"
+            r")\b"
+            r".{0,180}?"
+            r"\b(?:no\s+podr[aá]|no\s+puede)\s+"
+            r"(?:superar|exceder)\s+"
+            r"(?:los\s+)?"
+            r"(?P<delivery_cap_days>\d{1,4})\s*d[ií]as?"
+            r"(?:\s+(?P<delivery_cap_basis>h[aá]biles|corridos))?"
+            r"|"
+            r"\bde\s+superar\s+los\s+"
+            r"(?P<delivery_superar_days>\d{1,4})\s*d[ií]as?"
+            r"(?:\s+(?P<delivery_superar_basis>h[aá]biles|corridos))?"
+            r".{0,260}?"
             r"\b(?:oferta|propuesta)\b"
-            r".{0,100}?"
-            r"\binadmisible\b",
+            r".{0,120}?"
+            r"\binadmisible\b"
+            r")",
             _FLAGS,
         ),
-        parser="integer",
-        value_type="integer",
-        unit="calendar_days",
+        parser="duration_days",
+        value_type="duration_days",
+        unit="days",
     ),
     _Rule(
         field_name="faithful_performance_guarantee_percent",
         pattern=re.compile(
+            r"(?:"
             r"\bGarant[ií]a\s+de\s+Fiel\s+Cumplimiento"
             r"(?:\s+del|\s+de)?\s+Contrato\b"
             r".{0,1800}?"
-            r"\bmonto\s+que\s+alcance\s+el\s+"
+            r"\bmonto\s+(?:"
+            r"que\s+alcance\s+el"
+            r"|equivalente\s+a(?:\s+un)?"
+            r")\s+"
+            r"|"
+            r"\b(?:Fiel|ﬁel)"
+            r"(?:\s+y\s+oportuno)?\s+Cumplimiento\b"
+            r".{0,1400}?"
+            r"\b(?:Dicha\s+)?garant[ií]a\b"
+            r".{0,500}?"
+            r"\bmonto\s+equivalente\s+a(?:\s+un)?\s+"
+            r")"
             r"(?P<value>\d{1,3}(?:[.,]\d+)?)\s*%"
-            r"\s+del\s+precio\s+final\s+neto\b",
+            r"\s+del\s+precio\s+(?:final|ﬁnal)\s+neto\b",
             _FLAGS,
         ),
         parser="percentage",
@@ -168,6 +233,64 @@ def _parse_value(rule: _Rule, raw: str) -> Any:
         return int(value) if value.is_integer() else value
 
     raise ValueError(f"unsupported T1 parser: {rule.parser}")
+
+
+def _parse_duration_days_match(
+    match: re.Match[str],
+) -> dict[str, Any]:
+    group_pairs = (
+        ("delivery_max_days", "delivery_max_basis"),
+        (
+            "delivery_threshold_days",
+            "delivery_threshold_basis",
+        ),
+        (
+            "delivery_cap_days",
+            "delivery_cap_basis",
+        ),
+        (
+            "delivery_superar_days",
+            "delivery_superar_basis",
+        ),
+    )
+
+    for days_group, basis_group in group_pairs:
+        raw_days = match.group(days_group)
+
+        if raw_days is None:
+            continue
+
+        raw_basis = match.group(basis_group)
+
+        if raw_basis is None:
+            day_basis = None
+        else:
+            normalized = (
+                raw_basis.casefold()
+                .replace("á", "a")
+                .replace("é", "e")
+                .replace("í", "i")
+                .replace("ó", "o")
+                .replace("ú", "u")
+            )
+
+            if normalized == "habiles":
+                day_basis = "business"
+            elif normalized == "corridos":
+                day_basis = "calendar"
+            else:
+                raise ValueError(
+                    f"unsupported delivery day basis: {raw_basis!r}"
+                )
+
+        return {
+            "days": int(raw_days),
+            "day_basis": day_basis,
+        }
+
+    raise ValueError(
+        "duration-days match contains no supported value group"
+    )
 
 
 def _fact_id(tender_id: str, field_name: str) -> str:
@@ -200,7 +323,13 @@ def _observe_rule(
     observed: list[_ObservedCandidate] = []
 
     for match in rule.pattern.finditer(source.chunk.text):
-        value = _parse_value(rule, match.group("value"))
+        if rule.parser == "duration_days":
+            value = _parse_duration_days_match(match)
+        else:
+            value = _parse_value(
+                rule,
+                match.group("value"),
+            )
 
         # Preserve the whole supporting statement, not only the captured
         # numeric token, so a human reviewer can see why the value was read.
@@ -343,6 +472,12 @@ def extract_tender_terms(
                 _observe_rule(source, rule)
             )
 
+    items = extract_item_terms(
+        tender_id=bundle.tender_id,
+        sources=sources,
+        coverage_status=coverage.fact_coverage_status,
+    )
+
     facts = tuple(
         sorted(
     (
@@ -366,7 +501,7 @@ def extract_tender_terms(
             tender_id=bundle.tender_id,
             source_bundle_semantic_digest=bundle.semantic_digest,
             tender_facts=facts,
-            items=(),
+            items=items,
             coverage=coverage,
         )
     )

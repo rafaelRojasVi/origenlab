@@ -152,8 +152,12 @@ def test_gold_tender_extracts_initial_commercial_terms() -> None:
 
     delivery = facts["maximum_delivery_days"]
     assert delivery.state == FACT_STATE_EXPLICIT
-    assert delivery.value == 120
-    assert delivery.unit == "calendar_days"
+    assert delivery.value == {
+        "days": 120,
+        "day_basis": "calendar",
+    }
+    assert delivery.value_type == "duration_days"
+    assert delivery.unit == "days"
 
     guarantee = facts["faithful_performance_guarantee_percent"]
     assert guarantee.state == FACT_STATE_EXPLICIT
@@ -322,6 +326,166 @@ def test_document_role_is_advisory_not_a_recognition_gate() -> None:
 
     assert facts["offer_validity_days"].state == FACT_STATE_EXPLICIT
     assert facts["offer_validity_days"].value == 90
+
+
+
+def test_delivery_word_number_business_days_is_explicit() -> None:
+    bundle = _bundle(
+        (
+            "ESPECIFICACIONES TECNICAS GENERALES OBLIGATORIAS. "
+            "Plazo máximo de entrega de equipos quince (15) "
+            "días hábiles contados desde la adjudicación del contrato."
+        )
+    )
+
+    _, facts = _facts(bundle)
+    fact = facts["maximum_delivery_days"]
+
+    assert fact.state == FACT_STATE_EXPLICIT
+    assert fact.value == {
+        "days": 15,
+        "day_basis": "business",
+    }
+    assert fact.value_type == "duration_days"
+    assert fact.unit == "days"
+
+
+def test_delivery_table_value_without_day_basis_preserves_unknown_basis() -> None:
+    bundle = _bundle(
+        (
+            "Critico | Instalación | Incluye flete, instalación y "
+            "puesta en marcha sin costo para el establecimiento. "
+            "Critico | Plazo máximo de entrega | 30 días"
+        )
+    )
+
+    _, facts = _facts(bundle)
+    fact = facts["maximum_delivery_days"]
+
+    assert fact.state == FACT_STATE_EXPLICIT
+    assert fact.value == {
+        "days": 30,
+        "day_basis": None,
+    }
+
+
+def test_delivery_same_value_from_distinct_morphologies_coalesces() -> None:
+    bundle = _bundle(
+        (
+            "Nota: El plazo máximo para la entrega de los equipos "
+            "debe ser de 40 días hábiles."
+        ),
+        (
+            "Aquella oferta que ingrese un plazo de entrega superior "
+            "a 40 días hábiles, su oferta no continuará con el proceso "
+            "de evaluación y será declarada inadmisible."
+        ),
+    )
+
+    _, facts = _facts(bundle)
+    fact = facts["maximum_delivery_days"]
+
+    assert fact.state == FACT_STATE_EXPLICIT
+    assert fact.value == {
+        "days": 40,
+        "day_basis": "business",
+    }
+    assert len(fact.evidence) == 2
+    assert fact.candidates == ()
+
+
+def test_delivery_offered_cap_morphology_is_explicit() -> None:
+    bundle = _bundle(
+        (
+            "El plazo de entrega ofertado, no podrá superar "
+            "los 30 días hábiles."
+        )
+    )
+
+    _, facts = _facts(bundle)
+    fact = facts["maximum_delivery_days"]
+
+    assert fact.state == FACT_STATE_EXPLICIT
+    assert fact.value == {
+        "days": 30,
+        "day_basis": "business",
+    }
+
+
+def test_delivery_day_basis_difference_is_a_real_conflict() -> None:
+    bundle = _bundle(
+        "Plazo máximo de entrega | 30 días hábiles",
+        "Plazo máximo de entrega | 30 días corridos",
+    )
+
+    _, facts = _facts(bundle)
+    fact = facts["maximum_delivery_days"]
+
+    assert fact.state == FACT_STATE_CONFLICTING
+    assert fact.value is None
+
+    values = {
+        (
+            candidate.value["days"],
+            candidate.value["day_basis"],
+        )
+        for candidate in fact.candidates
+    }
+
+    assert values == {
+        (30, "business"),
+        (30, "calendar"),
+    }
+    assert all(
+        candidate.evidence
+        for candidate in fact.candidates
+    )
+
+
+def test_faithful_performance_equivalent_amount_morphology_is_explicit() -> None:
+    bundle = _bundle(
+        (
+            "Unidades de Fomento, destinada a cautelar el fiel y "
+            "oportuno cumplimiento del contrato. "
+            "Dicha garantía deberá ser constituida por un monto "
+            "equivalente a un 5% del precio ﬁnal neto ofertado "
+            "por el adjudicatario, con una vigencia adicional."
+        )
+    )
+
+    _, facts = _facts(bundle)
+    fact = facts["faithful_performance_guarantee_percent"]
+
+    assert fact.state == FACT_STATE_EXPLICIT
+    assert fact.value == 5
+    assert fact.unit == "percent"
+    assert fact.tax_basis == "net_final_awarded_price"
+
+
+
+def test_contract_duration_real_narrative_morphologies_coalesce() -> None:
+    bundle = _bundle(
+        (
+            "DE LA VIGENCIA Y DURACIÓN. "
+            "La vigencia del contrato se extenderá por el periodo "
+            "de 8 meses contados desde la total tramitación de la "
+            "Resolución que aprueba el contrato."
+        ),
+        (
+            "Duración del Contrato "
+            "Tiempo de Duración: 8 meses "
+            "Fecha de inicio: desde la aceptación de la orden de compra."
+        ),
+    )
+
+    _, facts = _facts(bundle)
+    fact = facts["contract_duration_months"]
+
+    assert fact.state == FACT_STATE_EXPLICIT
+    assert fact.value == 8
+    assert fact.unit == "months"
+    assert len(fact.evidence) == 2
+    assert fact.candidates == ()
 
 
 def test_extraction_is_deterministic_across_chunk_input_order() -> None:
