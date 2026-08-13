@@ -16,7 +16,10 @@ from origenlab_email_pipeline.chilecompra_api import (
     VALIDITY_STATUS_MISSING_CLOSE_DATE,
     VALIDITY_STATUS_OPEN,
 )
-from origenlab_email_pipeline.equipment_first_licitacion_queue import parse_close_date
+from origenlab_email_pipeline.equipment_first_licitacion_queue import (
+    detect_equipment_categories,
+    parse_close_date,
+)
 from origenlab_email_pipeline.equipment_first_operator_queue import OPERATOR_FIELDS
 
 CHILECOMPRA_REVIEW_NOTE = (
@@ -216,23 +219,90 @@ def aggregate_chilecompra_item_metadata(
     return aggregated
 
 
+
+def _item_only_blob(row: dict[str, str]) -> str:
+    """Text belonging to one procurement line, excluding tender-wide text."""
+    fields = (
+        "line_description",
+        "producto",
+        "nivel_1",
+        "nivel_2",
+        "nivel_3",
+    )
+    return " | ".join(
+        value for field in fields if (value := (row.get(field) or "").strip())
+    )
+
+
+def aggregate_chilecompra_item_metadata_by_category(
+    normalized_rows: list[dict[str, str]],
+) -> dict[tuple[str, str], dict[str, str]]:
+    """Aggregate only item lines that independently support each category."""
+    grouped: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
+
+    for row in normalized_rows:
+        codigo = (
+            row.get("codigo")
+            or row.get("codigo_licitacion")
+            or ""
+        ).strip()
+        if not codigo:
+            continue
+
+        categories = {
+            category
+            for category, _matched_span in detect_equipment_categories(
+                _item_only_blob(row)
+            )
+        }
+        for category in sorted(categories):
+            grouped[(codigo, category)].append(row)
+
+    aggregated: dict[tuple[str, str], dict[str, str]] = {}
+    for key, rows in sorted(grouped.items()):
+        codigo, _category = key
+        metadata = aggregate_chilecompra_item_metadata(rows)
+        aggregated[key] = metadata[codigo]
+
+    return aggregated
+
+
 def attach_item_metadata_to_queue_rows(
     queue_rows: list[dict[str, str]],
     normalized_rows: list[dict[str, str]],
 ) -> list[dict[str, str]]:
     metadata_by_codigo = aggregate_chilecompra_item_metadata(normalized_rows)
+    metadata_by_category = aggregate_chilecompra_item_metadata_by_category(
+        normalized_rows
+    )
     attached: list[dict[str, str]] = []
+
     for row in queue_rows:
         merged = dict(row)
         codigo = (row.get("codigo_licitacion") or "").strip()
-        meta = metadata_by_codigo.get(codigo, {})
+        category = (row.get("equipment_category") or "").strip()
+
+        category_meta = metadata_by_category.get((codigo, category))
+        if category_meta is not None:
+            meta = category_meta
+        else:
+            # Preserve descriptive tender metadata, but do not attribute the
+            # tender-wide quantity to a category without item-level evidence.
+            meta = dict(metadata_by_codigo.get(codigo, {}))
+            meta["cantidad"] = ""
+
         for field in CHILECOMPRA_ITEM_METADATA_FIELDS:
             value = (meta.get(field) or "").strip()
             if value:
                 merged[field] = value
+            elif field == "cantidad":
+                merged[field] = ""
+
         if not (merged.get("mercado_publico_url") or "").strip():
             merged["mercado_publico_url"] = build_mercado_publico_search_url(codigo)
+
         attached.append(merged)
+
     return attached
 
 
