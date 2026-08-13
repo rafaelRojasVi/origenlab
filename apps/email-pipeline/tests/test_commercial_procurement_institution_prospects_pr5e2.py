@@ -534,6 +534,134 @@ def test_every_unit_decision_is_reconciled() -> None:
     assert [r["unit_id"] for r in review_queue] == ["u-review"]
 
 
+
+
+def test_profile_purchase_metrics_follow_category_scoped_line_truth_once_per_tender() -> None:
+    """Line truth drives profile metrics; multiple categories still count one tender."""
+    from dataclasses import replace
+
+    from origenlab_email_pipeline.commercial_procurement_product_relevance.models import (
+        ProductTextUnit,
+    )
+    from origenlab_email_pipeline.commercial_procurement_product_relevance.normalize import (
+        normalize_product_text,
+    )
+
+    tender = _tender(
+        tid="LINE-TRUTH",
+        lifecycle="closed",
+        title="Insumos generales para laboratorio",
+    )
+
+    # Tender/title truth is deliberately non-purchase. Detailed line evidence
+    # below establishes two equipment categories on the same tender.
+    tender_decision = _decision(
+        tid="LINE-TRUTH",
+        relevance="consumable_or_reagent",
+        classes=(),
+    )
+
+    raw_units = (
+        (
+            "lt-centrifuge",
+            "centrifuga clinica de laboratorio",
+            ("centrifuge",),
+        ),
+        (
+            "lt-balance",
+            "balanza analitica de laboratorio",
+            ("balance",),
+        ),
+    )
+
+    product_units = tuple(
+        ProductTextUnit(
+            unit_id=uid,
+            coalesced_tender_id="LINE-TRUTH",
+            evidence_ref_id=f"ev-{uid}",
+            link_status="linked",
+            unresolved_reason=None,
+            field_path="line",
+            text_raw=raw_text,
+            text_normalized=normalize_product_text(raw_text),
+            evidence_tier="line_product_text",
+            source_plane="test",
+            snapshot_id="snap-1",
+            observation_id=None,
+            tender_observation_id=None,
+            line_observation_id=None,
+            pr4_procurement_id=None,
+            contributing_evidence_ref_ids=(),
+        )
+        for uid, raw_text, _classes in raw_units
+    )
+
+    unit_decisions = tuple(
+        _unit(
+            uid=uid,
+            tid="LINE-TRUTH",
+            relevance="strong_equipment_class",
+            classes=classes,
+            text=raw_text,
+        )
+        for uid, raw_text, classes in raw_units
+    )
+
+    pr5c, pr5d, pr5e = _plans(
+        (tender,),
+        (tender_decision,),
+        units=unit_decisions,
+    )
+
+    pr5d = replace(
+        pr5d,
+        product_text_units=product_units,
+    )
+
+    result = build_institution_prospects_from_plans(
+        pr5c=pr5c,
+        pr5d=pr5d,
+        pr5e=pr5e,
+        as_of_utc=AS_OF,
+        run_context="local_fixture",
+    )
+
+    profile = result.profiles[0]
+
+    purchase_rows = [
+        row
+        for row in profile["historical_signals"]
+        if row["commercial_signal_type"]
+        == "equipment_purchase_signal"
+    ]
+
+    assert {
+        row["canonical_equipment_category"]
+        for row in purchase_rows
+    } == {"balance", "centrifuge"}
+
+    # Two equipment categories from one procurement event are still one
+    # purchase tender for institution-level scoring.
+    assert (
+        profile["counts"]["equipment_purchase_tender_count"]
+        == 1
+    )
+
+    strength = profile["axes"]["prospect_strength"]
+    assert "has_equipment_purchase_evidence" in strength["reason_codes"]
+    assert "historical_buying_intent" in strength["reason_codes"]
+
+    historical = result.operator_queues[
+        "historical_prospect_queue"
+    ]
+    assert {
+        row["equipment_category"]
+        for row in historical
+        if row["commercial_signal_type"]
+        == "equipment_purchase_signal"
+    } == {"balance", "centrifuge"}
+
+
 # --- queues and safety -------------------------------------------------------
 
 
