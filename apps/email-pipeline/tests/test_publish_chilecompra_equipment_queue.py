@@ -15,6 +15,7 @@ from origenlab_email_pipeline.chilecompra_api import (
     classify_chilecompra_validity_status,
 )
 from origenlab_email_pipeline.equipment_first_chilecompra_publish import (
+    attach_item_metadata_to_queue_rows,
     CHILECOMPRA_CONTACT_STATUS,
     CHILECOMPRA_CONTACT_STATUS_MISSING_CLOSE_DATE,
     CHILECOMPRA_REVIEW_NOTE,
@@ -515,3 +516,112 @@ def test_enrich_carries_anexos_json_to_published_row() -> None:
     assert "anexos_json" in enriched
     assert "Bases.pdf" in enriched["anexos_json"]
     assert "anexos_json" in PUBLISHED_DASHBOARD_FIELDS
+
+def test_item_metadata_quantity_is_scoped_to_detected_category() -> None:
+    queue_rows = [
+        {
+            "codigo_licitacion": "1093303-5-CO26",
+            "equipment_category": "centrifuge",
+        }
+    ]
+    normalized_rows = [
+        {
+            "codigo": "1093303-5-CO26",
+            "line_description": (
+                "2.- EQUIPO DETECTOR DE FUGA/FILTRACIÓN EN PRODUCTOS "
+                "FARMACÉUTICOS Y DISPOSITIVOS MÉDICOS"
+            ),
+            "producto": "Unidades de laboratorio",
+            "cantidad": "1",
+            "unidad": "Unidad",
+        },
+        {
+            "codigo": "1093303-5-CO26",
+            "line_description": "6.- CENTRÍFUGA REFRIGERADA DE SOBREMESA",
+            "producto": "Unidades de laboratorio",
+            "cantidad": "1",
+            "unidad": "Unidad",
+        },
+    ]
+
+    attached = attach_item_metadata_to_queue_rows(queue_rows, normalized_rows)
+
+    assert len(attached) == 1
+    assert attached[0]["cantidad"] == "1"
+    assert "CENTRÍFUGA REFRIGERADA" in attached[0]["line_description"]
+    assert "DETECTOR DE FUGA" not in attached[0]["line_description"]
+
+
+def test_item_metadata_aggregates_only_lines_within_each_category() -> None:
+    queue_rows = [
+        {
+            "codigo_licitacion": "745712-19-LP26",
+            "equipment_category": "balance",
+        },
+        {
+            "codigo_licitacion": "745712-19-LP26",
+            "equipment_category": "centrifuge",
+        },
+    ]
+    normalized_rows = [
+        {
+            "codigo": "745712-19-LP26",
+            "line_description": "Ítem N°4 Balanza analítica para laboratorio",
+            "producto": "Balanzas electrónicas de carga superior",
+            "cantidad": "1",
+            "unidad": "Unidad",
+        },
+        {
+            "codigo": "745712-19-LP26",
+            "line_description": (
+                "Ítem N°12 Centrífuga para tubos eppendorf de 1,5 a 2 ml"
+            ),
+            "producto": "Centrífugos de laboratorio",
+            "cantidad": "1",
+            "unidad": "Unidad",
+        },
+        {
+            "codigo": "745712-19-LP26",
+            "line_description": (
+                "Ítem N°15 Centrífuga de sobremesa con rotor de ángulo fijo"
+            ),
+            "producto": "Centrífugos de laboratorio",
+            "cantidad": "1",
+            "unidad": "Unidad",
+        },
+    ]
+
+    attached = attach_item_metadata_to_queue_rows(queue_rows, normalized_rows)
+    by_category = {
+        row["equipment_category"]: row
+        for row in attached
+    }
+
+    assert by_category["balance"]["cantidad"] == "1"
+    assert by_category["centrifuge"]["cantidad"] == "2"
+    assert "Balanza analítica" in by_category["balance"]["line_description"]
+    assert "Centrífuga para tubos" in by_category["centrifuge"]["line_description"]
+    assert "Centrífuga de sobremesa" in by_category["centrifuge"]["line_description"]
+
+
+def test_category_without_item_level_support_does_not_inherit_tender_quantity() -> None:
+    queue_rows = [
+        {
+            "codigo_licitacion": "TEST-1-LP26",
+            "equipment_category": "centrifuge",
+        }
+    ]
+    normalized_rows = [
+        {
+            "codigo": "TEST-1-LP26",
+            "line_description": "Equipo detector de fuga",
+            "producto": "Unidades de laboratorio",
+            "cantidad": "2",
+            "unidad": "Unidad",
+        }
+    ]
+
+    attached = attach_item_metadata_to_queue_rows(queue_rows, normalized_rows)
+
+    assert attached[0]["cantidad"] == ""
+
