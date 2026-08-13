@@ -18,6 +18,7 @@ from origenlab_email_pipeline.chilecompra_api import (
 )
 from origenlab_email_pipeline.equipment_first_licitacion_queue import (
     detect_equipment_categories,
+    equipment_detection_blob,
     parse_close_date,
 )
 from origenlab_email_pipeline.equipment_first_operator_queue import OPERATOR_FIELDS
@@ -219,21 +220,6 @@ def aggregate_chilecompra_item_metadata(
     return aggregated
 
 
-
-def _item_only_blob(row: dict[str, str]) -> str:
-    """Text belonging to one procurement line, excluding tender-wide text."""
-    fields = (
-        "line_description",
-        "producto",
-        "nivel_1",
-        "nivel_2",
-        "nivel_3",
-    )
-    return " | ".join(
-        value for field in fields if (value := (row.get(field) or "").strip())
-    )
-
-
 def aggregate_chilecompra_item_metadata_by_category(
     normalized_rows: list[dict[str, str]],
 ) -> dict[tuple[str, str], dict[str, str]]:
@@ -252,7 +238,7 @@ def aggregate_chilecompra_item_metadata_by_category(
         categories = {
             category
             for category, _matched_span in detect_equipment_categories(
-                _item_only_blob(row)
+                equipment_detection_blob(row)
             )
         }
         for category in sorted(categories):

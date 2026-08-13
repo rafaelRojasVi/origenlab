@@ -13,7 +13,6 @@ from origenlab_email_pipeline.equipment_first_licitacion_queue import (
     classify_next_action,
     detect_equipment_categories,
     is_maintenance_only_service,
-    line_blob,
     parse_close_date,
 )
 
@@ -31,17 +30,44 @@ def test_detect_centrifuge_in_lab_context() -> None:
 
 def test_ultrasonido_skipped_for_ecografo() -> None:
     blob = "MANTENCIÓN EQUIPOS DE ECOGRAFÍA ultrasonido cardiaco"
-    assert not any(c == "lab_ultrasonic_processor" for c, _ in detect_equipment_categories(blob))
+    assert not any(
+        c == "lab_ultrasonic_processor" for c, _ in detect_equipment_categories(blob)
+    )
 
 
 def test_tubos_microcentrifuga_excluded_without_equipment_purchase() -> None:
-    assert detect_equipment_categories("INSUMOS DE LABORATORIO TUBOS DE MICROCENTRIFUGA") == []
-    assert detect_equipment_categories("Tubos para centrifuga, transparente 50 ml") == []
+    assert (
+        detect_equipment_categories("INSUMOS DE LABORATORIO TUBOS DE MICROCENTRIFUGA")
+        == []
+    )
+    assert (
+        detect_equipment_categories("Tubos para centrifuga, transparente 50 ml") == []
+    )
     blob = (
         "ADQUISICIÓN DE MATERIAL DE LABORATORIO PARA PROYECTO | "
         "Tubos para centrifuga, transparente 50 ml"
     )
     assert detect_equipment_categories(blob) == []
+
+
+def test_tubos_conicos_accented_excluded_as_consumable_via_line_description() -> None:
+    """A concrete line_description alone must carry enough consumable evidence to
+    exclude it, without relying on producto/taxonomy — accented "cónicos" must be
+    recognized the same as unaccented "conicos".
+    """
+    rows = build_equipment_queue_rows_from_normalized_rows(
+        [
+            {
+                "codigo": "GOLD-101-LP26",
+                "title": "Adquisición de material de laboratorio",
+                "line_description": "Tubos cónicos para centrífuga 50 ml",
+                "producto": "Tubos para centrífuga",
+            }
+        ],
+        now=datetime(2026, 8, 13, 12, 0, 0),
+    )
+
+    assert rows == []
 
 
 def test_generic_balanza_digital_without_lab_context_excluded() -> None:
@@ -62,6 +88,114 @@ def test_stop_codes_classified_skip_consumables() -> None:
             )
             == "skip_consumables"
         )
+
+
+def test_opportunity_truth_excludes_plural_maintenance_service() -> None:
+    rows = build_equipment_queue_rows_from_normalized_rows(
+        [
+            {
+                "codigo": "5067-119-L126",
+                "buyer": "UNIVERSIDAD DE SANTIAGO DE CHILE",
+                "close_date": "14/08/2026 15:00:00",
+                "title": ("Mantenciones preventivas de los equipos del laboratorio"),
+                "descripcion": "Servicio de mantenciones preventivas",
+                "line_description": ("Mantención de Balanza Analítica modelo FA 2004G"),
+                "producto": "Kits de reparación",
+            }
+        ],
+        now=datetime(2026, 8, 13, 12, 0, 0),
+    )
+
+    assert rows == []
+    assert is_maintenance_only_service(
+        "Mantenciones preventivas de dos balanzas analíticas"
+    )
+
+
+def test_opportunity_truth_detects_plural_balanzas_and_basculas() -> None:
+    rows = build_equipment_queue_rows_from_normalized_rows(
+        [
+            {
+                "codigo": "2981-205-LE26",
+                "buyer": "JENACO",
+                "close_date": "14/08/2026 15:00:00",
+                "title": "Adquisición de equipos",
+                "line_description": "10 BALANZAS DE PRECISIÓN Y ACCESORIOS",
+                "producto": "Básculas analíticas",
+            }
+        ],
+        now=datetime(2026, 8, 13, 12, 0, 0),
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["equipment_category"] == "balance"
+    assert rows[0]["next_action"] == "quote_now"
+
+
+def test_opportunity_truth_excludes_clinical_and_body_composition_scales() -> None:
+    rows = build_equipment_queue_rows_from_normalized_rows(
+        [
+            {
+                "codigo": "2410-66-LP26",
+                "buyer": "I MUNICIPALIDAD DE LOS ANGELES",
+                "close_date": "19/08/2026 10:00:00",
+                "title": "Equipamiento clínico",
+                "line_description": ("BALANZA MECÁNICA CON TALLÍMETRO INCORPORADO"),
+                "producto": "Balanzas electrónicas de carga superior",
+            },
+            {
+                "codigo": "2548-70-L126",
+                "buyer": "I MUNICIPALIDAD DE PADRE LAS CASAS",
+                "close_date": "20/08/2026 10:00:00",
+                "title": "Equipamiento clínico",
+                "line_description": (
+                    "Balanza de bioimpedancia para composición corporal"
+                ),
+                "producto": "Balanzas de uso comercial",
+            },
+        ],
+        now=datetime(2026, 8, 13, 12, 0, 0),
+    )
+
+    assert rows == []
+
+
+def test_opportunity_truth_prefers_concrete_line_evidence() -> None:
+    rows = build_equipment_queue_rows_from_normalized_rows(
+        [
+            {
+                "codigo": "4291-46-LE26",
+                "buyer": "UNIVERSIDAD DE ANTOFAGASTA",
+                "close_date": "20/08/2026 15:01:00",
+                "title": "Adquisición de equipos de laboratorio",
+                "line_description": "Centrífuga Refrigerada Universal de sobremesa",
+                "producto": "Bombas centrífugas de laboratorio",
+            },
+            {
+                "codigo": "4291-46-LE26",
+                "buyer": "UNIVERSIDAD DE ANTOFAGASTA",
+                "close_date": "20/08/2026 15:01:00",
+                "title": "Adquisición de equipos de laboratorio",
+                "line_description": "Campana de Flujo Laminar Vertical 800 mm",
+                "producto": "Bombas centrífugas de laboratorio",
+            },
+            {
+                "codigo": "4291-46-LE26",
+                "buyer": "UNIVERSIDAD DE ANTOFAGASTA",
+                "close_date": "20/08/2026 15:01:00",
+                "title": "Adquisición de equipos de laboratorio",
+                "line_description": "Termociclador PCR",
+                "producto": "Bombas centrífugas de laboratorio",
+            },
+        ],
+        now=datetime(2026, 8, 13, 12, 0, 0),
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["equipment_category"] == "centrifuge"
+    assert "Centrífuga Refrigerada" in rows[0]["item_description"]
+    assert "Campana" not in rows[0]["item_description"]
+    assert "Termociclador" not in rows[0]["item_description"]
 
 
 def test_build_queue_from_minimal_csv(tmp_path: Path) -> None:
@@ -152,7 +286,9 @@ def test_parse_close_date_supports_iso_datetime_formats() -> None:
 
 
 def test_parse_close_date_supports_iso_timezone_suffix_as_naive_wall_time() -> None:
-    assert parse_close_date("2026-06-17T19:00:00+00:00") == datetime(2026, 6, 17, 19, 0, 0)
+    assert parse_close_date("2026-06-17T19:00:00+00:00") == datetime(
+        2026, 6, 17, 19, 0, 0
+    )
     assert parse_close_date("2026-06-17T19:00:00Z") == datetime(2026, 6, 17, 19, 0, 0)
 
 

@@ -49,7 +49,7 @@ EQUIPMENT_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
             re.I,
         ),
     ),
-    ("balance", re.compile(r"\bbalanza\b", re.I)),
+    ("balance", re.compile(r"\b(?:balanzas?|b[áa]sculas?)\b", re.I)),
     (
         "sonicator",
         re.compile(
@@ -88,7 +88,7 @@ NON_LAB_CENTRIFUGE_RE = re.compile(
 )
 CONSUMABLE_CENTRIFUGE_TUBE_RE = re.compile(
     r"\btubos?\s+(de\s+|para\s+)?(micro)?centr[ií]fug|"
-    r"\btubos?\s+conic[oa]s?\s+para\s+centr[ií]fug|"
+    r"\btubos?\s+c[oó]nic[oa]s?\s+para\s+centr[ií]fug|"
     r"\btubos?\s+centr[ií]fug|"
     r"centr[ií]fug.*\btubos?\b",
     re.I,
@@ -118,13 +118,19 @@ LAB_ULTRASONIC_RE = re.compile(
 )
 NON_LAB_BALANCE_RE = re.compile(
     r"parvulario|did[aá]ctic|3\s+toneladas?|peso\s+control|"
-    r"vehiculos?\s+equipamiento|hidrolavadora",
+    r"vehiculos?\s+equipamiento|hidrolavadora|tall[ií]metro|"
+    r"pedi[aá]tric|adulto\s+port[aá]til|antropom[eé]tric|"
+    r"composici[oó]n\s+corporal|bioimpedancia|\bbia\b|"
+    r"uso\s+comercial|peso\s+corporal|nutricional",
     re.I,
 )
 LAB_BALANCE_RE = re.compile(
-    r"balanza\s+anal[ií]tic|balanza\s+de\s+precisi[oó]n|balanza\s+electr[oó]nic|"
-    r"0[,.]0+\s*mg|laboratorio.*balanza|balanza.*laboratorio|"
-    r"manten(ci|ció)n.*balanza|certificaci[oó]n.*balanza",
+    r"(?:balanzas?|b[áa]sculas?)\s+anal[ií]tic|"
+    r"(?:balanzas?|b[áa]sculas?)\s+de\s+precisi[oó]n|"
+    r"(?:balanzas?|b[áa]sculas?)\s+electr[oó]nic|"
+    r"0[,.]0+\s*mg|laboratorio.*(?:balanza|b[áa]scula)|"
+    r"(?:balanza|b[áa]scula).*laboratorio|"
+    r"manten(?:imiento|ci[oó]n).*balanza|certificaci[oó]n.*balanza",
     re.I,
 )
 CONSUMABLE_INCUBATOR_RE = re.compile(
@@ -147,13 +153,14 @@ LAB_CONTEXT_RE = re.compile(
     r"hematolog|microbiol|bioqu[ií]mic|anal[ií]t|diagn[oó]st",
     re.I,
 )
-MAINTENANCE_RE = re.compile(r"manten(ci|ció)n|mantencion", re.I)
+MAINTENANCE_TERM_RE = r"(?:mantenimientos?|mantenci[oó]n|mantenciones?)"
+MAINTENANCE_RE = re.compile(rf"\b{MAINTENANCE_TERM_RE}\b", re.I)
 MAINTENANCE_ONLY_SERVICE_RE = re.compile(
-    r"mantenimiento\s+preventiv|mantenimiento\s+correctiv|"
-    r"mantencion\s+preventiv|mantencion\s+correctiv|"
-    r"mantenci[oó]n\s+preventiv|mantenci[oó]n\s+correctiv|"
-    r"\breparaci[oó]n\b|servicio\s+t[eé]cnico|servicio\s+de\s+mantenimiento|"
-    r"servicio\s+de\s+mantencion|contratar\s+el\s+servicio\s+de\s+manten",
+    rf"{MAINTENANCE_TERM_RE}\s+preventiv|"
+    rf"{MAINTENANCE_TERM_RE}\s+correctiv|"
+    r"\breparaci[oó]n\b|servicio\s+t[eé]cnico|"
+    rf"servicio\s+de\s+{MAINTENANCE_TERM_RE}|"
+    r"contratar\s+el\s+servicio\s+de\s+manten",
     re.I,
 )
 EQUIPMENT_PURCHASE_SIGNAL_RE = re.compile(
@@ -169,6 +176,13 @@ CONVENIO_REACTIVOS_RE = re.compile(
     r"convenio.*reactivo|reactivo.*comodato|insumos.*comodato",
     re.I,
 )
+GENERIC_LINE_DESCRIPTION_RE = re.compile(
+    r"^\s*(?:(?:familia|lote|[ií]tem|l[ií]nea)"
+    r"(?:\s+n?[.°ºo-]*\s*\d+)?)?"
+    r"(?:\s*[:\-]\s*)?"
+    r"(?:equipos?(?:\s+umt)?(?:\s+\d+)?)?\s*$",
+    re.I,
+)
 
 
 def line_blob(row: dict[str, str]) -> str:
@@ -182,6 +196,27 @@ def line_blob(row: dict[str, str]) -> str:
         row.get("nivel_3", ""),
     ]
     return " | ".join(p for p in parts if p.strip())
+
+
+def equipment_detection_blob(row: dict[str, str]) -> str:
+    """Prefer concrete line evidence over conflicting tender taxonomy."""
+    line_description = (row.get("line_description") or "").strip()
+    if line_description and not GENERIC_LINE_DESCRIPTION_RE.fullmatch(line_description):
+        return line_description
+
+    item_parts = [
+        (row.get(field) or "").strip()
+        for field in ("producto", "nivel_1", "nivel_2", "nivel_3")
+    ]
+    item_blob = " | ".join(part for part in item_parts if part)
+    if item_blob:
+        return item_blob
+
+    return " | ".join(
+        part
+        for field in ("title", "descripcion")
+        if (part := (row.get(field) or "").strip())
+    )
 
 
 def is_maintenance_only_service(blob: str) -> bool:
@@ -302,7 +337,12 @@ class TenderAccumulator:
     arriendo_signal: bool = False
     convenio_reactivos: bool = False
 
-    def add_line(self, row: dict[str, str], blob: str) -> None:
+    def add_line(
+        self,
+        row: dict[str, str],
+        equipment_blob: str,
+        context_blob: str,
+    ) -> None:
         if not self.buyer:
             self.buyer = row.get("buyer", "")
             self.region = row.get("region", "")
@@ -311,20 +351,23 @@ class TenderAccumulator:
             self.descripcion = row.get("descripcion", "")
         elif not self.close_date and (row.get("close_date") or "").strip():
             self.close_date = row.get("close_date", "")
+
         if not self.descripcion and (row.get("descripcion") or "").strip():
             self.descripcion = row.get("descripcion", "")
-        for cat, span in detect_equipment_categories(blob):
+
+        for category, span in detect_equipment_categories(equipment_blob):
             self.has_equipment_line = True
-            desc = row.get("line_description") or row.get("producto") or span
-            if desc and desc not in self.categories[cat]:
-                self.categories[cat].append(desc[:240])
-        if consumables_exclusion_reason(blob):
+            description = row.get("line_description") or row.get("producto") or span
+            if description and description not in self.categories[category]:
+                self.categories[category].append(description[:240])
+
+        if consumables_exclusion_reason(context_blob):
             self.has_consumable_line = True
-        if MAINTENANCE_RE.search(blob):
+        if MAINTENANCE_RE.search(context_blob):
             self.maintenance_signal = True
-        if ARRIENDO_RE.search(blob):
+        if ARRIENDO_RE.search(context_blob):
             self.arriendo_signal = True
-        if CONVENIO_REACTIVOS_RE.search(blob):
+        if CONVENIO_REACTIVOS_RE.search(context_blob):
             self.convenio_reactivos = True
 
 
@@ -433,12 +476,15 @@ def build_equipment_queue_rows_from_normalized_rows(
         codigo = (row.get("codigo") or "").strip()
         if not codigo:
             continue
-        blob = line_blob(row)
+        context_blob = line_blob(row)
+        equipment_blob = equipment_detection_blob(row)
+
         acc = tenders.get(codigo)
         if acc is None:
             acc = TenderAccumulator(codigo=codigo)
             tenders[codigo] = acc
-        acc.add_line(row, blob)
+
+        acc.add_line(row, equipment_blob, context_blob)
 
     out: list[dict[str, str]] = []
     for acc in tenders.values():

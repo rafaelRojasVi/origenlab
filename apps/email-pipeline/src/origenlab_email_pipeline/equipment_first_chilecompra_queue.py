@@ -30,10 +30,12 @@ from origenlab_email_pipeline.equipment_first_licitacion_queue import (
 )
 
 SUMMARY_KEYWORD_PREFILTER_RE = re.compile(
-    r"centr[ií]fug|microcentr[ií]fug|balanza|sonicador|sonificador|"
-    r"homogeneizador|dispersor|incubadora|osm[oó]metr|ultrason|"
-    r"laboratorio|equipo[s]?\s+(de\s+)?laboratorio|manten(ci|ció)n.*centr[ií]fug|"
-    r"manten(ci|ció)n.*balanza",
+    r"centr[ií]fug|microcentr[ií]fug|balanzas?|b[áa]sculas?|"
+    r"sonicador|sonificador|homogeneizador|dispersor|v[oó]rtex|"
+    r"incubadora|osm[oó]metr|ultrason|laboratorio|"
+    r"equipo[s]?\s+(de\s+)?laboratorio|"
+    r"manten(?:imiento|ci[oó]n).*centr[ií]fug|"
+    r"manten(?:imiento|ci[oó]n).*(?:balanza|b[áa]scula)",
     re.I,
 )
 
