@@ -1,0 +1,14 @@
+{
+  "archived_snapshot_existed": false,
+  "archived_snapshot_available_locally": false,
+  "authenticated_request_performed": false,
+  "contact_data_included": false,
+  "fixture_contract": "commercial_procurement_anexo_integration_p2a_historical_replay_v1",
+  "fixture_kind": "deterministic_historical_replay_from_real_tender_facts",
+  "network_request_performed": false,
+  "note": "The tender status, publication, close, title, and buyer values are preserved from the reviewed local ChileCompra detail-cache records. Acquisition observation timestamps are deliberately constructed test data at or before each replay as_of_utc. This fixture does not prove that a contemporaneous archived acquisition snapshot existed.",
+  "production_artifact_rewritten": false,
+  "real_tender_facts_preserved": true,
+  "snapshot_acquisition_observations_constructed": true,
+  "test_fixture_only": true
+}
