@@ -1026,6 +1026,148 @@ def build_institution_prospects_from_plans(
         for tid, claims in sorted(claims_by_tender.items())
     }
 
+    def _commercial_row_specs_for_tender(t: Any) -> list[dict[str, Any]]:
+        """Project one tender into the same commercial truth used by operator rows.
+
+        Detailed category-scoped claims are authoritative when present. The
+        tender/title disposition remains a fallback only when no detailed
+        category-scoped claim exists.
+        """
+        tid = t.coalesced_tender_id
+        d = decisions_by_tender[tid]
+        claims = list(claims_by_tender.get(tid) or ())
+        title_disposition = disposition_by_tender.get(tid, {})
+
+        category_groups = [
+            g
+            for g in aggregate_category_scoped_claims(claims)
+            if g.get("purchase_intent")
+            or g.get("commercial_signal") == "equipment_purchase_signal"
+            or SCOPE_COMPLETE_EQUIPMENT in (g.get("scopes") or [])
+        ]
+
+        row_specs: list[dict[str, Any]] = []
+
+        if category_groups:
+            for group in category_groups:
+                group_claim_ids = set(group.get("claim_ids") or [])
+                group_claims = [
+                    c for c in claims if c.claim_id in group_claim_ids
+                ]
+
+                amb = sorted(
+                    {
+                        reason
+                        for c in group_claims
+                        for reason in (c.ambiguity_reason_codes or ())
+                    }
+                )
+                pos = sorted(
+                    {
+                        reason
+                        for c in group_claims
+                        for reason in (c.positive_reason_codes or ())
+                    }
+                )
+                neg = sorted(
+                    {
+                        reason
+                        for c in group_claims
+                        for reason in (c.negative_reason_codes or ())
+                    }
+                )
+
+                clause_text = " | ".join(
+                    c.clause_text
+                    for c in group_claims[:3]
+                    if c.clause_text
+                )
+                relevance = next(
+                    (
+                        c.relevance_class
+                        for c in group_claims
+                        if c.relevance_class
+                    ),
+                    d.relevance_class,
+                )
+                signal = str(
+                    group.get("commercial_signal")
+                    or "equipment_purchase_signal"
+                )
+
+                disposition = classify_provisional_disposition(
+                    relevance_class=relevance,
+                    commercial_signal=signal,
+                    canonical_equipment_classes=(
+                        group["equipment_category"],
+                    ),
+                    title=clause_text or t.title_selected,
+                    positive_reason_codes=pos,
+                    negative_reason_codes=neg,
+                    ambiguity_reason_codes=amb,
+                )
+
+                row_specs.append(
+                    {
+                        "disposition": disposition,
+                        "category": group["equipment_category"],
+                        "scopes": list(group.get("scopes") or []),
+                        "claim_ids": list(group.get("claim_ids") or []),
+                        "purchase_intent": bool(
+                            group.get("purchase_intent")
+                        ),
+                        "source": "category_scoped_line_claim",
+                    }
+                )
+        else:
+            row_specs.append(
+                {
+                    "disposition": {
+                        **title_disposition,
+                        "reason_codes": list(
+                            title_disposition.get("reason_codes") or []
+                        )
+                        + ["title_fallback_no_line_evidence"],
+                    },
+                    "category": title_disposition.get(
+                        "canonical_equipment_category"
+                    ),
+                    "scopes": list(
+                        (claim_axes_by_tender.get(tid) or {}).get(
+                            "equipment_scopes"
+                        )
+                        or []
+                    ),
+                    "claim_ids": [],
+                    "purchase_intent": False,
+                    "source": "title_fallback_no_line_evidence",
+                }
+            )
+
+        return row_specs
+
+    commercial_row_specs_by_tender = {
+        t.coalesced_tender_id: _commercial_row_specs_for_tender(t)
+        for t in sorted(
+            temporally_eligible_tenders,
+            key=lambda item: item.coalesced_tender_id,
+        )
+        if t.coalesced_tender_id in decisions_by_tender
+    }
+
+    def _tender_has_equipment_purchase_truth(tid: str) -> bool:
+        return any(
+            is_equipment_purchase_signal(
+                str(
+                    spec["disposition"].get(
+                        "commercial_signal_type"
+                    )
+                    or ""
+                )
+            )
+            for spec in commercial_row_specs_by_tender[tid]
+        )
+
     history_by_institution = aggregate_equipment_history(
         tenders=[t for t in pr5c.coalesced_tenders if t.coalesced_tender_id in eligible_tender_ids],
         decisions_by_tender=decisions_by_tender,
@@ -1072,17 +1214,22 @@ def build_institution_prospects_from_plans(
         )
 
         history = history_by_institution.get(iid, [])
-        purchase_tender_count = 0
-        open_purchase = 0
-        historical_purchase = 0
-        for t in tenders:
-            sig = _signal(t.coalesced_tender_id)
-            if is_equipment_purchase_signal(sig):
-                purchase_tender_count += 1
-                if is_open_lifecycle(_lifecycle(t.coalesced_tender_id)):
-                    open_purchase += 1
-                else:
-                    historical_purchase += 1
+        purchase_tender_ids = {
+            t.coalesced_tender_id
+            for t in tenders
+            if _tender_has_equipment_purchase_truth(
+                t.coalesced_tender_id
+            )
+        }
+        purchase_tender_count = len(purchase_tender_ids)
+        open_purchase = sum(
+            1
+            for tid in purchase_tender_ids
+            if is_open_lifecycle(_lifecycle(tid))
+        )
+        historical_purchase = (
+            purchase_tender_count - open_purchase
+        )
 
         repeated_category_count = sum(
             1
@@ -1113,7 +1260,7 @@ def build_institution_prospects_from_plans(
         current_opportunity_like = sum(
             1
             for t in open_tenders
-            if is_equipment_purchase_signal(_signal(t.coalesced_tender_id))
+            if t.coalesced_tender_id in purchase_tender_ids
         )
 
         strength = score_prospect_strength(
@@ -1141,99 +1288,7 @@ def build_institution_prospects_from_plans(
             projection = lifecycle_projections.get(tid)
             family = family_meta_by_tender.get(tid, {})
             life = _lifecycle(tid)
-            claims = list(claims_by_tender.get(tid) or ())
-            title_disposition = disposition_by_tender.get(tid, {})
-            category_groups = [
-                g
-                for g in aggregate_category_scoped_claims(claims)
-                if g.get("purchase_intent")
-                or g.get("commercial_signal") == "equipment_purchase_signal"
-                or SCOPE_COMPLETE_EQUIPMENT in (g.get("scopes") or [])
-            ]
-            # Title disposition is only a fallback when no detailed product lines
-            # produced category-scoped claims for this tender.
-            row_specs: list[dict[str, Any]] = []
-            if category_groups:
-                for group in category_groups:
-                    group_claims = [
-                        c
-                        for c in claims
-                        if c.claim_id in set(group.get("claim_ids") or [])
-                    ]
-                    amb = sorted(
-                        {
-                            a
-                            for c in group_claims
-                            for a in (c.ambiguity_reason_codes or ())
-                        }
-                    )
-                    pos = sorted(
-                        {
-                            a
-                            for c in group_claims
-                            for a in (c.positive_reason_codes or ())
-                        }
-                    )
-                    neg = sorted(
-                        {
-                            a
-                            for c in group_claims
-                            for a in (c.negative_reason_codes or ())
-                        }
-                    )
-                    clause_text = " | ".join(
-                        c.clause_text for c in group_claims[:3] if c.clause_text
-                    )
-                    relevance = next(
-                        (c.relevance_class for c in group_claims if c.relevance_class),
-                        d.relevance_class,
-                    )
-                    signal = str(
-                        group.get("commercial_signal") or "equipment_purchase_signal"
-                    )
-                    disposition = classify_provisional_disposition(
-                        relevance_class=relevance,
-                        commercial_signal=signal,
-                        canonical_equipment_classes=(group["equipment_category"],),
-                        title=clause_text or t.title_selected,
-                        positive_reason_codes=pos,
-                        negative_reason_codes=neg,
-                        ambiguity_reason_codes=amb,
-                    )
-                    row_specs.append(
-                        {
-                            "disposition": disposition,
-                            "category": group["equipment_category"],
-                            "scopes": list(group.get("scopes") or []),
-                            "claim_ids": list(group.get("claim_ids") or []),
-                            "purchase_intent": bool(group.get("purchase_intent")),
-                            "source": "category_scoped_line_claim",
-                        }
-                    )
-            else:
-                row_specs.append(
-                    {
-                        "disposition": {
-                            **title_disposition,
-                            "reason_codes": list(
-                                title_disposition.get("reason_codes") or []
-                            )
-                            + ["title_fallback_no_line_evidence"],
-                        },
-                        "category": title_disposition.get(
-                            "canonical_equipment_category"
-                        ),
-                        "scopes": list(
-                            (claim_axes_by_tender.get(tid) or {}).get(
-                                "equipment_scopes"
-                            )
-                            or []
-                        ),
-                        "claim_ids": [],
-                        "purchase_intent": False,
-                        "source": "title_fallback_no_line_evidence",
-                    }
-                )
+            row_specs = commercial_row_specs_by_tender[tid]
 
             for spec in row_specs:
                 disposition = spec["disposition"]
