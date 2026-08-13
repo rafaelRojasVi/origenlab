@@ -1818,10 +1818,50 @@ def build_institution_prospect_plan(
     pr5c_plan: CandidatePlanResult | None = None,
     pr5d_plan: ProductRelevancePlanResult | None = None,
     pr5e_plan: ContactResolutionPlanResult | None = None,
+    enable_annex_opportunity_evidence: bool = False,
+    annex_evidence_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Build and atomically write institution prospect artifacts."""
     root = _email_pipeline_root()
     materialized_at = _utcnow()
+
+    if enable_annex_opportunity_evidence and annex_evidence_dir is None:
+        raise ValueError(
+            "enable_annex_opportunity_evidence requires annex_evidence_dir"
+        )
+    if annex_evidence_dir is not None and not enable_annex_opportunity_evidence:
+        raise ValueError(
+            "annex_evidence_dir requires enable_annex_opportunity_evidence"
+        )
+    if enable_annex_opportunity_evidence and pr5e_plan is not None:
+        raise ValueError(
+            "enabled annex integration cannot consume an injected baseline PR5E plan"
+        )
+
+    resolved_annex_dir: Path | None = None
+    if enable_annex_opportunity_evidence:
+        # P2A only consumes an explicit pre-existing local evidence directory.
+        # It performs no acquisition/network work.
+        assert annex_evidence_dir is not None
+        try:
+            resolved_annex_dir = annex_evidence_dir.expanduser().resolve(strict=True)
+        except OSError as exc:
+            raise ValueError(
+                f"annex evidence directory is unavailable: {exc}"
+            ) from exc
+
+        if not resolved_annex_dir.is_dir():
+            raise ValueError("annex evidence path must be a directory")
+
+        resolved_out = out_dir.expanduser().resolve()
+        if (
+            resolved_annex_dir == resolved_out
+            or resolved_annex_dir in resolved_out.parents
+            or resolved_out in resolved_annex_dir.parents
+        ):
+            raise ValueError(
+                "annex evidence directory must be disjoint from out_dir"
+            )
 
     def _writer(dest: Path) -> dict[str, str]:
         nonlocal pr5c_plan, pr5d_plan, pr5e_plan
@@ -1883,7 +1923,68 @@ def build_institution_prospect_plan(
                 labeling_queue_size=labeling_queue_size,
                 pr5c_plan=pr5c_plan,
             )
-        if pr5e_plan is None:
+        baseline_pr5d = pr5d_plan
+
+        if enable_annex_opportunity_evidence:
+            # Lazy imports are deliberate: disabled mode must never import or
+            # invoke the P2A evidence lane.
+            from origenlab_email_pipeline.commercial_procurement_anexo_integration.augment import (
+                augment_product_relevance_plan,
+            )
+            from origenlab_email_pipeline.commercial_procurement_anexo_integration.bundle import (
+                load_verified_anexo_evidence,
+            )
+
+            assert resolved_annex_dir is not None
+
+            verified_annex = load_verified_anexo_evidence(
+                resolved_annex_dir
+            )
+            annex_augmentation = augment_product_relevance_plan(
+                pr5c=pr5c_plan,
+                baseline=baseline_pr5d,
+                verified=verified_annex,
+            )
+
+            # Baseline PR5E is built only for the later P2A delta/audit graph.
+            # Production enabled PR5E is rebuilt from augmented PR5D.
+            baseline_pr5e = build_contact_resolution_plan(
+                sqlite_path=sqlite_path,
+                acquisition_snapshot_paths=snapshot_paths
+                or list(acquisition_snapshot_paths or []),
+                as_of_utc=as_of_utc,
+                freshness_threshold_hours=freshness_threshold_hours,
+                run_context=run_context,
+                labeling_queue_size=labeling_queue_size,
+                pr5d_plan=baseline_pr5d,
+                pr5c_plan=pr5c_plan,
+            )
+
+            pr5d_plan = annex_augmentation.plan
+            pr5e_plan = build_contact_resolution_plan(
+                sqlite_path=sqlite_path,
+                acquisition_snapshot_paths=snapshot_paths
+                or list(acquisition_snapshot_paths or []),
+                as_of_utc=as_of_utc,
+                freshness_threshold_hours=freshness_threshold_hours,
+                run_context=run_context,
+                labeling_queue_size=labeling_queue_size,
+                pr5d_plan=pr5d_plan,
+                pr5c_plan=pr5c_plan,
+            )
+
+            expected_pr5d_digest = pr5d_plan.fingerprints.get(
+                "semantic_digest"
+            )
+            actual_pr5d_digest = pr5e_plan.dependency_fingerprints.get(
+                "pr5d_semantic_digest"
+            )
+            if actual_pr5d_digest != expected_pr5d_digest:
+                raise ValueError(
+                    "PR5E dependency does not bind to augmented annex PR5D"
+                )
+
+        elif pr5e_plan is None:
             pr5e_plan = build_contact_resolution_plan(
                 sqlite_path=sqlite_path,
                 acquisition_snapshot_paths=snapshot_paths
@@ -1899,6 +2000,18 @@ def build_institution_prospect_plan(
         temporal_report = classify_acquisition_snapshots(
             snapshot_paths, as_of_utc=as_of_utc
         )
+
+        baseline_result: InstitutionProspectPlanResult | None = None
+        if enable_annex_opportunity_evidence:
+            baseline_result = build_institution_prospects_from_plans(
+                pr5c=pr5c_plan,
+                pr5d=baseline_pr5d,
+                pr5e=baseline_pr5e,
+                as_of_utc=as_of_utc,
+                run_context=run_context,
+                snapshot_temporal_report=temporal_report,
+            )
+
         result = build_institution_prospects_from_plans(
             pr5c=pr5c_plan,
             pr5d=pr5d_plan,
@@ -1907,7 +2020,36 @@ def build_institution_prospect_plan(
             run_context=run_context,
             snapshot_temporal_report=temporal_report,
         )
-        return _write_bundle(dest, result, adapter_records=adapter_records)
+
+        paths = _write_bundle(
+            dest,
+            result,
+            adapter_records=adapter_records,
+        )
+
+        if enable_annex_opportunity_evidence:
+            from origenlab_email_pipeline.commercial_procurement_anexo_integration.audit import (
+                build_annex_integration_audit,
+                write_annex_integration_sidecars,
+            )
+
+            assert baseline_result is not None
+
+            reconciliation, provenance_rows = build_annex_integration_audit(
+                augmentation=annex_augmentation,
+                baseline=baseline_result,
+                enabled=result,
+            )
+
+            paths.update(
+                write_annex_integration_sidecars(
+                    dest,
+                    reconciliation=reconciliation,
+                    provenance_rows=provenance_rows,
+                )
+            )
+
+        return paths
 
     return write_atomically(
         out_dir, repo_email_pipeline_root=root, writer=_writer
