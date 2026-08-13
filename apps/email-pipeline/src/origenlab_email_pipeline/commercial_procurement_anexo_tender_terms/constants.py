@@ -1,6 +1,6 @@
 """Constants for ANEXO-T1 structured tender intelligence."""
 
-TENDER_TERMS_VERSION = "anexo_t1_v1"
+TENDER_TERMS_VERSION = "anexo_t1_v2"
 TENDER_TERMS_DIGEST_ALGORITHM = "anexo_t1.structured_tender_terms"
 
 FACT_STATE_EXPLICIT = "explicit"
