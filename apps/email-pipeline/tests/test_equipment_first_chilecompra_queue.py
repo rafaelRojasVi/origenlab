@@ -64,9 +64,27 @@ def _summary_row(
 def test_summary_keyword_prefilter_accepts_equipment_terms() -> None:
     row = _summary_row(codigo="1-1-LP26", title="Adquisición centrifuga laboratorio")
     assert summary_passes_keyword_prefilter(row) is True
+    assert (
+        summary_passes_keyword_prefilter(
+            _summary_row(codigo="2-2-LP26", title="Pavimentación calle principal")
+        )
+        is False
+    )
+
+
+def test_summary_keyword_prefilter_accepts_bascula_and_vortex_terms() -> None:
     assert summary_passes_keyword_prefilter(
-        _summary_row(codigo="2-2-LP26", title="Pavimentación calle principal")
-    ) is False
+        _summary_row(
+            codigo="2981-205-LE26",
+            title="Básculas analíticas de precisión",
+        )
+    )
+    assert summary_passes_keyword_prefilter(
+        _summary_row(
+            codigo="1947-146-LE26",
+            title="Adquisición agitador vórtex",
+        )
+    )
 
 
 def test_build_equipment_queue_from_normalized_rows_centrifuge() -> None:
@@ -215,7 +233,9 @@ def test_summary_prefilter_skips_are_counted_and_audited() -> None:
         ]
     }
     fetch_list = MagicMock(return_value=summaries)
-    fetch_detail = MagicMock(side_effect=lambda codigo, ticket: _equipment_detail_payload(codigo))
+    fetch_detail = MagicMock(
+        side_effect=lambda codigo, ticket: _equipment_detail_payload(codigo)
+    )
 
     _rows, manifest, audit_rows = build_equipment_queue_from_chilecompra_api(
         ticket=_SECRET_TICKET,
@@ -330,7 +350,9 @@ def test_write_chilecompra_api_queue_outputs_csv_fields(tmp_path: Path) -> None:
     assert manifest_data["by_next_action"]["quote_now"] == 1
 
 
-def test_build_equipment_queue_missing_ticket_raises_clear_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_equipment_queue_missing_ticket_raises_clear_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("CHILECOMPRA_API_TICKET", raising=False)
     with pytest.raises(ChileCompraTicketMissingError, match="CHILECOMPRA_API_TICKET"):
         build_equipment_queue_from_chilecompra_api(
@@ -456,7 +478,9 @@ def test_detail_cache_hit_avoids_fetch_detail(tmp_path: Path) -> None:
     cache_dir = tmp_path / "chilecompra_detail_cache"
     codigo = "1-1-LP26"
     cached_payload = _equipment_detail_payload(codigo)
-    from origenlab_email_pipeline.equipment_first_chilecompra_queue import write_detail_cache
+    from origenlab_email_pipeline.equipment_first_chilecompra_queue import (
+        write_detail_cache,
+    )
 
     write_detail_cache(cache_dir, codigo, cached_payload)
 
@@ -485,7 +509,9 @@ def test_successful_detail_fetch_writes_cache(tmp_path: Path) -> None:
     codigo = "1-1-LP26"
     fetch_list = MagicMock(return_value=_equipment_summaries(1))
     fetch_detail = MagicMock(
-        side_effect=lambda requested_codigo, ticket: _equipment_detail_payload(requested_codigo)
+        side_effect=lambda requested_codigo, ticket: _equipment_detail_payload(
+            requested_codigo
+        )
     )
 
     _rows, manifest, _audit = build_equipment_queue_from_chilecompra_api(
@@ -542,7 +568,9 @@ def test_candidate_audit_includes_matched_and_rejected_rows(tmp_path: Path) -> N
                     {
                         "CodigoExterno": codigo,
                         "Nombre": "Adquisición insumos laboratorio",
-                        "Items": {"Descripcion": "Papel bond y carpetas administrativas"},
+                        "Items": {
+                            "Descripcion": "Papel bond y carpetas administrativas"
+                        },
                     }
                 ]
             }
@@ -571,7 +599,9 @@ def test_candidate_audit_includes_matched_and_rejected_rows(tmp_path: Path) -> N
 
     assert by_codigo["1051-1-LP26"]["detected_output_rows"] == "1"
     assert by_codigo["1051-1-LP26"]["reject_reason"] == ""
-    assert by_codigo["2000-1-LP26"]["reject_reason"] == "no_equipment_match_after_detail"
+    assert (
+        by_codigo["2000-1-LP26"]["reject_reason"] == "no_equipment_match_after_detail"
+    )
     assert by_codigo["3000-1-LP26"]["reject_reason"] == "not_detailed_max_details"
     assert manifest["output_rows"] == len(rows)
 
