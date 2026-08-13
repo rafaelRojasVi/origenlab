@@ -8,7 +8,9 @@ from origenlab_email_pipeline.chilecompra_anexo_evidence.constants import (
     FORBIDDEN_ARTIFACT_SUBSTRINGS,
 )
 
-_TOKEN_QUERY_RE = re.compile(r"(?i)\b(qs|enc|ticket)=[^&\s\"'<>]*")
+_TOKEN_QUERY_RE = re.compile(
+    r"(?i)\b(qs|enc|ticket)=(?:<redacted>|[^&\s\"'<>]*)"
+)
 
 
 class ArtifactRedactionError(AssertionError):
@@ -28,8 +30,17 @@ def assert_no_portal_tokens(serialized: str, *, where: str) -> None:
     for needle in FORBIDDEN_ARTIFACT_SUBSTRINGS:
         index = lowered.find(needle)
         while index != -1:
-            tail = lowered[index + len(needle) : index + len(needle) + 12]
-            if not tail.startswith("<redacted>"):
+            tail = lowered[index + len(needle) :]
+            marker = "<redacted>"
+            suffix = tail[len(marker) :] if tail.startswith(marker) else ""
+            marker_is_exact = tail.startswith(marker) and (
+                not suffix
+                or suffix[0] in "&\t\r\n \"'"
+                # A quote inside an already JSON-serialized string is escaped.
+                # A generic backslash is not a delimiter and may hide a suffix.
+                or suffix.startswith('\\"')
+            )
+            if not marker_is_exact:
                 raise ArtifactRedactionError(
                     f"portal token {needle!r} found in {where}"
                 )

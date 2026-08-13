@@ -62,6 +62,23 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="ChileCompra equipment detail-cache directory (PR5B.2 seam).",
     )
+    parser.add_argument(
+        "--enable-annex-opportunity-evidence",
+        action="store_true",
+        help=(
+            "Explicitly enable local, previously-built annex "
+            "evidence integration."
+        ),
+    )
+    parser.add_argument(
+        "--annex-evidence-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Existing local annex evidence bundle "
+            "(requires explicit enable flag)."
+        ),
+    )
     parser.add_argument("--as-of-utc", required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--equipment-manifest", type=Path, default=None)
@@ -102,6 +119,24 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    if (
+        args.enable_annex_opportunity_evidence
+        and args.annex_evidence_dir is None
+    ):
+        parser.error(
+            "--enable-annex-opportunity-evidence requires "
+            "--annex-evidence-dir"
+        )
+
+    if (
+        args.annex_evidence_dir is not None
+        and not args.enable_annex_opportunity_evidence
+    ):
+        parser.error(
+            "--annex-evidence-dir requires "
+            "--enable-annex-opportunity-evidence"
+        )
+
     if not args.acquisition_snapshot_json and not args.detail_cache_dir:
         raise SystemExit(
             "error: provide --detail-cache-dir and/or --acquisition-snapshot-json"
@@ -131,6 +166,10 @@ def main(argv: list[str] | None = None) -> int:
             refresh_state_path=args.refresh_state,
             allow_stale_feed=args.allow_stale_feed,
             max_feed_age_hours=args.max_feed_age_hours,
+            enable_annex_opportunity_evidence=(
+                args.enable_annex_opportunity_evidence
+            ),
+            annex_evidence_dir=args.annex_evidence_dir,
         )
     except (LiveFeedFreshnessError, ReportOutputError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
