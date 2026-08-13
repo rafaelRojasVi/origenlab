@@ -1,0 +1,85 @@
+{
+  "fixture_contract": "commercial_procurement_anexo_integration_p2a_historical_replay_v1",
+  "archived_snapshot_existed": false,
+  "expected_historical_replay_union_ids": [
+    "1057510-40-LP26",
+    "1057510-53-LP26",
+    "4034-16-LE26"
+  ],
+  "historical_replay_results_by_as_of": {
+    "2026-06-20T12:00:00Z": [
+      "1057510-40-LP26"
+    ],
+    "2026-07-10T12:00:00Z": [
+      "1057510-53-LP26",
+      "4034-16-LE26"
+    ]
+  },
+  "historical_replay_union_ids": [
+    "1057510-40-LP26",
+    "1057510-53-LP26",
+    "4034-16-LE26"
+  ],
+  "no_single_replay_is_required_to_contain_the_union": true,
+  "scenarios": [
+    {
+      "scenario_id": "june_2026_open_window",
+      "as_of_utc": "2026-06-20T12:00:00Z",
+      "constructed_acquired_at_utc": "2026-06-19T12:00:00Z",
+      "archived_snapshot_existed": false,
+      "expected_current_opportunity_tender_ids": [
+        "1057510-40-LP26"
+      ],
+      "tenders": [
+        {
+          "tender_id": "1057510-40-LP26",
+          "status_code": "5",
+          "status_name": "Publicada",
+          "publication_timestamp_raw": "2026-05-26T16:53:56.35",
+          "close_timestamp_raw": "2026-06-22T17:00:00",
+          "title": "CONVENIO SUMINISTRO REACTIVOS E INSUMOS PARA ANÁLISIS DE ORINA Y SEDIMENTO CON ENTREGA DE EQUIPO PARA LABORATORIO DEL HOSPITAL DE SAN CARLOS DR. BENICIO ARZOLA MEDINA",
+          "buyer_display": "SERVICIO DE SALUD NUBLE HOSPITAL DE SAN CARLOS DR BENICIO ARZOLA MEDIN",
+          "buyer_source_id": "7469"
+        }
+      ]
+    },
+    {
+      "scenario_id": "july_2026_open_window",
+      "as_of_utc": "2026-07-10T12:00:00Z",
+      "constructed_acquired_at_utc": "2026-07-09T12:00:00Z",
+      "archived_snapshot_existed": false,
+      "expected_current_opportunity_tender_ids": [
+        "1057510-53-LP26",
+        "4034-16-LE26"
+      ],
+      "tenders": [
+        {
+          "tender_id": "1057510-53-LP26",
+          "status_code": "5",
+          "status_name": "Publicada",
+          "publication_timestamp_raw": "2026-07-08T16:31:51.227",
+          "close_timestamp_raw": "2026-07-28T17:00:00",
+          "title": "CONVENIO SUMINISTRO REACTIVOS E INSUMOS PARA ANÁLISIS DE ORINA Y SEDIMENTO CON ENTREGA DE EQUIPO PARA LABORATORIO DEL HOSPITAL DE SAN CARLOS DR. BENICIO ARZOLA MEDINA",
+          "buyer_display": "SERVICIO DE SALUD NUBLE HOSPITAL DE SAN CARLOS DR BENICIO ARZOLA MEDIN",
+          "buyer_source_id": "7469"
+        },
+        {
+          "tender_id": "4034-16-LE26",
+          "status_code": "5",
+          "status_name": "Publicada",
+          "publication_timestamp_raw": "2026-07-08T13:36:55.22",
+          "close_timestamp_raw": "2026-07-20T16:00:00",
+          "title": "LABORATORIOS MOVILES DE CIENCIAS NATURALES",
+          "buyer_display": "I MUNICIPALIDAD DE CANETE",
+          "buyer_source_id": "119488"
+        }
+      ]
+    }
+  ],
+  "timestamp_contract": {
+    "acquisition_observations_are_constructed_fixture_data": true,
+    "acquisition_observations_must_be_at_or_before_replay_as_of": true,
+    "source_tender_timestamps_are_verbatim": true,
+    "source_tender_timestamps_use_production_parser_semantics": "America/Santiago when the source timestamp has no explicit offset"
+  }
+}
