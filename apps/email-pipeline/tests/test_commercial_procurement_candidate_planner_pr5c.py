@@ -90,6 +90,9 @@ from origenlab_email_pipeline.commercial_procurement_candidate_planner.walkthrou
     build_walkthrough_bundle,
     write_walkthrough,
 )
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.procurement_eligibility import (
+    classify_procurement_eligibility,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 LIVE = FIXTURES / "commercial_procurement_acquisition_live_contract"
@@ -761,6 +764,155 @@ def test_procurement_method_duplicate_agreeing_evidence_is_not_a_false_conflict(
     assert tenders[0].procurement_method_selected == "LP"
     assert tenders[0].procurement_method_details_selected == "1"
     assert not any(c.conflict_kind == "procurement_method_conflict" for c in conflicts)
+
+
+def test_build_candidate_plan_preserves_procurement_method_through_lifecycle(
+    tmp_path: Path,
+) -> None:
+    """Live-verification regression: a fresh ChileCompra pull found
+    coalesce_evidence_refs() correctly selecting "LP" for a real tender
+    (745712-19-LP26 / SAG), but the full build_candidate_plan() path —
+    which additionally runs apply_lifecycle() after coalescence — reset
+    procurement_method_selected to None for 100% of live-snapshot tenders.
+    apply_lifecycle() reconstructed CoalescedProcurementTender field-by-field
+    and never carried the two PR3 fields forward. This exercises the public
+    build_candidate_plan() path end to end (not coalesce_evidence_refs() in
+    isolation, not a directly constructed CoalescedProcurementTender) with a
+    real Ticket-detail-shaped snapshot, through apply_lifecycle(), and proves
+    both fields — and downstream eligibility classification — survive.
+    """
+    db = tmp_path / "pr4.sqlite"
+    _seed_pr4_db(db, [])
+
+    public_snap = _write_snap(tmp_path, "public.json", _ticket_detail_snapshot())
+
+    restricted_payload = json.loads(
+        (LIVE / "ticket_detail_items_live_shape_v1.json").read_text()
+    )
+    restricted_lic = restricted_payload["Listado"][0]
+    restricted_lic["CodigoExterno"] = "9999-1-CO26"
+    restricted_lic["Tipo"] = "CO"
+    restricted_lic["TipoConvocatoria"] = "0"
+    restricted_snapshot = build_acquisition_snapshot(
+        source_kind="ticket_detail",
+        payload=restricted_payload,
+        fixture_origin="live_response_sanitized",
+        acquired_at_utc="2026-08-01T10:00:00Z",
+        tender_code="9999-1-CO26",
+    )
+    restricted_snap = _write_snap(
+        tmp_path, "restricted.json", restricted_snapshot.to_dict()
+    )
+
+    result = build_candidate_plan(
+        sqlite_path=db,
+        acquisition_snapshot_paths=[public_snap, restricted_snap],
+        as_of_utc=AS_OF,
+        freshness_threshold_hours=48,
+        run_context="local_fixture",
+    )
+
+    by_key = {t.canonical_tender_key: t for t in result.coalesced_tenders}
+    public_tender = by_key["3544-1-le26"]
+    restricted_tender = by_key["9999-1-co26"]
+
+    # Public method (Tipo=LE, TipoConvocatoria=1 in the live-shape fixture)
+    # survives the full path, including apply_lifecycle().
+    assert public_tender.procurement_method_selected == "LE"
+    assert public_tender.procurement_method_details_selected == "1"
+    prov_ref_id = public_tender.selected_field_provenance.get("procurement_method")
+    assert prov_ref_id is not None
+    assert prov_ref_id in public_tender.evidence_ref_ids
+    assert (
+        classify_procurement_eligibility(public_tender.procurement_method_selected)
+        == "open_public"
+    )
+
+    # Restricted method (Tipo=CO) also survives and classifies correctly.
+    assert restricted_tender.procurement_method_selected == "CO"
+    assert restricted_tender.procurement_method_details_selected == "0"
+    assert (
+        classify_procurement_eligibility(restricted_tender.procurement_method_selected)
+        == "restricted_invitation_unconfirmed"
+    )
+
+
+def test_apply_lifecycle_preserves_procurement_method_exactly() -> None:
+    """apply_lifecycle() must change only lifecycle/currentness fields — it
+    must not reset, backfill, or synthesize procurement_method_selected /
+    procurement_method_details_selected. Covers: a populated method with
+    populated details, and a populated method with details=None (which must
+    stay None, never backfilled from anywhere).
+    """
+    from dataclasses import replace
+
+    ref_with_details = _ref(
+        rid="ref_both",
+        plane="acquisition",
+        key="8001-1-lp26",
+        rank="ticket_detail",
+        status_code="5",
+        status_name="Publicada",
+        close="2026-09-01T15:00:00-04:00",
+        acquired="2026-08-01T10:00:00Z",
+        obs="obs_both",
+        snap="snap_both",
+    )
+    ref_with_details = replace(
+        ref_with_details,
+        procurement_method_raw="LP",
+        procurement_method_details_raw="1",
+        has_procurement_method=True,
+        has_procurement_method_details=True,
+    )
+    ref_method_only = _ref(
+        rid="ref_method_only",
+        plane="acquisition",
+        key="8002-1-co26",
+        rank="ticket_detail",
+        status_code="5",
+        status_name="Publicada",
+        close="2026-09-01T15:00:00-04:00",
+        acquired="2026-08-01T10:00:00Z",
+        obs="obs_method_only",
+        snap="snap_method_only",
+    )
+    ref_method_only = replace(
+        ref_method_only,
+        procurement_method_raw="CO",
+        procurement_method_details_raw=None,
+        has_procurement_method=True,
+        has_procurement_method_details=False,
+    )
+
+    tenders_both, _ = _coalesce([ref_with_details])
+    tenders_method_only, _ = _coalesce([ref_method_only])
+    refs_by_id = {
+        ref_with_details.evidence_ref_id: ref_with_details,
+        ref_method_only.evidence_ref_id: ref_method_only,
+    }
+
+    lifecycle_applied = apply_lifecycle(
+        list(tenders_both) + list(tenders_method_only),
+        refs_by_id=refs_by_id,
+        conflicts_by_id={},
+        as_of_utc=parse_as_of_utc(AS_OF),
+        freshness_threshold_hours=48,
+    )
+    by_key = {t.canonical_tender_key: t for t in lifecycle_applied}
+
+    both = by_key["8001-1-lp26"]
+    assert both.procurement_method_selected == "LP"
+    assert both.procurement_method_details_selected == "1"
+    # Lifecycle fields were genuinely recomputed (proves apply_lifecycle ran,
+    # not that it was a no-op).
+    assert both.lifecycle_class != "pending"
+    assert both.currentness_class != "pending"
+
+    method_only = by_key["8002-1-co26"]
+    assert method_only.procurement_method_selected == "CO"
+    assert method_only.procurement_method_details_selected is None
+    assert method_only.lifecycle_class != "pending"
 
 
 # --- Stable coalesced ID ---

@@ -439,6 +439,10 @@ def apply_lifecycle(
                 buyer_display_selected=tender.buyer_display_selected,
                 buyer_source_id_selected=tender.buyer_source_id_selected,
                 title_selected=tender.title_selected,
+                procurement_method_selected=tender.procurement_method_selected,
+                procurement_method_details_selected=(
+                    tender.procurement_method_details_selected
+                ),
                 selected_field_provenance=dict(tender.selected_field_provenance),
                 buyer_display_variance=tender.buyer_display_variance,
                 lifecycle_status_evidence_ref_id=status_ref_id,
