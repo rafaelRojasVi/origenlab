@@ -15,7 +15,10 @@ from origenlab_email_pipeline.commercial_procurement.constants import (
 PLANNER_VERSION: Final = "procurement_candidate_planner_v2"
 COALESCENCE_POLICY_VERSION: Final = "procurement_coalescence_policy_v3"
 LIFECYCLE_POLICY_VERSION: Final = "procurement_lifecycle_policy_v3"
-# v4: SELECTABLE_FIELDS gained procurement_method/procurement_method_details (PR3).
+# v4: SELECTABLE_FIELDS gained procurement_method (PR3). procurement_method_details
+# is deliberately NOT independently selectable — it is derived only from the same
+# evidence ref that won procurement_method, never backfilled from a different or
+# lower-ranked ref (see coalesce_evidence_refs in coalescence.py).
 FIELD_PRECEDENCE_VERSION: Final = "procurement_field_precedence_v4"
 COALESCED_TENDER_ID_ALGORITHM: Final = "coalesced_tender_id_v2"
 ACQUISITION_INSTANCE_ID_ALGORITHM: Final = "candidate_acquisition_instance_id_v1"

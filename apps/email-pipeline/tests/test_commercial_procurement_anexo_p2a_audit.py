@@ -357,6 +357,10 @@ def _enabled_row(
         "reason_codes": ["annex_evidence"],
         "eligibility_reason_codes": ["annex_equipment_purchase"],
         "claim_ids": [f"production-line-claim:{tender_code}:{category}"],
+        # PR3: this fixture predates procurement-method evidence; default to
+        # open/public for actionable rows so the fail-closed eligibility gate
+        # does not block scenarios this fixture already marks as in-scope.
+        "procurement_eligibility_status": "open_public" if actionable else "unknown",
     }
 
 

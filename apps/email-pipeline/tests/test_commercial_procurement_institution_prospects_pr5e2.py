@@ -1247,6 +1247,69 @@ def test_current_opportunity_blockers_reports_conflict_reason_code() -> None:
     )
 
 
+def test_current_opportunity_blockers_fails_closed_on_eligibility_status() -> None:
+    """PR3 hardening: the final queue boundary must fail closed. open_public
+    is the only status that passes without an eligibility blocker; every
+    other value — restricted, explicit unknown, a missing key, or an
+    unrecognized future value — is blocked. Uses an otherwise fully
+    actionable row (zero blockers when eligibility is open_public) so each
+    case isolates the eligibility gate specifically.
+    """
+    actionable_row = {
+        "projected_lifecycle_class": "active_open",
+        "review_disposition": "catalog_fit_candidate",
+        "commercial_signal_type": "equipment_purchase_signal",
+        "catalog_fit_status": "catalog_fit_candidate",
+        "catalog_match_status": "verified_catalog_equipment_class",
+        "canonical_equipment_category": "centrifuge",
+        "equipment_scopes": ["complete_equipment"],
+        "purchase_intent": True,
+        "commercial_truth_source": "category_scoped_line_claim",
+        "category_signal_conflict": False,
+        "close_timestamp": None,
+    }
+
+    open_row = {**actionable_row, "procurement_eligibility_status": "open_public"}
+    assert current_opportunity_blockers(open_row, 1, as_of_utc=AS_OF) == []
+
+    restricted_row = {
+        **actionable_row,
+        "procurement_eligibility_status": "restricted_invitation_unconfirmed",
+    }
+    assert current_opportunity_blockers(restricted_row, 1, as_of_utc=AS_OF) == [
+        "restricted_procurement_invitation_unconfirmed"
+    ]
+
+    explicit_unknown_row = {
+        **actionable_row,
+        "procurement_eligibility_status": "unknown",
+    }
+    assert current_opportunity_blockers(explicit_unknown_row, 1, as_of_utc=AS_OF) == [
+        "procurement_method_unknown_or_unmapped"
+    ]
+
+    missing_status_row = dict(actionable_row)
+    assert "procurement_eligibility_status" not in missing_status_row
+    assert current_opportunity_blockers(missing_status_row, 1, as_of_utc=AS_OF) == [
+        "procurement_method_unknown_or_unmapped"
+    ]
+
+    unrecognized_row = {
+        **actionable_row,
+        "procurement_eligibility_status": "some_future_status_not_yet_defined",
+    }
+    assert current_opportunity_blockers(unrecognized_row, 1, as_of_utc=AS_OF) == [
+        "procurement_method_unknown_or_unmapped"
+    ]
+
+    # Repeated calls must not mutate or duplicate reason_codes on the row.
+    row_with_reason_codes = {**open_row, "reason_codes": ["verified_catalog_class_and_purchase_signal"]}
+    before = list(row_with_reason_codes["reason_codes"])
+    current_opportunity_blockers(row_with_reason_codes, 1, as_of_utc=AS_OF)
+    current_opportunity_blockers(row_with_reason_codes, 1, as_of_utc=AS_OF)
+    assert row_with_reason_codes["reason_codes"] == before
+
+
 def test_chiloe_shaped_rental_tender_absent_from_current_opportunity_queue() -> None:
     """A generic fixture modeled on a real long-term rental tender: title
     names the rental directly, and the tender description separately reads
