@@ -62,7 +62,11 @@ from origenlab_email_pipeline.commercial_procurement_candidate_planner.normalize
 )
 
 SUPPORTED_ACQUISITION_CONTRACTS = frozenset({ACQUISITION_CONTRACT_VERSION})
-SUPPORTED_PARSER_VERSIONS = frozenset({PARSER_VERSION})
+# v1 snapshots persisted before PR3 (procurement_method/procurement_method_details
+# always None) remain readable; only newly-parsed observations report v2. Rehydration
+# must not reject historical snapshots merely because PARSER_VERSION advanced.
+_LEGACY_PARSER_VERSIONS = frozenset({"procurement_acquisition_parser_v1"})
+SUPPORTED_PARSER_VERSIONS = frozenset({PARSER_VERSION}) | _LEGACY_PARSER_VERSIONS
 SUPPORTED_QUERY_CONTRACTS = frozenset(
     {QUERY_CONTRACT_VERSION, OCDS_QUERY_CONTRACT_VERSION}
 )
@@ -820,6 +824,10 @@ def snapshot_to_evidence(
         buyer = (tender.buyer_display if tender else None) or obs.buyer_display_raw
         buyer_id = (tender.buyer_source_id if tender else None) or obs.buyer_source_id
         title = tender.title if tender else None
+        procurement_method = tender.procurement_method if tender else None
+        procurement_method_details = (
+            tender.procurement_method_details if tender else None
+        )
         status_code = (
             (tender.source_status_code if tender else None) or obs.source_status_code
         )
@@ -888,6 +896,8 @@ def snapshot_to_evidence(
                     "buyer_display": rank_class,
                     "buyer_source_id": rank_class,
                     "title": rank_class,
+                    "procurement_method": rank_class,
+                    "procurement_method_details": rank_class,
                 },
                 reason_codes=tuple(obs.provenance_reason_codes)
                 + (("partial_page",) if page_status == "partial_page_failure" else ()),
@@ -899,6 +909,10 @@ def snapshot_to_evidence(
                 has_buyer_source_id=bool(buyer_id),
                 has_title=bool(title),
                 page_completeness=page_status,
+                procurement_method_raw=procurement_method,
+                procurement_method_details_raw=procurement_method_details,
+                has_procurement_method=bool(procurement_method),
+                has_procurement_method_details=bool(procurement_method_details),
             )
         )
     return refs, unresolved

@@ -10,10 +10,13 @@ from origenlab_email_pipeline.commercial_procurement.constants import (
     INACTIVE_STATUS_NAMES as PR4_INACTIVE_STATUS_NAMES,
 )
 
-PLANNER_VERSION: Final = "procurement_candidate_planner_v1"
+# v2: CoalescedProcurementTender/ProcurementEvidenceRef gained
+# procurement_method(_details)(_selected|_raw) fields (PR3).
+PLANNER_VERSION: Final = "procurement_candidate_planner_v2"
 COALESCENCE_POLICY_VERSION: Final = "procurement_coalescence_policy_v3"
 LIFECYCLE_POLICY_VERSION: Final = "procurement_lifecycle_policy_v3"
-FIELD_PRECEDENCE_VERSION: Final = "procurement_field_precedence_v3"
+# v4: SELECTABLE_FIELDS gained procurement_method/procurement_method_details (PR3).
+FIELD_PRECEDENCE_VERSION: Final = "procurement_field_precedence_v4"
 COALESCED_TENDER_ID_ALGORITHM: Final = "coalesced_tender_id_v2"
 ACQUISITION_INSTANCE_ID_ALGORITHM: Final = "candidate_acquisition_instance_id_v1"
 
@@ -92,6 +95,7 @@ CONFLICT_KINDS: Final = (
     "duplicate_live_observation_conflict",
     "incompatible_canonical_identity",
     "acquisition_timestamp_conflict",
+    "procurement_method_conflict",
 )
 
 # Canonical identity namespaces (grouping grain).

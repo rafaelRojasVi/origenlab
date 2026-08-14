@@ -105,6 +105,19 @@ def tender_dict_to_coalesced(tender: dict[str, Any]) -> CoalescedProcurementTend
         lifecycle_reason_codes=(),
         evidence_ref_ids=(),
         conflict_ids=(),
+        # PR3: propagate when the ANEXO detail-cache dict carries it (same
+        # None-preserving convention as ticket_api.py); absent for fixtures
+        # that predate procurement-method evidence.
+        procurement_method_selected=(
+            str(tender["procurement_method"])
+            if tender.get("procurement_method")
+            else None
+        ),
+        procurement_method_details_selected=(
+            str(tender["procurement_method_details"])
+            if tender.get("procurement_method_details")
+            else None
+        ),
     )
 
 

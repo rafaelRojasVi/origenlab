@@ -4,10 +4,15 @@ from __future__ import annotations
 
 from typing import Final
 
-# Snapshot/observation contract stays v1: normalized evidence fields unchanged.
+# Snapshot/observation contract stays v1: procurement_method/procurement_method_details
+# are pre-existing str | None fields on ProcurementTenderObservation (PR3 only changes
+# what value the parser assigns to them, not the schema/field set).
 # OCDS range *query* identity is versioned separately (see OCDS_QUERY_CONTRACT_VERSION).
 ACQUISITION_CONTRACT_VERSION: Final = "commercial_procurement_acquisition_v1"
-PARSER_VERSION: Final = "procurement_acquisition_parser_v1"
+# v2: Ticket-sourced observations now populate procurement_method/procurement_method_details
+# from Tipo/TipoConvocatoria instead of always None (PR3). v1 snapshots remain readable —
+# see SUPPORTED_PARSER_VERSIONS in commercial_procurement_candidate_planner/plane_b_acquisition.py.
+PARSER_VERSION: Final = "procurement_acquisition_parser_v2"
 MANIFEST_VERSION: Final = "acquisition_snapshot_manifest_v1"
 QUERY_CONTRACT_VERSION: Final = "acquisition_query_v1"
 # ListaOCDSAgnoMes range wire semantics measured in PR5B.1 (offset/limit).

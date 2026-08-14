@@ -33,6 +33,12 @@ from origenlab_email_pipeline.commercial_procurement_institution_prospects.line_
     SCOPE_AMBIGUOUS,
     SCOPE_COMPLETE_EQUIPMENT,
 )
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.procurement_eligibility import (
+    ELIGIBILITY_RESTRICTED_INVITATION_UNCONFIRMED,
+    ELIGIBILITY_UNKNOWN,
+    PROCUREMENT_METHOD_UNKNOWN_OR_UNMAPPED_REASON,
+    RESTRICTED_PROCUREMENT_INVITATION_UNCONFIRMED_REASON,
+)
 
 # Only a demonstrably live tender is a current opportunity: future_scheduled,
 # status_conflict and date_missing are review states, not open bidding windows.
@@ -258,6 +264,11 @@ def current_opportunity_blockers(
         blockers.append("title_fallback_not_current_opportunity")
     if row.get("category_signal_conflict"):
         blockers.append(CATEGORY_SIGNAL_CONFLICT_REASON)
+    eligibility_status = row.get("procurement_eligibility_status")
+    if eligibility_status == ELIGIBILITY_RESTRICTED_INVITATION_UNCONFIRMED:
+        blockers.append(RESTRICTED_PROCUREMENT_INVITATION_UNCONFIRMED_REASON)
+    elif eligibility_status == ELIGIBILITY_UNKNOWN:
+        blockers.append(PROCUREMENT_METHOD_UNKNOWN_OR_UNMAPPED_REASON)
     close_dt = _parse_utc(row.get("close_timestamp"))
     as_of = _parse_utc(as_of_utc)
     if close_dt is not None and as_of is not None and close_dt <= as_of:

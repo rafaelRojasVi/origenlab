@@ -157,6 +157,10 @@ def tender(
     buyer: str = "Hospital Demo",
     lifecycle: str = "active_open",
     lines: list[dict] | None = None,
+    # PR3: defaults to a recognized open/public Ticket Tipo code so this
+    # fixture's original actionability intent (unrelated to procurement
+    # method) is preserved.
+    procurement_method: str | None = "LP",
 ) -> dict:
     return {
         "tender_id": tender_id,
@@ -165,6 +169,7 @@ def tender(
         "buyer_organization": buyer,
         "lifecycle_class": lifecycle,
         "lines": lines or [],
+        "procurement_method": procurement_method,
     }
 
 

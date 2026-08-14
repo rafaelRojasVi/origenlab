@@ -81,6 +81,10 @@ def _tender(**kwargs) -> CoalescedProcurementTender:
         lifecycle_reason_codes=(),
         evidence_ref_ids=(),
         conflict_ids=(),
+        # PR3: default to a recognized open/public Ticket Tipo code so
+        # pre-existing tests keep their original actionability intent.
+        procurement_method_selected="LP",
+        procurement_method_details_selected=None,
     )
     defaults.update(kwargs)
     return CoalescedProcurementTender(**defaults)

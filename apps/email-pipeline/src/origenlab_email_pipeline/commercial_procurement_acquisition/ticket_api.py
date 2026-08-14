@@ -377,8 +377,8 @@ def _build_observations_from_licitacion(
         region=_region_name(licitacion) or None,
         currency=_as_optional_str(licitacion.get("Moneda")),
         estimated_value=_as_optional_str(licitacion.get("MontoEstimado")),
-        procurement_method=None,
-        procurement_method_details=None,
+        procurement_method=_as_optional_str(licitacion.get("Tipo")),
+        procurement_method_details=_as_optional_str(licitacion.get("TipoConvocatoria")),
         related_processes=(),
         field_provenance={
             "canonical_tender_key_candidate": "CodigoExterno",
@@ -388,6 +388,8 @@ def _build_observations_from_licitacion(
             ),
             "close_timestamp_raw": "FechaCierre|Fechas.FechaCierre",
             "buyer_display": "Comprador.NombreOrganismo",
+            "procurement_method": "Tipo",
+            "procurement_method_details": "TipoConvocatoria",
         },
     )
     lines: list[ProcurementLineObservation] = []

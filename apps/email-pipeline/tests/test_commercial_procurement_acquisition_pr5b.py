@@ -14,6 +14,7 @@ from origenlab_email_pipeline.commercial_procurement_acquisition.canonical_json 
     canonical_json_digest,
 )
 from origenlab_email_pipeline.commercial_procurement_acquisition.fingerprint import (
+    acquisition_normalized_semantic_digest,
     acquisition_source_fingerprint,
     payload_digests,
     query_identity_from_model,
@@ -1602,3 +1603,96 @@ def test_snapshot_manifest_regression_matrix() -> None:
         snapshot_manifest(term, ticket_configured=False)["source_fingerprint"]
         == snapshot_manifest(term2, ticket_configured=False)["source_fingerprint"]
     )
+
+
+# --- PR3: procurement_method / procurement_method_details from Tipo/TipoConvocatoria ---
+
+
+def _detail_with_tipo(*, tipo: str | None, tipo_convocatoria: str | None) -> dict:
+    base = _load("ticket_detail_items.json")
+    payload = copy.deepcopy(base)
+    lic = payload["Listado"][0]
+    if tipo is None:
+        lic.pop("Tipo", None)
+    else:
+        lic["Tipo"] = tipo
+    if tipo_convocatoria is None:
+        lic.pop("TipoConvocatoria", None)
+    else:
+        lic["TipoConvocatoria"] = tipo_convocatoria
+    return payload
+
+
+def test_ticket_parser_preserves_tipo_and_tipo_convocatoria() -> None:
+    """Required regression 1: exact CO/0, LP/1, LE/1 preservation + provenance."""
+    for tipo, convocatoria in (("CO", "0"), ("LP", "1"), ("LE", "1")):
+        payload = _detail_with_tipo(tipo=tipo, tipo_convocatoria=convocatoria)
+        _q, _p, _s, tenders, _lines, _diag = parse_ticket_detail_payload(
+            payload, tender_code="9999-1-LE26"
+        )
+        assert len(tenders) == 1
+        tender = tenders[0]
+        assert tender.procurement_method == tipo
+        assert tender.procurement_method_details == convocatoria
+        assert tender.field_provenance["procurement_method"] == "Tipo"
+        assert tender.field_provenance["procurement_method_details"] == "TipoConvocatoria"
+
+
+def test_ticket_parser_missing_tipo_stays_none() -> None:
+    """Required regression 2: missing Tipo/TipoConvocatoria remains None, not ''."""
+    payload = _detail_with_tipo(tipo=None, tipo_convocatoria=None)
+    _q, _p, _s, tenders, _lines, _diag = parse_ticket_detail_payload(
+        payload, tender_code="9999-1-LE26"
+    )
+    assert len(tenders) == 1
+    tender = tenders[0]
+    assert tender.procurement_method is None
+    assert tender.procurement_method_details is None
+
+
+def test_procurement_method_participates_deterministically_in_semantic_digest() -> None:
+    """Required regression 3: procurement fields participate in the digest, and
+    the digest is a pure function of content (order-independent), not of
+    incidental construction order.
+    """
+    payload_co = _detail_with_tipo(tipo="CO", tipo_convocatoria="0")
+    payload_lp = _detail_with_tipo(tipo="LP", tipo_convocatoria="1")
+
+    def _digest(payload: dict) -> str:
+        _q, _p, sources, tenders, lines, _diag = parse_ticket_detail_payload(
+            payload, tender_code="9999-1-LE26"
+        )
+        return acquisition_normalized_semantic_digest(
+            source_observations=sources,
+            tender_observations=tenders,
+            line_observations=lines,
+            parser_version="test-parser",
+            contract_version="test-contract",
+        )
+
+    digest_co = _digest(payload_co)
+    digest_lp = _digest(payload_lp)
+    assert digest_co != digest_lp, (
+        "changing procurement_method must change the semantic digest"
+    )
+
+    # Reversing/reordering source+tender+line collections must not change the
+    # digest: acquisition_normalized_semantic_digest sorts internally.
+    _q, _p, sources, tenders, lines, _diag = parse_ticket_detail_payload(
+        payload_co, tender_code="9999-1-LE26"
+    )
+    forward = acquisition_normalized_semantic_digest(
+        source_observations=sources,
+        tender_observations=tenders,
+        line_observations=lines,
+        parser_version="test-parser",
+        contract_version="test-contract",
+    )
+    reversed_digest = acquisition_normalized_semantic_digest(
+        source_observations=list(reversed(sources)),
+        tender_observations=list(reversed(tenders)),
+        line_observations=list(reversed(lines)),
+        parser_version="test-parser",
+        contract_version="test-contract",
+    )
+    assert forward == reversed_digest

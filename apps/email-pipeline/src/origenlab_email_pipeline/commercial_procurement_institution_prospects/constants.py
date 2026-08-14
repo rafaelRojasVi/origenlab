@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import Final
 
-PLANNER_VERSION: Final[str] = "procurement_institution_prospect_planner_v3"
-CONTRACT_VERSION: Final[str] = "institution_prospect_contract_v3"
+# v4: tender rows gained procurement_method, procurement_method_details, and
+# procurement_eligibility_status (PR3).
+PLANNER_VERSION: Final[str] = "procurement_institution_prospect_planner_v4"
+CONTRACT_VERSION: Final[str] = "institution_prospect_contract_v4"
 RECOGNITION_LAYER_VERSION: Final[str] = "procurement_prospect_recognition_pr5e2_v1"
 
 FORBIDDEN_CLI_FLAGS: Final[tuple[str, ...]] = (

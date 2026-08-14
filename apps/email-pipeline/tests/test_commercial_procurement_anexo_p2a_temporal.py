@@ -211,6 +211,12 @@ def _tender(case: dict[str, Any], *, snapshot_id: str) -> CoalescedProcurementTe
         lifecycle_reason_codes=("constructed_historical_replay_fixture",),
         evidence_ref_ids=(),
         conflict_ids=(),
+        # PR3: this fixture predates procurement-method evidence; default to a
+        # recognized open/public Ticket Tipo code (this test is about temporal
+        # replay, not procurement-method eligibility) so historical-replay
+        # tenders keep their original actionability intent.
+        procurement_method_selected="LP",
+        procurement_method_details_selected=None,
     )
 
 

@@ -83,6 +83,13 @@ from origenlab_email_pipeline.commercial_procurement_institution_prospects.overl
     score_opportunity_urgency,
     score_prospect_strength,
 )
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.procurement_eligibility import (
+    ELIGIBILITY_RESTRICTED_INVITATION_UNCONFIRMED,
+    ELIGIBILITY_UNKNOWN,
+    PROCUREMENT_METHOD_UNKNOWN_OR_UNMAPPED_REASON,
+    RESTRICTED_PROCUREMENT_INVITATION_UNCONFIRMED_REASON,
+    classify_procurement_eligibility,
+)
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.queues import (
     EMPTY_QUEUE_HEADERS,
     QUEUE_GRAINS,
@@ -1318,6 +1325,18 @@ def build_institution_prospects_from_plans(
             family = family_meta_by_tender.get(tid, {})
             life = _lifecycle(tid)
             row_specs = commercial_row_specs_by_tender[tid]
+            procurement_eligibility_status = classify_procurement_eligibility(
+                t.procurement_method_selected
+            )
+            procurement_eligibility_reason_codes: list[str] = []
+            if procurement_eligibility_status == ELIGIBILITY_RESTRICTED_INVITATION_UNCONFIRMED:
+                procurement_eligibility_reason_codes.append(
+                    RESTRICTED_PROCUREMENT_INVITATION_UNCONFIRMED_REASON
+                )
+            elif procurement_eligibility_status == ELIGIBILITY_UNKNOWN:
+                procurement_eligibility_reason_codes.append(
+                    PROCUREMENT_METHOD_UNKNOWN_OR_UNMAPPED_REASON
+                )
 
             for spec in row_specs:
                 disposition = spec["disposition"]
@@ -1339,6 +1358,9 @@ def build_institution_prospects_from_plans(
                     else t.closing_soon_bucket,
                     "currentness_class": t.currentness_class,
                     "candidate_source_kind": t.candidate_source_kind,
+                    "procurement_method": t.procurement_method_selected,
+                    "procurement_method_details": t.procurement_method_details_selected,
+                    "procurement_eligibility_status": procurement_eligibility_status,
                     "relevance_class": d.relevance_class,
                     "canonical_equipment_classes": (
                         [spec["category"]]
@@ -1362,7 +1384,8 @@ def build_institution_prospects_from_plans(
                         spec.get("category_signal_sibling_signals") or []
                     ),
                     "reason_codes": list(disposition.get("reason_codes") or [])
-                    + list(disposition.get("signal_reason_codes") or []),
+                    + list(disposition.get("signal_reason_codes") or [])
+                    + procurement_eligibility_reason_codes,
                     "procurement_event_family_id": family.get("family_id"),
                     "family_resolution_status": family.get("family_resolution_status"),
                     "independent_demand_event_count": family.get(
