@@ -72,6 +72,13 @@ def _tender(
     close_ts: str | None = None,
     pub: str | None = "2026-01-01T00:00:00Z",
     close_bucket: str = "not_closing_soon",
+    # PR3: defaults to a recognized open/public Ticket Tipo code so every
+    # pre-existing test in this file keeps its original actionability intent
+    # without individually threading procurement-method evidence through.
+    # Tests exercising restricted/direct/unknown eligibility pass this
+    # explicitly (e.g. procurement_method="CO" or procurement_method=None).
+    procurement_method: str | None = "LP",
+    procurement_method_details: str | None = None,
 ) -> CoalescedProcurementTender:
     return CoalescedProcurementTender(
         coalesced_tender_id=tid,
@@ -107,6 +114,8 @@ def _tender(
         lifecycle_reason_codes=(),
         evidence_ref_ids=(),
         conflict_ids=(),
+        procurement_method_selected=procurement_method,
+        procurement_method_details_selected=procurement_method_details,
     )
 
 
@@ -1238,6 +1247,69 @@ def test_current_opportunity_blockers_reports_conflict_reason_code() -> None:
     )
 
 
+def test_current_opportunity_blockers_fails_closed_on_eligibility_status() -> None:
+    """PR3 hardening: the final queue boundary must fail closed. open_public
+    is the only status that passes without an eligibility blocker; every
+    other value — restricted, explicit unknown, a missing key, or an
+    unrecognized future value — is blocked. Uses an otherwise fully
+    actionable row (zero blockers when eligibility is open_public) so each
+    case isolates the eligibility gate specifically.
+    """
+    actionable_row = {
+        "projected_lifecycle_class": "active_open",
+        "review_disposition": "catalog_fit_candidate",
+        "commercial_signal_type": "equipment_purchase_signal",
+        "catalog_fit_status": "catalog_fit_candidate",
+        "catalog_match_status": "verified_catalog_equipment_class",
+        "canonical_equipment_category": "centrifuge",
+        "equipment_scopes": ["complete_equipment"],
+        "purchase_intent": True,
+        "commercial_truth_source": "category_scoped_line_claim",
+        "category_signal_conflict": False,
+        "close_timestamp": None,
+    }
+
+    open_row = {**actionable_row, "procurement_eligibility_status": "open_public"}
+    assert current_opportunity_blockers(open_row, 1, as_of_utc=AS_OF) == []
+
+    restricted_row = {
+        **actionable_row,
+        "procurement_eligibility_status": "restricted_invitation_unconfirmed",
+    }
+    assert current_opportunity_blockers(restricted_row, 1, as_of_utc=AS_OF) == [
+        "restricted_procurement_invitation_unconfirmed"
+    ]
+
+    explicit_unknown_row = {
+        **actionable_row,
+        "procurement_eligibility_status": "unknown",
+    }
+    assert current_opportunity_blockers(explicit_unknown_row, 1, as_of_utc=AS_OF) == [
+        "procurement_method_unknown_or_unmapped"
+    ]
+
+    missing_status_row = dict(actionable_row)
+    assert "procurement_eligibility_status" not in missing_status_row
+    assert current_opportunity_blockers(missing_status_row, 1, as_of_utc=AS_OF) == [
+        "procurement_method_unknown_or_unmapped"
+    ]
+
+    unrecognized_row = {
+        **actionable_row,
+        "procurement_eligibility_status": "some_future_status_not_yet_defined",
+    }
+    assert current_opportunity_blockers(unrecognized_row, 1, as_of_utc=AS_OF) == [
+        "procurement_method_unknown_or_unmapped"
+    ]
+
+    # Repeated calls must not mutate or duplicate reason_codes on the row.
+    row_with_reason_codes = {**open_row, "reason_codes": ["verified_catalog_class_and_purchase_signal"]}
+    before = list(row_with_reason_codes["reason_codes"])
+    current_opportunity_blockers(row_with_reason_codes, 1, as_of_utc=AS_OF)
+    current_opportunity_blockers(row_with_reason_codes, 1, as_of_utc=AS_OF)
+    assert row_with_reason_codes["reason_codes"] == before
+
+
 def test_chiloe_shaped_rental_tender_absent_from_current_opportunity_queue() -> None:
     """A generic fixture modeled on a real long-term rental tender: title
     names the rental directly, and the tender description separately reads
@@ -1245,6 +1317,10 @@ def test_chiloe_shaped_rental_tender_absent_from_current_opportunity_queue() -> 
     rental service, not the equipment). Must stay visible in the institution
     profile's current opportunities (it is still open and real evidence) but
     must never reach the actionable current_opportunity_queue.
+
+    Required regression 6: the real Chiloé tender's structured Tipo is "LE"
+    (open/public per PR3's Ticket code mapping) — PR3 must not add a new
+    blocker here or otherwise change PR2's rental-signal-driven exclusion.
     """
     tid = "GENERIC-RENTAL-1"
     tender = _tender(
@@ -1252,6 +1328,8 @@ def test_chiloe_shaped_rental_tender_absent_from_current_opportunity_queue() -> 
         lifecycle="active_open",
         title="arriendo centrifuga inmunohematologica lavadora",
         close_ts="2026-09-01T00:00:00Z",
+        procurement_method="LE",
+        procurement_method_details="1",
     )
     decision = _decision(tid=tid, relevance="rental_or_comodato", classes=())
     result = _build_with_lines(
@@ -1280,6 +1358,12 @@ def test_chiloe_shaped_rental_tender_absent_from_current_opportunity_queue() -> 
             "installed_base_signal",
         )
         assert "verified_catalog_class_and_purchase_signal" not in row["reason_codes"]
+        # PR3: method is open/public — exclusion is driven solely by PR2's
+        # existing rental-signal blocker, not by any new PR3 eligibility blocker.
+        assert row["procurement_method"] == "LE"
+        assert row["procurement_eligibility_status"] == "open_public"
+        assert "restricted_procurement_invitation_unconfirmed" not in row["reason_codes"]
+        assert "procurement_method_unknown_or_unmapped" not in row["reason_codes"]
         assert row["contact_authorization"] is False
         assert row["outreach_authorization"] is False
     assert profile["contact_authorization"] is False
@@ -1454,3 +1538,289 @@ def test_antofagasta_shaped_centrifuge_purchase_remains_actionable() -> None:
     assert queue_row["equipment_category"] == "centrifuge"
     assert queue_row["contact_authorization"] is False
     assert queue_row["outreach_authorization"] is False
+
+
+# --- PR3: procurement-method participation eligibility -----------------------
+#
+# Tender codes below are generic fixture labels, not references to any real
+# ChileCompra tender. Wording/method codes are modeled on the shapes of real
+# cases audited separately (see the PR3 audit report for ISP/SAG/Chiloé raw
+# evidence), without hardcoding production behavior to any specific tender ID.
+# No test here asserts a specific invited-supplier list, count, or that
+# OrigenLab was excluded — the pipeline has no invitee-identity evidence at
+# all (see PR3 audit); only "invitation unconfirmed" is ever asserted.
+
+
+def test_isp_shaped_co_acquisition_excluded_for_unconfirmed_invitation() -> None:
+    """Required regression 4: a genuine equipment-purchase signal (ISP-shaped,
+    Tipo=CO, TipoConvocatoria=0) is correctly recognized as a purchase but
+    blocked from current_opportunity_queue because the structured procurement
+    method is private/restricted and no invitee evidence exists — while
+    staying visible in tender_rows and the institution profile.
+    """
+    tid = "GENERIC-ISP-1"
+    tender = _tender(
+        tid=tid,
+        lifecycle="active_open",
+        title="PPRIV 05- Adquisicion de Equipos de Laboratorio Proyecto CORFO",
+        procurement_method="CO",
+        procurement_method_details="0",
+    )
+    decision = _decision(tid=tid, relevance="unrelated", classes=())
+    result = _build_with_lines(
+        tender,
+        decision,
+        ("6.- CENTRIFUGA REFRIGERADA DE SOBREMESA",),
+    )
+
+    assert not any(
+        r["tender_code"] == tid
+        for r in result.operator_queues["current_opportunity_queue"]
+    )
+    profile = result.profiles[0]
+    assert any(row["coalesced_tender_id"] == tid for row in profile["current_opportunities"])
+    matched_rows = [row for row in result.tender_rows if row["coalesced_tender_id"] == tid]
+    assert matched_rows
+    for row in matched_rows:
+        assert row["commercial_signal_type"] == "equipment_purchase_signal"
+        assert row["procurement_method"] == "CO"
+        assert row["procurement_method_details"] == "0"
+        assert row["procurement_eligibility_status"] == "restricted_invitation_unconfirmed"
+        assert "restricted_procurement_invitation_unconfirmed" in row["reason_codes"]
+        assert row["contact_authorization"] is False
+        assert row["outreach_authorization"] is False
+    assert profile["contact_authorization"] is False
+    assert profile["outreach_authorization"] is False
+
+
+def test_sag_shaped_lp_purchase_is_open_public_and_actionable() -> None:
+    """Required regression 5: SAG-shaped LP purchase classifies open_public
+    and remains actionable — no new PR3 blocker.
+    """
+    tid = "GENERIC-SAG-2"
+    tender = _tender(
+        tid=tid,
+        lifecycle="active_open",
+        title="SC 6732026- Equipos de laboratorio- RED SAG de Laboratorios",
+        procurement_method="LP",
+        procurement_method_details="1",
+    )
+    decision = _decision(tid=tid, relevance="unrelated", classes=())
+    result = _build_with_lines(
+        tender,
+        decision,
+        ("Centrifuga Refrigerada Universal.",),
+    )
+
+    row = next(r for r in result.tender_rows if r["coalesced_tender_id"] == tid)
+    assert row["procurement_eligibility_status"] == "open_public"
+    assert "restricted_procurement_invitation_unconfirmed" not in row["reason_codes"]
+    assert "procurement_method_unknown_or_unmapped" not in row["reason_codes"]
+    assert row["contact_authorization"] is False
+    assert row["outreach_authorization"] is False
+    assert any(
+        r["tender_code"] == tid
+        for r in result.operator_queues["current_opportunity_queue"]
+    )
+
+
+def test_lr_equipment_purchase_remains_open_and_actionable() -> None:
+    """Required regression 7: LR (glossary-confirmed public code) is treated
+    the same as the other public Ticket codes.
+    """
+    tid = "GENERIC-LR-1"
+    tender = _tender(
+        tid=tid,
+        lifecycle="active_open",
+        title="Adquisicion equipos laboratorio",
+        procurement_method="LR",
+        procurement_method_details="1",
+    )
+    decision = _decision(tid=tid, relevance="unrelated", classes=())
+    result = _build_with_lines(
+        tender,
+        decision,
+        ("Centrifuga Refrigerada Universal.",),
+    )
+
+    row = next(r for r in result.tender_rows if r["coalesced_tender_id"] == tid)
+    assert row["procurement_eligibility_status"] == "open_public"
+    assert row["contact_authorization"] is False
+    assert row["outreach_authorization"] is False
+    assert any(
+        r["tender_code"] == tid
+        for r in result.operator_queues["current_opportunity_queue"]
+    )
+
+
+def test_public_method_with_ppriv_in_title_stays_public() -> None:
+    """Required regression 8: title text ("PPRIV") never controls eligibility —
+    only the structured procurement_method does. A public Tipo code with a
+    misleadingly "PPRIV"-worded title must not be blocked.
+    """
+    tid = "GENERIC-PPRIV-PUBLIC-1"
+    tender = _tender(
+        tid=tid,
+        lifecycle="active_open",
+        title="PPRIV falso positivo Adquisicion equipos",
+        procurement_method="LP",
+        procurement_method_details="1",
+    )
+    decision = _decision(tid=tid, relevance="unrelated", classes=())
+    result = _build_with_lines(
+        tender,
+        decision,
+        ("Centrifuga Refrigerada Universal.",),
+    )
+
+    row = next(r for r in result.tender_rows if r["coalesced_tender_id"] == tid)
+    assert row["procurement_eligibility_status"] == "open_public"
+    assert "restricted_procurement_invitation_unconfirmed" not in row["reason_codes"]
+    assert any(
+        r["tender_code"] == tid
+        for r in result.operator_queues["current_opportunity_queue"]
+    )
+
+
+def test_co_method_without_ppriv_in_title_stays_restricted() -> None:
+    """Required regression 9: structured source evidence controls eligibility,
+    not title wording — a CO tender with no "PPRIV" anywhere in its title is
+    still restricted.
+    """
+    tid = "GENERIC-CO-NOPPRIV-1"
+    tender = _tender(
+        tid=tid,
+        lifecycle="active_open",
+        title="Adquisicion de Equipos de Laboratorio",
+        procurement_method="CO",
+        procurement_method_details="0",
+    )
+    decision = _decision(tid=tid, relevance="unrelated", classes=())
+    result = _build_with_lines(
+        tender,
+        decision,
+        ("Centrifuga Refrigerada Universal.",),
+    )
+
+    row = next(r for r in result.tender_rows if r["coalesced_tender_id"] == tid)
+    assert row["procurement_eligibility_status"] == "restricted_invitation_unconfirmed"
+    assert "restricted_procurement_invitation_unconfirmed" in row["reason_codes"]
+    assert not any(
+        r["tender_code"] == tid
+        for r in result.operator_queues["current_opportunity_queue"]
+    )
+
+
+def test_ticket_direct_nonopen_type_is_blocked() -> None:
+    """Required regression 10: a direct/non-open Ticket Tipo code (not merely
+    "private") is blocked the same way as private codes.
+    """
+    tid = "GENERIC-DIRECT-1"
+    tender = _tender(
+        tid=tid,
+        lifecycle="active_open",
+        title="Trato directo equipos laboratorio",
+        procurement_method="D1",
+        procurement_method_details=None,
+    )
+    decision = _decision(tid=tid, relevance="unrelated", classes=())
+    result = _build_with_lines(
+        tender,
+        decision,
+        ("Centrifuga Refrigerada Universal.",),
+    )
+
+    row = next(r for r in result.tender_rows if r["coalesced_tender_id"] == tid)
+    assert row["procurement_eligibility_status"] == "restricted_invitation_unconfirmed"
+    assert "restricted_procurement_invitation_unconfirmed" in row["reason_codes"]
+    assert not any(
+        r["tender_code"] == tid
+        for r in result.operator_queues["current_opportunity_queue"]
+    )
+
+
+def test_missing_procurement_method_is_blocked_as_unknown() -> None:
+    """Required regression 12: missing/unmapped method evidence must not be
+    silently presented as confirmed eligibility — it fails closed.
+    """
+    tid = "GENERIC-UNKNOWN-1"
+    tender = _tender(
+        tid=tid,
+        lifecycle="active_open",
+        title="Adquisicion equipos laboratorio",
+        procurement_method=None,
+        procurement_method_details=None,
+    )
+    decision = _decision(tid=tid, relevance="unrelated", classes=())
+    result = _build_with_lines(
+        tender,
+        decision,
+        ("Centrifuga Refrigerada Universal.",),
+    )
+
+    row = next(r for r in result.tender_rows if r["coalesced_tender_id"] == tid)
+    assert row["procurement_eligibility_status"] == "unknown"
+    assert "procurement_method_unknown_or_unmapped" in row["reason_codes"]
+    assert row["contact_authorization"] is False
+    assert row["outreach_authorization"] is False
+    assert not any(
+        r["tender_code"] == tid
+        for r in result.operator_queues["current_opportunity_queue"]
+    )
+
+
+def test_procurement_eligibility_blocker_reason_code_appears_exactly_once() -> None:
+    """PR3 verification gate: the eligibility blocker reason code must be
+    deterministic and appear exactly once on a row's reason_codes, even
+    across a multi-line-item tender (mirroring ISP's real two-item shape)
+    and even though two independent layers evaluate eligibility —
+    planner.py (which writes row["reason_codes"]) and
+    queues.py::current_opportunity_blockers (which independently decides
+    queue inclusion but must never itself write back into the row).
+    Historical/profile visibility stays separate from queue actionability.
+    """
+    tid = "GENERIC-ISP-DEDUP-1"
+    tender = _tender(
+        tid=tid,
+        lifecycle="active_open",
+        title="PPRIV 05- Adquisicion de Equipos de Laboratorio Proyecto CORFO",
+        procurement_method="CO",
+        procurement_method_details="0",
+    )
+    decision = _decision(tid=tid, relevance="unrelated", classes=())
+    result = _build_with_lines(
+        tender,
+        decision,
+        (
+            "6.- CENTRIFUGA REFRIGERADA DE SOBREMESA",
+            "Otra centrifuga de laboratorio.",
+        ),
+    )
+
+    matched_rows = [row for row in result.tender_rows if row["coalesced_tender_id"] == tid]
+    assert matched_rows
+    for row in matched_rows:
+        count = row["reason_codes"].count(
+            "restricted_procurement_invitation_unconfirmed"
+        )
+        assert count == 1, f"expected exactly one occurrence, got {count}"
+        # Ordering convention: eligibility reason appended after disposition/
+        # signal reasons, matching the existing CATEGORY_SIGNAL_CONFLICT_REASON
+        # append-last convention.
+        assert row["reason_codes"][-1] == "restricted_procurement_invitation_unconfirmed"
+
+        # Independently calling the blocker function (as queues.py does, and
+        # as a second "planning/queue layer" would) multiple times must not
+        # mutate or duplicate the row's own reason_codes.
+        before = list(row["reason_codes"])
+        current_opportunity_blockers(row, 1, as_of_utc=AS_OF)
+        current_opportunity_blockers(row, 1, as_of_utc=AS_OF)
+        assert row["reason_codes"] == before
+
+    # Historical/profile visibility stays separate from queue actionability.
+    assert not any(
+        r["tender_code"] == tid
+        for r in result.operator_queues["current_opportunity_queue"]
+    )
+    profile = result.profiles[0]
+    assert any(row["coalesced_tender_id"] == tid for row in profile["current_opportunities"])

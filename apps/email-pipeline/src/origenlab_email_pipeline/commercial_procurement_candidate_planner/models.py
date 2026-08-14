@@ -72,6 +72,12 @@ class ProcurementEvidenceRef:
     pr4_conflict_ids: tuple[str, ...] = ()
     constituent_source_ids: tuple[str, ...] = ()
     page_completeness: str | None = None
+    # PR3: absent (None/False) for PR4-plane evidence, which has no ChileCompra
+    # Tipo/TipoConvocatoria equivalent; populated only for acquisition-plane refs.
+    procurement_method_raw: str | None = None
+    procurement_method_details_raw: str | None = None
+    has_procurement_method: bool = False
+    has_procurement_method_details: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -164,6 +170,12 @@ class CoalescedProcurementTender:
     lifecycle_reason_codes: tuple[str, ...]
     evidence_ref_ids: tuple[str, ...]
     conflict_ids: tuple[str, ...]
+    # PR3: raw ChileCompra Tipo / OCDS procurementMethod (Ticket) and
+    # TipoConvocatoria / OCDS procurementMethodDetails (Ticket), selected via the
+    # same cross-source precedence as title/buyer_display. None when no
+    # contributing evidence ref carried a value (e.g. PR4-only tenders).
+    procurement_method_selected: str | None = None
+    procurement_method_details_selected: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)

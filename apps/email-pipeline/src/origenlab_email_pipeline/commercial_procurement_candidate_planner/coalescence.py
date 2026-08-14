@@ -40,7 +40,14 @@ SELECTABLE_FIELDS = (
     "buyer_display",
     "buyer_source_id",
     "title",
+    "procurement_method",
 )
+# procurement_method_details is deliberately NOT independently selectable: it
+# must always come from the same evidence ref that won procurement_method,
+# never backfilled from a lower-ranked or different-source ref. Independent
+# per-field selection here would let a synthetic method+details pair get
+# assembled from two different sources that never actually agreed on it.
+# See coalesce_evidence_refs, where it is derived from the winning ref.
 
 
 def field_precedence_matrix() -> dict[str, Any]:
@@ -219,6 +226,8 @@ def _select_field(
         candidates = [r for r in capable if r.has_buyer_source_id]
     elif field == "title":
         candidates = [r for r in capable if r.has_title]
+    elif field == "procurement_method":
+        candidates = [r for r in capable if r.has_procurement_method]
     else:
         candidates = []
     if not candidates:
@@ -229,6 +238,49 @@ def _select_field(
     authoritative = [
         r for r in candidates if r.source_rank_class != "ocds_lista_index"
     ]
+
+    if field == "procurement_method":
+        # The rank hierarchy (ticket_detail > ticket_summary > ocds_release >
+        # ocds_record > pr4 > ocds_lista_index) resolves disagreement between
+        # different-rank sources unambiguously — no new policy needed there.
+        # It provides no guidance when two candidates share the exact same
+        # rank and disagree, though: an arbitrary tiebreak between two
+        # eligibility-relevant values (e.g. "LP" vs "CO") is not safe. Agreeing
+        # duplicates at the top rank are not a conflict.
+        top_score = max(rank_score(r.source_rank_class) for r in candidates)
+        top_tier = [
+            r for r in candidates if rank_score(r.source_rank_class) == top_score
+        ]
+        top_values = {
+            (r.procurement_method_raw or "").strip().casefold() for r in top_tier
+        }
+        if len(top_values) > 1:
+            conflicts.append(
+                CoalescenceConflict(
+                    conflict_id=stable_content_id(
+                        "conflict",
+                        {
+                            "kind": "procurement_method_conflict",
+                            "field": "procurement_method",
+                            "key": refs[0].canonical_tender_key,
+                            "namespace": refs[0].identity_namespace,
+                            "refs": sorted(r.evidence_ref_id for r in top_tier),
+                        },
+                    ),
+                    conflict_kind="procurement_method_conflict",
+                    canonical_tender_key=refs[0].canonical_tender_key,
+                    identity_namespace=refs[0].identity_namespace,
+                    coalesced_tender_id=None,
+                    evidence_ref_ids=tuple(sorted(r.evidence_ref_id for r in top_tier)),
+                    field_name="procurement_method",
+                    reason_codes=("procurement_method_conflict",),
+                    detail={"values": sorted(top_values)},
+                )
+            )
+            # Fail closed: no value selected. classify_procurement_eligibility(None)
+            # correctly yields "unknown" downstream, without this module (which
+            # has no eligibility-class concept of its own) guessing a winner.
+            return None, None, conflicts, secondary
 
     if field in {"close_timestamp", "publication_timestamp"}:
         valid: list[tuple[ProcurementEvidenceRef, NormalizedTimestamp]] = []
@@ -391,6 +443,8 @@ def _select_field(
         return best.buyer_source_id, best.evidence_ref_id, conflicts, secondary
     if field == "title":
         return best.title_raw, best.evidence_ref_id, conflicts, secondary
+    if field == "procurement_method":
+        return best.procurement_method_raw, best.evidence_ref_id, conflicts, secondary
     return None, None, conflicts, secondary
 
 
@@ -593,6 +647,22 @@ def coalesce_evidence_refs(
                 provenance[f"{field}_compatible_refs"] = ",".join(sorted(secondary))
             group_conflicts.extend(field_conflicts)
 
+        # procurement_method_details always comes from the same evidence ref
+        # that won procurement_method — never independently selected, and
+        # never backfilled from a different (e.g. lower-ranked) ref. If the
+        # winning ref has no details, details stay None.
+        selected["procurement_method_details"] = None
+        method_ref_id = provenance.get("procurement_method")
+        if method_ref_id:
+            method_ref = next(
+                (r for r in group if r.evidence_ref_id == method_ref_id), None
+            )
+            if method_ref is not None and method_ref.procurement_method_details_raw:
+                selected["procurement_method_details"] = (
+                    method_ref.procurement_method_details_raw
+                )
+                provenance["procurement_method_details"] = method_ref_id
+
         # Detect buyer display variance when source IDs agree.
         id_agree = {
             (r.buyer_source_id or "").strip().casefold()
@@ -674,6 +744,10 @@ def coalesce_evidence_refs(
                 buyer_display_selected=selected.get("buyer_display"),
                 buyer_source_id_selected=selected.get("buyer_source_id"),
                 title_selected=selected.get("title"),
+                procurement_method_selected=selected.get("procurement_method"),
+                procurement_method_details_selected=selected.get(
+                    "procurement_method_details"
+                ),
                 selected_field_provenance=provenance,
                 buyer_display_variance=buyer_display_variance,
                 lifecycle_status_evidence_ref_id=None,

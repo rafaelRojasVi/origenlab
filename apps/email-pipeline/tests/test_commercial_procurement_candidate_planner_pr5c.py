@@ -519,6 +519,250 @@ def test_grouping_independent_of_input_order() -> None:
     assert t1[0].coalesced_tender_id == t2[0].coalesced_tender_id
 
 
+def test_procurement_method_selection_independent_of_input_order() -> None:
+    """PR3: procurement_method/procurement_method_details are selected via the
+    same cross-source precedence as title/buyer_display (higher
+    source_rank_class wins). Reversing the evidence-ref input order must not
+    change which value wins — the planner/queue read this value verbatim, so
+    order-dependence here would make eligibility classification nondeterministic.
+    """
+    from dataclasses import replace
+
+    high_rank = replace(
+        _ref(
+            rid="detail",
+            plane="acquisition",
+            key="9000-1-co26",
+            rank="ticket_detail",
+            acquired="2026-08-01T10:00:00Z",
+            obs="obs_detail",
+            snap="snap1",
+        ),
+        procurement_method_raw="CO",
+        procurement_method_details_raw="0",
+        has_procurement_method=True,
+        has_procurement_method_details=True,
+    )
+    low_rank = replace(
+        _ref(
+            rid="release",
+            plane="acquisition",
+            key="9000-1-co26",
+            rank="ocds_release",
+            acquired="2026-08-01T10:00:00Z",
+            obs="obs_release",
+            snap="snap1",
+        ),
+        procurement_method_raw="selective",
+        procurement_method_details_raw=None,
+        has_procurement_method=True,
+        has_procurement_method_details=False,
+    )
+    forward, _ = _coalesce([high_rank, low_rank])
+    reversed_result, _ = _coalesce([low_rank, high_rank])
+    assert len(forward) == 1 and len(reversed_result) == 1
+    assert forward[0].procurement_method_selected == "CO"
+    assert forward[0].procurement_method_details_selected == "0"
+    assert (
+        forward[0].procurement_method_selected
+        == reversed_result[0].procurement_method_selected
+    )
+    assert (
+        forward[0].procurement_method_details_selected
+        == reversed_result[0].procurement_method_details_selected
+    )
+
+
+def test_procurement_method_details_never_backfilled_from_losing_reference() -> None:
+    """procurement_method and procurement_method_details must be selected as
+    one coherent pair from the SAME winning evidence ref — never assembled
+    from two different sources. If the winning ref has a method but no
+    details, details stay None; a lower-ranked ref's details must not be used
+    to fill the gap.
+    """
+    from dataclasses import replace
+
+    high_rank_method_only = replace(
+        _ref(
+            rid="detail",
+            plane="acquisition",
+            key="9010-1-co26",
+            rank="ticket_detail",
+            acquired="2026-08-01T10:00:00Z",
+            obs="obs_detail",
+            snap="snap1",
+        ),
+        procurement_method_raw="CO",
+        procurement_method_details_raw=None,
+        has_procurement_method=True,
+        has_procurement_method_details=False,
+    )
+    low_rank_details_only = replace(
+        _ref(
+            rid="release",
+            plane="acquisition",
+            key="9010-1-co26",
+            rank="ocds_release",
+            acquired="2026-08-01T10:00:00Z",
+            obs="obs_release",
+            snap="snap1",
+        ),
+        procurement_method_raw=None,
+        procurement_method_details_raw="1",
+        has_procurement_method=False,
+        has_procurement_method_details=True,
+    )
+    tenders, _ = _coalesce([high_rank_method_only, low_rank_details_only])
+    assert len(tenders) == 1
+    assert tenders[0].procurement_method_selected == "CO"
+    assert tenders[0].procurement_method_details_selected is None, (
+        "details must not be backfilled from a different, lower-ranked ref"
+    )
+
+
+def test_procurement_method_ticket_beats_ocds_deterministically() -> None:
+    """Multi-source conflict: the same tender carries conflicting Ticket
+    (CO/0) and OCDS (open) evidence. The existing, pre-established rank
+    hierarchy (ticket_detail=100 > ocds_release=70) resolves this
+    unambiguously — Ticket wins regardless of input order. The tender must
+    never appear open/actionable merely because OCDS evidence also exists.
+    """
+    from dataclasses import replace
+
+    ticket = replace(
+        _ref(
+            rid="detail",
+            plane="acquisition",
+            key="9011-1-co26",
+            rank="ticket_detail",
+            acquired="2026-08-01T10:00:00Z",
+            obs="obs_detail",
+            snap="snap1",
+        ),
+        procurement_method_raw="CO",
+        procurement_method_details_raw="0",
+        has_procurement_method=True,
+        has_procurement_method_details=True,
+    )
+    ocds = replace(
+        _ref(
+            rid="release",
+            plane="acquisition",
+            key="9011-1-co26",
+            rank="ocds_release",
+            acquired="2026-08-01T10:00:00Z",
+            obs="obs_release",
+            snap="snap1",
+        ),
+        procurement_method_raw="open",
+        procurement_method_details_raw=None,
+        has_procurement_method=True,
+        has_procurement_method_details=False,
+    )
+    forward, _ = _coalesce([ticket, ocds])
+    reversed_result, _ = _coalesce([ocds, ticket])
+    assert forward[0].procurement_method_selected == "CO"
+    assert forward[0].procurement_method_details_selected == "0"
+    assert reversed_result[0].procurement_method_selected == "CO"
+    assert reversed_result[0].procurement_method_details_selected == "0"
+
+
+def test_procurement_method_same_rank_disagreement_fails_closed() -> None:
+    """When no precedence resolves a conflict — two candidates at the exact
+    same source rank disagree on procurement_method — the safe behavior is
+    to select nothing (None), which classify_procurement_eligibility()
+    downstream turns into "unknown" and the existing unknown/unmapped
+    blocker. This must never arbitrarily pick a side between an open and a
+    restricted value, and must be identical regardless of input order.
+    """
+    from dataclasses import replace
+
+    a = replace(
+        _ref(
+            rid="detail_a",
+            plane="acquisition",
+            key="9012-1-le26",
+            rank="ticket_detail",
+            acquired="2026-08-01T10:00:00Z",
+            obs="obs_a",
+            snap="snap1",
+        ),
+        procurement_method_raw="LP",
+        procurement_method_details_raw="1",
+        has_procurement_method=True,
+        has_procurement_method_details=True,
+    )
+    b = replace(
+        _ref(
+            rid="detail_b",
+            plane="acquisition",
+            key="9012-1-le26",
+            rank="ticket_detail",
+            acquired="2026-08-01T11:00:00Z",
+            obs="obs_b",
+            snap="snap1",
+        ),
+        procurement_method_raw="CO",
+        procurement_method_details_raw="0",
+        has_procurement_method=True,
+        has_procurement_method_details=True,
+    )
+    forward, forward_conflicts = _coalesce([a, b])
+    reversed_result, reversed_conflicts = _coalesce([b, a])
+    assert forward[0].procurement_method_selected is None
+    assert forward[0].procurement_method_details_selected is None
+    assert reversed_result[0].procurement_method_selected is None
+    assert reversed_result[0].procurement_method_details_selected is None
+    assert any(
+        c.conflict_kind == "procurement_method_conflict" for c in forward_conflicts
+    )
+    assert any(
+        c.conflict_kind == "procurement_method_conflict" for c in reversed_conflicts
+    )
+
+
+def test_procurement_method_duplicate_agreeing_evidence_is_not_a_false_conflict() -> None:
+    """Two equally-ranked refs that agree on procurement_method (e.g. a
+    duplicate fetch) must be selected normally, not treated as a conflict.
+    """
+    from dataclasses import replace
+
+    a = replace(
+        _ref(
+            rid="detail_a",
+            plane="acquisition",
+            key="9013-1-lp26",
+            rank="ticket_detail",
+            acquired="2026-08-01T10:00:00Z",
+            obs="obs_a",
+            snap="snap1",
+        ),
+        procurement_method_raw="LP",
+        procurement_method_details_raw="1",
+        has_procurement_method=True,
+        has_procurement_method_details=True,
+    )
+    b = replace(
+        _ref(
+            rid="detail_b",
+            plane="acquisition",
+            key="9013-1-lp26",
+            rank="ticket_detail",
+            acquired="2026-08-01T11:00:00Z",
+            obs="obs_b",
+            snap="snap1",
+        ),
+        procurement_method_raw="LP",
+        procurement_method_details_raw="1",
+        has_procurement_method=True,
+        has_procurement_method_details=True,
+    )
+    tenders, conflicts = _coalesce([a, b])
+    assert tenders[0].procurement_method_selected == "LP"
+    assert tenders[0].procurement_method_details_selected == "1"
+    assert not any(c.conflict_kind == "procurement_method_conflict" for c in conflicts)
+
+
 # --- Stable coalesced ID ---
 
 
@@ -603,6 +847,87 @@ def test_materialize_snapshot_and_reject_fingerprint_mismatch(tmp_path: Path) ->
     bad["source_fingerprint"] = "0" * 64
     with pytest.raises(AcquisitionPlaneError, match="source_fingerprint"):
         materialize_acquisition_snapshot(bad)
+
+
+def test_parser_v1_snapshot_rehydrates_through_materialize_boundary() -> None:
+    """PR3 gate: genuine parser-v1 compatibility, exercised through the real
+    production rehydration boundary (materialize_acquisition_snapshot), not
+    just a direct _validate_versions() unit test.
+
+    A realistic pre-PR3 persisted snapshot never had Tipo/TipoConvocatoria in
+    its source payload (the old parser did not read them), so it is
+    constructed here without those fields, tagged parser_version=v1 exactly
+    as a real historical file would be (including a v1-consistent
+    normalized_semantic_digest, which the real materializer recomputes and
+    checks), and must still rehydrate successfully with safely-None method
+    fields. A v2 snapshot with real Tipo/TipoConvocatoria data must also
+    rehydrate and correctly propagate populated method fields. An
+    unsupported parser_version must remain rejected — version validation is
+    not weakened globally by widening SUPPORTED_PARSER_VERSIONS.
+    """
+    from origenlab_email_pipeline.commercial_procurement_acquisition.fingerprint import (
+        acquisition_normalized_semantic_digest,
+    )
+    from origenlab_email_pipeline.commercial_procurement_candidate_planner.plane_b_acquisition import (
+        _line_from_dict,
+        _source_from_dict,
+        _tender_from_dict,
+    )
+
+    payload = json.loads((LIVE / "ticket_detail_items_live_shape_v1.json").read_text())
+    lic = payload["Listado"][0]
+    lic.pop("Tipo", None)
+    lic.pop("TipoConvocatoria", None)
+    snap = build_acquisition_snapshot(
+        source_kind="ticket_detail",
+        payload=payload,
+        fixture_origin="live_response_sanitized",
+        acquired_at_utc="2026-08-01T10:00:00Z",
+        tender_code="3544-1-LE26",
+    )
+    v1_dict = snap.to_dict()
+    v1_dict["parser_version"] = "procurement_acquisition_parser_v1"
+    for source_obs in v1_dict["source_observations"]:
+        source_obs["parser_version"] = "procurement_acquisition_parser_v1"
+    # A real v1-era file's digest was computed with parser_version=v1 at the
+    # time it was written; recompute it the same way materialize_* does, so
+    # the digest check (not just the version check) reflects a genuine file.
+    v1_dict["normalized_semantic_digest"] = acquisition_normalized_semantic_digest(
+        source_observations=tuple(
+            _source_from_dict(dict(o)) for o in v1_dict["source_observations"]
+        ),
+        tender_observations=tuple(
+            _tender_from_dict(dict(t)) for t in v1_dict["tender_observations"]
+        ),
+        line_observations=tuple(
+            _line_from_dict(dict(line)) for line in v1_dict["line_observations"]
+        ),
+        parser_version="procurement_acquisition_parser_v1",
+        contract_version=v1_dict["contract_version"],
+    )
+
+    rehydrated_v1 = materialize_acquisition_snapshot(v1_dict)
+    assert rehydrated_v1.parser_version == "procurement_acquisition_parser_v1"
+    assert rehydrated_v1.tender_observations[0].procurement_method is None
+    assert rehydrated_v1.tender_observations[0].procurement_method_details is None
+
+    payload_v2 = json.loads((LIVE / "ticket_detail_items_live_shape_v1.json").read_text())
+    snap_v2 = build_acquisition_snapshot(
+        source_kind="ticket_detail",
+        payload=payload_v2,
+        fixture_origin="live_response_sanitized",
+        acquired_at_utc="2026-08-01T10:00:00Z",
+        tender_code="3544-1-LE26",
+    )
+    v2_dict = snap_v2.to_dict()
+    assert v2_dict["parser_version"] == "procurement_acquisition_parser_v2"
+    rehydrated_v2 = materialize_acquisition_snapshot(v2_dict)
+    assert rehydrated_v2.tender_observations[0].procurement_method == "LE"
+
+    unsupported = dict(v2_dict)
+    unsupported["parser_version"] = "procurement_acquisition_parser_v99_nonexistent"
+    with pytest.raises(AcquisitionPlaneError, match="parser_version"):
+        materialize_acquisition_snapshot(unsupported)
 
 
 def test_lista_index_without_mp_code_is_unresolved() -> None:
