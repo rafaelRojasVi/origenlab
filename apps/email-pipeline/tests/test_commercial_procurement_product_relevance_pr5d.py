@@ -3200,6 +3200,159 @@ def test_rule_precedence_exhaustive_contract() -> None:
     assert relevance_rules_fingerprint() == base_fp
 
 
+def test_purchase_of_service_carve_out_distinguishes_service_object_from_equipment() -> None:
+    """A purchase verb modifying a rental/maintenance service noun is not a
+    buyer equipment purchase. Direct equipment-purchase language stays
+    unaffected — see test_rule_precedence_exhaustive_contract's "Arriendo y
+    compra..."/"Mantencion y adquisicion..." cases, which still resolve to
+    strong_equipment_class because the purchase verb there has no adjacent
+    "servicio de" noun to modify.
+    """
+    rental_wrapped = classify_product_text_unit(
+        _unit(
+            "Adquisición del servicio de arriendo de centrífuga por 96 meses",
+            tier="line_product_text",
+        )
+    )
+    assert rental_wrapped.relevance_class == "rental_or_comodato"
+    assert rental_wrapped.canonical_equipment_classes == ()
+
+    maintenance_wrapped = classify_product_text_unit(
+        _unit(
+            "Adquisición del servicio de mantención preventiva de balanza analítica",
+            tier="line_product_text",
+        )
+    )
+    assert maintenance_wrapped.relevance_class == "service_or_maintenance_only"
+    assert maintenance_wrapped.canonical_equipment_classes == ()
+
+    # Ancillary maintenance bundled with a directly explicit purchase object
+    # remains a genuine equipment purchase — the carve-out only fires when the
+    # purchase verb's object is the service itself, not the instrument.
+    direct_purchase_with_ancillary_service = classify_product_text_unit(
+        _unit(
+            "Adquisición de centrífuga con mantención preventiva incluida por 12 meses",
+            tier="line_product_text",
+        )
+    )
+    assert (
+        direct_purchase_with_ancillary_service.relevance_class
+        == "strong_equipment_class"
+    )
+    assert "centrifuge" in direct_purchase_with_ancillary_service.canonical_equipment_classes
+
+
+def test_purchase_of_service_carve_out_requires_direct_grammatical_object() -> None:
+    """The purchase-of-service carve-out must fire only when the purchase verb
+    directly governs "servicio" (only an article/preposition may sit between
+    them). An equipment noun in that gap — "adquisicion de centrifuga con
+    servicio de mantencion" — means the verb governs the equipment, and the
+    service is merely ancillary, so the carve-out must NOT fire even though
+    "servicio de mantencion" is present somewhere in the text.
+    """
+    purchase_with_included_service = classify_product_text_unit(
+        _unit(
+            "Adquisición de centrífuga con servicio de mantención preventiva "
+            "incluido por 12 meses",
+            tier="line_product_text",
+        )
+    )
+    assert purchase_with_included_service.relevance_class == "strong_equipment_class"
+    assert "centrifuge" in purchase_with_included_service.canonical_equipment_classes
+
+    purchase_with_included_calibration = classify_product_text_unit(
+        _unit(
+            "Compra de balanza analítica con servicio de calibración incluido",
+            tier="line_product_text",
+        )
+    )
+    assert (
+        purchase_with_included_calibration.relevance_class
+        == "compatible_equipment_class"
+    )
+    assert "balance" in purchase_with_included_calibration.canonical_equipment_classes
+
+    # The carve-out must still fire when the purchase verb directly governs
+    # the service noun (only "del"/"de"/"de la" between them).
+    direct_service_purchase = classify_product_text_unit(
+        _unit(
+            "Compra del servicio de calibración de balanza analítica",
+            tier="line_product_text",
+        )
+    )
+    assert direct_service_purchase.relevance_class == "service_or_maintenance_only"
+    assert direct_service_purchase.canonical_equipment_classes == ()
+
+    direct_rental_purchase = classify_product_text_unit(
+        _unit(
+            "Compra del servicio de arriendo de centrífuga",
+            tier="line_product_text",
+        )
+    )
+    assert direct_rental_purchase.relevance_class == "rental_or_comodato"
+    assert direct_rental_purchase.canonical_equipment_classes == ()
+
+
+def test_purchase_of_service_carve_out_covers_singular_and_plural_masculine_forms() -> None:
+    """"del servicio de X" is only one of several grammatically valid ways to
+    say "a purchase of the service" in Spanish: an indefinite article ("un
+    servicio"), a bare plural ("servicios"), or a definite plural ("los
+    servicios") are equally direct grammatical objects of the purchase verb
+    and must be caught the same way. Direct attachment is still required —
+    this must not reopen an arbitrary word gap.
+    """
+    indefinite_singular = classify_product_text_unit(
+        _unit(
+            "Adquisición de un servicio de mantenimiento de centrífuga",
+            tier="line_product_text",
+        )
+    )
+    assert indefinite_singular.relevance_class == "service_or_maintenance_only"
+    assert indefinite_singular.canonical_equipment_classes == ()
+
+    bare_plural = classify_product_text_unit(
+        _unit(
+            "Compra de servicios de calibración de balanzas analíticas",
+            tier="line_product_text",
+        )
+    )
+    assert bare_plural.relevance_class == "service_or_maintenance_only"
+    assert bare_plural.canonical_equipment_classes == ()
+
+    definite_plural = classify_product_text_unit(
+        _unit(
+            "Adquisición de los servicios de arriendo de centrífugas",
+            tier="line_product_text",
+        )
+    )
+    assert definite_plural.relevance_class == "rental_or_comodato"
+    assert definite_plural.canonical_equipment_classes == ()
+
+    # Genuine equipment purchases with an equipment noun in the gap before
+    # "servicio" must still resolve as purchases, singular or plural phrasing
+    # notwithstanding.
+    purchase_with_included_service = classify_product_text_unit(
+        _unit(
+            "Adquisición de centrífuga con servicio de mantención preventiva "
+            "incluido por 12 meses",
+            tier="line_product_text",
+        )
+    )
+    assert purchase_with_included_service.relevance_class == "strong_equipment_class"
+    assert "centrifuge" in purchase_with_included_service.canonical_equipment_classes
+
+    purchase_with_included_calibration = classify_product_text_unit(
+        _unit(
+            "Compra de balanza analítica con servicio de calibración incluido",
+            tier="line_product_text",
+        )
+    )
+    assert (
+        purchase_with_included_calibration.relevance_class
+        == "compatible_equipment_class"
+    )
+    assert "balance" in purchase_with_included_calibration.canonical_equipment_classes
+
 
 def test_contaminated_blind_packet_fails_before_publish(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

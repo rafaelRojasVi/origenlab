@@ -93,6 +93,25 @@ SUPPLIER_REQUIRED_EQUIPMENT_RE = re.compile(
     r"\bdebe\s+disponer\b"
 )
 RENTAL_RE = re.compile(r"\barriendo\b|\bcomodato\b|\balquiler\b")
+# A purchase verb ("adquisicion"/"compra") can modify a service noun instead of
+# the equipment itself — "adquisicion del servicio de arriendo/mantencion" buys
+# a rental or maintenance service, not the named instrument. The verb must
+# grammatically govern "servicio(s)" directly — only "del" or "de" optionally
+# followed by a masculine/plural article ("el"/"un"/"los"/"unos") may sit
+# between them, covering singular and plural forms ("de un servicio", "de
+# servicios", "de los servicios"). An equipment noun in that gap, as in
+# "adquisicion de centrifuga con servicio de mantencion", means the verb
+# governs the equipment and the service is merely ancillary, so it must NOT
+# match here. Narrow carve-out only: it does not touch EQUIPMENT_PURCHASE_RE/
+# BUYER_ACQUISITION_EXPLICIT_RE, which must keep matching direct equipment
+# purchases like "adquisicion de centrifuga" or coordinated-but-distinct
+# intents like "arriendo y compra de centrifuga" (the verb there is not
+# followed by a service noun at all).
+PURCHASE_OF_SERVICE_NOT_EQUIPMENT_RE = re.compile(
+    r"\b(?:adquisicion|compra)\b\s+(?:del|de(?:\s+(?:el|un|los|unos))?)\s+"
+    r"servicios?\s+de\s+"
+    r"(?:arriendo|comodato|alquiler|mantenimiento|mantencion|reparacion|calibracion)\b"
+)
 GENERIC_INSUMOS_RE = re.compile(
     r"\binsumos\s+de\s+laboratorio\b|\bmateriales?\s+de\s+laboratorio\b|"
     r"\breactivos?\b|\bconsumibles?\b"
@@ -443,8 +462,12 @@ def classify_product_text_unit(unit: ProductTextUnit) -> EvidenceUnitRelevanceDe
             spans=[_span(field_path, "diagnostic_sedimentation_exam", m_sed_exam)],
         )
 
+    m_purchase_of_service = PURCHASE_OF_SERVICE_NOT_EQUIPMENT_RE.search(text)
+
     m_rent = RENTAL_RE.search(text)
-    if m_rent and not EQUIPMENT_PURCHASE_RE.search(text):
+    if m_rent and (
+        not EQUIPMENT_PURCHASE_RE.search(text) or m_purchase_of_service
+    ):
         return _decision(
             unit,
             relevance_class="rental_or_comodato",
@@ -458,7 +481,9 @@ def classify_product_text_unit(unit: ProductTextUnit) -> EvidenceUnitRelevanceDe
         )
 
     m_svc = SERVICE_ONLY_RE.search(text)
-    if m_svc and not EQUIPMENT_PURCHASE_RE.search(text):
+    if m_svc and (
+        not EQUIPMENT_PURCHASE_RE.search(text) or m_purchase_of_service
+    ):
         return _decision(
             unit,
             relevance_class="service_or_maintenance_only",

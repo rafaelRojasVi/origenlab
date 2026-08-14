@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import random
+from dataclasses import replace
 from pathlib import Path
 
 from origenlab_email_pipeline.commercial_procurement_candidate_planner.models import (
@@ -32,6 +34,14 @@ from origenlab_email_pipeline.commercial_procurement_institution_prospects.ident
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.planner import (
     build_institution_prospects_from_plans,
 )
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.line_claims import (
+    aggregate_category_scoped_claims,
+    build_line_claims,
+    reconcile_category_signal_conflicts,
+)
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.queues import (
+    current_opportunity_blockers,
+)
 from origenlab_email_pipeline.commercial_procurement_live_feed_bridge.freshness import (
     is_future_observation,
     resolve_acquired_at_utc,
@@ -40,7 +50,11 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.models im
     EvidenceUnitRelevanceDecision,
     MatchedEvidenceSpan,
     ProductRelevancePlanResult,
+    ProductTextUnit,
     TenderRelevanceDecision,
+)
+from origenlab_email_pipeline.commercial_procurement_product_relevance.normalize import (
+    normalize_product_text,
 )
 
 AS_OF = "2026-08-06T02:00:00Z"
@@ -287,6 +301,57 @@ def _plans(
 
 def _build(tenders, decisions, units=()):
     pr5c, pr5d, pr5e = _plans(tenders, decisions, units)
+    return build_institution_prospects_from_plans(
+        pr5c=pr5c,
+        pr5d=pr5d,
+        pr5e=pr5e,
+        as_of_utc=AS_OF,
+        run_context="local_fixture",
+    )
+
+
+def _line_evidence(
+    tid: str, texts: tuple[str, ...]
+) -> tuple[tuple[ProductTextUnit, ...], tuple[EvidenceUnitRelevanceDecision, ...]]:
+    """Build matching ProductTextUnit + EvidenceUnitRelevanceDecision pairs.
+
+    A LineClaim's relevance/scope always comes from re-classifying the raw
+    clause text (see build_line_claims), independent of the synthetic
+    unit-decision relevance passed here — that value only drives whether
+    _build_line_rows treats the line as assigned rather than review/excluded.
+    """
+    units = tuple(
+        ProductTextUnit(
+            unit_id=f"{tid}-u{i}",
+            coalesced_tender_id=tid,
+            evidence_ref_id=f"{tid}-ev{i}",
+            link_status="linked",
+            unresolved_reason=None,
+            field_path="line",
+            text_raw=text,
+            text_normalized=normalize_product_text(text),
+            evidence_tier="line_product_text",
+            source_plane="test",
+            snapshot_id="snap-1",
+            observation_id=None,
+            tender_observation_id=None,
+            line_observation_id=None,
+            pr4_procurement_id=None,
+            contributing_evidence_ref_ids=(),
+        )
+        for i, text in enumerate(texts)
+    )
+    decisions = tuple(
+        _unit(uid=f"{tid}-u{i}", tid=tid, relevance="strong_equipment_class")
+        for i in range(len(texts))
+    )
+    return units, decisions
+
+
+def _build_with_lines(tender, decision, texts):
+    units, unit_decisions = _line_evidence(tender.coalesced_tender_id, texts)
+    pr5c, pr5d, pr5e = _plans((tender,), (decision,), units=unit_decisions)
+    pr5d = replace(pr5d, product_text_units=units)
     return build_institution_prospects_from_plans(
         pr5c=pr5c,
         pr5d=pr5d,
@@ -1010,3 +1075,382 @@ def test_reviewed_adjudication_fixture_distribution() -> None:
     assert report["matches"] == 36
     assert report["predicted_disposition_counts"] == report["expected_disposition_counts"]
     assert report["provenance"] == "analyst_reviewed_provisional"
+
+
+# --- same-category purchase/rental signal reconciliation (Defect A/B) -------
+#
+# Tender codes below are generic fixture labels, not references to any real
+# ChileCompra tender. Wording is modeled on the shapes of real cases audited
+# separately (a long-term rental described with an "adquisicion del servicio
+# de arriendo" tender description; a multi-item lab-equipment tender with
+# concrete, non-generic line descriptions) without hardcoding production
+# behavior to any specific tender ID.
+
+
+def test_reconcile_category_signal_conflicts_marks_inferred_purchase_only() -> None:
+    """Same-tender, same-category rental evidence plus a purchase-signal claim
+    inferred only from a bare equipment noun (no explicit purchase verb at
+    all) is an unresolved conflict — and the rental claim is not dropped.
+    """
+    tid = "GENERIC-CONFLICT-1"
+    units, _ = _line_evidence(
+        tid,
+        (
+            "arriendo de centrifuga",
+            "centrifuga de laboratorio disponible en bodega",
+        ),
+    )
+    claims = [c for u in units for c in build_line_claims(u)]
+    groups = aggregate_category_scoped_claims(claims)
+    reconciled = reconcile_category_signal_conflicts(claims, groups)
+
+    purchase = next(
+        g for g in reconciled if g["commercial_signal"] == "equipment_purchase_signal"
+    )
+    rental = next(
+        g for g in reconciled if g["commercial_signal"] == "rental_or_comodato_signal"
+    )
+    assert purchase["category_signal_conflict"] is True
+    assert purchase["category_signal_sibling_signals"] == ["rental_or_comodato_signal"]
+    # Reconciliation must not silently discard the sibling's own claims.
+    assert rental["category_signal_conflict"] is False
+    assert rental["claim_ids"]
+
+
+def test_reconcile_category_signal_conflicts_is_order_independent() -> None:
+    """Reconciliation must be a pure function of bucket contents, not of the
+    order claims/groups were passed in. In production, groups always arrive
+    pre-sorted from aggregate_category_scoped_claims, which would mask an
+    ordering bug here — so this test bypasses that by reversing (and
+    shuffling) both inputs directly, covering a category with three sibling
+    signals (purchase + rental + installed_base) so a same-signal insertion
+    order swap has somewhere to hide if it existed.
+    """
+    tid = "GENERIC-ORDER-1"
+    units, _ = _line_evidence(
+        tid,
+        (
+            "centrifuga de laboratorio disponible en bodega",
+            "arriendo de centrifuga",
+            "mantencion de centrifuga de laboratorio",
+        ),
+    )
+    claims = [c for u in units for c in build_line_claims(u)]
+    groups = aggregate_category_scoped_claims(claims)
+
+    forward = reconcile_category_signal_conflicts(claims, groups)
+    reversed_result = reconcile_category_signal_conflicts(
+        list(reversed(claims)), list(reversed(groups))
+    )
+    assert forward == reversed_result
+
+    shuffled_claims = list(claims)
+    shuffled_groups = list(groups)
+    random.Random(42).shuffle(shuffled_claims)
+    random.Random(7).shuffle(shuffled_groups)
+    shuffled_result = reconcile_category_signal_conflicts(
+        shuffled_claims, shuffled_groups
+    )
+    assert forward == shuffled_result
+
+    # category_signal_sibling_signals must be sorted and deduplicated,
+    # independent of how many times a signal's group appears in the bucket.
+    purchase = next(
+        g for g in forward if g["commercial_signal"] == "equipment_purchase_signal"
+    )
+    assert purchase["category_signal_sibling_signals"] == sorted(
+        set(purchase["category_signal_sibling_signals"])
+    )
+    assert purchase["category_signal_sibling_signals"] == [
+        "installed_base_signal",
+        "rental_or_comodato_signal",
+    ]
+
+
+def test_reconcile_category_signal_conflicts_preserves_explicit_purchase() -> None:
+    """An independently explicit equipment purchase alongside a same-category
+    rental claim is not flagged as a conflict; the sibling stays traceable.
+    """
+    tid = "GENERIC-EXPLICIT-1"
+    units, _ = _line_evidence(
+        tid,
+        (
+            "compra de centrifuga de laboratorio",
+            "arriendo de centrifuga",
+        ),
+    )
+    claims = [c for u in units for c in build_line_claims(u)]
+    groups = aggregate_category_scoped_claims(claims)
+    reconciled = reconcile_category_signal_conflicts(claims, groups)
+
+    purchase = next(
+        g for g in reconciled if g["commercial_signal"] == "equipment_purchase_signal"
+    )
+    assert purchase["category_signal_conflict"] is False
+    assert purchase["category_signal_sibling_signals"] == ["rental_or_comodato_signal"]
+
+
+def test_reconcile_category_signal_conflicts_keeps_categories_independent() -> None:
+    """Maintenance evidence for one category and a purchase claim for a
+    different category on the same tender never conflict with each other.
+    """
+    tid = "GENERIC-CROSSCAT-1"
+    units, _ = _line_evidence(
+        tid,
+        (
+            "mantencion de centrifuga de laboratorio",
+            "adquisicion de balanza analitica de laboratorio",
+        ),
+    )
+    claims = [c for u in units for c in build_line_claims(u)]
+    groups = aggregate_category_scoped_claims(claims)
+    reconciled = reconcile_category_signal_conflicts(claims, groups)
+
+    assert {g["equipment_category"] for g in reconciled} == {"centrifuge", "balance"}
+    for g in reconciled:
+        assert g["category_signal_conflict"] is False
+        assert g["category_signal_sibling_signals"] == []
+
+
+def test_current_opportunity_blockers_reports_conflict_reason_code() -> None:
+    """Direct blocker check: a row flagged as a category-signal conflict is
+    blocked with the deterministic reason code, independent of every other
+    check current_opportunity_blockers performs.
+    """
+    row = {
+        "projected_lifecycle_class": "active_open",
+        "review_disposition": "catalog_fit_candidate",
+        "commercial_signal_type": "equipment_purchase_signal",
+        "catalog_fit_status": "catalog_fit_candidate",
+        "catalog_match_status": "catalog_fit_candidate",
+        "canonical_equipment_category": "centrifuge",
+        "equipment_scopes": ["complete_equipment"],
+        "purchase_intent": True,
+        "commercial_truth_source": "category_scoped_line_claim_conflict",
+        "category_signal_conflict": True,
+    }
+    blockers = current_opportunity_blockers(row, 1, as_of_utc=AS_OF)
+    assert "unresolved_category_signal_conflict" in blockers
+
+    resolved_row = {**row, "category_signal_conflict": False}
+    assert "unresolved_category_signal_conflict" not in current_opportunity_blockers(
+        resolved_row, 1, as_of_utc=AS_OF
+    )
+
+
+def test_chiloe_shaped_rental_tender_absent_from_current_opportunity_queue() -> None:
+    """A generic fixture modeled on a real long-term rental tender: title
+    names the rental directly, and the tender description separately reads
+    "adquisicion del servicio de arriendo..." (a purchase verb modifying the
+    rental service, not the equipment). Must stay visible in the institution
+    profile's current opportunities (it is still open and real evidence) but
+    must never reach the actionable current_opportunity_queue.
+    """
+    tid = "GENERIC-RENTAL-1"
+    tender = _tender(
+        tid=tid,
+        lifecycle="active_open",
+        title="arriendo centrifuga inmunohematologica lavadora",
+        close_ts="2026-09-01T00:00:00Z",
+    )
+    decision = _decision(tid=tid, relevance="rental_or_comodato", classes=())
+    result = _build_with_lines(
+        tender,
+        decision,
+        (
+            "arriendo centrifuga inmunohematologica lavadora",
+            "disponer de 1 centrifuga inmunohematologica lavadora de celulas "
+            "de manera segura, mediante la adquisicion del servicio de "
+            "arriendo de equipos con modalidad de leasing.",
+        ),
+    )
+
+    assert not any(
+        r["tender_code"] == tid
+        for r in result.operator_queues["current_opportunity_queue"]
+    )
+    profile = result.profiles[0]
+    assert any(row["coalesced_tender_id"] == tid for row in profile["current_opportunities"])
+    matched_rows = [row for row in result.tender_rows if row["coalesced_tender_id"] == tid]
+    assert matched_rows, "expected at least one tender_rows entry for the Chiloé-shaped tender"
+    for row in matched_rows:
+        # Must retain an actual rental/service signal, not merely "not purchase".
+        assert row["commercial_signal_type"] in (
+            "rental_or_comodato_signal",
+            "installed_base_signal",
+        )
+        assert "verified_catalog_class_and_purchase_signal" not in row["reason_codes"]
+        assert row["contact_authorization"] is False
+        assert row["outreach_authorization"] is False
+    assert profile["contact_authorization"] is False
+    assert profile["outreach_authorization"] is False
+
+
+def test_same_category_conflict_blocked_from_current_opportunity_queue() -> None:
+    """End-to-end: rental evidence plus a bare-noun-inferred purchase claim
+    for the same category is blocked from current_opportunity_queue with the
+    deterministic conflict reason code, while staying visible in the profile.
+    """
+    tid = "GENERIC-CONFLICT-2"
+    tender = _tender(tid=tid, lifecycle="active_open", title="Centrifuga de laboratorio")
+    decision = _decision(tid=tid, relevance="ambiguous", classes=())
+    result = _build_with_lines(
+        tender,
+        decision,
+        (
+            "arriendo de centrifuga",
+            "centrifuga de laboratorio disponible en bodega",
+        ),
+    )
+
+    assert not any(
+        r["tender_code"] == tid
+        for r in result.operator_queues["current_opportunity_queue"]
+    )
+    conflict_rows = [
+        row for row in result.tender_rows if row["coalesced_tender_id"] == tid
+    ]
+    assert any(row["category_signal_conflict"] for row in conflict_rows)
+    conflict_row = next(row for row in conflict_rows if row["category_signal_conflict"])
+    assert "unresolved_category_signal_conflict" in conflict_row["reason_codes"]
+    assert conflict_row["category_signal_sibling_signals"] == ["rental_or_comodato_signal"]
+    assert conflict_row["contact_authorization"] is False
+    assert conflict_row["outreach_authorization"] is False
+    profile = result.profiles[0]
+    assert any(row["coalesced_tender_id"] == tid for row in profile["current_opportunities"])
+
+
+def test_explicit_purchase_with_separate_rental_sibling_remains_actionable() -> None:
+    """An explicit, independently-worded equipment purchase clause stays
+    actionable even when a separate rental clause for the same category and
+    tender exists — the sibling stays traceable but does not block the queue.
+    """
+    tid = "GENERIC-EXPLICIT-2"
+    tender = _tender(tid=tid, lifecycle="active_open", title="Centrifuga de laboratorio")
+    decision = _decision(tid=tid, relevance="ambiguous", classes=())
+    result = _build_with_lines(
+        tender,
+        decision,
+        (
+            "compra de centrifuga de laboratorio",
+            "arriendo de centrifuga",
+        ),
+    )
+
+    queue_row = next(
+        r
+        for r in result.operator_queues["current_opportunity_queue"]
+        if r["tender_code"] == tid
+    )
+    assert queue_row["contact_authorization"] is False
+    assert queue_row["outreach_authorization"] is False
+    row = next(row for row in result.tender_rows if row["coalesced_tender_id"] == tid)
+    assert row["category_signal_conflict"] is False
+    assert row["category_signal_sibling_signals"] == ["rental_or_comodato_signal"]
+
+
+def test_explicit_purchase_with_ancillary_maintenance_remains_actionable() -> None:
+    """Ancillary maintenance bundled into one explicit purchase clause (no
+    separate sibling claim at all) stays a clean, unconflicted purchase.
+    """
+    tid = "GENERIC-ANCILLARY-1"
+    tender = _tender(tid=tid, lifecycle="active_open", title="Centrifuga de laboratorio")
+    decision = _decision(tid=tid, relevance="ambiguous", classes=())
+    result = _build_with_lines(
+        tender,
+        decision,
+        (
+            "Adquisición de centrífuga con mantención preventiva incluida "
+            "por 12 meses",
+        ),
+    )
+
+    assert any(
+        r["tender_code"] == tid
+        for r in result.operator_queues["current_opportunity_queue"]
+    )
+    row = next(row for row in result.tender_rows if row["coalesced_tender_id"] == tid)
+    assert row["category_signal_conflict"] is False
+    assert row["category_signal_sibling_signals"] == []
+
+
+def test_maintenance_one_category_purchase_another_no_cross_conflict() -> None:
+    """Maintenance evidence for centrifuge and a purchase claim for balance on
+    the same tender must not block each other — different categories only.
+    """
+    tid = "GENERIC-CROSSCAT-2"
+    tender = _tender(tid=tid, lifecycle="active_open", title="Equipamiento de laboratorio")
+    decision = _decision(tid=tid, relevance="ambiguous", classes=())
+    result = _build_with_lines(
+        tender,
+        decision,
+        (
+            "mantencion de centrifuga de laboratorio",
+            "adquisicion de balanza analitica de laboratorio",
+        ),
+    )
+
+    balance_queue_row = next(
+        r
+        for r in result.operator_queues["current_opportunity_queue"]
+        if r["tender_code"] == tid and r["equipment_category"] == "balance"
+    )
+    assert balance_queue_row["contact_authorization"] is False
+    assert balance_queue_row["outreach_authorization"] is False
+    balance_row = next(
+        row
+        for row in result.tender_rows
+        if row["coalesced_tender_id"] == tid
+        and row["canonical_equipment_category"] == "balance"
+    )
+    assert balance_row["category_signal_conflict"] is False
+    assert balance_row["category_signal_sibling_signals"] == []
+
+
+def test_sag_shaped_centrifuge_purchase_remains_actionable() -> None:
+    """A real, concrete SAG-style line description (centrifuge for eppendorf
+    tubes) untouched by any conflicting sibling stays a clean purchase.
+    """
+    tid = "GENERIC-SAG-1"
+    tender = _tender(tid=tid, lifecycle="active_open", title="Equipos de laboratorio")
+    decision = _decision(tid=tid, relevance="ambiguous", classes=())
+    result = _build_with_lines(
+        tender,
+        decision,
+        (
+            "Item N12 Centrifuga para tubos eppendorf de 1,5 a 2ml + UPS. "
+            "Detalles en bases tecnicas.",
+        ),
+    )
+
+    queue_row = next(
+        r
+        for r in result.operator_queues["current_opportunity_queue"]
+        if r["tender_code"] == tid
+    )
+    assert queue_row["equipment_category"] == "centrifuge"
+    assert queue_row["contact_authorization"] is False
+    assert queue_row["outreach_authorization"] is False
+
+
+def test_antofagasta_shaped_centrifuge_purchase_remains_actionable() -> None:
+    """A real, concrete Antofagasta-style line description (refrigerated
+    centrifuge) untouched by any conflicting sibling stays a clean purchase.
+    """
+    tid = "GENERIC-ANTOF-1"
+    tender = _tender(tid=tid, lifecycle="active_open", title="Equipos de laboratorio")
+    decision = _decision(tid=tid, relevance="ambiguous", classes=())
+    result = _build_with_lines(
+        tender,
+        decision,
+        ("Centrifuga Refrigerada Universal.",),
+    )
+
+    queue_row = next(
+        r
+        for r in result.operator_queues["current_opportunity_queue"]
+        if r["tender_code"] == tid
+    )
+    assert queue_row["equipment_category"] == "centrifuge"
+    assert queue_row["contact_authorization"] is False
+    assert queue_row["outreach_authorization"] is False
