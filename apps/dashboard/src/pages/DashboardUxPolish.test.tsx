@@ -196,7 +196,7 @@ describe("Dashboard UX polish (Phase 7B.3 ES)", () => {
 
   it("mantiene marca solo en sidebar sin logo duplicado en header", async () => {
     render(<DashboardApp />);
-    await waitFor(() => screen.getByText("LISTO"));
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     const staticLogo = screen.getByTestId("origenlab-logo-static");
     expect(staticLogo.closest("aside")).toBeTruthy();
@@ -209,7 +209,7 @@ describe("Dashboard UX polish (Phase 7B.3 ES)", () => {
 
   it("navegación en español", async () => {
     render(<DashboardApp />);
-    await waitFor(() => screen.getByText("LISTO"));
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
     expect(within(nav).getByRole("link", { name: "Hoy" })).toBeTruthy();
@@ -220,7 +220,7 @@ describe("Dashboard UX polish (Phase 7B.3 ES)", () => {
 
   it("tarjetas de Hoy en español navegan", async () => {
     render(<DashboardApp />);
-    await waitFor(() => screen.getByText("LISTO"));
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     fireEvent.click(
       screen.getByRole("button", { name: /Proveedores pendientes:/i }),
@@ -232,7 +232,7 @@ describe("Dashboard UX polish (Phase 7B.3 ES)", () => {
 
   it("proveedores agrupados y filas al hacer clic", async () => {
     render(<DashboardApp />);
-    await waitFor(() => screen.getByText("LISTO"));
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
     await navigateTo("Proveedores");
 
     fireEvent.click(screen.getByRole("button", { name: /SERVA, 1 caso en espejo/i }));
@@ -244,7 +244,7 @@ describe("Dashboard UX polish (Phase 7B.3 ES)", () => {
 
   it("página Negocios muestra tarjeta CEAF × SERVA y bloqueos", async () => {
     render(<DashboardApp />);
-    await waitFor(() => screen.getByText("LISTO"));
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
     await navigateTo("Negocios");
 
     const card = screen.getByTestId("deal-highlight-card");
@@ -255,7 +255,7 @@ describe("Dashboard UX polish (Phase 7B.3 ES)", () => {
 
   it("pagos y logística en dos secciones", async () => {
     render(<DashboardApp />);
-    await waitFor(() => screen.getByText("LISTO"));
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
     await navigateTo("Pagos y logística");
 
     screen.getByRole("heading", { name: "Pagos" });

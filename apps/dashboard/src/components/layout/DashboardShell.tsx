@@ -64,20 +64,20 @@ export function DashboardShell({
                   Centro operador
                 </span>
               </div>
-              <h1 className="truncate text-lg font-semibold text-brand-950 sm:text-xl">
+              <h1 className="truncate text-lg font-semibold text-slate-900 sm:text-xl">
                 {pageTitle}
               </h1>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <span
-                className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-700 ring-1 ring-slate-200"
+                className="inline-flex items-center rounded-full px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 ring-1 ring-slate-200"
                 data-testid="read-only-chip"
               >
                 Solo lectura
               </span>
               {verdict ? (
                 <span
-                  className="inline-flex items-center rounded-full bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-900 ring-1 ring-brand-600/30"
+                  className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${verdictTone(verdict).badge}`}
                   data-testid="operator-verdict-chip"
                 >
                   Estado: {verdictTone(verdict).label}
@@ -94,7 +94,7 @@ export function DashboardShell({
                 type="button"
                 onClick={loadAll}
                 disabled={refreshing}
-                className="rounded-lg bg-brand-600 px-3.5 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-brand-700 disabled:opacity-50 motion-reduce:transition-none"
+                className="rounded-lg bg-brand-600 px-3.5 py-1.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-700 active:scale-95 disabled:opacity-50 disabled:active:scale-100 motion-reduce:transition-none motion-reduce:active:scale-100"
               >
                 {refreshing ? "Actualizando…" : "Actualizar"}
               </button>
@@ -108,7 +108,7 @@ export function DashboardShell({
               ·
             </span>
             <code
-              className="hidden rounded bg-slate-50 px-1.5 py-0.5 text-[10px] text-brand-900 ring-1 ring-slate-200 sm:inline"
+              className="hidden rounded bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-700 ring-1 ring-slate-200 sm:inline"
               title="Base URL del API"
             >
               API {apiBase}
@@ -117,7 +117,7 @@ export function DashboardShell({
         </header>
 
         <main className="flex-1 px-4 py-5 sm:px-6 lg:px-8">
-          <div className="mx-auto w-full max-w-[1600px] space-y-5">
+          <div key={section} className="mx-auto w-full max-w-[1600px] space-y-5 animate-fade-in-up">
             <ReadOnlyBanner mirrorBackend={Boolean(mirrorBackend)} />
             {devConfigWarning ? <DevLegacyPortWarning message={devConfigWarning} /> : null}
             {children}

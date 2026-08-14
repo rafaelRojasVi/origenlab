@@ -1,17 +1,19 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Teal is the single accent: active nav, links, primary actions. Not a page wash. */
   --color-brand-50: #f0fdfa;
   --color-brand-100: #ccfbf1;
   --color-brand-600: #0d9488;
   --color-brand-700: #0f766e;
   --color-brand-900: #134e4a;
   --color-brand-950: #042f2e;
-  --color-surface: #f0fdfa;
+  /* Neutral base */
+  --color-surface: #f8fafc;
   --color-card: #ffffff;
-  --color-muted: #5f6b6a;
-  --color-border: #99f6e4;
+  --color-muted: #64748b;
+  --color-border: #e2e8f0;
 }
 
 body {
@@ -19,5 +21,26 @@ body {
   min-height: 100vh;
   font-family: var(--font-sans);
   background: var(--color-surface);
-  color: #042f2e;
+  color: #0f172a;
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.22s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in-up {
+    animation: none;
+  }
 }

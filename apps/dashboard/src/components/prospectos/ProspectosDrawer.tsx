@@ -121,7 +121,7 @@ export function ProspectosDrawer({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[var(--color-border)] bg-white px-5 py-4">
-          <h2 id="prospect-drawer-title" className="text-lg font-semibold text-brand-900">
+          <h2 id="prospect-drawer-title" className="text-lg font-semibold text-slate-900">
             Ficha del prospecto
           </h2>
           <button
@@ -154,7 +154,7 @@ export function ProspectosDrawer({
               </p>
 
               <section data-testid="prospect-origin-section">
-                <h3 className="text-sm font-semibold text-brand-900">Origen del prospecto</h3>
+                <h3 className="text-sm font-semibold text-slate-900">Origen del prospecto</h3>
                 <dl className="mt-2 grid gap-1 text-sm">
                   <div>
                     <dt className="text-[var(--color-muted)]">Origen</dt>
@@ -173,7 +173,7 @@ export function ProspectosDrawer({
 
               {isGmailOrigin ? (
                 <section data-testid="prospect-gmail-history">
-                  <h3 className="text-sm font-semibold text-brand-900">Historial Gmail</h3>
+                  <h3 className="text-sm font-semibold text-slate-900">Historial Gmail</h3>
                   <dl className="mt-2 grid gap-1 text-sm">
                     <div>
                       <dt className="text-[var(--color-muted)]">Primer contacto</dt>
@@ -198,7 +198,7 @@ export function ProspectosDrawer({
               ) : null}
 
               <section>
-                <h3 className="text-sm font-semibold text-brand-900">Organización y contacto</h3>
+                <h3 className="text-sm font-semibold text-slate-900">Organización y contacto</h3>
                 <p className="mt-1 text-base font-medium">{p.organization_name}</p>
                 <dl className="mt-2 grid gap-1 text-sm">
                   <div>
@@ -232,7 +232,7 @@ export function ProspectosDrawer({
               </section>
 
               <section>
-                <h3 className="text-sm font-semibold text-brand-900">Próxima acción</h3>
+                <h3 className="text-sm font-semibold text-slate-900">Próxima acción</h3>
                 <p className="mt-1 text-sm" data-testid="prospect-next-action">
                   {p.recommended_next_action ?? "Revisar ficha y decidir contacto manualmente."}
                 </p>
@@ -240,7 +240,7 @@ export function ProspectosDrawer({
 
               {porQue ? (
                 <section data-testid="prospect-por-que-importa">
-                  <h3 className="text-sm font-semibold text-brand-900">Por qué importa</h3>
+                  <h3 className="text-sm font-semibold text-slate-900">Por qué importa</h3>
                   {porQue.queHaceEvidencia ? (
                     <div className="mt-2">
                       <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
@@ -267,7 +267,7 @@ export function ProspectosDrawer({
               ) : null}
 
               <section>
-                <h3 className="text-sm font-semibold text-brand-900">Ángulo recomendado</h3>
+                <h3 className="text-sm font-semibold text-slate-900">Ángulo recomendado</h3>
                 <p className="mt-1 text-sm">{p.spanish_message_angle ?? "—"}</p>
                 {p.product_angle && p.product_angle !== p.spanish_message_angle ? (
                   <p className="mt-2 text-sm text-[var(--color-muted)]">
@@ -278,7 +278,7 @@ export function ProspectosDrawer({
 
               {isDeepsearchOrigin ? (
                 <section>
-                  <h3 className="text-sm font-semibold text-brand-900">Evidencia pública (DeepSearch)</h3>
+                  <h3 className="text-sm font-semibold text-slate-900">Evidencia pública (DeepSearch)</h3>
                   <EvidenceBlock
                     source={primarySource}
                     evidenceUrl={primaryEvidenceUrl}
@@ -290,7 +290,7 @@ export function ProspectosDrawer({
                 </section>
               ) : (
                 <section>
-                  <h3 className="text-sm font-semibold text-brand-900">Evidencia</h3>
+                  <h3 className="text-sm font-semibold text-slate-900">Evidencia</h3>
                   <EvidenceBlock
                     source={primarySource}
                     evidenceUrl={primaryEvidenceUrl}
@@ -300,7 +300,7 @@ export function ProspectosDrawer({
               )}
 
               <section>
-                <h3 className="text-sm font-semibold text-brand-900">Estado de seguridad</h3>
+                <h3 className="text-sm font-semibold text-slate-900">Estado de seguridad</h3>
                 <p className="mt-1 text-sm">{prospectClassificationLabel(p.classification)}</p>
                 <RiskFlagChips flags={p.risk_flags} />
                 {p.block_or_review_reason ? (
@@ -311,7 +311,7 @@ export function ProspectosDrawer({
 
               {messagePreview ? (
                 <section data-testid="prospect-message-section">
-                  <h3 className="text-sm font-semibold text-brand-900">{messagePreview.title}</h3>
+                  <h3 className="text-sm font-semibold text-slate-900">{messagePreview.title}</h3>
                   {messagePreview.note ? (
                     <p className="mt-1 text-sm text-[var(--color-muted)]">{messagePreview.note}</p>
                   ) : null}

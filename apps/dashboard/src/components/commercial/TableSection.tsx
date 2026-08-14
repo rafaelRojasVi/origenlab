@@ -35,7 +35,7 @@ export function TableSection({
   return (
     <section className="space-y-3" aria-labelledby={title.replace(/\s+/g, "-").toLowerCase()}>
       <div>
-        <h2 id={title.replace(/\s+/g, "-").toLowerCase()} className="text-lg font-semibold text-brand-900">
+        <h2 id={title.replace(/\s+/g, "-").toLowerCase()} className="text-lg font-semibold text-slate-900">
           {title}
         </h2>
         {subtitle ? <p className="mt-1 text-sm text-[var(--color-muted)]">{subtitle}</p> : null}

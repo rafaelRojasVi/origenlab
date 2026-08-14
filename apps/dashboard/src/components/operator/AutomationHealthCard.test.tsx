@@ -224,7 +224,7 @@ describe("AutomationHealthCard", () => {
     screen.getByText("no_change");
     screen.getByText(/not inspected by API/);
     screen.getByText("current (directory, redacted)");
-    expect(screen.queryByTestId("automation-run-summary")).toBeNull();
+    screen.getByTestId("automation-run-summary");
     expect(screen.queryByText(/hidden\/active\/current/)).toBeNull();
     expect(screen.queryByText(/\/home\//)).toBeNull();
   });

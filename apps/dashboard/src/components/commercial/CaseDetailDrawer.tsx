@@ -48,7 +48,7 @@ export function CaseDetailDrawer({
             <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">
               Caso tibio · solo lectura
             </p>
-            <h2 id="case-detail-heading" className="mt-1 text-lg font-semibold text-brand-900">
+            <h2 id="case-detail-heading" className="mt-1 text-lg font-semibold text-slate-900">
               {detail.caseTitle}
             </h2>
           </div>
@@ -104,7 +104,7 @@ export function CaseDetailDrawer({
           </section>
 
           <section className="rounded-lg border border-brand-200 bg-brand-50/60 px-3 py-3 space-y-2">
-            <h3 className="text-sm font-semibold text-brand-900">Estrategia recomendada</h3>
+            <h3 className="text-sm font-semibold text-slate-900">Estrategia recomendada</h3>
             <p className="text-sm text-slate-800">{detail.recommendedStrategy}</p>
           </section>
 

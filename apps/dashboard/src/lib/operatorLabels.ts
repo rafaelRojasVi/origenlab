@@ -19,6 +19,21 @@ const WARM_STATUS: Record<string, string> = {
   problem: "Problema",
 };
 
+/** Severity-coded badge classes for the warm-case status column (kept separate from the label map since color is presentation, not translation). */
+const WARM_STATUS_BADGE_CLASS: Record<string, string> = {
+  problem: "rounded bg-red-50 px-2 py-0.5 text-xs font-medium text-red-800 ring-1 ring-red-200",
+  waiting: "rounded bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 ring-1 ring-amber-200",
+  quoted: "rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800 ring-1 ring-emerald-200",
+  new: "rounded bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-800 ring-1 ring-sky-200",
+};
+
+const WARM_STATUS_BADGE_CLASS_DEFAULT =
+  "rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-800";
+
+export function warmStatusBadgeClass(token: string | null | undefined): string {
+  return WARM_STATUS_BADGE_CLASS[normalizeToken((token || "").trim())] ?? WARM_STATUS_BADGE_CLASS_DEFAULT;
+}
+
 const WARM_CATEGORY: Record<string, string> = {
   client_opportunity: "Oportunidad de cliente",
   client_response: "Respuesta de cliente",

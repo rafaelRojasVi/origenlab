@@ -17,13 +17,9 @@ import {
   EQUIPMENT_FEED_UNAVAILABLE_TITLE,
   isEquipmentFeedUnavailable,
 } from "../../lib/equipmentFeedStatus";
-import {
-  formatEquipmentCloseDate,
-  formatEquipmentPublicationDate,
-} from "../../lib/dashboardDateFormat";
+import { formatEquipmentCloseDate } from "../../lib/dashboardDateFormat";
 import { getEquipmentFilterEmptyMessage } from "../../lib/equipmentEmptyState";
 import { useEquipmentWatchlist } from "../../lib/equipmentWatchlist";
-import { truncate } from "../../lib/safeText";
 import { TokenLabel } from "../operator/TokenLabel";
 import { ContactEmailButton } from "./ContactEmailButton";
 import { EquipmentTriageBadges } from "./EquipmentTriageBadges";
@@ -35,30 +31,6 @@ import {
 } from "./EquipmentOpportunityDetailDrawer";
 import { TableListToolbar, ToolbarField, toolbarInputClass, toolbarSelectClass } from "./TableListToolbar";
 import { TableSection } from "./TableSection";
-
-function EquipmentItemMetadata({ row }: { row: EquipmentOpportunityItem }) {
-  const lines: string[] = [];
-  if (row.cantidad) lines.push(`Cantidad: ${row.cantidad}`);
-  if (row.unidad) lines.push(`Unidad: ${row.unidad}`);
-  if (row.producto) lines.push(`Producto: ${truncate(row.producto, 60)}`);
-  if (row.unspsc_code) lines.push(`UNSPSC: ${row.unspsc_code}`);
-  if (row.nivel_1) lines.push(`Nivel 1: ${truncate(row.nivel_1, 50)}`);
-  if (row.nivel_2) lines.push(`Nivel 2: ${truncate(row.nivel_2, 50)}`);
-  if (row.nivel_3) lines.push(`Nivel 3: ${truncate(row.nivel_3, 50)}`);
-  const statusParts = [
-    row.chilecompra_status,
-    row.validity_status ? `validez: ${row.validity_status}` : "",
-  ].filter(Boolean);
-  if (statusParts.length) lines.push(statusParts.join(" · "));
-  if (!lines.length) return null;
-  return (
-    <div className="mt-1 space-y-0.5 text-xs text-slate-600">
-      {lines.map((line) => (
-        <p key={line}>{line}</p>
-      ))}
-    </div>
-  );
-}
 
 export function EquipmentOpportunitiesTable({
   backend,
@@ -129,34 +101,34 @@ export function EquipmentOpportunitiesTable({
 
   const toolbar = (
     <TableListToolbar>
-      <ToolbarField label="Search" className="min-w-[12rem] flex-1">
+      <ToolbarField label="Buscar" className="min-w-[12rem] flex-1">
         <input
           type="search"
           className={toolbarInputClass()}
-          placeholder="Buyer, region, category, item, note…"
+          placeholder="Comprador, región, categoría, ítem, nota…"
           value={filters.search}
           onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
-          aria-label="Search equipment opportunities"
+          aria-label="Buscar oportunidades de equipos"
         />
       </ToolbarField>
-      <ToolbarField label="Sort">
+      <ToolbarField label="Ordenar">
         <select
           className={toolbarSelectClass()}
           value={filters.sort}
           onChange={(e) =>
             setFilters((f) => ({ ...f, sort: e.target.value as EquipmentSortKey }))
           }
-          aria-label="Sort equipment opportunities"
+          aria-label="Ordenar oportunidades de equipos"
         >
-          <option value="rank_asc">Priority rank (low first)</option>
-          <option value="rank_desc">Priority rank (high first)</option>
-          <option value="close_date_asc">Close date (soonest)</option>
-          <option value="close_date_desc">Close date (latest)</option>
-          <option value="category">Equipment category</option>
-          <option value="buyer">Buyer</option>
+          <option value="rank_asc">Prioridad (menor primero)</option>
+          <option value="rank_desc">Prioridad (mayor primero)</option>
+          <option value="close_date_asc">Fecha de cierre (más próxima)</option>
+          <option value="close_date_desc">Fecha de cierre (más lejana)</option>
+          <option value="category">Categoría de equipo</option>
+          <option value="buyer">Comprador</option>
         </select>
       </ToolbarField>
-      <ToolbarField label="Triage">
+      <ToolbarField label="Triaje">
         <select
           className={toolbarSelectClass()}
           value={filters.triage}
@@ -166,7 +138,7 @@ export function EquipmentOpportunitiesTable({
               triage: e.target.value as EquipmentTableFilters["triage"],
             }))
           }
-          aria-label="Filter equipment opportunities by triage"
+          aria-label="Filtrar oportunidades de equipos por triaje"
         >
           <option value="all">Todas</option>
           <option value="quote_now">Cotizar ahora</option>
@@ -186,7 +158,7 @@ export function EquipmentOpportunitiesTable({
               watchlist: e.target.value as EquipmentTableFilters["watchlist"],
             }))
           }
-          aria-label="Filter equipment opportunities by watchlist"
+          aria-label="Filtrar oportunidades de equipos por lista de seguimiento"
         >
           <option value="all">Todas</option>
           <option value="saved">Solo guardadas</option>
@@ -203,7 +175,7 @@ export function EquipmentOpportunitiesTable({
           className="rounded-md border border-[var(--color-border)] bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
           onClick={() => setFilters(DEFAULT_EQUIPMENT_FILTERS)}
         >
-          Clear filters
+          Limpiar filtros
         </button>
       ) : null}
     </TableListToolbar>
@@ -243,16 +215,16 @@ export function EquipmentOpportunitiesTable({
         <table className="min-w-full text-left text-sm">
           <thead className="bg-slate-50 text-xs uppercase tracking-wide text-[var(--color-muted)]">
             <tr>
-              <th className="px-3 py-2 font-medium">Rank</th>
-              <th className="px-3 py-2 font-medium">Buyer / institution</th>
-              <th className="px-3 py-2 font-medium">Contact</th>
-              <th className="px-3 py-2 font-medium">Region</th>
-              <th className="px-3 py-2 font-medium">Category</th>
-              <th className="px-3 py-2 font-medium">Contact status</th>
-              <th className="px-3 py-2 font-medium">Close date</th>
-              <th className="px-3 py-2 font-medium">Channel</th>
-              <th className="px-3 py-2 font-medium">Item / evidence</th>
-              <th className="px-3 py-2 font-medium">Next action</th>
+              <th className="px-3 py-2 font-medium">Prioridad</th>
+              <th className="px-3 py-2 font-medium">Comprador / institución</th>
+              <th className="px-3 py-2 font-medium">Contacto</th>
+              <th className="px-3 py-2 font-medium">Región</th>
+              <th className="px-3 py-2 font-medium">Categoría</th>
+              <th className="px-3 py-2 font-medium">Estado de contacto</th>
+              <th className="px-3 py-2 font-medium">Fecha de cierre</th>
+              <th className="px-3 py-2 font-medium">Canal</th>
+              <th className="px-3 py-2 font-medium">Ítem / evidencia</th>
+              <th className="px-3 py-2 font-medium">Próxima acción</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--color-border)]">
@@ -296,11 +268,6 @@ export function EquipmentOpportunitiesTable({
                     saved={isSaved(row)}
                     onToggle={() => toggleSaved(row)}
                   />
-                  {row.fecha_publicacion ? (
-                    <div className="mt-0.5 text-xs text-slate-600">
-                      Publicado: {formatEquipmentPublicationDate(row.fecha_publicacion)}
-                    </div>
-                  ) : null}
                   {row.mercado_publico_url ? (
                     <div onClick={(event) => event.stopPropagation()}>
                       <MercadoPublicoLink
@@ -339,18 +306,12 @@ export function EquipmentOpportunitiesTable({
                   />
                 </td>
                 <td className="px-3 py-2 max-w-sm">
-                  <p className="text-slate-800">
-                    {row.item_description ? truncate(row.item_description, 100) : "—"}
+                  <p
+                    className="line-clamp-2 text-slate-800"
+                    title={row.item_description || undefined}
+                  >
+                    {row.item_description || "—"}
                   </p>
-                  {row.operator_note ? (
-                    <p className="mt-1 text-xs text-[var(--color-muted)]">
-                      Note: {truncate(row.operator_note, 80)}
-                    </p>
-                  ) : null}
-                  {row.supplier_needed ? (
-                    <p className="mt-1 text-xs text-slate-600">Supplier: {row.supplier_needed}</p>
-                  ) : null}
-                  <EquipmentItemMetadata row={row} />
                 </td>
                 <td className="px-3 py-2">
                   <TokenLabel

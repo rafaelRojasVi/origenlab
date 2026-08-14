@@ -108,7 +108,7 @@ export function AutomationHealthCard({
   const refreshButton = (
     <button
       type="button"
-      className="rounded-md border border-[var(--color-border)] bg-white px-3 py-1.5 text-xs font-medium text-brand-900 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+      className="rounded-md border border-[var(--color-border)] bg-white px-3 py-1.5 text-xs font-medium text-slate-900 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
       onClick={() => void loadStatus(true)}
       disabled={loading || refreshing}
       data-testid="automation-refresh-button"
@@ -192,7 +192,7 @@ export function AutomationHealthCard({
         <div>
           {variant === "summary" ? (
             <>
-              <h2 id="automation-health-heading" className="text-lg font-semibold text-brand-900">
+              <h2 id="automation-health-heading" className="text-lg font-semibold text-slate-900">
                 Automatización operador
               </h2>
               <p className="mt-1 text-xs text-[var(--color-muted)]">
@@ -200,7 +200,7 @@ export function AutomationHealthCard({
               </p>
             </>
           ) : (
-            <h3 id="automation-health-heading" className="text-base font-semibold text-brand-900">
+            <h3 id="automation-health-heading" className="text-base font-semibold text-slate-900">
               Estado de automatización
             </h3>
           )}
@@ -292,33 +292,31 @@ export function AutomationHealthCard({
         </div>
       ) : null}
 
-      {variant === "summary" ? (
-        <div
-          className="mt-3 rounded-md border border-[var(--color-border)] bg-white/70 px-3 py-2"
-          data-testid="automation-run-summary"
-        >
-          <p className="text-sm font-semibold text-brand-900">Últimas ejecuciones</p>
-          <ul className="mt-2 space-y-2">
-            {runSummary.map((row) => (
-              <li
-                key={row.id}
-                className={`rounded-md border px-2.5 py-2 text-xs ${AUTOMATION_RUN_TONE_CLASS[row.tone]}`}
-                data-testid={`automation-run-row-${row.id}`}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-medium">{row.label}</span>
-                  <span className="rounded-full border border-current/20 bg-white/60 px-2 py-0.5 font-semibold uppercase tracking-wide">
-                    {row.primary}
-                  </span>
-                </div>
-                {row.secondary ? (
-                  <p className="mt-1 text-[11px] opacity-90">{row.secondary}</p>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+      <div
+        className="mt-3 rounded-md border border-[var(--color-border)] bg-white/70 px-3 py-2"
+        data-testid="automation-run-summary"
+      >
+        <p className="text-sm font-semibold text-slate-900">Últimas ejecuciones</p>
+        <ul className="mt-2 space-y-2">
+          {runSummary.map((row) => (
+            <li
+              key={row.id}
+              className={`rounded-md border px-2.5 py-2 text-xs ${AUTOMATION_RUN_TONE_CLASS[row.tone]}`}
+              data-testid={`automation-run-row-${row.id}`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-medium">{row.label}</span>
+                <span className="rounded-full border border-current/20 bg-white/60 px-2 py-0.5 font-semibold uppercase tracking-wide">
+                  {row.primary}
+                </span>
+              </div>
+              {row.secondary ? (
+                <p className="mt-1 text-[11px] opacity-90">{row.secondary}</p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </div>
 
       {variant === "summary" ? (
         <ul className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
@@ -379,13 +377,12 @@ export function AutomationHealthCard({
           ) : null}
         </ul>
       ) : (
-        <div className="mt-4 space-y-4 text-sm">
+        <div className="mt-4 space-y-3 text-sm">
           <dl className="grid gap-2 sm:grid-cols-2">
             <DetailRow
               label="Generado"
               value={formatAutomationTimestamp(status.generated_at_utc)}
             />
-            <DetailRow label="Veredicto" value={automationVerdictLabel(status.verdict)} />
             <DetailRow
               label="Acción recomendada"
               value={automationRecommendedActionLabel(status.recommended_action)}
@@ -395,8 +392,14 @@ export function AutomationHealthCard({
             ) : null}
           </dl>
 
-          <div className="rounded-lg border border-[var(--color-border)] bg-white/60 px-3 py-3">
-            <h4 className="font-semibold text-brand-900">Daily-core</h4>
+          <p className="text-xs font-medium text-[var(--color-muted)]">
+            Detalle técnico por subsistema — cerrado por defecto, para depuración puntual.
+          </p>
+
+          <details className="rounded-lg border border-[var(--color-border)] bg-white/60 px-3 py-3">
+            <summary className="cursor-pointer select-none font-semibold text-slate-900">
+              Daily-core
+            </summary>
             <dl className="mt-2 grid gap-2 sm:grid-cols-2">
               <DetailRow
                 label="Manifiesto presente"
@@ -414,10 +417,12 @@ export function AutomationHealthCard({
                 }
               />
             </dl>
-          </div>
+          </details>
 
-          <div className="rounded-lg border border-[var(--color-border)] bg-white/60 px-3 py-3">
-            <h4 className="font-semibold text-brand-900">Mail auto-refresh</h4>
+          <details className="rounded-lg border border-[var(--color-border)] bg-white/60 px-3 py-3">
+            <summary className="cursor-pointer select-none font-semibold text-slate-900">
+              Mail auto-refresh
+            </summary>
             <dl className="mt-2 grid gap-2 sm:grid-cols-2">
               <DetailRow
                 label="Estado presente"
@@ -442,10 +447,12 @@ export function AutomationHealthCard({
                 value={`${status.mail_auto_refresh.last_seen_inbox_total ?? "—"} / ${status.mail_auto_refresh.last_seen_sent_total ?? "—"}`}
               />
             </dl>
-          </div>
+          </details>
 
-          <div className="rounded-lg border border-[var(--color-border)] bg-white/60 px-3 py-3">
-            <h4 className="font-semibold text-brand-900">Dashboard auto-mirror</h4>
+          <details className="rounded-lg border border-[var(--color-border)] bg-white/60 px-3 py-3">
+            <summary className="cursor-pointer select-none font-semibold text-slate-900">
+              Dashboard auto-mirror
+            </summary>
             <dl className="mt-2 grid gap-2 sm:grid-cols-2">
               <DetailRow
                 label="Estado presente"
@@ -470,13 +477,15 @@ export function AutomationHealthCard({
                 value={`${status.dashboard_auto_mirror.cooldown_remaining_seconds}s`}
               />
             </dl>
-          </div>
+          </details>
 
-          <div
+          <details
             className="rounded-lg border border-[var(--color-border)] bg-white/60 px-3 py-3"
             data-testid="chilecompra-automation-section"
           >
-            <h4 className="font-semibold text-brand-900">ChileCompra equipment auto-refresh</h4>
+            <summary className="cursor-pointer select-none font-semibold text-slate-900">
+              ChileCompra equipment auto-refresh
+            </summary>
             <dl className="mt-2 grid gap-2 sm:grid-cols-2">
               <DetailRow
                 label="Estado presente"
@@ -535,11 +544,11 @@ export function AutomationHealthCard({
                 />
               ) : null}
             </dl>
-          </div>
+          </details>
 
           {cronNote ? (
             <p className="text-xs text-[var(--color-muted)]">
-              <span className="font-medium text-brand-900">Cron:</span> {cronNote}
+              <span className="font-medium text-slate-900">Cron:</span> {cronNote}
             </p>
           ) : null}
         </div>

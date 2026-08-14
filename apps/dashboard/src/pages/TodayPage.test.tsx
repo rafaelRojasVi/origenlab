@@ -176,13 +176,16 @@ describe("DashboardApp (legacy TodayPage tests)", () => {
       },
     });
     render(<DashboardApp />);
-    await waitFor(() => screen.getByText("LISTO"));
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
     expect(screen.queryByText(/\/tmp\/emails\.sqlite/)).toBeNull();
-    expect(screen.queryByText(/daily_core_run_manifest\.json/)).toBeNull();
-    expect(screen.queryByText(/\/secret\/active/)).toBeNull();
     expect(screen.queryByText(/body_preview/)).toBeNull();
 
     const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
+    fireEvent.click(within(nav).getByRole("link", { name: "Sistema" }));
+    await waitFor(() => screen.getByText("Última ejecución daily-core"));
+    expect(screen.queryByText(/daily_core_run_manifest\.json/)).toBeNull();
+    expect(screen.queryByText(/\/secret\/active/)).toBeNull();
+
     fireEvent.click(within(nav).getByRole("link", { name: "Licitaciones / equipos" }));
     await waitFor(() => screen.getByText("Hospital Regional"));
     expect(screen.queryByText(/\/secret\/path/)).toBeNull();
@@ -191,9 +194,13 @@ describe("DashboardApp (legacy TodayPage tests)", () => {
   it("shows daily-core section when no run is registered", async () => {
     mockAllOk();
     render(<DashboardApp />);
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
+    screen.getByText(/Solo lectura: este panel no envía correos ni aprueba contactos/);
+
+    const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
+    fireEvent.click(within(nav).getByRole("link", { name: "Sistema" }));
     await waitFor(() => screen.getByText("Última ejecución daily-core"));
     screen.getByText("Sin ejecución registrada todavía.");
-    screen.getByText(/Solo lectura: este panel no envía correos ni aprueba contactos/);
     expect(screen.queryByText(/No aprueba envíos/)).toBeNull();
   });
 
@@ -218,6 +225,9 @@ describe("DashboardApp (legacy TodayPage tests)", () => {
       },
     });
     render(<DashboardApp />);
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
+    const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
+    fireEvent.click(within(nav).getByRole("link", { name: "Sistema" }));
     await waitFor(() => screen.getByText("Última ejecución daily-core"));
     const note = screen.getByTestId("daily-core-run-note");
     within(note).getByText("success");
@@ -245,6 +255,9 @@ describe("DashboardApp (legacy TodayPage tests)", () => {
       },
     });
     render(<DashboardApp />);
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
+    const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
+    fireEvent.click(within(nav).getByRole("link", { name: "Sistema" }));
     await waitFor(() => screen.getByText("Manifest no legible; revisar status en CLI."));
     expect(screen.queryByText(/\/hidden\/daily_core/)).toBeNull();
   });
@@ -316,7 +329,7 @@ describe("DashboardApp (legacy TodayPage tests)", () => {
     });
 
     render(<DashboardApp />);
-    await waitFor(() => screen.getByText("LISTO"));
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
     fireEvent.click(within(nav).getByRole("link", { name: "Bandeja de revisión" }));

@@ -46,7 +46,7 @@ function SupplierEntityCard({
       }`}
     >
       <div className="flex items-start justify-between gap-2">
-        <p className="truncate text-sm font-semibold text-brand-950">{group.label}</p>
+        <p className="truncate text-sm font-semibold text-slate-900">{group.label}</p>
         <span
           className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${roleBadgeClassName(group.roleBadge)}`}
         >
@@ -66,9 +66,9 @@ function SupplierEntityCard({
 
 function KpiCard({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] px-4 py-3 shadow-sm">
-      <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">{label}</p>
-      <p className="mt-1 text-2xl font-semibold text-brand-900">{value}</p>
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] px-4 py-3 shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md motion-reduce:transition-none motion-reduce:hover:translate-y-0">
+      <p className="text-xs font-medium text-[var(--color-muted)]">{label}</p>
+      <p className="mt-1 text-2xl font-semibold text-slate-900">{value}</p>
     </div>
   );
 }
@@ -236,7 +236,7 @@ export function SupplierEntityGroups({
             <>
               <div className="border-b border-[var(--color-border)] pb-4">
                 <div className="flex flex-wrap items-start justify-between gap-2">
-                  <h2 className="text-lg font-semibold text-brand-950" data-testid="supplier-detail-title">
+                  <h2 className="text-lg font-semibold text-slate-900" data-testid="supplier-detail-title">
                     {selectedGroup.label}
                   </h2>
                   <span

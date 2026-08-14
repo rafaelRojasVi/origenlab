@@ -36,9 +36,9 @@ function formatLoadError(label: string, e: unknown): { message: string; detail: 
 
 function KpiCard({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] px-4 py-3 shadow-sm">
-      <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">{label}</p>
-      <p className="mt-1 text-2xl font-semibold text-brand-900">{value}</p>
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] px-4 py-3 shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md motion-reduce:transition-none motion-reduce:hover:translate-y-0">
+      <p className="text-xs font-medium text-[var(--color-muted)]">{label}</p>
+      <p className="mt-1 text-2xl font-semibold text-slate-900">{value}</p>
     </div>
   );
 }
@@ -177,7 +177,7 @@ export function ProspectosPage() {
   return (
     <div className="space-y-6" data-testid="prospectos-page">
       <header>
-        <h1 className="text-2xl font-semibold text-brand-900">Prospectos</h1>
+        <h1 className="text-2xl font-semibold text-slate-900">Prospectos</h1>
         <p className="mt-1 text-sm text-[var(--color-muted)]">
           Mesa única de revisión comercial · DeepSearch, Gmail histórico, follow-up y casos activos ·
           solo lectura

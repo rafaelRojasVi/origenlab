@@ -163,7 +163,7 @@ export function ContactProfilePanel({
       >
         <header className="flex items-start justify-between gap-3 border-b border-[var(--color-border)] px-4 py-4">
           <div>
-            <h2 id="contact-profile-heading" className="text-lg font-semibold text-brand-900">
+            <h2 id="contact-profile-heading" className="text-lg font-semibold text-slate-900">
               Perfil de contacto · solo lectura
             </h2>
             <p className="mt-1 text-xs text-[var(--color-muted)] break-all">{email}</p>
