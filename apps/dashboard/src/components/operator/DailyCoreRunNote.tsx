@@ -15,7 +15,7 @@ export function DailyCoreRunNote({
       className="mt-4 rounded-lg border border-slate-200 bg-slate-50/80 px-4 py-3"
       data-testid="daily-core-run-note"
     >
-      <h3 className="text-sm font-semibold text-brand-900">Última ejecución daily-core</h3>
+      <h3 className="text-sm font-semibold text-slate-900">Última ejecución daily-core</h3>
       {showSafetyNote ? (
         <p className="mt-1 text-xs text-[var(--color-muted)]">
           Solo visibilidad operativa. No aprueba envíos.

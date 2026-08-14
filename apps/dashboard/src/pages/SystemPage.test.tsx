@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardDataContext } from "../context/DashboardDataContext";
@@ -65,7 +65,7 @@ import { fetchOperatorAutomationStatus } from "../api/operatorClient";
 
 const mockFetchAutomation = vi.mocked(fetchOperatorAutomationStatus);
 
-function wrap(ui: ReactNode) {
+function wrap(ui: ReactNode, overrides: Record<string, unknown> = {}) {
   return (
     <DashboardDataContext.Provider
       value={
@@ -90,9 +90,11 @@ function wrap(ui: ReactNode) {
           panelLoading: false,
           panelError: null,
           catalogProducts: null,
+          leadResearchSummary: null,
           mirrorBackend: false,
           loadPanel: async () => {},
           setContactEmail: () => {},
+          ...overrides,
         } as never
       }
     >
@@ -162,5 +164,103 @@ describe("SystemPage", () => {
     });
     screen.getByText("Actualizado");
     screen.getByText("4 / 2 / 0");
+  });
+
+  it("renders Estado del sistema with daily-core status", () => {
+    render(wrap(<SystemPage />));
+    const systemStatus = screen.getByTestId("system-status-section");
+    within(systemStatus).getByText("Última ejecución daily-core");
+    within(systemStatus).getByText("Sin ejecución registrada todavía.");
+    expect(within(systemStatus).queryByText(/No aprueba envíos/)).toBeNull();
+  });
+
+  it("shows empty Atención state when there are no warnings", () => {
+    render(wrap(<SystemPage />));
+    screen.getByText("Sin advertencias por ahora.");
+  });
+
+  it("humanizes stale Postgres mirror warning in Atención section", () => {
+    render(
+      wrap(<SystemPage />, {
+        data: {
+          health: { ok: true, service: "origenlab-api", mode: "operator-sqlite-readonly", backend: "sqlite" },
+          operator: {
+            verdict: "READY",
+            outbound_readiness: "ready",
+            warnings: ["Postgres mirror last sync older than 24h (2026-06-01T00:00:00Z)."],
+          },
+        },
+      }),
+    );
+    screen.getByText(
+      "El espejo Postgres no se ha sincronizado en más de 24h. Los datos pueden estar atrasados.",
+    );
+  });
+
+  it("humanizes Global MAX outlier warning in Atención section", () => {
+    render(
+      wrap(<SystemPage />, {
+        data: {
+          health: { ok: true, service: "origenlab-api", mode: "operator-sqlite-readonly", backend: "sqlite" },
+          operator: {
+            verdict: "READY",
+            outbound_readiness: "ready",
+            warnings: [
+              "Global MAX(date_iso) outlier (2033-06-09T15:09:53+01:00) — prefer 2026-filtered freshness.",
+            ],
+          },
+        },
+      }),
+    );
+    screen.getByText(
+      "Hay una fecha futura anómala en el archivo histórico. Para frescura diaria se usa la fecha filtrada de 2026.",
+    );
+    expect(screen.queryByText(/Global MAX\(date_iso\)/)).toBeNull();
+  });
+
+  it("humanizes FastLab not_contacted warning in Atención section", () => {
+    render(
+      wrap(<SystemPage />, {
+        data: {
+          health: { ok: true, service: "origenlab-api", mode: "operator-sqlite-readonly", backend: "sqlite" },
+          operator: {
+            verdict: "READY",
+            outbound_readiness: "ready",
+            warnings: [
+              "FastLab (contacto@fastlab.cl): corrected to not_contacted; no Gmail Sent evidence; future outreach requires deliberate manual review.",
+            ],
+          },
+        },
+      }),
+    );
+    screen.getByText(
+      "FastLab quedó marcado como no contactado porque no hay evidencia en Gmail Enviados. Revisar manualmente antes de contactar.",
+    );
+    expect(screen.queryByText(/corrected to not_contacted/i)).toBeNull();
+  });
+
+  it("shows prior-history warning near Atención when same_domain_review threshold is met", () => {
+    render(
+      wrap(<SystemPage />, {
+        leadResearchSummary: {
+          table_available: true,
+          total: 10,
+          review_count: 10,
+          blocked_count: 0,
+          net_new_safe: 2,
+          gmail_historico: 0,
+          followup_antiguo: 0,
+          caso_activo: 0,
+          public_tender_review: 0,
+          same_domain_review: 3,
+          research_needed: 0,
+          data_source: "postgres_mirror",
+          read_only: true,
+          disclaimer: "",
+        },
+      }),
+    );
+    screen.getByTestId("system-prospect-prior-history-warning");
+    screen.getByText(/Hay prospectos con historial previo/);
   });
 });

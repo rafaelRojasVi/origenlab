@@ -212,7 +212,7 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
 
   it("sidebar renders grouped navigation and all sections", async () => {
     render(<DashboardApp />);
-    await waitFor(() => screen.getByText("LISTO"));
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
     for (const groupId of ["inicio", "comercial", "operacion", "sistema"]) {
@@ -241,7 +241,7 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
 
   it("marks active nav item with aria-current", async () => {
     render(<DashboardApp />);
-    await waitFor(() => screen.getByText("LISTO"));
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
     expect(within(nav).getByRole("link", { name: "Hoy" }).getAttribute("aria-current")).toBe(
@@ -254,7 +254,7 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
 
   it("can collapse and expand sidebar from top toggle", async () => {
     render(<DashboardApp />);
-    await waitFor(() => screen.getByText("LISTO"));
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     const sidebar = screen.getByTestId("dashboard-sidebar");
     const toggle = screen.getByTestId("sidebar-collapse-toggle");
@@ -274,7 +274,7 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
 
   it("does not render duplicate OrigenLab branding in header and sidebar", async () => {
     render(<DashboardApp />);
-    await waitFor(() => screen.getByText("LISTO"));
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     expect(screen.queryByTestId("origenlab-logo-animated")).toBeNull();
     expect(screen.getAllByTestId("origenlab-logo-static")).toHaveLength(1);
@@ -284,7 +284,7 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
 
   it("does not introduce send or write action buttons in shell", async () => {
     render(<DashboardApp />);
-    await waitFor(() => screen.getByText("LISTO"));
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     expect(screen.queryByRole("button", { name: /Enviar/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /Aplicar/i })).toBeNull();
@@ -293,7 +293,7 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
 
   it("Today summary renders queue count cards", async () => {
     render(<DashboardApp />);
-    await waitFor(() => screen.getByText("LISTO"));
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     expect(screen.getAllByText("Qué revisar hoy").length).toBeGreaterThan(0);
     screen.getByText("Clientes por responder");
@@ -306,7 +306,7 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
 
   it("Catalog page renders product table", async () => {
     render(<DashboardApp />);
-    await waitFor(() => screen.getByText("LISTO"));
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     await navigateTo("Catálogo");
     await waitFor(() => {
@@ -317,7 +317,7 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
 
   it("Inbox page contains warm cases table", async () => {
     render(<DashboardApp />);
-    await waitFor(() => screen.getByText("LISTO"));
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     await navigateTo("Bandeja de revisión");
     await waitFor(() => {
@@ -327,7 +327,7 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
 
   it("Suppliers page excludes client opportunities", async () => {
     render(<DashboardApp />);
-    await waitFor(() => screen.getByText("LISTO"));
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     await navigateTo("Proveedores");
     await waitFor(() => {
@@ -343,7 +343,7 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
 
   it("Payments & logistics excludes supplier and client rows", async () => {
     render(<DashboardApp />);
-    await waitFor(() => screen.getByText("LISTO"));
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     await navigateTo("Pagos y logística");
     await waitFor(() => {
@@ -356,7 +356,7 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
 
   it("Deals page renders commercial deal table", async () => {
     render(<DashboardApp />);
-    await waitFor(() => screen.getByText("LISTO"));
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     await navigateTo("Negocios");
     await waitFor(() => {
@@ -368,7 +368,7 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
 
   it("global Refresh button reloads data", async () => {
     render(<DashboardApp />);
-    await waitFor(() => screen.getByText("LISTO"));
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     vi.mocked(fetchTodayPanel).mockClear();
 

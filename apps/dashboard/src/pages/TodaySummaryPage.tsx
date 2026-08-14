@@ -3,41 +3,10 @@ import { useDashboardData } from "../context/DashboardDataContext";
 import { dashboardSectionToHash } from "../lib/dashboardHashRoute";
 import type { DashboardSection } from "../lib/dashboardNav";
 import { isEquipmentFeedUnavailable } from "../lib/equipmentFeedStatus";
-import { humanizeOperatorWarning } from "../lib/humanizeOperatorWarning";
 import { computeTodaySummaryCounts } from "../lib/todaySummaryCounts";
-import { verdictTone } from "../lib/verdictStyles";
-import { AutomationHealthCard } from "../components/operator/AutomationHealthCard";
-import { DailyCoreRunNote } from "../components/operator/DailyCoreRunNote";
-import { OperatorWarningsList } from "../components/operator/OperatorWarningsList";
 
-const WARNINGS_PREVIEW = 5;
 const READ_ONLY_SAFETY =
   "Solo lectura: este panel no envía correos ni aprueba contactos.";
-
-function MirrorReadinessNote({
-  readiness,
-  mirrorBackend,
-}: {
-  readiness: string;
-  mirrorBackend: boolean;
-}) {
-  if (!mirrorBackend) {
-    return (
-      <p className="text-sm text-[var(--color-muted)]">
-        Preparación de salida: <span className="font-medium text-slate-800">{readiness}</span>
-      </p>
-    );
-  }
-  return (
-    <p className="text-sm text-[var(--color-muted)]">
-      Espejo Postgres / preparación salida:{" "}
-      <span className="font-medium text-slate-800">{readiness}</span>
-      <span className="mt-1 block text-xs text-sky-800">
-        Refleja la última sincronización al espejo Postgres, no la aprobación de envío en SQLite.
-      </span>
-    </p>
-  );
-}
 
 function navigateToSection(section: DashboardSection) {
   window.location.hash = dashboardSectionToHash(section);
@@ -49,36 +18,38 @@ function SummaryCard({
   displayValue,
   hint,
   section,
+  needsAttention = false,
 }: {
   label: string;
   value: number;
   displayValue?: string;
   hint?: string;
   section: DashboardSection;
+  /** True when a non-zero count here means something the operator should look at. */
+  needsAttention?: boolean;
 }) {
   const shown = displayValue ?? String(value);
+  const flagged = needsAttention && value > 0;
   return (
     <button
       type="button"
       onClick={() => navigateToSection(section)}
-      className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] px-4 py-4 text-left shadow-sm transition-all hover:border-brand-600/60 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+      className={`w-full rounded-xl border bg-[var(--color-card)] px-4 py-4 text-left shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-brand-600/60 hover:shadow-md active:translate-y-0 motion-reduce:transition-none motion-reduce:hover:translate-y-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 ${
+        flagged ? "border-amber-200" : "border-[var(--color-border)]"
+      }`}
       aria-label={`${label}: ${shown}. Abrir sección.`}
     >
-      <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
-        {label}
-      </p>
-      <p className="mt-2 text-3xl font-semibold text-brand-900">{shown}</p>
+      <div className="flex items-center gap-1.5">
+        {flagged ? (
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
+        ) : null}
+        <p className="text-xs font-medium text-[var(--color-muted)]">{label}</p>
+      </div>
+      <p className="mt-2 text-3xl font-semibold text-slate-900">{shown}</p>
       {hint ? <p className="mt-1 text-xs text-[var(--color-muted)]">{hint}</p> : null}
       <p className="mt-2 text-xs font-medium text-brand-700">Ver sección →</p>
     </button>
   );
-}
-
-function displayWarnings(warnings: string[]): { display: string; parseText: string }[] {
-  return warnings.map((warning) => ({
-    display: humanizeOperatorWarning(warning),
-    parseText: warning,
-  }));
 }
 
 export function TodaySummaryPage() {
@@ -91,15 +62,8 @@ export function TodaySummaryPage() {
     commercialDeals,
     catalogProducts,
     leadResearchSummary,
-    mirrorBackend,
     loadPanel,
-    setContactEmail,
   } = useDashboardData();
-
-  const tone = data ? verdictTone(data.operator.verdict) : null;
-  const warnings = data?.operator.warnings ?? [];
-  const warningsMore = Math.max(0, warnings.length - WARNINGS_PREVIEW);
-  const displayWarningLines = useMemo(() => displayWarnings(warnings), [warnings]);
 
   const equipmentFeedUnavailable = isEquipmentFeedUnavailable(equipment?.meta ?? null);
 
@@ -145,7 +109,7 @@ export function TodaySummaryPage() {
       {showMainContent ? (
         <>
           <header>
-            <h1 className="text-xl font-semibold text-brand-900">Qué revisar hoy</h1>
+            <h1 className="text-xl font-semibold text-slate-900">Qué revisar hoy</h1>
             <p className="mt-2 text-sm text-[var(--color-muted)]">
               Prioriza clientes, proveedores, pagos/logística y licitaciones. {READ_ONLY_SAFETY}
             </p>
@@ -168,7 +132,7 @@ export function TodaySummaryPage() {
           ) : null}
 
           <section aria-labelledby="today-queues-heading">
-            <h2 id="today-queues-heading" className="text-lg font-semibold text-brand-900">
+            <h2 id="today-queues-heading" className="text-lg font-semibold text-slate-900">
               Colas prioritarias
             </h2>
             <p className="mt-1 text-sm text-[var(--color-muted)]">
@@ -205,6 +169,7 @@ export function TodaySummaryPage() {
                 value={counts.dealBlockers}
                 hint="Negocios con bloqueos de margen"
                 section="deals"
+                needsAttention
               />
               <SummaryCard
                 label="Licitaciones / equipos"
@@ -234,104 +199,7 @@ export function TodaySummaryPage() {
                 section="prospectos"
               />
             </div>
-
-            {leadResearchSummary &&
-            (leadResearchSummary.same_domain_review >= 3 ||
-              leadResearchSummary.blocked_count >= 5) ? (
-              <p
-                className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
-                data-testid="today-prospect-prior-history-warning"
-              >
-                Hay prospectos con historial previo; revisar antes de contactar.{" "}
-                <button
-                  type="button"
-                  className="font-medium text-brand-800 underline"
-                  onClick={() => navigateToSection("prospectos")}
-                >
-                  Ver Prospectos
-                </button>
-              </p>
-            ) : null}
           </section>
-        </>
-      ) : null}
-
-      {data && tone ? (
-        <>
-          {warnings.length > 0 ? (
-            <OperatorWarningsList
-              title="Atención"
-              subtitle="Revisiones operativas o técnicas que conviene mirar antes de actuar. El panel sigue siendo solo lectura."
-              showListSafetyNote={false}
-              warnings={displayWarningLines.slice(0, WARNINGS_PREVIEW)}
-              moreCount={warningsMore}
-              onContactSelect={setContactEmail}
-            />
-          ) : (
-            <section className="rounded-lg border border-slate-200 bg-slate-50/80 px-4 py-4">
-              <h2 className="text-sm font-semibold text-brand-900">Atención</h2>
-              <p className="mt-1 text-sm text-[var(--color-muted)]" role="status">
-                Sin advertencias por ahora.
-              </p>
-            </section>
-          )}
-
-          <section
-            className={`rounded-xl border px-5 py-5 shadow-sm ${tone.banner}`}
-            aria-labelledby="system-status-heading"
-            data-testid="today-system-status"
-          >
-            <h2 id="system-status-heading" className="text-lg font-semibold text-brand-900">
-              Estado del sistema
-            </h2>
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              <span className={`rounded-md px-3 py-1 text-sm font-bold uppercase tracking-wide ${tone.badge}`}>
-                {tone.label}
-              </span>
-              <span className="text-sm font-medium text-[var(--color-muted)]">Estado operador</span>
-            </div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <p className="text-sm">
-                <span className="text-[var(--color-muted)]">Datos del panel:</span>{" "}
-                <code className="text-xs">{data.health.mode}</code>
-                {" · "}
-                {data.health.ok ? "ok" : "degradado"}
-              </p>
-              {data.operator.campaign_mode ? (
-                <p className="text-sm">
-                  <span className="text-[var(--color-muted)]">Campaña:</span>{" "}
-                  <span className="font-medium">{data.operator.campaign_mode}</span>
-                </p>
-              ) : null}
-              {data.operator.operator_focus ? (
-                <p className="text-sm">
-                  <span className="text-[var(--color-muted)]">Foco:</span>{" "}
-                  <span className="font-medium">{data.operator.operator_focus}</span>
-                </p>
-              ) : null}
-              {warnings.length > 0 ? (
-                <p className="text-sm">
-                  <span className="text-[var(--color-muted)]">Advertencias activas:</span>{" "}
-                  <span className="font-medium">{warnings.length}</span>
-                </p>
-              ) : null}
-            </div>
-            <div className="mt-3">
-              <MirrorReadinessNote
-                readiness={data.operator.outbound_readiness}
-                mirrorBackend={mirrorBackend}
-              />
-            </div>
-            <DailyCoreRunNote dailyCoreRun={data.operator.daily_core_run} showSafetyNote={false} />
-          </section>
-
-          <AutomationHealthCard />
-
-          {data.health.backend === "sqlite" ? (
-            <p className="text-sm text-[var(--color-muted)]" role="status">
-              El servidor usa SQLite local (la ruta no se muestra en el panel).
-            </p>
-          ) : null}
         </>
       ) : null}
     </div>

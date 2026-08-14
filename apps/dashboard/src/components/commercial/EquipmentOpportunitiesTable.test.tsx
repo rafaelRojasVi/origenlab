@@ -77,7 +77,6 @@ describe("EquipmentOpportunitiesTable", () => {
 
     screen.getByText("Universidad Ejemplo");
     screen.getByText("LP-001");
-    screen.getByText(/fit=90/);
     expect(screen.getAllByTestId("equipment-triage-badge").some((el) => el.textContent === "Cotizar ahora")).toBe(
       true,
     );
@@ -291,7 +290,7 @@ describe("EquipmentOpportunitiesTable", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: /Guardar oportunidad: Universidad Ejemplo/ }));
-    fireEvent.change(screen.getByLabelText("Filter equipment opportunities by watchlist"), {
+    fireEvent.change(screen.getByLabelText("Filtrar oportunidades de equipos por lista de seguimiento"), {
       target: { value: "saved" },
     });
 
@@ -327,18 +326,18 @@ describe("EquipmentOpportunitiesTable", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: /Guardar oportunidad: Universidad Ejemplo/ }));
-    fireEvent.change(screen.getByLabelText("Filter equipment opportunities by watchlist"), {
+    fireEvent.change(screen.getByLabelText("Filtrar oportunidades de equipos por lista de seguimiento"), {
       target: { value: "saved" },
     });
-    fireEvent.change(screen.getByLabelText("Search equipment opportunities"), {
+    fireEvent.change(screen.getByLabelText("Buscar oportunidades de equipos"), {
       target: { value: "zzznomatch" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar filtros" }));
 
     screen.getByRole("button", { name: /Quitar de guardadas: Universidad Ejemplo/ });
     screen.getByText("Hospital Monitor");
     expect(
-      (screen.getByLabelText("Filter equipment opportunities by watchlist") as HTMLSelectElement).value,
+      (screen.getByLabelText("Filtrar oportunidades de equipos por lista de seguimiento") as HTMLSelectElement).value,
     ).toBe("all");
   });
 
@@ -427,7 +426,7 @@ describe("EquipmentOpportunitiesTable", () => {
         onContactSelect={() => {}}
       />,
     );
-    expect(screen.getByLabelText("Filter equipment opportunities by triage")).toBeTruthy();
+    expect(screen.getByLabelText("Filtrar oportunidades de equipos por triaje")).toBeTruthy();
   });
 
   it("filters rows when Cotizar ahora triage is selected", () => {
@@ -457,7 +456,7 @@ describe("EquipmentOpportunitiesTable", () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText("Filter equipment opportunities by triage"), {
+    fireEvent.change(screen.getByLabelText("Filtrar oportunidades de equipos por triaje"), {
       target: { value: "quote_now" },
     });
 
@@ -499,7 +498,7 @@ describe("EquipmentOpportunitiesTable", () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText("Filter equipment opportunities by triage"), {
+    fireEvent.change(screen.getByLabelText("Filtrar oportunidades de equipos por triaje"), {
       target: { value: "missing_contact" },
     });
 
@@ -534,10 +533,10 @@ describe("EquipmentOpportunitiesTable", () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText("Search equipment opportunities"), {
+    fireEvent.change(screen.getByLabelText("Buscar oportunidades de equipos"), {
       target: { value: "ejemplo" },
     });
-    fireEvent.change(screen.getByLabelText("Filter equipment opportunities by triage"), {
+    fireEvent.change(screen.getByLabelText("Filtrar oportunidades de equipos por triaje"), {
       target: { value: "quote_now" },
     });
 
@@ -572,22 +571,22 @@ describe("EquipmentOpportunitiesTable", () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText("Search equipment opportunities"), {
+    fireEvent.change(screen.getByLabelText("Buscar oportunidades de equipos"), {
       target: { value: "ejemplo" },
     });
-    fireEvent.change(screen.getByLabelText("Filter equipment opportunities by triage"), {
+    fireEvent.change(screen.getByLabelText("Filtrar oportunidades de equipos por triaje"), {
       target: { value: "quote_now" },
     });
     expect(screen.queryByText("Hospital Monitor")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar filtros" }));
 
     screen.getByText("Universidad Ejemplo");
     screen.getByText("Hospital Monitor");
     expect(
-      (screen.getByLabelText("Filter equipment opportunities by triage") as HTMLSelectElement).value,
+      (screen.getByLabelText("Filtrar oportunidades de equipos por triaje") as HTMLSelectElement).value,
     ).toBe("all");
-    expect((screen.getByLabelText("Search equipment opportunities") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("Buscar oportunidades de equipos") as HTMLInputElement).value).toBe("");
   });
 
   it("shows triage-specific empty copy when triage filter has no matches", () => {
@@ -609,7 +608,7 @@ describe("EquipmentOpportunitiesTable", () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText("Filter equipment opportunities by triage"), {
+    fireEvent.change(screen.getByLabelText("Filtrar oportunidades de equipos por triaje"), {
       target: { value: "missing_contact" },
     });
 
@@ -635,7 +634,7 @@ describe("EquipmentOpportunitiesTable", () => {
         onContactSelect={() => {}}
       />,
     );
-    fireEvent.change(screen.getByLabelText("Search equipment opportunities"), {
+    fireEvent.change(screen.getByLabelText("Buscar oportunidades de equipos"), {
       target: { value: "zzznomatch" },
     });
     screen.getByText(/Ninguna oportunidad coincide con la búsqueda actual/);
@@ -783,17 +782,18 @@ describe("EquipmentOpportunitiesTable", () => {
     );
 
     expect(screen.queryByText("2026-06-17T19:00:00")).toBeNull();
-    screen.getByText(/Publicado:/);
     screen.getByRole("link", { name: "Buscar en Mercado Público" });
-    screen.getByText(/Cantidad: 2/);
-    screen.getByText(/UNSPSC: 41100000/);
-    screen.getByText(/Producto: Centrifuga refrigerada/);
     expect(screen.getByRole("link", { name: "Buscar en Mercado Público" }).getAttribute("href")).toContain(
       "1051-1-LP26",
     );
     expect(screen.getByRole("link", { name: "Buscar en Mercado Público" }).getAttribute("href")).not.toMatch(
       /ticket/i,
     );
+
+    fireEvent.click(screen.getByRole("button", { name: "Ver detalle de licitación 1051-1-LP26" }));
+    const drawer = screen.getByTestId("equipment-opportunity-detail-drawer");
+    within(drawer).getByText("Centrifuga refrigerada");
+    within(drawer).getByText("41100000");
   });
 
   const detailRow: EquipmentOpportunityItem = {

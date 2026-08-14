@@ -21,7 +21,7 @@ function SidebarCollapseToggle({
     <button
       type="button"
       onClick={onToggle}
-      className="shrink-0 rounded-lg p-1.5 text-teal-200/80 transition-colors hover:bg-brand-900/80 hover:text-white motion-reduce:transition-none"
+      className="shrink-0 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-800 hover:text-white motion-reduce:transition-none"
       aria-expanded={!collapsed}
       aria-controls="dashboard-sidebar"
       aria-label={collapsed ? "Expandir navegación" : "Contraer navegación"}
@@ -69,12 +69,12 @@ function NavLink({
       } ${
         isActive
           ? "bg-brand-600 text-white shadow-sm ring-1 ring-brand-700/50"
-          : "text-teal-100/90 hover:bg-brand-900/80 hover:text-white"
+          : "text-slate-300 hover:bg-slate-800 hover:text-white"
       }`}
     >
       <NavIcon
         name={item.iconName}
-        className={`h-5 w-5 shrink-0 ${isActive ? "text-white" : "text-teal-200/90 group-hover:text-white"}`}
+        className={`h-5 w-5 shrink-0 ${isActive ? "text-white" : "text-slate-400 group-hover:text-white"}`}
       />
       {!collapsed ? <span className="truncate">{item.label}</span> : null}
     </a>
@@ -95,24 +95,24 @@ export function DashboardSidebar({
   return (
     <aside
       id="dashboard-sidebar"
-      className={`flex shrink-0 flex-col border-r border-brand-900/30 bg-brand-950 text-brand-50 shadow-lg transition-[width] duration-200 ease-in-out motion-reduce:transition-none ${
+      className={`flex shrink-0 flex-col border-r border-slate-800 bg-slate-900 text-slate-100 shadow-lg transition-[width] duration-200 ease-in-out motion-reduce:transition-none ${
         collapsed ? "w-16" : "w-64"
       }`}
       data-testid="dashboard-sidebar"
       data-collapsed={collapsed ? "true" : "false"}
     >
-      <div className="border-b border-brand-900/40 px-2.5 py-2.5">
+      <div className="border-b border-slate-800 px-2.5 py-2.5">
         {collapsed ? (
           <div className="flex flex-col items-center gap-2">
             <div className="flex w-full items-center justify-between gap-1">
               <div className="flex min-w-0 flex-1 justify-center" data-testid="origenlab-logo-static">
-                <img
-                  src="/logo/origenlab-mark-static.svg"
-                  alt="OrigenLab"
-                  className="h-8 w-8 rounded-lg ring-1 ring-brand-700/40"
-                  width={32}
-                  height={32}
-                />
+                <span
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold text-white"
+                  aria-label="OrigenLab"
+                  title="OrigenLab"
+                >
+                  OL
+                </span>
               </div>
               <SidebarCollapseToggle collapsed={collapsed} onToggle={onToggleCollapsed} />
             </div>
@@ -121,7 +121,7 @@ export function DashboardSidebar({
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 flex-1">
               <OrigenLabStaticLogo compact />
-              <p className="mt-1 text-[10px] uppercase tracking-wide text-teal-200/60">
+              <p className="mt-1 text-[10px] uppercase tracking-wide text-slate-500">
                 Solo lectura
               </p>
             </div>
@@ -135,14 +135,14 @@ export function DashboardSidebar({
           <div key={group.id} className={collapsed ? "mb-2" : "mb-4"}>
             {!collapsed ? (
               <p
-                className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-wider text-teal-200/50"
+                className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500"
                 data-testid={`nav-group-${group.id}`}
               >
                 {group.label}
               </p>
             ) : (
               <div
-                className="mx-auto mb-1.5 h-px w-8 bg-brand-800/80"
+                className="mx-auto mb-1.5 h-px w-8 bg-slate-700"
                 aria-hidden
                 data-testid={`nav-group-${group.id}`}
               />

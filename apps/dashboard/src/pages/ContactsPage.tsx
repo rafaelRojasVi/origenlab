@@ -34,9 +34,9 @@ const CONTACT_SCOPE_OPTIONS: ReadonlyArray<{ value: ContactScope; label: string 
 
 function KpiCard({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] px-4 py-3 shadow-sm">
-      <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">{label}</p>
-      <p className="mt-1 text-2xl font-semibold text-brand-900">{value}</p>
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] px-4 py-3 shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md motion-reduce:transition-none motion-reduce:hover:translate-y-0">
+      <p className="text-xs font-medium text-[var(--color-muted)]">{label}</p>
+      <p className="mt-1 text-2xl font-semibold text-slate-900">{value}</p>
     </div>
   );
 }
@@ -173,7 +173,7 @@ export function ContactsPage() {
   return (
     <div className="space-y-6" data-testid="contacts-page">
       <header>
-        <h1 className="text-2xl font-semibold text-brand-900">Clientes / instituciones</h1>
+        <h1 className="text-2xl font-semibold text-slate-900">Clientes / instituciones</h1>
         <p className="mt-1 text-sm text-[var(--color-muted)]">
           Agrupa instituciones y contactos con historial OrigenLab publicado al espejo. DeepSearch queda
           separado en Investigación.
@@ -209,7 +209,7 @@ export function ContactsPage() {
             className={`rounded-full border px-3 py-1.5 text-sm font-medium ${
               contactScope === option.value
                 ? "border-brand-600 bg-brand-600 text-white"
-                : "border-[var(--color-border)] bg-white text-brand-900 hover:bg-brand-50"
+                : "border-[var(--color-border)] bg-white text-slate-700 hover:bg-slate-50"
             }`}
           >
             {option.label}

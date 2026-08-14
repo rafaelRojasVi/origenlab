@@ -227,7 +227,7 @@ export function EquipmentOpportunityDetailDrawer({
           <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">
             Licitación · solo lectura
           </p>
-          <h2 id="equipment-opportunity-detail-heading" className="text-lg font-semibold text-brand-900">
+          <h2 id="equipment-opportunity-detail-heading" className="text-lg font-semibold text-slate-900">
             {item.buyer?.trim() || "Sin comprador"}
           </h2>
           <p className="font-mono text-sm text-slate-700">{item.codigo_licitacion || "—"}</p>

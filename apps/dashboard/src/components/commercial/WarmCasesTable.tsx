@@ -24,7 +24,7 @@ import {
   type WarmCaseReviewFilter,
   type WarmCaseReviewLabel,
 } from "../../lib/warmCaseReviewLabels";
-import { formatOperatorToken } from "../../lib/operatorLabels";
+import { formatOperatorToken, warmStatusBadgeClass } from "../../lib/operatorLabels";
 import { formatWarmCaseNextAction } from "../../lib/warmCaseDetailStrategy";
 import { formatDashboardDateTime } from "../../lib/dashboardDateFormat";
 import { truncate } from "../../lib/safeText";
@@ -317,7 +317,7 @@ export function WarmCasesTable({
             {pagedRows.map((row) => (
               <tr
                 key={getWarmCaseReviewKey(row)}
-                className="align-top cursor-pointer hover:bg-brand-50/50 focus-within:bg-brand-50/50"
+                className="align-top cursor-pointer transition-colors hover:bg-slate-50 focus-within:bg-slate-50"
                 onClick={() => setSelectedCase(row)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
@@ -337,7 +337,11 @@ export function WarmCasesTable({
                 </td>
                 <td className="px-3 py-2 text-slate-800">{row.account_name || "—"}</td>
                 <td className="px-3 py-2">
-                  <TokenLabel token={row.status} kind="warm_status" />
+                  <TokenLabel
+                    token={row.status}
+                    kind="warm_status"
+                    className={warmStatusBadgeClass(row.status)}
+                  />
                 </td>
                 <td className="px-3 py-2">
                   <TokenLabel

@@ -9,6 +9,6 @@ describe("OrigenLabStaticLogo", () => {
     expect(screen.getByText("OrigenLab")).toBeTruthy();
     expect(screen.getByText("Panel operador")).toBeTruthy();
     expect(container.querySelector("canvas")).toBeNull();
-    expect(container.querySelector('img[src*="origenlab-mark-static"]')).toBeTruthy();
+    expect(container.querySelector("img")).toBeNull();
   });
 });

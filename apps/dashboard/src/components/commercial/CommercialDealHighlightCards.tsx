@@ -40,7 +40,7 @@ function DealProductLines({ lines }: { lines: CommercialDealProductLineUi[] }) {
               {key ? (
                 <a
                   href={catalogProductHash(key)}
-                  className="font-medium text-brand-800 underline decoration-brand-300 underline-offset-2 hover:text-brand-950"
+                  className="font-medium text-brand-800 underline decoration-brand-300 underline-offset-2 hover:text-slate-900"
                 >
                   {label}
                 </a>
@@ -75,7 +75,7 @@ function DealHighlightCard({ row }: { row: CommercialDealUiRow }) {
           <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
             Negocio comercial
           </p>
-          <h3 className="mt-1 text-xl font-semibold text-brand-950">
+          <h3 className="mt-1 text-xl font-semibold text-slate-900">
             {row.client_org_name || "—"}
             <span className="mx-2 font-normal text-[var(--color-muted)]">×</span>
             {row.supplier_org_name || "—"}
@@ -153,7 +153,7 @@ export function CommercialDealHighlightCards({ data }: { data: CommercialDealsLi
 
   return (
     <section className="space-y-4" aria-labelledby="deal-cards-heading">
-      <h2 id="deal-cards-heading" className="text-lg font-semibold text-brand-950">
+      <h2 id="deal-cards-heading" className="text-lg font-semibold text-slate-900">
         Negocio destacado
       </h2>
       <DealHighlightCard row={featured} />

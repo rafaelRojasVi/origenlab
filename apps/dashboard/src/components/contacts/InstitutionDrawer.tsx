@@ -43,7 +43,7 @@ export function InstitutionDrawer({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[var(--color-border)] bg-white px-5 py-4">
-          <h2 id="institution-drawer-title" className="text-lg font-semibold text-brand-900">
+          <h2 id="institution-drawer-title" className="text-lg font-semibold text-slate-900">
             Institución compradora
           </h2>
           <button
@@ -57,7 +57,7 @@ export function InstitutionDrawer({
 
         <div className="space-y-5 px-5 py-5">
           <section data-testid="institution-summary">
-            <p className="text-base font-semibold text-brand-900">{group.institutionName}</p>
+            <p className="text-base font-semibold text-slate-900">{group.institutionName}</p>
             {group.domain ? (
               <p className="mt-1 text-sm text-[var(--color-muted)]">{group.domain}</p>
             ) : null}
@@ -96,7 +96,7 @@ export function InstitutionDrawer({
           </section>
 
           <section data-testid="institution-contacts">
-            <h3 className="text-sm font-semibold text-brand-900">Contactos y correos</h3>
+            <h3 className="text-sm font-semibold text-slate-900">Contactos y correos</h3>
             <div className="mt-2 overflow-x-auto rounded-lg border border-[var(--color-border)]">
               <table className="min-w-full text-left text-sm">
                 <thead className="border-b border-[var(--color-border)] bg-slate-50 text-xs uppercase text-[var(--color-muted)]">
@@ -132,7 +132,7 @@ export function InstitutionDrawer({
           </section>
 
           <section data-testid="institution-gmail-history">
-            <h3 className="text-sm font-semibold text-brand-900">Historial Gmail</h3>
+            <h3 className="text-sm font-semibold text-slate-900">Historial Gmail</h3>
             <dl className="mt-2 grid gap-1 text-sm">
               <div>
                 <dt className="text-[var(--color-muted)]">En espejo</dt>
@@ -162,7 +162,7 @@ export function InstitutionDrawer({
           </section>
 
           <section data-testid="institution-prospect-rows">
-            <h3 className="text-sm font-semibold text-brand-900">Prospectos / fuentes</h3>
+            <h3 className="text-sm font-semibold text-slate-900">Prospectos / fuentes</h3>
             <ul className="mt-2 space-y-2 text-sm">
               {group.rows.map((row) => (
                 <li
@@ -179,13 +179,13 @@ export function InstitutionDrawer({
           </section>
 
           <section data-testid="institution-next-action">
-            <h3 className="text-sm font-semibold text-brand-900">Próxima acción recomendada</h3>
+            <h3 className="text-sm font-semibold text-slate-900">Próxima acción recomendada</h3>
             <p className="mt-1 text-sm">{group.recommendedNextAction}</p>
           </section>
 
           {(group.anyBlocked || group.anyRisk || riskRows.length > 0) && (
             <section data-testid="institution-safety-notes">
-              <h3 className="text-sm font-semibold text-brand-900">Seguridad y riesgo</h3>
+              <h3 className="text-sm font-semibold text-slate-900">Seguridad y riesgo</h3>
               {riskRows.length ? (
                 <ul className="mt-2 flex flex-wrap gap-2">
                   {riskRows.map((chip) => (

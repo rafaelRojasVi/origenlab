@@ -71,7 +71,7 @@ export function CatalogProductDrawer({
             <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">
               Ficha del producto · solo lectura
             </p>
-            <h2 id="catalog-product-heading" className="mt-1 text-lg font-semibold text-brand-900">
+            <h2 id="catalog-product-heading" className="mt-1 text-lg font-semibold text-slate-900">
               {product?.display_name ?? "Cargando producto…"}
             </h2>
             {product ? (
