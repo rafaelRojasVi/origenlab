@@ -29,6 +29,7 @@ from origenlab_email_pipeline.commercial_procurement_institution_prospects.lifec
     KNOWN_OPEN,
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.line_claims import (
+    CATEGORY_SIGNAL_CONFLICT_REASON,
     SCOPE_AMBIGUOUS,
     SCOPE_COMPLETE_EQUIPMENT,
 )
@@ -255,6 +256,8 @@ def current_opportunity_blockers(
         blockers.append("no_complete_equipment_purchase_claim")
     if row.get("commercial_truth_source") == "title_fallback_no_line_evidence":
         blockers.append("title_fallback_not_current_opportunity")
+    if row.get("category_signal_conflict"):
+        blockers.append(CATEGORY_SIGNAL_CONFLICT_REASON)
     close_dt = _parse_utc(row.get("close_timestamp"))
     as_of = _parse_utc(as_of_utc)
     if close_dt is not None and as_of is not None and close_dt <= as_of:

@@ -67,11 +67,13 @@ from origenlab_email_pipeline.commercial_procurement_institution_prospects.lifec
     apply_lifecycle_precedence,
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.line_claims import (
+    CATEGORY_SIGNAL_CONFLICT_REASON,
     LineClaim,
     SCOPE_COMPLETE_EQUIPMENT,
     aggregate_category_scoped_claims,
     aggregate_tender_axes,
     build_claims_for_units,
+    reconcile_category_signal_conflicts,
 )
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.overlay import (
     build_contact_overlay,
@@ -1038,9 +1040,12 @@ def build_institution_prospects_from_plans(
         claims = list(claims_by_tender.get(tid) or ())
         title_disposition = disposition_by_tender.get(tid, {})
 
+        reconciled_groups = reconcile_category_signal_conflicts(
+            claims, aggregate_category_scoped_claims(claims)
+        )
         category_groups = [
             g
-            for g in aggregate_category_scoped_claims(claims)
+            for g in reconciled_groups
             if g.get("purchase_intent")
             or g.get("commercial_signal") == "equipment_purchase_signal"
             or SCOPE_COMPLETE_EQUIPMENT in (g.get("scopes") or [])
@@ -1094,6 +1099,12 @@ def build_institution_prospects_from_plans(
                     group.get("commercial_signal")
                     or "equipment_purchase_signal"
                 )
+                category_signal_conflict = bool(
+                    group.get("category_signal_conflict")
+                )
+                category_signal_sibling_signals = list(
+                    group.get("category_signal_sibling_signals") or []
+                )
 
                 disposition = classify_provisional_disposition(
                     relevance_class=relevance,
@@ -1106,6 +1117,14 @@ def build_institution_prospects_from_plans(
                     negative_reason_codes=neg,
                     ambiguity_reason_codes=amb,
                 )
+                if category_signal_conflict:
+                    disposition = {
+                        **disposition,
+                        "reason_codes": list(
+                            disposition.get("reason_codes") or []
+                        )
+                        + [CATEGORY_SIGNAL_CONFLICT_REASON],
+                    }
 
                 row_specs.append(
                     {
@@ -1116,7 +1135,15 @@ def build_institution_prospects_from_plans(
                         "purchase_intent": bool(
                             group.get("purchase_intent")
                         ),
-                        "source": "category_scoped_line_claim",
+                        "source": (
+                            "category_scoped_line_claim_conflict"
+                            if category_signal_conflict
+                            else "category_scoped_line_claim"
+                        ),
+                        "category_signal_conflict": category_signal_conflict,
+                        "category_signal_sibling_signals": (
+                            category_signal_sibling_signals
+                        ),
                     }
                 )
         else:
@@ -1141,6 +1168,8 @@ def build_institution_prospects_from_plans(
                     "claim_ids": [],
                     "purchase_intent": False,
                     "source": "title_fallback_no_line_evidence",
+                    "category_signal_conflict": False,
+                    "category_signal_sibling_signals": [],
                 }
             )
 
@@ -1326,6 +1355,12 @@ def build_institution_prospects_from_plans(
                     "purchase_intent": bool(spec.get("purchase_intent")),
                     "claim_ids": list(spec.get("claim_ids") or []),
                     "commercial_truth_source": spec.get("source"),
+                    "category_signal_conflict": bool(
+                        spec.get("category_signal_conflict")
+                    ),
+                    "category_signal_sibling_signals": list(
+                        spec.get("category_signal_sibling_signals") or []
+                    ),
                     "reason_codes": list(disposition.get("reason_codes") or [])
                     + list(disposition.get("signal_reason_codes") or []),
                     "procurement_event_family_id": family.get("family_id"),

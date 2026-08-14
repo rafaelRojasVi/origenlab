@@ -11,7 +11,7 @@ from origenlab_email_pipeline.commercial_procurement_live_relevance.constants im
 )
 
 PRODUCT_RELEVANCE_PLANNER_VERSION: Final = "procurement_product_relevance_planner_v1"
-PRODUCT_RELEVANCE_RULES_VERSION: Final = "procurement_product_relevance_rules_v4"
+PRODUCT_RELEVANCE_RULES_VERSION: Final = "procurement_product_relevance_rules_v5"
 PRODUCT_RELEVANCE_TAXONOMY_VERSION: Final = "procurement_product_relevance_taxonomy_v1"
 PRODUCT_TEXT_ADAPTER_VERSION: Final = "procurement_product_text_adapter_v1"
 

@@ -68,7 +68,7 @@ def _classify(text: str, *, tier: str = "line_product_text"):
 
 
 def test_h3_versioning_bumps_rules_only() -> None:
-    assert PRODUCT_RELEVANCE_RULES_VERSION == "procurement_product_relevance_rules_v4"
+    assert PRODUCT_RELEVANCE_RULES_VERSION == "procurement_product_relevance_rules_v5"
     assert PRODUCT_RELEVANCE_TAXONOMY_VERSION == "procurement_product_relevance_taxonomy_v1"
     assert aggregation_policy_spec()["version"] == "aggregation_policy_v3"
     assert "autoclave" in CANONICAL_EQUIPMENT_CLASSES

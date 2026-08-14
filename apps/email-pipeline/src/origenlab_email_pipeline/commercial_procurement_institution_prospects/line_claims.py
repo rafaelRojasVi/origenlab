@@ -30,6 +30,7 @@ from origenlab_email_pipeline.commercial_procurement_product_relevance.rules imp
     MAGNETIC_STIRRER_RE,
     MICROSCOPE_EQ_RE,
     ORBITAL_SHAKER_RE,
+    PURCHASE_OF_SERVICE_NOT_EQUIPMENT_RE,
     SEDIMENTATION_RE,
     SERVICE_ONLY_RE,
     TABLET_TEST_RE,
@@ -552,9 +553,123 @@ def aggregate_category_scoped_claims(
     return out
 
 
+# Deterministic blocker/reason code for a same-tender, same-category purchase
+# claim whose only sibling evidence is rental/maintenance and whose purchase
+# signal is not independently explicit (see reconcile_category_signal_conflicts).
+CATEGORY_SIGNAL_CONFLICT_REASON = "unresolved_category_signal_conflict"
+
+
+def _claim_has_explicit_equipment_purchase_evidence(claim: LineClaim) -> bool:
+    """Explicit purchase language whose object is the equipment, not a service.
+
+    Deliberately independent of ``purchase_intent``/``commercial_signal_type``:
+    those are exactly the values a same-category purchase/rental conflict needs
+    to reconcile, so they cannot be trusted to resolve the conflict themselves.
+    This re-checks the claim's own raw clause text against the same
+    purchase-of-service carve-out used during classification.
+    """
+    text = normalize_product_text(claim.clause_text or claim.source_text or "")
+    if not text:
+        return False
+    if PURCHASE_OF_SERVICE_NOT_EQUIPMENT_RE.search(text):
+        return False
+    return bool(BUYER_ACQUISITION_EXPLICIT_RE.search(text))
+
+
+def reconcile_category_signal_conflicts(
+    claims: Iterable[LineClaim],
+    groups: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Reconcile same-tender, same-category groups before any group is dropped.
+
+    aggregate_category_scoped_claims groups strictly by (tender, category,
+    signal), so a genuine rental/maintenance claim and a purchase-shaped claim
+    for the same instrument surface as two independent groups. Left alone,
+    downstream filtering keeps only the purchase-shaped group and the sibling
+    evidence silently disappears. This is the last point where every group for
+    one (tender, category) pair is visible together, before that happens.
+
+    Policy:
+      1. A category with only one signal is returned unchanged.
+      2. Different categories are never compared to each other.
+      3. Purchase + rental/maintenance for the same category, where the
+         purchase group has no independently explicit equipment-purchase
+         claim (purchase inferred only from an equipment noun or context),
+         becomes an unresolved conflict.
+      4. If the purchase group does have an independently explicit claim
+         (a purchase verb whose object is the equipment, not a service), the
+         purchase stays actionable; the sibling signal is kept as traceable
+         context, not as a blocker.
+    """
+    claim_by_id = {c.claim_id: c for c in claims}
+
+    buckets: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for group in groups:
+        key = (group["coalesced_tender_id"], group["equipment_category"])
+        buckets.setdefault(key, []).append(group)
+
+    out: list[dict[str, Any]] = []
+    for key in sorted(buckets):
+        # Sort independent of caller-supplied group order: aggregate_category_
+        # scoped_claims already yields a deterministic order, but this function
+        # must not rely on that — its own output order must be a pure function
+        # of bucket contents, not of the order groups/claims were passed in.
+        bucket = sorted(
+            buckets[key],
+            key=lambda g: (g["commercial_signal"], tuple(g.get("claim_ids") or [])),
+        )
+        signals = {g["commercial_signal"] for g in bucket}
+        purchase_groups = [
+            g for g in bucket if g["commercial_signal"] == "equipment_purchase_signal"
+        ]
+        non_purchase_groups = [
+            g for g in bucket if g["commercial_signal"] != "equipment_purchase_signal"
+        ]
+
+        if len(signals) <= 1 or not purchase_groups or not non_purchase_groups:
+            for group in bucket:
+                out.append(
+                    {
+                        **group,
+                        "category_signal_conflict": False,
+                        "category_signal_sibling_signals": [],
+                    }
+                )
+            continue
+
+        sibling_signals = sorted({g["commercial_signal"] for g in non_purchase_groups})
+        for group in purchase_groups:
+            group_claims = [
+                claim_by_id[cid]
+                for cid in (group.get("claim_ids") or [])
+                if cid in claim_by_id
+            ]
+            explicit = any(
+                _claim_has_explicit_equipment_purchase_evidence(c)
+                for c in group_claims
+            )
+            out.append(
+                {
+                    **group,
+                    "category_signal_conflict": not explicit,
+                    "category_signal_sibling_signals": sibling_signals,
+                }
+            )
+        for group in non_purchase_groups:
+            out.append(
+                {
+                    **group,
+                    "category_signal_conflict": False,
+                    "category_signal_sibling_signals": [],
+                }
+            )
+    return out
+
+
 __all__ = [
     "ASSIGNED_NON_PURCHASE_SCOPES",
     "CATEGORY_PATTERNS",
+    "CATEGORY_SIGNAL_CONFLICT_REASON",
     "EQUIPMENT_SCOPES",
     "SCOPE_TO_COMMERCIAL_SIGNAL",
     "LineClaim",
@@ -573,6 +688,7 @@ __all__ = [
     "build_claims_for_units",
     "build_line_claims",
     "commercial_signal_for_scope",
+    "reconcile_category_signal_conflicts",
     "recognized_equipment_categories",
     "split_clause_spans",
     "split_clauses",
