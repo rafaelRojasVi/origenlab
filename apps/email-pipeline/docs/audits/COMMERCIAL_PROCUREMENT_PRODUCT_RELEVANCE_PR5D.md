@@ -48,6 +48,27 @@ Gap fills (class-level): `tablet_hardness_tester`, `dissolution_apparatus`, `sed
 
 Commercial capability seeds (UP200St, PTB 311E, Nalgene settlometer, …) remain `proposed_seed_not_verified` — **not** exact catalog aliases until sanitized evidence exists.
 
+## Current rule and aggregation semantics
+
+Current constants:
+
+- `PRODUCT_RELEVANCE_RULES_VERSION = "procurement_product_relevance_rules_v3"`
+- `aggregation_policy_spec()["version"] = "aggregation_policy_v3"`
+
+Rules v3 fail closed on precision findings from annex review: accessory and
+replacement lines, service/maintenance context, diagnostic method/exam wording,
+bare `agitador`, and supplier-required equipment do not become buyer equipment
+acquisitions.
+
+Aggregation v3 treats independent single-class strong units with distinct
+classes as legitimate multi-equipment evidence
+(`multiple_distinct_equipment_classes_combined`), while a single strong unit with
+competing classes remains `mixed_requires_review` with
+`conflicting_canonical_equipment_classes`. Negative evidence plus empty
+abstentions keeps the most-specific negative
+(`negative_survives_empty_abstentions`); negative evidence plus
+equipment-bearing abstention still requires review.
+
 ## CLI
 
 ```bash

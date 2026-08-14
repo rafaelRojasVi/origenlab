@@ -159,6 +159,10 @@ All limits are parameters and are tested with intentionally tiny values.
   Reasons are explicit: `archive_actual_member_bytes_limit`,
   `archive_actual_total_bytes_limit`, `archive_actual_ratio_limit`,
   `archive_actual_size_mismatch`.
+- Generic ZIP bundles use the same actual-expansion verifier before member
+  iteration. If verification fails, the bundle records
+  `partial_due_to_safety_limit`, emits no member/chunk evidence for the rejected
+  container, and preserves the exact `archive_actual_*` reason code.
 - Accepted parts are additionally read in fixed chunks rather than one large
   capped read, since `read(cap + 1)` lets zipfile decompress greedily and spike
   far past the part's real size before the cap applies.
