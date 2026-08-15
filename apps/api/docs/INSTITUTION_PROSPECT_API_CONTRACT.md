@@ -240,14 +240,56 @@ queue-row view below).
 `summary.json` (falling back to counting the loaded queue rows if `summary.json`
 itself is absent from the bundle) — the API never recomputes them.
 
-## Queue row shape
+## Queue reference (all six)
 
 Row shape genuinely varies by queue (see
-`commercial_procurement_institution_prospects.queues.EMPTY_QUEUE_HEADERS` for
-the authoritative per-queue field list); rows are returned as decoded JSON
-objects, not re-declared as six parallel schemas, so a field the planner adds
-is never silently dropped ahead of a contract update. Real
-`current_opportunity` row (SAG, `745712-19-LP26`, balance category):
+`commercial_procurement_institution_prospects.queues.EMPTY_QUEUE_HEADERS`/
+`QUEUE_GRAINS`/`canonical_queue_row` for the authoritative producer); rows are
+returned as decoded JSON objects, not re-declared as six parallel schemas, so
+a field the planner adds is never silently dropped ahead of a contract
+update. **Do not assume every queue row is institution-grain** — three of the
+six queues are not:
+
+| Queue (route name)         | Grain (from `QUEUE_GRAINS`)                                    | Meaning                                                                 | `institution_id`/`display_name` |
+| --------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------ | -------------------------------- |
+| `current_opportunity`       | `institution_id + tender_code + equipment_category`             | Confirmed-actionable tender (all fail-closed gates already applied)      | Always populated                 |
+| `historical_prospect`       | `institution_id + equipment_category + commercial_signal_type`  | Non-open commercial signal — **not necessarily a purchase**: `commercial_signal_type` may be `equipment_purchase_signal`, `rental_or_comodato_signal`, or `installed_base_signal` | Always populated |
+| `institution_match_review`  | `institution_id + institution_review_cluster_id`                | Identity needing manual review. Two row kinds exist: a per-profile review row, and a per-cluster row for an **unresolved group of profiles that isn't a single institution yet** | **Can be blank on cluster rows** — a cluster is not yet a confirmed institution |
+| `contact_gap`               | `institution_id`                                                 | Institution-grain contact-readiness gap                                  | Always populated                 |
+| `line_evidence_review`      | `coalesced_tender_id + unit_id`                                  | Line/unit-level evidence needing review — **not tender- or institution-grain** | Present, but this queue's identity is the tender+unit, not the institution |
+| `retender_review`           | `family_id`                                                      | Procurement-event-family-grain (possible reissue/retender relationship) — **has no institution identity at all** | **Never present** — `family_id`/`buyer_key` are the only identity |
+
+For `institution_match_review`, non-empty producer rows also carry
+`identity_subject_kind`. The currently emitted values are:
+
+- `profile` — a single institution/profile under identity review;
+- `review_cluster` — an unresolved cluster of profiles that is not yet one
+  confirmed institution.
+
+This discriminator tells consumers which of the two legitimate row forms they
+are reading. One producer nuance is intentional to preserve here:
+`EMPTY_QUEUE_HEADERS` currently does **not** include `identity_subject_kind`,
+so an empty fallback CSV omits that column even though non-empty produced rows
+include it. Consumers must therefore not infer the complete non-empty row shape
+solely from an empty-queue header.
+
+A review-queue row is **never** a resolved institution or an actionable
+opportunity — `institution_match_review`/`line_evidence_review`/
+`retender_review` rows exist precisely because something is *not yet*
+resolved. `contact_authorization`/`outreach_authorization` are `false` on
+every row of every queue, with no exception.
+
+Numeric-*looking* fields (`tender_count`, `raw_tender_count`,
+`known_contact_count`, `line_evidence_unit_count`, `prospect_strength_score`,
+etc.) are returned as **JSON strings, not numbers** — the API performs no
+numeric coercion when decoding the published CSVs. Only four fields decode to
+JSON booleans (`contact_authorization`, `outreach_authorization`,
+`identity_review_required`, `confirmed_account`); a fixed, per-queue set of
+fields decodes to JSON arrays (documented per example below); everything else
+— including every count field — stays a string. Do not assume a client can
+do arithmetic on a count field without parsing it first.
+
+Real `current_opportunity` row (SAG, `745712-19-LP26`, balance category):
 
 ```json
 {
@@ -295,6 +337,182 @@ correctly absent from the actionable queue, while still visible via
 `procurement_eligibility_status == "restricted_invitation_unconfirmed"`. This
 is the concrete "visible in profile, excluded from actionable queue" case
 requirement #2/#8 describe.
+
+### `historical_prospect` — non-purchase signal (rental/comodato)
+
+`historical_prospect_queue` does **not** mean "past purchase" — a row can be a
+rental/comodato or installed-base signal that never became an open tender.
+Do not hardcode purchase semantics onto this queue. Representative row
+(real production `commercial_signal_type`/`equipment_category` combination,
+observed via cached-live validation):
+
+```json
+{
+  "queue": "historical_prospect_queue",
+  "queue_row_id": "8c2e0e2d9a6a4a5f9a2f6d0b7c1e3a4b",
+  "institution_id": "002c706c",
+  "display_name": "CORPORACION MUNICIPAL DE FOMENTO PRODUCTIVO DE ARICA",
+  "equipment_category": "",
+  "commercial_signal_type": "rental_or_comodato_signal",
+  "tender_count": "1",
+  "tender_codes": ["1234-5-le26"],
+  "first_observed_date": "2025-11-01",
+  "most_recent_observed_date": "2026-01-19",
+  "review_dispositions": ["installed_base_or_rental"],
+  "prospect_strength_band": "medium",
+  "contact_authorization": false,
+  "outreach_authorization": false
+}
+```
+
+`equipment_category` can legitimately be empty (`""`) — the planner does not
+force a category onto a non-purchase signal. `tender_codes`/`review_dispositions`
+decode to JSON arrays; `tender_count` is a **string**, not a number.
+
+### `institution_match_review` — two distinct row kinds
+
+This queue mixes a per-profile review row and a per-cluster row for an
+**unresolved group of profiles that is not (yet) one confirmed institution**.
+Cluster rows legitimately have blank `institution_id`/`display_name` — do not
+manufacture an identity where the planner has none.
+
+Cluster-grain row (blank institution identity, real production tokens):
+
+```json
+{
+  "queue": "institution_match_review_queue",
+  "queue_row_id": "identity-cluster-008550af43420e2d",
+  "identity_subject_kind": "review_cluster",
+  "institution_id": "",
+  "display_name": "",
+  "institution_review_cluster_id": "008550af43420e2d",
+  "cluster_resolution_status": "review_only_fragmented_identity",
+  "member_profile_ids": ["profile-a", "profile-b"],
+  "identifier_conflicts": [],
+  "cluster_reason_codes": [
+    "normalized_name_multi_profile_fragmentation",
+    "review_only_cluster_no_auto_merge"
+  ],
+  "account_resolution_status": "",
+  "account_resolution_reason": "",
+  "identity_kind": "",
+  "identity_review_required": false,
+  "operator_next_action": "",
+  "confirmed_account": false,
+  "contact_authorization": false,
+  "outreach_authorization": false
+}
+```
+
+Profile-grain row (single profile flagged for review, identity present):
+
+```json
+{
+  "queue": "institution_match_review_queue",
+  "queue_row_id": "identity-profile-inst-example",
+  "identity_subject_kind": "profile",
+  "institution_id": "inst-example",
+  "display_name": "MUNICIPALIDAD DE EJEMPLO",
+  "institution_review_cluster_id": "cluster-example-1",
+  "account_resolution_status": "unlinked",
+  "account_resolution_reason": "pr4_constituents_present_but_unresolved",
+  "identity_kind": "normalized_buyer_name",
+  "identity_review_required": true,
+  "operator_next_action": "confirm_identity_match",
+  "confirmed_account": false,
+  "contact_authorization": false,
+  "outreach_authorization": false
+}
+```
+
+Only the cluster branch populates `cluster_resolution_status` /
+`member_profile_ids` / `identifier_conflicts` / `cluster_reason_codes`; on a
+profile-grain row these are absent from the producer's row dict and are
+returned as empty string / empty list by the same decode rules as any other
+missing CSV cell — never fabricated.
+
+### `contact_gap` — institution-grain contact-readiness gap
+
+```json
+{
+  "queue": "contact_gap_queue",
+  "queue_row_id": "gap-inst-example",
+  "institution_id": "inst-example",
+  "display_name": "MUNICIPALIDAD DE EJEMPLO",
+  "contact_gap_status": "linked_account_no_contact",
+  "contact_resolution_status": "no_contact_found",
+  "account_resolution_reason": "pr4_linked_account_carried_forward",
+  "prospect_strength_band": "high",
+  "prospect_strength_score": "7",
+  "opportunity_urgency_band": "high",
+  "known_contact_count": "0",
+  "suitable_contact_count": "0",
+  "verified_contact_count": "0",
+  "equipment_purchase_tender_count": "1",
+  "queue_entry_reason": "current_catalog_opportunity",
+  "operator_next_action": "research_new_contact",
+  "contact_authorization": false,
+  "outreach_authorization": false
+}
+```
+
+`prospect_strength_score`/`known_contact_count`/`suitable_contact_count`/
+`verified_contact_count`/`equipment_purchase_tender_count` are all **strings**
+— no numeric coercion.
+
+### `line_evidence_review` — line/unit evidence grain, no commercial-term fields
+
+```json
+{
+  "queue": "line_evidence_review_queue",
+  "queue_row_id": "line-coalesced_tender_example-unit-1",
+  "institution_id": "inst-example",
+  "display_name": "MUNICIPALIDAD DE EJEMPLO",
+  "tender_code": "1234-5-le26",
+  "coalesced_tender_id": "coalesced_tender_example",
+  "unit_id": "unit-1",
+  "unit_decision_id": "decision-1",
+  "relevance_class": "ambiguous",
+  "equipment_scopes": ["ambiguous"],
+  "canonical_equipment_classes": [],
+  "line_disposition": "review_required",
+  "line_reason_codes": ["no_supported_explicit_pattern_match"],
+  "ambiguity_reason_codes": ["scope_ambiguous"],
+  "contact_authorization": false,
+  "outreach_authorization": false
+}
+```
+
+There is **no `clause_text` field** — the published contract does not carry
+raw clause/quote text at this grain, only structured
+scope/class/disposition/reason-code evidence. A consumer must not invent one.
+
+### `retender_review` — family-grain, no institution identity
+
+```json
+{
+  "queue": "retender_review_queue",
+  "queue_row_id": "retender-0009a395",
+  "family_id": "0009a395",
+  "buyer_key": "buyer_name:i municipalidad de coquimbo",
+  "member_tender_codes": ["2446-4-le26", "2446-16-le26"],
+  "raw_tender_count": "2",
+  "confirmed_same_event_family_count": "0",
+  "independent_event_count_lower_bound": "1",
+  "independent_event_count_upper_bound": "2",
+  "unresolved_relationship_count": "1",
+  "recurrence_status": "recurrence_not_established",
+  "family_resolution_status": "retender_review_required",
+  "family_reason_codes": ["independence_not_established", "retender_review_required"],
+  "relationship_edges": [],
+  "contact_authorization": false,
+  "outreach_authorization": false
+}
+```
+
+`institution_id`/`display_name` are **not part of this queue's row shape at
+all** (not even as blank strings) — identity here is `family_id`/`buyer_key`
+only. Do not require or assume an institution join for this queue.
 
 ## Evidence/provenance projection (requirement #4)
 
