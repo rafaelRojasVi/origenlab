@@ -543,7 +543,10 @@ def test_tracked_cron_wrapper_scripts_exist_and_contain_commands() -> None:
     assert "ORIGENLAB_OPERATOR_NAME" in mirror_text
     assert "run --group gmail" in mail_text
     assert "run --group postgres" in mirror_text
-    assert "auto-refresh-chilecompra-equipment --once --apply" in chilecompra_text
+    assert "auto-refresh-chilecompra-equipment" in chilecompra_text
+    assert "--once" in chilecompra_text
+    assert "--apply" in chilecompra_text
+    assert "--publish-institution-prospects" in chilecompra_text
     assert "--group gmail" not in chilecompra_text
     assert "--group postgres" not in chilecompra_text
     for text in (mail_text, mirror_text, chilecompra_text):
