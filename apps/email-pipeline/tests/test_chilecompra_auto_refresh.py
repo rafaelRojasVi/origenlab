@@ -10,6 +10,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from origenlab_email_pipeline.chilecompra_api import TICKET_ENV_VAR
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.production_publish import (
+    InstitutionProspectPublicationResult,
+)
 from origenlab_email_pipeline.operator_cli.chilecompra_auto_refresh import (
     CADENCE_KIND_SCHEDULED_SLOT,
     CADENCE_KIND_WALL_CLOCK,
@@ -586,3 +589,192 @@ def test_build_failure_preserves_prior_success_cadence_anchor(
     assert reloaded.last_successful_refresh_at == success_at_before
     assert reloaded.consecutive_failures == 1
 
+
+
+# --- Institution-prospect publication integration (W2) ---
+
+
+def test_institution_publish_flag_default_false_never_calls_publisher(
+    reports_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default False must preserve existing refresh behavior exactly — merging
+    W2 cannot activate extra production work on the next cron tick."""
+    monkeypatch.setenv(TICKET_ENV_VAR, _SECRET_TICKET)
+    publish = MagicMock(
+        return_value={
+            "out_csv": str(reports_dir / "active/current/equipment_first_operator_queue_20260614.csv"),
+            "output_rows": 1,
+            "coalesced_duplicate_rows": 0,
+            "unique_codigo_count": 1,
+        }
+    )
+    institution_publish = MagicMock()
+
+    rc = run_chilecompra_equipment_auto_refresh(
+        _opts(apply=True),  # publish_institution_prospects not passed -> default False
+        reports_dir=reports_dir,
+        build_fn=lambda **kwargs: _mock_build_result(),
+        publish_fn=publish,
+        institution_publish_fn=institution_publish,
+        now_fn=lambda: _T0,
+    )
+    out = _parse_output(capsys.readouterr().out)
+    assert rc == 0
+    assert out["reason"] == "refreshed"
+    assert out["institution_prospect_result"] == "disabled"
+    institution_publish.assert_not_called()
+    state = load_state(state_path(reports_dir))
+    assert state.institution_prospect_result == "disabled"
+    assert state.last_successful_institution_prospect_publish_at is None
+
+
+def test_institution_publish_enabled_and_applied_updates_state(
+    reports_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(TICKET_ENV_VAR, _SECRET_TICKET)
+    publish = MagicMock(
+        return_value={
+            "out_csv": str(reports_dir / "active/current/equipment_first_operator_queue_20260614.csv"),
+            "output_rows": 1,
+            "coalesced_duplicate_rows": 0,
+            "unique_codigo_count": 1,
+        }
+    )
+    institution_publish = MagicMock(
+        return_value=InstitutionProspectPublicationResult(
+            result="applied",
+            output_dir_basename="institution_prospects",
+            contract_version="institution_prospect_contract_v4",
+            as_of_utc=_T0.isoformat(),
+            source_digest="abc123",
+            institution_count=42,
+            operator_queue_sizes={"current_opportunity_queue": 3},
+            current_opportunity_count=3,
+        )
+    )
+
+    rc = run_chilecompra_equipment_auto_refresh(
+        _opts(apply=True, publish_institution_prospects=True),
+        reports_dir=reports_dir,
+        build_fn=lambda **kwargs: _mock_build_result(),
+        publish_fn=publish,
+        institution_publish_fn=institution_publish,
+        now_fn=lambda: _T0,
+    )
+    out = _parse_output(capsys.readouterr().out)
+    assert rc == 0
+    assert out["institution_prospect_result"] == "applied"
+    institution_publish.assert_called_once()
+    call_kwargs = institution_publish.call_args.kwargs
+    assert call_kwargs["out_dir"].name == "institution_prospects"
+    # Reuses this exact run's detail cache + manifest — never re-derives them,
+    # and never passes a (possibly stale) refresh_state_path.
+    assert call_kwargs["detail_cache_dir"] == reports_dir / "active" / "current" / "chilecompra_detail_cache"
+    assert call_kwargs["equipment_manifest_path"].is_file()
+    assert "refresh_state_path" not in call_kwargs
+
+    state = load_state(state_path(reports_dir))
+    assert state.institution_prospect_result == "applied"
+    assert state.last_successful_institution_prospect_publish_at is not None
+    assert state.institution_prospect_contract_version == "institution_prospect_contract_v4"
+    assert state.institution_prospect_profile_count == 42
+    assert state.institution_prospect_current_opportunity_count == 3
+    # Equipment refresh itself still succeeded normally.
+    assert state.last_result == "refreshed"
+    assert state.published_rows == 1
+
+
+def test_institution_publish_failure_does_not_roll_back_equipment_publish(
+    reports_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(TICKET_ENV_VAR, _SECRET_TICKET)
+    publish = MagicMock(
+        return_value={
+            "out_csv": str(reports_dir / "active/current/equipment_first_operator_queue_20260614.csv"),
+            "output_rows": 1,
+            "coalesced_duplicate_rows": 0,
+            "unique_codigo_count": 1,
+        }
+    )
+    institution_publish = MagicMock(
+        return_value=InstitutionProspectPublicationResult(
+            result="failed",
+            output_dir_basename="institution_prospects",
+            error="validation_failed: malformed packet",
+        )
+    )
+
+    rc = run_chilecompra_equipment_auto_refresh(
+        _opts(apply=True, publish_institution_prospects=True),
+        reports_dir=reports_dir,
+        build_fn=lambda **kwargs: _mock_build_result(),
+        publish_fn=publish,
+        institution_publish_fn=institution_publish,
+        now_fn=lambda: _T0,
+    )
+    out = _parse_output(capsys.readouterr().out)
+    # Non-zero / attention-worthy specifically because the requested
+    # institution step failed — distinct from the equipment refresh's own
+    # success/failure codes (0/1/2).
+    assert rc == 3
+    assert out["reason"] == "refreshed"
+    assert out["institution_prospect_result"] == "failed"
+
+    state = load_state(state_path(reports_dir))
+    # Equipment refresh is NOT rolled back: still recorded as a successful refresh.
+    assert state.last_result == "refreshed"
+    assert state.published_rows == 1
+    assert state.next_recommended_run_at is not None
+    # Institution failure is visible, separately, without corrupting last_error
+    # in a way that hides it.
+    assert state.institution_prospect_result == "failed"
+    assert "institution_prospect_publish_failed" in (state.last_error or "")
+    assert state.last_successful_institution_prospect_publish_at is None
+
+
+def test_institution_publish_not_invoked_when_equipment_publish_disabled(
+    reports_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Per spec: institution publication only runs after normal canonical
+    equipment publication succeeded — never when --no-publish is set."""
+    monkeypatch.setenv(TICKET_ENV_VAR, _SECRET_TICKET)
+    institution_publish = MagicMock()
+
+    run_chilecompra_equipment_auto_refresh(
+        _opts(apply=True, publish=False, publish_institution_prospects=True),
+        reports_dir=reports_dir,
+        build_fn=lambda **kwargs: _mock_build_result(),
+        institution_publish_fn=institution_publish,
+        now_fn=lambda: _T0,
+    )
+    institution_publish.assert_not_called()
+    state = load_state(state_path(reports_dir))
+    assert state.institution_prospect_result == "disabled"
+
+
+def test_old_state_json_without_institution_fields_loads_with_safe_defaults(
+    reports_dir: Path,
+) -> None:
+    """Backward compatibility: state files written before W2 must still load."""
+    old_state = {
+        "schema_version": 2,
+        "last_result": "refreshed",
+        "last_successful_refresh_at": "2026-06-01T12:00:00+00:00",
+        "consecutive_failures": 0,
+    }
+    path = state_path(reports_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(old_state), encoding="utf-8")
+
+    loaded = load_state(path)
+    assert loaded.last_result == "refreshed"
+    assert loaded.institution_prospect_result is None
+    assert loaded.last_successful_institution_prospect_publish_at is None
+    assert loaded.institution_prospect_profile_count is None
