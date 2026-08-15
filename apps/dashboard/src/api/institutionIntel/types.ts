@@ -298,20 +298,41 @@ export interface ContactGapRow extends QueueRowBase {
 
 export interface InstitutionMatchReviewRow extends QueueRowBase {
   queue: "institution_match_review_queue";
-  conflictReason: string;
-  candidateDisplayNames: readonly string[];
+  // Legacy/mock preview fields.
+  conflictReason?: string;
+  candidateDisplayNames?: readonly string[];
+  // W1 production cluster-grain fields.
+  reviewClusterId?: string;
+  resolutionStatus?: string;
+  memberProfileIds?: readonly string[];
+  reasonCodes?: readonly string[];
+  confirmedAccount?: boolean;
 }
 
 export interface LineEvidenceReviewRow extends QueueRowBase {
   queue: "line_evidence_review_queue";
   tenderCode: string;
-  clauseText: string;
+  // Legacy/mock preview field. Production W1 does not expose raw clause text.
+  clauseText?: string;
+  relevanceClass?: string;
+  equipmentScopes?: readonly string[];
+  canonicalEquipmentClasses?: readonly string[];
+  lineDisposition?: string;
+  reasonCodes?: readonly string[];
+  ambiguityReasonCodes?: readonly string[];
 }
 
 export interface RetenderReviewRow extends QueueRowBase {
   queue: "retender_review_queue";
   tenderCodes: readonly string[];
-  resolutionReason: string;
+  // Legacy/mock preview field.
+  resolutionReason?: string;
+  // W1 production family-grain fields.
+  buyerKey?: string;
+  recurrenceStatus?: string;
+  resolutionStatus?: string;
+  reasonCodes?: readonly string[];
+  unresolvedRelationshipCount?: string;
 }
 
 export type ProspectQueueRow =

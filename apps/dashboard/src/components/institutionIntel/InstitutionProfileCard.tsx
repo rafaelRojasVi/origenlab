@@ -65,7 +65,7 @@ function TenderRowLine({ row }: { row: InstitutionTenderRow }) {
         >
           {isOpen ? "Abierta" : "Cerrada"}
         </span>
-        <span className="text-slate-800">{row.categoryOrTitle}</span>
+        <span className="text-slate-800">{formatEquipmentCategory(row.categoryOrTitle)}</span>
         <div className="mt-1 flex items-center gap-2">
           <p className="font-mono text-[11px] text-[var(--color-muted)]">{row.tenderCode}</p>
           {isOpen ? <EligibilityBadge status={row.eligibilityStatus} /> : null}

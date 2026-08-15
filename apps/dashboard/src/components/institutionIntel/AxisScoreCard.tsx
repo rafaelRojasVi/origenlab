@@ -24,6 +24,8 @@ function SingleAxisCard({
   band: AxisBand;
   reasonCodes: readonly string[];
 }) {
+  const visibleReasonCodes = [...new Set(reasonCodes)];
+
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3.5 py-3">
       <p className="text-xs font-medium text-[var(--color-muted)]">{label}</p>
@@ -31,9 +33,9 @@ function SingleAxisCard({
       <div className="mt-2 h-1.5 rounded-full bg-slate-100">
         <div className={`h-full rounded-full ${BAND_BAR[band]}`} />
       </div>
-      {reasonCodes.length > 0 ? (
+      {visibleReasonCodes.length > 0 ? (
         <ul className="mt-2 space-y-1 text-[11px] text-[var(--color-muted)]">
-          {reasonCodes.map((code) => (
+          {visibleReasonCodes.map((code) => (
             <li key={code} className="pl-2.5 relative before:absolute before:left-0 before:content-['–']">
               {formatAxisReasonCode(code)}
             </li>
