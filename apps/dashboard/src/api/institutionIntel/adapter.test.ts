@@ -136,3 +136,130 @@ describe("institutionIntelAdapter live W1 queue shapes", () => {
     });
   });
 });
+
+describe("institutionIntelAdapter.getCurrentOpportunities", () => {
+  function stubResponse(body: Record<string, unknown>) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => ({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => body,
+        text: async () => "",
+        _url: url,
+      })),
+    );
+  }
+
+  it("fetches exactly the pre-filtered current_opportunity_queue route — never an institution profile", async () => {
+    const fetchMock = vi.fn(async (_url: string) => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({ meta: META, limit: 20, offset: 0, total: 0, count: 0, items: [] }),
+      text: async () => "",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await institutionIntelAdapter.getCurrentOpportunities();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const calledUrl = String(fetchMock.mock.calls[0]?.[0]);
+    expect(calledUrl).toContain("/operator/procurement/queues/current_opportunity");
+    expect(calledUrl).not.toContain("/institutions/");
+  });
+
+  it("maps a real open/public row (Universidad de Antofagasta style fixture)", async () => {
+    stubResponse({
+      meta: META,
+      limit: 20,
+      offset: 0,
+      total: 1,
+      count: 1,
+      items: [
+        {
+          institution_id: "univ-antofagasta-hash",
+          display_name: "UNIVERSIDAD DE ANTOFAGASTA",
+          tender_code: "4291-46-le26",
+          coalesced_tender_id: "coalesced_tender_abc",
+          equipment_category: "centrifuge",
+          lifecycle_class: "active_open",
+          prospect_strength_band: "high",
+          close_timestamp: "2026-08-24T19:00:00",
+          queue: "current_opportunity_queue",
+          queue_row_id: "row-antofagasta-1",
+          contact_authorization: false,
+          outreach_authorization: false,
+        },
+      ],
+    });
+
+    const result = await institutionIntelAdapter.getCurrentOpportunities();
+
+    expect(result.availability.status).toBe("available");
+    if (result.availability.status !== "available") throw new Error("expected available");
+    expect(result.availability.data).toEqual([
+      expect.objectContaining({
+        institutionDisplayName: "UNIVERSIDAD DE ANTOFAGASTA",
+        tenderCode: "4291-46-le26",
+        categoryOrTitle: "centrifuge",
+        eligibilityStatus: "open_public",
+      }),
+    ]);
+  });
+
+  it("restricted tender (ISP / 1093303-5-CO26) is absent because the backend queue already excludes it — frontend adds no extra filtering", async () => {
+    // Real production behavior: the restricted tender simply never appears in
+    // this queue's response. This fixture reproduces exactly that shape (only
+    // the open tender present) rather than reimplementing an eligibility
+    // check client-side.
+    stubResponse({
+      meta: META,
+      limit: 20,
+      offset: 0,
+      total: 1,
+      count: 1,
+      items: [
+        {
+          institution_id: "univ-antofagasta-hash",
+          display_name: "UNIVERSIDAD DE ANTOFAGASTA",
+          tender_code: "4291-46-le26",
+          equipment_category: "centrifuge",
+          prospect_strength_band: "high",
+          close_timestamp: "2026-08-24T19:00:00",
+          queue: "current_opportunity_queue",
+          queue_row_id: "row-antofagasta-1",
+          contact_authorization: false,
+          outreach_authorization: false,
+        },
+      ],
+    });
+
+    const result = await institutionIntelAdapter.getCurrentOpportunities();
+    expect(result.availability.status).toBe("available");
+    if (result.availability.status !== "available") throw new Error("expected available");
+    const tenderCodes = result.availability.data.map((row) => row.tenderCode);
+    expect(tenderCodes).not.toContain("1093303-5-co26");
+    expect(tenderCodes).not.toContain("1093303-5-CO26");
+  });
+
+  it("genuinely empty queue maps to available_empty, not not_available", async () => {
+    stubResponse({ meta: META, limit: 20, offset: 0, total: 0, count: 0, items: [] });
+    const result = await institutionIntelAdapter.getCurrentOpportunities();
+    expect(result.availability.status).toBe("available_empty");
+  });
+
+  it("reduced_mode (feed unavailable) maps to not_available, never a fake empty queue", async () => {
+    stubResponse({
+      meta: { ...META, reduced_mode: true, canonical_reason: "missing_institution_prospect_packet" },
+      limit: 20,
+      offset: 0,
+      total: 0,
+      count: 0,
+      items: [],
+    });
+    const result = await institutionIntelAdapter.getCurrentOpportunities();
+    expect(result.availability.status).toBe("not_available");
+  });
+});

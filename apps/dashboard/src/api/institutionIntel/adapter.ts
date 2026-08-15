@@ -18,6 +18,7 @@ import type {
   Availed,
   ContactGapStatus,
   ContactOverlaySummary,
+  CurrentOpportunityRow,
   EquipmentHistoryEntry,
   IdentityKind,
   InstitutionAxes,
@@ -27,6 +28,7 @@ import type {
   InstitutionTenderRow,
   LicitacionIntel,
   Paged,
+  PageInfo,
   ProcurementEligibilityStatus,
   ProcurementMeta,
   ProspectQueueRow,
@@ -471,6 +473,41 @@ export const institutionIntelAdapter = {
 
     return {
       items,
+      pageInfo: { page, pageSize, totalItems: raw.total },
+    };
+  },
+
+  /**
+   * The single authoritative source for actionable/current procurement
+   * opportunities (TendersPage). Unlike `listQueueRows`, this surfaces the
+   * response `meta` as an `Availed<...>` so a genuinely empty queue is never
+   * confused with an unavailable feed (contract requirement: reduced_mode /
+   * stale must stay visibly distinct from an empty result).
+   *
+   * Deliberately reads only the pre-filtered `current_opportunity_queue`
+   * route — never an institution profile's `currentOpportunities` array,
+   * which intentionally still includes non-actionable (e.g. restricted-
+   * eligibility) tenders for historical/profile context. Falling back to
+   * that array here would silently reintroduce tenders W1 has already
+   * excluded from the actionable queue.
+   */
+  async getCurrentOpportunities(
+    params: { page?: number; pageSize?: number } = {},
+  ): Promise<{ availability: Availed<readonly CurrentOpportunityRow[]>; pageInfo: PageInfo }> {
+    const page = params.page ?? 1;
+    const pageSize = params.pageSize ?? 20;
+    const query: Record<string, string | number> = { limit: pageSize, offset: toOffset(page, pageSize) };
+
+    const raw = await fetchProcurementJson<RawListResponse>(
+      "/operator/procurement/queues/current_opportunity",
+      query,
+    );
+    const items = raw.items
+      .map((r) => mapQueueRow(r as Record<string, unknown>))
+      .filter((r): r is CurrentOpportunityRow => r !== null && r.queue === "current_opportunity_queue");
+
+    return {
+      availability: metaToAvailed(raw.meta, items),
       pageInfo: { page, pageSize, totalItems: raw.total },
     };
   },
