@@ -72,7 +72,11 @@ _RULES: tuple[_Rule, ...] = (
     _Rule(
         field_name="total_budget",
         pattern=re.compile(
+            r"(?:"
             r"\bPresupuesto\s+(?:Disponible|Estimado)\b"
+            r"|"
+            r"\bMonto\s+estimado\s+del\s+contrato\b"
+            r")"
             r".{0,180}?"
             r"\$\s*(?P<value>\d[\d.\s]{2,20})"
             r"\s*(?:\.-)?"
@@ -90,12 +94,14 @@ _RULES: tuple[_Rule, ...] = (
         field_name="offer_validity_days",
         pattern=re.compile(
             r"(?:"
-            r"\bLas\s+ofertas\s+tendr[aá]n\s+una\s+validez\s+de\s+"
+            r"\bLas\s+ofertas\s+tendr[aá]n\s+una\s+"
+            r"(?:validez\s+de|vigencia\s+m[ií]nima\s+de)\s+"
             r"|"
             r"\bValidez\s+de\s+la\s+oferta\b"
             r"\s*(?:\||:|-)\s*"
             r")"
-            r"(?P<value>\d{1,4})\s+d[ií]as\b",
+            r"(?P<value>\d{1,4})\s+d[ií]as\b"
+            r"(?:\s+(?:corridos|h[aá]biles))?",
             _FLAGS,
         ),
         parser="integer",
@@ -130,9 +136,19 @@ _RULES: tuple[_Rule, ...] = (
     _Rule(
         field_name="payment_deadline_days",
         pattern=re.compile(
+            r"(?:"
             r"\bModalidad\s+de\s+Pago\s+del\s+contrato\b"
             r".{0,150}?"
-            r"\bPago\s+m[aá]ximo\s+(?P<value>\d{1,3})\s+d[ií]as\b",
+            r"\bPago\s+m[aá]ximo\s+"
+            r"|"
+            r"\bEl\s+SAG\s+pagar[aá]\b"
+            r".{0,220}?"
+            r"\ben\s+el\s+plazo\s+m[aá]ximo\s+de\s+"
+            r")"
+            r"(?P<value>\d{1,3})\s+d[ií]as\b"
+            r"(?:\s+(?:corridos|h[aá]biles))?"
+            r"(?:\s*,?\s*contados?\s+desde\s+la\s+"
+            r"recepci[oó]n\s+de\s+la\s+factura\b)?",
             _FLAGS,
         ),
         parser="integer",
