@@ -91,6 +91,18 @@ export function formatQueueName(raw: string): string {
   return QUEUE_LABEL[raw] ?? raw;
 }
 
+const REVIEW_TOKEN_LABEL: Record<string, string> = {
+  ambiguous: "Ambigua",
+  review_required: "Revisión requerida",
+  retender_review_required: "Revisión de reoferta requerida",
+  review_only_fragmented_identity: "Identidad fragmentada — revisión manual",
+  recurrence_not_established: "Recurrencia no establecida",
+};
+
+export function formatReviewToken(raw: string): string {
+  return REVIEW_TOKEN_LABEL[raw] ?? humanizeToken(raw);
+}
+
 /**
  * Axis reason codes seen in mock fixtures so far — same caveat as
  * EQUIPMENT_CATEGORY_LABEL: not exhaustive, extend as new mock reasons come

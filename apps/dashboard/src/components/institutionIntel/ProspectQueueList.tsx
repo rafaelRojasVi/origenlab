@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
 import type { ProspectQueueRow, QueueName } from "../../api/institutionIntel/types";
 import { institutionIntelAdapter } from "../../api/institutionIntel/adapter";
-import { AXIS_BAND_LABEL, formatEquipmentCategory, formatQueueName } from "../../lib/institutionIntelLabels";
+import {
+  AXIS_BAND_LABEL,
+  formatEquipmentCategory,
+  formatQueueName,
+  formatReviewToken,
+  humanizeToken,
+} from "../../lib/institutionIntelLabels";
 import { TablePaginationBar } from "../commercial/TablePaginationBar";
 import { EligibilityBadge, QueueBadge } from "./IntelBadges";
 
@@ -21,6 +27,28 @@ const DE_EMPHASIZED_QUEUES = new Set<QueueName>([
   "retender_review_queue",
 ]);
 
+function formatCommercialSignalType(raw: string): string {
+  switch (raw) {
+    case "equipment_purchase_signal":
+      return "señal de compra";
+    case "rental_or_comodato_signal":
+      return "señal de arriendo / comodato";
+    case "installed_base_signal":
+      return "señal de base instalada";
+    case "consumable_or_reagent_signal":
+      return "señal de consumibles / reactivos";
+    case "review_required_signal":
+      return "señal pendiente de revisión";
+    default:
+      return raw ? humanizeToken(raw) : "señal comercial";
+  }
+}
+
+function formatBuyerKey(raw?: string): string {
+  if (!raw) return "Familia de licitaciones";
+  return raw.replace(/^buyer_name:/, "").trim() || "Familia de licitaciones";
+}
+
 function QueueRowCard({ row, onOpenInstitution }: { row: ProspectQueueRow; onOpenInstitution: (id: string) => void }) {
   const priority = row.queue === "current_opportunity_queue";
   return (
@@ -33,19 +61,25 @@ function QueueRowCard({ row, onOpenInstitution }: { row: ProspectQueueRow; onOpe
         <div className="min-w-0">
           <div className="mb-1 flex flex-wrap items-center gap-2">
             <QueueBadge queue={row.queue} />
-            <button
-              type="button"
-              className="text-sm font-bold text-brand-700 hover:underline"
-              onClick={() => onOpenInstitution(row.institutionId)}
-            >
-              {row.institutionDisplayName}
-            </button>
+            {row.institutionId ? (
+              <button
+                type="button"
+                className="text-sm font-bold text-brand-700 hover:underline"
+                onClick={() => onOpenInstitution(row.institutionId)}
+              >
+                {row.institutionDisplayName || "Institución"}
+              </button>
+            ) : row.institutionDisplayName ? (
+              <span className="text-sm font-bold text-slate-700">
+                {row.institutionDisplayName}
+              </span>
+            ) : null}
           </div>
 
           {row.queue === "current_opportunity_queue" ? (
             <>
               <p className="text-sm text-slate-800">
-                {row.categoryOrTitle} — licitación {row.tenderCode}
+                {formatEquipmentCategory(row.categoryOrTitle)} — licitación {row.tenderCode}
               </p>
               <p className="mt-0.5 text-xs text-[var(--color-muted)]">
                 <EligibilityBadge status={row.eligibilityStatus} /> · fuerza de prospecto{" "}
@@ -57,7 +91,8 @@ function QueueRowCard({ row, onOpenInstitution }: { row: ProspectQueueRow; onOpe
           {row.queue === "historical_prospect_queue" ? (
             <>
               <p className="text-sm text-slate-800">
-                {formatEquipmentCategory(row.category)} — señal de compra, sin licitación abierta actualmente
+                {row.category ? `${formatEquipmentCategory(row.category)} — ` : ""}
+                {formatCommercialSignalType(row.commercialSignalType)}, sin licitación abierta actualmente
               </p>
               <p className="mt-0.5 text-xs text-[var(--color-muted)]">
                 Última vez vista: {row.mostRecentObservedDate ?? "—"} · {row.tenderCount} licitación(es)
@@ -74,9 +109,22 @@ function QueueRowCard({ row, onOpenInstitution }: { row: ProspectQueueRow; onOpe
 
           {row.queue === "institution_match_review_queue" ? (
             <>
-              <p className="text-sm text-slate-800">{row.conflictReason}</p>
+              <p className="text-sm text-slate-800">
+                {row.conflictReason ||
+                  (row.resolutionStatus === "review_only_fragmented_identity"
+                    ? "Identidad fragmentada — revisión manual"
+                    : row.resolutionStatus
+                      ? humanizeToken(row.resolutionStatus)
+                      : "Identidad requiere revisión manual")}
+              </p>
               <p className="mt-0.5 text-xs text-[var(--color-muted)]">
-                {row.candidateDisplayNames.join(" / ")}
+                {row.candidateDisplayNames?.length
+                  ? row.candidateDisplayNames.join(" / ")
+                  : row.memberProfileIds?.length
+                    ? `${row.memberProfileIds.length} perfiles forman este cluster de revisión`
+                    : row.reviewClusterId
+                      ? `Cluster ${row.reviewClusterId.slice(0, 12)}…`
+                      : "Sin identidad institucional confirmada"}
               </p>
             </>
           ) : null}
@@ -84,16 +132,37 @@ function QueueRowCard({ row, onOpenInstitution }: { row: ProspectQueueRow; onOpe
           {row.queue === "line_evidence_review_queue" ? (
             <>
               <p className="text-sm text-slate-800">Licitación {row.tenderCode}</p>
-              <p className="mt-0.5 text-xs italic text-[var(--color-muted)] border-l-2 border-[var(--color-border)] pl-2">
-                &ldquo;{row.clauseText}&rdquo;
-              </p>
+              {row.clauseText ? (
+                <p className="mt-0.5 border-l-2 border-[var(--color-border)] pl-2 text-xs italic text-[var(--color-muted)]">
+                  &ldquo;{row.clauseText}&rdquo;
+                </p>
+              ) : (
+                <p className="mt-0.5 text-xs text-[var(--color-muted)]">
+                  {row.canonicalEquipmentClasses?.length
+                    ? `Clases detectadas: ${row.canonicalEquipmentClasses
+                        .map(formatEquipmentCategory)
+                        .join(", ")}`
+                    : row.relevanceClass
+                      ? `Relevancia: ${formatReviewToken(row.relevanceClass)}`
+                      : "Evidencia estructurada pendiente de revisión"}
+                  {row.lineDisposition ? ` · ${formatReviewToken(row.lineDisposition)}` : ""}
+                </p>
+              )}
             </>
           ) : null}
 
           {row.queue === "retender_review_queue" ? (
             <>
-              <p className="text-sm text-slate-800">{row.resolutionReason}</p>
-              <p className="mt-0.5 text-xs text-[var(--color-muted)]">{row.tenderCodes.join(" ↔ ")}</p>
+              <p className="text-sm text-slate-800">{formatBuyerKey(row.buyerKey)}</p>
+              <p className="mt-0.5 text-xs text-[var(--color-muted)]">
+                {row.tenderCodes.length ? row.tenderCodes.join(" ↔ ") : "Sin códigos de licitación"}
+              </p>
+              <p className="mt-0.5 text-xs text-[var(--color-muted)]">
+                {row.resolutionReason ||
+                  (row.resolutionStatus
+                    ? formatReviewToken(row.resolutionStatus)
+                    : "Relación entre licitaciones pendiente de revisión")}
+              </p>
             </>
           ) : null}
         </div>

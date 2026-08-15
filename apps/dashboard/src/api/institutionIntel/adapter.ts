@@ -262,7 +262,7 @@ function mapQueueRow(raw: Record<string, unknown>): ProspectQueueRow | null {
   const queue = asString(raw.queue) as QueueName;
   const rowId = asString(raw.queue_row_id, `${queue}-${asString(raw.institution_id)}-${asString(raw.tender_code)}`);
   const institutionId = asString(raw.institution_id);
-  const institutionDisplayName = asString(raw.display_name, institutionId || "—");
+  const institutionDisplayName = asString(raw.display_name, institutionId);
 
   switch (queue) {
     case "current_opportunity_queue":
@@ -306,8 +306,13 @@ function mapQueueRow(raw: Record<string, unknown>): ProspectQueueRow | null {
         rowId,
         institutionId,
         institutionDisplayName,
-        conflictReason: asString(raw.conflict_reason, "Identidad requiere revisión manual."),
+        conflictReason: asString(raw.conflict_reason),
         candidateDisplayNames: asStringArray(raw.candidate_display_names ?? raw.aliases),
+        reviewClusterId: asString(raw.institution_review_cluster_id),
+        resolutionStatus: asString(raw.cluster_resolution_status),
+        memberProfileIds: asStringArray(raw.member_profile_ids),
+        reasonCodes: asStringArray(raw.cluster_reason_codes),
+        confirmedAccount: raw.confirmed_account === true,
       };
     case "line_evidence_review_queue":
       return {
@@ -316,7 +321,13 @@ function mapQueueRow(raw: Record<string, unknown>): ProspectQueueRow | null {
         institutionId,
         institutionDisplayName,
         tenderCode: asString(raw.tender_code),
-        clauseText: asString(raw.clause_text, "—"),
+        clauseText: asString(raw.clause_text),
+        relevanceClass: asString(raw.relevance_class),
+        equipmentScopes: asStringArray(raw.equipment_scopes),
+        canonicalEquipmentClasses: asStringArray(raw.canonical_equipment_classes),
+        lineDisposition: asString(raw.line_disposition),
+        reasonCodes: asStringArray(raw.line_reason_codes),
+        ambiguityReasonCodes: asStringArray(raw.ambiguity_reason_codes),
       };
     case "retender_review_queue":
       return {
@@ -324,8 +335,13 @@ function mapQueueRow(raw: Record<string, unknown>): ProspectQueueRow | null {
         rowId,
         institutionId,
         institutionDisplayName,
-        tenderCodes: asStringArray(raw.tender_codes),
-        resolutionReason: asString(raw.resolution_reason, "Posible reedición — no confirmado."),
+        tenderCodes: asStringArray(raw.member_tender_codes ?? raw.tender_codes),
+        resolutionReason: asString(raw.resolution_reason),
+        buyerKey: asString(raw.buyer_key),
+        recurrenceStatus: asString(raw.recurrence_status),
+        resolutionStatus: asString(raw.family_resolution_status),
+        reasonCodes: asStringArray(raw.family_reason_codes),
+        unresolvedRelationshipCount: asString(raw.unresolved_relationship_count),
       };
     default:
       return null;

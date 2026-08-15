@@ -19,14 +19,15 @@ const TABS: { id: PreviewTab; label: string }[] = [
  */
 export function IntelPreviewPage() {
   const [tab, setTab] = useState<PreviewTab>("licitacion");
-  const [institutionId, setInstitutionId] = useState("inst-talca-01");
+  const [institutionId, setInstitutionId] = useState<string | null>(null);
 
   return (
     <div className="space-y-5">
       <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
         <p className="font-semibold">Vista previa de desarrollo — no es parte de la navegación real.</p>
         <p className="mt-1 text-xs text-amber-900">
-          Datos mock, pendiente del contrato de API de backend W1. Ver dashboard-data-requirements.md.
+          Instituciones y Prospectos usan datos reales del backend W1. La pestaña Licitación sigue siendo
+          una demostración mock hasta que T1 / ANEXO se exponga por API.
         </p>
       </div>
 
@@ -58,20 +59,13 @@ export function IntelPreviewPage() {
 
       {tab === "institucion" ? (
         <section className="max-w-2xl">
-          <div className="mb-3 flex flex-wrap gap-1.5">
-            <button
-              type="button"
-              onClick={() => setInstitutionId("inst-talca-01")}
-              className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                institutionId === "inst-talca-01"
-                  ? "bg-brand-600 text-white"
-                  : "border border-[var(--color-border)] bg-white text-slate-700"
-              }`}
-            >
-              Hospital Regional de Talca
-            </button>
-          </div>
-          <InstitutionProfileCard institutionId={institutionId} />
+          {institutionId ? (
+            <InstitutionProfileCard institutionId={institutionId} />
+          ) : (
+            <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-white px-4 py-5 text-sm text-[var(--color-muted)]">
+              Selecciona una institución desde la pestaña Prospectos para abrir su perfil real.
+            </div>
+          )}
         </section>
       ) : null}
 
