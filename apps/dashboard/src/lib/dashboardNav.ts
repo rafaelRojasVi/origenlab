@@ -10,7 +10,11 @@ export type DashboardSection =
   | "tenders"
   | "payments-logistics"
   | "contacts"
-  | "system";
+  | "system"
+  /** Dev-only preview, mock-backed pending backend W1. Deliberately NOT added
+   * to DASHBOARD_NAV_GROUPS below — reachable only via direct hash navigation
+   * (#/intel-preview), never appears in the real sidebar. */
+  | "intel-preview";
 
 export type DashboardNavIconName =
   | "home"
