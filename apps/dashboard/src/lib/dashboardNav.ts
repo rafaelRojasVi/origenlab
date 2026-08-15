@@ -11,9 +11,11 @@ export type DashboardSection =
   | "payments-logistics"
   | "contacts"
   | "system"
-  /** Dev-only preview, mock-backed pending backend W1. Deliberately NOT added
-   * to DASHBOARD_NAV_GROUPS below — reachable only via direct hash navigation
-   * (#/intel-preview), never appears in the real sidebar. */
+  /** Dev-only integration lab (institution/procurement-queue tabs are live W1;
+   * the Licitación tab's tender commercial terms / T1 / ANEXO remain mock).
+   * Deliberately NOT added to DASHBOARD_NAV_GROUPS below — reachable only via
+   * direct hash navigation (#/intel-preview), never appears in the real
+   * sidebar. */
   | "intel-preview";
 
 export type DashboardNavIconName =
