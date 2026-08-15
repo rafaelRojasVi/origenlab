@@ -18,4 +18,20 @@ describe("dashboardNav", () => {
     expect(dashboardSectionGroupLabel("deals")).toBe("Comercial");
     expect(dashboardSectionGroupLabel("system")).toBe("Sistema");
   });
+
+  it("A: 'intel-preview' is not present in the normal sidebar nav (DASHBOARD_NAV_ITEMS / DASHBOARD_NAV_GROUPS)", () => {
+    expect(DASHBOARD_NAV_ITEMS.some((item) => item.id === "intel-preview")).toBe(false);
+    const flattenedIds = DASHBOARD_NAV_GROUPS.flatMap((group) => group.items.map((item) => item.id));
+    expect(flattenedIds).not.toContain("intel-preview");
+  });
+
+  it("B: real 'Prospectos' (DeepSearch/Gmail commercial prospecting) remains a normal nav item", () => {
+    const item = DASHBOARD_NAV_ITEMS.find((i) => i.id === "prospectos");
+    expect(item?.label).toBe("Prospectos");
+  });
+
+  it("C: real 'Licitaciones / equipos' remains a normal nav item", () => {
+    const item = DASHBOARD_NAV_ITEMS.find((i) => i.id === "tenders");
+    expect(item?.label).toBe("Licitaciones / equipos");
+  });
 });

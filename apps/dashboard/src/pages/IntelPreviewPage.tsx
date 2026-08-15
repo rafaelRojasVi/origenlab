@@ -3,19 +3,24 @@ import { InstitutionProfileCard } from "../components/institutionIntel/Instituti
 import { LicitacionIntelCard } from "../components/institutionIntel/LicitacionIntelCard";
 import { ProspectQueueList } from "../components/institutionIntel/ProspectQueueList";
 
-type PreviewTab = "licitacion" | "institucion" | "prospectos";
+type PreviewTab = "licitacion" | "institucion" | "colas-w1";
 
 const TABS: { id: PreviewTab; label: string }[] = [
   { id: "licitacion", label: "Licitación" },
   { id: "institucion", label: "Institución" },
-  { id: "prospectos", label: "Prospectos" },
+  { id: "colas-w1", label: "Colas W1" },
 ];
 
 /**
- * Dev-only preview of the institution/prospect-intel components, mock-backed
- * pending backend W1. Not linked from the sidebar nav (see dashboardNav.ts) —
+ * Dev-only integration lab for the institution/procurement-queue intel
+ * components. Not linked from the sidebar nav (see dashboardNav.ts) —
  * reachable only via direct hash navigation (#/intel-preview) so it can't be
  * stumbled into from the real app's normal navigation flow.
+ *
+ * Boundary: the "Institución" and "Colas W1" tabs are backed by live W1
+ * (`apps/api/docs/INSTITUTION_PROSPECT_API_CONTRACT.md`). The "Licitación"
+ * tab's tender commercial terms (T1 / ANEXO) remain mock-backed — W1 does
+ * not expose that data yet.
  */
 export function IntelPreviewPage() {
   const [tab, setTab] = useState<PreviewTab>("licitacion");
@@ -26,7 +31,7 @@ export function IntelPreviewPage() {
       <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
         <p className="font-semibold">Vista previa de desarrollo — no es parte de la navegación real.</p>
         <p className="mt-1 text-xs text-amber-900">
-          Instituciones y Prospectos usan datos reales del backend W1. La pestaña Licitación sigue siendo
+          Institución y Colas W1 usan datos reales del backend W1. La pestaña Licitación sigue siendo
           una demostración mock hasta que T1 / ANEXO se exponga por API.
         </p>
       </div>
@@ -63,13 +68,13 @@ export function IntelPreviewPage() {
             <InstitutionProfileCard institutionId={institutionId} />
           ) : (
             <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-white px-4 py-5 text-sm text-[var(--color-muted)]">
-              Selecciona una institución desde la pestaña Prospectos para abrir su perfil real.
+              Selecciona una institución desde la pestaña Colas W1 para abrir su perfil real.
             </div>
           )}
         </section>
       ) : null}
 
-      {tab === "prospectos" ? (
+      {tab === "colas-w1" ? (
         <section className="max-w-3xl">
           <ProspectQueueList
             onOpenInstitution={(id) => {

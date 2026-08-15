@@ -260,9 +260,9 @@ export interface LicitacionIntel {
 }
 
 // ---------------------------------------------------------------------------
-// Prospect queue rows — one flat, discriminated-union feed the Prospectos
-// screen groups/sorts client-side. Grouping/sorting is a frontend decision;
-// backend just needs to expose sortable fields (see data-requirements doc).
+// Prospect queue rows — one flat, discriminated-union feed the "Colas W1"
+// preview screen groups/sorts client-side. Grouping/sorting is a frontend
+// decision; backend just needs to expose sortable fields (see data-requirements doc).
 // ---------------------------------------------------------------------------
 
 interface QueueRowBase {

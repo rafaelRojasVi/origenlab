@@ -1,11 +1,13 @@
 /**
- * Spanish presentation labels for institution-intel raw tokens (PLACEHOLDER).
+ * UI label mappings for known W1 and preview tokens (institution/procurement
+ * queue intel raw machine tokens → Spanish labels).
  *
  * Same pattern as operatorLabels.ts (raw machine token in, Spanish label out)
- * but kept in a separate file/module — deliberately not merged into the real
- * operatorLabels.ts, since these token value sets are provisional pending
- * backend W1's authoritative enums, and shouldn't blur into the label tables
- * already backing live production data.
+ * but kept in a separate file/module — not merged into the real
+ * operatorLabels.ts, since some entries here still cover mock-only preview
+ * tokens (see per-dictionary comments below) alongside the tokens confirmed
+ * against live W1 production data, and mixing those into the label tables
+ * that back other live production features would blur that distinction.
  */
 
 import type {
@@ -104,9 +106,11 @@ export function formatReviewToken(raw: string): string {
 }
 
 /**
- * Axis reason codes seen in mock fixtures so far — same caveat as
- * EQUIPMENT_CATEGORY_LABEL: not exhaustive, extend as new mock reasons come
- * up, W1's real vocabulary replaces this.
+ * Axis reason codes. The "Confirmed real tokens" block below is verified
+ * against live W1 production data (apps/api/docs/INSTITUTION_PROSPECT_API_CONTRACT.md);
+ * the remaining entries are earlier mock-fixture placeholders kept as
+ * harmless extras. Not exhaustive either way — extend as new real or preview
+ * reason codes come up.
  */
 const AXIS_REASON_CODE_LABEL: Record<string, string> = {
   // Confirmed real tokens (apps/api/docs/INSTITUTION_PROSPECT_API_CONTRACT.md, W1):
@@ -141,11 +145,11 @@ export function humanizeToken(raw: string): string {
 }
 
 /**
- * Equipment category tokens seen in mock fixtures so far. Not exhaustive —
- * anything missing falls back to humanizeToken() rather than showing the raw
- * token, but that fallback reads as English in an otherwise Spanish UI, so
- * extend this as new mock categories come up rather than leaning on the
- * fallback long-term. W1's real category vocabulary will replace this.
+ * Equipment category tokens seen across live W1 production data and mock
+ * fixtures. Not exhaustive — anything missing falls back to humanizeToken()
+ * rather than showing the raw token, but that fallback reads as English in
+ * an otherwise Spanish UI, so extend this as new categories come up (real or
+ * preview) rather than leaning on the fallback long-term.
  */
 const EQUIPMENT_CATEGORY_LABEL: Record<string, string> = {
   balance: "Balanza",

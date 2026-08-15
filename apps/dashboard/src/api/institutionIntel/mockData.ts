@@ -1,5 +1,7 @@
 /**
- * Mock fixture data — PLACEHOLDER, backs institutionIntelAdapter.ts until W1 lands.
+ * Mock fixture data. W1 already backs Institution / queue data in
+ * institutionIntelAdapter.ts — this file now backs only `getLicitacionIntel`
+ * (tender-level commercial terms / T1 preview), which W1 does not expose yet.
  * Continues the same example institutions used in the concept mockups
  * (Hospital Regional de Talca et al.) so the story stays consistent.
  */
