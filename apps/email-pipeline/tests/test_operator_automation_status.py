@@ -803,3 +803,160 @@ def test_wrong_chilecompra_cron_detected_not_tracked(active_current: Path) -> No
     assert report["cron"]["chilecompra_uses_tracked_script"] is False
     assert report["verdict"] == "healthy"
     assert report["recommended_action"] == "none"
+
+
+# --- Institution-prospect publication observability (W2) ---
+
+
+def _write_institution_prospect_bundle(
+    active_current: Path,
+    *,
+    as_of_utc: str,
+    contract_version: str = "institution_prospect_contract_v4",
+    current_opportunity_rows: int = 2,
+) -> None:
+    import csv as _csv
+
+    from origenlab_email_pipeline.commercial_procurement_institution_prospects.constants import (
+        OPERATOR_QUEUE_NAMES as _QUEUE_NAMES,
+    )
+    from origenlab_email_pipeline.commercial_procurement_institution_prospects.production_publish import (
+        INSTITUTION_PROSPECTS_DIRNAME,
+    )
+    from origenlab_email_pipeline.commercial_procurement_institution_prospects.queues import (
+        EMPTY_QUEUE_HEADERS,
+    )
+
+    dest = active_current / INSTITUTION_PROSPECTS_DIRNAME
+    dest.mkdir(parents=True, exist_ok=True)
+    packet = {
+        "ok": True,
+        "as_of_utc": as_of_utc,
+        "run_context": "production_apply",
+        "planner_version": "procurement_institution_prospect_planner_v4",
+        "recognition_layer_version": "procurement_prospect_recognition_pr5e2_v1",
+        "contract_version": contract_version,
+        "not_persisted": True,
+        "contact_authorization": False,
+        "outreach_authorization": False,
+        "profiles": [{"institution_id": f"inst-{i}"} for i in range(5)],
+        "counts": {"institution_count": 5},
+        "fingerprints": {"build_fingerprint": "digest-xyz"},
+    }
+    (dest / "institution_prospect_packet.json").write_text(json.dumps(packet), encoding="utf-8")
+    sizes = {name: 0 for name in _QUEUE_NAMES}
+    sizes["current_opportunity_queue"] = current_opportunity_rows
+    (dest / "summary.json").write_text(
+        json.dumps({"ok": True, "contract_version": contract_version, "operator_queue_sizes": sizes}),
+        encoding="utf-8",
+    )
+    for queue_name in _QUEUE_NAMES:
+        rows: list[dict[str, object]] = []
+        if queue_name == "current_opportunity_queue":
+            rows = [{"queue_row_id": f"r{i}"} for i in range(current_opportunity_rows)]
+        header = EMPTY_QUEUE_HEADERS[queue_name]
+        with (dest / f"{queue_name}.csv").open("w", encoding="utf-8", newline="") as fh:
+            writer = _csv.DictWriter(fh, fieldnames=header, extrasaction="ignore", restval="")
+            writer.writeheader()
+            for row in rows:
+                writer.writerow(row)
+
+
+def test_institution_prospect_missing_bundle_reported_cleanly_pre_activation(
+    active_current: Path,
+) -> None:
+    reports = _healthy_fixture(active_current)
+    _write_chilecompra_state(active_current, institution_prospect_result="disabled")
+    report = build_operator_automation_status(
+        reports_dir=reports,
+        now=_T0,
+        read_crontab=_healthy_tracked_crontab_with_chilecompra,
+    )
+    section = report["institution_prospect"]
+    assert section["bundle_exists"] is False
+    assert section["bundle_valid"] is None
+    assert section["parse_error"] is None
+    assert section["last_publish_result"] == "disabled"
+    # A bundle simply not existing yet (pre-activation) must never block or
+    # degrade the rest of operator-automation-status.
+    assert report["verdict"] == "healthy"
+    assert "institution_prospect_publication_failed" not in report["warnings"]
+
+
+def test_institution_prospect_healthy_valid_bundle(active_current: Path) -> None:
+    reports = _healthy_fixture(active_current)
+    _write_chilecompra_state(
+        active_current,
+        institution_prospect_result="applied",
+        last_successful_institution_prospect_publish_at=_T0.isoformat(),
+    )
+    _write_institution_prospect_bundle(active_current, as_of_utc=(_T0 - timedelta(hours=1)).isoformat())
+    report = build_operator_automation_status(
+        reports_dir=reports,
+        now=_T0,
+        read_crontab=_healthy_tracked_crontab_with_chilecompra,
+    )
+    section = report["institution_prospect"]
+    assert section["bundle_exists"] is True
+    assert section["bundle_valid"] is True
+    assert section["contract_version"] == "institution_prospect_contract_v4"
+    assert section["supported_contract_version"] is True
+    assert section["stale"] is False
+    assert section["current_opportunity_count"] == 2
+    assert section["operator_queue_sizes"]["current_opportunity_queue"] == 2
+    assert section["last_publish_result"] == "applied"
+    assert report["verdict"] == "healthy"
+
+
+def test_institution_prospect_stale_bundle_flagged(active_current: Path) -> None:
+    reports = _healthy_fixture(active_current)
+    _write_chilecompra_state(active_current, institution_prospect_result="applied")
+    old_as_of = (_T0 - timedelta(hours=72)).isoformat()  # older than the 48h threshold
+    _write_institution_prospect_bundle(active_current, as_of_utc=old_as_of)
+    report = build_operator_automation_status(
+        reports_dir=reports,
+        now=_T0,
+        read_crontab=_healthy_tracked_crontab_with_chilecompra,
+    )
+    section = report["institution_prospect"]
+    assert section["bundle_valid"] is True
+    assert section["stale"] is True
+    # Staleness alone is informational here, not an escalation (mirrors the
+    # W1 API's own stale != unavailable distinction) — conservative by design.
+    assert "institution_prospect_publication_failed" not in report["warnings"]
+
+
+def test_institution_prospect_failed_requested_publication_is_attention(
+    active_current: Path,
+) -> None:
+    reports = _healthy_fixture(active_current)
+    _write_chilecompra_state(active_current, institution_prospect_result="failed")
+    report = build_operator_automation_status(
+        reports_dir=reports,
+        now=_T0,
+        read_crontab=_healthy_tracked_crontab_with_chilecompra,
+    )
+    assert report["institution_prospect"]["last_publish_result"] == "failed"
+    assert "institution_prospect_publication_failed" in report["warnings"]
+    assert report["verdict"] == "attention"
+
+
+def test_institution_prospect_malformed_bundle_reported_not_crashing(active_current: Path) -> None:
+    from origenlab_email_pipeline.commercial_procurement_institution_prospects.production_publish import (
+        INSTITUTION_PROSPECTS_DIRNAME,
+    )
+
+    reports = _healthy_fixture(active_current)
+    _write_chilecompra_state(active_current, institution_prospect_result="applied")
+    dest = active_current / INSTITUTION_PROSPECTS_DIRNAME
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / "institution_prospect_packet.json").write_text("{not valid json", encoding="utf-8")
+    report = build_operator_automation_status(
+        reports_dir=reports,
+        now=_T0,
+        read_crontab=_healthy_tracked_crontab_with_chilecompra,
+    )
+    section = report["institution_prospect"]
+    assert section["bundle_exists"] is True
+    assert section["bundle_valid"] is False
+    assert section["parse_error"] == "malformed"

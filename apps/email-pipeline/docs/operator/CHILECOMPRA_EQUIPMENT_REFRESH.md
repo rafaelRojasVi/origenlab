@@ -126,6 +126,25 @@ Keep `max-details` conservative (50 or lower) to respect API quotas.
 - Detail cache under `reports/out/active/current/chilecompra_detail_cache/` reduces repeat lookups.
 - Review `chilecompra_equipment_candidate_audit_YYYYMMDD.csv` when tuning `max-details`.
 
+## Institution-prospect publication (opt-in, not yet activated)
+
+`--publish-institution-prospects` / `--no-publish-institution-prospects` (default: **false**) publishes the institution-prospect read model (`commercial_procurement_institution_prospects`) from this exact run's detail cache and manifest into `reports/out/active/current/institution_prospects/`, which the W1 API (`apps/api`, `/operator/procurement/*`) reads by default.
+
+```bash
+cd apps/email-pipeline
+uv run origenlab auto-refresh-chilecompra-equipment --once --apply --publish-institution-prospects
+```
+
+Key properties:
+
+- **Reuses**, never re-derives: the same `detail_cache_dir` and this run's freshly-written equipment manifest are passed straight through. No second ChileCompra API call, no ANEXO acquisition (`enable_annex_opportunity_evidence` stays `false`).
+- **Staged and validated before promotion**: the bundle is built into a sibling staging directory, validated through the same W1 `read_model.load_published_read_model()` loader the API uses, and only then atomically promoted into the canonical directory. A build or validation failure leaves the prior valid bundle completely untouched.
+- **Decoupled from the equipment refresh's own success**: a failed institution-prospect publication never rolls back or blocks the equipment queue publication that already succeeded in the same run. It surfaces as `institution_prospect_result=failed` in state/output and the command returns exit code `3` (distinct from `0`=success, `1`=build failed, `2`=ticket missing) so it is attention-worthy without masquerading as a full refresh failure.
+- **State fields** (`reports/out/active/current/chilecompra_equipment_auto_refresh_state.json`): `institution_prospect_result` (`disabled` | `applied` | `failed`), `last_successful_institution_prospect_publish_at`, `institution_prospect_contract_version`, `institution_prospect_as_of_utc`, `institution_prospect_profile_count`, `institution_prospect_current_opportunity_count`. Old state files without these fields still load (all default to `None`).
+- **`operator-automation-status`** exposes a read-only `institution_prospect` section (bundle existence/validity, contract version, `as_of_utc`, age, `stale` past 48h — matching the API's own threshold, last publish result). A missing bundle before this flag is ever enabled is reported plainly and never degrades the rest of the automation-status verdict; a *requested* publication that failed does escalate to `attention`.
+
+**Not yet activated**: the tracked wrapper (`scripts/operator/run_auto_refresh_chilecompra_equipment.sh`) does **not** pass this flag, so the next scheduled cron tick does not pick up this extra work merely because this code has merged. Activation is a separate, deliberate step once real production-cadence runtime/memory behavior has been observed with the flag on.
+
 ## Dashboard mirror relationship
 
 With `--apply` and Postgres configured, this command direct-publishes the typed equipment read model to Postgres (`commercial.equipment_opportunity_source` / `commercial.equipment_opportunity`, exposed by `api.v_equipment_opportunity_current`).

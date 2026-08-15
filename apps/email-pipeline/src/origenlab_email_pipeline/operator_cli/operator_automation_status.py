@@ -10,6 +10,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.production_publish import (
+    INSTITUTION_PROSPECTS_DIRNAME,
+)
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.read_model import (
+    PublishedReadModelError,
+    PublishedReadModelMalformedError,
+    PublishedReadModelMissingError,
+    UnsupportedContractVersionError,
+    load_published_read_model,
+)
 from origenlab_email_pipeline.config import load_settings
 from origenlab_email_pipeline.operator_cli.chilecompra_auto_refresh import (
     ChilecompraEquipmentAutoRefreshState,
@@ -50,6 +60,10 @@ VERDICT_BLOCKED = "blocked"
 
 # Cron fires every minute; successful mirrors may exceed this interval safely via locks/cooldowns.
 MIRROR_SCHEDULE_INTERVAL_SECONDS = 60
+
+# Matches the W1 API's own staleness threshold (apps/api's institution
+# prospect meta.stale semantics) so the operator view and the API agree.
+INSTITUTION_PROSPECT_STALE_AFTER_SECONDS = 48 * 60 * 60
 
 TRACKED_MAIL_CRON_SCRIPT = "scripts/operator/run_auto_refresh_mail.sh"
 TRACKED_MIRROR_CRON_SCRIPT = "scripts/operator/run_auto_mirror_dashboard.sh"
@@ -313,6 +327,88 @@ def _apply_cron_verdict_override(
     return verdict, recommended_action
 
 
+def _build_institution_prospect_section(
+    active_current: Path,
+    *,
+    chilecompra_state: ChilecompraEquipmentAutoRefreshState | None,
+    now: datetime,
+) -> dict[str, Any]:
+    """Read-only view of the published institution-prospect bundle, if any.
+
+    Delegates all parsing/contract-validation to the same W1
+    ``read_model.load_published_read_model`` loader the API uses — never
+    reimplements queue/contract semantics here. A missing bundle (expected
+    before W2 publication is opt-in-enabled) is reported plainly, never as an
+    error: this section must not make the rest of operator-automation-status
+    blocked merely because publication has not been activated yet.
+    """
+    out_dir = active_current / INSTITUTION_PROSPECTS_DIRNAME
+    last_result = chilecompra_state.institution_prospect_result if chilecompra_state else None
+    last_publish_at = (
+        chilecompra_state.last_successful_institution_prospect_publish_at
+        if chilecompra_state
+        else None
+    )
+    section: dict[str, Any] = {
+        "bundle_exists": out_dir.is_dir(),
+        "bundle_valid": None,
+        "contract_version": None,
+        "supported_contract_version": None,
+        "as_of_utc": None,
+        "age_seconds": None,
+        "stale": None,
+        "operator_queue_sizes": None,
+        "current_opportunity_count": None,
+        "last_successful_publish_at": last_publish_at,
+        "last_publish_result": last_result,
+        "parse_error": None,
+    }
+    if not out_dir.is_dir():
+        return section
+
+    try:
+        model = load_published_read_model(out_dir)
+    except UnsupportedContractVersionError as exc:
+        section["bundle_valid"] = False
+        section["contract_version"] = exc.contract_version
+        section["supported_contract_version"] = False
+        section["parse_error"] = "unsupported_contract_version"
+        return section
+    except PublishedReadModelMissingError:
+        section["bundle_valid"] = False
+        section["parse_error"] = "missing"
+        return section
+    except PublishedReadModelMalformedError:
+        section["bundle_valid"] = False
+        section["parse_error"] = "malformed"
+        return section
+    except PublishedReadModelError as exc:  # pragma: no cover - defensive catch-all
+        section["bundle_valid"] = False
+        section["parse_error"] = str(exc)
+        return section
+
+    as_of_utc = str(model.get("as_of_utc") or "") or None
+    age_seconds = _age_seconds(as_of_utc, now)
+    section.update(
+        {
+            "bundle_valid": True,
+            "contract_version": model.get("contract_version"),
+            "supported_contract_version": True,
+            "as_of_utc": as_of_utc,
+            "age_seconds": age_seconds,
+            "stale": (
+                age_seconds is not None
+                and age_seconds >= INSTITUTION_PROSPECT_STALE_AFTER_SECONDS
+            ),
+            "operator_queue_sizes": model.get("operator_queue_sizes"),
+            "current_opportunity_count": (
+                model.get("operator_queue_sizes") or {}
+            ).get("current_opportunity_queue"),
+        }
+    )
+    return section
+
+
 def _safe_load_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     if not path.is_file():
         return None, "missing"
@@ -515,6 +611,9 @@ def build_operator_automation_status(
     }
 
     sqlite_storage_section = build_sqlite_storage_status(reports_dir=reports_dir, now=now_dt)
+    institution_prospect_section = _build_institution_prospect_section(
+        active_current, chilecompra_state=chilecompra_state, now=now_dt
+    )
 
     verdict, recommended_action = _derive_verdict_and_action(
         daily_core=daily_core_section,
@@ -568,6 +667,16 @@ def build_operator_automation_status(
             if reason.endswith("_informational") and reason not in warnings:
                 warnings.append(reason)
 
+    # A REQUESTED institution-prospect publication that failed is attention-worthy.
+    # A bundle that simply does not exist yet (W2 not enabled) is never escalated —
+    # this section must stay conservative and not block the rest of the system.
+    if institution_prospect_section.get("last_publish_result") == "failed":
+        if "institution_prospect_publication_failed" not in warnings:
+            warnings.append("institution_prospect_publication_failed")
+        if verdict == VERDICT_HEALTHY:
+            verdict = VERDICT_ATTENTION
+            recommended_action = "inspect_institution_prospect_publication_failure"
+
     return {
         "generated_at_utc": _iso_now(now_dt),
         "active_current_dir": str(active_current),
@@ -577,6 +686,7 @@ def build_operator_automation_status(
         "dashboard_auto_mirror": mirror_section,
         "chilecompra_equipment_auto_refresh": chilecompra_section,
         "sqlite_storage": sqlite_storage_section,
+        "institution_prospect": institution_prospect_section,
         "ndr_pending_review": ndr_section,
         "cron": cron_section,
         "recommended_action": recommended_action,

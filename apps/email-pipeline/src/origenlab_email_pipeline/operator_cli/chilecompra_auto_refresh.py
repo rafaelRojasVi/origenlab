@@ -15,6 +15,12 @@ from origenlab_email_pipeline.chilecompra_api import (
     redact_ticket,
     ticket_from_env,
 )
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.production_publish import (
+    INSTITUTION_PROSPECTS_DIRNAME,
+    InstitutionProspectPublicationResult,
+    publish_current_institution_prospects,
+)
+from origenlab_email_pipeline.config import load_settings
 from origenlab_email_pipeline.equipment_first_chilecompra_publish import (
     default_canonical_operator_queue_path,
     publish_chilecompra_equipment_queue_for_dashboard,
@@ -64,6 +70,7 @@ CADENCE_KIND_WALL_CLOCK = "wall_clock"
 BuildQueueFn = Callable[..., tuple[list[dict[str, str]], dict[str, Any], list[dict[str, str]]]]
 PublishQueueFn = Callable[..., dict[str, Any]]
 ReadModelPublishFn = Callable[..., dict[str, Any]]
+InstitutionProspectPublishFn = Callable[..., InstitutionProspectPublicationResult]
 NowFn = Callable[[], datetime]
 
 
@@ -79,6 +86,10 @@ class ChilecompraEquipmentAutoRefreshOptions:
     write_candidate_audit: bool = True
     publish: bool = True
     publish_read_model: bool = True
+    # Opt-in, defaults false: publishing the institution-prospect read model
+    # from this run's detail cache + manifest. Must not activate merely by
+    # merging this option — the tracked cron wrapper does not pass this flag.
+    publish_institution_prospects: bool = False
     force: bool = False
     cooldown_seconds: int = DEFAULT_COOLDOWN_SECONDS
 
@@ -112,6 +123,15 @@ class ChilecompraEquipmentAutoRefreshState:
     published_queue: str | None = None
     candidate_audit: str | None = None
     next_recommended_run_at: str | None = None
+    # Institution-prospect publication is best-effort and decoupled from the
+    # core equipment refresh's success/cadence: a failure here never rolls
+    # back or blocks the equipment publication that already succeeded.
+    institution_prospect_result: str | None = None  # "disabled" | "applied" | "failed"
+    last_successful_institution_prospect_publish_at: str | None = None
+    institution_prospect_contract_version: str | None = None
+    institution_prospect_as_of_utc: str | None = None
+    institution_prospect_profile_count: int | None = None
+    institution_prospect_current_opportunity_count: int | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ChilecompraEquipmentAutoRefreshState:
@@ -427,6 +447,7 @@ def run_chilecompra_equipment_auto_refresh(
     build_fn: BuildQueueFn | None = None,
     publish_fn: PublishQueueFn | None = None,
     read_model_publish_fn: ReadModelPublishFn | None = None,
+    institution_publish_fn: InstitutionProspectPublishFn | None = None,
     now_fn: NowFn | None = None,
 ) -> int:
     if not options.once:
@@ -468,6 +489,7 @@ def run_chilecompra_equipment_auto_refresh(
     state_file = state_path(reports_dir)
     state = load_state(state_file)
     state.last_run_started_at = _iso_now(now)
+    institution_publish_failed = False
 
     try:
         result = evaluate_chilecompra_equipment_auto_refresh(
@@ -550,6 +572,8 @@ def run_chilecompra_equipment_auto_refresh(
             publish_stats: dict[str, Any] = {}
             read_model_summary: dict[str, Any] | None = None
             read_model_result = "skipped"
+            institution_prospect_result = "disabled"
+            institution_publish_failed = False
             if options.publish:
                 canonical_csv = default_canonical_operator_queue_path(reports_base, now=now)
                 publisher = publish_fn or publish_chilecompra_equipment_queue_for_dashboard
@@ -633,6 +657,43 @@ def run_chilecompra_equipment_auto_refresh(
                 else:
                     read_model_result = "disabled"
 
+                if options.publish_institution_prospects:
+                    institution_out_dir = active_current_dir(reports_dir) / INSTITUTION_PROSPECTS_DIRNAME
+                    institution_publisher = institution_publish_fn or publish_current_institution_prospects
+                    try:
+                        institution_publish_result = institution_publisher(
+                            sqlite_path=load_settings().resolved_sqlite_path(),
+                            detail_cache_dir=detail_cache_dir,
+                            equipment_manifest_path=Path(build_stats["manifest_path"]),
+                            as_of_utc=_iso_now(now),
+                            out_dir=institution_out_dir,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - never let this roll back equipment success
+                        institution_prospect_result = "failed"
+                        institution_publish_failed = True
+                        state.last_error = f"institution_prospect_publish_failed: {exc}"
+                    else:
+                        institution_prospect_result = institution_publish_result.result
+                        if institution_publish_result.result == "applied":
+                            state.last_successful_institution_prospect_publish_at = _iso_now(
+                                (now_fn or (lambda: datetime.now(timezone.utc)))()
+                            )
+                            state.institution_prospect_contract_version = (
+                                institution_publish_result.contract_version
+                            )
+                            state.institution_prospect_as_of_utc = institution_publish_result.as_of_utc
+                            state.institution_prospect_profile_count = (
+                                institution_publish_result.institution_count
+                            )
+                            state.institution_prospect_current_opportunity_count = (
+                                institution_publish_result.current_opportunity_count
+                            )
+                        else:
+                            institution_publish_failed = True
+                            state.last_error = (
+                                f"institution_prospect_publish_failed: {institution_publish_result.error}"
+                            )
+
             finished = (now_fn or (lambda: datetime.now(timezone.utc)))()
             state.last_run_finished_at = _iso_now(finished)
             started = _parse_iso(state.last_run_started_at) or now
@@ -644,8 +705,14 @@ def run_chilecompra_equipment_auto_refresh(
             )
             state.consecutive_failures = 0
             state.last_result = "refreshed"
-            state.last_error = None
+            # Institution-prospect publication is best-effort and decoupled from
+            # the core equipment refresh: a failed institution step must remain
+            # visible (do not clobber its error message here), but never flips
+            # the equipment refresh itself back to a failure state.
+            if not institution_publish_failed:
+                state.last_error = None
             state.published_rows = published_rows
+            state.institution_prospect_result = institution_prospect_result
             _update_state_counts_from_manifest(
                 state,
                 manifest,
@@ -685,6 +752,7 @@ def run_chilecompra_equipment_auto_refresh(
                     "api_queue": str(api_queue_csv),
                     "coalesced_duplicate_rows": str(publish_stats.get("coalesced_duplicate_rows", 0)),
                     "unique_codigo_count": str(publish_stats.get("unique_codigo_count", 0)),
+                    "institution_prospect_result": institution_prospect_result,
                 },
             )
         else:
@@ -695,6 +763,8 @@ def run_chilecompra_equipment_auto_refresh(
 
         for line in result.output_lines():
             print(line)
+        if institution_publish_failed:
+            return 3
         return 0
     finally:
         release_lock(refresh_lock)
@@ -735,6 +805,16 @@ def parse_chilecompra_equipment_auto_refresh_args(
         help="Publish typed Postgres equipment read model directly from ChileCompra rows (default: true)",
     )
     parser.add_argument(
+        "--publish-institution-prospects",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Publish the institution-prospect read model from this run's detail cache + "
+            "manifest into reports/out/active/current/institution_prospects/ (default: "
+            "false, opt-in; not yet wired into the tracked cron wrapper)"
+        ),
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Bypass the scheduled-slot cadence / cooldown gate",
@@ -764,6 +844,7 @@ def parse_chilecompra_equipment_auto_refresh_args(
         write_candidate_audit=ns.write_candidate_audit,
         publish=ns.publish,
         publish_read_model=ns.publish_read_model,
+        publish_institution_prospects=ns.publish_institution_prospects,
         force=ns.force,
         cooldown_seconds=ns.cooldown_seconds,
     )
