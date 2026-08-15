@@ -15,6 +15,7 @@ ApiBackend = Literal["sqlite", "postgres"]
 _API_ROOT = Path(__file__).resolve().parents[2]
 _EMAIL_PIPELINE_ROOT = _API_ROOT.parent / "email-pipeline"
 _DEFAULT_ACTIVE_CURRENT = _EMAIL_PIPELINE_ROOT / "reports" / "out" / "active" / "current"
+_DEFAULT_INSTITUTION_PROSPECT_DIR = _DEFAULT_ACTIVE_CURRENT / "institution_prospects"
 
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
 
@@ -58,6 +59,7 @@ class Settings(BaseSettings):
     """Completed compaction manifest path required for recovery mode."""
     sqlite_compaction_manifest: Path | None = None
     active_current: Path | None = None
+    institution_prospect_dir: Path | None = None
     api_backend: str | None = None
     postgres_url: str | None = None
     postgres_statement_timeout_ms: int = 30_000
@@ -145,6 +147,11 @@ class Settings(BaseSettings):
 
     def resolved_manifest_path(self) -> Path:
         return self.resolved_active_current() / "manifest.json"
+
+    def resolved_institution_prospect_dir(self) -> Path:
+        if self.institution_prospect_dir is not None:
+            return self.institution_prospect_dir.expanduser().resolve()
+        return _DEFAULT_INSTITUTION_PROSPECT_DIR.resolve()
 
 
 def build_settings(*, dotenv_disabled: bool | None = None) -> Settings:

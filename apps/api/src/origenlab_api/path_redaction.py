@@ -184,3 +184,8 @@ def enrich_equipment_meta_paths(meta: dict[str, Any]) -> dict[str, Any]:
         if info is not None:
             enriched["source_path_info"] = info
     return enriched
+
+
+# Same source_path redaction shape as equipment meta; kept as a separate name
+# since institution-prospect meta is a distinct schema that may diverge later.
+enrich_institution_prospect_meta_paths = enrich_equipment_meta_paths

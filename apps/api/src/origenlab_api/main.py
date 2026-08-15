@@ -10,7 +10,7 @@ from origenlab_api.http_security import configure_http_security, openapi_docs_en
 from origenlab_api.request_id import RequestIdMiddleware
 from origenlab_api.response_timing import ResponseTimingMiddleware
 from origenlab_api.mirror import router as mirror_router
-from origenlab_api.routes import cases, contacts, emails, health, operator, opportunities
+from origenlab_api.routes import cases, contacts, emails, health, institutions, operator, opportunities
 from origenlab_api.settings import get_settings
 
 
@@ -42,6 +42,7 @@ def create_app() -> FastAPI:
     app.include_router(emails.router)
     app.include_router(cases.router)
     app.include_router(opportunities.router)
+    app.include_router(institutions.router)
     app.include_router(mirror_router)
     app.include_router(contacts.router)
     validate_api_settings(settings)
