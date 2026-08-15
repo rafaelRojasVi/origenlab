@@ -126,7 +126,7 @@ Keep `max-details` conservative (50 or lower) to respect API quotas.
 - Detail cache under `reports/out/active/current/chilecompra_detail_cache/` reduces repeat lookups.
 - Review `chilecompra_equipment_candidate_audit_YYYYMMDD.csv` when tuning `max-details`.
 
-## Institution-prospect publication (opt-in, not yet activated)
+## Institution-prospect publication (activated in tracked wrapper)
 
 `--publish-institution-prospects` / `--no-publish-institution-prospects` (default: **false**) publishes the institution-prospect read model (`commercial_procurement_institution_prospects`) from this exact run's detail cache and manifest into `reports/out/active/current/institution_prospects/`, which the W1 API (`apps/api`, `/operator/procurement/*`) reads by default.
 
@@ -143,7 +143,7 @@ Key properties:
 - **State fields** (`reports/out/active/current/chilecompra_equipment_auto_refresh_state.json`): `institution_prospect_result` (`disabled` | `applied` | `failed`), `last_successful_institution_prospect_publish_at`, `institution_prospect_contract_version`, `institution_prospect_as_of_utc`, `institution_prospect_profile_count`, `institution_prospect_current_opportunity_count`. Old state files without these fields still load (all default to `None`).
 - **`operator-automation-status`** exposes a read-only `institution_prospect` section (bundle existence/validity, contract version, `as_of_utc`, age, `stale` past 48h — matching the API's own threshold, last publish result). A missing bundle before this flag is ever enabled is reported plainly and never degrades the rest of the automation-status verdict; a *requested* publication that failed does escalate to `attention`.
 
-**Not yet activated**: the tracked wrapper (`scripts/operator/run_auto_refresh_chilecompra_equipment.sh`) does **not** pass this flag, so the next scheduled cron tick does not pick up this extra work merely because this code has merged. Activation is a separate, deliberate step once real production-cadence runtime/memory behavior has been observed with the flag on.
+**Activated in the tracked wrapper**: `scripts/operator/run_auto_refresh_chilecompra_equipment.sh` explicitly passes `--publish-institution-prospects`. Therefore each successful scheduled ChileCompra equipment refresh also attempts the downstream institution-prospect publication using that same run's detail cache and manifest. The CLI option itself still defaults to `false`; activation is owned by the tracked wrapper, with no second cron entry or acquisition.
 
 ## Dashboard mirror relationship
 
