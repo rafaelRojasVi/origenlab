@@ -33,6 +33,13 @@ from origenlab_email_pipeline.commercial_procurement_institution_prospects.plann
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.queues import (
     build_operator_queues,
 )
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.read_model import (
+    PublishedReadModelError,
+    PublishedReadModelMalformedError,
+    PublishedReadModelMissingError,
+    UnsupportedContractVersionError,
+    load_published_read_model,
+)
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.reconcile import (
     InstitutionReconciliationError,
 )
@@ -47,13 +54,18 @@ __all__ = [
     "OPERATOR_QUEUE_NAMES",
     "PLANNER_VERSION",
     "ProcurementEventFamily",
+    "PublishedReadModelError",
+    "PublishedReadModelMalformedError",
+    "PublishedReadModelMissingError",
     "RECOGNITION_LAYER_VERSION",
+    "UnsupportedContractVersionError",
     "apply_lifecycle_precedence",
     "build_institution_prospect_plan",
     "build_institution_prospects_from_plans",
     "build_institution_review_clusters",
     "build_operator_queues",
     "classify_provisional_disposition",
+    "load_published_read_model",
     "refine_commercial_signal",
     "resolve_procurement_event_families",
 ]
