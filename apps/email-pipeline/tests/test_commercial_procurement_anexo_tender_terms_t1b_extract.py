@@ -188,6 +188,69 @@ def test_budget_tax_basis_requires_explicit_taxes_included_text() -> None:
     )
 
 
+def test_real_sag_monto_estimado_del_contrato_is_explicit() -> None:
+    bundle = _bundle(
+        (
+            "II. BASES TÉCNICAS. "
+            "Monto estimado del contrato $ 77.330.890 (IVA incluido). "
+            "Duración del Contrato Fecha de inicio: desde la aceptación "
+            "de la orden de compra."
+        )
+    )
+
+    _, facts = _facts(bundle)
+    fact = facts["total_budget"]
+
+    assert fact.state == FACT_STATE_EXPLICIT
+    assert fact.value == 77_330_890
+    assert fact.currency == "CLP"
+    assert fact.tax_basis == "taxes_included"
+    assert len(fact.evidence) == 1
+    assert "Monto estimado del contrato" in fact.evidence[0].evidence_excerpt
+
+
+def test_real_sag_offer_vigencia_minima_is_explicit() -> None:
+    bundle = _bundle(
+        (
+            "12. DE LA VIGENCIA DE LAS OFERTAS. "
+            "Las ofertas tendrán una vigencia mínima de 120 días corridos, "
+            "a contar de la fecha de cierre de Recepción de ofertas "
+            "en el portal www.mercadopublico.cl."
+        )
+    )
+
+    _, facts = _facts(bundle)
+    fact = facts["offer_validity_days"]
+
+    assert fact.state == FACT_STATE_EXPLICIT
+    assert fact.value == 120
+    assert fact.unit == "days"
+    assert len(fact.evidence) == 1
+    assert "120 días corridos" in fact.evidence[0].evidence_excerpt
+
+
+def test_real_sag_payment_deadline_is_explicit() -> None:
+    bundle = _bundle(
+        (
+            "22. DEL PRECIO Y FORMA DE PAGO. "
+            "El SAG pagará los equipos en pesos chilenos, "
+            "a través de transferencia bancaria, en el plazo "
+            "máximo de 30 días corridos, contados desde la "
+            "recepción de la factura."
+        )
+    )
+
+    _, facts = _facts(bundle)
+    fact = facts["payment_deadline_days"]
+
+    assert fact.state == FACT_STATE_EXPLICIT
+    assert fact.value == 30
+    assert fact.unit == "days"
+    assert len(fact.evidence) == 1
+    assert "30 días corridos" in fact.evidence[0].evidence_excerpt
+    assert "recepción de la factura" in fact.evidence[0].evidence_excerpt
+
+
 def test_missing_source_bundle_digest_fails_closed() -> None:
     bundle = replace(
         _bundle(
