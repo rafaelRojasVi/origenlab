@@ -20,6 +20,14 @@ services:
     plan: starter
     region: oregon
     healthCheckPath: /health
+    # Persistent disk for the W1 institution-prospect file-backed read model.
+    # The local worker publishes to institution_prospects/ on this disk via
+    # sync_institution_prospects_to_cloud.sh; the API reads it on every request.
+    # Required: Render paid plan with persistent disk support.
+    disk:
+      name: w1-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: ORIGENLAB_ENV
         value: production
@@ -31,6 +39,11 @@ services:
         value: https://dashboard.origenlab.cl
       - key: ORIGENLAB_API_ALLOWED_HOSTS
         value: api.origenlab.cl
+      # W1 institution-prospect read model directory on the persistent disk.
+      # Must match the mountPath above + the canonical bundle subdirectory name.
+      # The API reads this path on every request; symlink follows on resolve().
+      - key: ORIGENLAB_INSTITUTION_PROSPECT_DIR
+        value: /var/data/institution_prospects
       - key: ORIGENLAB_API_AUTH_TOKEN
         sync: false
       - key: ORIGENLAB_POSTGRES_URL
