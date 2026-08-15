@@ -103,6 +103,15 @@ vi.mock("../api/mirrorLeadIntelClient", () => ({
   fetchLeadResearchSummaryMirror: vi.fn(),
 }));
 
+vi.mock("../api/institutionIntel/adapter", () => ({
+  institutionIntelAdapter: {
+    getCurrentOpportunities: vi.fn(async () => ({
+      availability: { status: "available_empty" as const },
+      pageInfo: { page: 1, pageSize: 15, totalItems: 0 },
+    })),
+  },
+}));
+
 vi.mock("../lib/logo/threeBodyCanvasRunner", () => ({
   startThreeBodyCanvas: vi.fn(() => () => {}),
 }));
@@ -187,7 +196,7 @@ describe("DashboardApp (legacy TodayPage tests)", () => {
     expect(screen.queryByText(/\/secret\/active/)).toBeNull();
 
     fireEvent.click(within(nav).getByRole("link", { name: "Licitaciones / equipos" }));
-    await waitFor(() => screen.getByText("Hospital Regional"));
+    await waitFor(() => screen.getByText("Oportunidades accionables"));
     expect(screen.queryByText(/\/secret\/path/)).toBeNull();
   });
 
