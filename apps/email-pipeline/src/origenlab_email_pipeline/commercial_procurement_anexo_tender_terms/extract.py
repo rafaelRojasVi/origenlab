@@ -40,6 +40,10 @@ from .models import (
     TenderTermsBundle,
     TermEvidence,
 )
+from .semantic_fallback import (
+    SemanticFallbackClient,
+    semantic_observations_for_field,
+)
 from .source import (
     ResolvedEvidenceChunk,
     coverage_from_bundle,
@@ -468,6 +472,8 @@ def _fact_from_observations(
 
 def extract_tender_terms(
     bundle: TenderAttachmentBundle,
+    *,
+    semantic_client: SemanticFallbackClient | None = None,
 ) -> TenderTermsBundle:
     """Extract the initial T1-B tender-wide commercial term set."""
 
@@ -487,6 +493,47 @@ def extract_tender_terms(
             observations_by_field[rule.field_name].extend(
                 _observe_rule(source, rule)
             )
+
+    if semantic_client is not None:
+        for rule in _RULES:
+            field_observations = observations_by_field[rule.field_name]
+
+            # Deterministic recognition is authoritative and always wins.
+            # The semantic model is never consulted for a field that already
+            # has at least one explicit deterministic observation.
+            if field_observations:
+                continue
+
+            semantic_observations = semantic_observations_for_field(
+                sources,
+                rule.field_name,
+                semantic_client,
+            )
+
+            for observation in semantic_observations:
+                if observation.field_name != rule.field_name:
+                    raise ValueError(
+                        "semantic observation field mismatch: "
+                        f"{observation.field_name!r} != {rule.field_name!r}"
+                    )
+
+                if not observation.evidence:
+                    raise ValueError(
+                        "semantic observation requires provenance evidence: "
+                        f"{rule.field_name}"
+                    )
+
+                # Re-enter the normal T1 observation stream. Multiple pieces
+                # of evidence supporting the same semantic value are separate
+                # observations and are deduplicated by _fact_from_observations.
+                field_observations.extend(
+                    _ObservedCandidate(
+                        rule=rule,
+                        value=observation.value,
+                        evidence=evidence,
+                    )
+                    for evidence in observation.evidence
+                )
 
     items = extract_item_terms(
         tender_id=bundle.tender_id,

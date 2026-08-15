@@ -17,6 +17,9 @@ from origenlab_email_pipeline.commercial_procurement_anexo_tender_terms import (
     FACT_STATE_UNKNOWN,
     extract_tender_terms,
 )
+from origenlab_email_pipeline.commercial_procurement_anexo_tender_terms.semantic_fallback import (
+    SemanticClaim,
+)
 
 
 def _bundle(
@@ -570,3 +573,237 @@ def test_extraction_is_deterministic_across_chunk_input_order() -> None:
 
     assert forward.to_dict() == reverse.to_dict()
     assert forward.semantic_digest == reverse.semantic_digest
+
+
+class _IntegrationSemanticClient:
+    def __init__(
+        self,
+        *,
+        target_field: str,
+        value: int | float,
+        day_basis: str | None = None,
+        marker: str = "",
+    ) -> None:
+        self.target_field = target_field
+        self.value = value
+        self.day_basis = day_basis
+        self.marker = marker
+        self.calls: list[str] = []
+
+    def extract_claims(self, *, spec, spans):
+        self.calls.append(spec.field_name)
+
+        if spec.field_name != self.target_field:
+            return ()
+
+        matching_span = next(
+            (span for span in spans if not self.marker or self.marker in span.text),
+            None,
+        )
+
+        if matching_span is None:
+            return ()
+
+        return (
+            SemanticClaim(
+                value=self.value,
+                day_basis=self.day_basis,
+                evidence_span_ids=(matching_span.span_id,),
+            ),
+        )
+
+
+def test_semantic_fallback_fills_only_unresolved_tender_fact() -> None:
+    text = (
+        "Condición comercial de pago. "
+        "El proveedor recibirá el pago dentro de 30 días corridos "
+        "desde la recepción de la factura."
+    )
+    bundle = _bundle(text)
+
+    baseline = extract_tender_terms(bundle)
+    baseline_facts = {fact.field_name: fact for fact in baseline.tender_facts}
+
+    assert baseline_facts["payment_deadline_days"].state == FACT_STATE_UNKNOWN
+    assert baseline_facts["payment_deadline_days"].value is None
+
+    client = _IntegrationSemanticClient(
+        target_field="payment_deadline_days",
+        value=30,
+        day_basis="calendar",
+        marker="30 días corridos",
+    )
+
+    result = extract_tender_terms(
+        bundle,
+        semantic_client=client,
+    )
+
+    facts = {fact.field_name: fact for fact in result.tender_facts}
+
+    payment = facts["payment_deadline_days"]
+
+    assert payment.state == FACT_STATE_EXPLICIT
+    assert payment.value == 30
+    assert payment.unit == "days"
+    assert len(payment.evidence) == 1
+
+    evidence = payment.evidence[0]
+    start = evidence.locator["char_start"]
+    end = evidence.locator["char_end"]
+
+    assert evidence.evidence_excerpt == text[start:end]
+    assert "30 días corridos" in evidence.evidence_excerpt
+    assert "payment_deadline_days" in client.calls
+
+    # T1 safety invariants remain unchanged.
+    assert result.contact_authorization is False
+    assert result.outreach_authorization is False
+    assert result.production_queue_mutated is False
+    assert result.persisted is False
+
+
+def test_deterministic_fact_prevents_semantic_model_call_for_same_field() -> None:
+    text = (
+        "22. DEL PRECIO Y FORMA DE PAGO. "
+        "El SAG pagará los equipos en pesos chilenos, "
+        "a través de transferencia bancaria, en el plazo máximo "
+        "de 30 días corridos, contados desde la recepción de la factura."
+    )
+    bundle = _bundle(text)
+
+    # If the fallback were incorrectly invoked for this field, the proposed
+    # value 45 is absent from evidence and semantic validation would fail.
+    client = _IntegrationSemanticClient(
+        target_field="payment_deadline_days",
+        value=45,
+        day_basis="calendar",
+    )
+
+    result = extract_tender_terms(
+        bundle,
+        semantic_client=client,
+    )
+
+    facts = {fact.field_name: fact for fact in result.tender_facts}
+
+    payment = facts["payment_deadline_days"]
+
+    assert payment.state == FACT_STATE_EXPLICIT
+    assert payment.value == 30
+    assert "payment_deadline_days" not in client.calls
+
+
+class _MultiClaimSemanticClient:
+    def __init__(
+        self,
+        *,
+        target_field: str,
+        claims: tuple[tuple[str, int | float, str | None], ...],
+    ) -> None:
+        self.target_field = target_field
+        self.claims = claims
+
+    def extract_claims(self, *, spec, spans):
+        if spec.field_name != self.target_field:
+            return ()
+
+        result = []
+
+        for marker, value, day_basis in self.claims:
+            span = next(
+                (candidate for candidate in spans if marker in candidate.text),
+                None,
+            )
+
+            if span is None:
+                continue
+
+            result.append(
+                SemanticClaim(
+                    value=value,
+                    day_basis=day_basis,
+                    evidence_span_ids=(span.span_id,),
+                )
+            )
+
+        return tuple(result)
+
+
+def test_semantic_same_value_from_distinct_evidence_coalesces_to_explicit() -> None:
+    bundle = _bundle(
+        (
+            "Condición de pago. El pago al proveedor se realizará "
+            "dentro de 30 días corridos desde la recepción de la factura. "
+            "Referencia A."
+        ),
+        (
+            "Forma de pago. Los pagos serán realizados dentro de "
+            "30 días corridos siguientes a la recepción de la factura. "
+            "Referencia B."
+        ),
+    )
+
+    client = _MultiClaimSemanticClient(
+        target_field="payment_deadline_days",
+        claims=(
+            ("Referencia A", 30, "calendar"),
+            ("Referencia B", 30, "calendar"),
+        ),
+    )
+
+    result = extract_tender_terms(
+        bundle,
+        semantic_client=client,
+    )
+
+    payment = next(
+        fact
+        for fact in result.tender_facts
+        if fact.field_name == "payment_deadline_days"
+    )
+
+    assert payment.state == FACT_STATE_EXPLICIT
+    assert payment.value == 30
+    assert len(payment.evidence) == 2
+    assert {evidence.locator["page"] for evidence in payment.evidence} == {1, 2}
+
+
+def test_semantic_distinct_supported_values_flow_to_existing_conflict_reducer() -> None:
+    bundle = _bundle(
+        (
+            "Condición de pago. El pago al proveedor se realizará "
+            "dentro de 30 días corridos desde la recepción de la factura. "
+            "Referencia A."
+        ),
+        (
+            "Condición alternativa de pago. El pago al proveedor se realizará "
+            "dentro de 45 días corridos desde la recepción de la factura. "
+            "Referencia B."
+        ),
+    )
+
+    client = _MultiClaimSemanticClient(
+        target_field="payment_deadline_days",
+        claims=(
+            ("Referencia A", 30, "calendar"),
+            ("Referencia B", 45, "calendar"),
+        ),
+    )
+
+    result = extract_tender_terms(
+        bundle,
+        semantic_client=client,
+    )
+
+    payment = next(
+        fact
+        for fact in result.tender_facts
+        if fact.field_name == "payment_deadline_days"
+    )
+
+    assert payment.state == FACT_STATE_CONFLICTING
+    assert payment.value is None
+    assert {candidate.value for candidate in payment.candidates} == {30, 45}
+    assert payment.reason_codes == ("multiple_distinct_explicit_values",)
+    assert all(candidate.evidence for candidate in payment.candidates)
