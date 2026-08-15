@@ -20,6 +20,10 @@
 #   RUN_CATALOG_MIRROR=1           build SQLite catalog + sync+verify catalog.* (default 0)
 #   RUN_LEAD_RESEARCH_MIRROR=1     build SQLite lead_research + sync lead_intel.* (default 0)
 #   RUN_OUTBOUND_SIDECAR_MIRROR=1  sync outbound sidecars after dashboard mirror (default 1)
+#   RUN_W1_CLOUD_SYNC=1            sync W1 institution-prospect bundle to Render persistent disk
+#                                   after dashboard mirror (default 0). Requires SSH config:
+#                                   ORIGENLAB_RENDER_SSH_HOST / _SSH_USER / _SSH_KEY.
+#                                   Failure is non-fatal: local W1 publication remains authoritative.
 #   DASHBOARD_FAST=1               fast daily mode (canonical/recent rows + dashboard-only mirror sync)
 #   GMAIL_SINCE_DAYS=14            bound IMAP fetch when ingest runs
 #   ORIGENLAB_GMAIL_SENT_FOLDER    default "[Gmail]/Enviados"
@@ -42,6 +46,13 @@ RUN_COMMERCIAL_DEAL_MIRROR="${RUN_COMMERCIAL_DEAL_MIRROR:-0}"
 RUN_CATALOG_MIRROR="${RUN_CATALOG_MIRROR:-0}"
 RUN_LEAD_RESEARCH_MIRROR="${RUN_LEAD_RESEARCH_MIRROR:-0}"
 RUN_OUTBOUND_SIDECAR_MIRROR="${RUN_OUTBOUND_SIDECAR_MIRROR:-1}"
+# W1 cloud sync is opt-in (default 0) because:
+#   - It requires SSH credentials (ORIGENLAB_RENDER_SSH_HOST/USER/KEY).
+#   - Failure is non-fatal: the local W1 publication already succeeded before
+#     this script runs, and the Render API degrades gracefully (reduced_mode=true)
+#     rather than serving corrupt data.
+#   - It must NOT be part of the core ChileCompra auto-refresh transaction.
+RUN_W1_CLOUD_SYNC="${RUN_W1_CLOUD_SYNC:-0}"
 DASHBOARD_FAST="${DASHBOARD_FAST:-0}"
 GMAIL_SINCE_DAYS="${GMAIL_SINCE_DAYS:-14}"
 GMAIL_SENT_FOLDER="${ORIGENLAB_GMAIL_SENT_FOLDER:-[Gmail]/Enviados}"
@@ -181,16 +192,19 @@ COMMERCIAL_MIRROR_STATUS="skipped"
 CATALOG_MIRROR_STATUS="skipped"
 LEAD_RESEARCH_MIRROR_STATUS="skipped"
 OUTBOUND_SIDECAR_MIRROR_STATUS="skipped"
+W1_CLOUD_SYNC_STATUS="skipped"
 GMAIL_INGEST_LABEL="off"
 COMMERCIAL_MIRROR_LABEL="off"
 CATALOG_MIRROR_LABEL="off"
 LEAD_RESEARCH_MIRROR_LABEL="off"
 OUTBOUND_SIDECAR_MIRROR_LABEL="off"
+W1_CLOUD_SYNC_LABEL="off"
 [[ "$RUN_GMAIL_INGEST" == "1" ]] && GMAIL_INGEST_LABEL="on"
 [[ "$RUN_COMMERCIAL_DEAL_MIRROR" == "1" ]] && COMMERCIAL_MIRROR_LABEL="on"
 [[ "$RUN_CATALOG_MIRROR" == "1" ]] && CATALOG_MIRROR_LABEL="on"
 [[ "$RUN_LEAD_RESEARCH_MIRROR" == "1" ]] && LEAD_RESEARCH_MIRROR_LABEL="on"
 [[ "$RUN_OUTBOUND_SIDECAR_MIRROR" == "1" ]] && OUTBOUND_SIDECAR_MIRROR_LABEL="on"
+[[ "$RUN_W1_CLOUD_SYNC" == "1" ]] && W1_CLOUD_SYNC_LABEL="on"
 
 if [[ "$RUN_COMMERCIAL_DEAL_MIRROR" == "1" ]]; then
   # shellcheck source=scripts/ops/_refresh_commercial_deal_mirror.sh
@@ -239,6 +253,19 @@ if [[ "$RUN_OUTBOUND_SIDECAR_MIRROR" == "1" ]]; then
     OUTBOUND_SIDECAR_MIRROR_STATUS="failed"
     echo "ERROR: Refresh stopped — outbound sidecar mirror verify failed (dashboard may show stale suppressions)." >&2
     exit 1
+  fi
+fi
+
+if [[ "$RUN_W1_CLOUD_SYNC" == "1" ]]; then
+  echo ""
+  echo "-- W1 institution-prospect cloud sync → Render persistent disk --"
+  if bash "${PIPE}/scripts/ops/sync_institution_prospects_to_cloud.sh"; then
+    W1_CLOUD_SYNC_STATUS="ok"
+  else
+    W1_CLOUD_SYNC_STATUS="failed"
+    echo "WARNING: W1 cloud sync failed — local ChileCompra publication remains authoritative." >&2
+    echo "         Render API will serve reduced_mode=true until next successful W1 sync." >&2
+    echo "         (Non-fatal: not aborting refresh.)" >&2
   fi
 fi
 
@@ -292,6 +319,7 @@ if payload.get('postgres_lead_segments'):
 " "$OUTBOUND_SIDECAR_VERIFY_JSON"
   fi
 fi
+echo "  W1 institution-prospect:   $W1_CLOUD_SYNC_LABEL ($W1_CLOUD_SYNC_STATUS)"
 echo "  Sends / outreach / deploy: not run (read-only refresh)"
 echo ""
 echo "Open dashboard and click Refresh."

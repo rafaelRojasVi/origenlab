@@ -294,12 +294,96 @@ Before first production traffic:
 
 ---
 
+## 4. W1 institution-prospect file read model — Render persistent disk
+
+The W1 institution-prospect bundle is **not stored in Postgres**. The API reads it
+directly from the filesystem on every request. In production (Render), the bundle lives
+on a persistent disk mounted at `/var/data`.
+
+### Architecture
+
+```text
+Local worker
+  uv run origenlab auto-refresh-chilecompra-equipment --once --apply --publish-institution-prospects
+  → reports/out/active/current/institution_prospects/   (canonical local bundle)
+
+sync_institution_prospects_to_cloud.sh   (opt-in, default 0 in refresh script)
+  → scp archive → Render persistent disk /var/data
+  → ssh: extract to /var/data/institution_prospects.TIMESTAMP.staging/
+  → Python validation (same read_model loader the API uses)
+  → atomic symlink promotion: ln -s STAGING NEXT + mv NEXT CANONICAL  (rename(2))
+  → Render API resolves symlink on every request — no restart required
+
+Render API
+  ORIGENLAB_INSTITUTION_PROSPECT_DIR=/var/data/institution_prospects  (env var)
+  → Settings.resolved_institution_prospect_dir()  (resolves symlink each call)
+  → load_published_read_model(dir)
+  → success: reduced_mode=false
+  → missing/malformed: reduced_mode=true  (graceful degradation)
+```
+
+### Required SSH configuration (do not commit values)
+
+Set these in your local `.env` or shell before running the sync:
+
+```bash
+ORIGENLAB_RENDER_SSH_HOST=ssh.oregon.render.com   # Render SSH gateway
+ORIGENLAB_RENDER_SSH_USER=srv-xxxxxxxxxxxx         # Service username from Render dashboard
+ORIGENLAB_RENDER_SSH_KEY=/path/to/ssh/private/key  # Path only — contents never echoed
+```
+
+### One-time infrastructure setup (Render dashboard)
+
+1. The `render.yaml` blueprint already declares the persistent disk (`name: w1-data`,
+   `mountPath: /var/data`, `sizeGB: 1`). Apply via `render blueprint launch` or the
+   Render dashboard "Blueprints" tab.
+2. Add your SSH public key to the Render service under **Settings → SSH Keys**.
+3. Verify with: `ssh -i $ORIGENLAB_RENDER_SSH_KEY $ORIGENLAB_RENDER_SSH_USER@$ORIGENLAB_RENDER_SSH_HOST ls /var/data`
+
+### Recurring sync
+
+```bash
+# After a successful local ChileCompra auto-refresh:
+RUN_W1_CLOUD_SYNC=1 bash scripts/ops/refresh_render_dashboard_once.sh
+
+# Or standalone:
+bash scripts/ops/sync_institution_prospects_to_cloud.sh
+```
+
+**Failure is non-fatal.** If the sync fails (network, SSH, remote validation), the
+local W1 publication remains authoritative and the Render API degrades gracefully
+(`reduced_mode=true`) rather than serving corrupt data. The local ChileCompra
+auto-refresh transaction is never aborted due to W1 cloud sync failure.
+
+### Verification
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" https://api.origenlab.cl/operator/procurement/status | jq '.meta'
+# expect: meta.reduced_mode = false
+# expect: meta.canonical_reason = "institution_prospect_read_model"
+```
+
+### Rollback
+
+The sync script retains `ORIGENLAB_W1_KEEP_SNAPSHOTS` (default 2) old versioned
+staging directories on the remote disk. To roll back:
+
+```bash
+# On the Render persistent disk (via ssh):
+ls /var/data/institution_prospects.*.staging   # find previous snapshot
+ln -s /var/data/institution_prospects.PREV.staging /var/data/institution_prospects.next
+mv /var/data/institution_prospects.next /var/data/institution_prospects
+```
+
+---
+
 ## 11. Related artifacts
 
 | Artifact | Path |
 |----------|------|
 | Phase 0 local proof | [PHASE0_LOCAL_POSTGRES_MIRROR.md](PHASE0_LOCAL_POSTGRES_MIRROR.md) |
 | Cloud sync script | [`scripts/ops/sync_dashboard_mirror_to_cloud.sh`](../scripts/ops/sync_dashboard_mirror_to_cloud.sh) |
+| W1 cloud sync script | [`scripts/ops/sync_institution_prospects_to_cloud.sh`](../scripts/ops/sync_institution_prospects_to_cloud.sh) |
 | Verify script | [`scripts/qa/verify_dashboard_postgres_mirror.py`](../scripts/qa/verify_dashboard_postgres_mirror.py) |
 | Render blueprint | [`render.yaml`](../../../render.yaml) |
 | API README (CORS/production) | [`apps/api/README.md`](../../api/README.md) |
