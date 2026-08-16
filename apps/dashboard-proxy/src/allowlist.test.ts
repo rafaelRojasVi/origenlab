@@ -8,6 +8,15 @@ describe("allowlist", () => {
     "/health",
     "/operator/status",
     "/operator/automation-status",
+    "/operator/procurement/status",
+    "/operator/procurement/institutions",
+    "/operator/procurement/institutions/test-institution-id",
+    "/operator/procurement/queues/current_opportunity",
+    "/operator/procurement/queues/historical_prospect",
+    "/operator/procurement/queues/contact_gap",
+    "/operator/procurement/queues/institution_match_review",
+    "/operator/procurement/queues/line_evidence_review",
+    "/operator/procurement/queues/retender_review",
     "/mirror/catalog/products",
     "/mirror/leads/summary",
     "/mirror/leads/prospects",
@@ -45,6 +54,9 @@ describe("allowlist", () => {
   it("keeps representative write and non-dashboard paths blocked", () => {
     expect(isAllowedUpstreamPath("/emails")).toBe(false);
     expect(isAllowedUpstreamPath("/operator/send")).toBe(false);
+    expect(isAllowedUpstreamPath("/operator/procurement/queues/not_a_real_queue")).toBe(false);
+    expect(isAllowedUpstreamPath("/operator/procurement/send")).toBe(false);
+    expect(isAllowedUpstreamPath("/operator/procurement/institutions/id/extra")).toBe(false);
     expect(isAllowedUpstreamPath("/api/operator/status")).toBe(false);
   });
 });
