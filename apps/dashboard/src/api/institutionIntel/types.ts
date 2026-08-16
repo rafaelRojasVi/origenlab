@@ -214,11 +214,26 @@ export interface TermFactCandidate {
   evidence: EvidenceRef;
 }
 
+/**
+ * Structured `value` shape T1 publishes for `maximum_delivery_days` instead
+ * of a plain number — `{ days, day_basis }`, where `day_basis` is
+ * `"business"` (días hábiles), `"calendar"` (días corridos), or `null` when
+ * T1's extractor could not confirm a basis (see
+ * apps/email-pipeline's commercial_procurement_anexo_tender_terms/extract.py
+ * `_parse_duration_days_match`). Named explicitly here — never widened to
+ * `any`/`unknown` — so a malformed/unrecognized shape can fail closed to
+ * "—" instead of ever being stringified (`[object Object]`) in the UI.
+ */
+export interface DeliveryDaysValue {
+  days: number;
+  day_basis: string | null;
+}
+
 export interface TermFact {
   fieldName: string;
   label: string;
   state: TermFactState;
-  value: string | number | null;
+  value: string | number | null | DeliveryDaysValue;
   unit?: string;
   evidence?: EvidenceRef;
   candidates?: readonly TermFactCandidate[];

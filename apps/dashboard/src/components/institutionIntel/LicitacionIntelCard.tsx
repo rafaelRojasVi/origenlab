@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
-import type { ItemBudgetRow, LicitacionIntel, TermFact } from "../../api/institutionIntel/types";
+import type { CoverageStatus, ItemBudgetRow, LicitacionIntel, TermFact } from "../../api/institutionIntel/types";
 import { institutionIntelAdapter } from "../../api/institutionIntel/adapter";
-import { TERM_FACT_STATE_LABEL, formatEquipmentCategory } from "../../lib/institutionIntelLabels";
+import {
+  TERM_FACT_STATE_LABEL,
+  formatDeliveryDaysValue,
+  formatEquipmentCategory,
+  formatTermUnit,
+} from "../../lib/institutionIntelLabels";
 import { AvailabilityBlock } from "./AvailabilityBlock";
 import { EvidenceDisclosure } from "./EvidenceDisclosure";
 import { EligibilityBadge } from "./IntelBadges";
@@ -14,6 +19,24 @@ const TERM_STATE_TONE: Record<TermFact["state"], string> = {
   conflicting: "bg-amber-50 text-amber-700",
 };
 
+/**
+ * Renders a fact's value + unit for display. `value` may be a plain
+ * string/number, `null` (unknown), or the structured `{days, day_basis}`
+ * shape `maximum_delivery_days` carries — never stringifies an object
+ * (`[object Object]`): any structured value the label helper can't
+ * confidently phrase (missing/non-numeric `days`, unrecognized `day_basis`)
+ * fails closed to "—".
+ */
+function formatTermFactValue(fact: TermFact): string {
+  if (fact.value === null) return "—";
+  if (typeof fact.value === "object") {
+    return formatDeliveryDaysValue(fact.value) ?? "—";
+  }
+  const formattedValue = typeof fact.value === "number" ? fact.value.toLocaleString("es-CL") : fact.value;
+  const unitLabel = fact.unit ? formatTermUnit(fact.unit) : "";
+  return unitLabel ? `${formattedValue} ${unitLabel}` : formattedValue;
+}
+
 function TermFactTile({ fact }: { fact: TermFact }) {
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3.5 py-3">
@@ -23,13 +46,7 @@ function TermFactTile({ fact }: { fact: TermFact }) {
           {TERM_FACT_STATE_LABEL[fact.state]}
         </span>
       </div>
-      <p className="mt-0.5 text-base font-bold tabular-nums text-slate-900">
-        {fact.value === null
-          ? "—"
-          : `${typeof fact.value === "number" ? fact.value.toLocaleString("es-CL") : fact.value}${
-              fact.unit ? ` ${fact.unit}` : ""
-            }`}
-      </p>
+      <p className="mt-0.5 text-base font-bold tabular-nums text-slate-900">{formatTermFactValue(fact)}</p>
       {fact.evidence ? <EvidenceDisclosure evidence={fact.evidence} /> : null}
       {fact.candidates && fact.candidates.length > 0 ? (
         <div className="mt-1.5 space-y-1">
@@ -68,6 +85,196 @@ function ItemBudgetLine({ item }: { item: ItemBudgetRow }) {
   );
 }
 
+/**
+ * Coverage progress + honest prose. The "if a term isn't shown above, it's
+ * genuinely absent" claim only holds when `coverage.is_complete` — with
+ * `available_incomplete` there may be unread evidence that still contains
+ * additional terms not yet surfaced, so that case gets its own (amber, not
+ * absolute) prose instead of the complete-coverage claim.
+ */
+function CoverageBody({ coverage, isComplete }: { coverage: CoverageStatus; isComplete: boolean }) {
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <div className="h-1.5 flex-1 rounded-full bg-slate-100">
+          <div
+            className={`h-full rounded-full ${
+              coverage.incompleteReasonCodes.length > 0 ? "bg-amber-500" : "bg-emerald-600"
+            }`}
+            style={{
+              width: `${
+                coverage.documentsDiscovered > 0
+                  ? Math.round((coverage.documentsRead / coverage.documentsDiscovered) * 100)
+                  : 0
+              }%`,
+            }}
+          />
+        </div>
+        <span className="shrink-0 text-xs font-semibold text-slate-700">
+          {coverage.documentsRead} / {coverage.documentsDiscovered} documentos
+        </span>
+      </div>
+      {isComplete ? (
+        <p className="mt-1.5 text-[11px] text-[var(--color-muted)]" data-testid="coverage-complete-claim">
+          Se leyeron todos los documentos disponibles. Los términos marcados &quot;Sin datos&quot; no fueron
+          confirmados por los patrones soportados por T1.
+        </p>
+      ) : (
+        <p className="mt-1.5 text-[11px] text-amber-900" data-testid="coverage-incomplete-note">
+          La lectura de anexos todavía está incompleta — puede haber términos adicionales en evidencia
+          no leída que aún no se muestran arriba. No asumas que un término ausente aquí está
+          genuinamente descartado.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A `total_budget` term fact is only "known" when its state is `explicit` or
+ * `derived` — anything else (unknown/not_explicitly_found/conflicting, or no
+ * `total_budget` fact at all) means T1 has not actually confirmed a total,
+ * so the item-budget empty state must never claim one is known (see
+ * `LicitacionIntelBody`'s item-budget empty-label branch below).
+ */
+function isTotalBudgetKnown(terms: LicitacionIntel["terms"]): boolean {
+  const facts =
+    terms.status === "available" ? terms.data : terms.status === "available_incomplete" ? (terms.partial ?? []) : [];
+  const totalBudgetFact = facts.find((f) => f.fieldName === "total_budget");
+  return totalBudgetFact !== undefined && (totalBudgetFact.state === "explicit" || totalBudgetFact.state === "derived");
+}
+
+/**
+ * Presentation-only rendering of an already-fetched `LicitacionIntel`. No
+ * fetching happens here — callers (e.g. `LicitacionIntelCard` below, or
+ * `TenderDetailDrawer`, which fetches once itself and passes the result down)
+ * own the request lifecycle so a tender selection never triggers more than
+ * one `getLicitacionIntel` call.
+ *
+ * Renders no eligibility/identity badge of its own — that's owned entirely
+ * by the caller's header (`TenderDetailDrawer`'s header, or
+ * `LicitacionIntelCard`'s wrapper below for the standalone preview path) so
+ * a tender selection never shows the eligibility badge twice.
+ */
+export function LicitacionIntelBody({ intel }: { intel: LicitacionIntel }) {
+  const totalBudgetKnown = isTotalBudgetKnown(intel.terms);
+
+  return (
+    <div className="space-y-5" data-testid="licitacion-intel-card">
+      <section>
+        <h3 className="mb-1 text-sm font-semibold text-slate-900">Términos comerciales</h3>
+        <p className="mb-2 text-xs text-[var(--color-muted)]">
+          Extraídos de las bases y anexos técnicos, no del resumen de la ficha.
+        </p>
+        <AvailabilityBlock
+          availed={intel.terms}
+          notAvailableLabel="T1 todavía no publica términos comerciales para esta licitación (anexos aún no procesados)."
+          render={(terms) => (
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              {terms.map((fact) => (
+                <TermFactTile key={fact.fieldName} fact={fact} />
+              ))}
+            </div>
+          )}
+        />
+
+        <div className="mt-3">
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-700">Presupuesto por producto</span>
+            {intel.totalBudgetReconciled ? (
+              <span className="text-[11px] font-medium text-emerald-700">
+                ✓ Suma coincide con el total
+              </span>
+            ) : null}
+          </div>
+          <AvailabilityBlock
+            availed={intel.itemBudget}
+            emptyLabel={
+              totalBudgetKnown
+                ? "Sin desglose por producto — solo se conoce el total de la licitación."
+                : "T1 no encontró un desglose de presupuesto por producto."
+            }
+            render={(items) => (
+              <div className="space-y-1.5">
+                {items.map((item, i) => (
+                  <ItemBudgetLine key={i} item={item} />
+                ))}
+              </div>
+            )}
+          />
+        </div>
+      </section>
+
+      {intel.recognitionDelta.status !== "not_available" ? (
+        <section>
+          <h3 className="mb-1 text-sm font-semibold text-slate-900">Reconocimiento por anexo</h3>
+          <p className="mb-2 text-xs text-[var(--color-muted)]">
+            Comparación entre lo que dice el resumen de la licitación y lo que dicen sus anexos.
+          </p>
+          <AvailabilityBlock
+            availed={intel.recognitionDelta}
+            emptyLabel="Anexo leído — no cambió la categorización del resumen."
+            render={(delta) => (
+              <div>
+                {delta.addedCategories.length > 0 ? (
+                  <span className="mb-2 inline-block rounded bg-emerald-50 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-emerald-700">
+                    Anexo agregó equipo
+                  </span>
+                ) : null}
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  {delta.baselineCategories.map((c) => (
+                    <span key={c} className="rounded-full border border-[var(--color-border)] bg-white px-2.5 py-1 text-slate-700">
+                      {formatEquipmentCategory(c)}
+                    </span>
+                  ))}
+                  {delta.addedCategories.length > 0 ? <span className="text-[var(--color-muted)]">→</span> : null}
+                  {delta.addedCategories.map((c) => (
+                    <span
+                      key={c}
+                      className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700"
+                    >
+                      + {formatEquipmentCategory(c)}
+                    </span>
+                  ))}
+                </div>
+                {delta.evidence ? (
+                  <EvidenceDisclosure
+                    evidence={delta.evidence}
+                    label={`Ver evidencia (confianza: ${delta.confidenceBand})`}
+                    defaultOpen
+                  />
+                ) : null}
+              </div>
+            )}
+          />
+        </section>
+      ) : null}
+
+      <section>
+        <h3 className="mb-1 text-sm font-semibold text-slate-900">Cobertura de lectura</h3>
+        <AvailabilityBlock
+          availed={intel.coverage}
+          render={(coverage) => <CoverageBody coverage={coverage} isComplete />}
+          renderPartial={(coverage) => <CoverageBody coverage={coverage} isComplete={false} />}
+        />
+      </section>
+    </div>
+  );
+}
+
+/**
+ * Backward-compatible self-fetching wrapper — unchanged behavior for any
+ * other caller (e.g. IntelPreviewPage's dev-only "Licitación" tab preview).
+ * `TenderDetailDrawer` does NOT use this: it fetches once itself and renders
+ * `LicitacionIntelBody` directly, so a tender selection never performs more
+ * than one `getLicitacionIntel` request.
+ *
+ * Owns its own small eligibility-badge header (unlike `TenderDetailDrawer`,
+ * which already renders one in its own header and passes the fetched data
+ * straight to `LicitacionIntelBody`) since this standalone wrapper has no
+ * other header to rely on — `LicitacionIntelBody` itself renders no
+ * eligibility badge, so a tender is never shown with the badge twice.
+ */
 export function LicitacionIntelCard({ tenderCode }: { tenderCode: string }) {
   const [intel, setIntel] = useState<LicitacionIntel | null>(null);
   const [loading, setLoading] = useState(true);
@@ -99,130 +306,14 @@ export function LicitacionIntelCard({ tenderCode }: { tenderCode: string }) {
   }
 
   return (
-    <div className="space-y-5" data-testid="licitacion-intel-card">
+    <div className="space-y-3">
       <div className="flex items-center gap-2">
         <EligibilityBadge status={intel.eligibilityStatus} />
         {intel.procurementMethodRaw ? (
           <span className="text-xs text-[var(--color-muted)]">Método: {intel.procurementMethodRaw}</span>
         ) : null}
       </div>
-
-      <section>
-        <h3 className="mb-1 text-sm font-semibold text-slate-900">Términos comerciales</h3>
-        <p className="mb-2 text-xs text-[var(--color-muted)]">
-          Extraídos de las bases y anexos técnicos, no del resumen de la ficha.
-        </p>
-        <AvailabilityBlock
-          availed={intel.terms}
-          render={(terms) => (
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-              {terms.map((fact) => (
-                <TermFactTile key={fact.fieldName} fact={fact} />
-              ))}
-            </div>
-          )}
-        />
-
-        <div className="mt-3">
-          <div className="mb-1.5 flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-700">Presupuesto por producto</span>
-            {intel.totalBudgetReconciled ? (
-              <span className="text-[11px] font-medium text-emerald-700">
-                ✓ Suma coincide con el total
-              </span>
-            ) : null}
-          </div>
-          <AvailabilityBlock
-            availed={intel.itemBudget}
-            emptyLabel="Sin desglose por producto — solo se conoce el total de la licitación."
-            render={(items) => (
-              <div className="space-y-1.5">
-                {items.map((item, i) => (
-                  <ItemBudgetLine key={i} item={item} />
-                ))}
-              </div>
-            )}
-          />
-        </div>
-      </section>
-
-      <section>
-        <h3 className="mb-1 text-sm font-semibold text-slate-900">Reconocimiento por anexo</h3>
-        <p className="mb-2 text-xs text-[var(--color-muted)]">
-          Comparación entre lo que dice el resumen de la licitación y lo que dicen sus anexos.
-        </p>
-        <AvailabilityBlock
-          availed={intel.recognitionDelta}
-          notAvailableLabel="Sin evidencia de anexo leída todavía para esta licitación."
-          emptyLabel="Anexo leído — no cambió la categorización del resumen."
-          render={(delta) => (
-            <div>
-              {delta.addedCategories.length > 0 ? (
-                <span className="mb-2 inline-block rounded bg-emerald-50 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-emerald-700">
-                  Anexo agregó equipo
-                </span>
-              ) : null}
-              <div className="flex flex-wrap items-center gap-2 text-sm">
-                {delta.baselineCategories.map((c) => (
-                  <span key={c} className="rounded-full border border-[var(--color-border)] bg-white px-2.5 py-1 text-slate-700">
-                    {formatEquipmentCategory(c)}
-                  </span>
-                ))}
-                {delta.addedCategories.length > 0 ? <span className="text-[var(--color-muted)]">→</span> : null}
-                {delta.addedCategories.map((c) => (
-                  <span
-                    key={c}
-                    className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700"
-                  >
-                    + {formatEquipmentCategory(c)}
-                  </span>
-                ))}
-              </div>
-              {delta.evidence ? (
-                <EvidenceDisclosure
-                  evidence={delta.evidence}
-                  label={`Ver evidencia (confianza: ${delta.confidenceBand})`}
-                  defaultOpen
-                />
-              ) : null}
-            </div>
-          )}
-        />
-      </section>
-
-      <section>
-        <h3 className="mb-1 text-sm font-semibold text-slate-900">Cobertura de lectura</h3>
-        <AvailabilityBlock
-          availed={intel.coverage}
-          render={(coverage) => (
-            <div>
-              <div className="flex items-center gap-2">
-                <div className="h-1.5 flex-1 rounded-full bg-slate-100">
-                  <div
-                    className={`h-full rounded-full ${
-                      coverage.incompleteReasonCodes.length > 0 ? "bg-amber-500" : "bg-emerald-600"
-                    }`}
-                    style={{
-                      width: `${
-                        coverage.documentsDiscovered > 0
-                          ? Math.round((coverage.documentsRead / coverage.documentsDiscovered) * 100)
-                          : 0
-                      }%`,
-                    }}
-                  />
-                </div>
-                <span className="shrink-0 text-xs font-semibold text-slate-700">
-                  {coverage.documentsRead} / {coverage.documentsDiscovered} documentos
-                </span>
-              </div>
-              <p className="mt-1.5 text-[11px] text-[var(--color-muted)]">
-                Si un término no aparece arriba, es porque genuinamente no está especificado — no por un
-                documento sin leer.
-              </p>
-            </div>
-          )}
-        />
-      </section>
+      <LicitacionIntelBody intel={intel} />
     </div>
   );
 }

@@ -16,6 +16,7 @@ _API_ROOT = Path(__file__).resolve().parents[2]
 _EMAIL_PIPELINE_ROOT = _API_ROOT.parent / "email-pipeline"
 _DEFAULT_ACTIVE_CURRENT = _EMAIL_PIPELINE_ROOT / "reports" / "out" / "active" / "current"
 _DEFAULT_INSTITUTION_PROSPECT_DIR = _DEFAULT_ACTIVE_CURRENT / "institution_prospects"
+_DEFAULT_TENDER_TERMS_DIR = _DEFAULT_ACTIVE_CURRENT / "tender_terms"
 
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
 
@@ -60,6 +61,7 @@ class Settings(BaseSettings):
     sqlite_compaction_manifest: Path | None = None
     active_current: Path | None = None
     institution_prospect_dir: Path | None = None
+    tender_terms_dir: Path | None = None
     api_backend: str | None = None
     postgres_url: str | None = None
     postgres_statement_timeout_ms: int = 30_000
@@ -152,6 +154,11 @@ class Settings(BaseSettings):
         if self.institution_prospect_dir is not None:
             return self.institution_prospect_dir.expanduser().resolve()
         return _DEFAULT_INSTITUTION_PROSPECT_DIR.resolve()
+
+    def resolved_tender_terms_dir(self) -> Path:
+        if self.tender_terms_dir is not None:
+            return self.tender_terms_dir.expanduser().resolve()
+        return _DEFAULT_TENDER_TERMS_DIR.resolve()
 
 
 def build_settings(*, dotenv_disabled: bool | None = None) -> Settings:

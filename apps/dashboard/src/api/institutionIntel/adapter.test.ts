@@ -263,3 +263,348 @@ describe("institutionIntelAdapter.getCurrentOpportunities", () => {
     expect(result.availability.status).toBe("not_available");
   });
 });
+
+function stubTenderDetail(body: Record<string, unknown>) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => body,
+      text: async () => "",
+    })),
+  );
+}
+
+describe("institutionIntelAdapter.getLicitacionIntel", () => {
+  const baseResponse = {
+    tender_code: "745712-19-LP26",
+    queue_meta: META,
+    found_in_queue: true,
+    queue_row: { display_name: "SAG" },
+    queue_rows: [],
+    t1_meta: {
+      data_source: "tender_terms_read_model",
+      read_only: true,
+      contract_version: "tender_terms_publication_v1",
+      supported_contract_version: true,
+      terms_version: "anexo_t1_v2",
+      as_of_utc: "2026-08-15T00:00:00Z",
+      source_path: "tender_terms",
+      source_kind: "tender_terms_bundle",
+      artifact_basename: "tender_terms",
+      canonical_reason: "tender_terms_read_model",
+      reduced_mode: false,
+      note: "",
+      published: true,
+      contact_authorization: false,
+      outreach_authorization: false,
+    },
+    t1_published: true,
+    tender_facts: [],
+    items: [],
+    coverage: {
+      attachments_discovered: 2,
+      attachments_downloaded: 2,
+      is_complete: true,
+      incomplete_reason_codes: [],
+      unread_attachment_ids: [],
+    },
+  };
+
+  it("maps eligibility to open_public from queue membership, never from a nonexistent queue-row field", async () => {
+    stubTenderDetail({
+      ...baseResponse,
+      queue_row: { display_name: "SAG", procurement_eligibility_status: "restricted_invitation_unconfirmed" },
+    });
+    const result = await institutionIntelAdapter.getLicitacionIntel("745712-19-LP26");
+    expect(result?.eligibilityStatus).toBe("open_public");
+  });
+
+  it("never infers procurementMethodRaw from tender_code suffix patterns", async () => {
+    stubTenderDetail(baseResponse);
+    const result = await institutionIntelAdapter.getLicitacionIntel("745712-19-LP26");
+    expect(result?.procurementMethodRaw).toBeNull();
+  });
+
+  it("maps item_quantity from an explicit item fact, not a top-level field", async () => {
+    stubTenderDetail({
+      ...baseResponse,
+      items: [
+        {
+          item_id: "item-1",
+          item_number: "1",
+          item_label: "Balanza analitica",
+          facts: [
+            {
+              fact_id: "f1",
+              field_name: "item_quantity",
+              state: "explicit",
+              coverage_status: "complete",
+              value: 3,
+              evidence: [],
+              candidates: [],
+              reason_codes: [],
+            },
+          ],
+        },
+      ],
+    });
+    const result = await institutionIntelAdapter.getLicitacionIntel("745712-19-LP26");
+    expect(result?.itemBudget.status).toBe("available");
+    if (result?.itemBudget.status !== "available") throw new Error("expected available");
+    expect(result.itemBudget.data[0].quantity).toBe(3);
+  });
+
+  it("maps incomplete T1 coverage to available_incomplete, never fully available", async () => {
+    stubTenderDetail({
+      ...baseResponse,
+      tender_facts: [
+        {
+          fact_id: "f1",
+          field_name: "delivery_days",
+          state: "unknown",
+          coverage_status: "incomplete",
+          value: null,
+          evidence: [],
+          candidates: [],
+          reason_codes: [],
+        },
+      ],
+      coverage: {
+        attachments_discovered: 3,
+        attachments_downloaded: 1,
+        is_complete: false,
+        incomplete_reason_codes: ["attachment_download_incomplete"],
+        unread_attachment_ids: ["att-2"],
+      },
+    });
+    const result = await institutionIntelAdapter.getLicitacionIntel("745712-19-LP26");
+    expect(result?.terms.status).toBe("available_incomplete");
+    expect(result?.coverage.status).toBe("available_incomplete");
+    if (result?.coverage.status !== "available_incomplete") throw new Error("expected available_incomplete");
+    expect(result.coverage.reasonCodes).toContain("attachment_download_incomplete");
+  });
+
+  it("no T1 publication maps to not_available for terms/itemBudget/coverage", async () => {
+    stubTenderDetail({ ...baseResponse, t1_published: false, coverage: null });
+    const result = await institutionIntelAdapter.getLicitacionIntel("745712-19-LP26");
+    expect(result?.terms.status).toBe("not_available");
+    expect(result?.itemBudget.status).toBe("not_available");
+    expect(result?.coverage.status).toBe("not_available");
+  });
+
+  it("never surfaces a numeric item_budget amount for a conflicting-state fact, even though the raw payload carries a value", async () => {
+    stubTenderDetail({
+      ...baseResponse,
+      items: [
+        {
+          item_id: "item-1",
+          item_number: "1",
+          item_label: "Centrífuga refrigerada",
+          facts: [
+            {
+              fact_id: "f1",
+              field_name: "item_budget",
+              state: "conflicting",
+              coverage_status: "incomplete",
+              value: 500000,
+              evidence: [],
+              candidates: [
+                { value: 500000, evidence: [] },
+                { value: 620000, evidence: [] },
+              ],
+              reason_codes: [],
+            },
+          ],
+        },
+      ],
+    });
+    const result = await institutionIntelAdapter.getLicitacionIntel("745712-19-LP26");
+    expect(result?.itemBudget.status).toBe("available");
+    if (result?.itemBudget.status !== "available") throw new Error("expected available");
+    expect(result.itemBudget.data[0].amount).toBeNull();
+  });
+
+  it("never surfaces a numeric item_budget amount for an unknown/not_explicitly_found-state fact", async () => {
+    stubTenderDetail({
+      ...baseResponse,
+      items: [
+        {
+          item_id: "item-1",
+          item_number: "1",
+          item_label: "Centrífuga refrigerada",
+          facts: [
+            {
+              fact_id: "f1",
+              field_name: "unit_price",
+              state: "not_explicitly_found",
+              coverage_status: "complete",
+              value: null,
+              evidence: [],
+              candidates: [],
+              reason_codes: [],
+            },
+          ],
+        },
+      ],
+    });
+    const result = await institutionIntelAdapter.getLicitacionIntel("745712-19-LP26");
+    expect(result?.itemBudget.status).toBe("available");
+    if (result?.itemBudget.status !== "available") throw new Error("expected available");
+    expect(result.itemBudget.data[0].amount).toBeNull();
+  });
+
+  it("maps all six known T1 term field names to their Spanish operator-facing label, never the raw snake_case token", async () => {
+    const knownFields: Record<string, string> = {
+      contract_duration_months: "Duración del contrato",
+      faithful_performance_guarantee_percent: "Garantía de fiel cumplimiento",
+      maximum_delivery_days: "Plazo máximo de entrega",
+      offer_validity_days: "Vigencia de la oferta",
+      payment_deadline_days: "Plazo de pago",
+      total_budget: "Presupuesto total",
+    };
+    stubTenderDetail({
+      ...baseResponse,
+      tender_facts: Object.keys(knownFields).map((field_name) => ({
+        fact_id: field_name,
+        field_name,
+        state: "explicit",
+        coverage_status: "complete",
+        value: 1,
+        evidence: [],
+        candidates: [],
+        reason_codes: [],
+      })),
+    });
+    const result = await institutionIntelAdapter.getLicitacionIntel("745712-19-LP26");
+    expect(result?.terms.status).toBe("available");
+    if (result?.terms.status !== "available") throw new Error("expected available");
+    for (const fact of result.terms.data) {
+      expect(fact.label).toBe(knownFields[fact.fieldName]);
+      expect(fact.label).not.toBe(fact.fieldName);
+    }
+  });
+
+  it("falls back to a humanized (not raw snake_case) label for an unknown field name", async () => {
+    stubTenderDetail({
+      ...baseResponse,
+      tender_facts: [
+        {
+          fact_id: "f1",
+          field_name: "some_future_unmapped_field",
+          state: "explicit",
+          coverage_status: "complete",
+          value: 1,
+          evidence: [],
+          candidates: [],
+          reason_codes: [],
+        },
+      ],
+    });
+    const result = await institutionIntelAdapter.getLicitacionIntel("745712-19-LP26");
+    expect(result?.terms.status).toBe("available");
+    if (result?.terms.status !== "available") throw new Error("expected available");
+    expect(result.terms.data[0].label).toBe("Some Future Unmapped Field");
+    expect(result.terms.data[0].label).not.toBe("some_future_unmapped_field");
+  });
+
+  it("preserves the structured {days, day_basis} value maximum_delivery_days carries on the wire, rather than coercing it", async () => {
+    stubTenderDetail({
+      ...baseResponse,
+      tender_facts: [
+        {
+          fact_id: "f1",
+          field_name: "maximum_delivery_days",
+          state: "explicit",
+          coverage_status: "complete",
+          value: { days: 30, day_basis: "business" },
+          unit: "days",
+          evidence: [],
+          candidates: [],
+          reason_codes: [],
+        },
+      ],
+    });
+    const result = await institutionIntelAdapter.getLicitacionIntel("745712-19-LP26");
+    expect(result?.terms.status).toBe("available");
+    if (result?.terms.status !== "available") throw new Error("expected available");
+    expect(result.terms.data[0].value).toEqual({ days: 30, day_basis: "business" });
+  });
+
+  it("fails closed to null (never a raw stringifiable object) for a malformed structured fact value — missing days", async () => {
+    stubTenderDetail({
+      ...baseResponse,
+      tender_facts: [
+        {
+          fact_id: "f1",
+          field_name: "maximum_delivery_days",
+          state: "explicit",
+          coverage_status: "complete",
+          value: { day_basis: "business" },
+          unit: "days",
+          evidence: [],
+          candidates: [],
+          reason_codes: [],
+        },
+      ],
+    });
+    const result = await institutionIntelAdapter.getLicitacionIntel("745712-19-LP26");
+    expect(result?.terms.status).toBe("available");
+    if (result?.terms.status !== "available") throw new Error("expected available");
+    expect(result.terms.data[0].value).toBeNull();
+  });
+
+  it("fails closed to null for a malformed structured fact value — non-numeric days", async () => {
+    stubTenderDetail({
+      ...baseResponse,
+      tender_facts: [
+        {
+          fact_id: "f1",
+          field_name: "maximum_delivery_days",
+          state: "explicit",
+          coverage_status: "complete",
+          value: { days: "thirty", day_basis: "business" },
+          unit: "days",
+          evidence: [],
+          candidates: [],
+          reason_codes: [],
+        },
+      ],
+    });
+    const result = await institutionIntelAdapter.getLicitacionIntel("745712-19-LP26");
+    expect(result?.terms.status).toBe("available");
+    if (result?.terms.status !== "available") throw new Error("expected available");
+    expect(result.terms.data[0].value).toBeNull();
+  });
+
+  it("does expose the amount for an explicit/derived item_budget fact", async () => {
+    stubTenderDetail({
+      ...baseResponse,
+      items: [
+        {
+          item_id: "item-1",
+          item_number: "1",
+          item_label: "Centrífuga refrigerada",
+          facts: [
+            {
+              fact_id: "f1",
+              field_name: "item_budget",
+              state: "explicit",
+              coverage_status: "complete",
+              value: 6200000,
+              evidence: [],
+              candidates: [],
+              reason_codes: [],
+            },
+          ],
+        },
+      ],
+    });
+    const result = await institutionIntelAdapter.getLicitacionIntel("745712-19-LP26");
+    expect(result?.itemBudget.status).toBe("available");
+    if (result?.itemBudget.status !== "available") throw new Error("expected available");
+    expect(result.itemBudget.data[0].amount).toBe(6200000);
+  });
+});

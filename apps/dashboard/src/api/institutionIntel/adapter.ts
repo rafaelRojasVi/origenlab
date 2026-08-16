@@ -7,10 +7,10 @@
  * clean camelCase types in `./types.ts`; this file is the seam that parses
  * W1's raw (loosely-typed, snake_case) JSON into that shape.
  *
- * `getLicitacionIntel` stays mock-backed: the contract's own "T1 / ANEXO
- * status" section states nothing annex/term-related is exposed by W1 yet.
- *
- * Do not import mockData.ts from outside this file (getLicitacionIntel only).
+ * `getLicitacionIntel` calls the real
+ * `GET /operator/procurement/tenders/{tender_code}` route (merged W1
+ * actionability + T1 ANEXO term intelligence). mockData.ts is retained only
+ * for Storybook/tests, never imported on the live fetch path.
  */
 
 import { OperatorApiError, operatorApiUrl } from "../operatorClient";
@@ -19,6 +19,7 @@ import type {
   ContactGapStatus,
   ContactOverlaySummary,
   CurrentOpportunityRow,
+  DeliveryDaysValue,
   EquipmentHistoryEntry,
   IdentityKind,
   InstitutionAxes,
@@ -33,8 +34,9 @@ import type {
   ProcurementMeta,
   ProspectQueueRow,
   QueueName,
+  TermFact,
 } from "./types";
-import { MOCK_LICITACION_TALCA } from "./mockData";
+import { formatTenderTermField } from "../../lib/institutionIntelLabels";
 
 async function fetchProcurementJson<T>(path: string, params?: Record<string, string | number>): Promise<T> {
   const url = operatorApiUrl(path, params);
@@ -383,6 +385,227 @@ function toOffset(page: number, pageSize: number): number {
   return Math.max(0, (page - 1) * pageSize);
 }
 
+// ---------------------------------------------------------------------------
+// Tender detail (GET /operator/procurement/tenders/{tender_code}) — merges
+// W1 actionability (queue_row/queue_meta) with T1 term intelligence
+// (tender_facts/items/coverage). See schemas/tender_terms.py for the exact
+// server-side shape this mirrors.
+// ---------------------------------------------------------------------------
+
+interface RawTenderTermsMeta {
+  reduced_mode: boolean;
+  published: boolean;
+  note: string;
+  canonical_reason: string;
+  as_of_utc: string;
+}
+
+interface RawTenderEvidence {
+  locator_display?: string;
+  evidence_excerpt?: string;
+  safe_filename?: string;
+  document_role?: string;
+}
+
+interface RawTenderFact {
+  field_name: string;
+  state: string;
+  // T1's `value` is `Any` on the wire (schemas/tender_terms.py). Most facts
+  // carry a plain string/number, but `maximum_delivery_days` carries a
+  // structured `{days, day_basis}` object instead — see `DeliveryDaysValue`.
+  // Explicitly typed as this union (never `any`/`unknown`) so a malformed
+  // shape is caught by `normalizeFactValue` below rather than ever reaching
+  // template-literal stringification (`[object Object]`) in the UI.
+  value: string | number | null | DeliveryDaysValue;
+  unit?: string | null;
+  evidence?: RawTenderEvidence[];
+  candidates?: { value: string | number; evidence?: RawTenderEvidence[] }[];
+}
+
+interface RawTenderItem {
+  item_id: string;
+  item_label: string | null;
+  item_number: string | null;
+  facts: RawTenderFact[];
+}
+
+interface RawTenderCoverage {
+  attachments_discovered: number;
+  attachments_downloaded: number;
+  is_complete: boolean;
+  incomplete_reason_codes: string[];
+  unread_attachment_ids: string[];
+}
+
+interface RawTenderDetailResponse {
+  tender_code: string;
+  queue_meta: ProcurementMeta;
+  found_in_queue: boolean;
+  queue_row: Record<string, unknown> | null;
+  t1_meta: RawTenderTermsMeta;
+  t1_published: boolean;
+  tender_facts: RawTenderFact[];
+  items: RawTenderItem[];
+  coverage: RawTenderCoverage | null;
+}
+
+const TERM_FACT_STATES: readonly string[] = [
+  "explicit",
+  "derived",
+  "not_explicitly_found",
+  "unknown",
+  "conflicting",
+];
+
+function asTermFactState(value: string): TermFact["state"] {
+  return (TERM_FACT_STATES.includes(value) ? value : "unknown") as TermFact["state"];
+}
+
+function mapEvidence(raw: RawTenderEvidence | undefined) {
+  if (!raw) return undefined;
+  return {
+    excerpt: raw.evidence_excerpt ?? "",
+    documentLabel: raw.safe_filename ?? raw.document_role ?? "",
+    locator: raw.locator_display ?? "",
+  };
+}
+
+/**
+ * `raw.value` is `Any` on the wire — even though `RawTenderFact.value`'s TS
+ * type documents the two shapes we actually expect, that's a compile-time
+ * claim only. Validate the structured `{days, day_basis}` shape defensively
+ * at runtime here so any malformed/unexpected object (missing `days`,
+ * non-numeric `days`, or any other shape entirely) fails closed to `null`
+ * rather than ever reaching a template-literal stringification of an object.
+ */
+function normalizeFactValue(value: unknown): TermFact["value"] {
+  if (value === null || typeof value === "string" || typeof value === "number") {
+    return value;
+  }
+  if (typeof value === "object") {
+    const v = value as Record<string, unknown>;
+    if (typeof v.days === "number" && Number.isFinite(v.days) && (typeof v.day_basis === "string" || v.day_basis === null)) {
+      return { days: v.days, day_basis: v.day_basis as string | null };
+    }
+  }
+  return null;
+}
+
+function mapTermFact(raw: RawTenderFact): TermFact {
+  return {
+    fieldName: raw.field_name,
+    label: formatTenderTermField(raw.field_name),
+    state: asTermFactState(raw.state),
+    value: normalizeFactValue(raw.value),
+    unit: raw.unit ?? undefined,
+    evidence: mapEvidence(raw.evidence?.[0]),
+    candidates: (raw.candidates ?? []).map((c) => ({
+      value: c.value,
+      evidence: mapEvidence(c.evidence?.[0]) ?? { excerpt: "", documentLabel: "", locator: "" },
+    })),
+  };
+}
+
+function mapItemQuantity(item: RawTenderItem): number | null {
+  // T1 does not carry item quantity as a top-level field on TenderItemTerms;
+  // when present it is a fact within item.facts keyed by field_name
+  // "item_quantity". Only a numeric explicit/derived value counts —
+  // unknown/not_explicitly_found/conflicting facts must never surface a
+  // fabricated number.
+  const quantityFact = item.facts.find((f) => f.field_name === "item_quantity");
+  if (!quantityFact) return null;
+  if (quantityFact.state !== "explicit" && quantityFact.state !== "derived") return null;
+  return typeof quantityFact.value === "number" ? quantityFact.value : null;
+}
+
+function mapItemAmount(item: RawTenderItem): number | null {
+  // Same rule as mapItemQuantity: only an explicit/derived item_budget (or
+  // unit_price) fact counts as a real amount. unknown/not_explicitly_found/
+  // conflicting facts can still carry a raw numeric `value` on the wire (e.g.
+  // one of several conflicting candidates) — that value must never be
+  // presented as a confirmed amount.
+  const budgetFact = item.facts.find((f) => f.field_name === "item_budget" || f.field_name === "unit_price");
+  if (!budgetFact) return null;
+  if (budgetFact.state !== "explicit" && budgetFact.state !== "derived") return null;
+  return typeof budgetFact.value === "number" ? budgetFact.value : null;
+}
+
+function mapTenderDetail(raw: RawTenderDetailResponse): LicitacionIntel {
+  const queueRow = raw.queue_row ?? {};
+  const itemBudgetRows = raw.items.map((item) => {
+    const budgetFact = item.facts.find((f) => f.field_name === "item_budget" || f.field_name === "unit_price");
+    return {
+      itemLabel: item.item_label ?? item.item_number ?? item.item_id,
+      quantity: mapItemQuantity(item),
+      amount: mapItemAmount(item),
+      evidence: mapEvidence(budgetFact?.evidence?.[0]),
+    };
+  });
+
+  // The current_opportunity_queue read model does not publish an
+  // authoritative per-row coverage-completeness flag; that lives on the T1
+  // coverage object. Partial T1 extraction must never be presented as fully
+  // "available".
+  const coverageComplete = raw.coverage?.is_complete === true;
+  const partialCoverage = raw.t1_published && raw.coverage !== null && !coverageComplete;
+
+  const incompleteReasonCodes = raw.coverage?.incomplete_reason_codes ?? [];
+
+  const terms: Availed<readonly TermFact[]> = !raw.t1_published
+    ? { status: "not_available" }
+    : partialCoverage
+      ? { status: "available_incomplete", reasonCodes: incompleteReasonCodes, partial: raw.tender_facts.map(mapTermFact) }
+      : raw.tender_facts.length === 0
+        ? { status: "available_empty" }
+        : { status: "available", data: raw.tender_facts.map(mapTermFact) };
+
+  const itemBudget: Availed<readonly typeof itemBudgetRows[number][]> = !raw.t1_published
+    ? { status: "not_available" }
+    : partialCoverage
+      ? { status: "available_incomplete", reasonCodes: incompleteReasonCodes, partial: itemBudgetRows }
+      : itemBudgetRows.length === 0
+        ? { status: "available_empty" }
+        : { status: "available", data: itemBudgetRows };
+
+  // T1 does not yet publish an "anexo recognition delta" field on the wire —
+  // never fabricate one; render as honestly not-available until it exists.
+  const recognitionDelta: LicitacionIntel["recognitionDelta"] = { status: "not_available" };
+
+  const coverageData = raw.coverage
+    ? {
+        documentsDiscovered: raw.coverage.attachments_discovered,
+        documentsRead: raw.coverage.attachments_downloaded,
+        incompleteReasonCodes: raw.coverage.incomplete_reason_codes,
+      }
+    : null;
+
+  const coverage: LicitacionIntel["coverage"] =
+    !raw.t1_published || raw.coverage === null || coverageData === null
+      ? { status: "not_available" }
+      : partialCoverage
+        ? { status: "available_incomplete", reasonCodes: incompleteReasonCodes, partial: coverageData }
+        : { status: "available", data: coverageData };
+
+  // current_opportunity_queue membership already guarantees open_public
+  // eligibility per W1's own queue-building rules (see listQueueRows'
+  // `eligibilityStatus: "open_public"` mapping above) — the queue row does
+  // not publish procurement_eligibility_status/procurement_method_raw as
+  // authoritative fields, so eligibility here is derived from queue
+  // membership itself, and procurementMethodRaw stays null (never inferred
+  // from tender_code suffix patterns like "LP"/"LE"/"LR").
+  return {
+    tenderCode: raw.tender_code,
+    buyerDisplayName: asString(queueRow.display_name),
+    eligibilityStatus: raw.found_in_queue ? "open_public" : "unknown",
+    procurementMethodRaw: null,
+    terms,
+    itemBudget,
+    totalBudgetReconciled: false,
+    recognitionDelta,
+    coverage,
+  };
+}
+
 export const institutionIntelAdapter = {
   async getProcurementStatus(): Promise<{
     meta: ProcurementMeta;
@@ -444,10 +667,27 @@ export const institutionIntelAdapter = {
     };
   },
 
-  /** W1 doesn't cover tender-level commercial terms / anexo recognition — stays mock-backed. */
+  /**
+   * Real T1+W1 merged tender detail (`GET /operator/procurement/tenders/{tender_code}`).
+   * W1's current_opportunity_queue remains the sole actionability authority:
+   * a 404 here means "not actionable per W1" and this returns null — T1
+   * facts (if any exist) are never surfaced for a tender W1 doesn't list.
+   * `mockData.ts`'s MOCK_LICITACION_TALCA is kept only for Storybook/tests,
+   * it is not reachable from this live path any more.
+   */
   async getLicitacionIntel(tenderCode: string): Promise<LicitacionIntel | null> {
-    await new Promise((resolve) => setTimeout(resolve, 80));
-    return tenderCode === MOCK_LICITACION_TALCA.tenderCode ? MOCK_LICITACION_TALCA : null;
+    let raw: RawTenderDetailResponse;
+    try {
+      raw = await fetchProcurementJson<RawTenderDetailResponse>(
+        `/operator/procurement/tenders/${encodeURIComponent(tenderCode)}`,
+      );
+    } catch (err) {
+      if (err instanceof OperatorApiError && err.status === 404) {
+        return null;
+      }
+      throw err;
+    }
+    return mapTenderDetail(raw);
   },
 
   async listQueueRows(params: QueueListParams = {}): Promise<Paged<ProspectQueueRow>> {
