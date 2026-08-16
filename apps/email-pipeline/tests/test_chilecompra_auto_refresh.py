@@ -778,3 +778,327 @@ def test_old_state_json_without_institution_fields_loads_with_safe_defaults(
     assert loaded.institution_prospect_result is None
     assert loaded.last_successful_institution_prospect_publish_at is None
     assert loaded.institution_prospect_profile_count is None
+
+
+# --- ANEXO-T1 tender-terms publication integration ---
+
+
+def _institution_applied_result(**overrides: object) -> InstitutionProspectPublicationResult:
+    base = dict(
+        result="applied",
+        output_dir_basename="institution_prospects",
+        contract_version="institution_prospect_contract_v4",
+        as_of_utc=_T0.isoformat(),
+        source_digest="abc123",
+        institution_count=2,
+        operator_queue_sizes={"current_opportunity_queue": 2},
+        current_opportunity_count=2,
+    )
+    base.update(overrides)
+    return InstitutionProspectPublicationResult(**base)
+
+
+def test_tender_terms_flag_default_false_never_acquires(
+    reports_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from origenlab_email_pipeline.commercial_procurement_anexo_tender_terms.current_tender_annex_publish import (
+        AcquireAndPublishResult,
+    )
+
+    monkeypatch.setenv(TICKET_ENV_VAR, _SECRET_TICKET)
+    tender_terms_acquire = MagicMock()
+
+    rc = run_chilecompra_equipment_auto_refresh(
+        _opts(apply=True, publish_institution_prospects=True),  # publish_tender_terms not passed -> default False
+        reports_dir=reports_dir,
+        build_fn=lambda **kwargs: _mock_build_result(),
+        publish_fn=MagicMock(return_value={"out_csv": "x.csv", "output_rows": 1}),
+        institution_publish_fn=MagicMock(return_value=_institution_applied_result()),
+        tender_terms_acquire_fn=tender_terms_acquire,
+        now_fn=lambda: _T0,
+    )
+    out = _parse_output(capsys.readouterr().out)
+    assert rc == 0
+    assert out["tender_terms_result"] == "disabled"
+    tender_terms_acquire.assert_not_called()
+    state = load_state(state_path(reports_dir))
+    assert state.tender_terms_result == "disabled"
+
+
+def test_tender_terms_requires_institution_prospects_flag(
+    reports_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """publish_tender_terms alone (without publish_institution_prospects) must
+    never acquire -- it has no eligibility source of its own."""
+    monkeypatch.setenv(TICKET_ENV_VAR, _SECRET_TICKET)
+    tender_terms_acquire = MagicMock()
+
+    rc = run_chilecompra_equipment_auto_refresh(
+        _opts(apply=True, publish_tender_terms=True),  # publish_institution_prospects left False
+        reports_dir=reports_dir,
+        build_fn=lambda **kwargs: _mock_build_result(),
+        publish_fn=MagicMock(return_value={"out_csv": "x.csv", "output_rows": 1}),
+        tender_terms_acquire_fn=tender_terms_acquire,
+        now_fn=lambda: _T0,
+    )
+    out = _parse_output(capsys.readouterr().out)
+    # Operator configuration error: --publish-tender-terms was explicitly
+    # requested without its required --publish-institution-prospects
+    # precondition. This must be visible via a nonzero rc, not swallowed.
+    assert rc == 3
+    assert out["tender_terms_result"] == "requires_publish_institution_prospects"
+    tender_terms_acquire.assert_not_called()
+
+
+def test_tender_terms_blocked_when_institution_prospects_publish_failed(
+    reports_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail-closed at the gate: a degraded/failed W1 publish from this exact
+    run must block acquisition entirely, never a partial acquisition."""
+    monkeypatch.setenv(TICKET_ENV_VAR, _SECRET_TICKET)
+    tender_terms_acquire = MagicMock()
+
+    rc = run_chilecompra_equipment_auto_refresh(
+        _opts(apply=True, publish_institution_prospects=True, publish_tender_terms=True),
+        reports_dir=reports_dir,
+        build_fn=lambda **kwargs: _mock_build_result(),
+        publish_fn=MagicMock(return_value={"out_csv": "x.csv", "output_rows": 1}),
+        institution_publish_fn=MagicMock(
+            return_value=InstitutionProspectPublicationResult(
+                result="failed",
+                output_dir_basename="institution_prospects",
+                error="validation_failed",
+            )
+        ),
+        tender_terms_acquire_fn=tender_terms_acquire,
+        now_fn=lambda: _T0,
+    )
+    out = _parse_output(capsys.readouterr().out)
+    assert rc == 3
+    assert out["tender_terms_result"] == "blocked_institution_prospect_publish_not_applied"
+    tender_terms_acquire.assert_not_called()
+
+
+def test_tender_terms_acquires_using_this_runs_reloaded_current_queue(
+    reports_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reloaded current_opportunity_queue (a local file read of what this
+    run just published) -- not a fresh ChileCompra API query -- must be what
+    gets passed through to acquisition."""
+    from origenlab_email_pipeline.commercial_procurement_anexo_tender_terms.current_tender_annex_publish import (
+        AcquireAndPublishResult,
+        TenderAcquisitionOutcome,
+    )
+    from origenlab_email_pipeline.commercial_procurement_anexo_tender_terms.production_publish import (
+        TenderTermsPublicationResult,
+    )
+
+    monkeypatch.setenv(TICKET_ENV_VAR, _SECRET_TICKET)
+    fake_queue = [{"tender_code": "1051-1-LP26", "institution_id": "inst-1"}]
+    read_model_loader = MagicMock(
+        return_value={"queues": {"current_opportunity_queue": fake_queue}}
+    )
+    tender_terms_acquire = MagicMock(
+        return_value=AcquireAndPublishResult(
+            gate_status="acquired_and_published",
+            tender_codes_considered=("1051-1-LP26",),
+            acquisitions=(
+                TenderAcquisitionOutcome(tender_code="1051-1-LP26", status="acquired"),
+            ),
+            publish=TenderTermsPublicationResult(
+                result="applied",
+                output_dir_basename="tender_terms",
+                contract_version="anexo_t1_v2",
+                terms_version="anexo_t1_v2",
+                as_of_utc=_T0.isoformat(),
+                tender_count=1,
+                complete_coverage_count=1,
+                incomplete_coverage_count=0,
+                publication_digest="digest123",
+            ),
+        )
+    )
+
+    rc = run_chilecompra_equipment_auto_refresh(
+        _opts(apply=True, publish_institution_prospects=True, publish_tender_terms=True),
+        reports_dir=reports_dir,
+        build_fn=lambda **kwargs: _mock_build_result(),
+        publish_fn=MagicMock(return_value={"out_csv": "x.csv", "output_rows": 1}),
+        institution_publish_fn=MagicMock(return_value=_institution_applied_result()),
+        read_model_loader_fn=read_model_loader,
+        tender_terms_acquire_fn=tender_terms_acquire,
+        now_fn=lambda: _T0,
+    )
+    out = _parse_output(capsys.readouterr().out)
+    assert rc == 0
+    assert out["tender_terms_result"] == "applied"
+    tender_terms_acquire.assert_called_once()
+    call_kwargs = tender_terms_acquire.call_args.kwargs
+    assert call_kwargs["current_opportunity_queue"] == fake_queue
+    assert call_kwargs["tender_code_to_detail_url"].get("1051-1-LP26")
+    state = load_state(state_path(reports_dir))
+    assert state.tender_terms_result == "applied"
+    assert state.tender_terms_tender_count == 1
+    assert state.last_successful_tender_terms_publish_at is not None
+
+
+def test_tender_terms_publish_failure_does_not_roll_back_equipment_or_w1(
+    reports_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from origenlab_email_pipeline.commercial_procurement_anexo_tender_terms.current_tender_annex_publish import (
+        AcquireAndPublishResult,
+    )
+    from origenlab_email_pipeline.commercial_procurement_anexo_tender_terms.production_publish import (
+        TenderTermsPublicationResult,
+    )
+
+    monkeypatch.setenv(TICKET_ENV_VAR, _SECRET_TICKET)
+    read_model_loader = MagicMock(
+        return_value={"queues": {"current_opportunity_queue": []}}
+    )
+    tender_terms_acquire = MagicMock(
+        return_value=AcquireAndPublishResult(
+            gate_status="acquired_and_published",
+            tender_codes_considered=(),
+            acquisitions=(),
+            publish=TenderTermsPublicationResult(
+                result="failed",
+                output_dir_basename="tender_terms",
+                error="simulated publish failure",
+            ),
+        )
+    )
+
+    rc = run_chilecompra_equipment_auto_refresh(
+        _opts(apply=True, publish_institution_prospects=True, publish_tender_terms=True),
+        reports_dir=reports_dir,
+        build_fn=lambda **kwargs: _mock_build_result(),
+        publish_fn=MagicMock(return_value={"out_csv": "x.csv", "output_rows": 1}),
+        institution_publish_fn=MagicMock(return_value=_institution_applied_result()),
+        read_model_loader_fn=read_model_loader,
+        tender_terms_acquire_fn=tender_terms_acquire,
+        now_fn=lambda: _T0,
+    )
+    out = _parse_output(capsys.readouterr().out)
+    assert rc == 3
+    assert out["tender_terms_result"] == "failed"
+    state = load_state(state_path(reports_dir))
+    # Equipment refresh + W1 are NOT rolled back.
+    assert state.last_result == "refreshed"
+    assert state.institution_prospect_result == "applied"
+
+
+def test_tender_terms_blocked_max_tenders_exceeded_is_a_real_failure(
+    reports_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A gate_status of blocked_max_tenders_exceeded means publish is None
+    (nothing acquired, nothing published) -- but that must still surface as a
+    real T1-stage failure (nonzero rc), not a silently-successful no-op. W1
+    state must remain untouched (last_result stays "refreshed": W1 already
+    succeeded and is a precondition for T1 running at all)."""
+    from origenlab_email_pipeline.commercial_procurement_anexo_tender_terms.current_tender_annex_publish import (
+        GATE_BLOCKED_MAX_TENDERS_EXCEEDED,
+        AcquireAndPublishResult,
+    )
+
+    monkeypatch.setenv(TICKET_ENV_VAR, _SECRET_TICKET)
+    read_model_loader = MagicMock(
+        return_value={"queues": {"current_opportunity_queue": [{"tender_code": "x"}] * 30}}
+    )
+    tender_terms_acquire = MagicMock(
+        return_value=AcquireAndPublishResult(
+            gate_status=GATE_BLOCKED_MAX_TENDERS_EXCEEDED,
+            tender_codes_considered=(),
+            acquisitions=(),
+            publish=None,
+            eligible_count=30,
+            selected_count=0,
+            truncated=True,
+            truncation_reason="eligible tender_codes (30) exceed max_tenders (25)",
+        )
+    )
+
+    rc = run_chilecompra_equipment_auto_refresh(
+        _opts(apply=True, publish_institution_prospects=True, publish_tender_terms=True),
+        reports_dir=reports_dir,
+        build_fn=lambda **kwargs: _mock_build_result(),
+        publish_fn=MagicMock(return_value={"out_csv": "x.csv", "output_rows": 1}),
+        institution_publish_fn=MagicMock(return_value=_institution_applied_result()),
+        read_model_loader_fn=read_model_loader,
+        tender_terms_acquire_fn=tender_terms_acquire,
+        now_fn=lambda: _T0,
+    )
+    out = _parse_output(capsys.readouterr().out)
+    assert rc == 3
+    assert out["tender_terms_result"] == GATE_BLOCKED_MAX_TENDERS_EXCEEDED
+
+    state = load_state(state_path(reports_dir))
+    # W1/equipment state is not rolled back -- this run's equipment refresh
+    # and W1 publish already succeeded and remain reflected as succeeded.
+    assert state.last_result == "refreshed"
+    assert state.institution_prospect_result == "applied"
+    # But the T1-stage failure itself is correctly recorded.
+    assert state.tender_terms_result == GATE_BLOCKED_MAX_TENDERS_EXCEEDED
+    assert state.last_successful_tender_terms_publish_at is None
+    assert "tender_terms_publish_failed" in (state.last_error or "")
+
+
+def test_tender_terms_no_current_opportunities_is_a_valid_noop(
+    reports_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A gate_status of no_current_opportunities means nothing was eligible --
+    this is not an error, and must not flip the T1 stage or the overall rc to
+    a failure."""
+    from origenlab_email_pipeline.commercial_procurement_anexo_tender_terms.current_tender_annex_publish import (
+        GATE_NO_CURRENT_OPPORTUNITIES,
+        AcquireAndPublishResult,
+    )
+
+    monkeypatch.setenv(TICKET_ENV_VAR, _SECRET_TICKET)
+    read_model_loader = MagicMock(
+        return_value={"queues": {"current_opportunity_queue": []}}
+    )
+    tender_terms_acquire = MagicMock(
+        return_value=AcquireAndPublishResult(
+            gate_status=GATE_NO_CURRENT_OPPORTUNITIES,
+            tender_codes_considered=(),
+            acquisitions=(),
+            publish=None,
+            eligible_count=0,
+            selected_count=0,
+            truncated=False,
+        )
+    )
+
+    rc = run_chilecompra_equipment_auto_refresh(
+        _opts(apply=True, publish_institution_prospects=True, publish_tender_terms=True),
+        reports_dir=reports_dir,
+        build_fn=lambda **kwargs: _mock_build_result(),
+        publish_fn=MagicMock(return_value={"out_csv": "x.csv", "output_rows": 1}),
+        institution_publish_fn=MagicMock(return_value=_institution_applied_result()),
+        read_model_loader_fn=read_model_loader,
+        tender_terms_acquire_fn=tender_terms_acquire,
+        now_fn=lambda: _T0,
+    )
+    out = _parse_output(capsys.readouterr().out)
+    assert rc == 0
+    assert out["tender_terms_result"] == GATE_NO_CURRENT_OPPORTUNITIES
+
+    state = load_state(state_path(reports_dir))
+    assert state.last_result == "refreshed"
+    assert state.tender_terms_result == GATE_NO_CURRENT_OPPORTUNITIES
+    assert state.last_successful_tender_terms_publish_at is None

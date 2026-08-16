@@ -26,6 +26,7 @@ EXPECTED_PUBLIC_GET_PATHS: frozenset[str] = frozenset(
         "/operator/procurement/institutions",
         "/operator/procurement/institutions/{institution_id}",
         "/operator/procurement/queues/{queue_name}",
+        "/operator/procurement/tenders/{tender_code}",
         "/contacts/{email}",
         "/mirror/health/dependencies",
         "/mirror/meta/dashboard-sync",

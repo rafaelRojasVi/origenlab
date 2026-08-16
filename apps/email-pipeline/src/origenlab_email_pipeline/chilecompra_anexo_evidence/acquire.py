@@ -195,6 +195,12 @@ class PortalAttachmentSource:
         for stub in inventory.stubs:
             attachment = portal.attachments[stub.row_ordinal]
             fields = portal.listing_form_fields.get(attachment.listing_url, {})
+
+            # No cross-run skip here by design: Mercado Público does not expose
+            # a strong per-body freshness validator (content hash/ETag/immutable
+            # version) via listing metadata, so a metadata-only match (filename/
+            # tipo/descripcion/fecha_adjunto) is never proof the attachment
+            # bytes are unchanged. Every opt-in run re-fetches every body.
             try:
                 download = download_portal_attachment(
                     attachment,

@@ -17,6 +17,7 @@ describe("allowlist", () => {
     "/operator/procurement/queues/institution_match_review",
     "/operator/procurement/queues/line_evidence_review",
     "/operator/procurement/queues/retender_review",
+    "/operator/procurement/tenders/745712-14-LE26",
     "/mirror/catalog/products",
     "/mirror/leads/summary",
     "/mirror/leads/prospects",
@@ -57,7 +58,35 @@ describe("allowlist", () => {
     expect(isAllowedUpstreamPath("/operator/procurement/queues/not_a_real_queue")).toBe(false);
     expect(isAllowedUpstreamPath("/operator/procurement/send")).toBe(false);
     expect(isAllowedUpstreamPath("/operator/procurement/institutions/id/extra")).toBe(false);
+    expect(isAllowedUpstreamPath("/operator/procurement/tenders/id/extra")).toBe(false);
+    expect(isAllowedUpstreamPath("/operator/procurement/tenders/")).toBe(false);
+    // Path-traversal / deeper-segment variants must never sneak past the
+    // single-segment tender_code allowlist regex.
+    expect(isAllowedUpstreamPath("/operator/procurement/tenders/../status")).toBe(false);
+    expect(isAllowedUpstreamPath("/operator/procurement/tenders/id/../../status")).toBe(false);
     expect(isAllowedUpstreamPath("/api/operator/status")).toBe(false);
+  });
+
+  it("allows real tender_code formats (mixed and lowercase), case preserved", () => {
+    expect(isAllowedUpstreamPath("/operator/procurement/tenders/745712-19-LP26")).toBe(true);
+    expect(isAllowedUpstreamPath("/operator/procurement/tenders/4291-46-LE26")).toBe(true);
+    expect(isAllowedUpstreamPath("/operator/procurement/tenders/745712-19-lp26")).toBe(true);
+    expect(isAllowedUpstreamPath("/operator/procurement/tenders/4291-46-le26")).toBe(true);
+  });
+
+  it("rejects tender_code segments that are not a conservative alphanumeric+hyphen token", () => {
+    // Dot-segments (path traversal) as the tender_code segment itself.
+    expect(isAllowedUpstreamPath("/operator/procurement/tenders/..")).toBe(false);
+    expect(isAllowedUpstreamPath("/operator/procurement/tenders/.")).toBe(false);
+    // Whitespace in the tender_code segment.
+    expect(isAllowedUpstreamPath("/operator/procurement/tenders/745712 19 LP26")).toBe(false);
+    expect(isAllowedUpstreamPath("/operator/procurement/tenders/745712-19-LP26 ")).toBe(false);
+    // Unexpected punctuation in the tender_code segment.
+    expect(isAllowedUpstreamPath("/operator/procurement/tenders/745712;19;LP26")).toBe(false);
+    expect(isAllowedUpstreamPath("/operator/procurement/tenders/<script>")).toBe(false);
+    expect(isAllowedUpstreamPath("/operator/procurement/tenders/745712%2F19")).toBe(false);
+    // Deeper/extra path segments beyond the single tender_code segment.
+    expect(isAllowedUpstreamPath("/operator/procurement/tenders/745712-19-LP26/extra")).toBe(false);
   });
 });
 

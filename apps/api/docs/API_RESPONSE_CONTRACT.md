@@ -277,6 +277,7 @@ Operator plane (SQLite / active CSV):
 | GET    | `/operator/procurement/institutions` |
 | GET    | `/operator/procurement/institutions/{institution_id}` |
 | GET    | `/operator/procurement/queues/{queue_name}` |
+| GET    | `/operator/procurement/tenders/{tender_code}` |
 | GET    | `/contacts/{email}`           |
 
 Postgres mirror (`/mirror/*`, read-only reporting):

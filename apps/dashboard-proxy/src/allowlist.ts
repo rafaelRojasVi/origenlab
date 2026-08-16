@@ -10,6 +10,7 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/operator\/procurement\/institutions$/,
   /^\/operator\/procurement\/institutions\/[^/]+$/,
   /^\/operator\/procurement\/queues\/(?:current_opportunity|historical_prospect|contact_gap|institution_match_review|line_evidence_review|retender_review)$/,
+  /^\/operator\/procurement\/tenders\/[A-Za-z0-9-]+$/,
   /^\/cases\/warm$/,
   /^\/contacts\/[^/]+$/,
   /^\/opportunities\/equipment$/,

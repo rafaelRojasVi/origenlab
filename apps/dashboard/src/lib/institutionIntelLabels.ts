@@ -13,6 +13,7 @@
 import type {
   AxisBand,
   ContactGapStatus,
+  DeliveryDaysValue,
   DemandRecurrence,
   IdentityKind,
   ProcurementEligibilityStatus,
@@ -64,6 +65,63 @@ export const TERM_FACT_STATE_LABEL: Record<TermFactState, string> = {
   unknown: "Sin datos",
   conflicting: "Fuentes discrepan",
 };
+
+/**
+ * Known T1 tender-term `field_name` tokens -> Spanish operator-facing
+ * labels. Confirmed against T1's `commercial_procurement_anexo_tender_terms`
+ * extractor rules (apps/email-pipeline/.../extract.py `_RULES`). Any field
+ * name not in this map falls back to `humanizeToken()` below rather than
+ * showing the raw snake_case wire token in the UI.
+ */
+const TENDER_TERM_FIELD_LABEL: Record<string, string> = {
+  contract_duration_months: "Duración del contrato",
+  faithful_performance_guarantee_percent: "Garantía de fiel cumplimiento",
+  maximum_delivery_days: "Plazo máximo de entrega",
+  offer_validity_days: "Vigencia de la oferta",
+  payment_deadline_days: "Plazo de pago",
+  total_budget: "Presupuesto total",
+};
+
+export function formatTenderTermField(raw: string): string {
+  return TENDER_TERM_FIELD_LABEL[raw] ?? humanizeToken(raw);
+}
+
+/**
+ * T1 wire `unit` tokens are English machine words ("days"/"months"/
+ * "percent") straight from the extractor's `_Rule.unit` — localize them for
+ * display rather than showing e.g. "8 months". Unknown units fall back to
+ * the raw token rather than being dropped silently.
+ */
+const TERM_UNIT_LABEL: Record<string, string> = {
+  days: "días",
+  months: "meses",
+  percent: "%",
+};
+
+export function formatTermUnit(raw: string): string {
+  return TERM_UNIT_LABEL[raw] ?? raw;
+}
+
+/**
+ * `maximum_delivery_days` publishes a structured `{days, day_basis}` value
+ * instead of a plain number. Only the two real `day_basis` values T1's
+ * extractor ever emits ("business"/"calendar") are recognized here — any
+ * other basis, including a genuinely unconfirmed/null one, fails closed to
+ * `null` so the caller renders "—" instead of guessing at an unconfirmed
+ * day basis or ever stringifying the raw object.
+ */
+const DAY_BASIS_LABEL: Record<string, string> = {
+  business: "hábiles",
+  calendar: "corridos",
+};
+
+export function formatDeliveryDaysValue(value: DeliveryDaysValue): string | null {
+  if (!Number.isFinite(value.days)) return null;
+  if (value.day_basis === null) return null;
+  const basisLabel = DAY_BASIS_LABEL[value.day_basis];
+  if (!basisLabel) return null;
+  return `${value.days.toLocaleString("es-CL")} días ${basisLabel}`;
+}
 
 const NEXT_ACTION_LABEL: Record<string, string> = {
   resolve_account: "Resolver cuenta",

@@ -11,12 +11,14 @@ from origenlab_api.schemas.institution_prospects import (
     OperatorQueueRowsResponse,
     QueueName,
 )
+from origenlab_api.schemas.tender_terms import TenderDetailResponse
 from origenlab_api.services.institution_prospect_service import (
     build_institution_detail_response,
     build_institution_prospect_status_response,
     build_institutions_response,
     build_queue_response,
 )
+from origenlab_api.services.tender_terms_service import build_tender_detail_response
 from origenlab_api.settings import Settings, get_settings
 
 router = APIRouter(prefix="/operator/procurement", tags=["procurement"])
@@ -60,6 +62,25 @@ def procurement_institution_detail(
     # than a misleading 404, so it is returned as-is (200, item=None).
     if result.item is None and not result.meta.reduced_mode:
         raise HTTPException(status_code=404, detail="institution not found")
+    return result
+
+
+@router.get("/tenders/{tender_code}", response_model=TenderDetailResponse)
+def procurement_tender_detail(
+    tender_code: str,
+    settings: Settings = Depends(get_settings),
+) -> TenderDetailResponse:
+    """Merged W1 (actionability) + T1 (ANEXO term intelligence) tender view.
+
+    W1's current_opportunity_queue is the sole actionability authority: if
+    the tender_code is not present there, this is a real 404 regardless of
+    whether T1 has published terms for it (T1 alone can never make a tender
+    actionable). A degraded W1 feed (missing/malformed) is not "not found";
+    it is surfaced via queue_meta.reduced_mode with found_in_queue=False.
+    """
+    result = build_tender_detail_response(settings, tender_code)
+    if not result.found_in_queue and not result.queue_meta.get("reduced_mode"):
+        raise HTTPException(status_code=404, detail="tender not found in current opportunity queue")
     return result
 
 

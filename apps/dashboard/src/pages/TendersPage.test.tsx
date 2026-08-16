@@ -1,14 +1,16 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { Availed, CurrentOpportunityRow } from "../api/institutionIntel/types";
+import type { Availed, CurrentOpportunityRow, LicitacionIntel } from "../api/institutionIntel/types";
 import { dashboardSectionLabel } from "../lib/dashboardNav";
 import { TendersPage } from "./TendersPage";
 
 const getCurrentOpportunities = vi.fn();
+const getLicitacionIntel = vi.fn();
 
 vi.mock("../api/institutionIntel/adapter", () => ({
   institutionIntelAdapter: {
     getCurrentOpportunities: (...args: unknown[]) => getCurrentOpportunities(...args),
+    getLicitacionIntel: (...args: unknown[]) => getLicitacionIntel(...args),
   },
 }));
 
@@ -94,5 +96,44 @@ describe("TendersPage", () => {
     expect(screen.queryByRole("button", { name: /contactar/i })).toBeNull();
     expect(screen.queryByText(/mercadopublico\.cl/i)).toBeNull();
     expect(screen.queryByLabelText(/guardar oportunidad/i)).toBeNull();
+  });
+
+  it("shows an empty detail prompt until a row is selected, then opens the drawer for the clicked tender", async () => {
+    getLicitacionIntel.mockReset();
+    getLicitacionIntel.mockResolvedValue({
+      tenderCode: ANTOFAGASTA_ROW.tenderCode,
+      buyerDisplayName: ANTOFAGASTA_ROW.institutionDisplayName,
+      eligibilityStatus: "open_public",
+      procurementMethodRaw: null,
+      terms: { status: "not_available" },
+      itemBudget: { status: "not_available" },
+      totalBudgetReconciled: false,
+      recognitionDelta: { status: "not_available" },
+      coverage: { status: "not_available" },
+    } satisfies LicitacionIntel);
+
+    stub({ status: "available", data: [ANTOFAGASTA_ROW] });
+    render(<TendersPage />);
+
+    await waitFor(() => {
+      screen.getByText("UNIVERSIDAD DE ANTOFAGASTA");
+    });
+    screen.getByTestId("tender-detail-empty");
+
+    fireEvent.click(screen.getAllByTestId("actionable-opportunity-row")[0]);
+
+    await waitFor(() => {
+      expect(getLicitacionIntel).toHaveBeenCalledWith(ANTOFAGASTA_ROW.tenderCode);
+    });
+    await waitFor(() => {
+      screen.getByTestId("tender-detail-drawer");
+    });
+    expect(screen.queryByTestId("tender-detail-empty")).toBeNull();
+
+    // Selecting a tender must perform exactly one detail request. The drawer
+    // body used to be a self-fetching LicitacionIntelCard mounted alongside
+    // the drawer's own fetch, doubling the request for one selection — the
+    // body is now presentation-only and fetches nothing.
+    expect(getLicitacionIntel).toHaveBeenCalledTimes(1);
   });
 });

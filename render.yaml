@@ -44,6 +44,9 @@ services:
       # The API reads this path on every request; symlink follows on resolve().
       - key: ORIGENLAB_INSTITUTION_PROSPECT_DIR
         value: /var/data/institution_prospects
+      # T1 tender-terms read model directory on the same persistent disk.
+      - key: ORIGENLAB_TENDER_TERMS_DIR
+        value: /var/data/tender_terms
       - key: ORIGENLAB_API_AUTH_TOKEN
         sync: false
       - key: ORIGENLAB_POSTGRES_URL

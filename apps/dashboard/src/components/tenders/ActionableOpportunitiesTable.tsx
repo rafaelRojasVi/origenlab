@@ -21,7 +21,14 @@ const DEFAULT_PAGE_SIZE = 15;
  * offers a contact/outreach action: procurement opportunity never implies
  * contact/outreach authorization.
  */
-export function ActionableOpportunitiesTable() {
+export function ActionableOpportunitiesTable({
+  selectedTenderCode,
+  onSelectTender,
+}: {
+  /** Presentation-only master/detail selection — does not affect the W1 data source or its columns. */
+  selectedTenderCode?: string | null;
+  onSelectTender?: (tenderCode: string) => void;
+} = {}) {
   const [availability, setAvailability] = useState<Availed<readonly CurrentOpportunityRow[]> | null>(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -119,10 +126,37 @@ export function ActionableOpportunitiesTable() {
           totalPages={totalPages}
           onPageChange={setPage}
           onPageSizeChange={handlePageSizeChange}
+          selectedTenderCode={selectedTenderCode}
+          onSelectTender={onSelectTender}
         />
       ) : null}
     </section>
   );
+}
+
+/**
+ * Presentation-only merge: the W1 queue can carry more than one
+ * (institution, tender_code, equipment_category) row for the same
+ * tender_code (e.g. balance + centrifuge on one tender). The underlying
+ * `CurrentOpportunityRow[]` data stays exactly as returned by the adapter —
+ * this only groups rows by tenderCode for the tender-level master list, and
+ * joins the distinct categories for display (e.g. "Balanza + Centrífuga").
+ */
+function groupByTender(rows: readonly CurrentOpportunityRow[]): (CurrentOpportunityRow & { categories: string[] })[] {
+  const order: string[] = [];
+  const byTender = new Map<string, CurrentOpportunityRow & { categories: string[] }>();
+  for (const row of rows) {
+    const existing = byTender.get(row.tenderCode);
+    if (existing) {
+      if (!existing.categories.includes(row.categoryOrTitle)) {
+        existing.categories.push(row.categoryOrTitle);
+      }
+      continue;
+    }
+    order.push(row.tenderCode);
+    byTender.set(row.tenderCode, { ...row, categories: [row.categoryOrTitle] });
+  }
+  return order.map((code) => byTender.get(code)!);
 }
 
 function ActionableOpportunitiesTableBody({
@@ -132,6 +166,8 @@ function ActionableOpportunitiesTableBody({
   totalPages,
   onPageChange,
   onPageSizeChange,
+  selectedTenderCode,
+  onSelectTender,
 }: {
   rows: readonly CurrentOpportunityRow[];
   page: number;
@@ -139,37 +175,56 @@ function ActionableOpportunitiesTableBody({
   totalPages: number;
   onPageChange: (page: number) => void;
   onPageSizeChange: (size: ClientPageSizeOption) => void;
+  selectedTenderCode?: string | null;
+  onSelectTender?: (tenderCode: string) => void;
 }) {
+  const groupedRows = groupByTender(rows);
   return (
     <div className="overflow-x-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] shadow-sm">
       <table className="min-w-full text-left text-sm" data-testid="actionable-opportunities-table">
         <thead className="bg-slate-50 text-xs uppercase tracking-wide text-[var(--color-muted)]">
           <tr>
-            <th className="px-3 py-2 font-medium">Institución</th>
+            <th className="px-3 py-2 font-medium">#</th>
+            <th className="px-3 py-2 font-medium">Comprador / institución</th>
             <th className="px-3 py-2 font-medium">Categoría</th>
-            <th className="px-3 py-2 font-medium">Licitación</th>
-            <th className="px-3 py-2 font-medium">Elegibilidad</th>
             <th className="px-3 py-2 font-medium">Fuerza de prospecto</th>
             <th className="px-3 py-2 font-medium">Cierra</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-[var(--color-border)]">
-          {rows.map((row) => (
-            <tr key={row.rowId} data-testid="actionable-opportunity-row">
-              <td className="px-3 py-2 font-medium text-slate-900">
-                {row.institutionDisplayName || row.institutionId || "—"}
-              </td>
-              <td className="px-3 py-2 text-slate-700">{formatEquipmentCategory(row.categoryOrTitle)}</td>
-              <td className="px-3 py-2 font-mono text-xs text-slate-700">{row.tenderCode}</td>
-              <td className="px-3 py-2">
-                <EligibilityBadge status={row.eligibilityStatus} />
-              </td>
-              <td className="px-3 py-2 text-slate-700">{AXIS_BAND_LABEL[row.prospectStrengthBand]}</td>
-              <td className="px-3 py-2 whitespace-nowrap text-xs text-slate-600">
-                {row.closeTimestamp ? new Date(row.closeTimestamp).toLocaleDateString("es-CL") : "—"}
-              </td>
-            </tr>
-          ))}
+          {groupedRows.map((row, index) => {
+            const selected = selectedTenderCode != null && selectedTenderCode === row.tenderCode;
+            const selectable = typeof onSelectTender === "function";
+            return (
+              <tr
+                key={row.tenderCode}
+                data-testid="actionable-opportunity-row"
+                aria-selected={selectable ? selected : undefined}
+                onClick={selectable ? () => onSelectTender(row.tenderCode) : undefined}
+                className={
+                  selectable
+                    ? `cursor-pointer transition-colors ${selected ? "bg-[var(--accent-50,#f0fdfa)]" : "hover:bg-slate-50"}`
+                    : undefined
+                }
+              >
+                <td className="px-3 py-2 font-semibold text-slate-900">{index + 1}</td>
+                <td className="px-3 py-2 font-medium text-slate-900">
+                  {row.institutionDisplayName || row.institutionId || "—"}
+                  <div className="mt-0.5 font-mono text-xs font-normal text-slate-500">{row.tenderCode}</div>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    <EligibilityBadge status={row.eligibilityStatus} />
+                  </div>
+                </td>
+                <td className="px-3 py-2 text-slate-700">
+                  {row.categories.map(formatEquipmentCategory).join(" + ")}
+                </td>
+                <td className="px-3 py-2 text-slate-700">{AXIS_BAND_LABEL[row.prospectStrengthBand]}</td>
+                <td className="px-3 py-2 whitespace-nowrap text-xs text-slate-600">
+                  {row.closeTimestamp ? new Date(row.closeTimestamp).toLocaleDateString("es-CL") : "—"}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
       {totalPages > 1 ? (

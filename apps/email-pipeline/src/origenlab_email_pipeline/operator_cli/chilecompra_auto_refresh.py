@@ -15,11 +15,25 @@ from origenlab_email_pipeline.chilecompra_api import (
     redact_ticket,
     ticket_from_env,
 )
+from origenlab_email_pipeline.commercial_procurement_anexo_tender_terms.current_tender_annex_publish import (
+    GATE_BLOCKED_MAX_TENDERS_EXCEEDED,
+    GATE_BLOCKED_REDUCED_MODE_W1,
+    AcquireAndPublishResult,
+    acquire_and_publish_current_tender_terms,
+)
+from origenlab_email_pipeline.commercial_procurement_anexo_tender_terms.production_publish import (
+    TENDER_TERMS_DIRNAME,
+)
 from origenlab_email_pipeline.commercial_procurement_institution_prospects.production_publish import (
     INSTITUTION_PROSPECTS_DIRNAME,
     InstitutionProspectPublicationResult,
     publish_current_institution_prospects,
 )
+from origenlab_email_pipeline.commercial_procurement_institution_prospects.read_model import (
+    PublishedReadModelError,
+    load_published_read_model,
+)
+from origenlab_email_pipeline.chilecompra_api import build_licitacion_detail_url_for_codigo
 from origenlab_email_pipeline.config import load_settings
 from origenlab_email_pipeline.equipment_first_chilecompra_publish import (
     default_canonical_operator_queue_path,
@@ -90,6 +104,14 @@ class ChilecompraEquipmentAutoRefreshOptions:
     # from this run's detail cache + manifest. Must not activate merely by
     # merging this option — the tracked cron wrapper does not pass this flag.
     publish_institution_prospects: bool = False
+    # Opt-in, defaults false: after a successful publish_institution_prospects
+    # publish, acquire ANEXO evidence (network GET/POST against the public
+    # Mercado Público portal) for exactly this run's current_opportunity_queue
+    # tender_codes and publish ANEXO-T1 structured tender terms from it. Has
+    # no effect unless publish_institution_prospects is also true — this flag
+    # never re-derives actionability on its own. Not wired into the tracked
+    # cron wrapper.
+    publish_tender_terms: bool = False
     force: bool = False
     cooldown_seconds: int = DEFAULT_COOLDOWN_SECONDS
 
@@ -132,6 +154,11 @@ class ChilecompraEquipmentAutoRefreshState:
     institution_prospect_as_of_utc: str | None = None
     institution_prospect_profile_count: int | None = None
     institution_prospect_current_opportunity_count: int | None = None
+    # ANEXO-T1 tender-terms publication is likewise best-effort and decoupled
+    # from equipment/W1 success.
+    tender_terms_result: str | None = None  # "disabled" | "applied" | "failed" | ...
+    last_successful_tender_terms_publish_at: str | None = None
+    tender_terms_tender_count: int | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ChilecompraEquipmentAutoRefreshState:
@@ -448,6 +475,8 @@ def run_chilecompra_equipment_auto_refresh(
     publish_fn: PublishQueueFn | None = None,
     read_model_publish_fn: ReadModelPublishFn | None = None,
     institution_publish_fn: InstitutionProspectPublishFn | None = None,
+    read_model_loader_fn: Callable[[Path], dict[str, Any]] | None = None,
+    tender_terms_acquire_fn: Callable[..., AcquireAndPublishResult] | None = None,
     now_fn: NowFn | None = None,
 ) -> int:
     if not options.once:
@@ -490,6 +519,7 @@ def run_chilecompra_equipment_auto_refresh(
     state = load_state(state_file)
     state.last_run_started_at = _iso_now(now)
     institution_publish_failed = False
+    tender_terms_publish_failed = False
 
     try:
         result = evaluate_chilecompra_equipment_auto_refresh(
@@ -574,6 +604,8 @@ def run_chilecompra_equipment_auto_refresh(
             read_model_result = "skipped"
             institution_prospect_result = "disabled"
             institution_publish_failed = False
+            tender_terms_result = "disabled"
+            tender_terms_publish_failed = False
             if options.publish:
                 canonical_csv = default_canonical_operator_queue_path(reports_base, now=now)
                 publisher = publish_fn or publish_chilecompra_equipment_queue_for_dashboard
@@ -657,8 +689,9 @@ def run_chilecompra_equipment_auto_refresh(
                 else:
                     read_model_result = "disabled"
 
+                institution_publish_result: InstitutionProspectPublicationResult | None = None
+                institution_out_dir = active_current_dir(reports_dir) / INSTITUTION_PROSPECTS_DIRNAME
                 if options.publish_institution_prospects:
-                    institution_out_dir = active_current_dir(reports_dir) / INSTITUTION_PROSPECTS_DIRNAME
                     institution_publisher = institution_publish_fn or publish_current_institution_prospects
                     try:
                         institution_publish_result = institution_publisher(
@@ -694,6 +727,112 @@ def run_chilecompra_equipment_auto_refresh(
                                 f"institution_prospect_publish_failed: {institution_publish_result.error}"
                             )
 
+                # ANEXO-T1 acquisition + publication. Opt-in, and strictly
+                # gated on a *successful* institution-prospect publish from
+                # this exact run: current_opportunity_queue is reloaded from
+                # the read model this run just wrote (a local file read, not
+                # a re-query of ChileCompra), so it is guaranteed to be the
+                # same actionability set W1 just computed. Best-effort: a
+                # failure here never rolls back equipment/W1 success.
+                tender_terms_result = "disabled"
+                tender_terms_publish_failed = False
+                if options.publish_tender_terms:
+                    if not options.publish_institution_prospects:
+                        # Operator configuration error: --publish-tender-terms was
+                        # explicitly requested without its required precondition
+                        # flag. This is caught here (not at argparse time) because
+                        # the dependency is between two optional flags, not a
+                        # syntactic constraint -- but it must still surface as a
+                        # real T1-stage failure (nonzero rc), not a silent no-op.
+                        tender_terms_result = "requires_publish_institution_prospects"
+                        tender_terms_publish_failed = True
+                        state.last_error = (
+                            "tender_terms_publish_failed: requires_publish_institution_prospects"
+                        )
+                    elif institution_publish_result is None or institution_publish_result.result != "applied":
+                        tender_terms_result = "blocked_institution_prospect_publish_not_applied"
+                    else:
+                        try:
+                            loader = read_model_loader_fn or load_published_read_model
+                            read_model = loader(institution_out_dir)
+                        except PublishedReadModelError as exc:
+                            tender_terms_result = "failed_reload_read_model"
+                            tender_terms_publish_failed = True
+                            state.last_error = f"tender_terms_publish_failed: {exc}"
+                        else:
+                            current_queue = list(
+                                read_model.get("queues", {}).get("current_opportunity_queue") or []
+                            )
+                            tender_url_by_code: dict[str, str] = {}
+                            for queue_row in current_queue:
+                                code = str(queue_row.get("tender_code") or "").strip()
+                                if code and code not in tender_url_by_code:
+                                    tender_url_by_code[code] = build_licitacion_detail_url_for_codigo(code)
+                            for row in rows:
+                                code = str(row.get("codigo_licitacion") or "").strip()
+                                url = str(row.get("mercado_publico_url") or "").strip()
+                                if code and url and code in tender_url_by_code:
+                                    tender_url_by_code[code] = url
+
+                            tender_terms_out_dir = active_current_dir(reports_dir) / TENDER_TERMS_DIRNAME
+                            tender_terms_cache_dir = detail_cache_dir.parent / "tender_terms_annex_cache"
+                            try:
+                                tender_terms_fn = (
+                                    tender_terms_acquire_fn or acquire_and_publish_current_tender_terms
+                                )
+                                acquire_result: AcquireAndPublishResult = tender_terms_fn(
+                                    current_opportunity_queue=current_queue,
+                                    tender_code_to_detail_url=tender_url_by_code,
+                                    out_dir=tender_terms_out_dir,
+                                    cache_dir=tender_terms_cache_dir,
+                                    as_of_utc=_iso_now(now),
+                                )
+                            except Exception as exc:  # noqa: BLE001 - never let this roll back equipment/W1 success
+                                tender_terms_result = "failed"
+                                tender_terms_publish_failed = True
+                                state.last_error = f"tender_terms_publish_failed: {exc}"
+                            else:
+                                tender_terms_result = acquire_result.gate_status
+                                if acquire_result.publish is not None:
+                                    # gate_status == acquired_and_published: only the
+                                    # underlying publish result decides success/failure.
+                                    # A gate_status of "acquired_and_published" whose
+                                    # publish did NOT apply is still a failure.
+                                    tender_terms_result = acquire_result.publish.result
+                                    if acquire_result.publish.result != "applied":
+                                        tender_terms_publish_failed = True
+                                        state.last_error = (
+                                            f"tender_terms_publish_failed: {acquire_result.publish.error}"
+                                        )
+                                    else:
+                                        state.last_successful_tender_terms_publish_at = _iso_now(
+                                            (now_fn or (lambda: datetime.now(timezone.utc)))()
+                                        )
+                                        state.tender_terms_tender_count = (
+                                            acquire_result.publish.tender_count
+                                        )
+                                elif acquire_result.gate_status in (
+                                    GATE_BLOCKED_MAX_TENDERS_EXCEEDED,
+                                    GATE_BLOCKED_REDUCED_MODE_W1,
+                                ):
+                                    # Gate refused acquisition outright (publish is
+                                    # None): this is a real T1-stage failure, not a
+                                    # no-op, even though W1/equipment state must stay
+                                    # untouched (see comment above this whole block).
+                                    tender_terms_publish_failed = True
+                                    state.last_error = (
+                                        "tender_terms_publish_failed: "
+                                        f"gate_status={acquire_result.gate_status}"
+                                        + (
+                                            f" ({acquire_result.truncation_reason})"
+                                            if acquire_result.truncation_reason
+                                            else ""
+                                        )
+                                    )
+                                # else: GATE_NO_CURRENT_OPPORTUNITIES -- a valid no-op
+                                # (nothing eligible, nothing to publish); rc stays 0
+                                # and no failure flag is set.
+
             finished = (now_fn or (lambda: datetime.now(timezone.utc)))()
             state.last_run_finished_at = _iso_now(finished)
             started = _parse_iso(state.last_run_started_at) or now
@@ -705,14 +844,16 @@ def run_chilecompra_equipment_auto_refresh(
             )
             state.consecutive_failures = 0
             state.last_result = "refreshed"
-            # Institution-prospect publication is best-effort and decoupled from
-            # the core equipment refresh: a failed institution step must remain
-            # visible (do not clobber its error message here), but never flips
-            # the equipment refresh itself back to a failure state.
-            if not institution_publish_failed:
+            # Institution-prospect / tender-terms publication are both
+            # best-effort and decoupled from the core equipment refresh: a
+            # failed step must remain visible (do not clobber its error
+            # message here), but never flips the equipment refresh itself
+            # back to a failure state.
+            if not institution_publish_failed and not tender_terms_publish_failed:
                 state.last_error = None
             state.published_rows = published_rows
             state.institution_prospect_result = institution_prospect_result
+            state.tender_terms_result = tender_terms_result
             _update_state_counts_from_manifest(
                 state,
                 manifest,
@@ -753,6 +894,7 @@ def run_chilecompra_equipment_auto_refresh(
                     "coalesced_duplicate_rows": str(publish_stats.get("coalesced_duplicate_rows", 0)),
                     "unique_codigo_count": str(publish_stats.get("unique_codigo_count", 0)),
                     "institution_prospect_result": institution_prospect_result,
+                    "tender_terms_result": tender_terms_result,
                 },
             )
         else:
@@ -763,7 +905,7 @@ def run_chilecompra_equipment_auto_refresh(
 
         for line in result.output_lines():
             print(line)
-        if institution_publish_failed:
+        if institution_publish_failed or tender_terms_publish_failed:
             return 3
         return 0
     finally:
@@ -815,6 +957,19 @@ def parse_chilecompra_equipment_auto_refresh_args(
         ),
     )
     parser.add_argument(
+        "--publish-tender-terms",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "After a successful --publish-institution-prospects publish, acquire ANEXO "
+            "evidence (real network I/O against the public Mercado Público portal) for "
+            "this run's current_opportunity_queue tender_codes only, and publish ANEXO-T1 "
+            "structured terms into reports/out/active/current/tender_terms/ (default: "
+            "false, opt-in; requires --publish-institution-prospects; not wired into the "
+            "tracked cron wrapper)"
+        ),
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Bypass the scheduled-slot cadence / cooldown gate",
@@ -845,6 +1000,7 @@ def parse_chilecompra_equipment_auto_refresh_args(
         publish=ns.publish,
         publish_read_model=ns.publish_read_model,
         publish_institution_prospects=ns.publish_institution_prospects,
+        publish_tender_terms=ns.publish_tender_terms,
         force=ns.force,
         cooldown_seconds=ns.cooldown_seconds,
     )
