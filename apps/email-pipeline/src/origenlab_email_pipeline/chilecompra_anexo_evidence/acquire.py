@@ -18,6 +18,7 @@ from origenlab_email_pipeline.chilecompra_anexo_evidence.constants import (
     DEFAULT_EVIDENCE_MAX_ATTACHMENT_COUNT,
     DEFAULT_EVIDENCE_MAX_TOTAL_BYTES,
     REASON_ATTACHMENT_COUNT_BUDGET_EXCEEDED,
+    REASON_GATED_LISTING_UNREACHABLE,
 )
 from origenlab_email_pipeline.chilecompra_anexo_evidence.models import sha256_bytes
 
@@ -58,6 +59,11 @@ class AcquiredAttachment:
 class SourceInventory:
     listing_page_count: int
     stubs: tuple[AttachmentStub, ...]
+    # Source-level incompleteness that is not tied to any one discovered row
+    # (e.g. a gated listing this source cannot enumerate at all). Distinct
+    # from AttachmentBudgetError, which is raised while streaming bodies;
+    # this is known up front, at inventory time.
+    incomplete_reason_codes: tuple[str, ...] = ()
 
 
 class AttachmentSource(Protocol):
@@ -81,6 +87,10 @@ class LocalAttachmentSource:
     source_kind: str = "local"
     listing_ordinals: list[int] | None = None
     failures: dict[int, str] | None = None
+    # Test-only seam for simulating source-level incompleteness (e.g. a gated
+    # listing) without a full portal HTTP round trip. Never populated by
+    # production code -- this source is offline/test-only to begin with.
+    incomplete_reason_codes: tuple[str, ...] = ()
 
     def inventory(self) -> SourceInventory:
         from origenlab_email_pipeline.chilecompra_api import safe_attachment_filename
@@ -99,7 +109,9 @@ class LocalAttachmentSource:
                 )
             )
         return SourceInventory(
-            listing_page_count=self.listing_page_count, stubs=tuple(stubs)
+            listing_page_count=self.listing_page_count,
+            stubs=tuple(stubs),
+            incomplete_reason_codes=self.incomplete_reason_codes,
         )
 
     def iter_payloads(self, inventory: SourceInventory) -> Iterator[AcquiredAttachment]:
@@ -170,8 +182,19 @@ class PortalAttachmentSource:
                     fecha_adjunto=attachment.fecha_adjunto,
                 )
             )
+        # The ficha itself advertised a second, CAPTCHA-gated listing surface
+        # (see chilecompra_api.has_gated_attachment_listing_hint) that this
+        # read-only HTTP source cannot enumerate. This never asserts a count
+        # or that it is empty -- only that reading is known-incomplete.
+        incomplete_reason_codes = (
+            (REASON_GATED_LISTING_UNREACHABLE,)
+            if getattr(portal, "gated_listing_hint", False)
+            else ()
+        )
         return SourceInventory(
-            listing_page_count=len(portal.listing_urls), stubs=tuple(stubs)
+            listing_page_count=len(portal.listing_urls),
+            stubs=tuple(stubs),
+            incomplete_reason_codes=incomplete_reason_codes,
         )
 
     def iter_payloads(self, inventory: SourceInventory) -> Iterator[AcquiredAttachment]:

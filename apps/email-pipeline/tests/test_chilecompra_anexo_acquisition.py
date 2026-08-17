@@ -14,6 +14,9 @@ from origenlab_email_pipeline.chilecompra_anexo_evidence.acquire import (
     AttachmentBudgetError,
     PortalAttachmentSource,
 )
+from origenlab_email_pipeline.chilecompra_anexo_evidence.constants import (
+    REASON_GATED_LISTING_UNREACHABLE,
+)
 from origenlab_email_pipeline.chilecompra_anexo_evidence.planner import (
     build_tender_bundle,
 )
@@ -267,6 +270,139 @@ def test_portal_source_records_per_attachment_download_failure() -> None:
     assert bundle.attachments_downloaded == 1
     assert len(bundle.attachments) == 2
     assert bundle.bundle_complete is False
+
+
+def _opener_with_real_text_bodies(rows_first: int, rows_second: int):
+    """Like ``_opener``, but the postback body is genuinely extractable plain
+    text (the shared ``_opener`` posts back placeholder ``%PDF`` bytes that
+    pymupdf reports as ``corrupt``, which is fine for the existing tests
+    below but is the wrong fixture for proving a bundle CAN reach
+    bundle_complete=True)."""
+    calls: list[tuple[str, str]] = []
+
+    def opener(request, timeout=None):
+        url = request.full_url
+        calls.append((request.get_method(), url))
+        if request.data is not None:
+            return _response(
+                b"contenido real del anexo\n",
+                headers={"Content-Type": "text/plain"},
+                url=url,
+            )
+        if "DetailsAcquisition" in url:
+            return _response(_DETAIL_HTML.encode("utf-8"), url=url)
+        prefix = "uno" if "AAA" in url else "dos"
+        rows = rows_first if prefix == "uno" else rows_second
+        return _response(_listing_html(rows, prefix=prefix).encode("utf-8"), url=url)
+
+    opener.calls = calls
+    return opener
+
+
+def test_portal_source_normal_ficha_bundle_can_be_fully_complete() -> None:
+    """Fixture A: no gated-listing hint anywhere on the ficha -- the
+    reachable attachments are read normally and the bundle can be complete.
+    This is the no-regression guard for the gated-listing detection added
+    alongside it below."""
+    opener = _opener_with_real_text_bodies(rows_first=2, rows_second=1)
+    source = PortalAttachmentSource(detail_url=_DETAIL_URL, opener=opener)
+    bundle = build_tender_bundle("T-NORMAL", source)
+
+    assert bundle.attachments_discovered == 3
+    assert bundle.attachments_downloaded == 3
+    assert all(r.outcome == "extraction_success" for r in bundle.attachments)
+    assert bundle.incomplete_reason_codes == ()
+    assert bundle.download_complete is True
+    assert bundle.extraction_complete is True
+    assert bundle.bundle_complete is True
+
+
+# --- Real-regression-shaped fixture: tender 4291-46-LE26 (Universidad de
+# Antofagasta). The ficha exposes a normal VerAntecedentes.aspx href listing
+# (containing one administrative DOCX row) *and* a separate onclick popup
+# targeting the CAPTCHA-gated ViewAttachment.aspx -- a second annex-listing
+# surface this HTTP-only client can never enumerate. See
+# chilecompra_api._GATED_ATTACHMENT_ONCLICK_RE for the detection pattern and
+# has_gated_attachment_listing_hint for the presence-only check; this module
+# never fetches, follows, or otherwise interacts with ViewAttachment.aspx.
+_GATED_ONCLICK_SNIPPET = (
+    '<input type="image" name="imgAdjuntos" id="imgAdjuntos" '
+    "onclick=\"open(&#39;../Attachment/ViewAttachment.aspx?enc=GATEDTOKEN&#39;,"
+    "&#39;MercadoPublico&#39;, &#39;width=850, height=700&#39;);"
+    'window.event.returnValue=false;" border="0" />'
+)
+
+_GATED_DETAIL_HTML = f"""
+<html><body>
+  <a href="../Attachment/VerAntecedentes.aspx?enc=AAA%2fBBB">Ver anexos</a>
+  {_GATED_ONCLICK_SNIPPET}
+</body></html>
+"""
+
+
+def _gated_opener():
+    """One reachable listing (one DOCX-named row) plus the gated onclick hint."""
+    calls: list[tuple[str, str]] = []
+
+    def opener(request, timeout=None):
+        url = request.full_url
+        calls.append((request.get_method(), url))
+        if request.data is not None:
+            return _response(
+                b"contenido real del formulario obligatorio\n",
+                headers={"Content-Type": "text/plain"},
+                url=url,
+            )
+        if "DetailsAcquisition" in url:
+            return _response(_GATED_DETAIL_HTML.encode("utf-8"), url=url)
+        return _response(
+            _listing_html(1, prefix="FORMULARIO_OBLIGATORIO").encode("utf-8"), url=url
+        )
+
+    opener.calls = calls
+    return opener
+
+
+def test_portal_source_surfaces_gated_listing_without_losing_the_reachable_docx() -> None:
+    """Fixtures B + C: the DOCX genuinely found on the normal listing is still
+    discovered, downloaded, and extracted -- but the bundle as a whole is
+    marked incomplete because the ficha advertises a second, unreachable
+    listing surface. Mirrors the real 4291-46-LE26 regression: before this
+    fix the bundle would have reported attachments_discovered=1,
+    attachments_downloaded=1, bundle_complete=True."""
+    opener = _gated_opener()
+    source = PortalAttachmentSource(detail_url=_DETAIL_URL, opener=opener)
+    bundle = build_tender_bundle("4291-46-LE26", source)
+
+    # The one HTTP-reachable row was genuinely read -- never invent a
+    # different count or pretend it wasn't found.
+    assert bundle.attachments_discovered == 1
+    assert bundle.attachments_downloaded == 1
+    assert len(bundle.attachments) == 1
+    assert bundle.attachments[0].outcome == "extraction_success"
+    assert bundle.attachments[0].download_status == "downloaded"
+
+    # But the bundle must not claim complete coverage: the ficha advertised a
+    # gated listing this client could never enumerate.
+    assert REASON_GATED_LISTING_UNREACHABLE in bundle.incomplete_reason_codes
+    assert bundle.download_complete is True  # the reachable row itself is complete
+    assert bundle.extraction_complete is False
+    assert bundle.bundle_complete is False
+
+    # No CAPTCHA interaction of any kind: only GETs to the detail/listing
+    # pages and a POST to the postback download -- never a request touching
+    # ViewAttachment.aspx.
+    assert not any("ViewAttachment" in url for _, url in opener.calls)
+
+
+def test_portal_source_without_gated_hint_never_reports_the_reason_code() -> None:
+    """Inverse of the above: a ficha with only the normal listing (no onclick
+    hint) must never spuriously report the gated-listing reason code."""
+    opener = _opener_with_real_text_bodies(rows_first=1, rows_second=0)
+    source = PortalAttachmentSource(detail_url=_DETAIL_URL, opener=opener)
+    bundle = build_tender_bundle("T-NO-HINT", source)
+    assert REASON_GATED_LISTING_UNREACHABLE not in bundle.incomplete_reason_codes
+    assert bundle.bundle_complete is True
 
 
 # --- #438 regression guards ---------------------------------------------------

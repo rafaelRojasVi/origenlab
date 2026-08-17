@@ -70,6 +70,25 @@ _LISTING_HREF_RE = re.compile(
     r"""href=["']((?:\.\./)*Attachment/VerAntecedentes\.aspx\?enc=[^"'#]+)["']""",
     re.IGNORECASE,
 )
+# A ficha can additionally expose a *popup* attachment surface (observed as
+# ``input[name="imgAdjuntos"]``) whose onclick opens ``ViewAttachment.aspx``
+# instead of linking to ``VerAntecedentes.aspx``. That intermediary page loads
+# a browser-executed CAPTCHA challenge before it will redirect to the real
+# listing, so a plain HTTP client can never legitimately follow it. This is a
+# deliberately separate pattern from ``_LISTING_HREF_RE`` above: it is a
+# presence-only "a listing exists that we cannot follow" signal, never a
+# listing to parse, and this module never fetches, follows, or otherwise
+# interacts with ``ViewAttachment.aspx`` -- it only notices the onclick hint
+# on the detail page's own markup.
+#
+# The portal HTML-encodes the JS string quotes inside the attribute value
+# (``&#39;`` / ``&#039;``), so the pattern accepts an HTML-entity quote in
+# addition to a literal one.
+_GATED_ATTACHMENT_ONCLICK_RE = re.compile(
+    r"""onclick=["'][^"']*\bopen\(\s*(?:'|&\#0*39;|&apos;)?\s*"""
+    r"""(?:\.\./)*Attachment/ViewAttachment\.aspx\?enc=""",
+    re.IGNORECASE,
+)
 _HIDDEN_INPUT_RE = re.compile(r"""<input\b[^>]*type=["']hidden["'][^>]*>""", re.IGNORECASE)
 _INPUT_NAME_RE = re.compile(r"""\bname=["']([^"']+)["']""", re.IGNORECASE)
 _INPUT_VALUE_RE = re.compile(r"""\bvalue=["']([^"']*)["']""", re.IGNORECASE)
@@ -782,6 +801,20 @@ def extract_attachment_listing_urls(page_html: str, *, base_url: str = PORTAL_BA
     return urls
 
 
+def has_gated_attachment_listing_hint(page_html: str) -> bool:
+    """True when the ficha's own markup advertises a CAPTCHA-gated popup listing.
+
+    This only inspects the already-fetched detail-page markup for the
+    ``imgAdjuntos``-style ``open('...ViewAttachment.aspx?enc=...')`` onclick
+    shape; it never fetches, follows a redirect to, or otherwise interacts
+    with ``ViewAttachment.aspx``. Detecting the presence of this hint is the
+    entire scope of "handling" the gated listing -- callers use it only to
+    record that a second, unreachable attachment surface exists, never to
+    infer how many (or which) attachments it contains.
+    """
+    return _GATED_ATTACHMENT_ONCLICK_RE.search(page_html or "") is not None
+
+
 def parse_attachment_listing(listing_html: str, *, listing_url: str) -> list[PortalAttachment]:
     """Parse the anexo rows (name, tipo, postback control) off a listing page."""
     rows: list[PortalAttachment] = []
@@ -1089,6 +1122,11 @@ class PortalAttachmentInventory:
     attachments: tuple[PortalAttachment, ...]
     listing_form_fields: dict[str, dict[str, str]]
     session: PortalOpenFn | None = field(default=None, repr=False, compare=False)
+    # True when the ficha's own markup also advertised a CAPTCHA-gated popup
+    # listing (see `has_gated_attachment_listing_hint`) distinct from the
+    # `listing_urls` enumerated above. This never implies anything about how
+    # many attachments (if any) sit behind that surface.
+    gated_listing_hint: bool = False
 
     @property
     def attachments_discovered(self) -> int:
@@ -1121,7 +1159,9 @@ def list_licitacion_attachments(
         max_bytes=html_max_bytes,
         url_kind="detail",
     )
-    listing_urls = tuple(extract_attachment_listing_urls(_decode_portal_html(detail_raw)))
+    detail_html = _decode_portal_html(detail_raw)
+    listing_urls = tuple(extract_attachment_listing_urls(detail_html))
+    gated_listing_hint = has_gated_attachment_listing_hint(detail_html)
 
     attachments: list[PortalAttachment] = []
     form_fields: dict[str, dict[str, str]] = {}
@@ -1145,6 +1185,7 @@ def list_licitacion_attachments(
         attachments=tuple(attachments),
         listing_form_fields=form_fields,
         session=session,
+        gated_listing_hint=gated_listing_hint,
     )
 
 

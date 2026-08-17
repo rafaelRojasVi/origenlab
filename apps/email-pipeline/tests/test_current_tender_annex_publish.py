@@ -7,6 +7,9 @@ from pathlib import Path
 import pytest
 
 from origenlab_email_pipeline.chilecompra_anexo_evidence import LocalAttachmentSource
+from origenlab_email_pipeline.chilecompra_anexo_evidence.constants import (
+    REASON_GATED_LISTING_UNREACHABLE,
+)
 from origenlab_email_pipeline.commercial_procurement_anexo_tender_terms import (
     production_publish as publication,
 )
@@ -238,6 +241,7 @@ def test_portal_attachment_source_redownloads_every_run_even_with_identical_meta
         listing_urls = ["https://www.mercadopublico.cl/listing"]
         session = None
         listing_form_fields = {"https://www.mercadopublico.cl/listing": {}}
+        gated_listing_hint = False
 
         def listing_ordinal_of(self, attachment):
             return 0
@@ -525,6 +529,77 @@ def test_incomplete_attachment_download_stays_incomplete_not_silently_empty(
     assert outcome.bundle_complete is False
     assert result.publish is not None
     assert result.publish.result == "applied"
+
+
+def test_gated_listing_tender_publishes_honest_incomplete_coverage_without_sinking_others(
+    out_dir: Path, cache_dir: Path,
+) -> None:
+    """Fixture D: mirrors the real 4291-46-LE26 regression end to end. The
+    gated tender's one genuinely-reachable attachment is still read and
+    published, but its coverage must not claim completeness -- and a
+    completely unrelated, normally-complete tender in the same run must be
+    fully unaffected (per-tender/per-bundle signal, never a global mode)."""
+
+    def build_source_fn(tender_code: str, detail_url: str):
+        if tender_code == "4291-46-LE26":
+            # What PortalAttachmentSource would have produced for the real
+            # Antofagasta ficha: one reachable, genuinely-read DOCX, plus the
+            # source-level signal that a second, CAPTCHA-gated listing exists
+            # and could not be enumerated.
+            return LocalAttachmentSource(
+                items=[
+                    (
+                        "FORMULARIO_OBLIGATORIO_1234.docx",
+                        "text/plain",
+                        b"contenido real del formulario",
+                    )
+                ],
+                incomplete_reason_codes=(REASON_GATED_LISTING_UNREACHABLE,),
+            )
+        return LocalAttachmentSource(
+            items=[("bases.txt", "text/plain", b"contenido normal completo")]
+        )
+
+    result = acquire_and_publish_current_tender_terms(
+        current_opportunity_queue=[
+            _queue_row("4291-46-LE26"),
+            _queue_row("T-NORMAL"),
+        ],
+        tender_code_to_detail_url={
+            "4291-46-LE26": "https://www.mercadopublico.cl/gated",
+            "T-NORMAL": "https://www.mercadopublico.cl/normal",
+        },
+        out_dir=out_dir,
+        cache_dir=cache_dir,
+        as_of_utc="2026-08-15T00:00:00Z",
+        build_source_fn=build_source_fn,
+        require_git_ignored=False,
+    )
+
+    outcomes = {a.tender_code: a for a in result.acquisitions}
+    gated = outcomes["4291-46-LE26"]
+    normal = outcomes["T-NORMAL"]
+
+    # The one HTTP-reachable attachment was genuinely acquired -- never
+    # invented, never silently dropped.
+    assert gated.status == "acquired"
+    assert gated.attachments_discovered == 1
+    assert gated.attachments_downloaded == 1
+    assert REASON_GATED_LISTING_UNREACHABLE in gated.incomplete_reason_codes
+    assert gated.bundle_complete is False
+
+    # The unrelated tender is completely unaffected by the gated one.
+    assert normal.status == "acquired"
+    assert normal.incomplete_reason_codes == ()
+    assert normal.bundle_complete is True
+
+    assert result.publish is not None
+    assert result.publish.result == "applied"
+    assert result.publish.tender_count == 2
+    # Exactly one tender's published coverage is honestly incomplete; the
+    # other tender's publication is not degraded by it.
+    assert result.publish.complete_coverage_count == 1
+    assert result.publish.incomplete_coverage_count == 1
 
 
 def test_one_failed_tender_does_not_corrupt_publish_for_others(out_dir: Path, cache_dir: Path) -> None:
