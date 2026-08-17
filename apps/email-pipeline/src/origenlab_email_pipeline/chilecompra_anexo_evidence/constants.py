@@ -42,6 +42,12 @@ COMPLETE_OUTCOMES: Final = frozenset({OUTCOME_EXTRACTION_SUCCESS, OUTCOME_EXTRAC
 REASON_ATTACHMENT_COUNT_BUDGET_EXCEEDED: Final = "attachment_count_budget_exceeded"
 REASON_TOTAL_BYTES_BUDGET_EXCEEDED: Final = "total_bytes_budget_exceeded"
 REASON_EMBEDDED_CONTENT_UNPROCESSED: Final = "embedded_content_unprocessed"
+# A ficha advertised a second annex-listing surface (e.g. a popup gated by a
+# browser-executed challenge) that this HTTP-only acquisition path cannot
+# enumerate. This never implies zero attachments exist behind it, and it is
+# deliberately portal/mechanism-neutral in naming -- it means "we know there is
+# more, we don't know how much", not "download failed" or "budget exceeded".
+REASON_GATED_LISTING_UNREACHABLE: Final = "gated_listing_unreachable"
 REASON_ARCHIVE_DEPTH_LIMIT: Final = "archive_depth_limit"
 REASON_ARCHIVE_MEMBER_LIMIT: Final = "archive_member_limit"
 REASON_ARCHIVE_BYTES_LIMIT: Final = "archive_bytes_limit"

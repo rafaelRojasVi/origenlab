@@ -47,6 +47,7 @@ from origenlab_email_pipeline.chilecompra_anexo_evidence.constants import (
     OUTCOME_PARTIAL_DUE_TO_SAFETY_LIMIT,
     OUTCOME_UNSUPPORTED_FORMAT,
     REASON_ATTACHMENT_COUNT_BUDGET_EXCEEDED,
+    REASON_GATED_LISTING_UNREACHABLE,
     REASON_TOTAL_BYTES_BUDGET_EXCEEDED,
     ROLE_ADMINISTRATIVE_BASIS,
     ROLE_ECONOMIC_FORM,
@@ -95,10 +96,18 @@ _BUDGET_REASON_CODES = frozenset(
         REASON_TOTAL_BYTES_BUDGET_EXCEEDED,
     }
 )
+# Source-level incompleteness that is not derived from any one attachment's
+# outcome (see chilecompra_anexo_evidence.acquire.SourceInventory).
+_SOURCE_LEVEL_REASON_CODES = frozenset(
+    {
+        REASON_GATED_LISTING_UNREACHABLE,
+    }
+)
 _ALLOWED_INCOMPLETE_REASON_CODES = frozenset(
     {
         *_NONCOMPLETE_OUTCOMES,
         *_BUDGET_REASON_CODES,
+        *_SOURCE_LEVEL_REASON_CODES,
         *(f"archive_member_{outcome}" for outcome in _NONCOMPLETE_OUTCOMES),
     }
 )

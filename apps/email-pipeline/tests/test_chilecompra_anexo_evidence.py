@@ -61,6 +61,7 @@ from origenlab_email_pipeline.chilecompra_anexo_evidence.constants import (  # n
     OUTCOME_PARTIAL_DUE_TO_SAFETY_LIMIT,
     OUTCOME_UNSUPPORTED_FORMAT,
     REASON_ATTACHMENT_COUNT_BUDGET_EXCEEDED,
+    REASON_GATED_LISTING_UNREACHABLE,
 )
 from origenlab_email_pipeline.chilecompra_anexo_evidence.redaction import (  # noqa: E402
     ArtifactRedactionError,
@@ -196,6 +197,47 @@ def test_count_budget_failure_is_explicit_and_reports_discovered_count() -> None
     assert REASON_ATTACHMENT_COUNT_BUDGET_EXCEEDED in bundle.incomplete_reason_codes
     assert bundle.bundle_complete is False
     assert "80" in (bundle.attachments[0].error_message or "")
+
+
+def test_source_level_incompleteness_survives_into_the_bundle_alongside_a_real_read() -> None:
+    """Fixture C: SourceInventory-level incompleteness (e.g. PortalAttachmentSource
+    reporting a gated listing it could not enumerate, per chilecompra_api's
+    has_gated_attachment_listing_hint) is not tied to any one attachment
+    outcome, yet must still make it into TenderAttachmentBundle unchanged --
+    the one row that WAS read is not penalized, but the bundle as a whole
+    cannot claim complete coverage."""
+    bundle = _bundle(
+        [("FORMULARIO_OBLIGATORIO_1234.docx", "text/plain", b"contenido real leido")],
+        incomplete_reason_codes=(REASON_GATED_LISTING_UNREACHABLE,),
+    )
+    assert bundle.attachments_discovered == 1
+    assert bundle.attachments_downloaded == 1
+    assert bundle.attachments[0].outcome == OUTCOME_EXTRACTION_SUCCESS
+    assert REASON_GATED_LISTING_UNREACHABLE in bundle.incomplete_reason_codes
+    assert bundle.download_complete is True
+    assert bundle.extraction_complete is False
+    assert bundle.bundle_complete is False
+
+
+def test_semantic_digest_changes_when_source_level_incompleteness_changes() -> None:
+    """The digest must not silently equate a fully-covered bundle with one
+    that has identical attachments/chunks but an undiscovered gated listing
+    -- two consumers diffing digests across a re-crawl need to see this
+    surface appear, not a false "nothing changed"."""
+    items = [("FORMULARIO_OBLIGATORIO_1234.docx", "text/plain", b"contenido real leido")]
+    complete = _bundle(items)
+    gated = _bundle(items, incomplete_reason_codes=(REASON_GATED_LISTING_UNREACHABLE,))
+    assert complete.bundle_complete is True
+    assert gated.bundle_complete is False
+    # Same attachments and chunk content either way.
+    assert [a.sha256 for a in complete.attachments] == [a.sha256 for a in gated.attachments]
+    assert [c.text_sha256 for c in complete.chunks] == [c.text_sha256 for c in gated.chunks]
+    assert complete.semantic_digest != gated.semantic_digest
+
+
+def test_source_inventory_defaults_to_no_incomplete_reason_codes() -> None:
+    inventory = SourceInventory(listing_page_count=1, stubs=())
+    assert inventory.incomplete_reason_codes == ()
 
 
 def test_portal_source_preflights_count_before_downloading(monkeypatch) -> None:

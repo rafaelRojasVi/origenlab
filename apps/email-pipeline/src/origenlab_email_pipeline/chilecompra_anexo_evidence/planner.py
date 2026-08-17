@@ -324,7 +324,11 @@ def build_tender_bundle(
     stubs = list(inventory.stubs)
     records: list[AttachmentRecord] = []
     chunks: list[EvidenceChunk] = []
-    incomplete: list[str] = []
+    # Source-level incompleteness (e.g. a gated listing the source could not
+    # enumerate) is known before any body is fetched; every row the source
+    # *did* enumerate is still processed normally below -- this never skips
+    # or truncates the discovered rows, it only records that more may exist.
+    incomplete: list[str] = list(inventory.incomplete_reason_codes)
     bytes_downloaded = 0
     downloaded = 0
 

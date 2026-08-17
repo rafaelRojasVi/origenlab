@@ -35,11 +35,13 @@ from origenlab_email_pipeline.chilecompra_api import (
     fetch_licitacion_attachments,
     fetch_licitacion_by_codigo,
     fetch_licitaciones,
+    has_gated_attachment_listing_hint,
     is_active_chilecompra_licitacion,
     is_portal_detail_url,
     is_portal_listing_url,
     is_portal_url,
     is_safe_public_attachment_url,
+    list_licitacion_attachments,
     new_portal_opener,
     normalize_licitacion_detail_items,
     normalize_licitacion_summary,
@@ -503,6 +505,48 @@ _LISTING_HTML = """
 """
 _PDF_BYTES = b"%PDF-1.7\nfake attachment body\n%%EOF"
 
+# --- Real-regression-shaped fixtures: a ficha can advertise a normal
+# VerAntecedentes.aspx href listing *and* a separate, CAPTCHA-gated popup
+# listing (the ``imgAdjuntos`` onclick below), independently of one another.
+# This mirrors sanitized markup captured from a real ficha (tender
+# 4291-46-LE26): the popup's ``open(...)`` call quotes its JS string
+# arguments with HTML entities (``&#39;``), not literal apostrophes.
+_GATED_ATTACHMENT_ONCLICK_SNIPPET = (
+    '<input type="image" name="imgAdjuntos" id="imgAdjuntos" '
+    'src="../../Includes/images/FichaLight/iconos_licitacion/ic-21.png" '
+    "onclick=\"open(&#39;../Attachment/ViewAttachment.aspx?enc=GATEDTOKEN123&#39;,"
+    "&#39;MercadoPublico&#39;, &#39;width=850, height=700, status=yes, "
+    "scrollbars=yes, left=0, top=0, resizable=yes&#39;);"
+    'window.event.returnValue=false;" border="0" style="width: 43; height: 60;" />'
+)
+
+_GATED_DETAIL_HTML = f"""
+<html><body>
+  <a href="../Attachment/VerAntecedentes.aspx?enc=AAA%2fBBB">Ver anexos</a>
+  {_GATED_ATTACHMENT_ONCLICK_SNIPPET}
+</body></html>
+"""
+
+_GATED_LISTING_HTML = """
+<html><body><form>
+<input type="hidden" name="__VIEWSTATE" value="/wEPDwUxMjM=" />
+<input type="hidden" name="__EVENTVALIDATION" value="/wEdAAQ=" />
+<table id="grdAttachment">
+  <tr class="cssFwkHeaderTableRow">
+    <th scope="col">Anexo</th><th scope="col">Tipo</th><th scope="col">Descripci&oacute;n</th>
+    <th scope="col">Fecha</th><th scope="col">Acciones</th>
+  </tr>
+  <tr class="cssFwkItemStyle ajustar">
+    <td><span id="grdAttachment_ctl02_grdLblSourceFileName">FORMULARIO_OBLIGATORIO_1234.docx</span></td>
+    <td>Anexos Administrativos de Adquisici&oacute;n</td>
+    <td><span id="grdAttachment_ctl02_grdLblFileDescription">Formulario</span></td>
+    <td><span id="grdAttachment_ctl02_grdLblFileDate">02-06-2026 15:36:39</span></td>
+    <td><input type="image" name="grdAttachment$ctl02$grdIbtnView" id="grdAttachment_ctl02_grdIbtnView" /></td>
+  </tr>
+</table>
+</form></body></html>
+"""
+
 
 def _portal_response(body: bytes, *, headers: dict[str, str] | None = None, url: str | None = None):
     response = MagicMock()
@@ -580,6 +624,64 @@ def test_sanitize_portal_url_for_error_redacts_opaque_tokens() -> None:
 def test_extract_attachment_listing_urls_dedupes_and_drops_off_host_links() -> None:
     urls = extract_attachment_listing_urls(_DETAIL_HTML)
     assert urls == [_LISTING_URL]
+
+
+# --- Gated (CAPTCHA-popup) attachment-listing hint ---------------------------
+
+
+def test_has_gated_attachment_listing_hint_is_false_on_a_normal_ficha() -> None:
+    # Fixture A: no onclick popup hint anywhere on the page.
+    assert has_gated_attachment_listing_hint(_DETAIL_HTML) is False
+
+
+def test_has_gated_attachment_listing_hint_detects_entity_quoted_onclick() -> None:
+    # Fixture B (Antofagasta-shaped): real markup HTML-entity-encodes the JS
+    # string quotes inside the onclick handler (&#39; not a literal ').
+    assert has_gated_attachment_listing_hint(_GATED_DETAIL_HTML) is True
+
+
+def test_has_gated_attachment_listing_hint_also_detects_literal_quotes() -> None:
+    literal = (
+        '<input onclick="open(\'../Attachment/ViewAttachment.aspx?enc=abc\', '
+        "'MercadoPublico', 'width=850');\" />"
+    )
+    assert has_gated_attachment_listing_hint(literal) is True
+
+
+def test_gated_hint_and_normal_href_listing_are_independent_signals() -> None:
+    """The onclick hint must never be conflated with, or crowd out, the
+    ordinary href-based VerAntecedentes.aspx listing (requirement: normal
+    listing behavior is unaffected by the presence of the gated hint)."""
+    assert has_gated_attachment_listing_hint(_GATED_DETAIL_HTML) is True
+    urls = extract_attachment_listing_urls(_GATED_DETAIL_HTML)
+    assert urls == [_LISTING_URL]
+    # And the inverse: a ficha with only the normal listing never reports a
+    # gated hint that isn't actually there.
+    assert has_gated_attachment_listing_hint(_DETAIL_HTML) is False
+    assert extract_attachment_listing_urls(_DETAIL_HTML) == [_LISTING_URL]
+
+
+def test_list_licitacion_attachments_surfaces_gated_listing_hint() -> None:
+    """Antofagasta-shaped ficha: the one reachable DOCX row is still fully
+    enumerated, and the inventory additionally reports the gated hint."""
+
+    def opener(request, timeout=None):
+        url = request.full_url
+        if "DetailsAcquisition" in url:
+            return _portal_response(_GATED_DETAIL_HTML.encode("utf-8"), url=url)
+        return _portal_response(_GATED_LISTING_HTML.encode("utf-8"), url=url)
+
+    inventory = list_licitacion_attachments(_DETAIL_URL, opener=opener)
+    assert inventory.attachments_discovered == 1
+    assert inventory.attachments[0].nombre == "FORMULARIO_OBLIGATORIO_1234.docx"
+    assert inventory.gated_listing_hint is True
+
+
+def test_list_licitacion_attachments_no_gated_hint_on_normal_ficha() -> None:
+    opener = _fake_portal_opener()
+    inventory = list_licitacion_attachments(_DETAIL_URL, opener=opener)
+    assert inventory.attachments_discovered == 2
+    assert inventory.gated_listing_hint is False
 
 
 def test_parse_attachment_listing_reads_every_row() -> None:
