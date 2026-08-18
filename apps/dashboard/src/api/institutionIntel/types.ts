@@ -311,6 +311,20 @@ export interface TenderAnnexPreview {
   outreachAuthorization: false;
 }
 
+/**
+ * Ephemeral Mercado Público navigation destination.
+ *
+ * `url` may contain Mercado Público's opaque `enc` token. Callers must use
+ * it immediately for human navigation and must never persist it in frontend
+ * state, storage, logs, reports, or published procurement data.
+ */
+export interface TenderAttachmentNavigation {
+  tenderCode: string;
+  destinationKind: "attachments" | "tender";
+  url: string;
+  ephemeral: true;
+}
+
 // ---------------------------------------------------------------------------
 // Prospect queue rows — one flat, discriminated-union feed the "Colas W1"
 // preview screen groups/sorts client-side. Grouping/sorting is a frontend

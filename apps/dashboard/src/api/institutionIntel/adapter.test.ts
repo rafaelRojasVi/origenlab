@@ -608,3 +608,72 @@ describe("institutionIntelAdapter.getLicitacionIntel", () => {
     expect(result.itemBudget.data[0].amount).toBe(6200000);
   });
 });
+
+describe("institutionIntelAdapter.getTenderAttachmentNavigation", () => {
+  it("GETs the exact navigation route with cache:no-store and maps the ephemeral response", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({
+        tender_code: "2410-66-LP26",
+        destination_kind: "attachments",
+        url:
+          "https://www.mercadopublico.cl/Procurement/Modules/" +
+          "Attachment/ViewAttachmentLC.aspx?enc=EPHEMERAL123",
+        ephemeral: true,
+      }),
+      text: async () => "",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result =
+      await institutionIntelAdapter.getTenderAttachmentNavigation("2410-66-LP26");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      "/operator/procurement/tenders/2410-66-LP26/attachment-navigation",
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+    expect(result).toEqual({
+      tenderCode: "2410-66-LP26",
+      destinationKind: "attachments",
+      url:
+        "https://www.mercadopublico.cl/Procurement/Modules/" +
+        "Attachment/ViewAttachmentLC.aspx?enc=EPHEMERAL123",
+      ephemeral: true,
+    });
+  });
+
+  it("preserves the safe tender-page fallback returned by the backend", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => ({
+          tender_code: "2410-66-LP26",
+          destination_kind: "tender",
+          url:
+            "https://www.mercadopublico.cl/Procurement/Modules/" +
+            "RFB/DetailsAcquisition.aspx?idlicitacion=2410-66-LP26",
+          ephemeral: true,
+        }),
+        text: async () => "",
+      })),
+    );
+
+    const result =
+      await institutionIntelAdapter.getTenderAttachmentNavigation("2410-66-LP26");
+
+    expect(result.destinationKind).toBe("tender");
+    expect(result.url).toContain("DetailsAcquisition.aspx?idlicitacion=2410-66-LP26");
+    expect(result.url).not.toContain("enc=");
+  });
+});

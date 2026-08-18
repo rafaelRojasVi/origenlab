@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from origenlab_api.schemas.institution_prospects import (
     InstitutionProspectDetailResponse,
@@ -12,6 +12,9 @@ from origenlab_api.schemas.institution_prospects import (
     QueueName,
 )
 from origenlab_api.schemas.tender_annex_preview import TenderAnnexBundlePreviewResponse
+from origenlab_api.schemas.tender_attachment_navigation import (
+    TenderAttachmentNavigationResponse,
+)
 from origenlab_api.schemas.tender_terms import TenderDetailResponse
 from origenlab_api.services.institution_prospect_service import (
     build_institution_detail_response,
@@ -20,6 +23,9 @@ from origenlab_api.services.institution_prospect_service import (
     build_queue_response,
 )
 from origenlab_api.services.tender_annex_preview_service import build_tender_annex_bundle_preview
+from origenlab_api.services.tender_attachment_navigation_service import (
+    build_tender_attachment_navigation,
+)
 from origenlab_api.services.tender_terms_service import build_tender_detail_response
 from origenlab_api.settings import Settings, get_settings
 
@@ -119,6 +125,45 @@ def procurement_tender_detail(
     if not result.found_in_queue and not result.queue_meta.get("reduced_mode"):
         raise HTTPException(status_code=404, detail="tender not found in current opportunity queue")
     return result
+
+
+@router.get(
+    "/tenders/{tender_code}/attachment-navigation",
+    response_model=TenderAttachmentNavigationResponse,
+)
+def procurement_tender_attachment_navigation(
+    tender_code: str,
+    response: Response,
+    settings: Settings = Depends(get_settings),
+) -> TenderAttachmentNavigationResponse:
+    """Resolve an ephemeral Mercado Público navigation destination on demand.
+
+    The response may contain an opaque ``enc`` token because this HTTP response
+    exists solely for immediate human navigation. It is never threaded into W1,
+    T1, published artifacts, reports, or persistence.
+
+    W1 ``current_opportunity_queue`` remains the sole actionability authority.
+    """
+    outcome = build_tender_attachment_navigation(settings, tender_code)
+
+    if not outcome.w1_healthy:
+        raise HTTPException(
+            status_code=503,
+            detail="W1 current_opportunity_queue lookup is unavailable; try again shortly",
+        )
+
+    if not outcome.found_in_queue:
+        raise HTTPException(
+            status_code=404,
+            detail="tender not found in current opportunity queue",
+        )
+
+    assert outcome.response is not None
+
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+
+    return outcome.response
 
 
 @router.post(

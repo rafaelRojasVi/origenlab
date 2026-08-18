@@ -604,6 +604,113 @@ describe("handleRequest", () => {
   });
 });
 
+describe("tender attachment navigation: exact GET-only forwarding", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const NAVIGATION_PATH =
+    "/api/operator/procurement/tenders/2410-66-LP26/attachment-navigation";
+
+  function stubNavigationUpstream() {
+    const captured: { url: string; method: string }[] = [];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (req: Request) => {
+        captured.push({
+          url: req.url,
+          method: req.method,
+        });
+
+        return new Response(
+          JSON.stringify({
+            tender_code: "2410-66-LP26",
+            destination_kind: "attachments",
+            url:
+              "https://www.mercadopublico.cl/Procurement/Modules/" +
+              "Attachment/ViewAttachmentLC.aspx?enc=EPHEMERAL123",
+            ephemeral: true,
+          }),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json",
+              "Cache-Control": "no-store, private",
+              Pragma: "no-cache",
+              "X-Request-ID": "upstream-nav-1",
+            },
+          },
+        );
+      }),
+    );
+
+    return captured;
+  }
+
+  it("GET forwards to the exact upstream attachment-navigation endpoint", async () => {
+    const captured = stubNavigationUpstream();
+
+    const response = await handleRequest(
+      requestWithOrigin(`https://dashboard.origenlab.cl${NAVIGATION_PATH}`, {
+        method: "GET",
+      }),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    expect(captured).toEqual([
+      {
+        url:
+          "https://api.origenlab.cl/operator/procurement/tenders/" +
+          "2410-66-LP26/attachment-navigation",
+        method: "GET",
+      },
+    ]);
+
+    const data = (await response.json()) as {
+      destination_kind: string;
+      ephemeral: boolean;
+      url: string;
+    };
+    expect(data.destination_kind).toBe("attachments");
+    expect(data.ephemeral).toBe(true);
+    expect(data.url).toContain("ViewAttachmentLC.aspx?enc=EPHEMERAL123");
+  });
+
+  it("preserves upstream no-store and no-cache response headers", async () => {
+    stubNavigationUpstream();
+
+    const response = await handleRequest(
+      requestWithOrigin(`https://dashboard.origenlab.cl${NAVIGATION_PATH}`, {
+        method: "GET",
+      }),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store, private");
+    expect(response.headers.get("Pragma")).toBe("no-cache");
+    expect(response.headers.get("X-Request-ID")).toBe("upstream-nav-1");
+  });
+
+  it("POST to attachment-navigation remains 405 and never reaches upstream", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await handleRequest(
+      requestWithOrigin(`https://dashboard.origenlab.cl${NAVIGATION_PATH}`, {
+        method: "POST",
+      }),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(405);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+
 describe("annex-bundle preview upload: exact method+path authorization", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
