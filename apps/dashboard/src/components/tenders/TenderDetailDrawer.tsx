@@ -35,6 +35,7 @@ type DrawerPhase = "loading" | "error" | "not-found" | "ready";
 export function TenderDetailDrawer({ tenderCode }: { tenderCode: string | null }) {
   const [intel, setIntel] = useState<LicitacionIntel | null>(null);
   const [phase, setPhase] = useState<DrawerPhase>("loading");
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     if (!tenderCode) {
@@ -62,7 +63,7 @@ export function TenderDetailDrawer({ tenderCode }: { tenderCode: string | null }
     return () => {
       cancelled = true;
     };
-  }, [tenderCode]);
+  }, [tenderCode, refreshKey]);
 
   if (!tenderCode) {
     return (
@@ -131,7 +132,7 @@ export function TenderDetailDrawer({ tenderCode }: { tenderCode: string | null }
       data-testid="tender-detail-drawer"
     >
       <div className="border-b border-[var(--color-border)] px-5 py-4">
-        <p className="text-[11px] font-bold uppercase tracking-wide text-brand-700">Licitación · solo lectura</p>
+        <p className="text-[11px] font-bold uppercase tracking-wide text-brand-700">Licitación · lectura + documentos</p>
         <h2 className="mt-1 text-lg font-bold tracking-tight text-slate-900">{intel.buyerDisplayName || "—"}</h2>
         <p className="font-mono text-xs text-[var(--color-muted)]">{tenderCode}</p>
         <div className="mt-2.5 flex flex-wrap items-center gap-2">
@@ -142,7 +143,13 @@ export function TenderDetailDrawer({ tenderCode }: { tenderCode: string | null }
         <LicitacionIntelBody intel={intel} />
       </div>
       <div className="border-t border-[var(--color-border)] px-5 py-4">
-        <TenderAnnexUploadPanel tenderCode={tenderCode} />
+        <TenderAnnexUploadPanel
+          tenderCode={tenderCode}
+          persistedOperatorImport={
+            intel.t1SourceKind === "operator_annex_import"
+          }
+          onPersisted={() => setRefreshKey((value) => value + 1)}
+        />
       </div>
     </div>
   );

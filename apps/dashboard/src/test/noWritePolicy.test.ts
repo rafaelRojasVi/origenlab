@@ -30,35 +30,63 @@ describe("dashboard read-only policy", () => {
     expect(entries.length).toBeGreaterThan(5);
   });
 
-  // The dashboard is otherwise strictly read-only. This is the ONE sanctioned
-  // exception: the annex-bundle upload PREVIEW
-  // (`POST .../tenders/{tender_code}/annex-bundle/preview` in
-  // institutionIntel/adapter.ts's `previewTenderAnnexBundle`). It triggers
-  // server-side compute (bounded ZIP validation + T1 extraction) but never
-  // writes SQLite/Postgres/Gmail and never persists or publishes anything --
-  // see TenderAnnexPreview's own safety flags (`published`/`persisted`
-  // always false) and apps/api's tender_annex_preview_service.py. Any other
-  // mutating-method usage anywhere else in dashboard src remains forbidden,
-  // and even this file must contain exactly the one reviewed occurrence --
-  // a second one appearing here fails loudly rather than being silently
-  // grandfathered in.
+  // The dashboard is otherwise strictly read-only. Exactly TWO narrowly
+  // reviewed mutations are sanctioned, both in institutionIntel/adapter.ts:
+  //
+  // 1. annex-bundle PREVIEW -- bounded ZIP validation/extraction only;
+  //    never persisted or published.
+  // 2. annex-bundle IMPORT -- the explicit operator action that persists
+  //    validated structured tender evidence only.
+  //
+  // Neither route authorizes SQLite/Postgres commercial writes, Gmail,
+  // contact changes, or outreach. Every other POST/PUT/PATCH/DELETE remains
+  // forbidden. The policy checks the exact route literals as well as the
+  // exact method inventory so increasing the count cannot silently
+  // grandfather in an unrelated mutation.
   const SANCTIONED_MUTATION_FILE = "../api/institutionIntel/adapter.ts";
-  const SANCTIONED_MUTATION_COUNT = 1;
+  const SANCTIONED_MUTATION_ROUTES = [
+    "`/operator/procurement/tenders/${encodeURIComponent(tenderCode)}/annex-bundle/preview`",
+    "`/operator/procurement/tenders/${encodeURIComponent(tenderCode)}/annex-bundle/import`",
+  ] as const;
 
-  it("does not use mutating HTTP methods in source, except the one sanctioned annex-bundle preview call", () => {
+  it("allows only the two explicit annex-bundle POST mutations", () => {
     const hits: string[] = [];
+
     for (const [path, text] of entries) {
       const isSanctioned = path === SANCTIONED_MUTATION_FILE;
+
       if (!isSanctioned && (MUTATION_METHOD.test(text) || FORBIDDEN_FETCH.test(text))) {
         hits.push(path);
+        continue;
       }
-      if (isSanctioned) {
-        const count = (text.match(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi) ?? []).length;
-        if (count !== SANCTIONED_MUTATION_COUNT) {
-          hits.push(`${path} (expected exactly ${SANCTIONED_MUTATION_COUNT} sanctioned mutation, found ${count})`);
+
+      if (!isSanctioned) {
+        continue;
+      }
+
+      const methods = [
+        ...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi),
+      ].map((match) => match[1].toUpperCase());
+
+      if (
+        methods.length !== SANCTIONED_MUTATION_ROUTES.length ||
+        methods.some((method) => method !== "POST")
+      ) {
+        hits.push(
+          `${path} (expected exactly ${SANCTIONED_MUTATION_ROUTES.length} POST mutations, found ${methods.join(", ") || "none"})`,
+        );
+      }
+
+      for (const route of SANCTIONED_MUTATION_ROUTES) {
+        const occurrences = text.split(route).length - 1;
+        if (occurrences !== 1) {
+          hits.push(
+            `${path} (expected sanctioned route exactly once: ${route}; found ${occurrences})`,
+          );
         }
       }
     }
+
     expect(hits).toEqual([]);
   });
 

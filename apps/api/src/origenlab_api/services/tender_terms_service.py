@@ -10,6 +10,9 @@ from __future__ import annotations
 
 from origenlab_api.path_redaction import redact_mapping_path_fields
 from origenlab_api.repositories.institution_prospects import list_queue_rows
+from origenlab_api.repositories.operator_tender_imports import (
+    load_operator_tender_import,
+)
 from origenlab_api.repositories.tender_terms import get_tender_terms
 from origenlab_api.schemas.institution_prospects import InstitutionProspectMeta
 from origenlab_api.schemas.tender_terms import (
@@ -34,7 +37,9 @@ def _redacted_t1_meta(meta: TenderTermsMeta) -> TenderTermsMeta:
     return TenderTermsMeta.model_validate(redact_mapping_path_fields(meta.model_dump()))
 
 
-def build_tender_detail_response(settings: Settings, tender_code: str) -> TenderDetailResponse:
+def build_tender_detail_response(
+    settings: Settings, tender_code: str
+) -> TenderDetailResponse:
     w1_dir = settings.resolved_institution_prospect_dir()
     rows, w1_meta, _total = list_queue_rows(
         w1_dir,
@@ -57,22 +62,40 @@ def build_tender_detail_response(settings: Settings, tender_code: str) -> Tender
     w1_established_actionable = found_in_queue
 
     queue_row = rows[0] if rows else None
-    queue_rows = [TenderQueueRow.from_row(row) for row in rows] if w1_established_actionable else []
+    queue_rows = (
+        [TenderQueueRow.from_row(row) for row in rows]
+        if w1_established_actionable
+        else []
+    )
 
     if w1_established_actionable:
-        t1_dir = settings.resolved_tender_terms_dir()
-        t1_bundle, t1_meta = get_tender_terms(t1_dir, tender_code)
+        # Explicit operator imports are a per-tender overlay and take priority.
+        # Missing overlay -> canonical T1 fallback. Existing-but-malformed
+        # overlay -> fail closed; do not silently hide corruption by falling
+        # through to an older canonical T1 row.
+        operator_bundle, operator_meta = load_operator_tender_import(
+            settings.resolved_operator_tender_import_dir(),
+            tender_code,
+        )
+        if operator_meta is not None:
+            t1_bundle, t1_meta = operator_bundle, operator_meta
+        else:
+            t1_dir = settings.resolved_tender_terms_dir()
+            t1_bundle, t1_meta = get_tender_terms(t1_dir, tender_code)
     else:
         # W1 has not established this tender as actionable (either genuinely
         # absent from a healthy queue, or W1 itself is degraded). T1 facts
         # are never surfaced in either case.
-        t1_bundle, t1_meta = None, TenderTermsMeta(
-            canonical_reason="w1_actionability_not_established",
-            reduced_mode=not w1_healthy,
-            note=(
-                "W1 current_opportunity_queue lookup unhealthy; T1 detail withheld."
-                if not w1_healthy
-                else "Tender not present in W1 current_opportunity_queue; T1 detail withheld."
+        t1_bundle, t1_meta = (
+            None,
+            TenderTermsMeta(
+                canonical_reason="w1_actionability_not_established",
+                reduced_mode=not w1_healthy,
+                note=(
+                    "W1 current_opportunity_queue lookup unhealthy; T1 detail withheld."
+                    if not w1_healthy
+                    else "Tender not present in W1 current_opportunity_queue; T1 detail withheld."
+                ),
             ),
         )
 

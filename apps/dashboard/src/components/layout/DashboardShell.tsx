@@ -73,7 +73,9 @@ export function DashboardShell({
                 className="inline-flex items-center rounded-full px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 ring-1 ring-slate-200"
                 data-testid="read-only-chip"
               >
-                Solo lectura
+                {section === "tenders"
+                  ? "Lectura + documentos"
+                  : "Solo lectura"}
               </span>
               {verdict ? (
                 <span
@@ -103,7 +105,11 @@ export function DashboardShell({
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[var(--color-border)]/70 px-4 py-1.5 text-[11px] text-[var(--color-muted)] sm:px-6">
             <span>Centro de comando operador</span>
             <span aria-hidden>·</span>
-            <span>No envía correos ni modifica datos</span>
+            <span>
+              {section === "tenders"
+                ? "No envía correos ni modifica datos comerciales"
+                : "No envía correos ni modifica datos"}
+            </span>
             <span className="hidden sm:inline" aria-hidden>
               ·
             </span>
@@ -118,7 +124,10 @@ export function DashboardShell({
 
         <main className="flex-1 px-4 py-5 sm:px-6 lg:px-8">
           <div key={section} className="mx-auto w-full max-w-[1600px] space-y-5 animate-fade-in-up">
-            <ReadOnlyBanner mirrorBackend={Boolean(mirrorBackend)} />
+            <ReadOnlyBanner
+              mirrorBackend={Boolean(mirrorBackend)}
+              documentImportEnabled={section === "tenders"}
+            />
             {devConfigWarning ? <DevLegacyPortWarning message={devConfigWarning} /> : null}
             {children}
           </div>
