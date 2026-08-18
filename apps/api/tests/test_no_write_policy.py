@@ -23,17 +23,30 @@ _FORBIDDEN_SUBSTRINGS = (
 )
 
 
-def test_app_exposes_get_only_routes() -> None:
-    app = create_app()
-    unsafe: list[str] = []
-    for route in app.routes:
-        methods = getattr(route, "methods", None)
-        if not methods:
-            continue
-        mutating = methods - {"GET", "HEAD", "OPTIONS"}
-        if mutating:
-            unsafe.append(f"{route.path} {sorted(mutating)}")
-    assert unsafe == [], f"mutating routes found: {unsafe}"
+def test_app_exposes_only_sanctioned_mutating_routes() -> None:
+    schema = create_app().openapi()
+
+    expected = {
+        (
+            "/operator/procurement/tenders/{tender_code}/annex-bundle/preview",
+            "post",
+        ),
+        (
+            "/operator/procurement/tenders/{tender_code}/annex-bundle/import",
+            "post",
+        ),
+    }
+
+    mutating_methods = {"post", "put", "patch", "delete"}
+    actual: set[tuple[str, str]] = set()
+
+    for path, operations in schema["paths"].items():
+        for method in operations:
+            normalized = method.lower()
+            if normalized in mutating_methods:
+                actual.add((path, normalized))
+
+    assert actual == expected
 
 
 def test_origenlab_api_source_has_no_mutation_script_imports() -> None:
@@ -46,12 +59,17 @@ def test_origenlab_api_source_has_no_mutation_script_imports() -> None:
     assert hits == [], "forbidden references in apps/api:\n" + "\n".join(hits)
 
 
-def test_openapi_documents_read_only_app() -> None:
+def test_openapi_documents_narrow_operator_mutation_boundary() -> None:
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
     client = TestClient(create_app())
     r = client.get("/openapi.json")
     assert r.status_code == 200
-    info = r.json()["info"]
-    assert "read-only" in info["description"].lower()
+
+    description = r.json()["info"]["description"].lower()
+
+    assert "file-backed operator document import" in description
+    assert "does not send email" in description
+    assert "write sqlite/postgres" in description
+    assert "commercial/contact/outreach mutations remain outside this api" in description
