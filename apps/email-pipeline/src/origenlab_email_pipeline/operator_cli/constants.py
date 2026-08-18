@@ -52,6 +52,8 @@ NDR_SAFE_AUTO_APPLY_COMMAND = "ndr-safe-auto-apply"
 NDR_SAFE_AUTO_APPLY_USAGE = "uv run origenlab ndr-safe-auto-apply"
 REFRESH_DASHBOARD_COMMAND = "refresh-dashboard"
 REFRESH_DASHBOARD_USAGE = "uv run origenlab refresh-dashboard"
+IMPORT_TENDER_ANNEX_BUNDLE_COMMAND = "import-tender-annex-bundle"
+IMPORT_TENDER_ANNEX_BUNDLE_USAGE = "uv run origenlab import-tender-annex-bundle"
 SPECIAL_COMMANDS: frozenset[str] = GMAIL_INGEST_COMMANDS | frozenset(
     {
         MIRROR_DASHBOARD_COMMAND,
@@ -62,6 +64,7 @@ SPECIAL_COMMANDS: frozenset[str] = GMAIL_INGEST_COMMANDS | frozenset(
         AUTO_REFRESH_CHILECOMPRA_EQUIPMENT_COMMAND,
         OPERATOR_AUTOMATION_STATUS_COMMAND,
         NDR_SAFE_AUTO_APPLY_COMMAND,
+        IMPORT_TENDER_ANNEX_BUNDLE_COMMAND,
     }
 )
 
@@ -144,5 +147,10 @@ SUBCOMMAND_HELP: dict[str, str] = {
     "ndr-safe-auto-apply": (
         "Dry-run or guarded Batch A NDR apply from ndr_review_queue artifacts "
         "(--batch A --dry-run | --apply --operator NAME --confirm-reviewed)"
+    ),
+    "import-tender-annex-bundle": (
+        "Import an operator-supplied complete attachment ZIP already on local disk "
+        "(--tender-code CODE --zip PATH [--declare-complete]); no network I/O, no "
+        "browser automation; reports only, does not publish"
     ),
 }

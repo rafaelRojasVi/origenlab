@@ -37,6 +37,8 @@ uv run origenlab refresh-dashboard --apply --no-mirror
 uv run origenlab refresh-dashboard --apply --mirror-dry-run
 uv run origenlab daily-core
 uv run origenlab daily-core --apply
+uv run origenlab import-tender-annex-bundle --tender-code 2410-66-LP26 --zip /path/to/file.zip
+uv run origenlab import-tender-annex-bundle --tender-code 2410-66-LP26 --zip /path/to/file.zip --declare-complete
 ```
 
 **`daily-core`** is the daily operating alias: plan-only by default; **`daily-core --apply`** runs missing-only feature refresh + feature-backed mart rebuild (never includes mirror). **`refresh-dashboard --apply --no-mirror`** still uses the legacy mart scan. See [`pipeline/DAILY_CORE.md`](pipeline/DAILY_CORE.md).
@@ -78,8 +80,12 @@ Module fallback: `uv run python -m origenlab_email_pipeline.cli <subcommand>`. P
 | `operator-automation-status` | read-only automation health (manifest + mail + mirror + user crontab) | No |
 | `operator-automation-status --json` | same as structured JSON | No |
 | `operator-automation-status --skip-cron-inspection` | skip `crontab -l` read | No |
+| `import-tender-annex-bundle --tender-code CODE --zip PATH` | validate + preview an operator-downloaded ChileCompra annex ZIP already on local disk | No (in-memory only; never publishes) |
+| `import-tender-annex-bundle --tender-code CODE --zip PATH --declare-complete` | same, with explicit operator completeness assertion | No |
 
 **`ndr-safe-auto-apply` notes:** Batch **A** only (`bounce_no_such_user`, exact email — **no** domain suppression). Dry-run previews allowlist from latest `ndr_review_queue_*` and appends audit JSONL. **`--apply`** requires **`--operator`** and **`--confirm-reviewed`**; runs targeted `flag_ndr_bounces_from_contacto.py`, then `refresh-safety`, then rebuilds `ndr-review`. Batches **B/C/D/E** are refused for apply. Not cron-scheduled. Design: [`design/NDR_SAFE_AUTO_APPLY_PLAN.md`](design/NDR_SAFE_AUTO_APPLY_PLAN.md).
+
+**`import-tender-annex-bundle` notes:** the operator must already have downloaded the ZIP themselves, through their own browser, from Mercado Público's own UI — this command performs **zero network I/O** and never touches the CAPTCHA-gated `ViewAttachment.aspx` route. **`--declare-complete`** is a bare, explicit operator assertion that the ZIP is the tender's complete attachment inventory; it is never inferred from file count or filenames. Without it, completeness stays `unknown`/`incomplete` regardless of how many files the ZIP contains, and both fail closed identically downstream. Reports only — never publishes; run the existing tender-terms publish workflow separately.
 
 Cron wrappers (tracked): `scripts/operator/run_auto_refresh_mail.sh`, `scripts/operator/run_auto_mirror_dashboard.sh` — see [`pipeline/OPERATOR_CRON.md`](pipeline/OPERATOR_CRON.md).
 

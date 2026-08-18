@@ -11,6 +11,7 @@ from origenlab_email_pipeline.operator_cli.constants import (
     AUTO_REFRESH_CHILECOMPRA_EQUIPMENT_COMMAND,
     AUTO_REFRESH_MAIL_COMMAND,
     CLI_COMMAND_NAMES,
+    IMPORT_TENDER_ANNEX_BUNDLE_COMMAND,
     NDR_SAFE_AUTO_APPLY_COMMAND,
     OPERATOR_AUTOMATION_STATUS_COMMAND,
     DAILY_CORE_COMMAND,
@@ -51,6 +52,11 @@ from origenlab_email_pipeline.operator_cli.gmail import (
     print_gmail_ingest_folders_help,
     print_gmail_ingest_help_help,
     validate_gmail_ingest_passthrough,
+)
+from origenlab_email_pipeline.operator_cli.import_tender_annex_bundle import (
+    parse_import_tender_annex_bundle_args,
+    print_import_tender_annex_bundle_help,
+    run_import_tender_annex_bundle,
 )
 from origenlab_email_pipeline.operator_cli.mirror import (
     parse_mirror_dashboard_wrapper_args,
@@ -111,7 +117,9 @@ def _build_parser() -> argparse.ArgumentParser:
             "auto-mirror-dashboard: debounced Postgres publish (--once; separate from mail watcher). "
             "auto-refresh-chilecompra-equipment: ChileCompra API equipment queue refresh (--once --apply). "
             "operator-automation-status: read-only automation health (--json optional). "
-            "ndr-safe-auto-apply: Batch A dry-run plan from ndr_review_queue (--apply not enabled)."
+            "ndr-safe-auto-apply: Batch A dry-run plan from ndr_review_queue (--apply not enabled). "
+            "import-tender-annex-bundle: import an operator-supplied complete attachment ZIP "
+            "already on local disk (no network I/O, no browser automation, reports only)."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True, metavar="command")
@@ -182,6 +190,33 @@ def _build_parser() -> argparse.ArgumentParser:
                 default=60,
                 help="Dashboard mirror cooldown for remaining-seconds calculation",
             )
+            continue
+        if name == IMPORT_TENDER_ANNEX_BUNDLE_COMMAND:
+            p = sub.add_parser(
+                name,
+                help=SUBCOMMAND_HELP[name],
+                description=SUBCOMMAND_HELP[name],
+            )
+            p.add_argument(
+                "--tender-code",
+                required=True,
+                help="Exact tender code (e.g. 2410-66-LP26); never inferred or looked up",
+            )
+            p.add_argument(
+                "--zip",
+                dest="zip_path",
+                required=True,
+                help="Path to a ZIP already downloaded by the operator through their own browser",
+            )
+            p.add_argument(
+                "--declare-complete",
+                action="store_true",
+                help=(
+                    "Explicit operator assertion that this ZIP is Mercado Público's "
+                    "complete attachment inventory for this tender (never inferred)"
+                ),
+            )
+            p.add_argument("--json", dest="json_output", action="store_true", help="Emit structured JSON")
             continue
         if name == AUTO_MIRROR_DASHBOARD_COMMAND:
             p = sub.add_parser(
@@ -386,6 +421,16 @@ def main(argv: list[str] | None = None) -> int:
         except SystemExit as exc:
             raise exc
         return run_operator_automation_status(status_opts)
+
+    if command == IMPORT_TENDER_ANNEX_BUNDLE_COMMAND:
+        if _wrapper_help_requested(argv[1:]):
+            print_import_tender_annex_bundle_help()
+            return 0
+        try:
+            import_opts = parse_import_tender_annex_bundle_args(argv[1:])
+        except SystemExit as exc:
+            raise exc
+        return run_import_tender_annex_bundle(import_opts)
 
     if command == NDR_SAFE_AUTO_APPLY_COMMAND:
         if _wrapper_help_requested(argv[1:]):
