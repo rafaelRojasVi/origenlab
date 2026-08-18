@@ -4,10 +4,13 @@ import type { TenderAnnexPreview } from "../../api/institutionIntel/types";
 import { TenderAnnexUploadPanel } from "./TenderAnnexUploadPanel";
 
 const previewTenderAnnexBundle = vi.fn();
+const getTenderAttachmentNavigation = vi.fn();
 
 vi.mock("../../api/institutionIntel/adapter", () => ({
   institutionIntelAdapter: {
     previewTenderAnnexBundle: (...args: unknown[]) => previewTenderAnnexBundle(...args),
+    getTenderAttachmentNavigation: (...args: unknown[]) =>
+      getTenderAttachmentNavigation(...args),
   },
 }));
 
@@ -262,4 +265,133 @@ describe("TenderAnnexUploadPanel", () => {
     expect(screen.queryByTestId("annex-preview-result")).toBeNull();
     expect((screen.getByTestId("annex-process-button") as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it("renders Mercado Público navigation before the ZIP upload workflow", () => {
+    render(<TenderAnnexUploadPanel tenderCode="2410-66-LP26" />);
+
+    const navigationButton = screen.getByTestId("attachment-navigation-button");
+    const dropZone = screen.getByTestId("annex-drop-zone");
+
+    expect(
+      navigationButton.compareDocumentPosition(dropZone) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+  });
+
+  it("opens a blank tab synchronously and navigates it to the resolved attachment URL", async () => {
+    previewTenderAnnexBundle.mockReset();
+    getTenderAttachmentNavigation.mockReset();
+
+    const replace = vi.fn();
+    const close = vi.fn();
+    const popup = {
+      opener: {},
+      location: { replace },
+      close,
+    } as unknown as Window;
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(popup);
+
+    getTenderAttachmentNavigation.mockResolvedValue({
+      tenderCode: "2410-66-LP26",
+      destinationKind: "attachments",
+      url:
+        "https://www.mercadopublico.cl/Procurement/Modules/" +
+        "Attachment/ViewAttachmentLC.aspx?enc=EPHEMERAL123",
+      ephemeral: true,
+    });
+
+    render(<TenderAnnexUploadPanel tenderCode="2410-66-LP26" />);
+    fireEvent.click(screen.getByTestId("attachment-navigation-button"));
+
+    expect(openSpy).toHaveBeenCalledWith("about:blank", "_blank");
+
+    await waitFor(() =>
+      expect(getTenderAttachmentNavigation).toHaveBeenCalledWith("2410-66-LP26"),
+    );
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith(
+        expect.stringContaining("ViewAttachmentLC.aspx?enc=EPHEMERAL123"),
+      ),
+    );
+
+    expect(close).not.toHaveBeenCalled();
+    expect(previewTenderAnnexBundle).not.toHaveBeenCalled();
+    expect(screen.queryByText(/EPHEMERAL123/)).toBeNull();
+
+    openSpy.mockRestore();
+  });
+
+  it("uses the backend tender-page fallback exactly as returned", async () => {
+    getTenderAttachmentNavigation.mockReset();
+
+    const replace = vi.fn();
+    const popup = {
+      opener: {},
+      location: { replace },
+      close: vi.fn(),
+    } as unknown as Window;
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(popup);
+
+    const fallback =
+      "https://www.mercadopublico.cl/Procurement/Modules/" +
+      "RFB/DetailsAcquisition.aspx?idlicitacion=2410-66-LP26";
+
+    getTenderAttachmentNavigation.mockResolvedValue({
+      tenderCode: "2410-66-LP26",
+      destinationKind: "tender",
+      url: fallback,
+      ephemeral: true,
+    });
+
+    render(<TenderAnnexUploadPanel tenderCode="2410-66-LP26" />);
+    fireEvent.click(screen.getByTestId("attachment-navigation-button"));
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(fallback));
+
+    openSpy.mockRestore();
+  });
+
+  it("shows a local error and never calls the resolver when the popup is blocked", () => {
+    getTenderAttachmentNavigation.mockReset();
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+
+    render(<TenderAnnexUploadPanel tenderCode="2410-66-LP26" />);
+    fireEvent.click(screen.getByTestId("attachment-navigation-button"));
+
+    expect(getTenderAttachmentNavigation).not.toHaveBeenCalled();
+    expect(screen.getByTestId("attachment-navigation-error").textContent).toContain(
+      "bloqueó",
+    );
+
+    openSpy.mockRestore();
+  });
+
+  it("closes the blank tab and shows an error when navigation resolution fails", async () => {
+    getTenderAttachmentNavigation.mockReset();
+
+    const replace = vi.fn();
+    const close = vi.fn();
+    const popup = {
+      opener: {},
+      location: { replace },
+      close,
+    } as unknown as Window;
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(popup);
+
+    getTenderAttachmentNavigation.mockRejectedValue(
+      new OperatorApiError("unavailable", 503),
+    );
+
+    render(<TenderAnnexUploadPanel tenderCode="2410-66-LP26" />);
+    fireEvent.click(screen.getByTestId("attachment-navigation-button"));
+
+    await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+    expect(replace).not.toHaveBeenCalled();
+    expect(screen.getByTestId("attachment-navigation-error").textContent).toContain(
+      "no está disponible",
+    );
+
+    openSpy.mockRestore();
+  });
+
 });

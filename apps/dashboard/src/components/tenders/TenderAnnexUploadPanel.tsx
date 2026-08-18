@@ -34,6 +34,20 @@ function errorMessageFor(err: unknown): string {
   return "No se pudo comunicar con el servidor. Intenta de nuevo.";
 }
 
+function navigationErrorMessageFor(err: unknown): string {
+  if (err instanceof OperatorApiError) {
+    switch (err.status) {
+      case 404:
+        return "Esta licitación ya no está entre las oportunidades accionables.";
+      case 503:
+        return "El sistema de licitaciones accionables no está disponible en este momento.";
+      default:
+        return "No se pudo abrir Mercado Público. Intenta de nuevo.";
+    }
+  }
+  return "No se pudo comunicar con el servidor para abrir Mercado Público.";
+}
+
 function factStateCounts(terms: TenderAnnexPreview["licitacionIntel"]["terms"]): Record<TermFact["state"], number> {
   const facts: readonly TermFact[] =
     terms.status === "available" ? terms.data : terms.status === "available_incomplete" ? (terms.partial ?? []) : [];
@@ -112,6 +126,8 @@ export function TenderAnnexUploadPanel({ tenderCode }: { tenderCode: string }) {
   const [preview, setPreview] = useState<TenderAnnexPreview | null>(null);
   const [clientError, setClientError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [isResolvingNavigation, setIsResolvingNavigation] = useState(false);
+  const [navigationError, setNavigationError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   function acceptFile(file: File) {
@@ -153,6 +169,31 @@ export function TenderAnnexUploadPanel({ tenderCode }: { tenderCode: string }) {
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
+  async function openMercadoPublicoAttachments() {
+    const popup = window.open("about:blank", "_blank");
+    if (!popup) {
+      setNavigationError(
+        "El navegador bloqueó la nueva pestaña. Permite ventanas emergentes para OrigenLab e intenta de nuevo.",
+      );
+      return;
+    }
+
+    popup.opener = null;
+    setIsResolvingNavigation(true);
+    setNavigationError(null);
+
+    try {
+      const destination =
+        await institutionIntelAdapter.getTenderAttachmentNavigation(tenderCode);
+      popup.location.replace(destination.url);
+    } catch (err) {
+      popup.close();
+      setNavigationError(navigationErrorMessageFor(err));
+    } finally {
+      setIsResolvingNavigation(false);
+    }
+  }
+
   async function processDocuments() {
     if (!selectedFile) return;
     setPhase("processing");
@@ -174,6 +215,43 @@ export function TenderAnnexUploadPanel({ tenderCode }: { tenderCode: string }) {
       className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] px-5 py-4"
       data-testid="tender-annex-upload-panel"
     >
+      <div data-testid="attachment-navigation-section">
+        <h3 className="text-sm font-semibold text-slate-900">Documentos de la licitación</h3>
+        <p className="mt-1 text-xs text-[var(--color-muted)]">
+          Abre los adjuntos disponibles en Mercado Público para descargarlos manualmente.
+        </p>
+
+        <button
+          type="button"
+          className="mt-3 rounded-md border border-brand-700 bg-white px-4 py-2 text-xs font-semibold text-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+          onClick={openMercadoPublicoAttachments}
+          disabled={isResolvingNavigation}
+          data-testid="attachment-navigation-button"
+        >
+          {isResolvingNavigation
+            ? "Abriendo Mercado Público…"
+            : "↗ Abrir adjuntos en Mercado Público"}
+        </button>
+
+        {navigationError ? (
+          <p
+            className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-medium text-red-900"
+            role="alert"
+            data-testid="attachment-navigation-error"
+          >
+            {navigationError}
+          </p>
+        ) : null}
+
+        <ol className="mt-3 list-decimal space-y-1 pl-4 text-[11px] text-[var(--color-muted)]">
+          <li>Abre Mercado Público.</li>
+          <li>Selecciona y descarga los documentos de la licitación.</li>
+          <li>Vuelve a OrigenLab y carga el ZIP para completar el expediente.</li>
+        </ol>
+      </div>
+
+      <div className="my-4 border-t border-[var(--color-border)]" />
+
       <h3 className="text-sm font-semibold text-slate-900">Completar expediente</h3>
       <p className="mt-0.5 text-xs text-[var(--color-muted)]">Importar documentos de licitación</p>
       <p className="mt-2 text-xs text-[var(--color-muted)]">

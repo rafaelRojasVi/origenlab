@@ -26,6 +26,7 @@ from origenlab_email_pipeline.chilecompra_api import (
     _ValidatedPortalRedirectHandler,
     build_attachment_postback_body,
     build_licitacion_detail_url,
+    build_licitacion_detail_url_for_codigo,
     build_licitaciones_url,
     classify_chilecompra_validity_status,
     download_portal_attachment,
@@ -51,6 +52,7 @@ from origenlab_email_pipeline.chilecompra_api import (
     parse_attachment_listing,
     redact_ticket,
     redact_ticket_in_url,
+    resolve_licitacion_attachment_navigation,
     safe_attachment_filename,
     sanitize_portal_url_for_error,
     save_licitacion_attachments,
@@ -745,6 +747,76 @@ def test_is_portal_attachment_navigation_url_rejects_userinfo_trick() -> None:
 def test_is_portal_attachment_navigation_url_deterministic() -> None:
     url = "https://www.mercadopublico.cl/Procurement/Modules/Attachment/ViewAttachment.aspx?enc=x"
     assert is_portal_attachment_navigation_url(url) is is_portal_attachment_navigation_url(url) is True
+
+
+def test_resolve_licitacion_attachment_navigation_returns_direct_lc_url() -> None:
+    detail_html = (
+        '<html><body><input '
+        'onclick="open(\'../Attachment/ViewAttachmentLC.aspx?enc=LIVE123\', '
+        "'MercadoPublico', 'width=850');\" /></body></html>"
+    )
+    calls: list[tuple[str, str]] = []
+
+    def opener(request, timeout=None):
+        calls.append((request.get_method(), request.full_url))
+        return _portal_response(detail_html.encode("utf-8"), url=request.full_url)
+
+    result = resolve_licitacion_attachment_navigation(
+        "1057890-1-LE26",
+        opener=opener,
+    )
+
+    assert result.destination_kind == "attachments"
+    assert result.url == (
+        "https://www.mercadopublico.cl/Procurement/Modules/"
+        "Attachment/ViewAttachmentLC.aspx?enc=LIVE123"
+    )
+    assert calls == [
+        (
+            "GET",
+            build_licitacion_detail_url_for_codigo("1057890-1-LE26"),
+        )
+    ]
+
+
+def test_resolve_licitacion_attachment_navigation_falls_back_to_tender_page() -> None:
+    calls: list[tuple[str, str]] = []
+
+    def opener(request, timeout=None):
+        calls.append((request.get_method(), request.full_url))
+        return _portal_response(_DETAIL_HTML.encode("utf-8"), url=request.full_url)
+
+    result = resolve_licitacion_attachment_navigation(
+        "1057890-1-LE26",
+        opener=opener,
+    )
+
+    expected = build_licitacion_detail_url_for_codigo("1057890-1-LE26")
+    assert result.destination_kind == "tender"
+    assert result.url == expected
+    assert calls == [("GET", expected)]
+
+
+def test_resolve_licitacion_attachment_navigation_never_requests_gated_url() -> None:
+    calls: list[str] = []
+
+    def opener(request, timeout=None):
+        calls.append(request.full_url)
+        return _portal_response(
+            _GATED_DETAIL_HTML.encode("utf-8"),
+            url=request.full_url,
+        )
+
+    result = resolve_licitacion_attachment_navigation(
+        "4291-46-LE26",
+        opener=opener,
+    )
+
+    assert result.destination_kind == "attachments"
+    assert len(calls) == 1
+    assert "DetailsAcquisition.aspx" in calls[0]
+    assert "ViewAttachment.aspx" not in calls[0]
+    assert "ViewAttachmentLC.aspx" not in calls[0]
 
 
 def test_list_licitacion_attachments_surfaces_gated_listing_hint() -> None:

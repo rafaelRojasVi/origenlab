@@ -35,6 +35,7 @@ import type {
   ProspectQueueRow,
   QueueName,
   TenderAnnexPreview,
+  TenderAttachmentNavigation,
   TermFact,
 } from "./types";
 import { formatTenderTermField } from "../../lib/institutionIntelLabels";
@@ -450,6 +451,13 @@ interface RawTenderDetailResponse {
   coverage: RawTenderCoverage | null;
 }
 
+interface RawTenderAttachmentNavigationResponse {
+  tender_code: string;
+  destination_kind: "attachments" | "tender";
+  url: string;
+  ephemeral: true;
+}
+
 // ---------------------------------------------------------------------------
 // Operator annex-bundle upload PREVIEW
 // (`POST /operator/procurement/tenders/{tender_code}/annex-bundle/preview`).
@@ -824,6 +832,37 @@ export const institutionIntelAdapter = {
       throw err;
     }
     return mapTenderDetail(raw);
+  },
+
+  /**
+   * Resolve the current Mercado Público destination for human attachment
+   * navigation. The opaque destination URL is returned directly to the
+   * caller and is deliberately never cached or stored by this adapter.
+   */
+  async getTenderAttachmentNavigation(
+    tenderCode: string,
+  ): Promise<TenderAttachmentNavigation> {
+    const url = operatorApiUrl(
+      `/operator/procurement/tenders/${encodeURIComponent(tenderCode)}/attachment-navigation`,
+    );
+    const res = await fetch(url, {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new OperatorApiError(text || res.statusText || `HTTP ${res.status}`, res.status);
+    }
+
+    const raw = (await res.json()) as RawTenderAttachmentNavigationResponse;
+    return {
+      tenderCode: raw.tender_code,
+      destinationKind: raw.destination_kind,
+      url: raw.url,
+      ephemeral: raw.ephemeral,
+    };
   },
 
   /**

@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from http.cookiejar import CookieJar
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, Literal
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlparse, urlunparse
 from urllib.request import (
@@ -885,6 +885,66 @@ def extract_gated_attachment_navigation_url(
         return None
     absolute = urljoin(base_url, raw_url.replace("../", "", 1) if raw_url.startswith("../") else raw_url)
     return absolute if is_portal_attachment_navigation_url(absolute) else None
+
+
+@dataclass(frozen=True)
+class PortalAttachmentNavigation:
+    """Ephemeral human-navigation destination for one Mercado Público tender."""
+
+    destination_kind: Literal["attachments", "tender"]
+    url: str
+
+
+def resolve_licitacion_attachment_navigation(
+    codigo: str,
+    *,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    html_max_bytes: int = DEFAULT_PORTAL_HTML_MAX_BYTES,
+    opener: PortalOpenFn | None = None,
+) -> PortalAttachmentNavigation:
+    """Resolve the best current Mercado Público destination for a human operator.
+
+    Only the normal public tender detail page is fetched. If that already-fetched
+    HTML advertises a validated ``ViewAttachment.aspx`` or
+    ``ViewAttachmentLC.aspx`` URL, that URL is returned for HUMAN NAVIGATION.
+
+    The gated attachment URL itself is never requested by this function.
+
+    If the normal detail page is temporarily unavailable, fall back to its
+    public tender-code URL so the human operator can still navigate there.
+
+    Portal validation/safety failures are not swallowed.
+    """
+    detail_url = build_licitacion_detail_url_for_codigo(codigo)
+    session = opener or new_portal_opener()
+
+    try:
+        detail_raw, _ = _portal_request(
+            detail_url,
+            opener=session,
+            timeout=timeout,
+            max_bytes=html_max_bytes,
+            url_kind="detail",
+        )
+    except ChileCompraHttpError:
+        return PortalAttachmentNavigation(
+            destination_kind="tender",
+            url=detail_url,
+        )
+
+    detail_html = _decode_portal_html(detail_raw)
+    attachment_url = extract_gated_attachment_navigation_url(detail_html)
+
+    if attachment_url is not None:
+        return PortalAttachmentNavigation(
+            destination_kind="attachments",
+            url=attachment_url,
+        )
+
+    return PortalAttachmentNavigation(
+        destination_kind="tender",
+        url=detail_url,
+    )
 
 
 def parse_attachment_listing(listing_html: str, *, listing_url: str) -> list[PortalAttachment]:
