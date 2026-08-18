@@ -55,6 +55,10 @@ class TenderAnnexPreviewOutcome:
     rejected: bool
     error: str | None
     response: TenderAnnexBundlePreviewResponse | None
+    # Internal canonical domain result. Never serialized by the preview route;
+    # retained so the explicit import endpoint can persist the exact validated
+    # T1 row without re-running extraction or inventing a second representation.
+    raw: dict | None
 
 
 def _to_response(
@@ -122,6 +126,7 @@ def build_tender_annex_bundle_preview(
             rejected=False,
             error=None,
             response=None,
+            raw=None,
         )
 
     source = OperatorZipAttachmentSource.from_bytes(
@@ -138,6 +143,7 @@ def build_tender_annex_bundle_preview(
             rejected=True,
             error=raw.get("error") or "The uploaded ZIP was rejected.",
             response=None,
+            raw=None,
         )
 
     return TenderAnnexPreviewOutcome(
@@ -145,7 +151,10 @@ def build_tender_annex_bundle_preview(
         found_in_queue=True,
         rejected=False,
         error=None,
-        response=_to_response(tender_code, raw, operator_declared_complete=declare_complete),
+        response=_to_response(
+            tender_code, raw, operator_declared_complete=declare_complete
+        ),
+        raw=raw,
     )
 
 

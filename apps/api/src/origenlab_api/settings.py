@@ -14,7 +14,9 @@ ApiBackend = Literal["sqlite", "postgres"]
 
 _API_ROOT = Path(__file__).resolve().parents[2]
 _EMAIL_PIPELINE_ROOT = _API_ROOT.parent / "email-pipeline"
-_DEFAULT_ACTIVE_CURRENT = _EMAIL_PIPELINE_ROOT / "reports" / "out" / "active" / "current"
+_DEFAULT_ACTIVE_CURRENT = (
+    _EMAIL_PIPELINE_ROOT / "reports" / "out" / "active" / "current"
+)
 _DEFAULT_INSTITUTION_PROSPECT_DIR = _DEFAULT_ACTIVE_CURRENT / "institution_prospects"
 _DEFAULT_TENDER_TERMS_DIR = _DEFAULT_ACTIVE_CURRENT / "tender_terms"
 
@@ -62,6 +64,7 @@ class Settings(BaseSettings):
     active_current: Path | None = None
     institution_prospect_dir: Path | None = None
     tender_terms_dir: Path | None = None
+    operator_tender_import_dir: Path | None = None
     api_backend: str | None = None
     postgres_url: str | None = None
     postgres_statement_timeout_ms: int = 30_000
@@ -160,6 +163,18 @@ class Settings(BaseSettings):
             return self.tender_terms_dir.expanduser().resolve()
         return _DEFAULT_TENDER_TERMS_DIR.resolve()
 
+    def resolved_operator_tender_import_dir(self) -> Path:
+        if self.operator_tender_import_dir is not None:
+            return self.operator_tender_import_dir.expanduser().resolve()
+
+        # Keep operator-imported T1 evidence on the same storage volume as
+        # canonical T1 by default. In production ORIGENLAB_TENDER_TERMS_DIR
+        # is /var/data/tender_terms, so this safely resolves to
+        # /var/data/operator_tender_imports even if the newer explicit env
+        # variable has not yet been synchronized into the Render service.
+        tender_terms_dir = self.resolved_tender_terms_dir()
+        return (tender_terms_dir.parent / "operator_tender_imports").resolve()
+
 
 def build_settings(*, dotenv_disabled: bool | None = None) -> Settings:
     """
@@ -173,7 +188,9 @@ def build_settings(*, dotenv_disabled: bool | None = None) -> Settings:
     admission (immutable + confirm + manifest are still required).
     """
     disable = (
-        dotenv_disabled_from_environ() if dotenv_disabled is None else bool(dotenv_disabled)
+        dotenv_disabled_from_environ()
+        if dotenv_disabled is None
+        else bool(dotenv_disabled)
     )
     if disable:
         settings = Settings(_env_file=None)

@@ -112,10 +112,18 @@ describe("allowlist", () => {
 });
 
 describe("isAllowedPostUploadPath", () => {
-  it("accepts the exact annex-bundle preview path for a well-formed tender code", () => {
-    expect(isAllowedPostUploadPath("/operator/procurement/tenders/745712-19-LP26/annex-bundle/preview")).toBe(
-      true,
-    );
+  it("accepts only the exact annex-bundle preview/import paths for a well-formed tender code", () => {
+    expect(
+      isAllowedPostUploadPath(
+        "/operator/procurement/tenders/745712-19-LP26/annex-bundle/preview",
+      ),
+    ).toBe(true);
+
+    expect(
+      isAllowedPostUploadPath(
+        "/operator/procurement/tenders/745712-19-LP26/annex-bundle/import",
+      ),
+    ).toBe(true);
   });
 
   it("is independent of isAllowedUpstreamPath: the plain tender path is never POST-legal", () => {
@@ -135,9 +143,17 @@ describe("isAllowedPostUploadPath", () => {
     expect(isAllowedPostUploadPath("/health")).toBe(false);
   });
 
-  it("rejects a deeper/extra path segment beyond /preview", () => {
+  it("rejects deeper/extra path segments beyond preview/import", () => {
     expect(
-      isAllowedPostUploadPath("/operator/procurement/tenders/745712-19-LP26/annex-bundle/preview/extra"),
+      isAllowedPostUploadPath(
+        "/operator/procurement/tenders/745712-19-LP26/annex-bundle/preview/extra",
+      ),
+    ).toBe(false);
+
+    expect(
+      isAllowedPostUploadPath(
+        "/operator/procurement/tenders/745712-19-LP26/annex-bundle/import/extra",
+      ),
     ).toBe(false);
   });
 

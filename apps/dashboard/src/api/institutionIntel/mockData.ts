@@ -203,6 +203,7 @@ export const MOCK_LICITACION_TALCA: LicitacionIntel = {
   buyerDisplayName: "Hospital Regional de Talca",
   eligibilityStatus: "open_public",
   procurementMethodRaw: "LP",
+  t1SourceKind: null,
   totalBudgetReconciled: true,
   terms: {
     status: "available",

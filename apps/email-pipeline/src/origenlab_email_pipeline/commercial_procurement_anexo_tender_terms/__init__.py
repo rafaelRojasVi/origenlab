@@ -19,6 +19,7 @@ from .production_publish import (
     TenderTermsPublicationResult,
     load_published_tender_terms,
     publish_tender_terms,
+    validate_tender_terms_row,
 )
 from .models import (
     FactCandidate,
@@ -61,6 +62,7 @@ __all__ = [
     "finalize_bundle",
     "load_published_tender_terms",
     "publish_tender_terms",
+    "validate_tender_terms_row",
     "resolve_evidence_chunk",
     "resolve_evidence_chunks",
     "tender_terms_semantic_digest",

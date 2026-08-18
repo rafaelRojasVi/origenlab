@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { LicitacionIntel } from "../../api/institutionIntel/types";
 import { TenderDetailDrawer } from "./TenderDetailDrawer";
@@ -11,11 +11,28 @@ vi.mock("../../api/institutionIntel/adapter", () => ({
   },
 }));
 
+vi.mock("./TenderAnnexUploadPanel", () => ({
+  TenderAnnexUploadPanel: ({
+    onPersisted,
+  }: {
+    onPersisted?: () => void;
+  }) => (
+    <button
+      type="button"
+      data-testid="fake-annex-persist"
+      onClick={onPersisted}
+    >
+      persist
+    </button>
+  ),
+}));
+
 const BASE_INTEL: LicitacionIntel = {
   tenderCode: "1057898-51-LP26",
   buyerDisplayName: "HOSPITAL REGIONAL DE TALCA",
   eligibilityStatus: "open_public",
   procurementMethodRaw: null,
+  t1SourceKind: null,
   terms: {
     status: "available",
     data: [
@@ -153,6 +170,30 @@ describe("TenderDetailDrawer", () => {
     // that unread evidence may still hold additional terms.
     screen.getByTestId("coverage-incomplete-note");
     expect(screen.queryByTestId("coverage-complete-claim")).toBeNull();
+  });
+
+  it("refetches tender detail exactly once after an annex dossier is persisted", async () => {
+    getLicitacionIntel.mockReset();
+    getLicitacionIntel.mockResolvedValue(BASE_INTEL);
+
+    render(
+      <TenderDetailDrawer tenderCode="1057898-51-LP26" />,
+    );
+
+    await waitFor(() =>
+      expect(getLicitacionIntel).toHaveBeenCalledTimes(1),
+    );
+
+    fireEvent.click(screen.getByTestId("fake-annex-persist"));
+
+    await waitFor(() =>
+      expect(getLicitacionIntel).toHaveBeenCalledTimes(2),
+    );
+
+    expect(getLicitacionIntel).toHaveBeenNthCalledWith(
+      2,
+      "1057898-51-LP26",
+    );
   });
 
   it("never renders a contact/outreach action", async () => {

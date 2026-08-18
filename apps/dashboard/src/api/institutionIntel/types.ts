@@ -267,6 +267,8 @@ export interface LicitacionIntel {
   buyerDisplayName: string;
   eligibilityStatus: ProcurementEligibilityStatus;
   procurementMethodRaw: string | null;
+  /** Server-side T1 source. "operator_annex_import" means a saved operator dossier. */
+  t1SourceKind: string | null;
   terms: Availed<readonly TermFact[]>;
   itemBudget: Availed<readonly ItemBudgetRow[]>;
   totalBudgetReconciled: boolean;
@@ -310,6 +312,11 @@ export interface TenderAnnexPreview {
   contactAuthorization: false;
   outreachAuthorization: false;
 }
+
+export type TenderAnnexImport = Omit<TenderAnnexPreview, "published" | "persisted"> & {
+  published: true;
+  persisted: true;
+};
 
 /**
  * Ephemeral Mercado Público navigation destination.

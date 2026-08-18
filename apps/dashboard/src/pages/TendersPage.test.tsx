@@ -105,6 +105,7 @@ describe("TendersPage", () => {
       buyerDisplayName: ANTOFAGASTA_ROW.institutionDisplayName,
       eligibilityStatus: "open_public",
       procurementMethodRaw: null,
+      t1SourceKind: null,
       terms: { status: "not_available" },
       itemBudget: { status: "not_available" },
       totalBudgetReconciled: false,

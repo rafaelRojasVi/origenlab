@@ -1,4 +1,4 @@
-"""FastAPI application (API-0: operator plane, read-only)."""
+"""FastAPI application for the OrigenLab operator plane."""
 
 from __future__ import annotations
 
@@ -10,7 +10,15 @@ from origenlab_api.http_security import configure_http_security, openapi_docs_en
 from origenlab_api.request_id import RequestIdMiddleware
 from origenlab_api.response_timing import ResponseTimingMiddleware
 from origenlab_api.mirror import router as mirror_router
-from origenlab_api.routes import cases, contacts, emails, health, institutions, operator, opportunities
+from origenlab_api.routes import (
+    cases,
+    contacts,
+    emails,
+    health,
+    institutions,
+    operator,
+    opportunities,
+)
 from origenlab_api.settings import get_settings
 
 
@@ -20,10 +28,12 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="OrigenLab API",
         description=(
-            "Read-only operator API (SQLite-first). "
+            "Operator API (SQLite-first). "
             "Postgres mirror routes live under /mirror/* (API-3 Phase 1 complete; Phase 2 parity frozen). "
             "Does not send email, ingest Gmail, or write SQLite/Postgres. "
-            "email-pipeline scripts remain the mutation path."
+            "The procurement tender workflow permits one explicit file-backed "
+            "operator document import; commercial/contact/outreach mutations "
+            "remain outside this API."
         ),
         version="0.1.0",
         docs_url="/docs" if docs_on else None,

@@ -16,6 +16,7 @@ const OPEN_TENDER_INTEL: LicitacionIntel = {
   buyerDisplayName: "HOSPITAL REGIONAL DE TALCA",
   eligibilityStatus: "open_public",
   procurementMethodRaw: null,
+  t1SourceKind: null,
   terms: {
     status: "available",
     data: [

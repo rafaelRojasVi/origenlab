@@ -4,11 +4,14 @@ import type { TenderAnnexPreview } from "../../api/institutionIntel/types";
 import { TenderAnnexUploadPanel } from "./TenderAnnexUploadPanel";
 
 const previewTenderAnnexBundle = vi.fn();
+const importTenderAnnexBundle = vi.fn();
 const getTenderAttachmentNavigation = vi.fn();
 
 vi.mock("../../api/institutionIntel/adapter", () => ({
   institutionIntelAdapter: {
     previewTenderAnnexBundle: (...args: unknown[]) => previewTenderAnnexBundle(...args),
+    importTenderAnnexBundle: (...args: unknown[]) =>
+      importTenderAnnexBundle(...args),
     getTenderAttachmentNavigation: (...args: unknown[]) =>
       getTenderAttachmentNavigation(...args),
   },
@@ -48,6 +51,7 @@ const BASE_PREVIEW: TenderAnnexPreview = {
     buyerDisplayName: "",
     eligibilityStatus: "unknown",
     procurementMethodRaw: null,
+    t1SourceKind: null,
     terms: {
       status: "available",
       data: [
@@ -185,7 +189,7 @@ describe("TenderAnnexUploadPanel", () => {
 
     await waitFor(() => screen.getByTestId("annex-preview-result"));
 
-    screen.getByText("Vista previa — aún no publicada");
+    screen.getByText("Vista previa — aún no guardada");
     screen.getByTestId("annex-preview-summary");
     // T1 fact rendered via the reused LicitacionIntelBody.
     screen.getByText("payment_deadline_days");
@@ -249,6 +253,71 @@ describe("TenderAnnexUploadPanel", () => {
     await waitFor(() => screen.getByTestId("annex-preview-result"));
     expect(screen.queryByRole("button", { name: /publicar/i })).toBeNull();
     expect(screen.queryByText(/publicar/i)).toBeNull();
+  });
+
+  it("does not persist on preview; Guardar expediente is a separate explicit action", async () => {
+    previewTenderAnnexBundle.mockReset();
+    importTenderAnnexBundle.mockReset();
+
+    previewTenderAnnexBundle.mockResolvedValue(BASE_PREVIEW);
+    importTenderAnnexBundle.mockResolvedValue({
+      ...BASE_PREVIEW,
+      published: true,
+      persisted: true,
+    });
+
+    const onPersisted = vi.fn();
+
+    render(
+      <TenderAnnexUploadPanel
+        tenderCode="2410-66-LP26"
+        onPersisted={onPersisted}
+      />,
+    );
+
+    const file = zipFile("expediente.zip");
+    fireEvent.drop(screen.getByTestId("annex-drop-zone"), {
+      dataTransfer: { files: [file] },
+    });
+
+    fireEvent.click(screen.getByTestId("annex-process-button"));
+
+    await waitFor(() =>
+      screen.getByTestId("annex-preview-result"),
+    );
+
+    expect(importTenderAnnexBundle).not.toHaveBeenCalled();
+    screen.getByText("Vista previa — aún no guardada");
+
+    fireEvent.click(screen.getByTestId("annex-save-button"));
+
+    await waitFor(() =>
+      expect(importTenderAnnexBundle).toHaveBeenCalledWith(
+        "2410-66-LP26",
+        file,
+        { declareComplete: false },
+      ),
+    );
+
+    await waitFor(() =>
+      expect(onPersisted).toHaveBeenCalledTimes(1),
+    );
+  });
+
+  it("shows server-backed Expediente guardado after a browser-style reload", () => {
+    render(
+      <TenderAnnexUploadPanel
+        tenderCode="2410-66-LP26"
+        persistedOperatorImport
+      />,
+    );
+
+    screen.getByTestId("annex-persisted-banner");
+    screen.getByText("Expediente guardado");
+
+    expect(
+      screen.queryByTestId("annex-preview-result"),
+    ).toBeNull();
   });
 
   it("removing the selection clears the file and any prior result", async () => {

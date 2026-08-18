@@ -47,6 +47,10 @@ services:
       # T1 tender-terms read model directory on the same persistent disk.
       - key: ORIGENLAB_TENDER_TERMS_DIR
         value: /var/data/tender_terms
+      # Explicit operator-uploaded annex/T1 overlays. Kept separate from the
+      # canonical T1 bundle so a later canonical sync cannot erase them.
+      - key: ORIGENLAB_OPERATOR_TENDER_IMPORT_DIR
+        value: /var/data/operator_tender_imports
       - key: ORIGENLAB_API_AUTH_TOKEN
         sync: false
       - key: ORIGENLAB_POSTGRES_URL

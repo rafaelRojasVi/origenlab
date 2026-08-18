@@ -50,7 +50,9 @@ class TenderAnnexBundlePreviewResponse(BaseModel):
 
     result: str = "imported"
     tender_code: str = ""
-    acquisition: TenderAnnexAcquisitionInfo = Field(default_factory=TenderAnnexAcquisitionInfo)
+    acquisition: TenderAnnexAcquisitionInfo = Field(
+        default_factory=TenderAnnexAcquisitionInfo
+    )
     archive: TenderAnnexArchiveInfo = Field(default_factory=TenderAnnexArchiveInfo)
     bundle_complete: bool = False
     incomplete_reason_codes: list[str] = Field(default_factory=list)
@@ -63,8 +65,21 @@ class TenderAnnexBundlePreviewResponse(BaseModel):
     outreach_authorization: bool = False
 
 
+class TenderAnnexBundleImportResponse(TenderAnnexBundlePreviewResponse):
+    """Explicit saved operator import.
+
+    Same commercial-intelligence payload as preview, but ``published`` and
+    ``persisted`` are true because this response is returned only after the
+    per-tender overlay has been atomically written and read back.
+    """
+
+    published: bool = True
+    persisted: bool = True
+
+
 __all__ = [
     "TenderAnnexAcquisitionInfo",
     "TenderAnnexArchiveInfo",
+    "TenderAnnexBundleImportResponse",
     "TenderAnnexBundlePreviewResponse",
 ]

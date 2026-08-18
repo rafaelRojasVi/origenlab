@@ -351,6 +351,16 @@ def _bundle_from_dict(data: Any) -> TenderTermsBundle:
     return bundle
 
 
+def validate_tender_terms_row(data: Any) -> dict[str, Any]:
+    """Fail-closed validate one serialized TenderTermsBundle row.
+
+    This is the single-row equivalent of the validation performed while
+    loading a full canonical publication. It is used by the operator-import
+    overlay so a corrupt/tampered saved row can never be surfaced by the API.
+    """
+    return _bundle_from_dict(data).to_dict()
+
+
 def _fact_state_counts(
     bundles: Iterable[TenderTermsBundle],
 ) -> dict[str, int]:
@@ -655,4 +665,5 @@ __all__ = [
     "TenderTermsPublicationResult",
     "load_published_tender_terms",
     "publish_tender_terms",
+    "validate_tender_terms_row",
 ]

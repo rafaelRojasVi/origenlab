@@ -34,6 +34,7 @@ import type {
   ProcurementMeta,
   ProspectQueueRow,
   QueueName,
+  TenderAnnexImport,
   TenderAnnexPreview,
   TenderAttachmentNavigation,
   TermFact,
@@ -400,6 +401,7 @@ interface RawTenderTermsMeta {
   note: string;
   canonical_reason: string;
   as_of_utc: string;
+  source_kind?: string;
 }
 
 interface RawTenderEvidence {
@@ -561,6 +563,7 @@ function mapTenderAnnexPreview(raw: RawTenderAnnexBundlePreviewResponse): Tender
     buyerDisplayName: "",
     eligibilityStatus: "unknown",
     procurementMethodRaw: null,
+    t1SourceKind: null,
     terms,
     itemBudget,
     totalBudgetReconciled: false,
@@ -590,6 +593,17 @@ function mapTenderAnnexPreview(raw: RawTenderAnnexBundlePreviewResponse): Tender
     persisted: false,
     contactAuthorization: false,
     outreachAuthorization: false,
+  };
+}
+
+function mapTenderAnnexImport(
+  raw: RawTenderAnnexBundlePreviewResponse,
+): TenderAnnexImport {
+  const preview = mapTenderAnnexPreview(raw);
+  return {
+    ...preview,
+    published: true,
+    persisted: true,
   };
 }
 
@@ -742,6 +756,7 @@ function mapTenderDetail(raw: RawTenderDetailResponse): LicitacionIntel {
     buyerDisplayName: asString(queueRow.display_name),
     eligibilityStatus: raw.found_in_queue ? "open_public" : "unknown",
     procurementMethodRaw: null,
+    t1SourceKind: asStringOrNull(raw.t1_meta.source_kind),
     terms,
     itemBudget,
     totalBudgetReconciled: false,
@@ -900,6 +915,38 @@ export const institutionIntelAdapter = {
     }
     const raw = (await res.json()) as RawTenderAnnexBundlePreviewResponse;
     return mapTenderAnnexPreview(raw);
+  },
+
+  /**
+   * Explicitly persist an already-reviewed operator annex ZIP.
+   *
+   * This intentionally re-sends the bounded ZIP to the backend import route;
+   * the browser never creates a persistence token or local-storage copy.
+   */
+  async importTenderAnnexBundle(
+    tenderCode: string,
+    file: Blob,
+    options: { declareComplete?: boolean } = {},
+  ): Promise<TenderAnnexImport> {
+    const url = operatorApiUrl(
+      `/operator/procurement/tenders/${encodeURIComponent(tenderCode)}/annex-bundle/import`,
+      options.declareComplete ? { declare_complete: true } : undefined,
+    );
+    const res = await fetch(url, {
+      method: "POST",
+      credentials: "include",
+      headers: { Accept: "application/json", "Content-Type": "application/zip" },
+      body: file,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new OperatorApiError(
+        body || res.statusText || `HTTP ${res.status}`,
+        res.status,
+      );
+    }
+    const raw = (await res.json()) as RawTenderAnnexBundlePreviewResponse;
+    return mapTenderAnnexImport(raw);
   },
 
   async listQueueRows(params: QueueListParams = {}): Promise<Paged<ProspectQueueRow>> {

@@ -71,8 +71,8 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
   const upstreamPath = stripApiPrefix(url.pathname);
 
   // Method+path authorization, not method-then-path-in-isolation: POST is
-  // legal ONLY for the one exact annex-bundle preview upload path, checked
-  // against its own narrow pattern -- never against isAllowedUpstreamPath
+  // legal ONLY for the exact annex-bundle preview/import upload paths,
+  // checked against their own narrow pattern -- never against isAllowedUpstreamPath
   // (which governs GET/HEAD reachability only). Adding "POST" to
   // ALLOWED_METHODS would have made every allowlisted GET path a POST
   // surface too; this keeps every other path exactly as restrictive as

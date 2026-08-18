@@ -11,7 +11,10 @@ from origenlab_api.schemas.institution_prospects import (
     OperatorQueueRowsResponse,
     QueueName,
 )
-from origenlab_api.schemas.tender_annex_preview import TenderAnnexBundlePreviewResponse
+from origenlab_api.schemas.tender_annex_preview import (
+    TenderAnnexBundleImportResponse,
+    TenderAnnexBundlePreviewResponse,
+)
 from origenlab_api.schemas.tender_attachment_navigation import (
     TenderAttachmentNavigationResponse,
 )
@@ -22,7 +25,12 @@ from origenlab_api.services.institution_prospect_service import (
     build_institutions_response,
     build_queue_response,
 )
-from origenlab_api.services.tender_annex_preview_service import build_tender_annex_bundle_preview
+from origenlab_api.services.tender_annex_import_service import (
+    build_tender_annex_bundle_import,
+)
+from origenlab_api.services.tender_annex_preview_service import (
+    build_tender_annex_bundle_preview,
+)
 from origenlab_api.services.tender_attachment_navigation_service import (
     build_tender_attachment_navigation,
 )
@@ -55,16 +63,22 @@ async def _read_bounded_zip_body(request: Request) -> bytes:
         try:
             declared_bytes = int(declared)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid Content-Length header") from exc
+            raise HTTPException(
+                status_code=400, detail="Invalid Content-Length header"
+            ) from exc
         if declared_bytes > _MAX_ANNEX_BUNDLE_UPLOAD_BYTES:
-            raise HTTPException(status_code=413, detail="Upload exceeds maximum allowed size")
+            raise HTTPException(
+                status_code=413, detail="Upload exceeds maximum allowed size"
+            )
 
     chunks: list[bytes] = []
     total = 0
     async for chunk in request.stream():
         total += len(chunk)
         if total > _MAX_ANNEX_BUNDLE_UPLOAD_BYTES:
-            raise HTTPException(status_code=413, detail="Upload exceeds maximum allowed size")
+            raise HTTPException(
+                status_code=413, detail="Upload exceeds maximum allowed size"
+            )
         chunks.append(chunk)
     return b"".join(chunks)
 
@@ -82,7 +96,9 @@ def procurement_institutions(
     limit: int = Query(50, ge=1, le=_MAX_PAGE_SIZE),
     offset: int = Query(0, ge=0),
     institution_id: str | None = Query(None, description="Exact institution_id filter"),
-    q: str | None = Query(None, description="Search display_name / normalized_name / institution_id"),
+    q: str | None = Query(
+        None, description="Search display_name / normalized_name / institution_id"
+    ),
 ) -> InstitutionProspectsResponse:
     return build_institutions_response(
         settings,
@@ -93,7 +109,9 @@ def procurement_institutions(
     )
 
 
-@router.get("/institutions/{institution_id}", response_model=InstitutionProspectDetailResponse)
+@router.get(
+    "/institutions/{institution_id}", response_model=InstitutionProspectDetailResponse
+)
 def procurement_institution_detail(
     institution_id: str,
     settings: Settings = Depends(get_settings),
@@ -123,7 +141,9 @@ def procurement_tender_detail(
     """
     result = build_tender_detail_response(settings, tender_code)
     if not result.found_in_queue and not result.queue_meta.get("reduced_mode"):
-        raise HTTPException(status_code=404, detail="tender not found in current opportunity queue")
+        raise HTTPException(
+            status_code=404, detail="tender not found in current opportunity queue"
+        )
     return result
 
 
@@ -192,9 +212,13 @@ async def procurement_tender_annex_bundle_preview(
     feed fails closed with 503 rather than processing the ZIP against an
     unconfirmed tender_code.
     """
-    content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    content_type = (
+        (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    )
     if content_type not in _ALLOWED_ANNEX_BUNDLE_CONTENT_TYPES:
-        raise HTTPException(status_code=415, detail="Content-Type must be application/zip")
+        raise HTTPException(
+            status_code=415, detail="Content-Type must be application/zip"
+        )
 
     zip_bytes = await _read_bounded_zip_body(request)
     if not zip_bytes:
@@ -212,10 +236,78 @@ async def procurement_tender_annex_bundle_preview(
             detail="W1 current_opportunity_queue lookup is unavailable; try again shortly",
         )
     if not outcome.found_in_queue:
-        raise HTTPException(status_code=404, detail="tender not found in current opportunity queue")
+        raise HTTPException(
+            status_code=404, detail="tender not found in current opportunity queue"
+        )
     if outcome.rejected:
         raise HTTPException(status_code=422, detail=outcome.error)
     assert outcome.response is not None
+    return outcome.response
+
+
+@router.post(
+    "/tenders/{tender_code}/annex-bundle/import",
+    response_model=TenderAnnexBundleImportResponse,
+)
+async def procurement_tender_annex_bundle_import(
+    tender_code: str,
+    request: Request,
+    response: Response,
+    declare_complete: bool = Query(
+        False,
+        description=(
+            "Explicit operator assertion that the ZIP is the tender's complete "
+            "attachment inventory. Never inferred; default false."
+        ),
+    ),
+    settings: Settings = Depends(get_settings),
+) -> TenderAnnexBundleImportResponse:
+    """Explicitly save a validated operator-uploaded annex ZIP as T1 evidence.
+
+    This is the only mutation in the procurement tender document workflow.
+    W1 remains the sole actionability authority. Raw ZIP bytes are processed
+    in memory and are not persisted; only validated structured T1/provenance
+    is atomically saved to the operator-import overlay.
+    """
+    content_type = (
+        (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    )
+    if content_type not in _ALLOWED_ANNEX_BUNDLE_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=415, detail="Content-Type must be application/zip"
+        )
+
+    zip_bytes = await _read_bounded_zip_body(request)
+    if not zip_bytes:
+        raise HTTPException(status_code=422, detail="Empty request body")
+
+    outcome = build_tender_annex_bundle_import(
+        settings,
+        tender_code,
+        zip_bytes,
+        declare_complete=declare_complete,
+    )
+    if not outcome.w1_healthy:
+        raise HTTPException(
+            status_code=503,
+            detail="W1 current_opportunity_queue lookup is unavailable; try again shortly",
+        )
+    if not outcome.found_in_queue:
+        raise HTTPException(
+            status_code=404,
+            detail="tender not found in current opportunity queue",
+        )
+    if outcome.rejected:
+        raise HTTPException(status_code=422, detail=outcome.error)
+    if outcome.persistence_failed:
+        raise HTTPException(
+            status_code=500,
+            detail="Validated annex import could not be persisted",
+        )
+
+    assert outcome.response is not None
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     return outcome.response
 
 
@@ -227,11 +319,15 @@ def procurement_queue(
     offset: int = Query(0, ge=0),
     institution_id: str | None = Query(None, description="Exact institution_id filter"),
     tender_code: str | None = Query(None, description="Exact tender_code filter"),
-    equipment_category: str | None = Query(None, description="Exact equipment_category filter"),
+    equipment_category: str | None = Query(
+        None, description="Exact equipment_category filter"
+    ),
     commercial_signal_type: str | None = Query(
         None, description="Exact commercial_signal_type filter"
     ),
-    q: str | None = Query(None, description="Search display_name / institution_id / tender_code"),
+    q: str | None = Query(
+        None, description="Search display_name / institution_id / tender_code"
+    ),
 ) -> OperatorQueueRowsResponse:
     return build_queue_response(
         settings,
