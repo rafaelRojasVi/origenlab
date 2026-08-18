@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from origenlab_api.schemas.institution_prospects import (
     InstitutionProspectDetailResponse,
@@ -11,6 +11,7 @@ from origenlab_api.schemas.institution_prospects import (
     OperatorQueueRowsResponse,
     QueueName,
 )
+from origenlab_api.schemas.tender_annex_preview import TenderAnnexBundlePreviewResponse
 from origenlab_api.schemas.tender_terms import TenderDetailResponse
 from origenlab_api.services.institution_prospect_service import (
     build_institution_detail_response,
@@ -18,12 +19,48 @@ from origenlab_api.services.institution_prospect_service import (
     build_institutions_response,
     build_queue_response,
 )
+from origenlab_api.services.tender_annex_preview_service import build_tender_annex_bundle_preview
 from origenlab_api.services.tender_terms_service import build_tender_detail_response
 from origenlab_api.settings import Settings, get_settings
 
 router = APIRouter(prefix="/operator/procurement", tags=["procurement"])
 
 _MAX_PAGE_SIZE = 500
+
+# ZIPs of tender attachment bundles are typically a few MB; 64 MiB gives
+# generous headroom over any real Mercado Público download while staying
+# well inside chilecompra_anexo_evidence.constants.ArchiveLimits' own
+# 256 MiB total-uncompressed-bytes container bound (a raw compressed upload
+# is bounded here before ArchiveLimits ever gets to inspect its contents).
+_MAX_ANNEX_BUNDLE_UPLOAD_BYTES = 64 * 1024 * 1024
+_ALLOWED_ANNEX_BUNDLE_CONTENT_TYPES = frozenset({"application/zip"})
+
+
+async def _read_bounded_zip_body(request: Request) -> bytes:
+    """Read the request body streamed and capped -- never trusts Content-Length alone.
+
+    A declared Content-Length over the limit is rejected before reading
+    anything; the stream itself is also capped as it arrives so a missing or
+    understated Content-Length (chunked transfer, a lying client) cannot
+    force this into buffering an unbounded body.
+    """
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        try:
+            declared_bytes = int(declared)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length header") from exc
+        if declared_bytes > _MAX_ANNEX_BUNDLE_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="Upload exceeds maximum allowed size")
+
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > _MAX_ANNEX_BUNDLE_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="Upload exceeds maximum allowed size")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 @router.get("/status", response_model=InstitutionProspectStatusResponse)
@@ -82,6 +119,59 @@ def procurement_tender_detail(
     if not result.found_in_queue and not result.queue_meta.get("reduced_mode"):
         raise HTTPException(status_code=404, detail="tender not found in current opportunity queue")
     return result
+
+
+@router.post(
+    "/tenders/{tender_code}/annex-bundle/preview",
+    response_model=TenderAnnexBundlePreviewResponse,
+)
+async def procurement_tender_annex_bundle_preview(
+    tender_code: str,
+    request: Request,
+    declare_complete: bool = Query(
+        False,
+        description=(
+            "Explicit operator assertion that the ZIP is the tender's complete "
+            "attachment inventory. Never inferred; default false."
+        ),
+    ),
+    settings: Settings = Depends(get_settings),
+) -> TenderAnnexBundlePreviewResponse:
+    """Preview-only: validate + extract an operator-uploaded ChileCompra annex ZIP.
+
+    Never publishes, never persists, never authorizes contact/outreach, and
+    never writes to disk or a database -- see
+    ``services/tender_annex_preview_service.py``. Gated on the same W1
+    ``current_opportunity_queue`` authority as ``GET /tenders/{tender_code}``:
+    a healthy W1 feed with no matching tender is a real 404; a degraded W1
+    feed fails closed with 503 rather than processing the ZIP against an
+    unconfirmed tender_code.
+    """
+    content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if content_type not in _ALLOWED_ANNEX_BUNDLE_CONTENT_TYPES:
+        raise HTTPException(status_code=415, detail="Content-Type must be application/zip")
+
+    zip_bytes = await _read_bounded_zip_body(request)
+    if not zip_bytes:
+        raise HTTPException(status_code=422, detail="Empty request body")
+
+    outcome = build_tender_annex_bundle_preview(
+        settings,
+        tender_code,
+        zip_bytes,
+        declare_complete=declare_complete,
+    )
+    if not outcome.w1_healthy:
+        raise HTTPException(
+            status_code=503,
+            detail="W1 current_opportunity_queue lookup is unavailable; try again shortly",
+        )
+    if not outcome.found_in_queue:
+        raise HTTPException(status_code=404, detail="tender not found in current opportunity queue")
+    if outcome.rejected:
+        raise HTTPException(status_code=422, detail=outcome.error)
+    assert outcome.response is not None
+    return outcome.response
 
 
 @router.get("/queues/{queue_name}", response_model=OperatorQueueRowsResponse)

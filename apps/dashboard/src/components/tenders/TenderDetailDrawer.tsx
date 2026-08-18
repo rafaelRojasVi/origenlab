@@ -3,6 +3,7 @@ import type { LicitacionIntel } from "../../api/institutionIntel/types";
 import { institutionIntelAdapter } from "../../api/institutionIntel/adapter";
 import { LicitacionIntelBody } from "../institutionIntel/LicitacionIntelCard";
 import { EligibilityBadge } from "../institutionIntel/IntelBadges";
+import { TenderAnnexUploadPanel } from "./TenderAnnexUploadPanel";
 
 /**
  * Loading -> exactly one of three terminal phases per selected tenderCode:
@@ -139,6 +140,9 @@ export function TenderDetailDrawer({ tenderCode }: { tenderCode: string | null }
       </div>
       <div className="px-5 py-4">
         <LicitacionIntelBody intel={intel} />
+      </div>
+      <div className="border-t border-[var(--color-border)] px-5 py-4">
+        <TenderAnnexUploadPanel tenderCode={tenderCode} />
       </div>
     </div>
   );

@@ -34,6 +34,7 @@ import type {
   ProcurementMeta,
   ProspectQueueRow,
   QueueName,
+  TenderAnnexPreview,
   TermFact,
 } from "./types";
 import { formatTenderTermField } from "../../lib/institutionIntelLabels";
@@ -449,6 +450,141 @@ interface RawTenderDetailResponse {
   coverage: RawTenderCoverage | null;
 }
 
+// ---------------------------------------------------------------------------
+// Operator annex-bundle upload PREVIEW
+// (`POST /operator/procurement/tenders/{tender_code}/annex-bundle/preview`).
+// tender_facts/items/coverage reuse the exact same RawTenderFact/RawTenderItem
+// /RawTenderCoverage shapes above -- same mapTermFact/mapEvidence/item mapping
+// this file already uses for published T1 detail. See
+// apps/api/src/origenlab_api/schemas/tender_annex_preview.py for the
+// server-side contract this mirrors.
+// ---------------------------------------------------------------------------
+
+interface RawTenderAnnexAcquisition {
+  source: string;
+  completeness_state: string;
+  completeness_reason: string;
+  operator_declared_complete: boolean;
+}
+
+interface RawTenderAnnexArchive {
+  sha256: string;
+  attachments_discovered: number;
+  attachments_downloaded: number;
+  rejected_entries: string[];
+}
+
+interface RawTenderAnnexBundlePreviewResponse {
+  result: string;
+  tender_code: string;
+  acquisition: RawTenderAnnexAcquisition;
+  archive: RawTenderAnnexArchive;
+  bundle_complete: boolean;
+  incomplete_reason_codes: string[];
+  coverage: RawTenderCoverage | null;
+  tender_facts: RawTenderFact[];
+  items: RawTenderItem[];
+  published: boolean;
+  persisted: boolean;
+  contact_authorization: boolean;
+  outreach_authorization: boolean;
+}
+
+const TENDER_ANNEX_COMPLETENESS_STATES: readonly string[] = ["complete", "incomplete", "unknown"];
+
+function asTenderAnnexCompletenessState(value: string): TenderAnnexPreview["acquisition"]["completenessState"] {
+  return (
+    TENDER_ANNEX_COMPLETENESS_STATES.includes(value) ? value : "unknown"
+  ) as TenderAnnexPreview["acquisition"]["completenessState"];
+}
+
+function mapTenderAnnexPreview(raw: RawTenderAnnexBundlePreviewResponse): TenderAnnexPreview {
+  const coverageComplete = raw.coverage?.is_complete === true;
+  const partialCoverage = raw.coverage !== null && !coverageComplete;
+  const incompleteReasonCodes = raw.coverage?.incomplete_reason_codes ?? [];
+
+  const terms: LicitacionIntel["terms"] =
+    raw.tender_facts.length === 0
+      ? { status: "available_empty" }
+      : partialCoverage
+        ? {
+            status: "available_incomplete",
+            reasonCodes: incompleteReasonCodes,
+            partial: raw.tender_facts.map(mapTermFact),
+          }
+        : { status: "available", data: raw.tender_facts.map(mapTermFact) };
+
+  const itemBudgetRows = raw.items.map((item) => {
+    const budgetFact = item.facts.find((f) => f.field_name === "item_budget" || f.field_name === "unit_price");
+    return {
+      itemLabel: item.item_label ?? item.item_number ?? item.item_id,
+      quantity: mapItemQuantity(item),
+      amount: mapItemAmount(item),
+      evidence: mapEvidence(budgetFact?.evidence?.[0]),
+    };
+  });
+  const itemBudget: LicitacionIntel["itemBudget"] =
+    itemBudgetRows.length === 0
+      ? { status: "available_empty" }
+      : partialCoverage
+        ? { status: "available_incomplete", reasonCodes: incompleteReasonCodes, partial: itemBudgetRows }
+        : { status: "available", data: itemBudgetRows };
+
+  const coverageData = raw.coverage
+    ? {
+        documentsDiscovered: raw.coverage.attachments_discovered,
+        documentsRead: raw.coverage.attachments_downloaded,
+        incompleteReasonCodes: raw.coverage.incomplete_reason_codes,
+      }
+    : null;
+  const coverage: LicitacionIntel["coverage"] =
+    raw.coverage === null || coverageData === null
+      ? { status: "not_available" }
+      : partialCoverage
+        ? { status: "available_incomplete", reasonCodes: incompleteReasonCodes, partial: coverageData }
+        : { status: "available", data: coverageData };
+
+  const licitacionIntel: LicitacionIntel = {
+    tenderCode: raw.tender_code,
+    // No W1 queue row exists for a preview -- these two fields have no
+    // source of truth here and are never fabricated. LicitacionIntelBody
+    // itself renders neither field, so this has no visible effect; kept
+    // honestly empty/unknown rather than omitted so the type stays exact.
+    buyerDisplayName: "",
+    eligibilityStatus: "unknown",
+    procurementMethodRaw: null,
+    terms,
+    itemBudget,
+    totalBudgetReconciled: false,
+    // T1 preview never compares against a baseline summary categorization.
+    recognitionDelta: { status: "not_available" },
+    coverage,
+  };
+
+  return {
+    tenderCode: raw.tender_code,
+    acquisition: {
+      source: raw.acquisition.source,
+      completenessState: asTenderAnnexCompletenessState(raw.acquisition.completeness_state),
+      completenessReason: raw.acquisition.completeness_reason,
+      operatorDeclaredComplete: raw.acquisition.operator_declared_complete,
+    },
+    archive: {
+      sha256: raw.archive.sha256,
+      attachmentsDiscovered: raw.archive.attachments_discovered,
+      attachmentsDownloaded: raw.archive.attachments_downloaded,
+      rejectedEntries: raw.archive.rejected_entries,
+    },
+    bundleComplete: raw.bundle_complete,
+    incompleteReasonCodes: raw.incomplete_reason_codes,
+    licitacionIntel,
+    published: false,
+    persisted: false,
+    contactAuthorization: false,
+    outreachAuthorization: false,
+  };
+}
+
 const TERM_FACT_STATES: readonly string[] = [
   "explicit",
   "derived",
@@ -688,6 +824,43 @@ export const institutionIntelAdapter = {
       throw err;
     }
     return mapTenderDetail(raw);
+  },
+
+  /**
+   * Operator annex-bundle upload PREVIEW
+   * (`POST /operator/procurement/tenders/{tender_code}/annex-bundle/preview`).
+   * Never persists, never publishes, never authorizes contact/outreach --
+   * see TenderAnnexPreview's own field-level docs. `declareComplete`
+   * defaults to false and is only ever sent when the caller explicitly
+   * passed `true`; it is never inferred here. Raw ZIP bytes are sent as the
+   * request body (not multipart) with an explicit `application/zip`
+   * Content-Type, matching the server route's contract exactly. Throws
+   * `OperatorApiError` on any non-2xx response (404 tender not actionable,
+   * 422 rejected/corrupt ZIP, 413 too large, 415 wrong type, 503 W1
+   * degraded) -- callers branch on `.status`, this never swallows an error
+   * into a fabricated empty preview.
+   */
+  async previewTenderAnnexBundle(
+    tenderCode: string,
+    file: Blob,
+    options: { declareComplete?: boolean } = {},
+  ): Promise<TenderAnnexPreview> {
+    const url = operatorApiUrl(
+      `/operator/procurement/tenders/${encodeURIComponent(tenderCode)}/annex-bundle/preview`,
+      options.declareComplete ? { declare_complete: true } : undefined,
+    );
+    const res = await fetch(url, {
+      method: "POST",
+      credentials: "include",
+      headers: { Accept: "application/json", "Content-Type": "application/zip" },
+      body: file,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new OperatorApiError(text || res.statusText || `HTTP ${res.status}`, res.status);
+    }
+    const raw = (await res.json()) as RawTenderAnnexBundlePreviewResponse;
+    return mapTenderAnnexPreview(raw);
   },
 
   async listQueueRows(params: QueueListParams = {}): Promise<Paged<ProspectQueueRow>> {

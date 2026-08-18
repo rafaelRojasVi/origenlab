@@ -275,6 +275,43 @@ export interface LicitacionIntel {
 }
 
 // ---------------------------------------------------------------------------
+// Operator annex-bundle upload PREVIEW (`POST .../annex-bundle/preview`) --
+// never persisted, never published. `licitacionIntel` reuses the exact same
+// shape published T1 data renders with, so `LicitacionIntelBody` can render
+// a preview fact/item/coverage identically to a published one; only the
+// wrapping envelope here (acquisition/archive/safety flags) is preview-only.
+// ---------------------------------------------------------------------------
+
+export type TenderAnnexCompletenessState = "complete" | "incomplete" | "unknown";
+
+export interface TenderAnnexAcquisitionInfo {
+  source: string;
+  completenessState: TenderAnnexCompletenessState;
+  completenessReason: string;
+  operatorDeclaredComplete: boolean;
+}
+
+export interface TenderAnnexArchiveInfo {
+  sha256: string;
+  attachmentsDiscovered: number;
+  attachmentsDownloaded: number;
+  rejectedEntries: readonly string[];
+}
+
+export interface TenderAnnexPreview {
+  tenderCode: string;
+  acquisition: TenderAnnexAcquisitionInfo;
+  archive: TenderAnnexArchiveInfo;
+  bundleComplete: boolean;
+  incompleteReasonCodes: readonly string[];
+  licitacionIntel: LicitacionIntel;
+  published: false;
+  persisted: false;
+  contactAuthorization: false;
+  outreachAuthorization: false;
+}
+
+// ---------------------------------------------------------------------------
 // Prospect queue rows — one flat, discriminated-union feed the "Colas W1"
 // preview screen groups/sorts client-side. Grouping/sorting is a frontend
 // decision; backend just needs to expose sortable fields (see data-requirements doc).

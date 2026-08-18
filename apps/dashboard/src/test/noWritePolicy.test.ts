@@ -30,11 +30,33 @@ describe("dashboard read-only policy", () => {
     expect(entries.length).toBeGreaterThan(5);
   });
 
-  it("does not use mutating HTTP methods in source", () => {
+  // The dashboard is otherwise strictly read-only. This is the ONE sanctioned
+  // exception: the annex-bundle upload PREVIEW
+  // (`POST .../tenders/{tender_code}/annex-bundle/preview` in
+  // institutionIntel/adapter.ts's `previewTenderAnnexBundle`). It triggers
+  // server-side compute (bounded ZIP validation + T1 extraction) but never
+  // writes SQLite/Postgres/Gmail and never persists or publishes anything --
+  // see TenderAnnexPreview's own safety flags (`published`/`persisted`
+  // always false) and apps/api's tender_annex_preview_service.py. Any other
+  // mutating-method usage anywhere else in dashboard src remains forbidden,
+  // and even this file must contain exactly the one reviewed occurrence --
+  // a second one appearing here fails loudly rather than being silently
+  // grandfathered in.
+  const SANCTIONED_MUTATION_FILE = "../api/institutionIntel/adapter.ts";
+  const SANCTIONED_MUTATION_COUNT = 1;
+
+  it("does not use mutating HTTP methods in source, except the one sanctioned annex-bundle preview call", () => {
     const hits: string[] = [];
     for (const [path, text] of entries) {
-      if (MUTATION_METHOD.test(text) || FORBIDDEN_FETCH.test(text)) {
+      const isSanctioned = path === SANCTIONED_MUTATION_FILE;
+      if (!isSanctioned && (MUTATION_METHOD.test(text) || FORBIDDEN_FETCH.test(text))) {
         hits.push(path);
+      }
+      if (isSanctioned) {
+        const count = (text.match(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi) ?? []).length;
+        if (count !== SANCTIONED_MUTATION_COUNT) {
+          hits.push(`${path} (expected exactly ${SANCTIONED_MUTATION_COUNT} sanctioned mutation, found ${count})`);
+        }
       }
     }
     expect(hits).toEqual([]);

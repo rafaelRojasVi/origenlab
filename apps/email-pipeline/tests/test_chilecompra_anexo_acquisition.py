@@ -395,6 +395,25 @@ def test_portal_source_surfaces_gated_listing_without_losing_the_reachable_docx(
     assert not any("ViewAttachment" in url for _, url in opener.calls)
 
 
+def test_gated_listing_navigation_url_retained_but_never_requested() -> None:
+    """The exact gated attachment-view URL the ficha advertised must survive
+    all the way onto the built bundle, for HUMAN NAVIGATION ONLY -- and this
+    module must never issue a request to it or any URL containing it."""
+    opener = _gated_opener()
+    source = PortalAttachmentSource(detail_url=_DETAIL_URL, opener=opener)
+    bundle = build_tender_bundle("4291-46-LE26", source)
+
+    assert bundle.gated_attachment_navigation_url == (
+        "https://www.mercadopublico.cl/Procurement/Modules/Attachment/"
+        "ViewAttachment.aspx?enc=GATEDTOKEN"
+    )
+    assert REASON_GATED_LISTING_UNREACHABLE in bundle.incomplete_reason_codes
+    assert not any(
+        bundle.gated_attachment_navigation_url in url or "ViewAttachment" in url
+        for _, url in opener.calls
+    )
+
+
 def test_portal_source_without_gated_hint_never_reports_the_reason_code() -> None:
     """Inverse of the above: a ficha with only the normal listing (no onclick
     hint) must never spuriously report the gated-listing reason code."""
@@ -403,6 +422,7 @@ def test_portal_source_without_gated_hint_never_reports_the_reason_code() -> Non
     bundle = build_tender_bundle("T-NO-HINT", source)
     assert REASON_GATED_LISTING_UNREACHABLE not in bundle.incomplete_reason_codes
     assert bundle.bundle_complete is True
+    assert bundle.gated_attachment_navigation_url is None
 
 
 # --- #438 regression guards ---------------------------------------------------

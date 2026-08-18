@@ -64,6 +64,11 @@ class SourceInventory:
     # from AttachmentBudgetError, which is raised while streaming bodies;
     # this is known up front, at inventory time.
     incomplete_reason_codes: tuple[str, ...] = ()
+    # The exact gated attachment-view URL the source's ficha advertised (see
+    # chilecompra_api.extract_gated_attachment_navigation_url), for HUMAN
+    # NAVIGATION ONLY -- never requested by this source or any downstream
+    # consumer. `None` for every source that never encounters this surface.
+    gated_attachment_navigation_url: str | None = None
 
 
 class AttachmentSource(Protocol):
@@ -195,6 +200,9 @@ class PortalAttachmentSource:
             listing_page_count=len(portal.listing_urls),
             stubs=tuple(stubs),
             incomplete_reason_codes=incomplete_reason_codes,
+            gated_attachment_navigation_url=getattr(
+                portal, "gated_attachment_navigation_url", None
+            ),
         )
 
     def iter_payloads(self, inventory: SourceInventory) -> Iterator[AcquiredAttachment]:
