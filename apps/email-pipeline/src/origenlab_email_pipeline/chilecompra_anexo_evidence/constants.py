@@ -10,6 +10,44 @@ ANEXO_EVIDENCE_SEMANTIC_DIGEST_ALGORITHM: Final = "chilecompra_anexo_evidence_se
 ANEXO_EVIDENCE_CHUNK_ID_ALGORITHM: Final = "chilecompra_anexo_evidence_chunk_id_v1"
 ANEXO_EVIDENCE_ATTACHMENT_ID_ALGORITHM: Final = "chilecompra_anexo_evidence_attachment_id_v1"
 
+# --- Attachment acquisition sources (provenance layer) -----------------------
+# How the attachment bytes for a TenderAttachmentBundle legitimately arrived.
+# This is deliberately a closed, named vocabulary rather than a free-form
+# string: every acquisition path this codebase supports (or could someday
+# support) must be named here first.
+ACQUISITION_SOURCE_CHILECOMPRA_LEGACY_PARTIAL_HTTP: Final = "chilecompra_legacy_partial_http"
+ACQUISITION_SOURCE_OPERATOR_COMPLETE_BUNDLE: Final = "operator_complete_bundle"
+# Interface-only seam (see acquisition_provenance.FutureChileCompraDocumentApiSource):
+# no implementation exists or may be added speculatively.
+ACQUISITION_SOURCE_FUTURE_CHILECOMPRA_DOCUMENT_API: Final = "future_chilecompra_document_api"
+
+ACQUISITION_SOURCES: Final = frozenset(
+    {
+        ACQUISITION_SOURCE_CHILECOMPRA_LEGACY_PARTIAL_HTTP,
+        ACQUISITION_SOURCE_OPERATOR_COMPLETE_BUNDLE,
+        ACQUISITION_SOURCE_FUTURE_CHILECOMPRA_DOCUMENT_API,
+    }
+)
+
+# --- Acquisition-level completeness states (provenance layer) ----------------
+# Distinct from the 2-state (complete/incomplete) TenderTermsCoverage vocabulary
+# in commercial_procurement_anexo_tender_terms.constants: this 3-state
+# vocabulary exists because an un-declared operator bundle is genuinely
+# unknown (it might be the full inventory, might not be) rather than known to
+# be incomplete. Both "incomplete" and "unknown" still fail closed identically
+# downstream, via TenderAttachmentBundle.incomplete_reason_codes.
+COMPLETENESS_STATE_COMPLETE: Final = "complete"
+COMPLETENESS_STATE_INCOMPLETE: Final = "incomplete"
+COMPLETENESS_STATE_UNKNOWN: Final = "unknown"
+
+COMPLETENESS_STATES: Final = frozenset(
+    {
+        COMPLETENESS_STATE_COMPLETE,
+        COMPLETENESS_STATE_INCOMPLETE,
+        COMPLETENESS_STATE_UNKNOWN,
+    }
+)
+
 # --- Per-attachment processing outcomes (exactly one per discovered row) -----
 OUTCOME_EXTRACTION_SUCCESS: Final = "extraction_success"
 OUTCOME_EXTRACTED_EMPTY: Final = "extracted_empty"
@@ -61,6 +99,13 @@ REASON_ARCHIVE_ACTUAL_MEMBER_BYTES_LIMIT: Final = "archive_actual_member_bytes_l
 REASON_ARCHIVE_ACTUAL_TOTAL_BYTES_LIMIT: Final = "archive_actual_total_bytes_limit"
 REASON_ARCHIVE_ACTUAL_RATIO_LIMIT: Final = "archive_actual_ratio_limit"
 REASON_ARCHIVE_ACTUAL_SIZE_MISMATCH: Final = "archive_actual_size_mismatch"
+
+# An operator-supplied ZIP bundle (source_kind "operator_complete_bundle") was
+# imported without the operator explicitly asserting (via --declare-complete)
+# that it is Mercado Público's complete attachment inventory. This is never
+# inferred from file count, filenames, or comparison against any other
+# source's result count -- see acquisition_provenance.resolve_completeness_state.
+REASON_OPERATOR_COMPLETENESS_NOT_DECLARED: Final = "operator_completeness_not_declared"
 
 # Streaming verification reads this much at a time, bounding verifier memory.
 DEFAULT_ARCHIVE_VERIFY_CHUNK_BYTES: Final = 64 * 1024
