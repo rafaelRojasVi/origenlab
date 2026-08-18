@@ -83,11 +83,28 @@ _LISTING_HREF_RE = re.compile(
 #
 # The portal HTML-encodes the JS string quotes inside the attribute value
 # (``&#39;`` / ``&#039;``), so the pattern accepts an HTML-entity quote in
-# addition to a literal one.
+# addition to a literal one. Two real path variants have been observed for
+# this gated endpoint (``ViewAttachment.aspx`` and ``ViewAttachmentLC.aspx``);
+# both are matched here.
 _GATED_ATTACHMENT_ONCLICK_RE = re.compile(
     r"""onclick=["'][^"']*\bopen\(\s*(?:'|&\#0*39;|&apos;)?\s*"""
-    r"""(?:\.\./)*Attachment/ViewAttachment\.aspx\?enc=""",
+    r"""(?:\.\./)*Attachment/ViewAttachment(?:LC)?\.aspx\?enc=""",
     re.IGNORECASE,
+)
+# Captures the raw ``open(...)`` argument list off the same onclick handler,
+# so `extract_gated_attachment_navigation_url` can pull out the exact first
+# quoted string argument (the navigation URL) after HTML-entity-unescaping
+# it -- never a second, looser regex duplicating the URL grammar itself.
+_GATED_ATTACHMENT_OPEN_CALL_RE = re.compile(
+    r"""onclick=["'][^"']*\bopen\(([^)]*)\)""",
+    re.IGNORECASE,
+)
+# Both observed real path variants for the CAPTCHA-gated attachment-view
+# endpoint. Matched case-insensitively against a lower-cased, normalized path
+# (see `_normalized_portal_path`), so these stay lowercase.
+_PORTAL_ATTACHMENT_VIEW_PATH_SUFFIXES = (
+    "/procurement/modules/attachment/viewattachment.aspx",
+    "/procurement/modules/attachment/viewattachmentlc.aspx",
 )
 _HIDDEN_INPUT_RE = re.compile(r"""<input\b[^>]*type=["']hidden["'][^>]*>""", re.IGNORECASE)
 _INPUT_NAME_RE = re.compile(r"""\bname=["']([^"']+)["']""", re.IGNORECASE)
@@ -741,6 +758,27 @@ def is_portal_listing_url(url: str) -> bool:
     return bool(enc_values and str(enc_values[0]).strip())
 
 
+def is_portal_attachment_navigation_url(url: str) -> bool:
+    """True when ``url`` is a Mercado Público CAPTCHA-gated attachment-view
+    navigation endpoint (``ViewAttachment.aspx`` / ``ViewAttachmentLC.aspx``)
+    carrying a non-empty ``enc`` token.
+
+    For HUMAN NAVIGATION ONLY -- this module never requests this URL itself
+    (see ``has_gated_attachment_listing_hint`` / ``extract_gated_attachment_navigation_url``).
+    Reuses ``is_portal_url``'s scheme/host/userinfo checks exactly, so a
+    javascript: URL, a foreign host, a protocol-relative foreign URL, or
+    userinfo/encoded-host tricks are all rejected the same way an unsafe
+    listing/detail URL already is.
+    """
+    if not is_portal_url(url):
+        return False
+    path = _normalized_portal_path(url)
+    if not any(path.endswith(suffix) for suffix in _PORTAL_ATTACHMENT_VIEW_PATH_SUFFIXES):
+        return False
+    enc_values = parse_qs(urlparse(url).query).get("enc") or []
+    return bool(enc_values and str(enc_values[0]).strip())
+
+
 def _require_portal_detail_url(url: str) -> str:
     if not is_portal_detail_url(url):
         raise ChileCompraPortalError(
@@ -813,6 +851,40 @@ def has_gated_attachment_listing_hint(page_html: str) -> bool:
     infer how many (or which) attachments it contains.
     """
     return _GATED_ATTACHMENT_ONCLICK_RE.search(page_html or "") is not None
+
+
+def extract_gated_attachment_navigation_url(
+    page_html: str, *, base_url: str = PORTAL_BASE_URL
+) -> str | None:
+    """Recover the exact gated attachment-view URL the ficha's own onclick
+    handler advertises, for HUMAN NAVIGATION ONLY -- this module still never
+    requests, follows, or otherwise interacts with it.
+
+    The ``enc`` token is opaque: this never generates, decrypts, reverse
+    engineers, or guesses one. It only reads the URL already present in the
+    already-fetched detail page's own markup (the same page
+    `has_gated_attachment_listing_hint` inspects), resolves it against
+    ``base_url`` if relative, and returns it only if it passes
+    `is_portal_attachment_navigation_url`'s strict scheme/host/path/``enc``
+    validation. Returns ``None`` on any parse failure, any URL that fails
+    validation, or when no onclick hint is present at all -- never a
+    fabricated URL.
+    """
+    match = _GATED_ATTACHMENT_OPEN_CALL_RE.search(page_html or "")
+    if not match:
+        return None
+    args = html.unescape(match.group(1)).strip()
+    if not args or args[0] not in ("'", '"'):
+        return None
+    quote = args[0]
+    end = args.find(quote, 1)
+    if end == -1:
+        return None
+    raw_url = args[1:end].strip()
+    if not raw_url:
+        return None
+    absolute = urljoin(base_url, raw_url.replace("../", "", 1) if raw_url.startswith("../") else raw_url)
+    return absolute if is_portal_attachment_navigation_url(absolute) else None
 
 
 def parse_attachment_listing(listing_html: str, *, listing_url: str) -> list[PortalAttachment]:
@@ -1127,6 +1199,12 @@ class PortalAttachmentInventory:
     # `listing_urls` enumerated above. This never implies anything about how
     # many attachments (if any) sit behind that surface.
     gated_listing_hint: bool = False
+    # The exact gated attachment-view URL the ficha's markup advertised (see
+    # `extract_gated_attachment_navigation_url`), for HUMAN NAVIGATION ONLY --
+    # never requested by this module. `None` when no hint was present or the
+    # advertised URL failed validation; kept as a separate field rather than
+    # overloading `gated_listing_hint` with URL semantics.
+    gated_attachment_navigation_url: str | None = None
 
     @property
     def attachments_discovered(self) -> int:
@@ -1162,6 +1240,7 @@ def list_licitacion_attachments(
     detail_html = _decode_portal_html(detail_raw)
     listing_urls = tuple(extract_attachment_listing_urls(detail_html))
     gated_listing_hint = has_gated_attachment_listing_hint(detail_html)
+    gated_attachment_navigation_url = extract_gated_attachment_navigation_url(detail_html)
 
     attachments: list[PortalAttachment] = []
     form_fields: dict[str, dict[str, str]] = {}
@@ -1186,6 +1265,7 @@ def list_licitacion_attachments(
         listing_form_fields=form_fields,
         session=session,
         gated_listing_hint=gated_listing_hint,
+        gated_attachment_navigation_url=gated_attachment_navigation_url,
     )
 
 

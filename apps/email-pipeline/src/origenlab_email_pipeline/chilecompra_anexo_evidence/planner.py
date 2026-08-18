@@ -566,6 +566,7 @@ def build_tender_bundle(
         incomplete_reason_codes=tuple(sorted(set(incomplete))),
         semantic_digest=digest,
         outcome_counts=outcome_counts,
+        gated_attachment_navigation_url=inventory.gated_attachment_navigation_url,
     )
 
 

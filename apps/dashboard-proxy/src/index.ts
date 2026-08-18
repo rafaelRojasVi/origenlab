@@ -1,9 +1,16 @@
-import { isAllowedUpstreamPath, stripApiPrefix } from "./allowlist";
+import { isAllowedPostUploadPath, isAllowedUpstreamPath, stripApiPrefix } from "./allowlist";
 import { applyCorsHeaders, stripUpstreamCorsHeaders } from "./cors";
 import { API_AUTH_HEADER, buildUpstreamHeaders, buildUpstreamUrl, type ProxyEnv } from "./proxy";
 
 export type { ProxyEnv } from "./proxy";
-export { stripApiPrefix, isAllowedUpstreamPath, buildUpstreamUrl, buildUpstreamHeaders, API_AUTH_HEADER };
+export {
+  stripApiPrefix,
+  isAllowedUpstreamPath,
+  isAllowedPostUploadPath,
+  buildUpstreamUrl,
+  buildUpstreamHeaders,
+  API_AUTH_HEADER,
+};
 export { ALLOWED_ORIGINS, applyCorsHeaders, isAllowedOrigin } from "./cors";
 
 const PROXY_MARKER = "dashboard-proxy";
@@ -61,20 +68,26 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
     return new Response(null, { status: 204, headers });
   }
 
-  if (MUTATING_METHODS.has(method)) {
-    return jsonError(request, 405, "method_not_allowed");
-  }
-
-  if (!ALLOWED_METHODS.has(method)) {
-    return jsonError(request, 405, "method_not_allowed");
-  }
-
   const upstreamPath = stripApiPrefix(url.pathname);
-  if (upstreamPath === null) {
-    return jsonError(request, 404, "not_found");
-  }
 
-  if (!isAllowedUpstreamPath(upstreamPath)) {
+  // Method+path authorization, not method-then-path-in-isolation: POST is
+  // legal ONLY for the one exact annex-bundle preview upload path, checked
+  // against its own narrow pattern -- never against isAllowedUpstreamPath
+  // (which governs GET/HEAD reachability only). Adding "POST" to
+  // ALLOWED_METHODS would have made every allowlisted GET path a POST
+  // surface too; this keeps every other path exactly as restrictive as
+  // before.
+  if (method === "POST") {
+    if (upstreamPath === null || !isAllowedPostUploadPath(upstreamPath)) {
+      return jsonError(request, 405, "method_not_allowed");
+    }
+  } else if (MUTATING_METHODS.has(method)) {
+    return jsonError(request, 405, "method_not_allowed");
+  } else if (!ALLOWED_METHODS.has(method)) {
+    return jsonError(request, 405, "method_not_allowed");
+  } else if (upstreamPath === null) {
+    return jsonError(request, 404, "not_found");
+  } else if (!isAllowedUpstreamPath(upstreamPath)) {
     return jsonError(request, 403, "path_not_allowed");
   }
 
@@ -88,11 +101,20 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
     return jsonError(request, 500, "auth_token_not_configured");
   }
 
-  const upstreamUrl = buildUpstreamUrl(upstreamBase, upstreamPath, url.search);
+  // Every branch above that did not already return guarantees upstreamPath
+  // is non-null (POST: validated by isAllowedPostUploadPath itself; GET/HEAD:
+  // the explicit null check above).
+  const upstreamUrl = buildUpstreamUrl(upstreamBase, upstreamPath as string, url.search);
   const upstreamRequest = new Request(upstreamUrl, {
     method,
     headers: buildUpstreamHeaders(env, request.headers),
     redirect: "manual",
+    // Only POST (the one preview-upload path) ever carries a body. Buffered
+    // rather than streamed: the body is already bounded by the browser's
+    // own upload size and the upstream API's own limit, and buffering keeps
+    // forwarding trivially correct/testable (byte-identical) without
+    // relying on this runtime's streaming-request-body support.
+    body: method === "POST" ? await request.arrayBuffer() : undefined,
   });
 
   const upstreamResponse = await fetch(upstreamRequest);

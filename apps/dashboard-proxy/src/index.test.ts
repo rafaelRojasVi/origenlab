@@ -603,3 +603,251 @@ describe("handleRequest", () => {
     expect(response.headers.get("Access-Control-Allow-Origin")).not.toBe("*");
   });
 });
+
+describe("annex-bundle preview upload: exact method+path authorization", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const PREVIEW_PATH = "/api/operator/procurement/tenders/2410-66-LP26/annex-bundle/preview";
+  const ZIP_BYTES = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x00, 0x01, 0x02, 0x03]);
+
+  function stubUpstreamCapture() {
+    const captured: { url: string; method: string; headers: Headers; bodyText: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (req: Request) => {
+        const bodyText = await req.clone().text();
+        captured.push({ url: req.url, method: req.method, headers: req.headers, bodyText });
+        return new Response(JSON.stringify({ result: "imported" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json", "X-Request-ID": "upstream-req-1" },
+        });
+      }),
+    );
+    return captured;
+  }
+
+  it("GET on every other allowlisted path remains allowed (unchanged)", async () => {
+    stubUpstreamFetch();
+    const response = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/operator/procurement/tenders/2410-66-LP26", {
+        method: "GET",
+      }),
+      TEST_ENV,
+    );
+    expect(response.status).toBe(200);
+  });
+
+  it("POST to the exact preview path is allowed and forwards the body byte-identically", async () => {
+    const captured = stubUpstreamCapture();
+
+    const response = await handleRequest(
+      requestWithOrigin(`https://dashboard.origenlab.cl${PREVIEW_PATH}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/zip" },
+        body: ZIP_BYTES,
+      }),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.url).toBe(
+      "https://api.origenlab.cl/operator/procurement/tenders/2410-66-LP26/annex-bundle/preview",
+    );
+    expect(captured[0]?.method).toBe("POST");
+    const expectedText = new TextDecoder().decode(ZIP_BYTES);
+    expect(captured[0]?.bodyText).toBe(expectedText);
+  });
+
+  it("POST to the exact preview path preserves Content-Type upstream", async () => {
+    const captured = stubUpstreamCapture();
+
+    await handleRequest(
+      requestWithOrigin(`https://dashboard.origenlab.cl${PREVIEW_PATH}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/zip" },
+        body: ZIP_BYTES,
+      }),
+      TEST_ENV,
+    );
+
+    expect(captured[0]?.headers.get("Content-Type")).toBe("application/zip");
+  });
+
+  it("POST to the exact preview path injects server-side auth without leaking it back", async () => {
+    const captured = stubUpstreamCapture();
+
+    const response = await handleRequest(
+      requestWithOrigin(`https://dashboard.origenlab.cl${PREVIEW_PATH}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/zip" },
+        body: ZIP_BYTES,
+      }),
+      TEST_ENV,
+    );
+
+    expect(captured[0]?.headers.get(API_AUTH_HEADER)).toBe("server-only-token");
+    expect(response.headers.get(API_AUTH_HEADER)).toBeNull();
+    const bodyText = await response.text();
+    expect(bodyText).not.toContain("server-only-token");
+  });
+
+  it("POST to a different exact tender path is still 405", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/operator/procurement/tenders/2410-66-LP26", {
+        method: "POST",
+        headers: { "Content-Type": "application/zip" },
+        body: ZIP_BYTES,
+      }),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(405);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("POST to /operator/procurement/status is still 405", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/operator/procurement/status", {
+        method: "POST",
+      }),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(405);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("POST to a queues path is still 405", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/operator/procurement/queues/current_opportunity", {
+        method: "POST",
+      }),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(405);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("PUT/PATCH/DELETE to the preview path are still 405", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    for (const method of ["PUT", "PATCH", "DELETE"] as const) {
+      const response = await handleRequest(
+        requestWithOrigin(`https://dashboard.origenlab.cl${PREVIEW_PATH}`, { method }),
+        TEST_ENV,
+      );
+      expect(response.status).toBe(405);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("POST to a deeper/invalid upload-shaped path is 405", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await handleRequest(
+      requestWithOrigin(
+        "https://dashboard.origenlab.cl/api/operator/procurement/tenders/2410-66-LP26/annex-bundle/preview/extra",
+        { method: "POST" },
+      ),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(405);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("adding POST to ALLOWED_METHODS globally would have been wrong: GET-only paths never became POST surfaces", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/operator/procurement/institutions", {
+        method: "POST",
+      }),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(405);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("upstream redirect from a POST preview response is still blocked with 502", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        return new Response("", {
+          status: 302,
+          headers: { Location: "https://api.origenlab.cl/cdn-cgi/access/login" },
+        });
+      }),
+    );
+
+    const response = await handleRequest(
+      requestWithOrigin(`https://dashboard.origenlab.cl${PREVIEW_PATH}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/zip" },
+        body: ZIP_BYTES,
+      }),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(502);
+  });
+
+  it("no caching header on the preview response, matching every other route", async () => {
+    stubUpstreamCapture();
+
+    const response = await handleRequest(
+      requestWithOrigin(`https://dashboard.origenlab.cl${PREVIEW_PATH}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/zip" },
+        body: ZIP_BYTES,
+      }),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("X-OriginLab-Proxy")).toBe("dashboard-proxy");
+  });
+
+  it("OPTIONS preflight for the preview path advertises POST in Access-Control-Allow-Methods", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await handleRequest(
+      requestWithOrigin(`https://dashboard.origenlab.cl${PREVIEW_PATH}`, { method: "OPTIONS" }),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("Access-Control-Allow-Methods")).toBe("GET, HEAD, OPTIONS, POST");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("OPTIONS preflight for a read-only path still advertises only GET, HEAD, OPTIONS", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/operator/status", { method: "OPTIONS" }),
+      TEST_ENV,
+    );
+
+    expect(response.headers.get("Access-Control-Allow-Methods")).toBe("GET, HEAD, OPTIONS");
+  });
+});

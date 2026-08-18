@@ -31,12 +31,14 @@ from origenlab_email_pipeline.chilecompra_api import (
     download_portal_attachment,
     extract_aspnet_form_fields,
     extract_attachment_listing_urls,
+    extract_gated_attachment_navigation_url,
     extract_licitacion_anexos,
     fetch_licitacion_attachments,
     fetch_licitacion_by_codigo,
     fetch_licitaciones,
     has_gated_attachment_listing_hint,
     is_active_chilecompra_licitacion,
+    is_portal_attachment_navigation_url,
     is_portal_detail_url,
     is_portal_listing_url,
     is_portal_url,
@@ -659,6 +661,90 @@ def test_gated_hint_and_normal_href_listing_are_independent_signals() -> None:
     # gated hint that isn't actually there.
     assert has_gated_attachment_listing_hint(_DETAIL_HTML) is False
     assert extract_attachment_listing_urls(_DETAIL_HTML) == [_LISTING_URL]
+
+
+# --- Gated attachment navigation URL: extraction + strict validation ---------
+
+
+def test_extract_gated_attachment_navigation_url_from_real_shaped_fixture() -> None:
+    url = extract_gated_attachment_navigation_url(_GATED_DETAIL_HTML)
+    assert url == "https://www.mercadopublico.cl/Procurement/Modules/Attachment/ViewAttachment.aspx?enc=GATEDTOKEN123"
+
+
+def test_extract_gated_attachment_navigation_url_none_on_normal_ficha() -> None:
+    assert extract_gated_attachment_navigation_url(_DETAIL_HTML) is None
+
+
+def test_extract_gated_attachment_navigation_url_supports_viewattachmentlc_variant() -> None:
+    html_fragment = (
+        '<input onclick="open(\'../Attachment/ViewAttachmentLC.aspx?enc=LCTOKEN\', '
+        "'MercadoPublico', 'width=850');\" />"
+    )
+    url = extract_gated_attachment_navigation_url(html_fragment)
+    assert url == "https://www.mercadopublico.cl/Procurement/Modules/Attachment/ViewAttachmentLC.aspx?enc=LCTOKEN"
+
+
+def test_extract_gated_attachment_navigation_url_resolves_relative_url() -> None:
+    html_fragment = '<input onclick="open(\'../Attachment/ViewAttachment.aspx?enc=REL\', \'p\');" />'
+    url = extract_gated_attachment_navigation_url(html_fragment)
+    assert url is not None
+    assert url.startswith("https://www.mercadopublico.cl/")
+
+
+def test_extract_gated_attachment_navigation_url_accepts_absolute_canonical_url() -> None:
+    html_fragment = (
+        '<input onclick="open(\'https://www.mercadopublico.cl/Procurement/Modules/'
+        "Attachment/ViewAttachment.aspx?enc=ABS', 'p');\" />"
+    )
+    url = extract_gated_attachment_navigation_url(html_fragment)
+    assert url == "https://www.mercadopublico.cl/Procurement/Modules/Attachment/ViewAttachment.aspx?enc=ABS"
+
+
+def test_extract_gated_attachment_navigation_url_handles_html_entity_quotes() -> None:
+    # Same shape as _GATED_ATTACHMENT_ONCLICK_SNIPPET: &#39; not literal '.
+    url = extract_gated_attachment_navigation_url(_GATED_ATTACHMENT_ONCLICK_SNIPPET)
+    assert url == "https://www.mercadopublico.cl/Procurement/Modules/Attachment/ViewAttachment.aspx?enc=GATEDTOKEN123"
+
+
+def test_extract_gated_attachment_navigation_url_none_without_enc() -> None:
+    html_fragment = '<input onclick="open(\'../Attachment/ViewAttachment.aspx\', \'p\');" />'
+    assert extract_gated_attachment_navigation_url(html_fragment) is None
+
+
+def test_extract_gated_attachment_navigation_url_none_on_malformed_onclick() -> None:
+    assert extract_gated_attachment_navigation_url('<input onclick="open(" />') is None
+    assert extract_gated_attachment_navigation_url("") is None
+    assert extract_gated_attachment_navigation_url("no onclick here at all") is None
+
+
+def test_is_portal_attachment_navigation_url_rejects_foreign_host() -> None:
+    assert is_portal_attachment_navigation_url(
+        "https://evil.example.com/Procurement/Modules/Attachment/ViewAttachment.aspx?enc=x"
+    ) is False
+
+
+def test_is_portal_attachment_navigation_url_rejects_javascript_scheme() -> None:
+    assert is_portal_attachment_navigation_url("javascript:alert(1)") is False
+
+
+def test_is_portal_attachment_navigation_url_rejects_unrelated_portal_path() -> None:
+    # A real mercadopublico.cl host with a real path that is NOT an
+    # attachment-view endpoint must still be rejected.
+    assert is_portal_attachment_navigation_url(
+        "https://www.mercadopublico.cl/Procurement/Modules/RFB/DetailsAcquisition.aspx?enc=x"
+    ) is False
+
+
+def test_is_portal_attachment_navigation_url_rejects_userinfo_trick() -> None:
+    assert is_portal_attachment_navigation_url(
+        "https://www.mercadopublico.cl@evil.example.com/Procurement/Modules/"
+        "Attachment/ViewAttachment.aspx?enc=x"
+    ) is False
+
+
+def test_is_portal_attachment_navigation_url_deterministic() -> None:
+    url = "https://www.mercadopublico.cl/Procurement/Modules/Attachment/ViewAttachment.aspx?enc=x"
+    assert is_portal_attachment_navigation_url(url) is is_portal_attachment_navigation_url(url) is True
 
 
 def test_list_licitacion_attachments_surfaces_gated_listing_hint() -> None:

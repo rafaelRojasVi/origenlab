@@ -50,6 +50,7 @@ from origenlab_email_pipeline.chilecompra_anexo_evidence.operator_import import 
     OperatorZipImportError,
     OperatorZipImportResult,
     import_operator_zip,
+    import_operator_zip_bytes,
 )
 from origenlab_email_pipeline.chilecompra_anexo_evidence.planner import (
     EvidenceBuildConfig,
@@ -91,6 +92,7 @@ __all__ = [
     "detect_format",
     "extract_payload",
     "import_operator_zip",
+    "import_operator_zip_bytes",
     "is_operator_supplied",
     "resolve_completeness_state",
     "role_tag_for",

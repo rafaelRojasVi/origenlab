@@ -125,6 +125,30 @@ def test_coverage_projects_complete_bundle() -> None:
     assert coverage.unread_attachment_ids == ()
 
 
+def test_coverage_never_carries_gated_attachment_navigation_url_or_its_token() -> None:
+    """Regression guard: TenderTermsCoverage is the PERSISTED T1 shape (see
+    production_publish.publish_tender_terms), and
+    redaction.assert_no_portal_tokens hard-fails publication of any artifact
+    containing a literal `enc=` value. A bundle carrying a live gated
+    attachment-navigation URL (which always embeds an opaque `enc=` token)
+    must never make it into the coverage this function returns -- not even
+    redacted -- or publishing any tender with a gated ficha would crash.
+    """
+    bundle = replace(
+        _bundle(record=_record(), chunk=_chunk()),
+        gated_attachment_navigation_url=(
+            "https://www.mercadopublico.cl/Procurement/Modules/Attachment/"
+            "ViewAttachment.aspx?enc=LIVETOKEN123"
+        ),
+    )
+
+    coverage = coverage_from_bundle(bundle)
+
+    assert "enc=" not in str(coverage.to_dict())
+    assert "LIVETOKEN123" not in str(coverage.to_dict())
+    assert not hasattr(coverage, "gated_attachment_navigation_url")
+
+
 def test_coverage_projects_unread_attachment_fail_closed() -> None:
     record = _record(outcome="needs_ocr")
     bundle = _bundle(

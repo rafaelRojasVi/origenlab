@@ -224,6 +224,11 @@ class TenderAttachmentBundle:
     incomplete_reason_codes: tuple[str, ...] = ()
     semantic_digest: str = ""
     outcome_counts: dict[str, int] = field(default_factory=dict)
+    # The exact gated attachment-view URL the source's ficha advertised, if
+    # any (see acquire.SourceInventory.gated_attachment_navigation_url) --
+    # pure navigation metadata for a human operator, never requested by this
+    # codebase and never part of the bundle's semantic digest.
+    gated_attachment_navigation_url: str | None = None
 
     @property
     def attachments_extraction_success(self) -> int:

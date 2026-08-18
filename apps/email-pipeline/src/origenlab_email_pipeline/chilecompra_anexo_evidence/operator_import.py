@@ -116,14 +116,18 @@ class OperatorZipImportResult:
         }
 
 
-def import_operator_zip(
-    zip_path: Path,
+def _import_operator_zip_payload(
+    payload: bytes,
     *,
+    zip_path_label: str,
     limits: ArchiveLimits | None = None,
 ) -> OperatorZipImportResult:
-    """Validate and load one operator-supplied ZIP already present on disk.
+    """Shared validation core for both a real on-disk ZIP and in-memory bytes.
 
-    Raises :class:`OperatorZipImportError` when the ZIP as a whole is corrupt,
+    ``zip_path_label`` is purely descriptive (``import_operator_zip``'s
+    ``str(zip_path)``, or an HTTP upload's synthetic label) -- nothing in
+    this function ever touches the filesystem. Raises
+    :class:`OperatorZipImportError` when the ZIP as a whole is corrupt,
     unreadable, or exceeds a container-level safety bound (member count,
     per-member size, total uncompressed size, compression ratio). Individual
     unsafe members (zip-slip paths, symlink entries, encrypted entries, one
@@ -132,13 +136,6 @@ def import_operator_zip(
     member never costs the operator every other legitimate file in the ZIP.
     """
     active_limits = limits or ArchiveLimits()
-
-    try:
-        payload = zip_path.read_bytes()
-    except OSError as exc:
-        raise OperatorZipImportError(
-            f"unable to read zip file {zip_path}: {exc}"
-        ) from exc
 
     zip_sha256 = sha256_bytes(payload)
 
@@ -222,11 +219,48 @@ def import_operator_zip(
         raise OperatorZipImportError(f"corrupt or unreadable zip container: {exc}") from exc
 
     return OperatorZipImportResult(
-        zip_path=str(zip_path),
+        zip_path=zip_path_label,
         zip_sha256=zip_sha256,
         entries=tuple(entries),
         rejected_entries=tuple(rejected),
     )
+
+
+def import_operator_zip(
+    zip_path: Path,
+    *,
+    limits: ArchiveLimits | None = None,
+) -> OperatorZipImportResult:
+    """Validate and load one operator-supplied ZIP already present on disk.
+
+    See :func:`_import_operator_zip_payload` for the full validation
+    contract (shared with :func:`import_operator_zip_bytes`). The only
+    filesystem access anywhere in this module is the ``read_bytes()`` call
+    below.
+    """
+    try:
+        payload = zip_path.read_bytes()
+    except OSError as exc:
+        raise OperatorZipImportError(
+            f"unable to read zip file {zip_path}: {exc}"
+        ) from exc
+    return _import_operator_zip_payload(payload, zip_path_label=str(zip_path), limits=limits)
+
+
+def import_operator_zip_bytes(
+    payload: bytes,
+    *,
+    limits: ArchiveLimits | None = None,
+    source_label: str = "<uploaded bytes>",
+) -> OperatorZipImportResult:
+    """Validate and load one operator-supplied ZIP already read into memory.
+
+    Identical validation to :func:`import_operator_zip` (same shared core),
+    for a caller that already has the bytes in hand -- e.g. an HTTP upload
+    body already read and size-bounded by the caller before this is called.
+    There is no filesystem ``Path`` here and nothing is ever written to disk.
+    """
+    return _import_operator_zip_payload(payload, zip_path_label=source_label, limits=limits)
 
 
 @dataclass
@@ -246,20 +280,78 @@ class OperatorZipAttachmentSource:
     False (the default), a reason code is recorded up front so the resulting
     bundle fails closed to incomplete/unknown, exactly like a source-level
     gated-listing hint does for the legacy HTTP source.
+
+    Two ways to construct one, both funneling into the exact same validation/
+    import/provenance pipeline (``import_operator_zip`` /
+    ``import_operator_zip_bytes`` share one internal implementation -- see
+    ``_import_operator_zip_payload``): ``from_path`` for a ZIP already on
+    local disk (the CLI's case), or ``from_bytes`` for bytes already read
+    into memory (an HTTP upload body, already size-bounded by the caller --
+    this never writes the upload to a temporary file just to satisfy the
+    ``zip_path``-shaped CLI seam). Direct keyword construction with
+    ``zip_path=`` remains supported unchanged for existing callers.
     """
 
-    zip_path: Path
     tender_code: str
     declare_complete: bool = False
     limits: ArchiveLimits | None = None
     source_kind: str = ACQUISITION_SOURCE_OPERATOR_COMPLETE_BUNDLE
+    zip_path: Path | None = None
+    payload_bytes: bytes | None = None
+    payload_label: str = "<uploaded bytes>"
 
     def __post_init__(self) -> None:
+        if (self.zip_path is None) == (self.payload_bytes is None):
+            raise ValueError(
+                "OperatorZipAttachmentSource requires exactly one of zip_path "
+                "(a real file already on disk) or payload_bytes (bytes already "
+                "read into memory) -- never both, never neither"
+            )
         self._loaded_result: OperatorZipImportResult | None = None
+
+    @classmethod
+    def from_path(
+        cls,
+        zip_path: Path,
+        *,
+        tender_code: str,
+        declare_complete: bool = False,
+        limits: ArchiveLimits | None = None,
+    ) -> "OperatorZipAttachmentSource":
+        return cls(
+            tender_code=tender_code,
+            declare_complete=declare_complete,
+            limits=limits,
+            zip_path=zip_path,
+        )
+
+    @classmethod
+    def from_bytes(
+        cls,
+        payload: bytes,
+        *,
+        tender_code: str,
+        declare_complete: bool = False,
+        limits: ArchiveLimits | None = None,
+        label: str = "<uploaded bytes>",
+    ) -> "OperatorZipAttachmentSource":
+        return cls(
+            tender_code=tender_code,
+            declare_complete=declare_complete,
+            limits=limits,
+            payload_bytes=payload,
+            payload_label=label,
+        )
 
     def _load(self) -> OperatorZipImportResult:
         if self._loaded_result is None:
-            self._loaded_result = import_operator_zip(self.zip_path, limits=self.limits)
+            if self.zip_path is not None:
+                self._loaded_result = import_operator_zip(self.zip_path, limits=self.limits)
+            else:
+                assert self.payload_bytes is not None
+                self._loaded_result = import_operator_zip_bytes(
+                    self.payload_bytes, limits=self.limits, source_label=self.payload_label
+                )
         return self._loaded_result
 
     def loaded_import_result(self) -> OperatorZipImportResult:
@@ -304,4 +396,5 @@ __all__ = [
     "OperatorZipImportError",
     "OperatorZipImportResult",
     "import_operator_zip",
+    "import_operator_zip_bytes",
 ]

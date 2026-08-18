@@ -78,6 +78,16 @@ def coverage_from_bundle(bundle: TenderAttachmentBundle) -> TenderTermsCoverage:
         incomplete_reason_codes=tuple(bundle.incomplete_reason_codes),
         unread_attachment_ids=unread,
         outcome_counts=dict(bundle.outcome_counts),
+        # bundle.gated_attachment_navigation_url is deliberately NOT copied
+        # here. TenderTermsCoverage is the PERSISTED T1 shape (written to
+        # tender_terms.jsonl by publish_tender_terms and cloud-synced) --
+        # redaction.assert_no_portal_tokens hard-fails publication of any
+        # artifact containing a literal `enc=` value, and a redacted
+        # `enc=<redacted>` copy would be a non-functional link with zero
+        # information beyond what incomplete_reason_codes already carries
+        # (REASON_GATED_LISTING_UNREACHABLE). The live URL stays available
+        # only on the in-memory TenderAttachmentBundle for the run that
+        # acquired it; it is never propagated into anything persisted.
     )
 
 
