@@ -9,6 +9,8 @@ rather than an empty success.
 from __future__ import annotations
 
 import csv as _csv
+import ctypes
+import gc
 import io
 import re
 import xml.etree.ElementTree as ET
@@ -64,6 +66,16 @@ from origenlab_email_pipeline.chilecompra_anexo_evidence.ocr import (
 )
 
 _WS_RE = re.compile(r"[ \t\r\f\v]+")
+
+
+def _reclaim_ocr_native_memory() -> None:
+    """Return releasable OCR heap pages to the OS when supported."""
+    gc.collect()
+    try:
+        malloc_trim = ctypes.CDLL(None).malloc_trim
+    except (AttributeError, OSError):
+        return
+    malloc_trim(0)
 
 
 @dataclass(frozen=True)
@@ -292,6 +304,7 @@ def extract_pdf(payload: bytes, *, limits: ExtractionLimits) -> ExtractionOutput
                         alpha=False,
                     )
                     image_payload = pixmap.tobytes("png")
+                    del pixmap
                 except Exception as exc:  # noqa: BLE001 - page OCR remains coverage debt
                     ocr_pages_unreadable += 1
                     out.warnings.append(
@@ -304,15 +317,20 @@ def extract_pdf(payload: bytes, *, limits: ExtractionLimits) -> ExtractionOutput
                     limits=limits.ocr_limits,
                 )
 
-                if result.warning:
-                    out.warnings.append(f"pdf_ocr_page:{index + 1}:{result.warning}")
+                try:
+                    if result.warning:
+                        out.warnings.append(
+                            f"pdf_ocr_page:{index + 1}:{result.warning}"
+                        )
 
-                if not result.usable:
-                    ocr_pages_unreadable += 1
-                    continue
+                    result_usable = result.usable
+                    text = normalize_text(result.text) if result_usable else ""
+                finally:
+                    del result
+                    del image_payload
+                    _reclaim_ocr_native_memory()
 
-                text = normalize_text(result.text)
-                if not text:
+                if not result_usable or not text:
                     ocr_pages_unreadable += 1
                     continue
 
