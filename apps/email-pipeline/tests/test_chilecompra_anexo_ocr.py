@@ -142,3 +142,54 @@ def test_ocr_short_result_is_not_treated_as_complete(monkeypatch) -> None:
 
     assert result.usable is False
     assert result.warning == "ocr_insufficient_text"
+
+
+def test_default_ocr_profile_uses_bounded_cloud_resolution() -> None:
+    assert ocr.OcrLimits().inference_max_side_pixels == 1_200
+
+
+def test_engine_uses_ppocrv6_tiny_detector_and_recognizer(monkeypatch) -> None:
+    import rapidocr
+
+    captured: dict[str, object] = {}
+
+    class _CapturedRapidOCR:
+        def __init__(self, *, params):
+            captured["params"] = params
+
+    monkeypatch.setattr(
+        rapidocr,
+        "RapidOCR",
+        _CapturedRapidOCR,
+    )
+
+    ocr._engine.cache_clear()
+    try:
+        ocr._engine(1_200, 0.50)
+    finally:
+        ocr._engine.cache_clear()
+
+    params = captured["params"]
+
+    assert params["Rec.lang_type"] == "es"
+    assert params["Global.max_side_len"] == 1_200
+    assert params["Global.text_score"] == 0.50
+    assert params["Det.model_type"] == rapidocr.ModelType.TINY
+    assert params["Det.ocr_version"] == rapidocr.OCRVersion.PPOCRV6
+    assert params["Rec.model_type"] == rapidocr.ModelType.TINY
+    assert params["Rec.ocr_version"] == rapidocr.OCRVersion.PPOCRV6
+
+
+def test_prewarm_uses_default_production_profile(monkeypatch) -> None:
+    calls: list[tuple[int, float]] = []
+
+    monkeypatch.setattr(
+        ocr,
+        "_engine",
+        lambda side, score: calls.append((side, score)),
+    )
+
+    ocr.prewarm_ocr_models()
+
+    assert calls == [(1_200, 0.50)]
+
