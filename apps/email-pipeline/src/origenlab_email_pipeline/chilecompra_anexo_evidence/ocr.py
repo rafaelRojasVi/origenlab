@@ -19,7 +19,9 @@ class OcrLimits:
     max_pdf_pages: int = 50
     max_image_pixels: int = 25_000_000
     max_image_side_pixels: int = 10_000
-    inference_max_side_pixels: int = 2_000
+    # Production-safe PP-OCRv6 tiny profile. The previous 2,000px/small
+    # profile exceeded the cloud API memory envelope on real scanned tenders.
+    inference_max_side_pixels: int = 1_200
     min_text_chars: int = 8
     min_text_score: float = 0.50
 
@@ -38,14 +40,28 @@ class OcrResult:
 
 @lru_cache(maxsize=8)
 def _engine(inference_max_side_pixels: int, min_text_score: float):
-    from rapidocr import RapidOCR
+    from rapidocr import ModelType, OCRVersion, RapidOCR
 
     return RapidOCR(
         params={
             "Rec.lang_type": "es",
             "Global.max_side_len": inference_max_side_pixels,
             "Global.text_score": min_text_score,
+            "Det.model_type": ModelType.TINY,
+            "Det.ocr_version": OCRVersion.PPOCRV6,
+            "Rec.model_type": ModelType.TINY,
+            "Rec.ocr_version": OCRVersion.PPOCRV6,
         }
+    )
+
+
+def prewarm_ocr_models(*, limits: OcrLimits | None = None) -> None:
+    """Resolve the exact production OCR models before serving requests."""
+
+    active = limits or OcrLimits()
+    _engine(
+        active.inference_max_side_pixels,
+        active.min_text_score,
     )
 
 
