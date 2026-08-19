@@ -63,6 +63,9 @@ from origenlab_email_pipeline.chilecompra_anexo_evidence.constants import (  # n
     REASON_ATTACHMENT_COUNT_BUDGET_EXCEEDED,
     REASON_GATED_LISTING_UNREACHABLE,
 )
+import origenlab_email_pipeline.chilecompra_anexo_evidence.extract as extract_module  # noqa: E402
+from origenlab_email_pipeline.chilecompra_anexo_evidence.ocr import OcrResult  # noqa: E402
+
 from origenlab_email_pipeline.chilecompra_anexo_evidence.redaction import (  # noqa: E402
     ArtifactRedactionError,
     assert_no_portal_tokens,
@@ -100,7 +103,9 @@ def test_zero_attachments_yields_empty_but_complete_bundle() -> None:
 
 
 def test_single_pdf_attachment_extracts_and_completes() -> None:
-    bundle = _bundle([("bases.pdf", "application/pdf", make_pdf(2, marker=_SPEC, marker_page=2))])
+    bundle = _bundle(
+        [("bases.pdf", "application/pdf", make_pdf(2, marker=_SPEC, marker_page=2))]
+    )
     assert bundle.attachments_discovered == 1
     assert bundle.attachments_downloaded == 1
     assert _outcomes(bundle) == [OUTCOME_EXTRACTION_SUCCESS]
@@ -109,7 +114,9 @@ def test_single_pdf_attachment_extracts_and_completes() -> None:
 
 
 def test_multiple_listing_pages_are_counted_and_preserved() -> None:
-    items = [(f"doc_{i}.txt", "text/plain", f"contenido {i}".encode()) for i in range(6)]
+    items = [
+        (f"doc_{i}.txt", "text/plain", f"contenido {i}".encode()) for i in range(6)
+    ]
     source = _source(items, listing_page_count=3, listing_ordinals=[0, 0, 1, 1, 2, 2])
     bundle = build_tender_bundle("T-MULTI", source)
     assert bundle.listing_page_count == 3
@@ -119,7 +126,9 @@ def test_multiple_listing_pages_are_counted_and_preserved() -> None:
 
 
 def test_seventy_five_attachments_all_accounted_for() -> None:
-    items = [(f"anexo_{i:03d}.txt", "text/plain", f"linea {i}".encode()) for i in range(75)]
+    items = [
+        (f"anexo_{i:03d}.txt", "text/plain", f"linea {i}".encode()) for i in range(75)
+    ]
     bundle = build_tender_bundle(
         "T-BULK",
         _source(items),
@@ -157,7 +166,9 @@ def test_streaming_source_does_not_retain_every_payload(monkeypatch) -> None:
                 payload = b"contenido " * 100
                 live_payloads.append(len(payload))
                 max_live = max(max_live, len(live_payloads))
-                yield AcquiredAttachment(stub=stub, payload=payload, content_type="text/plain")
+                yield AcquiredAttachment(
+                    stub=stub, payload=payload, content_type="text/plain"
+                )
                 live_payloads.clear()
 
     bundle = build_tender_bundle("T-STREAM", _TrackingSource())
@@ -199,7 +210,9 @@ def test_count_budget_failure_is_explicit_and_reports_discovered_count() -> None
     assert "80" in (bundle.attachments[0].error_message or "")
 
 
-def test_source_level_incompleteness_survives_into_the_bundle_alongside_a_real_read() -> None:
+def test_source_level_incompleteness_survives_into_the_bundle_alongside_a_real_read() -> (
+    None
+):
     """Fixture C: SourceInventory-level incompleteness (e.g. PortalAttachmentSource
     reporting a gated listing it could not enumerate, per chilecompra_api's
     has_gated_attachment_listing_hint) is not tied to any one attachment
@@ -224,14 +237,20 @@ def test_semantic_digest_changes_when_source_level_incompleteness_changes() -> N
     that has identical attachments/chunks but an undiscovered gated listing
     -- two consumers diffing digests across a re-crawl need to see this
     surface appear, not a false "nothing changed"."""
-    items = [("FORMULARIO_OBLIGATORIO_1234.docx", "text/plain", b"contenido real leido")]
+    items = [
+        ("FORMULARIO_OBLIGATORIO_1234.docx", "text/plain", b"contenido real leido")
+    ]
     complete = _bundle(items)
     gated = _bundle(items, incomplete_reason_codes=(REASON_GATED_LISTING_UNREACHABLE,))
     assert complete.bundle_complete is True
     assert gated.bundle_complete is False
     # Same attachments and chunk content either way.
-    assert [a.sha256 for a in complete.attachments] == [a.sha256 for a in gated.attachments]
-    assert [c.text_sha256 for c in complete.chunks] == [c.text_sha256 for c in gated.chunks]
+    assert [a.sha256 for a in complete.attachments] == [
+        a.sha256 for a in gated.attachments
+    ]
+    assert [c.text_sha256 for c in complete.chunks] == [
+        c.text_sha256 for c in gated.chunks
+    ]
     assert complete.semantic_digest != gated.semantic_digest
 
 
@@ -293,7 +312,10 @@ def test_different_name_same_bytes_keeps_both_rows() -> None:
     )
     assert len(bundle.attachments) == 2
     assert bundle.attachments[1].duplicate_kind == "different_name_same_bytes"
-    assert bundle.attachments[1].duplicate_of_attachment_id == bundle.attachments[0].attachment_id
+    assert (
+        bundle.attachments[1].duplicate_of_attachment_id
+        == bundle.attachments[0].attachment_id
+    )
 
 
 def test_same_name_different_bytes_are_distinct_documents() -> None:
@@ -344,7 +366,9 @@ def test_misleading_extension_is_detected_by_signature() -> None:
 
 def test_misleading_content_type_is_recorded_as_warning() -> None:
     pdf = make_pdf(1)
-    detection = detect_format(pdf, content_type="application/vnd.ms-excel", filename="x.pdf")
+    detection = detect_format(
+        pdf, content_type="application/vnd.ms-excel", filename="x.pdf"
+    )
     assert detection.detected_format == "pdf"
     assert any(w.startswith("content_type_mismatch:") for w in detection.warnings)
 
@@ -371,17 +395,32 @@ def test_pdf_equipment_spec_beyond_page_200_is_extracted() -> None:
 
 def test_pdf_page_limit_reports_partial_not_success() -> None:
     payload = make_pdf(12)
-    output = extract_payload(payload, detected_format="pdf", limits=ExtractionLimits(max_pdf_pages=4))
+    output = extract_payload(
+        payload, detected_format="pdf", limits=ExtractionLimits(max_pdf_pages=4)
+    )
     assert output.outcome == OUTCOME_PARTIAL_DUE_TO_SAFETY_LIMIT
     assert any(w.startswith("pdf_page_limit:") for w in output.warnings)
     assert output.page_count == 12
 
 
-def test_image_only_pdf_is_needs_ocr_and_keeps_page_count() -> None:
+def test_image_only_pdf_is_needs_ocr_and_keeps_page_count(monkeypatch) -> None:
+    monkeypatch.setattr(
+        extract_module,
+        "extract_image_text",
+        lambda payload, *, limits: OcrResult(
+            text="",
+            line_count=0,
+            mean_score=None,
+            warning="ocr_insufficient_text",
+        ),
+    )
+
     output = extract_payload(make_image_only_pdf(3), detected_format="pdf")
+
     assert output.outcome == OUTCOME_NEEDS_OCR
     assert output.page_count == 3
     assert output.chunks == []
+    assert "pdf_no_extractable_text" in output.warnings
 
 
 def test_corrupt_pdf_is_reported_as_corrupt() -> None:
@@ -571,7 +610,10 @@ def test_zip_with_mixed_formats_produces_children_for_every_member() -> None:
         [
             ("bases.pdf", make_pdf(1, marker="BASES", marker_page=1)),
             ("especificaciones.docx", make_docx(paragraph=_SPEC)),
-            ("requerimientos.xlsx", make_xlsx(["S1"], cells={"S1": [(1, 1, "MICROSCOPIO")]})),
+            (
+                "requerimientos.xlsx",
+                make_xlsx(["S1"], cells={"S1": [(1, 1, "MICROSCOPIO")]}),
+            ),
             ("formulario.csv", make_csv(3, marker="CENTRIFUGA", marker_row=1)),
         ]
     )
@@ -579,7 +621,12 @@ def test_zip_with_mixed_formats_produces_children_for_every_member() -> None:
     record = bundle.attachments[0]
     assert record.detected_format == "zip"
     paths = sorted(m.member_path for m in record.archive_members)
-    assert paths == ["bases.pdf", "especificaciones.docx", "formulario.csv", "requerimientos.xlsx"]
+    assert paths == [
+        "bases.pdf",
+        "especificaciones.docx",
+        "formulario.csv",
+        "requerimientos.xlsx",
+    ]
     assert all(m.outcome == OUTCOME_EXTRACTION_SUCCESS for m in record.archive_members)
     assert record.outcome == OUTCOME_EXTRACTION_SUCCESS
     text = _all_text(bundle)
@@ -649,7 +696,9 @@ def test_archive_uncompressed_byte_limit_rejects_expansion() -> None:
 
 def test_zip_bomb_ratio_is_rejected_before_decompression() -> None:
     payload = make_zip_bomb(member_bytes=4 * 1024 * 1024)
-    preflight = preflight_archive(payload, limits=ArchiveLimits(max_compression_ratio=50.0))
+    preflight = preflight_archive(
+        payload, limits=ArchiveLimits(max_compression_ratio=50.0)
+    )
     assert preflight.rejected is True
     assert "archive_ratio_limit" in preflight.reason_codes
 
@@ -709,7 +758,9 @@ def test_unknown_binary_is_unsupported_and_named() -> None:
 
 def test_administrative_file_is_extracted_not_filtered() -> None:
     payload = make_docx(paragraph=f"Bases administrativas. Se requiere {_SPEC}.")
-    bundle = _bundle([("BASES ADMINISTRATIVAS.docx", "application/octet-stream", payload)])
+    bundle = _bundle(
+        [("BASES ADMINISTRATIVAS.docx", "application/octet-stream", payload)]
+    )
     record = bundle.attachments[0]
     assert record.role_tag == "administrative_basis"
     assert record.outcome == OUTCOME_EXTRACTION_SUCCESS
@@ -739,9 +790,7 @@ def test_input_order_does_not_change_semantic_digest() -> None:
     )
     shuffled = [items[2], items[0], items[1]]
     # Same portal positions, different iteration order of the source list.
-    reordered_source = LocalAttachmentSource(
-        items=shuffled, listing_ordinals=[0, 0, 0]
-    )
+    reordered_source = LocalAttachmentSource(items=shuffled, listing_ordinals=[0, 0, 0])
     reordered = build_tender_bundle("T-DET", reordered_source)
     assert forward.attachments_discovered == reordered.attachments_discovered
     assert sorted(c.text_sha256 for c in forward.chunks) == sorted(
@@ -806,7 +855,9 @@ def test_incomplete_bundle_never_reports_extraction_complete() -> None:
 
 
 def test_every_discovered_row_has_exactly_one_outcome() -> None:
-    from origenlab_email_pipeline.chilecompra_anexo_evidence.constants import ALL_OUTCOMES
+    from origenlab_email_pipeline.chilecompra_anexo_evidence.constants import (
+        ALL_OUTCOMES,
+    )
 
     bundle = _bundle(
         [
@@ -839,7 +890,10 @@ def test_output_bundle_is_written_atomically_without_tokens(tmp_path) -> None:
     root = tmp_path / "email-pipeline"
     (root / "reports" / "out").mkdir(parents=True)
     zip_payload = make_zip(
-        [("bases.pdf", make_pdf(1, marker="BASES", marker_page=1)), ("d.csv", make_csv(3))]
+        [
+            ("bases.pdf", make_pdf(1, marker="BASES", marker_page=1)),
+            ("d.csv", make_csv(3)),
+        ]
     )
     bundle = _bundle(
         [
