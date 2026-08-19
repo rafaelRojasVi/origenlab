@@ -58,6 +58,10 @@ from origenlab_email_pipeline.chilecompra_anexo_evidence.constants import (
     REASON_EMBEDDED_CONTENT_UNPROCESSED,
     REASON_OOXML_CONTAINER_UNSAFE,
 )
+from origenlab_email_pipeline.chilecompra_anexo_evidence.ocr import (
+    OcrLimits,
+    extract_image_text,
+)
 
 _WS_RE = re.compile(r"[ \t\r\f\v]+")
 
@@ -74,6 +78,7 @@ class ExtractionLimits:
     csv_rows_per_chunk: int = DEFAULT_CSV_ROWS_PER_CHUNK
     xlsx_rows_per_chunk: int = DEFAULT_XLSX_ROWS_PER_CHUNK
     pdf_min_page_chars: int = DEFAULT_PDF_MIN_PAGE_CHARS
+    ocr_limits: OcrLimits = OcrLimits()
 
 
 @dataclass(frozen=True)
@@ -196,22 +201,24 @@ def extract_pdf(payload: bytes, *, limits: ExtractionLimits) -> ExtractionOutput
         budget = _Budget(limits.max_chars_per_attachment)
         hit_limit = page_count > limits.max_pdf_pages
         if hit_limit:
-            out.warnings.append(
-                f"pdf_page_limit:{limits.max_pdf_pages}/{page_count}"
-            )
+            out.warnings.append(f"pdf_page_limit:{limits.max_pdf_pages}/{page_count}")
         pages_with_text = 0
         for index in range(min(page_count, limits.max_pdf_pages)):
             try:
                 page_text = document.load_page(index).get_text("text") or ""
             except Exception as exc:  # noqa: BLE001 - one bad page must not kill the doc
-                out.warnings.append(f"pdf_page_unreadable:{index + 1}:{type(exc).__name__}")
+                out.warnings.append(
+                    f"pdf_page_unreadable:{index + 1}:{type(exc).__name__}"
+                )
                 continue
             text = normalize_text(page_text)
             if len(text.strip()) >= limits.pdf_min_page_chars:
                 pages_with_text += 1
             if not text:
                 continue
-            for part_index, part in enumerate(_split_text(text, limits.max_chunk_chars)):
+            for part_index, part in enumerate(
+                _split_text(text, limits.max_chunk_chars)
+            ):
                 allowed = budget.take(part)
                 if not allowed:
                     break
@@ -230,9 +237,128 @@ def extract_pdf(payload: bytes, *, limits: ExtractionLimits) -> ExtractionOutput
                 out.warnings.append("char_budget_reached")
                 break
         if pages_with_text == 0 and page_count > 0:
-            out.outcome = OUTCOME_NEEDS_OCR
             out.warnings.append("pdf_no_extractable_text")
-            return out
+
+            ocr_page_count = min(
+                page_count,
+                limits.max_pdf_pages,
+                limits.ocr_limits.max_pdf_pages,
+            )
+            ocr_hit_limit = page_count > ocr_page_count
+            if ocr_hit_limit:
+                out.warnings.append(f"pdf_ocr_page_limit:{ocr_page_count}/{page_count}")
+
+            ocr_pages_with_text = 0
+            ocr_pages_unreadable = 0
+
+            for index in range(ocr_page_count):
+                try:
+                    page = document.load_page(index)
+                    rect = page.rect
+
+                    width_points = float(rect.width)
+                    height_points = float(rect.height)
+
+                    if width_points <= 0 or height_points <= 0:
+                        ocr_pages_unreadable += 1
+                        out.warnings.append(
+                            f"pdf_ocr_page_invalid_dimensions:{index + 1}"
+                        )
+                        continue
+
+                    target_side = min(
+                        limits.ocr_limits.inference_max_side_pixels,
+                        limits.ocr_limits.max_image_side_pixels,
+                    )
+                    max_side_points = max(width_points, height_points)
+
+                    scale = min(
+                        2.0,
+                        target_side / max_side_points,
+                        (
+                            limits.ocr_limits.max_image_pixels
+                            / (width_points * height_points)
+                        )
+                        ** 0.5,
+                    )
+
+                    if scale <= 0:
+                        ocr_pages_unreadable += 1
+                        out.warnings.append(f"pdf_ocr_page_invalid_scale:{index + 1}")
+                        continue
+
+                    pixmap = page.get_pixmap(
+                        matrix=fitz.Matrix(scale, scale),
+                        alpha=False,
+                    )
+                    image_payload = pixmap.tobytes("png")
+                except Exception as exc:  # noqa: BLE001 - page OCR remains coverage debt
+                    ocr_pages_unreadable += 1
+                    out.warnings.append(
+                        f"pdf_ocr_page_render_failed:{index + 1}:{type(exc).__name__}"
+                    )
+                    continue
+
+                result = extract_image_text(
+                    image_payload,
+                    limits=limits.ocr_limits,
+                )
+
+                if result.warning:
+                    out.warnings.append(f"pdf_ocr_page:{index + 1}:{result.warning}")
+
+                if not result.usable:
+                    ocr_pages_unreadable += 1
+                    continue
+
+                text = normalize_text(result.text)
+                if not text:
+                    ocr_pages_unreadable += 1
+                    continue
+
+                ocr_pages_with_text += 1
+
+                for part_index, part in enumerate(
+                    _split_text(text, limits.max_chunk_chars),
+                    start=1,
+                ):
+                    allowed = budget.take(part)
+                    if not allowed:
+                        break
+                    out.chunks.append(
+                        ChunkDraft(
+                            locator_type="pdf_page",
+                            locator={
+                                "page": index + 1,
+                                "page_count": page_count,
+                                "part": part_index,
+                            },
+                            text=allowed,
+                        )
+                    )
+
+                if budget.exhausted:
+                    out.warnings.append("char_budget_reached")
+                    break
+
+            if ocr_pages_with_text == 0:
+                out.outcome = OUTCOME_NEEDS_OCR
+                return out
+
+            out.extractor = "pymupdf_page_text+rapidocr_onnx"
+
+            if ocr_pages_unreadable:
+                out.outcome = OUTCOME_NEEDS_OCR
+                out.warnings.append(
+                    f"pdf_ocr_pages_unreadable:{ocr_pages_unreadable}/{ocr_page_count}"
+                )
+                return out
+
+            return _finalize(
+                out,
+                budget=budget,
+                hit_limit=hit_limit or ocr_hit_limit,
+            )
         if 0 < pages_with_text < min(page_count, limits.max_pdf_pages):
             out.warnings.append(
                 f"pdf_pages_without_text:{min(page_count, limits.max_pdf_pages) - pages_with_text}"
@@ -437,11 +563,17 @@ def extract_docx(
             names = set(archive.namelist())
             if any(n.startswith("word/embeddings/") for n in names):
                 out.warnings.append(REASON_EMBEDDED_CONTENT_UNPROCESSED)
-            if any(n.startswith("word/vbaProject") or n.endswith(".bin") for n in names):
+            if any(
+                n.startswith("word/vbaProject") or n.endswith(".bin") for n in names
+            ):
                 out.warnings.append("macro_or_binary_part_present_not_executed")
             ordered_parts = ["word/document.xml"]
-            ordered_parts += sorted(n for n in names if re.fullmatch(r"word/header\d*\.xml", n))
-            ordered_parts += sorted(n for n in names if re.fullmatch(r"word/footer\d*\.xml", n))
+            ordered_parts += sorted(
+                n for n in names if re.fullmatch(r"word/header\d*\.xml", n)
+            )
+            ordered_parts += sorted(
+                n for n in names if re.fullmatch(r"word/footer\d*\.xml", n)
+            )
             if "word/document.xml" not in names:
                 out.outcome = OUTCOME_CORRUPT
                 out.error_message = "missing word/document.xml"
@@ -740,7 +872,9 @@ def extract_csv(payload: bytes, *, limits: ExtractionLimits) -> ExtractionOutput
         out.error_message = str(exc)[:300]
         return out
     if pending and not budget.exhausted:
-        _flush_csv(out, budget, pending, pending_start, max(row_index, pending_start), limits)
+        _flush_csv(
+            out, budget, pending, pending_start, max(row_index, pending_start), limits
+        )
     out.row_count = row_index
     return _finalize(out, budget=budget, hit_limit=hit_limit)
 
@@ -776,7 +910,9 @@ def extract_txt(payload: bytes, *, limits: ExtractionLimits) -> ExtractionOutput
         out.warnings.append(f"decoded_as:{encoding}")
     normalized = normalize_text(text)
     budget = _Budget(limits.max_chars_per_attachment)
-    for index, part in enumerate(_split_text(normalized, limits.max_chunk_chars), start=1):
+    for index, part in enumerate(
+        _split_text(normalized, limits.max_chunk_chars), start=1
+    ):
         allowed = budget.take(part)
         if not allowed:
             out.warnings.append("char_budget_reached")
@@ -821,7 +957,9 @@ def extract_xml(payload: bytes, *, limits: ExtractionLimits) -> ExtractionOutput
             if raw and raw.strip():
                 values.append(raw.strip())
     combined = normalize_text("\n".join(values))
-    for index, part in enumerate(_split_text(combined, limits.max_chunk_chars), start=1):
+    for index, part in enumerate(
+        _split_text(combined, limits.max_chunk_chars), start=1
+    ):
         allowed = budget.take(part)
         if not allowed:
             out.warnings.append("char_budget_reached")
@@ -834,6 +972,51 @@ def extract_xml(payload: bytes, *, limits: ExtractionLimits) -> ExtractionOutput
             )
         )
     return _finalize(out, budget=budget, hit_limit=hit_limit)
+
+
+# --- Image OCR ----------------------------------------------------------------
+
+
+def extract_image(payload: bytes, *, limits: ExtractionLimits) -> ExtractionOutput:
+    """Extract text from one bounded image attachment using local OCR."""
+
+    out = ExtractionOutput(outcome="", extractor="rapidocr_onnx")
+    result = extract_image_text(payload, limits=limits.ocr_limits)
+
+    if result.warning:
+        out.warnings.append(result.warning)
+
+    if not result.usable:
+        out.outcome = OUTCOME_NEEDS_OCR
+        out.warnings.append("image_attachment_requires_ocr")
+        return out
+
+    text = normalize_text(result.text)
+    if not text:
+        out.outcome = OUTCOME_NEEDS_OCR
+        out.warnings.append("image_attachment_requires_ocr")
+        return out
+
+    budget = _Budget(limits.max_chars_per_attachment)
+    for part_index, part in enumerate(
+        _split_text(text, limits.max_chunk_chars),
+        start=1,
+    ):
+        allowed = budget.take(part)
+        if not allowed:
+            break
+        out.chunks.append(
+            ChunkDraft(
+                locator_type="image",
+                locator={"part": part_index},
+                text=allowed,
+            )
+        )
+
+    if budget.exhausted:
+        out.warnings.append("char_budget_reached")
+
+    return _finalize(out, budget=budget, hit_limit=False)
 
 
 # --- Dispatch ----------------------------------------------------------------
@@ -867,11 +1050,7 @@ def extract_payload(
     if detected_format == FORMAT_XML:
         return extract_xml(payload, limits=active)
     if detected_format == FORMAT_IMAGE:
-        return ExtractionOutput(
-            outcome=OUTCOME_NEEDS_OCR,
-            extractor="none",
-            warnings=["image_attachment_requires_ocr"],
-        )
+        return extract_image(payload, limits=active)
     if detected_format in _NEEDS_CONVERTER_FORMATS:
         return ExtractionOutput(
             outcome=OUTCOME_NEEDS_CONVERTER,
