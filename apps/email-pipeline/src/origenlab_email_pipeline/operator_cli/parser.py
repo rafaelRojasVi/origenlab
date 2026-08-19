@@ -12,6 +12,7 @@ from origenlab_email_pipeline.operator_cli.constants import (
     AUTO_REFRESH_MAIL_COMMAND,
     CLI_COMMAND_NAMES,
     IMPORT_TENDER_ANNEX_BUNDLE_COMMAND,
+    LOCAL_TENDER_WORKER_COMMAND,
     NDR_SAFE_AUTO_APPLY_COMMAND,
     OPERATOR_AUTOMATION_STATUS_COMMAND,
     DAILY_CORE_COMMAND,
@@ -48,6 +49,11 @@ from origenlab_email_pipeline.operator_cli.mail_auto_refresh import (
     print_mail_auto_refresh_help,
     run_mail_auto_refresh,
 )
+from origenlab_email_pipeline.operator_cli.local_tender_worker_command import (
+    parse_local_tender_worker_args,
+    print_local_tender_worker_help,
+    run_local_tender_worker,
+)
 from origenlab_email_pipeline.operator_cli.gmail import (
     print_gmail_ingest_folders_help,
     print_gmail_ingest_help_help,
@@ -80,7 +86,11 @@ def _add_refresh_wrapper_flags(
     include_mirror_dry_run: bool,
     no_mirror_help: str = "With --apply: skip Postgres mirror step",
 ) -> None:
-    parser.add_argument("--apply", action="store_true", help="Run workflow steps (stop on first failure)")
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Run workflow steps (stop on first failure)",
+    )
     parser.add_argument("--no-mirror", action="store_true", help=no_mirror_help)
     if include_mirror_dry_run:
         parser.add_argument(
@@ -191,6 +201,32 @@ def _build_parser() -> argparse.ArgumentParser:
                 help="Dashboard mirror cooldown for remaining-seconds calculation",
             )
             continue
+        if name == LOCAL_TENDER_WORKER_COMMAND:
+            p = sub.add_parser(
+                name,
+                help=SUBCOMMAND_HELP[name],
+                description=SUBCOMMAND_HELP[name],
+            )
+            p.add_argument(
+                "--downloads-dir",
+                type=Path,
+                required=True,
+                help="Directory containing OriginLab tickets and Licitaciones_*.zip",
+            )
+            p.add_argument(
+                "--state-dir",
+                type=Path,
+                default=None,
+                help="Optional local worker state directory",
+            )
+            mode = p.add_mutually_exclusive_group(required=True)
+            mode.add_argument("--once", action="store_true")
+            mode.add_argument("--watch", action="store_true")
+            p.add_argument("--apply", action="store_true")
+            p.add_argument("--poll-seconds", type=float, default=5.0)
+            p.add_argument("--settle-seconds", type=float, default=2.0)
+            continue
+
         if name == IMPORT_TENDER_ANNEX_BUNDLE_COMMAND:
             p = sub.add_parser(
                 name,
@@ -216,7 +252,12 @@ def _build_parser() -> argparse.ArgumentParser:
                     "complete attachment inventory for this tender (never inferred)"
                 ),
             )
-            p.add_argument("--json", dest="json_output", action="store_true", help="Emit structured JSON")
+            p.add_argument(
+                "--json",
+                dest="json_output",
+                action="store_true",
+                help="Emit structured JSON",
+            )
             continue
         if name == AUTO_MIRROR_DASHBOARD_COMMAND:
             p = sub.add_parser(
@@ -224,8 +265,14 @@ def _build_parser() -> argparse.ArgumentParser:
                 help=SUBCOMMAND_HELP[name],
                 description=SUBCOMMAND_HELP[name],
             )
-            p.add_argument("--apply", action="store_true", help="Run mirror-dashboard when gates pass")
-            p.add_argument("--once", action="store_true", help="Single evaluation (required)")
+            p.add_argument(
+                "--apply",
+                action="store_true",
+                help="Run mirror-dashboard when gates pass",
+            )
+            p.add_argument(
+                "--once", action="store_true", help="Single evaluation (required)"
+            )
             p.add_argument(
                 "--daemon",
                 action="store_true",
@@ -249,8 +296,14 @@ def _build_parser() -> argparse.ArgumentParser:
                 help=SUBCOMMAND_HELP[name],
                 description=SUBCOMMAND_HELP[name],
             )
-            p.add_argument("--apply", action="store_true", help="Run daily-core --apply when gates pass")
-            p.add_argument("--once", action="store_true", help="Single evaluation (required)")
+            p.add_argument(
+                "--apply",
+                action="store_true",
+                help="Run daily-core --apply when gates pass",
+            )
+            p.add_argument(
+                "--once", action="store_true", help="Single evaluation (required)"
+            )
             p.add_argument(
                 "--daemon",
                 action="store_true",
@@ -263,7 +316,9 @@ def _build_parser() -> argparse.ArgumentParser:
             p.add_argument("--large-sent-quiet-seconds", type=int, default=900)
             continue
         if name in (REFRESH_DASHBOARD_COMMAND, DAILY_CORE_COMMAND):
-            p = sub.add_parser(name, help=SUBCOMMAND_HELP[name], description=SUBCOMMAND_HELP[name])
+            p = sub.add_parser(
+                name, help=SUBCOMMAND_HELP[name], description=SUBCOMMAND_HELP[name]
+            )
             _add_refresh_wrapper_flags(
                 p,
                 include_mirror_dry_run=(name == REFRESH_DASHBOARD_COMMAND),
@@ -323,7 +378,9 @@ def _build_parser() -> argparse.ArgumentParser:
         sub.add_parser(
             name,
             help=SUBCOMMAND_HELP.get(name, script_rel),
-            description=f"Run {script_rel}" if name in SUBCOMMAND_SCRIPTS else SUBCOMMAND_HELP.get(name, ""),
+            description=f"Run {script_rel}"
+            if name in SUBCOMMAND_SCRIPTS
+            else SUBCOMMAND_HELP.get(name, ""),
         )
     return parser
 
@@ -422,6 +479,16 @@ def main(argv: list[str] | None = None) -> int:
             raise exc
         return run_operator_automation_status(status_opts)
 
+    if command == LOCAL_TENDER_WORKER_COMMAND:
+        if _wrapper_help_requested(argv[1:]):
+            print_local_tender_worker_help()
+            return 0
+        try:
+            worker_opts = parse_local_tender_worker_args(argv[1:])
+        except SystemExit as exc:
+            raise exc
+        return run_local_tender_worker(worker_opts)
+
     if command == IMPORT_TENDER_ANNEX_BUNDLE_COMMAND:
         if _wrapper_help_requested(argv[1:]):
             print_import_tender_annex_bundle_help()
@@ -450,7 +517,9 @@ def main(argv: list[str] | None = None) -> int:
             print_mirror_dashboard_help()
             return 0
         try:
-            mirror_apply, mirror_alembic, passthrough = parse_mirror_dashboard_wrapper_args(argv[1:])
+            mirror_apply, mirror_alembic, passthrough = (
+                parse_mirror_dashboard_wrapper_args(argv[1:])
+            )
         except ValueError as exc:
             parser.error(str(exc))
     elif command == "gmail-ingest-folders" and _wrapper_help_requested(argv[1:]):
