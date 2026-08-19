@@ -135,3 +135,71 @@ def test_pdf_ocr_page_cap_is_explicit_partial_result(monkeypatch) -> None:
     assert len(output.chunks) == 1
     assert output.chunks[0].locator["page"] == 1
     assert "pdf_ocr_page_limit:1/3" in output.warnings
+
+
+def test_reclaim_ocr_native_memory_collects_and_trims(monkeypatch) -> None:
+    calls: list[object] = []
+
+    monkeypatch.setattr(
+        extract_module.gc,
+        "collect",
+        lambda: calls.append("gc"),
+    )
+
+    class FakeLibc:
+        def malloc_trim(self, value: int) -> None:
+            calls.append(("malloc_trim", value))
+
+    monkeypatch.setattr(
+        extract_module.ctypes,
+        "CDLL",
+        lambda _name: FakeLibc(),
+    )
+
+    extract_module._reclaim_ocr_native_memory()
+
+    assert calls == ["gc", ("malloc_trim", 0)]
+
+
+def test_pdf_ocr_reclaims_native_memory_after_every_page(monkeypatch) -> None:
+    ocr_calls = 0
+    reclaim_calls = 0
+
+    def fake_ocr(payload: bytes, *, limits: OcrLimits) -> OcrResult:
+        nonlocal ocr_calls
+        ocr_calls += 1
+
+        if ocr_calls == 1:
+            return OcrResult(
+                text="GARANTIA DE FIEL CUMPLIMIENTO",
+                line_count=1,
+                mean_score=0.99,
+            )
+
+        return OcrResult(
+            text="",
+            line_count=0,
+            mean_score=None,
+            warning="ocr_insufficient_text",
+        )
+
+    def fake_reclaim() -> None:
+        nonlocal reclaim_calls
+        reclaim_calls += 1
+
+    monkeypatch.setattr(extract_module, "extract_image_text", fake_ocr)
+    monkeypatch.setattr(
+        extract_module,
+        "_reclaim_ocr_native_memory",
+        fake_reclaim,
+    )
+
+    output = extract_module.extract_payload(
+        make_image_only_pdf(2),
+        detected_format="pdf",
+    )
+
+    assert ocr_calls == 2
+    assert reclaim_calls == 2
+    assert output.outcome == OUTCOME_NEEDS_OCR
+    assert len(output.chunks) == 1
