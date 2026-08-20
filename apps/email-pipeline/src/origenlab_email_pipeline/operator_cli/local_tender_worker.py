@@ -47,6 +47,8 @@ DEFAULT_STATE_DIR = Path.home() / ".local" / "state" / "origenlab" / "tender-wor
 
 API_URL_ENV = "ORIGENLAB_API_BASE_URL"
 API_TOKEN_ENV = "ORIGENLAB_API_AUTH_TOKEN"
+CF_ACCESS_CLIENT_ID_ENV = "CF_ACCESS_CLIENT_ID"
+CF_ACCESS_CLIENT_SECRET_ENV = "CF_ACCESS_CLIENT_SECRET"
 
 # A dashboard ticket is intentionally short-lived. This prevents an abandoned
 # ticket from claiming an unrelated Licitaciones ZIP downloaded much later.
@@ -534,15 +536,32 @@ def post_structured_local_import(
         separators=(",", ":"),
     ).encode("utf-8")
 
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_token}",
+        "User-Agent": "OriginLab-Local/1.0",
+    }
+
+    cf_access_client_id = (os.environ.get(CF_ACCESS_CLIENT_ID_ENV) or "").strip()
+    cf_access_client_secret = (
+        os.environ.get(CF_ACCESS_CLIENT_SECRET_ENV) or ""
+    ).strip()
+
+    if bool(cf_access_client_id) != bool(cf_access_client_secret):
+        raise LocalTenderWorkerError(
+            "Cloudflare Access credentials must be configured as a pair"
+        )
+
+    if cf_access_client_id:
+        headers["CF-Access-Client-Id"] = cf_access_client_id
+        headers["CF-Access-Client-Secret"] = cf_access_client_secret
+
     request = urllib.request.Request(
         url,
         data=body,
         method="POST",
-        headers={
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_token}",
-        },
+        headers=headers,
     )
 
     try:
