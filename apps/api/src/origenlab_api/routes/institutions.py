@@ -11,6 +11,9 @@ from origenlab_api.schemas.institution_prospects import (
     OperatorQueueRowsResponse,
     QueueName,
 )
+from origenlab_api.schemas.tender_annex_local_import import (
+    TenderAnnexLocalImportRequest,
+)
 from origenlab_api.schemas.tender_annex_preview import (
     TenderAnnexBundleImportResponse,
     TenderAnnexBundlePreviewResponse,
@@ -27,6 +30,9 @@ from origenlab_api.services.institution_prospect_service import (
 )
 from origenlab_api.services.tender_annex_import_service import (
     build_tender_annex_bundle_import,
+)
+from origenlab_api.services.tender_annex_local_import_service import (
+    build_tender_annex_local_import,
 )
 from origenlab_api.services.tender_annex_preview_service import (
     build_tender_annex_bundle_preview,
@@ -47,10 +53,12 @@ _MAX_PAGE_SIZE = 500
 # 256 MiB total-uncompressed-bytes container bound (a raw compressed upload
 # is bounded here before ArchiveLimits ever gets to inspect its contents).
 _MAX_ANNEX_BUNDLE_UPLOAD_BYTES = 64 * 1024 * 1024
+_MAX_LOCAL_ANNEX_IMPORT_BYTES = 16 * 1024 * 1024
 _ALLOWED_ANNEX_BUNDLE_CONTENT_TYPES = frozenset({"application/zip"})
+_LOCAL_ANNEX_IMPORT_CONTENT_TYPE = "application/json"
 
 
-async def _read_bounded_zip_body(request: Request) -> bytes:
+async def _read_bounded_body(request: Request, *, max_bytes: int) -> bytes:
     """Read the request body streamed and capped -- never trusts Content-Length alone.
 
     A declared Content-Length over the limit is rejected before reading
@@ -66,7 +74,7 @@ async def _read_bounded_zip_body(request: Request) -> bytes:
             raise HTTPException(
                 status_code=400, detail="Invalid Content-Length header"
             ) from exc
-        if declared_bytes > _MAX_ANNEX_BUNDLE_UPLOAD_BYTES:
+        if declared_bytes > max_bytes:
             raise HTTPException(
                 status_code=413, detail="Upload exceeds maximum allowed size"
             )
@@ -75,12 +83,26 @@ async def _read_bounded_zip_body(request: Request) -> bytes:
     total = 0
     async for chunk in request.stream():
         total += len(chunk)
-        if total > _MAX_ANNEX_BUNDLE_UPLOAD_BYTES:
+        if total > max_bytes:
             raise HTTPException(
                 status_code=413, detail="Upload exceeds maximum allowed size"
             )
         chunks.append(chunk)
     return b"".join(chunks)
+
+
+async def _read_bounded_zip_body(request: Request) -> bytes:
+    return await _read_bounded_body(
+        request,
+        max_bytes=_MAX_ANNEX_BUNDLE_UPLOAD_BYTES,
+    )
+
+
+async def _read_bounded_local_import_body(request: Request) -> bytes:
+    return await _read_bounded_body(
+        request,
+        max_bytes=_MAX_LOCAL_ANNEX_IMPORT_BYTES,
+    )
 
 
 @router.get("/status", response_model=InstitutionProspectStatusResponse)
@@ -262,31 +284,56 @@ async def procurement_tender_annex_bundle_import(
     ),
     settings: Settings = Depends(get_settings),
 ) -> TenderAnnexBundleImportResponse:
-    """Explicitly save a validated operator-uploaded annex ZIP as T1 evidence.
+    """Persist validated annex T1 evidence from ZIP or OriginLab Local.
 
-    This is the only mutation in the procurement tender document workflow.
-    W1 remains the sole actionability authority. Raw ZIP bytes are processed
-    in memory and are not persisted; only validated structured T1/provenance
-    is atomically saved to the operator-import overlay.
+    This remains the single persistence boundary for the procurement tender
+    document workflow. W1 remains the sole actionability authority.
+
+    ``application/zip`` is the legacy fallback and may run document
+    extraction/OCR on the API process. ``application/json`` contains an
+    already-computed OriginLab Local result and never runs document
+    extraction/OCR on the API. Raw ZIP bytes are never persisted.
     """
     content_type = (
         (request.headers.get("content-type") or "").split(";")[0].strip().lower()
     )
-    if content_type not in _ALLOWED_ANNEX_BUNDLE_CONTENT_TYPES:
-        raise HTTPException(
-            status_code=415, detail="Content-Type must be application/zip"
+
+    if content_type == _LOCAL_ANNEX_IMPORT_CONTENT_TYPE:
+        body = await _read_bounded_local_import_body(request)
+        if not body:
+            raise HTTPException(status_code=422, detail="Empty request body")
+
+        try:
+            local_request = TenderAnnexLocalImportRequest.model_validate_json(body)
+        except Exception as exc:  # noqa: BLE001 - untrusted transport fails closed
+            raise HTTPException(
+                status_code=422,
+                detail="Invalid structured local annex import",
+            ) from exc
+
+        outcome = build_tender_annex_local_import(
+            settings,
+            tender_code,
+            local_request,
         )
 
-    zip_bytes = await _read_bounded_zip_body(request)
-    if not zip_bytes:
-        raise HTTPException(status_code=422, detail="Empty request body")
+    elif content_type in _ALLOWED_ANNEX_BUNDLE_CONTENT_TYPES:
+        zip_bytes = await _read_bounded_zip_body(request)
+        if not zip_bytes:
+            raise HTTPException(status_code=422, detail="Empty request body")
 
-    outcome = build_tender_annex_bundle_import(
-        settings,
-        tender_code,
-        zip_bytes,
-        declare_complete=declare_complete,
-    )
+        outcome = build_tender_annex_bundle_import(
+            settings,
+            tender_code,
+            zip_bytes,
+            declare_complete=declare_complete,
+        )
+
+    else:
+        raise HTTPException(
+            status_code=415,
+            detail="Content-Type must be application/zip or application/json",
+        )
     if not outcome.w1_healthy:
         raise HTTPException(
             status_code=503,

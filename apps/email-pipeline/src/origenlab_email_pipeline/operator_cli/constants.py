@@ -36,7 +36,9 @@ SUBCOMMAND_SCRIPTS: dict[str, str] = {
 }
 
 # Multi-step or special wrappers (not 1:1 SUBCOMMAND_SCRIPTS).
-GMAIL_INGEST_COMMANDS: frozenset[str] = frozenset({"gmail-ingest", "gmail-ingest-folders"})
+GMAIL_INGEST_COMMANDS: frozenset[str] = frozenset(
+    {"gmail-ingest", "gmail-ingest-folders"}
+)
 MIRROR_DASHBOARD_COMMAND = "mirror-dashboard"
 DAILY_CORE_COMMAND = "daily-core"
 DAILY_CORE_USAGE = "uv run origenlab daily-core"
@@ -45,7 +47,9 @@ AUTO_REFRESH_MAIL_USAGE = "uv run origenlab auto-refresh-mail"
 AUTO_MIRROR_DASHBOARD_COMMAND = "auto-mirror-dashboard"
 AUTO_MIRROR_DASHBOARD_USAGE = "uv run origenlab auto-mirror-dashboard"
 AUTO_REFRESH_CHILECOMPRA_EQUIPMENT_COMMAND = "auto-refresh-chilecompra-equipment"
-AUTO_REFRESH_CHILECOMPRA_EQUIPMENT_USAGE = "uv run origenlab auto-refresh-chilecompra-equipment"
+AUTO_REFRESH_CHILECOMPRA_EQUIPMENT_USAGE = (
+    "uv run origenlab auto-refresh-chilecompra-equipment"
+)
 OPERATOR_AUTOMATION_STATUS_COMMAND = "operator-automation-status"
 OPERATOR_AUTOMATION_STATUS_USAGE = "uv run origenlab operator-automation-status"
 NDR_SAFE_AUTO_APPLY_COMMAND = "ndr-safe-auto-apply"
@@ -54,6 +58,8 @@ REFRESH_DASHBOARD_COMMAND = "refresh-dashboard"
 REFRESH_DASHBOARD_USAGE = "uv run origenlab refresh-dashboard"
 IMPORT_TENDER_ANNEX_BUNDLE_COMMAND = "import-tender-annex-bundle"
 IMPORT_TENDER_ANNEX_BUNDLE_USAGE = "uv run origenlab import-tender-annex-bundle"
+LOCAL_TENDER_WORKER_COMMAND = "local-tender-worker"
+LOCAL_TENDER_WORKER_USAGE = "uv run origenlab local-tender-worker"
 SPECIAL_COMMANDS: frozenset[str] = GMAIL_INGEST_COMMANDS | frozenset(
     {
         MIRROR_DASHBOARD_COMMAND,
@@ -65,10 +71,13 @@ SPECIAL_COMMANDS: frozenset[str] = GMAIL_INGEST_COMMANDS | frozenset(
         OPERATOR_AUTOMATION_STATUS_COMMAND,
         NDR_SAFE_AUTO_APPLY_COMMAND,
         IMPORT_TENDER_ANNEX_BUNDLE_COMMAND,
+        LOCAL_TENDER_WORKER_COMMAND,
     }
 )
 
-CLI_COMMAND_NAMES: tuple[str, ...] = tuple(SUBCOMMAND_SCRIPTS.keys()) + tuple(sorted(SPECIAL_COMMANDS))
+CLI_COMMAND_NAMES: tuple[str, ...] = tuple(SUBCOMMAND_SCRIPTS.keys()) + tuple(
+    sorted(SPECIAL_COMMANDS)
+)
 
 # Subcommands that only run the target script ``--help`` (no passthrough).
 HELP_ONLY_SUBCOMMANDS: frozenset[str] = frozenset({"gmail-ingest-help"})
@@ -152,5 +161,9 @@ SUBCOMMAND_HELP: dict[str, str] = {
         "Import an operator-supplied complete attachment ZIP already on local disk "
         "(--tender-code CODE --zip PATH [--declare-complete]); no network I/O, no "
         "browser automation; reports only, does not publish"
+    ),
+    "local-tender-worker": (
+        "Watch local OriginLab tender tickets + Licitaciones ZIP downloads; "
+        "run extraction/OCR/T1 on this workstation and publish only structured JSON"
     ),
 }

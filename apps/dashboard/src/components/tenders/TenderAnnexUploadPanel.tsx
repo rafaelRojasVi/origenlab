@@ -6,6 +6,76 @@ import { LicitacionIntelBody } from "../institutionIntel/LicitacionIntelCard";
 
 const MAX_UPLOAD_BYTES = 64 * 1024 * 1024;
 
+const LOCAL_TENDER_TICKET_CONTRACT_VERSION =
+  "local_tender_processing_ticket_v1";
+
+export interface LocalTenderProcessingTicket {
+  contract_version: typeof LOCAL_TENDER_TICKET_CONTRACT_VERSION;
+  ticket_id: string;
+  tender_code: string;
+  operator_declared_complete: boolean;
+  created_at_utc: string;
+}
+
+export function buildLocalTenderProcessingTicket(
+  tenderCode: string,
+  operatorDeclaredComplete: boolean,
+  overrides: {
+    ticketId?: string;
+    createdAtUtc?: string;
+  } = {},
+): LocalTenderProcessingTicket {
+  const ticketId =
+    overrides.ticketId ??
+    `local_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+
+  return {
+    contract_version: LOCAL_TENDER_TICKET_CONTRACT_VERSION,
+    ticket_id: ticketId,
+    tender_code: tenderCode,
+    operator_declared_complete: operatorDeclaredComplete,
+    created_at_utc: overrides.createdAtUtc ?? new Date().toISOString(),
+  };
+}
+
+function downloadLocalProcessingTicket(
+  tenderCode: string,
+  operatorDeclaredComplete: boolean,
+): LocalTenderProcessingTicket {
+  const ticket = buildLocalTenderProcessingTicket(
+    tenderCode,
+    operatorDeclaredComplete,
+  );
+
+  const blob = new Blob(
+    [`${JSON.stringify(ticket, null, 2)}\n`],
+    { type: "application/json" },
+  );
+  let objectUrl: string;
+
+  try {
+    objectUrl = URL.createObjectURL(blob);
+  } catch {
+    throw new Error("local-ticket-download-failed");
+  }
+
+  const anchor = document.createElement("a");
+
+  anchor.href = objectUrl;
+  anchor.download = `origenlab-tender-${ticket.ticket_id}.json`;
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+
+  try {
+    anchor.click();
+  } finally {
+    anchor.remove();
+    URL.revokeObjectURL(objectUrl);
+  }
+
+  return ticket;
+}
+
 type PanelPhase = "idle" | "processing" | "error" | "success";
 type SavePhase = "idle" | "saving" | "saved" | "error";
 
@@ -184,6 +254,45 @@ export function TenderAnnexUploadPanel({
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
+  async function startLocalProcessing() {
+    const popup = window.open("about:blank", "_blank");
+
+    if (!popup) {
+      setNavigationError(
+        "El navegador bloqueó la nueva pestaña. Permite ventanas emergentes para OrigenLab e intenta de nuevo.",
+      );
+      return;
+    }
+
+    popup.opener = null;
+    setIsResolvingNavigation(true);
+    setNavigationError(null);
+
+    try {
+      const destination =
+        await institutionIntelAdapter.getTenderAttachmentNavigation(tenderCode);
+
+      // Resolve the gated destination before creating the local-worker ticket.
+      // This prevents a failed navigation request from leaving an orphan ticket
+      // that could later claim an unrelated Licitaciones ZIP.
+      downloadLocalProcessingTicket(tenderCode, declareComplete);
+
+      popup.location.replace(destination.url);
+    } catch (err) {
+      popup.close();
+
+      if (err instanceof Error && err.message === "local-ticket-download-failed") {
+        setNavigationError(
+          "No se pudo descargar el ticket para OriginLab Local. Intenta de nuevo.",
+        );
+      } else {
+        setNavigationError(navigationErrorMessageFor(err));
+      }
+    } finally {
+      setIsResolvingNavigation(false);
+    }
+  }
+
   async function openMercadoPublicoAttachments() {
     const popup = window.open("about:blank", "_blank");
     if (!popup) {
@@ -251,22 +360,53 @@ export function TenderAnnexUploadPanel({
       data-testid="tender-annex-upload-panel"
     >
       <div data-testid="attachment-navigation-section">
-        <h3 className="text-sm font-semibold text-slate-900">Documentos de la licitación</h3>
+        <h3 className="text-sm font-semibold text-slate-900">
+          Procesar expediente en mi PC
+        </h3>
+
         <p className="mt-1 text-xs text-[var(--color-muted)]">
-          Abre los adjuntos disponibles en Mercado Público para descargarlos manualmente.
+          OrigenLab descargará un pequeño ticket de trabajo y abrirá Mercado Público.
+          Después sólo tienes que descargar el ZIP de la licitación.
+        </p>
+
+        <label className="mt-3 flex items-start gap-2 text-xs text-slate-800">
+          <input
+            type="checkbox"
+            checked={declareComplete}
+            onChange={(e) => setDeclareComplete(e.target.checked)}
+            data-testid="annex-declare-complete-checkbox"
+            className="mt-0.5"
+          />
+          <span>
+            Declaro que descargaré el ZIP con todos los documentos disponibles para esta
+            licitación en Mercado Público.
+          </span>
+        </label>
+
+        <p className="mt-1 pl-6 text-[11px] text-[var(--color-muted)]">
+          Si no marcas esta opción, OrigenLab procesará el expediente pero mantendrá la
+          cobertura como no confirmada.
         </p>
 
         <button
           type="button"
-          className="mt-3 rounded-md border border-brand-700 bg-white px-4 py-2 text-xs font-semibold text-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
-          onClick={openMercadoPublicoAttachments}
+          className="mt-3 rounded-md bg-brand-700 px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+          onClick={startLocalProcessing}
           disabled={isResolvingNavigation}
-          data-testid="attachment-navigation-button"
+          data-testid="local-processing-button"
         >
           {isResolvingNavigation
-            ? "Abriendo Mercado Público…"
-            : "↗ Abrir adjuntos en Mercado Público"}
+            ? "Preparando…"
+            : "Procesar en mi PC"}
         </button>
+
+        <p
+          className="mt-2 text-[11px] text-[var(--color-muted)]"
+          data-testid="local-processing-safety-note"
+        >
+          El ZIP queda en tu computador. OCR y extracción se ejecutan localmente;
+          sólo el resultado estructurado se envía a OrigenLab.
+        </p>
 
         {navigationError ? (
           <p
@@ -279,16 +419,36 @@ export function TenderAnnexUploadPanel({
         ) : null}
 
         <ol className="mt-3 list-decimal space-y-1 pl-4 text-[11px] text-[var(--color-muted)]">
-          <li>Abre Mercado Público.</li>
-          <li>Selecciona y descarga los documentos de la licitación.</li>
-          <li>Vuelve a OrigenLab y carga el ZIP para completar el expediente.</li>
+          <li>Haz clic en “Procesar en mi PC”.</li>
+          <li>En Mercado Público descarga el archivo Licitaciones_*.zip.</li>
+          <li>OriginLab Local lo detectará, procesará y guardará el resultado automáticamente.</li>
         </ol>
+
+        <div className="mt-3 border-t border-[var(--color-border)] pt-3">
+          <p className="text-[11px] text-[var(--color-muted)]">
+            Alternativa manual:
+          </p>
+
+          <button
+            type="button"
+            className="mt-2 rounded-md border border-brand-700 bg-white px-3 py-1.5 text-[11px] font-semibold text-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={openMercadoPublicoAttachments}
+            disabled={isResolvingNavigation}
+            data-testid="attachment-navigation-button"
+          >
+            ↗ Sólo abrir Mercado Público
+          </button>
+        </div>
       </div>
 
       <div className="my-4 border-t border-[var(--color-border)]" />
 
-      <h3 className="text-sm font-semibold text-slate-900">Completar expediente</h3>
-      <p className="mt-0.5 text-xs text-[var(--color-muted)]">Importar documentos de licitación</p>
+      <h3 className="text-sm font-semibold text-slate-900">
+        Importación manual de respaldo
+      </h3>
+      <p className="mt-0.5 text-xs text-[var(--color-muted)]">
+        Usa esta opción sólo si OriginLab Local no está disponible.
+      </p>
 
       {persistedOperatorImport ? (
         <div
@@ -362,22 +522,6 @@ export function TenderAnnexUploadPanel({
           {clientError}
         </p>
       ) : null}
-
-      <label className="mt-3 flex items-start gap-2 text-xs text-slate-800">
-        <input
-          type="checkbox"
-          checked={declareComplete}
-          onChange={(e) => setDeclareComplete(e.target.checked)}
-          data-testid="annex-declare-complete-checkbox"
-          className="mt-0.5"
-        />
-        <span>
-          Declaro que este ZIP contiene todos los documentos disponibles para esta licitación en Mercado Público.
-        </span>
-      </label>
-      <p className="mt-1 pl-6 text-[11px] text-[var(--color-muted)]">
-        Si no marcas esta opción, OrigenLab procesará los documentos pero mantendrá la cobertura como no confirmada.
-      </p>
 
       <button
         type="button"

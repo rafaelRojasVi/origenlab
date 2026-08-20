@@ -1,7 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { TenderAnnexPreview } from "../../api/institutionIntel/types";
-import { TenderAnnexUploadPanel } from "./TenderAnnexUploadPanel";
+import {
+  buildLocalTenderProcessingTicket,
+  TenderAnnexUploadPanel,
+} from "./TenderAnnexUploadPanel";
 
 const previewTenderAnnexBundle = vi.fn();
 const importTenderAnnexBundle = vi.fn();
@@ -461,6 +464,232 @@ describe("TenderAnnexUploadPanel", () => {
     );
 
     openSpy.mockRestore();
+  });
+
+
+  it("builds the exact safe five-field local-worker ticket contract", () => {
+    const ticket = buildLocalTenderProcessingTicket(
+      "4291-46-LE26",
+      true,
+      {
+        ticketId: "local_test_12345678",
+        createdAtUtc: "2026-08-19T20:00:00.000Z",
+      },
+    );
+
+    expect(Object.keys(ticket).sort()).toEqual(
+      [
+        "contract_version",
+        "ticket_id",
+        "tender_code",
+        "operator_declared_complete",
+        "created_at_utc",
+      ].sort(),
+    );
+
+    expect(ticket).toEqual({
+      contract_version: "local_tender_processing_ticket_v1",
+      ticket_id: "local_test_12345678",
+      tender_code: "4291-46-LE26",
+      operator_declared_complete: true,
+      created_at_utc: "2026-08-19T20:00:00.000Z",
+    });
+
+    const serialized = JSON.stringify(ticket);
+
+    expect(serialized).not.toContain("enc=");
+    expect(serialized).not.toContain("qs=");
+    expect(serialized).not.toContain("ticket=");
+    expect(serialized).not.toContain("mercadopublico.cl");
+    expect(serialized).not.toContain("ViewAttachment");
+  });
+
+  it("Procesar en mi PC downloads a ticket and opens Mercado Público without uploading the ZIP", async () => {
+    previewTenderAnnexBundle.mockReset();
+    importTenderAnnexBundle.mockReset();
+    getTenderAttachmentNavigation.mockReset();
+
+    const replace = vi.fn();
+    const close = vi.fn();
+    const popup = {
+      opener: {},
+      location: { replace },
+      close,
+    } as unknown as Window;
+
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(popup);
+
+    getTenderAttachmentNavigation.mockResolvedValue({
+      tenderCode: "2410-66-LP26",
+      destinationKind: "attachments",
+      url:
+        "https://www.mercadopublico.cl/Procurement/Modules/" +
+        "Attachment/ViewAttachmentLC.aspx?enc=EPHEMERAL_LOCAL_TEST",
+      ephemeral: true,
+    });
+
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+
+    const createObjectURL = vi.fn(() => "blob:originlab-local-ticket");
+    const revokeObjectURL = vi.fn();
+
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      writable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      writable: true,
+      value: revokeObjectURL,
+    });
+
+    let downloadedFilename = "";
+
+    const anchorClickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        downloadedFilename = this.download;
+      });
+
+    try {
+      render(<TenderAnnexUploadPanel tenderCode="2410-66-LP26" />);
+
+      fireEvent.click(screen.getByTestId("local-processing-button"));
+
+      // The popup must open synchronously from the human click so popup
+      // blockers do not interfere. The ticket is created only after the
+      // Mercado Público destination resolves successfully.
+      expect(openSpy).toHaveBeenCalledWith("about:blank", "_blank");
+
+      await waitFor(() =>
+        expect(getTenderAttachmentNavigation).toHaveBeenCalledWith(
+          "2410-66-LP26",
+        ),
+      );
+
+      await waitFor(() =>
+        expect(anchorClickSpy).toHaveBeenCalledTimes(1),
+      );
+
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      expect(downloadedFilename).toMatch(
+        /^origenlab-tender-local_.+\.json$/,
+      );
+
+      await waitFor(() =>
+        expect(replace).toHaveBeenCalledWith(
+          expect.stringContaining(
+            "ViewAttachmentLC.aspx?enc=EPHEMERAL_LOCAL_TEST",
+          ),
+        ),
+      );
+
+      expect(revokeObjectURL).toHaveBeenCalledWith(
+        "blob:originlab-local-ticket",
+      );
+
+      // Local path must never call either server-side ZIP workflow.
+      expect(previewTenderAnnexBundle).not.toHaveBeenCalled();
+      expect(importTenderAnnexBundle).not.toHaveBeenCalled();
+
+      // Opaque navigation token is never rendered into the page.
+      expect(
+        screen.queryByText(/EPHEMERAL_LOCAL_TEST/),
+      ).toBeNull();
+
+      expect(close).not.toHaveBeenCalled();
+    } finally {
+      anchorClickSpy.mockRestore();
+      openSpy.mockRestore();
+
+      if (originalCreateObjectURL) {
+        Object.defineProperty(URL, "createObjectURL", {
+          configurable: true,
+          writable: true,
+          value: originalCreateObjectURL,
+        });
+      } else {
+        Reflect.deleteProperty(URL, "createObjectURL");
+      }
+
+      if (originalRevokeObjectURL) {
+        Object.defineProperty(URL, "revokeObjectURL", {
+          configurable: true,
+          writable: true,
+          value: originalRevokeObjectURL,
+        });
+      } else {
+        Reflect.deleteProperty(URL, "revokeObjectURL");
+      }
+    }
+  });
+
+  it("keeps manual Mercado Público navigation and ZIP import as fallback controls", () => {
+    render(<TenderAnnexUploadPanel tenderCode="2410-66-LP26" />);
+
+    screen.getByTestId("local-processing-button");
+    screen.getByTestId("attachment-navigation-button");
+    screen.getByTestId("annex-drop-zone");
+
+    screen.getByText("Importación manual de respaldo");
+    screen.getByText(/OriginLab Local no está disponible/);
+  });
+
+
+  it("does not leave a local-worker ticket when Mercado Público resolution fails", async () => {
+    getTenderAttachmentNavigation.mockReset();
+    getTenderAttachmentNavigation.mockRejectedValue(
+      new OperatorApiError("unavailable", 503),
+    );
+
+    const close = vi.fn();
+    const popup = {
+      opener: {},
+      location: { replace: vi.fn() },
+      close,
+    } as unknown as Window;
+
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(popup);
+
+    const originalCreateObjectURL = URL.createObjectURL;
+    const createObjectURL = vi.fn(() => "blob:must-not-be-created");
+
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      writable: true,
+      value: createObjectURL,
+    });
+
+    try {
+      render(<TenderAnnexUploadPanel tenderCode="2410-66-LP26" />);
+
+      fireEvent.click(screen.getByTestId("local-processing-button"));
+
+      expect(openSpy).toHaveBeenCalledWith("about:blank", "_blank");
+
+      await waitFor(() =>
+        expect(close).toHaveBeenCalledTimes(1),
+      );
+
+      expect(createObjectURL).not.toHaveBeenCalled();
+      expect(
+        screen.getByTestId("attachment-navigation-error").textContent,
+      ).toContain("no está disponible");
+    } finally {
+      openSpy.mockRestore();
+
+      if (originalCreateObjectURL) {
+        Object.defineProperty(URL, "createObjectURL", {
+          configurable: true,
+          writable: true,
+          value: originalCreateObjectURL,
+        });
+      } else {
+        Reflect.deleteProperty(URL, "createObjectURL");
+      }
+    }
   });
 
 });

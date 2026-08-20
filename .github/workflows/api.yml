@@ -27,5 +27,13 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Install ripgrep
+        run: |
+          set -euo pipefail
+          RG_VERSION=14.1.1
+          RG_DIR="ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl"
+          curl --fail --location             --retry 5             --retry-all-errors             --connect-timeout 10             --max-time 60             "https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/${RG_DIR}.tar.gz"             -o /tmp/ripgrep.tar.gz
+          tar -xzf /tmp/ripgrep.tar.gz -C /tmp
+          sudo install -m 0755 "/tmp/${RG_DIR}/rg" /usr/local/bin/rg
+          rg --version
       - run: ./scripts/validate.sh
