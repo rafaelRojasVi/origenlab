@@ -315,13 +315,7 @@ def _numeric_occurrences(
     occurrences: list[tuple[int, int, float]] = []
 
     for match in _NUMBER_PATTERN.finditer(text):
-        raw = (
-            match.group(0)
-            .strip()
-            .replace("\u00a0", "")
-            .replace(" ", "")
-            .rstrip(".")
-        )
+        raw = match.group(0).strip().replace("\u00a0", "").replace(" ", "").rstrip(".")
         if not raw:
             continue
 
@@ -355,10 +349,7 @@ def _numeric_occurrences(
 
 
 def _numeric_values(text: str) -> set[float]:
-    return {
-        value
-        for _start, _end, value in _numeric_occurrences(text)
-    }
+    return {value for _start, _end, value in _numeric_occurrences(text)}
 
 
 def _numeric_value_has_field_unit_context(
@@ -374,9 +365,7 @@ def _numeric_value_has_field_unit_context(
         if abs(value - expected) >= 1e-9:
             continue
 
-        raw_context = text[
-            max(0, start - radius) : min(len(text), end + radius)
-        ]
+        raw_context = text[max(0, start - radius) : min(len(text), end + radius)]
         normalized_context = _normalize(raw_context)
 
         if spec.currency == "CLP":
@@ -409,6 +398,27 @@ def _numeric_value_has_field_unit_context(
         return True
 
     return False
+
+
+def _normalized_numeric_contexts(
+    *,
+    text: str,
+    expected: float,
+    radius: int = 96,
+) -> tuple[str, ...]:
+    """Return small normalized windows around occurrences of one claimed number."""
+
+    contexts: list[str] = []
+
+    for start, end, value in _numeric_occurrences(text):
+        if abs(value - expected) >= 1e-9:
+            continue
+
+        raw_context = text[max(0, start - radius) : min(len(text), end + radius)]
+        contexts.append(_normalize(raw_context))
+
+    return tuple(contexts)
+
 
 def _coerce_value(spec: SemanticFieldSpec, claim: SemanticClaim) -> Any:
     raw = claim.value
@@ -475,15 +485,54 @@ def _validate_field_semantic_context(
                 "semantic payment deadline lacks payment/facture/provider context"
             )
 
+        # The claimed number itself must belong to a local payment-deadline
+        # clause. Large evidence spans may contain payment language in one
+        # sentence and an unrelated invoice/factoring deadline in another.
+        number_contexts = tuple(
+            context
+            for span in selected
+            for context in _normalized_numeric_contexts(
+                text=span.text,
+                expected=float(claim.value),
+            )
+        )
+
+        non_payment_deadline_markers = (
+            "reclamar contra el contenido de la factura",
+            "reclamo contra el contenido de la factura",
+            "cesion de los creditos",
+            "cesion del credito",
+            "factoring",
+            "anticipacion a la fecha de pago",
+            "pagos acordados a",
+        )
+
+        has_direct_payment_deadline_context = any(
+            re.search(
+                r"\b(?:pago|pagos|pagar[a-z]*)\b",
+                context,
+            )
+            is not None
+            and not any(marker in context for marker in non_payment_deadline_markers)
+            for context in number_contexts
+        )
+
+        if not has_direct_payment_deadline_context:
+            raise ValueError(
+                "semantic payment deadline lacks direct local payment-deadline context"
+            )
+
     if spec.field_name == "contract_duration_months":
         has_contract_duration_context = any(
             phrase in combined
             for phrase in (
                 "duracion del contrato",
                 "vigencia del contrato",
+                "vigencia del presente contrato",
                 "plazo del contrato",
                 "contrato tendra una vigencia",
                 "contrato tendra una duracion",
+                "presente contrato tendra un plazo",
             )
         )
         if not has_contract_duration_context:
@@ -505,6 +554,8 @@ def _validate_field_semantic_context(
                 "oferta debera mantenerse vigente",
                 "oferta tendra una vigencia",
                 "oferta tendra vigencia",
+                "ofertas tendran una validez",
+                "ofertas tendran una validez minima",
                 "oferta sera valida",
                 "mantener la oferta vigente",
                 "mantener su oferta vigente",
@@ -533,6 +584,47 @@ def _validate_field_semantic_context(
         )
         if not has_delivery_context:
             raise ValueError("semantic delivery deadline lacks delivery context")
+
+        delivery_number_contexts = tuple(
+            context
+            for span in selected
+            for context in _normalized_numeric_contexts(
+                text=span.text,
+                expected=float(claim.value),
+                radius=360,
+            )
+        )
+
+        bidder_scoring_matrix = any(
+            ("calculo del puntaje" in context or "puntaje asignado" in context)
+            and "informacion proporcionada por el oferente" in context
+            for context in delivery_number_contexts
+        )
+
+        if bidder_scoring_matrix:
+            raise ValueError("semantic delivery claim comes from bidder scoring matrix")
+
+        awarded_offer_delivery = any(
+            (
+                "adjudicar la oferta" in context
+                or (
+                    "oferta presentada" in context
+                    and "linea" in context
+                    and "plazo de entrega" in context
+                )
+                or (
+                    "comision evaluadora" in context
+                    and "monto total" in context
+                    and "plazo de entrega" in context
+                )
+            )
+            for context in delivery_number_contexts
+        )
+
+        if awarded_offer_delivery:
+            raise ValueError(
+                "semantic delivery claim is an evaluated or adjudicated offer value"
+            )
 
         # A blank supplier form that asks the bidder to mark one of several
         # delivery ranges does not state an awarded/required delivery value.
@@ -593,6 +685,18 @@ def _validate_semantic_support(
             raise ValueError(
                 "semantic total budget lacks explicit CLP/taxes-included support"
             )
+
+        # A supplier's adjudicated/awarded amount is a different lifecycle
+        # fact from the authority's available or estimated tender budget.
+        # Do not collapse those two concepts into one conflicting T1 fact.
+        looks_like_awarded_supplier_total = (
+            "adjudic" in combined
+            and "proveedor" in combined
+            and re.search(r"\btotal\b", combined) is not None
+        )
+
+        if looks_like_awarded_supplier_total:
+            raise ValueError("semantic total budget is an adjudicated supplier total")
 
     if spec.field_name == "faithful_performance_guarantee_percent":
         if (
@@ -684,6 +788,7 @@ class OllamaSemanticFallbackClient:
         endpoint: str = "http://127.0.0.1:11434/api/chat",
         timeout_seconds: float = 120.0,
         keep_alive: str = "20m",
+        thinking: bool | str = False,
     ) -> None:
         try:
             endpoint_parts = urllib.parse.urlsplit(endpoint)
@@ -705,10 +810,23 @@ class OllamaSemanticFallbackClient:
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
 
+        if isinstance(thinking, str):
+            normalized_thinking = thinking.strip().casefold()
+            if normalized_thinking not in {"low", "medium", "high"}:
+                raise ValueError("Ollama reasoning effort must be low, medium, or high")
+            resolved_thinking: bool | str = normalized_thinking
+        elif isinstance(thinking, bool):
+            resolved_thinking = thinking
+        else:
+            raise ValueError(
+                "Ollama thinking must be a boolean or reasoning-effort string"
+            )
+
         self.model = model
         self.endpoint = endpoint
         self.timeout_seconds = timeout_seconds
         self.keep_alive = keep_alive
+        self.thinking = resolved_thinking
 
     def extract_claims(
         self,
@@ -794,7 +912,7 @@ class OllamaSemanticFallbackClient:
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
-            "think": False,
+            "think": self.thinking,
             "format": schema,
             "options": {"temperature": 0},
             "keep_alive": self.keep_alive,
@@ -806,22 +924,52 @@ class OllamaSemanticFallbackClient:
             method="POST",
         )
 
-        try:
-            with urllib.request.urlopen(
-                request,
-                timeout=self.timeout_seconds,
-            ) as response:
-                raw_response = json.load(response)
-        except Exception as exc:
-            raise RuntimeError(
-                f"local semantic fallback request failed: {type(exc).__name__}"
-            ) from exc
+        parsed: dict[str, Any] | None = None
+        last_parse_error: Exception | None = None
 
-        try:
-            content = raw_response["message"]["content"]
-            parsed = json.loads(content)
-        except (KeyError, TypeError, json.JSONDecodeError) as exc:
-            raise ValueError("invalid Ollama semantic fallback response") from exc
+        # Structured generation can occasionally return an empty/truncated
+        # message even though the local Ollama request itself succeeded.
+        # Retry that narrow operational failure once; never silently convert
+        # repeated malformed output into factual "unknown".
+        for attempt in range(2):
+            try:
+                with urllib.request.urlopen(
+                    request,
+                    timeout=self.timeout_seconds,
+                ) as response:
+                    raw_response = json.load(response)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"local semantic fallback request failed: {type(exc).__name__}"
+                ) from exc
+
+            try:
+                content = raw_response["message"]["content"]
+                if not isinstance(content, str) or not content.strip():
+                    raise ValueError("empty Ollama semantic fallback content")
+
+                candidate = json.loads(content)
+                if not isinstance(candidate, dict):
+                    raise ValueError(
+                        "Ollama semantic fallback content must be an object"
+                    )
+
+                parsed = candidate
+                break
+            except (
+                KeyError,
+                TypeError,
+                ValueError,
+                json.JSONDecodeError,
+            ) as exc:
+                last_parse_error = exc
+                if attempt == 0:
+                    continue
+
+        if parsed is None:
+            raise ValueError(
+                "invalid Ollama semantic fallback response after retry"
+            ) from last_parse_error
 
         if parsed.get("field_name") != spec.field_name:
             raise ValueError("Ollama semantic fallback returned the wrong field")

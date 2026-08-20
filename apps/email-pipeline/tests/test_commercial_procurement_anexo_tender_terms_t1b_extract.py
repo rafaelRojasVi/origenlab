@@ -93,10 +93,7 @@ def _bundle(
 
 def _facts(bundle: TenderAttachmentBundle):
     result = extract_tender_terms(bundle)
-    return result, {
-        fact.field_name: fact
-        for fact in result.tender_facts
-    }
+    return result, {fact.field_name: fact for fact in result.tender_facts}
 
 
 def test_gold_tender_extracts_initial_commercial_terms() -> None:
@@ -176,9 +173,7 @@ def test_gold_tender_extracts_initial_commercial_terms() -> None:
 
 
 def test_budget_tax_basis_requires_explicit_taxes_included_text() -> None:
-    bundle = _bundle(
-        "Presupuesto Disponible $ 28.419.400.- CLP"
-    )
+    bundle = _bundle("Presupuesto Disponible $ 28.419.400.- CLP")
 
     _, facts = _facts(bundle)
     fact = facts["total_budget"]
@@ -186,9 +181,7 @@ def test_budget_tax_basis_requires_explicit_taxes_included_text() -> None:
     assert fact.state == FACT_STATE_UNKNOWN
     assert fact.value is None
     assert fact.tax_basis == "taxes_included"
-    assert fact.reason_codes == (
-        "no_supported_explicit_pattern_match",
-    )
+    assert fact.reason_codes == ("no_supported_explicit_pattern_match",)
 
 
 def test_real_sag_monto_estimado_del_contrato_is_explicit() -> None:
@@ -230,6 +223,22 @@ def test_real_sag_offer_vigencia_minima_is_explicit() -> None:
     assert fact.unit == "days"
     assert len(fact.evidence) == 1
     assert "120 días corridos" in fact.evidence[0].evidence_excerpt
+
+
+def test_real_present_contract_duration_is_explicit() -> None:
+    bundle = _bundle(
+        "ARTÍCULO DÉCIMO SEGUNDO: De la vigencia del Contrato. "
+        "La vigencia del presente contrato tendrá un plazo de 12 meses."
+    )
+
+    _, facts = _facts(bundle)
+    fact = facts["contract_duration_months"]
+
+    assert fact.state == FACT_STATE_EXPLICIT
+    assert fact.value == 12
+    assert fact.unit == "months"
+    assert len(fact.evidence) == 1
+    assert "12 meses" in fact.evidence[0].evidence_excerpt
 
 
 def test_real_sag_payment_deadline_is_explicit() -> None:
@@ -316,10 +325,7 @@ def test_complete_source_coverage_without_supported_match_remains_unknown() -> N
 
     _, facts = _facts(bundle)
 
-    assert all(
-        fact.state == FACT_STATE_UNKNOWN
-        for fact in facts.values()
-    )
+    assert all(fact.state == FACT_STATE_UNKNOWN for fact in facts.values())
     assert all(
         fact.reason_codes == ("no_supported_explicit_pattern_match",)
         for fact in facts.values()
@@ -335,10 +341,7 @@ def test_incomplete_coverage_without_match_is_unknown() -> None:
     result, facts = _facts(bundle)
 
     assert result.coverage.is_complete is False
-    assert all(
-        fact.state == FACT_STATE_UNKNOWN
-        for fact in facts.values()
-    )
+    assert all(fact.state == FACT_STATE_UNKNOWN for fact in facts.values())
 
 
 def test_positive_fact_survives_incomplete_coverage() -> None:
@@ -360,23 +363,15 @@ def test_positive_fact_survives_incomplete_coverage() -> None:
 
 def test_unrelated_guarantee_and_warranty_do_not_cross_match() -> None:
     bundle = _bundle(
-        
-            "Garantía de seriedad de la oferta: monto equivalente al 5%. "
-            "El periodo de garantía técnica mínimo a ofertar es de "
-            "12 meses sin excepción."
-        
+        "Garantía de seriedad de la oferta: monto equivalente al 5%. "
+        "El periodo de garantía técnica mínimo a ofertar es de "
+        "12 meses sin excepción."
     )
 
     _, facts = _facts(bundle)
 
-    assert (
-        facts["faithful_performance_guarantee_percent"].state
-        == FACT_STATE_UNKNOWN
-    )
-    assert (
-        facts["contract_duration_months"].state
-        == FACT_STATE_UNKNOWN
-    )
+    assert facts["faithful_performance_guarantee_percent"].state == FACT_STATE_UNKNOWN
+    assert facts["contract_duration_months"].state == FACT_STATE_UNKNOWN
 
 
 def test_document_role_is_advisory_not_a_recognition_gate() -> None:
@@ -392,7 +387,6 @@ def test_document_role_is_advisory_not_a_recognition_gate() -> None:
 
     assert facts["offer_validity_days"].state == FACT_STATE_EXPLICIT
     assert facts["offer_validity_days"].value == 90
-
 
 
 def test_delivery_word_number_business_days_is_explicit() -> None:
@@ -462,10 +456,7 @@ def test_delivery_same_value_from_distinct_morphologies_coalesces() -> None:
 
 def test_delivery_offered_cap_morphology_is_explicit() -> None:
     bundle = _bundle(
-        (
-            "El plazo de entrega ofertado, no podrá superar "
-            "los 30 días hábiles."
-        )
+        ("El plazo de entrega ofertado, no podrá superar los 30 días hábiles.")
     )
 
     _, facts = _facts(bundle)
@@ -502,10 +493,7 @@ def test_delivery_day_basis_difference_is_a_real_conflict() -> None:
         (30, "business"),
         (30, "calendar"),
     }
-    assert all(
-        candidate.evidence
-        for candidate in fact.candidates
-    )
+    assert all(candidate.evidence for candidate in fact.candidates)
 
 
 def test_faithful_performance_equivalent_amount_morphology_is_explicit() -> None:
@@ -526,7 +514,6 @@ def test_faithful_performance_equivalent_amount_morphology_is_explicit() -> None
     assert fact.value == 5
     assert fact.unit == "percent"
     assert fact.tax_basis == "net_final_awarded_price"
-
 
 
 def test_contract_duration_real_narrative_morphologies_coalesce() -> None:
@@ -560,10 +547,7 @@ def test_extraction_is_deterministic_across_chunk_input_order() -> None:
             "Artículo 15°. Las ofertas tendrán una validez de "
             "90 días contados desde la fecha de apertura electrónica."
         ),
-        (
-            "Presupuesto Disponible $ 28.419.400.- "
-            "CLP impuestos incluidos"
-        ),
+        ("Presupuesto Disponible $ 28.419.400.- CLP impuestos incluidos"),
     )
 
     forward = extract_tender_terms(bundle)

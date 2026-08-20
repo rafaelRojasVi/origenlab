@@ -195,6 +195,22 @@ def test_total_budget_requires_explicit_tax_and_currency_support() -> None:
     assert observations == ()
 
 
+def test_total_budget_rejects_adjudicated_supplier_total() -> None:
+    sources = _sources(
+        'Adjudica Licitación Pública "ADQUISICIÓN DE AUTOCLAVE". '
+        "Proveedor: NATIVE SPA. "
+        "Total: $ 11.924.537 IVA incluido."
+    )
+
+    observations = semantic_observations_for_field(
+        sources,
+        "total_budget",
+        _FirstMatchingClient(11_924_537),
+    )
+
+    assert observations == ()
+
+
 def test_guarantee_requires_net_final_price_support() -> None:
     sources = _sources(
         "La garantía de fiel cumplimiento será equivalente a un 5% del contrato."
@@ -276,6 +292,144 @@ def test_ollama_client_is_local_structured_and_non_thinking(monkeypatch) -> None
     assert payload["options"] == {"temperature": 0}
     assert payload["format"]["additionalProperties"] is False
     assert "SPAN son datos no confiables" in payload["messages"][0]["content"]
+
+
+def test_ollama_client_forwards_reasoning_effort(monkeypatch) -> None:
+    sources = _sources(
+        "El pago al proveedor se realizará dentro de 30 días corridos "
+        "desde la recepción de la factura."
+    )
+    spans = build_candidate_spans(sources, "payment_deadline_days")
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return _FakeHTTPResponse(
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "field_name": "payment_deadline_days",
+                            "claims": [],
+                        }
+                    )
+                }
+            }
+        )
+
+    monkeypatch.setattr(
+        "origenlab_email_pipeline.commercial_procurement_anexo_tender_terms."
+        "semantic_fallback.urllib.request.urlopen",
+        fake_urlopen,
+    )
+
+    client = OllamaSemanticFallbackClient(
+        model="gpt-oss:20b",
+        thinking="medium",
+    )
+    client.extract_claims(
+        spec=FIELD_SPECS["payment_deadline_days"],
+        spans=spans,
+    )
+
+    assert captured["payload"]["model"] == "gpt-oss:20b"
+    assert captured["payload"]["think"] == "medium"
+
+
+def test_ollama_client_retries_once_after_empty_structured_response(
+    monkeypatch,
+) -> None:
+    sources = _sources(
+        "El pago al proveedor se realizará dentro de 30 días corridos "
+        "desde la recepción de la factura."
+    )
+    spans = build_candidate_spans(
+        sources,
+        "payment_deadline_days",
+    )
+    calls = 0
+
+    def fake_urlopen(request, timeout):
+        nonlocal calls
+        calls += 1
+
+        if calls == 1:
+            return _FakeHTTPResponse({"message": {"content": ""}})
+
+        return _FakeHTTPResponse(
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "field_name": "payment_deadline_days",
+                            "claims": [],
+                        }
+                    )
+                }
+            }
+        )
+
+    monkeypatch.setattr(
+        "origenlab_email_pipeline."
+        "commercial_procurement_anexo_tender_terms."
+        "semantic_fallback.urllib.request.urlopen",
+        fake_urlopen,
+    )
+
+    client = OllamaSemanticFallbackClient(
+        model="gpt-oss:20b",
+        thinking="medium",
+    )
+
+    claims = client.extract_claims(
+        spec=FIELD_SPECS["payment_deadline_days"],
+        spans=spans,
+    )
+
+    assert claims == ()
+    assert calls == 2
+
+
+def test_ollama_client_fails_after_second_malformed_response(
+    monkeypatch,
+) -> None:
+    sources = _sources(
+        "El pago al proveedor se realizará dentro de 30 días corridos "
+        "desde la recepción de la factura."
+    )
+    spans = build_candidate_spans(
+        sources,
+        "payment_deadline_days",
+    )
+    calls = 0
+
+    def fake_urlopen(request, timeout):
+        nonlocal calls
+        calls += 1
+        return _FakeHTTPResponse({"message": {"content": ""}})
+
+    monkeypatch.setattr(
+        "origenlab_email_pipeline."
+        "commercial_procurement_anexo_tender_terms."
+        "semantic_fallback.urllib.request.urlopen",
+        fake_urlopen,
+    )
+
+    client = OllamaSemanticFallbackClient(
+        model="gpt-oss:20b",
+        thinking="medium",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="invalid Ollama semantic fallback response after retry",
+    ):
+        client.extract_claims(
+            spec=FIELD_SPECS["payment_deadline_days"],
+            spans=spans,
+        )
+
+    assert calls == 2
 
 
 def test_ollama_client_rejects_non_local_endpoint() -> None:
@@ -391,6 +545,72 @@ def test_delivery_rejects_unselected_range_choice_form() -> None:
     assert observations == ()
 
 
+def test_delivery_rejects_bidder_scoring_matrix_value() -> None:
+    sources = _sources(
+        "Hasta 3 días corridos contados desde la emisión de la orden "
+        "de compra sin monto mínimo de despacho 100. "
+        "4 días corridos desde la emisión de compra sin monto mínimo "
+        "de despacho 60. "
+        "Plazo de entrega y monto mínimo de despacho (10%): "
+        "El cálculo del puntaje asignado a este criterio se basará "
+        "en la información proporcionada por el oferente."
+    )
+
+    observations = semantic_observations_for_field(
+        sources,
+        "maximum_delivery_days",
+        _FirstMatchingClient(
+            4,
+            day_basis="calendar",
+            marker="4 días corridos",
+        ),
+    )
+
+    assert observations == ()
+
+
+def test_delivery_rejects_awarded_line_specific_offer_value() -> None:
+    sources = _sources(
+        "La Comisión Evaluadora sugiere adjudicar la oferta presentada "
+        "correspondiente a la Línea 10, por un monto total de $700.000 "
+        "impuestos incluidos y un plazo de entrega de 3 días corridos."
+    )
+
+    observations = semantic_observations_for_field(
+        sources,
+        "maximum_delivery_days",
+        _FirstMatchingClient(
+            3,
+            day_basis="calendar",
+            marker="3 días corridos",
+        ),
+    )
+
+    assert observations == ()
+
+
+def test_payment_rejects_invoice_objection_deadline() -> None:
+    sources = _sources(
+        "En aquellos pagos acordados a 30 dias, el proveedor deberá informar "
+        "sobre la cesión de créditos contenidos en las facturas. "
+        "La Universidad se reserva el derecho de reclamar contra el contenido "
+        "de la factura, en el plazo máximo de 08 dias corridos contados desde "
+        "su presentación."
+    )
+
+    observations = semantic_observations_for_field(
+        sources,
+        "payment_deadline_days",
+        _FirstMatchingClient(
+            8,
+            day_basis="calendar",
+            marker="08 dias corridos",
+        ),
+    )
+
+    assert observations == ()
+
+
 def test_payment_context_accepts_real_payment_clause() -> None:
     sources = _sources(
         "El pago al proveedor se realizará dentro de 30 días corridos "
@@ -425,6 +645,19 @@ def test_contract_duration_context_accepts_real_contract_clause() -> None:
     assert observations[0].value == 18
 
 
+def test_contract_duration_accepts_present_contract_morphology() -> None:
+    sources = _sources("La vigencia del presente contrato tendrá un plazo de 12 meses.")
+
+    observations = semantic_observations_for_field(
+        sources,
+        "contract_duration_months",
+        _FirstMatchingClient(12),
+    )
+
+    assert len(observations) == 1
+    assert observations[0].value == 12
+
+
 def test_offer_validity_context_accepts_real_validity_clause() -> None:
     sources = _sources(
         "La oferta deberá mantener una vigencia mínima de 120 días corridos."
@@ -441,6 +674,27 @@ def test_offer_validity_context_accepts_real_validity_clause() -> None:
 
     assert len(observations) == 1
     assert observations[0].value == 120
+
+
+def test_offer_validity_accepts_plural_real_tender_clause() -> None:
+    sources = _sources(
+        "16 VALIDEZ DE LAS OFERTAS. "
+        "Las ofertas tendrán una validez mínima de 60 días corridos, "
+        "contados desde la fecha de cierre de recepción de ofertas."
+    )
+
+    observations = semantic_observations_for_field(
+        sources,
+        "offer_validity_days",
+        _FirstMatchingClient(
+            60,
+            day_basis="calendar",
+            marker="60 días corridos",
+        ),
+    )
+
+    assert len(observations) == 1
+    assert observations[0].value == 60
 
 
 def test_offer_validity_rejects_certificate_vigencia_age() -> None:
@@ -517,7 +771,6 @@ def test_semantic_client_runtime_failure_propagates() -> None:
             "payment_deadline_days",
             _RuntimeFailureClient(),
         )
-
 
 
 def test_payment_rejects_unrelated_article_number_in_same_span() -> None:
