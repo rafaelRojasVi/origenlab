@@ -35,6 +35,9 @@ from origenlab_email_pipeline.chilecompra_anexo_evidence.redaction import (
 from origenlab_email_pipeline.commercial_procurement_anexo_tender_terms.operator_annex_bundle_preview import (
     build_operator_annex_bundle_preview,
 )
+from origenlab_email_pipeline.commercial_procurement_anexo_tender_terms.semantic_fallback import (
+    OllamaSemanticFallbackClient,
+)
 
 TICKET_CONTRACT_VERSION = "local_tender_processing_ticket_v1"
 LOCAL_IMPORT_CONTRACT_VERSION = "local_tender_annex_import_v1"
@@ -363,9 +366,15 @@ def build_structured_local_import(job: LocalTenderJob) -> dict[str, Any]:
         declare_complete=job.ticket.operator_declared_complete,
     )
 
+    semantic_client = OllamaSemanticFallbackClient(
+        model="gpt-oss:20b",
+        thinking="medium",
+    )
+
     raw = build_operator_annex_bundle_preview(
         source,
         tender_code=job.ticket.tender_code,
+        semantic_client=semantic_client,
     )
 
     if raw.get("result") != "imported":

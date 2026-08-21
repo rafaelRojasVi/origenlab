@@ -726,3 +726,63 @@ def test_post_accepts_matching_persisted_response(
 
     assert response["persisted"] is True
     assert response["tender_code"] == "4291-46-LE26"
+
+
+def test_build_structured_local_import_uses_local_ollama_semantics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ticket_path = _write_ticket(
+        tmp_path,
+        ticket_id="ticket_semantic12",
+        tender_code="4291-46-LE26",
+    )
+    zip_path = tmp_path / "Licitaciones_semantic.zip"
+    _write_zip(zip_path)
+
+    job = worker.LocalTenderJob(
+        ticket=worker.load_processing_ticket(ticket_path),
+        zip_path=zip_path,
+    )
+
+    semantic_client = object()
+    captured = {}
+
+    def fake_client(*, model, thinking):
+        captured["model"] = model
+        captured["thinking"] = thinking
+        return semantic_client
+
+    def fake_preview(
+        source,
+        *,
+        tender_code,
+        semantic_client=None,
+    ):
+        captured["tender_code"] = tender_code
+        captured["semantic_client"] = semantic_client
+        return {
+            "result": "imported",
+            "archive": {
+                "zip_sha256": worker.ticket_digest(zip_path),
+            },
+        }
+
+    monkeypatch.setattr(
+        worker,
+        "OllamaSemanticFallbackClient",
+        fake_client,
+    )
+    monkeypatch.setattr(
+        worker,
+        "build_operator_annex_bundle_preview",
+        fake_preview,
+    )
+
+    payload = worker.build_structured_local_import(job)
+
+    assert captured["model"] == "gpt-oss:20b"
+    assert captured["thinking"] == "medium"
+    assert captured["tender_code"] == "4291-46-le26"
+    assert captured["semantic_client"] is semantic_client
+    assert payload["raw"]["result"] == "imported"
