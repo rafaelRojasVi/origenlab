@@ -1,5 +1,7 @@
 """Enforce public GET route response_model coverage and route inventory parity."""
 
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import re
@@ -22,6 +24,8 @@ EXPECTED_PUBLIC_GET_PATHS: frozenset[str] = frozenset(
         "/emails/recent",
         "/cases/warm",
         "/opportunities/equipment",
+        "/opportunities/commercial",
+        "/opportunities/commercial/{opportunity_id}",
         "/operator/procurement/status",
         "/operator/procurement/institutions",
         "/operator/procurement/institutions/{institution_id}",

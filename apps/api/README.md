@@ -117,7 +117,7 @@ All routes are **GET-only**. Production serves Postgres read models when `ORIGEN
 | Group | Paths | Purpose |
 |-------|-------|---------|
 | **Health & operator** | `/health`, `/operator/status`, `/operator/automation-status` | Liveness, operator verdict, automation loop health |
-| **Commercial read models** | `/cases/warm`, `/opportunities/equipment`, `/emails/recent` | Dashboard Today, Bandeja, Licitaciones/equipos |
+| **Commercial read models** | `/cases/warm`, `/opportunities/equipment`, `/opportunities/commercial`, `/emails/recent` | Dashboard Today, lifecycle opportunities, Bandeja, Licitaciones/equipos |
 | **Contacts** | `/contacts/{email}` | Read-only contact drilldown (Today side panel) |
 | **Mirror reporting** | `/mirror/*` | Postgres mirror metadata, deals, catalog, suppressions, audits |
 
@@ -132,6 +132,8 @@ Responses include `X-Request-ID` plus read-only timing headers `Server-Timing` /
 | GET | `/operator/automation-status` | Mail refresh + dashboard mirror + SQLite storage observation (`sqlite_storage`) |
 | GET | `/cases/warm` | Warm commercial case queue (`api.v_warm_case` in production) |
 | GET | `/opportunities/equipment` | Equipment-first operator queue |
+| GET | `/opportunities/commercial` | Canonical PR3 commercial opportunity list |
+| GET | `/opportunities/commercial/{opportunity_id}` | Opportunity lifecycle detail with events/evidence/conflicts |
 | GET | `/emails/recent` | Recent canonical Gmail rows (`api.v_recent_email`) |
 | GET | `/contacts/{email}` | Contact profile + outreach read model |
 | GET | `/mirror/*` | Postgres mirror reporting (summary, meta, deals, catalog, …) |

@@ -5,6 +5,11 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from origenlab_api.repositories.contact_types import ContactQueryResult
+from origenlab_api.schemas.commercial_opportunities import (
+    CommercialOpportunitiesMeta,
+    CommercialOpportunityDetailResponse,
+    CommercialOpportunityItem,
+)
 from origenlab_api.repositories.email_types import RecentEmailsQueryResult
 from origenlab_api.schemas.cases import WarmCaseItem, WarmCasesMeta
 from origenlab_api.schemas.opportunities import EquipmentOpportunitiesMeta
@@ -14,7 +19,9 @@ class OperatorStatusRepository(Protocol):
     def get_status(self, *, max_staleness_days: float = 14.0) -> dict[str, Any]:
         """Return a dict compatible with ``OperatorStatusResponse`` fields."""
 
-    def get_automation_status(self, *, mirror_cooldown_seconds: int = 60) -> dict[str, Any]:
+    def get_automation_status(
+        self, *, mirror_cooldown_seconds: int = 60
+    ) -> dict[str, Any]:
         """Return a dict compatible with ``OperatorAutomationStatusResponse`` fields."""
 
 
@@ -29,6 +36,27 @@ class EquipmentOpportunityRepository(Protocol):
         include_account_intelligence: bool = True,
     ) -> tuple[list[dict[str, Any]], EquipmentOpportunitiesMeta]:
         """Return equipment queue rows and response meta."""
+
+
+class CommercialOpportunityRepository(Protocol):
+    def list_commercial(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        canonical_stage: str | None = None,
+        record_kind: str | None = None,
+        review_status: str | None = None,
+        account_id: str | None = None,
+        primary_contact_id: str | None = None,
+    ) -> tuple[list[CommercialOpportunityItem], CommercialOpportunitiesMeta]:
+        """Return canonical PR3 commercial opportunity rows."""
+
+    def get_commercial_detail(
+        self,
+        opportunity_id: str,
+    ) -> CommercialOpportunityDetailResponse | None:
+        """Return one opportunity with events/evidence/conflicts."""
 
 
 class WarmCaseRepository(Protocol):
