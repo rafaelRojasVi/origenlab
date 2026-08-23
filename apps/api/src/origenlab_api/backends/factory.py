@@ -4,21 +4,34 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from origenlab_api.repositories.postgres.commercial_opportunities import (
+    PostgresCommercialOpportunityRepository,
+)
 from origenlab_api.repositories.postgres.contact import PostgresContactRepository
 from origenlab_api.repositories.postgres.email import PostgresEmailRecentRepository
-from origenlab_api.repositories.postgres.equipment import PostgresEquipmentOpportunityRepository
-from origenlab_api.repositories.postgres.operator import PostgresOperatorStatusRepository
+from origenlab_api.repositories.postgres.equipment import (
+    PostgresEquipmentOpportunityRepository,
+)
+from origenlab_api.repositories.postgres.operator import (
+    PostgresOperatorStatusRepository,
+)
 from origenlab_api.repositories.postgres.warm_cases import PostgresWarmCaseRepository
 from origenlab_api.repositories.protocols import (
+    CommercialOpportunityRepository,
     ContactRepository,
     EmailRecentRepository,
     EquipmentOpportunityRepository,
     OperatorStatusRepository,
     WarmCaseRepository,
 )
+from origenlab_api.repositories.sqlite.commercial_opportunities import (
+    SqliteCommercialOpportunityRepository,
+)
 from origenlab_api.repositories.sqlite.contact import SqliteContactRepository
 from origenlab_api.repositories.sqlite.email import SqliteEmailRecentRepository
-from origenlab_api.repositories.sqlite.equipment import SqliteEquipmentOpportunityRepository
+from origenlab_api.repositories.sqlite.equipment import (
+    SqliteEquipmentOpportunityRepository,
+)
 from origenlab_api.repositories.sqlite.operator import SqliteOperatorStatusRepository
 from origenlab_api.repositories.sqlite.warm_cases import SqliteWarmCaseRepository
 from origenlab_api.settings import Settings
@@ -33,6 +46,7 @@ class RepositoryBundle:
     warm_cases: WarmCaseRepository
     email_recent: EmailRecentRepository
     contact: ContactRepository
+    commercial_opportunity: CommercialOpportunityRepository
 
 
 def validate_api_settings(settings: Settings) -> None:
@@ -58,9 +72,7 @@ def validate_api_settings(settings: Settings) -> None:
             "(explicit dashboard origin, no wildcard)"
         )
     if settings.production_mode() and not (settings.api_auth_token or "").strip():
-        raise ValueError(
-            "ORIGENLAB_ENV=production requires ORIGENLAB_API_AUTH_TOKEN"
-        )
+        raise ValueError("ORIGENLAB_ENV=production requires ORIGENLAB_API_AUTH_TOKEN")
     # Fail-closed recovery admission: never silently fall back to ordinary mode.
     try:
         admit_settings_for_immutable_api(settings)
@@ -78,6 +90,7 @@ def get_repository_bundle(settings: Settings) -> RepositoryBundle:
             warm_cases=PostgresWarmCaseRepository(settings),
             email_recent=PostgresEmailRecentRepository(settings),
             contact=PostgresContactRepository(settings),
+            commercial_opportunity=PostgresCommercialOpportunityRepository(settings),
         )
     return RepositoryBundle(
         operator=SqliteOperatorStatusRepository(settings),
@@ -85,6 +98,7 @@ def get_repository_bundle(settings: Settings) -> RepositoryBundle:
         warm_cases=SqliteWarmCaseRepository(settings),
         email_recent=SqliteEmailRecentRepository(settings),
         contact=SqliteContactRepository(settings),
+        commercial_opportunity=SqliteCommercialOpportunityRepository(settings),
     )
 
 

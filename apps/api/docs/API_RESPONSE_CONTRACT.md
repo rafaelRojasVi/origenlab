@@ -60,6 +60,7 @@ Routes may add **documented** meta fields (e.g. `reduced_mode`, `campaign_mode`,
 | ------------------------------ | --------------------------------------------------- |
 | `GET /cases/warm`              | `WarmCasesResponse` — `meta` + `items`              |
 | `GET /opportunities/equipment` | `EquipmentOpportunitiesResponse` — `meta` + `items` |
+| `GET /opportunities/commercial` | `CommercialOpportunitiesResponse` — `meta` + `items` |
 
 **`GET /cases/warm` (production Postgres read model):**
 
@@ -273,6 +274,8 @@ Operator plane (SQLite / active CSV):
 | GET    | `/emails/recent`              |
 | GET    | `/cases/warm`                 |
 | GET    | `/opportunities/equipment`    |
+| GET    | `/opportunities/commercial`   |
+| GET    | `/opportunities/commercial/{opportunity_id}` |
 | GET    | `/operator/procurement/status` |
 | GET    | `/operator/procurement/institutions` |
 | GET    | `/operator/procurement/institutions/{institution_id}` |
