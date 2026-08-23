@@ -60,6 +60,14 @@ IMPORT_TENDER_ANNEX_BUNDLE_COMMAND = "import-tender-annex-bundle"
 IMPORT_TENDER_ANNEX_BUNDLE_USAGE = "uv run origenlab import-tender-annex-bundle"
 LOCAL_TENDER_WORKER_COMMAND = "local-tender-worker"
 LOCAL_TENDER_WORKER_USAGE = "uv run origenlab local-tender-worker"
+BUILD_COMMERCIAL_IDENTITY_COMMAND = "build-commercial-identity"
+BUILD_COMMERCIAL_IDENTITY_USAGE = "uv run origenlab build-commercial-identity"
+BUILD_COMMERCIAL_OPPORTUNITY_COMMAND = "build-commercial-opportunity"
+BUILD_COMMERCIAL_OPPORTUNITY_USAGE = "uv run origenlab build-commercial-opportunity"
+REFRESH_COMMERCIAL_OPPORTUNITY_MODELS_COMMAND = "refresh-commercial-opportunity-models"
+REFRESH_COMMERCIAL_OPPORTUNITY_MODELS_USAGE = (
+    "uv run origenlab refresh-commercial-opportunity-models"
+)
 SPECIAL_COMMANDS: frozenset[str] = GMAIL_INGEST_COMMANDS | frozenset(
     {
         MIRROR_DASHBOARD_COMMAND,
@@ -72,6 +80,9 @@ SPECIAL_COMMANDS: frozenset[str] = GMAIL_INGEST_COMMANDS | frozenset(
         NDR_SAFE_AUTO_APPLY_COMMAND,
         IMPORT_TENDER_ANNEX_BUNDLE_COMMAND,
         LOCAL_TENDER_WORKER_COMMAND,
+        BUILD_COMMERCIAL_IDENTITY_COMMAND,
+        BUILD_COMMERCIAL_OPPORTUNITY_COMMAND,
+        REFRESH_COMMERCIAL_OPPORTUNITY_MODELS_COMMAND,
     }
 )
 
@@ -165,5 +176,20 @@ SUBCOMMAND_HELP: dict[str, str] = {
     "local-tender-worker": (
         "Watch local OriginLab tender tickets + Licitaciones ZIP downloads; "
         "run extraction/OCR/T1 on this workstation and publish only structured JSON"
+    ),
+    "build-commercial-identity": (
+        "PR2 account/contact identity read model (build_commercial_identity_read_model.py "
+        "logic, called directly) — dry-run default; operator-triggered only, not part of "
+        "daily-core automation; appends a durable JSONL run record"
+    ),
+    "build-commercial-opportunity": (
+        "PR3 opportunity stage/evidence read model (build_commercial_opportunity_read_model.py "
+        "logic, called directly) — dry-run default; requires a current PR2 identity snapshot "
+        "(fails closed otherwise); operator-triggered only; appends a durable JSONL run record"
+    ),
+    "refresh-commercial-opportunity-models": (
+        "Sequenced PR2 -> PR3 production refresh: build-commercial-identity then, only on "
+        "success, build-commercial-opportunity (--apply --confirm-sequenced-apply required; "
+        "no dry-run mode for the combined sequence; fail-fast, never reports partial success)"
     ),
 }

@@ -288,3 +288,36 @@ Fixture results must not be described as production metrics. Run-context labels 
 - Mart `opportunity_signals.created_at` is never business event time.
 - Supplier-only non-deal planes do not mint client opportunities.
 - No automatic follow-up dates or inactivity thresholds.
+
+---
+
+## 15. Operational status (ARCH-2A-P1)
+
+Current upstream refresh chain:
+
+```
+Gmail auto-refresh (cron, every few minutes)
+  -> daily-core: build-email-mart-features -> build-mart -> build-commercial-intel
+     -> refresh-safety -> ndr-review -> post-send-digest -> status
+  -- automated chain stops here --
+  -> build-commercial-identity (PR2)         operator-triggered only
+     -> build-commercial-opportunity (PR3)   operator-triggered only, gated on PR2
+```
+
+- PR2 and PR3 are **not** part of daily-core automation. Nothing in the cron-driven
+  refresh loops invokes either model.
+- Production apply requires explicit operator action: `uv run origenlab
+  build-commercial-identity --sqlite-path <path> --apply --run-context
+  production_apply`, then `uv run origenlab build-commercial-opportunity
+  --sqlite-path <path> --apply --run-context production_apply` — or the sequenced
+  `refresh-commercial-opportunity-models --sqlite-path <path> --apply
+  --confirm-sequenced-apply --run-context production_apply`, which runs both in
+  order and refuses to run PR3 if PR2 fails.
+- PR3 apply always fails closed (`IdentitySnapshotError` / `StaleBuildPlanError`)
+  when the persisted PR2 identity snapshot is missing or does not match a freshly
+  computed fingerprint — this is expected, not a bug, whenever source data has
+  changed since PR2's last build. Rebuild PR2 first.
+- Every `build-commercial-identity` / `build-commercial-opportunity` run (dry-run,
+  apply, or gate-rejected) appends one durable record to
+  `reports/out/active/current/commercial_identity_opportunity_runs.jsonl` — the
+  smallest available history of manual runs beyond stdout and `*_build_meta`.
