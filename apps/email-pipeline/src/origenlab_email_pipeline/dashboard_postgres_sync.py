@@ -22,10 +22,15 @@ from origenlab_email_pipeline.classification_postgres_mirror import (
 from origenlab_email_pipeline.commercial_deal_postgres_mirror import (
     sync_commercial_deals,
 )
+from origenlab_email_pipeline.commercial_opportunity_postgres_mirror import (
+    sync_commercial_opportunity_postgres_mirror,
+)
 from origenlab_email_pipeline.commercial_purchase_postgres_mirror import (
     sync_commercial_purchase_events,
 )
-from origenlab_email_pipeline.contacto_gmail_source import sql_predicate_contacto_gmail_source
+from origenlab_email_pipeline.contacto_gmail_source import (
+    sql_predicate_contacto_gmail_source,
+)
 from origenlab_email_pipeline.equipment_opportunity_mirror import (
     apply_load as apply_equipment_opportunity_mirror,
     preview_load as preview_equipment_opportunity_mirror,
@@ -54,7 +59,7 @@ except ImportError as exc:  # pragma: no cover
 else:
     _PSYCOPG_IMPORT_ERROR = None
 
-EXPECTED_ALEMBIC_HEAD = "20260617_0030"
+EXPECTED_ALEMBIC_HEAD = "20260822_0031"
 DASHBOARD_SYNC_KV_KEY = "dashboard_postgres_mirror_last_sync"
 
 OUTBOUND_SCRIPT = "scripts/migrate/sqlite_outbound_sidecars_to_postgres.py"
@@ -72,6 +77,10 @@ REQUIRED_MIRROR_TABLES: tuple[tuple[str, str], ...] = (
     ("mart", "contact_master_canonical"),
     ("mart", "organization_master_canonical"),
     ("mart", "opportunity_signals_canonical"),
+    ("commercial", "opportunity"),
+    ("commercial", "opportunity_event"),
+    ("commercial", "opportunity_evidence"),
+    ("commercial", "opportunity_conflict"),
 )
 
 REPORTING_WATERMARK_TABLE: tuple[str, str] = ("reporting", "dashboard_sync_run")
@@ -149,7 +158,11 @@ def fetch_alembic_version(cur: Any) -> str | None:
 def check_alembic_head(cur: Any) -> tuple[bool, str | None, str]:
     version = fetch_alembic_version(cur)
     if version is None:
-        return False, None, "alembic_version table missing or empty (run: uv run alembic upgrade head)"
+        return (
+            False,
+            None,
+            "alembic_version table missing or empty (run: uv run alembic upgrade head)",
+        )
     if version != EXPECTED_ALEMBIC_HEAD:
         return (
             False,
@@ -195,7 +208,9 @@ def collect_sqlite_mart_source_counts(sqlite_path: Path) -> SqliteMartSourceCoun
     conn = connect_sqlite_readonly(sqlite_path)
     try:
         canonical = count_canonical_gmail_emails(conn)
-        mart_counts = {t: _sqlite_table_count(conn, t) for t in REQUIRED_SQLITE_MART_TABLES}
+        mart_counts = {
+            t: _sqlite_table_count(conn, t) for t in REQUIRED_SQLITE_MART_TABLES
+        }
     finally:
         conn.close()
     return SqliteMartSourceCounts(
@@ -214,7 +229,11 @@ def assert_sqlite_mart_ready_for_mirror_sync(
     if allow_empty_mart or counts.canonical_gmail_email_count == 0:
         return counts
 
-    empty_tables = [t for t in REQUIRED_SQLITE_MART_TABLES if counts.mart_table_counts.get(t, 0) == 0]
+    empty_tables = [
+        t
+        for t in REQUIRED_SQLITE_MART_TABLES
+        if counts.mart_table_counts.get(t, 0) == 0
+    ]
     if not empty_tables:
         return counts
 
@@ -288,6 +307,10 @@ def collect_mirror_counts(pg_url: str) -> dict[str, int]:
         "commercial_purchase_event_count": "commercial.purchase_event",
         "commercial_purchase_event_item_count": "commercial.purchase_event_item",
         "commercial_deal_count": "commercial.deal",
+        "commercial_opportunity_count": "commercial.opportunity",
+        "commercial_opportunity_event_count": "commercial.opportunity_event",
+        "commercial_opportunity_evidence_count": "commercial.opportunity_evidence",
+        "commercial_opportunity_conflict_count": "commercial.opportunity_conflict",
     }
     out: dict[str, int] = {}
     with psycopg.connect(pg_url) as conn:
@@ -528,6 +551,7 @@ def build_selected_loaders(
     steps: list[LoaderStep],
     *,
     include_commercial_deals: bool = False,
+    include_commercial_opportunities: bool = False,
     include_equipment_opportunities: bool = False,
     include_warm_cases: bool = False,
     include_operator_snapshots: bool = False,
@@ -538,6 +562,8 @@ def build_selected_loaders(
     selected.extend(["classification", "commercial_purchase"])
     if include_commercial_deals:
         selected.append("commercial_deals")
+    if include_commercial_opportunities:
+        selected.append("commercial_opportunities")
     if include_equipment_opportunities:
         selected.append("equipment_opportunities")
     if include_warm_cases:
@@ -1041,7 +1067,9 @@ def run_optional_db2_loaders(
             reason=args.reason,
             sync_run_id=sync_run_id,
         )
-        _raise_if_optional_loader_failed("equipment_opportunity_mirror", equipment_summary)
+        _raise_if_optional_loader_failed(
+            "equipment_opportunity_mirror", equipment_summary
+        )
 
     if args.include_warm_cases:
         warm_summary = run_warm_case_promotion_sync(
@@ -1087,7 +1115,9 @@ def _format_optional_loader_summary(name: str, summary: dict[str, Any]) -> list[
             lines.append(f"      {key}: {summary[key]}")
     categories = summary.get("categories_summary")
     if isinstance(categories, dict) and categories:
-        compact = ", ".join(f"{cat}={count}" for cat, count in sorted(categories.items()))
+        compact = ", ".join(
+            f"{cat}={count}" for cat, count in sorted(categories.items())
+        )
         lines.append(f"      categories_summary: {compact}")
     return lines
 
@@ -1115,6 +1145,10 @@ def format_summary_text(result: dict[str, Any]) -> str:
         f"    purchase_events: {c.get('commercial_purchase_event_count')}",
         f"    purchase_event_items: {c.get('commercial_purchase_event_item_count')}",
         f"    deals: {c.get('commercial_deal_count')}",
+        f"    opportunities: {c.get('commercial_opportunity_count')}",
+        f"    opportunity_events: {c.get('commercial_opportunity_event_count')}",
+        f"    opportunity_evidence: {c.get('commercial_opportunity_evidence_count')}",
+        f"    opportunity_conflicts: {c.get('commercial_opportunity_conflict_count')}",
     ]
     if result.get("sync_run_id") is not None:
         lines.append(f"  sync_run_id: {result.get('sync_run_id')}")
@@ -1124,6 +1158,7 @@ def format_summary_text(result: dict[str, Any]) -> str:
         ("equipment_opportunities", "equipment_opportunity_sync"),
         ("warm_cases", "warm_case_sync"),
         ("commercial_deals", "commercial_deals_sync"),
+        ("commercial_opportunities", "commercial_opportunity_sync"),
     )
     present_loaders = [
         (label, result[key])
@@ -1155,7 +1190,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--sqlite-db", type=Path, default=None)
     p.add_argument("--postgres-url", default=None)
-    p.add_argument("--dry-run", action="store_true", help="Preflight only; no loader writes")
+    p.add_argument(
+        "--dry-run", action="store_true", help="Preflight only; no loader writes"
+    )
     p.add_argument("--only", choices=("outbound", "mart", "canonical"), default=None)
     p.add_argument("--skip-outbound", action="store_true")
     p.add_argument("--skip-mart", action="store_true")
@@ -1189,6 +1226,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "After purchase_events sync, mirror redacted commercial_deal ledger "
             "to commercial.deal (opt-in; requires Alembic 20260526_0018)."
+        ),
+    )
+    p.add_argument(
+        "--include-commercial-opportunities",
+        action="store_true",
+        help=(
+            "Mirror the validated SQLite PR3 commercial opportunity lifecycle "
+            "to commercial.opportunity* "
+            "(opt-in; requires Alembic 20260822_0031)."
         ),
     )
     p.add_argument(
@@ -1344,7 +1390,8 @@ def run_dashboard_mirror_sync(
         return result
 
     result["loader_steps"] = [
-        {"name": s.name, "script": s.script_relpath, "argv": list(s.argv)} for s in steps
+        {"name": s.name, "script": s.script_relpath, "argv": list(s.argv)}
+        for s in steps
     ]
 
     if mart_loader_planned(steps):
@@ -1365,6 +1412,27 @@ def run_dashboard_mirror_sync(
 
     if args.dry_run:
         result["counts"] = collect_mirror_counts(pg_url)
+
+        commercial_opportunity_summary: dict[str, Any] | None = None
+        if args.include_commercial_opportunities:
+            try:
+                commercial_opportunity_summary = (
+                    sync_commercial_opportunity_postgres_mirror(
+                        pg_url,
+                        sqlite_path,
+                        dry_run=True,
+                    )
+                )
+            except RuntimeError as exc:
+                result["errors"].append(str(exc))
+                result["elapsed_seconds"] = round(
+                    time.monotonic() - t0,
+                    3,
+                )
+                return result
+
+            result["commercial_opportunity_sync"] = commercial_opportunity_summary
+
         equipment_summary: dict[str, Any] | None = None
         warm_summary: dict[str, Any] | None = None
         if args.include_equipment_opportunities or args.include_warm_cases:
@@ -1395,21 +1463,32 @@ def run_dashboard_mirror_sync(
             )
             result["operator_snapshots"] = operator_snapshots
         result["details"] = merge_optional_loader_details(
-            {"loader_steps": result["loader_steps"], "alembic_version": alembic_version},
+            {
+                "loader_steps": result["loader_steps"],
+                "alembic_version": alembic_version,
+            },
             equipment_summary=equipment_summary,
             warm_summary=warm_summary,
         )
+        if commercial_opportunity_summary is not None:
+            result["details"]["commercial_opportunity_sync"] = (
+                commercial_opportunity_summary
+            )
         if operator_snapshots is not None:
             result["details"]["operator_snapshots"] = operator_snapshots
         result["ok"] = True
         result["status"] = "dry_run"
         result["elapsed_seconds"] = round(time.monotonic() - t0, 3)
-        phase_log("[sync] dry-run ok (no loaders executed, Postgres mirror unchanged)", log=log)
+        phase_log(
+            "[sync] dry-run ok (no loaders executed, Postgres mirror unchanged)",
+            log=log,
+        )
         return result
 
     selected_loaders = build_selected_loaders(
         steps,
         include_commercial_deals=bool(args.include_commercial_deals),
+        include_commercial_opportunities=bool(args.include_commercial_opportunities),
         include_equipment_opportunities=bool(args.include_equipment_opportunities),
         include_warm_cases=bool(args.include_warm_cases),
         include_operator_snapshots=bool(args.include_operator_snapshots),
@@ -1445,8 +1524,7 @@ def run_dashboard_mirror_sync(
         lifecycle_started = True
     except Exception as exc:  # noqa: BLE001
         result["errors"].append(
-            "Failed to publish running sync lifecycle before loaders: "
-            + _sanitize(exc)
+            "Failed to publish running sync lifecycle before loaders: " + _sanitize(exc)
         )
         result["status"] = "failed"
         result["elapsed_seconds"] = round(time.monotonic() - t0, 3)
@@ -1472,6 +1550,8 @@ def run_dashboard_mirror_sync(
                 extra["commercial_purchase_sync"] = value
             elif key == "commercial_deals":
                 extra["commercial_deals_sync"] = value
+            elif key == "commercial_opportunities":
+                extra["commercial_opportunity_sync"] = value
             elif key == "equipment_opportunities":
                 extra = merge_optional_loader_details(
                     extra, equipment_summary=value, warm_summary=None
@@ -1512,9 +1592,7 @@ def run_dashboard_mirror_sync(
         )
 
     def _maybe_update_details() -> None:
-        if not (
-            lifecycle_handle.reporting_enabled or lifecycle_handle.kv_enabled
-        ):
+        if not (lifecycle_handle.reporting_enabled or lifecycle_handle.kv_enabled):
             return
         update_sync_run_details(
             pg_url,
@@ -1601,6 +1679,28 @@ def run_dashboard_mirror_sync(
             _mark_completed("commercial_deals", deals_sync)
             failed_loader = None
 
+        if args.include_commercial_opportunities:
+            failed_loader = "commercial_opportunities"
+            stage_t0 = time.monotonic()
+
+            commercial_opportunity_sync = sync_commercial_opportunity_postgres_mirror(
+                pg_url,
+                sqlite_path,
+                dry_run=False,
+            )
+
+            result.setdefault("timings", {})["commercial_opportunity_sync_seconds"] = (
+                round(time.monotonic() - stage_t0, 3)
+            )
+
+            result["commercial_opportunity_sync"] = commercial_opportunity_sync
+            _mark_completed(
+                "commercial_opportunities",
+                commercial_opportunity_sync,
+            )
+            failed_loader = None
+            _maybe_update_details()
+
         if args.include_equipment_opportunities or args.include_warm_cases:
             stage_t0 = time.monotonic()
             try:
@@ -1632,13 +1732,15 @@ def run_dashboard_mirror_sync(
                         limit=int(args.warm_limit),
                         close_missing=bool(args.close_missing_warm_cases),
                     )
-                    _raise_if_optional_loader_failed("warm_case_promotion", warm_summary)
+                    _raise_if_optional_loader_failed(
+                        "warm_case_promotion", warm_summary
+                    )
                     result["warm_case_sync"] = warm_summary
                     _mark_completed("warm_cases", warm_summary)
                     failed_loader = None
             finally:
-                result.setdefault("timings", {})["optional_db2_loaders_seconds"] = round(
-                    time.monotonic() - stage_t0, 3
+                result.setdefault("timings", {})["optional_db2_loaders_seconds"] = (
+                    round(time.monotonic() - stage_t0, 3)
                 )
             if (
                 "equipment_opportunities" in completed_loaders

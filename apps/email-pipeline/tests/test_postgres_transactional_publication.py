@@ -28,7 +28,9 @@ from origenlab_email_pipeline import mart_core_postgres_migrate as mart
 from test_sqlite_mart_core_to_postgres_migrate import _make_mart_sqlite
 
 REPO = Path(__file__).resolve().parents[1]
-OUTBOUND_SCRIPT = REPO / "scripts" / "migrate" / "sqlite_outbound_sidecars_to_postgres.py"
+OUTBOUND_SCRIPT = (
+    REPO / "scripts" / "migrate" / "sqlite_outbound_sidecars_to_postgres.py"
+)
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 _PG_SCHEMES = frozenset(
@@ -139,7 +141,10 @@ def test_validate_disposable_postgres_test_url_accepts_ci_url() -> None:
             "loopback",
         ),
         ("postgresql://postgres:postgres@127.0.0.1:5432/", "database name"),
-        ("mysql://postgres:postgres@127.0.0.1:5432/origenlab_pg_test", "unsupported scheme"),
+        (
+            "mysql://postgres:postgres@127.0.0.1:5432/origenlab_pg_test",
+            "unsupported scheme",
+        ),
     ],
 )
 def test_validate_disposable_postgres_test_url_rejects(url: str, match: str) -> None:
@@ -147,7 +152,9 @@ def test_validate_disposable_postgres_test_url_rejects(url: str, match: str) -> 
         validate_disposable_postgres_test_url(url)
 
 
-def test_pg_url_never_falls_back_to_production_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pg_url_never_falls_back_to_production_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("ORIGENLAB_POSTGRES_TEST_URL", raising=False)
     monkeypatch.setenv(
         "ORIGENLAB_POSTGRES_URL",
@@ -211,7 +218,17 @@ def test_outbound_load_sidecar_table_never_commits() -> None:
     scur = MagicMock()
     sconn.cursor.return_value = scur
     scur.fetchmany.side_effect = [
-        [("a@x.com", "manual_do_not_contact", None, None, None, "2024-01-01T00:00:00Z", None)],
+        [
+            (
+                "a@x.com",
+                "manual_do_not_contact",
+                None,
+                None,
+                None,
+                "2024-01-01T00:00:00Z",
+                None,
+            )
+        ],
         [],
     ]
     pconn = MagicMock()
@@ -324,7 +341,9 @@ def test_outbound_mvcc_readers_see_old_until_commit(tmp_path: Path) -> None:
                 """
             )
         with reader.cursor() as rcur:
-            rcur.execute("SELECT email FROM outbound.contact_email_suppression ORDER BY email")
+            rcur.execute(
+                "SELECT email FROM outbound.contact_email_suppression ORDER BY email"
+            )
             emails = [r[0] for r in rcur.fetchall()]
             assert emails == ["old@x.com"]
             rcur.execute("SELECT COUNT(*) FROM outbound.outreach_contact_state")
@@ -493,7 +512,15 @@ def test_mart_failure_after_delete_restores_selected(tmp_path: Path) -> None:
     _make_mart_sqlite(db)
     assert (
         mart.run_migration(
-            ["--sqlite-db", str(db), "--postgres-url", pg, "--replace", "--tables", "archive"]
+            [
+                "--sqlite-db",
+                str(db),
+                "--postgres-url",
+                pg,
+                "--replace",
+                "--tables",
+                "archive",
+            ]
         )
         == 0
     )
@@ -508,7 +535,15 @@ def test_mart_failure_after_delete_restores_selected(tmp_path: Path) -> None:
 
     with patch.object(mart, "load_table", side_effect=boom):
         rc = mart.run_migration(
-            ["--sqlite-db", str(db), "--postgres-url", pg, "--replace", "--tables", "archive"]
+            [
+                "--sqlite-db",
+                str(db),
+                "--postgres-url",
+                pg,
+                "--replace",
+                "--tables",
+                "archive",
+            ]
         )
     assert rc == 1
     with psycopg.connect(pg) as conn, conn.cursor() as cur:
@@ -743,7 +778,15 @@ def test_archive_replace_does_not_modify_canonical_sequence(tmp_path: Path) -> N
     _make_mart_sqlite(db)
     assert (
         mart.run_migration(
-            ["--sqlite-db", str(db), "--postgres-url", pg, "--replace", "--tables", "archive"]
+            [
+                "--sqlite-db",
+                str(db),
+                "--postgres-url",
+                pg,
+                "--replace",
+                "--tables",
+                "archive",
+            ]
         )
         == 0
     )
@@ -788,7 +831,15 @@ def test_canonical_replace_does_not_modify_archive_sequence(tmp_path: Path) -> N
     conn.commit()
     conn.close()
     mart.run_migration(
-        ["--sqlite-db", str(db), "--postgres-url", pg, "--replace", "--tables", "canonical"]
+        [
+            "--sqlite-db",
+            str(db),
+            "--postgres-url",
+            pg,
+            "--replace",
+            "--tables",
+            "canonical",
+        ]
     )
     with psycopg.connect(pg) as conn, conn.cursor() as cur:
         _, last_after, called_after = _opp_seq_state(cur, archive)
@@ -809,7 +860,15 @@ def test_tables_all_repairs_both_opp_sequences(tmp_path: Path) -> None:
     # Enrich sqlite so both archive opportunity + empty canonical path still run.
     assert (
         mart.run_migration(
-            ["--sqlite-db", str(db), "--postgres-url", pg, "--replace", "--tables", "all"]
+            [
+                "--sqlite-db",
+                str(db),
+                "--postgres-url",
+                pg,
+                "--replace",
+                "--tables",
+                "all",
+            ]
         )
         == 0
     )
@@ -918,7 +977,9 @@ def test_opp_sequence_authority_exact_owner_superuser_and_inherit() -> None:
 
             _drop_temp_roles(cur, roles)
             cur.execute(
-                pg_sql.SQL("CREATE ROLE {} NOLOGIN").format(pg_sql.Identifier(owner_role))
+                pg_sql.SQL("CREATE ROLE {} NOLOGIN").format(
+                    pg_sql.Identifier(owner_role)
+                )
             )
             cur.execute(
                 pg_sql.SQL("CREATE ROLE {} NOLOGIN INHERIT").format(
@@ -976,7 +1037,9 @@ def test_opp_sequence_authority_exact_owner_superuser_and_inherit() -> None:
             mart.assert_opp_sequence_restart_authority(cur, specs)
 
             # 3) INHERIT member with immediately usable owner privileges passes.
-            cur.execute(pg_sql.SQL("SET ROLE {}").format(pg_sql.Identifier(inherit_role)))
+            cur.execute(
+                pg_sql.SQL("SET ROLE {}").format(pg_sql.Identifier(inherit_role))
+            )
             cur.execute(
                 "SELECT pg_has_role(current_user, %s::regrole, 'USAGE'), "
                 "pg_has_role(current_user, %s::regrole, 'MEMBER')",
@@ -989,7 +1052,9 @@ def test_opp_sequence_authority_exact_owner_superuser_and_inherit() -> None:
             cur.execute("RESET ROLE")
 
             # 4) NOINHERIT MEMBER-only path: MEMBER true, USAGE false → reject.
-            cur.execute(pg_sql.SQL("SET ROLE {}").format(pg_sql.Identifier(noinher_role)))
+            cur.execute(
+                pg_sql.SQL("SET ROLE {}").format(pg_sql.Identifier(noinher_role))
+            )
             cur.execute(
                 "SELECT pg_has_role(current_user, %s::regrole, 'USAGE'), "
                 "pg_has_role(current_user, %s::regrole, 'MEMBER')",
@@ -998,7 +1063,9 @@ def test_opp_sequence_authority_exact_owner_superuser_and_inherit() -> None:
             usage, member = cur.fetchone()
             assert bool(usage) is False
             assert bool(member) is True
-            with pytest.raises(PermissionError, match="immediately available owner privileges"):
+            with pytest.raises(
+                PermissionError, match="immediately available owner privileges"
+            ):
                 mart.assert_opp_sequence_restart_authority(cur, specs)
             cur.execute("RESET ROLE")
 
@@ -1048,10 +1115,14 @@ def test_opp_sequence_authority_rejects_before_delete_and_load() -> None:
     original_table_owner: str | None = None
     try:
         with admin.cursor() as cur:
-            original_table_owner, _seq, _seq_owner = _table_and_sequence_owner(cur, table)
+            original_table_owner, _seq, _seq_owner = _table_and_sequence_owner(
+                cur, table
+            )
             _drop_temp_roles(cur, roles)
             cur.execute(
-                pg_sql.SQL("CREATE ROLE {} NOLOGIN").format(pg_sql.Identifier(owner_role))
+                pg_sql.SQL("CREATE ROLE {} NOLOGIN").format(
+                    pg_sql.Identifier(owner_role)
+                )
             )
             cur.execute(
                 pg_sql.SQL("CREATE ROLE {} NOLOGIN NOINHERIT").format(
@@ -1122,9 +1193,13 @@ def test_opp_sequence_authority_rejects_before_delete_and_load() -> None:
                 # Mirror run_migration ordering: lock → authority → delete → load → restart.
                 mart.lock_mart_targets(cur, specs)
                 with (
-                    patch.object(mart, "delete_targets_for_specs", side_effect=track_delete),
+                    patch.object(
+                        mart, "delete_targets_for_specs", side_effect=track_delete
+                    ),
                     patch.object(mart, "load_table", side_effect=track_load),
-                    patch.object(mart, "restart_opp_sequences", side_effect=track_restart),
+                    patch.object(
+                        mart, "restart_opp_sequences", side_effect=track_restart
+                    ),
                 ):
                     with pytest.raises(PermissionError) as raised:
                         mart.assert_opp_sequence_restart_authority(cur, specs)
@@ -1164,3 +1239,254 @@ def test_opp_sequence_authority_rejects_before_delete_and_load() -> None:
                 _drop_temp_roles(cur, roles)
         finally:
             admin.close()
+
+
+def _arch2a_opportunity_payload(*, suffix: str = "a") -> dict[str, Any]:
+    """Small valid ARCH-2A graph for disposable real-Postgres publication tests."""
+    opportunity_id = f"o_arch2a_{suffix}"
+    evidence_id = f"evd_arch2a_{suffix}"
+
+    return {
+        "meta": {
+            "schema_version": "commercial_opportunity_v1",
+            "build_contract": "opportunity_stage_read_model_v2",
+            "built_at": "2026-08-23T00:00:00+00:00",
+            "run_context": "production_apply",
+            "identity_fingerprint": f"identity-{suffix}",
+            "identity_fingerprint_algorithm_version": "identity_fp_v2",
+            "identity_fingerprint_match_status": "matched",
+            "opportunity_source_fingerprint": f"source-{suffix}",
+            "opportunity_source_fingerprint_algorithm_version": (
+                "opportunity_source_fp_v1"
+            ),
+            "metrics_json": "{}",
+        },
+        "freshness": {
+            "identity_fingerprint": f"identity-{suffix}",
+            "opportunity_source_fingerprint": f"source-{suffix}",
+        },
+        "opportunities": [
+            {
+                "opportunity_id": opportunity_id,
+                "record_kind": "explicit_opportunity",
+                "account_id": "a_arch2a",
+                "primary_contact_id": "c_arch2a",
+                "contact_display_email": "buyer@example.test",
+                "account_display_domain": "example.test",
+                "source_kind": "commercial_deal",
+                "source_key": f"deal-{suffix}",
+                "deal_key": f"deal-{suffix}",
+                "canonical_stage": "quote_sent",
+                "source_stage": "quoted",
+                "stage_reason_code": "operator_confirmed_quote",
+                "stage_confidence": "operator_confirmed",
+                "stage_is_current": True,
+                "stage_is_terminal": False,
+                "stage_evidence_at": "2026-08-23T00:00:00+00:00",
+                "stage_evidence_id": evidence_id,
+                "first_activity_at": "2026-08-22T00:00:00+00:00",
+                "last_activity_at": "2026-08-23T00:00:00+00:00",
+                "identity_link_status": "linked",
+                "review_status": "not_required",
+            }
+        ],
+        "events": [
+            {
+                "event_id": f"evt_arch2a_{suffix}",
+                "opportunity_id": opportunity_id,
+                "canonical_event_type": "quote_sent",
+                "source_event_type": "quote",
+                "event_at": "2026-08-23T00:00:00+00:00",
+                "source_table": "commercial_deal_event",
+                "source_record_id": f"event-{suffix}",
+                "source_email_id": None,
+                "source_attachment_id": None,
+                "confidence": "operator_confirmed",
+                "operator_confirmed": True,
+                "detail_json": {"fixture": suffix},
+            }
+        ],
+        "evidence": [
+            {
+                "evidence_id": evidence_id,
+                "opportunity_id": opportunity_id,
+                "subject_kind": "opportunity_stage",
+                "source_table": "commercial_deal",
+                "source_record_id": f"deal-{suffix}",
+                "evidence_type": "stage_evidence",
+                "evidence_at": "2026-08-23T00:00:00+00:00",
+                "confidence": "operator_confirmed",
+                "reason_code": "operator_confirmed_quote",
+                "source_email_id": None,
+                "source_attachment_id": None,
+                "detail_json": {"fixture": suffix},
+            }
+        ],
+        "conflicts": [
+            {
+                "conflict_id": f"conf_arch2a_{suffix}",
+                "opportunity_id": opportunity_id,
+                "conflict_type": "fixture_conflict",
+                "reason_code": "fixture_reason",
+                "subject_keys_json": [opportunity_id],
+                "evidence_pointers_json": [evidence_id],
+                "review_status": "review",
+                "detail_json": {"fixture": suffix},
+            }
+        ],
+    }
+
+
+def _clear_arch2a_projection(pg: str) -> None:
+    import psycopg
+
+    with psycopg.connect(pg, autocommit=False) as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM commercial.opportunity_conflict")
+            cur.execute("DELETE FROM commercial.opportunity_evidence")
+            cur.execute("DELETE FROM commercial.opportunity_event")
+            cur.execute("DELETE FROM commercial.opportunity")
+        conn.commit()
+
+
+def _arch2a_projection_snapshot(pg: str) -> dict[str, list[tuple[Any, ...]]]:
+    import psycopg
+
+    queries = {
+        "opportunity": """
+            SELECT opportunity_id, deal_key, canonical_stage,
+                   contact_display_email, account_display_domain
+            FROM commercial.opportunity
+            ORDER BY opportunity_id
+        """,
+        "event": """
+            SELECT event_id, opportunity_id, canonical_event_type, detail_json
+            FROM commercial.opportunity_event
+            ORDER BY event_id
+        """,
+        "evidence": """
+            SELECT evidence_id, opportunity_id, evidence_type, detail_json
+            FROM commercial.opportunity_evidence
+            ORDER BY evidence_id
+        """,
+        "conflict": """
+            SELECT conflict_id, opportunity_id, conflict_type,
+                   subject_keys_json, evidence_pointers_json, detail_json
+            FROM commercial.opportunity_conflict
+            ORDER BY conflict_id
+        """,
+    }
+
+    out: dict[str, list[tuple[Any, ...]]] = {}
+    with psycopg.connect(pg) as conn:
+        with conn.cursor() as cur:
+            for name, sql in queries.items():
+                cur.execute(sql)
+                out[name] = list(cur.fetchall())
+    return out
+
+
+@requires_pg
+def test_arch2a_opportunity_mirror_real_postgres_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from origenlab_email_pipeline import (
+        commercial_opportunity_postgres_mirror as opportunity_mirror,
+    )
+
+    pg = _pg_url()
+    assert pg
+    _clear_arch2a_projection(pg)
+
+    payload = _arch2a_opportunity_payload(suffix="idempotent")
+    monkeypatch.setattr(
+        opportunity_mirror,
+        "load_commercial_opportunity_mirror_payload",
+        lambda _sqlite_path: payload,
+    )
+
+    fake_sqlite = tmp_path / "unused.sqlite"
+
+    first = opportunity_mirror.sync_commercial_opportunity_postgres_mirror(
+        pg,
+        fake_sqlite,
+        dry_run=False,
+    )
+    before = _arch2a_projection_snapshot(pg)
+
+    second = opportunity_mirror.sync_commercial_opportunity_postgres_mirror(
+        pg,
+        fake_sqlite,
+        dry_run=False,
+    )
+    after = _arch2a_projection_snapshot(pg)
+
+    assert first["applied"] is True
+    assert second["applied"] is True
+    assert first["written_counts"] == {
+        "opportunity": 1,
+        "opportunity_event": 1,
+        "opportunity_evidence": 1,
+        "opportunity_conflict": 1,
+    }
+    assert second["existing_postgres_counts"] == {
+        "opportunity": 1,
+        "opportunity_event": 1,
+        "opportunity_evidence": 1,
+        "opportunity_conflict": 1,
+    }
+    assert before == after
+
+    _clear_arch2a_projection(pg)
+
+
+@requires_pg
+def test_arch2a_opportunity_mirror_real_postgres_rolls_back_after_delete(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from origenlab_email_pipeline import (
+        commercial_opportunity_postgres_mirror as opportunity_mirror,
+    )
+
+    pg = _pg_url()
+    assert pg
+    _clear_arch2a_projection(pg)
+
+    payload = _arch2a_opportunity_payload(suffix="rollback")
+    monkeypatch.setattr(
+        opportunity_mirror,
+        "load_commercial_opportunity_mirror_payload",
+        lambda _sqlite_path: payload,
+    )
+
+    fake_sqlite = tmp_path / "unused.sqlite"
+
+    opportunity_mirror.sync_commercial_opportunity_postgres_mirror(
+        pg,
+        fake_sqlite,
+        dry_run=False,
+    )
+    before = _arch2a_projection_snapshot(pg)
+
+    def boom(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("ARCH2A_TEST_FAILURE_AFTER_DELETE")
+
+    monkeypatch.setattr(opportunity_mirror, "_insert_payload", boom)
+
+    with pytest.raises(
+        RuntimeError,
+        match="ARCH2A_TEST_FAILURE_AFTER_DELETE",
+    ):
+        opportunity_mirror.sync_commercial_opportunity_postgres_mirror(
+            pg,
+            fake_sqlite,
+            dry_run=False,
+        )
+
+    after = _arch2a_projection_snapshot(pg)
+
+    assert before == after
+
+    _clear_arch2a_projection(pg)
