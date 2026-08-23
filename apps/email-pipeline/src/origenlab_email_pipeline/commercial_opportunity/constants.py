@@ -23,7 +23,10 @@ from origenlab_email_pipeline.commercial_identity.constants import (
 SCHEMA_VERSION: Final = "commercial_opportunity_v1"
 # Resolver semantics v2: causal supplier fulfillment gating, source-side deal
 # classification, compatible late client prerequisites, same-stage latest-UTC wins.
-# Schema tables unchanged (PR3 not yet persisted in production).
+# Schema is additive. Production apply is operator-triggered only (not part of
+# daily-core automation) and always requires a current, matching PR2 identity
+# snapshot — see operator_cli build-commercial-identity /
+# build-commercial-opportunity / refresh-commercial-opportunity-models.
 BUILD_CONTRACT: Final = "opportunity_stage_read_model_v2"
 TRANSACTION_CONTRACT: Final = "B_schema_additive_data_atomic"
 

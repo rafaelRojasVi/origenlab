@@ -10,11 +10,14 @@ from origenlab_email_pipeline.operator_cli.constants import (
     AUTO_MIRROR_DASHBOARD_COMMAND,
     AUTO_REFRESH_CHILECOMPRA_EQUIPMENT_COMMAND,
     AUTO_REFRESH_MAIL_COMMAND,
+    BUILD_COMMERCIAL_IDENTITY_COMMAND,
+    BUILD_COMMERCIAL_OPPORTUNITY_COMMAND,
     CLI_COMMAND_NAMES,
     IMPORT_TENDER_ANNEX_BUNDLE_COMMAND,
     LOCAL_TENDER_WORKER_COMMAND,
     NDR_SAFE_AUTO_APPLY_COMMAND,
     OPERATOR_AUTOMATION_STATUS_COMMAND,
+    REFRESH_COMMERCIAL_OPPORTUNITY_MODELS_COMMAND,
     DAILY_CORE_COMMAND,
     GMAIL_INGEST_SCRIPT,
     HELP_ONLY_SUBCOMMANDS,
@@ -23,6 +26,17 @@ from origenlab_email_pipeline.operator_cli.constants import (
     SPECIAL_COMMANDS,
     SUBCOMMAND_HELP,
     SUBCOMMAND_SCRIPTS,
+)
+from origenlab_email_pipeline.operator_cli.commercial_opportunity_refresh_command import (
+    parse_build_commercial_identity_args,
+    parse_build_commercial_opportunity_args,
+    parse_refresh_commercial_opportunity_models_args,
+    print_build_commercial_identity_help,
+    print_build_commercial_opportunity_help,
+    print_refresh_commercial_opportunity_models_help,
+    run_build_commercial_identity,
+    run_build_commercial_opportunity,
+    run_refresh_commercial_opportunity_models,
 )
 from origenlab_email_pipeline.operator_cli.chilecompra_auto_refresh import (
     parse_chilecompra_equipment_auto_refresh_args,
@@ -498,6 +512,38 @@ def main(argv: list[str] | None = None) -> int:
         except SystemExit as exc:
             raise exc
         return run_import_tender_annex_bundle(import_opts)
+
+    if command == BUILD_COMMERCIAL_IDENTITY_COMMAND:
+        if _wrapper_help_requested(argv[1:]):
+            print_build_commercial_identity_help()
+            return 0
+        try:
+            identity_opts = parse_build_commercial_identity_args(argv[1:])
+        except SystemExit as exc:
+            raise exc
+        return run_build_commercial_identity(identity_opts)
+
+    if command == BUILD_COMMERCIAL_OPPORTUNITY_COMMAND:
+        if _wrapper_help_requested(argv[1:]):
+            print_build_commercial_opportunity_help()
+            return 0
+        try:
+            opportunity_opts = parse_build_commercial_opportunity_args(argv[1:])
+        except SystemExit as exc:
+            raise exc
+        return run_build_commercial_opportunity(opportunity_opts)
+
+    if command == REFRESH_COMMERCIAL_OPPORTUNITY_MODELS_COMMAND:
+        if _wrapper_help_requested(argv[1:]):
+            print_refresh_commercial_opportunity_models_help()
+            return 0
+        try:
+            refresh_models_opts = parse_refresh_commercial_opportunity_models_args(
+                argv[1:]
+            )
+        except SystemExit as exc:
+            raise exc
+        return run_refresh_commercial_opportunity_models(refresh_models_opts)
 
     if command == NDR_SAFE_AUTO_APPLY_COMMAND:
         if _wrapper_help_requested(argv[1:]):
