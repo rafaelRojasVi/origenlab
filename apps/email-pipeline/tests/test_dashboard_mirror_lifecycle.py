@@ -73,19 +73,27 @@ def _sample_mirror_counts() -> dict[str, int]:
         "outreach_state_count": 2,
         "commercial_purchase_event_count": 1,
         "commercial_purchase_event_item_count": 3,
+        "commercial_deal_count": 1,
+        "commercial_opportunity_count": 9577,
+        "commercial_opportunity_event_count": 7,
+        "commercial_opportunity_evidence_count": 14,
+        "commercial_opportunity_conflict_count": 2703,
     }
+
 
 _PATCH_PG = "origenlab_email_pipeline.dashboard_postgres_sync.preflight_postgres"
 _PATCH_COUNTS = "origenlab_email_pipeline.dashboard_postgres_sync.collect_mirror_counts"
 _PATCH_START = "origenlab_email_pipeline.dashboard_postgres_sync.start_sync_run"
 _PATCH_FINISH = "origenlab_email_pipeline.dashboard_postgres_sync.finish_sync_run"
-_PATCH_CLASSIFY = (
-    "origenlab_email_pipeline.dashboard_postgres_sync.sync_email_classification_canonical"
-)
+_PATCH_CLASSIFY = "origenlab_email_pipeline.dashboard_postgres_sync.sync_email_classification_canonical"
 _PATCH_PURCHASE = (
     "origenlab_email_pipeline.dashboard_postgres_sync.sync_commercial_purchase_events"
 )
 _PATCH_DEALS = "origenlab_email_pipeline.dashboard_postgres_sync.sync_commercial_deals"
+_PATCH_OPPORTUNITIES = (
+    "origenlab_email_pipeline.dashboard_postgres_sync."
+    "sync_commercial_opportunity_postgres_mirror"
+)
 _PATCH_EQUIP = (
     "origenlab_email_pipeline.dashboard_postgres_sync.run_equipment_opportunity_sync"
 )
@@ -119,6 +127,7 @@ def test_build_selected_loaders_default_and_optional() -> None:
     assert build_selected_loaders(
         steps,
         include_commercial_deals=True,
+        include_commercial_opportunities=True,
         include_equipment_opportunities=True,
         include_warm_cases=True,
         include_operator_snapshots=True,
@@ -128,6 +137,7 @@ def test_build_selected_loaders_default_and_optional() -> None:
         "classification",
         "commercial_purchase",
         "commercial_deals",
+        "commercial_opportunities",
         "equipment_opportunities",
         "warm_cases",
         "operator_snapshots",
@@ -139,7 +149,9 @@ def test_successful_default_run_finishes_after_classification_and_purchase(
 ) -> None:
     db = tmp_path / "emails.sqlite"
     _setup_sqlite(db, with_mart_rows=True)
-    monkeypatch.setenv("ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/scratch")
+    monkeypatch.setenv(
+        "ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/scratch"
+    )
     order: list[str] = []
 
     def _start(*_a: Any, **_k: Any) -> SyncRunHandle:
@@ -160,12 +172,13 @@ def test_successful_default_run_finishes_after_classification_and_purchase(
         order.append("purchase")
         return {"events_written": 1}
 
-    with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
-        _PATCH_COUNTS, return_value=_sample_mirror_counts()
-    ), patch(_PATCH_START, side_effect=_start), patch(
-        _PATCH_FINISH, side_effect=_finish
-    ), patch(_PATCH_CLASSIFY, side_effect=_classify), patch(
-        _PATCH_PURCHASE, side_effect=_purchase
+    with (
+        patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])),
+        patch(_PATCH_COUNTS, return_value=_sample_mirror_counts()),
+        patch(_PATCH_START, side_effect=_start),
+        patch(_PATCH_FINISH, side_effect=_finish),
+        patch(_PATCH_CLASSIFY, side_effect=_classify),
+        patch(_PATCH_PURCHASE, side_effect=_purchase),
     ):
         result = run_dashboard_mirror_sync(
             ["--sqlite-db", str(db)],
@@ -185,33 +198,49 @@ def test_optional_loaders_success_after_all_selected(
 ) -> None:
     db = tmp_path / "emails.sqlite"
     _setup_sqlite(db, with_mart_rows=True)
-    monkeypatch.setenv("ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/scratch")
+    monkeypatch.setenv(
+        "ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/scratch"
+    )
     finish_details: dict[str, Any] = {}
 
     def _finish(*_a: Any, **kwargs: Any) -> None:
         finish_details.update(kwargs["details"])
         assert kwargs["status"] == "success"
 
-    with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
-        _PATCH_COUNTS, return_value=_sample_mirror_counts()
-    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=9, reporting_enabled=True, kv_enabled=True)), patch(
-        _PATCH_FINISH, side_effect=_finish
-    ), patch(_PATCH_CLASSIFY, return_value={}), patch(
-        _PATCH_PURCHASE, return_value={}
-    ), patch(_PATCH_DEALS, return_value={"deals_written": 1}), patch(
-        _PATCH_EQUIP, return_value={"applied": True, "rows_inserted": 2}
-    ), patch(
-        _PATCH_WARM, return_value={"applied": True, "inserted_cases": 1}
-    ), patch(
-        _PATCH_SNAPSHOTS, return_value={"dry_run": False, "ok": True}
-    ), patch(
-        "origenlab_email_pipeline.dashboard_postgres_sync.update_sync_run_details"
+    with (
+        patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])),
+        patch(_PATCH_COUNTS, return_value=_sample_mirror_counts()),
+        patch(
+            _PATCH_START,
+            return_value=SyncRunHandle(
+                sync_run_id=9, reporting_enabled=True, kv_enabled=True
+            ),
+        ),
+        patch(_PATCH_FINISH, side_effect=_finish),
+        patch(_PATCH_CLASSIFY, return_value={}),
+        patch(_PATCH_PURCHASE, return_value={}),
+        patch(_PATCH_DEALS, return_value={"deals_written": 1}),
+        patch(
+            _PATCH_OPPORTUNITIES,
+            return_value={
+                "applied": True,
+                "source_freshness_verified": True,
+                "written_counts": {"opportunity": 9577},
+            },
+        ),
+        patch(_PATCH_EQUIP, return_value={"applied": True, "rows_inserted": 2}),
+        patch(_PATCH_WARM, return_value={"applied": True, "inserted_cases": 1}),
+        patch(_PATCH_SNAPSHOTS, return_value={"dry_run": False, "ok": True}),
+        patch(
+            "origenlab_email_pipeline.dashboard_postgres_sync.update_sync_run_details"
+        ),
     ):
         result = run_dashboard_mirror_sync(
             [
                 "--sqlite-db",
                 str(db),
                 "--include-commercial-deals",
+                "--include-commercial-opportunities",
                 "--include-equipment-opportunities",
                 "--include-warm-cases",
                 "--include-operator-snapshots",
@@ -229,6 +258,7 @@ def test_optional_loaders_success_after_all_selected(
     completed = set(result["completed_loaders"])
     assert selected == completed
     assert "commercial_deals" in completed
+    assert "commercial_opportunities" in completed
     assert "equipment_opportunities" in completed
     assert "warm_cases" in completed
     assert "operator_snapshots" in completed
@@ -257,6 +287,12 @@ def test_optional_loaders_success_after_all_selected(
             ["--include-commercial-deals"],
             _PATCH_DEALS,
             RuntimeError("deals boom"),
+        ),
+        (
+            "commercial_opportunities",
+            ["--include-commercial-opportunities"],
+            _PATCH_OPPORTUNITIES,
+            RuntimeError("opportunity mirror boom"),
         ),
         (
             "equipment_opportunities",
@@ -296,7 +332,9 @@ def test_loader_failure_marks_same_run_failed(
 
     db = tmp_path / "emails.sqlite"
     _setup_sqlite(db, with_mart_rows=True)
-    monkeypatch.setenv("ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/scratch")
+    monkeypatch.setenv(
+        "ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/scratch"
+    )
     finishes: list[dict[str, Any]] = []
 
     def _finish(*_a: Any, **kwargs: Any) -> None:
@@ -304,7 +342,10 @@ def test_loader_failure_marks_same_run_failed(
 
     def _loader(cmd: list[str], _root: Path) -> int:
         joined = " ".join(cmd)
-        if fail_step == "outbound_sidecars" and "sqlite_outbound_sidecars_to_postgres.py" in joined:
+        if (
+            fail_step == "outbound_sidecars"
+            and "sqlite_outbound_sidecars_to_postgres.py" in joined
+        ):
             return 2
         if fail_step == "mart_core" and "sqlite_mart_core_to_postgres.py" in joined:
             return 3
@@ -313,7 +354,14 @@ def test_loader_failure_marks_same_run_failed(
     with ExitStack() as stack:
         stack.enter_context(patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])))
         stack.enter_context(patch(_PATCH_COUNTS, return_value=_sample_mirror_counts()))
-        stack.enter_context(patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=55, reporting_enabled=True, kv_enabled=True)))
+        stack.enter_context(
+            patch(
+                _PATCH_START,
+                return_value=SyncRunHandle(
+                    sync_run_id=55, reporting_enabled=True, kv_enabled=True
+                ),
+            )
+        )
         stack.enter_context(patch(_PATCH_FINISH, side_effect=_finish))
         if fail_step == "classification":
             stack.enter_context(patch(_PATCH_CLASSIFY, side_effect=side_effect))
@@ -327,6 +375,10 @@ def test_loader_failure_marks_same_run_failed(
             stack.enter_context(patch(_PATCH_DEALS, side_effect=side_effect))
         else:
             stack.enter_context(patch(_PATCH_DEALS, return_value={}))
+        if fail_step == "commercial_opportunities":
+            stack.enter_context(patch(_PATCH_OPPORTUNITIES, side_effect=side_effect))
+        else:
+            stack.enter_context(patch(_PATCH_OPPORTUNITIES, return_value={}))
         if fail_step == "equipment_opportunities":
             stack.enter_context(patch(_PATCH_EQUIP, side_effect=side_effect))
         if fail_step == "warm_cases":
@@ -364,17 +416,27 @@ def test_final_count_failure_marks_failed(
 ) -> None:
     db = tmp_path / "emails.sqlite"
     _setup_sqlite(db, with_mart_rows=True)
-    monkeypatch.setenv("ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/scratch")
+    monkeypatch.setenv(
+        "ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/scratch"
+    )
     finishes: list[str] = []
 
     def _finish(*_a: Any, **kwargs: Any) -> None:
         finishes.append(kwargs["status"])
 
-    with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
-        _PATCH_COUNTS, side_effect=RuntimeError("count boom")
-    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=1, reporting_enabled=True, kv_enabled=True)), patch(
-        _PATCH_FINISH, side_effect=_finish
-    ), patch(_PATCH_CLASSIFY, return_value={}), patch(_PATCH_PURCHASE, return_value={}):
+    with (
+        patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])),
+        patch(_PATCH_COUNTS, side_effect=RuntimeError("count boom")),
+        patch(
+            _PATCH_START,
+            return_value=SyncRunHandle(
+                sync_run_id=1, reporting_enabled=True, kv_enabled=True
+            ),
+        ),
+        patch(_PATCH_FINISH, side_effect=_finish),
+        patch(_PATCH_CLASSIFY, return_value={}),
+        patch(_PATCH_PURCHASE, return_value={}),
+    ):
         result = run_dashboard_mirror_sync(
             ["--sqlite-db", str(db)],
             repo_root=REPO,
@@ -390,18 +452,25 @@ def test_start_failure_runs_no_loaders(
 ) -> None:
     db = tmp_path / "emails.sqlite"
     _setup_sqlite(db, with_mart_rows=True)
-    monkeypatch.setenv("ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/scratch")
+    monkeypatch.setenv(
+        "ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/scratch"
+    )
     loaders = {"n": 0}
 
-    with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
-        _PATCH_COUNTS, return_value=_sample_mirror_counts()
-    ), patch(_PATCH_START, side_effect=RuntimeError("cannot insert running")), patch(
-        _PATCH_FINISH
-    ) as mock_finish, patch(_PATCH_CLASSIFY) as mock_c, patch(_PATCH_PURCHASE) as mock_p:
+    with (
+        patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])),
+        patch(_PATCH_COUNTS, return_value=_sample_mirror_counts()),
+        patch(_PATCH_START, side_effect=RuntimeError("cannot insert running")),
+        patch(_PATCH_FINISH) as mock_finish,
+        patch(_PATCH_CLASSIFY) as mock_c,
+        patch(_PATCH_PURCHASE) as mock_p,
+    ):
         result = run_dashboard_mirror_sync(
             ["--sqlite-db", str(db)],
             repo_root=REPO,
-            loader_runner=lambda _c, _r: loaders.__setitem__("n", loaders["n"] + 1) or 0,
+            loader_runner=lambda _c, _r: (
+                loaders.__setitem__("n", loaders["n"] + 1) or 0
+            ),
         )
 
     assert result["ok"] is False
@@ -417,13 +486,23 @@ def test_terminal_success_publish_failure_does_not_claim_success(
 ) -> None:
     db = tmp_path / "emails.sqlite"
     _setup_sqlite(db, with_mart_rows=True)
-    monkeypatch.setenv("ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/scratch")
+    monkeypatch.setenv(
+        "ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/scratch"
+    )
 
-    with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
-        _PATCH_COUNTS, return_value=_sample_mirror_counts()
-    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=3, reporting_enabled=True, kv_enabled=True)), patch(
-        _PATCH_FINISH, side_effect=RuntimeError("finish boom")
-    ), patch(_PATCH_CLASSIFY, return_value={}), patch(_PATCH_PURCHASE, return_value={}):
+    with (
+        patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])),
+        patch(_PATCH_COUNTS, return_value=_sample_mirror_counts()),
+        patch(
+            _PATCH_START,
+            return_value=SyncRunHandle(
+                sync_run_id=3, reporting_enabled=True, kv_enabled=True
+            ),
+        ),
+        patch(_PATCH_FINISH, side_effect=RuntimeError("finish boom")),
+        patch(_PATCH_CLASSIFY, return_value={}),
+        patch(_PATCH_PURCHASE, return_value={}),
+    ):
         result = run_dashboard_mirror_sync(
             ["--sqlite-db", str(db)],
             repo_root=REPO,
@@ -440,15 +519,25 @@ def test_terminal_failure_publish_failure_keeps_primary_error(
 ) -> None:
     db = tmp_path / "emails.sqlite"
     _setup_sqlite(db, with_mart_rows=True)
-    monkeypatch.setenv("ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/scratch")
+    monkeypatch.setenv(
+        "ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/scratch"
+    )
 
-    with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
-        _PATCH_COUNTS, return_value=_sample_mirror_counts()
-    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=3, reporting_enabled=True, kv_enabled=True)), patch(
-        _PATCH_FINISH, side_effect=RuntimeError("finish boom")
-    ), patch(
-        _PATCH_CLASSIFY, side_effect=RuntimeError("primary classification failure")
-    ), patch(_PATCH_PURCHASE, return_value={}):
+    with (
+        patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])),
+        patch(_PATCH_COUNTS, return_value=_sample_mirror_counts()),
+        patch(
+            _PATCH_START,
+            return_value=SyncRunHandle(
+                sync_run_id=3, reporting_enabled=True, kv_enabled=True
+            ),
+        ),
+        patch(_PATCH_FINISH, side_effect=RuntimeError("finish boom")),
+        patch(
+            _PATCH_CLASSIFY, side_effect=RuntimeError("primary classification failure")
+        ),
+        patch(_PATCH_PURCHASE, return_value={}),
+    ):
         result = run_dashboard_mirror_sync(
             ["--sqlite-db", str(db)],
             repo_root=REPO,
@@ -465,11 +554,16 @@ def test_dry_run_writes_no_lifecycle(
 ) -> None:
     db = tmp_path / "emails.sqlite"
     _setup_sqlite(db, with_mart_rows=True)
-    monkeypatch.setenv("ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/scratch")
+    monkeypatch.setenv(
+        "ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/scratch"
+    )
 
-    with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
-        _PATCH_COUNTS, return_value=_sample_mirror_counts()
-    ), patch(_PATCH_START) as mock_start, patch(_PATCH_FINISH) as mock_finish:
+    with (
+        patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])),
+        patch(_PATCH_COUNTS, return_value=_sample_mirror_counts()),
+        patch(_PATCH_START) as mock_start,
+        patch(_PATCH_FINISH) as mock_finish,
+    ):
         result = run_dashboard_mirror_sync(
             ["--sqlite-db", str(db), "--dry-run"],
             repo_root=REPO,
@@ -487,17 +581,27 @@ def test_only_modes_selected_completed_accuracy(
 ) -> None:
     db = tmp_path / "emails.sqlite"
     _setup_sqlite(db, with_mart_rows=True)
-    monkeypatch.setenv("ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/scratch")
+    monkeypatch.setenv(
+        "ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/scratch"
+    )
     finishes: list[dict[str, Any]] = []
 
     def _finish(*_a: Any, **kwargs: Any) -> None:
         finishes.append(kwargs["details"])
 
-    with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
-        _PATCH_COUNTS, return_value=_sample_mirror_counts()
-    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=2, reporting_enabled=True, kv_enabled=True)), patch(
-        _PATCH_FINISH, side_effect=_finish
-    ), patch(_PATCH_CLASSIFY, return_value={}), patch(_PATCH_PURCHASE, return_value={}):
+    with (
+        patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])),
+        patch(_PATCH_COUNTS, return_value=_sample_mirror_counts()),
+        patch(
+            _PATCH_START,
+            return_value=SyncRunHandle(
+                sync_run_id=2, reporting_enabled=True, kv_enabled=True
+            ),
+        ),
+        patch(_PATCH_FINISH, side_effect=_finish),
+        patch(_PATCH_CLASSIFY, return_value={}),
+        patch(_PATCH_PURCHASE, return_value={}),
+    ):
         result = run_dashboard_mirror_sync(
             ["--sqlite-db", str(db), "--only", only],
             repo_root=REPO,
@@ -546,7 +650,10 @@ def test_start_and_finish_sql_one_row_lifecycle() -> None:
             sqlite_path=Path("/data/emails.sqlite"),
             postgres_url_redacted="postgresql://u:***@127.0.0.1/scratch",
             started_at=started,
-            details={"selected_loaders": ["outbound_sidecars"], "completed_loaders": []},
+            details={
+                "selected_loaders": ["outbound_sidecars"],
+                "completed_loaders": [],
+            },
             counts=None,
         )
         assert handle_started.sync_run_id == 101
@@ -572,7 +679,7 @@ def test_start_and_finish_sql_one_row_lifecycle() -> None:
     assert "INSERT INTO reporting.dashboard_sync_run" in sql
     assert "running" in sql
     assert "UPDATE reporting.dashboard_sync_run" in sql
-    assert "status = 'running'" in sql or 'status = %s' in sql
+    assert "status = 'running'" in sql or "status = %s" in sql
     assert "RETURNING id" in sql
     assert DASHBOARD_SYNC_KV_KEY in sql
     assert sql.count("INSERT INTO reporting.dashboard_sync_run") == 1
@@ -586,24 +693,44 @@ def test_cli_exit_code_compatible(
 
     db = tmp_path / "emails.sqlite"
     _setup_sqlite(db, with_mart_rows=True)
-    monkeypatch.setenv("ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/scratch")
+    monkeypatch.setenv(
+        "ORIGENLAB_POSTGRES_URL", "postgresql://u:p@127.0.0.1:5432/scratch"
+    )
 
-    with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
-        _PATCH_COUNTS, return_value=_sample_mirror_counts()
-    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=1, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(
-        _PATCH_CLASSIFY, return_value={}
-    ), patch(_PATCH_PURCHASE, return_value={}), patch(
-        "origenlab_email_pipeline.dashboard_postgres_sync.run_loader_subprocess",
-        return_value=0,
+    with (
+        patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])),
+        patch(_PATCH_COUNTS, return_value=_sample_mirror_counts()),
+        patch(
+            _PATCH_START,
+            return_value=SyncRunHandle(
+                sync_run_id=1, reporting_enabled=True, kv_enabled=True
+            ),
+        ),
+        patch(_PATCH_FINISH),
+        patch(_PATCH_CLASSIFY, return_value={}),
+        patch(_PATCH_PURCHASE, return_value={}),
+        patch(
+            "origenlab_email_pipeline.dashboard_postgres_sync.run_loader_subprocess",
+            return_value=0,
+        ),
     ):
         assert main(["--sqlite-db", str(db)]) == 0
 
-    with patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])), patch(
-        _PATCH_COUNTS, return_value=_sample_mirror_counts()
-    ), patch(_PATCH_START, return_value=SyncRunHandle(sync_run_id=1, reporting_enabled=True, kv_enabled=True)), patch(_PATCH_FINISH), patch(
-        _PATCH_CLASSIFY, side_effect=RuntimeError("x")
-    ), patch(_PATCH_PURCHASE, return_value={}), patch(
-        "origenlab_email_pipeline.dashboard_postgres_sync.run_loader_subprocess",
-        return_value=0,
+    with (
+        patch(_PATCH_PG, return_value=(EXPECTED_ALEMBIC_HEAD, [])),
+        patch(_PATCH_COUNTS, return_value=_sample_mirror_counts()),
+        patch(
+            _PATCH_START,
+            return_value=SyncRunHandle(
+                sync_run_id=1, reporting_enabled=True, kv_enabled=True
+            ),
+        ),
+        patch(_PATCH_FINISH),
+        patch(_PATCH_CLASSIFY, side_effect=RuntimeError("x")),
+        patch(_PATCH_PURCHASE, return_value={}),
+        patch(
+            "origenlab_email_pipeline.dashboard_postgres_sync.run_loader_subprocess",
+            return_value=0,
+        ),
     ):
         assert main(["--sqlite-db", str(db)]) == 1
