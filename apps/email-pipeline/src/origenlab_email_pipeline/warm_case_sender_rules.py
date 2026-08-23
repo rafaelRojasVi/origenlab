@@ -7,7 +7,9 @@ from email.utils import parseaddr
 
 from origenlab_email_pipeline.business_mart import emails_in
 
-INTERNAL_OPERATOR_DOMAINS: frozenset[str] = frozenset({"origenlab.cl", "labdelivery.cl"})
+INTERNAL_OPERATOR_DOMAINS: frozenset[str] = frozenset(
+    {"origenlab.cl", "labdelivery.cl"}
+)
 
 INTERNAL_OPERATOR_EMAILS: frozenset[str] = frozenset(
     {
@@ -96,6 +98,7 @@ REAL_CLIENT_DOMAINS: frozenset[str] = frozenset({"ceaf.cl"})
 # Domains that should never appear as «Clientes reales» (vendor / industrial suppliers).
 SUPPLIER_VENDOR_DOMAINS: frozenset[str] = frozenset(
     {
+        "apdataweigh.com",
         "asynt.com",
         "biosys.de",
         "ciqtek.com",
@@ -422,7 +425,9 @@ def looks_like_dhl_logistics_account_access_thread(
     return any(cue in hay for cue in access_cues)
 
 
-def looks_like_vendor_logistics_contact(contact_email: str, subject: str | None) -> bool:
+def looks_like_vendor_logistics_contact(
+    contact_email: str, subject: str | None
+) -> bool:
     """Alias for legacy callers."""
     return looks_like_logistics_admin_contact(contact_email, subject)
 
@@ -504,6 +509,41 @@ def looks_like_suppressed_promotional_marketing_noise(
     return any(marker in sub for marker in _PROMO_MARKETING_SUBJECT_MARKERS)
 
 
+def looks_like_promotional_marketing_thread(
+    contact_email: str,
+    sender: str | None,
+    subject: str | None,
+    *,
+    snippet: str | None = None,
+) -> bool:
+    """Explicit promotional blast, not an inbound buying opportunity."""
+    email = _resolve_contact_email(contact_email, sender=sender)
+    if is_internal_operator_contact(email):
+        return False
+
+    subject_l = (subject or "").lower()
+    hay = _message_haystack(subject, snippet, sender)
+
+    strong_cues = (
+        "descuentos exclusivos",
+        "exclusive discounts",
+        "newsletter",
+        "oferta especial",
+        "special offer",
+        "promoción especial",
+        "promocion especial",
+        "limited time offer",
+    )
+    if any(cue in hay for cue in strong_cues):
+        return True
+
+    has_promo_marker = any(
+        marker in subject_l for marker in _PROMO_MARKETING_SUBJECT_MARKERS
+    )
+    has_percent_offer = bool(re.search(r"\b\d{1,2}\s*%", hay))
+    return has_promo_marker and has_percent_offer
+
+
 # ---------------------------------------------------------------------------
 # Internal / operator / admin
 # ---------------------------------------------------------------------------
@@ -520,7 +560,9 @@ def _internal_thread_haystack(
 def _personal_operator_admin_email_match(email: str, hay: str) -> bool:
     if email == "sebastian.rojas.vivanco@gmail.com" and "serva" in hay:
         return True
-    if email == "tvivancob@gmail.com" and any(m in hay for m in _INTERNAL_ADMIN_SUBJECT_MARKERS):
+    if email == "tvivancob@gmail.com" and any(
+        m in hay for m in _INTERNAL_ADMIN_SUBJECT_MARKERS
+    ):
         return True
     return False
 
@@ -559,7 +601,9 @@ def looks_like_internal_forwarded_client_quote_request(
     if not is_internal_operator_contact(email):
         return False
     hay = _internal_thread_haystack(subject, snippet, sender)
-    has_forward_marker = any(marker in hay for marker in _FORWARDED_CLIENT_QUOTE_SUBJECT_MARKERS)
+    has_forward_marker = any(
+        marker in hay for marker in _FORWARDED_CLIENT_QUOTE_SUBJECT_MARKERS
+    )
     has_quote_signal = any(marker in hay for marker in _CLIENT_QUOTE_REQUEST_MARKERS)
     return has_forward_marker and has_quote_signal
 
@@ -574,7 +618,9 @@ def _matched_supplier_quote_subject_markers(hay: str) -> list[str]:
 
 
 def _weak_supplier_quote_markers_only(matched: list[str]) -> bool:
-    return bool(matched) and all(marker in _WEAK_SUPPLIER_QUOTE_SUBJECT_MARKERS for marker in matched)
+    return bool(matched) and all(
+        marker in _WEAK_SUPPLIER_QUOTE_SUBJECT_MARKERS for marker in matched
+    )
 
 
 _SUPPLIER_NON_QUOTE_REPLY_CUES: tuple[str, ...] = (
@@ -593,6 +639,11 @@ _SUPPLIER_NON_QUOTE_REPLY_CUES: tuple[str, ...] = (
     "local distributor",
     "distributor in chile",
     "authorized distributor",
+    "application worksheet",
+    "provide as much information as possible",
+    "configure and quote",
+    "happy to configure and quote",
+    "complete the attached worksheet",
     "contact our partner",
     "refer you to",
     "redirect you to",
@@ -655,7 +706,9 @@ def looks_like_real_supplier_quote_content(
         "112.00",
     )
     quote_words = ("precio", "price", "cotiz", "quote", "presupuesto", "quotation")
-    if any(cue in hay for cue in product_cues) and any(word in hay for word in quote_words):
+    if any(cue in hay for cue in product_cues) and any(
+        word in hay for word in quote_words
+    ):
         return True
     if "price response" in hay or "precio" in hay and "rv" in hay:
         return True
@@ -674,7 +727,8 @@ def looks_like_real_supplier_quote_content(
     ):
         return True
     if any(c in hay for c in ("specifications", "specification", "specs")) and any(
-        w in hay for w in ("reviewed", "comments", "attached", "find our", "quotation", "quote")
+        w in hay
+        for w in ("reviewed", "comments", "attached", "find our", "quotation", "quote")
     ):
         return True
     return False
@@ -738,7 +792,12 @@ def looks_like_client_post_sale_subject(subject: str | None) -> bool:
 
 
 def _warm_case_category_keeps_visible(category: str, subject: str | None) -> bool:
-    if category not in ("supplier_reply", "quote_sent", "waiting_supplier", "waiting_client"):
+    if category not in (
+        "supplier_reply",
+        "quote_sent",
+        "waiting_supplier",
+        "waiting_client",
+    ):
         return False
     if looks_like_cyberday_bulk_campaign_subject(subject):
         return False
@@ -751,7 +810,9 @@ def _client_oc_keeps_visible(
     *,
     snippet: str | None = None,
 ) -> bool:
-    return is_real_client_domain(email_domain(contact_email)) and looks_like_client_oc_post_sale_subject(
+    return is_real_client_domain(
+        email_domain(contact_email)
+    ) and looks_like_client_oc_post_sale_subject(
         subject,
         snippet=snippet,
     )
@@ -820,7 +881,10 @@ def looks_like_supplier_admin_signup_subject(subject: str | None) -> bool:
 def _cyberday_subject_matches(normalized: str, expected: str) -> bool:
     if normalized == expected:
         return True
-    return "cyberday" in normalized and "equipos de laboratorio seleccionados" in normalized
+    return (
+        "cyberday" in normalized
+        and "equipos de laboratorio seleccionados" in normalized
+    )
 
 
 def looks_like_cyberday_bulk_campaign_subject(subject: str | None) -> bool:
@@ -846,7 +910,9 @@ def looks_like_idiem_auto_acknowledgement(
 ) -> bool:
     """IDIEM institutional auto-ack — not a sales opportunity."""
     hay = _message_haystack(subject, snippet, sender)
-    domain = email_domain(contact_email) or email_domain(contact_email_from_sender(sender))
+    domain = email_domain(contact_email) or email_domain(
+        contact_email_from_sender(sender)
+    )
     if domain != "idiem.cl" and "idiem" not in hay:
         return False
     if domain == "idiem.cl" and (contact_email or "").startswith("no-reply@"):
@@ -882,12 +948,18 @@ def looks_like_unach_hielscher_supplier_wait(
 ) -> bool:
     """UNACH + Hielscher scaling thread — operator waiting on supplier quote."""
     hay = _message_haystack(subject, snippet, sender)
-    if not any(c in hay for c in ("unach", "universidad adventista", "[rch-", "uip2000")):
+    if not any(
+        c in hay for c in ("unach", "universidad adventista", "[rch-", "uip2000")
+    ):
         return False
-    if "hielscher" not in hay and not is_supplier_vendor_domain(email_domain(contact_email)):
+    if "hielscher" not in hay and not is_supplier_vendor_domain(
+        email_domain(contact_email)
+    ):
         return False
     sender_domain = email_domain(contact_email_from_sender(sender))
-    if is_supplier_vendor_domain(sender_domain) or is_supplier_vendor_domain(email_domain(contact_email)):
+    if is_supplier_vendor_domain(sender_domain) or is_supplier_vendor_domain(
+        email_domain(contact_email)
+    ):
         return True
     return "[rch-" in hay and "hielscher" in hay
 
@@ -992,9 +1064,36 @@ def looks_like_client_waiting_review_ack(
         return True
     if "revisaremos" in hay and ("gracias" in hay or "thank" in hay):
         return True
+
+    subject_l = (subject or "").strip().lower()
+    snippet_l = (snippet or "").strip().lower().rstrip(".! ")
+
+    quote_subject = any(
+        marker in subject_l
+        for marker in (
+            "cotiz",
+            "quotation",
+            "quote",
+            "presupuesto",
+        )
+    )
+    terse_ack = snippet_l in {
+        "gracias",
+        "muchas gracias",
+        "thanks",
+        "thank you",
+        "thank you very much",
+    }
+    if quote_subject and terse_ack:
+        return True
+
     domain = email_domain(contact_email or "")
     subj_only = (subject or "").lower()
-    if domain == "uc.cl" and "origenlab" in subj_only and "equipos para laboratorio" in subj_only:
+    if (
+        domain == "uc.cl"
+        and "origenlab" in subj_only
+        and "equipos para laboratorio" in subj_only
+    ):
         if subj_only.startswith("re:") or subj_only.startswith("re "):
             return True
     return False
@@ -1011,9 +1110,9 @@ def looks_like_supplier_followup_thread(
     email = _resolve_contact_email(contact_email, sender=sender)
     if not is_supplier_vendor_domain(email_domain(email)):
         return False
-    if looks_like_auto_reply_text(subject, snippet) and not looks_like_real_supplier_quote_content(
+    if looks_like_auto_reply_text(
         subject, snippet
-    ):
+    ) and not looks_like_real_supplier_quote_content(subject, snippet):
         return False
     if looks_like_supplier_non_quote_reply(subject, snippet, sender=sender):
         return True
@@ -1066,7 +1165,13 @@ def looks_like_supplier_marketing_thread(
         return True
 
     if email.startswith("sales@") or email.startswith("sales0"):
-        if domain and domain not in {"gmail.com", "googlemail.com", "hotmail.com", "outlook.com", "yahoo.com"}:
+        if domain and domain not in {
+            "gmail.com",
+            "googlemail.com",
+            "hotmail.com",
+            "outlook.com",
+            "yahoo.com",
+        }:
             return True
 
     return False
