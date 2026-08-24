@@ -43,31 +43,56 @@ def test_table_exists_and_missing() -> None:
     conn.close()
 
 
-def test_derive_internal_domains_top_senders() -> None:
+def test_derive_internal_domains_returns_canonical_operator_domains() -> None:
     conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE emails (sender TEXT)")
     conn.execute(
-        "CREATE TABLE emails (sender TEXT)"
+        "INSERT INTO emails VALUES (?)",
+        ("External <external@soviquim.cl>",),
     )
-    for _ in range(5):
-        conn.execute("INSERT INTO emails VALUES (?)", ("A <a@origenlab.cl>",))
-    conn.execute("INSERT INTO emails VALUES (?)", ("B <b@other.cl>",))
     conn.commit()
-    got = derive_internal_domains(conn, max_n=2)
-    assert "origenlab.cl" in got
+
+    assert derive_internal_domains(conn) == {
+        "origenlab.cl",
+        "labdelivery.cl",
+    }
     conn.close()
 
 
-def test_derive_internal_domains_skips_mail_relay_domains() -> None:
+def test_derive_internal_domains_does_not_promote_frequent_external_domains() -> None:
     conn = sqlite3.connect(":memory:")
     conn.execute("CREATE TABLE emails (sender TEXT)")
+
+    for _ in range(50):
+        conn.execute(
+            "INSERT INTO emails VALUES (?)",
+            ("Marketplace <notice@mercadopublico.cl>",),
+        )
+
     for _ in range(40):
-        conn.execute("INSERT INTO emails VALUES (?)", ("R <r@bounce.mailchannels.net>",))
-    for _ in range(4):
-        conn.execute("INSERT INTO emails VALUES (?)", ("L <l@labdelivery.cl>",))
+        conn.execute(
+            "INSERT INTO emails VALUES (?)",
+            ("External Gmail <buyer@googlemail.com>",),
+        )
+
+    for _ in range(30):
+        conn.execute(
+            "INSERT INTO emails VALUES (?)",
+            ("Supplier <sales@soviquim.cl>",),
+        )
+
     conn.commit()
-    got = derive_internal_domains(conn, max_n=4)
-    assert "labdelivery.cl" in got
-    assert "mailchannels.net" not in got
+
+    got = derive_internal_domains(conn)
+
+    assert got == {
+        "origenlab.cl",
+        "labdelivery.cl",
+    }
+    assert "mercadopublico.cl" not in got
+    assert "googlemail.com" not in got
+    assert "soviquim.cl" not in got
+
     conn.close()
 
 

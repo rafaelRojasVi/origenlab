@@ -61,6 +61,19 @@ def test_kalstein_discount_blast_is_marketing_noise_not_client_opportunity() -> 
     )
 
 
+def test_kalstein_supplier_recruitment_is_supplier_followup() -> None:
+    row = _inbound(
+        sender="Kalstein Sales <sales@kalstein.net>",
+        subject="Invitación a Reunión - Colaboración con Kalstein",
+        body_snippet=(
+            "We are looking for a distributor in Chile and would like "
+            "to discuss a commercial partnership."
+        ),
+    )
+
+    assert _role(row) == "supplier_followup"
+
+
 def test_post_quote_terse_thanks_waits_for_client_instead_of_open_opportunity() -> None:
     row = _inbound(
         sender="Gonzalo Leyton <gleyton@estudioleyton.com>",

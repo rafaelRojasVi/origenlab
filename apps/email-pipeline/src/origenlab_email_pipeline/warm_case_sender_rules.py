@@ -109,6 +109,7 @@ SUPPLIER_VENDOR_DOMAINS: frozenset[str] = frozenset(
         "gzfanbolun.com",
         "hielscher.com",
         "ika.net.br",
+        "kalstein.net",
         "moldev.com",
         "ollital.com",
         "ortoalresa.com",

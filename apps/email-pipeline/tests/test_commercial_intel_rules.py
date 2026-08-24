@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from origenlab_email_pipeline.commercial.commercial_intel_rules import derive_email_signal_facts
+from origenlab_email_pipeline.commercial.commercial_intel_rules import (
+    derive_email_signal_facts,
+    pick_external_contact,
+)
 
 _INTERNAL = {"origenlab.cl"}
 
@@ -11,6 +14,57 @@ def _positive_codes(facts: list) -> set[str]:
 
 def _suppression_codes(facts: list) -> set[str]:
     return {f.signal_code for f in facts if f.signal_kind == "suppression"}
+
+
+def test_pick_external_contact_recognizes_canonical_origenlab_sender() -> None:
+    # Reproduce the production failure: the caller's stale inferred set does
+    # NOT contain origenlab.cl and contains unrelated external domains.
+    contact = pick_external_contact(
+        sender_raw="OrigenLab <contacto@origenlab.cl>",
+        recipients_raw="sales@apdataweigh.com",
+        internal_domains={
+            "labdelivery.cl",
+            "googlemail.com",
+            "mercadopublico.cl",
+            "soviquim.cl",
+        },
+    )
+
+    assert contact == (
+        "sales@apdataweigh.com",
+        "apdataweigh.com",
+    )
+
+
+def test_pick_external_contact_handles_exact_operator_gmail_only() -> None:
+    outbound = pick_external_contact(
+        sender_raw="Tatiana <tvivancob@gmail.com>",
+        recipients_raw="compras@hospital.cl",
+        internal_domains={
+            "origenlab.cl",
+            "labdelivery.cl",
+        },
+    )
+
+    assert outbound == (
+        "compras@hospital.cl",
+        "hospital.cl",
+    )
+
+    # A normal external Gmail address must remain external.
+    inbound = pick_external_contact(
+        sender_raw="Cliente <buyer@gmail.com>",
+        recipients_raw="contacto@origenlab.cl",
+        internal_domains={
+            "origenlab.cl",
+            "labdelivery.cl",
+        },
+    )
+
+    assert inbound == (
+        "buyer@gmail.com",
+        "gmail.com",
+    )
 
 
 def test_rules_emit_positive_quote_and_procurement_signals() -> None:
