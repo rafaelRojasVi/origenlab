@@ -1,6 +1,7 @@
 import { useDashboardData } from "../context/DashboardDataContext";
 import { CommercialDealHighlightCards } from "../components/commercial/CommercialDealHighlightCards";
 import { CommercialDealsTable } from "../components/commercial/CommercialDealsTable";
+import { CommercialOpportunitiesCockpit } from "../components/commercial/CommercialOpportunitiesCockpit";
 
 export function DealsPage() {
   const {
@@ -9,18 +10,34 @@ export function DealsPage() {
     commercialDealsError,
     commercialDealsErrorDetail,
     loadCommercialDeals,
+    setContactEmail,
   } = useDashboardData();
 
   return (
-    <div className="space-y-8">
-      <CommercialDealHighlightCards data={commercialDeals} />
-      <CommercialDealsTable
-        data={commercialDeals}
-        loading={commercialDealsLoading}
-        error={commercialDealsError}
-        errorDetail={commercialDealsErrorDetail}
-        onRetry={() => void loadCommercialDeals()}
+    <div className="space-y-10">
+      <CommercialOpportunitiesCockpit
+        onSelectContact={setContactEmail}
       />
+
+      <section className="space-y-5 border-t border-[var(--color-border)] pt-8">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">
+            Registro financiero de negocios
+          </h2>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">
+            Ledger comercial y márgenes · modelo separado del ciclo PR3.
+          </p>
+        </div>
+
+        <CommercialDealHighlightCards data={commercialDeals} />
+        <CommercialDealsTable
+          data={commercialDeals}
+          loading={commercialDealsLoading}
+          error={commercialDealsError}
+          errorDetail={commercialDealsErrorDetail}
+          onRetry={() => void loadCommercialDeals()}
+        />
+      </section>
     </div>
   );
 }
