@@ -1,5 +1,6 @@
 """Warm-case response normalization (audit-driven, read-only)."""
 
+# ruff: noqa: E402
 from __future__ import annotations
 
 import json
@@ -85,15 +86,21 @@ def test_crtop_duplicate_rows_collapsed_with_grouped_count() -> None:
             subject="Re: Thank you very much for your inquiry about our reactor.",
             category="supplier_quote_received",
             snippet="CRTOP quotation OLT-HP-5L EXW USD 10600",
-        ).model_copy(update={"last_email_id": 10, "last_seen_at": "2026-05-18T10:00:00Z"}),
+        ).model_copy(
+            update={"last_email_id": 10, "last_seen_at": "2026-05-18T10:00:00Z"}
+        ),
         _item(
             contact_email="ariel@crtopmachine.com",
             subject="Re: Thank you very much for your inquiry about our reactor.",
             category="supplier_quote_received",
             snippet="Follow-up on reactor quote",
-        ).model_copy(update={"last_email_id": 11, "last_seen_at": "2026-05-19T10:00:00Z"}),
+        ).model_copy(
+            update={"last_email_id": 11, "last_seen_at": "2026-05-19T10:00:00Z"}
+        ),
     ]
-    merged = dedupe_warm_case_items([normalize_warm_case_item(r) for r in rows if normalize_warm_case_item(r)])
+    merged = dedupe_warm_case_items(
+        [normalize_warm_case_item(r) for r in rows if normalize_warm_case_item(r)]
+    )
     assert len(merged) == 1
     assert merged[0].last_email_id == 11
     assert merged[0].grouped_email_count == 2
@@ -125,13 +132,20 @@ def test_normalize_dlab_supplier() -> None:
     raw = _item(contact_email="chloe.yang@dlabsci.com", subject="DLAB visit reply")
     out = normalize_warm_case_item(raw)
     assert out is not None
-    assert out.category in ("supplier_reply", "supplier_followup", "supplier_quote_received")
+    assert out.category in (
+        "supplier_reply",
+        "supplier_followup",
+        "supplier_quote_received",
+    )
     assert "proveedor" in out.next_action.lower()
 
 
 def test_normalize_crtopmachine_supplier() -> None:
     raw = _item(contact_email="ariel@crtopmachine.com", subject="Re: reactor inquiry")
-    assert resolve_normalized_category(raw) in ("supplier_followup", "supplier_quote_received")
+    assert resolve_normalized_category(raw) in (
+        "supplier_followup",
+        "supplier_quote_received",
+    )
 
 
 def test_normalize_keeps_rg_energia_operator_safe_summary() -> None:
@@ -191,7 +205,10 @@ def test_normalize_redacts_bank_and_rut_from_snippet() -> None:
 
 def test_normalize_asynt_supplier() -> None:
     raw = _item(contact_email="sales@asynt.com", subject="Re: reactor specs")
-    assert resolve_normalized_category(raw) in ("supplier_followup", "supplier_quote_received")
+    assert resolve_normalized_category(raw) in (
+        "supplier_followup",
+        "supplier_quote_received",
+    )
 
 
 def test_normalize_serva_auto_reply_hidden_by_default() -> None:
@@ -218,7 +235,11 @@ def test_normalize_ollital_and_ortoalresa_stay_supplier() -> None:
     oll = _item(contact_email="kelly@ollital.com", subject="Re: Ollital reactor 5L")
     out = normalize_warm_case_item(oll)
     assert out is not None
-    assert out.category in ("supplier_reply", "supplier_followup", "supplier_quote_received")
+    assert out.category in (
+        "supplier_reply",
+        "supplier_followup",
+        "supplier_quote_received",
+    )
 
     orto = _item(
         contact_email="carmen.llorente@ortoalresa.com",
@@ -253,22 +274,47 @@ def test_normalize_eppendorf_registration_supplier() -> None:
     )
     out = normalize_warm_case_item(raw)
     assert out is not None
-    assert out.category in ("supplier_reply", "supplier_followup", "supplier_quote_received")
+    assert out.category in (
+        "supplier_reply",
+        "supplier_followup",
+        "supplier_quote_received",
+    )
 
 
 def test_normalize_valuenindustrial_sales_supplier() -> None:
-    raw = _item(contact_email="sales@valuenindustrial.com", subject="Promo", category="client_reply")
-    assert resolve_normalized_category(raw) in ("supplier_followup", "supplier_quote_received")
+    raw = _item(
+        contact_email="sales@valuenindustrial.com",
+        subject="Promo",
+        category="client_reply",
+    )
+    assert resolve_normalized_category(raw) in (
+        "supplier_followup",
+        "supplier_quote_received",
+    )
 
 
 def test_normalize_gzfanbolun_sales_supplier() -> None:
-    raw = _item(contact_email="sales001@gzfanbolun.com", subject="Offer", category="client_reply")
-    assert resolve_normalized_category(raw) in ("supplier_followup", "supplier_quote_received")
+    raw = _item(
+        contact_email="sales001@gzfanbolun.com",
+        subject="Offer",
+        category="client_reply",
+    )
+    assert resolve_normalized_category(raw) in (
+        "supplier_followup",
+        "supplier_quote_received",
+    )
 
 
 def test_normalize_yuanhuai_supplier() -> None:
-    raw = _item(contact_email="jizhendong@yuanhuai.com", subject="YHCHEM line", category="client_reply")
-    assert resolve_normalized_category(raw) in ("supplier_followup", "supplier_quote_received")
+    raw = _item(
+        contact_email="jizhendong@yuanhuai.com",
+        subject="YHCHEM line",
+        category="client_reply",
+    )
+    assert resolve_normalized_category(raw) in (
+        "supplier_followup",
+        "supplier_quote_received",
+    )
 
 
 def test_internal_contacto_waiting_client_hidden_by_default() -> None:
@@ -284,7 +330,9 @@ def test_internal_contacto_waiting_client_hidden_by_default() -> None:
 
 
 def test_bancochile_factura_payment_admin() -> None:
-    raw = _item(contact_email="serviciodetransferencias@bancochile.cl", subject="FACTURA 6")
+    raw = _item(
+        contact_email="serviciodetransferencias@bancochile.cl", subject="FACTURA 6"
+    )
     out = normalize_warm_case_item(raw)
     assert out is not None
     assert out.category == "payment_admin"
@@ -302,7 +350,11 @@ def test_dhl_import_account_vendor_logistics() -> None:
 
 
 def test_ceaf_oc_thread_is_deal_evidence_candidate() -> None:
-    raw = _item(contact_email="cgaray@ceaf.cl", subject="Remite OC N º 26172", category="waiting_supplier")
+    raw = _item(
+        contact_email="cgaray@ceaf.cl",
+        subject="Remite OC N º 26172",
+        category="waiting_supplier",
+    )
     out = normalize_warm_case_item(raw)
     assert out is not None
     assert out.category == "deal_evidence_candidate"
@@ -339,9 +391,13 @@ def test_ceaf_bank_details_subject_only_payment_admin() -> None:
 
 def test_post_normalize_positive_keeps_payment_and_logistics() -> None:
     rows = [
-        _item(contact_email="serviciodetransferencias@bancochile.cl", subject="FACTURA 6"),
+        _item(
+            contact_email="serviciodetransferencias@bancochile.cl", subject="FACTURA 6"
+        ),
         _item(contact_email="monica.silva@dhl.com", subject="PROPUESTA COMERCIAL DHL"),
-        _item(contact_email="no-reply@accounts.google.com", subject="Alerta de seguridad"),
+        _item(
+            contact_email="no-reply@accounts.google.com", subject="Alerta de seguridad"
+        ),
     ]
     normalized = normalize_warm_case_items(rows, positive_signal_only=True)
     emails = {i.contact_email for i in normalized}
@@ -352,7 +408,9 @@ def test_post_normalize_positive_keeps_payment_and_logistics() -> None:
 
 def test_filter_positive_normalized_items() -> None:
     banco = normalize_warm_case_item(
-        _item(contact_email="serviciodetransferencias@bancochile.cl", subject="FACTURA 1")
+        _item(
+            contact_email="serviciodetransferencias@bancochile.cl", subject="FACTURA 1"
+        )
     )
     assert banco is not None
     kept = filter_positive_normalized_items(
@@ -475,9 +533,15 @@ def test_cases_warm_api_normalizes_audit_samples(tmp_path: Path) -> None:
     by_email = {i["contact_email"].lower(): i for i in data["items"]}
 
     assert by_email["monica.silva@dhl.com"]["category"] == "logistics_admin"
-    assert by_email["chloe.yang@dlabsci.com"]["category"] in ("supplier_reply", "supplier_followup")
+    assert by_email["chloe.yang@dlabsci.com"]["category"] in (
+        "supplier_reply",
+        "supplier_followup",
+    )
     assert "order@serva.de" not in by_email
-    assert by_email["serviciodetransferencias@bancochile.cl"]["category"] == "payment_admin"
+    assert (
+        by_email["serviciodetransferencias@bancochile.cl"]["category"]
+        == "payment_admin"
+    )
     assert by_email["kelly@ollital.com"]["category"] in (
         "supplier_reply",
         "supplier_quote_received",
@@ -491,7 +555,9 @@ def test_cases_warm_api_normalizes_audit_samples(tmp_path: Path) -> None:
 
 
 def test_cyberday_campaign_hidden_from_default_warm_queue() -> None:
-    from origenlab_email_pipeline.warm_case_sender_rules import CYBERDAY_CAMPAIGN_SUBJECT
+    from origenlab_email_pipeline.warm_case_sender_rules import (
+        CYBERDAY_CAMPAIGN_SUBJECT,
+    )
 
     raw = _item(
         contact_email="lab@example.cl",
@@ -552,7 +618,10 @@ def test_legacy_supplier_reply_still_re_infers_role() -> None:
         status="open",
         snippet="Monto 112,00 — stock disponible para 3 unidades RV10.70",
     )
-    assert resolve_normalized_category(raw) in ("supplier_followup", "supplier_quote_received")
+    assert resolve_normalized_category(raw) in (
+        "supplier_followup",
+        "supplier_quote_received",
+    )
 
 
 def test_category_filter_supplier_quote_received_from_mirror() -> None:
@@ -625,3 +694,153 @@ def test_legacy_supplier_reply_still_re_infers_to_followup() -> None:
         snippet="Please send your address to calculate shipping cost to Chile.",
     )
     assert resolve_normalized_category(raw) == "supplier_followup"
+
+
+def test_live_serva_offer_normalizes_to_supplier_quote_received() -> None:
+    raw = _item(
+        contact_email="order@serva.de",
+        subject=("AW: Quotation Request / New adress created for your compagny 310471"),
+        category="supplier_reply",
+    ).model_copy(
+        update={
+            "body_snippet": (
+                "Dear Tatiana, please find attached our additional "
+                "offer N260733 for the positions listed below."
+            ),
+            "sender_preview": "Serva_Order <order@serva.de>",
+            "source_file": "gmail:contacto@origenlab.cl/INBOX",
+        }
+    )
+
+    out = normalize_warm_case_item(raw)
+
+    assert out is not None
+    assert out.category == "supplier_quote_received"
+    assert "cotización de proveedor recibida" in out.next_action.lower()
+
+
+def test_live_serva_outbound_rfq_normalizes_to_waiting_supplier() -> None:
+    raw = _item(
+        contact_email="order@serva.de",
+        subject=("Re: Quotation Request / New adress created for your compagny 310471"),
+        category="waiting_supplier",
+    ).model_copy(
+        update={
+            "sender_preview": ("Tatiana Vivanco | OrigenLab <contacto@origenlab.cl>"),
+            "recipients_preview": "order@serva.de",
+            "source_file": ("gmail:contacto@origenlab.cl/[Gmail]/Enviados"),
+        }
+    )
+
+    out = normalize_warm_case_item(raw)
+
+    assert out is not None
+    assert out.category == "waiting_supplier"
+    assert out.status == "waiting"
+
+
+def test_live_uc_serva_inquiry_keeps_targeted_action() -> None:
+    raw = _item(
+        contact_email="calidadagua.ing@uc.cl",
+        subject="Consulta cotización",
+        category="opportunity",
+    ).model_copy(
+        update={
+            "body_snippet": (
+                "Me comunico para consultar si comercializan la "
+                "solución de silicona SERVA en isopropanol."
+            ),
+            "sender_preview": ('"Calidad Agua.ing" <calidadagua.ing@uc.cl>'),
+            "source_file": "gmail:contacto@origenlab.cl/INBOX",
+            "next_action": (
+                "Cliente consulta producto SERVA; confirmar "
+                "formato/cantidad y preparar cotización."
+            ),
+        }
+    )
+
+    out = normalize_warm_case_item(raw)
+
+    assert out is not None
+    assert out.category == "client_opportunity"
+    assert "producto serva" in out.next_action.lower()
+    assert "preparar cotización" in out.next_action.lower()
+
+
+def test_live_carozzi_future_tender_keeps_nonurgent_action() -> None:
+    raw = _item(
+        contact_email="daniela.sepulveda@carozzi.cl",
+        subject=("RE: [EXTERNO]: Balanzas y Soluciones ADAM Equipment | OrigenLab"),
+        category="opportunity",
+    ).model_copy(
+        update={
+            "body_snippet": (
+                "En lo inmediato no necesito ningún servicio, "
+                "pero nos encontramos en proceso de licitación "
+                "para el contrato que gestionamos por 2 o 3 años."
+            ),
+            "sender_preview": (
+                "Daniela Sepulveda Rojas <daniela.sepulveda@carozzi.cl>"
+            ),
+            "source_file": "gmail:contacto@origenlab.cl/INBOX",
+            "next_action": (
+                "Sin necesidad inmediata; registrar la licitación "
+                "futura y hacer seguimiento comercial cuando se "
+                "acerque el proceso."
+            ),
+        }
+    )
+
+    out = normalize_warm_case_item(raw)
+
+    assert out is not None
+    assert out.category == "client_opportunity"
+    assert "sin necesidad inmediata" in out.next_action.lower()
+    assert "licitación futura" in out.next_action.lower()
+
+
+def test_live_apdata_outbound_rfq_normalizes_to_waiting_supplier() -> None:
+    raw = _item(
+        contact_email="sales@apdataweigh.com",
+        subject="Request for quotation - Dynamic Checkweigher",
+        category="waiting_supplier",
+    ).model_copy(
+        update={
+            "sender_preview": ("Tatiana Vivanco | OrigenLab <contacto@origenlab.cl>"),
+            "recipients_preview": "sales@apdataweigh.com",
+            "source_file": ("gmail:contacto@origenlab.cl/[Gmail]/Enviados"),
+        }
+    )
+
+    out = normalize_warm_case_item(raw)
+
+    assert out is not None
+    assert out.category == "waiting_supplier"
+    assert out.status == "waiting"
+
+
+def test_kalstein_promotion_normalizes_to_system_noise_action() -> None:
+    raw = _item(
+        contact_email="dianalopez@kalstein.net",
+        subject=(
+            "Kalstein Plus: disfrute de descuentos exclusivos "
+            "de entre el 22 % y el 36 %."
+        ),
+        category="bounce",
+        status="problem",
+    ).model_copy(
+        update={
+            "sender_preview": ("Diana Lopez <dianalopez@kalstein.net>"),
+            "source_file": "gmail:contacto@origenlab.cl/INBOX",
+        }
+    )
+
+    out = normalize_warm_case_item(
+        raw,
+        include_noise=True,
+    )
+
+    assert out is not None
+    assert out.category == "system_noise"
+    assert "ignorar" in out.next_action.lower()
+    assert "ndr" not in out.next_action.lower()

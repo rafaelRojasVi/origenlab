@@ -52,7 +52,9 @@ def account_name_from_sender(sender_preview: str | None, contact_email: str) -> 
     return s[:80] if s else "Desconocido"
 
 
-def equipment_signal_text(subject: str, row: dict[str, Any], *, enrichment_available: bool) -> str:
+def equipment_signal_text(
+    subject: str, row: dict[str, Any], *, enrichment_available: bool
+) -> str:
     subj = subject.lower()
     for kw in _EQUIPMENT_KEYWORDS:
         if kw.lower() in subj:
@@ -90,7 +92,9 @@ def infer_warm_case_category(
     return role_category_to_legacy_storage(role)
 
 
-def infer_warm_case_status(category: WarmCaseCategory, row: dict[str, Any]) -> WarmCaseStatus:
+def infer_warm_case_status(
+    category: WarmCaseCategory, row: dict[str, Any]
+) -> WarmCaseStatus:
     role = infer_warm_case_role_category(
         row,
         enrichment_available=bool(row.get("has_positive_signal")),
@@ -109,23 +113,32 @@ def infer_warm_case_status(category: WarmCaseCategory, row: dict[str, Any]) -> W
     return role_category_status(role, row)
 
 
-def infer_next_action(category: WarmCaseCategory, row: dict[str, Any] | None = None) -> str:
+def infer_next_action(
+    category: WarmCaseCategory, row: dict[str, Any] | None = None
+) -> str:
     subject_l = ""
     sender_l = ""
     snippet_l = ""
+    body_l = ""
     contact_email = ""
     if row:
         subject_l = str(row.get("subject_preview") or row.get("subject") or "").lower()
         sender_l = str(row.get("sender_preview") or "").lower()
         snippet_l = str(row.get("snippet") or "").lower()
+        body_l = str(
+            row.get("body_snippet") or row.get("top_reply_clean") or ""
+        ).lower()
         raw_contact = row.get("contact_email")
         if isinstance(raw_contact, str) and "@" in raw_contact:
             contact_email = raw_contact.strip().lower()
         else:
             contact_email = contact_email_from_sender(
-                row.get("sender_preview") if isinstance(row.get("sender_preview"), str) else None
+                row.get("sender_preview")
+                if isinstance(row.get("sender_preview"), str)
+                else None
             )
     hay = f"{subject_l} {snippet_l} {sender_l}"
+    detailed_hay = f"{subject_l} {body_l or snippet_l} {sender_l}"
 
     if (
         "rv10.70" in subject_l
@@ -148,13 +161,49 @@ def infer_next_action(category: WarmCaseCategory, row: dict[str, Any] | None = N
             "No cotizar al cliente hasta tener shipping/importación."
         )
     if (
-        ("crtop" in sender_l or "crtop" in subject_l or "olt-hp-5l" in subject_l)
-        and category in ("supplier_reply", "waiting_supplier")
-    ):
+        "crtop" in sender_l or "crtop" in subject_l or "olt-hp-5l" in subject_l
+    ) and category in ("supplier_reply", "waiting_supplier"):
         return (
             "Proveedor CRTOP envió cotización de reactor OLT-HP-5L por US$10,600 EXW. "
             "Falta shipping y costos de importación antes de cotizar al cliente."
         )
+    if (
+        category == "opportunity"
+        and (
+            "no necesito ningún servicio" in detailed_hay
+            or "no necesito ningun servicio" in detailed_hay
+            or "sin necesidad inmediata" in detailed_hay
+        )
+        and (
+            "licitacion" in detailed_hay
+            or "licitación" in detailed_hay
+            or "tender" in detailed_hay
+        )
+    ):
+        return (
+            "Sin necesidad inmediata; registrar la licitación futura y hacer "
+            "seguimiento comercial cuando se acerque el proceso."
+        )
+
+    if (
+        category == "opportunity"
+        and "serva" in detailed_hay
+        and any(
+            cue in detailed_hay
+            for cue in (
+                "comercializan",
+                "consulta cotización",
+                "consulta cotizacion",
+                "solución de silicona",
+                "solucion de silicona",
+            )
+        )
+    ):
+        return (
+            "Cliente consulta producto SERVA; confirmar formato/cantidad y "
+            "preparar cotización."
+        )
+
     if category == "opportunity" and looks_like_client_equipment_opportunity_thread(
         contact_email,
         subject_l or None,
@@ -165,7 +214,10 @@ def infer_next_action(category: WarmCaseCategory, row: dict[str, Any] | None = N
             "Cliente universitario evaluando escalamiento de extracción vegetal con ultrasonido. "
             "Hielscher deriva cotización local a OrigenLab."
         )
-    if category in ("waiting_client", "client_reply") and looks_like_client_waiting_review_ack(
+    if category in (
+        "waiting_client",
+        "client_reply",
+    ) and looks_like_client_waiting_review_ack(
         subject_l or None,
         snippet_l or None,
         contact_email=contact_email or None,
@@ -176,10 +228,14 @@ def infer_next_action(category: WarmCaseCategory, row: dict[str, Any] | None = N
             "Cotización UP400St enviada a ONGO. "
             "Seguimiento en 3–5 días hábiles si no hay respuesta."
         )
-    if looks_like_low_intent_client_acknowledgement(subject_l or None, snippet_l or None):
+    if looks_like_low_intent_client_acknowledgement(
+        subject_l or None, snippet_l or None
+    ):
         return "Agradecimiento sin solicitud nueva; sin seguimiento inmediato."
     if category == "bounce" and (
-        "mailer-daemon" in sender_l or "delivery" in subject_l or "undeliverable" in subject_l
+        "mailer-daemon" in sender_l
+        or "delivery" in subject_l
+        or "undeliverable" in subject_l
     ):
         return (
             "Rebote de entrega; revisar supresión por email exacto. "

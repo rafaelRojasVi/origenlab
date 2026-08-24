@@ -27,6 +27,7 @@ from origenlab_email_pipeline.warm_case_sender_rules import (
     looks_like_logistics_admin_contact,
     looks_like_low_intent_client_acknowledgement,
     looks_like_payment_admin_thread,
+    looks_like_promotional_marketing_thread,
     looks_like_supplier_followup_thread,
     looks_like_supplier_quote_response,
     looks_like_supplier_marketing_thread,
@@ -167,6 +168,23 @@ def looks_like_deal_evidence_thread(
     domain = email_domain(contact_email)
     subject_hay = " ".join([subject or "", snippet or ""]).lower()
     contact_l = contact_email.strip().lower()
+
+    if (
+        domain == "uc.cl"
+        and "serva" in subject_hay
+        and any(
+            cue in subject_hay
+            for cue in (
+                "comercializan",
+                "consulta cotización",
+                "consulta cotizacion",
+                "solución de silicona",
+                "solucion de silicona",
+            )
+        )
+    ):
+        return False
+
     if domain == "serva.de" or contact_l.endswith("@serva.de"):
         serva_hay = " ".join([contact_l, subject_hay]).lower()
         serva_markers = (
@@ -203,7 +221,9 @@ def infer_warm_case_role_category(
     subject_s = _row_subject(row)
     contact_email = _row_contact_email(row)
     snippet = _row_heuristic_snippet(row)
-    account_name = row.get("account_name") if isinstance(row.get("account_name"), str) else None
+    account_name = (
+        row.get("account_name") if isinstance(row.get("account_name"), str) else None
+    )
 
     if looks_like_obvious_noise(sender_s, subject_s):
         return "bounce_problem"
@@ -240,11 +260,32 @@ def infer_warm_case_role_category(
     ):
         return "system_noise"
 
+    if looks_like_promotional_marketing_thread(
+        contact_email,
+        sender_s,
+        subject_s,
+        snippet=snippet,
+    ):
+        return "system_noise"
+
     source_early = row.get("source_file")
     if _is_sent_folder(source_early if isinstance(source_early, str) else None):
         if not is_internal_operator_contact(contact_email):
             subj_early = (subject_s or "").lower()
-            if "cotiz" in subj_early or "quote" in subj_early or "presupuesto" in subj_early:
+            outbound_rfq_early = any(
+                cue in subj_early
+                for cue in (
+                    "request for quotation",
+                    "quotation request",
+                    "request for quote",
+                    "rfq",
+                )
+            )
+            if not outbound_rfq_early and (
+                "cotiz" in subj_early
+                or "quote" in subj_early
+                or "presupuesto" in subj_early
+            ):
                 return "quote_sent"
 
     if looks_like_internal_forwarded_client_quote_request(
@@ -278,7 +319,42 @@ def infer_warm_case_role_category(
     ):
         return "logistics_admin"
 
-    if looks_like_deal_evidence_thread(contact_email, subject_s, snippet=snippet):
+    source_direction = row.get("source_file")
+    if _is_sent_folder(source_direction if isinstance(source_direction, str) else None):
+        subject_direction = (subject_s or "").lower()
+        if any(
+            cue in subject_direction
+            for cue in (
+                "request for quotation",
+                "quotation request",
+                "request for quote",
+                "rfq",
+            )
+        ):
+            return "waiting_supplier"
+
+    if email_domain(contact_email) == "serva.de":
+        if looks_like_supplier_quote_response(
+            contact_email,
+            subject_s,
+            snippet=snippet,
+            sender=sender_s,
+        ):
+            return "supplier_quote_received"
+
+        if looks_like_supplier_followup_thread(
+            contact_email,
+            subject_s,
+            snippet=snippet,
+            sender=sender_s,
+        ):
+            return "supplier_followup"
+
+    if looks_like_deal_evidence_thread(
+        contact_email,
+        subject_s,
+        snippet=snippet,
+    ):
         return "deal_evidence_candidate"
 
     if looks_like_logistics_admin_contact(contact_email, subject_s, snippet=snippet):
@@ -294,7 +370,9 @@ def infer_warm_case_role_category(
     ):
         return "waiting_supplier"
 
-    if looks_like_client_waiting_review_ack(subject_s, snippet, contact_email=contact_email):
+    if looks_like_client_waiting_review_ack(
+        subject_s, snippet, contact_email=contact_email
+    ):
         return "waiting_client"
 
     source = row.get("source_file")
@@ -302,7 +380,11 @@ def infer_warm_case_role_category(
         if is_supplier_vendor_domain(email_domain(contact_email)):
             return "waiting_supplier"
         subj_l_early = (subject_s or "").lower()
-        if "cotiz" in subj_l_early or "quote" in subj_l_early or "presupuesto" in subj_l_early:
+        if (
+            "cotiz" in subj_l_early
+            or "quote" in subj_l_early
+            or "presupuesto" in subj_l_early
+        ):
             return "quote_sent"
         return "waiting_client"
 
@@ -363,7 +445,9 @@ def infer_warm_case_role_category(
     return "client_response"
 
 
-def role_category_to_legacy_storage(role: WarmCaseRoleCategory) -> WarmCaseLegacyCategory:
+def role_category_to_legacy_storage(
+    role: WarmCaseRoleCategory,
+) -> WarmCaseLegacyCategory:
     """Map role category to Postgres/SQLite promotion CHECK values."""
     return {
         "client_opportunity": "opportunity",
@@ -389,7 +473,12 @@ def role_category_status(
     role: WarmCaseRoleCategory,
     row: dict[str, Any],
 ) -> Literal["new", "open", "waiting", "quoted", "problem"]:
-    if role in ("bounce_problem", "system_noise", "internal_admin", "auto_acknowledgement"):
+    if role in (
+        "bounce_problem",
+        "system_noise",
+        "internal_admin",
+        "auto_acknowledgement",
+    ):
         return "problem"
     if role == "quote_sent":
         return "quoted"

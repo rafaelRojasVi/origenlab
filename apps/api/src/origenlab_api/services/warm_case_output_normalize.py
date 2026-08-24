@@ -117,7 +117,10 @@ _MIRROR_STORED_PRECISE_CATEGORIES: frozenset[str] = frozenset(
 
 _SENSITIVE_PREVIEW_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b\d{1,2}\.\d{3}\.\d{3}-[\dkK]\b"),
-    re.compile(r"\b(?:swift|iban|beneficiario|titular|cuenta(?:\s+corriente)?)\b[^.,;]{0,80}", re.I),
+    re.compile(
+        r"\b(?:swift|iban|beneficiario|titular|cuenta(?:\s+corriente)?)\b[^.,;]{0,80}",
+        re.I,
+    ),
     re.compile(r"\b\d{10,}\b"),
 )
 
@@ -243,7 +246,9 @@ def _looks_like_response_system_report(item: WarmCaseItem) -> bool:
 
 
 def _response_supplier_domain(item: WarmCaseItem) -> str:
-    return _domain_from_email(item.contact_email) or _domain_from_email(item.sender_preview)
+    return _domain_from_email(item.contact_email) or _domain_from_email(
+        item.sender_preview
+    )
 
 
 def _looks_like_response_supplier_thread(item: WarmCaseItem) -> bool:
@@ -253,7 +258,9 @@ def _looks_like_response_supplier_thread(item: WarmCaseItem) -> bool:
 def _looks_like_response_supplier_quote(item: WarmCaseItem) -> bool:
     hay = _item_haystack(item)
     has_quote_marker = any(marker in hay for marker in _RESPONSE_SUPPLIER_QUOTE_MARKERS)
-    has_product_marker = any(marker in hay for marker in _RESPONSE_SUPPLIER_PRODUCT_MARKERS)
+    has_product_marker = any(
+        marker in hay for marker in _RESPONSE_SUPPLIER_PRODUCT_MARKERS
+    )
     return has_quote_marker and has_product_marker
 
 
@@ -291,7 +298,25 @@ def resolve_normalized_category(item: WarmCaseItem) -> WarmCaseCategory:
         sender=sender,
     ):
         return _canonical_category("internal_admin")
-    if looks_like_deal_evidence_thread(contact_email, subject, snippet=snippet):
+
+    if _domain_from_email(contact_email) == "serva.de":
+        current_role = infer_warm_case_role_category(
+            row,
+            enrichment_available=item.category in ("opportunity", "client_opportunity"),
+            include_noise=True,
+        )
+        if current_role in (
+            "supplier_quote_received",
+            "supplier_followup",
+            "waiting_supplier",
+        ):
+            return _canonical_category(current_role)
+
+    if looks_like_deal_evidence_thread(
+        contact_email,
+        subject,
+        snippet=snippet,
+    ):
         return _canonical_category("deal_evidence_candidate")
     if looks_like_payment_admin_thread(
         contact_email,
@@ -324,7 +349,9 @@ def resolve_normalized_category(item: WarmCaseItem) -> WarmCaseCategory:
 
 
 def looks_like_idiem_auto_ack(item: WarmCaseItem) -> bool:
-    from origenlab_email_pipeline.warm_case_sender_rules import looks_like_idiem_auto_acknowledgement
+    from origenlab_email_pipeline.warm_case_sender_rules import (
+        looks_like_idiem_auto_acknowledgement,
+    )
 
     return looks_like_idiem_auto_acknowledgement(
         item.contact_email,
@@ -368,7 +395,19 @@ def normalize_warm_case_item(
 
     next_action = role_category_next_action(category)  # type: ignore[arg-type]
     existing_next = (item.next_action or "").strip()
-    if existing_next and ("rv10.70" in existing_next.lower() or "crtop" in existing_next.lower()):
+    existing_next_l = existing_next.lower()
+
+    preserve_operator_action = any(
+        marker in existing_next_l
+        for marker in (
+            "rv10.70",
+            "crtop",
+            "sin necesidad inmediata",
+            "cliente consulta producto serva",
+        )
+    )
+
+    if existing_next and preserve_operator_action:
         next_action = existing_next
 
     safe_snippet = redact_sensitive_preview(item.snippet or "")
@@ -384,7 +423,9 @@ def normalize_warm_case_item(
 
 
 def filter_positive_normalized_items(items: list[WarmCaseItem]) -> list[WarmCaseItem]:
-    return [item for item in items if item.category in POST_NORMALIZE_POSITIVE_CATEGORIES]
+    return [
+        item for item in items if item.category in POST_NORMALIZE_POSITIVE_CATEGORIES
+    ]
 
 
 def dedupe_warm_case_items(items: list[WarmCaseItem]) -> list[WarmCaseItem]:
