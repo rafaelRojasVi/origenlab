@@ -26,9 +26,10 @@ This logic is in `src/origenlab_email_pipeline/business_mart.py` (`is_noise_send
 ## 2) Internal vs external
 The mart focuses on **external contacts**.
 
-Heuristic:
-- internal domains are inferred from the most common sender domains (parsed from `emails.sender`)
-- can be overridden by passing `--internal-domain yourdomain.com` (repeatable)
+Direction identity:
+- canonical OriginLab operator domains come from the shared `INTERNAL_OPERATOR_DOMAINS` registry
+- sender frequency is **not** treated as an identity signal
+- `--internal-domain yourdomain.com` is repeatable and adds explicit operator-approved domains without replacing the canonical set
 
 ## 3) Organization name/type guesses
 These are transparent heuristics:

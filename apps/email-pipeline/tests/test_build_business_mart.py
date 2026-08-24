@@ -14,6 +14,9 @@ from origenlab_email_pipeline.core.mart.build_business_mart_cli import (
     normalize_mart_date_slack_days,
     run_build_business_mart_from_argv,
 )
+from origenlab_email_pipeline.core.mart.internal_domains import (
+    resolve_mart_internal_domains,
+)
 from origenlab_email_pipeline.freshness_dates import MART_DATE_SLACK_DAYS_DEFAULT
 
 REPO = Path(__file__).resolve().parents[1]
@@ -23,6 +26,22 @@ _SCRIPT = REPO / "scripts" / "mart" / "build_business_mart.py"
 
 def test_build_business_mart_cli_runner_importable() -> None:
     assert callable(run_build_business_mart_from_argv)
+
+
+def test_mart_internal_domains_default_to_canonical_operator_domains() -> None:
+    got = resolve_mart_internal_domains([])
+    assert got == {"origenlab.cl", "labdelivery.cl"}
+    assert "googlemail.com" not in got
+    assert "mercadopublico.cl" not in got
+
+
+def test_mart_internal_domains_explicit_values_are_additive() -> None:
+    got = resolve_mart_internal_domains(["EXAMPLE.INTERNAL ", "origenlab.cl"])
+    assert got == {
+        "origenlab.cl",
+        "labdelivery.cl",
+        "example.internal",
+    }
 
 
 @pytest.mark.parametrize("invalid", [-1, 99999])
@@ -35,7 +54,14 @@ def test_normalize_mart_date_slack_days_valid_unchanged() -> None:
 
 
 def test_build_business_mart_source_imports_counter() -> None:
-    contact_org = REPO / "src" / "origenlab_email_pipeline" / "core" / "mart" / "contact_org_builder.py"
+    contact_org = (
+        REPO
+        / "src"
+        / "origenlab_email_pipeline"
+        / "core"
+        / "mart"
+        / "contact_org_builder.py"
+    )
     text = contact_org.read_text(encoding="utf-8")
     assert "from collections import Counter" in text or "Counter, defaultdict" in text
     assert "doc_aggs.doc_counts_by_email.get(int(email_id), Counter())" in text
@@ -47,7 +73,10 @@ def test_build_mart_default_uses_email_body_scan(tmp_path: Path) -> None:
     if str(_SRC) not in sys.path:
         sys.path.insert(0, str(_SRC))
     from origenlab_email_pipeline.db import init_schema
-    from origenlab_email_pipeline.sqlite_migrate import SchemaLayer, migrate_sqlite_schema
+    from origenlab_email_pipeline.sqlite_migrate import (
+        SchemaLayer,
+        migrate_sqlite_schema,
+    )
 
     init_schema(conn)
     migrate_sqlite_schema(conn, layers={SchemaLayer.ARCHIVE_AND_MART})
@@ -103,7 +132,10 @@ def test_build_mart_use_email_mart_features_fails_when_empty(tmp_path: Path) -> 
     if str(_SRC) not in sys.path:
         sys.path.insert(0, str(_SRC))
     from origenlab_email_pipeline.db import init_schema
-    from origenlab_email_pipeline.sqlite_migrate import SchemaLayer, migrate_sqlite_schema
+    from origenlab_email_pipeline.sqlite_migrate import (
+        SchemaLayer,
+        migrate_sqlite_schema,
+    )
 
     init_schema(conn)
     migrate_sqlite_schema(conn, layers={SchemaLayer.ARCHIVE_AND_MART})
@@ -128,10 +160,15 @@ def test_build_mart_use_email_mart_features_fails_when_empty(tmp_path: Path) -> 
     )
     combined = cp.stdout + cp.stderr
     assert cp.returncode != 0
-    assert "email_mart_features is empty; run build-email-mart-features --apply first" in combined
+    assert (
+        "email_mart_features is empty; run build-email-mart-features --apply first"
+        in combined
+    )
 
 
-def test_build_mart_use_email_mart_features_succeeds_when_populated(tmp_path: Path) -> None:
+def test_build_mart_use_email_mart_features_succeeds_when_populated(
+    tmp_path: Path,
+) -> None:
     db = tmp_path / "emails.sqlite"
     conn = sqlite3.connect(db)
     if str(_SRC) not in sys.path:
@@ -139,9 +176,14 @@ def test_build_mart_use_email_mart_features_succeeds_when_populated(tmp_path: Pa
     from origenlab_email_pipeline.core.mart.build_email_mart_features_cli import (
         email_mart_feature_row_values,
     )
-    from origenlab_email_pipeline.core.mart.email_mart_features import compute_email_mart_feature
+    from origenlab_email_pipeline.core.mart.email_mart_features import (
+        compute_email_mart_feature,
+    )
     from origenlab_email_pipeline.db import init_schema
-    from origenlab_email_pipeline.sqlite_migrate import SchemaLayer, migrate_sqlite_schema
+    from origenlab_email_pipeline.sqlite_migrate import (
+        SchemaLayer,
+        migrate_sqlite_schema,
+    )
 
     init_schema(conn)
     migrate_sqlite_schema(conn, layers={SchemaLayer.ARCHIVE_AND_MART})
@@ -229,7 +271,10 @@ def test_build_business_mart_rebuild_limit_emails_no_name_error(tmp_path: Path) 
     if str(_SRC) not in sys.path:
         sys.path.insert(0, str(_SRC))
     from origenlab_email_pipeline.db import init_schema
-    from origenlab_email_pipeline.sqlite_migrate import SchemaLayer, migrate_sqlite_schema
+    from origenlab_email_pipeline.sqlite_migrate import (
+        SchemaLayer,
+        migrate_sqlite_schema,
+    )
 
     init_schema(conn)
     migrate_sqlite_schema(conn, layers={SchemaLayer.ARCHIVE_AND_MART})

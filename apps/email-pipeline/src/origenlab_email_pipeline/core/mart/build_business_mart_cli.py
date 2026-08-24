@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import argparse
 
-from origenlab_email_pipeline.business_mart import infer_internal_domains_from_top_senders
 from origenlab_email_pipeline.config import load_settings
 from origenlab_email_pipeline.core.mart.build_options import MartBuildOptions
-from origenlab_email_pipeline.core.mart.build_runner import ensure_fast_indexes, run_business_mart_build
+from origenlab_email_pipeline.core.mart.internal_domains import (
+    resolve_mart_internal_domains,
+)
+from origenlab_email_pipeline.core.mart.build_runner import (
+    ensure_fast_indexes,
+    run_business_mart_build,
+)
 from origenlab_email_pipeline.db import connect
 from origenlab_email_pipeline.freshness_dates import MART_DATE_SLACK_DAYS_DEFAULT
 from origenlab_email_pipeline.pipeline_run_recorder import start_run
@@ -29,10 +34,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--internal-domain",
         action="append",
         default=[],
-        help="repeatable; add internal domains (default: inferred)",
+        help="repeatable; add operator-approved domains to canonical defaults",
     )
-    ap.add_argument("--limit-emails", type=int, default=None, help="debug: limit emails scanned")
-    ap.add_argument("--rebuild", action="store_true", help="truncate and rebuild mart tables")
+    ap.add_argument(
+        "--limit-emails", type=int, default=None, help="debug: limit emails scanned"
+    )
+    ap.add_argument(
+        "--rebuild", action="store_true", help="truncate and rebuild mart tables"
+    )
     ap.add_argument(
         "--dashboard-fast",
         action="store_true",
@@ -91,12 +100,12 @@ def run_build_business_mart_from_argv(argv: list[str] | None = None) -> int:
         notes="business mart build",
     )
 
-    internal_domains = {d.lower().strip() for d in (args.internal_domain or []) if d.strip()}
-    if not internal_domains:
-        internal_domains = infer_internal_domains_from_top_senders(conn, max_n=3, sender_limit=50)
+    internal_domains = resolve_mart_internal_domains(
+        args.internal_domain,
+    )
 
     print(f"DB: {db_path}")
-    print(f"Internal domains (guess): {sorted(internal_domains)[:10]}")
+    print(f"Internal domains: {sorted(internal_domains)[:10]}")
     if args.dashboard_fast:
         print("[mode] dashboard-fast enabled")
     if args.canonical_only:
