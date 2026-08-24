@@ -9,6 +9,15 @@ import {
   parseEquipmentOpportunitiesResponse,
   parseWarmCasesResponse,
 } from "./commercialParse";
+import {
+  parseCommercialOpportunitiesResponse,
+  parseCommercialOpportunityDetailResponse,
+} from "./commercialOpportunitiesParse";
+import type {
+  CommercialOpportunitiesQuery,
+  CommercialOpportunitiesResponse,
+  CommercialOpportunityDetailResponse,
+} from "./commercialOpportunitiesTypes";
 import type {
   EquipmentOpportunitiesQuery,
   EquipmentOpportunitiesUiResponse,
@@ -541,4 +550,35 @@ export function parseOperatorStatusResponse(data: unknown): OperatorStatusRespon
     warnings: Array.isArray(row.warnings) ? row.warnings.map(String) : [],
     daily_core_run: parseDailyCoreRunStatus(row.daily_core_run),
   };
+}
+
+
+export function fetchCommercialOpportunities(
+  query: CommercialOpportunitiesQuery = {},
+): Promise<CommercialOpportunitiesResponse> {
+  const params: Record<string, string | number | boolean> = {};
+
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null && value !== "") {
+      params[key] = value;
+    }
+  }
+
+  return fetchJsonGet<unknown>(
+    operatorApiUrl("/opportunities/commercial", params),
+  ).then(parseCommercialOpportunitiesResponse);
+}
+
+export function commercialOpportunityDetailPath(
+  opportunityId: string,
+): string {
+  return `/opportunities/commercial/${encodeURIComponent(opportunityId)}`;
+}
+
+export function fetchCommercialOpportunityDetail(
+  opportunityId: string,
+): Promise<CommercialOpportunityDetailResponse> {
+  return fetchJsonGet<unknown>(
+    operatorApiUrl(commercialOpportunityDetailPath(opportunityId)),
+  ).then(parseCommercialOpportunityDetailResponse);
 }
