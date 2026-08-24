@@ -7,6 +7,9 @@ import time
 
 from origenlab_email_pipeline.business_mart import signal_row
 from origenlab_email_pipeline.core.mart.contact_org_builder import ContactMap, OrgMap
+from origenlab_email_pipeline.core.mart.directional_opportunity_signal_builder import (
+    compute_directional_opportunity_signal_rows,
+)
 
 
 def compute_opportunity_signal_rows(contact: ContactMap, org: OrgMap) -> list[tuple]:
@@ -73,14 +76,17 @@ def rebuild_opportunity_signals(
     stage_t0 = time.monotonic()
     conn.execute("DELETE FROM opportunity_signals")
     sig_rows = compute_opportunity_signal_rows(contact, org)
+    directional_rows = compute_directional_opportunity_signal_rows(conn)
+    all_rows = sig_rows + directional_rows
     conn.executemany(
         """
         INSERT INTO opportunity_signals
         (signal_type, entity_kind, entity_key, email_id, attachment_id, score, details_json, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        sig_rows,
+        all_rows,
     )
     conn.commit()
-    print(f"opportunity_signals rows: {len(sig_rows):,}")
+    print(f"opportunity_signals rows: {len(all_rows):,}")
+    print(f"opportunity_signals directional rows: {len(directional_rows):,}")
     print(f"[timing] opportunity_signals_seconds={time.monotonic() - stage_t0:.2f}")

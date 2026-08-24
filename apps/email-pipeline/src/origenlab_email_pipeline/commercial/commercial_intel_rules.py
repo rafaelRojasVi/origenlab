@@ -13,7 +13,9 @@ from origenlab_email_pipeline.business_mart import (
     is_noise_sender,
     primary_sender_email,
 )
-from origenlab_email_pipeline.timeutil import now_iso
+from origenlab_email_pipeline.warm_case_sender_rules import (
+    is_internal_operator_contact,
+)
 
 TECHNICAL_INQUIRY_RE = re.compile(
     r"\b(especificaci[oó]n|ficha t[eé]cnica|instalaci[oó]n|calibraci[oó]n|mantenimiento|"
@@ -60,17 +62,37 @@ def pick_external_contact(
     recipients_raw: str,
     internal_domains: set[str],
 ) -> tuple[str | None, str | None]:
+    """Resolve the external counterparty for inbound or outbound mail.
+
+    Canonical OriginLab operator identities are always internal even if the
+    caller's domain set is stale. Personal Gmail operator addresses are handled
+    by exact address, never by treating the whole Gmail domain as internal.
+    """
     sender_email = primary_sender_email(sender_raw or "")
     sender_domain = domain_of(sender_email)
-    direction = infer_direction(sender_domain, internal_domains)
 
-    if direction == "inbound" and sender_email and sender_domain and sender_domain not in internal_domains:
+    sender_is_internal = bool(
+        sender_email and is_internal_operator_contact(sender_email)
+    ) or bool(
+        sender_domain and sender_domain in internal_domains
+    )
+
+    if (
+        not sender_is_internal
+        and sender_email
+        and sender_domain
+        and sender_domain not in internal_domains
+    ):
         return sender_email, sender_domain
 
-    for r in emails_in(recipients_raw or ""):
-        d = domain_of(r)
-        if d and d not in internal_domains:
-            return r, d
+    for raw in emails_in(recipients_raw or ""):
+        email = raw.strip().lower()
+        if is_internal_operator_contact(email):
+            continue
+        domain = domain_of(email)
+        if domain and domain not in internal_domains:
+            return email, domain
+
     return None, None
 
 
@@ -94,7 +116,6 @@ def derive_email_signal_facts(
     body = top_reply_clean or full_body_clean or ""
     blob = (subject or "") + "\n" + body
     blob_l = blob.lower()
-    sender_l = (sender_raw or "").lower()
 
     out: list[EmailSignalFact] = []
     intents = classify_email_intents(subject or "", body)

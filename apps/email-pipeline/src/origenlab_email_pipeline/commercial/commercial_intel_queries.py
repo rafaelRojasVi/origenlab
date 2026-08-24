@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import sqlite3
 
-from origenlab_email_pipeline.business_mart import infer_internal_domains_from_top_senders
+from origenlab_email_pipeline.warm_case_sender_rules import INTERNAL_OPERATOR_DOMAINS
 
 SQL_COMMERCIAL_EMAIL_SIGNAL_FACT_FOR_ROLLUP = """
 SELECT email_id, sent_at, contact_email, org_domain, signal_code, signal_kind, reason_code,
@@ -62,7 +62,13 @@ def table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
 
 
 def derive_internal_domains(conn: sqlite3.Connection, *, max_n: int = 4) -> set[str]:
-    return infer_internal_domains_from_top_senders(conn, max_n=max_n, sender_limit=80)
+    """Return authoritative operator domains for commercial direction.
+
+    Sender frequency is not an identity signal: suppliers, customers,
+    marketplaces, and relay domains may legitimately dominate the archive.
+    """
+    _ = conn, max_n
+    return set(INTERNAL_OPERATOR_DOMAINS)
 
 
 def derive_vendor_domains(conn: sqlite3.Connection, *, min_rows: int = 4) -> set[str]:

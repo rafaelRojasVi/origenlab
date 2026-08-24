@@ -41,9 +41,9 @@ from origenlab_email_pipeline.commercial.commercial_intel_queries import (
 )
 from origenlab_email_pipeline.commercial.commercial_intel_rules import (
     derive_email_signal_facts,
-    now_iso,
     pick_external_contact,
 )
+from origenlab_email_pipeline.timeutil import now_iso
 from origenlab_email_pipeline.config import load_settings
 from origenlab_email_pipeline.db import connect
 from origenlab_email_pipeline.pipeline_run_recorder import finish_run, get_kv, set_kv, start_run
@@ -618,7 +618,11 @@ def main() -> int:
 
     try:
         stage_t0 = time.monotonic()
-        internal_domains = {d.strip().lower() for d in args.internal_domain if d.strip()} or derive_internal_domains(conn)
+        internal_domains = derive_internal_domains(conn) | {
+            d.strip().lower()
+            for d in args.internal_domain
+            if d.strip()
+        }
         vendor_domains = {d.strip().lower() for d in args.vendor_domain if d.strip()} | derive_vendor_domains(conn)
         existing_client_domains = {d.strip().lower() for d in args.existing_client_domain if d.strip()} | derive_existing_client_domains(conn)
         print(f"[timing] commercial_domain_derivation_seconds={time.monotonic() - stage_t0:.2f}")
