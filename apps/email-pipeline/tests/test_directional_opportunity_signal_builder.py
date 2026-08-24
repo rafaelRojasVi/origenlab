@@ -12,13 +12,19 @@ import sqlite3
 from collections import Counter
 
 from origenlab_email_pipeline.commercial_identity.models import IdentityResolution
-from origenlab_email_pipeline.commercial_opportunity.resolve import resolve_opportunities
-from origenlab_email_pipeline.commercial_opportunity.sources import load_opportunity_signals
+from origenlab_email_pipeline.commercial_opportunity.resolve import (
+    resolve_opportunities,
+)
+from origenlab_email_pipeline.commercial_opportunity.sources import (
+    load_opportunity_signals,
+)
 from origenlab_email_pipeline.core.mart.directional_opportunity_signal_builder import (
     DIRECTIONAL_SIGNAL_SOURCE_TAG,
     compute_directional_opportunity_signal_rows,
 )
-from origenlab_email_pipeline.core.mart.opportunity_signal_builder import rebuild_opportunity_signals
+from origenlab_email_pipeline.core.mart.opportunity_signal_builder import (
+    rebuild_opportunity_signals,
+)
 
 _EMAILS_DDL = """
 CREATE TABLE emails (
@@ -172,7 +178,16 @@ def test_uc_serva_inquiry_emits_client_opportunity_signal() -> None:
 
     rows = compute_directional_opportunity_signal_rows(conn)
     assert len(rows) == 1
-    signal_type, entity_kind, entity_key, email_id, attachment_id, score, details_json, _created_at = rows[0]
+    (
+        signal_type,
+        entity_kind,
+        entity_key,
+        email_id,
+        attachment_id,
+        score,
+        details_json,
+        _created_at,
+    ) = rows[0]
     assert signal_type == "client_opportunity"
     assert entity_kind == "contact"
     assert entity_key == "calidadagua.ing@uc.cl"
@@ -180,7 +195,10 @@ def test_uc_serva_inquiry_emits_client_opportunity_signal() -> None:
     assert attachment_id is None
     assert 0.0 <= score <= 1.0
     details = json.loads(details_json)
-    assert details == {"source": DIRECTIONAL_SIGNAL_SOURCE_TAG, "role_category": "client_opportunity"}
+    assert details == {
+        "source": DIRECTIONAL_SIGNAL_SOURCE_TAG,
+        "role_category": "client_opportunity",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +234,16 @@ def test_carozzi_future_tender_allows_client_opportunity_without_urgency() -> No
 
     rows = compute_directional_opportunity_signal_rows(conn)
     assert len(rows) == 1
-    signal_type, entity_kind, entity_key, email_id, _attachment_id, _score, details_json, _created_at = rows[0]
+    (
+        signal_type,
+        entity_kind,
+        entity_key,
+        email_id,
+        _attachment_id,
+        _score,
+        details_json,
+        _created_at,
+    ) = rows[0]
     assert signal_type == "client_opportunity"
     assert entity_key == "daniela.sepulveda@carozzi.cl"
     assert email_id == 202
@@ -388,10 +415,7 @@ def test_outbound_quote_like_subject_to_supplier_emits_no_directional_signal() -
 def test_outbound_counterparty_resolution_does_not_truncate_recipients() -> None:
     conn = _db_with_emails_and_facts()
 
-    recipients = "; ".join(
-        ["contacto@origenlab.cl"] * 12
-        + ["compras@hospital.cl"]
-    )
+    recipients = "; ".join(["contacto@origenlab.cl"] * 12 + ["compras@hospital.cl"])
     assert recipients.index("compras@hospital.cl") > 200
 
     _insert_email(
@@ -422,7 +446,6 @@ def test_outbound_counterparty_resolution_does_not_truncate_recipients() -> None
     assert rows[0][3] == 701
 
 
-
 # ---------------------------------------------------------------------------
 # 9. outbound OrigenLab quotation to a real client -> quote_sent, email_id retained
 # ---------------------------------------------------------------------------
@@ -451,7 +474,16 @@ def test_outbound_quotation_to_client_emits_quote_sent_signal() -> None:
 
     rows = compute_directional_opportunity_signal_rows(conn)
     assert len(rows) == 1
-    signal_type, entity_kind, entity_key, email_id, _attachment_id, _score, details_json, _created_at = rows[0]
+    (
+        signal_type,
+        entity_kind,
+        entity_key,
+        email_id,
+        _attachment_id,
+        _score,
+        details_json,
+        _created_at,
+    ) = rows[0]
     assert signal_type == "quote_sent"
     assert entity_kind == "contact"
     assert entity_key == "compras@hospital.cl"
@@ -482,7 +514,9 @@ def test_missing_commercial_email_signal_fact_table_does_not_crash() -> None:
     }
     rebuild_opportunity_signals(conn, contact, {})
 
-    rows = conn.execute("SELECT signal_type, email_id FROM opportunity_signals").fetchall()
+    rows = conn.execute(
+        "SELECT signal_type, email_id FROM opportunity_signals"
+    ).fetchall()
     assert rows == [("quote_email_plus_quote_doc", None)]
 
 
@@ -663,16 +697,23 @@ def test_integration_rebuild_preserves_legacy_and_adds_directional_rows() -> Non
         "SELECT signal_type, entity_kind, entity_key, email_id, details_json FROM opportunity_signals"
     ).fetchall()
 
-    legacy_rows = [r for r in all_rows if r["signal_type"] == "quote_email_plus_quote_doc"]
+    legacy_rows = [
+        r for r in all_rows if r["signal_type"] == "quote_email_plus_quote_doc"
+    ]
     assert len(legacy_rows) == 1
-    assert legacy_rows[0]["email_id"] is None  # legacy aggregate rows are preserved unchanged
+    assert (
+        legacy_rows[0]["email_id"] is None
+    )  # legacy aggregate rows are preserved unchanged
 
     directional_rows = [
         r
         for r in all_rows
         if r["details_json"] and DIRECTIONAL_SIGNAL_SOURCE_TAG in r["details_json"]
     ]
-    assert {r["signal_type"] for r in directional_rows} == {"client_opportunity", "quote_sent"}
+    assert {r["signal_type"] for r in directional_rows} == {
+        "client_opportunity",
+        "quote_sent",
+    }
     assert {r["email_id"] for r in directional_rows} == {1, 2}
     for r in directional_rows:
         assert r["email_id"] is not None
@@ -690,7 +731,9 @@ def test_integration_rebuild_preserves_legacy_and_adds_directional_rows() -> Non
     assert by_email_id[2].signal_type == "quote_sent"
 
     # Feed into PR3's resolver and confirm dated evidence_candidate behavior.
-    identity = IdentityResolution(accounts=[], contacts=[], evidence=[], conflicts=[], metrics={})
+    identity = IdentityResolution(
+        accounts=[], contacts=[], evidence=[], conflicts=[], metrics={}
+    )
     res = resolve_opportunities(
         identity=identity,
         deals=[],
@@ -701,7 +744,9 @@ def test_integration_rebuild_preserves_legacy_and_adds_directional_rows() -> Non
     )
 
     candidates_by_source_key = {
-        o.source_key: o for o in res.opportunities if o.record_kind == "evidence_candidate"
+        o.source_key: o
+        for o in res.opportunities
+        if o.record_kind == "evidence_candidate"
     }
     client_opp_signal_id = by_email_id[1].signal_id
     quote_sent_signal_id = by_email_id[2].signal_id
@@ -716,3 +761,267 @@ def test_integration_rebuild_preserves_legacy_and_adds_directional_rows() -> Non
     assert quote_sent.canonical_stage == "quote_sent"
     assert quote_sent.stage_evidence_at == "2026-02-25T16:00:00+00:00"
     assert quote_sent.stage_is_current is False
+
+
+# ---------------------------------------------------------------------------
+# Production activation hardening — 2026-08-24
+# ---------------------------------------------------------------------------
+
+
+def test_activation_audit_confirmed_supplier_domains_never_promote() -> None:
+    """Confirmed suppliers must not become PR3 client-side evidence.
+
+    Each fixture is intentionally quote-like. Without the supplier-domain
+    guard these messages are eligible for client_opportunity / quote_sent,
+    which reproduces the class of false positives found in the production
+    activation audit.
+    """
+    supplier_domains = (
+        "abdosindia.com",
+        "abdoslifesciences.com",
+        "benchmarkscientific.com",
+        "knauer.net",
+        "labtron.com",
+        "ohaus.com",
+        "techlabsystems.com",
+        "thermofisher.com",
+    )
+
+    for offset, domain in enumerate(supplier_domains, start=1):
+        conn = _db_with_emails_and_facts()
+        email_id = 8000 + offset
+
+        _insert_email(
+            conn,
+            email_id=email_id,
+            source_file=_SENT,
+            subject="Re: Cotización equipo laboratorio",
+            sender=("Tatiana Vivanco | OrigenLab <contacto@origenlab.cl>"),
+            recipients=f"sales@{domain}",
+            date_iso="2026-08-24T00:00:00+00:00",
+            body=(
+                "Muchas gracias por la cotización. "
+                "Quedamos atentos para adquirir el equipo directamente."
+            ),
+        )
+        _insert_fact(
+            conn,
+            email_id=email_id,
+            source_file=_SENT,
+            contact_email=f"sales@{domain}",
+            org_domain=domain,
+            signal_code="quote_intent",
+            strength_score=0.75,
+        )
+
+        rows = compute_directional_opportunity_signal_rows(conn)
+
+        assert rows == [], (
+            domain,
+            rows,
+        )
+
+
+def test_activation_audit_bioeq_real_client_remains_promotable() -> None:
+    """Bioeq is client-side evidence, not a supplier-domain suppression."""
+    conn = _db_with_emails_and_facts()
+
+    _insert_email(
+        conn,
+        email_id=8100,
+        source_file=_SENT,
+        subject="Cotización Osmómetro",
+        sender=("Tatiana Vivanco | OrigenLab <contacto@origenlab.cl>"),
+        recipients="fernando.trincado@bioeq.cl",
+        date_iso="2026-03-18T15:56:03-03:00",
+        body=(
+            "Muchas gracias por contactarnos. "
+            "De acuerdo con su solicitud adjunto la cotización "
+            "por el Osmómetro Basic."
+        ),
+    )
+    _insert_fact(
+        conn,
+        email_id=8100,
+        source_file=_SENT,
+        contact_email="fernando.trincado@bioeq.cl",
+        org_domain="bioeq.cl",
+        signal_code="quote_intent",
+        strength_score=0.75,
+    )
+
+    rows = compute_directional_opportunity_signal_rows(conn)
+
+    assert len(rows) == 1
+    assert rows[0][0] == "quote_sent"
+    assert rows[0][1] == "contact"
+    assert rows[0][2] == "fernando.trincado@bioeq.cl"
+    assert rows[0][3] == 8100
+
+
+# ---------------------------------------------------------------------------
+# Gmail verification — remaining activation candidates, 2026-08-24
+# ---------------------------------------------------------------------------
+
+
+def test_gmail_verified_supplier_domains_do_not_promote() -> None:
+    supplier_domains = (
+        "biolabscientific.com",
+        "freshclick.co.uk",
+        "labotemp.com",
+        "lobov.com.ar",
+        "ltech.cl",
+        "morph2ola.com",
+        "pedak.nl",
+        "prodelab.cl",
+        "vortexg.com",
+        "vortexsg.com",
+    )
+
+    for offset, domain in enumerate(supplier_domains, start=1):
+        conn = _db_with_emails_and_facts()
+        email_id = 8200 + offset
+
+        _insert_email(
+            conn,
+            email_id=email_id,
+            source_file=_SENT,
+            subject="Solicitud cotización",
+            sender=("Tatiana Vivanco | OrigenLab <contacto@origenlab.cl>"),
+            recipients=f"sales@{domain}",
+            date_iso="2026-08-24T00:00:00+00:00",
+            body=(
+                "Somos distribuidores en Chile. "
+                "Favor enviar cotización para un cliente."
+            ),
+        )
+        _insert_fact(
+            conn,
+            email_id=email_id,
+            source_file=_SENT,
+            contact_email=f"sales@{domain}",
+            org_domain=domain,
+            signal_code="quote_intent",
+            strength_score=0.75,
+        )
+
+        assert compute_directional_opportunity_signal_rows(conn) == []
+
+
+def test_gmail_verified_client_domains_remain_promotable() -> None:
+    client_domains = (
+        "nanotecchile.com",
+        "vetrocompany.com",
+        "pymatek.cl",
+    )
+
+    for offset, domain in enumerate(client_domains, start=1):
+        conn = _db_with_emails_and_facts()
+        email_id = 8300 + offset
+
+        _insert_email(
+            conn,
+            email_id=email_id,
+            source_file=_SENT,
+            subject="Cotización equipo laboratorio",
+            sender=("Tatiana Vivanco | OrigenLab <contacto@origenlab.cl>"),
+            recipients=f"cliente@{domain}",
+            date_iso="2026-08-24T00:00:00+00:00",
+            body=("De acuerdo a lo solicitado, adjunto cotización del equipo."),
+        )
+        _insert_fact(
+            conn,
+            email_id=email_id,
+            source_file=_SENT,
+            contact_email=f"cliente@{domain}",
+            org_domain=domain,
+            signal_code="quote_intent",
+            strength_score=0.75,
+        )
+
+        rows = compute_directional_opportunity_signal_rows(conn)
+
+        assert len(rows) == 1, domain
+        assert rows[0][0] == "quote_sent"
+        assert rows[0][2] == f"cliente@{domain}"
+
+
+# ---------------------------------------------------------------------------
+# Final Gmail role verification — activation gate
+# ---------------------------------------------------------------------------
+
+
+def test_final_gmail_verified_supplier_domains_do_not_promote() -> None:
+    supplier_domains = (
+        "adsl.tie.cl",
+        "soviquim.cl",
+    )
+
+    for offset, domain in enumerate(supplier_domains, start=1):
+        conn = _db_with_emails_and_facts()
+        email_id = 8400 + offset
+
+        _insert_email(
+            conn,
+            email_id=email_id,
+            source_file=_SENT,
+            subject="Solicitud cotización",
+            sender=("Tatiana Vivanco | OrigenLab <contacto@origenlab.cl>"),
+            recipients=f"ventas@{domain}",
+            date_iso="2026-08-24T00:00:00+00:00",
+            body=(
+                "No somos el usuario final. "
+                "Favor cotizar producto para nuestro cliente."
+            ),
+        )
+        _insert_fact(
+            conn,
+            email_id=email_id,
+            source_file=_SENT,
+            contact_email=f"ventas@{domain}",
+            org_domain=domain,
+            signal_code="quote_intent",
+            strength_score=0.75,
+        )
+
+        assert compute_directional_opportunity_signal_rows(conn) == []
+
+
+def test_final_gmail_verified_clients_remain_promotable() -> None:
+    client_domains = (
+        "corteva.com",
+        "ongo.cl",
+    )
+
+    for offset, domain in enumerate(client_domains, start=1):
+        conn = _db_with_emails_and_facts()
+        email_id = 8500 + offset
+
+        _insert_email(
+            conn,
+            email_id=email_id,
+            source_file=_SENT,
+            subject="Cotización equipo laboratorio",
+            sender=("Tatiana Vivanco | OrigenLab <contacto@origenlab.cl>"),
+            recipients=f"cliente@{domain}",
+            date_iso="2026-08-24T00:00:00+00:00",
+            body=(
+                "Gracias por contactarnos. "
+                "De acuerdo con su solicitud adjunto cotización."
+            ),
+        )
+        _insert_fact(
+            conn,
+            email_id=email_id,
+            source_file=_SENT,
+            contact_email=f"cliente@{domain}",
+            org_domain=domain,
+            signal_code="quote_intent",
+            strength_score=0.75,
+        )
+
+        rows = compute_directional_opportunity_signal_rows(conn)
+
+        assert len(rows) == 1, domain
+        assert rows[0][0] == "quote_sent"
+        assert rows[0][2] == f"cliente@{domain}"

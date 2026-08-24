@@ -7,9 +7,13 @@ import sqlite3
 import time
 from dataclasses import dataclass
 
-from origenlab_email_pipeline.business_mart import infer_internal_domains_from_top_senders
 from origenlab_email_pipeline.config import load_settings
-from origenlab_email_pipeline.core.mart.build_business_mart_cli import normalize_mart_date_slack_days
+from origenlab_email_pipeline.core.mart.build_business_mart_cli import (
+    normalize_mart_date_slack_days,
+)
+from origenlab_email_pipeline.core.mart.internal_domains import (
+    resolve_mart_internal_domains,
+)
 from origenlab_email_pipeline.core.mart.email_mart_features import (
     EmailMartFeature,
     compute_email_mart_feature,
@@ -133,7 +137,9 @@ def email_mart_feature_row_values(feature: EmailMartFeature) -> tuple[object, ..
     )
 
 
-def print_email_mart_features_backfill_report(report: EmailMartFeaturesBackfillReport) -> None:
+def print_email_mart_features_backfill_report(
+    report: EmailMartFeaturesBackfillReport,
+) -> None:
     dry = "true" if report.dry_run else "false"
     print(f"email_mart_features dry_run={dry}")
     print(f"mode={report.mode}")
@@ -247,7 +253,9 @@ def run_email_mart_features_backfill(
                     inserted += 1
 
         if not dry_run and to_write:
-            conn.executemany(_INSERT_SQL, [email_mart_feature_row_values(f) for f in to_write])
+            conn.executemany(
+                _INSERT_SQL, [email_mart_feature_row_values(f) for f in to_write]
+            )
             conn.commit()
 
         return EmailMartFeaturesBackfillReport(
@@ -312,7 +320,9 @@ def run_email_mart_features_backfill(
                 current += 1
 
     if not dry_run and to_write:
-        conn.executemany(_UPSERT_SQL, [email_mart_feature_row_values(f) for f in to_write])
+        conn.executemany(
+            _UPSERT_SQL, [email_mart_feature_row_values(f) for f in to_write]
+        )
         conn.commit()
 
     existing_features = stale + current
@@ -344,13 +354,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="write missing/stale email_mart_features rows",
     )
-    ap.add_argument("--limit", type=int, default=None, help="debug: limit emails scanned")
+    ap.add_argument(
+        "--limit", type=int, default=None, help="debug: limit emails scanned"
+    )
     ap.add_argument("--batch-size", type=int, default=5000, help="fetchmany batch size")
     ap.add_argument(
         "--internal-domain",
         action="append",
         default=[],
-        help="repeatable; add internal domains (default: inferred)",
+        help="repeatable; add operator-approved domains to canonical defaults",
     )
     ap.add_argument(
         "--mart-date-slack-days",
@@ -375,15 +387,15 @@ def run_build_email_mart_features_from_argv(argv: list[str] | None = None) -> in
     conn = connect(db_path)
     migrate_sqlite_schema(conn, layers={SchemaLayer.ARCHIVE_AND_MART})
 
-    internal_domains = {d.lower().strip() for d in (args.internal_domain or []) if d.strip()}
-    if not internal_domains:
-        internal_domains = infer_internal_domains_from_top_senders(conn, max_n=3, sender_limit=50)
+    internal_domains = resolve_mart_internal_domains(
+        args.internal_domain,
+    )
 
     mart_slack = normalize_mart_date_slack_days(int(args.mart_date_slack_days))
     batch_size = max(1, int(args.batch_size))
 
     print(f"DB: {db_path}")
-    print(f"Internal domains (guess): {sorted(internal_domains)[:10]}")
+    print(f"Internal domains: {sorted(internal_domains)[:10]}")
     print(f"Mart date slack days: {mart_slack}")
     if args.missing_only:
         print("[mode] missing-only enabled")

@@ -9,17 +9,24 @@ import time
 from contextlib import redirect_stdout
 from dataclasses import dataclass
 
-from origenlab_email_pipeline.business_mart import DocAgg, doc_aggregates, infer_internal_domains_from_top_senders
+from origenlab_email_pipeline.business_mart import DocAgg, doc_aggregates
 from origenlab_email_pipeline.config import load_settings
-from origenlab_email_pipeline.core.mart.build_business_mart_cli import normalize_mart_date_slack_days
+from origenlab_email_pipeline.core.mart.build_business_mart_cli import (
+    normalize_mart_date_slack_days,
+)
 from origenlab_email_pipeline.core.mart.build_options import MartBuildOptions
+from origenlab_email_pipeline.core.mart.internal_domains import (
+    resolve_mart_internal_domains,
+)
 from origenlab_email_pipeline.core.mart.contact_org_builder import (
     EmailMartFeaturesEmptyError,
     build_organization_map,
     scan_email_contacts,
     scan_email_contacts_from_features,
 )
-from origenlab_email_pipeline.core.mart.opportunity_signal_builder import compute_opportunity_signal_rows
+from origenlab_email_pipeline.core.mart.opportunity_signal_builder import (
+    compute_opportunity_signal_rows,
+)
 from origenlab_email_pipeline.db import connect
 from origenlab_email_pipeline.freshness_dates import MART_DATE_SLACK_DAYS_DEFAULT
 
@@ -120,12 +127,16 @@ def compare_contact_maps(
     extra_in_feature = len(feature_keys - old_keys)
     mismatched = 0
     for email in old_keys & feature_keys:
-        if contact_row_snapshot(old_contact[email]) != contact_row_snapshot(feature_contact[email]):
+        if contact_row_snapshot(old_contact[email]) != contact_row_snapshot(
+            feature_contact[email]
+        ):
             mismatched += 1
     return mismatched, missing_in_feature, extra_in_feature
 
 
-def opportunity_signal_keys(contact: dict[str, dict], org: dict[str, dict]) -> set[tuple[str, str, str]]:
+def opportunity_signal_keys(
+    contact: dict[str, dict], org: dict[str, dict]
+) -> set[tuple[str, str, str]]:
     return {
         (row[0], row[1], row[2])
         for row in compute_opportunity_signal_rows(contact, org)  # type: ignore[arg-type]
@@ -138,7 +149,9 @@ def run_email_mart_feature_scan_parity(
     options: MartBuildOptions,
 ) -> EmailMartFeatureScanParityReport:
     require_email_mart_features_table(conn)
-    feature_count = int(conn.execute("SELECT COUNT(*) FROM email_mart_features").fetchone()[0])
+    feature_count = int(
+        conn.execute("SELECT COUNT(*) FROM email_mart_features").fetchone()[0]
+    )
     if feature_count == 0:
         raise EmailMartFeaturesEmptyError(
             "email_mart_features is empty; run build-email-mart-features --apply first"
@@ -148,7 +161,9 @@ def run_email_mart_feature_scan_parity(
 
     with redirect_stdout(io.StringIO()):
         t0 = time.monotonic()
-        old_contact, scanned_emails = scan_email_contacts(conn, options=options, doc_aggs=doc_aggs)
+        old_contact, scanned_emails = scan_email_contacts(
+            conn, options=options, doc_aggs=doc_aggs
+        )
         elapsed_old = time.monotonic() - t0
 
         t1 = time.monotonic()
@@ -172,7 +187,9 @@ def run_email_mart_feature_scan_parity(
     organizations_feature = len(feature_org)
 
     opportunity_signals_old = len(opportunity_signal_keys(old_contact, old_org))
-    opportunity_signals_feature = len(opportunity_signal_keys(feature_contact, feature_org))
+    opportunity_signals_feature = len(
+        opportunity_signal_keys(feature_contact, feature_org)
+    )
 
     return EmailMartFeatureScanParityReport(
         scanned_emails=scanned_emails,
@@ -188,13 +205,16 @@ def run_email_mart_feature_scan_parity(
         organization_count_delta=organizations_feature - organizations_old,
         opportunity_signals_old=opportunity_signals_old,
         opportunity_signals_feature=opportunity_signals_feature,
-        opportunity_signal_count_delta=opportunity_signals_feature - opportunity_signals_old,
+        opportunity_signal_count_delta=opportunity_signals_feature
+        - opportunity_signals_old,
         elapsed_old_seconds=elapsed_old,
         elapsed_feature_seconds=elapsed_feature,
     )
 
 
-def print_email_mart_feature_scan_parity_report(report: EmailMartFeatureScanParityReport) -> None:
+def print_email_mart_feature_scan_parity_report(
+    report: EmailMartFeatureScanParityReport,
+) -> None:
     print("email_mart_feature_scan_parity")
     print(f"scanned_emails={report.scanned_emails}")
     print(f"scanned_features={report.scanned_features}")
@@ -218,12 +238,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         description="Read-only parity audit: email scan vs email_mart_features scan.",
     )
-    ap.add_argument("--limit", type=int, default=None, help="limit emails/features scanned")
+    ap.add_argument(
+        "--limit", type=int, default=None, help="limit emails/features scanned"
+    )
     ap.add_argument(
         "--internal-domain",
         action="append",
         default=[],
-        help="repeatable; add internal domains (default: inferred)",
+        help="repeatable; add operator-approved domains to canonical defaults",
     )
     ap.add_argument(
         "--mart-date-slack-days",
@@ -257,9 +279,9 @@ def run_audit_email_mart_feature_scan_from_argv(argv: list[str] | None = None) -
     db_path = settings.resolved_sqlite_path()
     conn = connect(db_path)
 
-    internal_domains = {d.lower().strip() for d in (args.internal_domain or []) if d.strip()}
-    if not internal_domains:
-        internal_domains = infer_internal_domains_from_top_senders(conn, max_n=3, sender_limit=50)
+    internal_domains = resolve_mart_internal_domains(
+        args.internal_domain,
+    )
 
     mart_slack = normalize_mart_date_slack_days(int(args.mart_date_slack_days))
     limit = args.limit
@@ -267,7 +289,7 @@ def run_audit_email_mart_feature_scan_from_argv(argv: list[str] | None = None) -
         limit = max(1, int(limit))
 
     print(f"DB: {db_path}")
-    print(f"Internal domains (guess): {sorted(internal_domains)[:10]}")
+    print(f"Internal domains: {sorted(internal_domains)[:10]}")
     print(f"Mart date slack days: {mart_slack}")
     if limit is not None:
         print(f"[mode] limit={limit}")

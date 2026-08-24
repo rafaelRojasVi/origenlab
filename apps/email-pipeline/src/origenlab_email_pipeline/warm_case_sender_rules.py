@@ -22,7 +22,13 @@ INTERNAL_OPERATOR_EMAILS: frozenset[str] = frozenset(
 
 _PAYMENT_ADMIN_DOMAINS: frozenset[str] = frozenset({"bancochile.cl"})
 
-_LOGISTICS_VENDOR_DOMAINS: frozenset[str] = frozenset({"dhl.com"})
+_LOGISTICS_VENDOR_DOMAINS: frozenset[str] = frozenset(
+    {
+        "dhl.com",
+        "chilexpress.cl",
+        "info.chilexpress.cl",
+    }
+)
 
 _SYSTEM_NOISE_EMAILS: frozenset[str] = frozenset(
     {
@@ -98,6 +104,29 @@ REAL_CLIENT_DOMAINS: frozenset[str] = frozenset({"ceaf.cl"})
 # Domains that should never appear as «Clientes reales» (vendor / industrial suppliers).
 SUPPLIER_VENDOR_DOMAINS: frozenset[str] = frozenset(
     {
+        # Confirmed supplier/manufacturer counterparties from the
+        # 2026-08-24 directional activation audit and established
+        # OriginLab supplier relationships.
+        "abdosindia.com",
+        "abdoslifesciences.com",
+        "adsl.tie.cl",
+        "benchmarkscientific.com",
+        "knauer.net",
+        "labtron.com",
+        "ohaus.com",
+        "techlabsystems.com",
+        "thermofisher.com",
+        "biolabscientific.com",
+        "freshclick.co.uk",
+        "labotemp.com",
+        "lobov.com.ar",
+        "ltech.cl",
+        "morph2ola.com",
+        "pedak.nl",
+        "prodelab.cl",
+        "soviquim.cl",
+        "vortexg.com",
+        "vortexsg.com",
         "apdataweigh.com",
         "asynt.com",
         "biosys.de",
