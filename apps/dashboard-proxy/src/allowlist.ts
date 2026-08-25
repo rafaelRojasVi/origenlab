@@ -15,6 +15,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/cases\/warm$/,
   /^\/contacts\/[^/]+$/,
   /^\/opportunities\/equipment$/,
+  /^\/operations\/work-queue$/,
+  /^\/operations\/opportunities\/o_[0-9a-f]{32}\/state$/,
+  /^\/operations\/opportunities\/o_[0-9a-f]{32}\/activities$/,
+  /^\/operations\/opportunities\/o_[0-9a-f]{32}\/tasks$/,
   /^\/mirror\/.+/,
 ];
 
@@ -33,6 +37,36 @@ export const ANNEX_BUNDLE_UPLOAD_PATH_RE =
 export function isAllowedPostUploadPath(pathname: string): boolean {
   const pathOnly = pathname.split("?")[0];
   return ANNEX_BUNDLE_UPLOAD_PATH_RE.test(pathOnly);
+}
+
+/**
+ * Durable commercial operations commands.
+ *
+ * Keep this separate from both the GET allowlist and annex upload POSTs.
+ * Opportunity IDs are PR3 deterministic `o_` + 32 lowercase hex chars.
+ * Task IDs are service-generated `task_` + 32 lowercase hex chars.
+ */
+export const COMMERCIAL_OPERATIONS_POST_PATHS: readonly RegExp[] = [
+  /^\/operations\/opportunities\/o_[0-9a-f]{32}\/state$/,
+  /^\/operations\/activities$/,
+  /^\/operations\/tasks$/,
+  /^\/operations\/tasks\/task_[0-9a-f]{32}\/(?:complete|cancel)$/,
+];
+
+export function isAllowedCommercialOperationsPostPath(
+  pathname: string,
+): boolean {
+  const pathOnly = pathname.split("?")[0];
+  return COMMERCIAL_OPERATIONS_POST_PATHS.some((pattern) =>
+    pattern.test(pathOnly),
+  );
+}
+
+export function isAllowedPostPath(pathname: string): boolean {
+  return (
+    isAllowedPostUploadPath(pathname) ||
+    isAllowedCommercialOperationsPostPath(pathname)
+  );
 }
 
 /** Strip `/api` prefix from incoming Worker pathname; null if not under /api. */

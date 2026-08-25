@@ -35,8 +35,16 @@ function renderToday(overrides: Record<string, unknown> = {}) {
           commercialDeals: null,
           catalogProducts: { total: 6 },
           leadResearchSummary: null,
+          commercialWorkQueue: {
+            open_tasks: [],
+            review_opportunities: [],
+            quote_followups: [],
+          },
+          commercialWorkQueueLoading: false,
+          commercialWorkQueueError: null,
           mirrorBackend: false,
           loadPanel: async () => {},
+          loadCommercialWorkQueue: async () => {},
           setContactEmail: () => {},
           ...overrides,
         } as never
@@ -182,5 +190,134 @@ describe("TodaySummaryPage equipment feed warning", () => {
     screen.getByText("Fuente de licitaciones no disponible");
     screen.getByLabelText(/Licitaciones \/ equipos: N\/D/);
     screen.getByText("Catálogo");
+  });
+});
+
+
+describe("TodaySummaryPage commercial work queue", () => {
+  it("shows overdue, today, review, and quote follow-up counts", () => {
+    const now = new Date();
+
+    const overdue = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() - 1,
+      12,
+      0,
+      0,
+    ).toISOString();
+
+    const dueToday = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+      18,
+      0,
+      0,
+    ).toISOString();
+
+    const opportunityId =
+      "o_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    function workTask(
+      taskId: string,
+      dueAt: string | null,
+    ) {
+      return {
+        task: {
+          task_id: taskId,
+          opportunity_id: opportunityId,
+          account_id: null,
+          contact_id: null,
+          title: taskId,
+          status: "open" as const,
+          priority: "normal" as const,
+          due_at: dueAt,
+          owner_key: null,
+          version: 1,
+          created_by: "tatiana@origenlab.cl",
+          updated_by: "tatiana@origenlab.cl",
+          completed_at: null,
+          created_at: now.toISOString(),
+          updated_at: now.toISOString(),
+        },
+        contact_display_email:
+          "buyer@example.cl",
+        account_display_domain:
+          "example.cl",
+        canonical_stage: "quote_sent",
+        machine_review_status:
+          "needs_review",
+      };
+    }
+
+    const opportunity = {
+      opportunity_id: opportunityId,
+      contact_display_email:
+        "buyer@example.cl",
+      account_display_domain:
+        "example.cl",
+      canonical_stage: "quote_sent",
+      machine_review_status:
+        "needs_review",
+      confirmation_status: null,
+      manual_stage: null,
+      owner_key: null,
+      operator_state_version: null,
+    };
+
+    renderToday({
+      commercialWorkQueue: {
+        open_tasks: [
+          workTask(
+            "task_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            overdue,
+          ),
+          workTask(
+            "task_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            dueToday,
+          ),
+          workTask(
+            "task_cccccccccccccccccccccccccccccccc",
+            null,
+          ),
+        ],
+        review_opportunities: [
+          opportunity,
+          {
+            ...opportunity,
+            opportunity_id:
+              "o_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          },
+        ],
+        quote_followups: [
+          opportunity,
+        ],
+      },
+    });
+
+    screen.getByTestId(
+      "today-commercial-work",
+    );
+
+    screen.getByLabelText(
+      /Seguimientos vencidos: 1/,
+    );
+
+    screen.getByLabelText(
+      /Para hoy: 1/,
+    );
+
+    screen.getByLabelText(
+      /Revisión humana: 2/,
+    );
+
+    screen.getByLabelText(
+      /Cotizaciones por seguir: 1/,
+    );
+
+    screen.getByText(
+      "0 próximos · 1 sin fecha",
+    );
   });
 });

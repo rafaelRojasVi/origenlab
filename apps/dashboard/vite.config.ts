@@ -17,6 +17,7 @@ export default defineConfig({
       "/opportunities": { target: apiTarget, changeOrigin: true },
       "/contacts": { target: apiTarget, changeOrigin: true },
       "/mirror": { target: apiTarget, changeOrigin: true },
+      "/operations": { target: apiTarget, changeOrigin: true },
     },
   },
   test: {

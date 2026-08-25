@@ -21,6 +21,8 @@ import type { TodayPanelData } from "../api/operatorTypes";
 import type { CatalogProductsListUi } from "../api/catalogTypes";
 import type { LeadResearchSummaryUi } from "../api/leadIntelTypes";
 import type { CommercialDealsListUi } from "../api/commercialDealsTypes";
+import type { CommercialWorkQueueResponse } from "../api/commercialOperationsTypes";
+import { fetchCommercialWorkQueue } from "../api/commercialOperationsClient";
 import { fetchCatalogProductsMirror } from "../api/mirrorCatalogClient";
 import { fetchLeadResearchSummaryMirror } from "../api/mirrorLeadIntelClient";
 import { fetchCommercialDealsMirror } from "../api/mirrorCommercialClient";
@@ -55,6 +57,9 @@ export interface DashboardDataState {
   leadResearchSummary: LeadResearchSummaryUi | null;
   leadResearchSummaryLoading: boolean;
   leadResearchSummaryError: string | null;
+  commercialWorkQueue: CommercialWorkQueueResponse | null;
+  commercialWorkQueueLoading: boolean;
+  commercialWorkQueueError: string | null;
   contactEmail: string | null;
   setContactEmail: (email: string | null) => void;
   loadAll: () => void;
@@ -64,6 +69,7 @@ export interface DashboardDataState {
   loadCommercialDeals: () => Promise<void>;
   loadCatalogProducts: () => Promise<void>;
   loadLeadResearchSummary: () => Promise<void>;
+  loadCommercialWorkQueue: () => Promise<void>;
   refreshing: boolean;
   mirrorBackend: boolean;
   backend: TodayPanelData["health"]["backend"] | "sqlite";
@@ -98,6 +104,13 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
   const [leadResearchSummary, setLeadResearchSummary] = useState<LeadResearchSummaryUi | null>(null);
   const [leadResearchSummaryLoading, setLeadResearchSummaryLoading] = useState(true);
   const [leadResearchSummaryError, setLeadResearchSummaryError] = useState<string | null>(null);
+
+  const [commercialWorkQueue, setCommercialWorkQueue] =
+    useState<CommercialWorkQueueResponse | null>(null);
+  const [commercialWorkQueueLoading, setCommercialWorkQueueLoading] =
+    useState(true);
+  const [commercialWorkQueueError, setCommercialWorkQueueError] =
+    useState<string | null>(null);
 
   const [contactEmail, setContactEmail] = useState<string | null>(null);
 
@@ -182,6 +195,24 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const loadCommercialWorkQueue = useCallback(async () => {
+    setCommercialWorkQueueLoading(true);
+    setCommercialWorkQueueError(null);
+
+    try {
+      setCommercialWorkQueue(
+        await fetchCommercialWorkQueue(100),
+      );
+    } catch (e) {
+      setCommercialWorkQueueError(
+        formatLoadError("Trabajo comercial", e),
+      );
+      setCommercialWorkQueue(null);
+    } finally {
+      setCommercialWorkQueueLoading(false);
+    }
+  }, []);
+
   const loadAll = useCallback(() => {
     void Promise.all([
       loadPanel(),
@@ -190,6 +221,7 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
       loadCommercialDeals(),
       loadCatalogProducts(),
       loadLeadResearchSummary(),
+      loadCommercialWorkQueue(),
     ]);
   }, [
     loadPanel,
@@ -198,6 +230,7 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
     loadCommercialDeals,
     loadCatalogProducts,
     loadLeadResearchSummary,
+    loadCommercialWorkQueue,
   ]);
 
   useEffect(() => {
@@ -218,7 +251,8 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
     equipmentLoading ||
     commercialDealsLoading ||
     catalogProductsLoading ||
-    leadResearchSummaryLoading;
+    leadResearchSummaryLoading ||
+    commercialWorkQueueLoading;
 
   const value = useMemo<DashboardDataState>(
     () => ({
@@ -241,6 +275,9 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
       leadResearchSummary,
       leadResearchSummaryLoading,
       leadResearchSummaryError,
+      commercialWorkQueue,
+      commercialWorkQueueLoading,
+      commercialWorkQueueError,
       contactEmail,
       setContactEmail,
       loadAll,
@@ -250,6 +287,7 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
       loadCommercialDeals,
       loadCatalogProducts,
       loadLeadResearchSummary,
+      loadCommercialWorkQueue,
       refreshing,
       mirrorBackend,
       backend,
@@ -275,6 +313,9 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
       leadResearchSummary,
       leadResearchSummaryLoading,
       leadResearchSummaryError,
+      commercialWorkQueue,
+      commercialWorkQueueLoading,
+      commercialWorkQueueError,
       contactEmail,
       loadAll,
       loadPanel,
@@ -283,6 +324,7 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
       loadCommercialDeals,
       loadCatalogProducts,
       loadLeadResearchSummary,
+      loadCommercialWorkQueue,
       refreshing,
       mirrorBackend,
       backend,

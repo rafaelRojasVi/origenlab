@@ -12,6 +12,7 @@ import {
   formatCommercialOpportunityDate,
 } from "../../lib/commercialOpportunityFormat";
 import { ContactEmailButton } from "./ContactEmailButton";
+import { CommercialOpportunityOperationsPanel } from "./CommercialOpportunityOperationsPanel";
 
 function DetailRow({
   label,
@@ -60,7 +61,11 @@ function DetailBody({
 
   return (
     <div className="flex-1 space-y-6 overflow-y-auto px-4 py-4">
-      <DrawerSection title="Estado comercial">
+      <CommercialOpportunityOperationsPanel
+        opportunityId={item.opportunity_id}
+      />
+
+      <DrawerSection title="Estado comercial derivado">
         <dl className="space-y-2">
           <DetailRow label="Etapa">
             {commercialOpportunityStageLabel(item.canonical_stage)}
@@ -324,7 +329,7 @@ export function CommercialOpportunityDetailDrawer({
         <header className="flex items-start justify-between gap-3 border-b border-[var(--color-border)] px-4 py-4">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">
-              Ciclo comercial · solo lectura
+              Ciclo comercial · operación
             </p>
             <h2
               id="commercial-opportunity-detail-heading"
@@ -368,8 +373,9 @@ export function CommercialOpportunityDetailDrawer({
         ) : null}
 
         <footer className="border-t border-[var(--color-border)] px-4 py-3 text-xs text-[var(--color-muted)]">
-          Solo lectura · no cambia etapas · no envía correos · provenance
-          JSON interno no se muestra.
+          PR3 permanece como evidencia derivada de solo lectura · las
+          acciones humanas se guardan por separado · no envía correos ·
+          provenance JSON interno no se muestra.
         </footer>
       </aside>
     </>

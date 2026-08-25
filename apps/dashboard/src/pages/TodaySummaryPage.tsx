@@ -4,6 +4,7 @@ import { dashboardSectionToHash } from "../lib/dashboardHashRoute";
 import type { DashboardSection } from "../lib/dashboardNav";
 import { isEquipmentFeedUnavailable } from "../lib/equipmentFeedStatus";
 import { computeTodaySummaryCounts } from "../lib/todaySummaryCounts";
+import { summarizeCommercialWorkQueue } from "../lib/commercialWorkQueue";
 
 const READ_ONLY_SAFETY =
   "Solo lectura: este panel no envía correos ni aprueba contactos.";
@@ -62,6 +63,10 @@ export function TodaySummaryPage() {
     commercialDeals,
     catalogProducts,
     leadResearchSummary,
+    commercialWorkQueue,
+    commercialWorkQueueLoading,
+    commercialWorkQueueError,
+    loadCommercialWorkQueue,
     loadPanel,
   } = useDashboardData();
 
@@ -76,6 +81,16 @@ export function TodaySummaryPage() {
         equipmentFeedUnavailable,
       ),
     [warm?.items, equipment?.items.length, commercialDeals?.items, equipmentFeedUnavailable],
+  );
+
+  const commercialWorkSummary = useMemo(
+    () =>
+      commercialWorkQueue
+        ? summarizeCommercialWorkQueue(
+            commercialWorkQueue,
+          )
+        : null,
+    [commercialWorkQueue],
   );
 
   const showMainContent = !panelLoading || data != null;
@@ -114,6 +129,109 @@ export function TodaySummaryPage() {
               Prioriza clientes, proveedores, pagos/logística y licitaciones. {READ_ONLY_SAFETY}
             </p>
           </header>
+
+          {commercialWorkQueueError ? (
+            <div
+              className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
+              role="alert"
+              data-testid="commercial-work-queue-error"
+            >
+              <p className="font-medium">
+                No se pudo cargar el trabajo comercial
+              </p>
+              <p className="mt-1 break-words">
+                {commercialWorkQueueError}
+              </p>
+              <button
+                type="button"
+                onClick={() =>
+                  void loadCommercialWorkQueue()
+                }
+                className="mt-3 rounded-md border border-amber-300 bg-white px-3 py-1.5 text-sm font-medium text-amber-900 hover:bg-amber-50"
+              >
+                Reintentar
+              </button>
+            </div>
+          ) : null}
+
+          <section
+            aria-labelledby="today-commercial-work-heading"
+            data-testid="today-commercial-work"
+          >
+            <h2
+              id="today-commercial-work-heading"
+              className="text-lg font-semibold text-slate-900"
+            >
+              Trabajo comercial
+            </h2>
+
+            <p className="mt-1 text-sm text-[var(--color-muted)]">
+              Seguimientos y decisiones humanas pendientes sobre
+              oportunidades comerciales.
+            </p>
+
+            {commercialWorkQueueLoading &&
+            !commercialWorkSummary ? (
+              <p
+                className="mt-4 text-sm text-[var(--color-muted)]"
+                role="status"
+              >
+                Cargando trabajo comercial…
+              </p>
+            ) : (
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <SummaryCard
+                  label="Seguimientos vencidos"
+                  value={
+                    commercialWorkSummary
+                      ?.overdueTasks.length ?? 0
+                  }
+                  hint="Tareas con fecha anterior a hoy"
+                  section="deals"
+                  needsAttention
+                />
+
+                <SummaryCard
+                  label="Para hoy"
+                  value={
+                    commercialWorkSummary
+                      ?.todayTasks.length ?? 0
+                  }
+                  hint={`${
+                    commercialWorkSummary
+                      ?.upcomingTasks.length ?? 0
+                  } próximos · ${
+                    commercialWorkSummary
+                      ?.unscheduledTasks.length ?? 0
+                  } sin fecha`}
+                  section="deals"
+                  needsAttention
+                />
+
+                <SummaryCard
+                  label="Revisión humana"
+                  value={
+                    commercialWorkSummary
+                      ?.reviewCount ?? 0
+                  }
+                  hint="Oportunidades pendientes de decisión"
+                  section="deals"
+                  needsAttention
+                />
+
+                <SummaryCard
+                  label="Cotizaciones por seguir"
+                  value={
+                    commercialWorkSummary
+                      ?.quoteFollowupCount ?? 0
+                  }
+                  hint="Cotizaciones enviadas aún no descartadas"
+                  section="deals"
+                  needsAttention
+                />
+              </div>
+            )}
+          </section>
 
           {equipmentFeedUnavailable ? (
             <div

@@ -30,60 +30,166 @@ describe("dashboard read-only policy", () => {
     expect(entries.length).toBeGreaterThan(5);
   });
 
-  // The dashboard is otherwise strictly read-only. Exactly TWO narrowly
-  // reviewed mutations are sanctioned, both in institutionIntel/adapter.ts:
+  // Dashboard mutation authority is intentionally split across exactly two
+  // narrow modules:
   //
-  // 1. annex-bundle PREVIEW -- bounded ZIP validation/extraction only;
-  //    never persisted or published.
-  // 2. annex-bundle IMPORT -- the explicit operator action that persists
-  //    validated structured tender evidence only.
+  // 1. institutionIntel/adapter.ts:
+  //    two explicit annex-bundle POST actions (preview/import).
   //
-  // Neither route authorizes SQLite/Postgres commercial writes, Gmail,
-  // contact changes, or outreach. Every other POST/PUT/PATCH/DELETE remains
-  // forbidden. The policy checks the exact route literals as well as the
-  // exact method inventory so increasing the count cannot silently
-  // grandfather in an unrelated mutation.
-  const SANCTIONED_MUTATION_FILE = "../api/institutionIntel/adapter.ts";
-  const SANCTIONED_MUTATION_ROUTES = [
+  // 2. commercialOperationsClient.ts:
+  //    one shared POST transport used only by the five explicit CRM command
+  //    shapes admitted by the production Worker.
+  //
+  // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
+
+  const ANNEX_MUTATION_FILE =
+    "../api/institutionIntel/adapter.ts";
+
+  const COMMERCIAL_MUTATION_FILE =
+    "../api/commercialOperationsClient.ts";
+
+  const ANNEX_MUTATION_ROUTES = [
     "`/operator/procurement/tenders/${encodeURIComponent(tenderCode)}/annex-bundle/preview`",
     "`/operator/procurement/tenders/${encodeURIComponent(tenderCode)}/annex-bundle/import`",
   ] as const;
 
-  it("allows only the two explicit annex-bundle POST mutations", () => {
+  it("allows only annex and commercial-operations POST mutation modules", () => {
     const hits: string[] = [];
 
     for (const [path, text] of entries) {
-      const isSanctioned = path === SANCTIONED_MUTATION_FILE;
+      const hasMutation =
+        MUTATION_METHOD.test(text) ||
+        FORBIDDEN_FETCH.test(text);
 
-      if (!isSanctioned && (MUTATION_METHOD.test(text) || FORBIDDEN_FETCH.test(text))) {
-        hits.push(path);
+      if (!hasMutation) {
         continue;
       }
 
-      if (!isSanctioned) {
+      if (
+        path !== ANNEX_MUTATION_FILE &&
+        path !== COMMERCIAL_MUTATION_FILE
+      ) {
+        hits.push(
+          `${path} (unsanctioned mutation module)`,
+        );
         continue;
       }
 
       const methods = [
-        ...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi),
-      ].map((match) => match[1].toUpperCase());
+        ...text.matchAll(
+          /method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi,
+        ),
+      ].map((match) =>
+        match[1].toUpperCase(),
+      );
+
+      if (path === ANNEX_MUTATION_FILE) {
+        if (
+          methods.length !==
+            ANNEX_MUTATION_ROUTES.length ||
+          methods.some(
+            (method) => method !== "POST",
+          )
+        ) {
+          hits.push(
+            `${path} (expected exactly ${ANNEX_MUTATION_ROUTES.length} POST mutations, found ${methods.join(", ") || "none"})`,
+          );
+        }
+
+        for (
+          const route of ANNEX_MUTATION_ROUTES
+        ) {
+          const occurrences =
+            text.split(route).length - 1;
+
+          if (occurrences !== 1) {
+            hits.push(
+              `${path} (expected sanctioned route exactly once: ${route}; found ${occurrences})`,
+            );
+          }
+        }
+
+        continue;
+      }
 
       if (
-        methods.length !== SANCTIONED_MUTATION_ROUTES.length ||
-        methods.some((method) => method !== "POST")
+        methods.length !== 1 ||
+        methods[0] !== "POST"
       ) {
         hits.push(
-          `${path} (expected exactly ${SANCTIONED_MUTATION_ROUTES.length} POST mutations, found ${methods.join(", ") || "none"})`,
+          `${path} (expected one shared POST transport, found ${methods.join(", ") || "none"})`,
         );
       }
 
-      for (const route of SANCTIONED_MUTATION_ROUTES) {
-        const occurrences = text.split(route).length - 1;
-        if (occurrences !== 1) {
-          hits.push(
-            `${path} (expected sanctioned route exactly once: ${route}; found ${occurrences})`,
-          );
-        }
+      if (
+        !text.includes(
+          'operatorApiUrl("/operations/activities")',
+        )
+      ) {
+        hits.push(
+          `${path} (missing activities command route)`,
+        );
+      }
+
+      if (
+        !text.includes(
+          'operatorApiUrl("/operations/tasks")',
+        )
+      ) {
+        hits.push(
+          `${path} (missing tasks command route)`,
+        );
+      }
+
+      if (
+        !text.includes(
+          "commercialOpportunityOperatorStatePath",
+        )
+      ) {
+        hits.push(
+          `${path} (missing opportunity-state command path)`,
+        );
+      }
+
+      if (
+        !text.includes(
+          "commercialTaskTransitionPath",
+        )
+      ) {
+        hits.push(
+          `${path} (missing task-transition command path)`,
+        );
+      }
+
+      if (
+        !text.includes(
+          'action: "complete" | "cancel"',
+        )
+      ) {
+        hits.push(
+          `${path} (task transition actions are not narrowly typed)`,
+        );
+      }
+
+      if (
+        /method:\s*["'](PUT|PATCH|DELETE)["']/i.test(
+          text,
+        )
+      ) {
+        hits.push(
+          `${path} (PUT/PATCH/DELETE remain forbidden)`,
+        );
+      }
+
+      if (
+        /X-OriginLab-Operator-Email/i.test(text) &&
+        !/never supplies X-OriginLab-Operator-Email/i.test(
+          text,
+        )
+      ) {
+        hits.push(
+          `${path} (browser must not inject trusted operator identity)`,
+        );
       }
     }
 

@@ -16,6 +16,7 @@ from origenlab_api.routes import (
     emails,
     health,
     institutions,
+    operations,
     operator,
     opportunities,
 )
@@ -29,11 +30,15 @@ def create_app() -> FastAPI:
         title="OrigenLab API",
         description=(
             "Operator API (SQLite-first). "
-            "Postgres mirror routes live under /mirror/* (API-3 Phase 1 complete; Phase 2 parity frozen). "
-            "Does not send email, ingest Gmail, or write SQLite/Postgres. "
+            "Postgres mirror routes under /mirror/* remain read-only reporting. "
+            "Does not send email or ingest Gmail. "
+            "SQLite remains read-only. "
+            "Durable commercial-operations writes are permitted only through "
+            "the explicitly allowlisted /operations/* command routes when "
+            "commercial writes are enabled and trusted operator identity is present. "
             "The procurement tender workflow permits one explicit file-backed "
-            "operator document import; commercial/contact/outreach mutations "
-            "remain outside this API."
+            "operator document import; other contact/outreach mutations remain "
+            "outside this API."
         ),
         version="0.1.0",
         docs_url="/docs" if docs_on else None,
@@ -52,6 +57,7 @@ def create_app() -> FastAPI:
     app.include_router(emails.router)
     app.include_router(cases.router)
     app.include_router(opportunities.router)
+    app.include_router(operations.router)
     app.include_router(institutions.router)
     app.include_router(mirror_router)
     app.include_router(contacts.router)

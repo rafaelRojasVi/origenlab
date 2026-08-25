@@ -1,4 +1,9 @@
-import { isAllowedPostUploadPath, isAllowedUpstreamPath, stripApiPrefix } from "./allowlist";
+import {
+  isAllowedPostPath,
+  isAllowedPostUploadPath,
+  isAllowedUpstreamPath,
+  stripApiPrefix,
+} from "./allowlist";
 import { applyCorsHeaders, stripUpstreamCorsHeaders } from "./cors";
 import { API_AUTH_HEADER, buildUpstreamHeaders, buildUpstreamUrl, type ProxyEnv } from "./proxy";
 
@@ -7,6 +12,7 @@ export {
   stripApiPrefix,
   isAllowedUpstreamPath,
   isAllowedPostUploadPath,
+  isAllowedPostPath,
   buildUpstreamUrl,
   buildUpstreamHeaders,
   API_AUTH_HEADER,
@@ -70,15 +76,13 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
 
   const upstreamPath = stripApiPrefix(url.pathname);
 
-  // Method+path authorization, not method-then-path-in-isolation: POST is
-  // legal ONLY for the exact annex-bundle preview/import upload paths,
-  // checked against their own narrow pattern -- never against isAllowedUpstreamPath
-  // (which governs GET/HEAD reachability only). Adding "POST" to
-  // ALLOWED_METHODS would have made every allowlisted GET path a POST
-  // surface too; this keeps every other path exactly as restrictive as
-  // before.
+  // Method+path authorization, never method-only authorization.
+  //
+  // POST is legal only for explicit annex-bundle commands and the narrowly
+  // enumerated commercial-operations commands. GET allowlisting never
+  // implies POST permission.
   if (method === "POST") {
-    if (upstreamPath === null || !isAllowedPostUploadPath(upstreamPath)) {
+    if (upstreamPath === null || !isAllowedPostPath(upstreamPath)) {
       return jsonError(request, 405, "method_not_allowed");
     }
   } else if (MUTATING_METHODS.has(method)) {
@@ -102,8 +106,8 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
   }
 
   // Every branch above that did not already return guarantees upstreamPath
-  // is non-null (POST: validated by isAllowedPostUploadPath itself; GET/HEAD:
-  // the explicit null check above).
+  // is non-null (POST: validated by isAllowedPostPath; GET/HEAD: the
+  // explicit null check above).
   const upstreamUrl = buildUpstreamUrl(upstreamBase, upstreamPath as string, url.search);
   const upstreamRequest = new Request(upstreamUrl, {
     method,

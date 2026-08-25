@@ -1,4 +1,7 @@
 export const API_AUTH_HEADER = "X-OriginLab-API-Key";
+export const OPERATOR_EMAIL_HEADER = "X-OriginLab-Operator-Email";
+export const IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
+export const CF_ACCESS_USER_EMAIL_HEADER = "Cf-Access-Authenticated-User-Email";
 export const CF_ACCESS_CLIENT_ID_HEADER = "CF-Access-Client-Id";
 export const CF_ACCESS_CLIENT_SECRET_HEADER = "CF-Access-Client-Secret";
 
@@ -33,6 +36,24 @@ export function buildUpstreamHeaders(env: ProxyEnv, incoming: Headers): Headers 
   const contentLength = incoming.get("Content-Length");
   if (contentLength) {
     headers.set("Content-Length", contentLength);
+  }
+
+  const idempotencyKey = incoming.get(IDEMPOTENCY_KEY_HEADER);
+  if (idempotencyKey) {
+    headers.set(IDEMPOTENCY_KEY_HEADER, idempotencyKey);
+  }
+
+  // Never forward a browser-supplied OriginLab operator header.
+  // Reconstruct it exclusively from Cloudflare Access authenticated identity.
+  headers.delete(OPERATOR_EMAIL_HEADER);
+
+  const authenticatedOperator = incoming
+    .get(CF_ACCESS_USER_EMAIL_HEADER)
+    ?.trim()
+    .toLowerCase();
+
+  if (authenticatedOperator) {
+    headers.set(OPERATOR_EMAIL_HEADER, authenticatedOperator);
   }
 
   const token = env.ORIGENLAB_API_AUTH_TOKEN?.trim();

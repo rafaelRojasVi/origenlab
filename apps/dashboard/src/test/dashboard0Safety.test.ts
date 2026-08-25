@@ -62,7 +62,7 @@ const viteEnvSource = import.meta.glob("../vite-env.d.ts", {
 })["../vite-env.d.ts"] as string;
 
 const activeApiClientSources = Object.entries(
-  import.meta.glob("../api/{operatorClient,mirrorCommercialClient,mirrorCatalogClient,mirrorLeadIntelClient,mirrorAuditClient}.ts", {
+  import.meta.glob("../api/{operatorClient,commercialOperationsClient,mirrorCommercialClient,mirrorCatalogClient,mirrorLeadIntelClient,mirrorAuditClient}.ts", {
     query: "?raw",
     import: "default",
     eager: true,
