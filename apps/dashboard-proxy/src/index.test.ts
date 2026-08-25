@@ -958,3 +958,157 @@ describe("annex-bundle preview upload: exact method+path authorization", () => {
     expect(response.headers.get("Access-Control-Allow-Methods")).toBe("GET, HEAD, OPTIONS");
   });
 });
+
+describe("commercial operations command forwarding", () => {
+  const env = {
+    ORIGENLAB_API_UPSTREAM: "https://api.example.com",
+    ORIGENLAB_API_AUTH_TOKEN: "secret",
+  };
+
+  it("forwards an exact allowed commercial POST", async () => {
+    const opportunityId = `o_${"a".repeat(32)}`;
+
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            opportunity_id: opportunityId,
+            confirmation_status: "confirmed",
+          }),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        ),
+      );
+
+    const request = new Request(
+      `https://dashboard.origenlab.cl/api/operations/opportunities/${opportunityId}/state`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Cf-Access-Authenticated-User-Email":
+            "tatiana@origenlab.cl",
+        },
+        body: JSON.stringify({
+          confirmation_status: "confirmed",
+          expected_version: 0,
+        }),
+      },
+    );
+
+    const { handleRequest } = await import("./index");
+    const response = await handleRequest(request, env);
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const upstreamRequest = fetchMock.mock.calls[0][0] as Request;
+
+    expect(upstreamRequest.method).toBe("POST");
+    expect(upstreamRequest.url).toContain(
+      `/operations/opportunities/${opportunityId}/state`,
+    );
+
+    expect(
+      upstreamRequest.headers.get("X-OriginLab-Operator-Email"),
+    ).toBe("tatiana@origenlab.cl");
+
+    fetchMock.mockRestore();
+  });
+
+  it("keeps non-allowlisted commercial mutations at 405", async () => {
+    const taskId = `task_${"b".repeat(32)}`;
+
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const { handleRequest } = await import("./index");
+
+    for (const path of [
+      `/api/operations/tasks/${taskId}/delete`,
+      `/api/operations/tasks/${taskId}/reopen`,
+      "/api/operations/unknown",
+    ]) {
+      const response = await handleRequest(
+        new Request(
+          `https://dashboard.origenlab.cl${path}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: "{}",
+          },
+        ),
+        env,
+      );
+
+      expect(response.status, path).toBe(405);
+
+      const payload = (await response.json()) as {
+        error: {
+          code: string;
+        };
+      };
+
+      expect(
+        payload.error.code,
+        path,
+      ).toBe("method_not_allowed");
+    }
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
+  it("still rejects PUT PATCH and DELETE on allowed CRM paths", async () => {
+    const taskId = `task_${"c".repeat(32)}`;
+
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const { handleRequest } = await import("./index");
+
+    for (const method of ["PUT", "PATCH", "DELETE"]) {
+      const response = await handleRequest(
+        new Request(
+          `https://dashboard.origenlab.cl/api/operations/tasks/${taskId}/complete`,
+          {
+            method,
+          },
+        ),
+        env,
+      );
+
+      expect(response.status, method).toBe(405);
+    }
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+});
+
+
+describe("commercial idempotency forwarding", () => {
+  it("forwards Idempotency-Key byte-for-byte upstream", () => {
+    const incoming = new Headers({
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "Idempotency-Key":
+        "activity:550e8400-e29b-41d4-a716-446655440000",
+    });
+
+    const headers = buildUpstreamHeaders(
+      TEST_ENV,
+      incoming,
+    );
+
+    expect(
+      headers.get("Idempotency-Key"),
+    ).toBe(
+      "activity:550e8400-e29b-41d4-a716-446655440000",
+    );
+  });
+});

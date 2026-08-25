@@ -26,6 +26,10 @@ EXPECTED_PUBLIC_GET_PATHS: frozenset[str] = frozenset(
         "/opportunities/equipment",
         "/opportunities/commercial",
         "/opportunities/commercial/{opportunity_id}",
+        "/operations/work-queue",
+        "/operations/opportunities/{opportunity_id}/state",
+        "/operations/opportunities/{opportunity_id}/activities",
+        "/operations/opportunities/{opportunity_id}/tasks",
         "/operator/procurement/status",
         "/operator/procurement/institutions",
         "/operator/procurement/institutions/{institution_id}",
@@ -72,6 +76,7 @@ PUBLIC_GET_PATH_PREFIXES: tuple[str, ...] = (
     "/emails/",
     "/contacts/",
     "/opportunities/",
+    "/operations/",
     "/mirror/",
 )
 

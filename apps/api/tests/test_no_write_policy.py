@@ -1,4 +1,4 @@
-"""API-0 must not invoke mutation paths (ingest, refresh, sync, send)."""
+"""API mutation surface must remain explicitly allowlisted and narrow."""
 
 from __future__ import annotations
 
@@ -33,6 +33,26 @@ def test_app_exposes_only_sanctioned_mutating_routes() -> None:
         ),
         (
             "/operator/procurement/tenders/{tender_code}/annex-bundle/import",
+            "post",
+        ),
+        (
+            "/operations/opportunities/{opportunity_id}/state",
+            "post",
+        ),
+        (
+            "/operations/activities",
+            "post",
+        ),
+        (
+            "/operations/tasks",
+            "post",
+        ),
+        (
+            "/operations/tasks/{task_id}/complete",
+            "post",
+        ),
+        (
+            "/operations/tasks/{task_id}/cancel",
             "post",
         ),
     }
@@ -71,5 +91,8 @@ def test_openapi_documents_narrow_operator_mutation_boundary() -> None:
 
     assert "file-backed operator document import" in description
     assert "does not send email" in description
-    assert "write sqlite/postgres" in description
-    assert "commercial/contact/outreach mutations remain outside this api" in description
+    assert "sqlite remains read-only" in description
+    assert "durable commercial-operations writes" in description
+    assert "explicitly allowlisted /operations/* command routes" in description
+    assert "trusted operator identity" in description
+    assert "other contact/outreach mutations remain outside this api" in description

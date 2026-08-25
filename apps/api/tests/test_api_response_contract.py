@@ -1,5 +1,7 @@
 """Contract smoke tests for apps/api JSON response shapes (read-only, SQLite-safe)."""
 
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import json

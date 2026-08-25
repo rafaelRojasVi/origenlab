@@ -61,6 +61,14 @@ def validate_api_settings(settings: Settings) -> None:
     backend = settings.resolved_api_backend()
     if backend == "postgres":
         settings.require_postgres_url()
+
+    if settings.commercial_operations_writes_enabled:
+        if backend != "postgres":
+            raise ValueError(
+                "commercial operations writes require ORIGENLAB_API_BACKEND=postgres"
+            )
+        settings.require_postgres_write_url()
+
     if settings.production_mode() and backend != "postgres":
         raise ValueError(
             "ORIGENLAB_ENV=production requires ORIGENLAB_API_BACKEND=postgres "

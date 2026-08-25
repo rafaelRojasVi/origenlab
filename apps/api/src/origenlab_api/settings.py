@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     operator_tender_import_dir: Path | None = None
     api_backend: str | None = None
     postgres_url: str | None = None
+    postgres_write_url: str | None = None
+    commercial_operations_writes_enabled: bool = False
     postgres_statement_timeout_ms: int = 30_000
     postgres_pool_size: int = 5
     """Comma-separated browser origins for dashboard static site (no wildcards)."""
@@ -130,6 +132,18 @@ class Settings(BaseSettings):
         if not url:
             raise ValueError(
                 "ORIGENLAB_POSTGRES_URL is required when ORIGENLAB_API_BACKEND=postgres"
+            )
+        return url
+
+    def postgres_write_configured(self) -> bool:
+        return bool((self.postgres_write_url or "").strip())
+
+    def require_postgres_write_url(self) -> str:
+        url = (self.postgres_write_url or "").strip()
+        if not url:
+            raise ValueError(
+                "ORIGENLAB_POSTGRES_WRITE_URL is required when "
+                "commercial operations writes are enabled"
             )
         return url
 

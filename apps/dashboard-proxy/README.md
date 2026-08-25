@@ -1,6 +1,6 @@
 # Dashboard read-only API proxy (Cloudflare Worker)
 
-Same-origin **GET-only** proxy for production dashboard builds. The browser calls `https://dashboard.origenlab.cl/api/*`; the Worker strips `/api`, checks an allowlist, and forwards to `apps/api` with upstream auth headers from Worker secrets.
+Same-origin, method+path allowlisted proxy for production dashboard builds. The browser calls `https://dashboard.origenlab.cl/api/*`; the Worker strips `/api`, checks an allowlist, and forwards to `apps/api` with upstream auth headers from Worker secrets.
 
 **No browser token.** `ORIGENLAB_API_AUTH_TOKEN` is a Worker secret only — never `VITE_*`.
 
@@ -28,7 +28,7 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/opportunities/equipment` | Equipment table |
 | `/mirror/*` | Postgres mirror reads |
 
-Mutating methods (`POST`, `PUT`, `PATCH`, `DELETE`) return **405**.
+POST is permitted only for explicit annex-bundle actions and the narrow commercial-operations command allowlist. All other POST requests, and all `PUT`, `PATCH`, and `DELETE` requests, return **405**.
 
 ## Response hardening
 

@@ -2,7 +2,7 @@
 
 **Audience:** Dashboard, operator tooling, and any HTTP client of `apps/api` (port **8001**).
 
-**Scope:** Read-only operator API (`origenlab_api`). This document defines the contract clients should rely on, documents **stable shapes already shipped**, and lists **remaining gaps**.
+**Scope:** Operator API (`origenlab_api`). Most routes remain read-only. Durable commercial-operations commands under `/operations/*` and the explicitly sanctioned procurement document-import commands form the narrow mutation boundary. This document defines the contract clients should rely on, documents **stable shapes already shipped**, and lists **remaining gaps**.
 
 **Non-goals (this doc):** Route refactors, error-handler rewrites, or breaking response renames. Those require a dedicated migration PR with client + test updates.
 
@@ -276,6 +276,10 @@ Operator plane (SQLite / active CSV):
 | GET    | `/opportunities/equipment`    |
 | GET    | `/opportunities/commercial`   |
 | GET    | `/opportunities/commercial/{opportunity_id}` |
+| GET    | `/operations/work-queue` |
+| GET    | `/operations/opportunities/{opportunity_id}/state` |
+| GET    | `/operations/opportunities/{opportunity_id}/activities` |
+| GET    | `/operations/opportunities/{opportunity_id}/tasks` |
 | GET    | `/operator/procurement/status` |
 | GET    | `/operator/procurement/institutions` |
 | GET    | `/operator/procurement/institutions/{institution_id}` |

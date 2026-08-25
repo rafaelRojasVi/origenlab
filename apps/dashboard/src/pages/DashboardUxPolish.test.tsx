@@ -135,14 +135,34 @@ vi.mock("../api/mirrorCommercialClient", () => ({
   fetchCommercialDealsMirror: vi.fn(),
 }));
 
+vi.mock("../api/commercialOperationsClient", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("../api/commercialOperationsClient")
+    >();
+
+  return {
+    ...actual,
+    fetchCommercialWorkQueue: vi.fn(),
+  };
+});
+
 vi.mock("../lib/logo/threeBodyCanvasRunner", () => ({
   startThreeBodyCanvas: vi.fn(() => () => {}),
 }));
 
 import { fetchEquipmentOpportunities, fetchTodayPanel, fetchWarmCases } from "../api/operatorClient";
 import { fetchCommercialDealsMirror } from "../api/mirrorCommercialClient";
+import { fetchCommercialWorkQueue } from "../api/commercialOperationsClient";
 
 function mockAll() {
+  vi.mocked(
+    fetchCommercialWorkQueue,
+  ).mockResolvedValue({
+    open_tasks: [],
+    review_opportunities: [],
+    quote_followups: [],
+  });
   vi.mocked(fetchTodayPanel).mockResolvedValue(panel);
   vi.mocked(fetchWarmCases).mockResolvedValue(warmPayload);
   vi.mocked(fetchEquipmentOpportunities).mockResolvedValue(equipmentPayload);

@@ -195,11 +195,10 @@ def configure_http_security(app: FastAPI, settings: Settings) -> None:
         CORSMiddleware,
         allow_origins=origins,
         allow_credentials=True,
-        # POST is CORS-permitted only for the two narrowly scoped annex-bundle
-        # actions: preview and explicit import. Every other operator route
-        # remains read-only, and the route itself remains the real
-        # authorization boundary (CORS is advisory to browsers, not an
-        # access-control mechanism).
+        # POST is CORS-permitted for explicit operator command routes.
+        # CORS is not an authorization boundary: FastAPI route admission,
+        # API authentication, and the production dashboard proxy's
+        # method+path allowlist remain authoritative.
         allow_methods=["GET", "HEAD", "OPTIONS", "POST"],
         allow_headers=["*"],
         expose_headers=["X-Request-ID", "Server-Timing", "X-Process-Time-Ms"],

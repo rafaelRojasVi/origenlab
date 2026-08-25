@@ -32,7 +32,15 @@ DASHBOARD_V1_ROUTES: tuple[tuple[str, str, dict[str, str | int | bool]], ...] = 
 
 FORBIDDEN_LEGACY_PREFIXES = ("/dashboard", "/classification", "/commercial/")
 FORBIDDEN_CONTACT_KEYS = frozenset(
-    {"body", "body_preview", "email_body", "source_path", "sqlite_path", "source_file", "gmail_url"}
+    {
+        "body",
+        "body_preview",
+        "email_body",
+        "source_path",
+        "sqlite_path",
+        "source_file",
+        "gmail_url",
+    }
 )
 
 
@@ -84,8 +92,12 @@ def _apply_backend_env(expect_backend: str | None) -> None:
             raise SystemExit(2)
         os.environ["ORIGENLAB_POSTGRES_URL"] = pg
     elif expect_backend == "sqlite":
-        os.environ.pop("ORIGENLAB_API_BACKEND", None)
+        # An explicit smoke expectation must override a developer .env.
+        # Unsetting API_BACKEND here would allow .env to select Postgres again.
+        os.environ["ORIGENLAB_API_BACKEND"] = "sqlite"
         os.environ.pop("ORIGENLAB_POSTGRES_URL", None)
+        os.environ.pop("ORIGENLAB_POSTGRES_WRITE_URL", None)
+        os.environ["ORIGENLAB_COMMERCIAL_OPERATIONS_WRITES_ENABLED"] = "false"
 
 
 def _validate_payload(label: str, data: dict, expect_backend: str | None) -> list[str]:
@@ -94,20 +106,38 @@ def _validate_payload(label: str, data: dict, expect_backend: str | None) -> lis
         backend = data.get("backend")
         if expect_backend and backend != expect_backend:
             errors.append(f"health.backend={backend!r} expected {expect_backend!r}")
-        if expect_backend == "postgres" and data.get("mode") != "operator-postgres-mirror-readonly":
-            errors.append(f"health.mode={data.get('mode')!r} expected operator-postgres-mirror-readonly")
+        if (
+            expect_backend == "postgres"
+            and data.get("mode") != "operator-postgres-mirror-readonly"
+        ):
+            errors.append(
+                f"health.mode={data.get('mode')!r} expected operator-postgres-mirror-readonly"
+            )
         if expect_backend == "sqlite" and backend != "sqlite":
             errors.append(f"health.backend={backend!r} expected sqlite")
     elif label == "GET /cases/warm":
         meta = data.get("meta") or {}
-        if expect_backend == "postgres" and meta.get("data_source") != "postgres_mirror":
-            errors.append(f"warm meta.data_source={meta.get('data_source')!r} expected postgres_mirror")
-        if expect_backend == "sqlite" and meta.get("data_source") not in ("sqlite", None):
+        if (
+            expect_backend == "postgres"
+            and meta.get("data_source") != "postgres_mirror"
+        ):
+            errors.append(
+                f"warm meta.data_source={meta.get('data_source')!r} expected postgres_mirror"
+            )
+        if expect_backend == "sqlite" and meta.get("data_source") not in (
+            "sqlite",
+            None,
+        ):
             if meta.get("data_source") == "postgres_mirror":
-                errors.append("warm meta.data_source must not be postgres_mirror in sqlite mode")
+                errors.append(
+                    "warm meta.data_source must not be postgres_mirror in sqlite mode"
+                )
     elif label == "GET /opportunities/equipment":
         meta = data.get("meta") or {}
-        if expect_backend == "postgres" and meta.get("data_source") != "postgres_mirror":
+        if (
+            expect_backend == "postgres"
+            and meta.get("data_source") != "postgres_mirror"
+        ):
             errors.append(
                 f"equipment meta.data_source={meta.get('data_source')!r} expected postgres_mirror"
             )
@@ -127,7 +157,10 @@ def main(argv: list[str] | None = None) -> int:
     for prefix in FORBIDDEN_LEGACY_PREFIXES:
         for _label, path, _params in DASHBOARD_V1_ROUTES:
             if path.startswith(prefix):
-                print(f"ERROR: smoke route list must not include legacy path {path}", file=sys.stderr)
+                print(
+                    f"ERROR: smoke route list must not include legacy path {path}",
+                    file=sys.stderr,
+                )
                 return 2
 
     _apply_backend_env(args.expect_backend)
@@ -140,12 +173,19 @@ def main(argv: list[str] | None = None) -> int:
     get_settings.cache_clear()
     client = TestClient(create_app())
 
-    report: dict[str, object] = {"routes": {}, "validation_errors": [], "contact_smoke": {}}
+    report: dict[str, object] = {
+        "routes": {},
+        "validation_errors": [],
+        "contact_smoke": {},
+    }
     warm_data: dict | None = None
     equipment_data: dict | None = None
     for label, path, params in DASHBOARD_V1_ROUTES:
         r = client.get(path, params=params)
-        entry: dict[str, object] = {"status_code": r.status_code, "ok": r.status_code == 200}
+        entry: dict[str, object] = {
+            "status_code": r.status_code,
+            "ok": r.status_code == 200,
+        }
         if r.status_code == 200:
             data = r.json()
             entry["summary"] = {
@@ -183,10 +223,16 @@ def main(argv: list[str] | None = None) -> int:
                 contact_data = r.json()
                 contact_entry["summary"] = {
                     "data_source": (contact_data.get("meta") or {}).get("data_source"),
-                    "reduced_mode": (contact_data.get("meta") or {}).get("reduced_mode"),
-                    "normalized_email": (contact_data.get("contact") or {}).get("normalized_email"),
+                    "reduced_mode": (contact_data.get("meta") or {}).get(
+                        "reduced_mode"
+                    ),
+                    "normalized_email": (contact_data.get("contact") or {}).get(
+                        "normalized_email"
+                    ),
                 }
-                report["validation_errors"].extend(_validate_contact_payload(contact_data))
+                report["validation_errors"].extend(
+                    _validate_contact_payload(contact_data)
+                )
             else:
                 contact_entry["body"] = r.text[:300]
             report["routes"]["GET /contacts/{email}"] = contact_entry
@@ -197,7 +243,9 @@ def main(argv: list[str] | None = None) -> int:
                 "status_code": r.status_code,
             }
             if r.status_code != 200:
-                print(f"FAIL: GET /contacts/{{email}} → {r.status_code}", file=sys.stderr)
+                print(
+                    f"FAIL: GET /contacts/{{email}} → {r.status_code}", file=sys.stderr
+                )
                 return 1
         else:
             print(

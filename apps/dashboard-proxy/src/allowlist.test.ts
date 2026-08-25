@@ -179,3 +179,183 @@ describe("buildUpstreamUrl", () => {
     );
   });
 });
+
+describe("commercial operator identity forwarding", () => {
+  it("reconstructs operator identity from Cloudflare Access", async () => {
+    const { buildUpstreamHeaders, OPERATOR_EMAIL_HEADER } = await import("./proxy");
+
+    const incoming = new Headers({
+      "Cf-Access-Authenticated-User-Email": "Tatiana@OrigenLab.CL",
+      "X-OriginLab-Operator-Email": "spoofed@attacker.example",
+    });
+
+    const headers = buildUpstreamHeaders(
+      {
+        ORIGENLAB_API_UPSTREAM: "https://api.example.com",
+        ORIGENLAB_API_AUTH_TOKEN: "secret",
+      },
+      incoming,
+    );
+
+    expect(headers.get(OPERATOR_EMAIL_HEADER)).toBe(
+      "tatiana@origenlab.cl",
+    );
+    expect(headers.get(OPERATOR_EMAIL_HEADER)).not.toBe(
+      "spoofed@attacker.example",
+    );
+  });
+
+  it("does not invent operator identity when Access identity is absent", async () => {
+    const { buildUpstreamHeaders, OPERATOR_EMAIL_HEADER } = await import("./proxy");
+
+    const incoming = new Headers({
+      "X-OriginLab-Operator-Email": "spoofed@attacker.example",
+    });
+
+    const headers = buildUpstreamHeaders(
+      {
+        ORIGENLAB_API_UPSTREAM: "https://api.example.com",
+        ORIGENLAB_API_AUTH_TOKEN: "secret",
+      },
+      incoming,
+    );
+
+    expect(headers.get(OPERATOR_EMAIL_HEADER)).toBeNull();
+  });
+});
+
+describe("commercial operations POST allowlist", () => {
+  it("admits exactly the intended commercial command shapes", async () => {
+    const { isAllowedCommercialOperationsPostPath } = await import("./allowlist");
+
+    const opportunityId = `o_${"a".repeat(32)}`;
+    const taskId = `task_${"b".repeat(32)}`;
+
+    expect(
+      isAllowedCommercialOperationsPostPath(
+        `/operations/opportunities/${opportunityId}/state`,
+      ),
+    ).toBe(true);
+
+    expect(
+      isAllowedCommercialOperationsPostPath("/operations/activities"),
+    ).toBe(true);
+
+    expect(
+      isAllowedCommercialOperationsPostPath("/operations/tasks"),
+    ).toBe(true);
+
+    expect(
+      isAllowedCommercialOperationsPostPath(
+        `/operations/tasks/${taskId}/complete`,
+      ),
+    ).toBe(true);
+
+    expect(
+      isAllowedCommercialOperationsPostPath(
+        `/operations/tasks/${taskId}/cancel`,
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects malformed or broadened commercial command paths", async () => {
+    const { isAllowedCommercialOperationsPostPath } = await import("./allowlist");
+
+    const opportunityId = `o_${"a".repeat(32)}`;
+    const taskId = `task_${"b".repeat(32)}`;
+
+    const rejected = [
+      "/operations",
+      "/operations/",
+      "/operations/opportunities",
+      "/operations/opportunities/opp_1/state",
+      `/operations/opportunities/${opportunityId}`,
+      `/operations/opportunities/${opportunityId}/delete`,
+      "/operations/activities/extra",
+      "/operations/tasks/extra",
+      `/operations/tasks/${taskId}`,
+      `/operations/tasks/${taskId}/delete`,
+      `/operations/tasks/${taskId}/reopen`,
+      `/operations/tasks/task_${"b".repeat(31)}/complete`,
+      `/operations/tasks/task_${"b".repeat(33)}/complete`,
+      `/operations/tasks/task_${"G".repeat(32)}/complete`,
+    ];
+
+    for (const path of rejected) {
+      expect(
+        isAllowedCommercialOperationsPostPath(path),
+        path,
+      ).toBe(false);
+    }
+  });
+
+  it("combined POST gate preserves annex uploads", async () => {
+    const { isAllowedPostPath } = await import("./allowlist");
+
+    expect(
+      isAllowedPostPath(
+        "/operator/procurement/tenders/1234-5-LE26/annex-bundle/preview",
+      ),
+    ).toBe(true);
+
+    expect(
+      isAllowedPostPath(
+        "/operator/procurement/tenders/1234-5-LE26/annex-bundle/import",
+      ),
+    ).toBe(true);
+
+    expect(
+      isAllowedPostPath("/operations/activities"),
+    ).toBe(true);
+  });
+});
+
+
+describe("commercial operations GET readback allowlist", () => {
+  it("admits only exact per-opportunity readback paths", async () => {
+    const { isAllowedUpstreamPath } = await import("./allowlist");
+    const opportunityId = `o_${"a".repeat(32)}`;
+
+    for (const suffix of [
+      "state",
+      "activities",
+      "tasks",
+    ]) {
+      expect(
+        isAllowedUpstreamPath(
+          `/operations/opportunities/${opportunityId}/${suffix}`,
+        ),
+        suffix,
+      ).toBe(true);
+    }
+
+    expect(
+      isAllowedUpstreamPath(
+        "/operations/opportunities/opp_1/state",
+      ),
+    ).toBe(false);
+
+    expect(
+      isAllowedUpstreamPath("/operations/tasks"),
+    ).toBe(false);
+  });
+});
+
+describe("commercial work queue GET allowlist", () => {
+  it("admits the exact global work queue path only", async () => {
+    const { isAllowedUpstreamPath } =
+      await import("./allowlist");
+
+    expect(
+      isAllowedUpstreamPath(
+        "/operations/work-queue",
+      ),
+    ).toBe(true);
+
+    expect(
+      isAllowedUpstreamPath(
+        "/operations/work-queue/delete",
+      ),
+    ).toBe(false);
+  });
+});

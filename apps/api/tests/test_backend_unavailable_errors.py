@@ -31,7 +31,9 @@ def test_postgres_connection_wraps_psycopg_errors_without_dsn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(pg_common, "psycopg", _FakePsycopg)
-    settings = Settings(postgres_url="postgresql://user:password@127.0.0.1:5432/origenlab")
+    settings = Settings(
+        postgres_url="postgresql://user:password@127.0.0.1:5432/origenlab"
+    )
 
     with pytest.raises(PostgresBackendUnavailableError) as excinfo:
         with postgres_connection(settings):
@@ -84,7 +86,20 @@ def _postgres_route_client(monkeypatch: pytest.MonkeyPatch, tmp_path):
     from origenlab_api.main import create_app
 
     monkeypatch.delenv("ORIGENLAB_ENV", raising=False)
-    monkeypatch.delenv("ORIGENLAB_API_BACKEND", raising=False)
+    monkeypatch.setenv("ORIGENLAB_DISABLE_DOTENV", "1")
+    monkeypatch.setenv("ORIGENLAB_API_BACKEND", "postgres")
+    monkeypatch.setenv(
+        "ORIGENLAB_POSTGRES_URL",
+        "postgresql://user:password@127.0.0.1:5432/origenlab",
+    )
+    monkeypatch.delenv(
+        "ORIGENLAB_COMMERCIAL_OPERATIONS_WRITES_ENABLED",
+        raising=False,
+    )
+    monkeypatch.delenv(
+        "ORIGENLAB_POSTGRES_WRITE_URL",
+        raising=False,
+    )
     get_settings.cache_clear()
 
     app = create_app()

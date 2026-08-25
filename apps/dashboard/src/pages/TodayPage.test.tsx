@@ -95,6 +95,18 @@ vi.mock("../api/mirrorCommercialClient", () => ({
   fetchCommercialDealsMirror: vi.fn(),
 }));
 
+vi.mock("../api/commercialOperationsClient", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("../api/commercialOperationsClient")
+    >();
+
+  return {
+    ...actual,
+    fetchCommercialWorkQueue: vi.fn(),
+  };
+});
+
 vi.mock("../api/mirrorCatalogClient", () => ({
   fetchCatalogProductsMirror: vi.fn(),
 }));
@@ -123,6 +135,7 @@ import {
   fetchWarmCases,
 } from "../api/operatorClient";
 import { fetchCommercialDealsMirror } from "../api/mirrorCommercialClient";
+import { fetchCommercialWorkQueue } from "../api/commercialOperationsClient";
 import { fetchCatalogProductsMirror } from "../api/mirrorCatalogClient";
 import { fetchLeadResearchSummaryMirror } from "../api/mirrorLeadIntelClient";
 import { catalogListFixture } from "../test/fixtures/catalogMirrorFixtures";
@@ -143,6 +156,13 @@ describe("DashboardApp (legacy TodayPage tests)", () => {
   });
 
   function mockAllOk() {
+  vi.mocked(
+    fetchCommercialWorkQueue,
+  ).mockResolvedValue({
+    open_tasks: [],
+    review_opportunities: [],
+    quote_followups: [],
+  });
     vi.mocked(fetchTodayPanel).mockResolvedValue(panelSqlite);
     vi.mocked(fetchWarmCases).mockResolvedValue(warmPayload);
     vi.mocked(fetchEquipmentOpportunities).mockResolvedValue(equipmentPayload);

@@ -4,6 +4,11 @@ import {
   fetchCommercialOpportunities,
   fetchCommercialOpportunityDetail,
 } from "../../api/operatorClient";
+import {
+  fetchCommercialOpportunityActivities,
+  fetchCommercialOpportunityOperatorState,
+  fetchCommercialOpportunityTasks,
+} from "../../api/commercialOperationsClient";
 import { CommercialOpportunitiesCockpit } from "./CommercialOpportunitiesCockpit";
 
 vi.mock("../../api/operatorClient", () => ({
@@ -11,8 +16,19 @@ vi.mock("../../api/operatorClient", () => ({
   fetchCommercialOpportunityDetail: vi.fn(),
 }));
 
+vi.mock("../../api/commercialOperationsClient", () => ({
+  fetchCommercialOpportunityActivities: vi.fn(),
+  fetchCommercialOpportunityOperatorState: vi.fn(),
+  fetchCommercialOpportunityTasks: vi.fn(),
+  cancelCommercialTask: vi.fn(),
+  completeCommercialTask: vi.fn(),
+  createCommercialActivity: vi.fn(),
+  createCommercialTask: vi.fn(),
+  setCommercialOpportunityOperatorState: vi.fn(),
+}));
+
 const listItem = {
-  opportunity_id: "o_1",
+  opportunity_id: "o_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   record_kind: "explicit_opportunity",
   account_id: "a_1",
   primary_contact_id: "c_1",
@@ -40,6 +56,21 @@ describe("CommercialOpportunitiesCockpit", () => {
   beforeEach(() => {
     vi.mocked(fetchCommercialOpportunities).mockReset();
     vi.mocked(fetchCommercialOpportunityDetail).mockReset();
+    vi.mocked(fetchCommercialOpportunityOperatorState).mockReset();
+    vi.mocked(fetchCommercialOpportunityActivities).mockReset();
+    vi.mocked(fetchCommercialOpportunityTasks).mockReset();
+
+    vi.mocked(fetchCommercialOpportunityOperatorState).mockResolvedValue({
+      state: null,
+    });
+
+    vi.mocked(fetchCommercialOpportunityActivities).mockResolvedValue({
+      items: [],
+    });
+
+    vi.mocked(fetchCommercialOpportunityTasks).mockResolvedValue({
+      items: [],
+    });
 
     vi.mocked(fetchCommercialOpportunities).mockResolvedValue({
       meta: {
@@ -64,7 +95,7 @@ describe("CommercialOpportunitiesCockpit", () => {
       events: [
         {
           event_id: "evt_1",
-          opportunity_id: "o_1",
+          opportunity_id: "o_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           canonical_event_type: "client_quote_sent",
           source_event_type: "client_quote_sent",
           event_at: "2026-08-23T10:00:00+00:00",

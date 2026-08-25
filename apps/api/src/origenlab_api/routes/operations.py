@@ -1,0 +1,413 @@
+"""Durable commercial operations command routes (ARCH-3B4)."""
+
+from __future__ import annotations
+
+from typing import NoReturn
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Path as PathParam,
+    Request,
+    status,
+)
+
+from origenlab_api.commercial_operator_identity import (
+    require_commercial_operator,
+)
+from origenlab_api.repositories.postgres.commercial_operations import (
+    CommercialOperationConflictError,
+    CommercialOperationNotFoundError,
+)
+from origenlab_api.schemas.commercial_operations import (
+    ActivityCreateCommand,
+    ActivityListResponse,
+    ActivityResponse,
+    CommercialWorkQueueOpportunity,
+    CommercialWorkQueueResponse,
+    CommercialWorkQueueTask,
+    OpportunityStateCommand,
+    OpportunityStateReadResponse,
+    OpportunityStateResponse,
+    TaskCreateCommand,
+    TaskListResponse,
+    TaskResponse,
+    TaskTransitionCommand,
+)
+from origenlab_api.services.commercial_operations_read_service import (
+    CommercialOperationsReadService,
+)
+from origenlab_api.services.commercial_operations_service import (
+    CommercialOperationsService,
+)
+from origenlab_api.settings import Settings, get_settings
+
+
+router = APIRouter(
+    prefix="/operations",
+    tags=["commercial-operations"],
+)
+
+
+def get_commercial_operations_service(
+    settings: Settings = Depends(get_settings),
+) -> CommercialOperationsService:
+    return CommercialOperationsService(settings)
+
+
+def get_commercial_operations_read_service(
+    settings: Settings = Depends(get_settings),
+) -> CommercialOperationsReadService:
+    return CommercialOperationsReadService(settings)
+
+
+def _raise_command_error(exc: Exception) -> NoReturn:
+    if isinstance(exc, CommercialOperationNotFoundError):
+        raise HTTPException(
+            status_code=404,
+            detail=str(exc),
+        ) from exc
+
+    if isinstance(exc, CommercialOperationConflictError):
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        ) from exc
+
+    if isinstance(exc, ValueError):
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+
+    raise exc
+
+
+@router.get(
+    "/work-queue",
+    response_model=CommercialWorkQueueResponse,
+)
+def get_commercial_work_queue(
+    limit: int = 100,
+    service: CommercialOperationsReadService = Depends(
+        get_commercial_operations_read_service
+    ),
+) -> CommercialWorkQueueResponse:
+    try:
+        (
+            open_tasks,
+            review_opportunities,
+            quote_followups,
+        ) = service.get_work_queue(limit=limit)
+    except ValueError as exc:
+        _raise_command_error(exc)
+
+    return CommercialWorkQueueResponse(
+        open_tasks=[
+            CommercialWorkQueueTask(
+                task=TaskResponse.model_validate(
+                    item.task,
+                    from_attributes=True,
+                ),
+                contact_display_email=(item.contact_display_email),
+                account_display_domain=(item.account_display_domain),
+                canonical_stage=item.canonical_stage,
+                machine_review_status=(item.machine_review_status),
+            )
+            for item in open_tasks
+        ],
+        review_opportunities=[
+            CommercialWorkQueueOpportunity(
+                opportunity_id=item.opportunity_id,
+                contact_display_email=(item.contact_display_email),
+                account_display_domain=(item.account_display_domain),
+                canonical_stage=item.canonical_stage,
+                machine_review_status=(item.machine_review_status),
+                confirmation_status=(item.confirmation_status),
+                manual_stage=item.manual_stage,
+                owner_key=item.owner_key,
+                operator_state_version=(item.operator_state_version),
+            )
+            for item in review_opportunities
+        ],
+        quote_followups=[
+            CommercialWorkQueueOpportunity(
+                opportunity_id=item.opportunity_id,
+                contact_display_email=(item.contact_display_email),
+                account_display_domain=(item.account_display_domain),
+                canonical_stage=item.canonical_stage,
+                machine_review_status=(item.machine_review_status),
+                confirmation_status=(item.confirmation_status),
+                manual_stage=item.manual_stage,
+                owner_key=item.owner_key,
+                operator_state_version=(item.operator_state_version),
+            )
+            for item in quote_followups
+        ],
+    )
+
+
+@router.get(
+    "/opportunities/{opportunity_id}/state",
+    response_model=OpportunityStateReadResponse,
+)
+def get_opportunity_state(
+    opportunity_id: str = PathParam(
+        min_length=1,
+        max_length=128,
+    ),
+    service: CommercialOperationsReadService = Depends(
+        get_commercial_operations_read_service
+    ),
+) -> OpportunityStateReadResponse:
+    try:
+        state = service.get_operator_state(opportunity_id)
+    except ValueError as exc:
+        _raise_command_error(exc)
+
+    return OpportunityStateReadResponse(
+        state=(
+            OpportunityStateResponse.model_validate(
+                state,
+                from_attributes=True,
+            )
+            if state is not None
+            else None
+        )
+    )
+
+
+@router.get(
+    "/opportunities/{opportunity_id}/activities",
+    response_model=ActivityListResponse,
+)
+def list_opportunity_activities(
+    opportunity_id: str = PathParam(
+        min_length=1,
+        max_length=128,
+    ),
+    service: CommercialOperationsReadService = Depends(
+        get_commercial_operations_read_service
+    ),
+) -> ActivityListResponse:
+    try:
+        items = service.list_activities(
+            opportunity_id,
+            limit=100,
+        )
+    except ValueError as exc:
+        _raise_command_error(exc)
+
+    return ActivityListResponse(items=items)
+
+
+@router.get(
+    "/opportunities/{opportunity_id}/tasks",
+    response_model=TaskListResponse,
+)
+def list_opportunity_tasks(
+    opportunity_id: str = PathParam(
+        min_length=1,
+        max_length=128,
+    ),
+    service: CommercialOperationsReadService = Depends(
+        get_commercial_operations_read_service
+    ),
+) -> TaskListResponse:
+    try:
+        items = service.list_tasks(
+            opportunity_id,
+            limit=100,
+        )
+    except ValueError as exc:
+        _raise_command_error(exc)
+
+    return TaskListResponse(items=items)
+
+
+@router.post(
+    "/opportunities/{opportunity_id}/state",
+    response_model=OpportunityStateResponse,
+)
+def set_opportunity_state(
+    command: OpportunityStateCommand,
+    request: Request,
+    opportunity_id: str = PathParam(
+        min_length=1,
+        max_length=128,
+    ),
+    settings: Settings = Depends(get_settings),
+    service: CommercialOperationsService = Depends(get_commercial_operations_service),
+) -> OpportunityStateResponse:
+    operator = require_commercial_operator(
+        request,
+        settings,
+    )
+
+    try:
+        return service.set_opportunity_state(
+            opportunity_id=opportunity_id,
+            confirmation_status=command.confirmation_status,
+            manual_stage=command.manual_stage,
+            owner_key=command.owner_key,
+            operator=operator,
+            expected_version=command.expected_version,
+        )
+    except (
+        CommercialOperationNotFoundError,
+        CommercialOperationConflictError,
+        ValueError,
+    ) as exc:
+        _raise_command_error(exc)
+
+
+@router.post(
+    "/activities",
+    response_model=ActivityResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_activity(
+    command: ActivityCreateCommand,
+    request: Request,
+    idempotency_key: str = Header(
+        alias="Idempotency-Key",
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    ),
+    settings: Settings = Depends(get_settings),
+    service: CommercialOperationsService = Depends(get_commercial_operations_service),
+) -> ActivityResponse:
+    operator = require_commercial_operator(
+        request,
+        settings,
+    )
+
+    try:
+        return service.create_activity(
+            opportunity_id=command.opportunity_id,
+            account_id=command.account_id,
+            contact_id=command.contact_id,
+            activity_type=command.activity_type,
+            occurred_at=command.occurred_at,
+            summary=command.summary,
+            detail=command.detail,
+            operator=operator,
+            idempotency_key=idempotency_key,
+        )
+    except (
+        CommercialOperationNotFoundError,
+        CommercialOperationConflictError,
+        ValueError,
+    ) as exc:
+        _raise_command_error(exc)
+
+
+@router.post(
+    "/tasks",
+    response_model=TaskResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_task(
+    command: TaskCreateCommand,
+    request: Request,
+    idempotency_key: str = Header(
+        alias="Idempotency-Key",
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    ),
+    settings: Settings = Depends(get_settings),
+    service: CommercialOperationsService = Depends(get_commercial_operations_service),
+) -> TaskResponse:
+    operator = require_commercial_operator(
+        request,
+        settings,
+    )
+
+    try:
+        return service.create_task(
+            opportunity_id=command.opportunity_id,
+            account_id=command.account_id,
+            contact_id=command.contact_id,
+            title=command.title,
+            priority=command.priority,
+            due_at=command.due_at,
+            owner_key=command.owner_key,
+            operator=operator,
+            idempotency_key=idempotency_key,
+        )
+    except (
+        CommercialOperationNotFoundError,
+        CommercialOperationConflictError,
+        ValueError,
+    ) as exc:
+        _raise_command_error(exc)
+
+
+@router.post(
+    "/tasks/{task_id}/complete",
+    response_model=TaskResponse,
+)
+def complete_task(
+    command: TaskTransitionCommand,
+    request: Request,
+    task_id: str = PathParam(
+        min_length=1,
+        max_length=128,
+    ),
+    settings: Settings = Depends(get_settings),
+    service: CommercialOperationsService = Depends(get_commercial_operations_service),
+) -> TaskResponse:
+    operator = require_commercial_operator(
+        request,
+        settings,
+    )
+
+    try:
+        return service.complete_task(
+            task_id=task_id,
+            operator=operator,
+            expected_version=command.expected_version,
+        )
+    except (
+        CommercialOperationNotFoundError,
+        CommercialOperationConflictError,
+        ValueError,
+    ) as exc:
+        _raise_command_error(exc)
+
+
+@router.post(
+    "/tasks/{task_id}/cancel",
+    response_model=TaskResponse,
+)
+def cancel_task(
+    command: TaskTransitionCommand,
+    request: Request,
+    task_id: str = PathParam(
+        min_length=1,
+        max_length=128,
+    ),
+    settings: Settings = Depends(get_settings),
+    service: CommercialOperationsService = Depends(get_commercial_operations_service),
+) -> TaskResponse:
+    operator = require_commercial_operator(
+        request,
+        settings,
+    )
+
+    try:
+        return service.cancel_task(
+            task_id=task_id,
+            operator=operator,
+            expected_version=command.expected_version,
+        )
+    except (
+        CommercialOperationNotFoundError,
+        CommercialOperationConflictError,
+        ValueError,
+    ) as exc:
+        _raise_command_error(exc)

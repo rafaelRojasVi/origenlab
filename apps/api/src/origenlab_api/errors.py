@@ -16,12 +16,12 @@ from origenlab_api.request_id import attach_request_id_header, get_request_id
 
 _POSTGRES_URL_RE = re.compile(r"postgres(?:ql)?://[^\s\"']+", re.IGNORECASE)
 _ENV_SECRET_RE = re.compile(
-    r"(ORIGENLAB_POSTGRES_URL|ALEMBIC_DATABASE_URL|CHILECOMPRA_API_TICKET)=\S+",
+    r"(ORIGENLAB_POSTGRES_URL|ORIGENLAB_POSTGRES_WRITE_URL|ALEMBIC_DATABASE_URL|CHILECOMPRA_API_TICKET)=\S+",
     re.IGNORECASE,
 )
 _PASSWORD_KV_RE = re.compile(r"(password|passwd|pwd)\s*[:=]\s*\S+", re.IGNORECASE)
 _SENSITIVE_DETAIL_KEY_RE = re.compile(
-    r"(password|passwd|pwd|token|secret|api[_-]?key|postgres_url|database_url)",
+    r"(password|passwd|pwd|token|secret|api[_-]?key|postgres(?:_write)?_url|database_url)",
     re.IGNORECASE,
 )
 
@@ -43,7 +43,6 @@ def sanitize_text(text: str) -> str:
         if needle in cleaned:
             return "An error occurred"
     return cleaned
-
 
 
 def _safe_detail_key(key: Any) -> str:
@@ -131,12 +130,20 @@ def _string_detail(exc: StarletteHTTPException) -> str:
 def _code_for_http_exception(exc: StarletteHTTPException, message: str) -> str:
     status = exc.status_code
     lowered = message.lower()
+    if status == 401:
+        return "unauthorized"
     if status == 403:
         return "forbidden"
     if status == 404:
         return "not_found"
+    if status == 409:
+        return "conflict"
     if status == 503:
-        if "mirror" in lowered or "postgres url required" in lowered or "origenlab_postgres_url" in lowered:
+        if (
+            "mirror" in lowered
+            or "postgres url required" in lowered
+            or "origenlab_postgres_url" in lowered
+        ):
             return "mirror_not_configured"
         return "backend_unavailable"
     if status == 422 and "invalid category" in lowered:
@@ -148,7 +155,9 @@ def _code_for_http_exception(exc: StarletteHTTPException, message: str) -> str:
     return "validation_error"
 
 
-def _details_for_http_exception(exc: StarletteHTTPException, message: str) -> dict[str, Any]:
+def _details_for_http_exception(
+    exc: StarletteHTTPException, message: str
+) -> dict[str, Any]:
     details: dict[str, Any] = {}
     if exc.status_code == 422 and "invalid category" in message.lower():
         details["param"] = "category"
