@@ -63,9 +63,9 @@ describe("TodaySummaryPage operator landing layout", () => {
     screen.getByText(/Colas priorizadas según correos, oportunidades de equipos y señales comerciales cargadas/);
   });
 
-  it("shows read-only safety note once at the top", () => {
+  it("shows operator safety boundary once at the top", () => {
     renderToday();
-    screen.getByText(/Solo lectura: este panel no envía correos ni aprueba contactos/);
+    screen.getByText(/Este panel no envía correos ni aprueba contactos; las acciones comerciales se realizan dentro del ciclo de cada oportunidad/);
     expect(screen.queryByText(/No aprueba envíos/)).toBeNull();
   });
 
