@@ -224,7 +224,7 @@ describe("DashboardApp (legacy TodayPage tests)", () => {
     mockAllOk();
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
-    screen.getByText(/Solo lectura: este panel no envía correos ni aprueba contactos/);
+    screen.getByText(/Este panel no envía correos ni aprueba contactos; las acciones comerciales se realizan dentro del ciclo de cada oportunidad/);
 
     const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
     fireEvent.click(within(nav).getByRole("link", { name: "Sistema" }));

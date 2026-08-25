@@ -5,9 +5,10 @@ import type { DashboardSection } from "../lib/dashboardNav";
 import { isEquipmentFeedUnavailable } from "../lib/equipmentFeedStatus";
 import { computeTodaySummaryCounts } from "../lib/todaySummaryCounts";
 import { summarizeCommercialWorkQueue } from "../lib/commercialWorkQueue";
+import { CommercialWorkQueuePanel } from "../components/commercial/CommercialWorkQueuePanel";
 
-const READ_ONLY_SAFETY =
-  "Solo lectura: este panel no envía correos ni aprueba contactos.";
+const OPERATOR_SAFETY =
+  "Este panel no envía correos ni aprueba contactos; las acciones comerciales se realizan dentro del ciclo de cada oportunidad.";
 
 function navigateToSection(section: DashboardSection) {
   window.location.hash = dashboardSectionToHash(section);
@@ -68,6 +69,7 @@ export function TodaySummaryPage() {
     commercialWorkQueueError,
     loadCommercialWorkQueue,
     loadPanel,
+    setContactEmail,
   } = useDashboardData();
 
   const equipmentFeedUnavailable = isEquipmentFeedUnavailable(equipment?.meta ?? null);
@@ -126,7 +128,7 @@ export function TodaySummaryPage() {
           <header>
             <h1 className="text-xl font-semibold text-slate-900">Qué revisar hoy</h1>
             <p className="mt-2 text-sm text-[var(--color-muted)]">
-              Prioriza clientes, proveedores, pagos/logística y licitaciones. {READ_ONLY_SAFETY}
+              Prioriza clientes, proveedores, pagos/logística y licitaciones. {OPERATOR_SAFETY}
             </p>
           </header>
 
@@ -232,6 +234,13 @@ export function TodaySummaryPage() {
               </div>
             )}
           </section>
+
+          {commercialWorkQueue ? (
+            <CommercialWorkQueuePanel
+              queue={commercialWorkQueue}
+              onSelectContact={setContactEmail}
+            />
+          ) : null}
 
           {equipmentFeedUnavailable ? (
             <div
