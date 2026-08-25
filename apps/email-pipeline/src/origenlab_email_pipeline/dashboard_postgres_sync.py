@@ -59,7 +59,7 @@ except ImportError as exc:  # pragma: no cover
 else:
     _PSYCOPG_IMPORT_ERROR = None
 
-EXPECTED_ALEMBIC_HEAD = "20260822_0031"
+EXPECTED_ALEMBIC_HEAD = "20260824_0034"
 DASHBOARD_SYNC_KV_KEY = "dashboard_postgres_mirror_last_sync"
 
 OUTBOUND_SCRIPT = "scripts/migrate/sqlite_outbound_sidecars_to_postgres.py"
@@ -1234,7 +1234,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Mirror the validated SQLite PR3 commercial opportunity lifecycle "
             "to commercial.opportunity* "
-            "(opt-in; requires Alembic 20260822_0031)."
+            "(opt-in; requires Alembic 20260824_0034)."
         ),
     )
     p.add_argument(
