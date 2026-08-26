@@ -197,7 +197,7 @@ When `ORIGENLAB_API_CORS_ORIGINS` is configured, credentialed dashboard/browser 
 | ------------------------------- | -------------- |
 | `Access-Control-Expose-Headers` | `X-Request-ID`, `Server-Timing`, `X-Process-Time-Ms` |
 
-Browser JavaScript on allowed origins can read the request/correlation id and read-only duration headers from response headers (including error responses). CORS methods remain read-only: **`GET`**, **`HEAD`**, **`OPTIONS`** only.
+Browser JavaScript on allowed origins can read the request/correlation id and read-only duration headers from response headers (including error responses). CORS permits **`GET`**, **`HEAD`**, **`OPTIONS`**, and **`POST`**. POST remains restricted to explicitly sanctioned command routes by API/proxy method+path allowlists and authentication.
 
 **CORS is not authentication.** Allowed origins may send credentialed browser requests; private routes still require production bearer auth (below).
 
@@ -277,6 +277,7 @@ Operator plane (SQLite / active CSV):
 | GET    | `/opportunities/commercial`   |
 | GET    | `/opportunities/commercial/{opportunity_id}` |
 | GET    | `/operations/work-queue` |
+| GET    | `/operations/sales-opportunities/{sales_opportunity_id}` |
 | GET    | `/operations/opportunities/{opportunity_id}/state` |
 | GET    | `/operations/opportunities/{opportunity_id}/activities` |
 | GET    | `/operations/opportunities/{opportunity_id}/tasks` |

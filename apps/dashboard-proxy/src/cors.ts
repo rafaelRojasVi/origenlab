@@ -1,6 +1,10 @@
 /** Browser origins allowed to call the dashboard read-only API proxy. */
 
-import { isAllowedPostUploadPath, stripApiPrefix } from "./allowlist";
+import {
+  isAllowedCommercialOperationsPostPath,
+  isAllowedPostPath,
+  stripApiPrefix,
+} from "./allowlist";
 
 export const ALLOWED_ORIGINS = new Set([
   "https://dashboard.origenlab.cl",
@@ -41,16 +45,28 @@ export function applyCorsHeaders(request: Request, headers: Headers): void {
 
   headers.set("Access-Control-Allow-Origin", origin);
   headers.set("Access-Control-Allow-Credentials", "true");
-  // POST is only advertised for the one exact preview-upload path -- a
-  // preflight for any other path/method combination still only sees GET,
-  // HEAD, OPTIONS here. This is advisory to the browser only; the real
-  // enforcement is index.ts's method-then-path check on the actual request.
+  // POST is advertised only for explicitly sanctioned command paths.
+  // index.ts remains the authoritative method+path enforcement layer.
   const upstreamPath = stripApiPrefix(new URL(request.url).pathname);
-  const methods =
-    upstreamPath !== null && isAllowedPostUploadPath(upstreamPath)
+  const postAllowed =
+    upstreamPath !== null && isAllowedPostPath(upstreamPath);
+
+  headers.set(
+    "Access-Control-Allow-Methods",
+    postAllowed
       ? "GET, HEAD, OPTIONS, POST"
-      : "GET, HEAD, OPTIONS";
-  headers.set("Access-Control-Allow-Methods", methods);
-  headers.set("Access-Control-Allow-Headers", "Accept, Content-Type, X-Request-ID");
+      : "GET, HEAD, OPTIONS",
+  );
+
+  const commercialCommand =
+    upstreamPath !== null &&
+    isAllowedCommercialOperationsPostPath(upstreamPath);
+
+  headers.set(
+    "Access-Control-Allow-Headers",
+    commercialCommand
+      ? "Accept, Content-Type, X-Request-ID, Idempotency-Key"
+      : "Accept, Content-Type, X-Request-ID",
+  );
   headers.set("Access-Control-Expose-Headers", "X-Request-ID");
 }

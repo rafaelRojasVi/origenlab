@@ -31,6 +31,9 @@ from origenlab_api.schemas.commercial_operations import (
     OpportunityStateCommand,
     OpportunityStateReadResponse,
     OpportunityStateResponse,
+    SalesOpportunityPromoteCommand,
+    SalesOpportunityReadResponse,
+    SalesOpportunityResponse,
     TaskCreateCommand,
     TaskListResponse,
     TaskResponse,
@@ -146,6 +149,81 @@ def get_commercial_work_queue(
             )
             for item in quote_followups
         ],
+    )
+
+
+@router.post(
+    "/sales-opportunities/promote",
+    response_model=SalesOpportunityResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def promote_sales_opportunity(
+    command: SalesOpportunityPromoteCommand,
+    request: Request,
+    idempotency_key: str = Header(
+        alias="Idempotency-Key",
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    ),
+    settings: Settings = Depends(get_settings),
+    service: CommercialOperationsService = Depends(get_commercial_operations_service),
+) -> SalesOpportunityResponse:
+    operator = require_commercial_operator(
+        request,
+        settings,
+    )
+
+    try:
+        result = service.promote_sales_opportunity(
+            source_opportunity_id=(command.source_opportunity_id),
+            title=command.title,
+            owner_key=command.owner_key,
+            operator=operator,
+            idempotency_key=idempotency_key,
+        )
+    except (
+        CommercialOperationNotFoundError,
+        CommercialOperationConflictError,
+        ValueError,
+    ) as exc:
+        _raise_command_error(exc)
+
+    return SalesOpportunityResponse.model_validate(
+        result,
+        from_attributes=True,
+    )
+
+
+@router.get(
+    "/sales-opportunities/{sales_opportunity_id}",
+    response_model=SalesOpportunityReadResponse,
+)
+def get_sales_opportunity(
+    sales_opportunity_id: str = PathParam(
+        min_length=1,
+        max_length=128,
+    ),
+    service: CommercialOperationsReadService = Depends(
+        get_commercial_operations_read_service
+    ),
+) -> SalesOpportunityReadResponse:
+    try:
+        result = service.get_sales_opportunity(sales_opportunity_id)
+    except ValueError as exc:
+        _raise_command_error(exc)
+
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(f"Sales opportunity not found: {sales_opportunity_id}"),
+        )
+
+    return SalesOpportunityReadResponse(
+        item=SalesOpportunityResponse.model_validate(
+            result,
+            from_attributes=True,
+        )
     )
 
 

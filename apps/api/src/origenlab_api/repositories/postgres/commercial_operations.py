@@ -69,6 +69,20 @@ class Task:
     updated_at: datetime
 
 
+@dataclass(frozen=True)
+class SalesOpportunity:
+    sales_opportunity_id: str
+    source_kind: str
+    source_opportunity_id: str
+    account_id: str | None
+    primary_contact_id: str | None
+    title: str
+    stage: str
+    owner_key: str
+    created_by: str
+    created_at: datetime
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -375,6 +389,205 @@ class PostgresCommercialOperationsRepository:
                 )
 
                 return state
+
+    def promote_sales_opportunity(
+        self,
+        *,
+        sales_opportunity_id: str,
+        source_opportunity_id: str,
+        title: str,
+        owner_key: str,
+        operator: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+    ) -> SalesOpportunity:
+        pg = require_psycopg()
+        now = _utcnow()
+
+        with postgres_write_connection(self._settings) as conn:
+            with conn.cursor(row_factory=pg.rows.dict_row) as cur:
+                replay_result_id = _claim_idempotency(
+                    cur,
+                    operator=operator,
+                    idempotency_key=idempotency_key,
+                    command_kind="sales_opportunity_promote",
+                    request_fingerprint=request_fingerprint,
+                )
+
+                if replay_result_id is not None:
+                    cur.execute(
+                        """
+                        SELECT *
+                        FROM commercial.sales_opportunity
+                        WHERE sales_opportunity_id =
+                          %(sales_opportunity_id)s
+                        LIMIT 1
+                        """,
+                        {
+                            "sales_opportunity_id": replay_result_id,
+                        },
+                    )
+
+                    replay = cur.fetchone()
+
+                    if replay is None:
+                        raise CommercialOperationConflictError(
+                            "Idempotency result sales opportunity is missing"
+                        )
+
+                    return SalesOpportunity(**dict(replay))
+
+                # PR3 is consulted only as the machine/evidence source.
+                # Its identity references are snapshotted into durable CRM
+                # state; no FK is created back to this replaceable view.
+                cur.execute(
+                    """
+                    SELECT
+                      account_id,
+                      primary_contact_id
+                    FROM api.v_commercial_opportunity
+                    WHERE opportunity_id =
+                      %(source_opportunity_id)s
+                    LIMIT 1
+                    """,
+                    {
+                        "source_opportunity_id": (source_opportunity_id),
+                    },
+                )
+
+                source = cur.fetchone()
+
+                if source is None:
+                    raise CommercialOperationNotFoundError(
+                        f"Commercial opportunity not found: {source_opportunity_id}"
+                    )
+
+                cur.execute(
+                    """
+                    INSERT INTO commercial.sales_opportunity (
+                      sales_opportunity_id,
+                      source_kind,
+                      source_opportunity_id,
+                      account_id,
+                      primary_contact_id,
+                      title,
+                      stage,
+                      owner_key,
+                      created_by,
+                      created_at
+                    )
+                    VALUES (
+                      %(sales_opportunity_id)s,
+                      'pr3',
+                      %(source_opportunity_id)s,
+                      %(account_id)s,
+                      %(primary_contact_id)s,
+                      %(title)s,
+                      'new',
+                      %(owner_key)s,
+                      %(operator)s,
+                      %(created_at)s
+                    )
+                    ON CONFLICT (
+                      source_kind,
+                      source_opportunity_id
+                    )
+                    DO NOTHING
+                    RETURNING *
+                    """,
+                    {
+                        "sales_opportunity_id": (sales_opportunity_id),
+                        "source_opportunity_id": (source_opportunity_id),
+                        "account_id": source["account_id"],
+                        "primary_contact_id": (source["primary_contact_id"]),
+                        "title": title,
+                        "owner_key": owner_key,
+                        "operator": operator,
+                        "created_at": now,
+                    },
+                )
+
+                row = cur.fetchone()
+
+                if row is None:
+                    cur.execute(
+                        """
+                        SELECT sales_opportunity_id
+                        FROM commercial.sales_opportunity
+                        WHERE source_kind = 'pr3'
+                          AND source_opportunity_id =
+                            %(source_opportunity_id)s
+                        LIMIT 1
+                        """,
+                        {
+                            "source_opportunity_id": (source_opportunity_id),
+                        },
+                    )
+
+                    existing = cur.fetchone()
+
+                    if existing is not None:
+                        raise CommercialOperationConflictError(
+                            "Commercial opportunity already promoted: "
+                            f"{source_opportunity_id}"
+                        )
+
+                    raise RuntimeError("Sales opportunity insert returned no row")
+
+                result = SalesOpportunity(**dict(row))
+
+                cur.execute(
+                    """
+                    INSERT INTO commercial.sales_opportunity_event (
+                      event_id,
+                      sales_opportunity_id,
+                      event_type,
+                      actor_key,
+                      payload,
+                      created_at
+                    )
+                    VALUES (
+                      %(event_id)s,
+                      %(sales_opportunity_id)s,
+                      'created',
+                      %(actor_key)s,
+                      %(payload)s,
+                      %(created_at)s
+                    )
+                    """,
+                    {
+                        "event_id": str(uuid.uuid4()),
+                        "sales_opportunity_id": (sales_opportunity_id),
+                        "actor_key": operator,
+                        "payload": json.dumps(
+                            {
+                                "source": {
+                                    "kind": "pr3",
+                                    "opportunity_id": (source_opportunity_id),
+                                },
+                                "snapshot": {
+                                    "account_id": result.account_id,
+                                    "primary_contact_id": (result.primary_contact_id),
+                                },
+                                "opportunity": {
+                                    "title": result.title,
+                                    "stage": result.stage,
+                                    "owner_key": (result.owner_key),
+                                },
+                            }
+                        ),
+                        "created_at": now,
+                    },
+                )
+
+                _store_idempotency_result(
+                    cur,
+                    operator=operator,
+                    idempotency_key=idempotency_key,
+                    result_id=sales_opportunity_id,
+                )
+
+                return result
 
     def create_activity(
         self,

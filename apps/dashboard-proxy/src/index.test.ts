@@ -1112,3 +1112,125 @@ describe("commercial idempotency forwarding", () => {
     );
   });
 });
+
+describe("CRM sales opportunity proxy boundary", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("commercial promotion preflight advertises POST and Idempotency-Key", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await handleRequest(
+      requestWithOrigin(
+        "https://dashboard.origenlab.cl/api/operations/sales-opportunities/promote",
+        {
+          method: "OPTIONS",
+          headers: {
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers":
+              "content-type,idempotency-key",
+          },
+        },
+      ),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(204);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    expect(
+      response.headers.get("Access-Control-Allow-Methods"),
+    ).toBe("GET, HEAD, OPTIONS, POST");
+
+    expect(
+      response.headers.get("Access-Control-Allow-Headers"),
+    ).toContain("Idempotency-Key");
+  });
+
+  it("forwards CRM promotion with trusted operator and idempotency headers", async () => {
+    const captured: {
+      url: string;
+      method: string;
+      headers: Headers;
+      body: string;
+    }[] = [];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (req: Request) => {
+        captured.push({
+          url: req.url,
+          method: req.method,
+          headers: req.headers,
+          body: await req.text(),
+        });
+
+        return new Response(
+          JSON.stringify({
+            sales_opportunity_id:
+              `sales_${"d".repeat(32)}`,
+            source_kind: "pr3",
+            source_opportunity_id:
+              `o_${"a".repeat(32)}`,
+            account_id: "a_1",
+            primary_contact_id: "c_1",
+            title: "Centrifuga",
+            stage: "new",
+            owner_key: "tatiana@origenlab.cl",
+            created_by: "tatiana@origenlab.cl",
+            created_at: "2026-08-26T00:00:00Z",
+          }),
+          {
+            status: 201,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }),
+    );
+
+    const body = JSON.stringify({
+      source_opportunity_id:
+        `o_${"a".repeat(32)}`,
+      title: "Centrifuga",
+      owner_key: "tatiana@origenlab.cl",
+    });
+
+    const response = await handleRequest(
+      requestWithOrigin(
+        "https://dashboard.origenlab.cl/api/operations/sales-opportunities/promote",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": "crm-promote-1",
+            "Cf-Access-Authenticated-User-Email":
+              "Tatiana@OrigenLab.CL",
+          },
+          body,
+        },
+      ),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(201);
+    expect(captured).toHaveLength(1);
+
+    expect(captured[0]?.url).toBe(
+      "https://api.origenlab.cl/operations/sales-opportunities/promote",
+    );
+    expect(captured[0]?.method).toBe("POST");
+    expect(
+      captured[0]?.headers.get("Idempotency-Key"),
+    ).toBe("crm-promote-1");
+    expect(
+      captured[0]?.headers.get(
+        "X-OriginLab-Operator-Email",
+      ),
+    ).toBe("tatiana@origenlab.cl");
+    expect(captured[0]?.body).toBe(body);
+  });
+});

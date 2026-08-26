@@ -112,6 +112,49 @@ class TaskTransitionCommand(CommercialCommandModel):
     expected_version: int = Field(ge=1)
 
 
+class SalesOpportunityPromoteCommand(CommercialCommandModel):
+    source_opportunity_id: str = Field(
+        min_length=1,
+        max_length=128,
+    )
+    title: str = Field(
+        min_length=1,
+        max_length=500,
+    )
+    owner_key: str = Field(
+        min_length=1,
+        max_length=320,
+    )
+
+
+class SalesOpportunityResponse(BaseModel):
+    sales_opportunity_id: str
+
+    source_kind: Literal["pr3"]
+    source_opportunity_id: str
+
+    account_id: str | None = None
+    primary_contact_id: str | None = None
+
+    title: str
+    stage: Literal["new"]
+
+    owner_key: str
+
+    created_by: str
+    created_at: datetime
+
+
+class SalesOpportunityReadMeta(BaseModel):
+    data_source: Literal["postgres"] = "postgres"
+    read_only: Literal[True] = True
+
+
+class SalesOpportunityReadResponse(BaseModel):
+    meta: SalesOpportunityReadMeta = Field(default_factory=SalesOpportunityReadMeta)
+    item: SalesOpportunityResponse
+
+
 class OpportunityStateResponse(BaseModel):
     opportunity_id: str
     confirmation_status: ConfirmationStatus
