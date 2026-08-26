@@ -12,6 +12,7 @@ from origenlab_api.repositories.postgres.commercial_operations import (
     Activity,
     OperatorState,
     PostgresCommercialOperationsRepository,
+    SalesOpportunity,
     Task,
 )
 from origenlab_api.settings import Settings
@@ -352,6 +353,56 @@ class CommercialOperationsService:
             title=normalized_title,
             priority=normalized_priority,
             due_at=normalized_due_at,
+            owner_key=normalized_owner,
+            operator=normalized_operator,
+            idempotency_key=normalized_key,
+            request_fingerprint=fingerprint,
+        )
+
+    def promote_sales_opportunity(
+        self,
+        *,
+        source_opportunity_id: str,
+        title: str,
+        owner_key: str,
+        operator: str,
+        idempotency_key: str,
+    ) -> SalesOpportunity:
+        source_id = _required_text(
+            source_opportunity_id,
+            field="source_opportunity_id",
+            max_length=128,
+        )
+        normalized_title = _required_text(
+            title,
+            field="title",
+            max_length=500,
+        )
+        normalized_owner = _required_text(
+            owner_key,
+            field="owner_key",
+            max_length=320,
+        )
+        normalized_operator = _required_text(
+            operator,
+            field="operator",
+            max_length=320,
+        ).lower()
+        normalized_key = _idempotency_key(idempotency_key)
+
+        fingerprint = _fingerprint(
+            "sales_opportunity_promote",
+            {
+                "source_opportunity_id": source_id,
+                "title": normalized_title,
+                "owner_key": normalized_owner,
+            },
+        )
+
+        return self._repository.promote_sales_opportunity(
+            sales_opportunity_id=f"sales_{uuid4().hex}",
+            source_opportunity_id=source_id,
+            title=normalized_title,
             owner_key=normalized_owner,
             operator=normalized_operator,
             idempotency_key=normalized_key,

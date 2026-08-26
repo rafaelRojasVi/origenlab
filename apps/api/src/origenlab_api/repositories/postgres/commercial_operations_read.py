@@ -11,6 +11,7 @@ from origenlab_api.repositories.postgres.common import (
 from origenlab_api.repositories.postgres.commercial_operations import (
     Activity,
     OperatorState,
+    SalesOpportunity,
     Task,
 )
 from origenlab_api.settings import Settings
@@ -21,6 +22,34 @@ class PostgresCommercialOperationsReadRepository:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+
+    def get_sales_opportunity(
+        self,
+        sales_opportunity_id: str,
+    ) -> SalesOpportunity | None:
+        pg = require_psycopg()
+
+        with postgres_connection(self._settings) as conn:
+            with conn.cursor(row_factory=pg.rows.dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM api.v_commercial_sales_opportunity
+                    WHERE sales_opportunity_id =
+                      %(sales_opportunity_id)s
+                    LIMIT 1
+                    """,
+                    {
+                        "sales_opportunity_id": (sales_opportunity_id),
+                    },
+                )
+
+                row = cur.fetchone()
+
+                if row is None:
+                    return None
+
+                return SalesOpportunity(**dict(row))
 
     def get_operator_state(
         self,

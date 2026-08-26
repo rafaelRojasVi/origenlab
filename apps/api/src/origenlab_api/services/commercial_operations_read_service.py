@@ -5,6 +5,7 @@ from __future__ import annotations
 from origenlab_api.repositories.postgres.commercial_operations import (
     Activity,
     OperatorState,
+    SalesOpportunity,
     Task,
 )
 from origenlab_api.repositories.postgres.commercial_operations_read import (
@@ -27,6 +28,18 @@ def _opportunity_id(value: str) -> str:
     return normalized
 
 
+def _sales_opportunity_id(value: str) -> str:
+    normalized = value.strip()
+
+    if not normalized:
+        raise ValueError("sales_opportunity_id must not be blank")
+
+    if len(normalized) > 128:
+        raise ValueError("sales_opportunity_id exceeds maximum length 128")
+
+    return normalized
+
+
 class CommercialOperationsReadService:
     def __init__(
         self,
@@ -36,6 +49,14 @@ class CommercialOperationsReadService:
     ) -> None:
         self._repository = repository or PostgresCommercialOperationsReadRepository(
             settings
+        )
+
+    def get_sales_opportunity(
+        self,
+        sales_opportunity_id: str,
+    ) -> SalesOpportunity | None:
+        return self._repository.get_sales_opportunity(
+            _sales_opportunity_id(sales_opportunity_id)
         )
 
     def get_operator_state(

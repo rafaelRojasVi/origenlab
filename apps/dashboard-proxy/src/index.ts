@@ -113,11 +113,10 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
     method,
     headers: buildUpstreamHeaders(env, request.headers),
     redirect: "manual",
-    // Only POST (the one preview-upload path) ever carries a body. Buffered
-    // rather than streamed: the body is already bounded by the browser's
-    // own upload size and the upstream API's own limit, and buffering keeps
-    // forwarding trivially correct/testable (byte-identical) without
-    // relying on this runtime's streaming-request-body support.
+    // Sanctioned POST commands may carry a body. Buffered rather than
+    // streamed: bodies are bounded by browser/upstream API contracts, and
+    // buffering keeps forwarding deterministic and testable without
+    // relying on streaming-request-body support.
     body: method === "POST" ? await request.arrayBuffer() : undefined,
   });
 

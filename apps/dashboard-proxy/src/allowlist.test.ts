@@ -359,3 +359,70 @@ describe("commercial work queue GET allowlist", () => {
     ).toBe(false);
   });
 });
+
+describe("CRM sales opportunity allowlist", () => {
+  const salesOpportunityId = `sales_${"c".repeat(32)}`;
+
+  it("allows the exact CRM sales-opportunity GET path", () => {
+    expect(
+      isAllowedUpstreamPath(
+        `/operations/sales-opportunities/${salesOpportunityId}`,
+      ),
+    ).toBe(true);
+  });
+
+  it("allows only the exact CRM promotion POST path", async () => {
+    const {
+      isAllowedCommercialOperationsPostPath,
+      isAllowedPostPath,
+    } = await import("./allowlist");
+
+    expect(
+      isAllowedCommercialOperationsPostPath(
+        "/operations/sales-opportunities/promote",
+      ),
+    ).toBe(true);
+
+    expect(
+      isAllowedPostPath(
+        "/operations/sales-opportunities/promote",
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects broadened or malformed CRM sales-opportunity paths", async () => {
+    const {
+      isAllowedCommercialOperationsPostPath,
+    } = await import("./allowlist");
+
+    expect(
+      isAllowedUpstreamPath(
+        "/operations/sales-opportunities/sales_short",
+      ),
+    ).toBe(false);
+
+    expect(
+      isAllowedUpstreamPath(
+        `/operations/sales-opportunities/${salesOpportunityId}/extra`,
+      ),
+    ).toBe(false);
+
+    expect(
+      isAllowedUpstreamPath(
+        `/operations/sales-opportunities/sales_${"G".repeat(32)}`,
+      ),
+    ).toBe(false);
+
+    expect(
+      isAllowedCommercialOperationsPostPath(
+        "/operations/sales-opportunities",
+      ),
+    ).toBe(false);
+
+    expect(
+      isAllowedCommercialOperationsPostPath(
+        "/operations/sales-opportunities/promote/extra",
+      ),
+    ).toBe(false);
+  });
+});

@@ -26,9 +26,9 @@ export function buildUpstreamHeaders(env: ProxyEnv, incoming: Headers): Headers 
   const headers = new Headers();
   headers.set("Accept", incoming.get("Accept") || "application/json");
 
-  // Only relevant for the one POST (annex-bundle preview upload) -- GET/HEAD
-  // requests never carry these. Forwarded byte-identical so the upstream API
-  // sees the exact same Content-Type/Content-Length the browser sent.
+  // Relevant for sanctioned POST commands; GET/HEAD requests normally
+  // do not carry these. Forward byte-identical so the upstream API sees the
+  // same Content-Type/Content-Length the browser sent.
   const contentType = incoming.get("Content-Type");
   if (contentType) {
     headers.set("Content-Type", contentType);
