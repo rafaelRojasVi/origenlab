@@ -50,6 +50,7 @@ export function isAllowedPostUploadPath(pathname: string): boolean {
 export const COMMERCIAL_OPERATIONS_POST_PATHS: readonly RegExp[] = [
   /^\/operations\/opportunities\/o_[0-9a-f]{32}\/state$/,
   /^\/operations\/sales-opportunities\/promote$/,
+  /^\/operations\/sales-opportunities\/sales_[0-9a-f]{32}\/stage$/,
   /^\/operations\/activities$/,
   /^\/operations\/tasks$/,
   /^\/operations\/tasks\/task_[0-9a-f]{32}\/(?:complete|cancel)$/,

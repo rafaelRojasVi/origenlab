@@ -117,8 +117,11 @@ def test_sales_opportunity_reads_api_view_only(
             "title": "Centrífuga",
             "stage": "new",
             "owner_key": "tatiana@origenlab.cl",
+            "version": 1,
             "created_by": "tatiana@origenlab.cl",
+            "updated_by": "tatiana@origenlab.cl",
             "created_at": NOW,
+            "updated_at": NOW,
         },
     )
 

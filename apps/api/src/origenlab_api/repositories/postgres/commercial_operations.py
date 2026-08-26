@@ -23,6 +23,27 @@ class CommercialOperationConflictError(RuntimeError):
     """Optimistic concurrency or state-transition conflict."""
 
 
+SALES_OPPORTUNITY_STAGES = frozenset(
+    {
+        "new",
+        "qualifying",
+        "qualified",
+        "quoting",
+        "negotiating",
+        "won",
+        "lost",
+        "dormant",
+    }
+)
+
+SALES_OPPORTUNITY_TERMINAL_STAGES = frozenset(
+    {
+        "won",
+        "lost",
+    }
+)
+
+
 @dataclass(frozen=True)
 class OperatorState:
     opportunity_id: str
@@ -79,8 +100,11 @@ class SalesOpportunity:
     title: str
     stage: str
     owner_key: str
+    version: int
     created_by: str
+    updated_by: str
     created_at: datetime
+    updated_at: datetime
 
 
 def _utcnow() -> datetime:
@@ -473,8 +497,11 @@ class PostgresCommercialOperationsRepository:
                       title,
                       stage,
                       owner_key,
+                      version,
                       created_by,
-                      created_at
+                      updated_by,
+                      created_at,
+                      updated_at
                     )
                     VALUES (
                       %(sales_opportunity_id)s,
@@ -485,7 +512,10 @@ class PostgresCommercialOperationsRepository:
                       %(title)s,
                       'new',
                       %(owner_key)s,
+                      1,
                       %(operator)s,
+                      %(operator)s,
+                      %(created_at)s,
                       %(created_at)s
                     )
                     ON CONFLICT (
@@ -585,6 +615,135 @@ class PostgresCommercialOperationsRepository:
                     operator=operator,
                     idempotency_key=idempotency_key,
                     result_id=sales_opportunity_id,
+                )
+
+                return result
+
+    def transition_sales_opportunity_stage(
+        self,
+        *,
+        sales_opportunity_id: str,
+        stage: str,
+        operator: str,
+        expected_version: int,
+    ) -> SalesOpportunity:
+        if stage not in SALES_OPPORTUNITY_STAGES:
+            raise ValueError(f"Unsupported sales opportunity stage: {stage!r}")
+
+        pg = require_psycopg()
+        now = _utcnow()
+
+        with postgres_write_connection(self._settings) as conn:
+            with conn.cursor(row_factory=pg.rows.dict_row) as cur:
+                # Serialize lifecycle mutation for this durable CRM row.
+                # The version check protects clients from silently writing
+                # over a state they did not read.
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM commercial.sales_opportunity
+                    WHERE sales_opportunity_id =
+                      %(sales_opportunity_id)s
+                    FOR UPDATE
+                    """,
+                    {
+                        "sales_opportunity_id": sales_opportunity_id,
+                    },
+                )
+
+                existing = cur.fetchone()
+
+                if existing is None:
+                    raise CommercialOperationNotFoundError(
+                        f"Sales opportunity not found: {sales_opportunity_id}"
+                    )
+
+                current_stage = str(existing["stage"])
+                current_version = int(existing["version"])
+
+                if expected_version != current_version:
+                    raise CommercialOperationConflictError(
+                        "Sales opportunity version conflict"
+                    )
+
+                if current_stage in SALES_OPPORTUNITY_TERMINAL_STAGES:
+                    raise CommercialOperationConflictError(
+                        "Sales opportunity is terminal and cannot change stage"
+                    )
+
+                if stage == current_stage:
+                    raise CommercialOperationConflictError(
+                        "Sales opportunity is already in the requested stage"
+                    )
+
+                cur.execute(
+                    """
+                    UPDATE commercial.sales_opportunity
+                    SET
+                      stage = %(stage)s,
+                      version = version + 1,
+                      updated_by = %(operator)s,
+                      updated_at = %(now)s
+                    WHERE sales_opportunity_id =
+                      %(sales_opportunity_id)s
+                      AND version = %(current_version)s
+                    RETURNING *
+                    """,
+                    {
+                        "sales_opportunity_id": sales_opportunity_id,
+                        "stage": stage,
+                        "operator": operator,
+                        "now": now,
+                        "current_version": current_version,
+                    },
+                )
+
+                row = cur.fetchone()
+
+                if row is None:
+                    raise CommercialOperationConflictError(
+                        "Sales opportunity concurrent update conflict"
+                    )
+
+                result = SalesOpportunity(**dict(row))
+
+                cur.execute(
+                    """
+                    INSERT INTO commercial.sales_opportunity_event (
+                      event_id,
+                      sales_opportunity_id,
+                      event_type,
+                      actor_key,
+                      payload,
+                      created_at
+                    )
+                    VALUES (
+                      %(event_id)s,
+                      %(sales_opportunity_id)s,
+                      'stage_changed',
+                      %(actor_key)s,
+                      %(payload)s,
+                      %(created_at)s
+                    )
+                    """,
+                    {
+                        "event_id": str(uuid.uuid4()),
+                        "sales_opportunity_id": sales_opportunity_id,
+                        "actor_key": operator,
+                        "payload": json.dumps(
+                            {
+                                "from": {
+                                    "stage": current_stage,
+                                    "version": current_version,
+                                },
+                                "to": {
+                                    "stage": result.stage,
+                                    "version": result.version,
+                                },
+                            }
+                        ),
+                        "created_at": now,
+                    },
                 )
 
                 return result

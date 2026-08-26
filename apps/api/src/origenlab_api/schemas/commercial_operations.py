@@ -32,6 +32,17 @@ TaskPriority = Literal[
     "urgent",
 ]
 
+SalesOpportunityStage = Literal[
+    "new",
+    "qualifying",
+    "qualified",
+    "quoting",
+    "negotiating",
+    "won",
+    "lost",
+    "dormant",
+]
+
 
 class CommercialCommandModel(BaseModel):
     """Command bodies fail closed on unknown/browser-invented fields."""
@@ -127,6 +138,11 @@ class SalesOpportunityPromoteCommand(CommercialCommandModel):
     )
 
 
+class SalesOpportunityStageCommand(CommercialCommandModel):
+    stage: SalesOpportunityStage
+    expected_version: int = Field(ge=1)
+
+
 class SalesOpportunityResponse(BaseModel):
     sales_opportunity_id: str
 
@@ -137,12 +153,17 @@ class SalesOpportunityResponse(BaseModel):
     primary_contact_id: str | None = None
 
     title: str
-    stage: Literal["new"]
+    stage: SalesOpportunityStage
 
     owner_key: str
 
+    version: int
+
     created_by: str
+    updated_by: str
+
     created_at: datetime
+    updated_at: datetime
 
 
 class SalesOpportunityReadMeta(BaseModel):

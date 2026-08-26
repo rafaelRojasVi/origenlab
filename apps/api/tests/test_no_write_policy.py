@@ -44,6 +44,10 @@ def test_app_exposes_only_sanctioned_mutating_routes() -> None:
             "post",
         ),
         (
+            "/operations/sales-opportunities/{sales_opportunity_id}/stage",
+            "post",
+        ),
+        (
             "/operations/activities",
             "post",
         ),

@@ -426,3 +426,62 @@ describe("CRM sales opportunity allowlist", () => {
     ).toBe(false);
   });
 });
+
+
+describe("CRM-2 sales opportunity stage POST allowlist", () => {
+  const salesOpportunityId = `sales_${"d".repeat(32)}`;
+
+  it("admits the exact lifecycle stage POST path", async () => {
+    const {
+      isAllowedCommercialOperationsPostPath,
+      isAllowedPostPath,
+    } = await import("./allowlist");
+
+    const path =
+      `/operations/sales-opportunities/${salesOpportunityId}/stage`;
+
+    expect(
+      isAllowedCommercialOperationsPostPath(path),
+    ).toBe(true);
+
+    expect(
+      isAllowedPostPath(path),
+    ).toBe(true);
+
+    expect(
+      isAllowedCommercialOperationsPostPath(
+        `${path}?request_id=test`,
+      ),
+    ).toBe(true);
+  });
+
+  it("does not make the lifecycle command path GET-readable", () => {
+    expect(
+      isAllowedUpstreamPath(
+        `/operations/sales-opportunities/${salesOpportunityId}/stage`,
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects malformed or broadened lifecycle stage paths", async () => {
+    const {
+      isAllowedCommercialOperationsPostPath,
+    } = await import("./allowlist");
+
+    const rejected = [
+      "/operations/sales-opportunities/sales_short/stage",
+      `/operations/sales-opportunities/sales_${"G".repeat(32)}/stage`,
+      `/operations/sales-opportunities/${salesOpportunityId}`,
+      `/operations/sales-opportunities/${salesOpportunityId}/stage/extra`,
+      `/operations/sales-opportunities/${salesOpportunityId}/delete`,
+      `/operations/sales-opportunities/${salesOpportunityId}/reopen`,
+    ];
+
+    for (const path of rejected) {
+      expect(
+        isAllowedCommercialOperationsPostPath(path),
+        path,
+      ).toBe(false);
+    }
+  });
+});
