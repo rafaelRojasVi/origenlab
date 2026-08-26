@@ -38,8 +38,11 @@ class FakeRepository:
             title=kwargs["title"],
             stage="new",
             owner_key=kwargs["owner_key"],
+            version=1,
             created_by=kwargs["operator"],
+            updated_by=kwargs["operator"],
             created_at=NOW,
+            updated_at=NOW,
         )
 
 

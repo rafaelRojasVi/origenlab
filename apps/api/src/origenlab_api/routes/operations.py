@@ -34,6 +34,7 @@ from origenlab_api.schemas.commercial_operations import (
     SalesOpportunityPromoteCommand,
     SalesOpportunityReadResponse,
     SalesOpportunityResponse,
+    SalesOpportunityStageCommand,
     TaskCreateCommand,
     TaskListResponse,
     TaskResponse,
@@ -181,6 +182,45 @@ def promote_sales_opportunity(
             owner_key=command.owner_key,
             operator=operator,
             idempotency_key=idempotency_key,
+        )
+    except (
+        CommercialOperationNotFoundError,
+        CommercialOperationConflictError,
+        ValueError,
+    ) as exc:
+        _raise_command_error(exc)
+
+    return SalesOpportunityResponse.model_validate(
+        result,
+        from_attributes=True,
+    )
+
+
+@router.post(
+    "/sales-opportunities/{sales_opportunity_id}/stage",
+    response_model=SalesOpportunityResponse,
+)
+def transition_sales_opportunity_stage(
+    command: SalesOpportunityStageCommand,
+    request: Request,
+    sales_opportunity_id: str = PathParam(
+        min_length=1,
+        max_length=128,
+    ),
+    settings: Settings = Depends(get_settings),
+    service: CommercialOperationsService = Depends(get_commercial_operations_service),
+) -> SalesOpportunityResponse:
+    operator = require_commercial_operator(
+        request,
+        settings,
+    )
+
+    try:
+        result = service.transition_sales_opportunity_stage(
+            sales_opportunity_id=sales_opportunity_id,
+            stage=command.stage,
+            operator=operator,
+            expected_version=command.expected_version,
         )
     except (
         CommercialOperationNotFoundError,

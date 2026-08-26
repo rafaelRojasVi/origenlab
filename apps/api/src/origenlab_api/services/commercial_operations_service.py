@@ -9,6 +9,7 @@ import re
 from uuid import uuid4
 
 from origenlab_api.repositories.postgres.commercial_operations import (
+    SALES_OPPORTUNITY_STAGES,
     Activity,
     OperatorState,
     PostgresCommercialOperationsRepository,
@@ -407,6 +408,41 @@ class CommercialOperationsService:
             operator=normalized_operator,
             idempotency_key=normalized_key,
             request_fingerprint=fingerprint,
+        )
+
+    def transition_sales_opportunity_stage(
+        self,
+        *,
+        sales_opportunity_id: str,
+        stage: str,
+        operator: str,
+        expected_version: int,
+    ) -> SalesOpportunity:
+        normalized_id = _required_text(
+            sales_opportunity_id,
+            field="sales_opportunity_id",
+            max_length=128,
+        )
+
+        normalized_stage = stage.strip().lower()
+
+        if normalized_stage not in SALES_OPPORTUNITY_STAGES:
+            raise ValueError(f"Unsupported sales opportunity stage: {stage!r}")
+
+        if expected_version < 1:
+            raise ValueError("expected_version must be >= 1")
+
+        normalized_operator = _required_text(
+            operator,
+            field="operator",
+            max_length=320,
+        ).lower()
+
+        return self._repository.transition_sales_opportunity_stage(
+            sales_opportunity_id=normalized_id,
+            stage=normalized_stage,
+            operator=normalized_operator,
+            expected_version=expected_version,
         )
 
     def complete_task(

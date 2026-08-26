@@ -1234,3 +1234,183 @@ describe("CRM sales opportunity proxy boundary", () => {
     expect(captured[0]?.body).toBe(body);
   });
 });
+
+
+describe("CRM-2 sales-opportunity lifecycle proxy", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const salesOpportunityId = `sales_${"d".repeat(32)}`;
+  const lifecyclePath =
+    `/api/operations/sales-opportunities/${salesOpportunityId}/stage`;
+
+  it("forwards the exact lifecycle POST body and trusted operator identity", async () => {
+    const captured: {
+      url: string;
+      method: string;
+      headers: Headers;
+      bodyText: string;
+    }[] = [];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (req: Request) => {
+        captured.push({
+          url: req.url,
+          method: req.method,
+          headers: req.headers,
+          bodyText: await req.clone().text(),
+        });
+
+        return new Response(
+          JSON.stringify({
+            sales_opportunity_id: salesOpportunityId,
+            source_kind: "pr3",
+            source_opportunity_id: `o_${"a".repeat(32)}`,
+            account_id: "account_1",
+            primary_contact_id: "contact_1",
+            title: "Centrífuga refrigerada",
+            stage: "qualifying",
+            owner_key: "tatiana@origenlab.cl",
+            version: 2,
+            created_by: "tatiana@origenlab.cl",
+            updated_by: "tatiana@origenlab.cl",
+            created_at: "2026-08-26T15:00:00Z",
+            updated_at: "2026-08-26T16:00:00Z",
+          }),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json",
+              "X-Request-ID": "crm2-stage-1",
+            },
+          },
+        );
+      }),
+    );
+
+    const body = JSON.stringify({
+      stage: "qualifying",
+      expected_version: 1,
+    });
+
+    const response = await handleRequest(
+      requestWithOrigin(
+        `https://dashboard.origenlab.cl${lifecyclePath}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Cf-Access-Authenticated-User-Email":
+              "Tatiana@OrigenLab.CL",
+            "X-OriginLab-Operator-Email":
+              "spoofed@attacker.example",
+          },
+          body,
+        },
+      ),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    expect(captured).toHaveLength(1);
+
+    expect(captured[0]?.url).toBe(
+      `https://api.origenlab.cl/operations/` +
+        `sales-opportunities/${salesOpportunityId}/stage`,
+    );
+
+    expect(captured[0]?.method).toBe("POST");
+    expect(captured[0]?.bodyText).toBe(body);
+
+    expect(
+      captured[0]?.headers.get(
+        "X-OriginLab-Operator-Email",
+      ),
+    ).toBe("tatiana@origenlab.cl");
+
+    expect(
+      captured[0]?.headers.get(
+        "X-OriginLab-Operator-Email",
+      ),
+    ).not.toBe("spoofed@attacker.example");
+
+    expect(
+      captured[0]?.headers.get(API_AUTH_HEADER),
+    ).toBe("server-only-token");
+
+    // CRM-2 lifecycle mutation uses expected_version rather than
+    // create-command idempotency.
+    expect(
+      captured[0]?.headers.get("Idempotency-Key"),
+    ).toBeNull();
+
+    expect(
+      response.headers.get("X-Request-ID"),
+    ).toBe("crm2-stage-1");
+  });
+
+  it("advertises POST for exact lifecycle preflight without fetching", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await handleRequest(
+      requestWithOrigin(
+        `https://dashboard.origenlab.cl${lifecyclePath}`,
+        {
+          method: "OPTIONS",
+        },
+      ),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(204);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    expect(
+      response.headers.get("Access-Control-Allow-Methods"),
+    ).toBe("GET, HEAD, OPTIONS, POST");
+
+    // Idempotency-Key remains an allowed browser header for the
+    // commercial-command family; the CRM-2 stage endpoint does not
+    // require or synthesize it.
+    expect(
+      response.headers.get("Access-Control-Allow-Headers"),
+    ).toContain("Idempotency-Key");
+  });
+
+  it("rejects broadened lifecycle POST paths before upstream", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rejected = [
+      `/api/operations/sales-opportunities/${salesOpportunityId}/stage/extra`,
+      `/api/operations/sales-opportunities/${salesOpportunityId}/delete`,
+      "/api/operations/sales-opportunities/sales_short/stage",
+    ];
+
+    for (const path of rejected) {
+      const response = await handleRequest(
+        requestWithOrigin(
+          `https://dashboard.origenlab.cl${path}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              stage: "qualifying",
+              expected_version: 1,
+            }),
+          },
+        ),
+        TEST_ENV,
+      );
+
+      expect(response.status, path).toBe(405);
+    }
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

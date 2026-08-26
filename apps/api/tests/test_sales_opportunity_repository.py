@@ -34,8 +34,11 @@ def _sales_row(
         "title": "Centrífuga refrigerada",
         "stage": "new",
         "owner_key": "tatiana@origenlab.cl",
+        "version": 1,
         "created_by": "tatiana@origenlab.cl",
+        "updated_by": "tatiana@origenlab.cl",
         "created_at": NOW,
+        "updated_at": NOW,
     }
 
 
