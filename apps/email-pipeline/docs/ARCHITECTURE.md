@@ -16,7 +16,7 @@ Last reviewed: 2026-04-15
 <a id="m-eparch-docs"></a>
 ## Canonical architecture docs
 
-- **Python package domains & import rules (Phase 0):** [`pipeline/PACKAGE_DOMAINS.md`](pipeline/PACKAGE_DOMAINS.md) — logical map of `src/origenlab_email_pipeline/`, `lead_*` vs `leads_*`, stable gate anchors, Tatiana/Streamlit boundaries.
+- **Python package domains & import rules (Phase 0):** [`pipeline/PACKAGE_DOMAINS.md`](pipeline/PACKAGE_DOMAINS.md) — logical map of `src/origenlab_email_pipeline/`, `lead_*` vs `leads_*`, stable gate anchors, Tatiana/read-operator boundaries.
 - Business mart: [`pipeline/BUSINESS_MART.md`](pipeline/BUSINESS_MART.md)
 - Commercial intelligence v1: [`pipeline/COMMERCIAL_INTEL_V1.md`](pipeline/COMMERCIAL_INTEL_V1.md)
 - Business signal filters: [`pipeline/BUSINESS_FILTERING.md`](pipeline/BUSINESS_FILTERING.md)
@@ -40,7 +40,7 @@ Sits **above** the SQLite database and **repo-local operational outputs**, not i
 
 Separate from the **publication** QA gate: **marketing / cold-outreach candidate** selection uses [`candidate_export_gate.py`](../src/origenlab_email_pipeline/candidate_export_gate.py). **`evaluate_export_eligibility()`** is invoked from:
 
-- [`next_marketing_queue.py`](../src/origenlab_email_pipeline/next_marketing_queue.py) → `compute_next_marketing_recipients()` (Streamlit **Cola outreach marketing** reads `lead_master` through this path).
+- [`next_marketing_queue.py`](../src/origenlab_email_pipeline/next_marketing_queue.py) → `compute_next_marketing_recipients()` (canonical lead-queue selection used by `export_next_marketing_recipients.py`; the former Streamlit Cola UI was removed).
 - [`export_marketing_from_contact_master.py`](../scripts/leads/advanced/export_marketing_from_contact_master.py) (optional pool from **`contact_master`**).
 
 So the **lead** and **`contact_master`** export paths share one policy module (`evaluate_export_eligibility`). Block reasons include invalid email, internal domains, suppression list, addresses already in **Sent**, **`outreach_contact_state`** in **`contacted`** / **`replied`** / **`snoozed`**, configured **supplier** domains, and **noise** heuristics on email or institution name. **`contact_master`** uses a **stricter** subset of email-noise rules (mail-graph senders) than **`lead_master`**; audit CSVs apply the same strictness per row source. Current sender/blocker context is the OrigenLab mailbox (`contacto@origenlab.cl`) for Sent-history and operator memory.
@@ -52,9 +52,9 @@ So the **lead** and **`contact_master`** export paths share one policy module (`
 
 The library root is still **mostly flat** (many modules at one level). **Exceptions:** commercial intelligence v1 under [`commercial/`](../src/origenlab_email_pipeline/commercial/); operational trust only under [`operational_trust/`](../src/origenlab_email_pipeline/operational_trust/) (package facade). **Domain ownership** and **allowed dependencies** are documented in [`pipeline/PACKAGE_DOMAINS.md`](pipeline/PACKAGE_DOMAINS.md). Highlights:
 
-- **`candidate_export_gate.py`** and **`marketing_export_context.py`** are **stable anchors** — shared by archive batch, lead queue, Streamlit Cola, and audits; avoid relocating without a migration plan.
+- **`candidate_export_gate.py`** and **`marketing_export_context.py`** are **stable anchors** — shared by archive batch, lead queue, and audits; avoid relocating without a migration plan.
 - **`lead_*` vs `leads_*`:** plural ≈ pipeline/DDL bundle; singular ≈ master-row identity, provenance, accounts (details in that doc).
-- **Tatiana** must not own export eligibility; **Streamlit** must not replace canonical CLI send selection (see import rules in the same doc).
+- **Tatiana** must not own export eligibility; dashboard/API/read surfaces must not replace canonical CLI send selection (see import rules in the same doc).
 
 <a id="m-eparch-constraints"></a>
 ## Design constraints

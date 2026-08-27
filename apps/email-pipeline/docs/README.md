@@ -12,7 +12,7 @@ Use this page as the navigation and truth hierarchy for [`apps/email-pipeline/do
 
 ## HTTP API (not in this package)
 
-Postgres mirror reporting and Dashboard operator routes are served by **[`apps/api`](../../api/README.md)** on port **8001** only. Email-pipeline provides sync (`sync_dashboard_postgres_mirror.py`) and Streamlit; it does **not** expose `origenlab_api` FastAPI (removed API-3 Phase 6).
+Postgres mirror reporting and Dashboard operator routes are served by **[`apps/api`](../../api/README.md)** on port **8001** only. Email-pipeline provides sync (`sync_dashboard_postgres_mirror.py`), CLIs, scripts, and SQLite jobs; it has no active product UI and does **not** expose `origenlab_api` FastAPI (removed API-3 Phase 6).
 
 ## Agent-first start
 

@@ -51,8 +51,8 @@ See monorepo [`docs/PROJECT_CONTEXT.md`](../../../../docs/PROJECT_CONTEXT.md), r
 - **Active UI:** `apps/dashboard` (React).  
 - **Active read API:** `apps/api` + Postgres mirror.  
 - **email-pipeline:** batch jobs, CLIs (`origenlab`), SQLite truth, reports — **not** a UI package.  
-- **Streamlit:** legacy/parked review surface on SQLite; retirement in phases below.  
-- **Prefer:** API/dashboard parity, `origenlab` CLIs, and CSV/JSON under `reports/out/` over new Streamlit pages.
+- **Streamlit:** removed 2026-06-04; historical audit/design references and backward-compatible aliases remain where explicitly documented.
+- **Prefer:** API/dashboard parity, `origenlab` CLIs, and CSV/JSON under `reports/out/`; do not add new Streamlit pages.
 
 ---
 

@@ -22,9 +22,9 @@ Override slack: `--mart-date-slack-days` on the build script.
 
 ## `opportunity_signals.created_at`
 
-Set to `now_iso()` at mart rebuild time when rows are inserted. It is a **rebuild stamp**, not “when the business event happened”. Streamlit labels this as **Mart (regenerado)** where shown.
+Set to `now_iso()` at mart rebuild time when rows are inserted. It is a **rebuild stamp**, not “when the business event happened”. The retired Streamlit UI labeled this as **Mart (regenerado)**; the underlying rebuild-stamp semantics remain unchanged.
 
 ## Related code
 
 - `src/origenlab_email_pipeline/freshness_dates.py` — policy implementation.
-- `apps/business_mart_app.py` — `load_email_date_health`, `_mart_plausible_max_ts`, vigencia copy.
+- Historical UI implementation: removed `apps/business_mart_app.py`; preserved concepts are documented in [`STREAMLIT_DATA_FRESHNESS.md`](STREAMLIT_DATA_FRESHNESS.md).

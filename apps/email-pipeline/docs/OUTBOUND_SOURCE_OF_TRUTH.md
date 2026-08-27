@@ -16,7 +16,7 @@ From `apps/email-pipeline/`:
 |------|-----------------|--------|
 | **Archive audit (default)** | `uv run python scripts/leads/build_archive_send_batch.py` | **Alternate lane** — audit-only by default: `archive_outreach_audit.csv` + `archive_outreach_audit_summary.json` (no shortlist/precheck). Not send approval. |
 | **Archive full batch** | Same script with `--build-batch` | Full batch: audit → shortlist → gate snapshot → commercial precheck → `archive_outreach_send_ready.csv` / `archive_outreach_review_required.csv`. Default ``company_intro`` ordering favors non–free-personal domains, org procurement signals, and (when ``emails`` has ``sender``/``recipients``) historical **LabDelivery / voice-domain** touches (`last_contacted_by_labdelivery`, `labdelivery_last_contact_at`); tune pool size with ``--shortlist-limit`` / ``--audit-limit``. |
-| **Lead (curated prospects)** | `uv run python scripts/leads/export_next_marketing_recipients.py` | Next N from `lead_master` using the **same** shared export gate as Streamlit’s queue. |
+| **Lead (curated prospects)** | `uv run python scripts/leads/export_next_marketing_recipients.py` | Next N from `lead_master` using the canonical shared export gate. |
 
 **Not a send lane:** ChileCompra / `external_leads_raw` / `lead_master` **ingest and scoring** are prospecting data prep, not a parallel mailbox-send path. Outbound still flows through one of the two lanes above plus human review.
 
@@ -25,7 +25,7 @@ From `apps/email-pipeline/`:
 - `scripts/leads/build_archive_send_batch.py` — canonical archive audit export by default (`--build-batch` for full CSVs; `--audit-only` is equivalent to default; wrapper removed Phase 5D).
 - `scripts/leads/advanced/export_marketing_from_contact_master.py` — optional `contact_master` pool export (**audit-only by default**; pass **`--export --out`** to write CSVs); **`contact_master` is not CRM truth**; not send approval; use for exploration, not as the default archive batch.
 
-**Streamlit** (`apps/business_mart_app.py`): **review, read/write sidecars** (suppression, outreach state, visibility), and surfaces that call the **same library functions** as the CLIs. It must **not** be treated as the sole source of “what we exported for this send” — the canonical commands above produce reproducible artifacts under `reports/out/...`.
+**Operator workflow:** Streamlit was removed on 2026-06-04. Review and sidecar mutations now use documented operator CLIs/helpers; the canonical commands above produce reproducible artifacts under `reports/out/...`. The active Dashboard/API are read surfaces, not the source of send selection.
 
 ### Shared runtime defaults (`outbound_core`)
 
@@ -63,7 +63,7 @@ Both lanes must use the same eligibility policy in [`candidate_export_gate.py`](
 |------|------|------|------|------|------|
 | Raw archive | `emails`, `attachments`, `attachment_extracts` | Preserve historical mailbox evidence | **Truth (evidence)** | ingest + extraction scripts | mart builders, reporting, intel |
 | Rebuildable mart | `contact_master`, `organization_master`, `document_master`, `opportunity_signals` | Deterministic projections from archive for analysis/queueing | **Heuristic / derived** | `build_business_mart.py` | outreach queues, lead matching, reports |
-| Leads | `external_leads_raw`, `lead_master`, lead match/reconcile tables | Curated external prospect pipeline | **Operational truth for prospecting** | leads ingest/normalize/score/match/reconcile | Streamlit queue, exports, QA |
+| Leads | `external_leads_raw`, `lead_master`, lead match/reconcile tables | Curated external prospect pipeline | **Operational truth for prospecting** | leads ingest/normalize/score/match/reconcile | lead queue/export CLIs, QA |
 | Commercial intel | `commercial_*` facts + candidate/review tables | Signal rollups + durable review workflow | **Mixed: heuristic + workflow state** | commercial build/review scripts | operator review queues/reports |
 | Operator sidecars | `contact_email_suppression`, `outreach_contact_state` | Durable outbound memory and hard blockers | **Workflow/safety state** | operator scripts + app actions | shared export gate and audits |
 | Policy in code | `candidate_export_gate.py` (not a table) | Enforce consistent blockers across lanes | **Policy logic** | maintained in code | both outbound lanes |
@@ -146,19 +146,22 @@ This is a bridge toward future product/API workflows while preserving current op
 - **Suppression (`contact_email_suppression`):** hard safety block (do not contact).
 - **Outreach state (`outreach_contact_state`):** lifecycle memory that may block based on state policy.
 
-## Streamlit/operator guidance (how tabs map to lanes)
+## Operator guidance (current surfaces)
 
-- **Qué hacer hoy:** operator command center; daily priorities and handoffs.
-- **Casos para revisar:** review-focused queueing and manual decision support (quality/safety check surface).
-- **Cola outreach marketing:** lead-based lane operational queue from `lead_master` through shared gate (same policy as `export_next_marketing_recipients.py`).
-- **Borrador comercial:** drafting support surface; assists composition, does not replace gate/human review.
+The Streamlit operator tabs were removed on 2026-06-04. Current responsibilities are deliberately split:
+
+- **Dashboard/API:** read-only operational visibility and current commercial/operator views.
+- **Archive lane:** `build_archive_send_batch.py` for warm-revival audit/batch construction.
+- **Lead lane:** `export_next_marketing_recipients.py` for curated `lead_master` selection through the shared gate.
+- **Review/state writes:** documented operator CLIs/helpers for `outreach_contact_state`, suppression, and other durable sidecars.
+- **Drafting support:** dedicated Tatiana/pilot tooling where documented; it does not replace the gate or human review.
 
 Operator rule of thumb:
 
 - Use archive-first candidates for warm revival and history-aware opportunities.
-- Use `lead_master` queue for curated net-new prospecting.
+- Use the `lead_master` export queue for curated net-new prospecting.
 - Never bypass shared gate + human review before sending.
-- **Canonical CLIs** (`build_archive_send_batch.py`, `export_next_marketing_recipients.py`) produce the **record of what was run** for a batch; **Streamlit** is for ongoing **review and read/write sidecars**, not a substitute for those artifacts.
+- **Canonical CLIs** (`build_archive_send_batch.py`, `export_next_marketing_recipients.py`) produce the **record of what was run** for a batch.
 - Use `reports/out/active/current/` as the only live send-review workspace; treat `reports/out/archive/` as historical evidence only.
 - When mailbox or DB freshness is uncertain, run **`check_outbound_readiness.py`** before generating a batch.
 - **After sending**, refresh **Sent** ingest for `contacto@origenlab.cl` and update **`outreach_contact_state`** / **suppression** so the next export does not re-surface the same contacts.

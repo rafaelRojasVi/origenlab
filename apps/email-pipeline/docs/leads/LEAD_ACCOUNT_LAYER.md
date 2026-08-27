@@ -41,7 +41,7 @@ uv run python scripts/leads/advanced/validate_lead_account_rollup.py
 
 Override DB path: `--db /path/to/emails.sqlite`
 
-## Sample SQL for Streamlit / dashboards
+## Sample SQL for dashboards / analysis
 
 **Top buyer accounts by tender count:**
 

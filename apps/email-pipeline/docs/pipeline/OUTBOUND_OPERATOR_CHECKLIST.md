@@ -46,25 +46,24 @@ Add **`--write-outbound-summary`** to emit `<stem>_outbound_summary.json` next t
 |------|----------|-----|
 | **Human review (send)** | The exported CSV (e.g. `next_marketing.csv`) | Operator working list from `lead_master` + gate. |
 | **Trust / debug** | `<stem>_outbound_summary.json` → **`outbound_run`** (+ optional `lead_queue` stats) | Same envelope as archive: lane, gmail, sqlite, Sent folders, counts, paths. |
-| **Secondary** | Streamlit **Cola** ranking UI | **Review / exploration** — not the record of what was exported in a given CLI run. |
 
 **Quick trust view:** `uv run python scripts/qa/print_outbound_run_summary.py --json <stem>_outbound_summary.json`
 
 ## Before drafting or sending
 
-- Open **`send_ready`** (archive) or the **lead CSV**, not only a Streamlit screen.
+- Open **`send_ready`** (archive) or the **lead CSV** as the canonical working artifact; do not rely on an obsolete UI surface.
 - Spot-check counts vs. `outbound_run` / summary.
 - Resolve or defer **`review_required`** rows explicitly — do not assume they are sendable.
 
 ## After sending
 
-- Update **blocker memory** so the next run does not re-offer the same contacts: Sent ingest for `contacto@origenlab.cl`, and/or [`mark_outreach_state.py`](../../scripts/leads/mark_outreach_state.py) (preview first, then **`--apply`** with operator, source, reason) / Streamlit sidecars for `outreach_contact_state`, plus suppression when appropriate.
+- Update **blocker memory** so the next run does not re-offer the same contacts: Sent ingest for `contacto@origenlab.cl`, and/or [`mark_outreach_state.py`](../../scripts/leads/mark_outreach_state.py) (preview first, then **`--apply`** with operator, source, reason), plus suppression when appropriate.
 - Keep the **CLI-produced CSV/JSON** (and readiness JSON if you ran it) as the record of what was selected for that batch.
 - **After post-send refresh** (follow [`POST_SEND_SAFE_LOOP.md`](POST_SEND_SAFE_LOOP.md)): review the Prospectos drift report under `prospectos_safety_drift_<date>/`. **Drift is not a send-safety failure** — raw `lead_research_prospect` can lag suppressions/contacted state; export gates and sidecars remain authoritative ([`SCHEMA_CLASSIFICATION_MODEL.md`](SCHEMA_CLASSIFICATION_MODEL.md)).
 
 ## What is **not** source of truth
 
-- **Streamlit** — read/write review, sidecars, visibility; it does **not** replace the canonical CLI outputs for “what we exported this run.”
+- **Dashboard/API read surfaces** — useful for operational visibility, but they do **not** replace the canonical CLI outputs for “what we exported this run.”
 - **Advanced / exploratory scripts** (e.g. `export_marketing_from_contact_master.py`) — not the default daily archive or lead path unless you intentionally choose them.
 - **Gate “eligible”** alone — not proof of fit to contact; still require human review and small batches.
 

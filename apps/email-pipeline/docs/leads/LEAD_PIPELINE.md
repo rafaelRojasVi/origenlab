@@ -193,7 +193,7 @@ Override DB: `--db /path/to/emails.sqlite` on any script.
 
 ## Cold outreach queue (shared export gate)
 
-Streamlit **Cola outreach marketing** ranks candidates from **`lead_master`** using [`compute_next_marketing_recipients()`](../../src/origenlab_email_pipeline/next_marketing_queue.py). That path shares **[`candidate_export_gate.py`](../../src/origenlab_email_pipeline/candidate_export_gate.py)** with [`export_marketing_from_contact_master.py`](../../scripts/leads/advanced/export_marketing_from_contact_master.py) (optional **`contact_master`** pool)—same suppression, Sent-folder, **`outreach_contact_state`** (**`contacted`** / **`replied`** / **`snoozed`**), supplier, and shared noise rules, with **stricter email-noise** on the **`contact_master`** export path. Eligibility is **not** buyer validation; keep outbound **human-reviewed** and **small-batch**. Audit helper and commands: [`RUNBOOK.md` § Cold outreach](../RUNBOOK.md#m-eprun-cold-export-gate).
+The canonical lead export queue ranks candidates from **`lead_master`** using [`compute_next_marketing_recipients()`](../../src/origenlab_email_pipeline/next_marketing_queue.py), exposed operationally through [`export_next_marketing_recipients.py`](../../scripts/leads/export_next_marketing_recipients.py). That path shares **[`candidate_export_gate.py`](../../src/origenlab_email_pipeline/candidate_export_gate.py)** with [`export_marketing_from_contact_master.py`](../../scripts/leads/advanced/export_marketing_from_contact_master.py) (optional **`contact_master`** pool)—same suppression, Sent-folder, **`outreach_contact_state`** (**`contacted`** / **`replied`** / **`snoozed`**), supplier, and shared noise rules, with **stricter email-noise** on the **`contact_master`** export path. Eligibility is **not** buyer validation; keep outbound **human-reviewed** and **small-batch**. Audit helper and commands: [`RUNBOOK.md` § Cold outreach](../RUNBOOK.md#m-eprun-cold-export-gate).
 
 Canonical outbound lane/source-of-truth policy (including archive-first lane and `contacto@origenlab.cl` sender-blocker context): [`../OUTBOUND_SOURCE_OF_TRUTH.md`](../OUTBOUND_SOURCE_OF_TRUTH.md).
 
@@ -288,7 +288,7 @@ Before treating the static **client pack** and **`reports/out/active/`** lead ex
 
 ## Planned for v2
 
-- Streamlit “Prospección” / “Leads externos” tab.
+- Dashboard/API prospecting view for external leads.
 - Mercado Público API (ticket-based).
 - Optional INN/CORFO HTTP fetch (respectful, compliant).
 - Dedupe/merge by org/domain.
