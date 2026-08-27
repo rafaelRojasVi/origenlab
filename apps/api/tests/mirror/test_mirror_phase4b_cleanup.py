@@ -12,7 +12,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 _POSTGRES_PLAN = (
     _REPO_ROOT / "apps/email-pipeline/docs/architecture/POSTGRES_API_DASHBOARD_PLAN.md"
 )
-_LEGACY_README = _REPO_ROOT / "apps/dashboard/src/legacy/README.md"
+_LEGACY_DASHBOARD_ROOT = _REPO_ROOT / "apps/dashboard/src/legacy"
 _LEGACY_ROOT = _REPO_ROOT / "apps/email-pipeline/src/origenlab_api"
 _GATE_SCRIPT = _REPO_ROOT / "apps/api/scripts/api3_phase6_grep_gate.sh"
 _OPERATOR_CLIENT = _REPO_ROOT / "apps/dashboard/src/api/operatorClient.ts"
@@ -30,11 +30,8 @@ def test_postgres_dashboard_plan_notes_legacy_removed() -> None:
     assert "Phase 6" in text or "removed" in text.lower() or "no FastAPI" in text
 
 
-def test_legacy_readme_points_at_mirror_on_8001() -> None:
-    text = _LEGACY_README.read_text(encoding="utf-8")
-    assert "8001" in text
-    assert "/mirror/" in text
-    assert "must not call `/mirror/*`" in text or "must not call /mirror" in text.lower()
+def test_parked_legacy_dashboard_removed() -> None:
+    assert not _LEGACY_DASHBOARD_ROOT.exists()
 
 
 def test_strict_phase6_grep_gate_passes() -> None:

@@ -30,9 +30,9 @@
 
 ---
 
-## Parked UI
+## Legacy dashboard UI
 
-`apps/dashboard/src/legacy/` remains **unmounted**; `client.ts` now targets **:8001** `/mirror/*` if ever revived.
+The previously parked pre-v1 dashboard under `apps/dashboard/src/legacy/` was subsequently removed during repository simplification. The active operator UI remains `apps/dashboard` backed by `apps/api`.
 
 ---
 

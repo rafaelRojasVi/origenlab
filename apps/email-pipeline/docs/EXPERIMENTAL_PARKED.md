@@ -25,7 +25,7 @@ The following are **optional**. None are needed for:
 | **Dashboard mirror** | `scripts/sync/sync_dashboard_postgres_mirror.py` | Loads Postgres mirror from SQLite; **not** send/export truth. |
 | **Dashboard stack wrapper** | `scripts/ops/refresh_operational_dashboard_stack.py` | Mart + mirror orchestration; **DASHBOARD_ONLY**; Gmail ingest off by default. |
 | **HTTP mirror API** | [`apps/api`](../../api/README.md) (`GET /mirror/*` on :8001) | Legacy `apps/email-pipeline/src/origenlab_api` on :8000 **removed** (API-3 Phase 6) — see [`apps/api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md`](../../api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md). |
-| **React dashboard** | [`apps/dashboard`](../../dashboard/README.md) | **Active operator UI** — polls `apps/api` (operator + mirror read paths). Legacy multi-tab client under `src/legacy/`. |
+| **React dashboard** | [`apps/dashboard`](../../dashboard/README.md) | **Active operator UI** — polls `apps/api` (operator + mirror read paths). Obsolete pre-v1 dashboard client removed. |
 | **Tatiana pilots** | `scripts/tatiana/*`, `src/origenlab_email_pipeline/tatiana_copilot/` | Drafting / eval; **lab boundary — not daily outbound** — see [`TATIANA_LAB_BOUNDARY.md`](TATIANA_LAB_BOUNDARY.md). |
 | **ML exploration** | `scripts/ml/*`, `scripts/reports/build_ml_report.py` | Embeddings / clustering experiments; lab report path. |
 | **Dataset / cohort tools** | `scripts/dataset/*` | Tatiana cohort exports and label review CLIs. |

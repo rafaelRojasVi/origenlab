@@ -15,7 +15,7 @@
 
 The browser does not open SQLite/Postgres, CSV files, or `apps/email-pipeline` modules.
 
-**Parked legacy:** the pre-v1 multi-tab panel lives under [`src/legacy/`](src/legacy/README.md) (mirror paths on :8001 if revived). It is **not mounted**, **not tested** in CI, and **must not** be imported from active code.
+**Legacy UI:** the obsolete pre-v1 multi-tab dashboard has been removed. Extend the active Dashboard/API contracts instead of restoring the old client.
 
 ## Run locally
 
@@ -68,7 +68,7 @@ Production builds **throw at runtime** if `VITE_ORIGENLAB_API_BASE_URL` is missi
 ```bash
 cd apps/dashboard
 npm run validate  # full local validation: tests + build
-npm test          # active src only (excludes src/legacy)
+npm test          # dashboard test suite
 npm run build
 ```
 

@@ -480,7 +480,6 @@ curl -sS 'http://127.0.0.1:8001/mirror/dashboard/summary?scope=archive' | jq '.s
 |-------|----------|
 | SQLite canonical `COUNT(*)` + `MAX(date_iso)` | Row count up and max date recent **after** ingest (see queries above) |
 | `GET /mirror/meta/dashboard-sync` `finished_at` (:8001) | **After** mart rebuild + sync (not hours/days stale unless intentional) |
-| React “Última sincronización del espejo Postgres” | Same order of magnitude as API `finished_at` (parked legacy UI only) |
 | `GET /mirror/dashboard/summary` default `scope` | `"canonical"` |
 | `contact_count` (canonical) | ≪ archive `contact_count` when archive is queried |
 | Classification KPIs | Non-zero after sync if canonical mail exists in SQLite window |

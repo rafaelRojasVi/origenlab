@@ -54,7 +54,6 @@ Historical API-3 migration notes (legacy `:8000` removal): [apps/api/docs/archiv
 
 - [apps/dashboard/README.md](../apps/dashboard/README.md) → **canonical** active read-only operator UI (:5173).
 - [apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md](../apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md) → **canonical** Today operator handoff.
-- [apps/dashboard/src/legacy/README.md](../apps/dashboard/src/legacy/README.md) → **historical** parked multi-tab UI (not active dashboard).
 
 ### Web docs
 

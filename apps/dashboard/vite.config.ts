@@ -23,6 +23,6 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
-    exclude: ["**/node_modules/**", "**/dist/**", "src/legacy/**"],
+    exclude: ["**/node_modules/**", "**/dist/**"],
   },
 });
