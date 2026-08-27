@@ -15,7 +15,7 @@
 |------|--------|
 | **Read-only UI** | **Today** page only in active code; no send, draft, archive, mark-contacted, or status writes. |
 | **API target** | `apps/api` on **:8001** — operator routes only, not `/mirror/*` on Today. |
-| **Legacy UI** | [`src/legacy/`](src/legacy/README.md) is parked — do not mount or import from active paths. |
+| **Legacy UI** | Pre-v1 dashboard UI removed; extend active Dashboard/API paths instead of restoring it. |
 | **No data mutation** | Browser must not open SQLite, Postgres, CSV paths, or email-pipeline mutation scripts. |
 
 ## Smokes

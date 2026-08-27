@@ -206,7 +206,7 @@ describe("dashboard read-only policy", () => {
     expect(hits).toEqual([]);
   });
 
-  it("active src does not import parked legacy modules", () => {
+  it("active src does not import legacy dashboard modules", () => {
     const hits: string[] = [];
     for (const [path, text] of entries) {
       if (/from\s+["'][^"']*\/legacy\//.test(text) || /import\s+["'][^"']*\/legacy\//.test(text)) {

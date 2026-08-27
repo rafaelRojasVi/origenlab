@@ -126,7 +126,7 @@ describe("Dashboard-2 safety (mounted Today)", () => {
     expect(appSource).not.toMatch(/\/legacy\//);
   });
 
-  it("active runtime does not import parked legacy folder", () => {
+  it("active runtime does not import legacy dashboard paths", () => {
     const activeSources = [appSource, dashboardAppSource, dashboardDataContextSource, operatorClientSource].join(
       "\n",
     );
@@ -230,14 +230,11 @@ describe("Dashboard-2 safety (mounted Today)", () => {
     expect(mailtoSource).not.toMatch(/subject=|body=/i);
   });
 
-  it("parked legacy tree exists but is outside vitest", () => {
-    const legacyReadme = import.meta.glob("../legacy/README.md", {
-      query: "?raw",
-      import: "default",
+  it("pre-v1 legacy dashboard tree has been removed", () => {
+    const legacyFiles = import.meta.glob("../legacy/**/*", {
       eager: true,
-    })["../legacy/README.md"] as string;
-    expect(legacyReadme).toContain("PARKED");
-    expect(legacyReadme).toContain("Not mounted");
+    });
+    expect(Object.keys(legacyFiles)).toEqual([]);
   });
 
   it("vite dev proxy exposes Dashboard v1 API routes only", () => {

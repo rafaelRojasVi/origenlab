@@ -9,7 +9,7 @@ Prove **Dashboard v1** and **Dashboard-2 contact drilldown** work against **`app
 | **`apps/api`** | **8001** | **Active** Dashboard API (`/health`, `/operator/status`, `/cases/warm`, `/opportunities/equipment`, `/contacts/{email}`) |
 | **Legacy email-pipeline API** | **8000** | **Removed** (API-3 Phase 6). Use **`apps/api`** `GET /mirror/*` on **8001**. |
 
-Dashboard v1 must not call `/mirror/*`. Parked `src/legacy/` client uses mirror paths on :8001 if revived.
+Dashboard v1 must not call `/mirror/*`. The obsolete pre-v1 dashboard client has been removed.
 
 ## Routes under test (GET only)
 

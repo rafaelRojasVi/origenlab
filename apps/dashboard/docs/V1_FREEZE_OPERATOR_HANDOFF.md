@@ -323,7 +323,7 @@ Dashboard: keep `VITE_ORIGENLAB_API_BASE_URL` unset; refresh [http://127.0.0.1:5
 
 ## Legacy email-pipeline API (removed — API-3 Phase 6)
 
-The deprecated FastAPI app on port **8000** (`apps/email-pipeline/src/origenlab_api`) was **deleted**. Postgres mirror reporting uses **`apps/api`** `GET /mirror/*` on **:8001** only. Parked UI under `src/legacy/` targets mirror paths if revived.
+The deprecated FastAPI app on port **8000** (`apps/email-pipeline/src/origenlab_api`) was **deleted**. Postgres mirror reporting uses **`apps/api`** `GET /mirror/*` on **:8001** only. The obsolete pre-v1 dashboard client has also been removed.
 
 **Dev env:** leave `VITE_ORIGENLAB_API_BASE_URL` unset in `npm run dev` so Vite proxies to **:8001**. A wrong API base URL causes **Failed to fetch** for v1 routes.
 
@@ -378,4 +378,3 @@ Fails early if URL is unset or unreachable. See **Mode 2** above for sync/migrat
 - [BACKEND_MATRIX_VALIDATION.md](./BACKEND_MATRIX_VALIDATION.md) — detailed matrix steps
 - [../README.md](../README.md) — dashboard dev env
 - [../../api/README.md](../../api/README.md) — `apps/api` package collision & endpoints
-- [../../dashboard/src/legacy/README.md](../src/legacy/README.md) — parked React tabs

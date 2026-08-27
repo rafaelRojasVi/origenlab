@@ -13,9 +13,6 @@ apps/dashboard/src/lib/devApiConfig.ts
 apps/dashboard/src/lib/devApiConfig.test.ts
 apps/dashboard/src/pages/TodayPage.test.tsx
 
-# Parked pre-v1 UI (historical comments; client uses /mirror on :8001)
-apps/dashboard/src/legacy/
-
 # Gate scripts (pattern literals)
 apps/api/scripts/api3_phase6_grep_gate.sh
 apps/api/scripts/api3_phase5a_deletion_audit.sh
