@@ -74,7 +74,7 @@ python3 scripts/tatiana/generate_tatiana_draft_package.py \
   --out reports/out/tatiana_draft_package_case001.json
 ```
 
-**OrigenLab mode** (same **`DRAFTING_PROFILE_ORIGENLAB`** + **`load_origenlab_drafting_context()`** as Streamlit **Borrador comercial** and **`run_tatiana_pilot_batch.py --origenlab`**):
+**OrigenLab mode** (same **`DRAFTING_PROFILE_ORIGENLAB`** + **`load_origenlab_drafting_context()`** used by the former Streamlit **Borrador comercial** surface and **`run_tatiana_pilot_batch.py --origenlab`**):
 
 ```bash
 uv run python scripts/tatiana/generate_tatiana_draft_package.py \

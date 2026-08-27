@@ -1,6 +1,6 @@
 # Google Workspace → SQLite (Gmail IMAP + OAuth2)
 
-**Operational default** for the live **contacto@** mailbox when it lives in **Google Workspace**: mail lands in **Gmail**, rows get **`gmail:...`** `source_file` values, and Streamlit **Actividad contacto Gmail** / **Casos para revisar** / Gmail **Borrador** flows read those rows (not Titan `imap:...` rows).
+**Operational default** for the live **contacto@** mailbox when it lives in **Google Workspace**: mail lands in **Gmail** and rows get **`gmail:...`** `source_file` values. Contacto review/drafting helpers use those Gmail-source rows rather than Titan `imap:...` rows; the former Streamlit surfaces were removed on 2026-06-04.
 
 Use this path when **contacto@origenlab.cl** (or the shared mailbox you ingest) is a **real Workspace user**. Mail is in **Gmail**.
 

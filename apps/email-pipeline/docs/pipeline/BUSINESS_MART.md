@@ -89,7 +89,7 @@ Fields include:
 No es “resumen inteligente”; es **limpieza conservadora**.
 
 ## 6) Contact master (`contact_master`)
-One row per **external contact email** aggregated from the **archive / mail graph**. Use for exploration, rollups, and joins—not as a guaranteed **buyer** or **procurement truth** layer. Cold-outreach exports that draw from this pool still pass [`candidate_export_gate.py`](../../src/origenlab_email_pipeline/candidate_export_gate.py) (shared with the lead-based Streamlit queue), which trims obvious leaks but **does not** certify commercial intent.
+One row per **external contact email** aggregated from the **archive / mail graph**. Use for exploration, rollups, and joins—not as a guaranteed **buyer** or **procurement truth** layer. Cold-outreach exports that draw from this pool still pass [`candidate_export_gate.py`](../../src/origenlab_email_pipeline/candidate_export_gate.py) (shared with the canonical lead queue), which trims obvious leaks but **does not** certify commercial intent.
 
 Direction:
 - outbound email: sender domain is internal → external recipients are counted
@@ -126,10 +126,11 @@ Each row includes:
 ## Rebuildability
 Run with `--rebuild` to truncate and regenerate the mart tables deterministically from the archive + extracts.
 
-## Streamlit UI (client-facing)
-App: `apps/business_mart_app.py`
+## Removed Streamlit UI (historical reference)
 
-Estructura:
+Former app: `apps/business_mart_app.py` (**removed 2026-06-04**). The list below records the retired UI for historical/domain context; the active operator UI is [`apps/dashboard`](../../../dashboard/README.md) backed by [`apps/api`](../../../api/README.md).
+
+Former structure:
 1. **Resumen** (KPIs + gráficos compactos)
 2. **Salud de datos** (conteos, rango `date_iso`, desglose `source_file`, heurística mart vs crudo, `pipeline_kv` / `pipeline_run` si existen) — ver [`STREAMLIT_DATA_FRESHNESS.md`](STREAMLIT_DATA_FRESHNESS.md)
 3. **Actividad contacto Gmail** — correos recientes con `source_file` tipo `gmail:contacto@origenlab.cl/%`, resúmenes 7/30/90 días, documentos y señales unidos por `email_id` si el mart existe; no sustituye un visor de bandeja completo.

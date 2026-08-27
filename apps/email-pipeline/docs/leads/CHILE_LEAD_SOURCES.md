@@ -2,6 +2,8 @@
 
 **Part I** (below): market map, public sources, keyword packs, and outreach framing. **Part II** (end of doc): implementation analysis — how this scope fits the OrigenLab repo and effort levels. *Former standalone doc:* `CHILE_LEAD_SOURCES_IMPLEMENTATION_ANALYSIS.md` now redirects to Part II.
 
+> **Runtime-status note (2026-08):** Part I is market/prospecting research. Part II preserves implementation analysis written against the former Streamlit UI and therefore contains historical UI/path assumptions. Streamlit was removed on 2026-06-04; the active operator UI is [`apps/dashboard`](../../../dashboard/README.md) backed by [`apps/api`](../../../api/README.md). Treat Streamlit references below as historical design context, not current implementation guidance.
+
 ## Executive summary
 
 Chile has unusually strong **public and quasi-public signal** for laboratory/industrial equipment demand because (a) most public institutions buy through **public procurement**, (b) many laboratories must appear in **official registries** (accreditation, environmental authorization, sectoral authorizations), and (c) research activity is trackable through national **funding and center** frameworks. The result is that you can build a high-quality prospect list without buying data—then selectively add paid enrichment later.
