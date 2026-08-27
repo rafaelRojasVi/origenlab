@@ -330,6 +330,186 @@ def test_operator_state_stale_version_fails_before_update(
     )
 
 
+def test_create_activity_with_sales_opportunity_resolves_pr3_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, cursor = _repository(
+        monkeypatch,
+        [
+            {"idempotency_key": "activity-sales-1"},
+            {
+                "source_kind": "pr3",
+                "source_opportunity_id": "opp_1",
+            },
+            {
+                **_activity_row(),
+                "sales_opportunity_id": "sales_1",
+            },
+        ],
+    )
+
+    result = repo.create_activity(
+        activity_id="act_1",
+        sales_opportunity_id="sales_1",
+        opportunity_id=None,
+        account_id=None,
+        contact_id=None,
+        activity_type="call",
+        occurred_at=NOW,
+        summary="Called customer",
+        detail=None,
+        operator="tatiana@origenlab.cl",
+        idempotency_key="activity-sales-1",
+        request_fingerprint="c" * 64,
+    )
+
+    assert result.sales_opportunity_id == "sales_1"
+    assert result.opportunity_id == "opp_1"
+
+    assert len(cursor.executed) == 4
+
+    resolver_sql, resolver_params = cursor.executed[1]
+    insert_sql, insert_params = cursor.executed[2]
+
+    assert "FROM commercial.sales_opportunity" in resolver_sql
+    assert resolver_params["sales_opportunity_id"] == "sales_1"
+
+    assert insert_sql.startswith("INSERT INTO commercial.activity")
+    assert "sales_opportunity_id" in insert_sql
+    assert insert_params["sales_opportunity_id"] == "sales_1"
+    assert insert_params["opportunity_id"] == "opp_1"
+
+
+def test_create_task_with_sales_opportunity_resolves_pr3_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, cursor = _repository(
+        monkeypatch,
+        [
+            {"idempotency_key": "task-sales-1"},
+            {
+                "source_kind": "pr3",
+                "source_opportunity_id": "opp_1",
+            },
+            {
+                **_task_row(),
+                "sales_opportunity_id": "sales_1",
+            },
+        ],
+    )
+
+    result = repo.create_task(
+        task_id="task_1",
+        sales_opportunity_id="sales_1",
+        opportunity_id=None,
+        account_id=None,
+        contact_id=None,
+        title="Follow up",
+        priority="high",
+        due_at=NOW,
+        owner_key="tatiana@origenlab.cl",
+        operator="tatiana@origenlab.cl",
+        idempotency_key="task-sales-1",
+        request_fingerprint="d" * 64,
+    )
+
+    assert result.sales_opportunity_id == "sales_1"
+    assert result.opportunity_id == "opp_1"
+
+    assert len(cursor.executed) == 4
+
+    resolver_sql, resolver_params = cursor.executed[1]
+    insert_sql, insert_params = cursor.executed[2]
+
+    assert "FROM commercial.sales_opportunity" in resolver_sql
+    assert resolver_params["sales_opportunity_id"] == "sales_1"
+
+    assert insert_sql.startswith("INSERT INTO commercial.task")
+    assert "sales_opportunity_id" in insert_sql
+    assert insert_params["sales_opportunity_id"] == "sales_1"
+    assert insert_params["opportunity_id"] == "opp_1"
+
+
+def test_sales_opportunity_work_rejects_mismatched_pr3_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, cursor = _repository(
+        monkeypatch,
+        [
+            {"idempotency_key": "activity-mismatch-1"},
+            {
+                "source_kind": "pr3",
+                "source_opportunity_id": "opp_1",
+            },
+        ],
+    )
+
+    with pytest.raises(
+        CommercialOperationConflictError,
+        match="different commercial pursuits",
+    ):
+        repo.create_activity(
+            activity_id="act_1",
+            sales_opportunity_id="sales_1",
+            opportunity_id="opp_other",
+            account_id=None,
+            contact_id=None,
+            activity_type="call",
+            occurred_at=NOW,
+            summary="Called customer",
+            detail=None,
+            operator="tatiana@origenlab.cl",
+            idempotency_key="activity-mismatch-1",
+            request_fingerprint="e" * 64,
+        )
+
+    assert len(cursor.executed) == 2
+    assert "FROM commercial.sales_opportunity" in cursor.executed[1][0]
+
+    assert not any(
+        sql.startswith("INSERT INTO commercial.activity")
+        for sql, _ in cursor.executed
+    )
+
+
+def test_sales_opportunity_work_rejects_unknown_sales_opportunity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, cursor = _repository(
+        monkeypatch,
+        [
+            {"idempotency_key": "task-missing-sales-1"},
+            None,
+        ],
+    )
+
+    with pytest.raises(
+        CommercialOperationNotFoundError,
+        match="Sales opportunity not found: sales_missing",
+    ):
+        repo.create_task(
+            task_id="task_1",
+            sales_opportunity_id="sales_missing",
+            opportunity_id=None,
+            account_id=None,
+            contact_id=None,
+            title="Follow up",
+            priority="normal",
+            due_at=None,
+            owner_key=None,
+            operator="tatiana@origenlab.cl",
+            idempotency_key="task-missing-sales-1",
+            request_fingerprint="f" * 64,
+        )
+
+    assert len(cursor.executed) == 2
+
+    assert not any(
+        sql.startswith("INSERT INTO commercial.task")
+        for sql, _ in cursor.executed
+    )
+
+
 def test_create_activity_writes_only_durable_activity_table(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

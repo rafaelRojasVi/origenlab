@@ -53,6 +53,37 @@ describe("allowlist", () => {
     expect(isAllowedUpstreamPath(`${path}?limit=20`)).toBe(true);
   });
 
+  it("allows CRM sales-opportunity nested read routes only", () => {
+    const salesId = "sales_0123456789abcdef0123456789abcdef";
+
+    expect(
+      isAllowedUpstreamPath(
+        `/operations/sales-opportunities/${salesId}/activities`,
+      ),
+    ).toBe(true);
+    expect(
+      isAllowedUpstreamPath(
+        `/operations/sales-opportunities/${salesId}/tasks`,
+      ),
+    ).toBe(true);
+
+    expect(
+      isAllowedUpstreamPath(
+        `/operations/sales-opportunities/${salesId}/activities/extra`,
+      ),
+    ).toBe(false);
+    expect(
+      isAllowedUpstreamPath(
+        `/operations/sales-opportunities/${salesId}/tasks/extra`,
+      ),
+    ).toBe(false);
+    expect(
+      isAllowedUpstreamPath(
+        "/operations/sales-opportunities/sales_not-valid/activities",
+      ),
+    ).toBe(false);
+  });
+
   it("keeps representative write and non-dashboard paths blocked", () => {
     expect(isAllowedUpstreamPath("/emails")).toBe(false);
     expect(isAllowedUpstreamPath("/operator/send")).toBe(false);

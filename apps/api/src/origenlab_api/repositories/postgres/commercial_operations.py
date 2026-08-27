@@ -69,6 +69,7 @@ class Activity:
     detail: str | None
     created_by: str
     created_at: datetime
+    sales_opportunity_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -88,6 +89,7 @@ class Task:
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    sales_opportunity_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -109,6 +111,63 @@ class SalesOpportunity:
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _resolve_sales_opportunity_source(
+    cur: object,
+    *,
+    sales_opportunity_id: str | None,
+    opportunity_id: str | None,
+) -> str | None:
+    """Resolve a durable CRM anchor to its retained PR3 provenance.
+
+    Legacy opportunity_id-only writes remain supported. For CRM-anchored work,
+    the durable sales opportunity is authoritative; callers are never trusted
+    to invent or mismatch its PR3 source ID.
+    """
+
+    if sales_opportunity_id is None:
+        return opportunity_id
+
+    cur.execute(
+        """
+        SELECT
+          source_kind,
+          source_opportunity_id
+        FROM commercial.sales_opportunity
+        WHERE sales_opportunity_id = %(sales_opportunity_id)s
+        LIMIT 1
+        """,
+        {
+            "sales_opportunity_id": sales_opportunity_id,
+        },
+    )
+
+    row = cur.fetchone()
+
+    if row is None:
+        raise CommercialOperationNotFoundError(
+            f"Sales opportunity not found: {sales_opportunity_id}"
+        )
+
+    if row["source_kind"] != "pr3":
+        raise CommercialOperationConflictError(
+            "Sales opportunity cannot currently anchor activity/task work "
+            "without PR3 provenance"
+        )
+
+    source_opportunity_id = str(row["source_opportunity_id"])
+
+    if (
+        opportunity_id is not None
+        and opportunity_id != source_opportunity_id
+    ):
+        raise CommercialOperationConflictError(
+            "sales_opportunity_id and opportunity_id refer to different "
+            "commercial pursuits"
+        )
+
+    return source_opportunity_id
 
 
 def _claim_idempotency(
@@ -753,7 +812,8 @@ class PostgresCommercialOperationsRepository:
         *,
         activity_id: str,
         opportunity_id: str | None,
-        account_id: str | None,
+        sales_opportunity_id: str | None = None,
+        account_id: str | None = None,
         contact_id: str | None,
         activity_type: str,
         occurred_at: datetime,
@@ -797,11 +857,18 @@ class PostgresCommercialOperationsRepository:
 
                     return Activity(**dict(replay))
 
+                resolved_opportunity_id = _resolve_sales_opportunity_source(
+                    cur,
+                    sales_opportunity_id=sales_opportunity_id,
+                    opportunity_id=opportunity_id,
+                )
+
                 cur.execute(
                     """
                     INSERT INTO commercial.activity (
                       activity_id,
                       opportunity_id,
+                      sales_opportunity_id,
                       account_id,
                       contact_id,
                       activity_type,
@@ -813,6 +880,7 @@ class PostgresCommercialOperationsRepository:
                     SELECT
                       %(activity_id)s,
                       %(opportunity_id)s,
+                      %(sales_opportunity_id)s,
                       %(account_id)s,
                       %(contact_id)s,
                       %(activity_type)s,
@@ -821,7 +889,8 @@ class PostgresCommercialOperationsRepository:
                       %(detail)s,
                       %(operator)s
                     WHERE
-                      CAST(%(opportunity_id)s AS text) IS NULL
+                      CAST(%(sales_opportunity_id)s AS text) IS NOT NULL
+                      OR CAST(%(opportunity_id)s AS text) IS NULL
                       OR EXISTS (
                         SELECT 1
                         FROM api.v_commercial_opportunity
@@ -831,7 +900,8 @@ class PostgresCommercialOperationsRepository:
                     """,
                     {
                         "activity_id": activity_id,
-                        "opportunity_id": opportunity_id,
+                        "opportunity_id": resolved_opportunity_id,
+                        "sales_opportunity_id": sales_opportunity_id,
                         "account_id": account_id,
                         "contact_id": contact_id,
                         "activity_type": activity_type,
@@ -866,7 +936,8 @@ class PostgresCommercialOperationsRepository:
         *,
         task_id: str,
         opportunity_id: str | None,
-        account_id: str | None,
+        sales_opportunity_id: str | None = None,
+        account_id: str | None = None,
         contact_id: str | None,
         title: str,
         priority: str,
@@ -910,11 +981,18 @@ class PostgresCommercialOperationsRepository:
 
                     return Task(**dict(replay))
 
+                resolved_opportunity_id = _resolve_sales_opportunity_source(
+                    cur,
+                    sales_opportunity_id=sales_opportunity_id,
+                    opportunity_id=opportunity_id,
+                )
+
                 cur.execute(
                     """
                     INSERT INTO commercial.task (
                       task_id,
                       opportunity_id,
+                      sales_opportunity_id,
                       account_id,
                       contact_id,
                       title,
@@ -929,6 +1007,7 @@ class PostgresCommercialOperationsRepository:
                     SELECT
                       %(task_id)s,
                       %(opportunity_id)s,
+                      %(sales_opportunity_id)s,
                       %(account_id)s,
                       %(contact_id)s,
                       %(title)s,
@@ -940,7 +1019,8 @@ class PostgresCommercialOperationsRepository:
                       %(operator)s,
                       %(operator)s
                     WHERE
-                      CAST(%(opportunity_id)s AS text) IS NULL
+                      CAST(%(sales_opportunity_id)s AS text) IS NOT NULL
+                      OR CAST(%(opportunity_id)s AS text) IS NULL
                       OR EXISTS (
                         SELECT 1
                         FROM api.v_commercial_opportunity
@@ -950,7 +1030,8 @@ class PostgresCommercialOperationsRepository:
                     """,
                     {
                         "task_id": task_id,
-                        "opportunity_id": opportunity_id,
+                        "opportunity_id": resolved_opportunity_id,
+                        "sales_opportunity_id": sales_opportunity_id,
                         "account_id": account_id,
                         "contact_id": contact_id,
                         "title": title,

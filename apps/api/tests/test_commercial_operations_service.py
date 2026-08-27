@@ -9,6 +9,7 @@ import pytest
 
 from origenlab_api.services.commercial_operations_service import (
     CommercialOperationsService,
+    _fingerprint,
 )
 from origenlab_api.settings import Settings
 
@@ -101,6 +102,49 @@ def test_activity_rejects_naive_datetime() -> None:
             idempotency_key="activity-naive-1",
             contact_id="contact_1",
         )
+
+
+def test_activity_accepts_sales_opportunity_as_crm_context() -> None:
+    service, repo = _service()
+
+    service.create_activity(
+        activity_type="call",
+        occurred_at=datetime(
+            2026,
+            8,
+            24,
+            14,
+            30,
+            tzinfo=timezone.utc,
+        ),
+        summary="Called customer",
+        operator="tatiana@origenlab.cl",
+        idempotency_key="activity-sales-context-1",
+        sales_opportunity_id=" sales_1 ",
+    )
+
+    name, kwargs = repo.calls[-1]
+
+    assert name == "create_activity"
+    assert kwargs["sales_opportunity_id"] == "sales_1"
+    assert kwargs["opportunity_id"] is None
+
+
+def test_task_accepts_sales_opportunity_as_crm_context() -> None:
+    service, repo = _service()
+
+    service.create_task(
+        title="Follow up",
+        operator="tatiana@origenlab.cl",
+        idempotency_key="task-sales-context-1",
+        sales_opportunity_id=" sales_1 ",
+    )
+
+    name, kwargs = repo.calls[-1]
+
+    assert name == "create_task"
+    assert kwargs["sales_opportunity_id"] == "sales_1"
+    assert kwargs["opportunity_id"] is None
 
 
 def test_activity_generates_id_and_normalizes_values() -> None:
@@ -287,3 +331,62 @@ def test_create_rejects_unsafe_idempotency_key() -> None:
         )
 
     assert repo.calls == []
+
+
+def test_legacy_opportunity_only_fingerprints_remain_stable() -> None:
+    service, repo = _service()
+
+    occurred_at = datetime(
+        2026,
+        8,
+        24,
+        14,
+        30,
+        tzinfo=timezone.utc,
+    )
+
+    service.create_activity(
+        activity_type="call",
+        occurred_at=occurred_at,
+        summary="Called customer",
+        operator="tatiana@origenlab.cl",
+        idempotency_key="legacy-activity-fingerprint",
+        opportunity_id="opp_legacy",
+    )
+
+    _, activity_kwargs = repo.calls[-1]
+
+    assert activity_kwargs["request_fingerprint"] == _fingerprint(
+        "activity_create",
+        {
+            "opportunity_id": "opp_legacy",
+            "account_id": None,
+            "contact_id": None,
+            "activity_type": "call",
+            "occurred_at": occurred_at.isoformat(),
+            "summary": "Called customer",
+            "detail": None,
+        },
+    )
+
+    service.create_task(
+        title="Follow up",
+        operator="tatiana@origenlab.cl",
+        idempotency_key="legacy-task-fingerprint",
+        opportunity_id="opp_legacy",
+    )
+
+    _, task_kwargs = repo.calls[-1]
+
+    assert task_kwargs["request_fingerprint"] == _fingerprint(
+        "task_create",
+        {
+            "opportunity_id": "opp_legacy",
+            "account_id": None,
+            "contact_id": None,
+            "title": "Follow up",
+            "priority": "normal",
+            "due_at": None,
+            "owner_key": None,
+        },
+    )
