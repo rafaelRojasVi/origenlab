@@ -65,6 +65,7 @@ class FakeService:
         return Activity(
             activity_id="act_1",
             opportunity_id=kwargs["opportunity_id"],
+            sales_opportunity_id=kwargs["sales_opportunity_id"],
             account_id=kwargs["account_id"],
             contact_id=kwargs["contact_id"],
             activity_type=kwargs["activity_type"],
@@ -82,6 +83,7 @@ class FakeService:
         return Task(
             task_id="task_1",
             opportunity_id=kwargs["opportunity_id"],
+            sales_opportunity_id=kwargs["sales_opportunity_id"],
             account_id=kwargs["account_id"],
             contact_id=kwargs["contact_id"],
             title=kwargs["title"],
@@ -300,6 +302,50 @@ def test_create_task_returns_201() -> None:
     assert response.json()["status"] == "open"
 
 
+def test_create_activity_accepts_sales_opportunity_context() -> None:
+    service = FakeService()
+
+    response = _client(service).post(
+        "/operations/activities",
+        headers=CREATE_HEADER,
+        json={
+            "sales_opportunity_id": "sales_1",
+            "activity_type": "call",
+            "occurred_at": NOW.isoformat(),
+            "summary": "Called customer",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["sales_opportunity_id"] == "sales_1"
+
+    method, kwargs = service.calls[-1]
+    assert method == "create_activity"
+    assert kwargs["sales_opportunity_id"] == "sales_1"
+    assert kwargs["opportunity_id"] is None
+
+
+def test_create_task_accepts_sales_opportunity_context() -> None:
+    service = FakeService()
+
+    response = _client(service).post(
+        "/operations/tasks",
+        headers=CREATE_HEADER,
+        json={
+            "sales_opportunity_id": "sales_1",
+            "title": "Follow up",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["sales_opportunity_id"] == "sales_1"
+
+    method, kwargs = service.calls[-1]
+    assert method == "create_task"
+    assert kwargs["sales_opportunity_id"] == "sales_1"
+    assert kwargs["opportunity_id"] is None
+
+
 def test_browser_cannot_supply_created_by() -> None:
     service = FakeService()
 
@@ -401,6 +447,24 @@ class FakeReadService:
         del opportunity_id, limit
         return []
 
+    def list_sales_opportunity_activities(
+        self,
+        sales_opportunity_id: str,
+        *,
+        limit: int,
+    ) -> list[Activity]:
+        del sales_opportunity_id, limit
+        return []
+
+    def list_sales_opportunity_tasks(
+        self,
+        sales_opportunity_id: str,
+        *,
+        limit: int,
+    ) -> list[Task]:
+        del sales_opportunity_id, limit
+        return []
+
     def get_work_queue(
         self,
         *,
@@ -423,6 +487,24 @@ def _read_client() -> TestClient:
         app,
         raise_server_exceptions=False,
     )
+
+
+def test_sales_opportunity_activity_read_returns_items() -> None:
+    response = _read_client().get(
+        "/operations/sales-opportunities/sales_1/activities"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"items": []}
+
+
+def test_sales_opportunity_task_read_returns_items() -> None:
+    response = _read_client().get(
+        "/operations/sales-opportunities/sales_1/tasks"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"items": []}
 
 
 def test_operator_state_read_returns_null_when_unreviewed() -> None:

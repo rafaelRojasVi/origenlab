@@ -87,6 +87,28 @@ class CommercialOperationsReadService:
             limit=limit,
         )
 
+    def list_sales_opportunity_activities(
+        self,
+        sales_opportunity_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[Activity]:
+        return self._repository.list_activities_for_sales_opportunity(
+            _sales_opportunity_id(sales_opportunity_id),
+            limit=limit,
+        )
+
+    def list_sales_opportunity_tasks(
+        self,
+        sales_opportunity_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[Task]:
+        return self._repository.list_tasks_for_sales_opportunity(
+            _sales_opportunity_id(sales_opportunity_id),
+            limit=limit,
+        )
+
     def get_work_queue(
         self,
         *,

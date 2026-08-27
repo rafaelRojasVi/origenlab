@@ -102,6 +102,33 @@ class PostgresCommercialOperationsReadRepository:
 
                 return [Activity(**dict(row)) for row in cur.fetchall()]
 
+    def list_activities_for_sales_opportunity(
+        self,
+        sales_opportunity_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[Activity]:
+        pg = require_psycopg()
+
+        with postgres_connection(self._settings) as conn:
+            with conn.cursor(row_factory=pg.rows.dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM api.v_commercial_activity
+                    WHERE sales_opportunity_id =
+                      %(sales_opportunity_id)s
+                    ORDER BY occurred_at DESC, created_at DESC
+                    LIMIT %(limit)s
+                    """,
+                    {
+                        "sales_opportunity_id": sales_opportunity_id,
+                        "limit": limit,
+                    },
+                )
+
+                return [Activity(**dict(row)) for row in cur.fetchall()]
+
     def list_tasks_for_opportunity(
         self,
         opportunity_id: str,
@@ -128,6 +155,39 @@ class PostgresCommercialOperationsReadRepository:
                     """,
                     {
                         "opportunity_id": opportunity_id,
+                        "limit": limit,
+                    },
+                )
+
+                return [Task(**dict(row)) for row in cur.fetchall()]
+
+    def list_tasks_for_sales_opportunity(
+        self,
+        sales_opportunity_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[Task]:
+        pg = require_psycopg()
+
+        with postgres_connection(self._settings) as conn:
+            with conn.cursor(row_factory=pg.rows.dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM api.v_commercial_task
+                    WHERE sales_opportunity_id =
+                      %(sales_opportunity_id)s
+                    ORDER BY
+                      CASE status
+                        WHEN 'open' THEN 0
+                        ELSE 1
+                      END,
+                      due_at NULLS LAST,
+                      created_at DESC
+                    LIMIT %(limit)s
+                    """,
+                    {
+                        "sales_opportunity_id": sales_opportunity_id,
                         "limit": limit,
                     },
                 )
@@ -180,6 +240,7 @@ class PostgresCommercialOperationsReadRepository:
                         task=Task(
                             task_id=row["task_id"],
                             opportunity_id=row["opportunity_id"],
+                            sales_opportunity_id=row["sales_opportunity_id"],
                             account_id=row["account_id"],
                             contact_id=row["contact_id"],
                             title=row["title"],

@@ -64,6 +64,10 @@ class OpportunityStateCommand(CommercialCommandModel):
 
 
 class ActivityCreateCommand(CommercialCommandModel):
+    sales_opportunity_id: str | None = Field(
+        default=None,
+        max_length=128,
+    )
     opportunity_id: str | None = Field(
         default=None,
         max_length=128,
@@ -91,6 +95,10 @@ class ActivityCreateCommand(CommercialCommandModel):
 
 
 class TaskCreateCommand(CommercialCommandModel):
+    sales_opportunity_id: str | None = Field(
+        default=None,
+        max_length=128,
+    )
     opportunity_id: str | None = Field(
         default=None,
         max_length=128,
@@ -195,6 +203,7 @@ class ActivityResponse(BaseModel):
     activity_id: str
 
     opportunity_id: str | None = None
+    sales_opportunity_id: str | None = None
     account_id: str | None = None
     contact_id: str | None = None
 
@@ -212,6 +221,7 @@ class TaskResponse(BaseModel):
     task_id: str
 
     opportunity_id: str | None = None
+    sales_opportunity_id: str | None = None
     account_id: str | None = None
     contact_id: str | None = None
 

@@ -268,6 +268,54 @@ def get_sales_opportunity(
 
 
 @router.get(
+    "/sales-opportunities/{sales_opportunity_id}/activities",
+    response_model=ActivityListResponse,
+)
+def list_sales_opportunity_activities(
+    sales_opportunity_id: str = PathParam(
+        min_length=1,
+        max_length=128,
+    ),
+    service: CommercialOperationsReadService = Depends(
+        get_commercial_operations_read_service
+    ),
+) -> ActivityListResponse:
+    try:
+        items = service.list_sales_opportunity_activities(
+            sales_opportunity_id,
+            limit=100,
+        )
+    except ValueError as exc:
+        _raise_command_error(exc)
+
+    return ActivityListResponse(items=items)
+
+
+@router.get(
+    "/sales-opportunities/{sales_opportunity_id}/tasks",
+    response_model=TaskListResponse,
+)
+def list_sales_opportunity_tasks(
+    sales_opportunity_id: str = PathParam(
+        min_length=1,
+        max_length=128,
+    ),
+    service: CommercialOperationsReadService = Depends(
+        get_commercial_operations_read_service
+    ),
+) -> TaskListResponse:
+    try:
+        items = service.list_sales_opportunity_tasks(
+            sales_opportunity_id,
+            limit=100,
+        )
+    except ValueError as exc:
+        _raise_command_error(exc)
+
+    return TaskListResponse(items=items)
+
+
+@router.get(
     "/opportunities/{opportunity_id}/state",
     response_model=OpportunityStateReadResponse,
 )
@@ -405,6 +453,7 @@ def create_activity(
 
     try:
         return service.create_activity(
+            sales_opportunity_id=command.sales_opportunity_id,
             opportunity_id=command.opportunity_id,
             account_id=command.account_id,
             contact_id=command.contact_id,
@@ -447,6 +496,7 @@ def create_task(
 
     try:
         return service.create_task(
+            sales_opportunity_id=command.sales_opportunity_id,
             opportunity_id=command.opportunity_id,
             account_id=command.account_id,
             contact_id=command.contact_id,

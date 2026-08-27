@@ -210,6 +210,84 @@ def test_task_list_reads_view_with_open_tasks_first(
     assert "WHEN 'open' THEN 0" in sql
 
 
+def test_activity_list_can_read_by_sales_opportunity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cursor = FakeCursor(
+        many=[
+            {
+                "activity_id": "act_1",
+                "opportunity_id": "opp_1",
+                "sales_opportunity_id": "sales_1",
+                "account_id": None,
+                "contact_id": None,
+                "activity_type": "call",
+                "occurred_at": NOW,
+                "summary": "Called",
+                "detail": None,
+                "created_by": "tatiana@origenlab.cl",
+                "created_at": NOW,
+            }
+        ]
+    )
+
+    result = _repo(
+        monkeypatch,
+        cursor,
+    ).list_activities_for_sales_opportunity("sales_1")
+
+    assert len(result) == 1
+    assert result[0].sales_opportunity_id == "sales_1"
+
+    sql, params = cursor.executed[0]
+
+    assert "FROM api.v_commercial_activity" in sql
+    assert "WHERE sales_opportunity_id =" in sql
+    assert params["sales_opportunity_id"] == "sales_1"
+
+
+def test_task_list_can_read_by_sales_opportunity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cursor = FakeCursor(
+        many=[
+            {
+                "task_id": "task_1",
+                "opportunity_id": "opp_1",
+                "sales_opportunity_id": "sales_1",
+                "account_id": None,
+                "contact_id": None,
+                "title": "Follow up",
+                "status": "open",
+                "priority": "normal",
+                "due_at": NOW,
+                "owner_key": None,
+                "version": 1,
+                "created_by": "tatiana@origenlab.cl",
+                "updated_by": "tatiana@origenlab.cl",
+                "completed_at": None,
+                "created_at": NOW,
+                "updated_at": NOW,
+            }
+        ]
+    )
+
+    result = _repo(
+        monkeypatch,
+        cursor,
+    ).list_tasks_for_sales_opportunity("sales_1")
+
+    assert len(result) == 1
+    assert result[0].sales_opportunity_id == "sales_1"
+
+    sql, params = cursor.executed[0]
+
+    assert "FROM api.v_commercial_task" in sql
+    assert "WHERE sales_opportunity_id =" in sql
+    assert params["sales_opportunity_id"] == "sales_1"
+    assert "WHEN 'open' THEN 0" in sql
+
+
 def test_read_repository_contains_no_mutation_sql() -> None:
     source = open(
         read_repo.__file__,
@@ -230,6 +308,7 @@ def test_work_queue_reads_open_tasks_and_review_surfaces(
     task_row = {
         "task_id": "task_" + ("b" * 32),
         "opportunity_id": "o_" + ("a" * 32),
+        "sales_opportunity_id": "sales_1",
         "account_id": "a_1",
         "contact_id": "c_1",
         "title": "Llamar cliente",
@@ -289,6 +368,7 @@ def test_work_queue_reads_open_tasks_and_review_surfaces(
 
     assert len(tasks) == 1
     assert tasks[0].task.status == "open"
+    assert tasks[0].task.sales_opportunity_id == "sales_1"
     assert tasks[0].account_display_domain == "example.cl"
 
     assert len(review) == 1

@@ -87,10 +87,16 @@ def _optional_text(
 
 def _require_context(
     *,
+    sales_opportunity_id: str | None,
     opportunity_id: str | None,
     account_id: str | None,
     contact_id: str | None,
-) -> tuple[str | None, str | None, str | None]:
+) -> tuple[str | None, str | None, str | None, str | None]:
+    sales_opportunity = _optional_text(
+        sales_opportunity_id,
+        field="sales_opportunity_id",
+        max_length=128,
+    )
     opportunity = _optional_text(
         opportunity_id,
         field="opportunity_id",
@@ -107,10 +113,15 @@ def _require_context(
         max_length=128,
     )
 
-    if opportunity is None and account is None and contact is None:
+    if (
+        sales_opportunity is None
+        and opportunity is None
+        and account is None
+        and contact is None
+    ):
         raise ValueError("At least one CRM context reference is required")
 
-    return opportunity, account, contact
+    return sales_opportunity, opportunity, account, contact
 
 
 def _idempotency_key(value: str) -> str:
@@ -216,6 +227,7 @@ class CommercialOperationsService:
         summary: str,
         operator: str,
         idempotency_key: str,
+        sales_opportunity_id: str | None = None,
         opportunity_id: str | None = None,
         account_id: str | None = None,
         contact_id: str | None = None,
@@ -226,7 +238,8 @@ class CommercialOperationsService:
         if activity not in ACTIVITY_TYPES:
             raise ValueError(f"Unsupported activity_type: {activity_type!r}")
 
-        opportunity, account, contact = _require_context(
+        sales_opportunity, opportunity, account, contact = _require_context(
+            sales_opportunity_id=sales_opportunity_id,
             opportunity_id=opportunity_id,
             account_id=account_id,
             contact_id=contact_id,
@@ -256,6 +269,11 @@ class CommercialOperationsService:
         fingerprint = _fingerprint(
             "activity_create",
             {
+                **(
+                    {"sales_opportunity_id": sales_opportunity}
+                    if sales_opportunity is not None
+                    else {}
+                ),
                 "opportunity_id": opportunity,
                 "account_id": account,
                 "contact_id": contact,
@@ -269,6 +287,7 @@ class CommercialOperationsService:
         return self._repository.create_activity(
             activity_id=f"act_{uuid4().hex}",
             opportunity_id=opportunity,
+            sales_opportunity_id=sales_opportunity,
             account_id=account,
             contact_id=contact,
             activity_type=activity,
@@ -289,6 +308,7 @@ class CommercialOperationsService:
         priority: str = "normal",
         due_at: datetime | None = None,
         owner_key: str | None = None,
+        sales_opportunity_id: str | None = None,
         opportunity_id: str | None = None,
         account_id: str | None = None,
         contact_id: str | None = None,
@@ -298,7 +318,8 @@ class CommercialOperationsService:
         if normalized_priority not in TASK_PRIORITIES:
             raise ValueError(f"Unsupported priority: {priority!r}")
 
-        opportunity, account, contact = _require_context(
+        sales_opportunity, opportunity, account, contact = _require_context(
+            sales_opportunity_id=sales_opportunity_id,
             opportunity_id=opportunity_id,
             account_id=account_id,
             contact_id=contact_id,
@@ -332,6 +353,11 @@ class CommercialOperationsService:
         fingerprint = _fingerprint(
             "task_create",
             {
+                **(
+                    {"sales_opportunity_id": sales_opportunity}
+                    if sales_opportunity is not None
+                    else {}
+                ),
                 "opportunity_id": opportunity,
                 "account_id": account,
                 "contact_id": contact,
@@ -349,6 +375,7 @@ class CommercialOperationsService:
         return self._repository.create_task(
             task_id=f"task_{uuid4().hex}",
             opportunity_id=opportunity,
+            sales_opportunity_id=sales_opportunity,
             account_id=account,
             contact_id=contact,
             title=normalized_title,
