@@ -145,3 +145,38 @@ def test_missing_sales_opportunity_is_none(
     )
 
     assert repo.get_sales_opportunity("missing") is None
+
+
+def test_sales_opportunity_surfaces_crm4a_durable_links(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # CRM-4A appends organization_id / primary_crm_contact_id to the view.
+    repo, _ = _repo(
+        monkeypatch,
+        {
+            "sales_opportunity_id": "sales_1",
+            "source_kind": "pr3",
+            "source_opportunity_id": "o_1",
+            "account_id": "a_1",
+            "primary_contact_id": "c_1",
+            "title": "Centrífuga",
+            "stage": "new",
+            "owner_key": "tatiana@origenlab.cl",
+            "version": 1,
+            "created_by": "tatiana@origenlab.cl",
+            "updated_by": "tatiana@origenlab.cl",
+            "created_at": NOW,
+            "updated_at": NOW,
+            "organization_id": "org_" + "a" * 32,
+            "primary_crm_contact_id": "contact_1",
+        },
+    )
+
+    result = repo.get_sales_opportunity("sales_1")
+
+    assert result is not None
+    assert result.organization_id == "org_" + "a" * 32
+    assert result.primary_crm_contact_id == "contact_1"
+    # PR2 identity provenance snapshots are untouched.
+    assert result.account_id == "a_1"
+    assert result.primary_contact_id == "c_1"

@@ -173,6 +173,11 @@ class SalesOpportunityResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    # CRM-4A durable canonical CRM links. Optional and appended; promotion
+    # semantics and request schemas are unchanged.
+    organization_id: str | None = None
+    primary_crm_contact_id: str | None = None
+
 
 class SalesOpportunityReadMeta(BaseModel):
     data_source: Literal["postgres"] = "postgres"
