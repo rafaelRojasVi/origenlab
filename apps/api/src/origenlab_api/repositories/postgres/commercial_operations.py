@@ -107,6 +107,11 @@ class SalesOpportunity:
     updated_by: str
     created_at: datetime
     updated_at: datetime
+    # CRM-4A durable canonical CRM links. Appended and optional so existing
+    # rows (and pre-CRM-4A callers) are unaffected; account_id /
+    # primary_contact_id remain rebuildable PR2 identity provenance.
+    organization_id: str | None = None
+    primary_crm_contact_id: str | None = None
 
 
 def _utcnow() -> datetime:

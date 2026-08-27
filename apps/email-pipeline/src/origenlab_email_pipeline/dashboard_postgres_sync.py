@@ -59,7 +59,7 @@ except ImportError as exc:  # pragma: no cover
 else:
     _PSYCOPG_IMPORT_ERROR = None
 
-EXPECTED_ALEMBIC_HEAD = "20260826_0037"
+EXPECTED_ALEMBIC_HEAD = "20260827_0038"
 DASHBOARD_SYNC_KV_KEY = "dashboard_postgres_mirror_last_sync"
 
 OUTBOUND_SCRIPT = "scripts/migrate/sqlite_outbound_sidecars_to_postgres.py"
