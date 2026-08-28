@@ -33,6 +33,50 @@ _REJECT_PHRASES = (
     "we reject the quote",
 )
 
+# Negation and conditional markers that guard (disqualify) a phrase match
+_NEGATION_MARKERS = (
+    "no", "aún no", "todavía no", "nunca", "jamás", "sin",
+    "not", "don't", "won't", "haven't",
+)
+_CONDITIONAL_MARKERS = (
+    "si", "en caso de", "si llegáramos a",
+    "if we", "in case",
+)
+
+
+def _is_text_guarded(preceding_text: str) -> bool:
+    """Check if preceding text contains negation or conditional markers."""
+    all_markers = _NEGATION_MARKERS + _CONDITIONAL_MARKERS
+    for marker in all_markers:
+        if marker in preceding_text:
+            return True
+    return False
+
+
+def _phrase_has_unguarded_occurrence(haystack: str, phrase: str) -> bool:
+    """Check if phrase appears in haystack without negation/conditional guard.
+
+    Returns True if there's at least one occurrence that's not preceded by
+    a negation or conditional marker within ~30 characters / ~4 words.
+    """
+    start = 0
+    while True:
+        pos = haystack.find(phrase, start)
+        if pos < 0:
+            break  # No more occurrences
+
+        # Check the text before this occurrence (up to 30 chars back)
+        preceding_start = max(0, pos - 30)
+        preceding_text = haystack[preceding_start:pos].strip()
+
+        # If this occurrence is not guarded, return True (phrase is evidence)
+        if not _is_text_guarded(preceding_text):
+            return True
+
+        start = pos + 1
+
+    return False  # All occurrences (if any) are guarded
+
 
 def classify_outcome(
     *, response_state: str, reply_bodies: list[str], revision_relationship: str,
@@ -43,8 +87,13 @@ def classify_outcome(
         return "superseded_or_requoted"
 
     haystack = " ".join(b.lower() for b in reply_bodies if b)
-    if any(p in haystack for p in _REJECT_PHRASES):
+
+    # Check reject phrases first
+    if any(_phrase_has_unguarded_occurrence(haystack, p) for p in _REJECT_PHRASES):
         return "rejected_explicit"
-    if any(p in haystack for p in _ACCEPT_PHRASES):
+
+    # Check accept phrases
+    if any(_phrase_has_unguarded_occurrence(haystack, p) for p in _ACCEPT_PHRASES):
         return "accepted_explicit"
+
     return "unknown"

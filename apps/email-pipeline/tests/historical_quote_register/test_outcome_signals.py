@@ -56,3 +56,49 @@ def test_possible_revision_needs_review_propagates():
 def test_no_reply_with_first_revision_is_unknown_not_rejected():
     outcome = classify_outcome(response_state="no_reply", reply_bodies=[], revision_relationship="first_revision")
     assert outcome == "unknown"
+
+
+# Regression tests for negation guard (Spanish negation before phrase)
+def test_negation_guard_no_emitan_la_factura():
+    """Spanish negation 'no' before accept phrase must not trigger accepted_explicit.
+
+    This was a critical bug: "No emitan la factura" contains the literal substring
+    "emitan la factura" but is explicitly deferring/rejecting invoice issuance.
+    """
+    outcome = classify_outcome(
+        response_state="replied",
+        reply_bodies=["No emitan la factura todavía, esperamos confirmar el presupuesto con gerencia."],
+        revision_relationship="first_revision",
+    )
+    assert outcome == "unknown", "Negation 'no' before accept phrase must not trigger accepted_explicit"
+
+
+def test_negation_guard_no_procedan_con_la_compra():
+    """Spanish negation 'no' before accept phrase in middle of sentence."""
+    outcome = classify_outcome(
+        response_state="replied",
+        reply_bodies=["Por ahora no procedan con la compra hasta nuevo aviso."],
+        revision_relationship="first_revision",
+    )
+    assert outcome == "unknown", "Negation 'no' before accept phrase must not trigger accepted_explicit"
+
+
+def test_negation_guard_no_aceptamos_la_propuesta():
+    """Spanish negation 'no' before reject phrase changes meaning from reject to non-decision."""
+    outcome = classify_outcome(
+        response_state="replied",
+        reply_bodies=["No aceptamos la propuesta en estos términos, necesitamos un descuento."],
+        revision_relationship="first_revision",
+    )
+    assert outcome == "unknown", "Negation before reject phrase is a negotiation, not acceptance"
+
+
+# Regression tests for conditional guard (conditional markers)
+def test_conditional_guard_si_decidimos_no_continuar():
+    """Conditional phrasing 'si' (if) before reject phrase is hypothetical, not a decision."""
+    outcome = classify_outcome(
+        response_state="replied",
+        reply_bodies=["Si decidimos no continuar, les avisaremos, pero por ahora seguimos revisando."],
+        revision_relationship="first_revision",
+    )
+    assert outcome == "unknown", "Conditional 'si' before reject phrase is hypothetical, not a decision"
