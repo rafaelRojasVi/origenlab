@@ -49,6 +49,28 @@ def test_copy_into_bundle_preserves_original_bytes_exactly(tmp_path):
     assert path.read_bytes() == payload
 
 
+def test_copy_into_bundle_disambiguates_distinct_content_at_same_path(tmp_path):
+    payload_a = b"%PDF-1.4 quote A content"
+    payload_b = b"%PDF-1.4 quote B totally different content"
+    sha_a = hashlib.sha256(payload_a).hexdigest()
+    sha_b = hashlib.sha256(payload_b).hexdigest()
+    assert sha_a != sha_b
+
+    kwargs = dict(
+        run_dir=tmp_path, original_filename="cotizacion.pdf",
+        year="2026", client_slug="universidad-austral", quote_number_or_key="COT-2026-014",
+        revision_index=1,
+    )
+    path_a = copy_into_bundle(payload=payload_a, sha256=sha_a, **kwargs)
+    path_b = copy_into_bundle(payload=payload_b, sha256=sha_b, **kwargs)
+
+    assert path_a != path_b
+    assert path_a.exists()
+    assert path_b.exists()
+    assert path_a.read_bytes() == payload_a
+    assert path_b.read_bytes() == payload_b
+
+
 def test_write_drive_upload_manifest(tmp_path):
     row = BundleManifestRow(
         local_export_path="documents/2026/cliente/COT-2026-014/revision-1/cot.pdf",

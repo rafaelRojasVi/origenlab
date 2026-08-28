@@ -44,6 +44,13 @@ def copy_into_bundle(
         if existing.is_file() and existing.stat().st_size == len(payload) and existing.read_bytes() == payload:
             return existing
 
+    if target_path.exists():
+        # A different physical file already occupies this path (the dedup
+        # scan above already ruled out a byte-identical match), so this is
+        # genuinely distinct content — disambiguate instead of silently
+        # clobbering the existing document.
+        target_path = target_path.with_name(f"{target_path.stem}-{sha256[:8]}{target_path.suffix}")
+
     fd, tmp_name = tempfile.mkstemp(dir=target_dir, prefix=".tmp-", suffix=ext)
     with os.fdopen(fd, "wb") as f:
         f.write(payload)
