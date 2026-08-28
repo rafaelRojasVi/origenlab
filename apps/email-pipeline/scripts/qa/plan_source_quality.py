@@ -118,7 +118,6 @@ def classify_vertical(rel_posix: str) -> str:
         p.startswith("src/origenlab_email_pipeline/operator_cli/")
         or base == "cli.py"
         or base == "operator_status_report.py"
-        or base == "operator_copy_es.py"
     ):
         return "operator_cli"
 
@@ -177,9 +176,6 @@ def classify_vertical(rel_posix: str) -> str:
         base == "inspect_sqlite.py" and p.startswith("scripts/tools/")
     ):
         return "tooling"
-
-    if "read/today_workspace" in p or base == "today_workspace.py":
-        return "read_module"
 
     if "streamlit" in p:
         return "removed_ui_module"

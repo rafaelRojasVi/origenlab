@@ -54,7 +54,6 @@ def test_phase8c_operator_cli() -> None:
     assert _classify("src/origenlab_email_pipeline/cli.py") == "operator_cli"
     assert _classify("src/origenlab_email_pipeline/operator_cli/parser.py") == "operator_cli"
     assert _classify("src/origenlab_email_pipeline/operator_status_report.py") == "operator_cli"
-    assert _classify("src/origenlab_email_pipeline/operator_copy_es.py") == "operator_cli"
 
 
 def test_phase8c_postgres_mirror() -> None:
@@ -91,10 +90,6 @@ def test_phase8c_research_lab() -> None:
     assert _classify("scripts/research/run_deep_research_prospecting.py") == "research_lab"
     assert _classify("src/origenlab_email_pipeline/core/research_automation.py") == "research_lab"
     assert _classify("scripts/qa/verify_research_candidate_evidence.py") == "research_lab"
-
-
-def test_phase8c_read_modules() -> None:
-    assert _classify("src/origenlab_email_pipeline/read/today_workspace.py") == "read_module"
 
 
 def test_phase8c_draft_review_helpers_is_tatiana_lab() -> None:
