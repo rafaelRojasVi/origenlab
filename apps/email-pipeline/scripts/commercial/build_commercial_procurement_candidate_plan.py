@@ -3,7 +3,6 @@
 # SAFETY: read-only plan generation only. Opens SQLite mode=ro + query_only.
 # Rejects --apply/--persist/--network/--ticket/--gmail/--postgres/--outreach/
 # --schedule. No Ticket/OCDS acquisition. No relevance classification.
-# See docs/audits/COMMERCIAL_PROCUREMENT_CANDIDATE_PLANNER_PR5C_COALESCENCE.md
 # -----------------------------------------------------------------------------
 """Build a deterministic PR5C coalescence / lifecycle candidate plan (read-only)."""
 

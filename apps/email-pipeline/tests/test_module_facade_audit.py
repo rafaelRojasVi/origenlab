@@ -42,15 +42,24 @@ def test_audit_module_facades_json_exit_zero() -> None:
     assert isinstance(report["pairs"], list)
 
 
-def test_business_mart_classified_root_impl_with_core_facade() -> None:
+def test_business_mart_facade_removed_from_tree() -> None:
+    # The core facade layer was removed in the 2026-08 commercial platform
+    # reset; business_mart.py must exist only as the root implementation.
     proc = _run_audit("--json")
     report = json.loads(proc.stdout)
-    match = next(p for p in report["pairs"] if p["basename"] == "business_mart.py")
-    assert match["classification"] == "root_implementation_with_subpackage_facade"
-    paths = {e["path"]: e for e in match["paths"]}
-    assert paths["business_mart.py"]["is_root"] is True
-    assert paths["business_mart.py"]["is_facade"] is False
-    assert paths["core/mart/business_mart.py"]["is_facade"] is True
+    match = next(
+        (p for p in report["pairs"] if p["basename"] == "business_mart.py"),
+        None,
+    )
+    assert match is None, "core/mart/business_mart.py facade resurrected"
+    assert not (REPO / "src" / "origenlab_email_pipeline" / "core" / "mart" / "business_mart.py").exists()
+
+
+def test_db_pair_classified_reviewed_distinct_domains() -> None:
+    proc = _run_audit("--json")
+    report = json.loads(proc.stdout)
+    match = next(p for p in report["pairs"] if p["basename"] == "db.py")
+    assert match["classification"] == "same_basename_distinct_domains"
 
 
 def test_schemas_classified_same_basename_distinct_domains() -> None:

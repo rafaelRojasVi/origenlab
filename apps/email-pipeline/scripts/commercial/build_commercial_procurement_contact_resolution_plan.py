@@ -3,7 +3,6 @@
 # SAFETY: read-only contact-resolution plan only. Opens SQLite mode=ro + query_only.
 # Rejects --apply/--persist/--network/--ticket/--gmail/--postgres/--outreach/
 # --send/--schedule/--label. No LLM, embeddings, Gmail, Postgres, or outreach.
-# See docs/audits/COMMERCIAL_PROCUREMENT_CONTACT_RESOLUTION_PR5E.md
 # -----------------------------------------------------------------------------
 """Build a deterministic PR5E procurement contact-resolution plan (read-only)."""
 

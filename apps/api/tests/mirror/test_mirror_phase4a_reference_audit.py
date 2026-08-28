@@ -11,14 +11,14 @@ _PHASE6 = _REPO_ROOT / "apps/api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md"
 _RUNBOOK = _REPO_ROOT / "apps/email-pipeline/docs/RUNBOOK.md"
 _LEGACY_ROOT = _REPO_ROOT / "apps/email-pipeline/src/origenlab_api"
 _OPERATOR_CLIENT = _REPO_ROOT / "apps/dashboard/src/api/operatorClient.ts"
-_TODAY_PAGE = _REPO_ROOT / "apps/dashboard/src/pages/TodayPage.tsx"
+_TODAY_PAGE = _REPO_ROOT / "apps/dashboard/src/pages/DashboardApp.tsx"
 _VITE_CONFIG = _REPO_ROOT / "apps/dashboard/vite.config.ts"
 _DASHBOARD_PKG = _REPO_ROOT / "apps/dashboard/package.json"
 
 _ACTIVE_8000_ALLOWLIST = (
     _REPO_ROOT / "apps/dashboard/src/lib/devApiConfig.ts",
     _REPO_ROOT / "apps/dashboard/src/lib/devApiConfig.test.ts",
-    _REPO_ROOT / "apps/dashboard/src/pages/TodayPage.test.tsx",
+    _REPO_ROOT / "apps/dashboard/src/pages/DashboardApp.today.test.tsx",
     _REPO_ROOT / "apps/dashboard/src/components/operator/DevLegacyPortWarning.tsx",
 )
 

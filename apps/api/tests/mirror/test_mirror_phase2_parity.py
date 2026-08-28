@@ -18,7 +18,7 @@ _LEGACY_API_ROOT = _REPO_ROOT / "apps" / "email-pipeline" / "src" / "origenlab_a
 _DASHBOARD_ACTIVE_SOURCES = (
     _REPO_ROOT / "apps" / "dashboard" / "src" / "api" / "operatorClient.ts",
     _REPO_ROOT / "apps" / "dashboard" / "src" / "api" / "mirrorCommercialClient.ts",
-    _REPO_ROOT / "apps" / "dashboard" / "src" / "pages" / "TodayPage.tsx",
+    _REPO_ROOT / "apps" / "dashboard" / "src" / "pages" / "DashboardApp.tsx",
     _REPO_ROOT / "apps" / "dashboard" / "src" / "App.tsx",
     _REPO_ROOT / "apps" / "dashboard" / "vite.config.ts",
 )

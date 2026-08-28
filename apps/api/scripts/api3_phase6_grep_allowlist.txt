@@ -4,6 +4,7 @@
 # Active completion + stabilization docs (may cite removed paths historically)
 apps/api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md
 apps/api/docs/API-3_PHASE6B_STABILIZATION.md
+docs/architecture/CURRENT_SYSTEM_TRUTH.md
 
 # API-3 migration archive (historical :8000 narrative only)
 apps/api/docs/archive/api3/
@@ -11,7 +12,7 @@ apps/api/docs/archive/api3/
 # Dashboard dev guardrails (warn when .env points at wrong port)
 apps/dashboard/src/lib/devApiConfig.ts
 apps/dashboard/src/lib/devApiConfig.test.ts
-apps/dashboard/src/pages/TodayPage.test.tsx
+apps/dashboard/src/pages/DashboardApp.today.test.tsx
 
 # Gate scripts (pattern literals)
 apps/api/scripts/api3_phase6_grep_gate.sh

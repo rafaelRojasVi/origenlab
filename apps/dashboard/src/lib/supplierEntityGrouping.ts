@@ -9,22 +9,6 @@ import { findGmailAuditForDomains } from "./gmailInteractionAuditMatch";
 import { buildSupplierMirrorDepthSummary } from "./supplierMirrorDepth";
 import { truncate } from "./safeText";
 
-export interface SupplierGroupDefinition {
-  id: string;
-  label: string;
-  domains: readonly string[];
-}
-
-/** Known supplier entities for grouped operator view (Phase 7B.3). */
-export const SUPPLIER_GROUP_DEFINITIONS: readonly SupplierGroupDefinition[] = [
-  { id: "serva", label: "SERVA", domains: ["serva.de"] },
-  { id: "ika", label: "IKA", domains: ["ika.net.br"] },
-  { id: "ortoalresa", label: "Ortoalresa", domains: ["ortoalresa.com"] },
-  { id: "hielscher", label: "Hielscher", domains: ["hielscher.com"] },
-  { id: "ollital", label: "Ollital", domains: ["ollital.com"] },
-  { id: "dlab", label: "DLAB", domains: ["dlabsci.com"] },
-] as const;
-
 const QUOTE_CATEGORIES: ReadonlySet<WarmCaseCategory> = new Set([
   "supplier_quote_received",
   "supplier_reply",
@@ -122,23 +106,44 @@ function buildGroup(
   };
 }
 
+/**
+ * Supplier grouping is derived purely from warm-case evidence (contact email
+ * domain), never from a UI-owned supplier list. Canonical supplier identity
+ * belongs to `commercial.organization`; this view only groups Gmail evidence.
+ */
 export function resolveSupplierGroupId(row: WarmCaseItem): string {
   const domain = emailDomain(row.contact_email);
-  for (const def of SUPPLIER_GROUP_DEFINITIONS) {
-    if (def.domains.includes(domain)) {
-      return def.id;
-    }
-  }
-  const org = (row.account_name || "").trim().toLowerCase();
-  for (const def of SUPPLIER_GROUP_DEFINITIONS) {
-    if (org.includes(def.label.toLowerCase())) {
-      return def.id;
-    }
-  }
   if (domain) {
     return `domain:${domain}`;
   }
   return "other";
+}
+
+/** Most frequent non-empty account name in the group, else the domain. */
+function deriveGroupLabel(id: string, items: WarmCaseItem[]): string {
+  const counts = new Map<string, number>();
+  for (const row of items) {
+    const name = (row.account_name || "").trim();
+    if (!name) {
+      continue;
+    }
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestCount = 0;
+  for (const [name, count] of counts) {
+    if (count > bestCount) {
+      best = name;
+      bestCount = count;
+    }
+  }
+  if (best) {
+    return best;
+  }
+  if (id.startsWith("domain:")) {
+    return id.replace("domain:", "");
+  }
+  return "Otros proveedores";
 }
 
 export function groupSupplierWarmCases(
@@ -154,33 +159,30 @@ export function groupSupplierWarmCases(
     buckets.set(id, list);
   }
 
-  const known: SupplierEntityGroup[] = [];
-  for (const def of SUPPLIER_GROUP_DEFINITIONS) {
-    const groupItems = buckets.get(def.id) ?? [];
-    if (groupItems.length === 0) {
-      continue;
-    }
-    known.push(buildGroup(def.id, def.label, groupItems, auditSnapshot, def.domains));
-    buckets.delete(def.id);
-  }
-
-  const extras: SupplierEntityGroup[] = [];
+  const groups: SupplierEntityGroup[] = [];
   for (const [id, groupItems] of buckets) {
     if (groupItems.length === 0) {
       continue;
     }
-    const label =
-      id === "other"
-        ? "Otros proveedores"
-        : id.startsWith("domain:")
-          ? id.replace("domain:", "")
-          : id;
     const domain = id.startsWith("domain:") ? id.replace("domain:", "") : "";
-    extras.push(
-      buildGroup(id, label, groupItems, auditSnapshot, domain ? [domain] : []),
+    groups.push(
+      buildGroup(
+        id,
+        deriveGroupLabel(id, groupItems),
+        groupItems,
+        auditSnapshot,
+        domain ? [domain] : [],
+      ),
     );
   }
 
-  extras.sort((a, b) => b.count - a.count);
-  return [...known, ...extras];
+  groups.sort((a, b) => {
+    if (b.count !== a.count) {
+      return b.count - a.count;
+    }
+    return (
+      parseSortableTimestamp(b.latestSeenAt) - parseSortableTimestamp(a.latestSeenAt)
+    );
+  });
+  return groups;
 }

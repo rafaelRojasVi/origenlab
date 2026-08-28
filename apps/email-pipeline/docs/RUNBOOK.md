@@ -8,7 +8,7 @@ Single entrypoint for **how to run** the email pipeline. **Daily core contract (
 
 **Preferred operator CLI (Phase 6C):** `uv run python -m origenlab_email_pipeline.cli <subcommand>` — see [Operator health matrix](#m-eprun-operator-health-matrix) and [`OPERATOR_COMMAND_SURFACE.md`](OPERATOR_COMMAND_SURFACE.md). Raw `scripts/qa/…` paths remain valid **advanced/manual** fallbacks.
 
-**Active operator UI:** [`apps/dashboard`](../../dashboard/README.md) (React) backed by [`apps/api`](../../api/README.md) (:8001) and the Postgres mirror. Streamlit Python UI **removed** (2026-06-04); see [`audits/ACTIVE_STACK_AND_STREAMLIT_RETIREMENT_PLAN_20260604.md`](audits/ACTIVE_STACK_AND_STREAMLIT_RETIREMENT_PLAN_20260604.md).
+**Active operator UI:** [`apps/dashboard`](../../dashboard/README.md) (React) backed by [`apps/api`](../../api/README.md) (:8001) and the Postgres mirror. Streamlit Python UI **removed** (2026-06-04);.
 
 ### Runbook map (pick one track)
 
@@ -23,7 +23,7 @@ Single entrypoint for **how to run** the email pipeline. **Daily core contract (
 | **Which status command?** | [Operator health matrix](#m-eprun-operator-health-matrix) | `make doctor` vs `make audit` vs health report vs API |
 | **`reports/out` cleanup** | [`reports/out` cleanup flow](#m-eprun-reports-out-cleanup) | Plan → archive moves → hygiene check |
 
-**Parked index:** [`EXPERIMENTAL_PARKED.md`](EXPERIMENTAL_PARKED.md) · **Tatiana/lab boundary:** [`TATIANA_LAB_BOUNDARY.md`](TATIANA_LAB_BOUNDARY.md). **Dashboard UX design (future CLI modes):** [`dashboard_stack_simplification_design_20260519.md`](../reports/out/active/current/dashboard_stack_simplification_design_20260519.md). **Simplification audit (Phase 1 map):** [`audits/CODEBASE_SIMPLIFICATION_AUDIT_20260602.md`](audits/CODEBASE_SIMPLIFICATION_AUDIT_20260602.md).
+**Parked index:** [`EXPERIMENTAL_PARKED.md`](EXPERIMENTAL_PARKED.md) · **Tatiana/lab boundary:** [`TATIANA_LAB_BOUNDARY.md`](TATIANA_LAB_BOUNDARY.md). **Dashboard UX design (future CLI modes):** [`dashboard_stack_simplification_design_20260519.md`](../reports/out/active/current/dashboard_stack_simplification_design_20260519.md).
 
 <a id="m-eprun-daily-outbound"></a>
 ## Daily outbound — two lanes
@@ -270,7 +270,7 @@ After **`05_workspace_gmail_imap_to_sqlite.py`** succeeds against the **same** S
 <a id="m-eprun-legacy-streamlit-docker"></a>
 ## Retired: Streamlit business mart UI
 
-> **Removed (2026-06-04).** `apps/business_mart_app.py`, Streamlit Docker (`Dockerfile`, `docker-compose.yml`), and UI modules (`streamlit_prioridad_*`, `streamlit_page_status`) are deleted. **Active UI:** [`apps/dashboard`](../../dashboard/README.md) + [`apps/api`](../../api/README.md). Inventory: [`audits/STREAMLIT_LAUNCH_SURFACE_REMOVAL_PLAN_20260604.md`](audits/STREAMLIT_LAUNCH_SURFACE_REMOVAL_PLAN_20260604.md).
+> **Removed (2026-06-04).** `apps/business_mart_app.py`, Streamlit Docker (`Dockerfile`, `docker-compose.yml`), and UI modules (`streamlit_prioridad_*`, `streamlit_page_status`) are deleted. **Active UI:** [`apps/dashboard`](../../dashboard/README.md) + [`apps/api`](../../api/README.md).
 
 **Postgres for dashboard mirror (active stack):** [`docker-compose.dashboard-postgres.yml`](../docker-compose.dashboard-postgres.yml).
 
@@ -298,7 +298,7 @@ After **`05_workspace_gmail_imap_to_sqlite.py`** succeeds against the **same** S
 | **Alembic** (`alembic/env.py`) | `ALEMBIC_DATABASE_URL`, else `ORIGENLAB_POSTGRES_URL` |
 | **Migrate scripts** (`scripts/migrate/sqlite_*_to_postgres.py`) and **optional outbound audit** on export CLIs | CLI `--postgres-url` if passed, else `ORIGENLAB_POSTGRES_URL`, else `ALEMBIC_DATABASE_URL` |
 
-Example URL form: `postgresql+psycopg://user:pass@host:5432/dbname`. Template lines: [`.env.example`](../.env.example) (commented). Deeper design: [`pipeline/POSTGRES_ARCHIVE_DATA_MIGRATION_PLAN_V1.md`](pipeline/POSTGRES_ARCHIVE_DATA_MIGRATION_PLAN_V1.md), [`pipeline/POSTGRES_SCHEMA_TARGET_V1.md`](pipeline/POSTGRES_SCHEMA_TARGET_V1.md).
+Example URL form: `postgresql+psycopg://user:pass@host:5432/dbname`. Template lines: [`.env.example`](../.env.example) (commented). Deeper design: [`pipeline/POSTGRES_SCHEMA_TARGET_V1.md`](pipeline/POSTGRES_SCHEMA_TARGET_V1.md).
 
 <a id="m-eprun-api-slice1"></a>
 ### Read-only dashboard API (Slice 1 — FastAPI)
@@ -542,7 +542,7 @@ DASHBOARD_FAST=1 RUN_GMAIL_INGEST=1 RUN_COMMERCIAL_DEAL_MIRROR=1 RUN_CATALOG_MIR
   bash apps/email-pipeline/scripts/ops/refresh_render_dashboard_once.sh
 ```
 
-**References:** [`architecture/POSTGRES_API_DASHBOARD_PLAN.md`](architecture/POSTGRES_API_DASHBOARD_PLAN.md) · [`OPERATOR_CHEAT_SHEET.md`](OPERATOR_CHEAT_SHEET.md#m-opsheet-dashboard-gmail-to-react) · [`dashboard_stack_simplification_design_20260519.md`](../reports/out/active/current/dashboard_stack_simplification_design_20260519.md)
+**References:** [`OPERATOR_CHEAT_SHEET.md`](OPERATOR_CHEAT_SHEET.md#m-opsheet-dashboard-gmail-to-react) · [`dashboard_stack_simplification_design_20260519.md`](../reports/out/active/current/dashboard_stack_simplification_design_20260519.md)
 
 ---
 
@@ -780,7 +780,6 @@ uv run origenlab audit-institution-grouping
 # Optional: --sqlite-path /path/to/emails.sqlite --out-dir reports/local/my-audit --date-label 2026_06_05
 ```
 
-Spec: [`pipeline/INSTITUTION_EXPLORER_SPEC.md`](pipeline/INSTITUTION_EXPLORER_SPEC.md).
 
 **Operator review** (dashboard read-only panels, documented CLIs, optional `ORIGENLAB_OPERATOR_*_RW` env gates) is for **visibility** and sidecar updates; it is **not** the final record of what was exported in a given run. **Canonical CLI CSV/JSON** (and optional readiness JSON) are the reproducible record; update **Sent ingest** and **outreach/suppression sidecars** after sends so the next run’s blocker memory stays accurate.
 
@@ -1063,7 +1062,7 @@ Optional: `--db /path/to/emails.sqlite`. Interpretation: **eligible** = gate ret
 ```bash
 cd apps/email-pipeline
 uv run pytest tests/test_candidate_export_gate.py -q
-uv run pytest tests/test_today_workspace_read.py tests/test_contacto_gmail_source_contract.py -q
+uv run pytest tests/test_contacto_gmail_source_contract.py -q
 ```
 
 ---
@@ -1189,18 +1188,9 @@ Contract summary:
 
 Design/ownership: [`pipeline/COMMERCIAL_INTEL_V1.md`](pipeline/COMMERCIAL_INTEL_V1.md)
 
-**Commercial read-model / recognition stack (audit / break-glass; not daily send truth):** Identity, opportunity, procurement, acquisition, live-feed bridge, and institution-prospect recognition layers are separate rebuildable/audit paths — not part of the default daily `refresh-dashboard` or send-safety loop, and **not** outreach authorization or PR5F persistence. Start from [`SCRIPT_MAP.md`](SCRIPT_MAP.md#debug--audit-scripts-keepaudit--keepdebug) and the linked audits:
+**Commercial read-model / recognition stack (machine intelligence; not daily send truth):** Identity (`commercial_identity/`, PR2), opportunity (`commercial_opportunity/`, PR3), and procurement (`commercial_procurement*` family, PR4/PR5) packages are separate rebuildable projections — not part of the default daily `refresh-dashboard` or send-safety loop, and **not** outreach authorization. Each package's `__init__.py` docstring documents its scope; see [`SCRIPT_MAP.md`](SCRIPT_MAP.md#debug--audit-scripts-keepaudit--keepdebug) for entrypoints and [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](../../../docs/architecture/CURRENT_SYSTEM_TRUTH.md) for how these projections relate to the durable CRM.
 
-| Layer | Package / entry | Design audit |
-|-------|-----------------|--------------|
-| PR2–PR4 identity / opportunity / procurement | `commercial_identity/`, `commercial_opportunity/`, `commercial_procurement/` | `audits/COMMERCIAL_*_PR2.md` … `PR4.md` |
-| PR5B / PR5B.1 acquisition + live contract | `commercial_procurement_acquisition/` | `audits/COMMERCIAL_PROCUREMENT_ACQUISITION_PR5B.md`, `…_PR5B1.md` |
-| PR5B.2 live equipment detail-cache bridge | `commercial_procurement_live_feed_bridge/` | [`COMMERCIAL_PROCUREMENT_LIVE_FEED_BRIDGE_PR5B2.md`](audits/COMMERCIAL_PROCUREMENT_LIVE_FEED_BRIDGE_PR5B2.md) |
-| PR5C–PR5E coalescence / relevance / contact | `commercial_procurement_candidate_planner/`, `…_product_relevance/`, `…_contact_resolution/` | matching `audits/COMMERCIAL_PROCUREMENT_*` docs |
-| PR5E.1 institution prospect map | `commercial_procurement_institution_prospects/` | [`COMMERCIAL_PROCUREMENT_INSTITUTION_PROSPECTS_PR5E1.md`](audits/COMMERCIAL_PROCUREMENT_INSTITUTION_PROSPECTS_PR5E1.md) |
-| PR5E.2 hardened recognition | same package (temporal eligibility, line claims, catalog capability, event families, operator queues) | [`COMMERCIAL_PROCUREMENT_PROSPECT_RECOGNITION_PR5E2.md`](audits/COMMERCIAL_PROCUREMENT_PROSPECT_RECOGNITION_PR5E2.md) |
-
-Builders default to dry-run / read-only artifacts; any `--apply` use requires explicit approval and the fingerprint/stale-plan gates in the matching audit doc. Authorization flags remain false.
+Builders default to dry-run / read-only artifacts; any `--apply` use requires explicit approval and fingerprint/stale-plan gates. Authorization flags remain false.
 
 ---
 

@@ -1,6 +1,6 @@
 # Production dashboard → API authentication
 
-**Audience:** Operators and engineers deploying the read-only dashboard against a production `apps/api` host.
+**Audience:** Operators and engineers deploying the dashboard against a production `apps/api` host.
 
 **Status:** **Cloudflare Worker proxy** in [`apps/dashboard-proxy`](../../dashboard-proxy/README.md) — deploy Worker + set `VITE_ORIGENLAB_API_BASE_URL=https://dashboard.origenlab.cl/api`.
 

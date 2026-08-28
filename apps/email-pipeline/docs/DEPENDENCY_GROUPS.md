@@ -227,4 +227,3 @@ After adding groups, re-run your command with `uv run …` so the project venv i
 - [`TATIANA_LAB_BOUNDARY.md`](TATIANA_LAB_BOUNDARY.md) — lab vs daily outbound
 - [`OPERATOR_COMMAND_SURFACE.md`](OPERATOR_COMMAND_SURFACE.md) — `origenlab` subcommands
 - [`EXPERIMENTAL_PARKED.md`](EXPERIMENTAL_PARKED.md) — Postgres / API / Tatiana parked index
-- [`audits/PHASE8F_BACKEND_REDUCTION_AUDIT_20260603.md`](audits/PHASE8F_BACKEND_REDUCTION_AUDIT_20260603.md) — 8F reduction audit

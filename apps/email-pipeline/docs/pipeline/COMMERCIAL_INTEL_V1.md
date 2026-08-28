@@ -114,7 +114,7 @@ uv run python scripts/commercial/review_commercial_candidate.py \
   --entity-kind organization --entity-key example.com --action approve --note "validated"
 ```
 
-**Streamlit UI removed (2026-06-04).** Use the CLIs above and [`review_commercial_candidate.py`](../../scripts/commercial/review_commercial_candidate.py) for review writes on a **writable** SQLite file. Optional RW env: `ORIGENLAB_OPERATOR_COMMERCIAL_REVIEW_RW=1` (legacy alias: `ORIGENLAB_STREAMLIT_COMMERCIAL_REVIEW_RW=1` when the operator helper is wired). Active read UI: [`apps/dashboard`](../../../dashboard/README.md) + Postgres mirror via [`apps/api`](../../../api/README.md). Plan: [`audits/ACTIVE_STACK_AND_STREAMLIT_RETIREMENT_PLAN_20260604.md`](../audits/ACTIVE_STACK_AND_STREAMLIT_RETIREMENT_PLAN_20260604.md).
+**Streamlit UI removed (2026-06-04).** Use the CLIs above and [`review_commercial_candidate.py`](../../scripts/commercial/review_commercial_candidate.py) for review writes on a **writable** SQLite file. Optional RW env: `ORIGENLAB_OPERATOR_COMMERCIAL_REVIEW_RW=1` (legacy alias: `ORIGENLAB_STREAMLIT_COMMERCIAL_REVIEW_RW=1` when the operator helper is wired). Active read UI: [`apps/dashboard`](../../../dashboard/README.md) + Postgres mirror via [`apps/api`](../../../api/README.md).
 
 ## Non-goals for v1
 

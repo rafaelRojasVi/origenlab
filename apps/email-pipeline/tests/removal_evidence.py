@@ -438,7 +438,9 @@ def build_removal_evidence_markdown() -> str:
 
 
 def write_removal_evidence_report(path: Path | None = None) -> Path:
-    out = path or (REPO / "docs/audits/PHASE2_SCRIPT_REMOVAL_EVIDENCE_20260602.md")
+    if path is None:
+        raise ValueError("write_removal_evidence_report requires an explicit path")
+    out = path
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(build_removal_evidence_markdown(), encoding="utf-8")
     return out

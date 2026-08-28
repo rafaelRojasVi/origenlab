@@ -5,7 +5,6 @@ Heuristic vertical buckets, line counts, and import-hint flags. **Not** authorit
 use with [`docs/QUALITY_AND_REFACTOR_STRATEGY.md`](../../docs/QUALITY_AND_REFACTOR_STRATEGY.md) and [`docs/TATIANA_LAB_BOUNDARY.md`](../../docs/TATIANA_LAB_BOUNDARY.md) for the ``tatiana_lab`` bucket.
 Does not read SQLite, Gmail, or secrets; does not write outside optional ``--json-out`` path.
 
-Phase 8C extends vertical buckets per ``docs/audits/PHASE8_POST_7C_TREE_CLEANUP_AUDIT_20260603.md`` §3 (planner-only).
 
 Skips Python under ``reports/local/`` and ``reports/out/`` (generated audit snapshots and report artifacts).
 """
@@ -118,7 +117,6 @@ def classify_vertical(rel_posix: str) -> str:
         p.startswith("src/origenlab_email_pipeline/operator_cli/")
         or base == "cli.py"
         or base == "operator_status_report.py"
-        or base == "operator_copy_es.py"
     ):
         return "operator_cli"
 
@@ -177,9 +175,6 @@ def classify_vertical(rel_posix: str) -> str:
         base == "inspect_sqlite.py" and p.startswith("scripts/tools/")
     ):
         return "tooling"
-
-    if "read/today_workspace" in p or base == "today_workspace.py":
-        return "read_module"
 
     if "streamlit" in p:
         return "removed_ui_module"

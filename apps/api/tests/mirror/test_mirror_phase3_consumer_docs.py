@@ -16,7 +16,7 @@ _DASHBOARD_PKG = _REPO_ROOT / "apps" / "dashboard" / "package.json"
 _DASHBOARD_ACTIVE = (
     _REPO_ROOT / "apps" / "dashboard" / "src" / "api" / "operatorClient.ts",
     _REPO_ROOT / "apps" / "dashboard" / "src" / "api" / "mirrorCommercialClient.ts",
-    _REPO_ROOT / "apps" / "dashboard" / "src" / "pages" / "TodayPage.tsx",
+    _REPO_ROOT / "apps" / "dashboard" / "src" / "pages" / "DashboardApp.tsx",
 )
 _COMMERCIAL_DEALS_MIRROR_LIST = "/mirror/commercial/deals"
 _FORBIDDEN_DASHBOARD_MIRROR_PATHS = (

@@ -2,33 +2,17 @@
 
 ## Scope
 
-This file applies to the **whole monorepo**. For **email-pipeline** work, read **[`apps/email-pipeline/AGENTS.md`](apps/email-pipeline/AGENTS.md)** first — it has stricter safety rules and the operator reading list.
+This file applies to the **whole monorepo** and is read by Cursor and other
+AGENTS.md-aware tooling. **Claude Code sessions start at
+[`CLAUDE.md`](CLAUDE.md)** — it covers architecture, responsibility
+boundaries, and the durable-vs-rebuildable rule; this file does not repeat
+that and stays focused on workflow rules below.
+
+For **email-pipeline** work, read **[`apps/email-pipeline/AGENTS.md`](apps/email-pipeline/AGENTS.md)** first — it has stricter safety rules and the operator reading list.
 
 For **public website** work, read **[`apps/web/AGENTS.md`](apps/web/AGENTS.md)**.
 
 For **operator API** or **dashboard** work, read **[`apps/api/AGENTS.md`](apps/api/AGENTS.md)** and **[`apps/dashboard/AGENTS.md`](apps/dashboard/AGENTS.md)** (pointers only — full freeze rules in dashboard handoff).
-
-## Factual entry
-
-1. [`docs/PROJECT_CONTEXT.md`](docs/PROJECT_CONTEXT.md) — what each app is
-2. App-specific `docs/APP_CONTEXT.md` and `docs/RUNBOOK.md`
-
-## Operator stack (read-only)
-
-| Topic | Canonical doc |
-|-------|----------------|
-| Monorepo architecture | [`docs/PROJECT_CONTEXT.md`](docs/PROJECT_CONTEXT.md) |
-| Active HTTP API | [`apps/api/README.md`](apps/api/README.md) — **:8001**, operator routes + `GET /mirror/*` |
-| Active operator UI | [`apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md`](apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md) |
-| Outbound / send safety (SQLite) | [`apps/email-pipeline/docs/OUTBOUND_SOURCE_OF_TRUTH.md`](apps/email-pipeline/docs/OUTBOUND_SOURCE_OF_TRUTH.md) |
-
-**Agents must assume:**
-
-- **Active API** is **`apps/api` on port 8001** only. Legacy email-pipeline FastAPI on **:8000** was **removed** (API-3 Phase 6) — see [`apps/api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md`](apps/api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md).
-- **Dashboard Today** is **read-only / GET-only** — no write/send/archive actions in the UI.
-- **SQLite** remains operational truth for ingest, outbound safety, DNR/suppression, and send decisions.
-- **Postgres** (and any future **Supabase** hosted mirror) is a **read-only reporting mirror** — never treat mirror API responses as send approval.
-- **`apps/dashboard/src/legacy/`** is parked UI only, not the active dashboard.
 
 ## Hard rules (all apps)
 

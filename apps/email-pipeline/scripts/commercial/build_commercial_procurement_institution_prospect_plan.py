@@ -4,7 +4,6 @@
 # No network. No --apply DB writes. Rejects --ticket/--gmail/--postgres/--send.
 # Does not authorize outreach or persist institution profiles.
 # Operator queues are review-only; no queue implies contact/outreach approval.
-# See docs/audits/COMMERCIAL_PROCUREMENT_INSTITUTION_PROSPECTS_PR5E1.md
 # -----------------------------------------------------------------------------
 """Build institution-level prospect recognition from live+historical tenders."""
 

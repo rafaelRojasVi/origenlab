@@ -3,7 +3,7 @@
 **Status:** Design only (2026-05-26, rev. **v1.1** field provenance + money minor units). **No migrations applied.**  
 **Schema version constant (Phase 1):** `commercial_deal_schema_version = "1.1.0"`.
 **Worked example:** SERVA Electrophoresis GmbH → CEAF (OC 26172 / PO 174-26).  
-**Prior art:** [`COMMERCIAL_DEAL_LEDGER_AUDIT.md`](COMMERCIAL_DEAL_LEDGER_AUDIT.md), read-only preview under `apps/email-pipeline/reports/out/active/current/commercial_deals_preview/`.
+**Prior art:** read-only preview under `apps/email-pipeline/reports/out/active/current/commercial_deals_preview/`.
 
 ---
 
@@ -1012,6 +1012,5 @@ uv run python scripts/commercial/apply_commercial_deal_schema_dry_run.py \
 
 - Preview: `apps/email-pipeline/scripts/commercial/extract_serva_ceaf_deal_preview.py`
 - Confirmed facts: `apps/email-pipeline/src/.../commercial/serva_ceaf_deal_confirmed.py`
-- Audit: [`COMMERCIAL_DEAL_LEDGER_AUDIT.md`](COMMERCIAL_DEAL_LEDGER_AUDIT.md)
 - Purchase legacy: `commercial_purchase_schema.py`
 - Redaction: `deal_preview_redaction.py`

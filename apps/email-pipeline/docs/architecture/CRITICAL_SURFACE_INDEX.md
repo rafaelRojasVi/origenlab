@@ -101,4 +101,3 @@ LOC figures are from `wc -l` on 2026-06-13; re-check after large edits.
 
 - [`../QUALITY_AND_REFACTOR_STRATEGY.md`](../QUALITY_AND_REFACTOR_STRATEGY.md) — staged refactor policy
 - [`../DEPENDENCY_GROUPS.md`](../DEPENDENCY_GROUPS.md) — optional install groups (`gmail`, `postgres`, `lab`, `ml`, …)
-- [`POSTGRES_API_DASHBOARD_PLAN.md`](POSTGRES_API_DASHBOARD_PLAN.md) — historical; active API is `apps/api` :8001

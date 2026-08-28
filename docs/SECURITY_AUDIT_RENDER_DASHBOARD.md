@@ -1,4 +1,6 @@
-# Security audit — Render API + dashboard (read-only operator plane)
+# Security audit — Render API + dashboard (operator plane)
+
+> Scope note (2026-08): this audit covers authentication/authorization of the read path and the Cloudflare Access/Worker boundary. The API and dashboard are no longer read-only — durable commercial CRM writes exist under `POST /operations/*`, behind the same Worker/Access boundary audited here. See [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](architecture/CURRENT_SYSTEM_TRUTH.md).
 
 **Last updated:** 2026-07-06 (docs refresh after dashboard Worker proxy hardening)
 **Scope:** `apps/api` (FastAPI on Render `origenlab-api`), `apps/dashboard` (Vite/React static on `origenlab-dashboard`), Cloudflare Worker (`apps/dashboard-proxy`), Render Postgres mirror, Cloudflare Access on custom domains.

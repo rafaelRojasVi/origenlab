@@ -65,7 +65,7 @@
 #                                           (default: 2; must be >= 1)
 #
 # See sync_institution_prospects_to_cloud.sh for the W1 counterpart this
-# mirrors, and docs/PHASE1_CLOUD_READ_PATH.md §4.
+# mirrors, and apps/email-pipeline/docs/PHASE1_CLOUD_READ_PATH.md §4.
 set -euo pipefail
 
 PIPE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

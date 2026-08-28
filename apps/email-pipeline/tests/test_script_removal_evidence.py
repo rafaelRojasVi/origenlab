@@ -8,7 +8,6 @@ import pytest
 
 from removal_evidence import (
     DEPRECATED_REMOVAL_TARGETS,
-    REFACTOR_PHASE3_TARGETS,
     REMOVED_PHASE5A_TARGETS,
     REMOVED_PHASE5B_TARGETS,
     REMOVED_PHASE5C_TARGETS,
@@ -28,8 +27,8 @@ REPO = Path(__file__).resolve().parents[1]
 REMOVED_LEGACY_REPORTED_NDR = "scripts/tools/flag_reported_non_delivery_from_contacto.py"
 
 
-def test_generate_removal_evidence_report() -> None:
-    out = write_removal_evidence_report()
+def test_generate_removal_evidence_report(tmp_path: Path) -> None:
+    out = write_removal_evidence_report(tmp_path / "PHASE2_SCRIPT_REMOVAL_EVIDENCE_20260602.md")
     assert out.is_file()
     body = out.read_text(encoding="utf-8")
     assert "Phase 2 — script removal evidence" in body
@@ -180,12 +179,6 @@ def test_phase5s_removed_zero_ref_lab_scripts_in_evidence_markdown() -> None:
     for row in REMOVED_PHASE5S_TARGETS:
         assert row["path"] in md
         assert "Removed in Phase 5S" in md
-
-
-def test_refactor_phase3_targets_documented() -> None:
-    audit = (REPO / "docs/audits/CODEBASE_SIMPLIFICATION_AUDIT_20260602.md").read_text(encoding="utf-8")
-    for row in REFACTOR_PHASE3_TARGETS:
-        assert row["path"] in audit
 
 
 def test_evidence_markdown_has_removed_phase_rows() -> None:

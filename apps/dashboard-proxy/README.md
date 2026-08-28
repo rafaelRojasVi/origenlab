@@ -1,6 +1,6 @@
-# Dashboard read-only API proxy (Cloudflare Worker)
+# Dashboard API proxy (Cloudflare Worker)
 
-Same-origin, method+path allowlisted proxy for production dashboard builds. The browser calls `https://dashboard.origenlab.cl/api/*`; the Worker strips `/api`, checks an allowlist, and forwards to `apps/api` with upstream auth headers from Worker secrets.
+Same-origin, method+path allowlisted proxy for production dashboard builds. The browser calls `https://dashboard.origenlab.cl/api/*`; the Worker strips `/api`, checks an allowlist, and forwards to `apps/api` with upstream auth headers from Worker secrets. GET is allowlisted for dashboard reads; POST is allowlisted narrowly for the durable commercial-operations commands and the tender annex import — this Worker is the trust boundary for both, not a pure read-only pass-through.
 
 **No browser token.** `ORIGENLAB_API_AUTH_TOKEN` is a Worker secret only — never `VITE_*`.
 
@@ -19,16 +19,30 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 
 ## Routes (allowlist)
 
+**GET** (dashboard reads):
+
 | Upstream path | Purpose |
 |---------------|---------|
 | `/health` | Public health |
 | `/operator/status`, `/operator/automation-status` | Operator panels |
+| `/operator/procurement/*` | W1 institution/tender queues + T1 term detail |
 | `/cases/warm` | Warm cases |
 | `/contacts/*` | Contact drilldown |
-| `/opportunities/equipment` | Equipment table |
+| `/opportunities/equipment` | Equipment table (legacy feed, Today counts only) |
+| `/opportunities/commercial`, `/opportunities/commercial/o_<32hex>` | PR3 machine-proposed opportunity intake (read-only) |
+| `/operations/work-queue`, `/operations/sales-opportunities/sales_<32hex>[/activities\|/tasks]`, `/operations/opportunities/o_<32hex>/[state\|activities\|tasks]` | Durable CRM reads |
 | `/mirror/*` | Postgres mirror reads |
 
-POST is permitted only for explicit annex-bundle actions and the narrow commercial-operations command allowlist. All other POST requests, and all `PUT`, `PATCH`, and `DELETE` requests, return **405**.
+**POST** (the only human write path — trusted operator identity, `Idempotency-Key`, optimistic concurrency; each ID format is regex-constrained, no wildcard route):
+
+| Upstream path | Purpose |
+|---------------|---------|
+| `/operations/opportunities/o_<32hex>/state` | PR3 operator confirm/reject |
+| `/operations/sales-opportunities/promote`, `/sales_<32hex>/stage` | Durable sales-opportunity lifecycle |
+| `/operations/activities`, `/operations/tasks`, `/operations/tasks/task_<32hex>/[complete\|cancel]` | Durable activities/tasks |
+| `/operator/procurement/tenders/<code>/annex-bundle/[preview\|import]` | Explicit tender annex evidence upload |
+
+All other POST requests, and all `PUT`, `PATCH`, and `DELETE` requests, return **405**.
 
 ## Response hardening
 

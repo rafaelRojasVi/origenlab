@@ -15,6 +15,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/cases\/warm$/,
   /^\/contacts\/[^/]+$/,
   /^\/opportunities\/equipment$/,
+  // PR3 machine-proposed opportunity intake (read-only list + detail) — the
+  // review surface whose human decisions flow through /operations/* below.
+  /^\/opportunities\/commercial$/,
+  /^\/opportunities\/commercial\/o_[0-9a-f]{32}$/,
   /^\/operations\/work-queue$/,
   /^\/operations\/sales-opportunities\/sales_[0-9a-f]{32}$/,
   /^\/operations\/sales-opportunities\/sales_[0-9a-f]{32}\/activities$/,

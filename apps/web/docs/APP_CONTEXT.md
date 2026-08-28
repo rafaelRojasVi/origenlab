@@ -35,4 +35,4 @@ Static Spanish-first B2B website for OrigenLab that helps visitors understand of
 <a id="m-web-historical"></a>
 ## Historical boundary
 
-Cross-project email pointers live under [`compat/`](compat/) only; canonical email-pipeline docs are under [`../../email-pipeline/docs/`](../../email-pipeline/docs/).
+Canonical email-pipeline docs are under [`../../email-pipeline/docs/`](../../email-pipeline/docs/) — this app does not duplicate them.

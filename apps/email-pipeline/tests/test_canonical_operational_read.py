@@ -12,10 +12,6 @@ from origenlab_email_pipeline.canonical_operational_sql import (
     count_canonical_operational_opportunity_signals,
     canonical_emails_where,
 )
-from origenlab_email_pipeline.read.today_workspace import (
-    TodayWorkspaceSpec,
-    gather_today_workspace_rows,
-)
 
 
 def _seed_db(path: Path) -> None:
@@ -78,18 +74,11 @@ def test_canonical_contact_count_excludes_noise_and_legacy(tmp_path: Path) -> No
         conn.close()
 
 
-def test_inicio_today_workspace_excludes_noise_dormant(tmp_path: Path) -> None:
+def test_canonical_opportunity_signal_count_excludes_noise(tmp_path: Path) -> None:
     db = tmp_path / "today.sqlite"
     _seed_db(db)
     conn = sqlite3.connect(str(db))
     try:
-        rows = gather_today_workspace_rows(
-            conn, TodayWorkspaceSpec(dormant_limit=10, max_total_rows=20, canonical_only=True)
-        )
-        dormant = [r for r in rows if r.handoff_kind == "dormant"]
-        keys = " ".join(r.reference_es for r in dormant)
-        assert "good@lab.cl" in keys or len(dormant) == 0
-        assert "mailer-daemon" not in keys
         assert count_canonical_operational_opportunity_signals(conn) == 1
     finally:
         conn.close()

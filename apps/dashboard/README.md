@@ -2,20 +2,21 @@
 
 > **Operator handoff (v1–v2 freeze):** [docs/V1_FREEZE_OPERATOR_HANDOFF.md](docs/V1_FREEZE_OPERATOR_HANDOFF.md) — three run modes (SQLite / disposable Postgres / return to SQLite), Dashboard-2 contact drilldown, smoke commands, send-truth rules.
 
-**Dashboard v1** is the active read-only operator UI. It talks only to **`apps/api`** on port **8001** (legacy email-pipeline API removed in API-3 Phase 6):
+The active operator UI. It talks only to **`apps/api`** on port **8001** (legacy email-pipeline API removed in API-3 Phase 6). Main routes:
 
 | Route | Use |
 |-------|-----|
-| `GET /health` | Backend / service health |
-| `GET /operator/status` | Operator verdict panel |
-| `GET /operator/automation-status` | Read-only automation health (Gmail→SQLite + mirror publish loops) |
-| `GET /cases/warm` | Warm cases table |
-| `GET /opportunities/equipment` | Equipment opportunities table |
-| `GET /contacts/{email}` | Read-only contact profile drilldown (Dashboard-2) |
+| `GET /health` · `GET /operator/status` · `GET /operator/automation-status` | Health, operator verdict, automation loops |
+| `GET /cases/warm` | Warm cases (Bandeja / Proveedores / Pagos, machine evidence) |
+| `GET /opportunities/commercial` | PR3 machine-proposed opportunity intake (Negocios cockpit) |
+| `GET /operations/work-queue` + `POST /operations/*` | Durable CRM: work queue, PR3 operator state, activities, tasks (trusted operator identity + Idempotency-Key) |
+| `GET /operator/procurement/*` + annex `preview`/`import` POSTs | Licitaciones W1/T1 + explicit annex import |
+| `GET /mirror/commercial/deals` · `/mirror/catalog/products` · `/mirror/leads/*` · `/mirror/audits/*` | Mirror lists (Negocios ledger, Catálogo, Prospectos, Gmail audit) |
+| `GET /contacts/{email}` | Contact profile drilldown |
 
-The browser does not open SQLite/Postgres, CSV files, or `apps/email-pipeline` modules.
+The browser does not open SQLite/Postgres, CSV files, or `apps/email-pipeline` modules; production writes pass the `apps/dashboard-proxy` method+path allowlist. Machine surfaces propose; durable CRM state changes only through `/operations/*`. Canonical architecture: [`../../docs/architecture/CURRENT_SYSTEM_TRUTH.md`](../../docs/architecture/CURRENT_SYSTEM_TRUTH.md).
 
-**Legacy UI:** the obsolete pre-v1 multi-tab dashboard has been removed. Extend the active Dashboard/API contracts instead of restoring the old client.
+**Legacy UI:** the obsolete pre-v1 multi-tab dashboard and the unrendered equipment_first client were removed. Extend the active Dashboard/API contracts instead of restoring old clients.
 
 ## Run locally
 

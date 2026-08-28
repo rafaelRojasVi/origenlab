@@ -25,7 +25,7 @@ export function DealsPage() {
             Registro financiero de negocios
           </h2>
           <p className="mt-1 text-sm text-[var(--color-muted)]">
-            Ledger comercial y márgenes · modelo separado del ciclo PR3.
+            Ledger histórico de negocios y márgenes · evidencia de contexto, no flujo operativo.
           </p>
         </div>
 

@@ -4,7 +4,6 @@
 # No network. No Gmail/SQLite/Postgres writes. No persistence. No outreach.
 # Rejects --apply/--send/--persist/--network/--ticket/--gmail/--postgres.
 # Does NOT mutate production opportunity queues. Does NOT start PR5F.
-# See docs/audits/COMMERCIAL_PROCUREMENT_ANEXO_SHADOW_PROSPECTS_P1.md
 # -----------------------------------------------------------------------------
 from __future__ import annotations
 

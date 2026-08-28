@@ -30,22 +30,40 @@ function row(
 }
 
 describe("supplierEntityGrouping", () => {
-  it("groups known suppliers with count summaries", () => {
+  it("groups suppliers by evidence domain with derived labels", () => {
     const groups = groupSupplierWarmCases([
       row("a@serva.de", "supplier_followup", "SERVA", "SERVA thread", "2026-05-20T10:00:00-04:00"),
       row("b@ika.net.br", "supplier_quote_received", "IKA", "IKA quote", "2026-05-19T10:00:00-04:00"),
       row("c@ortoalresa.com", "supplier_quote_received"),
     ]);
-    expect(groups.map((g) => g.label)).toEqual(["SERVA", "IKA", "Ortoalresa"]);
-    expect(groups[0].summaryLabel).toBe("1 caso en espejo");
-    expect(groups[1].summaryLabel).toBe("1 caso en espejo");
-    expect(groups[0].latestSubject).toBe("SERVA thread");
-    expect(groups[1].roleBadge).toBe("Cotización recibida");
-    expect(groups[0].roleBadge).toBe("Seguimiento");
+    expect(new Set(groups.map((g) => g.label))).toEqual(
+      new Set(["SERVA", "IKA", "ortoalresa.com"]),
+    );
+    const serva = groups.find((g) => g.label === "SERVA");
+    const ika = groups.find((g) => g.label === "IKA");
+    expect(serva?.summaryLabel).toBe("1 caso en espejo");
+    expect(ika?.summaryLabel).toBe("1 caso en espejo");
+    expect(serva?.latestSubject).toBe("SERVA thread");
+    expect(ika?.roleBadge).toBe("Cotización recibida");
+    expect(serva?.roleBadge).toBe("Seguimiento");
   });
 
-  it("resolveSupplierGroupId maps ika domain", () => {
-    expect(resolveSupplierGroupId(row("x@ika.net.br", "supplier_quote_received"))).toBe("ika");
+  it("resolveSupplierGroupId derives the id from the contact domain", () => {
+    expect(resolveSupplierGroupId(row("x@ika.net.br", "supplier_quote_received"))).toBe(
+      "domain:ika.net.br",
+    );
+    expect(resolveSupplierGroupId(row("", "supplier_quote_received"))).toBe("other");
+  });
+
+  it("derives the label from the most frequent account name in the group", () => {
+    const groups = groupSupplierWarmCases([
+      row("a@hielscher.com", "supplier_reply", "Hielscher Ultrasonics", "s1"),
+      row("b@hielscher.com", "supplier_reply", "Hielscher Ultrasonics", "s2"),
+      row("c@hielscher.com", "supplier_reply", "Hielscher GmbH", "s3"),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].label).toBe("Hielscher Ultrasonics");
+    expect(groups[0].count).toBe(3);
   });
 
   it("includes grouped email count in summary when present", () => {

@@ -221,7 +221,6 @@ describe("dashboard read-only policy", () => {
     for (const [path, text] of entries) {
       const isMounted =
         path.includes("App.tsx") ||
-        path.includes("TodayPage.tsx") ||
         path.includes("operatorClient.ts") ||
         path.includes("/commercial/") ||
         path.includes("ContactProfilePanel") ||

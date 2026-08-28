@@ -92,7 +92,7 @@ export function CommercialOpportunitiesCockpit({
     <>
       <TableSection
         title="Oportunidades comerciales"
-        subtitle="Ciclo PR3 derivado de evidencia comercial · separado del registro financiero de negocios."
+        subtitle="Propuestas por el sistema (PR3) a partir de evidencia comercial · las decisiones humanas (confirmar, descartar, tareas) se registran en el CRM durable."
         dataSourceLabel={
           data
             ? commercialOpportunitySourceLabel(data.meta.data_source)

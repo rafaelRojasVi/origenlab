@@ -1,4 +1,4 @@
-/** Browser origins allowed to call the dashboard read-only API proxy. */
+/** Browser origins allowed to call the dashboard API proxy. */
 
 import {
   isAllowedCommercialOperationsPostPath,

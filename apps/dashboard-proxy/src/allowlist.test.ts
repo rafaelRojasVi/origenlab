@@ -53,6 +53,23 @@ describe("allowlist", () => {
     expect(isAllowedUpstreamPath(`${path}?limit=20`)).toBe(true);
   });
 
+  it("allows the PR3 machine-opportunity intake list and detail reads only", () => {
+    const opportunityId = "o_0123456789abcdef0123456789abcdef";
+
+    expect(isAllowedUpstreamPath("/opportunities/commercial")).toBe(true);
+    expect(isAllowedUpstreamPath(`/opportunities/commercial/${opportunityId}`)).toBe(true);
+    expect(
+      isAllowedUpstreamPath("/opportunities/commercial?limit=20&canonical_stage=quote_sent"),
+    ).toBe(true);
+
+    expect(isAllowedUpstreamPath("/opportunities/commercial/")).toBe(false);
+    expect(isAllowedUpstreamPath("/opportunities/commercial/not-an-id")).toBe(false);
+    expect(
+      isAllowedUpstreamPath(`/opportunities/commercial/${opportunityId}/extra`),
+    ).toBe(false);
+    expect(isAllowedUpstreamPath("/opportunities/commercial/o_short")).toBe(false);
+  });
+
   it("allows CRM sales-opportunity nested read routes only", () => {
     const salesId = "sales_0123456789abcdef0123456789abcdef";
 

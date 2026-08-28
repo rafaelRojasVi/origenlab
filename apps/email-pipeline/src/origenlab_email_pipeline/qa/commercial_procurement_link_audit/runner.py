@@ -1120,8 +1120,7 @@ def _render_audit_report(
             f"Build-plan fingerprint (`{summary['procurement_build_plan_fingerprint_algorithm']}`): "
             f"`{summary['procurement_build_plan_fingerprint']}`",
             "",
-            "See `proposed_schema.md` and committed "
-            "`docs/audits/COMMERCIAL_PROCUREMENT_LINK_READ_MODEL_PR4.md`.",
+            "See `proposed_schema.md`.",
             "",
         ]
     )

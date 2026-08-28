@@ -24,14 +24,6 @@ This index is the navigation hub for website documentation and agent context.
 
 - **Live chat (Tidio):** active in `Layout.astro`. Legacy `FloatingChat.astro` was removed; historical context in [`audits/stage-4-cleanup-hardening-2026-05-16.md`](audits/stage-4-cleanup-hardening-2026-05-16.md) (`floating-chat-widget-notes.md` was not retained in-repo).
 
-## Archive and cross-project stubs
-
-The following docs are preserved under [`compat/`](compat/) in web, but their canonical operational home is the email pipeline docs:
-
-- [`compat/EMAIL_BUSINESS_SIGNAL_PROMPT.md`](compat/EMAIL_BUSINESS_SIGNAL_PROMPT.md) (stub → email-pipeline [`ml/AI_ML_IMPLEMENTED_SUMMARY.md`](../../email-pipeline/docs/ml/AI_ML_IMPLEMENTED_SUMMARY.md) appendix)
-- [`compat/email-archive-locations.md`](compat/email-archive-locations.md)
-- [`compat/legacy-mail-migration-notes.md`](compat/legacy-mail-migration-notes.md)
-
 ## Detailed docs
 
 - [`company-scope.md`](company-scope.md)

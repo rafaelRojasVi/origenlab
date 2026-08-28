@@ -2,7 +2,11 @@
 
 Status: canonical  
 Owner: project-maintainers  
-Last reviewed: 2026-06-10
+Last reviewed: 2026-08-28
+
+> Architecture truth (durable CRM vs machine mirrors, write paths, ownership):
+> [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](./architecture/CURRENT_SYSTEM_TRUTH.md) ·
+> [`docs/architecture/TARGET_COMMERCIAL_ARCHITECTURE.md`](./architecture/TARGET_COMMERCIAL_ARCHITECTURE.md)
 
 This is the primary monorepo context document for coding agents and contributors.
 
@@ -13,8 +17,9 @@ OrigenLab monorepo with these active applications:
 
 - [`apps/web`](../apps/web/): public marketing website (Astro, static deployment).
 - [`apps/email-pipeline`](../apps/email-pipeline/): email archive ingestion, enrichment, and reporting pipeline (Python + uv, **no FastAPI**), including **human-in-the-loop drafting assistance** for OrigenLab / Labdelivery-style commercial email (Tatiana copilot — eval and pilot workflows; **not** an autonomous sender).
-- [`apps/api`](../apps/api/): **only** operator HTTP API (FastAPI on **:8001**) — Dashboard Today routes plus Postgres mirror reporting under **`GET /mirror/*`**.
-- [`apps/dashboard`](../apps/dashboard/): read-only operator React UI (**Today** page) — calls `apps/api` operator routes only, not `/mirror/*`.
+- [`apps/api`](../apps/api/): **only** operator HTTP API (FastAPI on **:8001**) — operator/dashboard read routes, Postgres mirror reporting under **`GET /mirror/*`**, and the durable commercial CRM commands under **`POST /operations/*`** (trusted operator identity, idempotency, optimistic concurrency).
+- [`apps/dashboard`](../apps/dashboard/): operator React UI (multi-section: Hoy, Bandeja, Negocios, Prospectos, Clientes, Licitaciones, Pagos, Proveedores, Catálogo, Sistema) — reads operator routes **and** selected `/mirror/*` lists; performs durable CRM mutations only through the allowlisted `/operations/*` commands.
+- [`apps/dashboard-proxy`](../apps/dashboard-proxy/): Cloudflare Worker trust boundary at `dashboard.origenlab.cl/api*` — strict method+path allowlist; injects upstream auth; the browser never holds the API token.
 
 **Operator automation (read-only health):** debounced Gmail → SQLite (`auto-refresh-mail`) and SQLite → Postgres/dashboard (`auto-mirror-dashboard`) loops with tracked cron wrappers — see [`OPERATOR_CRON.md`](../apps/email-pipeline/docs/pipeline/OPERATOR_CRON.md). Status: `uv run origenlab operator-automation-status`; also `GET /operator/automation-status` and the dashboard Today automation card (API skips live crontab inspection). Public-repo guardrails: [`SECURITY_PUBLIC_REPO.md`](./SECURITY_PUBLIC_REPO.md).
 
@@ -84,4 +89,3 @@ Support OrigenLab's commercial operation by:
 ## Navigation
 
 - Documentation map: [`DOCUMENTATION_MAP.md`](./DOCUMENTATION_MAP.md#m-docmap-entry) · [link check & linking conventions](./DOCUMENTATION_MAP.md#m-docmap-link-check)
-- Historical monorepo migration notes: [`MONOREPO.md`](./MONOREPO.md)

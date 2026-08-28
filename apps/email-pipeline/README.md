@@ -53,7 +53,7 @@ Run `./scripts/validate.sh` before opening or merging email-pipeline PRs. Target
 
 **HTTP API:** FastAPI does **not** live in this package. Mirror reporting is `GET /mirror/*` on **`apps/api`**.
 
-**Streamlit (retired):** The Python Streamlit app and UI modules were **removed** (2026-06-04). Operator UI is [`apps/dashboard`](../dashboard/README.md). See [`docs/audits/ACTIVE_STACK_AND_STREAMLIT_RETIREMENT_PLAN_20260604.md`](docs/audits/ACTIVE_STACK_AND_STREAMLIT_RETIREMENT_PLAN_20260604.md).
+**Streamlit (retired):** The Python Streamlit app and UI modules were **removed** (2026-06-04). Operator UI is [`apps/dashboard`](../dashboard/README.md).
 
 ## GitHub & what not to commit
 
@@ -226,7 +226,7 @@ uv run python scripts/mart/build_business_mart.py --rebuild --internal-domain la
 
 Docs: `docs/pipeline/BUSINESS_MART.md`
 
-**Streamlit UI removed (2026-06-04):** `business_mart_app.py`, Docker Streamlit image, and LAN launcher are gone. Use **`apps/dashboard`** + **`apps/api`** + [`docker-compose.dashboard-postgres.yml`](docker-compose.dashboard-postgres.yml) for mirror dev. Details: [`docs/audits/STREAMLIT_LAUNCH_SURFACE_REMOVAL_PLAN_20260604.md`](docs/audits/STREAMLIT_LAUNCH_SURFACE_REMOVAL_PLAN_20260604.md).
+**Streamlit UI removed (2026-06-04):** `business_mart_app.py`, Docker Streamlit image, and LAN launcher are gone. Use **`apps/dashboard`** + **`apps/api`** + [`docker-compose.dashboard-postgres.yml`](docker-compose.dashboard-postgres.yml) for mirror dev.
 
 **3. SQLite → JSONL**
 

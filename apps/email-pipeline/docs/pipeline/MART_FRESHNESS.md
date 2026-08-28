@@ -27,4 +27,3 @@ Set to `now_iso()` at mart rebuild time when rows are inserted. It is a **rebuil
 ## Related code
 
 - `src/origenlab_email_pipeline/freshness_dates.py` — policy implementation.
-- Historical UI implementation: removed `apps/business_mart_app.py`; preserved concepts are documented in [`STREAMLIT_DATA_FRESHNESS.md`](STREAMLIT_DATA_FRESHNESS.md).

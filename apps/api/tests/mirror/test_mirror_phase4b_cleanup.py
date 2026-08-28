@@ -9,9 +9,7 @@ from pathlib import Path
 from origenlab_api.main import create_app
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-_POSTGRES_PLAN = (
-    _REPO_ROOT / "apps/email-pipeline/docs/architecture/POSTGRES_API_DASHBOARD_PLAN.md"
-)
+_CURRENT_SYSTEM_TRUTH = _REPO_ROOT / "docs/architecture/CURRENT_SYSTEM_TRUTH.md"
 _LEGACY_DASHBOARD_ROOT = _REPO_ROOT / "apps/dashboard/src/legacy"
 _LEGACY_ROOT = _REPO_ROOT / "apps/email-pipeline/src/origenlab_api"
 _GATE_SCRIPT = _REPO_ROOT / "apps/api/scripts/api3_phase6_grep_gate.sh"
@@ -23,8 +21,8 @@ def test_phase6_legacy_removal_doc_exists() -> None:
     assert _PHASE6_DOC.is_file()
 
 
-def test_postgres_dashboard_plan_notes_legacy_removed() -> None:
-    text = _POSTGRES_PLAN.read_text(encoding="utf-8")
+def test_current_system_truth_notes_legacy_removed() -> None:
+    text = _CURRENT_SYSTEM_TRUTH.read_text(encoding="utf-8")
     assert "8001" in text
     assert "/mirror/" in text
     assert "Phase 6" in text or "removed" in text.lower() or "no FastAPI" in text

@@ -1,5 +1,12 @@
 # Dashboard / API v1–v2 — freeze & operator handoff
 
+> **Status: historical (2026-05 freeze record).** This documents the retired
+> read-only era. The stack now includes durable commercial CRM writes via
+> `POST /operations/*` and a multi-section dashboard. Current truth:
+> [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](../../../docs/architecture/CURRENT_SYSTEM_TRUTH.md).
+> The smoke/matrix procedures below remain useful as historical validation
+> recipes only.
+
 **Frozen state (2026-05):** Dashboard v1 + `apps/api` read-only operator plane. **Dashboard-2** adds read-only contact drilldown (`GET /contacts/{email}`) on the **Today** page. **Dashboard-2.3** adds client-side table polish; **Dashboard-2.5** adds read-only operator usability (internal-contact filter, warning email drilldown, human labels, outreach field guide). Validated on **SQLite** and **disposable Postgres mirror**; no send/write features and no Dashboard-3 scope in this freeze.
 
 | Component | Status |

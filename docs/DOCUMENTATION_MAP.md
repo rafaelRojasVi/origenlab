@@ -2,14 +2,17 @@
 
 Status: canonical  
 Owner: project-maintainers  
-Last reviewed: 2026-06-17
+Last reviewed: 2026-08-28
 
 This file is the source of truth for documentation placement, intent, and lifecycle.
 
 <a id="m-docmap-entry"></a>
 ## Canonical Entry Points
 
+- Claude Code entrypoint: [CLAUDE.md](../CLAUDE.md)
 - Monorepo: [README.md](../README.md)
+- Canonical system truth: [architecture/CURRENT_SYSTEM_TRUTH.md](./architecture/CURRENT_SYSTEM_TRUTH.md)
+- Target commercial architecture: [architecture/TARGET_COMMERCIAL_ARCHITECTURE.md](./architecture/TARGET_COMMERCIAL_ARCHITECTURE.md)
 - Monorepo agent context: [PROJECT_CONTEXT.md](./PROJECT_CONTEXT.md)
 - Release process: [RELEASE_PROCESS.md](./RELEASE_PROCESS.md)
 - Web app: [apps/web/README.md](../apps/web/README.md)
@@ -22,14 +25,15 @@ This file is the source of truth for documentation placement, intent, and lifecy
 - Operator API: [apps/api/README.md](../apps/api/README.md) · [apps/api/docs/README.md](../apps/api/docs/README.md)
 - Dashboard (Today UI): [apps/dashboard/README.md](../apps/dashboard/README.md) · [apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md](../apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md)
 
-**Architecture entrypoint (monorepo):** [PROJECT_CONTEXT.md](./PROJECT_CONTEXT.md) — canonical for what each app owns; do not duplicate a separate architecture index in this phase.
+**Architecture entrypoint (monorepo):** [architecture/CURRENT_SYSTEM_TRUTH.md](./architecture/CURRENT_SYSTEM_TRUTH.md) (durable CRM vs machine mirrors, write paths, ownership) with [PROJECT_CONTEXT.md](./PROJECT_CONTEXT.md) for per-app context. [architecture/COMMERCIAL_RESET_LEDGER.md](./architecture/COMMERCIAL_RESET_LEDGER.md) is the completed 2026-08 reset migration record.
 
-### Operator stack (read-only HTTP + UI)
+### Operator stack (HTTP + UI)
 
 | App | Canonical docs |
 |-----|----------------|
 | **Operator API** (`apps/api`, :8001) | [apps/api/README.md](../apps/api/README.md) · [apps/api/docs/README.md](../apps/api/docs/README.md) |
-| **Dashboard** (`apps/dashboard`, :5173) | [apps/dashboard/README.md](../apps/dashboard/README.md) · [apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md](../apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md) |
+| **Dashboard** (`apps/dashboard`, :5173) | [apps/dashboard/README.md](../apps/dashboard/README.md) (historical freeze record: [V1_FREEZE_OPERATOR_HANDOFF.md](../apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md)) |
+| **Dashboard proxy** (`apps/dashboard-proxy`) | [apps/dashboard-proxy/README.md](../apps/dashboard-proxy/README.md) |
 | **Email pipeline** (SQLite OLTP, ingest, outbound) | [apps/email-pipeline/docs/OUTBOUND_SOURCE_OF_TRUTH.md](../apps/email-pipeline/docs/OUTBOUND_SOURCE_OF_TRUTH.md) · [RUNBOOK.md](../apps/email-pipeline/docs/RUNBOOK.md) |
 
 Historical API-3 migration notes (legacy `:8000` removal): [apps/api/docs/archive/api3/](../apps/api/docs/archive/api3/README.md) — not current operator runbooks.
@@ -39,21 +43,20 @@ Historical API-3 migration notes (legacy `:8000` removal): [apps/api/docs/archiv
 
 ### Monorepo
 
-- [MONOREPO.md](./MONOREPO.md) → historical context, keep as archive reference.
 - [RELEASE_PROCESS.md](./RELEASE_PROCESS.md) → **canonical** GitHub Release / tag workflow (changelog snapshots; not package distribution).
-- [business/BUSINESS_RULES_QUOTES_AND_SUPPLIERS.md](./business/BUSINESS_RULES_QUOTES_AND_SUPPLIERS.md) → **canonical** quote/supplier **truth rules** and proposed entities (cotizaciones, proveedores, research runs vs master data).
+- [business/BUSINESS_RULES_QUOTES_AND_SUPPLIERS.md](./business/BUSINESS_RULES_QUOTES_AND_SUPPLIERS.md) → **canonical** quote/supplier **truth rules** (cotizaciones, proveedores, research runs vs master data; schema design lives in [architecture/TARGET_COMMERCIAL_ARCHITECTURE.md](./architecture/TARGET_COMMERCIAL_ARCHITECTURE.md)).
 
 ### Operator API (`apps/api`)
 
-- [apps/api/README.md](../apps/api/README.md) → **canonical** active read-only API (:8001; operator routes + `GET /mirror/*`).
+- [apps/api/README.md](../apps/api/README.md) → **canonical** API (:8001; operator reads, `GET /mirror/*` reporting, durable `POST /operations/*` CRM commands).
 - [apps/api/docs/README.md](../apps/api/docs/README.md) → **canonical** API docs index.
-- [apps/api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md](../apps/api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md) → **canonical** removal record (legacy :8000).
-- [apps/api/docs/archive/api3/](../apps/api/docs/archive/api3/README.md) → **historical** API-3 migration context (not current runbooks).
+- [apps/api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md](../apps/api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md) → **canonical** removal record (legacy :8000); test-gated regression fixture.
+- [apps/api/docs/archive/api3/](../apps/api/docs/archive/api3/README.md) → **historical** API-3 migration context, retained because several tests assert on it directly (regression protection against legacy-path resurrection).
 
 ### Dashboard (`apps/dashboard`)
 
-- [apps/dashboard/README.md](../apps/dashboard/README.md) → **canonical** active read-only operator UI (:5173).
-- [apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md](../apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md) → **canonical** Today operator handoff.
+- [apps/dashboard/README.md](../apps/dashboard/README.md) → **canonical** active operator UI (:5173).
+- [apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md](../apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md) → **historical** freeze record for the pre-CRM read-only era.
 
 ### Web docs
 
@@ -63,9 +66,6 @@ Historical API-3 migration notes (legacy `:8000` removal): [apps/api/docs/archiv
 - [security-audit-v1.md](../apps/web/docs/security-audit-v1.md) → canonical baseline audit.
 - [company-scope.md](../apps/web/docs/company-scope.md) → canonical human-facing business brief; **should match** [`apps/web/src/data/`](../apps/web/src/data/) (manually maintained; not an automated sync).
 - Live chat (Tidio in `Layout.astro`; legacy FloatingChat removed) → [stage-4 web audit](../apps/web/docs/audits/stage-4-cleanup-hardening-2026-05-16.md) (historical; `floating-chat-widget-notes.md` not retained in-repo).
-- [compat/EMAIL_BUSINESS_SIGNAL_PROMPT.md](../apps/web/docs/compat/EMAIL_BUSINESS_SIGNAL_PROMPT.md) → archive/stub in web; canonical prompt in [AI_ML_IMPLEMENTED_SUMMARY.md](../apps/email-pipeline/docs/ml/AI_ML_IMPLEMENTED_SUMMARY.md) (appendix).
-- [compat/email-archive-locations.md](../apps/web/docs/compat/email-archive-locations.md) → archive/stub in web; canonical copy in [DATA_LOCATIONS.md](../apps/email-pipeline/docs/DATA_LOCATIONS.md#m-epdata-root).
-- [compat/legacy-mail-migration-notes.md](../apps/web/docs/compat/legacy-mail-migration-notes.md) → archive/stub in web; canonical copy in [LEGACY_MAIL_MIGRATION.md](../apps/email-pipeline/docs/ARCHIVE/research/LEGACY_MAIL_MIGRATION.md).
 
 ### Email pipeline docs
 
@@ -95,14 +95,11 @@ Paths below are under [`apps/email-pipeline/docs/`](../apps/email-pipeline/docs/
   - [dataset/TATIANA_DRAFTING_COPILOT.md](../apps/email-pipeline/docs/dataset/TATIANA_DRAFTING_COPILOT.md)
   - [dataset/TATIANA_PILOT_WORKFLOW.md](../apps/email-pipeline/docs/dataset/TATIANA_PILOT_WORKFLOW.md) (operational pilot batches + `pilot_review.csv`)
   - [dataset/TATIANA_EVAL_REVIEW.md](../apps/email-pipeline/docs/dataset/TATIANA_EVAL_REVIEW.md)
-- Generated or snapshot docs:
+- Generated or snapshot docs (regenerated by the scripts named in each; not hand-edited):
   - [generated/CONTACT_READINESS_AUDIT.md](../apps/email-pipeline/docs/generated/CONTACT_READINESS_AUDIT.md)
   - [generated/DEEP_RESEARCH_RECONCILIATION.md](../apps/email-pipeline/docs/generated/DEEP_RESEARCH_RECONCILIATION.md)
   - [generated/READY8_AND_TOP20_REPORTING_PLAN.md](../apps/email-pipeline/docs/generated/READY8_AND_TOP20_REPORTING_PLAN.md)
-  - [generated/AI_READINESS_AUDIT.md](../apps/email-pipeline/docs/generated/AI_READINESS_AUDIT.md)
-  - [generated/PHASE2_1_VALIDATION.md](../apps/email-pipeline/docs/generated/PHASE2_1_VALIDATION.md) and [generated/PHASE2_2_VALIDATION.md](../apps/email-pipeline/docs/generated/PHASE2_2_VALIDATION.md)
-- Archived or superseded context:
-  - primary storage under [ARCHIVE/](../apps/email-pipeline/docs/ARCHIVE/)
+  - [generated/operational_trust_scorecard.md](../apps/email-pipeline/docs/generated/operational_trust_scorecard.md)
 
 <a id="m-docmap-lifecycle"></a>
 ## Lifecycle Labels

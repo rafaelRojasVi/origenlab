@@ -6,7 +6,7 @@ Last reviewed: 2026-06-07 (PR #121 — lab boundary doc pass)
 
 **Purpose:** Make **Tatiana**, **lab**, **ML exploration**, and **niche campaign pilots** **visibly** separate from **daily production** outbound and reporting—**without** moving code yet. Operator truth for paths remains [`SCRIPT_MAP.md`](SCRIPT_MAP.md), [`RUNBOOK.md`](RUNBOOK.md), and tests.
 
-**Companion:** [`EXPERIMENTAL_PARKED.md`](EXPERIMENTAL_PARKED.md) · [`audits/REDUCTION_SHORTLIST_20260607.md`](audits/REDUCTION_SHORTLIST_20260607.md) · [`QUALITY_AND_REFACTOR_STRATEGY.md`](QUALITY_AND_REFACTOR_STRATEGY.md) (Stage **6E1** = this boundary; future **6E2** may refactor large Tatiana modules), read-only [`plan_source_quality.py`](../scripts/qa/plan_source_quality.py) (heuristic `tatiana_lab` bucket), [`ml/AI_ML_IMPLEMENTED_SUMMARY.md`](ml/AI_ML_IMPLEMENTED_SUMMARY.md).
+**Companion:** [`EXPERIMENTAL_PARKED.md`](EXPERIMENTAL_PARKED.md) · [`QUALITY_AND_REFACTOR_STRATEGY.md`](QUALITY_AND_REFACTOR_STRATEGY.md) (Stage **6E1** = this boundary; future **6E2** may refactor large Tatiana modules), read-only [`plan_source_quality.py`](../scripts/qa/plan_source_quality.py) (heuristic `tatiana_lab` bucket), [`ml/AI_ML_IMPLEMENTED_SUMMARY.md`](ml/AI_ML_IMPLEMENTED_SUMMARY.md).
 
 ---
 
@@ -118,5 +118,4 @@ These paths are **lab or pilot tooling**. They are **not** part of daily outboun
 - [`dataset/TATIANA_DRAFTING_COPILOT.md`](dataset/TATIANA_DRAFTING_COPILOT.md) · [`dataset/TATIANA_PILOT_WORKFLOW.md`](dataset/TATIANA_PILOT_WORKFLOW.md)  
 - [`SCRIPT_MAP.md`](SCRIPT_MAP.md) — **Lab** bucket vs **OPS_DAILY**  
 - [`EXPERIMENTAL_PARKED.md`](EXPERIMENTAL_PARKED.md) — parked Postgres/API + lab index  
-- [`audits/REDUCTION_SHORTLIST_20260607.md`](audits/REDUCTION_SHORTLIST_20260607.md) — next reduction candidates  
 - [`QUALITY_AND_REFACTOR_STRATEGY.md`](QUALITY_AND_REFACTOR_STRATEGY.md) §4.C

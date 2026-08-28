@@ -19,9 +19,9 @@ describe("dashboardNav", () => {
     expect(dashboardSectionGroupLabel("system")).toBe("Sistema");
   });
 
-  it("A: 'intel-preview' is not present in the normal sidebar nav (DASHBOARD_NAV_ITEMS / DASHBOARD_NAV_GROUPS)", () => {
-    expect(DASHBOARD_NAV_ITEMS.some((item) => item.id === "intel-preview")).toBe(false);
-    const flattenedIds = DASHBOARD_NAV_GROUPS.flatMap((group) => group.items.map((item) => item.id));
+  it("A: the removed dev-only 'intel-preview' section stays out of the nav", () => {
+    expect(DASHBOARD_NAV_ITEMS.some((item) => (item.id as string) === "intel-preview")).toBe(false);
+    const flattenedIds = DASHBOARD_NAV_GROUPS.flatMap((group) => group.items.map((item) => item.id as string));
     expect(flattenedIds).not.toContain("intel-preview");
   });
 

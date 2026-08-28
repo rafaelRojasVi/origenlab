@@ -15,7 +15,7 @@ export function isDashboardProductionBuild(mode: string = import.meta.env.MODE):
 }
 
 /**
- * Whether the dashboard shell may mount TodayPage and call operator APIs.
+ * Whether the dashboard shell may mount the operator app and call operator APIs.
  * Production builds only allow the production host or local dev hostnames.
  */
 export function isDashboardHostAllowed(

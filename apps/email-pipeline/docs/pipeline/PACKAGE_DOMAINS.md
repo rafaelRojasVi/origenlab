@@ -23,7 +23,6 @@ The package root lists **many modules at one namespace level**. That is workable
 | **Leads (pipeline + master)** | `leads_*.py`, `lead_*.py`, `lead_accounts_schema.py`, `hunt_csv_alignment.py`, `dr50_payload_loader.py` | **Core** for Chile external-lead ingest → `lead_master`; **lead accounts** are additive. See [naming](#m-pkg-naming) below. |
 | **Client reports** | `client_report_*.py`, `attachment_report_sql.py` | **Secondary** (client-facing narrative/metrics); not on the outbound send path. |
 | **Operational trust** | [`operational_trust/`](../../src/origenlab_email_pipeline/operational_trust/) — facade [`__init__.py`](../../src/origenlab_email_pipeline/operational_trust/__init__.py) + `operational_trust_*.py` submodules (**no** root-level `operational_trust_*.py`) | **Core** for publish-safe QA **consistency** checks; not eligibility for send lists. |
-| **Read / operator browse** | [`read/`](../../src/origenlab_email_pipeline/read/) (`today_workspace`, `leads_browse`, `suppliers_browse`), `operator_copy_es.py` | **Secondary** SQLite read helpers (Streamlit UI **removed** 2026-06-04); must **reuse** gate/queue modules, not redefine policy. |
 | **Suppliers** | `supplier_schema.py`, `supplier_workbook.py`, `marketing_supplier_domains.py` | **Core** for supplier domain exclusion in the gate; workbook tooling is **operator-facing** but not send logic. |
 | **Tatiana / drafting** | `tatiana_copilot/` (subpackage), `tatiana_review_cohort.py`, `tatiana_voice_cohort.py` | **Optional** copilot; **no send path**; must not own export eligibility. |
 
