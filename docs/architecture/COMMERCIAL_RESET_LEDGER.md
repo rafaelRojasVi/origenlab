@@ -130,3 +130,104 @@ tests, and docs:
 - PR3 cockpit (`/opportunities/commercial`) — production-blocked by the proxy
   today but it is the machine-intake review surface; fix is reconnection
   (allowlist), not deletion. See Checkpoint 4.
+
+## Checkpoint 3 — Executed deletions/consolidations (2026-08-28)
+
+Each group committed separately with focused validation:
+
+1. **`9389601` Streamlit-era remnants (email-pipeline):** deleted `read/`
+   package (leads/suppliers/today browse), `operator_copy_es.py`,
+   `canonical_contacto_source.py` + 6 test files; updated
+   `test_package_import_boundaries`, `plan_source_quality` taxonomy,
+   `test_canonical_operational_read` (kept the active
+   `canonical_operational_sql` assertions), RUNBOOK, PACKAGE_DOMAINS.
+   Validation: focused suites green.
+2. **`ef3f52e` core facade layer (email-pipeline):** deleted all 40 facade
+   modules + facade-only subpackages (`core/gmail`, `core/leads`,
+   `core/suppliers`); migrated 3 remaining callers (incl. a relative import
+   inside `broad_marketing_contacts`) to root imports; rewrote
+   `test_core_import_surface` as a stay-removed guard; facade audit gained a
+   reviewed-distinct allowlist for `db.py`/`postgres_dashboard_api/db.py`.
+   Validation: full email-pipeline suite, 5630 passed.
+3. **`7066a14` legacy equipment client + TodayPage shim (dashboard):**
+   deleted the unrendered equipment_first client closure (table, drawer,
+   triage badges, watchlist button, equipmentTableView/Watchlist/EmptyState/
+   Triage libs — including the localStorage watchlist) and the TodayPage
+   re-export shim; renamed its test to `DashboardApp.today.test.tsx`;
+   updated the apps/api consumer-docs test + phase6 grep-gate allowlist.
+   `/opportunities/equipment` API + Today counts kept.
+   Validation: dashboard validate (657 tests + build), api mirror tests.
+4. **`35fc5f6` IntelPreview (dashboard):** deleted the dev-only page +
+   preview-only InstitutionProfileCard/ProspectQueueList/AxisScoreCard and
+   the `intel-preview` section id. Live tender intel path untouched.
+   Validation: dashboard validate (651 tests + build).
+5. **`5231bef` hard-coded supplier universe (dashboard):** deleted
+   `SUPPLIER_GROUP_DEFINITIONS`; grouping now derives id from the evidence
+   domain and label from the most frequent account name. Validation:
+   dashboard validate (652 tests + build).
+6. **`e963475` stale docs:** README, AGENTS, PROJECT_CONTEXT, api/dashboard
+   READMEs, DOCUMENTATION_MAP corrected; V1 freeze handoff marked
+   historical; broken links fixed. Doc link checker: 177 files OK.
+
+## Checkpoint 4 — Reconnection (2026-08-28)
+
+- **`3a6457f`**: proxy GET allowlist now carries `/opportunities/commercial`
+  and `/opportunities/commercial/o_<32hex>` — the PR3 intake cockpit had
+  been silently 403-blocked in production. Cockpit relabeled as
+  system-proposed intake whose human decisions land in the durable CRM;
+  deals table relabeled as historical evidence ledger.
+- Durable CRM already reaches the dashboard via `/operations/work-queue`
+  (Hoy) and the operator-state/tasks/activities panel (Negocios detail).
+  Sales-opportunity promote/stage UI is deliberately left to the next
+  branch (feature work, not consolidation).
+
+## Special legacy questions — resolutions
+
+1. **`opportunity_operator_state.manual_stage`:** TRANSITIONAL. It remains
+   the pre-promotion triage overlay on machine (`o_*`) opportunities.
+   Human lifecycle for promoted records lives in
+   `commercial.sales_opportunity.stage`. Removal condition: when the
+   promote-at-confirm flow ships in the UI, stop writing `manual_stage`
+   for promoted records (column stays; shipped migrations unchanged).
+2. **PR3 vs durable CRM lifecycle:** PR3 keeps dedupe, evidence,
+   conflicts, and canonical-stage *suggestions* (rebuildable). Human truth
+   is operator_state (confirm/reject) + sales_opportunity (stage). PR3
+   never owns human decisions.
+3. **Deals:** historical/evidence context (redacted mirror of the SQLite
+   deal ledger). Stays a read-only table on Negocios labeled as historical
+   ledger; long-term it attaches as provenance to organizations/
+   opportunities. Not a separate operational workflow.
+4. **Warm Cases:** remain the machine intake/triage queue (Bandeja +
+   role-filtered views). Local-only review labels are TRANSITIONAL until
+   triage promotes into durable CRM records.
+5. **Proveedores page:** kept as a supplier *evidence* view, but the
+   hard-coded company/domain universe is deleted; grouping is now derived
+   from evidence. Canonical supplier identity: `commercial.organization`
+   (role=supplier) once organization routes ship.
+6. **Supplier modules:** canonical evidence utilities = supplier workbook/
+   schema, `marketing_supplier_domains`, warm-case supplier categories,
+   `catalog.supplier_offer`, Gmail interaction audit, PR2 identity.
+   Obsolete duplicates removed = `read/suppliers_browse`, dashboard
+   hard-coded groups, `core/suppliers` facades.
+7. **`lead_*`/`leads_*`:** ACTIVE machine/outbound layer (lead_master
+   SQLite + `lead_intel` mirror + Prospectos page + export gate). Only the
+   `core/leads` facade layer was dead — removed.
+8. **Streamlit remnants:** `read/` package, `operator_copy_es`, shim-parity
+   tests — all removed this pass. Remaining mentions are historical
+   audits/reports only.
+9. **Old API/read layers:** legacy `:8000` API was already removed
+   (API-3); `/mirror/*` + `postgres_dashboard_api` survive as the
+   documented read-only reporting surface; `read/` package removed.
+   `/emails/recent` is TRANSITIONAL (no UI consumer, proxy-blocked;
+   retire when an inbox surface reads a durable path).
+10. **Materially false docs:** root README, AGENTS.md, PROJECT_CONTEXT,
+    api README, dashboard README — corrected. V1 freeze handoff — marked
+    historical. Architecture truth now lives in
+    `CURRENT_SYSTEM_TRUTH.md` / `TARGET_COMMERCIAL_ARCHITECTURE.md`.
+
+## Status
+
+This ledger is the completed migration record of the 2026-08 commercial
+platform reset. Permanent documentation:
+`docs/architecture/CURRENT_SYSTEM_TRUTH.md` (what is) and
+`docs/architecture/TARGET_COMMERCIAL_ARCHITECTURE.md` (direction + rules).
