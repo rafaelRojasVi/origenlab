@@ -71,10 +71,13 @@ export function SalesOpportunityWorkspaceDrawer({
         })
         .catch(() => undefined);
     }
+  }, [open, item]);
+
+  useEffect(() => {
     if (!open && !mounted) {
       setCore(null);
     }
-  }, [open, item, mounted]);
+  }, [open, mounted]);
 
   useEffect(() => {
     if (open) {
@@ -88,13 +91,16 @@ export function SalesOpportunityWorkspaceDrawer({
     return () => clearTimeout(timeout);
   }, [open]);
 
-  // Deps are intentionally just [open]: `onClose` is read via `onCloseRef`
+  // Deps include both [open] and [core]: `onClose` is read via `onCloseRef`
   // so that a parent re-render with a new inline `onClose` (e.g. right
   // after `onStageChanged()` fires) doesn't tear down and re-run this
   // effect — which would re-capture `previouslyFocused` and steal focus
-  // back to the close button mid-interaction.
+  // back to the close button mid-interaction. But we must also key off `core`
+  // to handle persistent-mount usage where the drawer is mounted once with
+  // `item=null` and `core` only gets populated by the background fetch;
+  // without this, focus runs before the close button exists.
   useEffect(() => {
-    if (!open) return;
+    if (!open || !core) return;
 
     previouslyFocused.current = document.activeElement as HTMLElement | null;
     closeButtonRef.current?.focus();
@@ -108,9 +114,9 @@ export function SalesOpportunityWorkspaceDrawer({
       document.removeEventListener("keydown", onKeyDown);
       previouslyFocused.current?.focus();
     };
-  }, [open]);
+  }, [open, core]);
 
-  if (!mounted || !core) return null;
+  if (!mounted || !core || core.sales_opportunity_id !== item?.sales_opportunity_id) return null;
 
   async function changeStage(nextStage: SalesOpportunityStage) {
     if (!core) return;
@@ -163,7 +169,10 @@ export function SalesOpportunityWorkspaceDrawer({
     <>
       <button
         type="button"
-        className="fixed inset-0 z-40 hidden bg-slate-900/30 md:block"
+        className={
+          "fixed inset-0 z-40 hidden md:block motion-safe:transition-opacity motion-safe:duration-200 " +
+          (entered ? "bg-slate-900/30 pointer-events-auto" : "bg-slate-900/0 pointer-events-none")
+        }
         aria-label="Cerrar oportunidad"
         onClick={onClose}
       />
@@ -175,7 +184,7 @@ export function SalesOpportunityWorkspaceDrawer({
         data-testid="sales-opportunity-workspace-drawer"
         className={
           "mt-4 flex w-full flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] shadow-sm motion-safe:transition-all motion-safe:duration-200 md:fixed md:inset-y-0 md:right-0 md:z-50 md:mt-0 md:h-full md:max-w-xl md:rounded-none md:border-l md:border-t-0 md:shadow-xl " +
-          (entered ? "opacity-100 md:translate-x-0" : "opacity-0 md:translate-x-full")
+          (entered ? "opacity-100 md:translate-x-0 pointer-events-auto" : "opacity-0 md:translate-x-full pointer-events-none")
         }
       >
         <header className="flex items-start justify-between gap-3 border-b border-[var(--color-border)] px-4 py-4">

@@ -154,4 +154,17 @@ describe("SalesOpportunityWorkspaceDrawer", () => {
 
     vi.useRealTimers();
   });
+
+  it("moves focus to close button even when drawer is persistently mounted with initial item=null", async () => {
+    // Simulates the real PipelinePage usage: drawer mounted once, props change over time
+    const { rerender } = render(
+      <SalesOpportunityWorkspaceDrawer item={null} open={false} onClose={vi.fn()} onStageChanged={vi.fn()} />,
+    );
+
+    // Open drawer with an item — core starts null, gets populated by background fetch
+    rerender(<SalesOpportunityWorkspaceDrawer item={item()} open onClose={vi.fn()} onStageChanged={vi.fn()} />);
+
+    // Focus should move to close button once core is set by the fetch (not before)
+    await waitFor(() => expect(screen.getByText("Cerrar")).toHaveFocus());
+  });
 });
