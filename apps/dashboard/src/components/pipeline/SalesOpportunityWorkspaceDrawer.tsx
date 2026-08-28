@@ -50,6 +50,8 @@ export function SalesOpportunityWorkspaceDrawer({
   const [core, setCore] = useState<SalesOpportunityListItem | null>(item);
   const [stagePending, setStagePending] = useState(false);
   const [stageError, setStageError] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(open);
+  const [entered, setEntered] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
@@ -69,10 +71,22 @@ export function SalesOpportunityWorkspaceDrawer({
         })
         .catch(() => undefined);
     }
-    if (!open) {
+    if (!open && !mounted) {
       setCore(null);
     }
-  }, [open, item]);
+  }, [open, item, mounted]);
+
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      const raf = requestAnimationFrame(() => setEntered(true));
+      return () => cancelAnimationFrame(raf);
+    }
+
+    setEntered(false);
+    const timeout = setTimeout(() => setMounted(false), 200);
+    return () => clearTimeout(timeout);
+  }, [open]);
 
   // Deps are intentionally just [open]: `onClose` is read via `onCloseRef`
   // so that a parent re-render with a new inline `onClose` (e.g. right
@@ -96,7 +110,7 @@ export function SalesOpportunityWorkspaceDrawer({
     };
   }, [open]);
 
-  if (!open || !core) return null;
+  if (!mounted || !core) return null;
 
   async function changeStage(nextStage: SalesOpportunityStage) {
     if (!core) return;
@@ -159,7 +173,10 @@ export function SalesOpportunityWorkspaceDrawer({
         aria-modal="false"
         aria-labelledby="sales-opportunity-workspace-heading"
         data-testid="sales-opportunity-workspace-drawer"
-        className="mt-4 flex w-full flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] shadow-sm motion-safe:transition-transform motion-safe:duration-200 md:fixed md:inset-y-0 md:right-0 md:z-50 md:mt-0 md:h-full md:max-w-xl md:rounded-none md:border-l md:border-t-0 md:shadow-xl"
+        className={
+          "mt-4 flex w-full flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] shadow-sm motion-safe:transition-all motion-safe:duration-200 md:fixed md:inset-y-0 md:right-0 md:z-50 md:mt-0 md:h-full md:max-w-xl md:rounded-none md:border-l md:border-t-0 md:shadow-xl " +
+          (entered ? "opacity-100 md:translate-x-0" : "opacity-0 md:translate-x-full")
+        }
       >
         <header className="flex items-start justify-between gap-3 border-b border-[var(--color-border)] px-4 py-4">
           <div className="min-w-0">

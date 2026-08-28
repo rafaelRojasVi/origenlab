@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SalesOpportunityWorkspaceDrawer } from "./SalesOpportunityWorkspaceDrawer";
 import { fetchSalesOpportunity, transitionSalesOpportunityStage } from "../../api/commercialOperationsClient";
@@ -134,5 +134,24 @@ describe("SalesOpportunityWorkspaceDrawer", () => {
       ).toBeInTheDocument(),
     );
     expect((screen.getByLabelText("Cambiar etapa") as HTMLSelectElement).value).toBe("qualifying");
+  });
+
+  it("keeps the drawer mounted briefly while it exits, for the close transition", () => {
+    vi.useFakeTimers();
+    const { rerender } = render(
+      <SalesOpportunityWorkspaceDrawer item={item()} open onClose={vi.fn()} onStageChanged={vi.fn()} />,
+    );
+
+    act(() => {
+      rerender(<SalesOpportunityWorkspaceDrawer item={item()} open={false} onClose={vi.fn()} onStageChanged={vi.fn()} />);
+    });
+    expect(screen.getByTestId("sales-opportunity-workspace-drawer")).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+    expect(screen.queryByTestId("sales-opportunity-workspace-drawer")).not.toBeInTheDocument();
+
+    vi.useRealTimers();
   });
 });
