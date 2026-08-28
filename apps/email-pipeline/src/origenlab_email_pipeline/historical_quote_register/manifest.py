@@ -45,7 +45,11 @@ def write_manifest(manifest: RunManifest, run_dir: Path) -> Path:
     run_dir.mkdir(parents=True, exist_ok=True)
     path = run_dir / "manifest.json"
     fd, tmp_name = tempfile.mkstemp(dir=run_dir, prefix=".manifest.", suffix=".tmp")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(asdict(manifest), f, indent=2, ensure_ascii=False)
-    os.replace(tmp_name, path)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(asdict(manifest), f, indent=2, ensure_ascii=False)
+        os.replace(tmp_name, path)
+    finally:
+        if os.path.exists(tmp_name):
+            os.remove(tmp_name)
     return path
