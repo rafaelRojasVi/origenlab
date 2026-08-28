@@ -84,6 +84,17 @@ describe("SalesOpportunityCard", () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
+  it("does not call onOpen when Enter is pressed on the stage select", () => {
+    const onOpen = vi.fn();
+    const onStageChange = vi.fn();
+
+    render(<SalesOpportunityCard item={item()} onOpen={onOpen} onStageChange={onStageChange} stagePending={false} />);
+
+    const select = screen.getByLabelText("Cambiar etapa");
+    fireEvent.keyDown(select, { key: "Enter" });
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
   it("shows a terminal badge with no stage select for a won opportunity", () => {
     render(
       <SalesOpportunityCard item={item({ stage: "won" })} onOpen={vi.fn()} onStageChange={vi.fn()} stagePending={false} />,
