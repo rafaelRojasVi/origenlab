@@ -21,3 +21,10 @@ def test_script_map_does_not_classify_helpers_as_active_operator_command() -> No
             assert "active_operator_command" not in line, (
                 f"{script} must not be classified active_operator_command: {line!r}"
             )
+
+
+def test_script_map_marks_helpers_parked_or_owner_review() -> None:
+    text = _SCRIPT_MAP.read_text(encoding="utf-8").lower()
+    assert _SPANISH_SCRIPT in text
+    assert _WEB_SERVER_SCRIPT in text
+    assert "owner review" in text or "parked" in text

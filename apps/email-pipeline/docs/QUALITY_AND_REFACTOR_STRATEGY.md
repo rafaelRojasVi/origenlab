@@ -12,8 +12,8 @@ This document is **governance and intent**, not a second source of behavior. It 
 
 ## 1. Current architecture truth
 
-- **`core/`** is a **stable re-export import surface** (see `core/__init__.py` and `tests/test_core_import_surface.py`). It **does not** by itself move implementation out of the historic top-level package layout.
-- **Top-level** modules under `src/origenlab_email_pipeline/` (e.g. `candidate_export_gate.py`, `outbound_core.py`) **remain the implementation** for most logic until an explicit **vertical migration** phase and tests.
+- **`core/`** holds **real implementation modules only** (`core.safety`, `core.step_runner`, `core.reports_out`, `core.research_automation`, `core.mart.*`, `core.outbound.broad_marketing_contacts`/`do_not_repeat_master`) — see `core/__init__.py` and `tests/test_core_import_surface.py`. The Stage 2A/2B re-export **facade layer** (`core.config`, `core.db`, `core.gmail.*`, `core.leads.*`, `core.suppliers.*`, and facade twins of most `core.outbound`/`core.mart` modules) was **removed** in the 2026-08 commercial platform reset: it had stalled since 2026-06 and 37 of 40 facade modules had zero runtime importers. That migration direction is abandoned; do not recreate it.
+- **Top-level** modules under `src/origenlab_email_pipeline/` (e.g. `candidate_export_gate.py`, `outbound_core.py`) **are the canonical implementation** for everything except the real `core/` modules listed above.
 - **`scripts/`** are **operator entrypoints**; they should become **thinner** over time by delegating to the library, not re-implementing policy.
 - **Lab / pilot / archive-lane** code is **expected**; it must stay **visibly** separated (naming, folders, `SCRIPT_MAP.md`) so daily outbound lanes are not confused with experiments.
 - **Runtime is SQLite-first**; **Postgres** is optional (migration, audit) — not primary OLTP.
@@ -25,8 +25,8 @@ This document is **governance and intent**, not a second source of behavior. It 
 
 - **No big-bang** physical moves: one concern per PR, one vertical or one subsystem.
 - **One vertical per PR** (see §4) unless the change is docs-only or test-only.
-- **Scripts** should **delegate** to `origenlab_email_pipeline` and, for new work, to **`core.*` re-exports** where they exist; avoid growing monolithic `scripts/…` with duplicated business rules.
-- **New** library and script code should **prefer** `from origenlab_email_pipeline.core.…` **where a wrapper exists**; existing `from origenlab_email_pipeline.…` imports stay valid. **No mass rewrites** until Stage 6C+ with dedicated tests.
+- **Scripts** should **delegate** to `origenlab_email_pipeline` library modules (root-level, or `core.*` for the small set of real infra modules listed in §1); avoid growing monolithic `scripts/…` with duplicated business rules.
+- Import from the **canonical** module directly — root-level `origenlab_email_pipeline.<name>` for everything except the real `core/` infra modules. There is no re-export surface to prefer over the canonical module anymore.
 - **Do not move** policy-critical modules (gate, suppressions, operational trust, core outbound) until **tests and docs** explicitly cover the new paths and the operator contract is updated.
 - **No deletion** of scripts or package modules without: read-only **planner** pass where applicable (`plan_script_consolidation.py` / `plan_reports_out_cleanup.py`), `SCRIPT_MAP.md` / `RUNBOOK.md` updates, and `tests/test_critical_script_paths.py` (or replacement) in the **same** change set.
 
@@ -52,7 +52,7 @@ Refactors are **staged**; the tables below are **not** a commitment to order. Us
 | | |
 |-|-|
 | **Current pain** | Large scripts and parallel import paths; gate and CSV contracts touch many files. |
-| **Candidate files** (non-exhaustive) | `outbound_core.py`, `candidate_export_gate.py`, `operational_trust/`, `scripts/leads/process_broad_marketing_contacts.py`, `scripts/leads/*campaign*`, `core/outbound/*` re-exports |
+| **Candidate files** (non-exhaustive) | `outbound_core.py`, `candidate_export_gate.py`, `operational_trust/`, `scripts/leads/process_broad_marketing_contacts.py`, `scripts/leads/*campaign*` |
 | **Risk** | **High** — wrong change breaks send eligibility, suppressions, or post-send state. |
 | **Expected benefit** | Thinner scripts, clearer ownership, fewer divergent import paths. |
 | **First safe refactor** | **Docs + tests only**, or a **single** script thinned to call **existing** library functions (no policy change), with full `pytest` and a manual lane smoke note in PR. |
@@ -109,7 +109,4 @@ Refactors are **staged**; the tables below are **not** a commitment to order. Us
 ## 6. Import convention (Stage 6B)
 
 - Import implementations from the top-level `origenlab_email_pipeline` modules; `core` holds only real shared infrastructure (`core.safety`, `core.step_runner`, `core.reports_out`, `core.research_automation`, `core.mart` / `core.outbound` builders). The re-export facade layer was removed in the 2026-08 commercial platform reset.
-- **Existing** `from origenlab_email_pipeline.candidate_export_gate` (and similar) **remain valid** — do not mass-rewrite.
-- A **per-vertical** migration in **Stage 6C+** can switch one subtree at a time with tests, not a repo-wide sed.
-
-This keeps **compatibility** while nudging new work toward a **stable** `core.*` story.
+- `from origenlab_email_pipeline.candidate_export_gate` (and similar root-level imports) **are the convention** — no migration is in progress toward a broader `core.*` surface.
