@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping, MutableMapping, Sequence, Tuple
 
-from origenlab_email_pipeline.core.mart.business_mart import emails_in
+from origenlab_email_pipeline.business_mart import emails_in
 
 # Email-like keys scanned from JSON send manifests
 CSV_EMAIL_FIELDS: Tuple[str, ...] = (

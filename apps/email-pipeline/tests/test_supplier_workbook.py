@@ -14,7 +14,6 @@ from openpyxl import Workbook
 from openpyxl.utils.exceptions import InvalidFileException
 
 import origenlab_email_pipeline.supplier_workbook as supplier_workbook_root
-from origenlab_email_pipeline.core.suppliers import supplier_workbook as supplier_workbook_core
 from origenlab_email_pipeline.supplier_schema import SUPPLIER_SCHEMA_SQL, ensure_supplier_tables
 from origenlab_email_pipeline.supplier_workbook import (
     CONF_KEYS,
@@ -171,18 +170,13 @@ def test_expected_sheets_contract() -> None:
 
 
 @pytest.mark.parametrize("name", _PUBLIC_CONSTANTS)
-def test_public_constants_on_root_and_core_facade(name: str) -> None:
+def test_public_constants_on_root_module(name: str) -> None:
     assert hasattr(supplier_workbook_root, name)
-    assert hasattr(supplier_workbook_core, name)
-    assert getattr(supplier_workbook_root, name) is getattr(supplier_workbook_core, name)
 
 
 @pytest.mark.parametrize("name", _PUBLIC_CALLABLES)
-def test_public_callables_same_reference_root_and_core(name: str) -> None:
-    root_fn = getattr(supplier_workbook_root, name)
-    core_fn = getattr(supplier_workbook_core, name)
-    assert root_fn is core_fn
-    assert callable(root_fn)
+def test_public_callables_on_root_module(name: str) -> None:
+    assert callable(getattr(supplier_workbook_root, name))
 
 
 def test_tier_constants_and_weights() -> None:

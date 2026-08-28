@@ -108,7 +108,7 @@ Refactors are **staged**; the tables below are **not** a commitment to order. Us
 
 ## 6. Import convention (Stage 6B)
 
-- **New** code should **prefer** `from origenlab_email_pipeline.core…` where a re-export exists (`core.outbound`, `core.gmail`, `core.mart`, `core.suppliers`, `core.leads`, `core.reports_out` for `reports/out` rules, plus `core.config`, `core.db`, `core.safety`, `core.sqlite_migrate`).
+- Import implementations from the top-level `origenlab_email_pipeline` modules; `core` holds only real shared infrastructure (`core.safety`, `core.step_runner`, `core.reports_out`, `core.research_automation`, `core.mart` / `core.outbound` builders). The re-export facade layer was removed in the 2026-08 commercial platform reset.
 - **Existing** `from origenlab_email_pipeline.candidate_export_gate` (and similar) **remain valid** — do not mass-rewrite.
 - A **per-vertical** migration in **Stage 6C+** can switch one subtree at a time with tests, not a repo-wide sed.
 

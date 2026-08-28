@@ -37,7 +37,7 @@ from origenlab_email_pipeline.core.outbound.do_not_repeat_master import (
     scan_csv_emails,
     touch_source_with_paths,
 )
-from origenlab_email_pipeline.core.mart.business_mart import emails_in
+from origenlab_email_pipeline.business_mart import emails_in
 from origenlab_email_pipeline.outbound_core import (
     resolve_outbound_gmail_user,
     resolve_outbound_sent_folders,

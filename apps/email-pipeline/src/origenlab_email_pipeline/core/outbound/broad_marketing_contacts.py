@@ -16,8 +16,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from .candidate_export_gate import GateContext, evaluate_export_eligibility
-from .csv_contracts import (
+from origenlab_email_pipeline.candidate_export_gate import GateContext, evaluate_export_eligibility
+from origenlab_email_pipeline.csv_contracts import (
     extract_email_from_aliases,
     normalize_confidence,
     sanitize_csv_text,

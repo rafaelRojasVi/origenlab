@@ -79,9 +79,23 @@ def is_facade_wrapper(content: str) -> bool:
     return any(marker in content for marker in _IMPL_LIVES_MARKERS)
 
 
+# Same-basename groups that are verified distinct domains despite mixing a
+# root implementation with subpackage implementations. Reviewed 2026-08-28
+# (commercial platform reset): root db.py is the SQLite connection layer;
+# postgres_dashboard_api/db.py is the Postgres mirror connection helper.
+_REVIEWED_DISTINCT_GROUPS: dict[str, frozenset[str]] = {
+    "db.py": frozenset({"db.py", "postgres_dashboard_api/db.py"}),
+}
+
+
 def classify_duplicate_group(entries: list[dict[str, object]]) -> str:
     root_entries = [e for e in entries if e["is_root"]]
     sub_entries = [e for e in entries if not e["is_root"]]
+
+    paths = {str(e["path"]) for e in entries}
+    for basename, reviewed_paths in _REVIEWED_DISTINCT_GROUPS.items():
+        if paths == reviewed_paths:
+            return "same_basename_distinct_domains"
 
     if len(root_entries) == 1 and sub_entries:
         root_facade = bool(root_entries[0]["is_facade"])
