@@ -39,6 +39,11 @@ export function SalesOpportunityCard({
           onOpen();
         }
       }}
+      draggable
+      onDragStart={(event) => {
+        event.dataTransfer.setData("text/plain", item.sales_opportunity_id);
+        event.dataTransfer.effectAllowed = "move";
+      }}
       className="motion-safe:transition-shadow motion-safe:duration-150 cursor-pointer space-y-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-3 shadow-sm hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
     >
       <div className="flex items-start justify-between gap-2">

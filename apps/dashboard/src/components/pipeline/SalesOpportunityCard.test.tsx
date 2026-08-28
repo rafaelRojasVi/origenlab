@@ -103,4 +103,15 @@ describe("SalesOpportunityCard", () => {
     expect(screen.queryByLabelText("Cambiar etapa")).not.toBeInTheDocument();
     expect(screen.getByText("Ganada · cerrada")).toBeInTheDocument();
   });
+
+  it("is draggable and reports its own id on dragstart", () => {
+    render(<SalesOpportunityCard item={item()} onOpen={vi.fn()} onStageChange={vi.fn()} stagePending={false} />);
+
+    const card = screen.getByRole("button", { name: /Centrífuga refrigerada/ });
+    expect(card).toHaveAttribute("draggable", "true");
+
+    const dataTransfer = { setData: vi.fn(), effectAllowed: "" };
+    fireEvent.dragStart(card, { dataTransfer });
+    expect(dataTransfer.setData).toHaveBeenCalledWith("text/plain", "sales_1");
+  });
 });

@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { SalesOpportunityBoard } from "./SalesOpportunityBoard";
 import type { SalesOpportunityListItem } from "../../api/commercialOperationsTypes";
@@ -126,5 +126,16 @@ describe("SalesOpportunityBoard", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Esta oportunidad cambió en otra sesión");
     screen.getByText("Cerrar").click();
     expect(dismissStageError).toHaveBeenCalled();
+  });
+
+  it("dropping a card on a column calls changeStage with that column's stage", () => {
+    const changeStage = vi.fn();
+    render(<SalesOpportunityBoard board={board({ items: [item()], changeStage })} onOpenOpportunity={vi.fn()} />);
+
+    const newColumnDropZone = screen.getByTestId("pipeline-column-drop-new");
+    const dataTransfer = { getData: () => "sales_1", setData: vi.fn() };
+
+    fireEvent.drop(newColumnDropZone, { dataTransfer });
+    expect(changeStage).toHaveBeenCalledWith(item(), "new");
   });
 });

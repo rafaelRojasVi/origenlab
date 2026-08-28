@@ -111,7 +111,20 @@ export function SalesOpportunityBoard({
       {!board.loading && !board.error && !isEmpty ? (
         <div className="flex gap-4 overflow-x-auto pb-2">
           {columns.map((stage) => (
-            <div key={stage} className="w-72 shrink-0 space-y-2">
+            <div
+              key={stage}
+              data-testid={`pipeline-column-drop-${stage}`}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                const droppedId = event.dataTransfer.getData("text/plain");
+                const droppedItem = board.items.find((row) => row.sales_opportunity_id === droppedId);
+                if (droppedItem && droppedItem.stage !== stage) {
+                  void board.changeStage(droppedItem, stage);
+                }
+              }}
+              className="w-72 shrink-0 space-y-2"
+            >
               <div className="flex items-center justify-between px-1">
                 <h3 className="text-sm font-semibold text-slate-800">{salesOpportunityStageLabel(stage)}</h3>
                 <span className="text-xs text-[var(--color-muted)]">{grouped[stage].length}</span>
