@@ -1,0 +1,6 @@
+{
+  "authenticated_request_performed": false,
+  "fixture_origin": "synthetic_official_shape",
+  "note": "Synthetic emails/attachments/attachment_extracts rows shaped like the canonical emails.sqlite schema (origenlab_email_pipeline.db.SCHEMA_SQL) for historical_quote_register tests. No production data.",
+  "ticket_present": false
+}
