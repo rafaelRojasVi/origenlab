@@ -87,6 +87,21 @@ def test_promotion_normalizes_input_and_forces_server_identity() -> None:
     assert len(call["request_fingerprint"]) == 64
 
 
+def test_promotion_defaults_owner_to_operator_when_omitted() -> None:
+    repository = FakeRepository()
+    service = _service(repository)
+
+    result = service.promote_sales_opportunity(
+        source_opportunity_id="o_123",
+        title="Centrífuga refrigerada",
+        operator="Tatiana@OrigenLab.CL",
+        idempotency_key="promote-123",
+    )
+
+    assert result.owner_key == "tatiana@origenlab.cl"
+    assert repository.calls[0]["owner_key"] == "tatiana@origenlab.cl"
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
