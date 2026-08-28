@@ -52,9 +52,6 @@ Inicio rápido para agentes: [docs/APP_CONTEXT.md](docs/APP_CONTEXT.md)
 | [docs/deployment-status.md](docs/deployment-status.md) | Estado actual, hosting, DNS, advertencias |
 | [docs/email-setup.md](docs/email-setup.md) | Email contacto@origenlab.cl (Titan, IMAP/SMTP, DKIM) |
 | [docs/company-scope.md](docs/company-scope.md) | Alcance, contacto, servicios, tono y prompt para redactar cotizaciones |
-| [docs/compat/legacy-mail-migration-notes.md](docs/compat/legacy-mail-migration-notes.md) | Stub histórico: referencia al dominio email-pipeline |
-| [docs/compat/email-archive-locations.md](docs/compat/email-archive-locations.md) | Stub histórico: referencia al dominio email-pipeline |
-| [docs/compat/EMAIL_BUSINESS_SIGNAL_PROMPT.md](docs/compat/EMAIL_BUSINESS_SIGNAL_PROMPT.md) | Stub: prompt en `apps/email-pipeline/docs/ml/AI_ML_IMPLEMENTED_SUMMARY.md` (apéndice) |
 | [docs/security-audit-v1.md](docs/security-audit-v1.md) | Auditoría de seguridad y arquitectura v1 |
 | [CLAUDE.md](CLAUDE.md) | Instrucciones para asistencia con IA |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Guía para colaboradores y uso con Claude/Cursor (reglas, skills, alcance) |
@@ -63,7 +60,7 @@ Inicio rápido para agentes: [docs/APP_CONTEXT.md](docs/APP_CONTEXT.md)
 
 - **Git:** el remoto es el **monorepo** (raíz del clone); este sitio vive bajo `apps/web/`.
 - **Ramas:** suele usarse `main` y `dev` a nivel monorepo; desarrollo del sitio en la rama acordada del equipo.
-- **Alcance de esta carpeta:** solo la app Astro; el monorepo incluye además `apps/email-pipeline/` y documentación en la raíz ([`docs/MONOREPO.md`](../../docs/MONOREPO.md)).
+- **Alcance de esta carpeta:** solo la app Astro; el monorepo incluye además `apps/email-pipeline/`, `apps/api/`, `apps/dashboard/`, y documentación de arquitectura en la raíz ([`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](../../docs/architecture/CURRENT_SYSTEM_TRUTH.md)).
 
 **Colaboradores y uso con Claude/Cursor:** ver [CONTRIBUTING.md](CONTRIBUTING.md) (estructura, dónde está cada cosa, reglas en `.cursor/rules/`, skills en `.claude/skills/`, alcance en `docs/company-scope.md`).
 

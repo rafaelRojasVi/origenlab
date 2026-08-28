@@ -203,7 +203,6 @@ The script does **not** print response bodies, DB paths, Postgres URLs, or crede
 - Refresh runbook: [`apps/email-pipeline/docs/REFRESH_RENDER_DASHBOARD_ONCE.md`](../../apps/email-pipeline/docs/REFRESH_RENDER_DASHBOARD_ONCE.md)
 - Dashboard production API auth: [`apps/dashboard/docs/PRODUCTION_API_AUTH.md`](../../apps/dashboard/docs/PRODUCTION_API_AUTH.md)
 - Dashboard read-only Worker proxy: [`apps/dashboard-proxy/README.md`](../../apps/dashboard-proxy/README.md)
-- Truth audit: [`DASHBOARD_TRUTH_AUDIT_2026-05-28.md`](./DASHBOARD_TRUTH_AUDIT_2026-05-28.md)
 - API mirror smoke (narrower): [`apps/api/scripts/mirror_parity_smoke.py`](../../apps/api/scripts/mirror_parity_smoke.py)
 
 ## Tests

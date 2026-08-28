@@ -125,4 +125,7 @@ fail-closed.
 
 Older docs describing the API/dashboard as entirely read-only/GET-only
 (pre-ARCH-3B) are historical. The durable `/operations/*` command surface
-exists and is the only human write path.
+exists and is the only human write path. The legacy email-pipeline FastAPI
+app on port 8000 (`apps/email-pipeline/src/origenlab_api`) was fully
+removed in API-3 Phase 6 — `apps/api` on :8001 is the only HTTP app; no
+FastAPI code remains under `apps/email-pipeline`.

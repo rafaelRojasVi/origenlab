@@ -1,6 +1,6 @@
 # Guía para colaboradores (y uso con Claude / Cursor)
 
-Estás en **`apps/web/`**: la app **sitio Astro** de OrigenLab (Chile). El **repositorio Git** es un **monorepo**: la raíz del clone contiene también **`apps/email-pipeline/`** y otros archivos compartidos — ver [README del monorepo](../../README.md) y [`docs/MONOREPO.md`](../../docs/MONOREPO.md). Todo el código **del sitio** vive bajo `apps/web/`; la documentación y reglas de esta carpeta aplican a esa app.
+Estás en **`apps/web/`**: la app **sitio Astro** de OrigenLab (Chile). El **repositorio Git** es un **monorepo**: la raíz del clone contiene también **`apps/email-pipeline/`**, **`apps/api/`**, **`apps/dashboard/`**, y otros archivos compartidos — ver [README del monorepo](../../README.md) y [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](../../docs/architecture/CURRENT_SYSTEM_TRUTH.md). Todo el código **del sitio** vive bajo `apps/web/`; la documentación y reglas de esta carpeta aplican a esa app.
 
 ---
 

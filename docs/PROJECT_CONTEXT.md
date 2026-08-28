@@ -89,4 +89,3 @@ Support OrigenLab's commercial operation by:
 ## Navigation
 
 - Documentation map: [`DOCUMENTATION_MAP.md`](./DOCUMENTATION_MAP.md#m-docmap-entry) · [link check & linking conventions](./DOCUMENTATION_MAP.md#m-docmap-link-check)
-- Historical monorepo migration notes: [`MONOREPO.md`](./MONOREPO.md)

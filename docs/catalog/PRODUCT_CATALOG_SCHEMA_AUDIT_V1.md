@@ -467,7 +467,7 @@ Aligned with `COMMERCIAL_DEAL_LEDGER_SCHEMA_V1.md` §6 and `commercial_deal_mirr
 | `apps/web/scripts/validate-catalog.mjs` | Catalogue integrity rules |
 | `apps/web/src/components/HomeCommercialLines.astro` | SERVA home cards |
 | `docs/commercial/COMMERCIAL_DEAL_LEDGER_SCHEMA_V1.md` | `commercial_product`, money rules, redaction |
-| `docs/commercial/PHASE7A_WARM_CASE_CLASSIFICATION_AUDIT.md` | Warm case taxonomy |
+| `apps/email-pipeline/src/origenlab_email_pipeline/warm_case_classification.py` | Warm case taxonomy |
 | `apps/email-pipeline/src/origenlab_email_pipeline/commercial/commercial_deal_mirror_read_model.py` | Mirror redaction |
 | `apps/email-pipeline/src/origenlab_email_pipeline/commercial/commercial_purchase_schema.py` | Purchase line items |
 | `apps/email-pipeline/src/origenlab_email_pipeline/warm_case_promotion.py` | RG/CRTOP case keys |

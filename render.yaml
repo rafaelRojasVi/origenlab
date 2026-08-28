@@ -2,7 +2,7 @@
 # Apply: render blueprint launch or connect repo and use this spec.
 #
 # Prerequisites: operator runs sync_dashboard_mirror_to_cloud.sh from laptop/VPS
-# with ORIGENLAB_CLOUD_POSTGRES_URL (see docs/PHASE1_CLOUD_READ_PATH.md).
+# with ORIGENLAB_CLOUD_POSTGRES_URL (see apps/email-pipeline/docs/PHASE1_CLOUD_READ_PATH.md).
 
 databases:
   - name: origenlab-dashboard-db
