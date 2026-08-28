@@ -123,14 +123,11 @@ export function SalesOpportunityWorkPanel({ salesOpportunityId }: { salesOpportu
     setSavingActivity(true);
     setActionError(null);
 
-    const command: CreateCommercialActivityCommand = {
+    const signature = JSON.stringify({
       sales_opportunity_id: salesOpportunityId,
       activity_type: "note",
-      occurred_at: new Date().toISOString(),
       summary,
-    };
-
-    const signature = JSON.stringify(command);
+    });
 
     try {
       let pending = pendingActivityCreate.current;
@@ -139,7 +136,12 @@ export function SalesOpportunityWorkPanel({ salesOpportunityId }: { salesOpportu
         pending = {
           signature,
           idempotencyKey: newIdempotencyKey("activity"),
-          command,
+          command: {
+            sales_opportunity_id: salesOpportunityId,
+            activity_type: "note",
+            occurred_at: new Date().toISOString(),
+            summary,
+          },
         };
 
         pendingActivityCreate.current = pending;

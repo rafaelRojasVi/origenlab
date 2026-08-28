@@ -234,4 +234,74 @@ describe("SalesOpportunityWorkPanel", () => {
     // Keys should be different because content changed
     expect(firstKey).not.toBe(secondKey);
   });
+
+  it("reuses idempotency key when retrying activity with identical content", async () => {
+    let resolveActivity: ((value: any) => void) | null = null;
+    let rejectActivity: ((reason?: any) => void) | null = null;
+
+    vi.mocked(createCommercialActivity).mockImplementation(() => {
+      return new Promise((resolve, reject) => {
+        resolveActivity = resolve;
+        rejectActivity = reject;
+      }) as any;
+    });
+
+    render(<SalesOpportunityWorkPanel salesOpportunityId={SALES_ID} />);
+    await waitFor(() => expect(fetchSalesOpportunityActivities).toHaveBeenCalled());
+
+    const activityInput = screen.getByLabelText("Resumen de actividad") as HTMLInputElement;
+    const submitButton = screen.getByText("Registrar actividad") as HTMLButtonElement;
+
+    // First submit
+    fireEvent.change(activityInput, { target: { value: "Seguimiento importante" } });
+    fireEvent.click(submitButton);
+
+    // Verify button is disabled while request is in flight
+    await waitFor(() => expect(submitButton.disabled).toBe(true));
+
+    // Get the first idempotency key
+    expect(createCommercialActivity).toHaveBeenCalledTimes(1);
+    const firstCall = vi.mocked(createCommercialActivity).mock.calls[0];
+    const firstKey = firstCall[1];
+
+    // Reject the first request (simulating a network error)
+    rejectActivity!(new Error("Network error"));
+
+    // Wait for button to be enabled again
+    await waitFor(() => expect(submitButton.disabled).toBe(false));
+
+    // Verify error is shown
+    await waitFor(() => expect(screen.getByText("Network error")).toBeInTheDocument());
+
+    // Retry with identical content (not changing the input field)
+    fireEvent.click(submitButton);
+
+    // Wait for button to be disabled again
+    await waitFor(() => expect(submitButton.disabled).toBe(true));
+
+    // Verify createCommercialActivity was called a second time
+    expect(createCommercialActivity).toHaveBeenCalledTimes(2);
+    const secondCall = vi.mocked(createCommercialActivity).mock.calls[1];
+    const secondKey = secondCall[1];
+
+    // Keys should be IDENTICAL because content is identical
+    expect(firstKey).toBe(secondKey);
+
+    // Resolve the second attempt
+    resolveActivity!({
+      activity_id: "act_retry",
+      opportunity_id: null,
+      account_id: null,
+      contact_id: null,
+      activity_type: "note",
+      occurred_at: "2026-08-28T12:00:00+00:00",
+      summary: "Seguimiento importante",
+      detail: null,
+      created_by: "test@origenlab.cl",
+      created_at: "2026-08-28T12:00:00+00:00",
+    });
+
+    // Wait for activity to be added to list
+    await waitFor(() => expect(screen.getByText("Seguimiento importante")).toBeInTheDocument());
+  });
 });
