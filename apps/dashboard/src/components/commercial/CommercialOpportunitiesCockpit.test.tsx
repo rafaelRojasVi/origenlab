@@ -10,6 +10,7 @@ import {
   fetchCommercialOpportunityOperatorState,
   fetchCommercialOpportunityTasks,
   fetchSalesOpportunities,
+  promoteSalesOpportunity,
 } from "../../api/commercialOperationsClient";
 import { CommercialOpportunitiesCockpit } from "./CommercialOpportunitiesCockpit";
 
@@ -28,6 +29,7 @@ vi.mock("../../api/commercialOperationsClient", () => ({
   createCommercialTask: vi.fn(),
   setCommercialOpportunityOperatorState: vi.fn(),
   fetchSalesOpportunities: vi.fn(),
+  promoteSalesOpportunity: vi.fn(),
 }));
 
 const listItem = {
@@ -66,6 +68,7 @@ describe("CommercialOpportunitiesCockpit", () => {
       meta: { data_source: "postgres", read_only: true, count: 0, total_count: 0, limit: 200, offset: 0 },
       items: [],
     });
+    vi.mocked(promoteSalesOpportunity).mockReset();
 
     vi.mocked(fetchCommercialOpportunityOperatorState).mockResolvedValue({
       state: null,
@@ -287,5 +290,52 @@ describe("CommercialOpportunitiesCockpit", () => {
       }),
     );
     await waitFor(() => expect(screen.getByText("En pipeline")).toBeInTheDocument());
+  });
+
+  it("reflects a successful in-drawer promotion immediately, without an extra fetch", async () => {
+    vi.mocked(promoteSalesOpportunity).mockResolvedValue({
+      sales_opportunity_id: "sales_99",
+      source_kind: "pr3",
+      source_opportunity_id: listItem.opportunity_id,
+      account_id: null,
+      primary_contact_id: null,
+      organization_id: null,
+      primary_crm_contact_id: null,
+      title: "Oportunidad — example.cl",
+      stage: "new",
+      owner_key: "tatiana@origenlab.cl",
+      version: 1,
+      created_by: "tatiana@origenlab.cl",
+      updated_by: "tatiana@origenlab.cl",
+      created_at: "2026-08-28T12:00:00+00:00",
+      updated_at: "2026-08-28T12:00:00+00:00",
+    });
+
+    render(<CommercialOpportunitiesCockpit onSelectContact={vi.fn()} onOpenPipeline={vi.fn()} />);
+
+    await screen.findByText("example.cl");
+    await waitFor(() => expect(fetchSalesOpportunities).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("En pipeline")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Ver ciclo" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Promover a CRM" })).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Promover a CRM" }));
+    await waitFor(() => expect(screen.getByText("Abrir en Pipeline")).toBeInTheDocument());
+
+    // Close the drawer — the table row's badge must already reflect the promotion,
+    // and reopening the SAME row must show "Abrir en Pipeline" straight away, with
+    // no second fetchSalesOpportunities call triggered by either action.
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar" }));
+
+    await waitFor(() => expect(screen.getByText("En pipeline")).toBeInTheDocument());
+    expect(fetchSalesOpportunities).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Ver ciclo" }));
+    await waitFor(() => expect(screen.getByText("Abrir en Pipeline")).toBeInTheDocument());
+    expect(screen.queryByLabelText("Título de la oportunidad")).not.toBeInTheDocument();
+    expect(fetchSalesOpportunities).toHaveBeenCalledTimes(1);
   });
 });

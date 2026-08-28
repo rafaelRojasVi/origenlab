@@ -74,6 +74,7 @@ describe("CommercialOpportunityDetailDrawer — promotion", () => {
         onSelectContact={vi.fn()}
         promotedSalesOpportunityId={null}
         onOpenPipeline={vi.fn()}
+        onPromoted={vi.fn()}
       />,
     );
 
@@ -90,6 +91,7 @@ describe("CommercialOpportunityDetailDrawer — promotion", () => {
         onSelectContact={vi.fn()}
         promotedSalesOpportunityId="sales_1"
         onOpenPipeline={vi.fn()}
+        onPromoted={vi.fn()}
       />,
     );
 
@@ -116,6 +118,8 @@ describe("CommercialOpportunityDetailDrawer — promotion", () => {
       updated_at: "2026-08-28T12:00:00+00:00",
     });
 
+    const onPromoted = vi.fn();
+
     render(
       <CommercialOpportunityDetailDrawer
         opportunityId={OPPORTUNITY_ID}
@@ -124,6 +128,7 @@ describe("CommercialOpportunityDetailDrawer — promotion", () => {
         onSelectContact={vi.fn()}
         promotedSalesOpportunityId={null}
         onOpenPipeline={vi.fn()}
+        onPromoted={onPromoted}
       />,
     );
 
@@ -137,6 +142,7 @@ describe("CommercialOpportunityDetailDrawer — promotion", () => {
       ),
     );
     await waitFor(() => expect(screen.getByText("Abrir en Pipeline")).toBeInTheDocument());
+    expect(onPromoted).toHaveBeenCalledWith(OPPORTUNITY_ID, "sales_1");
   });
 
   it("shows a clean message on a duplicate-promotion 409", async () => {
@@ -150,6 +156,7 @@ describe("CommercialOpportunityDetailDrawer — promotion", () => {
         onSelectContact={vi.fn()}
         promotedSalesOpportunityId={null}
         onOpenPipeline={vi.fn()}
+        onPromoted={vi.fn()}
       />,
     );
 

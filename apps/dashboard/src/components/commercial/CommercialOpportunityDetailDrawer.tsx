@@ -56,11 +56,13 @@ function PromoteToCrmAction({
   suggestedTitle,
   promotedSalesOpportunityId,
   onOpenPipeline,
+  onPromoted,
 }: {
   opportunityId: string;
   suggestedTitle: string;
   promotedSalesOpportunityId: string | null;
   onOpenPipeline: () => void;
+  onPromoted: (sourceOpportunityId: string, salesOpportunityId: string) => void;
 }) {
   const [title, setTitle] = useState(suggestedTitle);
   const [selfAssign, setSelfAssign] = useState(true);
@@ -108,6 +110,7 @@ function PromoteToCrmAction({
         `promote:${crypto.randomUUID()}`,
       );
       setLocalPromotedId(result.sales_opportunity_id);
+      onPromoted(opportunityId, result.sales_opportunity_id);
     } catch (reason: unknown) {
       setError(
         reason instanceof OperatorApiError && reason.status === 409
@@ -178,11 +181,13 @@ function DetailBody({
   onSelectContact,
   promotedSalesOpportunityId,
   onOpenPipeline,
+  onPromoted,
 }: {
   detail: CommercialOpportunityDetailResponse;
   onSelectContact: (email: string) => void;
   promotedSalesOpportunityId: string | null;
   onOpenPipeline: () => void;
+  onPromoted: (sourceOpportunityId: string, salesOpportunityId: string) => void;
 }) {
   const item = detail.opportunity;
 
@@ -199,6 +204,7 @@ function DetailBody({
         }
         promotedSalesOpportunityId={promotedSalesOpportunityId}
         onOpenPipeline={onOpenPipeline}
+        onPromoted={onPromoted}
       />
 
       <CommercialOpportunityOperationsPanel
@@ -405,6 +411,7 @@ export function CommercialOpportunityDetailDrawer({
   onSelectContact,
   promotedSalesOpportunityId,
   onOpenPipeline,
+  onPromoted,
 }: {
   opportunityId: string | null;
   open: boolean;
@@ -412,6 +419,7 @@ export function CommercialOpportunityDetailDrawer({
   onSelectContact: (email: string) => void;
   promotedSalesOpportunityId: string | null;
   onOpenPipeline: () => void;
+  onPromoted: (sourceOpportunityId: string, salesOpportunityId: string) => void;
 }) {
   const [detail, setDetail] =
     useState<CommercialOpportunityDetailResponse | null>(null);
@@ -515,6 +523,7 @@ export function CommercialOpportunityDetailDrawer({
             onSelectContact={onSelectContact}
             promotedSalesOpportunityId={promotedSalesOpportunityId}
             onOpenPipeline={onOpenPipeline}
+            onPromoted={onPromoted}
           />
         ) : null}
 

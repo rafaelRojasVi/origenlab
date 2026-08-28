@@ -55,6 +55,7 @@ export function CommercialWorkQueuePanel({
 
   const [selectedOpportunityId, setSelectedOpportunityId] =
     useState<string | null>(null);
+  const [promotedBySourceId, setPromotedBySourceId] = useState<Map<string, string>>(new Map());
 
   return (
     <>
@@ -160,9 +161,18 @@ export function CommercialWorkQueuePanel({
         open={selectedOpportunityId !== null}
         onClose={() => setSelectedOpportunityId(null)}
         onSelectContact={onSelectContact}
-        promotedSalesOpportunityId={null}
+        promotedSalesOpportunityId={
+          selectedOpportunityId ? (promotedBySourceId.get(selectedOpportunityId) ?? null) : null
+        }
         onOpenPipeline={() => {
           window.location.hash = dashboardSectionToHash("pipeline");
+        }}
+        onPromoted={(sourceOpportunityId, salesOpportunityId) => {
+          setPromotedBySourceId((prev) => {
+            const next = new Map(prev);
+            next.set(sourceOpportunityId, salesOpportunityId);
+            return next;
+          });
         }}
       />
     </>

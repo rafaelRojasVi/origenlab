@@ -348,6 +348,13 @@ export function CommercialOpportunitiesCockpit({
           selectedOpportunityId ? (promotedBySourceId.get(selectedOpportunityId) ?? null) : null
         }
         onOpenPipeline={onOpenPipeline}
+        onPromoted={(sourceOpportunityId, salesOpportunityId) => {
+          setPromotedBySourceId((prev) => {
+            const next = new Map(prev);
+            next.set(sourceOpportunityId, salesOpportunityId);
+            return next;
+          });
+        }}
       />
     </>
   );
