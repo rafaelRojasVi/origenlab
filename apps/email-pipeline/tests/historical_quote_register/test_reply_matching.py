@@ -135,6 +135,41 @@ def test_classify_response_auto_reply_not_counted_as_replied():
     assert result.response_state == "auto_reply"
 
 
+def test_classify_response_auto_reply_with_subject_overlap_still_not_replied():
+    """An auto-reply that happens to quote the original subject back (a
+    common autoresponder pattern) must still never be classified as a real
+    reply — the auto-reply check must run before, and win over, subject/
+    quote-number overlap matching."""
+    candidates = [
+        ReplyCandidateRow(
+            email_id=1, sender="compras@cliente.cl",
+            subject="Automatic reply: RE: Cotización COT-2026-014",
+            date_iso="2026-05-11T00:00:00",
+            body_snippet="I am out of office until next week. Cotización COT-2026-014.",
+        )
+    ]
+    result = classify_response(candidates, quote_number="COT-2026-014", normalized_quote_subject_core="cotizacion")
+    assert result.response_state == "auto_reply"
+    assert result.response_state != "replied"
+
+
+def test_classify_response_bounce_with_subject_overlap_still_not_replied():
+    """A bounce (NDR) that quotes the original subject in its body must
+    still never be classified as a real reply — the noise/bounce check
+    must run before, and win over, subject/quote-number overlap matching."""
+    candidates = [
+        ReplyCandidateRow(
+            email_id=1, sender="mailer-daemon@cliente.cl",
+            subject="Undelivered Mail Returned to Sender: RE: Cotización COT-2026-014",
+            date_iso="2026-05-10T01:00:00",
+            body_snippet="This is an automatically generated message. Cotización COT-2026-014.",
+        )
+    ]
+    result = classify_response(candidates, quote_number="COT-2026-014", normalized_quote_subject_core="cotizacion")
+    assert result.response_state == "bounced"
+    assert result.response_state != "replied"
+
+
 def test_classify_response_bounce_not_counted_as_replied():
     candidates = [
         ReplyCandidateRow(
