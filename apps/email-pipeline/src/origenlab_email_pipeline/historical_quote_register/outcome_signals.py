@@ -69,7 +69,12 @@ def _phrase_has_unguarded_occurrence(haystack: str, phrase: str) -> bool:
     """Check if phrase appears in haystack without negation/conditional guard.
 
     Returns True if there's at least one occurrence that's not preceded by
-    a negation or conditional marker within ~60 characters (~8-10 words).
+    a negation or conditional marker within the current sentence (or up to
+    ~60 characters if no sentence boundary is found).
+
+    Stops lookback at sentence-terminating punctuation (. ! ? or newline) to
+    prevent cross-sentence false positives where negation/conditional markers
+    in a prior sentence wrongly suppress a clear decision in the current one.
     """
     start = 0
     while True:
@@ -77,9 +82,24 @@ def _phrase_has_unguarded_occurrence(haystack: str, phrase: str) -> bool:
         if pos < 0:
             break  # No more occurrences
 
-        # Check the text before this occurrence (up to 60 chars back)
+        # Look back up to 60 chars for sentence terminators
         preceding_start = max(0, pos - 60)
-        preceding_text = haystack[preceding_start:pos].strip()
+        preceding_text_full = haystack[preceding_start:pos]
+
+        # Find the nearest sentence terminator within the lookback range
+        # Sentence terminators: . ! ? or newline
+        sentence_end = -1
+        for i in range(len(preceding_text_full) - 1, -1, -1):
+            if preceding_text_full[i] in '.!?\n':
+                sentence_end = i
+                break
+
+        # If we found a sentence terminator, start from after it
+        # Otherwise, use the full preceding text
+        if sentence_end >= 0:
+            preceding_text = preceding_text_full[sentence_end + 1:].strip()
+        else:
+            preceding_text = preceding_text_full.strip()
 
         # If this occurrence is not guarded, return True (phrase is evidence)
         if not _is_text_guarded(preceding_text):

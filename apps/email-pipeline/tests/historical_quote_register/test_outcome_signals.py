@@ -158,3 +158,40 @@ def test_conditional_guard_de_llegar_a():
         revision_relationship="first_revision",
     )
     assert outcome == "unknown", "Conditional 'de llegar a' should guard accept phrase"
+
+
+# Round 3: Regression tests for cross-sentence lookback window
+def test_cross_sentence_no_should_not_guard():
+    """Negation 'no' in prior sentence should not guard decision in current sentence.
+
+    The wide lookback window (60 chars) can cross sentence boundaries if not
+    restricted by sentence terminators. This test confirms a negation in the
+    prior sentence about unrelated topic doesn't suppress a clear accept in
+    the current sentence.
+    """
+    outcome = classify_outcome(
+        response_state="replied",
+        reply_bodies=["No estamos conformes con el precio anterior. Confirmamos la compra del nuevo pedido."],
+        revision_relationship="first_revision",
+    )
+    assert outcome == "accepted_explicit", "Negation in prior sentence should not guard current sentence's accept"
+
+
+def test_cross_sentence_ni_should_not_guard():
+    """Negation 'ni' in prior sentence about shipping should not guard accept in new sentence."""
+    outcome = classify_outcome(
+        response_state="replied",
+        reply_bodies=["El envío no incluye instalación ni garantía extendida. Confirmamos la compra."],
+        revision_relationship="first_revision",
+    )
+    assert outcome == "accepted_explicit", "Negation in prior sentence about shipping should not guard current sentence's accept"
+
+
+def test_same_sentence_de_llegar_a_still_guards():
+    """Confirm that within-sentence 'de llegar a' still guards correctly."""
+    outcome = classify_outcome(
+        response_state="replied",
+        reply_bodies=["De llegar a concretarse otros cambios, aceptamos la propuesta."],
+        revision_relationship="first_revision",
+    )
+    assert outcome == "unknown", "Same-sentence 'de llegar a' should still guard"
