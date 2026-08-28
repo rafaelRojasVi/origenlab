@@ -58,7 +58,7 @@
 #   ORIGENLAB_W1_KEEP_SNAPSHOTS   Old remote snapshots to retain after promotion
 #                                  (default: 2; must be >= 1)
 #
-# See docs/PHASE1_CLOUD_READ_PATH.md §4 — W1 institution-prospect sync.
+# See apps/email-pipeline/docs/PHASE1_CLOUD_READ_PATH.md §4 — W1 institution-prospect sync.
 set -euo pipefail
 
 PIPE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

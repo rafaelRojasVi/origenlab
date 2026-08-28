@@ -4,7 +4,6 @@
 # No network. No Gmail/SQLite/Postgres writes. No persistence. No outreach.
 # Rejects --apply/--send/--persist/--network/--ticket/--gmail/--postgres.
 # Does not change PR5D/PR5E production decisions or the opportunity queues.
-# See docs/audits/COMMERCIAL_PROCUREMENT_ANEXO_RECOGNITION_E2.md
 # -----------------------------------------------------------------------------
 from __future__ import annotations
 

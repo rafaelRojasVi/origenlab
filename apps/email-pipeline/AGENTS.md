@@ -18,9 +18,8 @@
    ```
 
 8. **Classification layers & send gates:** [`docs/pipeline/SCHEMA_CLASSIFICATION_MODEL.md`](docs/pipeline/SCHEMA_CLASSIFICATION_MODEL.md) — evidence vs safety vs workflow; never gate sends on `lead_research_prospect.classification` alone.
-9. **Safety checkpoint (pause marker):** [`docs/pipeline/CURRENT_SAFETY_CHECKPOINT.md`](docs/pipeline/CURRENT_SAFETY_CHECKPOINT.md) — safe loop before outreach; golden rules; what not to build next.
-10. **Post-send safe loop:** [`docs/pipeline/POST_SEND_SAFE_LOOP.md`](docs/pipeline/POST_SEND_SAFE_LOOP.md) — after Sent/NDR changes; targeted NDR `--emails-file` / `--only-code`; broad `--apply` is break-glass.
-11. Optional context: [`docs/OUTBOUND_SOURCE_OF_TRUTH.md`](docs/OUTBOUND_SOURCE_OF_TRUTH.md), [`reports/out/active/current/code_quality_simplification_audit_20260519.md`](reports/out/active/current/code_quality_simplification_audit_20260519.md).
+9. **Post-send safe loop:** [`docs/pipeline/POST_SEND_SAFE_LOOP.md`](docs/pipeline/POST_SEND_SAFE_LOOP.md) — after Sent/NDR changes; targeted NDR `--emails-file` / `--only-code`; broad `--apply` is break-glass.
+10. Optional context: [`docs/OUTBOUND_SOURCE_OF_TRUTH.md`](docs/OUTBOUND_SOURCE_OF_TRUTH.md), [`reports/out/active/current/code_quality_simplification_audit_20260519.md`](reports/out/active/current/code_quality_simplification_audit_20260519.md).
 
 ## Hard rules (non-negotiable)
 
@@ -42,7 +41,7 @@
 - **SQLite** (`ORIGENLAB_SQLITE_PATH` / settings) + **Gmail Sent in `emails`** = outbound safety truth.
 - **Active operator UI** = [`apps/dashboard`](../../dashboard/README.md) + [`apps/api`](../../api/README.md) (Postgres mirror read model). Not Streamlit.
 - **Postgres mirror sync** = parked for *daily outbound* but required when using the React dashboard; not send approval.
-- **Streamlit Python UI** = **removed** (2026-06-04). Do not reintroduce; active UI is **`apps/dashboard`** — see [`docs/audits/ACTIVE_STACK_AND_STREAMLIT_RETIREMENT_PLAN_20260604.md`](docs/audits/ACTIVE_STACK_AND_STREAMLIT_RETIREMENT_PLAN_20260604.md).
+- **Streamlit Python UI** = **removed** (2026-06-04). Do not reintroduce; active UI is **`apps/dashboard`**.
 
 ## Safe default workflow
 

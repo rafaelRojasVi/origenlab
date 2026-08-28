@@ -45,7 +45,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--markdown-path",
         type=Path,
-        default=_ROOT / "docs/audits/COMMERCIAL_PROCUREMENT_DATA_WALKTHROUGH_PR4.md",
+        default=(
+            _ROOT
+            / "reports/out/active/current/commercial_procurement_data_walkthrough_2026-07-30"
+            / "COMMERCIAL_PROCUREMENT_DATA_WALKTHROUGH_PR4.md"
+        ),
     )
     parser.add_argument(
         "--json-dir",

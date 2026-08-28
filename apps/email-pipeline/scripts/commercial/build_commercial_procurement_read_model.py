@@ -3,7 +3,6 @@
 # SAFETY: default is dry-run (mode=ro + query_only). CLI --apply is permitted
 # only with --run-context production_apply and four approved --expected-* digests.
 # This PR does not run production --apply. Never mutate Gmail or Postgres.
-# See docs/audits/COMMERCIAL_PROCUREMENT_LINK_READ_MODEL_PR4.md.
 # -----------------------------------------------------------------------------
 """Deterministic commercial procurement planner / apply (PR4).
 

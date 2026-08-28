@@ -5,7 +5,6 @@ Heuristic vertical buckets, line counts, and import-hint flags. **Not** authorit
 use with [`docs/QUALITY_AND_REFACTOR_STRATEGY.md`](../../docs/QUALITY_AND_REFACTOR_STRATEGY.md) and [`docs/TATIANA_LAB_BOUNDARY.md`](../../docs/TATIANA_LAB_BOUNDARY.md) for the ``tatiana_lab`` bucket.
 Does not read SQLite, Gmail, or secrets; does not write outside optional ``--json-out`` path.
 
-Phase 8C extends vertical buckets per ``docs/audits/PHASE8_POST_7C_TREE_CLEANUP_AUDIT_20260603.md`` §3 (planner-only).
 
 Skips Python under ``reports/local/`` and ``reports/out/`` (generated audit snapshots and report artifacts).
 """

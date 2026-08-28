@@ -132,7 +132,7 @@ Former app: `apps/business_mart_app.py` (**removed 2026-06-04**). The list below
 
 Former structure:
 1. **Resumen** (KPIs + gráficos compactos)
-2. **Salud de datos** (conteos, rango `date_iso`, desglose `source_file`, heurística mart vs crudo, `pipeline_kv` / `pipeline_run` si existen) — ver [`STREAMLIT_DATA_FRESHNESS.md`](STREAMLIT_DATA_FRESHNESS.md)
+2. **Salud de datos** (conteos, rango `date_iso`, desglose `source_file`, heurística mart vs crudo, `pipeline_kv` / `pipeline_run` si existen)
 3. **Actividad contacto Gmail** — correos recientes con `source_file` tipo `gmail:contacto@origenlab.cl/%`, resúmenes 7/30/90 días, documentos y señales unidos por `email_id` si el mart existe; no sustituye un visor de bandeja completo.
 4. **Casos para revisar** — cola operativa mensaje a mensaje (Gmail contacto), enriquecimiento opcional con `commercial_email_signal_fact`, entrega a **Borrador comercial**; ver [`CASOS_PARA_REVISAR.md`](CASOS_PARA_REVISAR.md).
 5. **Cola outreach marketing** — candidatos desde `lead_master` vía [`compute_next_marketing_recipients()`](../../src/origenlab_email_pipeline/next_marketing_queue.py); mismo módulo [`candidate_export_gate.py`](../../src/origenlab_email_pipeline/candidate_export_gate.py) que [`export_marketing_from_contact_master.py`](../../scripts/leads/advanced/export_marketing_from_contact_master.py), con **ruido de correo más estricto** en la vía `contact_master` (grafico de correo). Sin envío automático; no reemplaza revisión humana ni “verdad comprador”.

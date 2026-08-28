@@ -2,10 +2,9 @@
 
 Automated operator step to refresh the equipment-first queue from the Mercado Público licitaciones API, publish the canonical dashboard CSV/audit artifacts, and direct-publish the typed equipment read model to Postgres when `--apply` runs with Postgres configured.
 
-**PR5B note:** The acquisition snapshot parsers in
-[`COMMERCIAL_PROCUREMENT_ACQUISITION_PR5B.md`](../audits/COMMERCIAL_PROCUREMENT_ACQUISITION_PR5B.md)
-do **not** change this operational refresh path. Auto-refresh is not routed
-through PR5B.
+**PR5B note:** The acquisition snapshot parsers in the
+`commercial_procurement_acquisition/` package do **not** change this
+operational refresh path. Auto-refresh is not routed through PR5B.
 
 ## Required environment
 

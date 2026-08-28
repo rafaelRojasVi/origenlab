@@ -53,7 +53,7 @@ No se duplica `build_draft_package` ni la lógica de generación.
 
 ## Comandos
 
-**Streamlit UI removed (2026-06-04).** This queue is consumed by library code (`cases_review_queue`) and tests; active operator UI is [`apps/dashboard`](../../../dashboard/README.md) + [`apps/api`](../../../api/README.md) over the Postgres mirror. Retirement plan: [`audits/ACTIVE_STACK_AND_STREAMLIT_RETIREMENT_PLAN_20260604.md`](../audits/ACTIVE_STACK_AND_STREAMLIT_RETIREMENT_PLAN_20260604.md).
+**Streamlit UI removed (2026-06-04).** This queue is consumed by library code (`cases_review_queue`) and tests; active operator UI is [`apps/dashboard`](../../../dashboard/README.md) + [`apps/api`](../../../api/README.md) over the Postgres mirror.
 
 Para enriquecimiento: `uv run python scripts/commercial/build_commercial_intel_v1.py` (ver `COMMERCIAL_INTEL_V1.md`).
 

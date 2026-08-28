@@ -7,7 +7,6 @@ from pathlib import Path
 _REPO = Path(__file__).resolve().parents[1]
 _BOUNDARY = _REPO / "docs" / "TATIANA_LAB_BOUNDARY.md"
 _SCRIPT_MAP = _REPO / "docs" / "SCRIPT_MAP.md"
-_SHORTLIST = _REPO / "docs" / "audits" / "REDUCTION_SHORTLIST_20260607.md"
 
 _LAB_SCRIPT_PATHS = (
     "scripts/tatiana",
@@ -52,8 +51,3 @@ def test_script_map_links_tatiana_lab_boundary_near_lab_entries() -> None:
     lab_section = text.split("## Lab scripts (LAB)", 1)[-1].split("\n---\n", 1)[0]
     assert "scripts/tatiana" in lab_section
     assert "TATIANA_LAB_BOUNDARY.md" in lab_section
-
-
-def test_reduction_shortlist_still_lists_lab_boundary_action() -> None:
-    text = _SHORTLIST.read_text(encoding="utf-8")
-    assert "lab_boundary" in text

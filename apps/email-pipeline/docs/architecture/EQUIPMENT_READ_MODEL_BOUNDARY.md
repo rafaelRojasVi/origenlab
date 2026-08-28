@@ -7,7 +7,6 @@
 
 - [`apps/api/README.md`](../../../api/README.md) — operator API backends and production env
 - [`docs/runbooks/EQUIPMENT_READ_MODEL_RUNBOOK.md`](../runbooks/EQUIPMENT_READ_MODEL_RUNBOOK.md) — operator verification checklist (migrations, audits, remote API)
-- [`POSTGRES_API_DASHBOARD_PLAN.md`](POSTGRES_API_DASHBOARD_PLAN.md) — broader Postgres + dashboard initiative
 - [`apps/api/docs/API_RESPONSE_CONTRACT.md`](../../../api/docs/API_RESPONSE_CONTRACT.md) — response shapes for `GET /opportunities/equipment`
 
 ---

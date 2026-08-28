@@ -125,9 +125,9 @@ These table families are separate from commercial intel v1 and are **not** part 
 | `commercial_opportunity_*` | [`commercial_opportunity/`](../../src/origenlab_email_pipeline/commercial_opportunity/) | [`build_commercial_opportunity_read_model.py`](../../scripts/commercial/build_commercial_opportunity_read_model.py) | PR3 opportunity-stage read model; gates on PR2 identity fingerprint when applying. |
 | `commercial_procurement_*` | [`commercial_procurement/`](../../src/origenlab_email_pipeline/commercial_procurement/) | [`build_commercial_procurement_read_model.py`](../../scripts/commercial/build_commercial_procurement_read_model.py) | PR4 procurement planner/persistence; dry-run uses read-only SQLite, apply uses stale-plan checks. |
 
-Design audits: [`COMMERCIAL_IDENTITY_READ_MODEL_PR2.md`](../audits/COMMERCIAL_IDENTITY_READ_MODEL_PR2.md), [`COMMERCIAL_OPPORTUNITY_STAGE_READ_MODEL_PR3.md`](../audits/COMMERCIAL_OPPORTUNITY_STAGE_READ_MODEL_PR3.md), [`COMMERCIAL_PROCUREMENT_LINK_READ_MODEL_PR4.md`](../audits/COMMERCIAL_PROCUREMENT_LINK_READ_MODEL_PR4.md).
+Package docstrings document each read model: `commercial_identity/__init__.py` (PR2), `commercial_opportunity/__init__.py` (PR3), `commercial_procurement/__init__.py` (PR4).
 
-Later commercial layers (PR5B.2 live-feed bridge, PR5E.1 institution prospects, PR5E.2 recognition) are **artifact / in-memory** audit paths under their packages — they do **not** add default migrate-stack SQLite families here and are **not** outreach authorization or PR5F persistence. See [`SCRIPT_MAP.md`](../SCRIPT_MAP.md) and the matching `docs/audits/COMMERCIAL_PROCUREMENT_*` docs.
+Later commercial layers (PR5B.2 live-feed bridge, PR5E.1 institution prospects, PR5E.2 recognition) are **artifact / in-memory** audit paths under their packages — they do **not** add default migrate-stack SQLite families here and are **not** outreach authorization or PR5F persistence. See [`SCRIPT_MAP.md`](../SCRIPT_MAP.md) and each package's own docstring.
 
 ---
 

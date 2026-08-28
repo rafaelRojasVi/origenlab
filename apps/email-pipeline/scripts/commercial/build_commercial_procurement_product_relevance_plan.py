@@ -3,7 +3,6 @@
 # SAFETY: read-only product-relevance plan only. Opens SQLite mode=ro + query_only
 # via PR5C. Rejects --apply/--persist/--network/--ticket/--gmail/--postgres/
 # --outreach/--schedule. No LLM, embeddings, Gmail, Postgres, or outreach.
-# See docs/audits/COMMERCIAL_PROCUREMENT_PRODUCT_RELEVANCE_PR5D.md
 # -----------------------------------------------------------------------------
 """Build a deterministic PR5D procurement product-relevance plan (read-only)."""
 

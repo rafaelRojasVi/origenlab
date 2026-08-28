@@ -1483,8 +1483,7 @@ def render_markdown(bundle: WalkthroughBundle) -> str:
         "  --as-of-date 2026-07-30 \\\n"
         "  --write-markdown \\\n"
         "  --write-json\n"
-        "# Markdown: docs/audits/COMMERCIAL_PROCUREMENT_DATA_WALKTHROUGH_PR4.md\n"
-        "# JSON (gitignored): reports/out/active/current/commercial_procurement_data_walkthrough_2026-07-30/\n"
+        "# Markdown + JSON (gitignored): reports/out/active/current/commercial_procurement_data_walkthrough_2026-07-30/\n"
         "```\n"
     )
     return "\n".join(parts)

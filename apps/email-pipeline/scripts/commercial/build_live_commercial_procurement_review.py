@@ -3,7 +3,6 @@
 # SAFETY: read-only review over existing ChileCompra detail-cache artifacts.
 # No network. No --apply DB writes. Rejects --ticket/--gmail/--postgres/--send.
 # Reuses PR5C/PR5D/PR5E planners; does not authorize outreach.
-# See docs/audits/COMMERCIAL_PROCUREMENT_LIVE_FEED_BRIDGE_PR5B2.md
 # -----------------------------------------------------------------------------
 """Bridge live equipment detail cache into a PR5C→PR5D→PR5E operator review."""
 

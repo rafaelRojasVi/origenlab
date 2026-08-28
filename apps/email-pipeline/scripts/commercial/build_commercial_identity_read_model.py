@@ -5,7 +5,7 @@
 # Transaction contract B: additive schema (executescript) may remain after a
 # first-run failure; DELETE+INSERT data replacement is atomic with foreign_keys=ON.
 # Do not run --apply against production SQLite without operator approval.
-# See docs/SCRIPT_MAP.md and docs/audits/COMMERCIAL_IDENTITY_READ_MODEL_PR2.md.
+# See docs/SCRIPT_MAP.md.
 # -----------------------------------------------------------------------------
 """Build the deterministic commercial account/contact identity read model (PR2).
 

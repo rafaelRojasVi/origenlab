@@ -6,7 +6,7 @@ Last reviewed: 2026-05-19 (RUNBOOK dedup: [dashboard section](RUNBOOK.md#m-eprun
 
 **Purpose:** Single index for infrastructure and pilots that are **built but not on the daily SQLite outbound path**. Agents and operators should read this **before** touching Postgres, the HTTP dashboard, Tatiana/ML tooling, or old campaign pilots.
 
-**Companion:** [`SCRIPT_MAP.md`](SCRIPT_MAP.md) · [`TATIANA_LAB_BOUNDARY.md`](TATIANA_LAB_BOUNDARY.md) · [`audits/REDUCTION_SHORTLIST_20260607.md`](audits/REDUCTION_SHORTLIST_20260607.md) · [`AGENTS.md`](../AGENTS.md) · [`reports/out/active/current/manifest.json`](../reports/out/active/current/manifest.json) (`postgres_status` / `api_status`: `parked`)
+**Companion:** [`SCRIPT_MAP.md`](SCRIPT_MAP.md) · [`TATIANA_LAB_BOUNDARY.md`](TATIANA_LAB_BOUNDARY.md) · [`AGENTS.md`](../AGENTS.md) · [`reports/out/active/current/manifest.json`](../reports/out/active/current/manifest.json) (`postgres_status` / `api_status`: `parked`)
 
 ---
 
@@ -31,7 +31,7 @@ The following are **optional**. None are needed for:
 | **Dataset / cohort tools** | `scripts/dataset/*` | Tatiana cohort exports and label review CLIs. |
 | **Old campaign pilots** | `scripts/leads/campaigns/*` | e.g. DR50 reconciliation, ready8 patches — niche, not current equipment-first policy. |
 
-**Streamlit Python UI** (`business_mart_app.py` and related UI modules) **removed** (2026-06-04). Active operator UI: `apps/dashboard` + `apps/api`. Retirement plan: [`audits/ACTIVE_STACK_AND_STREAMLIT_RETIREMENT_PLAN_20260604.md`](audits/ACTIVE_STACK_AND_STREAMLIT_RETIREMENT_PLAN_20260604.md).
+**Streamlit Python UI** (`business_mart_app.py` and related UI modules) **removed** (2026-06-04). Active operator UI: `apps/dashboard` + `apps/api`.
 
 ---
 
@@ -51,7 +51,7 @@ Scripts in the parked paths above carry top-of-file comments:
 - **`# EXPERIMENTAL_PARKED`** — migrate loaders, mirror sync
 - **`# EXPERIMENTAL_PARKED / DASHBOARD_ONLY`** — `refresh_operational_dashboard_stack.py`
 
-Tatiana/ML/dataset/campaign files are listed here **without** mass header edits (avoid risky churn). Treat entire directories as parked per [`TATIANA_LAB_BOUNDARY.md`](TATIANA_LAB_BOUNDARY.md) and reduction planning in [`audits/REDUCTION_SHORTLIST_20260607.md`](audits/REDUCTION_SHORTLIST_20260607.md).
+Tatiana/ML/dataset/campaign files are listed here **without** mass header edits (avoid risky churn). Treat entire directories as parked per [`TATIANA_LAB_BOUNDARY.md`](TATIANA_LAB_BOUNDARY.md).
 
 ---
 
@@ -75,5 +75,4 @@ Checklist:
 
 ## Related audits
 
-- [`audits/POSTGRES_API_PIPELINE_MESS_AUDIT.md`](audits/POSTGRES_API_PIPELINE_MESS_AUDIT.md)
 - [`reports/out/active/current/code_quality_simplification_audit_20260519.md`](../reports/out/active/current/code_quality_simplification_audit_20260519.md)

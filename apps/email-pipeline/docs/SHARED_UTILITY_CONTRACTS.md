@@ -11,8 +11,6 @@ Five small modules live at the **package root** (`origenlab_email_pipeline/<name
 - **No** Streamlit, Gmail, Postgres, OpenAI, or production SQLite paths inside these modules.
 - **Characterization tests** lock observable contracts before any future move or `core/` facade.
 
-See also: [`audits/ROOT_MISC_MODULE_CLASSIFICATION_20260604.md`](audits/ROOT_MISC_MODULE_CLASSIFICATION_20260604.md).
-
 ## Contract table
 
 | Module | Responsibility | Stable contract |

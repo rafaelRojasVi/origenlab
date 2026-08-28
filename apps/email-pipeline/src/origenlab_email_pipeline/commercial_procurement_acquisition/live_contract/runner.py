@@ -504,9 +504,6 @@ def run_live_validation(
     md_lines = [
         "# PR5B.1 live contract walkthrough (redacted)",
         "",
-        "Canonical narrative:",
-        "`docs/audits/COMMERCIAL_PROCUREMENT_REAL_CONTRACT_VALIDATION_PR5B1.md`.",
-        "",
         f"- Range conclusion: `{range_public.get('conclusion')}`",
         f"- PR5B correction required: `{range_public.get('pr5b_correction_required')}`",
         f"- Detail validation: `{detail_validation.get('status')}`",

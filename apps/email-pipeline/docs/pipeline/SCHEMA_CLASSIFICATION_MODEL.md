@@ -102,7 +102,7 @@ Operator status (read-only): `scripts/qa/operator_status.py`.
 [`POST_SEND_SAFE_LOOP.md`](POST_SEND_SAFE_LOOP.md) (report-only; `ORIGENLAB_STRICT_PROSPECTOS_DRIFT=1` for `--strict`).  
 Drift is not a send-safety failure; export gates remain authoritative.
 
-**Institution grouping (read-model audit):** `uv run python scripts/qa/audit_institution_grouping.py` — domain-level cards are for **read-only exploration** only (not send gates). The audit tags ESP/platform/noise domains with `do_not_promote_to_institution` and emits conservative `alias_seed_candidates.csv` (`proposed_manual_review`). **Alias policy:** [`INSTITUTION_ALIAS_POLICY.md`](INSTITUTION_ALIAS_POLICY.md) — no production alias table yet; ~26% of proposed seeds passed conservative review. **Explorer spec:** [`INSTITUTION_EXPLORER_SPEC.md`](INSTITUTION_EXPLORER_SPEC.md) — GET-only card model and rollout (not implemented).
+**Institution grouping (read-model audit):** `uv run python scripts/qa/audit_institution_grouping.py` — domain-level cards are for **read-only exploration** only (not send gates). The audit tags ESP/platform/noise domains with `do_not_promote_to_institution` and emits conservative `alias_seed_candidates.csv` (`proposed_manual_review`). No production alias table exists yet; ~26% of proposed seeds passed conservative review.
 
 ---
 
@@ -115,7 +115,7 @@ Without explicit approval and a migration plan:
 - **Mirror verify contracts** — tests and dashboard PRECAUCIÓN logic depend on them
 - **Warm case / Today path** — separate from Prospectos lead research (`warm_case_*`, equipment queue)
 - **Legacy 2016–2019 pipeline** — isolated `source_type`; do not merge into net-new without operator sign-off
-- **Institution / account grouping** — see [`INSTITUTION_ALIAS_POLICY.md`](INSTITUTION_ALIAS_POLICY.md); `lead_account_*` unification and production alias table deferred
+- **Institution / account grouping** — `lead_account_*` unification and a production alias table remain deferred (read-only domain-card grouping only)
 
 ---
 

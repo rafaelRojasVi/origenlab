@@ -10,7 +10,6 @@ from origenlab_email_pipeline.operator_cli.constants import SUBCOMMAND_SCRIPTS
 _REPO = Path(__file__).resolve().parents[1]
 _SCRIPT_MAP = _REPO / "docs" / "SCRIPT_MAP.md"
 _OPERATOR_SURFACE = _REPO / "docs" / "OPERATOR_COMMAND_SURFACE.md"
-_UNKNOWN_REVIEW_AUDIT = _REPO / "docs" / "audits" / "UNKNOWN_REVIEW_SURFACE_CLASSIFICATION_20260605.md"
 
 _CLASSIFICATION_HEADER = "Canonical classification table"
 _CATEGORY_TERMS = (
@@ -113,12 +112,3 @@ def test_script_map_points_to_read_only_planners() -> None:
         "plan_import_surface.py",
     ):
         assert script in text
-
-
-def test_unknown_review_classification_audit_exists_and_not_deletion_authority() -> None:
-    assert _UNKNOWN_REVIEW_AUDIT.is_file(), f"missing audit doc: {_UNKNOWN_REVIEW_AUDIT}"
-    text = _UNKNOWN_REVIEW_AUDIT.read_text(encoding="utf-8")
-    assert "unknown_review" in text
-    lower = text.lower()
-    assert "not deletion authority" in lower or "deletion safety" in lower
-    assert _SCRIPT_MAP.read_text(encoding="utf-8").count("UNKNOWN_REVIEW_SURFACE_CLASSIFICATION_20260605") >= 1

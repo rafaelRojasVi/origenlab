@@ -6,7 +6,6 @@
 # Transaction contract B: additive schema may remain; DELETE+INSERT is atomic
 # with foreign_keys=ON. Does not mutate commercial_deal* or commercial_identity_*.
 # Do not run --apply against production SQLite without operator approval.
-# See docs/audits/COMMERCIAL_OPPORTUNITY_STAGE_READ_MODEL_PR3.md.
 # -----------------------------------------------------------------------------
 """Build the deterministic commercial opportunity stage read model (PR3).
 

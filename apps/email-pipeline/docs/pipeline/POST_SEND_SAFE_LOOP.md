@@ -8,7 +8,7 @@ Last reviewed: 2026-06-11
 
 **Not enough alone:** mirror-only refresh when Gmail changed — ingest + NDR review + safety exports must run first.
 
-Related: [`CURRENT_SAFETY_CHECKPOINT.md`](CURRENT_SAFETY_CHECKPOINT.md) · [`SCHEMA_CLASSIFICATION_MODEL.md`](SCHEMA_CLASSIFICATION_MODEL.md) · [`SCRIPT_MAP.md`](../SCRIPT_MAP.md) · [`OPERATOR_COMMAND_SURFACE.md`](../OPERATOR_COMMAND_SURFACE.md)
+Related: [`SCHEMA_CLASSIFICATION_MODEL.md`](SCHEMA_CLASSIFICATION_MODEL.md) · [`SCRIPT_MAP.md`](../SCRIPT_MAP.md) · [`OPERATOR_COMMAND_SURFACE.md`](../OPERATOR_COMMAND_SURFACE.md)
 
 **Preferred CLI (Phase 6C):** where a step maps to a unified subcommand, use `uv run python -m origenlab_email_pipeline.cli <subcommand>` first; script paths below are **advanced/manual** fallbacks (same behavior).
 
