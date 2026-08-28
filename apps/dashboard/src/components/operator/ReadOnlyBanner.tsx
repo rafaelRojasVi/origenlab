@@ -1,10 +1,26 @@
 export function ReadOnlyBanner({
   mirrorBackend,
   documentImportEnabled = false,
+  crmWritesEnabled = false,
 }: {
   mirrorBackend: boolean;
   documentImportEnabled?: boolean;
+  crmWritesEnabled?: boolean;
 }) {
+  if (crmWritesEnabled) {
+    return (
+      <div
+        className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700"
+        role="note"
+      >
+        <p className="font-medium text-slate-800">
+          Pipeline del CRM durable. Los cambios de etapa y las promociones se registran de forma
+          durable en PostgreSQL — no se envían correos ni se modifican cotizaciones.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div
       className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700"
