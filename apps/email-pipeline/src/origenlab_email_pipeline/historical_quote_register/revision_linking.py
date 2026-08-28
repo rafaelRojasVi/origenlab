@@ -16,7 +16,8 @@ RevisionRelationship = Literal[
 ]
 
 _REVISION_MARKER_RE = re.compile(
-    r"\b(rev(?:isi[oó]n)?\.?\s*\d+|v\d+|version\s*\d+)\b", re.IGNORECASE
+    r"\b(?:rev(?:isi[oó]n)?|vers[ií]?[óo]n)\.?[\s\-]*(?:no\.?|n°)?\s*\d+\b",
+    re.IGNORECASE
 )
 
 
