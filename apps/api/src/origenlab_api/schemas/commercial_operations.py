@@ -140,8 +140,8 @@ class SalesOpportunityPromoteCommand(CommercialCommandModel):
         min_length=1,
         max_length=500,
     )
-    owner_key: str = Field(
-        min_length=1,
+    owner_key: str | None = Field(
+        default=None,
         max_length=320,
     )
 
@@ -187,6 +187,54 @@ class SalesOpportunityReadMeta(BaseModel):
 class SalesOpportunityReadResponse(BaseModel):
     meta: SalesOpportunityReadMeta = Field(default_factory=SalesOpportunityReadMeta)
     item: SalesOpportunityResponse
+
+
+class SalesOpportunityListItem(BaseModel):
+    sales_opportunity_id: str
+
+    source_kind: Literal["pr3"]
+    source_opportunity_id: str
+
+    account_id: str | None = None
+    primary_contact_id: str | None = None
+    organization_id: str | None = None
+    primary_crm_contact_id: str | None = None
+
+    title: str
+    stage: SalesOpportunityStage
+
+    owner_key: str
+
+    version: int
+
+    created_by: str
+    updated_by: str
+
+    created_at: datetime
+    updated_at: datetime
+    stage_updated_at: datetime
+
+    contact_display_email: str | None = None
+    account_display_domain: str | None = None
+
+    open_task_count: int = 0
+    next_task_id: str | None = None
+    next_task_title: str | None = None
+    next_task_due_at: datetime | None = None
+
+
+class SalesOpportunitiesMeta(BaseModel):
+    data_source: Literal["postgres"] = "postgres"
+    read_only: Literal[True] = True
+    count: int = 0
+    total_count: int = 0
+    limit: int = 100
+    offset: int = 0
+
+
+class SalesOpportunitiesResponse(BaseModel):
+    meta: SalesOpportunitiesMeta = Field(default_factory=SalesOpportunitiesMeta)
+    items: list[SalesOpportunityListItem] = Field(default_factory=list)
 
 
 class OpportunityStateResponse(BaseModel):
