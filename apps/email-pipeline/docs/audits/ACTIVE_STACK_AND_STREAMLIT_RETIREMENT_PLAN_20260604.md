@@ -42,7 +42,7 @@ See monorepo [`docs/PROJECT_CONTEXT.md`](../../../../docs/PROJECT_CONTEXT.md), r
 | Renamed tests | `test_today_workspace_read.py`, `test_tatiana_draft_review_helpers.py`, etc. — not the product UI |
 | Streamlit operator docs | `docs/pipeline/STREAMLIT_DATA_FRESHNESS.md`, historical RUNBOOK sections — migrate over time |
 
-**Already removed (Phase 5E–5G + 2026-06-04 UI):** browse/today/copy shims, `streamlit_api_preview`, `streamlit_canonical_dashboard_sql`, **`business_mart_app.py`**, **`streamlit_prioridad_*`**, **`streamlit_page_status`**. See [`tests/test_read_module_shim_parity.py`](../../tests/test_read_module_shim_parity.py) and [`STREAMLIT_LAUNCH_SURFACE_REMOVAL_PLAN_20260604.md`](STREAMLIT_LAUNCH_SURFACE_REMOVAL_PLAN_20260604.md).
+**Already removed (Phase 5E–5G + 2026-06-04 UI):** browse/today/copy shims, `streamlit_api_preview`, `streamlit_canonical_dashboard_sql`, **`business_mart_app.py`**, **`streamlit_prioridad_*`**, **`streamlit_page_status`**. See `tests/test_read_module_shim_parity.py` (guard test; removed with the read/ package in the 2026-08 commercial platform reset) and [`STREAMLIT_LAUNCH_SURFACE_REMOVAL_PLAN_20260604.md`](STREAMLIT_LAUNCH_SURFACE_REMOVAL_PLAN_20260604.md).
 
 ---
 

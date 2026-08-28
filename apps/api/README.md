@@ -4,7 +4,7 @@
 >
 > **Portfolio demo guide:** [docs/PORTFOLIO_DEMO_GUIDE.md](docs/PORTFOLIO_DEMO_GUIDE.md)
 
-Read-only **operator API** over SQLite and `reports/out/active/current`. This app is separated from `apps/email-pipeline` so daily ingest, DNR refresh, and mutation CLIs stay unchanged.
+**Operator API** over SQLite, Postgres, and `reports/out/active/current`: read routes for the dashboard, read-only `/mirror/*` reporting, and the **durable commercial CRM commands under `POST /operations/*`** (trusted operator identity, Idempotency-Key, optimistic concurrency, append-only events). This app is separated from `apps/email-pipeline` so daily ingest, DNR refresh, and outbound CLIs stay unchanged. Canonical architecture: [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](../../docs/architecture/CURRENT_SYSTEM_TRUTH.md).
 
 ## Package layout
 
@@ -30,13 +30,15 @@ User-unit templates + install notes: [`docs/LOCAL_SYSTEMD.md`](docs/LOCAL_SYSTEM
 | Layer | Role |
 |-------|------|
 | **SQLite** (`ORIGENLAB_SQLITE_PATH`) | Authoritative for outbound safety, Sent memory, outreach sidecars |
-| **This API** | GET-only HTTP for **Dashboard Today** (`apps/dashboard`) and operator tooling |
-| **Postgres mirror** | **Read-only reporting target** when `auto-mirror-dashboard` publishes; not send/outreach truth |
-| **email-pipeline** | **Write path** — ingest, `refresh_outbound_safety_memory`, `mark_outreach_state`, mart rebuilds |
+| **This API** | Dashboard reads + `/mirror/*` reporting + durable `/operations/*` CRM commands (the only human write path) |
+| **Postgres** | Rebuildable machine mirrors (published by `auto-mirror-dashboard`) **plus** the durable human CRM (`commercial.*` durable tables); mirror data is not send/outreach truth |
+| **email-pipeline** | **Machine write path** — ingest, `refresh_outbound_safety_memory`, `mark_outreach_state`, mart rebuilds, Alembic migrations |
 
 ## What this API must **not** run
 
-API-0 is **read-only**. The HTTP app does not invoke and must not grow imports for:
+Outside the allowlisted `/operations/*` CRM commands and the explicit tender
+annex import, the HTTP app is read-only. It does not invoke and must not grow
+imports for:
 
 | Forbidden operation | Typical entrypoint (stay in email-pipeline) |
 |---------------------|---------------------------------------------|
@@ -48,7 +50,7 @@ API-0 is **read-only**. The HTTP app does not invoke and must not grow imports f
 | Queue regeneration | `scripts/qa/build_equipment_first_operator_queue.py` |
 | Outreach state writes | `scripts/leads/mark_outreach_state.py --apply` |
 
-CI: `tests/test_no_write_policy.py` checks GET-only routes and scans `apps/api/src/origenlab_api` for forbidden script references.
+CI: `tests/test_no_write_policy.py` enforces the exact write surface (only the enumerated `/operations/*` + annex-import POSTs) and scans `apps/api/src/origenlab_api` for forbidden script references.
 
 ## CORS and production mode
 
@@ -110,7 +112,7 @@ Public `*.fastapicloud.dev` URLs rely on API token auth for private routes (no C
 
 ## Endpoints
 
-All routes are **GET-only**. Production serves Postgres read models when `ORIGENLAB_API_BACKEND=postgres`; local dev can fall back to SQLite or CSV fixtures.
+All routes are **GET-only** except the enumerated `POST /operations/*` CRM commands and the tender annex `preview`/`import` uploads. Production serves Postgres read models when `ORIGENLAB_API_BACKEND=postgres`; local dev can fall back to SQLite or CSV fixtures.
 
 ### Endpoint groups
 
@@ -120,6 +122,8 @@ All routes are **GET-only**. Production serves Postgres read models when `ORIGEN
 | **Commercial read models** | `/cases/warm`, `/opportunities/equipment`, `/opportunities/commercial`, `/emails/recent` | Dashboard Today, lifecycle opportunities, Bandeja, Licitaciones/equipos |
 | **Contacts** | `/contacts/{email}` | Read-only contact drilldown (Today side panel) |
 | **Mirror reporting** | `/mirror/*` | Postgres mirror metadata, deals, catalog, suppressions, audits |
+| **Durable CRM commands** | `POST /operations/*` (+ GET work-queue/detail routes) | Sales-opportunity promote/stage, PR3 operator state, activities, tasks — trusted operator identity + Idempotency-Key + expected_version |
+| **Procurement** | `/operator/procurement/*` | W1 institution/tender read models + explicit annex-bundle preview/import |
 
 ### Route reference
 

@@ -2,7 +2,7 @@
 
 Status: canonical  
 Owner: project-maintainers  
-Last reviewed: 2026-06-17
+Last reviewed: 2026-08-28
 
 This file is the source of truth for documentation placement, intent, and lifecycle.
 
@@ -10,6 +10,8 @@ This file is the source of truth for documentation placement, intent, and lifecy
 ## Canonical Entry Points
 
 - Monorepo: [README.md](../README.md)
+- Canonical system truth: [architecture/CURRENT_SYSTEM_TRUTH.md](./architecture/CURRENT_SYSTEM_TRUTH.md)
+- Target commercial architecture: [architecture/TARGET_COMMERCIAL_ARCHITECTURE.md](./architecture/TARGET_COMMERCIAL_ARCHITECTURE.md)
 - Monorepo agent context: [PROJECT_CONTEXT.md](./PROJECT_CONTEXT.md)
 - Release process: [RELEASE_PROCESS.md](./RELEASE_PROCESS.md)
 - Web app: [apps/web/README.md](../apps/web/README.md)
@@ -22,14 +24,15 @@ This file is the source of truth for documentation placement, intent, and lifecy
 - Operator API: [apps/api/README.md](../apps/api/README.md) · [apps/api/docs/README.md](../apps/api/docs/README.md)
 - Dashboard (Today UI): [apps/dashboard/README.md](../apps/dashboard/README.md) · [apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md](../apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md)
 
-**Architecture entrypoint (monorepo):** [PROJECT_CONTEXT.md](./PROJECT_CONTEXT.md) — canonical for what each app owns; do not duplicate a separate architecture index in this phase.
+**Architecture entrypoint (monorepo):** [architecture/CURRENT_SYSTEM_TRUTH.md](./architecture/CURRENT_SYSTEM_TRUTH.md) (durable CRM vs machine mirrors, write paths, ownership) with [PROJECT_CONTEXT.md](./PROJECT_CONTEXT.md) for per-app context. [architecture/COMMERCIAL_RESET_LEDGER.md](./architecture/COMMERCIAL_RESET_LEDGER.md) is the completed 2026-08 reset migration record.
 
-### Operator stack (read-only HTTP + UI)
+### Operator stack (HTTP + UI)
 
 | App | Canonical docs |
 |-----|----------------|
 | **Operator API** (`apps/api`, :8001) | [apps/api/README.md](../apps/api/README.md) · [apps/api/docs/README.md](../apps/api/docs/README.md) |
-| **Dashboard** (`apps/dashboard`, :5173) | [apps/dashboard/README.md](../apps/dashboard/README.md) · [apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md](../apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md) |
+| **Dashboard** (`apps/dashboard`, :5173) | [apps/dashboard/README.md](../apps/dashboard/README.md) (historical freeze record: [V1_FREEZE_OPERATOR_HANDOFF.md](../apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md)) |
+| **Dashboard proxy** (`apps/dashboard-proxy`) | [apps/dashboard-proxy/README.md](../apps/dashboard-proxy/README.md) |
 | **Email pipeline** (SQLite OLTP, ingest, outbound) | [apps/email-pipeline/docs/OUTBOUND_SOURCE_OF_TRUTH.md](../apps/email-pipeline/docs/OUTBOUND_SOURCE_OF_TRUTH.md) · [RUNBOOK.md](../apps/email-pipeline/docs/RUNBOOK.md) |
 
 Historical API-3 migration notes (legacy `:8000` removal): [apps/api/docs/archive/api3/](../apps/api/docs/archive/api3/README.md) — not current operator runbooks.

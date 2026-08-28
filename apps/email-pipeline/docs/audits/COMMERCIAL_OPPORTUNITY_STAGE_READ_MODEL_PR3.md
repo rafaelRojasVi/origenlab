@@ -5,7 +5,7 @@ Owner: email-pipeline-maintainers
 Date: 2026-07-29  
 Branch: `feat/commercial-opportunity-stage-pr3`
 
-Related: [`COMMERCIAL_TRUTH_AUDIT_PR1.md`](COMMERCIAL_TRUTH_AUDIT_PR1.md) · [`COMMERCIAL_IDENTITY_READ_MODEL_PR2.md`](COMMERCIAL_IDENTITY_READ_MODEL_PR2.md) · [`COMMERCIAL_DEAL_LEDGER_SCHEMA_V1.md`](../../../docs/commercial/COMMERCIAL_DEAL_LEDGER_SCHEMA_V1.md) · [`CRUD_SAFETY.md`](../CRUD_SAFETY.md)
+Related: [`COMMERCIAL_TRUTH_AUDIT_PR1.md`](COMMERCIAL_TRUTH_AUDIT_PR1.md) · [`COMMERCIAL_IDENTITY_READ_MODEL_PR2.md`](COMMERCIAL_IDENTITY_READ_MODEL_PR2.md) · [`COMMERCIAL_DEAL_LEDGER_SCHEMA_V1.md`](../../../../docs/commercial/COMMERCIAL_DEAL_LEDGER_SCHEMA_V1.md) · [`CRUD_SAFETY.md`](../CRUD_SAFETY.md)
 
 **Identity does not prove an opportunity.**  
 **Historical commercial evidence does not prove a current stage.**  

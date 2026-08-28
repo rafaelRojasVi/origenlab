@@ -1,7 +1,7 @@
 # OrigenLab
 
 <p align="center">
-  <strong>Commercial operations monorepo</strong> — public website, email intelligence pipeline, read-only operator API, and dashboard.
+  <strong>Commercial operations monorepo</strong> — public website, email intelligence pipeline, operator API with a durable commercial CRM core, and dashboard.
 </p>
 
 <p align="center">
@@ -18,26 +18,28 @@
 
 ## What this is
 
-OrigenLab combines a **public marketing site** with **operator tooling** for commercial email intelligence, outbound safety, and read-only triage. Gmail and archive signals land in **SQLite** on the operator machine; **Postgres** is a read-only dashboard mirror. The **API** and **dashboard** observe that mirror — they do not send mail or mutate outreach state.
+OrigenLab combines a **public marketing site** with **operator tooling** for commercial email intelligence, outbound safety, and commercial triage. Gmail and archive signals land in **SQLite** on the operator machine; **Postgres** holds rebuildable machine mirrors **plus the durable human CRM** (`commercial.sales_opportunity`, tasks, activities, organizations, contacts). Machine systems propose; the durable CRM records human commercial truth. The API/dashboard never send mail or mutate outreach state; durable CRM writes flow only through the allowlisted `/operations/*` commands. Canonical architecture: [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](docs/architecture/CURRENT_SYSTEM_TRUTH.md).
 
 This public repository holds **code, tests, and documentation only**. Mail exports, SQLite files, generated reports, and client collateral stay outside Git by design.
 
-| Write path | Read-only surfaces |
-|------------|-------------------|
-| [`apps/email-pipeline`](apps/email-pipeline/) — ingest, mart, safety, explicit `--apply` workflows | [`apps/api`](apps/api/) `:8001` · [`apps/dashboard`](apps/dashboard/) `:5173` |
+| Write path | Surfaces |
+|------------|----------|
+| Machine: [`apps/email-pipeline`](apps/email-pipeline/) — ingest, mart, safety, explicit `--apply` workflows. Human CRM: `POST /operations/*` on [`apps/api`](apps/api/) | [`apps/api`](apps/api/) `:8001` · [`apps/dashboard`](apps/dashboard/) `:5173` (reads + allowlisted CRM commands via [`apps/dashboard-proxy`](apps/dashboard-proxy/)) |
 
 Full topology: [`docs/PROJECT_CONTEXT.md`](docs/PROJECT_CONTEXT.md) · outbound rules: [`apps/email-pipeline/docs/OUTBOUND_SOURCE_OF_TRUTH.md`](apps/email-pipeline/docs/OUTBOUND_SOURCE_OF_TRUTH.md)
 
 ## Operator surfaces
 
-The active operator UI is [`apps/dashboard`](apps/dashboard/) (Streamlit was retired). All sections are **GET-only** against [`apps/api`](apps/api/).
+The active operator UI is [`apps/dashboard`](apps/dashboard/) (Streamlit was retired). Sections read machine evidence and the durable CRM; the only writes are the allowlisted `/operations/*` CRM commands and the tender annex import.
 
 | Section | Role |
 |---------|------|
-| **Hoy (Today)** | Daily summary, automation health card, queue counts |
-| **Bandeja de revisión** | Warm-case triage with client-side filters and local review labels |
-| **Licitaciones / equipos** | Equipment-first public-tender queue from the Postgres read model |
-| **Sistema** | Service status, read-only policy, backend/mirror context |
+| **Hoy (Today)** | Durable commercial work queue + daily summary, automation health, queue counts |
+| **Bandeja de revisión** | Warm-case triage (machine evidence) |
+| **Negocios** | Machine-proposed opportunity intake + durable CRM commands + historical deal ledger |
+| **Prospectos / Clientes / Catálogo / Proveedores / Pagos** | Machine-evidence views (mirror) |
+| **Licitaciones / equipos** | W1 actionable tender queue + T1 term intelligence + annex import |
+| **Sistema** | Service status, backend/mirror context |
 
 Handoff and freeze rules: [`apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md`](apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md)
 
@@ -45,23 +47,26 @@ Handoff and freeze rules: [`apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md`](
 
 ```mermaid
 flowchart LR
-  Gmail[Gmail / archives] --> MailRefresh[auto-refresh-mail]
+  Gmail[Gmail / ChileCompra / archives] --> MailRefresh[auto-refresh-mail + tender workers]
   MailRefresh --> SQLite[(SQLite operational truth)]
-  SQLite --> DailyCore[daily-core + email_mart_features]
+  SQLite --> DailyCore[daily-core + read models]
   DailyCore --> Reports[reports / safety state]
   DailyCore --> Mirror[auto-mirror-dashboard]
-  Mirror --> Postgres[(Postgres read mirror)]
-  Postgres --> API[FastAPI read-only API]
-  API --> Dashboard[React operator dashboard]
+  Mirror --> PGM[(Postgres machine mirrors)]
+  PGD[(Postgres durable CRM commercial.*)] <--> API[FastAPI operator API]
+  PGM --> API
+  API --> Proxy[dashboard-proxy allowlist]
+  Proxy --> Dashboard[React operator dashboard]
   Web[Astro public website] -. separate .- Dashboard
 ```
 
 | Layer | Role |
 |-------|------|
-| Gmail / archives | External source (not in Git) |
-| SQLite | Operational truth — ingest, outbound safety, Sent memory |
-| Postgres | Read-only dashboard/reporting mirror |
-| API / dashboard | Read-only operator surfaces; mirror data is **not** send approval |
+| Gmail / ChileCompra / archives | External sources (not in Git) |
+| SQLite | Machine operational truth — ingest, outbound safety, Sent memory |
+| Postgres mirrors | Rebuildable machine projections (warm cases, deals, catalog, leads, PR3 opportunities) |
+| Postgres durable CRM | Human commercial truth — sales opportunities, tasks, activities, organizations, contacts |
+| API / proxy / dashboard | Reads + allowlisted `/operations/*` CRM commands; mirror data is **not** send approval |
 | `apps/web` | Public marketing site (separate from operator stack) |
 
 Two debounced cron loops keep ingest and publish separate: Gmail → SQLite (~3 min) and SQLite → Postgres/dashboard (every minute; default 60s cooldown). Runbook: [`apps/email-pipeline/docs/pipeline/OPERATOR_CRON.md`](apps/email-pipeline/docs/pipeline/OPERATOR_CRON.md)
@@ -71,17 +76,19 @@ Two debounced cron loops keep ingest and publish separate: Gmail → SQLite (~3 
 | App | Path | Stack | Writes? |
 |-----|------|-------|---------|
 | **Web** | [`apps/web/`](apps/web/) | Astro, Tailwind, TypeScript | No operational data |
-| **Email pipeline** | [`apps/email-pipeline/`](apps/email-pipeline/) | Python 3.12, `uv`, SQLite | Yes — local SQLite/reports when explicitly applied |
-| **Operator API** | [`apps/api/`](apps/api/) | FastAPI `:8001` | No mutation |
-| **Dashboard** | [`apps/dashboard/`](apps/dashboard/) | React, Vite `:5173` | No mutation |
+| **Email pipeline** | [`apps/email-pipeline/`](apps/email-pipeline/) | Python 3.12, `uv`, SQLite | Yes — local SQLite/reports/mirrors when explicitly applied |
+| **Operator API** | [`apps/api/`](apps/api/) | FastAPI `:8001` | Durable CRM commands under `/operations/*` only (+ tender annex import) |
+| **Dashboard** | [`apps/dashboard/`](apps/dashboard/) | React, Vite `:5173` | Via allowlisted API commands only |
+| **Dashboard proxy** | [`apps/dashboard-proxy/`](apps/dashboard-proxy/) | Cloudflare Worker | Trust boundary — strict method+path allowlist |
 
 **Default ports:** API `:8001` · Dashboard `:5173` · Web `:4321`
 
 ## Source-of-truth boundaries
 
-- **SQLite** — operational truth for ingest, outbound safety, and send decisions.
-- **Postgres** — read-only reporting mirror after `auto-mirror-dashboard` publishes.
-- **API / dashboard** — read-only; never treat mirror responses as send approval.
+- **SQLite** — machine operational truth for ingest, outbound safety, and send decisions.
+- **Postgres mirrors** — rebuildable machine projections published by `auto-mirror-dashboard`.
+- **Postgres durable CRM** (`commercial.*` durable tables) — human commercial truth; written only via `POST /operations/*` with trusted operator identity.
+- **API / dashboard** — reads plus allowlisted CRM commands; never treat mirror responses as send approval.
 - **Send / outreach** — human-reviewed batches via email-pipeline scripts; **no autonomous send path**.
 - **Generated datasets** — `reports/out`, SQLite, and mail exports stay out of Git.
 
@@ -136,6 +143,8 @@ This repository is **public**. Do not commit `.env`, SQLite databases, mail arch
 
 | Topic | Doc |
 |-------|-----|
+| Canonical system truth | [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](docs/architecture/CURRENT_SYSTEM_TRUTH.md) |
+| Target commercial architecture | [`docs/architecture/TARGET_COMMERCIAL_ARCHITECTURE.md`](docs/architecture/TARGET_COMMERCIAL_ARCHITECTURE.md) |
 | Monorepo architecture | [`docs/PROJECT_CONTEXT.md`](docs/PROJECT_CONTEXT.md) |
 | Documentation map | [`docs/DOCUMENTATION_MAP.md`](docs/DOCUMENTATION_MAP.md) |
 | Release process | [`docs/RELEASE_PROCESS.md`](docs/RELEASE_PROCESS.md) |

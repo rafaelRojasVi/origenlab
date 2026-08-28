@@ -13,22 +13,23 @@ For **operator API** or **dashboard** work, read **[`apps/api/AGENTS.md`](apps/a
 1. [`docs/PROJECT_CONTEXT.md`](docs/PROJECT_CONTEXT.md) — what each app is
 2. App-specific `docs/APP_CONTEXT.md` and `docs/RUNBOOK.md`
 
-## Operator stack (read-only)
+## Operator stack
 
 | Topic | Canonical doc |
 |-------|----------------|
+| **Canonical system truth** | [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](docs/architecture/CURRENT_SYSTEM_TRUTH.md) |
+| Target commercial architecture | [`docs/architecture/TARGET_COMMERCIAL_ARCHITECTURE.md`](docs/architecture/TARGET_COMMERCIAL_ARCHITECTURE.md) |
 | Monorepo architecture | [`docs/PROJECT_CONTEXT.md`](docs/PROJECT_CONTEXT.md) |
-| Active HTTP API | [`apps/api/README.md`](apps/api/README.md) — **:8001**, operator routes + `GET /mirror/*` |
-| Active operator UI | [`apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md`](apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md) |
+| Active HTTP API | [`apps/api/README.md`](apps/api/README.md) — **:8001**, operator routes + `GET /mirror/*` + `POST /operations/*` CRM commands |
 | Outbound / send safety (SQLite) | [`apps/email-pipeline/docs/OUTBOUND_SOURCE_OF_TRUTH.md`](apps/email-pipeline/docs/OUTBOUND_SOURCE_OF_TRUTH.md) |
 
 **Agents must assume:**
 
 - **Active API** is **`apps/api` on port 8001** only. Legacy email-pipeline FastAPI on **:8000** was **removed** (API-3 Phase 6) — see [`apps/api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md`](apps/api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md).
-- **Dashboard Today** is **read-only / GET-only** — no write/send/archive actions in the UI.
-- **SQLite** remains operational truth for ingest, outbound safety, DNR/suppression, and send decisions.
-- **Postgres** (and any future **Supabase** hosted mirror) is a **read-only reporting mirror** — never treat mirror API responses as send approval.
-- **`apps/dashboard/src/legacy/`** is parked UI only, not the active dashboard.
+- **Machine systems propose; the durable CRM records human commercial truth.** The only human write path is `POST /operations/*` (trusted operator identity, Idempotency-Key, optimistic concurrency) plus the explicit tender annex import; the dashboard has **no** send/archive/Gmail actions.
+- **SQLite** remains machine operational truth for ingest, outbound safety, DNR/suppression, and send decisions.
+- **Postgres** holds rebuildable machine mirrors **and** the durable human CRM (`commercial.sales_opportunity`, tasks, activities, organizations, contacts). Never treat mirror API responses as send approval; never write durable CRM state outside `/operations/*`.
+- The historical v1-freeze handoff ([`apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md`](apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md)) describes the retired read-only era — reference only.
 
 ## Hard rules (all apps)
 

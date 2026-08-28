@@ -11,7 +11,7 @@ apps/api/docs/archive/api3/
 # Dashboard dev guardrails (warn when .env points at wrong port)
 apps/dashboard/src/lib/devApiConfig.ts
 apps/dashboard/src/lib/devApiConfig.test.ts
-apps/dashboard/src/pages/TodayPage.test.tsx
+apps/dashboard/src/pages/DashboardApp.today.test.tsx
 
 # Gate scripts (pattern literals)
 apps/api/scripts/api3_phase6_grep_gate.sh
