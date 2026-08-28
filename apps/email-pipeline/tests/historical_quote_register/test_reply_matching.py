@@ -181,6 +181,66 @@ def test_classify_response_bounce_not_counted_as_replied():
     assert result.response_state == "bounced"
 
 
+def test_classify_response_early_auto_reply_then_later_real_reply_is_replied():
+    """An immediate out-of-office auto-reply followed later by a genuine
+    human reply (once the person returns) must not be short-circuited into
+    'auto_reply' — the real reply must still be found and reported."""
+    candidates = [
+        ReplyCandidateRow(
+            email_id=1, sender="compras@cliente.cl", subject="Automatic reply: Out of office",
+            date_iso="2026-05-11T00:00:00", body_snippet="I am out of office until...",
+        ),
+        ReplyCandidateRow(
+            email_id=2, sender="compras@cliente.cl", subject="RE: Cotización COT-2026-014",
+            date_iso="2026-05-15T00:00:00", body_snippet="Ya de vuelta, la revisamos.",
+        ),
+    ]
+    result = classify_response(candidates, quote_number="COT-2026-014", normalized_quote_subject_core="cotizacion")
+    assert result.response_state == "replied"
+    assert result.first_reply_email_id == 2
+    assert result.latest_reply_email_id == 2
+    assert result.review_required is False
+
+
+def test_classify_response_early_bounce_then_later_real_reply_is_replied():
+    """An early bounce/NDR (e.g. a resend after a typo'd address) followed
+    later by a genuine human reply from the corrected address must not be
+    short-circuited into 'bounced' — the real reply must still win."""
+    candidates = [
+        ReplyCandidateRow(
+            email_id=1, sender="compras@cliente.cl", subject="Undelivered Mail Returned to Sender",
+            date_iso="2026-05-10T01:00:00", body_snippet="This is an automatically generated message.",
+        ),
+        ReplyCandidateRow(
+            email_id=2, sender="compras@cliente.cl", subject="RE: Cotización COT-2026-014",
+            date_iso="2026-05-12T00:00:00", body_snippet="Gracias, la revisamos.",
+        ),
+    ]
+    result = classify_response(candidates, quote_number="COT-2026-014", normalized_quote_subject_core="cotizacion")
+    assert result.response_state == "replied"
+    assert result.first_reply_email_id == 2
+    assert result.latest_reply_email_id == 2
+    assert result.review_required is False
+
+
+def test_classify_response_single_candidate_no_subject_overlap_is_replied_with_review():
+    """A single real candidate is genuinely strong enough evidence to claim
+    'replied' even without subject/quote-number overlap — but it must be
+    flagged for human review rather than silently trusted."""
+    candidates = [
+        ReplyCandidateRow(
+            email_id=1, sender="compras@cliente.cl", subject="Consulta sobre otro tema",
+            date_iso="2026-05-12T00:00:00", body_snippet="Hola, tengo una pregunta distinta.",
+        )
+    ]
+    result = classify_response(candidates, quote_number="COT-2026-014", normalized_quote_subject_core="cotizacion")
+    assert result.response_state == "replied"
+    assert result.first_reply_email_id == 1
+    assert result.latest_reply_email_id == 1
+    assert result.review_required is True
+    assert result.review_reason == "single_candidate_no_subject_overlap"
+
+
 def test_classify_response_multiple_conflicting_candidates_is_unknown():
     candidates = [
         ReplyCandidateRow(

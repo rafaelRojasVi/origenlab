@@ -111,23 +111,34 @@ def classify_response(
             review_required=False, review_reason=None,
         )
 
+    # Classify every candidate first — never return on the first noise/
+    # auto-reply hit. Candidates arrive in ascending-date order (see
+    # find_candidate_replies), so an early out-of-office auto-reply followed
+    # later by a genuine human reply must still surface as "replied": a
+    # premature return here would report "auto_reply"/"bounced" and silently
+    # discard a real reply that comes later in the same candidate list.
     real_candidates: list[ReplyCandidateRow] = []
+    non_real_candidates: list[tuple[ReplyCandidateRow, ResponseState]] = []
     for c in candidates:
         if looks_like_obvious_noise(c.sender, c.subject):
-            return ResponseMatchResult(
-                response_state="bounced", first_reply_email_id=c.email_id, first_reply_at=c.date_iso,
-                latest_reply_email_id=c.email_id, latest_reply_at=c.date_iso, latest_reply_subject=c.subject,
-                review_required=False, review_reason=None,
-            )
+            non_real_candidates.append((c, "bounced"))
+            continue
         if looks_like_auto_reply_text(c.subject, c.body_snippet):
-            return ResponseMatchResult(
-                response_state="auto_reply", first_reply_email_id=c.email_id, first_reply_at=c.date_iso,
-                latest_reply_email_id=c.email_id, latest_reply_at=c.date_iso, latest_reply_subject=c.subject,
-                review_required=False, review_reason=None,
-            )
+            non_real_candidates.append((c, "auto_reply"))
+            continue
         real_candidates.append(c)
 
     if not real_candidates:
+        if non_real_candidates:
+            # No genuine reply anywhere in the window — report the LATEST
+            # noise/auto-reply candidate, since it's most representative of
+            # the final state of the thread.
+            c, state = non_real_candidates[-1]
+            return ResponseMatchResult(
+                response_state=state, first_reply_email_id=c.email_id, first_reply_at=c.date_iso,
+                latest_reply_email_id=c.email_id, latest_reply_at=c.date_iso, latest_reply_subject=c.subject,
+                review_required=False, review_reason=None,
+            )
         return ResponseMatchResult(
             response_state="no_reply", first_reply_email_id=None, first_reply_at=None,
             latest_reply_email_id=None, latest_reply_at=None, latest_reply_subject=None,
