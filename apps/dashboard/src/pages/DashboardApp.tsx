@@ -8,6 +8,7 @@ import { ContactsPage } from "./ContactsPage";
 import { DealsPage } from "./DealsPage";
 import { InboxTriagePage } from "./InboxTriagePage";
 import { PaymentsLogisticsPage } from "./PaymentsLogisticsPage";
+import { PipelinePage } from "./PipelinePage";
 import { SuppliersPage } from "./SuppliersPage";
 import { SystemPage } from "./SystemPage";
 import { TendersPage } from "./TendersPage";
@@ -19,6 +20,8 @@ function DashboardSectionView({ section }: { section: DashboardSection }) {
       return <TodaySummaryPage />;
     case "inbox":
       return <InboxTriagePage />;
+    case "pipeline":
+      return <PipelinePage />;
     case "deals":
       return <DealsPage />;
     case "prospectos":

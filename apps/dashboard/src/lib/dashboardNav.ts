@@ -3,6 +3,7 @@
 export type DashboardSection =
   | "today"
   | "inbox"
+  | "pipeline"
   | "deals"
   | "prospectos"
   | "catalogo"
@@ -15,6 +16,7 @@ export type DashboardSection =
 export type DashboardNavIconName =
   | "home"
   | "inbox"
+  | "pipeline"
   | "deals"
   | "prospectos"
   | "contacts"
@@ -63,6 +65,13 @@ export const DASHBOARD_NAV_GROUPS: DashboardNavGroup[] = [
     id: "comercial",
     label: "Comercial",
     items: [
+      {
+        id: "pipeline",
+        label: "Pipeline",
+        shortLabel: "Pipeline",
+        description: "Oportunidades de venta en gestión activa (CRM durable)",
+        iconName: "pipeline",
+      },
       {
         id: "deals",
         label: "Negocios",
