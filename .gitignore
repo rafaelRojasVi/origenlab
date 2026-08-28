@@ -104,3 +104,6 @@ apps/email-pipeline/reports/in/
 # Monorepo-level report inputs/outputs (may contain PII; never public)
 reports/in/
 reports/out/
+
+# Subagent-driven-development scratch workspace (ledgers, briefs, review packages)
+.superpowers/
