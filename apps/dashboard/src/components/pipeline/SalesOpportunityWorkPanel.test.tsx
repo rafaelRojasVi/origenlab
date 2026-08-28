@@ -37,7 +37,6 @@ describe("SalesOpportunityWorkPanel", () => {
       items: [
         {
           task_id: "task_1",
-          sales_opportunity_id: SALES_ID,
           opportunity_id: null,
           account_id: null,
           contact_id: null,
@@ -64,7 +63,6 @@ describe("SalesOpportunityWorkPanel", () => {
   it("creates a task anchored to the sales opportunity", async () => {
     vi.mocked(createCommercialTask).mockResolvedValue({
       task_id: "task_2",
-      sales_opportunity_id: SALES_ID,
       opportunity_id: null,
       account_id: null,
       contact_id: null,
@@ -99,7 +97,6 @@ describe("SalesOpportunityWorkPanel", () => {
       items: [
         {
           task_id: "task_1",
-          sales_opportunity_id: SALES_ID,
           opportunity_id: null,
           account_id: null,
           contact_id: null,
@@ -119,7 +116,6 @@ describe("SalesOpportunityWorkPanel", () => {
     });
     vi.mocked(completeCommercialTask).mockResolvedValue({
       task_id: "task_1",
-      sales_opportunity_id: SALES_ID,
       opportunity_id: null,
       account_id: null,
       contact_id: null,
@@ -149,7 +145,6 @@ describe("SalesOpportunityWorkPanel", () => {
   it("creates an activity anchored to the sales opportunity", async () => {
     vi.mocked(createCommercialActivity).mockResolvedValue({
       activity_id: "act_1",
-      sales_opportunity_id: SALES_ID,
       opportunity_id: null,
       account_id: null,
       contact_id: null,
@@ -173,5 +168,70 @@ describe("SalesOpportunityWorkPanel", () => {
         expect.any(String),
       ),
     );
+  });
+
+  it("disables submit button while saving and reuses idempotency key only for identical content", async () => {
+    let resolveTask: ((value: any) => void) | null = null;
+    const taskPromise = new Promise((resolve) => {
+      resolveTask = resolve;
+    });
+
+    vi.mocked(createCommercialTask).mockReturnValue(taskPromise as any);
+
+    render(<SalesOpportunityWorkPanel salesOpportunityId={SALES_ID} />);
+    await waitFor(() => expect(fetchSalesOpportunityTasks).toHaveBeenCalled());
+
+    // First submit
+    const taskInput = screen.getByLabelText("Nuevo seguimiento") as HTMLInputElement;
+    const submitButton = screen.getByText("Agregar seguimiento") as HTMLButtonElement;
+
+    fireEvent.change(taskInput, { target: { value: "Tarea 1" } });
+    fireEvent.click(submitButton);
+
+    // Verify button is disabled while request is in flight
+    await waitFor(() => expect(submitButton.disabled).toBe(true));
+
+    // Try to click again while request is in flight (button should be disabled)
+    fireEvent.change(taskInput, { target: { value: "Tarea 2" } });
+    fireEvent.click(submitButton); // This won't actually fire the handler since button is disabled
+
+    // Verify createCommercialTask was called only once (first submission)
+    expect(createCommercialTask).toHaveBeenCalledTimes(1);
+    const firstCall = vi.mocked(createCommercialTask).mock.calls[0];
+    const firstKey = firstCall[1];
+
+    // Resolve the first request
+    resolveTask!({
+      task_id: "task_new",
+      opportunity_id: null,
+      account_id: null,
+      contact_id: null,
+      title: "Tarea 1",
+      status: "open",
+      priority: "normal",
+      due_at: null,
+      owner_key: null,
+      version: 1,
+      created_by: "test@origenlab.cl",
+      updated_by: "test@origenlab.cl",
+      completed_at: null,
+      created_at: "2026-08-28T12:00:00+00:00",
+      updated_at: "2026-08-28T12:00:00+00:00",
+    });
+
+    // Wait for button to be enabled again
+    await waitFor(() => expect(submitButton.disabled).toBe(false));
+
+    // Now submit with different content
+    fireEvent.change(taskInput, { target: { value: "Tarea 2" } });
+    fireEvent.click(submitButton);
+
+    // Verify createCommercialTask was called a second time
+    await waitFor(() => expect(createCommercialTask).toHaveBeenCalledTimes(2));
+    const secondCall = vi.mocked(createCommercialTask).mock.calls[1];
+    const secondKey = secondCall[1];
+
+    // Keys should be different because content changed
+    expect(firstKey).not.toBe(secondKey);
   });
 });

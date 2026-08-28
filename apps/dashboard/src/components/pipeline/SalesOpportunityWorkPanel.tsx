@@ -7,7 +7,13 @@ import {
   fetchSalesOpportunityActivities,
   fetchSalesOpportunityTasks,
 } from "../../api/commercialOperationsClient";
-import type { CommercialActivity, CommercialTask } from "../../api/commercialOperationsTypes";
+import type { CommercialActivity, CommercialTask, CreateCommercialActivityCommand, CreateCommercialTaskCommand } from "../../api/commercialOperationsTypes";
+
+type PendingCreate<T> = {
+  signature: string;
+  idempotencyKey: string;
+  command: T;
+};
 
 function errorMessage(reason: unknown, fallback: string): string {
   return reason instanceof Error ? reason.message : fallback;
@@ -30,9 +36,11 @@ export function SalesOpportunityWorkPanel({ salesOpportunityId }: { salesOpportu
   const [actionError, setActionError] = useState<string | null>(null);
   const [taskTitle, setTaskTitle] = useState("");
   const [activitySummary, setActivitySummary] = useState("");
+  const [savingTask, setSavingTask] = useState(false);
+  const [savingActivity, setSavingActivity] = useState(false);
   const [transitioningTaskId, setTransitioningTaskId] = useState<string | null>(null);
-  const pendingTaskKey = useRef<string | null>(null);
-  const pendingActivityKey = useRef<string | null>(null);
+  const pendingTaskCreate = useRef<PendingCreate<CreateCommercialTaskCommand> | null>(null);
+  const pendingActivityCreate = useRef<PendingCreate<CreateCommercialActivityCommand> | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -69,20 +77,38 @@ export function SalesOpportunityWorkPanel({ salesOpportunityId }: { salesOpportu
       return;
     }
 
+    setSavingTask(true);
     setActionError(null);
-    const key = pendingTaskKey.current ?? newIdempotencyKey("task");
-    pendingTaskKey.current = key;
+
+    const command: CreateCommercialTaskCommand = {
+      sales_opportunity_id: salesOpportunityId,
+      title,
+      priority: "normal",
+    };
+
+    const signature = JSON.stringify(command);
 
     try {
-      const created = await createCommercialTask(
-        { sales_opportunity_id: salesOpportunityId, title, priority: "normal" },
-        key,
-      );
-      pendingTaskKey.current = null;
+      let pending = pendingTaskCreate.current;
+
+      if (pending === null || pending.signature !== signature) {
+        pending = {
+          signature,
+          idempotencyKey: newIdempotencyKey("task"),
+          command,
+        };
+
+        pendingTaskCreate.current = pending;
+      }
+
+      const created = await createCommercialTask(pending.command, pending.idempotencyKey);
+      pendingTaskCreate.current = null;
       setTasks((current) => [created, ...current]);
       setTaskTitle("");
     } catch (reason: unknown) {
       setActionError(errorMessage(reason, "No se pudo crear el seguimiento."));
+    } finally {
+      setSavingTask(false);
     }
   }
 
@@ -94,25 +120,39 @@ export function SalesOpportunityWorkPanel({ salesOpportunityId }: { salesOpportu
       return;
     }
 
+    setSavingActivity(true);
     setActionError(null);
-    const key = pendingActivityKey.current ?? newIdempotencyKey("activity");
-    pendingActivityKey.current = key;
+
+    const command: CreateCommercialActivityCommand = {
+      sales_opportunity_id: salesOpportunityId,
+      activity_type: "note",
+      occurred_at: new Date().toISOString(),
+      summary,
+    };
+
+    const signature = JSON.stringify(command);
 
     try {
-      const created = await createCommercialActivity(
-        {
-          sales_opportunity_id: salesOpportunityId,
-          activity_type: "note",
-          occurred_at: new Date().toISOString(),
-          summary,
-        },
-        key,
-      );
-      pendingActivityKey.current = null;
+      let pending = pendingActivityCreate.current;
+
+      if (pending === null || pending.signature !== signature) {
+        pending = {
+          signature,
+          idempotencyKey: newIdempotencyKey("activity"),
+          command,
+        };
+
+        pendingActivityCreate.current = pending;
+      }
+
+      const created = await createCommercialActivity(pending.command, pending.idempotencyKey);
+      pendingActivityCreate.current = null;
       setActivities((current) => [created, ...current]);
       setActivitySummary("");
     } catch (reason: unknown) {
       setActionError(errorMessage(reason, "No se pudo registrar la actividad."));
+    } finally {
+      setSavingActivity(false);
     }
   }
 
@@ -170,9 +210,10 @@ export function SalesOpportunityWorkPanel({ salesOpportunityId }: { salesOpportu
             value={taskTitle}
             onChange={(event) => setTaskTitle(event.target.value)}
             maxLength={500}
-            className="flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            disabled={savingTask}
+            className="flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm disabled:opacity-50"
           />
-          <button type="submit" className="rounded-md border border-brand-300 bg-brand-50 px-3 py-1.5 text-sm font-medium text-brand-800">
+          <button type="submit" disabled={savingTask} className="rounded-md border border-brand-300 bg-brand-50 px-3 py-1.5 text-sm font-medium text-brand-800 disabled:opacity-50">
             Agregar seguimiento
           </button>
         </form>
@@ -217,9 +258,10 @@ export function SalesOpportunityWorkPanel({ salesOpportunityId }: { salesOpportu
             value={activitySummary}
             onChange={(event) => setActivitySummary(event.target.value)}
             maxLength={500}
-            className="flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            disabled={savingActivity}
+            className="flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm disabled:opacity-50"
           />
-          <button type="submit" className="rounded-md border border-brand-300 bg-brand-50 px-3 py-1.5 text-sm font-medium text-brand-800">
+          <button type="submit" disabled={savingActivity} className="rounded-md border border-brand-300 bg-brand-50 px-3 py-1.5 text-sm font-medium text-brand-800 disabled:opacity-50">
             Registrar actividad
           </button>
         </form>
