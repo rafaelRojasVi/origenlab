@@ -142,8 +142,9 @@ describe("SalesOpportunityWorkspaceDrawer", () => {
       <SalesOpportunityWorkspaceDrawer item={item()} open onClose={vi.fn()} onStageChanged={vi.fn()} />,
     );
 
+    // Close with item=null, matching what PipelinePage actually does
     act(() => {
-      rerender(<SalesOpportunityWorkspaceDrawer item={item()} open={false} onClose={vi.fn()} onStageChanged={vi.fn()} />);
+      rerender(<SalesOpportunityWorkspaceDrawer item={null} open={false} onClose={vi.fn()} onStageChanged={vi.fn()} />);
     });
     expect(screen.getByTestId("sales-opportunity-workspace-drawer")).toBeInTheDocument();
 
@@ -166,5 +167,44 @@ describe("SalesOpportunityWorkspaceDrawer", () => {
 
     // Focus should move to close button once core is set by the fetch (not before)
     await waitFor(() => expect(screen.getByText("Cerrar")).toHaveFocus());
+  });
+
+  it("does not re-trigger focus effect when core mutates (stage change), only on open/item changes", async () => {
+    // Create an external button to track focus restoration
+    const externalButton = document.createElement("button");
+    externalButton.textContent = "External";
+    document.body.appendChild(externalButton);
+    externalButton.focus();
+    const focusSpy = vi.spyOn(externalButton, "focus");
+
+    try {
+      // Open the drawer
+      render(<SalesOpportunityWorkspaceDrawer item={item()} open onClose={vi.fn()} onStageChanged={vi.fn()} />);
+      await waitFor(() => expect(screen.getByText("Cerrar")).toHaveFocus());
+      expect(focusSpy).not.toHaveBeenCalled();
+
+      // Trigger a core mutation by changing the stage
+      vi.mocked(transitionSalesOpportunityStage).mockResolvedValue({
+        ...item(),
+        stage: "quoting",
+        version: 3,
+        updated_at: "2026-08-28T12:00:00+00:00",
+      });
+
+      const stageSelect = screen.getByLabelText("Cambiar etapa") as HTMLSelectElement;
+      fireEvent.change(stageSelect, { target: { value: "quoting" } });
+
+      // Wait for the mutation to settle
+      await waitFor(() => {
+        expect(stageSelect.value).toBe("quoting");
+      });
+
+      // The focus effect's cleanup should NOT have been called during the mutation
+      // (which would have restored focus to externalButton). It should only have been
+      // called during the initial open (which we already verified).
+      expect(focusSpy).not.toHaveBeenCalled();
+    } finally {
+      document.body.removeChild(externalButton);
+    }
   });
 });

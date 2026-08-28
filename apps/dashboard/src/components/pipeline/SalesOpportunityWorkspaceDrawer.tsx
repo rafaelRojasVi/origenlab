@@ -91,14 +91,15 @@ export function SalesOpportunityWorkspaceDrawer({
     return () => clearTimeout(timeout);
   }, [open]);
 
-  // Deps include both [open] and [core]: `onClose` is read via `onCloseRef`
+  // Deps include [open] and [core?.sales_opportunity_id]: `onClose` is read via `onCloseRef`
   // so that a parent re-render with a new inline `onClose` (e.g. right
   // after `onStageChanged()` fires) doesn't tear down and re-run this
   // effect — which would re-capture `previouslyFocused` and steal focus
-  // back to the close button mid-interaction. But we must also key off `core`
-  // to handle persistent-mount usage where the drawer is mounted once with
-  // `item=null` and `core` only gets populated by the background fetch;
-  // without this, focus runs before the close button exists.
+  // back to the close button mid-interaction. We key off `core?.sales_opportunity_id`
+  // (stable string) not `core` (mutable object) to handle persistent-mount usage
+  // where the drawer is mounted once with `item=null` and `core` is populated by
+  // the background fetch, BUT without re-firing on every mutation (stage change,
+  // merge) to the same record — only on genuine null→X or X→Y transitions.
   useEffect(() => {
     if (!open || !core) return;
 
@@ -114,9 +115,9 @@ export function SalesOpportunityWorkspaceDrawer({
       document.removeEventListener("keydown", onKeyDown);
       previouslyFocused.current?.focus();
     };
-  }, [open, core]);
+  }, [open, core?.sales_opportunity_id]);
 
-  if (!mounted || !core || core.sales_opportunity_id !== item?.sales_opportunity_id) return null;
+  if (!mounted || !core || (open && core.sales_opportunity_id !== item?.sales_opportunity_id)) return null;
 
   async function changeStage(nextStage: SalesOpportunityStage) {
     if (!core) return;
@@ -170,7 +171,7 @@ export function SalesOpportunityWorkspaceDrawer({
       <button
         type="button"
         className={
-          "fixed inset-0 z-40 hidden md:block motion-safe:transition-opacity motion-safe:duration-200 " +
+          "fixed inset-0 z-40 hidden md:block motion-safe:transition-colors motion-safe:duration-200 " +
           (entered ? "bg-slate-900/30 pointer-events-auto" : "bg-slate-900/0 pointer-events-none")
         }
         aria-label="Cerrar oportunidad"
