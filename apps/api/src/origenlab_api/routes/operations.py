@@ -331,7 +331,12 @@ def list_sales_opportunity_activities(
     except ValueError as exc:
         _raise_command_error(exc)
 
-    return ActivityListResponse(items=items)
+    return ActivityListResponse(
+        items=[
+            ActivityResponse.model_validate(item, from_attributes=True)
+            for item in items
+        ]
+    )
 
 
 @router.get(
@@ -355,7 +360,12 @@ def list_sales_opportunity_tasks(
     except ValueError as exc:
         _raise_command_error(exc)
 
-    return TaskListResponse(items=items)
+    return TaskListResponse(
+        items=[
+            TaskResponse.model_validate(item, from_attributes=True)
+            for item in items
+        ]
+    )
 
 
 @router.get(
@@ -409,7 +419,12 @@ def list_opportunity_activities(
     except ValueError as exc:
         _raise_command_error(exc)
 
-    return ActivityListResponse(items=items)
+    return ActivityListResponse(
+        items=[
+            ActivityResponse.model_validate(item, from_attributes=True)
+            for item in items
+        ]
+    )
 
 
 @router.get(
@@ -433,7 +448,12 @@ def list_opportunity_tasks(
     except ValueError as exc:
         _raise_command_error(exc)
 
-    return TaskListResponse(items=items)
+    return TaskListResponse(
+        items=[
+            TaskResponse.model_validate(item, from_attributes=True)
+            for item in items
+        ]
+    )
 
 
 @router.post(

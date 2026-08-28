@@ -637,6 +637,230 @@ def test_work_queue_read_serializes_populated_items() -> None:
     assert payload["quote_followups"][0]["canonical_stage"] == "quote_sent"
 
 
+def test_opportunity_activities_read_serializes_populated_items() -> None:
+    """Regression: repository Activity dataclasses must convert to
+    ActivityResponse before being embedded in ActivityListResponse, or
+    Pydantic v2 rejects them with a 500 (model_type ValidationError)."""
+
+    activity = Activity(
+        activity_id="act_" + ("a" * 32),
+        opportunity_id="o_" + ("a" * 32),
+        account_id="a_1",
+        contact_id="c_1",
+        activity_type="call",
+        occurred_at=NOW,
+        summary="Llamada de seguimiento",
+        detail="Cliente pidió cotización",
+        created_by="tatiana@origenlab.cl",
+        created_at=NOW,
+    )
+
+    class PopulatedActivityReadService(FakeReadService):
+        def list_activities(
+            self,
+            opportunity_id: str,
+            *,
+            limit: int,
+        ) -> list[Activity]:
+            del opportunity_id, limit
+            return [activity]
+
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(operations.router)
+
+    app.dependency_overrides[operations.get_commercial_operations_read_service] = (
+        lambda: PopulatedActivityReadService()
+    )
+
+    client = TestClient(
+        app,
+        raise_server_exceptions=False,
+    )
+
+    response = client.get(
+        "/operations/opportunities/o_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/activities"
+    )
+
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["activity_id"] == activity.activity_id
+    assert payload["items"][0]["summary"] == "Llamada de seguimiento"
+
+
+def test_opportunity_tasks_read_serializes_populated_items() -> None:
+    """Regression: repository Task dataclasses must convert to
+    TaskResponse before being embedded in TaskListResponse, or Pydantic
+    v2 rejects them with a 500 (model_type ValidationError)."""
+
+    task = Task(
+        task_id="task_" + ("a" * 32),
+        opportunity_id="o_" + ("a" * 32),
+        account_id="a_1",
+        contact_id="c_1",
+        title="Llamar cliente",
+        status="open",
+        priority="high",
+        due_at=NOW,
+        owner_key="tatiana@origenlab.cl",
+        version=1,
+        created_by="tatiana@origenlab.cl",
+        updated_by="tatiana@origenlab.cl",
+        completed_at=None,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+    class PopulatedTaskReadService(FakeReadService):
+        def list_tasks(
+            self,
+            opportunity_id: str,
+            *,
+            limit: int,
+        ) -> list[Task]:
+            del opportunity_id, limit
+            return [task]
+
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(operations.router)
+
+    app.dependency_overrides[operations.get_commercial_operations_read_service] = (
+        lambda: PopulatedTaskReadService()
+    )
+
+    client = TestClient(
+        app,
+        raise_server_exceptions=False,
+    )
+
+    response = client.get(
+        "/operations/opportunities/o_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/tasks"
+    )
+
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["task_id"] == task.task_id
+    assert payload["items"][0]["status"] == "open"
+
+
+def test_sales_opportunity_activities_read_serializes_populated_items() -> None:
+    """Regression: repository Activity dataclasses must convert to
+    ActivityResponse before being embedded in ActivityListResponse, or
+    Pydantic v2 rejects them with a 500 (model_type ValidationError)."""
+
+    activity = Activity(
+        activity_id="act_" + ("b" * 32),
+        opportunity_id=None,
+        account_id="a_1",
+        contact_id="c_1",
+        activity_type="email",
+        occurred_at=NOW,
+        summary="Envío de cotización",
+        detail=None,
+        created_by="tatiana@origenlab.cl",
+        created_at=NOW,
+        sales_opportunity_id="sales_1",
+    )
+
+    class PopulatedSalesActivityReadService(FakeReadService):
+        def list_sales_opportunity_activities(
+            self,
+            sales_opportunity_id: str,
+            *,
+            limit: int,
+        ) -> list[Activity]:
+            del sales_opportunity_id, limit
+            return [activity]
+
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(operations.router)
+
+    app.dependency_overrides[operations.get_commercial_operations_read_service] = (
+        lambda: PopulatedSalesActivityReadService()
+    )
+
+    client = TestClient(
+        app,
+        raise_server_exceptions=False,
+    )
+
+    response = client.get(
+        "/operations/sales-opportunities/sales_1/activities"
+    )
+
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["activity_id"] == activity.activity_id
+    assert payload["items"][0]["sales_opportunity_id"] == "sales_1"
+
+
+def test_sales_opportunity_tasks_read_serializes_populated_items() -> None:
+    """Regression: repository Task dataclasses must convert to
+    TaskResponse before being embedded in TaskListResponse, or Pydantic
+    v2 rejects them with a 500 (model_type ValidationError)."""
+
+    task = Task(
+        task_id="task_" + ("b" * 32),
+        opportunity_id=None,
+        account_id="a_1",
+        contact_id="c_1",
+        title="Confirmar entrega",
+        status="open",
+        priority="urgent",
+        due_at=None,
+        owner_key="tatiana@origenlab.cl",
+        version=1,
+        created_by="tatiana@origenlab.cl",
+        updated_by="tatiana@origenlab.cl",
+        completed_at=None,
+        created_at=NOW,
+        updated_at=NOW,
+        sales_opportunity_id="sales_1",
+    )
+
+    class PopulatedSalesTaskReadService(FakeReadService):
+        def list_sales_opportunity_tasks(
+            self,
+            sales_opportunity_id: str,
+            *,
+            limit: int,
+        ) -> list[Task]:
+            del sales_opportunity_id, limit
+            return [task]
+
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(operations.router)
+
+    app.dependency_overrides[operations.get_commercial_operations_read_service] = (
+        lambda: PopulatedSalesTaskReadService()
+    )
+
+    client = TestClient(
+        app,
+        raise_server_exceptions=False,
+    )
+
+    response = client.get(
+        "/operations/sales-opportunities/sales_1/tasks"
+    )
+
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["task_id"] == task.task_id
+    assert payload["items"][0]["sales_opportunity_id"] == "sales_1"
+
+
 def test_create_activity_missing_opportunity_maps_to_404() -> None:
     service = FakeService()
     service.errors["create_activity"] = CommercialOperationNotFoundError(
