@@ -1,13 +1,30 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { fetchSalesOpportunity, transitionSalesOpportunityStage } from "../../api/commercialOperationsClient";
 import { OperatorApiError } from "../../api/operatorClient";
-import type { SalesOpportunityListItem, SalesOpportunityStage } from "../../api/commercialOperationsTypes";
+import type { SalesOpportunity, SalesOpportunityListItem, SalesOpportunityStage } from "../../api/commercialOperationsTypes";
 import { formatCommercialOpportunityDate } from "../../lib/commercialOpportunityFormat";
 import { StageChangeMenu } from "./StageChangeMenu";
 import { SalesOpportunityWorkPanel } from "./SalesOpportunityWorkPanel";
 
 const CONFLICT_MESSAGE =
   "Esta oportunidad cambió en otra sesión. Actualizamos el estado con la versión más reciente.";
+
+/**
+ * Merge a freshly fetched server record onto local state, but only if the
+ * server record is at least as new as what we already have. A background
+ * refresh (or a re-fetch after a 409) can resolve *after* a faster local
+ * mutation has already settled `core` to a newer version — merging
+ * unconditionally in that ordering would silently revert the drawer to
+ * stale stage/version data. Comparing `version` makes the merge a no-op
+ * whenever `incoming` is older than what's already on screen.
+ */
+function mergeIfNewer(
+  current: SalesOpportunityListItem | null,
+  incoming: SalesOpportunity,
+): SalesOpportunityListItem | null {
+  if (!current || incoming.version < current.version) return current;
+  return { ...current, ...incoming };
+}
 
 function DetailRow({ label, children }: { label: string; children: ReactNode }) {
   if (children == null || children === "") return null;
@@ -35,6 +52,11 @@ export function SalesOpportunityWorkspaceDrawer({
   const [stageError, setStageError] = useState<string | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (open && item) {
@@ -43,7 +65,7 @@ export function SalesOpportunityWorkspaceDrawer({
 
       void fetchSalesOpportunity(item.sales_opportunity_id)
         .then((result) => {
-          setCore((current) => (current ? { ...current, ...result.item } : current));
+          setCore((current) => mergeIfNewer(current, result.item));
         })
         .catch(() => undefined);
     }
@@ -52,6 +74,11 @@ export function SalesOpportunityWorkspaceDrawer({
     }
   }, [open, item]);
 
+  // Deps are intentionally just [open]: `onClose` is read via `onCloseRef`
+  // so that a parent re-render with a new inline `onClose` (e.g. right
+  // after `onStageChanged()` fires) doesn't tear down and re-run this
+  // effect — which would re-capture `previouslyFocused` and steal focus
+  // back to the close button mid-interaction.
   useEffect(() => {
     if (!open) return;
 
@@ -59,7 +86,7 @@ export function SalesOpportunityWorkspaceDrawer({
     closeButtonRef.current?.focus();
 
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") onCloseRef.current();
     }
 
     document.addEventListener("keydown", onKeyDown);
@@ -67,7 +94,7 @@ export function SalesOpportunityWorkspaceDrawer({
       document.removeEventListener("keydown", onKeyDown);
       previouslyFocused.current?.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open || !core) return null;
 
@@ -100,6 +127,19 @@ export function SalesOpportunityWorkspaceDrawer({
             ? reason.message
             : "No pudimos cambiar la etapa. Reintenta.",
       );
+
+      // `previous` is exactly the stale state that caused this failure (a
+      // 409 in particular). The conflict message claims we've updated to
+      // the latest version, so make that true: pull the real current
+      // record so a retry sends a fresh `expected_version` instead of
+      // repeating the same conflict. Best-effort — if this also fails,
+      // the rolled-back `previous` state stands.
+      try {
+        const refreshed = await fetchSalesOpportunity(core.sales_opportunity_id);
+        setCore((current) => mergeIfNewer(current, refreshed.item));
+      } catch {
+        // Ignore — leave the rollback from above in place.
+      }
     } finally {
       setStagePending(false);
     }

@@ -81,6 +81,27 @@ describe("SalesOpportunityWorkspaceDrawer", () => {
     await waitFor(() => expect(screen.getByText("Cerrar")).toHaveFocus());
   });
 
+  it("returns focus to the previously focused element on close", async () => {
+    const trigger = document.createElement("button");
+    trigger.textContent = "Abrir oportunidad";
+    document.body.appendChild(trigger);
+    trigger.focus();
+    expect(trigger).toHaveFocus();
+
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <SalesOpportunityWorkspaceDrawer item={item()} open onClose={onClose} onStageChanged={vi.fn()} />,
+    );
+
+    await waitFor(() => expect(screen.getByText("Cerrar")).toHaveFocus());
+
+    rerender(<SalesOpportunityWorkspaceDrawer item={item()} open={false} onClose={onClose} onStageChanged={vi.fn()} />);
+
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    document.body.removeChild(trigger);
+  });
+
   it("changes stage and notifies the parent on success", async () => {
     vi.mocked(transitionSalesOpportunityStage).mockResolvedValue({
       ...item(),
