@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 
 import type { CommercialWorkQueueResponse } from "../../api/commercialOperationsTypes";
 import { summarizeCommercialWorkQueue } from "../../lib/commercialWorkQueue";
+import { dashboardSectionToHash } from "../../lib/dashboardHashRoute";
 import { CommercialOpportunityDetailDrawer } from "./CommercialOpportunityDetailDrawer";
 import { CommercialFollowupCard } from "./workQueue/CommercialFollowupCard";
 import { CommercialReviewCard } from "./workQueue/CommercialReviewCard";
@@ -159,6 +160,10 @@ export function CommercialWorkQueuePanel({
         open={selectedOpportunityId !== null}
         onClose={() => setSelectedOpportunityId(null)}
         onSelectContact={onSelectContact}
+        promotedSalesOpportunityId={null}
+        onOpenPipeline={() => {
+          window.location.hash = dashboardSectionToHash("pipeline");
+        }}
       />
     </>
   );

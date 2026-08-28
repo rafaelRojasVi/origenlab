@@ -1,3 +1,4 @@
+import "@testing-library/jest-dom";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -8,6 +9,7 @@ import {
   fetchCommercialOpportunityActivities,
   fetchCommercialOpportunityOperatorState,
   fetchCommercialOpportunityTasks,
+  fetchSalesOpportunities,
 } from "../../api/commercialOperationsClient";
 import { CommercialOpportunitiesCockpit } from "./CommercialOpportunitiesCockpit";
 
@@ -25,6 +27,7 @@ vi.mock("../../api/commercialOperationsClient", () => ({
   createCommercialActivity: vi.fn(),
   createCommercialTask: vi.fn(),
   setCommercialOpportunityOperatorState: vi.fn(),
+  fetchSalesOpportunities: vi.fn(),
 }));
 
 const listItem = {
@@ -59,6 +62,10 @@ describe("CommercialOpportunitiesCockpit", () => {
     vi.mocked(fetchCommercialOpportunityOperatorState).mockReset();
     vi.mocked(fetchCommercialOpportunityActivities).mockReset();
     vi.mocked(fetchCommercialOpportunityTasks).mockReset();
+    vi.mocked(fetchSalesOpportunities).mockReset().mockResolvedValue({
+      meta: { data_source: "postgres", read_only: true, count: 0, total_count: 0, limit: 200, offset: 0 },
+      items: [],
+    });
 
     vi.mocked(fetchCommercialOpportunityOperatorState).mockResolvedValue({
       state: null,
@@ -120,6 +127,7 @@ describe("CommercialOpportunitiesCockpit", () => {
     render(
       <CommercialOpportunitiesCockpit
         onSelectContact={vi.fn()}
+        onOpenPipeline={vi.fn()}
       />,
     );
 
@@ -140,6 +148,7 @@ describe("CommercialOpportunitiesCockpit", () => {
     render(
       <CommercialOpportunitiesCockpit
         onSelectContact={vi.fn()}
+        onOpenPipeline={vi.fn()}
       />,
     );
 
@@ -163,6 +172,7 @@ describe("CommercialOpportunitiesCockpit", () => {
     render(
       <CommercialOpportunitiesCockpit
         onSelectContact={vi.fn()}
+        onOpenPipeline={vi.fn()}
       />,
     );
 
@@ -191,6 +201,7 @@ describe("CommercialOpportunitiesCockpit", () => {
     render(
       <CommercialOpportunitiesCockpit
         onSelectContact={vi.fn()}
+        onOpenPipeline={vi.fn()}
       />,
     );
 
@@ -222,6 +233,7 @@ describe("CommercialOpportunitiesCockpit", () => {
     render(
       <CommercialOpportunitiesCockpit
         onSelectContact={onSelectContact}
+        onOpenPipeline={vi.fn()}
       />,
     );
 
@@ -234,5 +246,46 @@ describe("CommercialOpportunitiesCockpit", () => {
     expect(onSelectContact).toHaveBeenCalledWith(
       "buyer@example.cl",
     );
+  });
+
+  it("resolves promotion status for the current page in one request", async () => {
+    vi.mocked(fetchSalesOpportunities).mockResolvedValue({
+      meta: { data_source: "postgres", read_only: true, count: 1, total_count: 1, limit: 200, offset: 0 },
+      items: [
+        {
+          sales_opportunity_id: "sales_1",
+          source_kind: "pr3",
+          source_opportunity_id: listItem.opportunity_id,
+          account_id: null,
+          primary_contact_id: null,
+          organization_id: null,
+          primary_crm_contact_id: null,
+          title: "Centrífuga",
+          stage: "new",
+          owner_key: "tatiana@origenlab.cl",
+          version: 1,
+          created_by: "tatiana@origenlab.cl",
+          updated_by: "tatiana@origenlab.cl",
+          created_at: "2026-08-28T12:00:00+00:00",
+          updated_at: "2026-08-28T12:00:00+00:00",
+          stage_updated_at: "2026-08-28T12:00:00+00:00",
+          contact_display_email: null,
+          account_display_domain: null,
+          open_task_count: 0,
+          next_task_id: null,
+          next_task_title: null,
+          next_task_due_at: null,
+        },
+      ],
+    });
+
+    render(<CommercialOpportunitiesCockpit onSelectContact={vi.fn()} onOpenPipeline={vi.fn()} />);
+
+    await waitFor(() =>
+      expect(vi.mocked(fetchSalesOpportunities)).toHaveBeenCalledWith({
+        sourceOpportunityId: [listItem.opportunity_id],
+      }),
+    );
+    await waitFor(() => expect(screen.getByText("En pipeline")).toBeInTheDocument());
   });
 });
