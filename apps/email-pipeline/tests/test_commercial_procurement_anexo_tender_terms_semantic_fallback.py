@@ -477,6 +477,24 @@ def test_invalid_semantic_claim_does_not_discard_valid_sibling() -> None:
     assert "50 días hábiles" in observations[0].evidence[0].evidence_excerpt
 
 
+def test_payment_rejects_factoring_notice_clause() -> None:
+    sources = _sources(
+        "El proveedor debe informar si efectuará cesión de los créditos "
+        "contenidos en las facturas y las empresas de factoring con las "
+        "cuales operará. En aquellos pagos acordados a 30 dias, se entenderá "
+        "oportuna aquella información realizada al menos con 15 dias de "
+        "anticipación a la fecha de pago."
+    )
+
+    observations = semantic_observations_for_field(
+        sources,
+        "payment_deadline_days",
+        _FirstMatchingClient(30),
+    )
+
+    assert observations == ()
+
+
 def test_payment_rejects_delivery_range_number() -> None:
     sources = _sources(
         "Precio Unitario Neto, en pesos chilenos (sin IVA) | "

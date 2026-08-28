@@ -517,6 +517,26 @@ def _validate_field_semantic_context(
             for context in number_contexts
         )
 
+        # Credit-assignment/factoring clauses can mention examples such as
+        # "pagos acordados a 30 dias" solely to define the advance notice
+        # required before assigning an invoice. Those examples are not a
+        # contractual payment deadline. Fail closed when the model selects
+        # evidence that is explicitly a factoring-notification clause.
+        looks_like_factoring_notice_timing = (
+            (
+                "factoring" in combined
+                or "cesion de los creditos" in combined
+                or "cesion del credito" in combined
+            )
+            and "pagos acordados a" in combined
+            and "anticipacion a la fecha de pago" in combined
+        )
+
+        if looks_like_factoring_notice_timing:
+            raise ValueError(
+                "semantic payment deadline comes from factoring notice timing"
+            )
+
         if not has_direct_payment_deadline_context:
             raise ValueError(
                 "semantic payment deadline lacks direct local payment-deadline context"
