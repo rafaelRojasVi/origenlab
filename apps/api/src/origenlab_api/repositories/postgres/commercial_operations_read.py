@@ -20,7 +20,7 @@ from origenlab_api.settings import Settings
 
 _SALES_OPPORTUNITY_LIST_FILTERS_SQL = """
   (%(stages)s::text[] IS NULL OR so.stage = ANY(%(stages)s))
-  AND (%(owner_key)s IS NULL OR so.owner_key = %(owner_key)s)
+  AND (%(owner_key)s::text IS NULL OR so.owner_key = %(owner_key)s::text)
   AND (
     %(source_opportunity_ids)s::text[] IS NULL
     OR so.source_opportunity_id = ANY(%(source_opportunity_ids)s)
