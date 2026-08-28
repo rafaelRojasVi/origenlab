@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   SALES_OPPORTUNITY_ACTIVE_STAGES,
-  SALES_OPPORTUNITY_STAGE_LABELS,
   SALES_OPPORTUNITY_TOGGLE_STAGES,
   formatSalesOpportunityAge,
   isSalesOpportunityStageTerminal,
