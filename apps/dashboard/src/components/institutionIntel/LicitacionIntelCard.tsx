@@ -263,8 +263,8 @@ export function LicitacionIntelBody({ intel }: { intel: LicitacionIntel }) {
 }
 
 /**
- * Backward-compatible self-fetching wrapper — unchanged behavior for any
- * other caller (e.g. IntelPreviewPage's dev-only "Licitación" tab preview).
+ * Self-fetching wrapper around `LicitacionIntelBody` (also the harness its
+ * test suite renders the body through).
  * `TenderDetailDrawer` does NOT use this: it fetches once itself and renders
  * `LicitacionIntelBody` directly, so a tender selection never performs more
  * than one `getLicitacionIntel` request.

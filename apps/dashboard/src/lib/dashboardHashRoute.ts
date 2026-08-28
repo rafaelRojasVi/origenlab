@@ -12,7 +12,6 @@ const VALID_SECTIONS = new Set<string>([
   "payments-logistics",
   "contacts",
   "system",
-  "intel-preview",
 ]);
 
 export function parseDashboardSectionFromHash(hash: string): DashboardSection {

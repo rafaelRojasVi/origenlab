@@ -3,7 +3,6 @@ import { DashboardShell } from "../components/layout/DashboardShell";
 import { useDashboardSection } from "../lib/dashboardHashRoute";
 import type { DashboardSection } from "../lib/dashboardNav";
 import { CatalogPage } from "./CatalogPage";
-import { IntelPreviewPage } from "./IntelPreviewPage";
 import { ProspectosPage } from "./ProspectosPage";
 import { ContactsPage } from "./ContactsPage";
 import { DealsPage } from "./DealsPage";
@@ -36,8 +35,6 @@ function DashboardSectionView({ section }: { section: DashboardSection }) {
       return <ContactsPage />;
     case "system":
       return <SystemPage />;
-    case "intel-preview":
-      return <IntelPreviewPage />;
     default:
       return <TodaySummaryPage />;
   }
