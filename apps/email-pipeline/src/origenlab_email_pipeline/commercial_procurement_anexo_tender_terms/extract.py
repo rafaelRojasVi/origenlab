@@ -123,6 +123,9 @@ _RULES: tuple[_Rule, ...] = (
             r"\bVigencia\s+(?:del\s+)?contrato\b"
             r"\s*(?:\||:|-)\s*"
             r"|"
+            r"\bLa\s+vigencia\s+del\s+presente\s+contrato\s+"
+            r"tendr[aá]\s+un\s+plazo\s+de\s+"
+            r"|"
             r"\bVigencia\s+del\s+contrato\s+"
             r"se\s+extender[aá]\s+por\s+el\s+periodo\s+de\s+"
             r"|"
@@ -299,18 +302,14 @@ def _parse_duration_days_match(
             elif normalized == "corridos":
                 day_basis = "calendar"
             else:
-                raise ValueError(
-                    f"unsupported delivery day basis: {raw_basis!r}"
-                )
+                raise ValueError(f"unsupported delivery day basis: {raw_basis!r}")
 
         return {
             "days": int(raw_days),
             "day_basis": day_basis,
         }
 
-    raise ValueError(
-        "duration-days match contains no supported value group"
-    )
+    raise ValueError("duration-days match contains no supported value group")
 
 
 def _fact_id(tender_id: str, field_name: str) -> str:
@@ -324,10 +323,7 @@ def _candidate_id(
     value: Any,
 ) -> str:
     value_digest = canonical_json_digest({"value": value})
-    seed = (
-        f"anexo_t1_candidate\0{tender_id}\0"
-        f"{field_name}\0{value_digest}"
-    ).encode()
+    seed = (f"anexo_t1_candidate\0{tender_id}\0{field_name}\0{value_digest}").encode()
     return hashlib.sha256(seed).hexdigest()[:32]
 
 
@@ -418,10 +414,7 @@ def _fact_from_observations(
         else:
             existing[1].append(observation.evidence)
 
-    ordered_groups = [
-        grouped[key]
-        for key in sorted(grouped)
-    ]
+    ordered_groups = [grouped[key] for key in sorted(grouped)]
 
     if len(ordered_groups) == 1:
         value, evidence_rows = ordered_groups[0]
@@ -484,15 +477,12 @@ def extract_tender_terms(
     sources = resolve_evidence_chunks(bundle)
 
     observations_by_field: dict[str, list[_ObservedCandidate]] = {
-        rule.field_name: []
-        for rule in _RULES
+        rule.field_name: [] for rule in _RULES
     }
 
     for source in sources:
         for rule in _RULES:
-            observations_by_field[rule.field_name].extend(
-                _observe_rule(source, rule)
-            )
+            observations_by_field[rule.field_name].extend(_observe_rule(source, rule))
 
     if semantic_client is not None:
         for rule in _RULES:
@@ -543,13 +533,11 @@ def extract_tender_terms(
 
     facts = tuple(
         sorted(
-    (
+            (
                 _fact_from_observations(
                     tender_id=bundle.tender_id,
                     rule=rule,
-                    observations=tuple(
-                        observations_by_field[rule.field_name]
-                    ),
+                    observations=tuple(observations_by_field[rule.field_name]),
                     coverage_status=coverage.fact_coverage_status,
                     coverage_complete=coverage.is_complete,
                 )

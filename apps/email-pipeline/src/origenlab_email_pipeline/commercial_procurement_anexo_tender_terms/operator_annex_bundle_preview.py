@@ -15,7 +15,8 @@ caller can render the same commercial-term intelligence shown for a
 published tender -- just with ``published=False``.
 
 Hard invariants, unchanged from #491/#493:
-  * Zero network I/O, zero browser automation anywhere in this module.
+  * Zero browser automation. The default path performs no semantic network I/O;
+    an explicitly supplied semantic client may perform local inference.
   * Never publishes (no call to ``publish_tender_terms`` anywhere here) and
     never persists anything to disk/DB -- this is preview-only.
   * ``completeness_state`` defaults to "unknown" unless the caller's
@@ -39,7 +40,9 @@ from origenlab_email_pipeline.chilecompra_anexo_evidence.operator_import import 
     OperatorZipAttachmentSource,
     OperatorZipImportError,
 )
-from origenlab_email_pipeline.chilecompra_anexo_evidence.planner import build_tender_bundle
+from origenlab_email_pipeline.chilecompra_anexo_evidence.planner import (
+    build_tender_bundle,
+)
 
 from .extract import extract_tender_terms
 
@@ -53,6 +56,7 @@ def build_operator_annex_bundle_preview(
     *,
     tender_code: str,
     now_fn: Any = None,
+    semantic_client: Any = None,
 ) -> dict[str, Any]:
     """Run one operator ZIP through the canonical pipeline; return a full preview.
 
@@ -84,7 +88,10 @@ def build_operator_annex_bundle_preview(
         operator_declared_complete=source.declare_complete,
     )
 
-    terms_bundle = extract_tender_terms(bundle)
+    terms_bundle = extract_tender_terms(
+        bundle,
+        semantic_client=semantic_client,
+    )
     import_result = source.loaded_import_result()
 
     return {

@@ -52,8 +52,12 @@ def _write_zip(tmp_path: Path, name: str, payload: bytes) -> Path:
 # --- Path vs bytes equivalence -------------------------------------------------
 
 
-def test_from_path_and_from_bytes_produce_identical_import_result(tmp_path: Path) -> None:
-    payload = make_zip([("tecnico.pdf", make_pdf(pages=1)), ("planilla.csv", make_csv(3))])
+def test_from_path_and_from_bytes_produce_identical_import_result(
+    tmp_path: Path,
+) -> None:
+    payload = make_zip(
+        [("tecnico.pdf", make_pdf(pages=1)), ("planilla.csv", make_csv(3))]
+    )
     zip_path = _write_zip(tmp_path, "anexos.zip", payload)
 
     path_source = OperatorZipAttachmentSource.from_path(zip_path, tender_code=_TENDER)
@@ -62,8 +66,14 @@ def test_from_path_and_from_bytes_produce_identical_import_result(tmp_path: Path
     path_result = path_source.loaded_import_result()
     bytes_result = bytes_source.loaded_import_result()
 
-    assert path_result.zip_sha256 == bytes_result.zip_sha256 == hashlib.sha256(payload).hexdigest()
-    assert [e.to_dict() for e in path_result.entries] == [e.to_dict() for e in bytes_result.entries]
+    assert (
+        path_result.zip_sha256
+        == bytes_result.zip_sha256
+        == hashlib.sha256(payload).hexdigest()
+    )
+    assert [e.to_dict() for e in path_result.entries] == [
+        e.to_dict() for e in bytes_result.entries
+    ]
     assert path_result.rejected_entries == bytes_result.rejected_entries == ()
     # Only the descriptive label differs (real path vs. synthetic label) --
     # never surfaced as meaningful data by any caller.
@@ -77,7 +87,9 @@ def test_direct_keyword_zip_path_construction_still_works(tmp_path: Path) -> Non
 
     source = OperatorZipAttachmentSource(zip_path=zip_path, tender_code=_TENDER)
 
-    assert source.loaded_import_result().zip_sha256 == hashlib.sha256(payload).hexdigest()
+    assert (
+        source.loaded_import_result().zip_sha256 == hashlib.sha256(payload).hexdigest()
+    )
 
 
 def test_construction_requires_exactly_one_of_path_or_bytes(tmp_path: Path) -> None:
@@ -111,7 +123,16 @@ def test_bytes_seam_no_network_no_disk_extraction_at_module_scope() -> None:
     mod = importlib.import_module(
         "origenlab_email_pipeline.chilecompra_anexo_evidence.operator_import"
     )
-    banned = ("gmail", "outreach", "sqlite3", "psycopg", "smtplib", "requests", "urllib", "socket")
+    banned = (
+        "gmail",
+        "outreach",
+        "sqlite3",
+        "psycopg",
+        "smtplib",
+        "requests",
+        "urllib",
+        "socket",
+    )
     tree = ast.parse(Path(mod.__file__).read_text(encoding="utf-8"))
     imported_modules: list[str] = []
     for node in ast.walk(tree):
@@ -128,7 +149,9 @@ def test_deterministic_output_across_repeated_bytes_imports() -> None:
     payload = make_zip([("z.txt", b"1"), ("a.txt", b"2"), ("m.txt", b"3")])
     first = import_operator_zip_bytes(payload)
     second = import_operator_zip_bytes(payload)
-    assert [e.original_filename for e in first.entries] == [e.original_filename for e in second.entries]
+    assert [e.original_filename for e in first.entries] == [
+        e.original_filename for e in second.entries
+    ]
     assert [e.sha256 for e in first.entries] == [e.sha256 for e in second.entries]
 
 
@@ -136,8 +159,12 @@ def test_deterministic_output_across_repeated_bytes_imports() -> None:
 
 
 def test_preview_from_bytes_contains_full_t1_facts_items_evidence() -> None:
-    payload = make_zip([("tecnico.pdf", make_pdf(pages=1, marker="ESPECTROFOTOMETRO", marker_page=1))])
-    source = OperatorZipAttachmentSource.from_bytes(payload, tender_code=_TENDER, declare_complete=True)
+    payload = make_zip(
+        [("tecnico.pdf", make_pdf(pages=1, marker="ESPECTROFOTOMETRO", marker_page=1))]
+    )
+    source = OperatorZipAttachmentSource.from_bytes(
+        payload, tender_code=_TENDER, declare_complete=True
+    )
 
     result = build_operator_annex_bundle_preview(source, tender_code=_TENDER)
 
@@ -160,7 +187,9 @@ def test_preview_from_bytes_contains_full_t1_facts_items_evidence() -> None:
 
 def test_preview_completeness_unknown_without_declare_complete() -> None:
     payload = make_zip([("a.csv", make_csv(2))])
-    source = OperatorZipAttachmentSource.from_bytes(payload, tender_code=_TENDER, declare_complete=False)
+    source = OperatorZipAttachmentSource.from_bytes(
+        payload, tender_code=_TENDER, declare_complete=False
+    )
 
     result = build_operator_annex_bundle_preview(source, tender_code=_TENDER)
 
@@ -169,7 +198,9 @@ def test_preview_completeness_unknown_without_declare_complete() -> None:
 
 
 def test_preview_rejects_corrupt_zip_as_data_not_exception() -> None:
-    source = OperatorZipAttachmentSource.from_bytes(b"not a zip at all", tender_code=_TENDER)
+    source = OperatorZipAttachmentSource.from_bytes(
+        b"not a zip at all", tender_code=_TENDER
+    )
 
     result = build_operator_annex_bundle_preview(source, tender_code=_TENDER)
 
@@ -179,17 +210,71 @@ def test_preview_rejects_corrupt_zip_as_data_not_exception() -> None:
     assert result["persisted"] is False
 
 
-def test_preview_path_and_bytes_produce_identical_terms_and_provenance(tmp_path: Path) -> None:
+def test_preview_path_and_bytes_produce_identical_terms_and_provenance(
+    tmp_path: Path,
+) -> None:
     payload = make_zip([("tecnico.pdf", make_pdf(pages=1))])
     zip_path = _write_zip(tmp_path, "same.zip", payload)
 
-    path_source = OperatorZipAttachmentSource.from_path(zip_path, tender_code=_TENDER, declare_complete=True)
-    bytes_source = OperatorZipAttachmentSource.from_bytes(payload, tender_code=_TENDER, declare_complete=True)
+    path_source = OperatorZipAttachmentSource.from_path(
+        zip_path, tender_code=_TENDER, declare_complete=True
+    )
+    bytes_source = OperatorZipAttachmentSource.from_bytes(
+        payload, tender_code=_TENDER, declare_complete=True
+    )
 
     fixed_now = lambda: datetime(2026, 8, 18, tzinfo=timezone.utc)  # noqa: E731
-    path_result = build_operator_annex_bundle_preview(path_source, tender_code=_TENDER, now_fn=fixed_now)
-    bytes_result = build_operator_annex_bundle_preview(bytes_source, tender_code=_TENDER, now_fn=fixed_now)
+    path_result = build_operator_annex_bundle_preview(
+        path_source, tender_code=_TENDER, now_fn=fixed_now
+    )
+    bytes_result = build_operator_annex_bundle_preview(
+        bytes_source, tender_code=_TENDER, now_fn=fixed_now
+    )
 
     assert path_result["terms"] == bytes_result["terms"]
     assert path_result["archive"]["zip_sha256"] == bytes_result["archive"]["zip_sha256"]
-    assert path_result["provenance"]["completeness_state"] == bytes_result["provenance"]["completeness_state"]
+    assert (
+        path_result["provenance"]["completeness_state"]
+        == bytes_result["provenance"]["completeness_state"]
+    )
+
+
+def test_preview_forwards_explicit_semantic_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = make_zip([("bases.txt", b"centrifuga refrigerada")])
+    source = OperatorZipAttachmentSource.from_bytes(
+        payload,
+        tender_code=_TENDER,
+        declare_complete=True,
+    )
+    semantic_client = object()
+    captured = {}
+
+    class FakeTermsBundle:
+        def to_dict(self):
+            return {
+                "tender_facts": [],
+                "items": [],
+                "coverage": {},
+            }
+
+    def fake_extract_tender_terms(bundle, *, semantic_client=None):
+        captured["semantic_client"] = semantic_client
+        return FakeTermsBundle()
+
+    monkeypatch.setattr(
+        "origenlab_email_pipeline."
+        "commercial_procurement_anexo_tender_terms."
+        "operator_annex_bundle_preview.extract_tender_terms",
+        fake_extract_tender_terms,
+    )
+
+    result = build_operator_annex_bundle_preview(
+        source,
+        tender_code=_TENDER,
+        semantic_client=semantic_client,
+    )
+
+    assert result["result"] == "imported"
+    assert captured["semantic_client"] is semantic_client
