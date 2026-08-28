@@ -77,7 +77,9 @@ export function DashboardShell({
                   ? "Lectura + documentos"
                   : section === "pipeline"
                     ? "CRM durable"
-                    : "Solo lectura"}
+                    : section === "deals"
+                      ? "Lectura + promoción"
+                      : "Solo lectura"}
               </span>
               {verdict ? (
                 <span
@@ -112,7 +114,9 @@ export function DashboardShell({
                 ? "No envía correos ni modifica datos comerciales"
                 : section === "pipeline"
                   ? "No envía correos · los cambios de etapa quedan registrados en el CRM"
-                  : "No envía correos ni modifica datos"}
+                  : section === "deals"
+                    ? "No envía correos · promover a Pipeline es la única escritura"
+                    : "No envía correos ni modifica datos"}
             </span>
             <span className="hidden sm:inline" aria-hidden>
               ·
@@ -131,6 +135,7 @@ export function DashboardShell({
             <ReadOnlyBanner
               mirrorBackend={Boolean(mirrorBackend)}
               documentImportEnabled={section === "tenders"}
+              promotionEnabled={section === "deals"}
               crmWritesEnabled={section === "pipeline"}
             />
             {devConfigWarning ? <DevLegacyPortWarning message={devConfigWarning} /> : null}
