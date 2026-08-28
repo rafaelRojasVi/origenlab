@@ -44,7 +44,7 @@ def classify_send_direction(
     has_rfq_cue = any(cue in subj_l for cue in _OUTBOUND_RFQ_CUES)
     has_quote_cue = any(cue in subj_l for cue in _QUOTE_SUBJECT_CUES)
 
-    if has_rfq_cue and not has_quote_cue:
+    if has_rfq_cue:
         return "supplier_rfq", contact
     if has_quote_cue:
         return "customer_quote_candidate", contact

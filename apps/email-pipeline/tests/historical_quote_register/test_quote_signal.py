@@ -30,6 +30,22 @@ def test_outbound_rfq_subject_without_supplier_domain_is_supplier_rfq():
     assert direction == "supplier_rfq"
 
 
+def test_rfq_cue_wins_over_quote_cue_on_overlap():
+    """Regression: RFQ cues must win even when overlapping with quote cues.
+
+    'request for quote' contains both:
+    - 'request for quote' (an RFQ cue)
+    - 'quote' (a quote cue)
+
+    Should classify as supplier_rfq, not customer_quote_candidate.
+    """
+    direction, _ = classify_send_direction(
+        recipients="new-unlisted-vendor@new-unlisted-vendor.example",
+        subject="Request for Quote - filtration cartridges",
+    )
+    assert direction == "supplier_rfq"
+
+
 def test_internal_only_recipient_is_excluded():
     direction, contact = classify_send_direction(
         recipients="equipo@origenlab.cl",
