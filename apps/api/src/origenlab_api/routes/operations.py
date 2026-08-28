@@ -10,6 +10,7 @@ from fastapi import (
     Header,
     HTTPException,
     Path as PathParam,
+    Query,
     Request,
     status,
 )
@@ -31,6 +32,9 @@ from origenlab_api.schemas.commercial_operations import (
     OpportunityStateCommand,
     OpportunityStateReadResponse,
     OpportunityStateResponse,
+    SalesOpportunitiesMeta,
+    SalesOpportunitiesResponse,
+    SalesOpportunityListItem,
     SalesOpportunityPromoteCommand,
     SalesOpportunityReadResponse,
     SalesOpportunityResponse,
@@ -232,6 +236,45 @@ def transition_sales_opportunity_stage(
     return SalesOpportunityResponse.model_validate(
         result,
         from_attributes=True,
+    )
+
+
+@router.get(
+    "/sales-opportunities",
+    response_model=SalesOpportunitiesResponse,
+)
+def list_sales_opportunities(
+    stage: list[str] | None = Query(None),
+    owner_key: str | None = Query(None, min_length=1, max_length=320),
+    source_opportunity_id: list[str] | None = Query(None),
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    service: CommercialOperationsReadService = Depends(
+        get_commercial_operations_read_service
+    ),
+) -> SalesOpportunitiesResponse:
+    try:
+        items, total_count = service.list_sales_opportunities(
+            stages=stage,
+            owner_key=owner_key,
+            source_opportunity_ids=source_opportunity_id,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as exc:
+        _raise_command_error(exc)
+
+    return SalesOpportunitiesResponse(
+        meta=SalesOpportunitiesMeta(
+            count=len(items),
+            total_count=total_count,
+            limit=limit,
+            offset=offset,
+        ),
+        items=[
+            SalesOpportunityListItem.model_validate(item, from_attributes=True)
+            for item in items
+        ],
     )
 
 
