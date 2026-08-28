@@ -88,7 +88,10 @@ export function joinApiBaseUrl(base: string, path: string): string {
 
 export function operatorApiUrl(
   path: string,
-  params?: Record<string, string | number | boolean>,
+  params?: Record<
+    string,
+    string | number | boolean | readonly (string | number)[] | undefined
+  >,
 ): string {
   const base = getOperatorApiBaseUrl();
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
@@ -106,6 +109,13 @@ export function operatorApiUrl(
   const url = new URL(resolved);
   if (params) {
     for (const [key, value] of Object.entries(params)) {
+      if (value === undefined) continue;
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          url.searchParams.append(key, String(item));
+        }
+        continue;
+      }
       url.searchParams.set(key, String(value));
     }
   }
