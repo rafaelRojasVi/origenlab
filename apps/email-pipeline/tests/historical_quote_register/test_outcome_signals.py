@@ -102,3 +102,59 @@ def test_conditional_guard_si_decidimos_no_continuar():
         revision_relationship="first_revision",
     )
     assert outcome == "unknown", "Conditional 'si' before reject phrase is hypothetical, not a decision"
+
+
+# Round 2: Regression tests for word-boundary anchoring (false guards from substrings)
+def test_word_boundary_positivo_contains_si_but_not_word_si():
+    """'positivo' contains substring 'si' but is not the word 'si'.
+
+    This was a regression from round 1: marker in preceding_text
+    matches 'si' inside 'posi**tivo**', falsely guarding genuine accept phrase.
+    """
+    outcome = classify_outcome(
+        response_state="replied",
+        reply_bodies=["El presupuesto nos parece positivo, confirmamos la compra."],
+        revision_relationship="first_revision",
+    )
+    assert outcome == "accepted_explicit", "'positivo' should not trigger 'si' guard"
+
+
+def test_word_boundary_revision_contains_si_but_not_word_si():
+    """'revisión' contains substring 'si' but is not the word 'si'."""
+    outcome = classify_outcome(
+        response_state="replied",
+        reply_bodies=["Estimados, tras revisión, aceptamos la propuesta."],
+        revision_relationship="first_revision",
+    )
+    assert outcome == "accepted_explicit", "'revisión' should not trigger 'si' guard"
+
+
+def test_word_boundary_consideramos_contains_si_but_not_word_si():
+    """'consideramos' contains substring 'si' but is not the word 'si'."""
+    outcome = classify_outcome(
+        response_state="replied",
+        reply_bodies=["Lo consideramos internamente y confirmamos la compra, gracias."],
+        revision_relationship="first_revision",
+    )
+    assert outcome == "accepted_explicit", "'consideramos' should not trigger 'si' guard"
+
+
+# Round 2: Tests for expanded negation/conditional marker lists
+def test_negation_guard_tampoco():
+    """Negation word 'tampoco' (nor, neither) should guard reject phrase."""
+    outcome = classify_outcome(
+        response_state="replied",
+        reply_bodies=["Tampoco confirmamos la compra en esta ocasión."],
+        revision_relationship="first_revision",
+    )
+    assert outcome == "unknown", "Negation 'tampoco' should guard accept phrase"
+
+
+def test_conditional_guard_de_llegar_a():
+    """Conditional phrase 'de llegar a' should guard accept phrase."""
+    outcome = classify_outcome(
+        response_state="replied",
+        reply_bodies=["De llegar a concretarse otros cambios, aceptamos la propuesta."],
+        revision_relationship="first_revision",
+    )
+    assert outcome == "unknown", "Conditional 'de llegar a' should guard accept phrase"

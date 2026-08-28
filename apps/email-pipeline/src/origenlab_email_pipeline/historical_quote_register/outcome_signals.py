@@ -6,6 +6,7 @@ new revision (superseding this one), ever sets a definite outcome.
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 OutcomeState = Literal[
@@ -33,22 +34,33 @@ _REJECT_PHRASES = (
     "we reject the quote",
 )
 
-# Negation and conditional markers that guard (disqualify) a phrase match
+# Negation and conditional markers that guard (disqualify) a phrase match.
+# These are matched with word boundaries (\b) to avoid false positives from substrings.
+# NOTE: This is a best-effort heuristic, not a complete negation/conditional grammar.
+# Classification outputs (accepted_explicit/rejected_explicit) are reviewed by humans
+# before any durable CRM import, so incomplete coverage here is acceptable.
 _NEGATION_MARKERS = (
     "no", "aún no", "todavía no", "nunca", "jamás", "sin",
+    "tampoco", "para nada", "de ninguna manera", "en absoluto", "ni",
     "not", "don't", "won't", "haven't",
 )
 _CONDITIONAL_MARKERS = (
-    "si", "en caso de", "si llegáramos a",
+    "si", "en caso de", "si llegáramos a", "de llegar a",
     "if we", "in case",
 )
 
 
 def _is_text_guarded(preceding_text: str) -> bool:
-    """Check if preceding text contains negation or conditional markers."""
+    """Check if preceding text contains negation or conditional markers.
+
+    Uses word-boundary matching (\b) to avoid false positives from substrings
+    (e.g., "si" inside "revisión" or "positivo").
+    """
     all_markers = _NEGATION_MARKERS + _CONDITIONAL_MARKERS
     for marker in all_markers:
-        if marker in preceding_text:
+        # Word boundaries protect against substring matches within words
+        pattern = rf"\b{re.escape(marker)}\b"
+        if re.search(pattern, preceding_text, re.IGNORECASE):
             return True
     return False
 
@@ -57,7 +69,7 @@ def _phrase_has_unguarded_occurrence(haystack: str, phrase: str) -> bool:
     """Check if phrase appears in haystack without negation/conditional guard.
 
     Returns True if there's at least one occurrence that's not preceded by
-    a negation or conditional marker within ~30 characters / ~4 words.
+    a negation or conditional marker within ~60 characters (~8-10 words).
     """
     start = 0
     while True:
@@ -65,8 +77,8 @@ def _phrase_has_unguarded_occurrence(haystack: str, phrase: str) -> bool:
         if pos < 0:
             break  # No more occurrences
 
-        # Check the text before this occurrence (up to 30 chars back)
-        preceding_start = max(0, pos - 30)
+        # Check the text before this occurrence (up to 60 chars back)
+        preceding_start = max(0, pos - 60)
         preceding_text = haystack[preceding_start:pos].strip()
 
         # If this occurrence is not guarded, return True (phrase is evidence)
