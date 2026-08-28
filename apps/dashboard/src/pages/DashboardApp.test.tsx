@@ -245,6 +245,7 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
     for (const label of [
       "Hoy",
       "Bandeja de revisión",
+      "Pipeline",
       "Negocios",
       "Prospectos",
       "Catálogo",
