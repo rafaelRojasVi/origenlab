@@ -134,10 +134,7 @@ function haystackIncludesLogistics(row: WarmCaseItem): boolean {
 
 const PAYMENT_ADMIN_DOMAINS: ReadonlySet<string> = new Set(["bancochile.cl"]);
 
-const PAYMENT_ADMIN_CATEGORIES: ReadonlySet<WarmCaseCategory> = new Set([
-  "payment_admin",
-  "payment_received",
-]);
+const PAYMENT_ADMIN_CATEGORIES: ReadonlySet<WarmCaseCategory> = new Set(["payment_admin"]);
 
 function pagosAdminTextHaystack(row: WarmCaseItem): string {
   return [row.subject, row.snippet, row.account_name].join(" ").toLowerCase();

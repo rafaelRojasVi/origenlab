@@ -9,7 +9,6 @@ const SUPPLIER_CATEGORIES: ReadonlySet<WarmCaseCategory> = new Set([
 
 const PAYMENTS_LOGISTICS_CATEGORIES: ReadonlySet<WarmCaseCategory> = new Set([
   "payment_admin",
-  "payment_received",
   "logistics_admin",
   "vendor_logistics",
 ]);
@@ -45,7 +44,6 @@ export function filterPaymentAdminWarmCases(items: WarmCaseItem[]): WarmCaseItem
   return items.filter(
     (row) =>
       row.category === "payment_admin" ||
-      row.category === "payment_received" ||
       matchesWarmCaseViewPreset(row, "pagos_admin"),
   );
 }

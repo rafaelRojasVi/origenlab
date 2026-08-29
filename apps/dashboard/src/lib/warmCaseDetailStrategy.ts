@@ -86,7 +86,6 @@ function linkedSectionForCategory(category: WarmCaseCategory): DashboardSection 
     case "supplier_reply":
       return "suppliers";
     case "payment_admin":
-    case "payment_received":
     case "logistics_admin":
     case "vendor_logistics":
       return "payments-logistics";
@@ -115,7 +114,6 @@ export function fallbackNextActionForWarmCategory(
     case "supplier_reply":
       return "Revisar respuesta del proveedor y cerrar datos faltantes.";
     case "payment_admin":
-    case "payment_received":
       return "Registrar o confirmar pago/datos bancarios.";
     case "logistics_admin":
     case "vendor_logistics":
@@ -177,7 +175,6 @@ function strategyForCategory(category: WarmCaseCategory): { summary: string; str
           "Lee la respuesta del proveedor, cierra datos técnicos o comerciales faltantes y actualiza la cotización o notas internas. Mantén este hilo fuera de la vista de clientes.",
       };
     case "payment_admin":
-    case "payment_received":
       return {
         summary: "Hilo de pago o datos bancarios — operativo, no es una cotización comercial.",
         strategy:
