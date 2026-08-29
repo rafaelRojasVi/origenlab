@@ -194,6 +194,10 @@ export interface SalesOpportunityListItem extends SalesOpportunity {
   contact_display_email: string | null;
   account_display_domain: string | null;
 
+  organization_display_name: string | null;
+  contact_display_name: string | null;
+  contact_primary_email: string | null;
+
   open_task_count: number;
   next_task_id: string | null;
   next_task_title: string | null;

@@ -25,7 +25,8 @@ export function SalesOpportunityCard({
   onStageChange: (stage: SalesOpportunityStage) => void;
   stagePending: boolean;
 }) {
-  const primaryIdentity = item.account_display_domain ?? item.contact_display_email;
+  const primaryIdentity =
+    item.organization_display_name ?? item.account_display_domain ?? item.contact_display_email;
 
   return (
     <article

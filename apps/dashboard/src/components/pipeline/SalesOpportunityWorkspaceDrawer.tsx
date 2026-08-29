@@ -192,7 +192,7 @@ export function SalesOpportunityWorkspaceDrawer({
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">Oportunidad de venta</p>
             <h2 id="sales-opportunity-workspace-heading" className="mt-1 text-lg font-semibold text-slate-900">
-              {core.account_display_domain ?? core.contact_display_email ?? core.title}
+              {core.organization_display_name ?? core.account_display_domain ?? core.contact_display_email ?? core.title}
             </h2>
             <p className="mt-1 text-sm text-slate-700">{core.title}</p>
           </div>
@@ -220,7 +220,9 @@ export function SalesOpportunityWorkspaceDrawer({
 
           <dl className="space-y-2">
             <DetailRow label="Responsable">{core.owner_key}</DetailRow>
-            <DetailRow label="Contacto">{core.contact_display_email ?? "—"}</DetailRow>
+            <DetailRow label="Contacto">
+              {core.contact_display_name ?? core.contact_display_email ?? "—"}
+            </DetailRow>
             <DetailRow label="Creada">{formatCommercialOpportunityDate(core.created_at)}</DetailRow>
             <DetailRow label="Actualizada">{formatCommercialOpportunityDate(core.updated_at)}</DetailRow>
           </dl>

@@ -261,6 +261,9 @@ describe("sales opportunity parsing", () => {
       stage_updated_at: "2026-08-28T12:00:00+00:00",
       contact_display_email: null,
       account_display_domain: null,
+      organization_display_name: null,
+      contact_display_name: null,
+      contact_primary_email: null,
       open_task_count: 0,
       next_task_id: null,
       next_task_title: null,
@@ -270,6 +273,27 @@ describe("sales opportunity parsing", () => {
     expect(result.open_task_count).toBe(0);
     expect(result.next_task_title).toBeNull();
     expect(result.contact_display_email).toBeNull();
+    expect(result.organization_display_name).toBeNull();
+  });
+
+  it("parseSalesOpportunityListItem parses the resolved CRM-4A identity display fields", () => {
+    const result = parseSalesOpportunityListItem({
+      ...salesOpportunityRow,
+      stage_updated_at: "2026-08-28T12:00:00+00:00",
+      contact_display_email: "buyer@example.cl",
+      account_display_domain: "example.cl",
+      organization_display_name: "Example SpA",
+      contact_display_name: "Ana Buyer",
+      contact_primary_email: "ana@example.cl",
+      open_task_count: 0,
+      next_task_id: null,
+      next_task_title: null,
+      next_task_due_at: null,
+    });
+
+    expect(result.organization_display_name).toBe("Example SpA");
+    expect(result.contact_display_name).toBe("Ana Buyer");
+    expect(result.contact_primary_email).toBe("ana@example.cl");
   });
 
   it("parseSalesOpportunitiesResponse parses meta and items", () => {
@@ -288,6 +312,9 @@ describe("sales opportunity parsing", () => {
           stage_updated_at: "2026-08-28T12:00:00+00:00",
           contact_display_email: "buyer@example.cl",
           account_display_domain: "example.cl",
+          organization_display_name: null,
+          contact_display_name: null,
+          contact_primary_email: null,
           open_task_count: 1,
           next_task_id: "task_1",
           next_task_title: "Llamar cliente",
