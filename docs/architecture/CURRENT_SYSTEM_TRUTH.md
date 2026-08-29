@@ -61,7 +61,7 @@ apps/web (Astro)          public marketing site — no operator/CRM code
 | Machine-proposed opportunities (`o_*`) | PR3 read model → `commercial.opportunity*` | rebuildable projection |
 | Human opportunity decisions | `commercial.sales_opportunity` (`sales_*`), `commercial.opportunity_operator_state` | **durable** |
 | Human work (tasks, activities) | `commercial.task`, `commercial.activity` | **durable** |
-| Organization / contact identity (human-confirmed) | `commercial.organization`, `commercial.contact` | **durable** (no API routes yet) |
+| Organization / contact identity | `commercial.organization`, `commercial.contact` (+`*_source` provenance) | **durable**, reconciled by sales-opportunity promotion (no standalone CRUD routes) |
 | Historical deal ledger | SQLite deal ledger → `commercial.deal` mirror | historical evidence |
 | Catalog + supplier offers + price snapshots | `catalog.*` mirror | rebuildable projection |
 | Lead research / prospects | `lead_intel.*` mirror | rebuildable projection |
@@ -83,6 +83,15 @@ Rules:
    `Idempotency-Key`; stage/state transitions use `expected_version`.
    Current commands: PR3 operator state (confirm/reject + manual_stage),
    sales-opportunity promote + stage, activity create, task create/complete/cancel.
+   Promote also conservatively reconciles durable CRM identity in the same
+   transaction: it resolves an existing `commercial.organization`/
+   `commercial.contact` via the `*_source` provenance tables' `(source_kind,
+   source_id)` key (never by matching raw domain/email strings), or creates
+   one when the machine evidence is sufficient (a contact is only linked once
+   an organization is resolved). Before this, `organization_id`/
+   `primary_crm_contact_id` were always left `NULL`. Insufficient or
+   malformed evidence still leaves them `NULL` rather than fabricate
+   identity — promotion never blocks on it.
 2. **Operator annex import (file evidence):** dashboard → proxy → POST
    `/operator/procurement/tenders/{code}/annex-bundle/{preview|import}`.
 3. **Machine writes:** email-pipeline CLIs and cron loops only (SQLite +
