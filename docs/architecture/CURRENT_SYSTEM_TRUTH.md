@@ -1,7 +1,7 @@
 # Current System Truth
 
 Status: canonical
-Last verified against code: 2026-08-28 (branch `refactor/commercial-platform-reset-v1`)
+Last verified against code: 2026-08-29 (branch `feat/sales-opportunity-realdata-preview-v1`)
 
 One page of what the system actually is today. If another doc contradicts
 this one, this one wins; fix the other doc.
@@ -45,7 +45,8 @@ apps/dashboard-proxy      Cloudflare Worker at dashboard.origenlab.cl/api* —
         ^
         v
 apps/dashboard (React)    operator UI (hash-routed sections):
-                          Hoy · Bandeja · Negocios · Prospectos · Clientes ·
+                          Hoy · Bandeja · Pipeline (durable, real writes) ·
+                          Negocios · Prospectos · Clientes ·
                           Licitaciones/equipos · Pagos y logística · Proveedores ·
                           Catálogo · Sistema
 
@@ -96,7 +97,8 @@ Anything else is read-only. `apps/api` write policy is enforced by
 |---|---|---|---|
 | Hoy | operator status, warm counts, `/operations/work-queue` | — | durable work queue + machine counts |
 | Bandeja de revisión | `/cases/warm` | local-only view labels (browser) | machine evidence |
-| Negocios | `/opportunities/commercial` (PR3 intake cockpit), `/mirror/commercial/deals` (historical ledger) | `/operations/*` via detail panel | machine intake + durable commands + historical evidence |
+| Pipeline | `GET /operations/sales-opportunities` (+ task/activity routes) | `POST /operations/*` stage transitions, activity/task CRUD | **durable** — the post-promotion sales-opportunity board (Kanban, drag/drop, workspace drawer); real writes, not read-only |
+| Negocios | `/opportunities/commercial` (PR3 intake cockpit), `/mirror/commercial/deals` (historical ledger) | `/operations/*` via detail panel (confirm/reject + promote into Pipeline) | machine intake + durable commands + historical evidence |
 | Prospectos | `/mirror/leads/prospects` | — | machine evidence |
 | Clientes / instituciones | `/cases/warm` grouping, `/contacts/{email}`, gmail audit | — | machine evidence |
 | Licitaciones / equipos | W1 queues + T1 tender detail | annex preview/import | machine evidence + evidence import |
