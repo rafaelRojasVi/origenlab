@@ -69,6 +69,18 @@ const activeApiClientSources = Object.entries(
   }),
 ).map(([, src]) => src as string);
 
+// A client genuinely delegates credentialed JSON GET to operatorClient's shared
+// fetchJsonGet only if it both imports that specific named export from "./operatorClient"
+// AND actually invokes it -- a bare token match (unused import, comment, unrelated text)
+// is not proof of delegation.
+const IMPORTS_SHARED_FETCH_JSON_GET =
+  /import\s*{[^}]*\bfetchJsonGet\b[^}]*}\s*from\s*["']\.\/operatorClient["']/;
+const CALLS_SHARED_FETCH_JSON_GET = /\bfetchJsonGet(<[^>]*>)?\(/;
+
+function delegatesToSharedFetchJsonGet(source: string): boolean {
+  return IMPORTS_SHARED_FETCH_JSON_GET.test(source) && CALLS_SHARED_FETCH_JSON_GET.test(source);
+}
+
 const DASHBOARD_V1_API_PATHS = [
   "/health",
   "/operator/status",
@@ -180,7 +192,7 @@ describe("Dashboard-2 safety (mounted Today)", () => {
     expect(mirrorCommercialClientSource).not.toMatch(/operatorApiUrl\([^)]*purchase/);
     // Credentialed GET is delegated to operatorClient's shared fetchJsonGet (see
     // "active API clients send credentials include" below), not implemented inline here.
-    expect(mirrorCommercialClientSource).toMatch(/fetchJsonGet/);
+    expect(delegatesToSharedFetchJsonGet(mirrorCommercialClientSource)).toBe(true);
     expect(mirrorCommercialClientSource).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/i);
   });
 
@@ -276,13 +288,12 @@ describe("Dashboard-2 safety (mounted Today)", () => {
 
 describe("Production API auth gap (docs/tests guard)", () => {
   it("active API clients send credentials include for Cloudflare Access cookies", () => {
-    // A client either sends `credentials: "include"` directly, or delegates entirely to
+    // A client either sends `credentials: "include"` directly, or genuinely delegates to
     // operatorClient's shared fetchJsonGet (itself asserted to send it, above/below).
     const sendsCredentialsInclude = /credentials:\s*["']include["']/;
-    const delegatesToSharedFetchJsonGet = /\bfetchJsonGet\b/;
     for (const source of activeApiClientSources) {
       expect(
-        sendsCredentialsInclude.test(source) || delegatesToSharedFetchJsonGet.test(source),
+        sendsCredentialsInclude.test(source) || delegatesToSharedFetchJsonGet(source),
         "credentials include (directly or via shared fetchJsonGet)",
       ).toBe(true);
     }
