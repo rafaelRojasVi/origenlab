@@ -278,7 +278,7 @@ describe("WarmCasesTable", () => {
   it("section footer shows global warm queue total, not vague API reportó", () => {
     const paymentRows = [
       { ...row, case_id: "p1", category: "payment_admin" as const },
-      { ...row, case_id: "p2", category: "payment_received" as const, contact_email: "pay2@bank.cl" },
+      { ...row, case_id: "p2", category: "payment_admin" as const, contact_email: "pay2@bank.cl" },
     ];
     render(
       <WarmCasesTable
@@ -420,16 +420,16 @@ describe("WarmCasesTable", () => {
     screen.getByText(/vista: Pagos\/admin/);
   });
 
-  it("Pagos/admin preset shows payment_received and transferencia snippet rows", () => {
+  it("Pagos/admin preset shows payment_admin and transferencia snippet rows", () => {
     render(
       <WarmCasesTable
         backend="sqlite"
         items={[
           {
             ...row,
-            case_id: "pago-recibido",
+            case_id: "pago-admin",
             contact_email: "tesoreria@hospital.cl",
-            category: "payment_received",
+            category: "payment_admin",
             subject: "Comprobante pago",
           },
           {

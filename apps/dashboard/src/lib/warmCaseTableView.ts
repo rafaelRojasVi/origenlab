@@ -61,7 +61,6 @@ const CATEGORY_SORT_RANK: Partial<Record<WarmCaseCategory, number>> = {
   auto_reply: 1,
   system_noise: 1,
   payment_admin: 2,
-  payment_received: 2,
   vendor_logistics: 3,
   logistics_admin: 3,
   internal_admin: 4,

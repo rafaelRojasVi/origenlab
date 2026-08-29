@@ -57,7 +57,6 @@ const WARM_CATEGORY: Record<string, string> = {
   opportunity: "Oportunidad",
   auto_reply: "Respuesta automática",
   vendor_logistics: "Logística",
-  payment_received: "Pago recibido",
 };
 
 const WARM_NEXT_ACTION: Record<string, string> = {

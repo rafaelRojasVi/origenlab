@@ -106,16 +106,6 @@ describe("warmCaseViewPreset", () => {
     expect(matchesWarmCaseViewPreset(AUDIT_ROWS[5], preset)).toBe(false);
   });
 
-  it("Pagos/admin includes payment_received category", () => {
-    const preset = "pagos_admin" as const;
-    const row = warmRow({
-      contact_email: "tesoreria@cliente.cl",
-      category: "payment_received",
-      subject: "Comprobante",
-    });
-    expect(matchesWarmCaseViewPreset(row, preset)).toBe(true);
-  });
-
   it("Pagos/admin includes bancochile.cl and FACTURA/transferencia text signals", () => {
     const preset = "pagos_admin" as const;
     expect(

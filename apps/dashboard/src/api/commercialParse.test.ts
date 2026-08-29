@@ -26,6 +26,38 @@ const EQUIPMENT_INTERNAL_KEYS = [
   "headers",
 ] as const;
 
+// Mirrors CANONICAL_WARM_CASE_CATEGORIES in apps/api/src/origenlab_api/schemas/cases.py.
+// Kept as an explicit literal list (no codegen, no reading the Python source from this
+// test) so a future contract change fails this test loudly instead of silently.
+const CANONICAL_WARM_CASE_CATEGORIES = [
+  "client_opportunity",
+  "client_response",
+  "supplier_quote_received",
+  "supplier_followup",
+  "payment_admin",
+  "logistics_admin",
+  "internal_admin",
+  "system_noise",
+  "bounce_problem",
+  "deal_evidence_candidate",
+  "quote_sent",
+  "waiting_supplier",
+  "waiting_client",
+  "campaign_outreach",
+  "waiting_campaign_reply",
+  "auto_acknowledgement",
+] as const;
+
+// Mirrors LEGACY_WARM_CASE_CATEGORY_ALIASES.keys() in apps/api/src/origenlab_api/schemas/cases.py.
+const LEGACY_WARM_CASE_CATEGORY_ALIASES = [
+  "client_reply",
+  "supplier_reply",
+  "bounce",
+  "opportunity",
+  "auto_reply",
+  "vendor_logistics",
+] as const;
+
 describe("parseWarmCasesResponse", () => {
   it("accepts meta.data_source postgres_mirror", () => {
     const parsed = parseWarmCasesResponse({
@@ -144,6 +176,44 @@ describe("normalizeWarmCaseItem", () => {
     expect(row.subject).toContain("[path redacted]");
     expect("source_file" in row).toBe(false);
     expect("source_path" in row).toBe(false);
+  });
+});
+
+describe("normalizeWarmCaseItem — warm case category contract", () => {
+  it("preserves every canonical category from the Python schema unchanged", () => {
+    for (const category of CANONICAL_WARM_CASE_CATEGORIES) {
+      const row = normalizeWarmCaseItem({ case_id: "a", category }, 0);
+      expect(row.category).toBe(category);
+    }
+  });
+
+  it("preserves every legacy alias category unchanged", () => {
+    for (const category of LEGACY_WARM_CASE_CATEGORY_ALIASES) {
+      const row = normalizeWarmCaseItem({ case_id: "a", category }, 0);
+      expect(row.category).toBe(category);
+    }
+  });
+
+  it("does not silently relabel campaign_outreach, waiting_campaign_reply, or auto_acknowledgement", () => {
+    expect(normalizeWarmCaseItem({ case_id: "a", category: "campaign_outreach" }, 0).category).toBe(
+      "campaign_outreach",
+    );
+    expect(
+      normalizeWarmCaseItem({ case_id: "a", category: "waiting_campaign_reply" }, 0).category,
+    ).toBe("waiting_campaign_reply");
+    expect(
+      normalizeWarmCaseItem({ case_id: "a", category: "auto_acknowledgement" }, 0).category,
+    ).toBe("auto_acknowledgement");
+  });
+
+  it("rejects payment_received, which is not part of the Python contract", () => {
+    const row = normalizeWarmCaseItem({ case_id: "a", category: "payment_received" }, 0);
+    expect(row.category).toBe("opportunity");
+  });
+
+  it("still falls back a genuinely unknown category to opportunity", () => {
+    const row = normalizeWarmCaseItem({ case_id: "a", category: "not_a_real_category" }, 0);
+    expect(row.category).toBe("opportunity");
   });
 });
 

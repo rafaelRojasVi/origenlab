@@ -30,13 +30,15 @@ const WARM_CATEGORIES = new Set<string>([
   "quote_sent",
   "waiting_supplier",
   "waiting_client",
+  "campaign_outreach",
+  "waiting_campaign_reply",
+  "auto_acknowledgement",
   "client_reply",
   "supplier_reply",
   "bounce",
   "opportunity",
   "auto_reply",
   "vendor_logistics",
-  "payment_received",
 ]);
 
 const WARM_STATUSES = new Set<string>(["new", "open", "waiting", "quoted", "problem"]);

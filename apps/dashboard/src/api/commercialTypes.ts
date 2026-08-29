@@ -22,8 +22,7 @@ export type WarmCaseCategory =
   | "bounce"
   | "opportunity"
   | "auto_reply"
-  | "vendor_logistics"
-  | "payment_received";
+  | "vendor_logistics";
 
 export type WarmCaseStatus = "new" | "open" | "waiting" | "quoted" | "problem";
 

@@ -17,7 +17,6 @@ const SUPPLIER_CATEGORIES: ReadonlySet<WarmCaseCategory> = new Set([
 
 const PAYMENTS_LOGISTICS_CATEGORIES: ReadonlySet<WarmCaseCategory> = new Set([
   "payment_admin",
-  "payment_received",
   "logistics_admin",
   "vendor_logistics",
 ]);
