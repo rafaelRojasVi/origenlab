@@ -117,6 +117,7 @@ export function SalesOpportunityBoard({
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => {
                 event.preventDefault();
+                if (board.pendingStageChangeId !== null) return;
                 const droppedId = event.dataTransfer.getData("text/plain");
                 const droppedItem = board.items.find((row) => row.sales_opportunity_id === droppedId);
                 if (droppedItem && droppedItem.stage !== stage) {
@@ -136,7 +137,7 @@ export function SalesOpportunityBoard({
                     item={item}
                     onOpen={() => onOpenOpportunity(item)}
                     onStageChange={(nextStage) => void board.changeStage(item, nextStage)}
-                    stagePending={board.pendingStageChangeId === item.sales_opportunity_id}
+                    stagePending={board.pendingStageChangeId !== null}
                   />
                 ))}
                 {grouped[stage].length === 0 ? (

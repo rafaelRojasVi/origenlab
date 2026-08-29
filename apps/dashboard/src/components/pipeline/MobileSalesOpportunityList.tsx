@@ -107,7 +107,7 @@ export function MobileSalesOpportunityList({
               item={item}
               onOpen={() => onOpenOpportunity(item)}
               onStageChange={(nextStage) => void board.changeStage(item, nextStage)}
-              stagePending={board.pendingStageChangeId === item.sales_opportunity_id}
+              stagePending={board.pendingStageChangeId !== null}
             />
           ))}
           {visibleItems.length === 0 ? (
