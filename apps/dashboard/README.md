@@ -57,6 +57,29 @@ Production builds **throw at runtime** if `VITE_ORIGENLAB_API_BASE_URL` is missi
 
 **After changing `.env`, restart `npm run dev`** — Vite only reads env at startup.
 
+### Local development operator identity
+
+Durable-write routes (`POST /operations/*`) require a trusted
+`X-OriginLab-Operator-Email` header. In production, `apps/dashboard-proxy`
+injects it after its own auth — the browser can never set it. For local dev
+against a disposable Postgres, set a plain (non-`VITE_`-prefixed) env var
+before starting the dev server:
+
+```bash
+ORIGENLAB_DEV_OPERATOR_EMAIL="dev-operator@origenlab.cl" npm run dev -- --host 127.0.0.1
+```
+
+`vite.config.ts` reads this in the Node process and injects the header on
+proxied requests (`vite.devOperatorProxy.ts` — unit tested), the same way the
+production Worker does. **Disabled by default** (unset var → no header, so
+writes correctly 401 with no identity present); only active for `vite dev`,
+never `vite build` — the logic is gated on Vite's `command`, and
+`server.proxy` is not part of the production build output at all. Because
+the var is not `VITE_`-prefixed, Vite never exposes it to client code via
+`import.meta.env`, so it cannot leak into a built bundle. Do not commit a
+real personal email as a default anywhere — always pass it via your own
+shell environment.
+
 ## Read-only scope
 
 - **GET only** — no write/send/draft/archive actions.
