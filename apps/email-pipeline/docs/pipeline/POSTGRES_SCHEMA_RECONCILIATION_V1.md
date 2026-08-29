@@ -5,6 +5,13 @@ Owner: email-pipeline-maintainers
 Last reviewed: 2026-04-19  
 Companion: [`POSTGRES_SCHEMA_TARGET_V1.md`](POSTGRES_SCHEMA_TARGET_V1.md)
 
+> **Status: historical planning document.** Written before the Alembic migration chain
+> existed. Current PostgreSQL/Alembic truth is defined by the migration chain in
+> `apps/email-pipeline/alembic/versions/` and
+> [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](../../../../docs/architecture/CURRENT_SYSTEM_TRUTH.md).
+> The "no Alembic migrations exist yet" statements below describe the state at the time
+> this document was written (2026-04-19), not the current state.
+
 ## 1. Purpose
 
 This document **reconciles** the **current SQLite DDL** (as defined in Python source) with the **target PostgreSQL layout** in `POSTGRES_SCHEMA_TARGET_V1.md`. It is the column-accurate basis for a **future Alembic** revision chain.

@@ -4,6 +4,13 @@ Status: **design only** (no migrations implemented)
 Owner: email-pipeline-maintainers  
 Last reviewed: 2026-04-19
 
+> **Status: historical planning document.** Written before the Alembic migration chain
+> existed. Current PostgreSQL/Alembic truth is defined by the migration chain in
+> `apps/email-pipeline/alembic/versions/` and
+> [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](../../../../docs/architecture/CURRENT_SYSTEM_TRUTH.md).
+> The "design only / no migrations implemented" status above describes the state at the
+> time this document was written (2026-04-19), not the current state.
+
 ## 1. Purpose
 
 The OrigenLab email pipeline today uses a **single SQLite file** as the operational database. DDL is spread across Python modules (`db.py`, `business_mart_schema.py`, `leads_schema.py`, `commercial/commercial_intel_schema.py`, etc.); see the internal schema inventory derived from those modules.

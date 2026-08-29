@@ -1,10 +1,34 @@
 # Commercial Operating System Audit
 
-Status: canonical (point-in-time audit + target-model resolution)
+Status: historical / point-in-time audit and evidence record (see status note below)
 Performed: 2026-08-29, branch `feat/sales-opportunity-realdata-preview-v1` (base `feat/sales-opportunity-ui-v1` @ `1e46a82`, forked from `main` @ `190fae0`)
 Method: read-only investigation of real sources (real SQLite at `/home/rafael/data/origenlab-email/sqlite/emails.sqlite`, ~62GB with live WAL; local repo/git state) plus read/write against the disposable local preview Postgres only (`localhost:55432`). **No production system was written to, migrated, or mutated to produce this document.**
 
-If this document and `CURRENT_SYSTEM_TRUTH.md` disagree, treat this document as the more current audit for the areas it covers (identity conflicts, warm-case duplication, CRM-4A, tender/opportunity linkage, supplier gap, deployment drift) and update `CURRENT_SYSTEM_TRUTH.md` accordingly — see "Documentation drift found" below.
+`docs/architecture/CURRENT_SYSTEM_TRUTH.md` is authoritative for CURRENT repository truth. This
+document remains a valuable historical/point-in-time audit and evidence record explaining how that
+state was reached; where the two disagree, trust `CURRENT_SYSTEM_TRUTH.md`. This document is not
+retrospectively rewritten to match later code — instead, findings that were later resolved or
+corrected are annotated in place (see "Status note (post-merge corrections)" immediately below and
+the inline `>` callouts on Executive summary items 1 and 2).
+
+## Status note (post-merge corrections)
+
+The branch chain this audit describes (Pipeline UI, real-data preview, CRM-4A reconciliation, the
+warm-case category contract fix) has since merged to `main` through PRs #521–#526. The findings
+below were re-examined by a later whole-repository audit against `main` and are annotated inline
+where the original finding no longer matches current code:
+
+- **Executive summary #1** (CRM-4A schema and zero writer) — **RESOLVED** by PR #522.
+- **Executive summary #2, `commercial.warm_case*` half** (orphaned, no reader) — **CORRECTED**: the
+  read path is live under the Postgres API backend; the writer is opt-in and not part of the
+  documented scheduled cron. This is a half-wired/ownership question, not "no reader." No product
+  decision has been made on scheduling vs. retiring it.
+- **Executive summary #2, `commercial.equipment_opportunity*` half** (no route reads it) —
+  **CORRECTED**: the route and read model are still wired end to end; only the primary UI content
+  has been removed, leaving a limited count/signal consumer. It has not been retired.
+- **"This branch, 40 commits ahead of `main`"** (here and in Phase 9) — the branch chain has since
+  merged; see `CURRENT_SYSTEM_TRUTH.md` for current deployment topology. Historical branch/commit
+  references below are left as originally written.
 
 ## Executive summary
 
@@ -19,10 +43,25 @@ everything":
 1. **CRM-4A (`commercial.organization`/`commercial.contact`) has a schema and zero writer.**
    Promoted sales opportunities have `organization_id`/`primary_crm_contact_id` permanently `NULL`.
    This is the single largest structural gap in the domain model.
+
+   > **RESOLVED by PR #522** (merged to `main`). Sales-opportunity promotion now performs
+   > conservative, provenance-based CRM-4A reconciliation in the same transaction — see
+   > `docs/architecture/CURRENT_SYSTEM_TRUTH.md` ("Write paths") for current behavior.
 2. **Two orphaned/duplicate machine surfaces exist** that look durable but aren't wired to anything:
    `commercial.warm_case*` (Postgres, has a promotion writer that's never scheduled, never read by
    the API) and `commercial.equipment_opportunity*` (DB-1-era CSV batch table, no route reads it).
    Both are dead weight, same shape as the "CRM-4A schema-only" pattern.
+
+   > **CORRECTED.** A later whole-repository audit against `main` found both halves of this
+   > finding inaccurate as originally stated:
+   > - `commercial.warm_case*`: the Postgres read path IS live under the Postgres API backend
+   >   (the production configuration). The writer/promotion job is opt-in and not part of the
+   >   documented scheduled cron — a half-wired/ownership question (likely empty or stale in
+   >   production), not simply "no reader." No decision has been made on scheduling the writer
+   >   vs. retiring the Postgres path.
+   > - `commercial.equipment_opportunity*`: the route and read model are still wired end to end;
+   >   only the primary UI content has been removed, leaving a limited Today/System count/signal
+   >   consumer. It has not been retired.
 3. **The "9,577 PR3 opportunities" figure is misleading.** 9,576 of 9,577 are
    `record_kind='commercial_history'` — identity-touch reconstructions with no product/title
    content. Exactly **one** row (`o_254ee22e1f2e2c9ab7f7ef9706729d78`, CEAF/SERVA, linked to the
@@ -228,6 +267,10 @@ reads a different evidence stream (`/cases/warm`, general commercial signal tria
 opportunity intake, and merging them would conflate two real, distinct machine surfaces.
 
 ## Phase 9 — deployment drift diagnosis (root cause, not executed)
+
+> **Status: this branch chain has since merged to `main`** (PRs #521-#526). The diagnosis below
+> describes the drift as it stood at audit time; see `CURRENT_SYSTEM_TRUTH.md` for current
+> deployment topology.
 
 **Root cause: unreleased branch work, not a bug.** `git merge-base main <this branch>` = `190fae0`,
 exactly main's current tip — all 40 commits on this branch chain (including the dashboard-proxy
