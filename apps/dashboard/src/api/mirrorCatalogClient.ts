@@ -5,24 +5,11 @@
 
 import { parseCatalogProductDetailResponse, parseCatalogProductsListResponse } from "./catalogParse";
 import type { CatalogListQuery, CatalogProductDetailResponseUi, CatalogProductsListUi } from "./catalogTypes";
-import { OperatorApiError, getOperatorApiBaseUrl, operatorApiUrl } from "./operatorClient";
+import { fetchJsonGet, getOperatorApiBaseUrl, operatorApiUrl } from "./operatorClient";
 
 export const MIRROR_CATALOG_PRODUCTS_PATH = "/mirror/catalog/products";
 
 const DEFAULT_CATALOG_LIMIT = 100;
-
-async function fetchMirrorJsonGet<T>(url: string): Promise<T> {
-  const res = await fetch(url, {
-    method: "GET",
-    credentials: "include",
-    headers: { Accept: "application/json" },
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new OperatorApiError(text || res.statusText || `HTTP ${res.status}`, res.status);
-  }
-  return res.json() as Promise<T>;
-}
 
 export function mirrorCatalogProductsUrl(query: CatalogListQuery = {}): string {
   const params: Record<string, string | number> = {
@@ -51,7 +38,7 @@ export function mirrorCatalogProductDetailUrl(productKey: string): string {
 export function fetchCatalogProductsMirror(
   query: CatalogListQuery = {},
 ): Promise<CatalogProductsListUi> {
-  return fetchMirrorJsonGet<unknown>(mirrorCatalogProductsUrl(query)).then(
+  return fetchJsonGet<unknown>(mirrorCatalogProductsUrl(query)).then(
     parseCatalogProductsListResponse,
   );
 }
@@ -59,7 +46,7 @@ export function fetchCatalogProductsMirror(
 export function fetchCatalogProductDetailMirror(
   productKey: string,
 ): Promise<CatalogProductDetailResponseUi> {
-  return fetchMirrorJsonGet<unknown>(mirrorCatalogProductDetailUrl(productKey)).then(
+  return fetchJsonGet<unknown>(mirrorCatalogProductDetailUrl(productKey)).then(
     parseCatalogProductDetailResponse,
   );
 }

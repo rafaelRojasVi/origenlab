@@ -466,6 +466,16 @@ describe("operator API client", () => {
     await expect(fetchOperatorStatus()).rejects.toBeInstanceOf(OperatorApiError);
   });
 
+  it("preserves the response HTTP status on OperatorApiError", async () => {
+    vi.stubEnv("MODE", "production");
+    vi.stubEnv("VITE_ORIGENLAB_API_BASE_URL", "http://127.0.0.1:8001");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status: 503, statusText: "down", text: async () => "" }),
+    );
+    await expect(fetchOperatorStatus()).rejects.toMatchObject({ status: 503 });
+  });
+
   it("operatorApiUrl builds warm cases GET path", () => {
     vi.stubEnv("MODE", "production");
     vi.stubEnv("VITE_ORIGENLAB_API_BASE_URL", "https://api.example.com");
