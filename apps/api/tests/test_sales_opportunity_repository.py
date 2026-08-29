@@ -163,7 +163,10 @@ def test_promotion_snapshots_pr3_identity_and_writes_event(
             {
                 "account_id": "a_1",
                 "primary_contact_id": "c_1",
+                "contact_display_email": None,
+                "account_display_domain": None,
             },
+            None,  # organization_source lookup: no existing org
             _sales_row(),
         ],
     )
@@ -178,22 +181,25 @@ def test_promotion_snapshots_pr3_identity_and_writes_event(
 
     assert statements[0].startswith("INSERT INTO commercial.command_idempotency")
     assert "FROM api.v_commercial_opportunity" in statements[1]
-    assert statements[2].startswith("INSERT INTO commercial.sales_opportunity")
-    assert statements[3].startswith("INSERT INTO commercial.sales_opportunity_event")
-    assert statements[4].startswith("UPDATE commercial.command_idempotency")
+    assert "FROM commercial.organization_source" in statements[2]
+    assert statements[3].startswith("INSERT INTO commercial.sales_opportunity")
+    assert statements[4].startswith("INSERT INTO commercial.sales_opportunity_event")
+    assert statements[5].startswith("UPDATE commercial.command_idempotency")
 
     claim_params = cursor.executed[0][1]
 
     assert claim_params["command_kind"] == "sales_opportunity_promote"
 
-    insert_sql, insert_params = cursor.executed[2]
+    insert_sql, insert_params = cursor.executed[3]
 
     assert "'pr3'" in insert_sql
     assert "'new'" in insert_sql
     assert insert_params["account_id"] == "a_1"
     assert insert_params["primary_contact_id"] == "c_1"
+    assert insert_params["organization_id"] is None
+    assert insert_params["primary_crm_contact_id"] is None
 
-    event_params = cursor.executed[3][1]
+    event_params = cursor.executed[4][1]
     payload = json.loads(event_params["payload"])
 
     assert event_params["actor_key"] == "tatiana@origenlab.cl"
@@ -204,6 +210,8 @@ def test_promotion_snapshots_pr3_identity_and_writes_event(
     assert payload["snapshot"] == {
         "account_id": "a_1",
         "primary_contact_id": "c_1",
+        "organization_id": None,
+        "primary_crm_contact_id": None,
     }
 
 
@@ -242,8 +250,11 @@ def test_duplicate_pr3_promotion_returns_conflict(
             {
                 "account_id": "a_1",
                 "primary_contact_id": "c_1",
+                "contact_display_email": None,
+                "account_display_domain": None,
             },
-            None,
+            None,  # organization_source lookup: no existing org
+            None,  # sales_opportunity INSERT: swallowed by ON CONFLICT
             {
                 "sales_opportunity_id": "sales_existing",
             },
@@ -256,7 +267,7 @@ def test_duplicate_pr3_promotion_returns_conflict(
     ):
         _promote(repo)
 
-    assert len(cursor.executed) == 4
+    assert len(cursor.executed) == 5
 
 
 def test_identical_idempotency_replay_returns_original(
