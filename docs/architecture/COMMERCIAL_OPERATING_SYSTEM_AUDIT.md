@@ -13,10 +13,10 @@ the inline `>` callouts on Executive summary items 1 and 2).
 
 ## Status note (post-merge corrections)
 
-The branch chain this audit describes (Pipeline UI, real-data preview, CRM-4A reconciliation, the
-warm-case category contract fix) has since merged to `main` through PRs #521–#526. The findings
-below were re-examined by a later whole-repository audit against `main` and are annotated inline
-where the original finding no longer matches current code:
+Pipeline (#523), real-data preview/safety (#524), CRM-4A reconciliation (#522), and the warm-case
+category contract fix (#526) have since merged to `main`; the commercial-platform reset (#521) is
+also on `main`. The findings below were re-examined by a later whole-repository audit against
+`main` and are annotated inline where the original finding no longer matches current code:
 
 - **Executive summary #1** (CRM-4A schema and zero writer) — **RESOLVED** by PR #522.
 - **Executive summary #2, `commercial.warm_case*` half** (orphaned, no reader) — **CORRECTED**: the
@@ -268,8 +268,9 @@ opportunity intake, and merging them would conflate two real, distinct machine s
 
 ## Phase 9 — deployment drift diagnosis (root cause, not executed)
 
-> **Status: this branch chain has since merged to `main`** (PRs #521-#526). The diagnosis below
-> describes the drift as it stood at audit time; see `CURRENT_SYSTEM_TRUTH.md` for current
+> **Status: this branch chain has since merged to `main`** (Pipeline #523, real-data preview/
+> safety #524, CRM-4A #522; the commercial-platform reset #521 is also on `main`). The diagnosis
+> below describes the drift as it stood at audit time; see `CURRENT_SYSTEM_TRUTH.md` for current
 > deployment topology.
 
 **Root cause: unreleased branch work, not a bug.** `git merge-base main <this branch>` = `190fae0`,

@@ -125,7 +125,9 @@ The dashboard's `/cases/warm` category set (`WarmCaseCategory` in
 ## Migrations
 
 Alembic lives in `apps/email-pipeline/alembic`; head `20260828_0039`.
-Durable CRM tables: 0032–0039. Shipped migrations are never rewritten;
+Durable CRM tables were introduced through 0032–0038; 0039 adds the CRM-4A
+writer grants and organization/contact API read views (no table/column/
+constraint or data changes). Shipped migrations are never rewritten;
 corrections are new migrations. Downgrades that would drop human data are
 fail-closed.
 
