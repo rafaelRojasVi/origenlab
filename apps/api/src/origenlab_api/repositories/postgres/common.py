@@ -37,7 +37,7 @@ def require_psycopg() -> Any:
     return psycopg
 
 
-def _is_psycopg_error(pg: Any, exc: BaseException) -> bool:
+def is_psycopg_error(pg: Any, exc: BaseException) -> bool:
     error_cls = getattr(pg, "Error", None)
     return isinstance(error_cls, type) and isinstance(exc, error_cls)
 
@@ -58,7 +58,7 @@ def postgres_connection(settings: Settings) -> Iterator[Any]:
     except PostgresBackendUnavailableError:
         raise
     except Exception as exc:
-        if _is_psycopg_error(pg, exc):
+        if is_psycopg_error(pg, exc):
             raise PostgresBackendUnavailableError(
                 "Postgres read model unavailable."
             ) from exc
