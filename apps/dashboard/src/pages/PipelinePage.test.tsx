@@ -92,4 +92,21 @@ describe("PipelinePage", () => {
       expect(screen.queryByTestId("drawer-stub")).not.toBeInTheDocument();
     });
   });
+
+  it("refetches the board when the page-local refresh button is clicked", () => {
+    const refetch = vi.fn();
+    vi.mocked(useSalesOpportunityBoard).mockReturnValue(fakeBoard(refetch));
+    render(<PipelinePage />);
+
+    screen.getByRole("button", { name: "Actualizar datos" }).click();
+    expect(refetch).toHaveBeenCalled();
+  });
+
+  it("disables the refresh button and shows a loading label while the board is loading", () => {
+    vi.mocked(useSalesOpportunityBoard).mockReturnValue({ ...fakeBoard(), loading: true });
+    render(<PipelinePage />);
+
+    const button = screen.getByRole("button", { name: "Actualizando…" });
+    expect(button).toBeDisabled();
+  });
 });
