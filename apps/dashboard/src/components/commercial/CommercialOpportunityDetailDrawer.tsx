@@ -97,6 +97,12 @@ function PromoteToCrmAction({
       return;
     }
 
+    const trimmedOwner = ownerOverride.trim();
+    if (!selfAssign && !trimmedOwner) {
+      setError("Escribe el correo del responsable o marca \"Responsable: yo\".");
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
@@ -105,7 +111,10 @@ function PromoteToCrmAction({
         {
           source_opportunity_id: opportunityId,
           title: trimmedTitle,
-          owner_key: selfAssign ? undefined : ownerOverride.trim() || undefined,
+          // selfAssign omits owner_key so the trusted server-side operator
+          // default applies; unchecking it must never fall through to that
+          // same default when the override is left blank.
+          owner_key: selfAssign ? undefined : trimmedOwner,
         },
         `promote:${crypto.randomUUID()}`,
       );

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { OperatorApiError } from "../../api/operatorClient";
 import {
   fetchSalesOpportunities,
@@ -18,6 +18,12 @@ export function useSalesOpportunityBoard() {
   const [enabledToggles, setEnabledToggles] = useState<SalesOpportunityStage[]>([]);
   const [pendingStageChangeId, setPendingStageChangeId] = useState<string | null>(null);
   const [stageError, setStageError] = useState<string | null>(null);
+  // Synchronous mutex, not state: only one stage mutation may be in flight
+  // at once. A ref (not pendingStageChangeId) guards this so a second
+  // changeStage call is rejected immediately even if it fires before React
+  // re-renders with the disabled UI, and so overlapping mutations can never
+  // race on the `previousItems` snapshot used to revert on failure.
+  const stageMutationInFlightRef = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -48,6 +54,9 @@ export function useSalesOpportunityBoard() {
 
   const changeStage = useCallback(
     async (item: SalesOpportunityListItem, nextStage: SalesOpportunityStage) => {
+      if (stageMutationInFlightRef.current) return;
+      stageMutationInFlightRef.current = true;
+
       setStageError(null);
       setPendingStageChangeId(item.sales_opportunity_id);
 
@@ -90,6 +99,7 @@ export function useSalesOpportunityBoard() {
         await load();
       } finally {
         setPendingStageChangeId(null);
+        stageMutationInFlightRef.current = false;
       }
     },
     [items, load],

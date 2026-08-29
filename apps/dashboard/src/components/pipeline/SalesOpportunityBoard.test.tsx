@@ -141,4 +141,36 @@ describe("SalesOpportunityBoard", () => {
     fireEvent.drop(newColumnDropZone, { dataTransfer });
     expect(changeStage).toHaveBeenCalledWith(item(), "new");
   });
+
+  it("ignores a drop while a stage mutation is already pending", () => {
+    const changeStage = vi.fn();
+    render(
+      <SalesOpportunityBoard
+        board={board({ items: [item()], changeStage, pendingStageChangeId: "sales_1" })}
+        onOpenOpportunity={vi.fn()}
+      />,
+    );
+
+    const newColumnDropZone = screen.getByTestId("pipeline-column-drop-new");
+    const dataTransfer = { getData: () => "sales_1", setData: vi.fn() };
+
+    fireEvent.drop(newColumnDropZone, { dataTransfer });
+    expect(changeStage).not.toHaveBeenCalled();
+  });
+
+  it("disables every card's stage control while any stage mutation is pending", () => {
+    render(
+      <SalesOpportunityBoard
+        board={board({
+          items: [item(), item({ sales_opportunity_id: "sales_2", stage: "new", title: "Autoclave" })],
+          pendingStageChangeId: "sales_1",
+        })}
+        onOpenOpportunity={vi.fn()}
+      />,
+    );
+
+    for (const select of screen.getAllByLabelText("Cambiar etapa")) {
+      expect(select).toBeDisabled();
+    }
+  });
 });

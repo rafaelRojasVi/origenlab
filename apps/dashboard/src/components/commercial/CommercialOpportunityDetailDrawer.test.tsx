@@ -145,6 +145,71 @@ describe("CommercialOpportunityDetailDrawer — promotion", () => {
     expect(onPromoted).toHaveBeenCalledWith(OPPORTUNITY_ID, "sales_1");
   });
 
+  it("does not submit and shows a validation message when self-assign is unchecked with no owner", async () => {
+    render(
+      <CommercialOpportunityDetailDrawer
+        opportunityId={OPPORTUNITY_ID}
+        open
+        onClose={vi.fn()}
+        onSelectContact={vi.fn()}
+        promotedSalesOpportunityId={null}
+        onOpenPipeline={vi.fn()}
+        onPromoted={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Promover a CRM" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("checkbox", { name: /Responsable: yo/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Promover a CRM" }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/responsable/i));
+    expect(promoteSalesOpportunity).not.toHaveBeenCalled();
+  });
+
+  it("sends the exact trimmed owner override when self-assign is unchecked with an owner", async () => {
+    vi.mocked(promoteSalesOpportunity).mockResolvedValue({
+      sales_opportunity_id: "sales_1",
+      source_kind: "pr3",
+      source_opportunity_id: OPPORTUNITY_ID,
+      account_id: null,
+      primary_contact_id: null,
+      organization_id: null,
+      primary_crm_contact_id: null,
+      title: "Oportunidad — example.cl",
+      stage: "new",
+      owner_key: "otro@origenlab.cl",
+      version: 1,
+      created_by: "tatiana@origenlab.cl",
+      updated_by: "tatiana@origenlab.cl",
+      created_at: "2026-08-28T12:00:00+00:00",
+      updated_at: "2026-08-28T12:00:00+00:00",
+    });
+
+    render(
+      <CommercialOpportunityDetailDrawer
+        opportunityId={OPPORTUNITY_ID}
+        open
+        onClose={vi.fn()}
+        onSelectContact={vi.fn()}
+        promotedSalesOpportunityId={null}
+        onOpenPipeline={vi.fn()}
+        onPromoted={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Promover a CRM" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("checkbox", { name: /Responsable: yo/ }));
+    fireEvent.change(screen.getByLabelText("Responsable"), { target: { value: "  otro@origenlab.cl  " } });
+    fireEvent.click(screen.getByRole("button", { name: "Promover a CRM" }));
+
+    await waitFor(() =>
+      expect(promoteSalesOpportunity).toHaveBeenCalledWith(
+        expect.objectContaining({ owner_key: "otro@origenlab.cl" }),
+        expect.any(String),
+      ),
+    );
+  });
+
   it("shows a clean message on a duplicate-promotion 409", async () => {
     vi.mocked(promoteSalesOpportunity).mockRejectedValue(new OperatorApiError("already promoted", 409));
 

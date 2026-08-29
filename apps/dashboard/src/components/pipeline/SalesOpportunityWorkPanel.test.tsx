@@ -142,6 +142,206 @@ describe("SalesOpportunityWorkPanel", () => {
     );
   });
 
+  it("calls onTaskChanged after a successful task create", async () => {
+    vi.mocked(createCommercialTask).mockResolvedValue({
+      task_id: "task_2",
+      opportunity_id: null,
+      account_id: null,
+      contact_id: null,
+      title: "Enviar propuesta",
+      status: "open",
+      priority: "normal",
+      due_at: null,
+      owner_key: null,
+      version: 1,
+      created_by: "tatiana@origenlab.cl",
+      updated_by: "tatiana@origenlab.cl",
+      completed_at: null,
+      created_at: "2026-08-28T12:00:00+00:00",
+      updated_at: "2026-08-28T12:00:00+00:00",
+    });
+    const onTaskChanged = vi.fn();
+
+    render(<SalesOpportunityWorkPanel salesOpportunityId={SALES_ID} onTaskChanged={onTaskChanged} />);
+    await waitFor(() => expect(fetchSalesOpportunityTasks).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByLabelText("Nuevo seguimiento"), { target: { value: "Enviar propuesta" } });
+    fireEvent.click(screen.getByText("Agregar seguimiento"));
+
+    await waitFor(() => expect(onTaskChanged).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not call onTaskChanged when task create fails", async () => {
+    vi.mocked(createCommercialTask).mockRejectedValue(new Error("network down"));
+    const onTaskChanged = vi.fn();
+
+    render(<SalesOpportunityWorkPanel salesOpportunityId={SALES_ID} onTaskChanged={onTaskChanged} />);
+    await waitFor(() => expect(fetchSalesOpportunityTasks).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByLabelText("Nuevo seguimiento"), { target: { value: "Enviar propuesta" } });
+    fireEvent.click(screen.getByText("Agregar seguimiento"));
+
+    await waitFor(() => expect(screen.getByText("network down")).toBeInTheDocument());
+    expect(onTaskChanged).not.toHaveBeenCalled();
+  });
+
+  it("calls onTaskChanged after a successful task complete", async () => {
+    vi.mocked(fetchSalesOpportunityTasks).mockResolvedValue({
+      items: [
+        {
+          task_id: "task_1",
+          opportunity_id: null,
+          account_id: null,
+          contact_id: null,
+          title: "Llamar a cliente",
+          status: "open",
+          priority: "normal",
+          due_at: null,
+          owner_key: null,
+          version: 1,
+          created_by: "tatiana@origenlab.cl",
+          updated_by: "tatiana@origenlab.cl",
+          completed_at: null,
+          created_at: "2026-08-28T12:00:00+00:00",
+          updated_at: "2026-08-28T12:00:00+00:00",
+        },
+      ],
+    });
+    vi.mocked(completeCommercialTask).mockResolvedValue({
+      task_id: "task_1",
+      opportunity_id: null,
+      account_id: null,
+      contact_id: null,
+      title: "Llamar a cliente",
+      status: "done",
+      priority: "normal",
+      due_at: null,
+      owner_key: null,
+      version: 2,
+      created_by: "tatiana@origenlab.cl",
+      updated_by: "tatiana@origenlab.cl",
+      completed_at: "2026-08-28T12:30:00+00:00",
+      created_at: "2026-08-28T12:00:00+00:00",
+      updated_at: "2026-08-28T12:30:00+00:00",
+    });
+    const onTaskChanged = vi.fn();
+
+    render(<SalesOpportunityWorkPanel salesOpportunityId={SALES_ID} onTaskChanged={onTaskChanged} />);
+    await waitFor(() => expect(screen.getByText("Llamar a cliente")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("Completar"));
+
+    await waitFor(() => expect(onTaskChanged).toHaveBeenCalledTimes(1));
+  });
+
+  it("calls onTaskChanged after a successful task cancel", async () => {
+    vi.mocked(fetchSalesOpportunityTasks).mockResolvedValue({
+      items: [
+        {
+          task_id: "task_1",
+          opportunity_id: null,
+          account_id: null,
+          contact_id: null,
+          title: "Llamar a cliente",
+          status: "open",
+          priority: "normal",
+          due_at: null,
+          owner_key: null,
+          version: 1,
+          created_by: "tatiana@origenlab.cl",
+          updated_by: "tatiana@origenlab.cl",
+          completed_at: null,
+          created_at: "2026-08-28T12:00:00+00:00",
+          updated_at: "2026-08-28T12:00:00+00:00",
+        },
+      ],
+    });
+    vi.mocked(cancelCommercialTask).mockResolvedValue({
+      task_id: "task_1",
+      opportunity_id: null,
+      account_id: null,
+      contact_id: null,
+      title: "Llamar a cliente",
+      status: "cancelled",
+      priority: "normal",
+      due_at: null,
+      owner_key: null,
+      version: 2,
+      created_by: "tatiana@origenlab.cl",
+      updated_by: "tatiana@origenlab.cl",
+      completed_at: null,
+      created_at: "2026-08-28T12:00:00+00:00",
+      updated_at: "2026-08-28T12:30:00+00:00",
+    });
+    const onTaskChanged = vi.fn();
+
+    render(<SalesOpportunityWorkPanel salesOpportunityId={SALES_ID} onTaskChanged={onTaskChanged} />);
+    await waitFor(() => expect(screen.getByText("Llamar a cliente")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("Cancelar"));
+
+    await waitFor(() => expect(onTaskChanged).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not call onTaskChanged when task complete fails", async () => {
+    vi.mocked(fetchSalesOpportunityTasks).mockResolvedValue({
+      items: [
+        {
+          task_id: "task_1",
+          opportunity_id: null,
+          account_id: null,
+          contact_id: null,
+          title: "Llamar a cliente",
+          status: "open",
+          priority: "normal",
+          due_at: null,
+          owner_key: null,
+          version: 1,
+          created_by: "tatiana@origenlab.cl",
+          updated_by: "tatiana@origenlab.cl",
+          completed_at: null,
+          created_at: "2026-08-28T12:00:00+00:00",
+          updated_at: "2026-08-28T12:00:00+00:00",
+        },
+      ],
+    });
+    vi.mocked(completeCommercialTask).mockRejectedValue(new Error("network down"));
+    const onTaskChanged = vi.fn();
+
+    render(<SalesOpportunityWorkPanel salesOpportunityId={SALES_ID} onTaskChanged={onTaskChanged} />);
+    await waitFor(() => expect(screen.getByText("Llamar a cliente")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("Completar"));
+
+    await waitFor(() => expect(screen.getByText("network down")).toBeInTheDocument());
+    expect(onTaskChanged).not.toHaveBeenCalled();
+  });
+
+  it("does not call onTaskChanged after creating an activity", async () => {
+    vi.mocked(createCommercialActivity).mockResolvedValue({
+      activity_id: "act_1",
+      opportunity_id: null,
+      account_id: null,
+      contact_id: null,
+      activity_type: "call",
+      occurred_at: "2026-08-28T12:00:00+00:00",
+      summary: "Llamada de seguimiento",
+      detail: null,
+      created_by: "tatiana@origenlab.cl",
+      created_at: "2026-08-28T12:00:00+00:00",
+    });
+    const onTaskChanged = vi.fn();
+
+    render(<SalesOpportunityWorkPanel salesOpportunityId={SALES_ID} onTaskChanged={onTaskChanged} />);
+    await waitFor(() => expect(fetchSalesOpportunityActivities).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByLabelText("Resumen de actividad"), { target: { value: "Llamada de seguimiento" } });
+    fireEvent.click(screen.getByText("Registrar actividad"));
+
+    await waitFor(() => expect(screen.getByText("Llamada de seguimiento")).toBeInTheDocument());
+    expect(onTaskChanged).not.toHaveBeenCalled();
+  });
+
   it("creates an activity anchored to the sales opportunity", async () => {
     vi.mocked(createCommercialActivity).mockResolvedValue({
       activity_id: "act_1",

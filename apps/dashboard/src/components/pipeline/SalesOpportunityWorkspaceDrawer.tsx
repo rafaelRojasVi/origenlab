@@ -41,11 +41,13 @@ export function SalesOpportunityWorkspaceDrawer({
   open,
   onClose,
   onStageChanged,
+  onTaskChanged,
 }: {
   item: SalesOpportunityListItem | null;
   open: boolean;
   onClose: () => void;
   onStageChanged: () => void;
+  onTaskChanged?: () => void;
 }) {
   const [core, setCore] = useState<SalesOpportunityListItem | null>(item);
   const [stagePending, setStagePending] = useState(false);
@@ -232,7 +234,10 @@ export function SalesOpportunityWorkspaceDrawer({
             humana.
           </p>
 
-          <SalesOpportunityWorkPanel salesOpportunityId={core.sales_opportunity_id} />
+          <SalesOpportunityWorkPanel
+            salesOpportunityId={core.sales_opportunity_id}
+            onTaskChanged={onTaskChanged}
+          />
         </div>
       </aside>
     </>

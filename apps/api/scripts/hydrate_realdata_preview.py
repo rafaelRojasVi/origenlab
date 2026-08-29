@@ -45,7 +45,15 @@ Usage:
     cd apps/api
     uv run python scripts/hydrate_realdata_preview.py \\
         --postgres-write-url postgresql://origenlab:...@localhost:55432/origenlab_realdata_preview \\
-        --sqlite-path "$HOME/data/origenlab-email/sqlite/emails.sqlite"
+        --sqlite-path "$HOME/data/origenlab-email/sqlite/emails.sqlite" \\
+        --confirm-disposable
+
+Being local (localhost/127.0.0.1) is not proof of being disposable -- a
+developer's real local Postgres is still local. --postgres-write-url is
+therefore also required to name an explicitly disposable database (its name
+must contain "preview", "shadow", or "test"; generic/default names like
+"postgres" or "origenlab" are rejected even locally), and --confirm-disposable
+must be passed to acknowledge that database will be written to.
 """
 
 from __future__ import annotations
@@ -62,18 +70,65 @@ if str(_REPO / "src") not in sys.path:
 
 ALLOWED_HOSTS = {"localhost", "127.0.0.1"}
 
+# A narrow, intentionally conservative V1 policy: the database name must
+# contain one of these markers to look disposable. Extending this list is a
+# deliberate decision, not a place to be permissive by default.
+DISPOSABLE_DB_NAME_MARKERS = ("preview", "shadow", "test")
+
+# Explicitly rejected even though hostname alone would pass -- these are
+# real/default database names a developer could plausibly have configured
+# for non-disposable use, so an accidental write here would be far worse
+# than a rejection.
+GENERIC_DB_NAMES = {"postgres", "origenlab"}
+
 # The single real, title-bearing PR3 opportunity documented above.
 CEAF_OPPORTUNITY_ID = "o_254ee22e1f2e2c9ab7f7ef9706729d78"
 
 PREVIEW_OPERATOR = "realdata-preview-hydration@origenlab.cl"
 
 
-def _require_local_dsn(dsn: str, *, label: str) -> None:
-    host = urlsplit(dsn.replace("postgresql+psycopg://", "postgresql://")).hostname
+def _require_local_dsn(dsn: str, *, label: str, confirm_disposable: bool) -> None:
+    """Admission gate before ANY Postgres connection/write.
+
+    Three independent gates, each failing closed with its own explicit
+    reason: host must be local, the database name must look disposable
+    (and must not be a generic/default name), and the caller must have
+    passed --confirm-disposable. Proving "local" is not the same as proving
+    "disposable" -- a developer's real local Postgres is still local.
+    """
+    normalized = dsn.replace("postgresql+psycopg://", "postgresql://")
+    parts = urlsplit(normalized)
+
+    host = parts.hostname
     if host not in ALLOWED_HOSTS:
         raise SystemExit(
             f"Refusing to write: {label} host {host!r} is not in {ALLOWED_HOSTS}. "
             "This script only ever writes to a disposable local preview database."
+        )
+
+    dbname = parts.path.lstrip("/")
+    if not dbname:
+        raise SystemExit(
+            f"Refusing to write: {label} has no database name. "
+            "Point this at an explicitly named disposable preview/shadow/test database."
+        )
+
+    if dbname.lower() in GENERIC_DB_NAMES:
+        raise SystemExit(
+            f"Refusing to write: {label} database name {dbname!r} is a generic/default "
+            f"database name ({sorted(GENERIC_DB_NAMES)}), not an explicitly disposable one."
+        )
+
+    if not any(marker in dbname.lower() for marker in DISPOSABLE_DB_NAME_MARKERS):
+        raise SystemExit(
+            f"Refusing to write: {label} database name {dbname!r} does not look "
+            f"disposable (expected it to contain one of {DISPOSABLE_DB_NAME_MARKERS})."
+        )
+
+    if not confirm_disposable:
+        raise SystemExit(
+            f"Refusing to write: {label} looks disposable but was not confirmed. "
+            "Pass --confirm-disposable to acknowledge this database will be written to."
         )
 
 
@@ -223,9 +278,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--postgres-write-url", required=True)
     parser.add_argument("--sqlite-path", required=True, type=Path)
+    parser.add_argument(
+        "--confirm-disposable",
+        action="store_true",
+        help="Acknowledge --postgres-write-url names a disposable database that will be written to.",
+    )
     args = parser.parse_args()
 
-    _require_local_dsn(args.postgres_write_url, label="--postgres-write-url")
+    _require_local_dsn(
+        args.postgres_write_url,
+        label="--postgres-write-url",
+        confirm_disposable=args.confirm_disposable,
+    )
 
     import os
 

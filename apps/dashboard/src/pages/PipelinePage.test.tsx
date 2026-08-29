@@ -28,17 +28,20 @@ vi.mock(
       open,
       onClose,
       onStageChanged,
+      onTaskChanged,
     }: {
       item: { title: string } | null;
       open: boolean;
       onClose: () => void;
       onStageChanged: () => void;
+      onTaskChanged?: () => void;
     }) =>
       open ? (
         <div data-testid="drawer-stub">
           <span>{item?.title}</span>
           <button onClick={onClose}>cerrar-drawer</button>
           <button onClick={onStageChanged}>disparar-cambio</button>
+          <button onClick={() => onTaskChanged?.()}>disparar-tarea</button>
         </div>
       ) : null,
   }),
@@ -91,6 +94,20 @@ describe("PipelinePage", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("drawer-stub")).not.toBeInTheDocument();
     });
+  });
+
+  it("refetches the board when the drawer reports a task change", async () => {
+    const refetch = vi.fn();
+    vi.mocked(useSalesOpportunityBoard).mockReturnValue(fakeBoard(refetch));
+    render(<PipelinePage />);
+
+    screen.getByText("abrir-desktop").click();
+    await waitFor(() => {
+      expect(screen.getByTestId("drawer-stub")).toBeInTheDocument();
+    });
+
+    screen.getByText("disparar-tarea").click();
+    expect(refetch).toHaveBeenCalled();
   });
 
   it("refetches the board when the page-local refresh button is clicked", () => {

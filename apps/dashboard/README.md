@@ -80,11 +80,34 @@ the var is not `VITE_`-prefixed, Vite never exposes it to client code via
 real personal email as a default anywhere — always pass it via your own
 shell environment.
 
-## Read-only scope
+**`VITE_ORIGENLAB_API_BASE_URL` must stay unset** while relying on this
+mechanism. When it's set, client code builds absolute request URLs straight
+to that API host instead of relative paths, so the browser bypasses Vite's
+dev proxy entirely — and with it, the proxy's server-side identity
+injection (and the strip-inbound-header step that always runs alongside it).
+Durable-write requests then arrive with no trusted operator header and are
+correctly rejected (401), or — if you also happen to be proxying elsewhere —
+could carry whatever `X-OriginLab-Operator-Email` the client sent, unstripped.
 
-- **GET only** — no write/send/draft/archive actions.
+## Write scope and safety boundaries
+
+- **Durable CRM writes are explicitly allowlisted**, not general write
+  access: `POST /operations/*` (PR3 operator state, sales-opportunity
+  promote/stage, activity/task create) requires a trusted operator identity
+  and `Idempotency-Key`, and is the only path that changes durable
+  `commercial.*` state.
+- **Annex import** (`POST /operator/procurement/tenders/{code}/annex-bundle/{preview|import}`)
+  is a separate, similarly sanctioned write path for tender evidence — not
+  part of `/operations/*`.
+- The dashboard still does **not** send email, create Gmail drafts, archive
+  Gmail, or otherwise mutate outbound/send truth — that remains exclusively
+  in the SQLite pipeline and operator scripts; Postgres mirror reads are not
+  send approval.
+- **Machine evidence is distinct from durable human CRM truth.** Read-only
+  machine surfaces (PR3 opportunities, warm cases, contact/lead intel) only
+  ever *propose*; a human operator decision only becomes durable through the
+  allowlisted `/operations/*` commands above.
 - **Today** includes an **Automatización operador** card (`AutomationHealthCard`) fed by `GET /operator/automation-status` — local automation state only, no trigger buttons. The card surfaces freshness for Gmail/SQLite, the dashboard mirror, and the API snapshot using existing read-only automation status fields. It distinguishes actual Postgres mirror sync freshness from the auto-mirror loop state, so manual mirror refreshes are reflected without implying the dashboard can trigger writes.
-- **Send/outreach truth** remains in the SQLite pipeline and operator scripts; Postgres mirror reads are not send approval.
 - **No raw email bodies** or filesystem paths in the UI (API snippet/subject previews only).
 
 ## Tests and build
