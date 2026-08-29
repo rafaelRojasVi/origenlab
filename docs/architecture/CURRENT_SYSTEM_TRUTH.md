@@ -1,10 +1,12 @@
 # Current System Truth
 
 Status: canonical
-Last verified against code: 2026-08-29 (branch `feat/sales-opportunity-realdata-preview-v1`)
+Last verified against code: 2026-08-29, `main` @ `a789b9b915407b223ddbd5592ca23a872e9a4359`
 
-One page of what the system actually is today. If another doc contradicts
-this one, this one wins; fix the other doc.
+One page of what the system actually is today — the current authoritative source of truth
+for this repository. If another doc contradicts this one (including
+`COMMERCIAL_OPERATING_SYSTEM_AUDIT.md`, which is a historical/point-in-time audit and
+evidence record, not current truth), this one wins; fix the other doc.
 
 ## Topology
 
@@ -116,10 +118,16 @@ Anything else is read-only. `apps/api` write policy is enforced by
 | Catálogo | `/mirror/catalog/products` | — | machine evidence |
 | Sistema | health/status | — | diagnostics |
 
+The dashboard's `/cases/warm` category set (`WarmCaseCategory` in
+`apps/dashboard/src/api/commercialTypes.ts`) matches the API's canonical contract
+(`apps/api/src/origenlab_api/schemas/cases.py`) exactly.
+
 ## Migrations
 
-Alembic lives in `apps/email-pipeline/alembic`; head `20260827_0038`.
-Durable CRM tables: 0032–0038. Shipped migrations are never rewritten;
+Alembic lives in `apps/email-pipeline/alembic`; head `20260828_0039`.
+Durable CRM tables were introduced through 0032–0038; 0039 adds the CRM-4A
+writer grants and organization/contact API read views (no table/column/
+constraint or data changes). Shipped migrations are never rewritten;
 corrections are new migrations. Downgrades that would drop human data are
 fail-closed.
 
