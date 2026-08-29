@@ -48,6 +48,13 @@ class SalesOpportunityBoardItem:
     stage_updated_at: datetime
     contact_display_email: str | None
     account_display_domain: str | None
+    # CRM-4A resolved durable identity display fields (via api.v_commercial_
+    # organization/contact -- the read role has no grant on the raw
+    # commercial.* tables). None until organization_id/primary_crm_contact_id
+    # are populated by the reconciliation writer.
+    organization_display_name: str | None
+    contact_display_name: str | None
+    contact_primary_email: str | None
     open_task_count: int
     next_task_id: str | None
     next_task_title: str | None
@@ -431,6 +438,9 @@ class PostgresCommercialOperationsReadRepository:
                       COALESCE(se.stage_changed_at, so.created_at) AS stage_updated_at,
                       o.contact_display_email,
                       o.account_display_domain,
+                      crm_org.display_name AS organization_display_name,
+                      crm_contact.display_name AS contact_display_name,
+                      crm_contact.primary_email AS contact_primary_email,
                       COALESCE(ct.open_task_count, 0) AS open_task_count,
                       nt.next_task_id,
                       nt.next_task_title,
@@ -438,6 +448,10 @@ class PostgresCommercialOperationsReadRepository:
                     FROM api.v_commercial_sales_opportunity so
                     LEFT JOIN api.v_commercial_opportunity o
                       ON o.opportunity_id = so.source_opportunity_id
+                    LEFT JOIN api.v_commercial_organization crm_org
+                      ON crm_org.organization_id = so.organization_id
+                    LEFT JOIN api.v_commercial_contact crm_contact
+                      ON crm_contact.contact_id = so.primary_crm_contact_id
                     LEFT JOIN LATERAL (
                       SELECT e.created_at AS stage_changed_at
                       FROM api.v_commercial_sales_opportunity_event e

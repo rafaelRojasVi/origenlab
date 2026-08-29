@@ -27,6 +27,9 @@ from origenlab_api.repositories.postgres.commercial_operations import (
     CommercialOperationConflictError,
     PostgresCommercialOperationsRepository,
 )
+from origenlab_api.repositories.postgres.commercial_operations_read import (
+    PostgresCommercialOperationsReadRepository,
+)
 from origenlab_api.repositories.postgres.common import normalize_postgres_url
 from origenlab_api.settings import Settings
 
@@ -88,6 +91,13 @@ def repo() -> PostgresCommercialOperationsRepository:
     url = _postgres_test_url_ready()
     assert url is not None
     return PostgresCommercialOperationsRepository(_settings(url))
+
+
+@pytest.fixture
+def read_repo() -> PostgresCommercialOperationsReadRepository:
+    url = _postgres_test_url_ready()
+    assert url is not None
+    return PostgresCommercialOperationsReadRepository(_settings(url))
 
 
 def _seed_opportunity(
@@ -1172,4 +1182,72 @@ def test_contact_reused_only_when_existing_organization_matches_resolved_organiz
             sales_opportunity_ids=(sales_id,),
             organization_ids=new_org_ids,
             contact_ids=(contact_id_existing,),
+        )
+
+
+# ---------------------------------------------------------------------------
+# 15. Read model exposes the resolved organization/contact display identity
+# ---------------------------------------------------------------------------
+
+
+def test_list_sales_opportunities_exposes_resolved_identity_display_names(
+    admin_conn: object,
+    repo: PostgresCommercialOperationsRepository,
+    read_repo: PostgresCommercialOperationsReadRepository,
+) -> None:
+    account_id = _uid("a")
+    contact_evidence_id = _uid("c")
+    domain = f"{_uid('readmodel')}.cl"
+    email = f"buyer@{domain}"
+    opportunity_id = _uid("o")
+    sales_id = _uid("sales")
+
+    _seed_opportunity(
+        admin_conn,
+        opportunity_id=opportunity_id,
+        account_id=account_id,
+        primary_contact_id=contact_evidence_id,
+        account_display_domain=domain,
+        contact_display_email=email,
+    )
+
+    try:
+        result = _promote(
+            repo, sales_opportunity_id=sales_id, source_opportunity_id=opportunity_id
+        )
+        assert result.organization_id is not None
+        assert result.primary_crm_contact_id is not None
+
+        items, _total = read_repo.list_sales_opportunities(
+            source_opportunity_ids=[opportunity_id]
+        )
+
+        assert len(items) == 1
+        item = items[0]
+        assert item.organization_display_name == domain
+        assert item.contact_primary_email == email
+        # No durable contact display_name was ever set (evidence had no
+        # name), so it must stay None rather than fabricate one.
+        assert item.contact_display_name is None
+    finally:
+        with admin_conn.cursor() as cur:
+            cur.execute(
+                "SELECT organization_id FROM commercial.organization_source "
+                "WHERE source_id = %s",
+                (account_id,),
+            )
+            row = cur.fetchone()
+            org_id = row["organization_id"] if row else None
+            cur.execute(
+                "SELECT contact_id FROM commercial.contact_source WHERE source_id = %s",
+                (contact_evidence_id,),
+            )
+            row = cur.fetchone()
+            contact_id = row["contact_id"] if row else None
+        _cleanup(
+            admin_conn,
+            opportunity_ids=(opportunity_id,),
+            sales_opportunity_ids=(sales_id,),
+            organization_ids=(org_id,) if org_id else (),
+            contact_ids=(contact_id,) if contact_id else (),
         )
