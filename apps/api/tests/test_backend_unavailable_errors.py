@@ -27,6 +27,26 @@ class _FakePsycopg:
         )
 
 
+def test_is_psycopg_error_true_for_real_pg_error_instance() -> None:
+    assert pg_common.is_psycopg_error(_FakePsycopg, _FakePsycopg.Error("boom")) is True
+
+
+def test_is_psycopg_error_false_for_unrelated_exception() -> None:
+    assert pg_common.is_psycopg_error(_FakePsycopg, ValueError("not a pg error")) is False
+
+
+def test_is_psycopg_error_false_for_pg_without_usable_error_class() -> None:
+    class _NoErrorAttr:
+        pass
+
+    assert pg_common.is_psycopg_error(_NoErrorAttr, ValueError("boom")) is False
+
+    class _NonTypeError:
+        Error = "not-a-class"
+
+    assert pg_common.is_psycopg_error(_NonTypeError, ValueError("boom")) is False
+
+
 def test_postgres_connection_wraps_psycopg_errors_without_dsn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

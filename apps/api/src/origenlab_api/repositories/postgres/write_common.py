@@ -12,6 +12,7 @@ from typing import Any, Iterator
 
 from origenlab_api.repositories.postgres.common import (
     PostgresBackendUnavailableError,
+    is_psycopg_error,
     normalize_postgres_url,
     require_psycopg,
 )
@@ -20,11 +21,6 @@ from origenlab_api.settings import Settings
 
 class PostgresWriteBackendUnavailableError(PostgresBackendUnavailableError):
     """Restricted operator-write Postgres dependency failed safely."""
-
-
-def _is_psycopg_error(pg: Any, exc: BaseException) -> bool:
-    error_cls = getattr(pg, "Error", None)
-    return isinstance(error_cls, type) and isinstance(exc, error_cls)
 
 
 @contextmanager
@@ -46,7 +42,7 @@ def postgres_write_connection(settings: Settings) -> Iterator[Any]:
     except PostgresWriteBackendUnavailableError:
         raise
     except Exception as exc:
-        if _is_psycopg_error(pg, exc):
+        if is_psycopg_error(pg, exc):
             raise PostgresWriteBackendUnavailableError(
                 "Commercial operations write database unavailable."
             ) from exc

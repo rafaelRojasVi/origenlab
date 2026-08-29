@@ -139,3 +139,37 @@ def test_write_connection_uses_write_dsn_only(
 
     assert observed["url"] == "postgresql://writer/MUST_BE_USED"
     assert "readonly" not in str(observed["url"])
+
+
+def test_write_connection_wraps_psycopg_errors_as_write_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from origenlab_api.repositories.postgres import write_common
+
+    class FakePg:
+        class Error(Exception):
+            pass
+
+        def connect(self, *args: object, **kwargs: object) -> None:
+            raise FakePg.Error(
+                "could not connect to postgresql://writer:password@127.0.0.1:5432/origenlab"
+            )
+
+    monkeypatch.setattr(
+        write_common,
+        "require_psycopg",
+        lambda: FakePg(),
+    )
+
+    settings = _settings(
+        postgres_write_url="postgresql://writer:password@127.0.0.1:5432/origenlab",
+    )
+
+    with pytest.raises(write_common.PostgresWriteBackendUnavailableError) as excinfo:
+        with write_common.postgres_write_connection(settings):
+            pass
+
+    message = str(excinfo.value)
+    assert message == "Commercial operations write database unavailable."
+    assert "postgresql://" not in message
+    assert "password" not in message.lower()
