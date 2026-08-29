@@ -132,7 +132,7 @@ export class OperatorApiError extends Error {
   }
 }
 
-async function fetchJsonGet<T>(url: string): Promise<T> {
+export async function fetchJsonGet<T>(url: string): Promise<T> {
   const res = await fetch(url, {
     method: "GET",
     credentials: "include",

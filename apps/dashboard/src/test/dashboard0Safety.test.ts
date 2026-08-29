@@ -178,8 +178,10 @@ describe("Dashboard-2 safety (mounted Today)", () => {
     expect(mirrorCommercialClientSource).toContain("/mirror/commercial/deals");
     expect(mirrorCommercialClientSource).not.toMatch(/\/mirror\/commercial\/purchase-events/);
     expect(mirrorCommercialClientSource).not.toMatch(/operatorApiUrl\([^)]*purchase/);
-    expect(mirrorCommercialClientSource).toMatch(/credentials:\s*["']include["']/);
-    expect(mirrorCommercialClientSource).toMatch(/method:\s*["']GET["']/);
+    // Credentialed GET is delegated to operatorClient's shared fetchJsonGet (see
+    // "active API clients send credentials include" below), not implemented inline here.
+    expect(mirrorCommercialClientSource).toMatch(/fetchJsonGet/);
+    expect(mirrorCommercialClientSource).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/i);
   });
 
   it("operatorClient uses GET fetch only", () => {
@@ -274,8 +276,15 @@ describe("Dashboard-2 safety (mounted Today)", () => {
 
 describe("Production API auth gap (docs/tests guard)", () => {
   it("active API clients send credentials include for Cloudflare Access cookies", () => {
+    // A client either sends `credentials: "include"` directly, or delegates entirely to
+    // operatorClient's shared fetchJsonGet (itself asserted to send it, above/below).
+    const sendsCredentialsInclude = /credentials:\s*["']include["']/;
+    const delegatesToSharedFetchJsonGet = /\bfetchJsonGet\b/;
     for (const source of activeApiClientSources) {
-      expect(source, "credentials include").toMatch(/credentials:\s*["']include["']/);
+      expect(
+        sendsCredentialsInclude.test(source) || delegatesToSharedFetchJsonGet.test(source),
+        "credentials include (directly or via shared fetchJsonGet)",
+      ).toBe(true);
     }
   });
 

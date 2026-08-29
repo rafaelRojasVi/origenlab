@@ -10,7 +10,7 @@ import type {
   LeadProspectsListUi,
   LeadResearchSummaryUi,
 } from "./leadIntelTypes";
-import { OperatorApiError, operatorApiUrl } from "./operatorClient";
+import { OperatorApiError, fetchJsonGet, operatorApiUrl } from "./operatorClient";
 
 export const MIRROR_LEADS_PROSPECTS_PATH = "/mirror/leads/prospects";
 export const MIRROR_LEADS_PROSPECTS_EXPORT_PATH = "/mirror/leads/prospects/export.csv";
@@ -34,19 +34,6 @@ function leadProspectsQueryParams(
   if (query.min_score != null) params.min_score = query.min_score;
   if (query.contact_scope?.trim()) params.contact_scope = query.contact_scope.trim();
   return params;
-}
-
-async function fetchMirrorJsonGet<T>(url: string): Promise<T> {
-  const res = await fetch(url, {
-    method: "GET",
-    credentials: "include",
-    headers: { Accept: "application/json" },
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new OperatorApiError(text || res.statusText || `HTTP ${res.status}`, res.status);
-  }
-  return res.json() as Promise<T>;
 }
 
 export function mirrorLeadProspectsUrl(query: LeadProspectsListQuery = {}): string {
@@ -93,19 +80,19 @@ export function mirrorLeadProspectDetailUrl(prospectKey: string): string {
 export function fetchLeadProspectsMirror(
   query: LeadProspectsListQuery = {},
 ): Promise<LeadProspectsListUi> {
-  return fetchMirrorJsonGet<unknown>(mirrorLeadProspectsUrl(query)).then(parseLeadProspectsListResponse);
+  return fetchJsonGet<unknown>(mirrorLeadProspectsUrl(query)).then(parseLeadProspectsListResponse);
 }
 
 export function fetchLeadProspectDetailMirror(
   prospectKey: string,
 ): Promise<LeadProspectDetailResponseUi> {
-  return fetchMirrorJsonGet<unknown>(mirrorLeadProspectDetailUrl(prospectKey)).then(
+  return fetchJsonGet<unknown>(mirrorLeadProspectDetailUrl(prospectKey)).then(
     parseLeadProspectDetailResponse,
   );
 }
 
 export function fetchLeadResearchSummaryMirror(): Promise<LeadResearchSummaryUi> {
-  return fetchMirrorJsonGet<unknown>(operatorApiUrl(MIRROR_LEADS_SUMMARY_PATH)).then(
+  return fetchJsonGet<unknown>(operatorApiUrl(MIRROR_LEADS_SUMMARY_PATH)).then(
     parseLeadResearchSummaryResponse,
   );
 }
