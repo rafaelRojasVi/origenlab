@@ -612,6 +612,18 @@ export function parseSalesOpportunityListItem(
       row.account_display_domain,
       "account_display_domain",
     ),
+    organization_display_name: nullableString(
+      row.organization_display_name,
+      "organization_display_name",
+    ),
+    contact_display_name: nullableString(
+      row.contact_display_name,
+      "contact_display_name",
+    ),
+    contact_primary_email: nullableString(
+      row.contact_primary_email,
+      "contact_primary_email",
+    ),
     open_task_count: positiveIntegerOrZero(
       row.open_task_count,
       "open_task_count",

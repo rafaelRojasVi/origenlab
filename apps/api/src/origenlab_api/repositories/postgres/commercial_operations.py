@@ -43,6 +43,25 @@ SALES_OPPORTUNITY_TERMINAL_STAGES = frozenset(
     }
 )
 
+# CRM-4A reconciliation: resolution keys reuse the *_source provenance
+# tables' unique (source_kind, source_id) constraint as the race-safe
+# find-or-create key, rather than matching on raw domain/email strings
+# (organization.primary_domain / contact.primary_email have no unique
+# constraint by design -- see 20260827_0038).
+_ORG_SOURCE_KIND = "pr2_account"
+_CONTACT_SOURCE_KIND = "pr2_contact"
+
+# Mirrors the DB CHECK constraints so malformed evidence (blank, oversized,
+# internal whitespace) never reaches an INSERT. Evidence-quality problems
+# must be *skipped*, never raised: reconciliation is best-effort relative to
+# promotion succeeding. This is distinct from a genuine DB/infrastructure
+# failure during a resolve-or-create call (dropped connection, unexpected
+# constraint violation) -- those are never caught here and propagate to
+# abort/rollback the whole transaction like every other failure in this
+# method, exactly as before this feature existed.
+_MAX_DOMAIN_LEN = 253
+_MAX_EMAIL_LEN = 320
+
 
 @dataclass(frozen=True)
 class OperatorState:
@@ -282,6 +301,270 @@ def _store_idempotency_result(
             "result_id": result_id,
         },
     )
+
+
+def _sanitized_evidence(value: str | None, *, max_length: int) -> str | None:
+    """Best-effort, non-raising evidence normalization.
+
+    ``None`` return means "treat as insufficient evidence" -- never raises.
+    """
+    if value is None:
+        return None
+    candidate = value.strip()
+    if not candidate or len(candidate) > max_length:
+        return None
+    if any(ch.isspace() for ch in candidate):
+        return None
+    return candidate
+
+
+def _sanitized_email(value: str | None) -> str | None:
+    candidate = _sanitized_evidence(value, max_length=_MAX_EMAIL_LEN)
+    if candidate is None:
+        return None
+    local, _, domain = candidate.partition("@")
+    if not local or not domain or "@" in domain:
+        return None
+    return candidate
+
+
+def _resolve_or_create_organization(
+    cur: object,
+    *,
+    account_id: str | None,
+    account_display_domain: str | None,
+    operator: str,
+    now: datetime,
+) -> str | None:
+    """Resolve the durable organization linked to a PR2 ``account_id``.
+
+    Resolution key is ``commercial.organization_source(source_kind='pr2_account',
+    source_id=account_id)`` -- CRM-4A's own built-in provenance/dedup key, not
+    a raw domain-string match (``organization.primary_domain`` has no unique
+    constraint, by design). A brand-new organization is only created when
+    ``account_display_domain`` survives sanitization, since
+    ``organization.display_name`` is ``NOT NULL`` and must never be
+    fabricated.
+
+    Race-safety without a DELETE grant: a fresh organization row is inserted
+    speculatively inside a SAVEPOINT. If a concurrent promotion wins the
+    ``organization_source`` unique race, the speculative row is undone via
+    ``ROLLBACK TO SAVEPOINT`` -- the API write role is deliberately never
+    granted DELETE on these durable tables.
+    """
+    if account_id is None:
+        return None
+
+    cur.execute(
+        """
+        SELECT organization_id
+        FROM commercial.organization_source
+        WHERE source_kind = %(source_kind)s
+          AND source_id = %(account_id)s
+        LIMIT 1
+        """,
+        {"source_kind": _ORG_SOURCE_KIND, "account_id": account_id},
+    )
+    existing = cur.fetchone()
+    if existing is not None:
+        return str(existing["organization_id"])
+
+    domain = _sanitized_evidence(account_display_domain, max_length=_MAX_DOMAIN_LEN)
+    if domain is None:
+        return None
+
+    organization_id = f"org_{uuid.uuid4().hex}"
+
+    cur.execute("SAVEPOINT reconcile_organization")
+    cur.execute(
+        """
+        INSERT INTO commercial.organization (
+          organization_id, display_name, primary_domain,
+          version, created_by, updated_by, created_at, updated_at
+        ) VALUES (
+          %(organization_id)s, %(display_name)s, %(primary_domain)s,
+          1, %(operator)s, %(operator)s, %(now)s, %(now)s
+        )
+        """,
+        {
+            "organization_id": organization_id,
+            "display_name": domain,
+            "primary_domain": domain,
+            "operator": operator,
+            "now": now,
+        },
+    )
+    cur.execute(
+        """
+        INSERT INTO commercial.organization_source (
+          organization_id, source_kind, source_id, created_by, created_at
+        ) VALUES (
+          %(organization_id)s, %(source_kind)s, %(account_id)s,
+          %(operator)s, %(now)s
+        )
+        ON CONFLICT (source_kind, source_id) DO NOTHING
+        RETURNING organization_id
+        """,
+        {
+            "organization_id": organization_id,
+            "source_kind": _ORG_SOURCE_KIND,
+            "account_id": account_id,
+            "operator": operator,
+            "now": now,
+        },
+    )
+    won = cur.fetchone()
+
+    if won is not None:
+        cur.execute("RELEASE SAVEPOINT reconcile_organization")
+        return organization_id
+
+    # Lost the race: undo the speculative organization row without DELETE
+    # privilege, then read the winner's id committed by the other
+    # transaction (INSERT ... ON CONFLICT waits for it, so it is visible).
+    cur.execute("ROLLBACK TO SAVEPOINT reconcile_organization")
+    cur.execute("RELEASE SAVEPOINT reconcile_organization")
+
+    cur.execute(
+        """
+        SELECT organization_id
+        FROM commercial.organization_source
+        WHERE source_kind = %(source_kind)s
+          AND source_id = %(account_id)s
+        LIMIT 1
+        """,
+        {"source_kind": _ORG_SOURCE_KIND, "account_id": account_id},
+    )
+    winner = cur.fetchone()
+
+    if winner is None:
+        raise RuntimeError("organization_source race lost but no winning row found")
+
+    return str(winner["organization_id"])
+
+
+def _resolve_or_create_contact(
+    cur: object,
+    *,
+    organization_id: str | None,
+    primary_contact_id: str | None,
+    contact_display_email: str | None,
+    operator: str,
+    now: datetime,
+) -> str | None:
+    """Resolve the durable contact linked to a PR2 ``primary_contact_id``.
+
+    Org-first policy: a contact is only created/linked when an organization
+    was already resolved (``organization_id is not None``). This closes the
+    DB's ``MATCH SIMPLE`` gap on the composite FK
+    ``sales_opportunity_primary_contact_organization_fkey`` at the app
+    level -- that FK is not checked at all when either column is NULL.
+
+    If a durable contact is already reconciled for this
+    ``primary_contact_id`` but under a *different* organization (the same
+    person's email later appearing under a different account/domain), it is
+    not linked here: ``contact_source.source_id`` is unique, so a second
+    durable contact can never be minted for the same PR2 contact id, and
+    linking the mismatched contact would fail the composite FK at INSERT
+    time and abort the whole promotion.
+    """
+    if organization_id is None or primary_contact_id is None:
+        return None
+
+    cur.execute(
+        """
+        SELECT cs.contact_id, c.organization_id
+        FROM commercial.contact_source cs
+        JOIN commercial.contact c ON c.contact_id = cs.contact_id
+        WHERE cs.source_kind = %(source_kind)s
+          AND cs.source_id = %(primary_contact_id)s
+        LIMIT 1
+        """,
+        {
+            "source_kind": _CONTACT_SOURCE_KIND,
+            "primary_contact_id": primary_contact_id,
+        },
+    )
+    existing = cur.fetchone()
+
+    if existing is not None:
+        if str(existing["organization_id"]) == organization_id:
+            return str(existing["contact_id"])
+        return None
+
+    email = _sanitized_email(contact_display_email)
+    contact_id = f"contact_{uuid.uuid4().hex}"
+
+    cur.execute("SAVEPOINT reconcile_contact")
+    cur.execute(
+        """
+        INSERT INTO commercial.contact (
+          contact_id, organization_id, display_name, primary_email,
+          version, created_by, updated_by, created_at, updated_at
+        ) VALUES (
+          %(contact_id)s, %(organization_id)s, NULL, %(primary_email)s,
+          1, %(operator)s, %(operator)s, %(now)s, %(now)s
+        )
+        """,
+        {
+            "contact_id": contact_id,
+            "organization_id": organization_id,
+            "primary_email": email,
+            "operator": operator,
+            "now": now,
+        },
+    )
+    cur.execute(
+        """
+        INSERT INTO commercial.contact_source (
+          contact_id, source_kind, source_id, created_by, created_at
+        ) VALUES (
+          %(contact_id)s, %(source_kind)s, %(primary_contact_id)s,
+          %(operator)s, %(now)s
+        )
+        ON CONFLICT (source_kind, source_id) DO NOTHING
+        RETURNING contact_id
+        """,
+        {
+            "contact_id": contact_id,
+            "source_kind": _CONTACT_SOURCE_KIND,
+            "primary_contact_id": primary_contact_id,
+            "operator": operator,
+            "now": now,
+        },
+    )
+    won = cur.fetchone()
+
+    if won is not None:
+        cur.execute("RELEASE SAVEPOINT reconcile_contact")
+        return contact_id
+
+    cur.execute("ROLLBACK TO SAVEPOINT reconcile_contact")
+    cur.execute("RELEASE SAVEPOINT reconcile_contact")
+
+    cur.execute(
+        """
+        SELECT cs.contact_id, c.organization_id
+        FROM commercial.contact_source cs
+        JOIN commercial.contact c ON c.contact_id = cs.contact_id
+        WHERE cs.source_kind = %(source_kind)s
+          AND cs.source_id = %(primary_contact_id)s
+        LIMIT 1
+        """,
+        {
+            "source_kind": _CONTACT_SOURCE_KIND,
+            "primary_contact_id": primary_contact_id,
+        },
+    )
+    winner = cur.fetchone()
+
+    if winner is None:
+        raise RuntimeError("contact_source race lost but no winning row found")
+
+    if str(winner["organization_id"]) == organization_id:
+        return str(winner["contact_id"])
+
+    return None
 
 
 class PostgresCommercialOperationsRepository:
@@ -528,11 +811,17 @@ class PostgresCommercialOperationsRepository:
                 # PR3 is consulted only as the machine/evidence source.
                 # Its identity references are snapshotted into durable CRM
                 # state; no FK is created back to this replaceable view.
+                # contact_display_email / account_display_domain are
+                # explicitly "not identity truth" (see 20260822_0031) -- used
+                # below only as display material for a *new* organization/
+                # contact, never as a resolution/matching key.
                 cur.execute(
                     """
                     SELECT
                       account_id,
-                      primary_contact_id
+                      primary_contact_id,
+                      contact_display_email,
+                      account_display_domain
                     FROM api.v_commercial_opportunity
                     WHERE opportunity_id =
                       %(source_opportunity_id)s
@@ -550,6 +839,28 @@ class PostgresCommercialOperationsRepository:
                         f"Commercial opportunity not found: {source_opportunity_id}"
                     )
 
+                # CRM-4A reconciliation: best-effort, conservative, org-first.
+                # Never fabricates identity from insufficient/malformed
+                # evidence (reconciliation is skipped, promotion still
+                # proceeds); a genuine DB/infrastructure failure inside these
+                # calls is never caught here and aborts/rolls back the whole
+                # transaction like every other failure in this method.
+                organization_id = _resolve_or_create_organization(
+                    cur,
+                    account_id=source["account_id"],
+                    account_display_domain=source["account_display_domain"],
+                    operator=operator,
+                    now=now,
+                )
+                primary_crm_contact_id = _resolve_or_create_contact(
+                    cur,
+                    organization_id=organization_id,
+                    primary_contact_id=source["primary_contact_id"],
+                    contact_display_email=source["contact_display_email"],
+                    operator=operator,
+                    now=now,
+                )
+
                 cur.execute(
                     """
                     INSERT INTO commercial.sales_opportunity (
@@ -565,7 +876,9 @@ class PostgresCommercialOperationsRepository:
                       created_by,
                       updated_by,
                       created_at,
-                      updated_at
+                      updated_at,
+                      organization_id,
+                      primary_crm_contact_id
                     )
                     VALUES (
                       %(sales_opportunity_id)s,
@@ -580,7 +893,9 @@ class PostgresCommercialOperationsRepository:
                       %(operator)s,
                       %(operator)s,
                       %(created_at)s,
-                      %(created_at)s
+                      %(created_at)s,
+                      %(organization_id)s,
+                      %(primary_crm_contact_id)s
                     )
                     ON CONFLICT (
                       source_kind,
@@ -598,6 +913,8 @@ class PostgresCommercialOperationsRepository:
                         "owner_key": owner_key,
                         "operator": operator,
                         "created_at": now,
+                        "organization_id": organization_id,
+                        "primary_crm_contact_id": primary_crm_contact_id,
                     },
                 )
 
@@ -662,6 +979,10 @@ class PostgresCommercialOperationsRepository:
                                 "snapshot": {
                                     "account_id": result.account_id,
                                     "primary_contact_id": (result.primary_contact_id),
+                                    "organization_id": result.organization_id,
+                                    "primary_crm_contact_id": (
+                                        result.primary_crm_contact_id
+                                    ),
                                 },
                                 "opportunity": {
                                     "title": result.title,

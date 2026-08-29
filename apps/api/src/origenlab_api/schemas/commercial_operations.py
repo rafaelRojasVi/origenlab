@@ -217,6 +217,10 @@ class SalesOpportunityListItem(BaseModel):
     contact_display_email: str | None = None
     account_display_domain: str | None = None
 
+    organization_display_name: str | None = None
+    contact_display_name: str | None = None
+    contact_primary_email: str | None = None
+
     open_task_count: int = 0
     next_task_id: str | None = None
     next_task_title: str | None = None

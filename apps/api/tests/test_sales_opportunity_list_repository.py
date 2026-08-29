@@ -91,6 +91,9 @@ def _row(**overrides: Any) -> dict[str, Any]:
         "stage_updated_at": NOW,
         "contact_display_email": "buyer@example.cl",
         "account_display_domain": "example.cl",
+        "organization_display_name": None,
+        "contact_display_name": None,
+        "contact_primary_email": None,
         "open_task_count": 1,
         "next_task_id": "task_1",
         "next_task_title": "Llamar cliente",
@@ -122,6 +125,8 @@ def test_list_returns_items_and_total_count(monkeypatch: pytest.MonkeyPatch) -> 
     assert "FROM api.v_commercial_sales_opportunity so" in count_sql
     assert "FROM api.v_commercial_sales_opportunity so" in list_sql
     assert "LEFT JOIN api.v_commercial_opportunity o" in list_sql
+    assert "LEFT JOIN api.v_commercial_organization crm_org" in list_sql
+    assert "LEFT JOIN api.v_commercial_contact crm_contact" in list_sql
     assert "LEFT JOIN LATERAL" in list_sql
     assert "api.v_commercial_sales_opportunity_event e" in list_sql
     assert "ORDER BY so.updated_at DESC" in list_sql

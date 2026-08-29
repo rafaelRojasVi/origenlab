@@ -24,6 +24,9 @@ function item(overrides: Partial<SalesOpportunityListItem> = {}): SalesOpportuni
     stage_updated_at: "2026-08-25T12:00:00+00:00",
     contact_display_email: "buyer@example.cl",
     account_display_domain: "uach.cl",
+    organization_display_name: null,
+    contact_display_name: null,
+    contact_primary_email: null,
     open_task_count: 1,
     next_task_id: "task_1",
     next_task_title: "Llamar a cliente",
@@ -68,6 +71,20 @@ describe("SalesOpportunityCard", () => {
     );
 
     expect(screen.getByText("buyer@example.cl")).toBeInTheDocument();
+  });
+
+  it("prefers the resolved durable organization name over the machine display domain", () => {
+    render(
+      <SalesOpportunityCard
+        item={item({ organization_display_name: "Universidad Austral de Chile" })}
+        onOpen={vi.fn()}
+        onStageChange={vi.fn()}
+        stagePending={false}
+      />,
+    );
+
+    expect(screen.getByText("Universidad Austral de Chile")).toBeInTheDocument();
+    expect(screen.queryByText("uach.cl")).not.toBeInTheDocument();
   });
 
   it("calls onOpen when the card body is clicked, not when the stage select is used", () => {

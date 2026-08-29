@@ -41,6 +41,9 @@ function item(overrides: Partial<SalesOpportunityListItem> = {}): SalesOpportuni
     stage_updated_at: "2026-08-25T12:00:00+00:00",
     contact_display_email: "buyer@example.cl",
     account_display_domain: "uach.cl",
+    organization_display_name: null,
+    contact_display_name: null,
+    contact_primary_email: null,
     open_task_count: 0,
     next_task_id: null,
     next_task_title: null,
@@ -69,6 +72,35 @@ describe("SalesOpportunityWorkspaceDrawer", () => {
     expect(screen.getByText("uach.cl")).toBeInTheDocument();
     expect(screen.getByText("Centrífuga refrigerada")).toBeInTheDocument();
     expect(screen.getByTestId("work-panel-stub")).toBeInTheDocument();
+  });
+
+  it("prefers the resolved durable organization/contact identity over machine display strings", () => {
+    vi.mocked(fetchSalesOpportunity).mockReset().mockResolvedValue({
+      meta: { data_source: "postgres", read_only: true },
+      item: {
+        ...item({
+          organization_display_name: "Universidad Austral de Chile",
+          contact_display_name: "Ana Compradora",
+        }),
+        version: 2,
+      },
+    });
+
+    render(
+      <SalesOpportunityWorkspaceDrawer
+        item={item({
+          organization_display_name: "Universidad Austral de Chile",
+          contact_display_name: "Ana Compradora",
+        })}
+        open
+        onClose={vi.fn()}
+        onStageChanged={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Universidad Austral de Chile")).toBeInTheDocument();
+    expect(screen.getByText("Ana Compradora")).toBeInTheDocument();
+    expect(screen.queryByText("uach.cl")).not.toBeInTheDocument();
   });
 
   it("forwards onTaskChanged through to the work panel", () => {

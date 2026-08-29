@@ -22,19 +22,20 @@ real, title-bearing opportunity; promoting the others as "sales
 opportunities" would require inventing a title/subject that does not exist
 in the source data, which this task's data-safety rules forbid.
 
-Two of this script's writes are explicitly scoped preview-only
-demonstrations of a target shape that has NO production writer today
-(see the audit doc's CRM-4A finding):
+One of this script's writes is an explicitly scoped preview-only
+demonstration of a step normally performed by a different job:
 
 1. Seeding `commercial.opportunity` (normally written by the mirror-sync
    job, not this script) with just the one real row needed so the real
    `CommercialOperationsService.promote_sales_opportunity` write path has
    a source row to promote from (it looks the row up via
    `api.v_commercial_opportunity` and raises if missing).
-2. Seeding `commercial.organization` / `commercial.contact` (CRM-4A) and
-   then linking the newly promoted `sales_opportunity` to them via a direct
-   UPDATE. Production has no reconciliation writer for this yet — this is a
-   demonstration of the target shape, not a shipped feature.
+
+`commercial.organization` / `commercial.contact` (CRM-4A) are now created by
+the REAL production reconciliation writer inside `promote_sales_opportunity`
+itself -- this script no longer seeds or links them manually. It only
+provides the source evidence; the writer resolves/creates the durable
+identity from that evidence exactly as it would for any real promotion.
 
 Everything else (task/activity) is intentionally left empty: these are
 pure human-authored CRM concepts with no machine source to backfill from,
@@ -62,7 +63,6 @@ import sqlite3
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
-from uuid import uuid5, NAMESPACE_URL
 
 _REPO = Path(__file__).resolve().parents[1]
 if str(_REPO / "src") not in sys.path:
@@ -137,11 +137,6 @@ def _connect_sqlite_readonly(path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA query_only = ON")
     return conn
-
-
-def _deterministic_id(prefix: str, *parts: str) -> str:
-    """Stable, non-random id derived from real identifying fields (re-runnable)."""
-    return f"{prefix}_{uuid5(NAMESPACE_URL, '|'.join(parts)).hex}"
 
 
 def fetch_ceaf_evidence(sqlite_path: Path) -> dict:
@@ -241,63 +236,16 @@ def seed_opportunity_mirror(conn, evidence: dict) -> None:
     conn.commit()
 
 
-def seed_organization_and_contact(conn, evidence: dict, *, operator: str) -> tuple[str, str | None]:
-    """Preview-only demonstration of the target CRM-4A shape (no production writer exists).
-
-    Returns (organization_id, contact_id | None).
+def promote_and_link(evidence: dict, *, operator: str) -> str:
+    """Promotes via the REAL production write path, including the REAL CRM-4A
+    reconciliation writer -- organization_id/primary_crm_contact_id are
+    resolved/created by promote_sales_opportunity itself, from the source
+    evidence already seeded by seed_opportunity_mirror. Nothing here seeds or
+    links organization/contact rows manually.
     """
-    deal = evidence["deal"]
-    account = evidence["account"]
-    contact = evidence["contact"]
-
-    domain = (deal["client_domain"] if deal else None) or (account["primary_domain"] if account else None)
-    display_name = (deal["client_org_name"] if deal else None) or (account["canonical_name"] if account else None)
-    if not domain or not display_name:
-        raise SystemExit("Real evidence missing organization domain/name — refusing to invent one.")
-
-    organization_id = _deterministic_id("org", "realdata-preview", domain)
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO commercial.organization (
-              organization_id, display_name, primary_domain, version, created_by, updated_by
-            ) VALUES (%(id)s, %(name)s, %(domain)s, 1, %(operator)s, %(operator)s)
-            ON CONFLICT (organization_id) DO UPDATE SET
-              display_name = EXCLUDED.display_name, updated_by = EXCLUDED.updated_by, updated_at = now()
-            """,
-            {"id": organization_id, "name": display_name, "domain": domain, "operator": operator},
-        )
-
-        contact_id = None
-        email = (deal["client_contact_email"] if deal else None) or (contact["normalized_email"] if contact else None)
-        if email:
-            contact_id = _deterministic_id("contact", "realdata-preview", email)
-            cur.execute(
-                """
-                INSERT INTO commercial.contact (
-                  contact_id, organization_id, primary_email, display_name, version, created_by, updated_by
-                ) VALUES (%(id)s, %(org_id)s, %(email)s, %(name)s, 1, %(operator)s, %(operator)s)
-                ON CONFLICT (contact_id) DO UPDATE SET
-                  organization_id = EXCLUDED.organization_id, updated_by = EXCLUDED.updated_by, updated_at = now()
-                """,
-                {
-                    "id": contact_id,
-                    "org_id": organization_id,
-                    "email": email,
-                    "name": (contact["display_name"] if contact and contact["display_name"] else email),
-                    "operator": operator,
-                },
-            )
-    conn.commit()
-    return organization_id, contact_id
-
-
-def promote_and_link(evidence: dict, *, organization_id: str, contact_id: str | None, operator: str) -> str:
-    """Uses the REAL promotion write path, then a preview-only CRM-4A link demonstration."""
     from origenlab_api.services.commercial_operations_service import CommercialOperationsService
     from origenlab_api.repositories.postgres.commercial_operations import PostgresCommercialOperationsRepository
     from origenlab_api.settings import Settings
-    from origenlab_api.repositories.postgres.write_common import postgres_write_connection
 
     deal = evidence["deal"]
     opportunity_id = evidence["opportunity"]["opportunity_id"]
@@ -317,24 +265,11 @@ def promote_and_link(evidence: dict, *, organization_id: str, contact_id: str | 
         idempotency_key=f"realdata-preview-hydrate-{opportunity_id}-v1",
     )
 
-    with postgres_write_connection(settings) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                -- PREVIEW-ONLY: demonstrates the target CRM-4A reconciliation shape.
-                -- No production writer sets these columns today; see
-                -- docs/architecture/COMMERCIAL_OPERATING_SYSTEM_AUDIT.md.
-                UPDATE commercial.sales_opportunity
-                SET organization_id = %(org_id)s, primary_crm_contact_id = %(contact_id)s
-                WHERE sales_opportunity_id = %(id)s
-                """,
-                {
-                    "org_id": organization_id,
-                    "contact_id": contact_id,
-                    "id": sales_opportunity.sales_opportunity_id,
-                },
-            )
-        conn.commit()
+    print(
+        "  resolved organization_id="
+        f"{sales_opportunity.organization_id} primary_crm_contact_id="
+        f"{sales_opportunity.primary_crm_contact_id}"
+    )
 
     return sales_opportunity.sales_opportunity_id
 
@@ -374,14 +309,14 @@ def main() -> None:
     with pg.connect(normalize_postgres_url(args.postgres_write_url), connect_timeout=10) as conn:
         print("Seeding commercial.opportunity (preview-only mirror shape) ...")
         seed_opportunity_mirror(conn, evidence)
-        print("Seeding commercial.organization / commercial.contact (preview-only CRM-4A demo) ...")
-        organization_id, contact_id = seed_organization_and_contact(conn, evidence, operator=PREVIEW_OPERATOR)
 
-    print("Promoting via the real durable write path (CommercialOperationsService.promote_sales_opportunity) ...")
-    sales_opportunity_id = promote_and_link(
-        evidence, organization_id=organization_id, contact_id=contact_id, operator=PREVIEW_OPERATOR
+    print(
+        "Promoting via the real durable write path "
+        "(CommercialOperationsService.promote_sales_opportunity, including the "
+        "real CRM-4A reconciliation writer) ..."
     )
-    print(f"Done. sales_opportunity_id={sales_opportunity_id} organization_id={organization_id} contact_id={contact_id}")
+    sales_opportunity_id = promote_and_link(evidence, operator=PREVIEW_OPERATOR)
+    print(f"Done. sales_opportunity_id={sales_opportunity_id}")
 
 
 if __name__ == "__main__":
