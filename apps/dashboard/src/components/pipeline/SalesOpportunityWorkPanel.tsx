@@ -28,7 +28,19 @@ function newIdempotencyKey(kind: "activity" | "task"): string {
   return `${kind}:${Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("")}`;
 }
 
-export function SalesOpportunityWorkPanel({ salesOpportunityId }: { salesOpportunityId: string }) {
+export function SalesOpportunityWorkPanel({
+  salesOpportunityId,
+  onTaskChanged,
+}: {
+  salesOpportunityId: string;
+  /**
+   * Called after a successful task create/complete/cancel so the Pipeline
+   * card (open_task_count/next_task_title/next_task_due_at, derived from a
+   * separate board query) can be refreshed. Never called on a failed write,
+   * and never called for activity creation, which the card doesn't render.
+   */
+  onTaskChanged?: () => void;
+}) {
   const [tasks, setTasks] = useState<CommercialTask[]>([]);
   const [activities, setActivities] = useState<CommercialActivity[]>([]);
   const [loading, setLoading] = useState(true);
@@ -105,6 +117,7 @@ export function SalesOpportunityWorkPanel({ salesOpportunityId }: { salesOpportu
       pendingTaskCreate.current = null;
       setTasks((current) => [created, ...current]);
       setTaskTitle("");
+      onTaskChanged?.();
     } catch (reason: unknown) {
       setActionError(errorMessage(reason, "No se pudo crear el seguimiento."));
     } finally {
@@ -169,6 +182,7 @@ export function SalesOpportunityWorkPanel({ salesOpportunityId }: { salesOpportu
           : await cancelCommercialTask(task.task_id, { expected_version: task.version });
 
       setTasks((current) => current.map((item) => (item.task_id === updated.task_id ? updated : item)));
+      onTaskChanged?.();
     } catch (reason: unknown) {
       setActionError(
         errorMessage(reason, action === "complete" ? "No se pudo completar el seguimiento." : "No se pudo cancelar el seguimiento."),

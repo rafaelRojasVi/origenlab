@@ -12,7 +12,13 @@ vi.mock("../../api/commercialOperationsClient", () => ({
 }));
 
 vi.mock("./SalesOpportunityWorkPanel", () => ({
-  SalesOpportunityWorkPanel: () => <div data-testid="work-panel-stub" />,
+  SalesOpportunityWorkPanel: ({ onTaskChanged }: { onTaskChanged?: () => void }) => (
+    <div data-testid="work-panel-stub">
+      <button type="button" onClick={() => onTaskChanged?.()}>
+        simulate task change
+      </button>
+    </div>
+  ),
 }));
 
 function item(overrides: Partial<SalesOpportunityListItem> = {}): SalesOpportunityListItem {
@@ -63,6 +69,22 @@ describe("SalesOpportunityWorkspaceDrawer", () => {
     expect(screen.getByText("uach.cl")).toBeInTheDocument();
     expect(screen.getByText("Centrífuga refrigerada")).toBeInTheDocument();
     expect(screen.getByTestId("work-panel-stub")).toBeInTheDocument();
+  });
+
+  it("forwards onTaskChanged through to the work panel", () => {
+    const onTaskChanged = vi.fn();
+    render(
+      <SalesOpportunityWorkspaceDrawer
+        item={item()}
+        open
+        onClose={vi.fn()}
+        onStageChanged={vi.fn()}
+        onTaskChanged={onTaskChanged}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("simulate task change"));
+    expect(onTaskChanged).toHaveBeenCalledTimes(1);
   });
 
   it("closes on Escape and on the close button", () => {

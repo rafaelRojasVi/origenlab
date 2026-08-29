@@ -36,6 +36,7 @@ export function PipelinePage() {
         open={openItem !== null}
         onClose={() => setOpenItem(null)}
         onStageChanged={() => board.refetch()}
+        onTaskChanged={() => board.refetch()}
       />
     </div>
   );
