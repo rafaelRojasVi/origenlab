@@ -77,6 +77,23 @@ describe("operator API client", () => {
     expect(url).toContain("max_staleness_days=14");
   });
 
+  it("operatorApiUrl appends repeated params for array values and skips undefined", () => {
+    vi.stubEnv("MODE", "production");
+    vi.stubEnv("VITE_ORIGENLAB_API_BASE_URL", "https://dashboard.origenlab.cl/api");
+
+    const url = new URL(
+      operatorApiUrl("/operations/sales-opportunities", {
+        stage: ["new", "qualifying"],
+        owner_key: undefined,
+        limit: 200,
+      }),
+    );
+
+    expect(url.searchParams.getAll("stage")).toEqual(["new", "qualifying"]);
+    expect(url.searchParams.has("owner_key")).toBe(false);
+    expect(url.searchParams.get("limit")).toBe("200");
+  });
+
   it("parseHealthResponse normalizes backend", () => {
     const parsed = parseHealthResponse({
       ok: true,

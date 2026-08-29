@@ -12,6 +12,11 @@ import type {
   CommercialWorkQueueOpportunity,
   CommercialWorkQueueResponse,
   CommercialWorkQueueTask,
+  SalesOpportunity,
+  SalesOpportunitiesResponse,
+  SalesOpportunityListItem,
+  SalesOpportunityReadResponse,
+  SalesOpportunityStage,
 } from "./commercialOperationsTypes";
 
 function record(
@@ -68,6 +73,23 @@ function positiveInteger(
   return value;
 }
 
+function positiveIntegerOrZero(
+  value: unknown,
+  label: string,
+): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < 0
+  ) {
+    throw new Error(
+      `${label} must be a non-negative integer`,
+    );
+  }
+
+  return value;
+}
+
 function enumValue<T extends string>(
   value: unknown,
   allowed: readonly T[],
@@ -113,6 +135,17 @@ const TASK_PRIORITIES = [
   "normal",
   "high",
   "urgent",
+] as const;
+
+const SALES_OPPORTUNITY_STAGES = [
+  "new",
+  "qualifying",
+  "qualified",
+  "quoting",
+  "negotiating",
+  "won",
+  "lost",
+  "dormant",
 ] as const;
 
 export function parseCommercialOperatorState(
@@ -493,5 +526,155 @@ export function parseCommercialWorkQueueResponse(
       row.quote_followups.map(
         parseCommercialWorkQueueOpportunity,
       ),
+  };
+}
+
+export function parseSalesOpportunity(
+  raw: unknown,
+): SalesOpportunity {
+  const row = record(raw, "sales opportunity");
+
+  return {
+    sales_opportunity_id: stringValue(
+      row.sales_opportunity_id,
+      "sales_opportunity_id",
+    ),
+    source_kind: "pr3",
+    source_opportunity_id: stringValue(
+      row.source_opportunity_id,
+      "source_opportunity_id",
+    ),
+    account_id: nullableString(
+      row.account_id,
+      "account_id",
+    ),
+    primary_contact_id: nullableString(
+      row.primary_contact_id,
+      "primary_contact_id",
+    ),
+    organization_id: nullableString(
+      row.organization_id,
+      "organization_id",
+    ),
+    primary_crm_contact_id: nullableString(
+      row.primary_crm_contact_id,
+      "primary_crm_contact_id",
+    ),
+    title: stringValue(row.title, "title"),
+    stage: enumValue<SalesOpportunityStage>(
+      row.stage,
+      SALES_OPPORTUNITY_STAGES,
+      "stage",
+    ),
+    owner_key: stringValue(
+      row.owner_key,
+      "owner_key",
+    ),
+    version: positiveInteger(
+      row.version,
+      "version",
+    ),
+    created_by: stringValue(
+      row.created_by,
+      "created_by",
+    ),
+    updated_by: stringValue(
+      row.updated_by,
+      "updated_by",
+    ),
+    created_at: stringValue(
+      row.created_at,
+      "created_at",
+    ),
+    updated_at: stringValue(
+      row.updated_at,
+      "updated_at",
+    ),
+  };
+}
+
+export function parseSalesOpportunityListItem(
+  raw: unknown,
+): SalesOpportunityListItem {
+  const row = record(raw, "sales opportunity list item");
+
+  return {
+    ...parseSalesOpportunity(row),
+    stage_updated_at: stringValue(
+      row.stage_updated_at,
+      "stage_updated_at",
+    ),
+    contact_display_email: nullableString(
+      row.contact_display_email,
+      "contact_display_email",
+    ),
+    account_display_domain: nullableString(
+      row.account_display_domain,
+      "account_display_domain",
+    ),
+    open_task_count: positiveIntegerOrZero(
+      row.open_task_count,
+      "open_task_count",
+    ),
+    next_task_id: nullableString(
+      row.next_task_id,
+      "next_task_id",
+    ),
+    next_task_title: nullableString(
+      row.next_task_title,
+      "next_task_title",
+    ),
+    next_task_due_at: nullableString(
+      row.next_task_due_at,
+      "next_task_due_at",
+    ),
+  };
+}
+
+export function parseSalesOpportunitiesResponse(
+  raw: unknown,
+): SalesOpportunitiesResponse {
+  const row = record(
+    raw,
+    "sales opportunities response",
+  );
+  const meta = record(row.meta, "sales opportunities meta");
+
+  if (!Array.isArray(row.items)) {
+    throw new Error(
+      "sales opportunities items must be an array",
+    );
+  }
+
+  return {
+    meta: {
+      data_source: "postgres",
+      read_only: true,
+      count: positiveIntegerOrZero(meta.count, "count"),
+      total_count: positiveIntegerOrZero(
+        meta.total_count,
+        "total_count",
+      ),
+      limit: positiveInteger(meta.limit, "limit"),
+      offset: positiveIntegerOrZero(
+        meta.offset,
+        "offset",
+      ),
+    },
+    items: row.items.map(parseSalesOpportunityListItem),
+  };
+}
+
+export function parseSalesOpportunityReadResponse(
+  raw: unknown,
+): SalesOpportunityReadResponse {
+  const row = record(
+    raw,
+    "sales opportunity read response",
+  );
+
+  return {
+    meta: { data_source: "postgres", read_only: true },
+    item: parseSalesOpportunity(row.item),
   };
 }

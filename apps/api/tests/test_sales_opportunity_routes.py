@@ -139,6 +139,25 @@ def test_promotion_uses_trusted_operator_and_returns_201() -> None:
     assert call["idempotency_key"] == "promote-1"
 
 
+def test_promotion_without_owner_key_defaults_to_operator() -> None:
+    service = FakeWriteService()
+
+    response = _client(write=service).post(
+        "/operations/sales-opportunities/promote",
+        headers=HEADERS,
+        json={
+            "source_opportunity_id": "o_1",
+            "title": "Centrífuga refrigerada",
+        },
+    )
+
+    assert response.status_code == 201
+
+    call = service.calls[-1]
+    assert call["owner_key"] is None
+    assert call["operator"] == "tatiana@origenlab.cl"
+
+
 def test_browser_cannot_spoof_server_controlled_fields() -> None:
     service = FakeWriteService()
 

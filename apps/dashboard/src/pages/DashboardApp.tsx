@@ -8,19 +8,28 @@ import { ContactsPage } from "./ContactsPage";
 import { DealsPage } from "./DealsPage";
 import { InboxTriagePage } from "./InboxTriagePage";
 import { PaymentsLogisticsPage } from "./PaymentsLogisticsPage";
+import { PipelinePage } from "./PipelinePage";
 import { SuppliersPage } from "./SuppliersPage";
 import { SystemPage } from "./SystemPage";
 import { TendersPage } from "./TendersPage";
 import { TodaySummaryPage } from "./TodaySummaryPage";
 
-function DashboardSectionView({ section }: { section: DashboardSection }) {
+function DashboardSectionView({
+  section,
+  navigate,
+}: {
+  section: DashboardSection;
+  navigate: (section: DashboardSection) => void;
+}) {
   switch (section) {
     case "today":
       return <TodaySummaryPage />;
     case "inbox":
       return <InboxTriagePage />;
+    case "pipeline":
+      return <PipelinePage />;
     case "deals":
-      return <DealsPage />;
+      return <DealsPage onOpenPipeline={() => navigate("pipeline")} />;
     case "prospectos":
       return <ProspectosPage />;
     case "catalogo":
@@ -46,7 +55,7 @@ export function DashboardApp() {
   return (
     <DashboardDataProvider>
       <DashboardShell section={section} onNavigate={navigate}>
-        <DashboardSectionView section={section} />
+        <DashboardSectionView section={section} navigate={navigate} />
       </DashboardShell>
     </DashboardDataProvider>
   );

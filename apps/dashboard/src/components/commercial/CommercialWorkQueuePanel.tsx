@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 
 import type { CommercialWorkQueueResponse } from "../../api/commercialOperationsTypes";
 import { summarizeCommercialWorkQueue } from "../../lib/commercialWorkQueue";
+import { dashboardSectionToHash } from "../../lib/dashboardHashRoute";
 import { CommercialOpportunityDetailDrawer } from "./CommercialOpportunityDetailDrawer";
 import { CommercialFollowupCard } from "./workQueue/CommercialFollowupCard";
 import { CommercialReviewCard } from "./workQueue/CommercialReviewCard";
@@ -54,6 +55,7 @@ export function CommercialWorkQueuePanel({
 
   const [selectedOpportunityId, setSelectedOpportunityId] =
     useState<string | null>(null);
+  const [promotedBySourceId, setPromotedBySourceId] = useState<Map<string, string>>(new Map());
 
   return (
     <>
@@ -159,6 +161,19 @@ export function CommercialWorkQueuePanel({
         open={selectedOpportunityId !== null}
         onClose={() => setSelectedOpportunityId(null)}
         onSelectContact={onSelectContact}
+        promotedSalesOpportunityId={
+          selectedOpportunityId ? (promotedBySourceId.get(selectedOpportunityId) ?? null) : null
+        }
+        onOpenPipeline={() => {
+          window.location.hash = dashboardSectionToHash("pipeline");
+        }}
+        onPromoted={(sourceOpportunityId, salesOpportunityId) => {
+          setPromotedBySourceId((prev) => {
+            const next = new Map(prev);
+            next.set(sourceOpportunityId, salesOpportunityId);
+            return next;
+          });
+        }}
       />
     </>
   );

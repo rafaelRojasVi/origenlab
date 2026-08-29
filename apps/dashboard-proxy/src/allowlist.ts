@@ -20,6 +20,7 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/opportunities\/commercial$/,
   /^\/opportunities\/commercial\/o_[0-9a-f]{32}$/,
   /^\/operations\/work-queue$/,
+  /^\/operations\/sales-opportunities$/,
   /^\/operations\/sales-opportunities\/sales_[0-9a-f]{32}$/,
   /^\/operations\/sales-opportunities\/sales_[0-9a-f]{32}\/activities$/,
   /^\/operations\/sales-opportunities\/sales_[0-9a-f]{32}\/tasks$/,

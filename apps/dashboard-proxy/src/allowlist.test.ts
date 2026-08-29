@@ -101,6 +101,17 @@ describe("allowlist", () => {
     ).toBe(false);
   });
 
+  it("allows the durable sales-opportunity board list route only", () => {
+    expect(isAllowedUpstreamPath("/operations/sales-opportunities")).toBe(true);
+    expect(
+      isAllowedUpstreamPath(
+        "/operations/sales-opportunities?stage=new&stage=qualifying&limit=200",
+      ),
+    ).toBe(true);
+    expect(isAllowedUpstreamPath("/operations/sales-opportunities/")).toBe(false);
+    expect(isAllowedUpstreamPath("/operations/sales-opportunities/extra/path")).toBe(false);
+  });
+
   it("keeps representative write and non-dashboard paths blocked", () => {
     expect(isAllowedUpstreamPath("/emails")).toBe(false);
     expect(isAllowedUpstreamPath("/operator/send")).toBe(false);

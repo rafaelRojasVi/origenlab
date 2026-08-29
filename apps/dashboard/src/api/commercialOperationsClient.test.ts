@@ -15,6 +15,11 @@ import {
   fetchCommercialOpportunityOperatorState,
   fetchCommercialWorkQueue,
   setCommercialOpportunityOperatorState,
+  fetchSalesOpportunities,
+  fetchSalesOpportunity,
+  promoteSalesOpportunity,
+  salesOpportunityPath,
+  transitionSalesOpportunityStage,
 } from "./commercialOperationsClient";
 
 
@@ -23,6 +28,8 @@ const OPPORTUNITY_ID =
 
 const TASK_ID =
   "task_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+const SALES_OPPORTUNITY_ID = "sales_" + "a".repeat(32);
 
 
 describe("commercial operations API client", () => {
@@ -433,5 +440,151 @@ describe("commercial create idempotency", () => {
     );
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("sales opportunity API client", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("builds the exact sales opportunity path and rejects malformed IDs", () => {
+    expect(salesOpportunityPath(SALES_OPPORTUNITY_ID)).toBe(
+      `/operations/sales-opportunities/${SALES_OPPORTUNITY_ID}`,
+    );
+    expect(() => salesOpportunityPath("not-an-id")).toThrow(/Invalid sales opportunity ID/);
+  });
+
+  it("fetchSalesOpportunities sends repeated stage params and parses the envelope", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          meta: { data_source: "postgres", read_only: true, count: 0, total_count: 0, limit: 200, offset: 0 },
+          items: [],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchSalesOpportunities({
+      stage: ["new", "qualifying"],
+      limit: 200,
+    });
+
+    expect(result.meta.limit).toBe(200);
+
+    const requestUrl = new URL(fetchMock.mock.calls[0][0] as string);
+    expect(requestUrl.searchParams.getAll("stage")).toEqual(["new", "qualifying"]);
+    expect(requestUrl.searchParams.get("limit")).toBe("200");
+  });
+
+  it("promoteSalesOpportunity posts with the Idempotency-Key header", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          sales_opportunity_id: SALES_OPPORTUNITY_ID,
+          source_kind: "pr3",
+          source_opportunity_id: "o_1",
+          account_id: null,
+          primary_contact_id: null,
+          organization_id: null,
+          primary_crm_contact_id: null,
+          title: "Centrífuga",
+          stage: "new",
+          owner_key: "tatiana@origenlab.cl",
+          version: 1,
+          created_by: "tatiana@origenlab.cl",
+          updated_by: "tatiana@origenlab.cl",
+          created_at: "2026-08-28T12:00:00+00:00",
+          updated_at: "2026-08-28T12:00:00+00:00",
+        }),
+        { status: 201, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await promoteSalesOpportunity(
+      { source_opportunity_id: "o_1", title: "Centrífuga" },
+      "promote-key-1",
+    );
+
+    expect(result.sales_opportunity_id).toBe(SALES_OPPORTUNITY_ID);
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Headers;
+    expect(headers.get("Idempotency-Key")).toBe("promote-key-1");
+  });
+
+  it("transitionSalesOpportunityStage posts the target stage and expected_version", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          sales_opportunity_id: SALES_OPPORTUNITY_ID,
+          source_kind: "pr3",
+          source_opportunity_id: "o_1",
+          account_id: null,
+          primary_contact_id: null,
+          organization_id: null,
+          primary_crm_contact_id: null,
+          title: "Centrífuga",
+          stage: "qualifying",
+          owner_key: "tatiana@origenlab.cl",
+          version: 2,
+          created_by: "tatiana@origenlab.cl",
+          updated_by: "tatiana@origenlab.cl",
+          created_at: "2026-08-28T12:00:00+00:00",
+          updated_at: "2026-08-28T12:05:00+00:00",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await transitionSalesOpportunityStage(SALES_OPPORTUNITY_ID, {
+      stage: "qualifying",
+      expected_version: 1,
+    });
+
+    expect(result.stage).toBe("qualifying");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain(`${SALES_OPPORTUNITY_ID}/stage`);
+    expect(JSON.parse(init.body as string)).toEqual({ stage: "qualifying", expected_version: 1 });
+  });
+
+  it("fetchSalesOpportunity returns the durable item", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          meta: { data_source: "postgres", read_only: true },
+          item: {
+            sales_opportunity_id: SALES_OPPORTUNITY_ID,
+            source_kind: "pr3",
+            source_opportunity_id: "o_1",
+            account_id: null,
+            primary_contact_id: null,
+            organization_id: null,
+            primary_crm_contact_id: null,
+            title: "Centrífuga",
+            stage: "won",
+            owner_key: "tatiana@origenlab.cl",
+            version: 5,
+            created_by: "tatiana@origenlab.cl",
+            updated_by: "tatiana@origenlab.cl",
+            created_at: "2026-08-28T12:00:00+00:00",
+            updated_at: "2026-08-28T12:05:00+00:00",
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchSalesOpportunity(SALES_OPPORTUNITY_ID);
+    expect(result.item.stage).toBe("won");
   });
 });

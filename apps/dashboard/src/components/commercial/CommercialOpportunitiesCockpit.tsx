@@ -3,6 +3,7 @@ import {
   useState,
 } from "react";
 import { fetchCommercialOpportunities } from "../../api/operatorClient";
+import { fetchSalesOpportunities } from "../../api/commercialOperationsClient";
 import type { CommercialOpportunitiesResponse } from "../../api/commercialOpportunitiesTypes";
 import {
   COMMERCIAL_OPPORTUNITY_REVIEW_OPTIONS,
@@ -23,8 +24,10 @@ import { TableSection } from "./TableSection";
 
 export function CommercialOpportunitiesCockpit({
   onSelectContact,
+  onOpenPipeline,
 }: {
   onSelectContact: (email: string) => void;
+  onOpenPipeline: () => void;
 }) {
   const [data, setData] =
     useState<CommercialOpportunitiesResponse | null>(null);
@@ -39,6 +42,32 @@ export function CommercialOpportunitiesCockpit({
 
   const [selectedOpportunityId, setSelectedOpportunityId] =
     useState<string | null>(null);
+
+  const [promotedBySourceId, setPromotedBySourceId] = useState<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    const ids = (data?.items ?? []).map((item) => item.opportunity_id);
+    if (ids.length === 0) {
+      setPromotedBySourceId(new Map());
+      return;
+    }
+
+    let active = true;
+    void fetchSalesOpportunities({ sourceOpportunityId: ids })
+      .then((result) => {
+        if (!active) return;
+        setPromotedBySourceId(
+          new Map(result.items.map((row) => [row.source_opportunity_id, row.sales_opportunity_id])),
+        );
+      })
+      .catch(() => {
+        if (active) setPromotedBySourceId(new Map());
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [data]);
 
   useEffect(() => {
     let active = true;
@@ -264,6 +293,9 @@ export function CommercialOpportunitiesCockpit({
                       </td>
 
                       <td className="px-3 py-2 text-right align-top">
+                        {promotedBySourceId.has(item.opportunity_id) ? (
+                          <p className="mb-1 text-xs font-medium text-emerald-700">En pipeline</p>
+                        ) : null}
                         <button
                           type="button"
                           onClick={() =>
@@ -312,6 +344,17 @@ export function CommercialOpportunitiesCockpit({
         open={selectedOpportunityId !== null}
         onClose={() => setSelectedOpportunityId(null)}
         onSelectContact={onSelectContact}
+        promotedSalesOpportunityId={
+          selectedOpportunityId ? (promotedBySourceId.get(selectedOpportunityId) ?? null) : null
+        }
+        onOpenPipeline={onOpenPipeline}
+        onPromoted={(sourceOpportunityId, salesOpportunityId) => {
+          setPromotedBySourceId((prev) => {
+            const next = new Map(prev);
+            next.set(sourceOpportunityId, salesOpportunityId);
+            return next;
+          });
+        }}
       />
     </>
   );

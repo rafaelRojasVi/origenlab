@@ -392,9 +392,9 @@ class CommercialOperationsService:
         *,
         source_opportunity_id: str,
         title: str,
-        owner_key: str,
         operator: str,
         idempotency_key: str,
+        owner_key: str | None = None,
     ) -> SalesOpportunity:
         source_id = _required_text(
             source_opportunity_id,
@@ -406,16 +406,15 @@ class CommercialOperationsService:
             field="title",
             max_length=500,
         )
-        normalized_owner = _required_text(
-            owner_key,
-            field="owner_key",
-            max_length=320,
-        )
         normalized_operator = _required_text(
             operator,
             field="operator",
             max_length=320,
         ).lower()
+        normalized_owner = (
+            _optional_text(owner_key, field="owner_key", max_length=320)
+            or normalized_operator
+        )
         normalized_key = _idempotency_key(idempotency_key)
 
         fingerprint = _fingerprint(

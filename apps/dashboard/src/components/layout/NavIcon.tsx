@@ -4,6 +4,8 @@ const ICON_PATHS: Record<DashboardNavIconName, string> = {
   home: "M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1v-9.5Z",
   inbox:
     "M4 6h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1Zm0 2 8 5 8-5",
+  pipeline:
+    "M4 4h4v16H4V4Zm6 3h4v13h-4V7Zm6 5h4v8h-4v-8Z",
   deals:
     "M4 7h16v12H4V7Zm2 2v2h4V9H6Zm6 0v2h6V9h-6ZM6 13v2h4v-2H6Zm6 0v2h6v-2h-6Z",
   prospectos:

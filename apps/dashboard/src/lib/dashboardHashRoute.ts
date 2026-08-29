@@ -4,6 +4,7 @@ import { DEFAULT_DASHBOARD_SECTION, type DashboardSection } from "./dashboardNav
 const VALID_SECTIONS = new Set<string>([
   "today",
   "inbox",
+  "pipeline",
   "deals",
   "prospectos",
   "catalogo",

@@ -19,6 +19,9 @@ import {
   parseCommercialTask,
   parseCommercialTaskListResponse,
   parseCommercialWorkQueueResponse,
+  parseSalesOpportunitiesResponse,
+  parseSalesOpportunity,
+  parseSalesOpportunityReadResponse,
 } from "./commercialOperationsParse";
 
 import type {
@@ -31,7 +34,13 @@ import type {
   CommercialTaskTransitionCommand,
   CreateCommercialActivityCommand,
   CreateCommercialTaskCommand,
+  PromoteSalesOpportunityCommand,
+  SalesOpportunity,
+  SalesOpportunitiesResponse,
+  SalesOpportunityReadResponse,
+  SalesOpportunityStage,
   SetCommercialOpportunityStateCommand,
+  TransitionSalesOpportunityStageCommand,
   CommercialWorkQueueResponse,
 } from "./commercialOperationsTypes";
 
@@ -41,6 +50,9 @@ const COMMERCIAL_OPPORTUNITY_ID_RE =
 
 const COMMERCIAL_TASK_ID_RE =
   /^task_[0-9a-f]{32}$/;
+
+const SALES_OPPORTUNITY_ID_RE =
+  /^sales_[0-9a-f]{32}$/;
 
 const IDEMPOTENCY_KEY_RE =
   /^[A-Za-z0-9._:-]{1,200}$/;
@@ -70,6 +82,22 @@ function requireCommercialTaskId(
   if (!COMMERCIAL_TASK_ID_RE.test(normalized)) {
     throw new OperatorApiError(
       "Invalid commercial task ID",
+      422,
+    );
+  }
+
+  return normalized;
+}
+
+
+function requireSalesOpportunityId(
+  salesOpportunityId: string,
+): string {
+  const normalized = salesOpportunityId.trim();
+
+  if (!SALES_OPPORTUNITY_ID_RE.test(normalized)) {
+    throw new OperatorApiError(
+      "Invalid sales opportunity ID",
       422,
     );
   }
@@ -197,6 +225,36 @@ export function commercialTaskTransitionPath(
   return `/operations/tasks/${requireCommercialTaskId(
     taskId,
   )}/${action}`;
+}
+
+
+export function salesOpportunityPath(
+  salesOpportunityId: string,
+): string {
+  return `/operations/sales-opportunities/${requireSalesOpportunityId(
+    salesOpportunityId,
+  )}`;
+}
+
+
+export function salesOpportunityStagePath(
+  salesOpportunityId: string,
+): string {
+  return `${salesOpportunityPath(salesOpportunityId)}/stage`;
+}
+
+
+export function salesOpportunityActivitiesPath(
+  salesOpportunityId: string,
+): string {
+  return `${salesOpportunityPath(salesOpportunityId)}/activities`;
+}
+
+
+export function salesOpportunityTasksPath(
+  salesOpportunityId: string,
+): string {
+  return `${salesOpportunityPath(salesOpportunityId)}/tasks`;
 }
 
 
@@ -338,5 +396,74 @@ export function fetchCommercialWorkQueue(
       },
     ),
   ).then(parseCommercialWorkQueueResponse);
+}
+
+
+export function fetchSalesOpportunities(params?: {
+  stage?: readonly SalesOpportunityStage[];
+  ownerKey?: string;
+  sourceOpportunityId?: readonly string[];
+  limit?: number;
+  offset?: number;
+}): Promise<SalesOpportunitiesResponse> {
+  return fetchJsonGet<unknown>(
+    operatorApiUrl("/operations/sales-opportunities", {
+      stage: params?.stage,
+      owner_key: params?.ownerKey,
+      source_opportunity_id: params?.sourceOpportunityId,
+      limit: params?.limit,
+      offset: params?.offset,
+    }),
+  ).then(parseSalesOpportunitiesResponse);
+}
+
+
+export function fetchSalesOpportunity(
+  salesOpportunityId: string,
+): Promise<SalesOpportunityReadResponse> {
+  return fetchJsonGet<unknown>(
+    operatorApiUrl(salesOpportunityPath(salesOpportunityId)),
+  ).then(parseSalesOpportunityReadResponse);
+}
+
+
+export function fetchSalesOpportunityActivities(
+  salesOpportunityId: string,
+): Promise<CommercialActivityListResponse> {
+  return fetchJsonGet<unknown>(
+    operatorApiUrl(salesOpportunityActivitiesPath(salesOpportunityId)),
+  ).then(parseCommercialActivityListResponse);
+}
+
+
+export function fetchSalesOpportunityTasks(
+  salesOpportunityId: string,
+): Promise<CommercialTaskListResponse> {
+  return fetchJsonGet<unknown>(
+    operatorApiUrl(salesOpportunityTasksPath(salesOpportunityId)),
+  ).then(parseCommercialTaskListResponse);
+}
+
+
+export function promoteSalesOpportunity(
+  command: PromoteSalesOpportunityCommand,
+  idempotencyKey: string,
+): Promise<SalesOpportunity> {
+  return fetchJsonPost<unknown>(
+    operatorApiUrl("/operations/sales-opportunities/promote"),
+    command,
+    idempotencyKey,
+  ).then(parseSalesOpportunity);
+}
+
+
+export function transitionSalesOpportunityStage(
+  salesOpportunityId: string,
+  command: TransitionSalesOpportunityStageCommand,
+): Promise<SalesOpportunity> {
+  return fetchJsonPost<unknown>(
+    operatorApiUrl(salesOpportunityStagePath(salesOpportunityId)),
+    command,
+  ).then(parseSalesOpportunity);
 }
 

@@ -87,6 +87,7 @@ export interface SetCommercialOpportunityStateCommand {
 }
 
 export interface CreateCommercialActivityCommand {
+  sales_opportunity_id?: string | null;
   opportunity_id?: string | null;
   account_id?: string | null;
   contact_id?: string | null;
@@ -97,6 +98,7 @@ export interface CreateCommercialActivityCommand {
 }
 
 export interface CreateCommercialTaskCommand {
+  sales_opportunity_id?: string | null;
   opportunity_id?: string | null;
   account_id?: string | null;
   contact_id?: string | null;
@@ -149,4 +151,81 @@ export interface CommercialWorkQueueResponse {
 
   quote_followups:
     CommercialWorkQueueOpportunity[];
+}
+
+export type SalesOpportunityStage =
+  | "new"
+  | "qualifying"
+  | "qualified"
+  | "quoting"
+  | "negotiating"
+  | "won"
+  | "lost"
+  | "dormant";
+
+export interface SalesOpportunity {
+  sales_opportunity_id: string;
+
+  source_kind: "pr3";
+  source_opportunity_id: string;
+
+  account_id: string | null;
+  primary_contact_id: string | null;
+  organization_id: string | null;
+  primary_crm_contact_id: string | null;
+
+  title: string;
+  stage: SalesOpportunityStage;
+
+  owner_key: string;
+
+  version: number;
+
+  created_by: string;
+  updated_by: string;
+
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SalesOpportunityListItem extends SalesOpportunity {
+  stage_updated_at: string;
+
+  contact_display_email: string | null;
+  account_display_domain: string | null;
+
+  open_task_count: number;
+  next_task_id: string | null;
+  next_task_title: string | null;
+  next_task_due_at: string | null;
+}
+
+export interface SalesOpportunitiesMeta {
+  data_source: "postgres";
+  read_only: true;
+  count: number;
+  total_count: number;
+  limit: number;
+  offset: number;
+}
+
+export interface SalesOpportunitiesResponse {
+  meta: SalesOpportunitiesMeta;
+  items: SalesOpportunityListItem[];
+}
+
+export interface SalesOpportunityReadResponse {
+  meta: { data_source: "postgres"; read_only: true };
+  item: SalesOpportunity;
+}
+
+export interface PromoteSalesOpportunityCommand {
+  source_opportunity_id: string;
+  title: string;
+  owner_key?: string | null;
+}
+
+export interface TransitionSalesOpportunityStageCommand {
+  stage: SalesOpportunityStage;
+  expected_version: number;
 }

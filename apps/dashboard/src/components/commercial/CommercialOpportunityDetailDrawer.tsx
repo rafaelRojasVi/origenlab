@@ -3,7 +3,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { fetchCommercialOpportunityDetail } from "../../api/operatorClient";
+import { fetchCommercialOpportunityDetail, OperatorApiError } from "../../api/operatorClient";
 import type { CommercialOpportunityDetailResponse } from "../../api/commercialOpportunitiesTypes";
 import {
   commercialOpportunityReviewLabel,
@@ -13,6 +13,7 @@ import {
 } from "../../lib/commercialOpportunityFormat";
 import { ContactEmailButton } from "./ContactEmailButton";
 import { CommercialOpportunityOperationsPanel } from "./CommercialOpportunityOperationsPanel";
+import { promoteSalesOpportunity } from "../../api/commercialOperationsClient";
 
 function DetailRow({
   label,
@@ -50,17 +51,171 @@ function DrawerSection({
   );
 }
 
+function PromoteToCrmAction({
+  opportunityId,
+  suggestedTitle,
+  promotedSalesOpportunityId,
+  onOpenPipeline,
+  onPromoted,
+}: {
+  opportunityId: string;
+  suggestedTitle: string;
+  promotedSalesOpportunityId: string | null;
+  onOpenPipeline: () => void;
+  onPromoted: (sourceOpportunityId: string, salesOpportunityId: string) => void;
+}) {
+  const [title, setTitle] = useState(suggestedTitle);
+  const [selfAssign, setSelfAssign] = useState(true);
+  const [ownerOverride, setOwnerOverride] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [localPromotedId, setLocalPromotedId] = useState<string | null>(promotedSalesOpportunityId);
+
+  useEffect(() => {
+    setLocalPromotedId(promotedSalesOpportunityId);
+  }, [promotedSalesOpportunityId]);
+
+  if (localPromotedId) {
+    return (
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3">
+        <p className="text-sm font-medium text-emerald-900">Esta oportunidad ya está en el pipeline durable.</p>
+        <button
+          type="button"
+          onClick={onOpenPipeline}
+          className="mt-2 rounded-md border border-emerald-300 bg-white px-3 py-1.5 text-sm font-medium text-emerald-800"
+        >
+          Abrir en Pipeline
+        </button>
+      </div>
+    );
+  }
+
+  async function promote() {
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) {
+      setError("Escribe un título para la oportunidad.");
+      return;
+    }
+
+    const trimmedOwner = ownerOverride.trim();
+    if (!selfAssign && !trimmedOwner) {
+      setError("Escribe el correo del responsable o marca \"Responsable: yo\".");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+
+    try {
+      const result = await promoteSalesOpportunity(
+        {
+          source_opportunity_id: opportunityId,
+          title: trimmedTitle,
+          // selfAssign omits owner_key so the trusted server-side operator
+          // default applies; unchecking it must never fall through to that
+          // same default when the override is left blank.
+          owner_key: selfAssign ? undefined : trimmedOwner,
+        },
+        `promote:${crypto.randomUUID()}`,
+      );
+      setLocalPromotedId(result.sales_opportunity_id);
+      onPromoted(opportunityId, result.sales_opportunity_id);
+    } catch (reason: unknown) {
+      setError(
+        reason instanceof OperatorApiError && reason.status === 409
+          ? "Esta oportunidad ya fue promovida al pipeline. Actualiza Negocios para verla marcada."
+          : reason instanceof Error
+            ? reason.message
+            : "No se pudo promover la oportunidad.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <p className="text-sm font-medium text-slate-900">Promover a CRM</p>
+      <p className="text-xs text-slate-500">Crea el registro durable de esta oportunidad en el pipeline comercial.</p>
+
+      {error ? (
+        <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-800">
+          {error}
+        </div>
+      ) : null}
+
+      <label className="block space-y-1 text-xs font-medium text-slate-700">
+        <span>Título</span>
+        <input
+          aria-label="Título de la oportunidad"
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          maxLength={500}
+          className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+        />
+      </label>
+
+      <label className="flex items-center gap-2 text-xs text-slate-700">
+        <input type="checkbox" checked={selfAssign} onChange={(event) => setSelfAssign(event.target.checked)} />
+        Responsable: yo (operador autenticado)
+      </label>
+
+      {!selfAssign ? (
+        <label className="block space-y-1 text-xs font-medium text-slate-700">
+          <span>Asignar a (correo)</span>
+          <input
+            aria-label="Responsable"
+            value={ownerOverride}
+            onChange={(event) => setOwnerOverride(event.target.value)}
+            maxLength={320}
+            className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+          />
+        </label>
+      ) : null}
+
+      <button
+        type="button"
+        disabled={saving}
+        onClick={() => void promote()}
+        className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+      >
+        {saving ? "Promoviendo…" : "Promover a CRM"}
+      </button>
+    </div>
+  );
+}
+
 function DetailBody({
   detail,
   onSelectContact,
+  promotedSalesOpportunityId,
+  onOpenPipeline,
+  onPromoted,
 }: {
   detail: CommercialOpportunityDetailResponse;
   onSelectContact: (email: string) => void;
+  promotedSalesOpportunityId: string | null;
+  onOpenPipeline: () => void;
+  onPromoted: (sourceOpportunityId: string, salesOpportunityId: string) => void;
 }) {
   const item = detail.opportunity;
 
   return (
     <div className="flex-1 space-y-6 overflow-y-auto px-4 py-4">
+      <PromoteToCrmAction
+        opportunityId={item.opportunity_id}
+        suggestedTitle={
+          item.account_display_domain
+            ? `Oportunidad — ${item.account_display_domain}`
+            : item.contact_display_email
+              ? `Oportunidad — ${item.contact_display_email}`
+              : "Nueva oportunidad"
+        }
+        promotedSalesOpportunityId={promotedSalesOpportunityId}
+        onOpenPipeline={onOpenPipeline}
+        onPromoted={onPromoted}
+      />
+
       <CommercialOpportunityOperationsPanel
         opportunityId={item.opportunity_id}
       />
@@ -263,11 +418,17 @@ export function CommercialOpportunityDetailDrawer({
   open,
   onClose,
   onSelectContact,
+  promotedSalesOpportunityId,
+  onOpenPipeline,
+  onPromoted,
 }: {
   opportunityId: string | null;
   open: boolean;
   onClose: () => void;
   onSelectContact: (email: string) => void;
+  promotedSalesOpportunityId: string | null;
+  onOpenPipeline: () => void;
+  onPromoted: (sourceOpportunityId: string, salesOpportunityId: string) => void;
 }) {
   const [detail, setDetail] =
     useState<CommercialOpportunityDetailResponse | null>(null);
@@ -369,6 +530,9 @@ export function CommercialOpportunityDetailDrawer({
           <DetailBody
             detail={detail}
             onSelectContact={onSelectContact}
+            promotedSalesOpportunityId={promotedSalesOpportunityId}
+            onOpenPipeline={onOpenPipeline}
+            onPromoted={onPromoted}
           />
         ) : null}
 

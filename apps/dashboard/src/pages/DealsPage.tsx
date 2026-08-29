@@ -3,7 +3,7 @@ import { CommercialDealHighlightCards } from "../components/commercial/Commercia
 import { CommercialDealsTable } from "../components/commercial/CommercialDealsTable";
 import { CommercialOpportunitiesCockpit } from "../components/commercial/CommercialOpportunitiesCockpit";
 
-export function DealsPage() {
+export function DealsPage({ onOpenPipeline }: { onOpenPipeline: () => void }) {
   const {
     commercialDeals,
     commercialDealsLoading,
@@ -15,9 +15,7 @@ export function DealsPage() {
 
   return (
     <div className="space-y-10">
-      <CommercialOpportunitiesCockpit
-        onSelectContact={setContactEmail}
-      />
+      <CommercialOpportunitiesCockpit onSelectContact={setContactEmail} onOpenPipeline={onOpenPipeline} />
 
       <section className="space-y-5 border-t border-[var(--color-border)] pt-8">
         <div>
