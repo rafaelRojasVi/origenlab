@@ -184,7 +184,7 @@ export function SalesOpportunityWorkspaceDrawer({
         aria-labelledby="sales-opportunity-workspace-heading"
         data-testid="sales-opportunity-workspace-drawer"
         className={
-          "mt-4 flex w-full flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] shadow-sm motion-safe:transition-all motion-safe:duration-200 md:fixed md:inset-y-0 md:right-0 md:z-50 md:mt-0 md:h-full md:max-w-xl md:rounded-none md:border-l md:border-t-0 md:shadow-xl " +
+          "fixed inset-0 z-50 flex flex-col bg-[var(--color-card)] motion-safe:transition-all motion-safe:duration-200 md:inset-y-0 md:left-auto md:right-0 md:max-w-xl md:border-l md:border-[var(--color-border)] md:shadow-xl " +
           (entered ? "opacity-100 md:translate-x-0 pointer-events-auto" : "opacity-0 md:translate-x-full pointer-events-none")
         }
       >
