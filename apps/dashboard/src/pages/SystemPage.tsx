@@ -5,6 +5,12 @@ import { OperatorWarningsList } from "../components/operator/OperatorWarningsLis
 import { useDashboardData } from "../context/DashboardDataContext";
 import { dashboardSectionToHash } from "../lib/dashboardHashRoute";
 import { humanizeOperatorWarning } from "../lib/humanizeOperatorWarning";
+import {
+  ACTIONABLE_OPPORTUNITIES_LABEL,
+  ACTIONABLE_OPPORTUNITIES_STALE_HINT,
+  ACTIONABLE_OPPORTUNITIES_UNAVAILABLE_HINT,
+  summarizeProcurementStatus,
+} from "../lib/procurementSummary";
 import { backendLabel, verdictTone } from "../lib/verdictStyles";
 
 const WARNINGS_PREVIEW = 5;
@@ -52,8 +58,24 @@ function StatTile({ label, value, hint }: { label: string; value: string | numbe
 }
 
 export function SystemPage() {
-  const { data, warm, equipment, commercialDeals, leadResearchSummary, mirrorBackend, setContactEmail } =
-    useDashboardData();
+  const {
+    data,
+    warm,
+    procurementStatus,
+    procurementStatusLoading,
+    commercialDeals,
+    leadResearchSummary,
+    mirrorBackend,
+    setContactEmail,
+  } = useDashboardData();
+
+  const opportunitySummary = useMemo(
+    () => summarizeProcurementStatus(procurementStatus),
+    [procurementStatus],
+  );
+
+  // No status yet AND still fetching: the request is in flight, not unavailable.
+  const procurementInitialLoading = procurementStatus == null && procurementStatusLoading;
 
   const tone = data ? verdictTone(data.operator.verdict) : null;
   const warnings = data?.operator.warnings ?? [];
@@ -170,9 +192,23 @@ export function SystemPage() {
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           <StatTile label="Casos tibios cargados" value={warm?.items.length ?? 0} />
           <StatTile
-            label="Licitaciones / equipos"
-            value={equipment?.meta?.reduced_mode ? "N/D" : (equipment?.items.length ?? 0)}
-            hint={equipment?.meta?.reduced_mode ? "Fuente no disponible" : undefined}
+            label={ACTIONABLE_OPPORTUNITIES_LABEL}
+            value={
+              procurementInitialLoading
+                ? "…"
+                : opportunitySummary.available
+                  ? opportunitySummary.value
+                  : "N/D"
+            }
+            hint={
+              procurementInitialLoading
+                ? undefined
+                : !opportunitySummary.available
+                  ? ACTIONABLE_OPPORTUNITIES_UNAVAILABLE_HINT
+                  : opportunitySummary.stale
+                    ? ACTIONABLE_OPPORTUNITIES_STALE_HINT
+                    : undefined
+            }
           />
           <StatTile
             label="Negocios en espejo"
@@ -245,7 +281,7 @@ export function SystemPage() {
           </p>
 
           <footer className="border-t border-[var(--color-border)] pt-4 text-xs text-[var(--color-muted)]">
-            Rutas de solo lectura: estado del operador, casos tibios, oportunidades de equipos,
+            Rutas de solo lectura: estado del operador, casos tibios, oportunidades accionables,
             negocios comerciales y contactos.
           </footer>
         </div>

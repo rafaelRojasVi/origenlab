@@ -7,13 +7,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type {
-  EquipmentOpportunitiesUiResponse,
-  WarmCasesResponse,
-} from "../api/commercialTypes";
+import type { WarmCasesResponse } from "../api/commercialTypes";
 import {
   DASHBOARD_WARM_CASES_QUERY,
-  fetchEquipmentOpportunities,
   fetchTodayPanel,
   fetchWarmCases,
 } from "../api/operatorClient";
@@ -22,6 +18,8 @@ import type { CatalogProductsListUi } from "../api/catalogTypes";
 import type { LeadResearchSummaryUi } from "../api/leadIntelTypes";
 import type { CommercialDealsListUi } from "../api/commercialDealsTypes";
 import type { CommercialWorkQueueResponse } from "../api/commercialOperationsTypes";
+import type { ProcurementStatus } from "../api/institutionIntel/types";
+import { institutionIntelAdapter } from "../api/institutionIntel/adapter";
 import { fetchCommercialWorkQueue } from "../api/commercialOperationsClient";
 import { fetchCatalogProductsMirror } from "../api/mirrorCatalogClient";
 import { fetchLeadResearchSummaryMirror } from "../api/mirrorLeadIntelClient";
@@ -44,9 +42,9 @@ export interface DashboardDataState {
   warm: WarmCasesResponse | null;
   warmLoading: boolean;
   warmError: string | null;
-  equipment: EquipmentOpportunitiesUiResponse | null;
-  equipmentLoading: boolean;
-  equipmentError: string | null;
+  procurementStatus: ProcurementStatus | null;
+  procurementStatusLoading: boolean;
+  procurementStatusError: string | null;
   commercialDeals: CommercialDealsListUi | null;
   commercialDealsLoading: boolean;
   commercialDealsError: string | null;
@@ -65,7 +63,7 @@ export interface DashboardDataState {
   loadAll: () => void;
   loadPanel: () => Promise<void>;
   loadWarm: () => Promise<void>;
-  loadEquipment: () => Promise<void>;
+  loadProcurementStatus: () => Promise<void>;
   loadCommercialDeals: () => Promise<void>;
   loadCatalogProducts: () => Promise<void>;
   loadLeadResearchSummary: () => Promise<void>;
@@ -88,9 +86,9 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
   const [warmLoading, setWarmLoading] = useState(true);
   const [warmError, setWarmError] = useState<string | null>(null);
 
-  const [equipment, setEquipment] = useState<EquipmentOpportunitiesUiResponse | null>(null);
-  const [equipmentLoading, setEquipmentLoading] = useState(true);
-  const [equipmentError, setEquipmentError] = useState<string | null>(null);
+  const [procurementStatus, setProcurementStatus] = useState<ProcurementStatus | null>(null);
+  const [procurementStatusLoading, setProcurementStatusLoading] = useState(true);
+  const [procurementStatusError, setProcurementStatusError] = useState<string | null>(null);
 
   const [commercialDeals, setCommercialDeals] = useState<CommercialDealsListUi | null>(null);
   const [commercialDealsLoading, setCommercialDealsLoading] = useState(true);
@@ -140,16 +138,16 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const loadEquipment = useCallback(async () => {
-    setEquipmentLoading(true);
-    setEquipmentError(null);
+  const loadProcurementStatus = useCallback(async () => {
+    setProcurementStatusLoading(true);
+    setProcurementStatusError(null);
     try {
-      setEquipment(await fetchEquipmentOpportunities());
+      setProcurementStatus(await institutionIntelAdapter.getProcurementStatus());
     } catch (e) {
-      setEquipmentError(formatLoadError("Equipment opportunities", e));
-      setEquipment(null);
+      setProcurementStatusError(formatLoadError("Procurement status", e));
+      setProcurementStatus(null);
     } finally {
-      setEquipmentLoading(false);
+      setProcurementStatusLoading(false);
     }
   }, []);
 
@@ -217,7 +215,7 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
     void Promise.all([
       loadPanel(),
       loadWarm(),
-      loadEquipment(),
+      loadProcurementStatus(),
       loadCommercialDeals(),
       loadCatalogProducts(),
       loadLeadResearchSummary(),
@@ -226,7 +224,7 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
   }, [
     loadPanel,
     loadWarm,
-    loadEquipment,
+    loadProcurementStatus,
     loadCommercialDeals,
     loadCatalogProducts,
     loadLeadResearchSummary,
@@ -248,7 +246,7 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
   const refreshing =
     panelLoading ||
     warmLoading ||
-    equipmentLoading ||
+    procurementStatusLoading ||
     commercialDealsLoading ||
     catalogProductsLoading ||
     leadResearchSummaryLoading ||
@@ -262,9 +260,9 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
       warm,
       warmLoading,
       warmError,
-      equipment,
-      equipmentLoading,
-      equipmentError,
+      procurementStatus,
+      procurementStatusLoading,
+      procurementStatusError,
       commercialDeals,
       commercialDealsLoading,
       commercialDealsError,
@@ -283,7 +281,7 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
       loadAll,
       loadPanel,
       loadWarm,
-      loadEquipment,
+      loadProcurementStatus,
       loadCommercialDeals,
       loadCatalogProducts,
       loadLeadResearchSummary,
@@ -300,9 +298,9 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
       warm,
       warmLoading,
       warmError,
-      equipment,
-      equipmentLoading,
-      equipmentError,
+      procurementStatus,
+      procurementStatusLoading,
+      procurementStatusError,
       commercialDeals,
       commercialDealsLoading,
       commercialDealsError,
@@ -320,7 +318,7 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
       loadAll,
       loadPanel,
       loadWarm,
-      loadEquipment,
+      loadProcurementStatus,
       loadCommercialDeals,
       loadCatalogProducts,
       loadLeadResearchSummary,
