@@ -157,6 +157,33 @@ vi.mock("../lib/logo/threeBodyCanvasRunner", () => ({
   startThreeBodyCanvas: vi.fn(() => () => {}),
 }));
 
+vi.mock("../api/institutionIntel/adapter", () => ({
+  institutionIntelAdapter: {
+    getCurrentOpportunities: vi.fn(async () => ({
+      availability: { status: "available_empty" as const },
+      pageInfo: { page: 1, pageSize: 15, totalItems: 0 },
+    })),
+    getProcurementStatus: vi.fn(async () => ({
+      meta: {
+        data_source: "institution_prospect_bundle",
+        read_only: true,
+        contract_version: "institution_prospect_contract_v4",
+        supported_contract_version: true,
+        reduced_mode: false,
+        stale: false,
+        canonical_reason: "institution_prospect_read_model",
+        note: "",
+        as_of_utc: "2026-08-30T00:12:01+00:00",
+        not_persisted: true,
+        contact_authorization: false,
+        outreach_authorization: false,
+      },
+      operatorQueueSizes: { current_opportunity_queue: 1 },
+      summaryOk: true,
+    })),
+  },
+}));
+
 import {
   fetchEquipmentOpportunities,
   fetchTodayPanel,
@@ -320,7 +347,7 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
     screen.getByText("Clientes por responder");
     screen.getByText("Proveedores pendientes");
     screen.getByText("Negocios en curso");
-    screen.getByLabelText(/Licitaciones \/ equipos:/);
+    screen.getByLabelText(/Oportunidades accionables:/);
     screen.getByLabelText(/Catálogo:/);
     expect(screen.queryByText(/Casos tibios \/ Warm cases/)).toBeNull();
   });

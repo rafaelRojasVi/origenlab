@@ -36,13 +36,16 @@ describe("todaySummaryCounts", () => {
     expect(counts.paymentsLogistics).toBe(1);
     expect(counts.dealEvidence).toBe(1);
     expect(counts.dealBlockers).toBe(1);
-    expect(counts.tendersEquipment).toBe(3);
-    expect(counts.equipmentFeedUnavailable).toBe(false);
+    expect(counts.actionableOpportunities).toBe(3);
   });
 
-  it("marks equipment KPI unavailable in reduced mode", () => {
-    const counts = computeTodaySummaryCounts([], 99, [], true);
-    expect(counts.tendersEquipment).toBe(0);
-    expect(counts.equipmentFeedUnavailable).toBe(true);
+  it("passes the actionable-opportunity count through unchanged (availability is decided by the caller)", () => {
+    const counts = computeTodaySummaryCounts([], 99, []);
+    expect(counts.actionableOpportunities).toBe(99);
+  });
+
+  it("passes a healthy zero through unchanged", () => {
+    const counts = computeTodaySummaryCounts([], 0, []);
+    expect(counts.actionableOpportunities).toBe(0);
   });
 });

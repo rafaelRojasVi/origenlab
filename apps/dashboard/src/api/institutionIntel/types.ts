@@ -182,6 +182,13 @@ export type QueueName =
   | "line_evidence_review_queue"
   | "retender_review_queue";
 
+/** GET /operator/procurement/status — backs the dashboard's actionable-opportunity summary. */
+export interface ProcurementStatus {
+  meta: ProcurementMeta;
+  operatorQueueSizes: Partial<Record<QueueName, number>>;
+  summaryOk: boolean;
+}
+
 export interface InstitutionProfile {
   identity: InstitutionIdentitySummary;
   axes: InstitutionAxes;

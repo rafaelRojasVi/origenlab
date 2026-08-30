@@ -2,7 +2,13 @@ import { useMemo } from "react";
 import { useDashboardData } from "../context/DashboardDataContext";
 import { dashboardSectionToHash } from "../lib/dashboardHashRoute";
 import type { DashboardSection } from "../lib/dashboardNav";
-import { isEquipmentFeedUnavailable } from "../lib/equipmentFeedStatus";
+import {
+  ACTIONABLE_OPPORTUNITIES_LABEL,
+  ACTIONABLE_OPPORTUNITIES_NORMAL_HINT,
+  ACTIONABLE_OPPORTUNITIES_STALE_HINT,
+  ACTIONABLE_OPPORTUNITIES_UNAVAILABLE_HINT,
+  summarizeProcurementStatus,
+} from "../lib/procurementSummary";
 import { computeTodaySummaryCounts } from "../lib/todaySummaryCounts";
 import { summarizeCommercialWorkQueue } from "../lib/commercialWorkQueue";
 import { CommercialWorkQueuePanel } from "../components/commercial/CommercialWorkQueuePanel";
@@ -60,7 +66,7 @@ export function TodaySummaryPage() {
     panelLoading,
     panelError,
     warm,
-    equipment,
+    procurementStatus,
     commercialDeals,
     catalogProducts,
     leadResearchSummary,
@@ -72,17 +78,19 @@ export function TodaySummaryPage() {
     setContactEmail,
   } = useDashboardData();
 
-  const equipmentFeedUnavailable = isEquipmentFeedUnavailable(equipment?.meta ?? null);
+  const opportunitySummary = useMemo(
+    () => summarizeProcurementStatus(procurementStatus),
+    [procurementStatus],
+  );
 
   const counts = useMemo(
     () =>
       computeTodaySummaryCounts(
         warm?.items ?? [],
-        equipment?.items.length ?? 0,
+        opportunitySummary.value,
         commercialDeals?.items ?? [],
-        equipmentFeedUnavailable,
       ),
-    [warm?.items, equipment?.items.length, commercialDeals?.items, equipmentFeedUnavailable],
+    [warm?.items, opportunitySummary.value, commercialDeals?.items],
   );
 
   const commercialWorkSummary = useMemo(
@@ -242,19 +250,22 @@ export function TodaySummaryPage() {
             />
           ) : null}
 
-          {equipmentFeedUnavailable ? (
+          {!opportunitySummary.available ? (
             <div
               className="rounded-xl border border-amber-200 bg-amber-50/90 px-4 py-4 text-sm text-amber-950"
               role="status"
-              data-testid="today-equipment-feed-unavailable"
+              data-testid="today-procurement-status-unavailable"
             >
-              <p className="font-semibold">Fuente de licitaciones no disponible</p>
-              <p className="mt-2">
-                La cola de licitaciones/equipos puede estar vacía o desactualizada. Revisa la
-                generación de{" "}
-                <code className="text-xs">equipment_first_operator_queue</code> desde CLI si
-                necesitas actualizar reportes.
-              </p>
+              <p className="font-semibold">{ACTIONABLE_OPPORTUNITIES_UNAVAILABLE_HINT}</p>
+              <p className="mt-2">No significa que no existan oportunidades.</p>
+            </div>
+          ) : opportunitySummary.stale ? (
+            <div
+              className="rounded-xl border border-amber-200 bg-amber-50/90 px-4 py-4 text-sm text-amber-950"
+              role="status"
+              data-testid="today-procurement-status-stale"
+            >
+              <p className="font-semibold">{ACTIONABLE_OPPORTUNITIES_STALE_HINT}</p>
             </div>
           ) : null}
 
@@ -263,7 +274,7 @@ export function TodaySummaryPage() {
               Colas prioritarias
             </h2>
             <p className="mt-1 text-sm text-[var(--color-muted)]">
-              Colas priorizadas según correos, oportunidades de equipos y señales comerciales
+              Colas priorizadas según correos, oportunidades accionables y señales comerciales
               cargadas.
             </p>
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -299,13 +310,15 @@ export function TodaySummaryPage() {
                 needsAttention
               />
               <SummaryCard
-                label="Licitaciones / equipos"
-                value={counts.tendersEquipment}
-                displayValue={equipmentFeedUnavailable ? "N/D" : undefined}
+                label={ACTIONABLE_OPPORTUNITIES_LABEL}
+                value={counts.actionableOpportunities}
+                displayValue={opportunitySummary.available ? undefined : "N/D"}
                 hint={
-                  equipmentFeedUnavailable
-                    ? "Fuente de licitaciones no disponible (modo reducido)"
-                    : "Cola de oportunidades de equipos"
+                  !opportunitySummary.available
+                    ? ACTIONABLE_OPPORTUNITIES_UNAVAILABLE_HINT
+                    : opportunitySummary.stale
+                      ? ACTIONABLE_OPPORTUNITIES_STALE_HINT
+                      : ACTIONABLE_OPPORTUNITIES_NORMAL_HINT
                 }
                 section="tenders"
               />

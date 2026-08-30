@@ -27,8 +27,7 @@ export interface TodaySummaryCounts {
   paymentsLogistics: number;
   dealEvidence: number;
   dealBlockers: number;
-  tendersEquipment: number;
-  equipmentFeedUnavailable: boolean;
+  actionableOpportunities: number;
 }
 
 export function countClientOpportunities(items: WarmCaseItem[]): number {
@@ -58,9 +57,8 @@ export function countDealBlockers(deals: CommercialDealUiRow[]): number {
 
 export function computeTodaySummaryCounts(
   warmItems: WarmCaseItem[],
-  equipmentCount: number,
+  actionableOpportunityCount: number,
   dealItems: CommercialDealUiRow[],
-  equipmentFeedUnavailable = false,
 ): TodaySummaryCounts {
   return {
     clientOpportunities: countClientOpportunities(warmItems),
@@ -68,7 +66,6 @@ export function computeTodaySummaryCounts(
     paymentsLogistics: countPaymentsLogistics(warmItems),
     dealEvidence: countDealEvidence(warmItems),
     dealBlockers: countDealBlockers(dealItems),
-    tendersEquipment: equipmentFeedUnavailable ? 0 : equipmentCount,
-    equipmentFeedUnavailable,
+    actionableOpportunities: actionableOpportunityCount,
   };
 }

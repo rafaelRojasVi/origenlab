@@ -32,6 +32,7 @@ import type {
   PageInfo,
   ProcurementEligibilityStatus,
   ProcurementMeta,
+  ProcurementStatus,
   ProspectQueueRow,
   QueueName,
   TenderAnnexImport,
@@ -766,11 +767,7 @@ function mapTenderDetail(raw: RawTenderDetailResponse): LicitacionIntel {
 }
 
 export const institutionIntelAdapter = {
-  async getProcurementStatus(): Promise<{
-    meta: ProcurementMeta;
-    operatorQueueSizes: Partial<Record<QueueName, number>>;
-    summaryOk: boolean;
-  }> {
+  async getProcurementStatus(): Promise<ProcurementStatus> {
     const raw = await fetchProcurementJson<{
       meta: ProcurementMeta;
       operator_queue_sizes?: Record<string, number>;

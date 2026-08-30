@@ -2,7 +2,34 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardDataContext } from "../context/DashboardDataContext";
+import type { ProcurementStatus } from "../api/institutionIntel/types";
 import { SystemPage } from "./SystemPage";
+
+function procurementStatus(
+  overrides: Partial<ProcurementStatus["meta"]> = {},
+  queueValue: number | undefined = 4,
+): ProcurementStatus {
+  return {
+    meta: {
+      data_source: "institution_prospect_bundle",
+      read_only: true,
+      contract_version: "institution_prospect_contract_v4",
+      supported_contract_version: true,
+      reduced_mode: false,
+      stale: false,
+      canonical_reason: "institution_prospect_read_model",
+      note: "",
+      as_of_utc: "2026-08-30T00:12:01+00:00",
+      not_persisted: true,
+      contact_authorization: false,
+      outreach_authorization: false,
+      ...overrides,
+    },
+    operatorQueueSizes:
+      queueValue === undefined ? {} : { current_opportunity_queue: queueValue },
+    summaryOk: true,
+  };
+}
 
 const BASE_AUTOMATION_STATUS = {
   generated_at_utc: "2026-06-10T18:30:00+00:00",
@@ -75,17 +102,7 @@ function wrap(ui: ReactNode, overrides: Record<string, unknown> = {}) {
             operator: { verdict: "READY", outbound_readiness: "ready", warnings: [] },
           },
           warm: { items: [], meta: null },
-          equipment: {
-            items: [],
-            meta: {
-              reduced_mode: false,
-              count: 0,
-              data_source: "active_current_csv",
-              read_only: true,
-              note: "",
-              campaign_mode: null,
-            },
-          },
+          procurementStatus: procurementStatus(),
           commercialDeals: null,
           panelLoading: false,
           panelError: null,
@@ -262,5 +279,33 @@ describe("SystemPage", () => {
     );
     screen.getByTestId("system-prospect-prior-history-warning");
     screen.getByText(/Hay prospectos con historial previo/);
+  });
+
+  it("shows the W1 current_opportunity_queue count as Oportunidades accionables", () => {
+    render(wrap(<SystemPage />, { procurementStatus: procurementStatus({}, 4) }));
+    const activitySection = screen.getByRole("heading", { name: "Actividad del sistema" }).closest("section")!;
+    within(activitySection).getByText("Oportunidades accionables");
+    within(activitySection).getByText("4");
+    expect(within(activitySection).queryByText("Licitaciones / equipos")).toBeNull();
+  });
+
+  it("shows a healthy zero as a real 0", () => {
+    render(wrap(<SystemPage />, { procurementStatus: procurementStatus({}, 0) }));
+    const tile = screen.getByText("Oportunidades accionables").closest("div")!;
+    within(tile).getByText("0");
+  });
+
+  it("shows N/D and an unavailable hint when reduced_mode is true", () => {
+    render(wrap(<SystemPage />, { procurementStatus: procurementStatus({ reduced_mode: true }, 4) }));
+    const activitySection = screen.getByRole("heading", { name: "Actividad del sistema" }).closest("section")!;
+    within(activitySection).getByText("N/D");
+    within(activitySection).getByText("Fuente de oportunidades accionables no disponible");
+  });
+
+  it("shows the numeric value and a stale hint when meta.stale is true", () => {
+    render(wrap(<SystemPage />, { procurementStatus: procurementStatus({ stale: true }, 4) }));
+    const activitySection = screen.getByRole("heading", { name: "Actividad del sistema" }).closest("section")!;
+    within(activitySection).getByText("4");
+    within(activitySection).getByText("Datos accionables desactualizados · revisar actualización W1");
   });
 });

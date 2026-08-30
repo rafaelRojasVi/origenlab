@@ -1,7 +1,34 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { DashboardDataContext } from "../context/DashboardDataContext";
+import type { ProcurementStatus } from "../api/institutionIntel/types";
 import { TodaySummaryPage } from "./TodaySummaryPage";
+
+function procurementStatus(
+  overrides: Partial<ProcurementStatus["meta"]> = {},
+  queueValue: number | undefined = 4,
+): ProcurementStatus {
+  return {
+    meta: {
+      data_source: "institution_prospect_bundle",
+      read_only: true,
+      contract_version: "institution_prospect_contract_v4",
+      supported_contract_version: true,
+      reduced_mode: false,
+      stale: false,
+      canonical_reason: "institution_prospect_read_model",
+      note: "",
+      as_of_utc: "2026-08-30T00:12:01+00:00",
+      not_persisted: true,
+      contact_authorization: false,
+      outreach_authorization: false,
+      ...overrides,
+    },
+    operatorQueueSizes:
+      queueValue === undefined ? {} : { current_opportunity_queue: queueValue },
+    summaryOk: true,
+  };
+}
 
 const BASE_PANEL = {
   health: {
@@ -31,7 +58,7 @@ function renderToday(overrides: Record<string, unknown> = {}) {
           panelLoading: false,
           panelError: null,
           warm: { items: [], meta: null },
-          equipment: { items: [], meta: null },
+          procurementStatus: procurementStatus(),
           commercialDeals: null,
           catalogProducts: { total: 6 },
           leadResearchSummary: null,
@@ -60,7 +87,7 @@ describe("TodaySummaryPage operator landing layout", () => {
     renderToday();
     expect(screen.getAllByText("Qué revisar hoy")).toHaveLength(1);
     screen.getByRole("heading", { level: 2, name: "Colas prioritarias" });
-    screen.getByText(/Colas priorizadas según correos, oportunidades de equipos y señales comerciales cargadas/);
+    screen.getByText(/Colas priorizadas según correos, oportunidades accionables y señales comerciales cargadas/);
   });
 
   it("shows operator safety boundary once at the top", () => {
@@ -138,58 +165,51 @@ describe("TodaySummaryPage prospect review card", () => {
   });
 });
 
-describe("TodaySummaryPage equipment feed warning", () => {
-  it("shows unavailable warning and N/D KPI when equipment reduced_mode", () => {
-    render(
-      <DashboardDataContext.Provider
-        value={
-          {
-            data: {
-              health: {
-                ok: true,
-                service: "origenlab-api",
-                mode: "operator-sqlite-readonly",
-                backend: "sqlite",
-              },
-              operator: { verdict: "READY", outbound_readiness: "ready", warnings: [] },
-            },
-            panelLoading: false,
-            panelError: null,
-            warm: { items: [], meta: null },
-            equipment: {
-              items: [],
-              meta: {
-                reduced_mode: true,
-                count: 0,
-                data_source: "active_current_csv",
-                read_only: true,
-                note: "missing queue",
-                campaign_mode: "equipment_first",
-              },
-            },
-            commercialDeals: {
-              items: [],
-              table_available: true,
-              total: 0,
-              limit: 20,
-              read_only: true,
-              data_source: "postgres_mirror",
-            },
-            catalogProducts: { total: 6 },
-            mirrorBackend: false,
-            loadPanel: async () => {},
-            setContactEmail: () => {},
-          } as never
-        }
-      >
-        <TodaySummaryPage />
-      </DashboardDataContext.Provider>,
-    );
+describe("TodaySummaryPage actionable-opportunity summary (W1 procurement status)", () => {
+  it("shows the W1 current_opportunity_queue count, not any legacy equipment count", () => {
+    // Deliberately distinct from any legacy equipment-feed count: proves the
+    // summary is sourced from W1, not from the old GET /opportunities/equipment feed.
+    renderToday({ procurementStatus: procurementStatus({}, 4) });
+    screen.getByLabelText(/Oportunidades accionables: 4/);
+    expect(screen.queryByText("Licitaciones / equipos")).toBeNull();
+  });
 
-    screen.getByTestId("today-equipment-feed-unavailable");
-    screen.getByText("Fuente de licitaciones no disponible");
-    screen.getByLabelText(/Licitaciones \/ equipos: N\/D/);
+  it("shows a healthy zero as a real 0, not N/D", () => {
+    renderToday({ procurementStatus: procurementStatus({}, 0) });
+    screen.getByLabelText(/Oportunidades accionables: 0/);
+    expect(screen.queryByTestId("today-procurement-status-unavailable")).toBeNull();
+  });
+
+  it("shows unavailable warning and N/D KPI when reduced_mode is true", () => {
+    renderToday({ procurementStatus: procurementStatus({ reduced_mode: true }, 4) });
+    within(screen.getByTestId("today-procurement-status-unavailable")).getByText(
+      "Fuente de oportunidades accionables no disponible",
+    );
+    screen.getByLabelText(/Oportunidades accionables: N\/D/);
     screen.getByText("Catálogo");
+  });
+
+  it("shows N/D when the procurement status request fails (null status)", () => {
+    renderToday({ procurementStatus: null });
+    screen.getByTestId("today-procurement-status-unavailable");
+    screen.getByLabelText(/Oportunidades accionables: N\/D/);
+  });
+
+  it("shows N/D when summaryOk is false", () => {
+    renderToday({
+      procurementStatus: { ...procurementStatus({}, 4), summaryOk: false },
+    });
+    screen.getByTestId("today-procurement-status-unavailable");
+    screen.getByLabelText(/Oportunidades accionables: N\/D/);
+  });
+
+  it("shows the numeric value AND a stale indication when meta.stale is true", () => {
+    renderToday({ procurementStatus: procurementStatus({ stale: true }, 4) });
+    within(screen.getByTestId("today-procurement-status-stale")).getByText(
+      "Datos accionables desactualizados · revisar actualización W1",
+    );
+    screen.getByLabelText(/Oportunidades accionables: 4/);
+    expect(screen.queryByTestId("today-procurement-status-unavailable")).toBeNull();
   });
 });
 
