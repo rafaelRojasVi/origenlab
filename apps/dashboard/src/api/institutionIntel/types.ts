@@ -210,8 +210,8 @@ export interface InstitutionListItem {
 }
 
 // ---------------------------------------------------------------------------
-// Licitación (tender) intel — extends the existing equipment-opportunity data
-// with terms/recognition/coverage. Not a replacement for EquipmentOpportunityItem.
+// Licitación (tender) intel — institution-prospect terms/recognition/coverage
+// data. Not a replacement for the W1 institution-prospect list/detail types.
 // ---------------------------------------------------------------------------
 
 export type TermFactState = "explicit" | "derived" | "not_explicitly_found" | "unknown" | "conflicting";

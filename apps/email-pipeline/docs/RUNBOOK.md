@@ -509,7 +509,7 @@ curl -sS 'http://127.0.0.1:8001/mirror/dashboard/summary?scope=archive' | jq '.s
 
 `/mirror/outbound/readiness` reflects **Postgres mirrors only** (not full SQLite Sent-folder gates). OpenAPI: [http://127.0.0.1:8001/docs](http://127.0.0.1:8001/docs).
 
-**Dashboard v1 Today** uses operator routes on :8001 (`/health`, `/operator/status`, `/cases/warm`, `/opportunities/equipment`, `/contacts/{email}`) plus **one** mirror route for commercial deals: `GET /mirror/commercial/deals` (redacted Postgres mirror). Do **not** use `GET /mirror/commercial/purchase-events` for deal UI — buyer emails and legacy purchase rows.
+**Dashboard v1 Today** uses operator routes on :8001 (`/health`, `/operator/status`, `/cases/warm`, `/operator/procurement/status`, `/contacts/{email}`) plus **one** mirror route for commercial deals: `GET /mirror/commercial/deals` (redacted Postgres mirror). Do **not** use `GET /mirror/commercial/purchase-events` for deal UI — buyer emails and legacy purchase rows. (Legacy `GET /opportunities/equipment` is retired — the dashboard's actionable-opportunity summary now sources from `/operator/procurement/status`.)
 
 **Commercial deals mirror (production order, explicit opt-in):**
 

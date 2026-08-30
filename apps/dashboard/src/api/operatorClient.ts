@@ -5,10 +5,7 @@
 
 import { parseContactDetailResponse } from "./contactParse";
 import type { ContactProfileUi } from "./contactTypes";
-import {
-  parseEquipmentOpportunitiesResponse,
-  parseWarmCasesResponse,
-} from "./commercialParse";
+import { parseWarmCasesResponse } from "./commercialParse";
 import {
   parseCommercialOpportunitiesResponse,
   parseCommercialOpportunityDetailResponse,
@@ -18,12 +15,7 @@ import type {
   CommercialOpportunitiesResponse,
   CommercialOpportunityDetailResponse,
 } from "./commercialOpportunitiesTypes";
-import type {
-  EquipmentOpportunitiesQuery,
-  EquipmentOpportunitiesUiResponse,
-  WarmCasesQuery,
-  WarmCasesResponse,
-} from "./commercialTypes";
+import type { WarmCasesQuery, WarmCasesResponse } from "./commercialTypes";
 import type {
   ChileCompraEquipmentAutoRefreshStatus,
   DailyCoreRunStatus,
@@ -428,13 +420,6 @@ export const DASHBOARD_WARM_CASES_QUERY: Required<
   positive_signal_only: false,
 };
 
-const DEFAULT_EQUIPMENT_QUERY: Required<
-  Pick<EquipmentOpportunitiesQuery, "limit" | "include_account_intelligence">
-> = {
-  limit: 30,
-  include_account_intelligence: false,
-};
-
 export function fetchWarmCases(query: WarmCasesQuery = {}): Promise<WarmCasesResponse> {
   const params: Record<string, string | number | boolean> = {
     days: query.days ?? DASHBOARD_WARM_CASES_QUERY.days,
@@ -463,28 +448,6 @@ export function contactDetailPath(email: string): string {
 export function fetchContactProfile(email: string): Promise<ContactProfileUi> {
   return fetchJsonGet<unknown>(operatorApiUrl(contactDetailPath(email))).then(
     parseContactDetailResponse,
-  );
-}
-
-export function fetchEquipmentOpportunities(
-  query: EquipmentOpportunitiesQuery = {},
-): Promise<EquipmentOpportunitiesUiResponse> {
-  const params: Record<string, string | number | boolean> = {
-    limit: query.limit ?? DEFAULT_EQUIPMENT_QUERY.limit,
-    include_account_intelligence:
-      query.include_account_intelligence ?? DEFAULT_EQUIPMENT_QUERY.include_account_intelligence,
-  };
-  if (query.priority != null) {
-    params.priority = query.priority;
-  }
-  if (query.next_action) {
-    params.next_action = query.next_action;
-  }
-  if (query.safe_channel) {
-    params.safe_channel = query.safe_channel;
-  }
-  return fetchJsonGet<unknown>(operatorApiUrl("/opportunities/equipment", params)).then(
-    parseEquipmentOpportunitiesResponse,
   );
 }
 

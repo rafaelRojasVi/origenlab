@@ -93,11 +93,7 @@ LATENCY_ENDPOINTS: tuple[LatencyEndpoint, ...] = (
     LatencyEndpoint("GET /operator/automation-status", "/operator/automation-status"),
     LatencyEndpoint("GET /cases/warm?limit=3", "/cases/warm?limit=3"),
     LatencyEndpoint("GET /cases/warm?limit=100", "/cases/warm?limit=100"),
-    LatencyEndpoint("GET /opportunities/equipment?limit=3", "/opportunities/equipment?limit=3"),
-    LatencyEndpoint(
-        "GET /opportunities/equipment?limit=100",
-        "/opportunities/equipment?limit=100",
-    ),
+    LatencyEndpoint("GET /operator/procurement/status", "/operator/procurement/status"),
     LatencyEndpoint("GET /emails/recent?limit=3", "/emails/recent?limit=3"),
     LatencyEndpoint("GET /emails/recent?limit=100", "/emails/recent?limit=100"),
 )

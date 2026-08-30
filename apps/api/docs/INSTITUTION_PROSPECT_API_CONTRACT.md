@@ -127,7 +127,8 @@ states, all driven by `meta.reduced_mode` + `meta.canonical_reason` +
 
 `note` is a free-text human explanation only set when `reduced_mode` is true.
 `source_path`/`artifact_basename` are always redacted to a basename (never a
-full filesystem path) via the same convention as `/opportunities/equipment`.
+full filesystem path) via the shared `path_redaction.py` convention used
+elsewhere in this API.
 
 `contact_authorization` / `outreach_authorization` are **always `false`** at
 every level (meta, institution item, queue row) — this API never grants

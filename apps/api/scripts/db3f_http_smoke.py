@@ -78,7 +78,7 @@ def main() -> int:
         ("GET /operator/status", "/operator/status", {}),
         ("GET /emails/recent", "/emails/recent", {"days": 7, "limit": 10}),
         ("GET /cases/warm", "/cases/warm", {"days": 30, "limit": 50, "positive_signal_only": "false"}),
-        ("GET /opportunities/equipment", "/opportunities/equipment", {"limit": 50}),
+        ("GET /operator/procurement/status", "/operator/procurement/status", {}),
         (f"GET /contacts/{known_email}", f"/contacts/{known_email}", {}),
     ]
 

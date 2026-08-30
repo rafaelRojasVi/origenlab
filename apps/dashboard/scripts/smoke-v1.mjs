@@ -7,7 +7,7 @@
  *
  * Optional: EXPECT_BACKEND=postgres|sqlite to assert health/meta labels.
  *
- * Dashboard-2: after warm/equipment loads, GET /contacts/{email} using the first
+ * Dashboard-2: after warm cases load, GET /contacts/{email} using the first
  * valid contact_email found. Skips with a warning if none (not a failure).
  *
  * Does not call legacy /dashboard, /classification, or mutating methods.
@@ -25,7 +25,7 @@ const ROUTES = [
   { label: "GET /health", path: "/health" },
   { label: "GET /operator/status", path: "/operator/status?max_staleness_days=14" },
   { label: "GET /cases/warm", path: "/cases/warm?limit=5&positive_signal_only=false" },
-  { label: "GET /opportunities/equipment", path: "/opportunities/equipment?limit=5" },
+  { label: "GET /operator/procurement/status", path: "/operator/procurement/status" },
 ];
 
 const FORBIDDEN_LEGACY = ["/dashboard/", "/classification/", "/commercial/"];
@@ -59,16 +59,11 @@ function isValidEmail(value) {
   return s.includes("@") && !/\s/.test(s);
 }
 
-/** Pick first contact email from warm cases, then equipment rows (mirrors src/lib/smokeContactPick.ts). */
-function pickContactEmailFromLists(warm, equipment) {
+/** Pick first contact email from warm cases (mirrors src/lib/smokeContactPick.ts). */
+function pickContactEmailFromLists(warm) {
   for (const row of warm?.items || []) {
     if (isValidEmail(row.contact_email)) {
       return { email: row.contact_email.trim(), source: "warm_cases" };
-    }
-  }
-  for (const row of equipment?.items || []) {
-    if (isValidEmail(row.contact_email)) {
-      return { email: row.contact_email.trim(), source: "equipment" };
     }
   }
   return null;
@@ -123,26 +118,19 @@ function validate(label, data) {
       errors.push(`warm meta.data_source=${data.meta?.data_source} expected postgres_mirror`);
     }
   }
-  if (label === "GET /opportunities/equipment" && EXPECT_BACKEND === "postgres") {
-    if (data.meta?.data_source !== "postgres_mirror") {
-      errors.push(
-        `equipment meta.data_source=${data.meta?.data_source} expected postgres_mirror`,
-      );
-    }
-  }
   return errors;
 }
 
-async function smokeContactDetail(warm, equipment) {
+async function smokeContactDetail(warm) {
   if (SKIP_CONTACTS) {
     console.warn("[smoke-v1] SMOKE_SKIP_CONTACTS=1 — skipping GET /contacts/{email}");
     return { skipped: true, reason: "SMOKE_SKIP_CONTACTS" };
   }
 
-  const picked = pickContactEmailFromLists(warm, equipment);
+  const picked = pickContactEmailFromLists(warm);
   if (!picked) {
     console.warn(
-      "[smoke-v1] WARN: no contact_email in warm/equipment rows — skipping GET /contacts/{email} (not a failure)",
+      "[smoke-v1] WARN: no contact_email in warm rows — skipping GET /contacts/{email} (not a failure)",
     );
     return { skipped: true, reason: "no_email_in_rows" };
   }
@@ -180,9 +168,9 @@ async function main() {
   const health = results["GET /health"];
   const status = results["GET /operator/status"];
   const warm = results["GET /cases/warm"];
-  const equipment = results["GET /opportunities/equipment"];
+  const procurement = results["GET /operator/procurement/status"];
 
-  const contactSmoke = await smokeContactDetail(warm, equipment);
+  const contactSmoke = await smokeContactDetail(warm);
 
   console.log("smoke v1 ok:", {
     base,
@@ -191,8 +179,7 @@ async function main() {
     verdict: status.verdict,
     warm_count: warm.meta?.count,
     warm_data_source: warm.meta?.data_source,
-    equipment_count: equipment.meta?.count,
-    equipment_data_source: equipment.meta?.data_source,
+    procurement_summary_ok: procurement.summary_ok,
     expect_backend: EXPECT_BACKEND || "(any)",
     contact_smoke: contactSmoke,
   });

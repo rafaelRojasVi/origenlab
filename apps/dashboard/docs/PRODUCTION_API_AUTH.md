@@ -51,7 +51,7 @@ Worker deploy: see [`apps/dashboard-proxy/README.md`](../../dashboard-proxy/READ
 
 Active read-only clients live under `src/api/`:
 
-- `operatorClient.ts` — `/health`, `/operator/*`, `/cases/warm`, `/contacts/{email}`, `/opportunities/equipment`
+- `operatorClient.ts` — `/health`, `/operator/*`, `/cases/warm`, `/contacts/{email}`, `/opportunities/commercial`
 - `mirrorCommercialClient.ts`, `mirrorCatalogClient.ts`, `mirrorLeadIntelClient.ts`, `mirrorAuditClient.ts` — `/mirror/*`
 
 All use:

@@ -28,7 +28,6 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/operator/procurement/*` | W1 institution/tender queues + T1 term detail |
 | `/cases/warm` | Warm cases |
 | `/contacts/*` | Contact drilldown |
-| `/opportunities/equipment` | Equipment table (legacy feed, Today counts only) |
 | `/opportunities/commercial`, `/opportunities/commercial/o_<32hex>` | PR3 machine-proposed opportunity intake (read-only) |
 | `/operations/work-queue`, `/operations/sales-opportunities/sales_<32hex>[/activities\|/tasks]`, `/operations/opportunities/o_<32hex>/[state\|activities\|tasks]` | Durable CRM reads |
 | `/mirror/*` | Postgres mirror reads |

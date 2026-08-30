@@ -119,11 +119,11 @@ All routes are **GET-only** except the enumerated `POST /operations/*` CRM comma
 | Group | Paths | Purpose |
 |-------|-------|---------|
 | **Health & operator** | `/health`, `/operator/status`, `/operator/automation-status` | Liveness, operator verdict, automation loop health |
-| **Commercial read models** | `/cases/warm`, `/opportunities/equipment`, `/opportunities/commercial`, `/emails/recent` | Dashboard Today, lifecycle opportunities, Bandeja, Licitaciones/equipos |
+| **Commercial read models** | `/cases/warm`, `/opportunities/commercial`, `/emails/recent` | Dashboard Today, lifecycle opportunities, Bandeja |
 | **Contacts** | `/contacts/{email}` | Read-only contact drilldown (Today side panel) |
 | **Mirror reporting** | `/mirror/*` | Postgres mirror metadata, deals, catalog, suppressions, audits |
 | **Durable CRM commands** | `POST /operations/*` (+ GET work-queue/detail routes) | Sales-opportunity promote/stage, PR3 operator state, activities, tasks — trusted operator identity + Idempotency-Key + expected_version |
-| **Procurement** | `/operator/procurement/*` | W1 institution/tender read models + explicit annex-bundle preview/import |
+| **Procurement** | `/operator/procurement/*` | W1 institution/tender read models + explicit annex-bundle preview/import; dashboard actionable-opportunity summary and Licitaciones/equipos |
 
 ### Route reference
 
@@ -135,7 +135,6 @@ Responses include `X-Request-ID` plus read-only timing headers `Server-Timing` /
 | GET | `/operator/status` | Operator verdict (`operator_status_report`) |
 | GET | `/operator/automation-status` | Mail refresh + dashboard mirror + SQLite storage observation (`sqlite_storage`) |
 | GET | `/cases/warm` | Warm commercial case queue (`api.v_warm_case` in production) |
-| GET | `/opportunities/equipment` | Equipment-first operator queue |
 | GET | `/opportunities/commercial` | Canonical PR3 commercial opportunity list |
 | GET | `/opportunities/commercial/{opportunity_id}` | Opportunity lifecycle detail with events/evidence/conflicts |
 | GET | `/emails/recent` | Recent canonical Gmail rows (`api.v_recent_email`) |
@@ -146,7 +145,7 @@ Responses include `X-Request-ID` plus read-only timing headers `Server-Timing` /
 
 **Recent emails read-model boundary:** production serves `api.v_recent_email` through `PostgresEmailRecentRepository` when `ORIGENLAB_API_BACKEND=postgres`. Remote contract checks live in `scripts/remote_response_audit.py` (`require_recent_emails_contract`).
 
-**Equipment read-model boundary:** production serves `api.v_equipment_opportunity_current` when `ORIGENLAB_API_BACKEND=postgres`. See [`../email-pipeline/docs/architecture/EQUIPMENT_READ_MODEL_BOUNDARY.md`](../email-pipeline/docs/architecture/EQUIPMENT_READ_MODEL_BOUNDARY.md) and the operator runbook [`../email-pipeline/docs/runbooks/EQUIPMENT_READ_MODEL_RUNBOOK.md`](../email-pipeline/docs/runbooks/EQUIPMENT_READ_MODEL_RUNBOOK.md).
+**Legacy equipment HTTP route retired:** `GET /opportunities/equipment` is no longer part of this API. The dashboard's actionable-opportunity summary and Licitaciones/equipos page now source from `/operator/procurement/status` (W1). The underlying `commercial.equipment_opportunity*` writer/read model is unaffected by this and remains scheduled — see [`../email-pipeline/docs/architecture/EQUIPMENT_READ_MODEL_BOUNDARY.md`](../email-pipeline/docs/architecture/EQUIPMENT_READ_MODEL_BOUNDARY.md) and the operator runbook [`../email-pipeline/docs/runbooks/EQUIPMENT_READ_MODEL_RUNBOOK.md`](../email-pipeline/docs/runbooks/EQUIPMENT_READ_MODEL_RUNBOOK.md).
 
 ### Quick `curl` examples (local dev)
 
@@ -157,7 +156,6 @@ curl -sS 'http://127.0.0.1:8001/health' | jq .
 curl -sS 'http://127.0.0.1:8001/operator/status' | jq .
 curl -sS 'http://127.0.0.1:8001/operator/automation-status' | jq .
 curl -sS 'http://127.0.0.1:8001/cases/warm?limit=5' | jq '.meta, (.items | length)'
-curl -sS 'http://127.0.0.1:8001/opportunities/equipment?limit=5' | jq '.meta, (.items | length)'
 curl -sS 'http://127.0.0.1:8001/emails/recent?limit=5' | jq '.total_returned, (.items | length)'
 curl -sS 'http://127.0.0.1:8001/contacts/buyer%40example.cl' | jq '.contact.email'
 ```
@@ -245,7 +243,7 @@ Optional env for cold Render / Cloudflare starts (network timeouts and connectio
 | `ORIGENLAB_REMOTE_AUDIT_RETRIES` | `2` | Retries after `TimeoutError` / `URLError` / `OSError` only |
 | `ORIGENLAB_REMOTE_AUDIT_RETRY_BACKOFF_SECONDS` | `2.0` | Sleep between network retries |
 
-Uses the same response contract checks as the local audit (`x-request-id`, JSON envelopes, list `meta`/`items`, warm-cases, recent-emails, and equipment current-view contracts, forbidden path/secret leaks). **Current limitation:** this script sends Cloudflare Access service-token headers only, not `ORIGENLAB_API_AUTH_TOKEN`; for production private routes protected by origin token auth, use `apps/email-pipeline/scripts/qa/smoke_dashboard_api_readiness.py` with `ORIGENLAB_API_AUTH_TOKEN` set. Not part of `./scripts/validate.sh` (requires network + secrets).
+Uses the same response contract checks as the local audit (`x-request-id`, JSON envelopes, list `meta`/`items`, warm-cases and recent-emails contracts, forbidden path/secret leaks). **Current limitation:** this script sends Cloudflare Access service-token headers only, not `ORIGENLAB_API_AUTH_TOKEN`; for production private routes protected by origin token auth, use `apps/email-pipeline/scripts/qa/smoke_dashboard_api_readiness.py` with `ORIGENLAB_API_AUTH_TOKEN` set. Not part of `./scripts/validate.sh` (requires network + secrets).
 
 **Remote latency audit** (read-only GET timing; warm-run budgets; skips with exit 0 without CF credentials):
 
@@ -330,7 +328,7 @@ Dashboard v1 + **Dashboard-2 contact drilldown** use **this app only** (`apps/ap
 | SQLite (default) | `ORIGENLAB_API_BACKEND` unset or `sqlite` | `dashboard_v1_http_smoke.py --expect-backend sqlite` |
 | Postgres mirror | `ORIGENLAB_API_BACKEND=postgres` + disposable `ORIGENLAB_POSTGRES_URL` | `--expect-backend postgres` |
 
-`dashboard_v1_http_smoke.py` also calls **`GET /contacts/{email}`** (email from warm/equipment rows; skips with WARN if none).
+`dashboard_v1_http_smoke.py` also calls **`GET /contacts/{email}`** (email from warm rows; skips with WARN if none).
 
 Full procedure: [`../dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md`](../dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md) · matrix detail: [`../dashboard/docs/BACKEND_MATRIX_VALIDATION.md`](../dashboard/docs/BACKEND_MATRIX_VALIDATION.md).
 

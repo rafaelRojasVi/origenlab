@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  normalizeEquipmentItem,
   normalizeWarmCaseItem,
-  parseEquipmentMeta,
-  parseEquipmentOpportunitiesResponse,
   parseWarmCasesMeta,
   parseWarmCasesResponse,
 } from "./commercialParse";
@@ -13,15 +10,6 @@ const WARM_INTERNAL_KEYS = [
   "source_file",
   "recipients_preview",
   "sender_preview",
-  "raw_body",
-  "headers",
-] as const;
-
-const EQUIPMENT_INTERNAL_KEYS = [
-  "source_file",
-  "csv_path",
-  "sqlite_path",
-  "body",
   "raw_body",
   "headers",
 ] as const;
@@ -222,144 +210,5 @@ describe("parseWarmCasesMeta", () => {
     expect(parseWarmCasesMeta({ data_source: "postgres_mirror" }).data_source).toBe("postgres_mirror");
     expect(parseWarmCasesMeta({ data_source: "sqlite" }).data_source).toBe("sqlite");
     expect(parseWarmCasesMeta({ data_source: "unknown" }).data_source).toBe("sqlite");
-  });
-});
-
-describe("parseEquipmentOpportunitiesResponse", () => {
-  it("accepts meta.data_source postgres_mirror", () => {
-    const parsed = parseEquipmentOpportunitiesResponse({
-      meta: { data_source: "postgres_mirror", count: 0, reduced_mode: true, note: "" },
-      items: [],
-    });
-    expect(parsed.meta.data_source).toBe("postgres_mirror");
-  });
-
-  it("strips source_path and ignores source_path_info from UI meta", () => {
-    const parsed = parseEquipmentOpportunitiesResponse({
-      meta: {
-        data_source: "postgres_mirror",
-        source_path: "/var/data/queue/secret.csv",
-        source_path_info: {
-          redacted: true,
-          basename: "secret.csv",
-          kind: "file",
-        },
-        count: 0,
-        reduced_mode: true,
-        note: "mirror lag",
-      },
-      items: [],
-    });
-
-    expect(parsed.items).toEqual([]);
-    expect(parsed.meta.reduced_mode).toBe(true);
-    expect("source_path" in parsed.meta).toBe(false);
-    expect("source_path_info" in parsed.meta).toBe(false);
-    expect(JSON.stringify(parsed.meta)).not.toContain("secret.csv");
-  });
-
-  it("keeps ChileCompra detail fields and preserves public equipment fields", () => {
-    const parsed = parseEquipmentOpportunitiesResponse({
-      meta: { data_source: "postgres_mirror", count: 1, reduced_mode: false, note: "" },
-      items: [
-        {
-          priority_rank: 1,
-          opportunity_key: "equipment:equipment_queue:lp-26",
-          codigo_licitacion: "1051-1-LP26",
-          buyer: "Hospital",
-          equipment_category: "centrifuge",
-          item_description: "Centrifuge unit",
-          next_action: "quote_now",
-          contact_email: "procurement@hospital.cl",
-          close_date: "2026-06-17T19:00:00",
-          close_at: "2026-06-17T19:00:00-04:00",
-          fecha_publicacion: "10/06/2026",
-          mercado_publico_url:
-            "https://www.mercadopublico.cl/BuscarLicitacion?codigoLicitacion=1051-1-LP26",
-          unspsc_code: "41100000",
-          cantidad: "2",
-          producto: "Centrifuga",
-          validity_status: "open",
-          chilecompra_status: "Publicada",
-          region: null,
-          safe_channel: undefined,
-        },
-      ],
-    });
-
-    const item = parsed.items[0];
-    expect(item.opportunity_key).toBe("equipment:equipment_queue:lp-26");
-    expect(item.codigo_licitacion).toBe("1051-1-LP26");
-    expect(item.buyer).toBe("Hospital");
-    expect(item.equipment_category).toBe("centrifuge");
-    expect(item.item_description).toBe("Centrifuge unit");
-    expect(item.next_action).toBe("quote_now");
-    expect(item.contact_email).toBe("procurement@hospital.cl");
-    expect(item.fecha_publicacion).toBe("10/06/2026");
-    expect(item.mercado_publico_url).toContain("mercadopublico.cl");
-    expect(item.unspsc_code).toBe("41100000");
-    expect(item.region).toBe("");
-    expect(item.safe_channel).toBe("");
-    expect(JSON.stringify(parsed)).not.toMatch(/CHILECOMPRA_API_TICKET/i);
-  });
-
-  it("sanitizes anexos and drops ChileCompra ticket/api URLs", () => {
-    const parsed = parseEquipmentOpportunitiesResponse({
-      meta: { data_source: "postgres_mirror", count: 1, reduced_mode: false, note: "" },
-      items: [
-        {
-          priority_rank: 1,
-          codigo_licitacion: "LP-1",
-          anexos: [
-            {
-              nombre: "Bases.pdf",
-              url: "https://www.mercadopublico.cl/archivos/bases.pdf",
-            },
-            {
-              nombre: "Ticket doc",
-              url: "https://api.mercadopublico.cl/v1/doc?ticket=SECRET",
-            },
-          ],
-        },
-      ],
-    });
-
-    expect(parsed.items[0].anexos).toHaveLength(2);
-    expect(parsed.items[0].anexos?.[0]?.url).toContain("mercadopublico.cl");
-    expect(parsed.items[0].anexos?.[1]?.url).toBeUndefined();
-  });
-});
-
-describe("normalizeEquipmentItem", () => {
-  it("ignores raw/internal API fields on items", () => {
-    const payload: Record<string, unknown> = {
-      priority_rank: 1,
-      codigo_licitacion: "LP-1",
-    };
-    for (const key of EQUIPMENT_INTERNAL_KEYS) {
-      payload[key] = `leak-${key}`;
-    }
-    const row = normalizeEquipmentItem(payload, 0);
-    for (const key of EQUIPMENT_INTERNAL_KEYS) {
-      expect(key in row).toBe(false);
-    }
-    expect(JSON.stringify(row)).not.toContain("leak-raw_body");
-  });
-});
-
-describe("parseEquipmentMeta", () => {
-  it("never exposes source_path or source_path_info", () => {
-    const meta = parseEquipmentMeta({
-      data_source: "postgres_mirror",
-      source_path: "/home/ops/queue.csv",
-      source_path_info: { redacted: true, basename: "queue.csv", kind: "file" },
-      count: 2,
-      reduced_mode: false,
-      note: "",
-    });
-    expect(meta.data_source).toBe("postgres_mirror");
-    expect(meta.count).toBe(2);
-    expect("source_path" in meta).toBe(false);
-    expect("source_path_info" in meta).toBe(false);
   });
 });

@@ -502,18 +502,15 @@ def _check_warm_cases(
     )
 
 
-def _check_equipment(
+def _check_procurement_status(
     fetch: FetchJsonFn,
     *,
     cf_access_configured: bool = False,
     api_auth_configured: bool = False,
 ) -> EndpointCheck:
-    status, body, err = fetch(
-        "/opportunities/equipment",
-        {"limit": 20, "include_account_intelligence": "false"},
-    )
+    status, body, err = fetch("/operator/procurement/status", {})
     check = _expect_status(
-        "GET /opportunities/equipment",
+        "GET /operator/procurement/status",
         status,
         body,
         err,
@@ -524,25 +521,22 @@ def _check_equipment(
         return check
     meta = body.get("meta")
     if not isinstance(meta, dict):
-        return EndpointCheck("GET /opportunities/equipment", False, "missing meta")
+        return EndpointCheck("GET /operator/procurement/status", False, "missing meta")
     if meta.get("read_only") is not True:
-        return EndpointCheck("GET /opportunities/equipment", False, "meta.read_only is not true")
-    if meta.get("source_path"):
-        return EndpointCheck("GET /opportunities/equipment", False, "meta.source_path must be empty")
+        return EndpointCheck("GET /operator/procurement/status", False, "meta.read_only is not true")
     data_source = meta.get("data_source")
-    if data_source not in ("active_current_csv", "postgres_mirror"):
+    if data_source != "institution_prospect_read_model":
         return EndpointCheck(
-            "GET /opportunities/equipment",
+            "GET /operator/procurement/status",
             False,
             f"unexpected data_source={data_source!r}",
         )
-    count = len(body.get("items") or [])
-    reduced = bool(meta.get("reduced_mode"))
-    note = "reduced_mode" if reduced else "ok"
+    summary_ok = body.get("summary_ok")
+    counts = body.get("counts") or {}
     return EndpointCheck(
-        "GET /opportunities/equipment",
+        "GET /operator/procurement/status",
         True,
-        f"data_source={data_source} items={count} ({note})",
+        f"summary_ok={summary_ok} counts={len(counts)}",
     )
 
 
@@ -600,6 +594,6 @@ def run_dashboard_api_smoke(
             **cf_kw,
         ),
         _check_warm_cases(bound_fetch, **cf_kw),
-        _check_equipment(bound_fetch, **cf_kw),
+        _check_procurement_status(bound_fetch, **cf_kw),
     ]
     return report

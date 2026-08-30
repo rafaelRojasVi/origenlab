@@ -1,6 +1,5 @@
 import type { ApiBackend } from "../api/operatorTypes";
 import type { ContactDataSource } from "../api/contactTypes";
-import type { EquipmentDataSource } from "../api/commercialTypes";
 
 export function operatorBackendSourceLabel(backend: ApiBackend): string {
   if (backend === "postgres") {
@@ -27,14 +26,4 @@ export function contactDataSourceLabel(
     return "Contacto desde espejo Postgres — no autoriza envíos";
   }
   return "Contacto desde SQLite vía API";
-}
-
-export function equipmentSourceLabel(
-  backend: ApiBackend,
-  metaSource: EquipmentDataSource,
-): string {
-  if (backend === "postgres" || metaSource === "postgres_mirror") {
-    return "Cola desde espejo Postgres — solo lectura";
-  }
-  return "Cola activa del workspace vía API";
 }

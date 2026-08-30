@@ -7,12 +7,10 @@ vi.mock("./pages/DashboardApp", () => ({
 
 const fetchTodayPanel = vi.fn();
 const fetchWarmCases = vi.fn();
-const fetchEquipmentOpportunities = vi.fn();
 
 vi.mock("./api/operatorClient", () => ({
   fetchTodayPanel,
   fetchWarmCases,
-  fetchEquipmentOpportunities,
   fetchContactProfile: vi.fn(),
   getOperatorApiBaseUrl: vi.fn(() => ""),
   OperatorApiError: class OperatorApiError extends Error {},
@@ -35,7 +33,6 @@ describe("App production host guard", () => {
     vi.stubEnv("MODE", "production");
     fetchTodayPanel.mockReset();
     fetchWarmCases.mockReset();
-    fetchEquipmentOpportunities.mockReset();
   });
 
   afterEach(() => {
@@ -75,6 +72,5 @@ describe("App production host guard", () => {
     render(<App />);
     expect(fetchTodayPanel).not.toHaveBeenCalled();
     expect(fetchWarmCases).not.toHaveBeenCalled();
-    expect(fetchEquipmentOpportunities).not.toHaveBeenCalled();
   });
 });

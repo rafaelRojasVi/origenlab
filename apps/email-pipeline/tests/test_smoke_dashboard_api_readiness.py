@@ -125,16 +125,14 @@ def _good_responses() -> dict[str, dict[str, Any]]:
                 }
             ],
         },
-        "/opportunities/equipment": {
+        "/operator/procurement/status": {
             "meta": {
-                "data_source": "postgres_mirror",
+                "data_source": "institution_prospect_read_model",
                 "read_only": True,
-                "reduced_mode": False,
-                "count": 0,
-                "source_path": "",
-                "note": "",
             },
-            "items": [],
+            "counts": {"institutions": 0},
+            "operator_queue_sizes": {},
+            "summary_ok": True,
         },
     }
 
@@ -227,16 +225,16 @@ def test_smoke_fails_on_forbidden_transfer_id_in_deals() -> None:
     assert "transfer_id" in keys
 
 
-def test_smoke_fails_when_equipment_exposes_source_path() -> None:
+def test_smoke_fails_when_procurement_status_read_only_false() -> None:
     responses = _good_responses()
-    responses["/opportunities/equipment"]["meta"]["source_path"] = "/reports/out/secret.csv"
+    responses["/operator/procurement/status"]["meta"]["read_only"] = False
     report = run_dashboard_api_smoke(
         "https://api.example.test",
         fetch=_mock_fetch(responses),
     )
     assert not report.passed
-    eq = next(c for c in report.checks if "/opportunities/equipment" in c.name)
-    assert "source_path" in eq.detail
+    proc = next(c for c in report.checks if "/operator/procurement/status" in c.name)
+    assert "read_only" in proc.detail
 
 
 def test_summary_does_not_embed_response_bodies() -> None:

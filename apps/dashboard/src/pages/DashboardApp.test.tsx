@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EquipmentOpportunitiesResponse, WarmCasesResponse } from "../api/commercialTypes";
+import type { WarmCasesResponse } from "../api/commercialTypes";
 import type { TodayPanelData } from "../api/operatorTypes";
 import { DashboardApp } from "./DashboardApp";
 
@@ -92,42 +92,12 @@ const warmPayload: WarmCasesResponse = {
   ],
 };
 
-const equipmentPayload: EquipmentOpportunitiesResponse = {
-  meta: {
-    data_source: "active_current_csv",
-    read_only: true,
-    count: 1,
-    source_path: "/secret/path/queue.csv",
-    campaign_mode: "equipment_first",
-    reduced_mode: false,
-    note: "",
-  },
-  items: [
-    {
-      priority_rank: 1,
-      codigo_licitacion: "LP-99",
-      buyer: "Hospital Regional",
-      region: "RM",
-      close_date: "15/06/2026",
-      equipment_category: "incubator",
-      item_description: "CO2 incubator",
-      next_action: "monitor",
-      safe_channel: "mercado_publico_bid",
-      supplier_needed: "no",
-      contact_status: "pending",
-      contact_email: "procurement@hospital.cl",
-      operator_note: "intel",
-    },
-  ],
-};
-
 vi.mock("../api/operatorClient", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/operatorClient")>();
   return {
     ...actual,
     fetchTodayPanel: vi.fn(),
     fetchWarmCases: vi.fn(),
-    fetchEquipmentOpportunities: vi.fn(),
     fetchContactProfile: vi.fn(),
     getOperatorApiBaseUrl: vi.fn(() => ""),
   };
@@ -184,11 +154,7 @@ vi.mock("../api/institutionIntel/adapter", () => ({
   },
 }));
 
-import {
-  fetchEquipmentOpportunities,
-  fetchTodayPanel,
-  fetchWarmCases,
-} from "../api/operatorClient";
+import { fetchTodayPanel, fetchWarmCases } from "../api/operatorClient";
 import { fetchCommercialDealsMirror } from "../api/mirrorCommercialClient";
 import { fetchCommercialWorkQueue } from "../api/commercialOperationsClient";
 import { fetchCatalogProductsMirror } from "../api/mirrorCatalogClient";
@@ -204,7 +170,6 @@ function mockAllOk() {
   });
   vi.mocked(fetchTodayPanel).mockResolvedValue(panelSqlite);
   vi.mocked(fetchWarmCases).mockResolvedValue(warmPayload);
-  vi.mocked(fetchEquipmentOpportunities).mockResolvedValue(equipmentPayload);
   vi.mocked(fetchCatalogProductsMirror).mockResolvedValue(catalogListFixture());
   vi.mocked(fetchCommercialDealsMirror).mockResolvedValue({
     table_available: true,

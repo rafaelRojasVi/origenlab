@@ -216,3 +216,31 @@ def test_contact_detail_missing_sqlite_reduced_mode(tmp_path: Path) -> None:
     data = client.get("/contacts/anyone@cliente.cl").json()
     assert data["meta"]["reduced_mode"] is True
     assert data["contact"]["normalized_email"] == "anyone@cliente.cl"
+
+
+def test_load_manifest_returns_empty_dict_when_file_missing(tmp_path: Path) -> None:
+    from origenlab_api.repositories.contact import _load_manifest
+
+    active = tmp_path / "current"
+    active.mkdir()
+    assert _load_manifest(active) == {}
+
+
+def test_load_manifest_returns_empty_dict_on_malformed_json(tmp_path: Path) -> None:
+    from origenlab_api.repositories.contact import _load_manifest
+
+    active = tmp_path / "current"
+    active.mkdir()
+    (active / "manifest.json").write_text("{not valid json", encoding="utf-8")
+    assert _load_manifest(active) == {}
+
+
+def test_load_manifest_returns_parsed_dict_on_valid_json(tmp_path: Path) -> None:
+    from origenlab_api.repositories.contact import _load_manifest
+
+    active = tmp_path / "current"
+    active.mkdir()
+    (active / "manifest.json").write_text(
+        json.dumps({"canonical_files": ["a.csv"]}), encoding="utf-8"
+    )
+    assert _load_manifest(active) == {"canonical_files": ["a.csv"]}

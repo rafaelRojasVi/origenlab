@@ -27,7 +27,7 @@ DASHBOARD_V1_ROUTES: tuple[tuple[str, str, dict[str, str | int | bool]], ...] = 
         "/cases/warm",
         {"days": 14, "limit": 5, "positive_signal_only": "false"},
     ),
-    ("GET /opportunities/equipment", "/opportunities/equipment", {"limit": 5}),
+    ("GET /operator/procurement/status", "/operator/procurement/status", {}),
 )
 
 FORBIDDEN_LEGACY_PREFIXES = ("/dashboard", "/classification", "/commercial/")
@@ -49,15 +49,11 @@ def _is_valid_email(value: object) -> bool:
     return "@" in s and " " not in s
 
 
-def _pick_contact_email(warm: dict, equipment: dict) -> tuple[str, str] | None:
+def _pick_contact_email(warm: dict) -> tuple[str, str] | None:
     for row in warm.get("items") or []:
         email = str(row.get("contact_email") or "").strip()
         if _is_valid_email(email):
             return email, "warm_cases"
-    for row in equipment.get("items") or []:
-        email = str(row.get("contact_email") or "").strip()
-        if _is_valid_email(email):
-            return email, "equipment"
     return None
 
 
@@ -132,15 +128,6 @@ def _validate_payload(label: str, data: dict, expect_backend: str | None) -> lis
                 errors.append(
                     "warm meta.data_source must not be postgres_mirror in sqlite mode"
                 )
-    elif label == "GET /opportunities/equipment":
-        meta = data.get("meta") or {}
-        if (
-            expect_backend == "postgres"
-            and meta.get("data_source") != "postgres_mirror"
-        ):
-            errors.append(
-                f"equipment meta.data_source={meta.get('data_source')!r} expected postgres_mirror"
-            )
     return errors
 
 
@@ -179,7 +166,6 @@ def main(argv: list[str] | None = None) -> int:
         "contact_smoke": {},
     }
     warm_data: dict | None = None
-    equipment_data: dict | None = None
     for label, path, params in DASHBOARD_V1_ROUTES:
         r = client.get(path, params=params)
         entry: dict[str, object] = {
@@ -199,15 +185,13 @@ def main(argv: list[str] | None = None) -> int:
             )
             if path == "/cases/warm":
                 warm_data = data
-            if path == "/opportunities/equipment":
-                equipment_data = data
         else:
             entry["body"] = r.text[:300]
         report["routes"][label] = entry
 
     contact_smoke: dict[str, object] = {"skipped": True, "reason": "no_email_in_rows"}
-    if warm_data is not None and equipment_data is not None:
-        picked = _pick_contact_email(warm_data, equipment_data)
+    if warm_data is not None:
+        picked = _pick_contact_email(warm_data)
         if picked:
             email, source = picked
             from urllib.parse import quote
@@ -249,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
         else:
             print(
-                "WARN: no contact_email in warm/equipment rows — skipping GET /contacts/{email}",
+                "WARN: no contact_email in warm rows — skipping GET /contacts/{email}",
                 file=sys.stderr,
             )
     report["contact_smoke"] = contact_smoke

@@ -554,11 +554,11 @@ describe("operator API client", () => {
     expect(profile.contact.normalized_email).toBe("a@b.cl");
   });
 
-  it("operatorApiUrl builds equipment opportunities GET path", () => {
+  it("operatorApiUrl builds commercial opportunities GET path", () => {
     vi.stubEnv("MODE", "production");
     vi.stubEnv("VITE_ORIGENLAB_API_BASE_URL", "https://api.example.com");
-    const url = operatorApiUrl("/opportunities/equipment", { limit: 30 });
-    expect(url).toContain("/opportunities/equipment");
+    const url = operatorApiUrl("/opportunities/commercial", { limit: 30 });
+    expect(url).toContain("/opportunities/commercial");
     expect(url).toContain("limit=30");
   });
 });

@@ -59,7 +59,6 @@ Routes may add **documented** meta fields (e.g. `reduced_mode`, `campaign_mode`,
 | Route                          | Response model                                      |
 | ------------------------------ | --------------------------------------------------- |
 | `GET /cases/warm`              | `WarmCasesResponse` — `meta` + `items`              |
-| `GET /opportunities/equipment` | `EquipmentOpportunitiesResponse` — `meta` + `items` |
 | `GET /opportunities/commercial` | `CommercialOpportunitiesResponse` — `meta` + `items` |
 
 **`GET /cases/warm` (production Postgres read model):**
@@ -273,7 +272,6 @@ Operator plane (SQLite / active CSV):
 | GET    | `/operator/automation-status` |
 | GET    | `/emails/recent`              |
 | GET    | `/cases/warm`                 |
-| GET    | `/opportunities/equipment`    |
 | GET    | `/opportunities/commercial`   |
 | GET    | `/opportunities/commercial/{opportunity_id}` |
 | GET    | `/operations/work-queue` |
@@ -339,13 +337,12 @@ Besides `meta` + `items`, includes `total_returned`, `days_window`, `scope_note`
 
 ### 4. Operator-facing filesystem paths are basename-only
 
-`GET /operator/status`, `GET /operator/automation-status`, and `GET /opportunities/equipment` expose filesystem locations using **basename-only** legacy string fields for dashboard compatibility, plus structured `*_info` / `path_info` companions.
+`GET /operator/status` and `GET /operator/automation-status` expose filesystem locations using **basename-only** legacy string fields for dashboard compatibility, plus structured `*_info` / `path_info` companions.
 
 | Endpoint                          | Legacy field (basename only)                   | Companion metadata                                  |
 | --------------------------------- | ---------------------------------------------- | --------------------------------------------------- |
 | `GET /operator/status`            | `sqlite_path`                                  | `sqlite_path_info` → `{ redacted, basename, kind }` |
 | `GET /operator/automation-status` | `active_current_dir`, nested queue/audit paths | `active_current_dir_info`, section `path_info`      |
-| `GET /opportunities/equipment`    | `meta.source_path`                             | `meta.source_path_info`                             |
 
 Raw absolute paths (`/home/…`, `/mnt/…`, parent directories) must **not** appear in JSON responses. `scripts/audit_response_contract.py` fails on `/home/` and `/mnt/` anywhere in audited payloads.
 
@@ -355,6 +352,7 @@ Raw absolute paths (`/home/…`, `/mnt/…`, parent directories) must **not** ap
 
 | Date    | Change                                                                                                                                                                                                                                                             |
 | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-08 | `GET /opportunities/equipment` retired. The dashboard's actionable-opportunity summary now sources from `GET /operator/procurement/status` (W1). The underlying `commercial.equipment_opportunity*` writer/read model is unaffected and remains scheduled.        |
 | 2026-07 | `GET /operator/automation-status`: additive `ndr_pending_review` (pending NDR review counts/paths/status); nested paths basename-redacted like other automation sections.                                                                                          |
 | 2026-07 | Production bearer auth: `ORIGENLAB_API_AUTH_TOKEN` required when `ORIGENLAB_ENV=production`; public routes are `GET /health` and `OPTIONS` only.                                                                                                                   |
 | 2026-07 | CORS: `Access-Control-Expose-Headers` includes `X-Request-ID`, `Server-Timing`, and `X-Process-Time-Ms` for configured dashboard origins; methods remain `GET` / `HEAD` / `OPTIONS`.                                                                              |

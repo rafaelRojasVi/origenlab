@@ -13,12 +13,13 @@ import { TenderDetailDrawer } from "../components/tenders/TenderDetailDrawer";
  * drawer (right column, ~620px) for that tender_code — additive detail on
  * top of the same W1 actionability gate, never a second opportunity source.
  *
- * The legacy equipment_first feed (GET /opportunities/equipment) predates
- * procurement-eligibility work and can still label a restricted-eligibility
- * tender `next_action=quote_now`, so it is deliberately NOT rendered here.
- * Its dashboard client components were removed in the 2026-08 commercial
- * platform reset; the pipeline and API endpoint remain for Today counts and
- * the reduced-mode feed-status signal only.
+ * The legacy equipment_first feed predates procurement-eligibility work and
+ * can still label a restricted-eligibility tender `next_action=quote_now`,
+ * so it is deliberately NOT rendered here. Its dashboard client components
+ * were removed in the 2026-08 commercial platform reset, and the HTTP route
+ * (`GET /opportunities/equipment`) was retired afterward — the underlying
+ * ChileCompra writer/read model keeps running, but nothing in this app reads
+ * it anymore; W1 is the sole opportunity source.
  */
 export function TendersPage() {
   const [selectedTenderCode, setSelectedTenderCode] = useState<string | null>(null);
