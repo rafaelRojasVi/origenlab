@@ -89,7 +89,7 @@ Give operators a single, copy-paste workflow for:
 |-------|------|
 | **`daily-core --apply`** | Refreshes **SQLite** operational truth and safety exports under `reports/out/`. **Never** runs Postgres mirror. |
 | **`mirror-dashboard --apply`** | Copies refreshed SQLite-side state into the **Postgres mirror** for reporting and the React dashboard (core loaders only). |
-| **`mirror-dashboard --live --apply`** | Same as above **plus** warm cases, commercial deals, and operator snapshots — the dashboard people actually see. Equipment opportunities are direct-published by the ChileCompra refresh path. |
+| **`mirror-dashboard --live --apply`** | Same as above **plus** warm cases, commercial deals, and operator snapshots — the dashboard people actually see. Equipment opportunities are **not** part of this loop; the legacy Postgres equipment writer is manual/backfill opt-in only (see below). |
 | **Dashboard / API (`apps/api` :8001)** | **Read-only visibility** over SQLite (operator routes) and Postgres (`/mirror/*`). |
 | **Postgres mirror** | **Not send approval.** LISTO / READY / mirror success does **not** mean an outbound batch may be sent. |
 
@@ -168,7 +168,7 @@ test -n "${ORIGENLAB_POSTGRES_URL:-${ALEMBIC_DATABASE_URL:-${ORIGENLAB_CLOUD_POS
 
 ## Live dashboard refresh (preferred)
 
-For the **live React dashboard** and deployed API counts (warm cases, commercial deals, operator snapshots), use the **`--live`** preset instead of remembering passthrough flags. Equipment opportunities are refreshed by the direct ChileCompra path: `uv run origenlab auto-refresh-chilecompra-equipment --once --apply`.
+For the **live React dashboard** and deployed API counts (warm cases, commercial deals, operator snapshots), use the **`--live`** preset instead of remembering passthrough flags. Equipment opportunities are **not** refreshed by this preset. Scheduled ChileCompra auto-refresh (`uv run origenlab auto-refresh-chilecompra-equipment --once --apply`) publishes the queue/CSV/W1 institution-prospect data only and does **not** write `commercial.equipment_opportunity*`; direct Postgres publication needs the explicit legacy/manual-backfill flag `--publish-read-model`. `/opportunities/equipment` and legacy Today equipment consumption are retired.
 
 **`--live`** includes:
 

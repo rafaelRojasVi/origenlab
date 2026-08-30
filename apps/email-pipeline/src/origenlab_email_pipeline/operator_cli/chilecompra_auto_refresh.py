@@ -106,8 +106,9 @@ class ChilecompraEquipmentAutoRefreshOptions:
     # EQUIPMENT_READ_MODEL_BOUNDARY.md.
     publish_read_model: bool = False
     # Opt-in, defaults false: publishing the institution-prospect read model
-    # from this run's detail cache + manifest. Must not activate merely by
-    # merging this option — the tracked cron wrapper does not pass this flag.
+    # from this run's detail cache + manifest. The CLI option itself must not
+    # activate merely by merging this option — the tracked cron wrapper is
+    # what turns it on, by explicitly passing --publish-institution-prospects.
     publish_institution_prospects: bool = False
     # Opt-in, defaults false: after a successful publish_institution_prospects
     # publish, acquire ANEXO evidence (network GET/POST against the public
@@ -970,7 +971,7 @@ def parse_chilecompra_equipment_auto_refresh_args(
         help=(
             "Publish the institution-prospect read model from this run's detail cache + "
             "manifest into reports/out/active/current/institution_prospects/ (default: "
-            "false, opt-in; not yet wired into the tracked cron wrapper)"
+            "false, opt-in; the tracked cron wrapper explicitly passes this flag)"
         ),
     )
     parser.add_argument(
@@ -1028,7 +1029,8 @@ def print_chilecompra_equipment_auto_refresh_help() -> None:
         "auto-refresh-chilecompra-equipment — operator ChileCompra equipment queue refresh\n\n"
         "  uv run origenlab auto-refresh-chilecompra-equipment --once\n"
         "  uv run origenlab auto-refresh-chilecompra-equipment --once --apply\n\n"
-        "Writes API queue CSV, optional candidate audit, canonical dashboard CSV, "
-        "and typed Postgres equipment read model when Postgres is configured. "
+        "Writes API queue CSV, optional candidate audit, and canonical dashboard CSV. "
+        "Direct-publishing the typed Postgres equipment read model is a separate, "
+        "manual/legacy-backfill opt-in (--publish-read-model, defaulting false). "
         "Does not send email or mutate SQLite. See docs/operator/CHILECOMPRA_EQUIPMENT_REFRESH.md.\n"
     )

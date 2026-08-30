@@ -1,6 +1,6 @@
 # ChileCompra equipment queue refresh (operator)
 
-Automated operator step to refresh the equipment-first queue from the Mercado Público licitaciones API, publish the canonical dashboard CSV/audit artifacts, and direct-publish the typed equipment read model to Postgres when `--apply` runs with Postgres configured.
+Automated operator step to refresh the equipment-first queue from the Mercado Público licitaciones API and publish the canonical dashboard CSV/audit artifacts. Direct-publishing the typed equipment read model to Postgres is a separate, manual/legacy-backfill opt-in (`--publish-read-model`, defaulting `false`) — see [Dashboard mirror relationship](#dashboard-mirror-relationship) below; the scheduled/tracked wrapper does not enable it.
 
 **PR5B note:** The acquisition snapshot parsers in the
 `commercial_procurement_acquisition/` package do **not** change this

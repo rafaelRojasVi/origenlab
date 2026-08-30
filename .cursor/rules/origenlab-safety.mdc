@@ -105,8 +105,10 @@ Recent API polish added:
   - `meta.canonical_categories`
   - `meta.legacy_category_aliases`
 - Equipment empty-state note:
-  - use `auto-refresh-chilecompra-equipment --once --apply`
-  - `--include-equipment-opportunities` is legacy/backfill only
+  - `/opportunities/equipment` and legacy Today equipment consumption are retired; W1 procurement status is canonical.
+  - Scheduled auto-refresh (`auto-refresh-chilecompra-equipment --once --apply`) publishes queue/CSV/W1 institution-prospect data only; it does not write `commercial.equipment_opportunity*`.
+  - Manual legacy direct publish (opt-in backfill only): add `--publish-read-model`.
+  - Legacy CSV mirror backfill (opt-in only): `mirror-dashboard --live -- --include-equipment-opportunities`
 - `/operator/automation-status` exposes:
   - `ndr_pending_review`
 - CORS exposes:

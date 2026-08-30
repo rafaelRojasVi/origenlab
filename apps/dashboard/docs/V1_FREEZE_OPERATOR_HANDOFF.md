@@ -6,6 +6,12 @@
 > [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](../../../docs/architecture/CURRENT_SYSTEM_TRUTH.md).
 > The smoke/matrix procedures below remain useful as historical validation
 > recipes only.
+>
+> **2026-08-30 correction:** `GET /opportunities/equipment`, the
+> `EquipmentOpportunitiesTable` dashboard client, and legacy Today equipment
+> consumption described below are **retired**. W1 procurement status
+> (`/operator/procurement/*`) is canonical. Equipment mentions elsewhere in
+> this document are historical only.
 
 **Frozen state (2026-05):** Dashboard v1 + `apps/api` read-only operator plane. **Dashboard-2** adds read-only contact drilldown (`GET /contacts/{email}`) on the **Today** page. **Dashboard-2.3** adds client-side table polish; **Dashboard-2.5** adds read-only operator usability (internal-contact filter, warning email drilldown, human labels, outreach field guide). Validated on **SQLite** and **disposable Postgres mirror**; no send/write features and no Dashboard-3 scope in this freeze.
 
@@ -232,7 +238,7 @@ uv run origenlab mirror-dashboard --alembic --live --apply \
   --reason "dashboard v1 postgres matrix"
 ```
 
-This sync **writes Postgres mirror tables** from SQLite — it does **not** send email and does **not** replace SQLite send truth. `--live` covers warm cases, commercial deals, and operator snapshots. Equipment opportunities are now direct-published by `uv run origenlab auto-refresh-chilecompra-equipment --once --apply` when Postgres is configured; use `mirror-dashboard --live -- --include-equipment-opportunities` only for an explicit legacy/backfill CSV reload.
+This sync **writes Postgres mirror tables** from SQLite — it does **not** send email and does **not** replace SQLite send truth. `--live` covers warm cases, commercial deals, and operator snapshots. **Equipment opportunities are not covered.** Scheduled ChileCompra auto-refresh publishes queue/CSV/W1 institution-prospect data only; direct Postgres publication of the legacy equipment read model is manual/backfill opt-in only, via `auto-refresh-chilecompra-equipment --once --apply --publish-read-model`. Use `mirror-dashboard --live -- --include-equipment-opportunities` only for an explicit legacy/backfill CSV reload. `/opportunities/equipment` and legacy Today equipment consumption are retired.
 
 ### 2. API on postgres backend
 
@@ -263,7 +269,7 @@ npm run dev -- --host 127.0.0.1
 | Dashboard chip | **Postgres mirror** |
 | Banner | includes **“Postgres mirror is not send/outreach truth.”** |
 | Warm `meta.data_source` | `postgres_mirror` when mirror populated |
-| Equipment `meta.data_source` | `postgres_mirror` when the direct ChileCompra refresh or explicit legacy/backfill populated the equipment read model; otherwise expect the documented empty-state note |
+| Equipment `meta.data_source` | **Retired** — `/opportunities/equipment` no longer exists (see the 2026-08-30 correction note at the top of this document); this row is historical only |
 
 ### Smoke
 
