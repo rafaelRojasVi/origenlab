@@ -13,8 +13,10 @@ from origenlab_email_pipeline.equipment_first_chilecompra_read_model import (
 )
 from origenlab_email_pipeline.operator_cli.chilecompra_auto_refresh import (
     ChilecompraEquipmentAutoRefreshOptions,
+    ChilecompraEquipmentAutoRefreshState,
     load_state,
     run_chilecompra_equipment_auto_refresh,
+    save_state,
     state_path,
 )
 
@@ -118,7 +120,9 @@ def test_auto_refresh_direct_publishes_read_model_from_builder_rows(
     )
 
     rc = run_chilecompra_equipment_auto_refresh(
-        ChilecompraEquipmentAutoRefreshOptions(apply=True, once=True, force=True),
+        ChilecompraEquipmentAutoRefreshOptions(
+            apply=True, once=True, force=True, publish_read_model=True
+        ),
         reports_dir=reports_dir,
         build_fn=lambda **kwargs: _mock_build_result(),
         publish_fn=publish,
@@ -172,7 +176,9 @@ def test_auto_refresh_direct_read_model_failure_fails_closed(
     read_model_publish = MagicMock(return_value={"applied": False, "error": "boom"})
 
     rc = run_chilecompra_equipment_auto_refresh(
-        ChilecompraEquipmentAutoRefreshOptions(apply=True, once=True, force=True),
+        ChilecompraEquipmentAutoRefreshOptions(
+            apply=True, once=True, force=True, publish_read_model=True
+        ),
         reports_dir=reports_dir,
         build_fn=lambda **kwargs: _mock_build_result(),
         publish_fn=publish,
@@ -187,3 +193,57 @@ def test_auto_refresh_direct_read_model_failure_fails_closed(
     assert state.last_result == "read_model_failed"
     assert state.read_model_result == "boom"
     assert state.consecutive_failures == 1
+
+
+def test_disabled_read_model_clears_stale_fields_but_keeps_last_success_timestamp(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    """A previous manual/legacy publish left rows/source_kind/source_id in the
+    state file. Once the writer is disabled (the new default), those fields
+    must stop looking current — but last_successful_read_model_publish_at is
+    historical evidence and must survive untouched."""
+    reports_dir = tmp_path
+    monkeypatch.setenv(TICKET_ENV_VAR, _SECRET_TICKET)
+    prior_success_at = "2026-07-01T00:00:00+00:00"
+    save_state(
+        state_path(reports_dir),
+        ChilecompraEquipmentAutoRefreshState(
+            read_model_result="applied",
+            read_model_rows=1,
+            read_model_source_kind="typed_read_model",
+            read_model_source_id=55,
+            last_successful_read_model_publish_at=prior_success_at,
+        ),
+    )
+    publish = MagicMock(
+        return_value={
+            "out_csv": str(reports_dir / "active/current/equipment_first_operator_queue_chilecompra_api_20260702.csv"),
+            "output_rows": 1,
+            "coalesced_duplicate_rows": 0,
+            "unique_codigo_count": 1,
+        }
+    )
+    read_model_publish = MagicMock()
+
+    rc = run_chilecompra_equipment_auto_refresh(
+        ChilecompraEquipmentAutoRefreshOptions(apply=True, once=True, force=True),  # publish_read_model default
+        reports_dir=reports_dir,
+        build_fn=lambda **kwargs: _mock_build_result(),
+        publish_fn=publish,
+        read_model_publish_fn=read_model_publish,
+        now_fn=lambda: _T0,
+    )
+
+    assert rc == 0
+    read_model_publish.assert_not_called()
+    out = _parse_output(capsys.readouterr().out)
+    assert out["read_model_result"] == "disabled"
+
+    state = load_state(state_path(reports_dir))
+    assert state.read_model_result == "disabled"
+    assert state.read_model_rows is None
+    assert state.read_model_source_kind is None
+    assert state.read_model_source_id is None
+    assert state.last_successful_read_model_publish_at == prior_success_at

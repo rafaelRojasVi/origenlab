@@ -25,6 +25,7 @@ from origenlab_email_pipeline.operator_cli.chilecompra_auto_refresh import (
     evaluate_chilecompra_equipment_auto_refresh,
     load_state,
     next_chilecompra_scheduled_slot,
+    parse_chilecompra_equipment_auto_refresh_args,
     resolve_chilecompra_cadence_anchor,
     run_chilecompra_equipment_auto_refresh,
     save_state,
@@ -757,6 +758,80 @@ def test_institution_publish_not_invoked_when_equipment_publish_disabled(
     institution_publish.assert_not_called()
     state = load_state(state_path(reports_dir))
     assert state.institution_prospect_result == "disabled"
+
+
+def test_publish_read_model_defaults_false_on_dataclass() -> None:
+    """Legacy direct Postgres publication is manual/backfill opt-in — the
+    dataclass default must not silently reactivate it."""
+    assert ChilecompraEquipmentAutoRefreshOptions().publish_read_model is False
+
+
+def test_parse_args_publish_read_model_defaults_false() -> None:
+    options = parse_chilecompra_equipment_auto_refresh_args(["--once"])
+    assert options.publish_read_model is False
+
+
+def test_parse_args_explicit_publish_read_model_still_enables_manual_backfill() -> None:
+    options = parse_chilecompra_equipment_auto_refresh_args(["--once", "--publish-read-model"])
+    assert options.publish_read_model is True
+
+
+def test_legacy_read_model_writer_not_called_when_disabled_but_w1_still_publishes(
+    reports_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mirrors the tracked cron wrapper's actual flags: --apply and
+    --publish-institution-prospects, relying on publish_read_model's default
+    (now False) rather than passing it explicitly. W1 must still succeed and
+    the legacy Postgres writer must never be invoked — even though a
+    read_model_publish_fn is injected, proving the default itself is what
+    keeps it from firing, not test wiring."""
+    monkeypatch.setenv(TICKET_ENV_VAR, _SECRET_TICKET)
+    publish = MagicMock(
+        return_value={
+            "out_csv": str(reports_dir / "active/current/equipment_first_operator_queue_20260614.csv"),
+            "output_rows": 1,
+            "coalesced_duplicate_rows": 0,
+            "unique_codigo_count": 1,
+        }
+    )
+    read_model_publish = MagicMock()
+    institution_publish = MagicMock(
+        return_value=InstitutionProspectPublicationResult(
+            result="applied",
+            output_dir_basename="institution_prospects",
+            contract_version="institution_prospect_contract_v4",
+            as_of_utc=_T0.isoformat(),
+            source_digest="abc123",
+            institution_count=42,
+            operator_queue_sizes={"current_opportunity_queue": 3},
+            current_opportunity_count=3,
+        )
+    )
+
+    rc = run_chilecompra_equipment_auto_refresh(
+        _opts(apply=True, publish_institution_prospects=True),  # publish_read_model not passed -> default
+        reports_dir=reports_dir,
+        build_fn=lambda **kwargs: _mock_build_result(),
+        publish_fn=publish,
+        read_model_publish_fn=read_model_publish,
+        institution_publish_fn=institution_publish,
+        now_fn=lambda: _T0,
+    )
+
+    out = _parse_output(capsys.readouterr().out)
+    assert rc == 0
+    assert out["reason"] == "refreshed"
+    assert out["read_model_result"] == "disabled"
+    assert out["institution_prospect_result"] == "applied"
+    read_model_publish.assert_not_called()
+    institution_publish.assert_called_once()
+
+    state = load_state(state_path(reports_dir))
+    assert state.read_model_result == "disabled"
+    assert state.institution_prospect_result == "applied"
+    assert state.last_result == "refreshed"
 
 
 def test_old_state_json_without_institution_fields_loads_with_safe_defaults(

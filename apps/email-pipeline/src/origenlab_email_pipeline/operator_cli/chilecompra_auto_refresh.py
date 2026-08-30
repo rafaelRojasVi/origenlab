@@ -99,7 +99,12 @@ class ChilecompraEquipmentAutoRefreshOptions:
     detail_cache_dir: Path | None = None
     write_candidate_audit: bool = True
     publish: bool = True
-    publish_read_model: bool = True
+    # LEGACY, defaults false: direct Postgres equipment read-model publication.
+    # Manual/backfill opt-in only — the tracked cron wrapper explicitly passes
+    # --no-publish-read-model so a future default change can't silently
+    # reactivate the scheduled writer. See docs/architecture/
+    # EQUIPMENT_READ_MODEL_BOUNDARY.md.
+    publish_read_model: bool = False
     # Opt-in, defaults false: publishing the institution-prospect read model
     # from this run's detail cache + manifest. Must not activate merely by
     # merging this option — the tracked cron wrapper does not pass this flag.
@@ -455,6 +460,14 @@ def _update_state_from_read_model_summary(
 ) -> None:
     state.read_model_result = result
     if summary is None:
+        # Not attempted this run (disabled / postgres not configured / equipment
+        # publish skipped) or failed before producing any summary. Either way,
+        # per-run writer fields must not keep looking current from a prior run —
+        # last_successful_read_model_publish_at is untouched as historical
+        # evidence of when the writer last actually succeeded.
+        state.read_model_rows = None
+        state.read_model_source_kind = None
+        state.read_model_source_id = None
         return
     row_count = summary.get("rows_inserted")
     if row_count is None:
@@ -943,8 +956,12 @@ def parse_chilecompra_equipment_auto_refresh_args(
     parser.add_argument(
         "--publish-read-model",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Publish typed Postgres equipment read model directly from ChileCompra rows (default: true)",
+        default=False,
+        help=(
+            "[LEGACY] Publish typed Postgres equipment read model directly from "
+            "ChileCompra rows. Manual/backfill opt-in only (default: false) — "
+            "the tracked cron wrapper explicitly passes --no-publish-read-model."
+        ),
     )
     parser.add_argument(
         "--publish-institution-prospects",
