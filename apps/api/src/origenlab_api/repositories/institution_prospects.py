@@ -7,7 +7,7 @@ All parsing/decoding is delegated to
 so this module never reimplements queue or contract semantics — it only
 resolves a directory, calls the loader, and maps failures onto the
 ``reduced_mode``/``canonical_reason`` feed-status idiom used elsewhere in
-apps/api (see ``repositories/equipment_opportunities.py``).
+apps/api (see ``repositories/tender_terms.py``).
 """
 
 from __future__ import annotations

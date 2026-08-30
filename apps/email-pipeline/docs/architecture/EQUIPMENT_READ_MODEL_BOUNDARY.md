@@ -7,7 +7,7 @@
 
 - [`apps/api/README.md`](../../../api/README.md) — operator API backends and production env
 - [`docs/runbooks/EQUIPMENT_READ_MODEL_RUNBOOK.md`](../runbooks/EQUIPMENT_READ_MODEL_RUNBOOK.md) — operator verification checklist (migrations, audits, remote API)
-- [`apps/api/docs/API_RESPONSE_CONTRACT.md`](../../../api/docs/API_RESPONSE_CONTRACT.md) — response shapes for `GET /opportunities/equipment`
+- [`apps/api/docs/API_RESPONSE_CONTRACT.md`](../../../api/docs/API_RESPONSE_CONTRACT.md) — API route inventory (the legacy `GET /opportunities/equipment` HTTP route documented below is retired; see its changelog entry)
 
 ---
 
@@ -19,7 +19,7 @@
 | **Postgres (`api.*` views)** | Typed **read model** for API and dashboard in production |
 | **CSV queue files** | Export, audit, and operator artifacts — **not** the public HTTP contract |
 
-Production **`GET /opportunities/equipment`** must read **`api.v_equipment_opportunity_current`** via `ORIGENLAB_API_BACKEND=postgres`. The SQLite/active-current CSV path is **dev/local only**.
+**`GET /opportunities/equipment` (the apps/api HTTP route) is retired** — the dashboard's actionable-opportunity summary now sources from `GET /operator/procurement/status` (W1) instead. This does **not** change the writer/read-model boundary below: the ChileCompra-direct and legacy-CSV-bridge pipelines still populate `commercial.equipment_opportunity*` and `api.v_equipment_opportunity_current` on schedule, and that data remains available for direct SQL/audit access. The SQLite/active-current CSV path was always **dev/local only** and remains so.
 
 ---
 
@@ -39,13 +39,11 @@ commercial.equipment_opportunity
 api.v_equipment_opportunity_current   (one row per opportunity_key)
         │
         ▼
-apps/api  PostgresEquipmentOpportunityRepository
-        │
-        ▼
-dashboard Today (read-only)
+available for direct SQL / audit access
+(no apps/api HTTP route currently reads this view — retired)
 ```
 
-`auto-refresh-chilecompra-equipment --once --apply` also writes the active/current CSV and manifest artifacts for audit, debugging, and compatibility. With Postgres configured, the typed rows are the normal writer path for the production API/dashboard read model (`source_kind=typed_read_model`, `canonical_reason=chilecompra_api_direct_rows`). See [`EQUIPMENT_DIRECT_ROW_LOADER.md`](EQUIPMENT_DIRECT_ROW_LOADER.md).
+`auto-refresh-chilecompra-equipment --once --apply` also writes the active/current CSV and manifest artifacts for audit, debugging, and compatibility. With Postgres configured, the typed rows are the normal writer path for this read model (`source_kind=typed_read_model`, `canonical_reason=chilecompra_api_direct_rows`). See [`EQUIPMENT_DIRECT_ROW_LOADER.md`](EQUIPMENT_DIRECT_ROW_LOADER.md).
 
 ---
 
@@ -68,10 +66,8 @@ api.v_equipment_opportunity   (canonical source base rows)
 api.v_equipment_opportunity_current   (one row per opportunity_key)
         │
         ▼
-apps/api  PostgresEquipmentOpportunityRepository
-        │
-        ▼
-dashboard Today (read-only)
+available for direct SQL / audit access
+(no apps/api HTTP route currently reads this view — retired)
 ```
 
 CSV remains a valid **input** only for explicit legacy/backfill reloads, e.g. `mirror-dashboard --live -- --include-equipment-opportunities`. The API does **not** open that CSV in production.
@@ -107,7 +103,7 @@ typed Postgres read model (commercial.* / api.*)
 | Uniqueness | **Not** unique yet — bridge snapshots may repeat the same opportunity across `source_id` loads |
 | Provenance | `source_id`, `csv_path`, and `source_path` remain load/artifact provenance, not business identity |
 
-`api.v_equipment_opportunity` and `GET /opportunities/equipment` expose `opportunity_key` additively on each item.
+`api.v_equipment_opportunity` exposes `opportunity_key` additively on each row.
 
 ---
 
@@ -144,7 +140,7 @@ Selection rules for `api.v_equipment_opportunity_current`:
 
 Historical or stale keys that appear only on non-canonical sources remain visible in **`v_equipment_opportunity_key_audit`**, not in the current API view. **`opportunity_key` is still not unique** at the table level; current selection is view-level read-model logic only.
 
-Production **`GET /opportunities/equipment`** queries `api.v_equipment_opportunity_current`.
+No apps/api HTTP route currently queries `api.v_equipment_opportunity_current` — see the retirement note under **Strategic split** above.
 
 ---
 
@@ -167,17 +163,7 @@ Production **`GET /opportunities/equipment`** queries `api.v_equipment_opportuni
 
 ## Enforcement
 
-| Environment | `ORIGENLAB_API_BACKEND` | Equipment data source |
-|-------------|-------------------------|------------------------|
-| **Production** (`ORIGENLAB_ENV=production`) | **must be `postgres`** | `api.v_equipment_opportunity_current` only |
-| **Local / CI dev** | `sqlite` (default) or `postgres` | CSV fallback allowed only when backend is `sqlite` |
-
-`apps/api` tests lock this contract:
-
-- Postgres repository SQL references `api.v_equipment_opportunity_current` (not CSV/active_current).
-- Postgres repository does not call `fetch_equipment_opportunities` or read `active_current` CSV.
-- `ORIGENLAB_ENV=production` + `ORIGENLAB_API_BACKEND=sqlite` fails at settings validation.
-- Route tests prove `api_backend=postgres` serves `meta.data_source=postgres_mirror` without CSV fallback.
+Historically, `apps/api` had a dedicated Postgres/SQLite repository and route (`GET /opportunities/equipment`) enforcing "production must read `api.v_equipment_opportunity_current`, never fall back to CSV." That HTTP route and its repository were retired (dashboard now uses `GET /operator/procurement/status` / W1), so this enforcement no longer applies to `apps/api` — it has no equipment-specific code path left to enforce it on. The view and the writer pipelines above are unaffected and continue to run on schedule.
 
 ---
 

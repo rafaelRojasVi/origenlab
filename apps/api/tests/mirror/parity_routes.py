@@ -41,7 +41,7 @@ OPERATOR_TODAY_PATHS: tuple[str, ...] = (
     "/operator/status",
     "/operator/automation-status",
     "/cases/warm",
-    "/opportunities/equipment",
+    "/operator/procurement/status",
     "/contacts/{email}",
     "/emails/recent",
 )

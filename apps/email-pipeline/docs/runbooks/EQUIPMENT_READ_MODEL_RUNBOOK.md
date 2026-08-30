@@ -12,10 +12,11 @@ Give operators a single checklist to verify that:
 
 1. Postgres schema/migrations for the equipment read model are at head (`20260617_0030`).
 2. `api.v_equipment_opportunity_current` has **one row per `opportunity_key`**.
-3. Production **`GET /opportunities/equipment`** reads the current view with redacted paths and stable keys.
-4. Repeated keys in the bridge layer are understood (audit) but do not leak into the current API view.
+3. Repeated keys in the bridge layer are understood (audit) but do not leak into the current API view.
 
 This runbook is **read-only verification**. It does not approve sends, mutate Gmail, or change SQLite operational truth.
+
+**`GET /opportunities/equipment` (the apps/api HTTP route) is retired** — the dashboard's actionable-opportunity summary now sources from `GET /operator/procurement/status` (W1) instead. §1–§3 below (migrations, key audit, direct-SQL view check) remain the way to verify this read model's health; §4–§5 (which used to curl the now-retired route) have been updated accordingly.
 
 ---
 
@@ -36,13 +37,11 @@ api.v_equipment_opportunity               (canonical base rows from current sour
 api.v_equipment_opportunity_key_audit     (correlation: repeated keys across loads)
         │
         ▼
-api.v_equipment_opportunity_current       (one row per opportunity_key — API truth)
+api.v_equipment_opportunity_current       (one row per opportunity_key — read-model truth)
         │
         ▼
-apps/api  PostgresEquipmentOpportunityRepository
-        │
-        ▼
-GET /opportunities/equipment  (production: meta.data_source = postgres_mirror)
+available for direct SQL / audit access
+(no apps/api HTTP route currently reads this view — retired; see §4)
 ```
 
 The command also writes `equipment_first_operator_queue_*.csv` and the canonical dashboard CSV under `reports/out/active/current` for audit/debugging. Those CSV artifacts are no longer the normal live writer bridge; `mirror-dashboard --live -- --include-equipment-opportunities` is reserved for explicit legacy/backfill CSV reloads.
@@ -58,7 +57,7 @@ The command also writes `equipment_first_operator_queue_*.csv` and the canonical
 | `commercial.equipment_opportunity` | All mirrored rows; same `opportunity_key` may repeat across `source_id` loads | **No** (base table) |
 | `api.v_equipment_opportunity` | Canonical-source rows from the current load | Internal base view |
 | `api.v_equipment_opportunity_key_audit` | Repeated-key diagnostic (`row_count > 1`) | **No** (operator CLI only) |
-| **`api.v_equipment_opportunity_current`** | **Current** deduplicated read model | **Yes** — production API + dashboard |
+| **`api.v_equipment_opportunity_current`** | **Current** deduplicated read model | **No** — HTTP route retired; direct SQL/audit access only (§3) |
 
 **Identity for correlation:** `opportunity_key` (`equipment:<source_slug>:<codigo_licitacion_lower>`).  
 **Provenance fields** (`source_id`, internal `csv_path`, `source_path` in Postgres) must not appear as raw filesystem paths in public JSON.
@@ -123,7 +122,7 @@ uv run python scripts/audit_equipment_opportunity_keys.py --limit 25
 
 - **No rows printed** — no repeated keys in audit view (fine).
 - **Rows with `canonical_row_count >= 1`** — bridge history; current API still dedupes via `api.v_equipment_opportunity_current`.
-- **`canonical_row_count = 0`** — stale/non-canonical only; should **not** appear in `/opportunities/equipment`.
+- **`canonical_row_count = 0`** — stale/non-canonical only; should **not** appear in `api.v_equipment_opportunity_current` (§3).
 
 ---
 
@@ -174,11 +173,7 @@ ORIGENLAB_API_AUTH_TOKEN=... \
 
 The smoke script sends Cloudflare Access service-token headers when provided and sends `X-OriginLab-API-Key` when `ORIGENLAB_API_AUTH_TOKEN` is set. It does not print secrets or response bodies.
 
-**Healthy:** exits `0`; equipment check validates:
-
-- `GET /opportunities/equipment` is reachable as JSON
-- `meta.data_source` is a known read source (`postgres_mirror` in production)
-- no item-level `source_path` / raw path leak
+**Note:** this smoke script no longer checks the equipment read model over HTTP — `GET /opportunities/equipment` is retired, and the script's procurement check now validates `GET /operator/procurement/status` (W1) instead. For the equipment read model specifically, use §1–§3 above (migrations, key audit, direct-SQL view check).
 
 Optional narrower response contract audit (Cloudflare Access only):
 
@@ -189,38 +184,40 @@ ORIGENLAB_REMOTE_AUDIT_TIMEOUT_SECONDS=90 \
   uv run python scripts/remote_response_audit.py
 ```
 
-`remote_response_audit.py` retries **network** failures (`TimeoutError`, `URLError`, `OSError`) only. Contract failures are **not** retried. Current limitation: it does **not** send `ORIGENLAB_API_AUTH_TOKEN`, so use it only when the target does not require origin token auth on private routes, or after an origin-token-aware smoke has already passed.
-
-When applicable, a healthy remote response audit exits `0` with `ok: remote production responses passed response audit`. Equipment check validates:
-
-- `meta.data_source == postgres_mirror`
-- `meta.count == len(items)`
-- each item has non-empty `opportunity_key` (unique within the response page)
-- `meta.source_path_info.redacted == true` when path metadata is present
-- no item-level `source_path` or `/home` / `/mnt` leaks
+`remote_response_audit.py` retries **network** failures (`TimeoutError`, `URLError`, `OSError`) only. Contract failures are **not** retried. Current limitation: it does **not** send `ORIGENLAB_API_AUTH_TOKEN`, so use it only when the target does not require origin token auth on private routes, or after an origin-token-aware smoke has already passed. This script also no longer has an equipment-specific check (route retired); it validates the general response envelope on the current route surface.
 
 Skips with exit `0` when Cloudflare credentials are unset (CI without secrets).
 
 ---
 
-## 5. Manual curl — `/opportunities/equipment`
+## 5. Manual verification — direct SQL only
+
+There is no HTTP route left to manually curl for this read model — `GET /opportunities/equipment` is retired. Use the direct-SQL check in §3 as the manual verification path. If you need to eyeball individual rows:
 
 ```bash
-curl -sS \
-  -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
-  -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
-  -H "X-OriginLab-API-Key: ${ORIGENLAB_API_AUTH_TOKEN}" \
-  -H "Accept: application/json" \
-  "https://api.origenlab.cl/opportunities/equipment?limit=10"
+cd apps/email-pipeline
+uv run python - <<'PY'
+import os
+import psycopg
+
+raw = os.environ["ORIGENLAB_POSTGRES_URL"]
+url = raw.replace("postgresql+psycopg://", "postgresql://", 1)
+
+with psycopg.connect(url) as conn:
+    with conn.cursor() as cur:
+        cur.execute(
+            "select opportunity_key, buyer, close_at from api.v_equipment_opportunity_current "
+            "order by close_at nulls last limit 10"
+        )
+        for row in cur.fetchall():
+            print(row)
+PY
 ```
 
-Pipe through `jq` locally if installed. Inspect:
+Inspect:
 
-- `meta.data_source` → `"postgres_mirror"`
-- `meta.count` matches `items` length
-- each `items[].opportunity_key` is a non-empty string
-- `meta.source_path_info.redacted` is `true` when `source_path_info` is present
-- response JSON contains **no** `/home/` or `/mnt/` substrings
+- each `opportunity_key` is a non-empty string, unique across the printed rows
+- no raw filesystem paths in the output (this query does not select `source_path`)
 
 ---
 
@@ -229,11 +226,9 @@ Pipe through `jq` locally if installed. Inspect:
 | Check | Expected |
 |-------|----------|
 | `api.v_equipment_opportunity_current` | `count(*) == count(distinct opportunity_key)` |
-| `GET /opportunities/equipment` | `meta.data_source == "postgres_mirror"` |
-| Response items | each has non-empty `opportunity_key` |
-| Path redaction | `source_path_info.redacted == true`; no raw `/home` or `/mnt` in JSON |
+| View rows | each has non-empty `opportunity_key` |
 | Key audit CLI | no rows, or repeated keys with canonical history only |
-| Current API | stale keys with `canonical_row_count = 0` in audit **absent** from API items |
+| Current view | stale keys with `canonical_row_count = 0` in audit **absent** from the current view |
 
 ---
 
@@ -246,8 +241,7 @@ Pipe through `jq` locally if installed. Inspect:
 | `psycopg` error: `invalid connection option` / missing `=` after `postgresql+psycopg://` | SQLAlchemy URL passed directly to `psycopg.connect` | Replace scheme: `.replace("postgresql+psycopg://", "postgresql://", 1)` |
 | `remote_response_audit.py` timeout on `/health` | Cold Render instance | `ORIGENLAB_REMOTE_AUDIT_TIMEOUT_SECONDS=90` and/or rely on default network retries |
 | Audit shows repeated keys | Bridge re-ingest of same `codigo_licitacion` | **Okay** during CSV bridge — verify current view still dedupes (§3) |
-| Repeated key with `canonical_row_count = 0` | Non-canonical stale rows only | Should **not** appear in current API; if it does, inspect view definition and canonical flags |
-| `meta.data_source` not `postgres_mirror` | API not on Postgres backend | Check Render env: `ORIGENLAB_API_BACKEND=postgres`, `ORIGENLAB_ENV=production` |
+| Repeated key with `canonical_row_count = 0` | Non-canonical stale rows only | Should **not** appear in `api.v_equipment_opportunity_current`; if it does, inspect view definition and canonical flags |
 
 ---
 

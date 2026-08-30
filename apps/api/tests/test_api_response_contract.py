@@ -145,7 +145,6 @@ def test_public_get_route_paths_are_stable(client: TestClient) -> None:
         "/health",
         "/cases/warm?positive_signal_only=false&limit=5",
         "/emails/recent?limit=5",
-        "/opportunities/equipment?limit=5",
     ],
 )
 def test_selected_success_endpoints_return_json_objects(
@@ -159,7 +158,7 @@ def test_selected_success_endpoints_return_json_objects(
 
 
 def test_list_endpoints_use_meta_and_items_not_bare_array(client: TestClient) -> None:
-    for path in ("/cases/warm?limit=5", "/emails/recent?limit=5", "/opportunities/equipment"):
+    for path in ("/cases/warm?limit=5", "/emails/recent?limit=5"):
         data = _assert_json_object(client.get(path).json())
         assert "meta" in data
         assert "items" in data

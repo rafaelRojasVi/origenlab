@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -16,9 +17,17 @@ from origenlab_email_pipeline.outreach_contact_state import (
     normalize_contact_email_for_outreach,
 )
 
-from origenlab_api.repositories.equipment_opportunities import load_manifest
-
 _BLOCKING_OUTREACH_STATES = frozenset({"contacted", "replied", "snoozed"})
+
+
+def _load_manifest(active_current: Path) -> dict[str, Any]:
+    path = active_current / "manifest.json"
+    if not path.is_file():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
@@ -172,7 +181,7 @@ def fetch_contact_intelligence(
             True,
         )
 
-    manifest = load_manifest(active_current)
+    manifest = _load_manifest(active_current)
     dnr_path = resolve_do_not_repeat_master_csv(active_current, manifest)
     dnr_set: set[str] = set()
     if dnr_path:

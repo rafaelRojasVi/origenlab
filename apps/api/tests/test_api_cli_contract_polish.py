@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from origenlab_api.repositories.postgres.equipment import build_equipment_meta
 from origenlab_api.schemas.cases import (
     CANONICAL_WARM_CASE_CATEGORIES,
     LEGACY_WARM_CASE_CATEGORY_ALIASES,
@@ -45,16 +44,3 @@ def test_legacy_warm_category_filter_matches_normalized_category() -> None:
 
     assert len(filtered) == 1
     assert filtered[0].category == "supplier_followup"
-
-
-def test_equipment_empty_postgres_note_points_to_direct_refresh_not_csv_reload() -> None:
-    meta = build_equipment_meta(
-        items=[],
-        source_path=None,
-        campaign_mode="equipment_first",
-    )
-
-    assert meta.reduced_mode is True
-    assert "auto-refresh-chilecompra-equipment --once --apply" in meta.note
-    assert "legacy/backfill CSV reloads" in meta.note
-    assert "run sync with --include-equipment-opportunities" not in meta.note

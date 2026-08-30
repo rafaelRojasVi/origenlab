@@ -24,9 +24,9 @@ Use this to show mirror freshness. It shows the latest Postgres dashboard sync s
 
 Use this to show the operator review workflow. Keep the limit low. Explain that warm cases are heuristic review suggestions, not automatic decisions.
 
-### `GET /opportunities/equipment?limit=2`
+### `GET /operator/procurement/status`
 
-Use this to show business value. It exposes a ranked equipment opportunity queue with priority, buyer, region, close date, category, and safe next-action fields.
+Use this to show business value. It exposes the W1 institution-prospect procurement summary — counts, operator queue sizes, and staleness — that drives the dashboard's actionable-opportunity view.
 
 ## Endpoints to avoid during a public screen-share
 
@@ -70,7 +70,7 @@ Now more safely redacted, but still infrastructure-oriented. Show only briefly i
 1. `GET /health`
 2. `GET /mirror/meta/dashboard-sync`
 3. `GET /cases/warm?limit=2`
-4. `GET /opportunities/equipment?limit=2`
+4. `GET /operator/procurement/status`
 
 End with this architecture sentence:
 

@@ -6,7 +6,7 @@ Prove **Dashboard v1** and **Dashboard-2 contact drilldown** work against **`app
 
 | Stack | Port (typical) | Role |
 |-------|----------------|------|
-| **`apps/api`** | **8001** | **Active** Dashboard API (`/health`, `/operator/status`, `/cases/warm`, `/opportunities/equipment`, `/contacts/{email}`) |
+| **`apps/api`** | **8001** | **Active** Dashboard API (`/health`, `/operator/status`, `/cases/warm`, `/operator/procurement/status`, `/contacts/{email}`) |
 | **Legacy email-pipeline API** | **8000** | **Removed** (API-3 Phase 6). Use **`apps/api`** `GET /mirror/*` on **8001**. |
 
 Dashboard v1 must not call `/mirror/*`. The obsolete pre-v1 dashboard client has been removed.
@@ -18,7 +18,7 @@ Dashboard v1 must not call `/mirror/*`. The obsolete pre-v1 dashboard client has
 | `GET /health` | Backend chip (`sqlite` vs `postgres`) |
 | `GET /operator/status` | Verdict panel |
 | `GET /cases/warm` | Warm cases table |
-| `GET /opportunities/equipment` | Equipment opportunities table |
+| `GET /operator/procurement/status` | W1 procurement status (Licitaciones/equipos, actionable-opportunity summary) |
 | `GET /contacts/{email}` | Read-only contact profile drilldown (Dashboard-2 side panel) |
 
 No `POST` / `PUT` / `PATCH` / `DELETE`. Contact drilldown has no send/draft/archive/mark-contacted/status-write actions and must not render raw bodies or filesystem paths.
@@ -34,7 +34,7 @@ No `POST` / `PUT` / `PATCH` / `DELETE`. Contact drilldown has no send/draft/arch
 | `SMOKE_BASE_URL=http://127.0.0.1:5173 npm run smoke:proxy` | Through Vite dev proxy |
 | `SMOKE_BASE_URL=http://127.0.0.1:5173 EXPECT_BACKEND=postgres npm run smoke:proxy` | Proxy + postgres labels |
 
-If warm/equipment rows have no `contact_email`, contact smoke logs **WARN** and skips (not a failure). Smoke scripts must not call `/dashboard/*` or `/classification/*`.
+If warm rows have no `contact_email`, contact smoke logs **WARN** and skips (not a failure). Smoke scripts must not call `/dashboard/*` or `/classification/*`.
 
 ### Dashboard-2 freeze validation (recorded)
 
@@ -96,7 +96,7 @@ uv run python scripts/dashboard_v1_http_smoke.py
 
 - `health.backend` = `sqlite`
 - `health.mode` = `operator-sqlite-readonly`
-- Warm/equipment `meta.data_source` = `sqlite` / `active_current_csv` (not `postgres_mirror`)
+- Warm `meta.data_source` = `sqlite` (not `postgres_mirror`)
 - Dashboard banner: read-only; **no** “Postgres mirror is not send/outreach truth” line (unless backend is postgres)
 - Contact panel: `GET /contacts/{email}` **200** when email picked from warm row; read-only copy; no forbidden fields in JSON
 
@@ -161,7 +161,7 @@ npm run dev -- --host 127.0.0.1
 
 - Backend chip: **Postgres mirror** (read-only)
 - Banner includes: **“Postgres mirror is not send/outreach truth.”**
-- Warm table loads when the warm mirror is populated. Equipment table loads when the direct ChileCompra refresh or explicit legacy/backfill populated the equipment read model; otherwise it shows the documented empty-state note.
+- Warm table loads when the warm mirror is populated.
 - Contact drilldown: side panel **read-only**; **“Postgres mirror is not send/outreach truth.”** visible; `GET /contacts/{email}` via proxy returns **200**
 
 **Smoke**
@@ -187,7 +187,6 @@ ORIGENLAB_API_BACKEND=postgres ORIGENLAB_POSTGRES_URL="$ORIGENLAB_TEST_POSTGRES_
 cd apps/api
 export ORIGENLAB_TEST_POSTGRES_URL="$ORIGENLAB_TEST_POSTGRES_URL"
 uv run pytest tests/test_postgres_warm_cases.py::test_postgres_warm_cases_integration_against_mirror \
-  tests/test_postgres_equipment.py::test_postgres_equipment_integration_against_mirror \
   tests/test_postgres_contact.py::test_postgres_contact_integration_against_mirror -q
 ```
 

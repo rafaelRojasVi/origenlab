@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EquipmentOpportunitiesResponse, WarmCasesResponse } from "../api/commercialTypes";
+import type { WarmCasesResponse } from "../api/commercialTypes";
 import type { TodayPanelData } from "../api/operatorTypes";
 import { DashboardApp } from "./DashboardApp";
 
@@ -106,26 +106,12 @@ const warmPayload: WarmCasesResponse = {
   ],
 };
 
-const equipmentPayload: EquipmentOpportunitiesResponse = {
-  meta: {
-    data_source: "active_current_csv",
-    read_only: true,
-    count: 1,
-    source_path: "/secret/path.csv",
-    campaign_mode: null,
-    reduced_mode: false,
-    note: "",
-  },
-  items: [],
-};
-
 vi.mock("../api/operatorClient", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/operatorClient")>();
   return {
     ...actual,
     fetchTodayPanel: vi.fn(),
     fetchWarmCases: vi.fn(),
-    fetchEquipmentOpportunities: vi.fn(),
     fetchContactProfile: vi.fn(),
     getOperatorApiBaseUrl: vi.fn(() => ""),
   };
@@ -151,7 +137,7 @@ vi.mock("../lib/logo/threeBodyCanvasRunner", () => ({
   startThreeBodyCanvas: vi.fn(() => () => {}),
 }));
 
-import { fetchEquipmentOpportunities, fetchTodayPanel, fetchWarmCases } from "../api/operatorClient";
+import { fetchTodayPanel, fetchWarmCases } from "../api/operatorClient";
 import { fetchCommercialDealsMirror } from "../api/mirrorCommercialClient";
 import { fetchCommercialWorkQueue } from "../api/commercialOperationsClient";
 
@@ -165,7 +151,6 @@ function mockAll() {
   });
   vi.mocked(fetchTodayPanel).mockResolvedValue(panel);
   vi.mocked(fetchWarmCases).mockResolvedValue(warmPayload);
-  vi.mocked(fetchEquipmentOpportunities).mockResolvedValue(equipmentPayload);
   vi.mocked(fetchCommercialDealsMirror).mockResolvedValue({
     table_available: true,
     read_only: true,

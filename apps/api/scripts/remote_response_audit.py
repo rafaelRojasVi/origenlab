@@ -47,7 +47,6 @@ FORBIDDEN_LEAK_SUBSTRINGS: tuple[str, ...] = (
 LIST_ENDPOINT_PATHS: frozenset[str] = frozenset(
     {
         "/cases/warm",
-        "/opportunities/equipment",
         "/emails/recent",
     }
 )
@@ -81,7 +80,7 @@ SUCCESS_CHECKS: tuple[AuditCheck, ...] = (
     AuditCheck("GET /operator/status", "/operator/status", True),
     AuditCheck("GET /operator/automation-status", "/operator/automation-status", True),
     AuditCheck("GET /cases/warm?limit=3", "/cases/warm?limit=3", True),
-    AuditCheck("GET /opportunities/equipment?limit=3", "/opportunities/equipment?limit=3", True),
+    AuditCheck("GET /operator/procurement/status", "/operator/procurement/status", True),
     AuditCheck("GET /emails/recent?limit=3", "/emails/recent?limit=3", True),
 )
 
@@ -324,61 +323,6 @@ def require_recent_emails_contract(body: dict[str, Any]) -> None:
         )
 
 
-def require_equipment_current_contract(body: dict[str, Any]) -> None:
-    """Assert production current-view shape for GET /opportunities/equipment."""
-    require_meta_items(body)
-    meta = body["meta"]
-    items = body["items"]
-
-    if meta.get("data_source") != "postgres_mirror":
-        raise RemoteAuditError(
-            f"meta.data_source must be postgres_mirror, got {meta.get('data_source')!r}"
-        )
-
-    count = meta.get("count")
-    if not isinstance(count, int):
-        raise RemoteAuditError("meta.count must be an int")
-    if count != len(items):
-        raise RemoteAuditError(
-            f"meta.count ({count}) must equal len(items) ({len(items)})"
-        )
-
-    seen_keys: set[str] = set()
-    for index, item in enumerate(items):
-        if not isinstance(item, dict) or isinstance(item, list):
-            raise RemoteAuditError(f"items[{index}] must be an object")
-        opportunity_key = item.get("opportunity_key")
-        if not isinstance(opportunity_key, str) or not opportunity_key.strip():
-            raise RemoteAuditError(f"items[{index}].opportunity_key must be a non-empty string")
-        if opportunity_key in seen_keys:
-            raise RemoteAuditError(
-                f"duplicate opportunity_key in response page: {opportunity_key}"
-            )
-        seen_keys.add(opportunity_key)
-        if "source_path" in item:
-            raise RemoteAuditError(f"items[{index}] must not include top-level source_path")
-
-    source_path = meta.get("source_path", "")
-    source_path_text = source_path.strip() if isinstance(source_path, str) else ""
-    source_path_info = meta.get("source_path_info")
-    if source_path_text:
-        if not isinstance(source_path_info, dict):
-            raise RemoteAuditError(
-                "meta.source_path_info must be an object when meta.source_path is non-empty"
-            )
-    if isinstance(source_path_info, dict):
-        if source_path_info.get("redacted") is not True:
-            raise RemoteAuditError("meta.source_path_info.redacted must be true")
-        if source_path_text:
-            basename = source_path_info.get("basename")
-            if not isinstance(basename, str) or not basename.strip():
-                raise RemoteAuditError("meta.source_path_info.basename must be a non-empty string")
-            if basename != source_path_text:
-                raise RemoteAuditError(
-                    "meta.source_path_info.basename must equal meta.source_path"
-                )
-
-
 def request_timeout_seconds() -> int:
     raw = os.environ.get("ORIGENLAB_REMOTE_AUDIT_TIMEOUT_SECONDS", "").strip()
     if not raw:
@@ -512,9 +456,7 @@ def audit_response(
             raise RemoteAuditError(f"expected HTTP 200, got {response.status}")
         if is_list_endpoint(request_path):
             endpoint = path_only(request_path)
-            if endpoint == "/opportunities/equipment":
-                require_equipment_current_contract(body)
-            elif endpoint == "/cases/warm":
+            if endpoint == "/cases/warm":
                 require_warm_cases_contract(body)
             elif endpoint == "/emails/recent":
                 require_recent_emails_contract(body)

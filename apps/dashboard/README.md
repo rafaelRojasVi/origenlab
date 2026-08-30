@@ -119,7 +119,7 @@ npm test          # dashboard test suite
 npm run build
 ```
 
-Use **`npm run validate`** before opening or merging dashboard PRs. Today parser contract tests lock the dashboard boundary for `/cases/warm`, `/opportunities/equipment`, `/operator/status`, `/operator/automation-status`, and `/contacts/{email}`. Equipment opportunities also show compact triage badges derived client-side from current API fields, can be filtered client-side by triage badge key, show triage-specific empty-state guidance when a filter has no matches, and support a local browser watchlist stored in localStorage (not written back to the API or shared across users). Targeted Vitest runs (`vitest run path/to/file.test.tsx`) are useful while developing, but full validation should pass before review. This matters especially for Today / operator-status changes because fixtures span multiple test files (`TodaySummaryPage.test.tsx`, `TodayPage.test.tsx`, `DashboardApp.test.tsx`, component tests, etc.).
+Use **`npm run validate`** before opening or merging dashboard PRs. Today parser contract tests lock the dashboard boundary for `/cases/warm`, `/opportunities/commercial`, `/operator/status`, `/operator/automation-status`, and `/contacts/{email}`. Targeted Vitest runs (`vitest run path/to/file.test.tsx`) are useful while developing, but full validation should pass before review. This matters especially for Today / operator-status changes because fixtures span multiple test files (`TodaySummaryPage.test.tsx`, `TodayPage.test.tsx`, `DashboardApp.test.tsx`, component tests, etc.).
 
 GitHub Actions workflow [`.github/workflows/dashboard.yml`](../../.github/workflows/dashboard.yml) runs `npm ci`, `npm test`, and `npm run build` for dashboard changes.
 
@@ -137,9 +137,9 @@ Safety tests enforce: `App.tsx` → `TodayPage` only, Dashboard v1 GET routes (i
 
 ### Dashboard-2 — contact drilldown (frozen & validated)
 
-Click a contact email in **Warm cases** or **Equipment opportunities** (when `contact_email` is present) to open a read-only **side panel** on Today (`GET /contacts/{email}` only).
+Click a contact email in **Warm cases** (when `contact_email` is present) to open a read-only **side panel** on Today (`GET /contacts/{email}` only).
 
-**Dashboard-2.3 (Today UI polish):** client-side search, status/category filters, and sort on warm cases; search and sort on equipment opportunities; row counts (`Showing N of M loaded`) and distinct empty vs no-match-filter states. All filtering is in-browser only — no extra API calls.
+**Dashboard-2.3 (Today UI polish):** client-side search, status/category filters, and sort on warm cases; row counts (`Showing N of M loaded`) and distinct empty vs no-match-filter states. All filtering is in-browser only — no extra API calls.
 
 **Dashboard-2.5 (operator usability):** optional **Hide internal OrigenLab contacts** on warm cases (`@origenlab.cl`, `@labdelivery.cl`, default off); warning emails open read-only **contact drilldown** (no mailto from warnings); humanized status/category/action labels; **OutreachTruthGuide** in the contact panel (DNR vs Sent history vs outreach state). All client-side — no write/send/draft/archive/mark-contacted/status-edit.
 

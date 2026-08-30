@@ -17,10 +17,10 @@ describe("smoke-v1 policy", () => {
     expect(smokeSource).toMatch(/GET \/health/);
     expect(smokeSource).toMatch(/\/operator\/status/);
     expect(smokeSource).toMatch(/\/cases\/warm/);
-    expect(smokeSource).toMatch(/\/opportunities\/equipment/);
+    expect(smokeSource).toMatch(/\/operator\/procurement\/status/);
     expect(smokeSource).toMatch(/\/contacts\//);
     expect(smokeSource).toMatch(/pickContactEmailFromLists/);
-    expect(smokeSource).toMatch(/no contact_email in warm\/equipment/);
+    expect(smokeSource).toMatch(/no contact_email in warm rows/);
     expect(smokeSource).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/i);
   });
 

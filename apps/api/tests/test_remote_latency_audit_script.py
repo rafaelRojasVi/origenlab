@@ -290,8 +290,7 @@ def test_latency_endpoints_include_expected_paths() -> None:
         "/operator/automation-status",
         "/cases/warm?limit=3",
         "/cases/warm?limit=100",
-        "/opportunities/equipment?limit=3",
-        "/opportunities/equipment?limit=100",
+        "/operator/procurement/status",
         "/emails/recent?limit=3",
         "/emails/recent?limit=100",
     ]

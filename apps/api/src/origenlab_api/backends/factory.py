@@ -9,9 +9,6 @@ from origenlab_api.repositories.postgres.commercial_opportunities import (
 )
 from origenlab_api.repositories.postgres.contact import PostgresContactRepository
 from origenlab_api.repositories.postgres.email import PostgresEmailRecentRepository
-from origenlab_api.repositories.postgres.equipment import (
-    PostgresEquipmentOpportunityRepository,
-)
 from origenlab_api.repositories.postgres.operator import (
     PostgresOperatorStatusRepository,
 )
@@ -20,7 +17,6 @@ from origenlab_api.repositories.protocols import (
     CommercialOpportunityRepository,
     ContactRepository,
     EmailRecentRepository,
-    EquipmentOpportunityRepository,
     OperatorStatusRepository,
     WarmCaseRepository,
 )
@@ -29,9 +25,6 @@ from origenlab_api.repositories.sqlite.commercial_opportunities import (
 )
 from origenlab_api.repositories.sqlite.contact import SqliteContactRepository
 from origenlab_api.repositories.sqlite.email import SqliteEmailRecentRepository
-from origenlab_api.repositories.sqlite.equipment import (
-    SqliteEquipmentOpportunityRepository,
-)
 from origenlab_api.repositories.sqlite.operator import SqliteOperatorStatusRepository
 from origenlab_api.repositories.sqlite.warm_cases import SqliteWarmCaseRepository
 from origenlab_api.settings import Settings
@@ -42,7 +35,6 @@ class RepositoryBundle:
     """Hybrid bundle: Postgres repos for implemented routes; SQLite for the rest."""
 
     operator: OperatorStatusRepository
-    equipment: EquipmentOpportunityRepository
     warm_cases: WarmCaseRepository
     email_recent: EmailRecentRepository
     contact: ContactRepository
@@ -94,7 +86,6 @@ def get_repository_bundle(settings: Settings) -> RepositoryBundle:
     if backend == "postgres":
         return RepositoryBundle(
             operator=PostgresOperatorStatusRepository(settings),
-            equipment=PostgresEquipmentOpportunityRepository(settings),
             warm_cases=PostgresWarmCaseRepository(settings),
             email_recent=PostgresEmailRecentRepository(settings),
             contact=PostgresContactRepository(settings),
@@ -102,7 +93,6 @@ def get_repository_bundle(settings: Settings) -> RepositoryBundle:
         )
     return RepositoryBundle(
         operator=SqliteOperatorStatusRepository(settings),
-        equipment=SqliteEquipmentOpportunityRepository(settings),
         warm_cases=SqliteWarmCaseRepository(settings),
         email_recent=SqliteEmailRecentRepository(settings),
         contact=SqliteContactRepository(settings),

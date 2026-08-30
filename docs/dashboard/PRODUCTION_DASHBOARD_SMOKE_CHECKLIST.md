@@ -166,7 +166,7 @@ Exit code **0** = PASS, **1** = FAIL.
 | `GET /mirror/catalog/products/serva-blueslick-250ml` | `commercial_history` includes EUR **117.00** and CLP **695000** |
 | `GET /mirror/catalog/products/serva-temed-25ml` | `commercial_history` includes EUR **31.00** and CLP **545000** |
 | `GET /cases/warm` | HTTP 200 if reachable; `meta.read_only`, known `data_source` |
-| `GET /opportunities/equipment` | HTTP 200 if reachable; `meta.read_only`, **empty** `meta.source_path` |
+| `GET /operator/procurement/status` | HTTP 200 if reachable; `meta.read_only`, `meta.data_source == institution_prospect_read_model` |
 
 ### Safety scan (all JSON bodies)
 

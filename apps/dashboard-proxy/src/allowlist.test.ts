@@ -130,6 +130,10 @@ describe("allowlist", () => {
     expect(isAllowedUpstreamPath("/operator/procurement/tenders/../status")).toBe(false);
     expect(isAllowedUpstreamPath("/operator/procurement/tenders/id/../../status")).toBe(false);
     expect(isAllowedUpstreamPath("/api/operator/status")).toBe(false);
+    // Legacy equipment HTTP surface is retired (apps/api no longer serves this
+    // route); the dashboard's actionable-opportunity summary now sources from
+    // /operator/procurement/status (W1).
+    expect(isAllowedUpstreamPath("/opportunities/equipment")).toBe(false);
   });
 
   it("allows real tender_code formats (mixed and lowercase), case preserved", () => {

@@ -25,7 +25,6 @@ audit_response = _remote.audit_response
 cf_credentials_from_env = _remote.cf_credentials_from_env
 fetch_get = _remote.fetch_get
 main = _remote.main
-require_equipment_current_contract = _remote.require_equipment_current_contract
 require_recent_emails_contract = _remote.require_recent_emails_contract
 require_warm_cases_contract = _remote.require_warm_cases_contract
 require_error_envelope = _remote.require_error_envelope
@@ -83,41 +82,6 @@ def _valid_warm_body(**overrides: object) -> dict[str, object]:
             "reduced_mode": False,
             "count": len(items),
             "enrichment_available": True,
-            "note": "",
-        },
-        "items": items,
-    }
-    body.update(overrides)
-    return body
-
-
-def _valid_equipment_body(*, duplicate_key: bool = False, **overrides: object) -> dict[str, object]:
-    items = [
-        {
-            "opportunity_key": "equipment:equipment_queue:lp-001",
-            "priority_rank": 1,
-            "codigo_licitacion": "LP-001",
-        },
-        {
-            "opportunity_key": "equipment:equipment_queue:lp-001"
-            if duplicate_key
-            else "equipment:equipment_queue:lp-002",
-            "priority_rank": 2,
-            "codigo_licitacion": "LP-002",
-        },
-    ]
-    body: dict[str, object] = {
-        "meta": {
-            "data_source": "postgres_mirror",
-            "read_only": True,
-            "count": len(items),
-            "source_path": "equipment_first_operator_queue_20260518.csv",
-            "source_path_info": {
-                "redacted": True,
-                "basename": "equipment_first_operator_queue_20260518.csv",
-                "kind": "file",
-            },
-            "reduced_mode": False,
             "note": "",
         },
         "items": items,
@@ -266,58 +230,6 @@ def test_require_warm_cases_contract_raw_filesystem_path_fails() -> None:
         require_warm_cases_contract(body)  # type: ignore[arg-type]
 
 
-def test_require_equipment_current_contract_accepts_valid_response() -> None:
-    require_equipment_current_contract(_valid_equipment_body())  # type: ignore[arg-type]
-
-
-def test_require_equipment_current_contract_missing_opportunity_key_fails() -> None:
-    body = _valid_equipment_body()
-    body["items"][0].pop("opportunity_key")  # type: ignore[index]
-    with pytest.raises(RemoteAuditError, match="opportunity_key"):
-        require_equipment_current_contract(body)  # type: ignore[arg-type]
-
-
-def test_require_equipment_current_contract_duplicate_opportunity_key_fails() -> None:
-    with pytest.raises(RemoteAuditError, match="duplicate opportunity_key"):
-        require_equipment_current_contract(_valid_equipment_body(duplicate_key=True))  # type: ignore[arg-type]
-
-
-def test_require_equipment_current_contract_meta_count_mismatch_fails() -> None:
-    body = _valid_equipment_body()
-    body["meta"]["count"] = 99  # type: ignore[index]
-    with pytest.raises(RemoteAuditError, match="meta.count"):
-        require_equipment_current_contract(body)  # type: ignore[arg-type]
-
-
-def test_require_equipment_current_contract_source_path_info_redacted_false_fails() -> None:
-    body = _valid_equipment_body()
-    body["meta"]["source_path_info"]["redacted"] = False  # type: ignore[index]
-    with pytest.raises(RemoteAuditError, match="redacted"):
-        require_equipment_current_contract(body)  # type: ignore[arg-type]
-
-
-def test_require_equipment_current_contract_item_source_path_fails() -> None:
-    body = _valid_equipment_body()
-    body["items"][0]["source_path"] = "equipment_first_operator_queue_20260518.csv"  # type: ignore[index]
-    with pytest.raises(RemoteAuditError, match="source_path"):
-        require_equipment_current_contract(body)  # type: ignore[arg-type]
-
-
-def test_audit_response_equipment_current_contract() -> None:
-    body = _valid_equipment_body()
-    response = RemoteResponse(
-        status=200,
-        headers={"x-request-id": "rid-1"},
-        body_text=json.dumps(body),
-    )
-    audit_response(
-        "GET /opportunities/equipment?limit=3",
-        response,
-        "/opportunities/equipment?limit=3",
-        expect_success=True,
-    )
-
-
 def test_fetch_get_timeout_raises_remote_audit_error_without_traceback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -328,7 +240,7 @@ def test_fetch_get_timeout_raises_remote_audit_error_without_traceback(
 
     with patch("urllib.request.urlopen", side_effect=_timeout):
         with pytest.raises(RemoteAuditError, match="timed out") as exc_info:
-            fetch_get("https://api.origenlab.cl/opportunities/equipment?limit=3", {})
+            fetch_get("https://api.origenlab.cl/cases/warm?limit=3", {})
     assert "Traceback" not in str(exc_info.value)
     assert "after 1 attempt(s)" in str(exc_info.value)
 
@@ -416,24 +328,24 @@ def test_contract_validation_errors_are_not_retried(
     monkeypatch.setenv("ORIGENLAB_REMOTE_AUDIT_RETRIES", "2")
     monkeypatch.setenv("ORIGENLAB_REMOTE_AUDIT_RETRY_BACKOFF_SECONDS", "0")
 
-    bad_equipment_body = _valid_equipment_body()
-    bad_equipment_body["items"][0].pop("opportunity_key")  # type: ignore[index]
+    bad_warm_body = _valid_warm_body()
+    bad_warm_body["items"][0].pop("case_id")  # type: ignore[index]
 
     response = MagicMock()
     response.status = 200
     response.headers = {"x-request-id": "rid-1"}
-    response.read.return_value = json.dumps(bad_equipment_body).encode()
+    response.read.return_value = json.dumps(bad_warm_body).encode()
     response.__enter__.return_value = response
     response.__exit__.return_value = False
 
-    equipment_check = next(
-        check for check in _remote.SUCCESS_CHECKS if "/opportunities/equipment" in check.path
+    warm_check = next(
+        check for check in _remote.SUCCESS_CHECKS if "/cases/warm" in check.path
     )
 
-    with patch.object(_remote, "SUCCESS_CHECKS", (equipment_check,)):
+    with patch.object(_remote, "SUCCESS_CHECKS", (warm_check,)):
         with patch.object(_remote, "ERROR_CHECKS", ()):
             with patch("urllib.request.urlopen", return_value=response) as urlopen_mock:
-                with pytest.raises(RemoteAuditError, match="opportunity_key"):
+                with pytest.raises(RemoteAuditError, match="case_id"):
                     main()
 
     assert urlopen_mock.call_count == 1

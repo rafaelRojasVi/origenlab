@@ -12,7 +12,6 @@ from origenlab_api.schemas.commercial_opportunities import (
 )
 from origenlab_api.repositories.email_types import RecentEmailsQueryResult
 from origenlab_api.schemas.cases import WarmCaseItem, WarmCasesMeta
-from origenlab_api.schemas.opportunities import EquipmentOpportunitiesMeta
 
 
 class OperatorStatusRepository(Protocol):
@@ -23,19 +22,6 @@ class OperatorStatusRepository(Protocol):
         self, *, mirror_cooldown_seconds: int = 60
     ) -> dict[str, Any]:
         """Return a dict compatible with ``OperatorAutomationStatusResponse`` fields."""
-
-
-class EquipmentOpportunityRepository(Protocol):
-    def list_equipment(
-        self,
-        *,
-        limit: int = 50,
-        priority: int | None = None,
-        next_action: str | None = None,
-        safe_channel: str | None = None,
-        include_account_intelligence: bool = True,
-    ) -> tuple[list[dict[str, Any]], EquipmentOpportunitiesMeta]:
-        """Return equipment queue rows and response meta."""
 
 
 class CommercialOpportunityRepository(Protocol):

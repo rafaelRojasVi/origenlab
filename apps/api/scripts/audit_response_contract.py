@@ -43,7 +43,6 @@ FORBIDDEN_LEAK_SUBSTRINGS: tuple[str, ...] = (
 LIST_ENDPOINT_PREFIXES: tuple[str, ...] = (
     "/emails/recent",
     "/cases/warm",
-    "/opportunities/equipment",
 )
 
 
@@ -122,7 +121,6 @@ SUCCESS_CHECKS: tuple[AuditCheck, ...] = (
     AuditCheck("GET /operator/automation-status", "/operator/automation-status", True),
     AuditCheck("GET /emails/recent", "/emails/recent?limit=5", True),
     AuditCheck("GET /cases/warm", "/cases/warm?limit=5&positive_signal_only=false", True),
-    AuditCheck("GET /opportunities/equipment", "/opportunities/equipment?limit=5", True),
 )
 
 ERROR_CHECKS: tuple[AuditCheck, ...] = (

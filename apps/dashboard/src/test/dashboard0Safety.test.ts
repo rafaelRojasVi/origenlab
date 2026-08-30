@@ -87,7 +87,6 @@ const DASHBOARD_V1_API_PATHS = [
   "/operator/automation-status",
   "/cases/warm",
   "/opportunities/commercial",
-  "/opportunities/equipment",
 ];
 
 const LEGACY_API_PATH_FRAGMENTS = [
@@ -178,7 +177,7 @@ describe("Dashboard-2 safety (mounted Today)", () => {
     const dataLayer = [dashboardAppSource, dashboardDataContextSource].join("\n");
     expect(dataLayer).not.toMatch(/from\s+["'][^"']*api\/client["']/);
     expect(dataLayer).not.toMatch(/api\/client/);
-    expect(dataLayer).toMatch(/fetchWarmCases|fetchEquipmentOpportunities/);
+    expect(dataLayer).toMatch(/fetchWarmCases/);
     expect(dataLayer).toMatch(/fetchCommercialDealsMirror/);
     expect(dataLayer).not.toMatch(/\/mirror\/commercial\/purchase-events/);
     expect(dataLayer).not.toMatch(/fetchPurchase/);
@@ -213,7 +212,6 @@ describe("Dashboard-2 safety (mounted Today)", () => {
       expect(blob, pattern.toString()).not.toMatch(pattern);
     }
     expect(operatorClientSource).toContain("parseWarmCasesResponse");
-    expect(operatorClientSource).toContain("parseEquipmentOpportunitiesResponse");
   });
 
   it("case detail drawer does not expose gmail urls or send actions", () => {

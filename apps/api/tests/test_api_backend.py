@@ -15,7 +15,6 @@ from origenlab_api.repositories.postgres.operator import (
 )
 from origenlab_api.repositories.sqlite.contact import SqliteContactRepository
 from origenlab_api.repositories.sqlite.email import SqliteEmailRecentRepository
-from origenlab_api.repositories.sqlite.equipment import SqliteEquipmentOpportunityRepository
 from origenlab_api.repositories.sqlite.operator import SqliteOperatorStatusRepository
 from origenlab_api.repositories.sqlite.warm_cases import SqliteWarmCaseRepository
 from origenlab_api.settings import Settings, get_settings
@@ -138,14 +137,12 @@ def test_repository_bundle_sqlite_uses_sqlite_operator(tmp_path: Path) -> None:
     )
     bundle = get_repository_bundle(settings)
     assert isinstance(bundle.operator, SqliteOperatorStatusRepository)
-    assert isinstance(bundle.equipment, SqliteEquipmentOpportunityRepository)
     assert isinstance(bundle.warm_cases, SqliteWarmCaseRepository)
     assert isinstance(bundle.email_recent, SqliteEmailRecentRepository)
     assert isinstance(bundle.contact, SqliteContactRepository)
 
 
 def test_repository_bundle_postgres_uses_postgres_operator() -> None:
-    from origenlab_api.repositories.postgres.equipment import PostgresEquipmentOpportunityRepository
     from origenlab_api.repositories.postgres.contact import PostgresContactRepository
     from origenlab_api.repositories.postgres.email import PostgresEmailRecentRepository
     from origenlab_api.repositories.postgres.warm_cases import PostgresWarmCaseRepository
@@ -156,7 +153,6 @@ def test_repository_bundle_postgres_uses_postgres_operator() -> None:
     )
     bundle = get_repository_bundle(settings)
     assert isinstance(bundle.operator, PostgresOperatorStatusRepository)
-    assert isinstance(bundle.equipment, PostgresEquipmentOpportunityRepository)
     assert isinstance(bundle.warm_cases, PostgresWarmCaseRepository)
     assert isinstance(bundle.email_recent, PostgresEmailRecentRepository)
     assert isinstance(bundle.contact, PostgresContactRepository)

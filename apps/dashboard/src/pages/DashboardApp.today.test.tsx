@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EquipmentOpportunitiesResponse, WarmCasesResponse } from "../api/commercialTypes";
+import type { WarmCasesResponse } from "../api/commercialTypes";
 import type { TodayPanelData } from "../api/operatorTypes";
 import { DashboardApp } from "./DashboardApp";
 
@@ -50,42 +50,12 @@ const warmPayload: WarmCasesResponse = {
   ],
 };
 
-const equipmentPayload: EquipmentOpportunitiesResponse = {
-  meta: {
-    data_source: "active_current_csv",
-    read_only: true,
-    count: 1,
-    source_path: "/secret/path/queue.csv",
-    campaign_mode: "equipment_first",
-    reduced_mode: false,
-    note: "",
-  },
-  items: [
-    {
-      priority_rank: 1,
-      codigo_licitacion: "LP-99",
-      buyer: "Hospital Regional",
-      region: "RM",
-      close_date: "15/06/2026",
-      equipment_category: "incubator",
-      item_description: "CO2 incubator",
-      next_action: "monitor",
-      safe_channel: "mercado_publico_bid",
-      supplier_needed: "no",
-      contact_status: "pending",
-      contact_email: "procurement@hospital.cl",
-      operator_note: "intel",
-    },
-  ],
-};
-
 vi.mock("../api/operatorClient", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/operatorClient")>();
   return {
     ...actual,
     fetchTodayPanel: vi.fn(),
     fetchWarmCases: vi.fn(),
-    fetchEquipmentOpportunities: vi.fn(),
     fetchContactProfile: vi.fn(),
     getOperatorApiBaseUrl: vi.fn(() => ""),
   };
@@ -148,7 +118,6 @@ vi.mock("../lib/logo/threeBodyCanvasRunner", () => ({
 
 import {
   fetchContactProfile,
-  fetchEquipmentOpportunities,
   fetchTodayPanel,
   fetchWarmCases,
 } from "../api/operatorClient";
@@ -183,7 +152,6 @@ describe("DashboardApp (legacy TodayPage tests)", () => {
   });
     vi.mocked(fetchTodayPanel).mockResolvedValue(panelSqlite);
     vi.mocked(fetchWarmCases).mockResolvedValue(warmPayload);
-    vi.mocked(fetchEquipmentOpportunities).mockResolvedValue(equipmentPayload);
     vi.mocked(fetchCatalogProductsMirror).mockResolvedValue(catalogListFixture());
     vi.mocked(fetchLeadResearchSummaryMirror).mockResolvedValue(leadSummaryFixture());
     vi.mocked(fetchCommercialDealsMirror).mockResolvedValue({
@@ -235,7 +203,6 @@ describe("DashboardApp (legacy TodayPage tests)", () => {
 
     fireEvent.click(within(nav).getByRole("link", { name: "Licitaciones / equipos" }));
     await waitFor(() => screen.getByText("Oportunidades accionables"));
-    expect(screen.queryByText(/\/secret\/path/)).toBeNull();
   });
 
   it("shows daily-core section when no run is registered", async () => {
@@ -323,10 +290,6 @@ describe("DashboardApp (legacy TodayPage tests)", () => {
     vi.mocked(fetchWarmCases).mockResolvedValue({
       ...warmPayload,
       meta: { ...warmPayload.meta, data_source: "postgres_mirror" },
-    });
-    vi.mocked(fetchEquipmentOpportunities).mockResolvedValue({
-      ...equipmentPayload,
-      meta: { ...equipmentPayload.meta, data_source: "postgres_mirror" },
     });
     mockAllOk();
     vi.mocked(fetchTodayPanel).mockResolvedValue({

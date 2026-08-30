@@ -136,7 +136,6 @@ def _postgres_route_client(monkeypatch: pytest.MonkeyPatch, tmp_path):
     "path",
     [
         "/cases/warm",
-        "/opportunities/equipment",
         "/operator/status",
         "/operator/automation-status",
     ],
