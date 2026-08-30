@@ -20,7 +20,10 @@ def evaluate_render_dashboard_assertions(
     out: dict[str, object],
     *,
     min_warm_cases: int = 1,
-    expect_equipment_count: int | None = 9,
+    # PHASE W1 (2026-08): the legacy equipment writer is frozen for observation
+    # and no longer gates Render readiness by default. Pass an explicit count
+    # for a manual/legacy diagnostic check only.
+    expect_equipment_count: int | None = None,
     expect_archive_emails: int = 0,
 ) -> list[str]:
     """Return human-readable assertion failures for Render dashboard mirror checks."""
@@ -86,8 +89,12 @@ def main() -> int:
     parser.add_argument(
         "--expect-equipment-count",
         type=int,
-        default=9,
-        help="Expected api.v_equipment_opportunity count when --assert-render-dashboard (default 9).",
+        default=None,
+        help=(
+            "[LEGACY] Expected api.v_equipment_opportunity count. Manual/legacy "
+            "diagnostic only — omitted by default, so --assert-render-dashboard "
+            "does not gate Render readiness on the frozen equipment writer."
+        ),
     )
     parser.add_argument(
         "--expect-archive-emails",

@@ -46,6 +46,7 @@ def test_render_dashboard_assertions_fail_warm_and_archive() -> None:
 
 
 def test_render_dashboard_assertions_equipment_mismatch() -> None:
+    """Explicit --expect-equipment-count still works as a manual diagnostic."""
     mod = _load_module()
     out = {
         "archive_emails": 0,
@@ -56,3 +57,17 @@ def test_render_dashboard_assertions_equipment_mismatch() -> None:
     failures = mod.evaluate_render_dashboard_assertions(out, expect_equipment_count=9)
     assert len(failures) == 1
     assert "api.v_equipment_opportunity" in failures[0]
+
+
+def test_render_dashboard_assertions_default_does_not_gate_equipment_count() -> None:
+    """PHASE W1: the legacy equipment writer is frozen for observation, so
+    Render readiness must not fail on a stale/mismatched equipment count
+    unless an operator explicitly opts in via --expect-equipment-count."""
+    mod = _load_module()
+    out = {
+        "archive_emails": 0,
+        "api_v_warm_case": 5,
+        "api_v_equipment_opportunity": 8,
+        "dashboard_sync_run_latest": (2, "success", "t0", "t1", "host/db"),
+    }
+    assert mod.evaluate_render_dashboard_assertions(out) == []

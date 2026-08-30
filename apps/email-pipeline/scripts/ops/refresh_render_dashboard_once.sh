@@ -27,8 +27,11 @@
 #   DASHBOARD_FAST=1               fast daily mode (canonical/recent rows + dashboard-only mirror sync)
 #   GMAIL_SINCE_DAYS=14            bound IMAP fetch when ingest runs
 #   ORIGENLAB_GMAIL_SENT_FOLDER    default "[Gmail]/Enviados"
-#   ORIGENLAB_EXPECT_EQUIPMENT_COUNT  default 9 (verify assertion)
 #   ORIGENLAB_SYNC_UPDATED_BY / ORIGENLAB_SYNC_REASON  passed to mirror sync
+#
+# PHASE W1 (2026-08): legacy commercial.equipment_opportunity* is frozen for
+# observation — this script no longer syncs it or gates Render readiness on
+# an equipment count. See docs/architecture/EQUIPMENT_READ_MODEL_BOUNDARY.md.
 #
 # See docs/REFRESH_RENDER_DASHBOARD_ONCE.md
 set -eo pipefail
@@ -56,7 +59,6 @@ RUN_W1_CLOUD_SYNC="${RUN_W1_CLOUD_SYNC:-0}"
 DASHBOARD_FAST="${DASHBOARD_FAST:-0}"
 GMAIL_SINCE_DAYS="${GMAIL_SINCE_DAYS:-14}"
 GMAIL_SENT_FOLDER="${ORIGENLAB_GMAIL_SENT_FOLDER:-[Gmail]/Enviados}"
-EXPECT_EQUIPMENT="${ORIGENLAB_EXPECT_EQUIPMENT_COUNT:-9}"
 DASHBOARD_VERIFY_JSON="/tmp/render_dashboard_mirror_verify.json"
 COMMERCIAL_VERIFY_JSON="/tmp/commercial_deals_mirror_verify.json"
 CATALOG_VERIFY_JSON="/tmp/catalog_postgres_mirror_verify.json"
@@ -172,7 +174,6 @@ if [[ "$DASHBOARD_FAST" == "1" ]]; then
   uv run python scripts/sync/sync_dashboard_postgres_mirror.py \
     --allow-non-scratch-postgres \
     --only canonical \
-    --include-equipment-opportunities \
     --include-warm-cases \
     --updated-by "${ORIGENLAB_SYNC_UPDATED_BY:-phase1-cloud-manual}" \
     --reason "${ORIGENLAB_SYNC_REASON:-Phase 6.6 dashboard-fast canonical mirror sync}" \
@@ -185,7 +186,6 @@ echo ""
 echo "-- Verify mirror (assert Render dashboard readiness) --"
 uv run python scripts/qa/verify_dashboard_postgres_mirror.py \
   --assert-render-dashboard \
-  --expect-equipment-count "$EXPECT_EQUIPMENT" \
   --json-out "$DASHBOARD_VERIFY_JSON"
 
 COMMERCIAL_MIRROR_STATUS="skipped"

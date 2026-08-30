@@ -90,6 +90,22 @@ def test_refresh_script_default_path_keeps_standard_sync_script() -> None:
     assert "bash scripts/ops/sync_dashboard_mirror_to_cloud.sh" in text
 
 
+def test_refresh_script_dashboard_fast_does_not_auto_include_equipment() -> None:
+    """PHASE W1: the legacy equipment writer is manual/backfill opt-in — the
+    DASHBOARD_FAST=1 branch must not resurrect it automatically."""
+    text = _script_text(_REFRESH)
+    assert "--include-equipment-opportunities" not in text
+
+
+def test_refresh_script_does_not_gate_render_readiness_on_equipment_count() -> None:
+    """Render readiness must not assert an equipment count by default during
+    the observation period; the verifier's --expect-equipment-count stays an
+    explicit, manual, opt-in diagnostic (not auto-passed by this script)."""
+    text = _script_text(_REFRESH)
+    assert "ORIGENLAB_EXPECT_EQUIPMENT_COUNT" not in text
+    assert "--expect-equipment-count" not in text
+
+
 def test_refresh_script_syntax_check() -> None:
     for script in (_REFRESH, _CATALOG_HELPER):
         cp = subprocess.run(
