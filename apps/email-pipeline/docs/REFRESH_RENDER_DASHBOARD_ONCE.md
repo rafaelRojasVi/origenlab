@@ -194,8 +194,9 @@ After sync, assertions require:
 |-------|----------|
 | `archive.emails` | `0` (mirror does not load full archive bodies) |
 | `api.v_warm_case` | `> 0` |
-| `api.v_equipment_opportunity_current` | `9` after direct ChileCompra refresh or explicit legacy/backfill equipment reload (override: `ORIGENLAB_EXPECT_EQUIPMENT_COUNT`) |
 | `reporting.dashboard_sync_run` latest | `status = success`, `finished_at` set |
+
+**PHASE W1 (2026-08):** `api.v_equipment_opportunity_current` is no longer asserted by default — the legacy writer is frozen for observation, so this script no longer passes `--expect-equipment-count`. The count is still reported informationally in the verify JSON; pass `--expect-equipment-count N` to `scripts/qa/verify_dashboard_postgres_mirror.py` directly for a manual/legacy diagnostic check.
 
 JSON artifact: `/tmp/render_dashboard_mirror_verify.json`
 
@@ -251,8 +252,7 @@ uv run python scripts/commercial/build_commercial_intel_v1.py
 # Mirror + verify
 bash scripts/ops/sync_dashboard_mirror_to_cloud.sh
 uv run python scripts/qa/verify_dashboard_postgres_mirror.py \
-  --assert-render-dashboard \
-  --expect-equipment-count 9
+  --assert-render-dashboard
 ```
 
 ---
@@ -263,7 +263,7 @@ uv run python scripts/qa/verify_dashboard_postgres_mirror.py \
 |---------|------------|
 | `Refusing Postgres dashboard mirror sync: mart table(s) … empty` | Run incremental `build_business_mart.py` once; if mart was never built, operator must run **one-time** `--rebuild` outside this workflow. |
 | Gmail folder select fails | `uv run python scripts/ingest/05_workspace_gmail_imap_to_sqlite.py --list-folders` and set `ORIGENLAB_GMAIL_SENT_FOLDER`. |
-| Equipment count ≠ 9 | Set `ORIGENLAB_EXPECT_EQUIPMENT_COUNT` to current baseline after operator review. |
+| Equipment count looks stale (PHASE W1, 2026-08) | Expected — the legacy writer is frozen for observation and no longer gates Render readiness. Pass `--expect-equipment-count N` to the verify script directly for a manual/legacy diagnostic only. |
 | Dashboard stale after green verify | Open dashboard and click **Refresh** (browser cache / SPA poll). |
 | **PRECAUCIÓN** / stale suppressions after campaign | `DASHBOARD_FAST=1` skips outbound in main sync — ensure `RUN_OUTBOUND_SIDECAR_MIRROR=1` (default) or run `sqlite_outbound_sidecars_to_postgres.py --replace` manually |
 | Suppression count mismatch (e.g. SQLite 114 vs Postgres 96) | Run outbound sidecar sync + `verify_outbound_sidecar_postgres_mirror.py`; check `/tmp/outbound_sidecar_mirror_verify.json` |

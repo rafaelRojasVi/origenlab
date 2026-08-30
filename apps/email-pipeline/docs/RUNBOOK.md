@@ -155,7 +155,7 @@ uv run origenlab auto-refresh-chilecompra-equipment --once          # dry-run; n
 uv run origenlab auto-refresh-chilecompra-equipment --once --apply  # fetch + publish when approved
 ```
 
-With Postgres configured, `--apply` publishes typed rows to `commercial.equipment_opportunity_source` / `commercial.equipment_opportunity`, exposed to the API/dashboard by `api.v_equipment_opportunity_current`. CSVs and manifest entries under `reports/out/active/current/` remain audit and compatibility artifacts. See [`operator/CHILECOMPRA_EQUIPMENT_REFRESH.md`](operator/CHILECOMPRA_EQUIPMENT_REFRESH.md) and [`architecture/EQUIPMENT_DIRECT_ROW_LOADER.md`](architecture/EQUIPMENT_DIRECT_ROW_LOADER.md).
+**PHASE W1 (2026-08):** direct Postgres publication is legacy/manual-backfill opt-in (`--publish-read-model`, default `false`) — the tracked cron wrapper explicitly disables it, so `--apply` alone no longer writes `commercial.equipment_opportunity_source` / `commercial.equipment_opportunity`. No apps/api HTTP route reads the resulting `api.v_equipment_opportunity_current` view; that data is frozen for observation. CSVs and manifest entries under `reports/out/active/current/` remain audit and compatibility artifacts regardless. See [`operator/CHILECOMPRA_EQUIPMENT_REFRESH.md`](operator/CHILECOMPRA_EQUIPMENT_REFRESH.md) and [`architecture/EQUIPMENT_DIRECT_ROW_LOADER.md`](architecture/EQUIPMENT_DIRECT_ROW_LOADER.md).
 
 **Canonical operator outputs** (under `reports/out/active/current/`):
 

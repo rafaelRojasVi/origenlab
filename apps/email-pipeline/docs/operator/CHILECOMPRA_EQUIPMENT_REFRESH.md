@@ -146,7 +146,7 @@ Key properties:
 
 ## Dashboard mirror relationship
 
-With `--apply` and Postgres configured, this command direct-publishes the typed equipment read model to Postgres (`commercial.equipment_opportunity_source` / `commercial.equipment_opportunity`, exposed by `api.v_equipment_opportunity_current`).
+**PHASE W1 (2026-08): direct Postgres publication is legacy/manual-backfill opt-in, defaulting `false`.** With `--apply`, `--publish-read-model`, and Postgres configured, this command direct-publishes the typed equipment read model to Postgres (`commercial.equipment_opportunity_source` / `commercial.equipment_opportunity`, exposed by `api.v_equipment_opportunity_current`). The tracked wrapper (`scripts/operator/run_auto_refresh_chilecompra_equipment.sh`) explicitly passes `--no-publish-read-model`, so the scheduled ChileCompra refresh no longer writes this table family — those rows are frozen at their last writer run for an observation period. No apps/api HTTP route reads the resulting view; see [`../architecture/EQUIPMENT_READ_MODEL_BOUNDARY.md`](../architecture/EQUIPMENT_READ_MODEL_BOUNDARY.md).
 
 It still publishes the dashboard CSV/manifest artifacts for audit and compatibility, but `auto-mirror-dashboard` / `mirror-dashboard --live` no longer reloads equipment from the CSV by default. Use `mirror-dashboard --live -- --include-equipment-opportunities` only for an explicit legacy/backfill CSV reload.
 

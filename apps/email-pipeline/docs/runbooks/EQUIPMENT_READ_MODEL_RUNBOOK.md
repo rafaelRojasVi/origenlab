@@ -18,6 +18,8 @@ This runbook is **read-only verification**. It does not approve sends, mutate Gm
 
 **`GET /opportunities/equipment` (the apps/api HTTP route) is retired** — the dashboard's actionable-opportunity summary now sources from `GET /operator/procurement/status` (W1) instead. §1–§3 below (migrations, key audit, direct-SQL view check) remain the way to verify this read model's health; §4–§5 (which used to curl the now-retired route) have been updated accordingly.
 
+**PHASE W1 (2026-08):** the writer below is legacy/manual-backfill opt-in (`--publish-read-model`, default `false`); the tracked cron wrapper explicitly disables it, so this read model is frozen at its last writer run for an observation period rather than updated on schedule.
+
 ---
 
 ## Data flow

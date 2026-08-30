@@ -126,7 +126,7 @@ uv run python scripts/qa/verify_dashboard_postgres_mirror.py
 | `api.v_equipment_opportunity_current` | **> 0** only after direct ChileCompra refresh or explicit legacy/backfill equipment reload |
 | `reporting.dashboard_sync_run` | Latest row `status = success` |
 
-**Equipment canonical behavior:** the normal live path is `uv run origenlab auto-refresh-chilecompra-equipment --once --apply`, which publishes typed ChileCompra rows directly to the Postgres equipment read model when Postgres is configured. The CSV mirror flag `--include-equipment-opportunities` is legacy/backfill only.
+**Equipment canonical behavior (PHASE W1, 2026-08):** direct Postgres publication now requires `uv run origenlab auto-refresh-chilecompra-equipment --once --apply --publish-read-model` — the flag defaults `false` and the tracked cron wrapper explicitly disables it, so the scheduled refresh no longer writes this table family; those rows are frozen for observation. The CSV mirror flag `--include-equipment-opportunities` remains legacy/backfill only.
 
 ---
 
