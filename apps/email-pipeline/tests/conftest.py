@@ -15,9 +15,10 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     del config
     marker = pytest.mark.xfail(
         reason=(
-            "equipment opportunities are direct-published by "
-            "auto-refresh-chilecompra-equipment; mirror-dashboard --live no longer "
-            "reopens the equipment CSV by default"
+            "mirror-dashboard --live intentionally excludes equipment opportunities; "
+            "Postgres equipment publication is now explicit manual/legacy-backfill "
+            "opt-in via auto-refresh-chilecompra-equipment --publish-read-model, and "
+            "mirror-dashboard --live no longer reopens the equipment CSV by default"
         ),
         strict=False,
     )

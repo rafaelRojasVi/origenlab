@@ -28,8 +28,9 @@ This runbook is **read-only verification**. It does not approve sends, mutate Gm
 ChileCompra API/detail builder rows
         │
         ▼
-auto-refresh-chilecompra-equipment --once --apply
-        │
+auto-refresh-chilecompra-equipment --once --apply --publish-read-model
+        │   (manual/legacy-backfill writer path only — NOT scheduled;
+        │    the tracked cron wrapper always passes --no-publish-read-model)
         ▼
 commercial.equipment_opportunity_source   (source load + artifact metadata)
 commercial.equipment_opportunity          (rows; opportunity_key indexed, not unique)
