@@ -18,10 +18,11 @@ from origenlab_email_pipeline.operator_cli.paths import (
     repo_root,
 )
 
-# Equipment opportunities are now direct-published by auto-refresh-chilecompra-equipment
-# when Postgres is configured. Keep --include-equipment-opportunities available as an
-# explicit legacy/backfill passthrough, but do not reopen the CSV export in the normal
-# live mirror loop.
+# The legacy Postgres equipment writer (auto-refresh-chilecompra-equipment
+# --publish-read-model) is manual/backfill opt-in only; the scheduled wrapper
+# does not enable it. Keep --include-equipment-opportunities available as an
+# explicit legacy/backfill passthrough, but do not reopen the CSV export in the
+# normal live mirror loop.
 LIVE_DASHBOARD_FLAGS = (
     "--include-warm-cases",
     "--include-commercial-deals",
@@ -278,8 +279,10 @@ def print_mirror_dashboard_help() -> None:
         "  uv run origenlab mirror-dashboard --alembic --apply\n"
         "  uv run origenlab mirror-dashboard -- --only mart --json-out path\n\n"
         "--live includes warm cases, commercial deals, and operator snapshots. "
-        "Equipment opportunities are direct-published by auto-refresh-chilecompra-equipment; "
-        "pass --include-equipment-opportunities after `--` only for legacy/backfill CSV reloads.\n"
+        "Equipment opportunities are not included; the legacy Postgres equipment writer "
+        "(auto-refresh-chilecompra-equipment --publish-read-model) is manual/backfill "
+        "opt-in only. Pass --include-equipment-opportunities after `--` only for "
+        "legacy/backfill CSV reloads.\n"
         "--live uses the same default warm-case window as Hoy: 14 days / 100 cases "
         "(--warm-days 14 --warm-limit 100) and closes stale warm_queue_promotion rows "
         "missing from the current snapshot (--close-missing-warm-cases).\n"

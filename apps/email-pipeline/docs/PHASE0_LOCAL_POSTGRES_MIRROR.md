@@ -51,7 +51,7 @@ uv run python scripts/qa/verify_dashboard_postgres_mirror.py
 
 Expect `archive.emails` count **0** on a lightweight mirror (mart + outbound sidecars + commercial tables only; no full archive replica). Warm cases via `api.v_warm_case` and `commercial.warm_case`.
 
-**Equipment canonical source:** normal live equipment refresh is direct-published by `uv run origenlab auto-refresh-chilecompra-equipment --once --apply` when Postgres is configured. Use `mirror-dashboard --live -- --include-equipment-opportunities` only for an explicit legacy/backfill CSV reload of the resolved `active/current` equipment queue.
+**Equipment canonical source (PHASE W1, 2026-08):** direct Postgres publication is legacy/manual-backfill opt-in — `uv run origenlab auto-refresh-chilecompra-equipment --once --apply --publish-read-model` when Postgres is configured; the flag defaults `false` and the tracked cron wrapper explicitly disables it, so this table family is frozen for observation. Use `mirror-dashboard --live -- --include-equipment-opportunities` only for an explicit legacy/backfill CSV reload of the resolved `active/current` equipment queue.
 
 ## 5. Next: Phase 1 cloud
 

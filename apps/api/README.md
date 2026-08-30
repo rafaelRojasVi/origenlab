@@ -145,7 +145,7 @@ Responses include `X-Request-ID` plus read-only timing headers `Server-Timing` /
 
 **Recent emails read-model boundary:** production serves `api.v_recent_email` through `PostgresEmailRecentRepository` when `ORIGENLAB_API_BACKEND=postgres`. Remote contract checks live in `scripts/remote_response_audit.py` (`require_recent_emails_contract`).
 
-**Legacy equipment HTTP route retired:** `GET /opportunities/equipment` is no longer part of this API. The dashboard's actionable-opportunity summary and Licitaciones/equipos page now source from `/operator/procurement/status` (W1). The underlying `commercial.equipment_opportunity*` writer/read model is unaffected by this and remains scheduled — see [`../email-pipeline/docs/architecture/EQUIPMENT_READ_MODEL_BOUNDARY.md`](../email-pipeline/docs/architecture/EQUIPMENT_READ_MODEL_BOUNDARY.md) and the operator runbook [`../email-pipeline/docs/runbooks/EQUIPMENT_READ_MODEL_RUNBOOK.md`](../email-pipeline/docs/runbooks/EQUIPMENT_READ_MODEL_RUNBOOK.md).
+**Legacy equipment HTTP route retired:** `GET /opportunities/equipment` is no longer part of this API. The dashboard's actionable-opportunity summary and Licitaciones/equipos page now source from `/operator/procurement/status` (W1). **PHASE W1 (2026-08):** the underlying `commercial.equipment_opportunity*` writer/read model is now legacy/manual-backfill opt-in and no longer runs on schedule — see [`../email-pipeline/docs/architecture/EQUIPMENT_READ_MODEL_BOUNDARY.md`](../email-pipeline/docs/architecture/EQUIPMENT_READ_MODEL_BOUNDARY.md) and the operator runbook [`../email-pipeline/docs/runbooks/EQUIPMENT_READ_MODEL_RUNBOOK.md`](../email-pipeline/docs/runbooks/EQUIPMENT_READ_MODEL_RUNBOOK.md).
 
 ### Quick `curl` examples (local dev)
 

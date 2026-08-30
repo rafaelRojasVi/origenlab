@@ -3,6 +3,13 @@
 **Status:** active architecture contract (2026-06)  
 **Audience:** API, dashboard, and email-pipeline maintainers  
 
+> **PHASE W1 update (2026-08):** the direct-publish writer described below is
+> now legacy/manual-backfill opt-in (`--publish-read-model`, default `false`)
+> and the tracked cron wrapper explicitly disables it. `commercial.
+> equipment_opportunity*` / `api.v_equipment_opportunity*` are frozen at their
+> last writer run for an observation period, not updated on schedule. Schema
+> and views remain in place; see [`operator/CHILECOMPRA_EQUIPMENT_REFRESH.md`](../operator/CHILECOMPRA_EQUIPMENT_REFRESH.md) for the current default.
+
 **Related:**
 
 - [`apps/api/README.md`](../../../api/README.md) — operator API backends and production env
@@ -19,7 +26,7 @@
 | **Postgres (`api.*` views)** | Typed **read model** for API and dashboard in production |
 | **CSV queue files** | Export, audit, and operator artifacts — **not** the public HTTP contract |
 
-**`GET /opportunities/equipment` (the apps/api HTTP route) is retired** — the dashboard's actionable-opportunity summary now sources from `GET /operator/procurement/status` (W1) instead. This does **not** change the writer/read-model boundary below: the ChileCompra-direct and legacy-CSV-bridge pipelines still populate `commercial.equipment_opportunity*` and `api.v_equipment_opportunity_current` on schedule, and that data remains available for direct SQL/audit access. The SQLite/active-current CSV path was always **dev/local only** and remains so.
+**`GET /opportunities/equipment` (the apps/api HTTP route) is retired** — the dashboard's actionable-opportunity summary now sources from `GET /operator/procurement/status` (W1) instead. **PHASE W1 (2026-08): the ChileCompra-direct and legacy-CSV-bridge pipelines below are now legacy/manual-backfill opt-in and no longer populate `commercial.equipment_opportunity*` / `api.v_equipment_opportunity_current` on schedule** — the tracked cron wrapper explicitly disables direct publication, so this data is frozen at its last writer run and remains available for direct SQL/audit access only. The SQLite/active-current CSV path was always **dev/local only** and remains so.
 
 ---
 
@@ -43,7 +50,7 @@ available for direct SQL / audit access
 (no apps/api HTTP route currently reads this view — retired)
 ```
 
-`auto-refresh-chilecompra-equipment --once --apply` also writes the active/current CSV and manifest artifacts for audit, debugging, and compatibility. With Postgres configured, the typed rows are the normal writer path for this read model (`source_kind=typed_read_model`, `canonical_reason=chilecompra_api_direct_rows`). See [`EQUIPMENT_DIRECT_ROW_LOADER.md`](EQUIPMENT_DIRECT_ROW_LOADER.md).
+`auto-refresh-chilecompra-equipment --once --apply` also writes the active/current CSV and manifest artifacts for audit, debugging, and compatibility. With `--publish-read-model` (legacy/manual-backfill opt-in, default `false` as of PHASE W1) and Postgres configured, the typed rows are the writer path for this read model (`source_kind=typed_read_model`, `canonical_reason=chilecompra_api_direct_rows`). See [`EQUIPMENT_DIRECT_ROW_LOADER.md`](EQUIPMENT_DIRECT_ROW_LOADER.md).
 
 ---
 
@@ -163,7 +170,7 @@ No apps/api HTTP route currently queries `api.v_equipment_opportunity_current` �
 
 ## Enforcement
 
-Historically, `apps/api` had a dedicated Postgres/SQLite repository and route (`GET /opportunities/equipment`) enforcing "production must read `api.v_equipment_opportunity_current`, never fall back to CSV." That HTTP route and its repository were retired (dashboard now uses `GET /operator/procurement/status` / W1), so this enforcement no longer applies to `apps/api` — it has no equipment-specific code path left to enforce it on. The view and the writer pipelines above are unaffected and continue to run on schedule.
+Historically, `apps/api` had a dedicated Postgres/SQLite repository and route (`GET /opportunities/equipment`) enforcing "production must read `api.v_equipment_opportunity_current`, never fall back to CSV." That HTTP route and its repository were retired (dashboard now uses `GET /operator/procurement/status` / W1), so this enforcement no longer applies to `apps/api` — it has no equipment-specific code path left to enforce it on. **PHASE W1 (2026-08): the writer pipelines above are also now legacy/manual-backfill opt-in and no longer run on schedule** — see the update note at the top of this document. The view and underlying tables remain in place, frozen for observation.
 
 ---
 

@@ -1,12 +1,20 @@
 # Equipment direct-row read model loader
 
-Status: phase 3 direct publish path.
+Status: phase 3 direct publish path. **PHASE W1 (2026-08): legacy/manual-backfill
+opt-in** — see [`EQUIPMENT_READ_MODEL_BOUNDARY.md`](EQUIPMENT_READ_MODEL_BOUNDARY.md).
 
-The production API reads `api.v_equipment_opportunity_current` from Postgres. The CSV queue is now an export/audit artifact and compatibility fallback, not the normal writer bridge for live ChileCompra equipment opportunities.
+No apps/api HTTP route reads `api.v_equipment_opportunity_current` (the legacy
+`GET /opportunities/equipment` route was retired; the dashboard's
+actionable-opportunity summary now sources from W1). The CSV queue is now an
+export/audit artifact and compatibility fallback, not the normal writer bridge
+for live ChileCompra equipment opportunities.
 
-## Current live behavior
+## Current behavior
 
-`auto-refresh-chilecompra-equipment --once --apply` now has the live path:
+`auto-refresh-chilecompra-equipment --once --apply --publish-read-model` has the
+direct-publish path below. `--publish-read-model` defaults `false` and the
+tracked cron wrapper explicitly disables it, so this path only runs on an
+explicit manual/backfill invocation, not on schedule:
 
 ```text
 ChileCompra API/detail builder rows
@@ -14,7 +22,7 @@ ChileCompra API/detail builder rows
   -> apply_chilecompra_equipment_read_model(...)
   -> commercial.equipment_opportunity_source / commercial.equipment_opportunity
   -> api.v_equipment_opportunity_current
-  -> API/dashboard/CLI
+  -> direct SQL / audit access only (no HTTP route)
 ```
 
 It still writes:

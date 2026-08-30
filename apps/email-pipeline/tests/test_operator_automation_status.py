@@ -547,6 +547,10 @@ def test_tracked_cron_wrapper_scripts_exist_and_contain_commands() -> None:
     assert "--once" in chilecompra_text
     assert "--apply" in chilecompra_text
     assert "--publish-institution-prospects" in chilecompra_text
+    # Legacy direct Postgres equipment writer defaults false now, but the
+    # explicit negative flag is required so a future default change can't
+    # silently reactivate it on the next cron tick.
+    assert "--no-publish-read-model" in chilecompra_text
     assert "--group gmail" not in chilecompra_text
     assert "--group postgres" not in chilecompra_text
     for text in (mail_text, mirror_text, chilecompra_text):

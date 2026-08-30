@@ -136,7 +136,7 @@ uv run origenlab mirror-dashboard --alembic --live --apply \
   --reason "dashboard backend matrix smoke"
 ```
 
-Requires operator approval in production workflows; safe on disposable DB. `--live` covers warm cases, commercial deals, and operator snapshots. Equipment opportunities are direct-published by `uv run origenlab auto-refresh-chilecompra-equipment --once --apply` when Postgres is configured; use `mirror-dashboard --live -- --include-equipment-opportunities` only for explicit legacy/backfill CSV reloads.
+Requires operator approval in production workflows; safe on disposable DB. `--live` covers warm cases, commercial deals, and operator snapshots. **PHASE W1 (2026-08):** direct Postgres publication of equipment opportunities is legacy/manual-backfill opt-in — `uv run origenlab auto-refresh-chilecompra-equipment --once --apply --publish-read-model` when Postgres is configured; the tracked cron wrapper explicitly disables it. Use `mirror-dashboard --live -- --include-equipment-opportunities` only for explicit legacy/backfill CSV reloads.
 
 ### 2. Start `apps/api` on postgres backend
 

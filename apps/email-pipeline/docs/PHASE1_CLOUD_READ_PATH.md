@@ -1,7 +1,7 @@
 # Phase 1 — Cloud read path (OrigenLab Today)
 
 **Status:** deployment readiness checklist (do not run until operator approves)  
-**Prerequisite:** [Phase 0 local Postgres mirror proof](PHASE0_LOCAL_POSTGRES_MIRROR.md) — **green** (`apps/api` **200 passed**; equipment rows require direct ChileCompra refresh or explicit legacy/backfill reload).
+**Prerequisite:** [Phase 0 local Postgres mirror proof](PHASE0_LOCAL_POSTGRES_MIRROR.md) — **green** (`apps/api` **200 passed**; equipment rows require the manual/legacy-backfill `auto-refresh-chilecompra-equipment --publish-read-model` direct-publish path or an explicit legacy/backfill CSV mirror reload).
 **Scope:** Cloud Postgres read model + cloud GET-only API + static dashboard behind the read-only Worker proxy. **Manual mirror sync only** (no cron in Phase 1).
 
 ---
@@ -123,10 +123,10 @@ uv run python scripts/qa/verify_dashboard_postgres_mirror.py
 |-------|----------|
 | `archive.emails` | **0** (lightweight mirror; no full archive replica) |
 | `commercial.warm_case` | **> 0** |
-| `api.v_equipment_opportunity_current` | **> 0** only after direct ChileCompra refresh or explicit legacy/backfill equipment reload |
+| `api.v_equipment_opportunity_current` | **> 0** only after the manual `--publish-read-model` direct-publish path (below) or an explicit legacy/backfill equipment CSV reload |
 | `reporting.dashboard_sync_run` | Latest row `status = success` |
 
-**Equipment canonical behavior:** the normal live path is `uv run origenlab auto-refresh-chilecompra-equipment --once --apply`, which publishes typed ChileCompra rows directly to the Postgres equipment read model when Postgres is configured. The CSV mirror flag `--include-equipment-opportunities` is legacy/backfill only.
+**Equipment canonical behavior (PHASE W1, 2026-08):** direct Postgres publication now requires `uv run origenlab auto-refresh-chilecompra-equipment --once --apply --publish-read-model` — the flag defaults `false` and the tracked cron wrapper explicitly disables it, so the scheduled refresh no longer writes this table family; those rows are frozen for observation. The CSV mirror flag `--include-equipment-opportunities` remains legacy/backfill only.
 
 ---
 

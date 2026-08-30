@@ -231,3 +231,11 @@ This ledger is the completed migration record of the 2026-08 commercial
 platform reset. Permanent documentation:
 `docs/architecture/CURRENT_SYSTEM_TRUTH.md` (what is) and
 `docs/architecture/TARGET_COMMERCIAL_ARCHITECTURE.md` (direction + rules).
+
+**2026-08-30 correction:** later work (PR #531/#532, after this ledger was
+written) retired `/opportunities/equipment` and legacy Today equipment
+consumption, and made the legacy Postgres equipment writer
+(`auto-refresh-chilecompra-equipment --publish-read-model`) a manual/backfill
+opt-in. Checkpoint entries above that describe `/opportunities/equipment` /
+Today counts as kept or ACTIVE reflect the state at the time this ledger was
+written, not current truth — see `CURRENT_SYSTEM_TRUTH.md`.

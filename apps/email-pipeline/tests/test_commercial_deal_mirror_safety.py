@@ -161,6 +161,14 @@ def test_cloud_dashboard_sync_script_does_not_auto_include_commercial_deals() ->
     assert "sync_dashboard_postgres_mirror.py" in text
 
 
+def test_cloud_dashboard_sync_script_does_not_auto_include_equipment_opportunities() -> None:
+    """The legacy equipment writer is manual/backfill opt-in now (PHASE W1) —
+    the tracked cloud-mirror script must not resurrect it automatically."""
+    text = _CLOUD_SYNC.read_text(encoding="utf-8")
+    assert "include-equipment-opportunities" not in text
+    assert "sync_dashboard_postgres_mirror.py" in text
+
+
 def test_standalone_sync_script_documents_opt_in() -> None:
     text = _STANDALONE_SYNC.read_text(encoding="utf-8")
     assert "Opt-in" in text or "opt-in" in text

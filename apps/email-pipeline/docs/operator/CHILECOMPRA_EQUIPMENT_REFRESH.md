@@ -1,6 +1,6 @@
 # ChileCompra equipment queue refresh (operator)
 
-Automated operator step to refresh the equipment-first queue from the Mercado Público licitaciones API, publish the canonical dashboard CSV/audit artifacts, and direct-publish the typed equipment read model to Postgres when `--apply` runs with Postgres configured.
+Automated operator step to refresh the equipment-first queue from the Mercado Público licitaciones API and publish the canonical dashboard CSV/audit artifacts. Direct-publishing the typed equipment read model to Postgres is a separate, manual/legacy-backfill opt-in (`--publish-read-model`, defaulting `false`) — see [Dashboard mirror relationship](#dashboard-mirror-relationship) below; the scheduled/tracked wrapper does not enable it.
 
 **PR5B note:** The acquisition snapshot parsers in the
 `commercial_procurement_acquisition/` package do **not** change this
@@ -146,7 +146,7 @@ Key properties:
 
 ## Dashboard mirror relationship
 
-With `--apply` and Postgres configured, this command direct-publishes the typed equipment read model to Postgres (`commercial.equipment_opportunity_source` / `commercial.equipment_opportunity`, exposed by `api.v_equipment_opportunity_current`).
+**PHASE W1 (2026-08): direct Postgres publication is legacy/manual-backfill opt-in, defaulting `false`.** With `--apply`, `--publish-read-model`, and Postgres configured, this command direct-publishes the typed equipment read model to Postgres (`commercial.equipment_opportunity_source` / `commercial.equipment_opportunity`, exposed by `api.v_equipment_opportunity_current`). The tracked wrapper (`scripts/operator/run_auto_refresh_chilecompra_equipment.sh`) explicitly passes `--no-publish-read-model`, so the scheduled ChileCompra refresh no longer writes this table family — those rows are frozen at their last writer run for an observation period. No apps/api HTTP route reads the resulting view; see [`../architecture/EQUIPMENT_READ_MODEL_BOUNDARY.md`](../architecture/EQUIPMENT_READ_MODEL_BOUNDARY.md).
 
 It still publishes the dashboard CSV/manifest artifacts for audit and compatibility, but `auto-mirror-dashboard` / `mirror-dashboard --live` no longer reloads equipment from the CSV by default. Use `mirror-dashboard --live -- --include-equipment-opportunities` only for an explicit legacy/backfill CSV reload.
 

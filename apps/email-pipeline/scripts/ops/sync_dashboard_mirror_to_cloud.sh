@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Manual SQLite → cloud Postgres dashboard mirror (Phase 1).
 # SAFETY: Read-only SQLite; writes cloud Postgres mirror only. No Gmail ingest, no mart rebuild.
+# PHASE W1 (2026-08): legacy commercial.equipment_opportunity* is no longer synced
+# here — it is frozen for observation. See docs/architecture/
+# EQUIPMENT_READ_MODEL_BOUNDARY.md for the explicit manual/backfill reload path.
 set -euo pipefail
 
 PIPE="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -27,7 +30,6 @@ uv run alembic -c alembic.ini upgrade head
 
 uv run python scripts/sync/sync_dashboard_postgres_mirror.py \
   --allow-non-scratch-postgres \
-  --include-equipment-opportunities \
   --include-warm-cases \
   --updated-by "${ORIGENLAB_SYNC_UPDATED_BY:-phase1-cloud-manual}" \
   --reason "${ORIGENLAB_SYNC_REASON:-Phase 1 cloud dashboard mirror manual sync}" \
