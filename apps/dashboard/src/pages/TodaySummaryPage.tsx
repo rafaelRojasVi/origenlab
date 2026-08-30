@@ -67,6 +67,7 @@ export function TodaySummaryPage() {
     panelError,
     warm,
     procurementStatus,
+    procurementStatusLoading,
     commercialDeals,
     catalogProducts,
     leadResearchSummary,
@@ -82,6 +83,11 @@ export function TodaySummaryPage() {
     () => summarizeProcurementStatus(procurementStatus),
     [procurementStatus],
   );
+
+  // No status yet AND still fetching: the request is in flight, not unavailable.
+  // Once a status has loaded (even while a later refresh is in flight), keep
+  // showing it rather than reverting to a loading state.
+  const procurementInitialLoading = procurementStatus == null && procurementStatusLoading;
 
   const counts = useMemo(
     () =>
@@ -250,7 +256,7 @@ export function TodaySummaryPage() {
             />
           ) : null}
 
-          {!opportunitySummary.available ? (
+          {!procurementInitialLoading && !opportunitySummary.available ? (
             <div
               className="rounded-xl border border-amber-200 bg-amber-50/90 px-4 py-4 text-sm text-amber-950"
               role="status"
@@ -312,13 +318,21 @@ export function TodaySummaryPage() {
               <SummaryCard
                 label={ACTIONABLE_OPPORTUNITIES_LABEL}
                 value={counts.actionableOpportunities}
-                displayValue={opportunitySummary.available ? undefined : "N/D"}
+                displayValue={
+                  procurementInitialLoading
+                    ? "…"
+                    : opportunitySummary.available
+                      ? undefined
+                      : "N/D"
+                }
                 hint={
-                  !opportunitySummary.available
-                    ? ACTIONABLE_OPPORTUNITIES_UNAVAILABLE_HINT
-                    : opportunitySummary.stale
-                      ? ACTIONABLE_OPPORTUNITIES_STALE_HINT
-                      : ACTIONABLE_OPPORTUNITIES_NORMAL_HINT
+                  procurementInitialLoading
+                    ? undefined
+                    : !opportunitySummary.available
+                      ? ACTIONABLE_OPPORTUNITIES_UNAVAILABLE_HINT
+                      : opportunitySummary.stale
+                        ? ACTIONABLE_OPPORTUNITIES_STALE_HINT
+                        : ACTIONABLE_OPPORTUNITIES_NORMAL_HINT
                 }
                 section="tenders"
               />

@@ -189,10 +189,25 @@ describe("TodaySummaryPage actionable-opportunity summary (W1 procurement status
     screen.getByText("Catálogo");
   });
 
-  it("shows N/D when the procurement status request fails (null status)", () => {
-    renderToday({ procurementStatus: null });
+  it("shows N/D and the unavailable banner once the request has finished with no usable status", () => {
+    renderToday({ procurementStatus: null, procurementStatusLoading: false });
     screen.getByTestId("today-procurement-status-unavailable");
     screen.getByLabelText(/Oportunidades accionables: N\/D/);
+  });
+
+  it("shows a neutral loading placeholder, not N/D or the unavailable banner, while the initial request is in flight", () => {
+    renderToday({ procurementStatus: null, procurementStatusLoading: true });
+    expect(screen.queryByTestId("today-procurement-status-unavailable")).toBeNull();
+    expect(
+      screen.queryByText("Fuente de oportunidades accionables no disponible"),
+    ).toBeNull();
+    screen.getByLabelText(/Oportunidades accionables: …/);
+  });
+
+  it("keeps showing an already-loaded value while a background refresh is in flight", () => {
+    renderToday({ procurementStatus: procurementStatus({}, 4), procurementStatusLoading: true });
+    expect(screen.queryByTestId("today-procurement-status-unavailable")).toBeNull();
+    screen.getByLabelText(/Oportunidades accionables: 4/);
   });
 
   it("shows N/D when summaryOk is false", () => {

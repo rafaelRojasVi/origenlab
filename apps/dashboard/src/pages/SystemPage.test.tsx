@@ -308,4 +308,37 @@ describe("SystemPage", () => {
     within(activitySection).getByText("4");
     within(activitySection).getByText("Datos accionables desactualizados · revisar actualización W1");
   });
+
+  it("shows a neutral loading placeholder, not N/D or an unavailable hint, while the initial request is in flight", () => {
+    render(
+      wrap(<SystemPage />, { procurementStatus: null, procurementStatusLoading: true }),
+    );
+    const tile = screen.getByText("Oportunidades accionables").closest("div")!;
+    within(tile).getByText("…");
+    expect(within(tile).queryByText("N/D")).toBeNull();
+    expect(
+      within(tile).queryByText("Fuente de oportunidades accionables no disponible"),
+    ).toBeNull();
+  });
+
+  it("shows N/D and an unavailable hint once the request has finished with no usable status", () => {
+    render(
+      wrap(<SystemPage />, { procurementStatus: null, procurementStatusLoading: false }),
+    );
+    const tile = screen.getByText("Oportunidades accionables").closest("div")!;
+    within(tile).getByText("N/D");
+    within(tile).getByText("Fuente de oportunidades accionables no disponible");
+  });
+
+  it("keeps showing an already-loaded value while a background refresh is in flight", () => {
+    render(
+      wrap(<SystemPage />, {
+        procurementStatus: procurementStatus({}, 4),
+        procurementStatusLoading: true,
+      }),
+    );
+    const tile = screen.getByText("Oportunidades accionables").closest("div")!;
+    within(tile).getByText("4");
+    expect(within(tile).queryByText("N/D")).toBeNull();
+  });
 });

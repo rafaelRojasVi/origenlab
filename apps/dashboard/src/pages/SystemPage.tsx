@@ -62,6 +62,7 @@ export function SystemPage() {
     data,
     warm,
     procurementStatus,
+    procurementStatusLoading,
     commercialDeals,
     leadResearchSummary,
     mirrorBackend,
@@ -72,6 +73,9 @@ export function SystemPage() {
     () => summarizeProcurementStatus(procurementStatus),
     [procurementStatus],
   );
+
+  // No status yet AND still fetching: the request is in flight, not unavailable.
+  const procurementInitialLoading = procurementStatus == null && procurementStatusLoading;
 
   const tone = data ? verdictTone(data.operator.verdict) : null;
   const warnings = data?.operator.warnings ?? [];
@@ -189,13 +193,21 @@ export function SystemPage() {
           <StatTile label="Casos tibios cargados" value={warm?.items.length ?? 0} />
           <StatTile
             label={ACTIONABLE_OPPORTUNITIES_LABEL}
-            value={opportunitySummary.available ? opportunitySummary.value : "N/D"}
+            value={
+              procurementInitialLoading
+                ? "…"
+                : opportunitySummary.available
+                  ? opportunitySummary.value
+                  : "N/D"
+            }
             hint={
-              !opportunitySummary.available
-                ? ACTIONABLE_OPPORTUNITIES_UNAVAILABLE_HINT
-                : opportunitySummary.stale
-                  ? ACTIONABLE_OPPORTUNITIES_STALE_HINT
-                  : undefined
+              procurementInitialLoading
+                ? undefined
+                : !opportunitySummary.available
+                  ? ACTIONABLE_OPPORTUNITIES_UNAVAILABLE_HINT
+                  : opportunitySummary.stale
+                    ? ACTIONABLE_OPPORTUNITIES_STALE_HINT
+                    : undefined
             }
           />
           <StatTile
