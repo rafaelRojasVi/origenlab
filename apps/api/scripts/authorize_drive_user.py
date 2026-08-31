@@ -34,6 +34,7 @@ path.
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import stat
@@ -46,6 +47,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from origenlab_api.drive.factory import DRIVE_OAUTH_SCOPE
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+
+# POSIX-only; a no-op flag on a platform that lacks it (this backend only
+# ever runs this bootstrap on Linux/macOS operator machines).
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 
 class DriveAuthorizationError(RuntimeError):
@@ -126,10 +131,13 @@ def authorize_drive_user(
     """Runs the bootstrap; returns the authenticated email on success.
 
     Raises DriveAuthorizationError (a safe, printable message -- never a
-    secret) on any failure: missing client secrets file, an output path
-    inside the repository, an existing output file without
-    --replace-existing, or an authenticated identity that does not match
-    --expected-email. Nothing is written to disk unless every check passes.
+    secret) on any failure: missing client secrets file, a relative or
+    repository-relative output path, an existing symlink at the output
+    path (regardless of --replace-existing -- it is never followed, so it
+    can never be used to write through to an arbitrary file), an existing
+    output file without --replace-existing, or an authenticated identity
+    that does not match --expected-email. Nothing is written to disk
+    unless every check passes.
     """
 
     if not client_secrets_file.is_file():
@@ -137,7 +145,31 @@ def authorize_drive_user(
             f"client secrets file not found: {client_secrets_file}"
         )
 
-    resolved_output = output_file.expanduser().resolve()
+    # A relative path is CWD-dependent and ambiguous for a one-time
+    # credential-writing tool; expanduser() first so "~/..." still counts
+    # as absolute.
+    literal_output = output_file.expanduser()
+
+    if not literal_output.is_absolute():
+        raise DriveAuthorizationError(
+            "--output-file must be an absolute path (relative paths "
+            "depend on the current working directory, which is easy to "
+            "get wrong for a one-time credential write)"
+        )
+
+    # is_symlink() lstat's only the final path component -- it does not
+    # care whether ancestor directories are symlinks (that is normal and
+    # fine; only the credential *file* itself must never be a symlink).
+    # Checked before resolving so a symlink pointing anywhere -- inside or
+    # outside the repo, dangling or not -- is caught here, before the
+    # target is silently substituted in and treated as the real output.
+    if literal_output.is_symlink():
+        raise DriveAuthorizationError(
+            f"refusing to write through an existing symlink at {literal_output} "
+            "-- remove it first if you intend to replace it"
+        )
+
+    resolved_output = literal_output.resolve()
     _reject_path_inside_repo(resolved_output)
 
     if resolved_output.exists() and not replace_existing:
@@ -160,12 +192,22 @@ def authorize_drive_user(
 
     # Create with restrictive permissions from the start (no window where
     # the file is world/group readable), then chmod again in case umask
-    # widened the mode passed to os.open.
-    fd = os.open(
-        str(resolved_output),
-        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-        stat.S_IRUSR | stat.S_IWUSR,
-    )
+    # widened the mode passed to os.open. O_NOFOLLOW is defense-in-depth
+    # against a symlink appearing at this exact path in the (tiny) window
+    # since the is_symlink() check above -- the primary guarantee.
+    try:
+        fd = os.open(
+            str(resolved_output),
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC | _O_NOFOLLOW,
+            stat.S_IRUSR | stat.S_IWUSR,
+        )
+    except OSError as exc:
+        if _O_NOFOLLOW and exc.errno == errno.ELOOP:
+            raise DriveAuthorizationError(
+                f"refusing to write through a symlink at {resolved_output}"
+            ) from exc
+        raise
+
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         json.dump(credentials_json, handle)
     os.chmod(resolved_output, stat.S_IRUSR | stat.S_IWUSR)

@@ -107,6 +107,112 @@ def test_refuses_output_path_inside_repo(module, tmp_path: Path) -> None:
     assert not inside_repo_output.exists()
 
 
+def test_refuses_relative_output_path(module, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A relative --output-file is CWD-dependent and ambiguous for a
+    # one-time credential-writing tool: reject outright rather than
+    # silently resolving it against whatever directory the operator
+    # happened to be in (which is very likely inside the repo, since the
+    # documented usage is `cd apps/api` first).
+    client_secrets = tmp_path / "client-secrets.json"
+    client_secrets.write_text("{}", encoding="utf-8")
+
+    # CWD is safely outside the repo, so if a relative path were resolved
+    # against it (instead of rejected outright) the repo-containment check
+    # alone would not catch it -- proving this is a distinct guarantee.
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(module.DriveAuthorizationError, match="absolute"):
+        module.authorize_drive_user(
+            client_secrets_file=client_secrets,
+            output_file=Path("relative-creds.json"),
+            expected_email="contacto@origenlab.cl",
+            replace_existing=False,
+            run_flow=_fake_run_flow(),
+            fetch_identity=_fake_fetch_identity("contacto@origenlab.cl"),
+        )
+
+    assert not (tmp_path / "relative-creds.json").exists()
+
+
+def test_refuses_existing_symlink_output_and_never_writes_through_it(
+    module, tmp_path: Path
+) -> None:
+    # A pre-existing symlink at the exact output path -- pointing anywhere,
+    # not necessarily inside the repo -- must never be followed: writing
+    # through it would silently overwrite whatever file the symlink target
+    # actually names.
+    client_secrets = tmp_path / "client-secrets.json"
+    client_secrets.write_text("{}", encoding="utf-8")
+
+    victim = tmp_path / "victim-file.txt"
+    victim.write_text("do not overwrite me", encoding="utf-8")
+
+    symlinked_output = tmp_path / "creds.json"
+    symlinked_output.symlink_to(victim)
+
+    with pytest.raises(module.DriveAuthorizationError, match="refusing to write through"):
+        module.authorize_drive_user(
+            client_secrets_file=client_secrets,
+            output_file=symlinked_output,
+            expected_email="contacto@origenlab.cl",
+            replace_existing=False,
+            run_flow=_fake_run_flow(),
+            fetch_identity=_fake_fetch_identity("contacto@origenlab.cl"),
+        )
+
+    assert victim.read_text(encoding="utf-8") == "do not overwrite me"
+    assert symlinked_output.is_symlink()
+
+
+def test_refuses_symlink_output_even_with_replace_existing(
+    module, tmp_path: Path
+) -> None:
+    # --replace-existing means "replace a previous credentials JSON at this
+    # exact path", never "follow whatever this path is linked to".
+    client_secrets = tmp_path / "client-secrets.json"
+    client_secrets.write_text("{}", encoding="utf-8")
+
+    victim = tmp_path / "victim-file.txt"
+    victim.write_text("do not overwrite me", encoding="utf-8")
+
+    symlinked_output = tmp_path / "creds.json"
+    symlinked_output.symlink_to(victim)
+
+    with pytest.raises(module.DriveAuthorizationError, match="refusing to write through"):
+        module.authorize_drive_user(
+            client_secrets_file=client_secrets,
+            output_file=symlinked_output,
+            expected_email="contacto@origenlab.cl",
+            replace_existing=True,
+            run_flow=_fake_run_flow(),
+            fetch_identity=_fake_fetch_identity("contacto@origenlab.cl"),
+        )
+
+    assert victim.read_text(encoding="utf-8") == "do not overwrite me"
+
+
+def test_refuses_dangling_symlink_output(module, tmp_path: Path) -> None:
+    # A symlink whose target does not exist must still be refused -- it
+    # must not be silently treated as "no existing file, safe to create".
+    client_secrets = tmp_path / "client-secrets.json"
+    client_secrets.write_text("{}", encoding="utf-8")
+
+    symlinked_output = tmp_path / "creds.json"
+    symlinked_output.symlink_to(tmp_path / "does-not-exist.json")
+
+    with pytest.raises(module.DriveAuthorizationError, match="refusing to write through"):
+        module.authorize_drive_user(
+            client_secrets_file=client_secrets,
+            output_file=symlinked_output,
+            expected_email="contacto@origenlab.cl",
+            replace_existing=False,
+            run_flow=_fake_run_flow(),
+            fetch_identity=_fake_fetch_identity("contacto@origenlab.cl"),
+        )
+
+    assert not (tmp_path / "does-not-exist.json").exists()
+
+
 def test_refuses_existing_output_without_replace_flag(
     module, tmp_path: Path
 ) -> None:
