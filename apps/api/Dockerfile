@@ -28,7 +28,10 @@ COPY apps/api/pyproject.toml apps/api/uv.lock apps/api/README.md apps/api/
 COPY apps/api/src apps/api/src
 
 WORKDIR /app/apps/api
-RUN uv sync --frozen --no-dev
+# CRM-Q1B: the production image is Drive-capable (contacto@origenlab.cl
+# authorized_user_my_drive activation is the near-term plan). See
+# tests/test_drive_deployment_dependency_audit.py.
+RUN uv sync --frozen --no-dev --extra drive
 
 # Resolve the exact production OCR models while the image is built. Runtime
 # tender processing must never depend on downloading models from ModelScope.

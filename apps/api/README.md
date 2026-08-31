@@ -122,7 +122,7 @@ All routes are **GET-only** except the enumerated `POST /operations/*` CRM comma
 | **Commercial read models** | `/cases/warm`, `/opportunities/commercial`, `/emails/recent` | Dashboard Today, lifecycle opportunities, Bandeja |
 | **Contacts** | `/contacts/{email}` | Read-only contact drilldown (Today side panel) |
 | **Mirror reporting** | `/mirror/*` | Postgres mirror metadata, deals, catalog, suppressions, audits |
-| **Durable CRM commands** | `POST /operations/*` (+ GET work-queue/detail routes) | Sales-opportunity promote/stage, PR3 operator state, activities, tasks — trusted operator identity + Idempotency-Key + expected_version |
+| **Durable CRM commands** | `POST /operations/*` (+ GET work-queue/detail routes) | Sales-opportunity promote/stage, PR3 operator state, activities, tasks, customer quotes + Drive workspace (CRM-Q1) — trusted operator identity + Idempotency-Key + expected_version |
 | **Procurement** | `/operator/procurement/*` | W1 institution/tender read models + explicit annex-bundle preview/import; dashboard actionable-opportunity summary and Licitaciones/equipos |
 
 ### Route reference
@@ -140,6 +140,10 @@ Responses include `X-Request-ID` plus read-only timing headers `Server-Timing` /
 | GET | `/emails/recent` | Recent canonical Gmail rows (`api.v_recent_email`) |
 | GET | `/contacts/{email}` | Contact profile + outreach read model |
 | GET | `/mirror/*` | Postgres mirror reporting (summary, meta, deals, catalog, …) |
+| POST | `/operations/sales-opportunities/{id}/quotes` | CRM-Q1: create a durable customer quote (transactional quote number, revision 1, Drive workspace provisioning; Idempotency-Key) |
+| GET | `/operations/sales-opportunities/{id}/quotes` | CRM-Q1: quotes for a sales opportunity |
+| GET | `/operations/customer-quotes/{quote_id}` | CRM-Q1: quote detail with Drive workspace state |
+| POST | `/operations/customer-quotes/{quote_id}/drive-workspace` | CRM-Q1: idempotent Drive provisioning retry (expected_version) |
 
 **Warm cases read-model boundary:** production serves `api.v_warm_case` through `PostgresWarmCaseRepository` when `ORIGENLAB_API_BACKEND=postgres`. Remote contract checks live in `scripts/remote_response_audit.py` (`require_warm_cases_contract`).
 
@@ -194,6 +198,110 @@ Requires editable `../email-pipeline` (`origenlab-email-pipeline`). Business log
 
 Postgres URL is **not** required.
 
+**CRM-Q1 quote workspace + numbering (all fail closed until configured; see [.env.example](.env.example)):**
+
+| Variable | Purpose |
+|----------|---------|
+| `ORIGENLAB_DRIVE_QUOTES_ROOT_FOLDER_ID` | Drive folder that holds every quote workspace folder |
+| `ORIGENLAB_DRIVE_QUOTE_TEMPLATE_FILE_ID` | Master quotation spreadsheet template file ID |
+| `ORIGENLAB_DRIVE_AUTH_MODE` | `authorized_user_my_drive` or `service_account_shared_drive` — see below |
+| `ORIGENLAB_DRIVE_CREDENTIALS_FILE` | Credentials JSON path for the configured auth mode |
+| `ORIGENLAB_DRIVE_EXPECTED_PRINCIPAL_EMAIL` | Expected Drive identity (e.g. `contacto@origenlab.cl`); the preflight check fails closed as `drive_principal_mismatch` if the credentials belong to any other account |
+| `ORIGENLAB_DRIVE_SHARED_DRIVE_ID` | Shared Drive ID; **required** in `service_account_shared_drive` mode, optional in `authorized_user_my_drive` mode |
+| `ORIGENLAB_QUOTE_NUMBER_PREFIX` / `_PAD_WIDTH` / `_SEED_NEXT_SERIAL` | The recorded quote-numbering business decision; quote creation returns `quote_numbering_not_configured` (503) until all three are set. The seed applies only on the first allocation; the durable `commercial.customer_quote_number_series` row is the counter truth afterwards. |
+
+Two Drive authentication modes are supported, because a bare service account
+has no My Drive storage quota and cannot own files there:
+
+- **`authorized_user_my_drive`** — an authorized-user credentials JSON with
+  an offline refresh token, acting as a human Google identity. This is the
+  only supported mode when the quotations root/template live in someone's
+  personal My Drive (the current production destination).
+- **`service_account_shared_drive`** — a service-account credentials JSON,
+  valid only when `ORIGENLAB_DRIVE_SHARED_DRIVE_ID` is also set and the
+  configured root folder actually lives inside that Shared Drive. Pairing a
+  service account with a My Drive destination fails closed as
+  `drive_auth_mode_incompatible` before any Drive mutation.
+
+Before activating either mode in production, run the read-only preflight
+check (never mutates Drive, never makes an HTTP call in tests):
+
+```bash
+cd apps/api
+uv run python scripts/drive_preflight.py
+```
+
+Without Drive configuration, quote creation still succeeds durably and the
+workspace records a redacted `failed` category (`drive_not_configured`) that
+the dashboard can retry after activation. The production Docker image
+installs the optional `google-auth` dependency (`uv sync --extra drive`,
+see [Dockerfile](Dockerfile)); an environment that runs without it (e.g. a
+stale image, a non-Docker deployment) still fails closed as
+`drive_dependency_missing` rather than silently reporting
+`drive_not_configured`. No test or default code path calls Google APIs.
+
+### Production activation (contacto@origenlab.cl) — supervised setup
+
+**Not yet performed.** This records the exact steps for the human operator
+who will run them; nothing here is automated. Quote numbering also stays
+`quote_numbering_not_configured` until the owner separately records the
+numbering decision — see the table above.
+
+1. Confirm `contacto@origenlab.cl` is a real, Drive-enabled Google account
+   (not an alias, not a distribution list). It is unrelated to any personal
+   Gmail account used elsewhere (e.g. for a ChatGPT Drive connection).
+2. In Google Cloud Console, create (or reuse) a project for this OAuth
+   client. If `contacto@origenlab.cl` belongs to a Google Workspace, prefer
+   creating the OAuth consent screen as an **Internal** application over
+   leaving it in external **Testing** state: apps left in Testing can issue
+   refresh tokens that expire after roughly 7 days, which would silently
+   break quote creation; Internal (Workspace) or a verified External/
+   Production app does not have that limitation.
+3. Enable the Google Drive API for that project.
+4. Create an OAuth 2.0 **Desktop app** client and download its client
+   secrets JSON. Keep it outside git, exactly like any other credential.
+5. Run the bootstrap helper, signing in specifically as
+   `contacto@origenlab.cl` when the browser consent screen appears:
+   ```bash
+   cd apps/api
+   uv sync --extra drive-bootstrap
+   uv run python scripts/authorize_drive_user.py \
+     --client-secrets-file /secure/path/oauth-client.json \
+     --output-file /secure/path/origenlab-drive-credentials.json \
+     --expected-email contacto@origenlab.cl
+   ```
+   The script refuses to write anywhere inside this repository and refuses
+   to overwrite an existing file without `--replace-existing`; it never
+   prints the token, refresh token, client secret, or credential contents.
+6. Store the resulting authorized-user JSON outside git. It later becomes a
+   production secret file (e.g. a Render secret file), referenced by
+   `ORIGENLAB_DRIVE_CREDENTIALS_FILE` — never committed, never logged.
+7. While still signed in as `contacto@origenlab.cl` in Drive, create the
+   quotations root folder, e.g. named `OrigenLab — Cotizaciones CRM`.
+8. Share that root folder manually with Tatiana and Rafael (Drive's own
+   sharing UI) — this backend never manages Drive permissions itself (see
+   the file-header note on `apps/api/src/origenlab_api/drive/google_drive.py`).
+9. Copy the master quotation template into `contacto@origenlab.cl`'s Drive
+   so the template is owned there too (preferred, not strictly required —
+   `scripts/drive_preflight.py` reports template ownership status without
+   blocking on a mismatch, since the template may legitimately still be
+   shared from elsewhere for a while).
+10. Configure `ORIGENLAB_DRIVE_QUOTES_ROOT_FOLDER_ID`,
+    `ORIGENLAB_DRIVE_QUOTE_TEMPLATE_FILE_ID`,
+    `ORIGENLAB_DRIVE_AUTH_MODE=authorized_user_my_drive`,
+    `ORIGENLAB_DRIVE_CREDENTIALS_FILE`, and
+    `ORIGENLAB_DRIVE_EXPECTED_PRINCIPAL_EMAIL=contacto@origenlab.cl`.
+11. Run the read-only preflight check and confirm it reports
+    `principal_email: contacto@origenlab.cl` and `ok`:
+    ```bash
+    uv run python scripts/drive_preflight.py
+    ```
+12. Conduct the first real end-to-end test only against a disposable
+    Postgres (never the production database) and a clearly marked test
+    folder/template inside the quotations root — never against real
+    customer data or the eventual production template until that first
+    test is reviewed.
+
 ## Tests
 
 Default local pre-PR check (frozen sync + full pytest, same shape as CI):
@@ -203,7 +311,7 @@ cd apps/api
 ./scripts/validate.sh
 ```
 
-`./scripts/validate.sh` first runs a **Render-style no-dev runtime import smoke** (`uv sync --frozen --no-dev`, then imports `psycopg` and `origenlab_api.main` without Postgres or network). That catches missing runtime dependencies before production deploy. It then runs **`scripts/check_runtime_dependency_boundary.py`**, which inspects effective `uv tree --no-dev` and `uv tree --group dev` output and fails if ML-heavy packages (for example `torch`, `transformers`, `faiss-cpu`) appear in those trees.
+`./scripts/validate.sh` first runs a **Render-style no-dev runtime import smoke** (`uv sync --frozen --no-dev --extra drive`, matching [Dockerfile](Dockerfile) exactly, then imports `psycopg`, `google.oauth2.credentials`/`service_account`, and `origenlab_api.main` without Postgres or network). That catches missing runtime dependencies before production deploy. It then runs **`scripts/check_runtime_dependency_boundary.py`**, which inspects effective `uv tree --no-dev` and `uv tree --group dev` output and fails if ML-heavy packages (for example `torch`, `transformers`, `faiss-cpu`) appear in those trees.
 
 **Runtime dependency boundary:** `apps/api` must remain ML-free at runtime and in dev test dependencies. Optional ML groups from `origenlab-email-pipeline` may still appear in `uv.lock`, but CI validates **effective** dependency trees — not raw lockfile entries — so Dependabot torch bumps are not merged blindly when they would enter the API install graph.
 

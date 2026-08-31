@@ -30,6 +30,8 @@ EXPECTED_PUBLIC_GET_PATHS: frozenset[str] = frozenset(
         "/operations/sales-opportunities/{sales_opportunity_id}",
         "/operations/sales-opportunities/{sales_opportunity_id}/activities",
         "/operations/sales-opportunities/{sales_opportunity_id}/tasks",
+        "/operations/sales-opportunities/{sales_opportunity_id}/quotes",
+        "/operations/customer-quotes/{quote_id}",
         "/operations/opportunities/{opportunity_id}/state",
         "/operations/opportunities/{opportunity_id}/activities",
         "/operations/opportunities/{opportunity_id}/tasks",

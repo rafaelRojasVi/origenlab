@@ -23,6 +23,11 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/operations\/sales-opportunities\/sales_[0-9a-f]{32}$/,
   /^\/operations\/sales-opportunities\/sales_[0-9a-f]{32}\/activities$/,
   /^\/operations\/sales-opportunities\/sales_[0-9a-f]{32}\/tasks$/,
+  // CRM-Q1 durable customer-quote reads. Quote IDs are service-generated
+  // `quote_` + 32 lowercase hex chars. The drive-workspace command path is
+  // deliberately NOT GET-readable.
+  /^\/operations\/sales-opportunities\/sales_[0-9a-f]{32}\/quotes$/,
+  /^\/operations\/customer-quotes\/quote_[0-9a-f]{32}$/,
   /^\/operations\/opportunities\/o_[0-9a-f]{32}\/state$/,
   /^\/operations\/opportunities\/o_[0-9a-f]{32}\/activities$/,
   /^\/operations\/opportunities\/o_[0-9a-f]{32}\/tasks$/,
@@ -60,6 +65,10 @@ export const COMMERCIAL_OPERATIONS_POST_PATHS: readonly RegExp[] = [
   /^\/operations\/activities$/,
   /^\/operations\/tasks$/,
   /^\/operations\/tasks\/task_[0-9a-f]{32}\/(?:complete|cancel)$/,
+  // CRM-Q1 durable customer-quote commands: create a quote for an existing
+  // durable sales opportunity, and retry Drive workspace provisioning.
+  /^\/operations\/sales-opportunities\/sales_[0-9a-f]{32}\/quotes$/,
+  /^\/operations\/customer-quotes\/quote_[0-9a-f]{32}\/drive-workspace$/,
 ];
 
 export function isAllowedCommercialOperationsPostPath(

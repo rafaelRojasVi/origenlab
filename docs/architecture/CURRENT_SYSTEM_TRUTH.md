@@ -30,7 +30,8 @@ PostgreSQL                commercial.* / catalog.* / lead_intel.* / api.* views
                           - DURABLE human CRM (survives any mirror rebuild):
                             sales_opportunity(+event), opportunity_operator_state,
                             activity, task, organization(+source), contact(+source),
-                            command_idempotency, operator events
+                            customer_quote(+revision, drive_workspace, event,
+                            number_series), command_idempotency, operator events
         ^
         |  durable writes (POST /operations/*) — the ONLY human write path
         v
@@ -63,6 +64,7 @@ apps/web (Astro)          public marketing site — no operator/CRM code
 | Machine-proposed opportunities (`o_*`) | PR3 read model → `commercial.opportunity*` | rebuildable projection |
 | Human opportunity decisions | `commercial.sales_opportunity` (`sales_*`), `commercial.opportunity_operator_state` | **durable** |
 | Human work (tasks, activities) | `commercial.task`, `commercial.activity` | **durable** |
+| Customer quotes (number, revision 1, Drive workspace refs) | `commercial.customer_quote` (+`_revision`, `_drive_workspace`, `_event`, `_number_series`) | **durable** — Google Drive holds the human working documents; the CRM stores only safe references and provisioning state |
 | Organization / contact identity | `commercial.organization`, `commercial.contact` (+`*_source` provenance) | **durable**, reconciled by sales-opportunity promotion (no standalone CRUD routes) |
 | Historical deal ledger | SQLite deal ledger → `commercial.deal` mirror | historical evidence |
 | Catalog + supplier offers + price snapshots | `catalog.*` mirror | rebuildable projection |
@@ -84,7 +86,9 @@ Rules:
    transaction + append-only event. Requires trusted operator identity and
    `Idempotency-Key`; stage/state transitions use `expected_version`.
    Current commands: PR3 operator state (confirm/reject + manual_stage),
-   sales-opportunity promote + stage, activity create, task create/complete/cancel.
+   sales-opportunity promote + stage, activity create, task create/complete/cancel,
+   customer-quote create (CRM-Q1: transactional quote-number allocation, revision 1,
+   Drive-workspace provisioning state) + Drive-workspace provisioning retry.
    Promote also conservatively reconciles durable CRM identity in the same
    transaction: it resolves an existing `commercial.organization`/
    `commercial.contact` via the `*_source` provenance tables' `(source_kind,
@@ -124,10 +128,13 @@ The dashboard's `/cases/warm` category set (`WarmCaseCategory` in
 
 ## Migrations
 
-Alembic lives in `apps/email-pipeline/alembic`; head `20260828_0039`.
+Alembic lives in `apps/email-pipeline/alembic`; head `20260830_0040`.
 Durable CRM tables were introduced through 0032–0038; 0039 adds the CRM-4A
 writer grants and organization/contact API read views (no table/column/
-constraint or data changes). Shipped migrations are never rewritten;
+constraint or data changes); 0040 adds the CRM-Q1 durable customer-quote
+aggregate (quote, revision, Drive-workspace provisioning state, append-only
+events, transactional number-series allocator — seeded only via explicit
+operator configuration, never by migration). Shipped migrations are never rewritten;
 corrections are new migrations. Downgrades that would drop human data are
 fail-closed.
 

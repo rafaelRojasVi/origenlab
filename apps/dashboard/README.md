@@ -9,7 +9,7 @@ The active operator UI. It talks only to **`apps/api`** on port **8001** (legacy
 | `GET /health` · `GET /operator/status` · `GET /operator/automation-status` | Health, operator verdict, automation loops |
 | `GET /cases/warm` | Warm cases (Bandeja / Proveedores / Pagos, machine evidence) |
 | `GET /opportunities/commercial` | PR3 machine-proposed opportunity intake (Negocios cockpit) |
-| `GET /operations/work-queue` + `POST /operations/*` | Durable CRM: work queue, PR3 operator state, activities, tasks (trusted operator identity + Idempotency-Key) |
+| `GET /operations/work-queue` + `POST /operations/*` | Durable CRM: work queue, PR3 operator state, activities, tasks, customer quotes + Drive workspace (trusted operator identity + Idempotency-Key) |
 | `GET /operator/procurement/*` + annex `preview`/`import` POSTs | Licitaciones W1/T1 + explicit annex import |
 | `GET /mirror/commercial/deals` · `/mirror/catalog/products` · `/mirror/leads/*` · `/mirror/audits/*` | Mirror lists (Negocios ledger, Catálogo, Prospectos, Gmail audit) |
 | `GET /contacts/{email}` | Contact profile drilldown |
@@ -93,9 +93,12 @@ could carry whatever `X-OriginLab-Operator-Email` the client sent, unstripped.
 
 - **Durable CRM writes are explicitly allowlisted**, not general write
   access: `POST /operations/*` (PR3 operator state, sales-opportunity
-  promote/stage, activity/task create) requires a trusted operator identity
+  promote/stage, activity/task create, customer-quote create + Drive
+  workspace retry) requires a trusted operator identity
   and `Idempotency-Key`, and is the only path that changes durable
-  `commercial.*` state.
+  `commercial.*` state. Quote Drive links render only from parse-validated
+  https Google URLs; the browser never invents quote numbers or Drive
+  references.
 - **Annex import** (`POST /operator/procurement/tenders/{code}/annex-bundle/{preview|import}`)
   is a separate, similarly sanctioned write path for tender evidence — not
   part of `/operations/*`.

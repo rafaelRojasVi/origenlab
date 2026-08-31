@@ -548,3 +548,92 @@ describe("CRM-2 sales opportunity stage POST allowlist", () => {
     }
   });
 });
+
+describe("CRM-Q1 customer quote allowlist", () => {
+  const salesId = "sales_0123456789abcdef0123456789abcdef";
+  const quoteId = "quote_0123456789abcdef0123456789abcdef";
+
+  it("allows the exact quote list GET and detail GET paths", () => {
+    expect(
+      isAllowedUpstreamPath(`/operations/sales-opportunities/${salesId}/quotes`),
+    ).toBe(true);
+    expect(isAllowedUpstreamPath(`/operations/customer-quotes/${quoteId}`)).toBe(
+      true,
+    );
+    expect(
+      isAllowedUpstreamPath(
+        `/operations/sales-opportunities/${salesId}/quotes?limit=20`,
+      ),
+    ).toBe(true);
+  });
+
+  it("allows only the exact quote-create and drive-workspace POST paths", async () => {
+    const { isAllowedCommercialOperationsPostPath } = await import(
+      "../src/allowlist"
+    );
+
+    expect(
+      isAllowedCommercialOperationsPostPath(
+        `/operations/sales-opportunities/${salesId}/quotes`,
+      ),
+    ).toBe(true);
+    expect(
+      isAllowedCommercialOperationsPostPath(
+        `/operations/customer-quotes/${quoteId}/drive-workspace`,
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects malformed or broadened quote paths", async () => {
+    const { isAllowedCommercialOperationsPostPath } = await import(
+      "../src/allowlist"
+    );
+
+    // Bare collection roots stay closed.
+    expect(isAllowedUpstreamPath("/operations/customer-quotes")).toBe(false);
+    expect(isAllowedUpstreamPath("/operations/customer-quotes/")).toBe(false);
+
+    // Malformed IDs.
+    expect(isAllowedUpstreamPath("/operations/customer-quotes/not-an-id")).toBe(
+      false,
+    );
+    expect(isAllowedUpstreamPath("/operations/customer-quotes/quote_short")).toBe(
+      false,
+    );
+    expect(
+      isAllowedUpstreamPath(
+        "/operations/customer-quotes/quote_0123456789ABCDEF0123456789ABCDEF",
+      ),
+    ).toBe(false);
+    expect(
+      isAllowedCommercialOperationsPostPath(
+        "/operations/sales-opportunities/not-an-id/quotes",
+      ),
+    ).toBe(false);
+
+    // Deeper segments beyond the enumerated shapes.
+    expect(
+      isAllowedUpstreamPath(
+        `/operations/sales-opportunities/${salesId}/quotes/extra`,
+      ),
+    ).toBe(false);
+    expect(
+      isAllowedCommercialOperationsPostPath(
+        `/operations/customer-quotes/${quoteId}/drive-workspace/extra`,
+      ),
+    ).toBe(false);
+    expect(
+      isAllowedCommercialOperationsPostPath(
+        `/operations/customer-quotes/${quoteId}/delete`,
+      ),
+    ).toBe(false);
+  });
+
+  it("does not make the drive-workspace command path GET-readable", () => {
+    expect(
+      isAllowedUpstreamPath(
+        `/operations/customer-quotes/${quoteId}/drive-workspace`,
+      ),
+    ).toBe(false);
+  });
+});

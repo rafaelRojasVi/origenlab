@@ -6,7 +6,7 @@ Last reviewed: 2026-08-28
 
 Formal **business policy** for OrigenLab commercial work (quotes and supplier research). This doc is **source of truth for policy**; Word templates remain **presentation**. When code or DB schemas exist, they must not contradict this file without an explicit decision and doc update.
 
-**Durable quote/supplier-offer schema:** not yet built. The target design (`commercial.customer_quote` + revisions/lines, `commercial.supplier_offer`) lives in [`docs/architecture/TARGET_COMMERCIAL_ARCHITECTURE.md`](../architecture/TARGET_COMMERCIAL_ARCHITECTURE.md) — this file no longer proposes a separate schema.
+**Durable quote schema:** CRM-Q1 (2026-08) shipped `commercial.customer_quote` + revision 1 + the Google Drive workspace (folder + working copy of the master template, provisioned from the dashboard with a transactionally allocated quote number). Google Sheets remains the editing authority for quote content in V1 — no lines, costs, pricing, or cell ingestion; the spreadsheet is not the CRM database, and the CRM stores only safe Drive references and provisioning state. Quote-number activation is an explicit configuration decision (`quote_numbering_not_configured` fail-closed until then). Supplier offers and quote lines remain future work per [`docs/architecture/TARGET_COMMERCIAL_ARCHITECTURE.md`](../architecture/TARGET_COMMERCIAL_ARCHITECTURE.md) — this file no longer proposes a separate schema.
 
 **Related:** `[apps/web/docs/company-scope.md](../../apps/web/docs/company-scope.md)` (tone, contact, cotización prompts, [operational intake checklist](../../apps/web/docs/company-scope.md#datos-a-solicitar-operativo)).
 
@@ -30,7 +30,7 @@ This rule applies to: internal checklists, any quote generator, LLM prompts, and
 ### 2.1 Template discipline
 
 - Work from a **duplicated** master file; change **only** intended placeholders.
-- **Provenance:** retain **intake source**, **template version**, **author**, and **generation timestamp** for every quote (once tooling exists).
+- **Provenance:** retain **intake source**, **template version**, **author**, and **generation timestamp** for every quote. CRM-Q1 records template reference, creating operator, and timestamps on `commercial.customer_quote_revision`; intake-source provenance remains manual until quote intake tooling exists.
 
 ### 2.2 "Ready to send" gates
 
@@ -127,3 +127,4 @@ Store **structured facts** (tables above) in the DB; **generate** narrative from
 | ---------- | -------------------------------------------------------------------------------------------------------- |
 | 2026-03-24 | Initial canonical rules + proposed entities (from internal template / ficha / supplier report analysis). |
 | 2026-08-28 | Removed the pre-CRM proposed quote/supplier-offer schema (former §§3–5, 8); the durable schema design now lives in `TARGET_COMMERCIAL_ARCHITECTURE.md`. This file keeps policy only. |
+| 2026-08-31 | CRM-Q1: durable `commercial.customer_quote` + revision 1 + Drive workspace shipped (dashboard-first quote creation, transactional numbering, fail-closed activation). Policy unchanged: Sheets edits content in V1, no supplier-cost exposure, no bidirectional sync. |

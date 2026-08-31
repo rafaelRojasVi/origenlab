@@ -4,6 +4,7 @@ import { OperatorApiError } from "../../api/operatorClient";
 import type { SalesOpportunity, SalesOpportunityListItem, SalesOpportunityStage } from "../../api/commercialOperationsTypes";
 import { formatCommercialOpportunityDate } from "../../lib/commercialOpportunityFormat";
 import { StageChangeMenu } from "./StageChangeMenu";
+import { QuoteWorkspaceSection } from "./QuoteWorkspaceSection";
 import { SalesOpportunityWorkPanel } from "./SalesOpportunityWorkPanel";
 
 const CONFLICT_MESSAGE =
@@ -233,6 +234,8 @@ export function SalesOpportunityWorkspaceDrawer({
             El sistema sugirió esta oportunidad a partir de evidencia de correo; este registro ahora es de gestión
             humana.
           </p>
+
+          <QuoteWorkspaceSection salesOpportunityId={core.sales_opportunity_id} />
 
           <SalesOpportunityWorkPanel
             salesOpportunityId={core.sales_opportunity_id}
