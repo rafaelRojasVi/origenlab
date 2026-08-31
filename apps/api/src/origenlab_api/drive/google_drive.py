@@ -147,16 +147,24 @@ class GoogleDriveQuoteWorkspaceProvider:
         if mime_clause is not None:
             clauses.insert(2, mime_clause)
 
+        params: dict[str, Any] = {
+            "q": " and ".join(clauses),
+            "fields": _FIELDS_LIST,
+            "pageSize": 2,
+            # Oldest first: concurrent racers converge on the same artifact.
+            "orderBy": "createdTime",
+            "supportsAllDrives": True,
+            "includeItemsFromAllDrives": True,
+        }
+
+        if self._shared_drive_id is not None:
+            params["corpora"] = "drive"
+            params["driveId"] = self._shared_drive_id
+
         body = self._request(
             "GET",
             f"{DRIVE_API_BASE_URL}/drive/v3/files",
-            params={
-                "q": " and ".join(clauses),
-                "fields": _FIELDS_LIST,
-                "pageSize": 2,
-                "supportsAllDrives": True,
-                "includeItemsFromAllDrives": True,
-            },
+            params=params,
         )
 
         files = body.get("files") or []
@@ -165,6 +173,58 @@ class GoogleDriveQuoteWorkspaceProvider:
             return None
 
         return _safe_ref(files[0])
+
+    def verify_destination(self) -> None:
+        """Read-only check that the configured root is a usable destination.
+
+        Verifies the root is a writable, non-trashed folder and that its
+        storage model matches the configuration: when a Shared Drive is
+        configured the root must actually live in that Shared Drive (a
+        service account pointed at a personal My Drive folder fails closed
+        here, before any mutation).
+        """
+
+        body = self._request(
+            "GET",
+            f"{DRIVE_API_BASE_URL}/drive/v3/files/{self._root_folder_id}",
+            params={
+                "fields": "id,mimeType,trashed,driveId,capabilities/canAddChildren",
+                "supportsAllDrives": True,
+            },
+        )
+
+        capabilities = body.get("capabilities") or {}
+
+        if (
+            body.get("mimeType") != _FOLDER_MIME_TYPE
+            or body.get("trashed") is not False
+            or capabilities.get("canAddChildren") is not True
+        ):
+            raise DriveProvisioningError("drive_root_invalid")
+
+        if self._shared_drive_id is not None:
+            if body.get("driveId") != self._shared_drive_id:
+                raise DriveProvisioningError("drive_auth_mode_incompatible")
+
+    def verify_template(self) -> None:
+        """Read-only check that the template is readable and copyable."""
+
+        body = self._request(
+            "GET",
+            f"{DRIVE_API_BASE_URL}/drive/v3/files/{self._template_file_id}",
+            params={
+                "fields": "id,trashed,capabilities/canCopy",
+                "supportsAllDrives": True,
+            },
+        )
+
+        capabilities = body.get("capabilities") or {}
+
+        if (
+            body.get("trashed") is not False
+            or capabilities.get("canCopy") is not True
+        ):
+            raise DriveProvisioningError("drive_template_invalid")
 
     def find_folder(self, quote_id: str) -> DriveFileRef | None:
         return self._find_artifact(

@@ -228,6 +228,10 @@ class CustomerQuoteService:
 
         try:
             provider = self._drive_provider_factory(self._settings)
+            # Fail closed before any mutation when the destination is
+            # unusable or incompatible with the configured auth mode (e.g.
+            # a service account pointed at a personal My Drive folder).
+            provider.verify_destination()
         except DriveProvisioningError as exc:
             return fail(exc.category)
 

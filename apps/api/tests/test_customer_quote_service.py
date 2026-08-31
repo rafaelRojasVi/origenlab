@@ -197,8 +197,14 @@ class FakeDriveProvider:
         self.folders: dict[str, DriveFileRef] = {}
         self.sheets: dict[str, DriveFileRef] = {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.verify_destination_error: DriveProvisioningError | None = None
         self.create_folder_error: DriveProvisioningError | None = None
         self.copy_sheet_error: DriveProvisioningError | None = None
+
+    def verify_destination(self) -> None:
+        self.calls.append(("verify_destination", {}))
+        if self.verify_destination_error is not None:
+            raise self.verify_destination_error
 
     def find_folder(self, quote_id: str) -> DriveFileRef | None:
         self.calls.append(("find_folder", {"quote_id": quote_id}))
@@ -282,6 +288,7 @@ def test_create_quote_provisions_drive_workspace_end_to_end() -> None:
     provider_methods = [name for name, _ in provider.calls]
 
     assert provider_methods == [
+        "verify_destination",
         "find_folder",
         "create_folder",
         "find_sheet",
@@ -289,7 +296,7 @@ def test_create_quote_provisions_drive_workspace_end_to_end() -> None:
     ]
 
     # Artifact names carry the allocated number + sanitized title.
-    assert provider.calls[1][1]["name"] == "CN011729 — Centrífuga CEAF"
+    assert provider.calls[2][1]["name"] == "CN011729 — Centrífuga CEAF"
 
 
 def test_create_quote_without_numbering_config_fails_closed() -> None:
@@ -361,6 +368,47 @@ def test_drive_unconfigured_failure_keeps_quote_and_records_category() -> None:
 
     assert fail_call["failure_category"] == "drive_not_configured"
     assert fail_call.get("folder_id") is None
+
+
+def test_provision_verifies_destination_before_any_drive_mutation() -> None:
+    repository = FakeRepository(_bundle(_workspace()))
+    provider = FakeDriveProvider()
+
+    _service(repository, provider).create_quote(
+        sales_opportunity_id=SALES_ID,
+        operator=OPERATOR,
+        idempotency_key="quote-create-1",
+    )
+
+    call_names = [name for name, _ in provider.calls]
+
+    assert call_names[0] == "verify_destination"
+    assert "create_folder" in call_names
+
+
+def test_destination_verification_failure_blocks_all_drive_writes() -> None:
+    # A service account paired with a My Drive destination (or any unusable
+    # root) must fail closed before creating anything.
+    repository = FakeRepository(_bundle(_workspace()))
+    provider = FakeDriveProvider()
+    provider.verify_destination_error = DriveProvisioningError(
+        "drive_auth_mode_incompatible"
+    )
+
+    result = _service(repository, provider).create_quote(
+        sales_opportunity_id=SALES_ID,
+        operator=OPERATOR,
+        idempotency_key="quote-create-1",
+    )
+
+    assert result.workspace.provisioning_status == "failed"
+    assert result.workspace.failure_category == "drive_auth_mode_incompatible"
+
+    call_names = [name for name, _ in provider.calls]
+
+    assert "find_folder" not in call_names
+    assert "create_folder" not in call_names
+    assert "copy_template_sheet" not in call_names
 
 
 def test_folder_creation_failure_records_category_without_partial_refs() -> None:

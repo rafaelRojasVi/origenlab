@@ -22,6 +22,10 @@ class DriveFileRef:
 
 
 class QuoteDriveWorkspaceProvider(Protocol):
+    def verify_destination(self) -> None:
+        """Read-only destination check; raises before any mutation when the
+        configured root is unusable or incompatible with the auth mode."""
+
     def find_folder(self, quote_id: str) -> DriveFileRef | None:
         """Locate a previously created quote folder by internal identity."""
 
