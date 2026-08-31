@@ -507,7 +507,7 @@ def test_complete_drive_provision_persists_references_and_event(
     assert update_params["folder_id"] == "folder-1"
     assert update_params["sheet_file_id"] == "sheet-1"
 
-    event_sql, event_params = cursor.executed[1]
+    _, event_params = cursor.executed[1]
 
     assert event_params["event_type"] == "drive_workspace_ready"
 
@@ -570,7 +570,7 @@ def test_fail_drive_provision_keeps_partial_folder_and_redacted_category(
     assert "COALESCE(%(folder_id)s, folder_id)" in update_sql
     assert update_params["failure_category"] == "drive_unavailable"
 
-    event_sql, event_params = cursor.executed[1]
+    _, event_params = cursor.executed[1]
 
     assert event_params["event_type"] == "drive_provision_failed"
 
@@ -605,7 +605,7 @@ def test_get_quote_bundle_returns_none_for_missing_quote(
 def test_get_quote_bundle_reads_quote_revision_and_workspace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    repo, cursor = _repository(
+    repo, _ = _repository(
         monkeypatch,
         [
             _quote_with_title_row(),
