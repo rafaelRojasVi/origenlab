@@ -394,6 +394,33 @@ def upgrade() -> None:
     )
 
     # ------------------------------------------------------------------
+    # 5b. Widen the existing commercial.command_idempotency command_kind
+    # allowlist (ARCH-3B8, 20260824_0033) to admit 'customer_quote_create'.
+    # That table is shipped and never rewritten; this is the corrective
+    # ALTER for the new command kind CRM-Q1 introduces.
+    # ------------------------------------------------------------------
+    op.execute(
+        """
+        ALTER TABLE commercial.command_idempotency
+          DROP CONSTRAINT command_idempotency_command_kind_check
+        """
+    )
+    op.execute(
+        """
+        ALTER TABLE commercial.command_idempotency
+          ADD CONSTRAINT command_idempotency_command_kind_check
+          CHECK (
+            command_kind IN (
+              'activity_create',
+              'task_create',
+              'sales_opportunity_promote',
+              'customer_quote_create'
+            )
+          )
+        """
+    )
+
+    # ------------------------------------------------------------------
     # 6. Read views (the read role has no grant on raw commercial.* tables).
     # ------------------------------------------------------------------
     op.execute(
@@ -582,6 +609,31 @@ def downgrade() -> None:
     op.execute("DROP VIEW IF EXISTS api.v_commercial_customer_quote_drive_workspace")
     op.execute("DROP VIEW IF EXISTS api.v_commercial_customer_quote_revision")
     op.execute("DROP VIEW IF EXISTS api.v_commercial_customer_quote")
+
+    # Restore the pre-CRM-Q1 command_kind allowlist. Safe: the guard above
+    # already fails closed if any commercial.customer_quote row exists, and
+    # every committed customer_quote_create idempotency claim shares a
+    # transaction with its customer_quote row (both commit or both roll
+    # back), so no orphaned 'customer_quote_create' claim can remain here.
+    op.execute(
+        """
+        ALTER TABLE commercial.command_idempotency
+          DROP CONSTRAINT command_idempotency_command_kind_check
+        """
+    )
+    op.execute(
+        """
+        ALTER TABLE commercial.command_idempotency
+          ADD CONSTRAINT command_idempotency_command_kind_check
+          CHECK (
+            command_kind IN (
+              'activity_create',
+              'task_create',
+              'sales_opportunity_promote'
+            )
+          )
+        """
+    )
 
     # FK-safe teardown: children before commercial.customer_quote.
     op.execute("DROP TABLE IF EXISTS commercial.customer_quote_event")
