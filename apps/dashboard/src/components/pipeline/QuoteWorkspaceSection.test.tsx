@@ -185,6 +185,59 @@ describe("QuoteWorkspaceSection", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("offers an operator-visible retry action while Drive is pending, in case it is stuck", async () => {
+    // A process crash between commit and Drive completion leaves the
+    // workspace durably 'pending' with no automatic recovery -- the
+    // operator must be able to trigger a fresh provisioning attempt from
+    // here, not only from the 'failed' state.
+    vi.mocked(fetchCustomerQuotes).mockResolvedValue({
+      meta: { count: 1 },
+      items: [
+        quote({
+          drive_workspace: {
+            provider: "google_drive",
+            provisioning_status: "pending",
+            folder_id: null,
+            folder_web_url: null,
+            sheet_file_id: null,
+            sheet_web_url: null,
+            failure_category: null,
+            attempt_count: 1,
+            version: 2,
+            requested_at: "2026-08-30T14:00:00+00:00",
+            completed_at: null,
+          },
+        }),
+      ],
+    });
+
+    render(<QuoteWorkspaceSection salesOpportunityId={SALES_ID} />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("Preparando carpeta en Drive…"),
+      ).toBeInTheDocument(),
+    );
+
+    vi.mocked(retryCustomerQuoteDriveWorkspace).mockResolvedValue(quote());
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reintentar creación en Drive" }),
+    );
+
+    await waitFor(() =>
+      expect(retryCustomerQuoteDriveWorkspace).toHaveBeenCalledWith(QUOTE_ID, {
+        expected_version: 2,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("link", { name: "Abrir carpeta en Drive" }),
+      ).toBeInTheDocument(),
+    );
+  });
+
   it("shows a human warning and retry action on Drive failure", async () => {
     vi.mocked(fetchCustomerQuotes).mockResolvedValue({
       meta: { count: 1 },

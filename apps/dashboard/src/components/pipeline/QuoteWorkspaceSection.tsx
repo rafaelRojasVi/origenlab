@@ -105,10 +105,31 @@ function QuoteWorkspaceStatus({
   }
 
   if (workspace.provisioning_status === "pending") {
+    // A process crash (or a lost response) between the durable commit and
+    // Drive completion can leave the workspace pending indefinitely with no
+    // automatic recovery: an explicit retry action must always be reachable
+    // here, not only once the workspace has moved to "failed".
     return (
-      <p className="text-sm text-slate-600" role="status">
-        Preparando carpeta en Drive…
-      </p>
+      <div className="space-y-2">
+        <p className="text-sm text-slate-600" role="status">
+          Preparando carpeta en Drive…
+        </p>
+        {retryError ? (
+          <p className="text-sm text-amber-900" role="alert">
+            {retryError}
+          </p>
+        ) : null}
+        <button
+          type="button"
+          onClick={onRetry}
+          disabled={retryPending}
+          className="rounded-md border border-[var(--color-border)] bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {retryPending
+            ? "Reintentando…"
+            : "Reintentar creación en Drive"}
+        </button>
+      </div>
     );
   }
 
