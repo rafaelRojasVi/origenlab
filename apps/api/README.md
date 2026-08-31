@@ -204,13 +204,40 @@ Postgres URL is **not** required.
 |----------|---------|
 | `ORIGENLAB_DRIVE_QUOTES_ROOT_FOLDER_ID` | Drive folder that holds every quote workspace folder |
 | `ORIGENLAB_DRIVE_QUOTE_TEMPLATE_FILE_ID` | Master quotation spreadsheet template file ID |
-| `ORIGENLAB_DRIVE_SERVICE_ACCOUNT_FILE` | Service-account JSON path (requires `uv sync --extra drive`) |
+| `ORIGENLAB_DRIVE_AUTH_MODE` | `authorized_user_my_drive` or `service_account_shared_drive` — see below |
+| `ORIGENLAB_DRIVE_CREDENTIALS_FILE` | Credentials JSON path for the configured auth mode (requires `uv sync --extra drive`) |
+| `ORIGENLAB_DRIVE_SHARED_DRIVE_ID` | Shared Drive ID; **required** in `service_account_shared_drive` mode, optional in `authorized_user_my_drive` mode |
 | `ORIGENLAB_QUOTE_NUMBER_PREFIX` / `_PAD_WIDTH` / `_SEED_NEXT_SERIAL` | The recorded quote-numbering business decision; quote creation returns `quote_numbering_not_configured` (503) until all three are set. The seed applies only on the first allocation; the durable `commercial.customer_quote_number_series` row is the counter truth afterwards. |
+
+Two Drive authentication modes are supported, because a bare service account
+has no My Drive storage quota and cannot own files there:
+
+- **`authorized_user_my_drive`** — an authorized-user credentials JSON with
+  an offline refresh token, acting as a human Google identity. This is the
+  only supported mode when the quotations root/template live in someone's
+  personal My Drive (the current production destination).
+- **`service_account_shared_drive`** — a service-account credentials JSON,
+  valid only when `ORIGENLAB_DRIVE_SHARED_DRIVE_ID` is also set and the
+  configured root folder actually lives inside that Shared Drive. Pairing a
+  service account with a My Drive destination fails closed as
+  `drive_auth_mode_incompatible` before any Drive mutation.
+
+Before activating either mode in production, run the read-only preflight
+check (never mutates Drive, never makes an HTTP call in tests):
+
+```bash
+cd apps/api
+uv run python scripts/drive_preflight.py
+```
 
 Without Drive configuration, quote creation still succeeds durably and the
 workspace records a redacted `failed` category (`drive_not_configured`) that
-the dashboard can retry after activation. No test or default code path calls
-Google APIs.
+the dashboard can retry after activation. If Drive is configured but the
+optional `google-auth` dependency is not installed (the production Docker
+image installs it only when built with `uv sync --extra drive`, which it
+does not by default), creation fails closed as `drive_dependency_missing`
+rather than silently reporting `drive_not_configured`. No test or default
+code path calls Google APIs.
 
 ## Tests
 
