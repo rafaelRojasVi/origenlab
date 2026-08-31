@@ -23,9 +23,15 @@ dev = [
 postgres = ["psycopg[binary]>=3.2"]
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.2"]
-# CRM-Q1 Drive activation only: service-account credentials for the quote
-# Drive workspace adapter (uv sync --extra drive). Not a default runtime dep.
+# CRM-Q1 Drive activation: credentials for the quote Drive workspace adapter
+# (uv sync --extra drive). Installed in the production image (Dockerfile).
 drive = ["google-auth>=2"]
+# Operator-only, local one-time OAuth bootstrap (scripts/authorize_drive_user.py).
+# Deliberately NOT part of the `drive` extra above: the running API only
+# ever refreshes an existing token (google-auth alone suffices for that);
+# it never runs the interactive browser consent flow, so the production
+# image has no reason to carry this.
+drive-bootstrap = ["google-auth-oauthlib>=1"]
 
 [tool.uv.sources]
 origenlab-email-pipeline = { path = "../email-pipeline", editable = true }

@@ -47,8 +47,11 @@ _VALID_AUTH_MODES = frozenset(
 
 # Full Drive scope: the operator shares the quotations root folder and the
 # master template with the configured identity; the narrower drive.file scope
-# cannot see items merely shared to the account.
-_DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
+# cannot see items merely shared to the account. This is the ONLY scope this
+# backend requests -- never Gmail, Sheets, or profile scopes. Also used by
+# scripts/authorize_drive_user.py so the one-time OAuth bootstrap and the
+# runtime factory can never drift apart.
+DRIVE_OAUTH_SCOPE = "https://www.googleapis.com/auth/drive"
 
 _REQUEST_TIMEOUT_SECONDS = 20.0
 
@@ -69,7 +72,7 @@ def _build_authorized_user_token_supplier(
 
     credentials = Credentials.from_authorized_user_file(
         str(credential_file),
-        scopes=[_DRIVE_SCOPE],
+        scopes=[DRIVE_OAUTH_SCOPE],
     )
 
     def supply_token() -> str:
@@ -94,7 +97,7 @@ def _build_service_account_token_supplier(
 
     credentials = service_account.Credentials.from_service_account_file(
         str(credential_file),
-        scopes=[_DRIVE_SCOPE],
+        scopes=[DRIVE_OAUTH_SCOPE],
     )
 
     def supply_token() -> str:
