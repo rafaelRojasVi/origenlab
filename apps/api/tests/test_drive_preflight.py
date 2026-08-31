@@ -1,11 +1,12 @@
 """CRM-Q1 tests for the read-only Drive configuration/preflight boundary.
 
 The preflight boundary lets an operator verify a Drive configuration
-(credentials load, root folder is writable, template is copyable, storage
-model matches the auth mode) before activating quote workspace creation --
-without ever making a live Google API call in this test suite. Every path
-returns a result object; nothing here raises, and no provider payload,
-token, or credential path ever reaches the result.
+(credentials load, root/Pendientes/Enviadas folders are usable and
+correctly parented, template is copyable, storage model matches the auth
+mode) before activating quote workspace creation -- without ever making a
+live Google API call in this test suite. Every path returns a result
+object; nothing here raises, and no provider payload, token, or credential
+path ever reaches the result.
 """
 
 from __future__ import annotations
@@ -33,13 +34,17 @@ class FakeProvider:
         *,
         principal_error: DriveProvisioningError | None = None,
         principal_email: str = "contacto@origenlab.cl",
-        destination_error: DriveProvisioningError | None = None,
+        root_error: DriveProvisioningError | None = None,
+        pending_error: DriveProvisioningError | None = None,
+        sent_error: DriveProvisioningError | None = None,
         template_error: DriveProvisioningError | None = None,
         template_owned_by_expected_principal: bool | None = None,
     ) -> None:
         self.principal_error = principal_error
         self.principal_email = principal_email
-        self.destination_error = destination_error
+        self.root_error = root_error
+        self.pending_error = pending_error
+        self.sent_error = sent_error
         self.template_error = template_error
         self.template_owned_by_expected_principal = (
             template_owned_by_expected_principal
@@ -52,12 +57,26 @@ class FakeProvider:
             raise self.principal_error
         return self.principal_email
 
+    def verify_root(self, *, expected_owner_email: str | None = None) -> None:
+        self.calls.append(
+            ("verify_root", {"expected_owner_email": expected_owner_email})
+        )
+        if self.root_error is not None:
+            raise self.root_error
+
     def verify_destination(self, *, expected_owner_email: str | None = None) -> None:
         self.calls.append(
             ("verify_destination", {"expected_owner_email": expected_owner_email})
         )
-        if self.destination_error is not None:
-            raise self.destination_error
+        if self.pending_error is not None:
+            raise self.pending_error
+
+    def verify_sent(self, *, expected_owner_email: str | None = None) -> None:
+        self.calls.append(
+            ("verify_sent", {"expected_owner_email": expected_owner_email})
+        )
+        if self.sent_error is not None:
+            raise self.sent_error
 
     def verify_template(
         self, *, expected_owner_email: str | None = None
@@ -98,6 +117,7 @@ def test_preflight_redacts_credential_refresh_failure_end_to_end() -> None:
     provider = GoogleDriveQuoteWorkspaceProvider(
         transport=RaisingTransport(),
         root_folder_id="root-1",
+        pending_folder_id="pending-1",
         template_file_id="template-1",
     )
 
@@ -113,9 +133,9 @@ def test_preflight_redacts_credential_refresh_failure_end_to_end() -> None:
     assert "client_secret" not in repr(result)
 
 
-def test_preflight_reports_destination_failure_before_template_check() -> None:
+def test_preflight_reports_root_failure_before_pending_check() -> None:
     provider = FakeProvider(
-        destination_error=DriveProvisioningError("drive_auth_mode_incompatible")
+        root_error=DriveProvisioningError("drive_root_invalid")
     )
 
     result = run_drive_preflight(
@@ -125,10 +145,79 @@ def test_preflight_reports_destination_failure_before_template_check() -> None:
 
     assert result == DrivePreflightResult(
         ok=False,
-        step="destination",
+        step="root",
+        category="drive_root_invalid",
+    )
+    assert [name for name, _ in provider.calls] == ["verify_root"]
+
+
+def test_preflight_reports_pending_failure_before_template_check() -> None:
+    provider = FakeProvider(
+        pending_error=DriveProvisioningError("drive_auth_mode_incompatible")
+    )
+
+    result = run_drive_preflight(
+        _settings(),
+        provider_factory=lambda settings_arg: provider,
+    )
+
+    assert result == DrivePreflightResult(
+        ok=False,
+        step="pending",
         category="drive_auth_mode_incompatible",
     )
-    assert [name for name, _ in provider.calls] == ["verify_destination"]
+    assert [name for name, _ in provider.calls] == ["verify_root", "verify_destination"]
+
+
+def test_preflight_skips_sent_check_when_not_configured() -> None:
+    provider = FakeProvider()
+
+    result = run_drive_preflight(
+        _settings(),
+        provider_factory=lambda settings_arg: provider,
+    )
+
+    assert result.ok is True
+    assert "verify_sent" not in [name for name, _ in provider.calls]
+
+
+def test_preflight_verifies_sent_when_configured() -> None:
+    provider = FakeProvider()
+
+    result = run_drive_preflight(
+        _settings(drive_quotes_sent_folder_id="sent-1"),
+        provider_factory=lambda settings_arg: provider,
+    )
+
+    assert result.ok is True
+    assert [name for name, _ in provider.calls] == [
+        "verify_root",
+        "verify_destination",
+        "verify_sent",
+        "verify_template",
+    ]
+
+
+def test_preflight_reports_sent_failure_before_template_check() -> None:
+    provider = FakeProvider(
+        sent_error=DriveProvisioningError("drive_sent_container_mismatch")
+    )
+
+    result = run_drive_preflight(
+        _settings(drive_quotes_sent_folder_id="sent-1"),
+        provider_factory=lambda settings_arg: provider,
+    )
+
+    assert result == DrivePreflightResult(
+        ok=False,
+        step="sent",
+        category="drive_sent_container_mismatch",
+    )
+    assert [name for name, _ in provider.calls] == [
+        "verify_root",
+        "verify_destination",
+        "verify_sent",
+    ]
 
 
 def test_preflight_reports_template_failure() -> None:
@@ -147,6 +236,7 @@ def test_preflight_reports_template_failure() -> None:
         category="drive_template_invalid",
     )
     assert [name for name, _ in provider.calls] == [
+        "verify_root",
         "verify_destination",
         "verify_template",
     ]
@@ -162,6 +252,7 @@ def test_preflight_reports_ok_when_every_check_passes() -> None:
 
     assert result == DrivePreflightResult(ok=True, step=None, category=None)
     assert [name for name, _ in provider.calls] == [
+        "verify_root",
         "verify_destination",
         "verify_template",
     ]
@@ -190,14 +281,18 @@ def test_preflight_verifies_principal_first_when_configured() -> None:
     assert call_names[0] == "verify_principal"
     assert provider.calls[0][1]["expected_email"] == "contacto@origenlab.cl"
 
-    # Destination/template checks receive the same expected owner so
+    # Root/destination/template checks receive the same expected owner so
     # ownership can be verified/reported against the same principal.
+    root_call = next(
+        kwargs for name, kwargs in provider.calls if name == "verify_root"
+    )
     destination_call = next(
         kwargs for name, kwargs in provider.calls if name == "verify_destination"
     )
     template_call = next(
         kwargs for name, kwargs in provider.calls if name == "verify_template"
     )
+    assert root_call["expected_owner_email"] == "contacto@origenlab.cl"
     assert destination_call["expected_owner_email"] == "contacto@origenlab.cl"
     assert template_call["expected_owner_email"] == "contacto@origenlab.cl"
 

@@ -26,11 +26,23 @@ class QuoteDriveWorkspaceProvider(Protocol):
         """Read-only identity check; raises drive_principal_mismatch when the
         authenticated Drive identity does not match expected_email."""
 
+    def verify_root(self, *, expected_owner_email: str | None = None) -> None:
+        """Read-only, preflight-only check that the quotations root itself
+        is a usable folder; raises before any mutation when unusable or
+        incompatible with the auth mode."""
+
     def verify_destination(self, *, expected_owner_email: str | None = None) -> None:
-        """Read-only destination check; raises before any mutation when the
-        configured root is unusable, incompatible with the auth mode, or (when
-        expected_owner_email is given and ownership metadata is present) not
-        owned by the expected principal."""
+        """Read-only check that the configured Pendientes container is a
+        usable quote-workspace creation destination; raises before any
+        mutation when it is unusable, not parented by the configured root,
+        incompatible with the auth mode, or (when expected_owner_email is
+        given and ownership metadata is present) not owned by the expected
+        principal."""
+
+    def verify_sent(self, *, expected_owner_email: str | None = None) -> None:
+        """Read-only, preflight-only check that the configured Enviadas
+        container is a usable, correctly-parented folder. Callers must only
+        invoke this when Enviadas is configured."""
 
     def verify_template(
         self, *, expected_owner_email: str | None = None

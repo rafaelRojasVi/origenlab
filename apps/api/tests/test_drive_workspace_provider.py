@@ -2,6 +2,12 @@
 
 No test here (or anywhere in this suite) talks to Google: the adapter is
 exercised through a deterministic fake transport.
+
+CRM-Q1D hierarchy: quote folders are created/found under the configured
+Pendientes container (``pending_folder_id``), never directly under the
+generic quotations root. ``verify_root``/``verify_sent`` are preflight-only
+checks; ``verify_destination`` is the runtime, per-provisioning-attempt
+check and targets Pendientes.
 """
 
 from __future__ import annotations
@@ -23,6 +29,10 @@ from origenlab_api.drive.google_drive import (
 
 
 QUOTE_ID = "quote_" + "a" * 32
+
+ROOT_FOLDER_ID = "root-folder-1"
+PENDING_FOLDER_ID = "pending-folder-1"
+SENT_FOLDER_ID = "sent-folder-1"
 
 
 class FakeTransport:
@@ -65,18 +75,21 @@ def _provider(
     transport: FakeTransport,
     *,
     shared_drive_id: str | None = None,
+    sent_folder_id: str | None = None,
 ) -> GoogleDriveQuoteWorkspaceProvider:
     return GoogleDriveQuoteWorkspaceProvider(
         transport=transport,
-        root_folder_id="root-folder-1",
+        root_folder_id=ROOT_FOLDER_ID,
+        pending_folder_id=PENDING_FOLDER_ID,
         template_file_id="template-file-1",
+        sent_folder_id=sent_folder_id,
         shared_drive_id=shared_drive_id,
     )
 
 
-def _root_info_body(**overrides: Any) -> dict[str, Any]:
+def _container_info_body(folder_id: str, **overrides: Any) -> dict[str, Any]:
     body: dict[str, Any] = {
-        "id": "root-folder-1",
+        "id": folder_id,
         "mimeType": "application/vnd.google-apps.folder",
         "trashed": False,
         "capabilities": {"canAddChildren": True},
@@ -116,7 +129,7 @@ def test_find_folder_queries_by_app_properties_and_returns_none_when_absent() ->
     assert f"key='{DRIVE_ARTIFACT_PROPERTY}' and value='quote_folder'" in query
     assert "mimeType='application/vnd.google-apps.folder'" in query
     assert "trashed=false" in query
-    assert "'root-folder-1' in parents" in query
+    assert f"'{PENDING_FOLDER_ID}' in parents" in query
 
 
 def test_find_folder_returns_existing_reference() -> None:
@@ -170,9 +183,30 @@ def test_create_folder_stamps_quote_identity_app_properties() -> None:
 
     assert body["name"] == "CN011729 — Centrífuga CEAF"
     assert body["mimeType"] == "application/vnd.google-apps.folder"
-    assert body["parents"] == ["root-folder-1"]
+    assert body["parents"] == [PENDING_FOLDER_ID]
     assert body["appProperties"][DRIVE_QUOTE_ID_PROPERTY] == QUOTE_ID
     assert body["appProperties"][DRIVE_ARTIFACT_PROPERTY] == "quote_folder"
+
+
+def test_create_folder_never_uses_root_as_parent_when_pending_configured() -> None:
+    # A quote workspace must never accidentally land directly under the
+    # generic quotations root when Pendientes is explicitly configured.
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body={
+                "id": "folder-1",
+                "webViewLink": "https://drive.google.com/drive/folders/folder-1",
+            },
+        )
+    )
+
+    _provider(transport).create_folder(QUOTE_ID, name="CN011729")
+
+    body = transport.calls[0]["json_body"]
+
+    assert ROOT_FOLDER_ID not in body["parents"]
 
 
 def test_find_sheet_scopes_query_to_folder() -> None:
@@ -338,10 +372,13 @@ def test_find_sheet_scopes_to_configured_shared_drive() -> None:
     assert params["driveId"] == "shared-drive-1"
 
 
-def test_verify_destination_accepts_writable_my_drive_folder() -> None:
+def test_verify_destination_accepts_writable_pending_folder() -> None:
     transport = FakeTransport()
     transport.queue(
-        DriveTransportResponse(status_code=200, body=_root_info_body())
+        DriveTransportResponse(
+            status_code=200,
+            body=_container_info_body(PENDING_FOLDER_ID, parents=[ROOT_FOLDER_ID]),
+        )
     )
 
     _provider(transport).verify_destination()
@@ -349,22 +386,29 @@ def test_verify_destination_accepts_writable_my_drive_folder() -> None:
     call = transport.calls[0]
 
     assert call["method"] == "GET"
-    assert call["url"].endswith("/drive/v3/files/root-folder-1")
+    assert call["url"].endswith(f"/drive/v3/files/{PENDING_FOLDER_ID}")
     assert call["params"]["supportsAllDrives"] is True
     assert "driveId" in call["params"]["fields"]
     assert "canAddChildren" in call["params"]["fields"]
+    assert "parents" in call["params"]["fields"]
 
 
-def test_verify_destination_accepts_matching_shared_drive_root() -> None:
+def test_verify_destination_accepts_matching_shared_drive_pending() -> None:
     transport = FakeTransport()
     transport.queue(
         DriveTransportResponse(
             status_code=200,
-            body=_root_info_body(driveId="shared-drive-1"),
+            body=_container_info_body(
+                PENDING_FOLDER_ID,
+                parents=[ROOT_FOLDER_ID],
+                driveId="shared-drive-1",
+            ),
         )
     )
 
-    _provider(transport, shared_drive_id="shared-drive-1").verify_destination()
+    _provider(
+        transport, shared_drive_id="shared-drive-1"
+    ).verify_destination()
 
 
 @pytest.mark.parametrize(
@@ -376,36 +420,70 @@ def test_verify_destination_accepts_matching_shared_drive_root() -> None:
         {"capabilities": {}},
     ],
 )
-def test_verify_destination_rejects_unusable_root(
+def test_verify_destination_rejects_unusable_pending_folder(
     overrides: dict[str, Any],
 ) -> None:
     transport = FakeTransport()
     transport.queue(
         DriveTransportResponse(
             status_code=200,
-            body=_root_info_body(**overrides),
+            body=_container_info_body(
+                PENDING_FOLDER_ID, parents=[ROOT_FOLDER_ID], **overrides
+            ),
         )
     )
 
     with pytest.raises(DriveProvisioningError) as excinfo:
         _provider(transport).verify_destination()
 
-    assert excinfo.value.category == "drive_root_invalid"
+    assert excinfo.value.category == "drive_pending_invalid"
+
+
+def test_verify_destination_rejects_pending_not_parented_by_root() -> None:
+    # A quote workspace must never be created under a Pendientes folder that
+    # isn't actually inside the configured quotations root -- a real
+    # misconfiguration risk, not a hypothetical.
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body=_container_info_body(
+                PENDING_FOLDER_ID, parents=["some-other-folder"]
+            ),
+        )
+    )
+
+    with pytest.raises(DriveProvisioningError) as excinfo:
+        _provider(transport).verify_destination()
+
+    assert excinfo.value.category == "drive_pending_container_mismatch"
+
+
+def test_verify_destination_rejects_pending_with_no_parents() -> None:
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body=_container_info_body(PENDING_FOLDER_ID),
+        )
+    )
+
+    with pytest.raises(DriveProvisioningError) as excinfo:
+        _provider(transport).verify_destination()
+
+    assert excinfo.value.category == "drive_pending_container_mismatch"
 
 
 @pytest.mark.parametrize(
-    "root_drive_id",
+    "pending_drive_id",
     [None, "another-shared-drive"],
 )
 def test_verify_destination_rejects_shared_drive_mismatch(
-    root_drive_id: str | None,
+    pending_drive_id: str | None,
 ) -> None:
-    # A configured Shared Drive that does not actually contain the root
-    # (e.g. a service account pointed at a personal My Drive folder) must
-    # fail closed before any mutation.
-    body = _root_info_body()
-    if root_drive_id is not None:
-        body["driveId"] = root_drive_id
+    body = _container_info_body(PENDING_FOLDER_ID, parents=[ROOT_FOLDER_ID])
+    if pending_drive_id is not None:
+        body["driveId"] = pending_drive_id
 
     transport = FakeTransport()
     transport.queue(DriveTransportResponse(status_code=200, body=body))
@@ -419,7 +497,7 @@ def test_verify_destination_rejects_shared_drive_mismatch(
     assert excinfo.value.category == "drive_auth_mode_incompatible"
 
 
-def test_verify_destination_maps_missing_root_to_drive_not_found() -> None:
+def test_verify_destination_maps_missing_pending_to_drive_not_found() -> None:
     transport = FakeTransport()
     transport.queue(DriveTransportResponse(status_code=404, body={}))
 
@@ -427,6 +505,204 @@ def test_verify_destination_maps_missing_root_to_drive_not_found() -> None:
         _provider(transport).verify_destination()
 
     assert excinfo.value.category == "drive_not_found"
+
+
+def test_verify_destination_accepts_matching_owner() -> None:
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body=_container_info_body(
+                PENDING_FOLDER_ID,
+                parents=[ROOT_FOLDER_ID],
+                owners=_owners("Contacto@OrigenLab.cl"),
+            ),
+        )
+    )
+
+    _provider(transport).verify_destination(
+        expected_owner_email="contacto@origenlab.cl"
+    )
+
+    call = transport.calls[0]
+    assert "owners(emailAddress)" in call["params"]["fields"]
+
+
+def test_verify_destination_rejects_owner_mismatch() -> None:
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body=_container_info_body(
+                PENDING_FOLDER_ID,
+                parents=[ROOT_FOLDER_ID],
+                owners=_owners("someone-else@gmail.com"),
+            ),
+        )
+    )
+
+    with pytest.raises(DriveProvisioningError) as excinfo:
+        _provider(transport).verify_destination(
+            expected_owner_email="contacto@origenlab.cl"
+        )
+
+    assert excinfo.value.category == "drive_principal_mismatch"
+
+
+def test_verify_destination_skips_owner_check_when_owners_absent() -> None:
+    # A Shared Drive item has no personal owner: skip, do not fail.
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body=_container_info_body(
+                PENDING_FOLDER_ID,
+                parents=[ROOT_FOLDER_ID],
+                driveId="shared-drive-1",
+                owners=[],
+            ),
+        )
+    )
+
+    _provider(
+        transport, shared_drive_id="shared-drive-1"
+    ).verify_destination(expected_owner_email="contacto@origenlab.cl")
+
+
+def test_verify_root_accepts_writable_root_folder() -> None:
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body=_container_info_body(ROOT_FOLDER_ID),
+        )
+    )
+
+    _provider(transport).verify_root()
+
+    call = transport.calls[0]
+
+    assert call["method"] == "GET"
+    assert call["url"].endswith(f"/drive/v3/files/{ROOT_FOLDER_ID}")
+    # The root has no expected parent -- only pending/sent containers do.
+    assert "parents" not in call["params"]["fields"]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"mimeType": "application/vnd.google-apps.document"},
+        {"trashed": True},
+        {"capabilities": {"canAddChildren": False}},
+    ],
+)
+def test_verify_root_rejects_unusable_root(overrides: dict[str, Any]) -> None:
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body=_container_info_body(ROOT_FOLDER_ID, **overrides),
+        )
+    )
+
+    with pytest.raises(DriveProvisioningError) as excinfo:
+        _provider(transport).verify_root()
+
+    assert excinfo.value.category == "drive_root_invalid"
+
+
+def test_verify_root_rejects_shared_drive_mismatch() -> None:
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body=_container_info_body(ROOT_FOLDER_ID),
+        )
+    )
+
+    with pytest.raises(DriveProvisioningError) as excinfo:
+        _provider(
+            transport, shared_drive_id="shared-drive-1"
+        ).verify_root()
+
+    assert excinfo.value.category == "drive_auth_mode_incompatible"
+
+
+def test_verify_root_rejects_owner_mismatch() -> None:
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body=_container_info_body(
+                ROOT_FOLDER_ID, owners=_owners("someone-else@gmail.com")
+            ),
+        )
+    )
+
+    with pytest.raises(DriveProvisioningError) as excinfo:
+        _provider(transport).verify_root(
+            expected_owner_email="contacto@origenlab.cl"
+        )
+
+    assert excinfo.value.category == "drive_principal_mismatch"
+
+
+def test_verify_sent_not_configured_fails_closed() -> None:
+    transport = FakeTransport()
+
+    with pytest.raises(DriveProvisioningError) as excinfo:
+        _provider(transport).verify_sent()
+
+    assert excinfo.value.category == "drive_not_configured"
+    assert transport.calls == []
+
+
+def test_verify_sent_accepts_writable_sent_folder_parented_by_root() -> None:
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body=_container_info_body(SENT_FOLDER_ID, parents=[ROOT_FOLDER_ID]),
+        )
+    )
+
+    _provider(transport, sent_folder_id=SENT_FOLDER_ID).verify_sent()
+
+    call = transport.calls[0]
+    assert call["url"].endswith(f"/drive/v3/files/{SENT_FOLDER_ID}")
+    assert "parents" in call["params"]["fields"]
+
+
+def test_verify_sent_rejects_unusable_sent_folder() -> None:
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body=_container_info_body(
+                SENT_FOLDER_ID, parents=[ROOT_FOLDER_ID], trashed=True
+            ),
+        )
+    )
+
+    with pytest.raises(DriveProvisioningError) as excinfo:
+        _provider(transport, sent_folder_id=SENT_FOLDER_ID).verify_sent()
+
+    assert excinfo.value.category == "drive_sent_invalid"
+
+
+def test_verify_sent_rejects_sent_not_parented_by_root() -> None:
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body=_container_info_body(SENT_FOLDER_ID, parents=["some-other-folder"]),
+        )
+    )
+
+    with pytest.raises(DriveProvisioningError) as excinfo:
+        _provider(transport, sent_folder_id=SENT_FOLDER_ID).verify_sent()
+
+    assert excinfo.value.category == "drive_sent_container_mismatch"
 
 
 def test_verify_template_accepts_copyable_template() -> None:
@@ -484,7 +760,6 @@ def test_verify_principal_accepts_matching_identity_case_insensitively() -> None
     assert email == "Contacto@OrigenLab.cl"
 
     call = transport.calls[0]
-
     assert call["method"] == "GET"
     assert call["url"].endswith("/drive/v3/about")
     assert "user(emailAddress)" in call["params"]["fields"]
@@ -513,68 +788,6 @@ def test_verify_principal_rejects_missing_identity() -> None:
         _provider(transport).verify_principal("contacto@origenlab.cl")
 
     assert excinfo.value.category == "drive_principal_mismatch"
-
-
-def test_verify_destination_skips_owner_check_when_not_requested() -> None:
-    transport = FakeTransport()
-    transport.queue(
-        DriveTransportResponse(
-            status_code=200,
-            body=_root_info_body(owners=_owners("someone-else@gmail.com")),
-        )
-    )
-
-    # No expected_owner_email -- backward compatible, no ownership check.
-    _provider(transport).verify_destination()
-
-
-def test_verify_destination_accepts_matching_owner() -> None:
-    transport = FakeTransport()
-    transport.queue(
-        DriveTransportResponse(
-            status_code=200,
-            body=_root_info_body(owners=_owners("Contacto@OrigenLab.cl")),
-        )
-    )
-
-    _provider(transport).verify_destination(
-        expected_owner_email="contacto@origenlab.cl"
-    )
-
-    call = transport.calls[0]
-    assert "owners(emailAddress)" in call["params"]["fields"]
-
-
-def test_verify_destination_rejects_owner_mismatch() -> None:
-    transport = FakeTransport()
-    transport.queue(
-        DriveTransportResponse(
-            status_code=200,
-            body=_root_info_body(owners=_owners("someone-else@gmail.com")),
-        )
-    )
-
-    with pytest.raises(DriveProvisioningError) as excinfo:
-        _provider(transport).verify_destination(
-            expected_owner_email="contacto@origenlab.cl"
-        )
-
-    assert excinfo.value.category == "drive_principal_mismatch"
-
-
-def test_verify_destination_skips_owner_check_when_owners_absent() -> None:
-    # A Shared Drive item has no personal owner: skip, do not fail.
-    transport = FakeTransport()
-    transport.queue(
-        DriveTransportResponse(
-            status_code=200,
-            body=_root_info_body(driveId="shared-drive-1", owners=[]),
-        )
-    )
-
-    _provider(
-        transport, shared_drive_id="shared-drive-1"
-    ).verify_destination(expected_owner_email="contacto@origenlab.cl")
 
 
 def test_verify_template_reports_none_when_expected_owner_not_provided() -> None:

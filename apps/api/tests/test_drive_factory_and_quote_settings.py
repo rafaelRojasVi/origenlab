@@ -47,11 +47,26 @@ def test_factory_fails_closed_when_only_root_folder_configured() -> None:
     assert excinfo.value.category == "drive_not_configured"
 
 
+def test_factory_fails_closed_when_pending_folder_not_configured() -> None:
+    # Root + template alone are not a complete decision: quote workspaces
+    # are created under Pendientes, so its folder ID is mandatory too.
+    with pytest.raises(DriveProvisioningError) as excinfo:
+        build_drive_workspace_provider(
+            _settings(
+                drive_quotes_root_folder_id="root-1",
+                drive_quote_template_file_id="template-1",
+            )
+        )
+
+    assert excinfo.value.category == "drive_not_configured"
+
+
 def test_factory_requires_explicit_auth_mode() -> None:
     with pytest.raises(DriveProvisioningError) as excinfo:
         build_drive_workspace_provider(
             _settings(
                 drive_quotes_root_folder_id="root-1",
+                drive_quotes_pending_folder_id="pending-1",
                 drive_quote_template_file_id="template-1",
             )
         )
@@ -68,6 +83,7 @@ def test_factory_rejects_unknown_auth_mode(bad_mode: str) -> None:
         build_drive_workspace_provider(
             _settings(
                 drive_quotes_root_folder_id="root-1",
+                drive_quotes_pending_folder_id="pending-1",
                 drive_quote_template_file_id="template-1",
                 drive_auth_mode=bad_mode,
             )
@@ -84,6 +100,7 @@ def test_service_account_mode_without_shared_drive_id_is_incompatible() -> None:
         build_drive_workspace_provider(
             _settings(
                 drive_quotes_root_folder_id="root-1",
+                drive_quotes_pending_folder_id="pending-1",
                 drive_quote_template_file_id="template-1",
                 drive_auth_mode="service_account_shared_drive",
             )
@@ -97,6 +114,7 @@ def test_factory_requires_credentials_once_mode_configured() -> None:
         build_drive_workspace_provider(
             _settings(
                 drive_quotes_root_folder_id="root-1",
+                drive_quotes_pending_folder_id="pending-1",
                 drive_quote_template_file_id="template-1",
                 drive_auth_mode="authorized_user_my_drive",
             )
@@ -112,6 +130,7 @@ def test_factory_fails_closed_when_credential_file_missing(
         build_drive_workspace_provider(
             _settings(
                 drive_quotes_root_folder_id="root-1",
+                drive_quotes_pending_folder_id="pending-1",
                 drive_quote_template_file_id="template-1",
                 drive_auth_mode="authorized_user_my_drive",
                 drive_credentials_file=tmp_path / "missing.json",
@@ -143,6 +162,7 @@ def test_factory_builds_authorized_user_provider(
     provider = build_drive_workspace_provider(
         _settings(
             drive_quotes_root_folder_id="root-1",
+            drive_quotes_pending_folder_id="pending-1",
             drive_quote_template_file_id="template-1",
             drive_auth_mode="authorized_user_my_drive",
             drive_credentials_file=credential_file,
@@ -152,6 +172,9 @@ def test_factory_builds_authorized_user_provider(
     assert isinstance(provider, GoogleDriveQuoteWorkspaceProvider)
     assert calls == [credential_file]
     assert provider.shared_drive_id is None
+    assert provider.root_folder_id == "root-1"
+    assert provider.pending_folder_id == "pending-1"
+    assert provider.sent_folder_id is None
 
 
 def test_factory_builds_service_account_provider_scoped_to_shared_drive(
@@ -170,6 +193,8 @@ def test_factory_builds_service_account_provider_scoped_to_shared_drive(
     provider = build_drive_workspace_provider(
         _settings(
             drive_quotes_root_folder_id="root-1",
+            drive_quotes_pending_folder_id="pending-1",
+            drive_quotes_sent_folder_id="sent-1",
             drive_quote_template_file_id="template-1",
             drive_auth_mode="service_account_shared_drive",
             drive_shared_drive_id="shared-drive-1",
@@ -179,6 +204,7 @@ def test_factory_builds_service_account_provider_scoped_to_shared_drive(
 
     assert isinstance(provider, GoogleDriveQuoteWorkspaceProvider)
     assert provider.shared_drive_id == "shared-drive-1"
+    assert provider.sent_folder_id == "sent-1"
 
 
 def test_authorized_user_mode_may_scope_to_a_shared_drive(
@@ -199,6 +225,7 @@ def test_authorized_user_mode_may_scope_to_a_shared_drive(
     provider = build_drive_workspace_provider(
         _settings(
             drive_quotes_root_folder_id="root-1",
+            drive_quotes_pending_folder_id="pending-1",
             drive_quote_template_file_id="template-1",
             drive_auth_mode="authorized_user_my_drive",
             drive_shared_drive_id="shared-drive-1",
@@ -246,6 +273,7 @@ def test_factory_maps_missing_dependency_to_dependency_category(
         build_drive_workspace_provider(
             _settings(
                 drive_quotes_root_folder_id="root-1",
+                drive_quotes_pending_folder_id="pending-1",
                 drive_quote_template_file_id="template-1",
                 drive_auth_mode=auth_mode,
                 drive_credentials_file=credential_file,
@@ -276,6 +304,7 @@ def test_factory_maps_malformed_credentials_to_credentials_category(
         build_drive_workspace_provider(
             _settings(
                 drive_quotes_root_folder_id="root-1",
+                drive_quotes_pending_folder_id="pending-1",
                 drive_quote_template_file_id="template-1",
                 drive_auth_mode="authorized_user_my_drive",
                 drive_credentials_file=credential_file,

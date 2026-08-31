@@ -99,8 +99,12 @@ class Settings(BaseSettings):
 
     # CRM-Q1 quote Drive workspace + numbering: every field below fails
     # closed until explicitly configured (placeholders in .env.example).
-    """Drive folder ID under which every quote workspace folder is created."""
+    """Drive folder ID of the canonical quotations root (e.g. "Cotizaciones"); verified read-only by preflight, never a creation target itself."""
     drive_quotes_root_folder_id: str | None = None
+    """Drive folder ID under which every new quote workspace folder is created (e.g. "Pendientes"); required for provisioning."""
+    drive_quotes_pending_folder_id: str | None = None
+    """Drive folder ID of the post-send container (e.g. "Enviadas"); optional -- verified read-only by preflight when set, not yet used by any write path (no sent lifecycle exists)."""
+    drive_quotes_sent_folder_id: str | None = None
     """Drive file ID of the master quotation spreadsheet template."""
     drive_quote_template_file_id: str | None = None
     """Explicit auth mode: authorized_user_my_drive | service_account_shared_drive."""
