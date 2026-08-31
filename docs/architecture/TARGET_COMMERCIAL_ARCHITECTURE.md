@@ -51,10 +51,14 @@ commercial.sales_opportunity  (organization_id, primary_crm_contact_id)
         +-- commercial.activity
         +-- commercial.sales_opportunity_event (append-only)
         |
-        +-- FUTURE commercial.customer_quote
-        |       +-- quote revisions (immutable per revision)
-        |       +-- quote lines
-        |       +-- document references
+        +-- commercial.customer_quote  (CRM-Q1: shipped V1)
+        |       +-- customer_quote_revision (revision 1 at creation;
+        |       |   immutable sent revisions are a later slice)
+        |       +-- customer_quote_drive_workspace (Drive folder/sheet
+        |       |   references + provisioning state; documents live in Drive)
+        |       +-- customer_quote_event (append-only)
+        |       +-- FUTURE quote lines (Sheets remains the editing
+        |           authority in V1; no cell/pricing ingestion)
         +-- FUTURE commercial.supplier_offer
                 +-- supplier organization_id
                 +-- document references
@@ -133,6 +137,9 @@ evidence). No new supplier identity universe may be created.
    exist (promote + stage transition buttons; Kanban by stage).
 2. `commercial.customer_quote` + revisions + lines (new migration,
    append-only revisions), commands in apps/api, proxy allowlist entries.
+   **CRM-Q1 (2026-08) shipped the quote + revision-1 + Drive-workspace
+   slice** (transactional numbering, provisioning state, dashboard UI);
+   quote lines and immutable sent revisions remain future work.
 3. `commercial.supplier_offer` referencing supplier
    `commercial.organization` rows (create-on-confirm from evidence).
 4. Organization/contact API routes (read + confirm/merge commands) so

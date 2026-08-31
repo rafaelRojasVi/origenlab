@@ -122,7 +122,7 @@ All routes are **GET-only** except the enumerated `POST /operations/*` CRM comma
 | **Commercial read models** | `/cases/warm`, `/opportunities/commercial`, `/emails/recent` | Dashboard Today, lifecycle opportunities, Bandeja |
 | **Contacts** | `/contacts/{email}` | Read-only contact drilldown (Today side panel) |
 | **Mirror reporting** | `/mirror/*` | Postgres mirror metadata, deals, catalog, suppressions, audits |
-| **Durable CRM commands** | `POST /operations/*` (+ GET work-queue/detail routes) | Sales-opportunity promote/stage, PR3 operator state, activities, tasks — trusted operator identity + Idempotency-Key + expected_version |
+| **Durable CRM commands** | `POST /operations/*` (+ GET work-queue/detail routes) | Sales-opportunity promote/stage, PR3 operator state, activities, tasks, customer quotes + Drive workspace (CRM-Q1) — trusted operator identity + Idempotency-Key + expected_version |
 | **Procurement** | `/operator/procurement/*` | W1 institution/tender read models + explicit annex-bundle preview/import; dashboard actionable-opportunity summary and Licitaciones/equipos |
 
 ### Route reference
@@ -140,6 +140,10 @@ Responses include `X-Request-ID` plus read-only timing headers `Server-Timing` /
 | GET | `/emails/recent` | Recent canonical Gmail rows (`api.v_recent_email`) |
 | GET | `/contacts/{email}` | Contact profile + outreach read model |
 | GET | `/mirror/*` | Postgres mirror reporting (summary, meta, deals, catalog, …) |
+| POST | `/operations/sales-opportunities/{id}/quotes` | CRM-Q1: create a durable customer quote (transactional quote number, revision 1, Drive workspace provisioning; Idempotency-Key) |
+| GET | `/operations/sales-opportunities/{id}/quotes` | CRM-Q1: quotes for a sales opportunity |
+| GET | `/operations/customer-quotes/{quote_id}` | CRM-Q1: quote detail with Drive workspace state |
+| POST | `/operations/customer-quotes/{quote_id}/drive-workspace` | CRM-Q1: idempotent Drive provisioning retry (expected_version) |
 
 **Warm cases read-model boundary:** production serves `api.v_warm_case` through `PostgresWarmCaseRepository` when `ORIGENLAB_API_BACKEND=postgres`. Remote contract checks live in `scripts/remote_response_audit.py` (`require_warm_cases_contract`).
 
@@ -193,6 +197,20 @@ Requires editable `../email-pipeline` (`origenlab-email-pipeline`). Business log
 | `ORIGENLAB_ACTIVE_CURRENT` | `../email-pipeline/reports/out/active/current` |
 
 Postgres URL is **not** required.
+
+**CRM-Q1 quote workspace + numbering (all fail closed until configured; see [.env.example](.env.example)):**
+
+| Variable | Purpose |
+|----------|---------|
+| `ORIGENLAB_DRIVE_QUOTES_ROOT_FOLDER_ID` | Drive folder that holds every quote workspace folder |
+| `ORIGENLAB_DRIVE_QUOTE_TEMPLATE_FILE_ID` | Master quotation spreadsheet template file ID |
+| `ORIGENLAB_DRIVE_SERVICE_ACCOUNT_FILE` | Service-account JSON path (requires `uv sync --extra drive`) |
+| `ORIGENLAB_QUOTE_NUMBER_PREFIX` / `_PAD_WIDTH` / `_SEED_NEXT_SERIAL` | The recorded quote-numbering business decision; quote creation returns `quote_numbering_not_configured` (503) until all three are set. The seed applies only on the first allocation; the durable `commercial.customer_quote_number_series` row is the counter truth afterwards. |
+
+Without Drive configuration, quote creation still succeeds durably and the
+workspace records a redacted `failed` category (`drive_not_configured`) that
+the dashboard can retry after activation. No test or default code path calls
+Google APIs.
 
 ## Tests
 

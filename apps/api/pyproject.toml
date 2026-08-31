@@ -23,6 +23,9 @@ dev = [
 postgres = ["psycopg[binary]>=3.2"]
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.2"]
+# CRM-Q1 Drive activation only: service-account credentials for the quote
+# Drive workspace adapter (uv sync --extra drive). Not a default runtime dep.
+drive = ["google-auth>=2"]
 
 [tool.uv.sources]
 origenlab-email-pipeline = { path = "../email-pipeline", editable = true }

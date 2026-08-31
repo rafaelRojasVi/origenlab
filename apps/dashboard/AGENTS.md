@@ -13,7 +13,7 @@
 
 | Rule | Detail |
 |------|--------|
-| **Read-only UI** | **Today** page only in active code; no send, draft, archive, mark-contacted, or status writes. |
+| **Narrow write scope** | Multi-section operator UI; the only writes are the allowlisted `POST /operations/*` CRM commands and the tender annex import (see `CURRENT_SYSTEM_TRUTH.md`). Still no send, draft, archive, mark-contacted, or outbound-state writes. |
 | **API target** | `apps/api` on **:8001** — operator routes only, not `/mirror/*` on Today. |
 | **Legacy UI** | Pre-v1 dashboard UI removed; extend active Dashboard/API paths instead of restoring it. |
 | **No data mutation** | Browser must not open SQLite, Postgres, CSV paths, or email-pipeline mutation scripts. |
