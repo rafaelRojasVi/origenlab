@@ -15,6 +15,10 @@ from typing import Any
 import pytest
 
 from origenlab_api.drive.errors import DriveProvisioningError
+from origenlab_api.drive.google_drive import (
+    DriveCredentialsError,
+    GoogleDriveQuoteWorkspaceProvider,
+)
 from origenlab_api.drive.preflight import DrivePreflightResult, run_drive_preflight
 from origenlab_api.settings import Settings
 
@@ -78,6 +82,35 @@ def test_preflight_reports_factory_failure_without_calling_provider() -> None:
         step="credentials",
         category="drive_credentials_not_configured",
     )
+
+
+def test_preflight_redacts_credential_refresh_failure_end_to_end() -> None:
+    # End-to-end through the real transport boundary (not a fake provider):
+    # a credential/token failure at the token_supplier boundary must reach
+    # this result as a redacted category, never a raw traceback or the
+    # underlying provider/library message.
+    secret = "invalid_grant: refresh_token revoked. client_secret=super-secret"
+
+    class RaisingTransport:
+        def request(self, *args: object, **kwargs: object) -> object:
+            raise DriveCredentialsError(secret)
+
+    provider = GoogleDriveQuoteWorkspaceProvider(
+        transport=RaisingTransport(),
+        root_folder_id="root-1",
+        template_file_id="template-1",
+    )
+
+    result = run_drive_preflight(
+        _settings(drive_expected_principal_email="contacto@origenlab.cl"),
+        provider_factory=lambda settings_arg: provider,
+    )
+
+    assert result.ok is False
+    assert result.step == "principal"
+    assert result.category == "drive_credentials_invalid"
+    assert "super-secret" not in repr(result)
+    assert "client_secret" not in repr(result)
 
 
 def test_preflight_reports_destination_failure_before_template_check() -> None:

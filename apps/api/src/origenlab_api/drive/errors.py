@@ -15,6 +15,7 @@ DRIVE_FAILURE_CATEGORIES = frozenset(
         "drive_auth_mode_not_configured",
         "drive_auth_mode_incompatible",
         "drive_credentials_not_configured",
+        "drive_credentials_invalid",
         "drive_dependency_missing",
         "drive_root_invalid",
         "drive_template_invalid",

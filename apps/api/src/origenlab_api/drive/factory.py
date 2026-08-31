@@ -25,11 +25,13 @@ credential dependency is an explicit activation step:
 
 from __future__ import annotations
 
+import concurrent.futures
 from pathlib import Path
 from typing import Any, Callable
 
 from origenlab_api.drive.errors import DriveProvisioningError
 from origenlab_api.drive.google_drive import (
+    DriveCredentialsError,
     DriveTransportResponse,
     DriveTransportTimeoutError,
     DriveTransportUnavailableError,
@@ -55,6 +57,54 @@ DRIVE_OAUTH_SCOPE = "https://www.googleapis.com/auth/drive"
 
 _REQUEST_TIMEOUT_SECONDS = 20.0
 
+# Single source of truth with _REQUEST_TIMEOUT_SECONDS: credentials.refresh()
+# forwards no timeout of its own to google-auth's Request() (it calls the
+# transport with timeout=None internally), so without this wrapper a stalled
+# token endpoint could hang indefinitely. Bounding it to the same value as
+# every other Drive HTTP call keeps one call-count arithmetic usable for the
+# provisioning-attempt lease (see customer_quotes.PROVISION_ATTEMPT_LEASE_SECONDS).
+_TOKEN_REFRESH_TIMEOUT_SECONDS = _REQUEST_TIMEOUT_SECONDS
+
+
+def _refresh_with_timeout(credentials: Any) -> None:
+    """Run ``credentials.refresh(Request())`` under a hard wall-clock bound.
+
+    google-auth's own ``Request`` wrapper passes no timeout through to the
+    underlying HTTP call unless the caller supplies one explicitly, and
+    ``Credentials.refresh()`` has no timeout parameter of its own -- so a
+    stalled token endpoint can otherwise hang the calling thread forever.
+    Running the refresh in a worker thread with a bounded ``future.result()``
+    enforces a finite timeout regardless of google-auth/requests internals.
+
+    Raises ``DriveCredentialsError`` (never the raw google-auth exception)
+    on any credential failure or timeout -- the caller must never see a raw
+    provider/library message.
+    """
+
+    from google.auth.exceptions import GoogleAuthError  # type: ignore[import-not-found]
+    from google.auth.transport.requests import Request  # type: ignore[import-not-found]
+
+    def _do_refresh() -> None:
+        credentials.refresh(Request())
+
+    # Deliberately not `with ThreadPoolExecutor() as executor:` -- that
+    # context manager's __exit__ calls shutdown(wait=True), which would
+    # block the caller until the worker thread finishes even after we have
+    # already given up on it via future.result(timeout=...). A genuinely
+    # hung refresh leaks one worker thread (Python threads cannot be force-
+    # killed); shutdown(wait=False) accepts that tradeoff in exchange for
+    # never blocking the caller past the bound below.
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(_do_refresh)
+    try:
+        future.result(timeout=_TOKEN_REFRESH_TIMEOUT_SECONDS)
+    except concurrent.futures.TimeoutError as exc:
+        raise DriveCredentialsError("token refresh timed out") from exc
+    except GoogleAuthError as exc:
+        raise DriveCredentialsError("token refresh failed") from exc
+    finally:
+        executor.shutdown(wait=False)
+
 
 def _build_authorized_user_token_supplier(
     credential_file: Path,
@@ -67,7 +117,6 @@ def _build_authorized_user_token_supplier(
     installed only when Drive provisioning is activated.
     """
 
-    from google.auth.transport.requests import Request  # type: ignore[import-not-found]
     from google.oauth2.credentials import Credentials  # type: ignore[import-not-found]
 
     credentials = Credentials.from_authorized_user_file(
@@ -77,7 +126,7 @@ def _build_authorized_user_token_supplier(
 
     def supply_token() -> str:
         if not credentials.valid:
-            credentials.refresh(Request())
+            _refresh_with_timeout(credentials)
         return str(credentials.token)
 
     return supply_token
@@ -92,7 +141,6 @@ def _build_service_account_token_supplier(
     when Drive provisioning is activated (``uv sync --extra drive``).
     """
 
-    from google.auth.transport.requests import Request  # type: ignore[import-not-found]
     from google.oauth2 import service_account  # type: ignore[import-not-found]
 
     credentials = service_account.Credentials.from_service_account_file(
@@ -102,7 +150,7 @@ def _build_service_account_token_supplier(
 
     def supply_token() -> str:
         if not credentials.valid:
-            credentials.refresh(Request())
+            _refresh_with_timeout(credentials)
         return str(credentials.token)
 
     return supply_token

@@ -14,6 +14,7 @@ from origenlab_api.drive.errors import DriveProvisioningError
 from origenlab_api.drive.google_drive import (
     DRIVE_ARTIFACT_PROPERTY,
     DRIVE_QUOTE_ID_PROPERTY,
+    DriveCredentialsError,
     DriveTransportResponse,
     DriveTransportTimeoutError,
     DriveTransportUnavailableError,
@@ -227,6 +228,26 @@ def test_timeout_maps_to_redacted_drive_timeout_category() -> None:
 
     assert excinfo.value.category == "drive_timeout"
     assert "10.0.0.1" not in str(excinfo.value)
+
+
+def test_credentials_error_maps_to_redacted_credentials_invalid_category() -> None:
+    # A google-auth RefreshError (or any credential/token failure) surfaced
+    # by the token_supplier boundary must never escape as a raw exception --
+    # it must be caught here and redacted to a stable category, the same as
+    # every other transport-level failure.
+    transport = FakeTransport()
+    transport.queue(
+        DriveCredentialsError(
+            "invalid_grant: token expired. client_secret=super-secret-value"
+        )
+    )
+
+    with pytest.raises(DriveProvisioningError) as excinfo:
+        _provider(transport).find_folder(QUOTE_ID)
+
+    assert excinfo.value.category == "drive_credentials_invalid"
+    assert "super-secret-value" not in str(excinfo.value)
+    assert "client_secret" not in str(excinfo.value)
 
 
 def test_connection_failure_maps_to_drive_unavailable() -> None:

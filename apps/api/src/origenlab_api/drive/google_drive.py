@@ -39,6 +39,16 @@ class DriveTransportUnavailableError(RuntimeError):
     """The transport could not reach Drive."""
 
 
+class DriveCredentialsError(RuntimeError):
+    """Obtaining/refreshing the bearer token failed at the credential
+    boundary (e.g. a google-auth ``RefreshError`` or a bounded refresh
+    timeout). Raised by the token_supplier closure built in
+    ``origenlab_api.drive.factory``; mapped here to a redacted
+    ``DriveProvisioningError`` category the same as every other transport
+    failure -- the underlying provider/library message must never reach
+    durable state, API responses, or the UI."""
+
+
 @dataclass(frozen=True)
 class DriveTransportResponse:
     status_code: int
@@ -125,6 +135,8 @@ class GoogleDriveQuoteWorkspaceProvider:
             raise DriveProvisioningError("drive_timeout") from exc
         except DriveTransportUnavailableError as exc:
             raise DriveProvisioningError("drive_unavailable") from exc
+        except DriveCredentialsError as exc:
+            raise DriveProvisioningError("drive_credentials_invalid") from exc
 
         if response.status_code != 200:
             raise DriveProvisioningError(
