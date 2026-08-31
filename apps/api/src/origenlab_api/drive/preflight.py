@@ -26,6 +26,10 @@ class DrivePreflightResult:
     ok: bool
     step: str | None
     category: str | None
+    # Safe metadata only (an email address, a boolean) -- never a token,
+    # credential path, file content, or raw provider response.
+    principal_email: str | None = None
+    template_owned_by_expected_principal: bool | None = None
 
 
 def run_drive_preflight(
@@ -44,18 +48,40 @@ def run_drive_preflight(
             ok=False, step="credentials", category=exc.category
         )
 
+    expected_principal = (
+        settings.drive_expected_principal_email or ""
+    ).strip() or None
+
+    principal_email: str | None = None
+
+    if expected_principal is not None:
+        try:
+            principal_email = provider.verify_principal(expected_principal)
+        except DriveProvisioningError as exc:
+            return DrivePreflightResult(
+                ok=False, step="principal", category=exc.category
+            )
+
     try:
-        provider.verify_destination()
+        provider.verify_destination(expected_owner_email=expected_principal)
     except DriveProvisioningError as exc:
         return DrivePreflightResult(
             ok=False, step="destination", category=exc.category
         )
 
     try:
-        provider.verify_template()
+        template_owned = provider.verify_template(
+            expected_owner_email=expected_principal
+        )
     except DriveProvisioningError as exc:
         return DrivePreflightResult(
             ok=False, step="template", category=exc.category
         )
 
-    return DrivePreflightResult(ok=True, step=None, category=None)
+    return DrivePreflightResult(
+        ok=True,
+        step=None,
+        category=None,
+        principal_email=principal_email,
+        template_owned_by_expected_principal=template_owned,
+    )

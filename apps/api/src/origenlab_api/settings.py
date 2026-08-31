@@ -109,6 +109,8 @@ class Settings(BaseSettings):
     drive_credentials_file: Path | None = None
     """Shared Drive ID (required in service_account_shared_drive mode)."""
     drive_shared_drive_id: str | None = None
+    """Expected Drive principal email; preflight fails closed on any mismatch."""
+    drive_expected_principal_email: str | None = None
     """Quote-number series prefix (e.g. CN) — part of the numbering decision."""
     quote_number_prefix: str | None = None
     """Zero-pad width for the quote-number serial (1..10)."""

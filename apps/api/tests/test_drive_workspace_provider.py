@@ -94,6 +94,10 @@ def _template_info_body(**overrides: Any) -> dict[str, Any]:
     return body
 
 
+def _owners(*emails: str) -> list[dict[str, str]]:
+    return [{"emailAddress": email} for email in emails]
+
+
 def test_find_folder_queries_by_app_properties_and_returns_none_when_absent() -> None:
     transport = FakeTransport()
     transport.queue(DriveTransportResponse(status_code=200, body={"files": []}))
@@ -443,6 +447,178 @@ def test_verify_template_rejects_unusable_template(
         _provider(transport).verify_template()
 
     assert excinfo.value.category == "drive_template_invalid"
+
+
+def test_verify_principal_accepts_matching_identity_case_insensitively() -> None:
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body={"user": {"emailAddress": "Contacto@OrigenLab.cl"}},
+        )
+    )
+
+    email = _provider(transport).verify_principal("contacto@origenlab.cl")
+
+    assert email == "Contacto@OrigenLab.cl"
+
+    call = transport.calls[0]
+
+    assert call["method"] == "GET"
+    assert call["url"].endswith("/drive/v3/about")
+    assert "user(emailAddress)" in call["params"]["fields"]
+
+
+def test_verify_principal_rejects_mismatched_identity() -> None:
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body={"user": {"emailAddress": "someone-else@gmail.com"}},
+        )
+    )
+
+    with pytest.raises(DriveProvisioningError) as excinfo:
+        _provider(transport).verify_principal("contacto@origenlab.cl")
+
+    assert excinfo.value.category == "drive_principal_mismatch"
+
+
+def test_verify_principal_rejects_missing_identity() -> None:
+    transport = FakeTransport()
+    transport.queue(DriveTransportResponse(status_code=200, body={}))
+
+    with pytest.raises(DriveProvisioningError) as excinfo:
+        _provider(transport).verify_principal("contacto@origenlab.cl")
+
+    assert excinfo.value.category == "drive_principal_mismatch"
+
+
+def test_verify_destination_skips_owner_check_when_not_requested() -> None:
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body=_root_info_body(owners=_owners("someone-else@gmail.com")),
+        )
+    )
+
+    # No expected_owner_email -- backward compatible, no ownership check.
+    _provider(transport).verify_destination()
+
+
+def test_verify_destination_accepts_matching_owner() -> None:
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body=_root_info_body(owners=_owners("Contacto@OrigenLab.cl")),
+        )
+    )
+
+    _provider(transport).verify_destination(
+        expected_owner_email="contacto@origenlab.cl"
+    )
+
+    call = transport.calls[0]
+    assert "owners(emailAddress)" in call["params"]["fields"]
+
+
+def test_verify_destination_rejects_owner_mismatch() -> None:
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body=_root_info_body(owners=_owners("someone-else@gmail.com")),
+        )
+    )
+
+    with pytest.raises(DriveProvisioningError) as excinfo:
+        _provider(transport).verify_destination(
+            expected_owner_email="contacto@origenlab.cl"
+        )
+
+    assert excinfo.value.category == "drive_principal_mismatch"
+
+
+def test_verify_destination_skips_owner_check_when_owners_absent() -> None:
+    # A Shared Drive item has no personal owner: skip, do not fail.
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body=_root_info_body(driveId="shared-drive-1", owners=[]),
+        )
+    )
+
+    _provider(
+        transport, shared_drive_id="shared-drive-1"
+    ).verify_destination(expected_owner_email="contacto@origenlab.cl")
+
+
+def test_verify_template_reports_none_when_expected_owner_not_provided() -> None:
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body=_template_info_body(owners=_owners("someone-else@gmail.com")),
+        )
+    )
+
+    result = _provider(transport).verify_template()
+
+    assert result is None
+
+
+def test_verify_template_reports_true_when_owned_by_expected_principal() -> None:
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body=_template_info_body(owners=_owners("Contacto@OrigenLab.cl")),
+        )
+    )
+
+    result = _provider(transport).verify_template(
+        expected_owner_email="contacto@origenlab.cl"
+    )
+
+    assert result is True
+
+
+def test_verify_template_reports_false_without_raising_when_owned_elsewhere() -> None:
+    # Ownership mismatch on the template is informational only -- it must
+    # never block activation (the template may legitimately be shared from
+    # another account).
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body=_template_info_body(owners=_owners("rafarojasv6@gmail.com")),
+        )
+    )
+
+    result = _provider(transport).verify_template(
+        expected_owner_email="contacto@origenlab.cl"
+    )
+
+    assert result is False
+
+
+def test_verify_template_reports_none_when_owners_absent() -> None:
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body=_template_info_body(owners=[]),
+        )
+    )
+
+    result = _provider(transport).verify_template(
+        expected_owner_email="contacto@origenlab.cl"
+    )
+
+    assert result is None
 
 
 def test_non_https_web_link_from_provider_is_rejected() -> None:

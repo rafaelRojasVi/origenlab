@@ -22,9 +22,22 @@ class DriveFileRef:
 
 
 class QuoteDriveWorkspaceProvider(Protocol):
-    def verify_destination(self) -> None:
+    def verify_principal(self, expected_email: str) -> str:
+        """Read-only identity check; raises drive_principal_mismatch when the
+        authenticated Drive identity does not match expected_email."""
+
+    def verify_destination(self, *, expected_owner_email: str | None = None) -> None:
         """Read-only destination check; raises before any mutation when the
-        configured root is unusable or incompatible with the auth mode."""
+        configured root is unusable, incompatible with the auth mode, or (when
+        expected_owner_email is given and ownership metadata is present) not
+        owned by the expected principal."""
+
+    def verify_template(
+        self, *, expected_owner_email: str | None = None
+    ) -> bool | None:
+        """Read-only template check; raises when unusable. Ownership against
+        expected_owner_email is informational only (never raises) and
+        returns True/False/None."""
 
     def find_folder(self, quote_id: str) -> DriveFileRef | None:
         """Locate a previously created quote folder by internal identity."""

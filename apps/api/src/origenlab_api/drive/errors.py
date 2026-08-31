@@ -18,6 +18,7 @@ DRIVE_FAILURE_CATEGORIES = frozenset(
         "drive_dependency_missing",
         "drive_root_invalid",
         "drive_template_invalid",
+        "drive_principal_mismatch",
         "drive_timeout",
         "drive_unavailable",
         "drive_permission_denied",

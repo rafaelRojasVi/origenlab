@@ -71,6 +71,12 @@ def _escape_query_value(value: str) -> str:
     return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
+def _owner_emails_contain(owners: list[dict[str, Any]], expected_email: str) -> bool:
+    expected = expected_email.strip().lower()
+    emails = {str(owner.get("emailAddress") or "").strip().lower() for owner in owners}
+    return expected in emails
+
+
 def _safe_ref(item: dict[str, Any]) -> DriveFileRef:
     file_id = str(item.get("id") or "").strip()
     web_url = str(item.get("webViewLink") or "").strip()
@@ -174,7 +180,30 @@ class GoogleDriveQuoteWorkspaceProvider:
 
         return _safe_ref(files[0])
 
-    def verify_destination(self) -> None:
+    def verify_principal(self, expected_email: str) -> str:
+        """Read-only check that the authenticated identity matches.
+
+        Calls the Drive ``about.get`` boundary and compares the
+        authenticated user's email against ``expected_email``,
+        case-insensitively. Returns the actual authenticated email (safe
+        metadata, never a token) on success; raises ``drive_principal_mismatch``
+        otherwise -- before any mutation.
+        """
+
+        body = self._request(
+            "GET",
+            f"{DRIVE_API_BASE_URL}/drive/v3/about",
+            params={"fields": "user(emailAddress)"},
+        )
+
+        actual = str((body.get("user") or {}).get("emailAddress") or "").strip()
+
+        if not actual or actual.lower() != expected_email.strip().lower():
+            raise DriveProvisioningError("drive_principal_mismatch")
+
+        return actual
+
+    def verify_destination(self, *, expected_owner_email: str | None = None) -> None:
         """Read-only check that the configured root is a usable destination.
 
         Verifies the root is a writable, non-trashed folder and that its
@@ -182,13 +211,21 @@ class GoogleDriveQuoteWorkspaceProvider:
         configured the root must actually live in that Shared Drive (a
         service account pointed at a personal My Drive folder fails closed
         here, before any mutation).
+
+        When ``expected_owner_email`` is given and the root actually carries
+        owner metadata (My Drive items only -- Shared Drive items have no
+        personal owner and are silently skipped), the root must be owned by
+        that email or this fails closed as ``drive_principal_mismatch``.
         """
 
         body = self._request(
             "GET",
             f"{DRIVE_API_BASE_URL}/drive/v3/files/{self._root_folder_id}",
             params={
-                "fields": "id,mimeType,trashed,driveId,capabilities/canAddChildren",
+                "fields": (
+                    "id,mimeType,trashed,driveId,owners(emailAddress),"
+                    "capabilities/canAddChildren"
+                ),
                 "supportsAllDrives": True,
             },
         )
@@ -206,14 +243,27 @@ class GoogleDriveQuoteWorkspaceProvider:
             if body.get("driveId") != self._shared_drive_id:
                 raise DriveProvisioningError("drive_auth_mode_incompatible")
 
-    def verify_template(self) -> None:
-        """Read-only check that the template is readable and copyable."""
+        if expected_owner_email is not None:
+            owners = body.get("owners") or []
+            if owners and not _owner_emails_contain(owners, expected_owner_email):
+                raise DriveProvisioningError("drive_principal_mismatch")
+
+    def verify_template(
+        self, *, expected_owner_email: str | None = None
+    ) -> bool | None:
+        """Read-only check that the template is readable and copyable.
+
+        Ownership is informational only and never blocks activation (the
+        template may legitimately be shared from another account): returns
+        ``True``/``False`` when ``expected_owner_email`` is given and owner
+        metadata is present, else ``None``.
+        """
 
         body = self._request(
             "GET",
             f"{DRIVE_API_BASE_URL}/drive/v3/files/{self._template_file_id}",
             params={
-                "fields": "id,trashed,capabilities/canCopy",
+                "fields": "id,trashed,owners(emailAddress),capabilities/canCopy",
                 "supportsAllDrives": True,
             },
         )
@@ -225,6 +275,16 @@ class GoogleDriveQuoteWorkspaceProvider:
             or capabilities.get("canCopy") is not True
         ):
             raise DriveProvisioningError("drive_template_invalid")
+
+        if expected_owner_email is None:
+            return None
+
+        owners = body.get("owners") or []
+
+        if not owners:
+            return None
+
+        return _owner_emails_contain(owners, expected_owner_email)
 
     def find_folder(self, quote_id: str) -> DriveFileRef | None:
         return self._find_artifact(

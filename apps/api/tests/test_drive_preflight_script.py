@@ -69,3 +69,31 @@ def test_main_prints_redacted_category_and_returns_nonzero_on_failure(
     assert "drive_auth_mode_incompatible" in output
     for forbidden in ("token", "credential", "Bearer", "/secure/"):
         assert forbidden not in output
+
+
+def test_main_prints_principal_and_template_ownership_on_success(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = globals()["_module"]
+
+    monkeypatch.setattr(
+        module,
+        "run_drive_preflight",
+        lambda settings: module.DrivePreflightResult(
+            ok=True,
+            step=None,
+            category=None,
+            principal_email="contacto@origenlab.cl",
+            template_owned_by_expected_principal=False,
+        ),
+    )
+
+    exit_code = module.main()
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "contacto@origenlab.cl" in output
+    # Non-blocking, but the operator must see the template isn't owned by
+    # the expected principal yet (it may still be shared from elsewhere).
+    assert "template" in output.lower()
+    assert "false" in output.lower()

@@ -30,6 +30,13 @@ def main() -> int:
 
     if result.ok:
         print("ok: drive configuration preflight passed")
+        if result.principal_email is not None:
+            print(f"authenticated principal: {result.principal_email}")
+        if result.template_owned_by_expected_principal is not None:
+            print(
+                "template owned by expected principal: "
+                f"{result.template_owned_by_expected_principal}"
+            )
         return 0
 
     print(f"error: drive preflight failed at step={result.step} category={result.category}")
