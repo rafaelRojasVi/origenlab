@@ -89,10 +89,16 @@ class GoogleDriveQuoteWorkspaceProvider:
         transport: DriveTransport,
         root_folder_id: str,
         template_file_id: str,
+        shared_drive_id: str | None = None,
     ) -> None:
         self._transport = transport
         self._root_folder_id = root_folder_id
         self._template_file_id = template_file_id
+        self._shared_drive_id = shared_drive_id
+
+    @property
+    def shared_drive_id(self) -> str | None:
+        return self._shared_drive_id
 
     def _request(
         self,

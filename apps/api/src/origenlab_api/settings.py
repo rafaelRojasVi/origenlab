@@ -103,8 +103,12 @@ class Settings(BaseSettings):
     drive_quotes_root_folder_id: str | None = None
     """Drive file ID of the master quotation spreadsheet template."""
     drive_quote_template_file_id: str | None = None
-    """Path to a Google service-account JSON credential file (Drive scope)."""
-    drive_service_account_file: Path | None = None
+    """Explicit auth mode: authorized_user_my_drive | service_account_shared_drive."""
+    drive_auth_mode: str | None = None
+    """Path to the Google credentials JSON file for the configured auth mode."""
+    drive_credentials_file: Path | None = None
+    """Shared Drive ID (required in service_account_shared_drive mode)."""
+    drive_shared_drive_id: str | None = None
     """Quote-number series prefix (e.g. CN) — part of the numbering decision."""
     quote_number_prefix: str | None = None
     """Zero-pad width for the quote-number serial (1..10)."""

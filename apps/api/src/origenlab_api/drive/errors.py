@@ -12,7 +12,12 @@ from __future__ import annotations
 DRIVE_FAILURE_CATEGORIES = frozenset(
     {
         "drive_not_configured",
+        "drive_auth_mode_not_configured",
+        "drive_auth_mode_incompatible",
         "drive_credentials_not_configured",
+        "drive_dependency_missing",
+        "drive_root_invalid",
+        "drive_template_invalid",
         "drive_timeout",
         "drive_unavailable",
         "drive_permission_denied",
