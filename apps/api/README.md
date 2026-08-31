@@ -210,18 +210,31 @@ Postgres URL is **not** required.
 | `ORIGENLAB_DRIVE_CREDENTIALS_FILE` | Credentials JSON path for the configured auth mode |
 | `ORIGENLAB_DRIVE_EXPECTED_PRINCIPAL_EMAIL` | Expected Drive identity (e.g. `contacto@origenlab.cl`); the preflight check fails closed as `drive_principal_mismatch` if the credentials belong to any other account |
 | `ORIGENLAB_DRIVE_SHARED_DRIVE_ID` | Shared Drive ID; **required** in `service_account_shared_drive` mode, optional in `authorized_user_my_drive` mode |
-| `ORIGENLAB_QUOTE_NUMBER_PREFIX` / `_PAD_WIDTH` / `_SEED_NEXT_SERIAL` | The recorded quote-numbering business decision; quote creation returns `quote_numbering_not_configured` (503) until all three are set. The seed applies only on the first allocation; the durable `commercial.customer_quote_number_series` row is the counter truth afterwards. |
+| `ORIGENLAB_QUOTE_DOCUMENT_PREFIX` / `_SERIAL_PAD_WIDTH` / `_SEED_NEXT_SERIAL` | The recorded quote-numbering business decision; quote creation returns `quote_numbering_not_configured` (503) until all three are set. The seed applies only on the first allocation; the durable `commercial.customer_quote_number_series` row is the counter truth afterwards. |
+
+**Quote numbering (CRM-Q1D):** one allocated serial powers two distinct
+identifiers -- they are never the same string:
+
+* **`quote_number`** (human, customer-facing): `<padded serial>-<2-digit
+  issue year>`, e.g. `01183-26`. The issue year is the business-local
+  (`America/Santiago`) calendar date at allocation time, never UTC's.
+* **`document_number`** (Drive artifact stem, currently internal):
+  `<document_prefix><padded serial>`, e.g. `CN01183`.
+
+`ORIGENLAB_QUOTE_DOCUMENT_PREFIX` seeds only `document_number` -- it is
+never part of `quote_number`.
 
 **Drive hierarchy (CRM-Q1D):** the quotations root is a fixed container that
 is never written to directly. Every new quote workspace folder is created
-under the configured Pendientes container instead:
+under the configured Pendientes container instead, and the two Drive
+artifacts are named from the two distinct identifiers above:
 
 ```text
-Cotizaciones/                          <- ORIGENLAB_DRIVE_QUOTES_ROOT_FOLDER_ID
-├── Pendientes/                        <- ORIGENLAB_DRIVE_QUOTES_PENDING_FOLDER_ID
-│   └── <quote number> — <customer>/   <- created per quote
-│       └── <template copy>
-└── Enviadas/                          <- ORIGENLAB_DRIVE_QUOTES_SENT_FOLDER_ID (optional)
+Cotizaciones/                              <- ORIGENLAB_DRIVE_QUOTES_ROOT_FOLDER_ID
+├── Pendientes/                            <- ORIGENLAB_DRIVE_QUOTES_PENDING_FOLDER_ID
+│   └── 01183-26 — Cliente — Producto/     <- folder: human quote_number
+│       └── CN01183 — Cliente — Producto   <- copied template: document_number
+└── Enviadas/                              <- ORIGENLAB_DRIVE_QUOTES_SENT_FOLDER_ID (optional)
 ```
 
 Preflight verifies Pendientes/Enviadas are each a direct child of the root;

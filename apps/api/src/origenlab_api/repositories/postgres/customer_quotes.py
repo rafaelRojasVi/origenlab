@@ -22,6 +22,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import NoReturn
+from zoneinfo import ZoneInfo
 
 from origenlab_api.repositories.postgres.commercial_operations import (
     CommercialOperationConflictError,
@@ -46,7 +47,21 @@ __all__ = [
     "QuoteNumberingConfig",
     "QuoteNumberingNotConfiguredError",
     "QuoteNumberingPolicyMismatchError",
+    "chile_issue_year",
 ]
+
+
+# OrigenLab is a Chilean business: the issue year is the business-local
+# calendar year at allocation time, never UTC's -- a naive UTC-based year
+# would occasionally allocate the wrong year for quotes created shortly
+# after UTC midnight (America/Santiago is behind UTC, so its own local new
+# year always arrives later).
+_CHILE_TZ = ZoneInfo("America/Santiago")
+
+
+def chile_issue_year(moment: datetime) -> int:
+    """The America/Santiago business-local calendar year for ``moment``."""
+    return moment.astimezone(_CHILE_TZ).year
 
 
 # The single logical customer-quote numbering series. This is a fixed
@@ -104,7 +119,17 @@ _CREATE_COMMAND_KIND = "customer_quote_create"
 class CustomerQuote:
     quote_id: str
     sales_opportunity_id: str
+
+    # The allocated base serial and the two distinct identifiers derived
+    # from it: quote_number is the human customer-facing business number
+    # (<serial>-<issue_year 2-digit>, e.g. "01183-26"); document_number is
+    # the separate Drive document stem (<document_prefix><serial>, e.g.
+    # "CN01183"). Neither is parsed from the other at read time.
     quote_number: str
+    serial: int
+    issue_year: int
+    document_number: str
+
     status: str
     version: int
     created_by: str
@@ -183,6 +208,9 @@ def _quote_from_row(row: dict[str, object]) -> CustomerQuote:
             "quote_id",
             "sales_opportunity_id",
             "quote_number",
+            "serial",
+            "issue_year",
+            "document_number",
             "status",
             "version",
             "created_by",
@@ -407,7 +435,7 @@ class PostgresCustomerQuoteRepository:
                     """
                     INSERT INTO commercial.customer_quote_number_series (
                       series_key,
-                      prefix,
+                      document_prefix,
                       pad_width,
                       next_serial,
                       created_by,
@@ -417,7 +445,7 @@ class PostgresCustomerQuoteRepository:
                     )
                     VALUES (
                       %(series_key)s,
-                      %(prefix)s,
+                      %(document_prefix)s,
                       %(pad_width)s,
                       %(next_serial)s,
                       %(operator)s,
@@ -431,13 +459,13 @@ class PostgresCustomerQuoteRepository:
                     DO UPDATE SET
                       series_key = EXCLUDED.series_key
                     RETURNING
-                      prefix,
+                      document_prefix,
                       pad_width
                     """,
                     {
                         "series_key": CUSTOMER_QUOTE_SERIES_KEY,
-                        "prefix": numbering.prefix,
-                        "pad_width": numbering.pad_width,
+                        "document_prefix": numbering.document_prefix,
+                        "pad_width": numbering.serial_pad_width,
                         "next_serial": numbering.seed_next_serial,
                         "operator": operator,
                         "now": now,
@@ -452,14 +480,15 @@ class PostgresCustomerQuoteRepository:
                     )
 
                 if (
-                    str(policy_row["prefix"]) != numbering.prefix
-                    or int(policy_row["pad_width"]) != numbering.pad_width
+                    str(policy_row["document_prefix"]) != numbering.document_prefix
+                    or int(policy_row["pad_width"]) != numbering.serial_pad_width
                 ):
                     raise QuoteNumberingPolicyMismatchError(
                         "quote_numbering_policy_mismatch: configured "
-                        f"prefix/pad_width ({numbering.prefix}/"
-                        f"{numbering.pad_width}) disagrees with the durable "
-                        f"series policy ({policy_row['prefix']}/"
+                        f"document prefix/pad width ({numbering.document_prefix}/"
+                        f"{numbering.serial_pad_width}) disagrees with the "
+                        "durable series policy "
+                        f"({policy_row['document_prefix']}/"
                         f"{policy_row['pad_width']}) established by the "
                         "first allocation"
                     )
@@ -475,7 +504,7 @@ class PostgresCustomerQuoteRepository:
                       updated_at = %(now)s
                     WHERE series_key = %(series_key)s
                     RETURNING
-                      prefix,
+                      document_prefix,
                       pad_width,
                       next_serial - 1 AS allocated_serial
                     """,
@@ -493,10 +522,13 @@ class PostgresCustomerQuoteRepository:
                         "Quote number series row disappeared during allocation"
                     )
 
-                quote_number = (
-                    f"{allocated['prefix']}"
-                    f"{str(allocated['allocated_serial']).zfill(int(allocated['pad_width']))}"
+                allocated_serial = int(allocated["allocated_serial"])
+                padded_serial = str(allocated_serial).zfill(
+                    int(allocated["pad_width"])
                 )
+                issue_year = chile_issue_year(now)
+                quote_number = f"{padded_serial}-{issue_year % 100:02d}"
+                document_number = f"{allocated['document_prefix']}{padded_serial}"
 
                 cur.execute(
                     """
@@ -504,6 +536,9 @@ class PostgresCustomerQuoteRepository:
                       quote_id,
                       sales_opportunity_id,
                       quote_number,
+                      serial,
+                      issue_year,
+                      document_number,
                       status,
                       version,
                       created_by,
@@ -515,6 +550,9 @@ class PostgresCustomerQuoteRepository:
                       %(quote_id)s,
                       %(sales_opportunity_id)s,
                       %(quote_number)s,
+                      %(serial)s,
+                      %(issue_year)s,
+                      %(document_number)s,
                       'draft',
                       1,
                       %(operator)s,
@@ -528,6 +566,9 @@ class PostgresCustomerQuoteRepository:
                         "quote_id": quote_id,
                         "sales_opportunity_id": sales_opportunity_id,
                         "quote_number": quote_number,
+                        "serial": allocated_serial,
+                        "issue_year": issue_year,
+                        "document_number": document_number,
                         "operator": operator,
                         "now": now,
                     },
@@ -623,6 +664,7 @@ class PostgresCustomerQuoteRepository:
                     actor_key=operator,
                     payload={
                         "quote_number": quote.quote_number,
+                        "document_number": quote.document_number,
                         "sales_opportunity_id": sales_opportunity_id,
                         "revision_number": 1,
                         "template_reference": template_reference,

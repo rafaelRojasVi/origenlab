@@ -19,16 +19,46 @@ from origenlab_api.repositories.postgres.customer_quotes import (
     QuoteNumberingConfig,
     QuoteNumberingNotConfiguredError,
     QuoteNumberingPolicyMismatchError,
+    chile_issue_year,
 )
 from origenlab_api.settings import Settings
 
 
+def test_chile_issue_year_uses_santiago_local_calendar_year() -> None:
+    moment = datetime(2026, 8, 30, 14, 0, tzinfo=timezone.utc)
+
+    assert chile_issue_year(moment) == 2026
+
+
+def test_chile_issue_year_does_not_advance_early_at_utc_new_year() -> None:
+    # OrigenLab is Chilean: America/Santiago is behind UTC, so UTC's new
+    # year always arrives before Santiago's. Just after UTC midnight on
+    # Jan 1, Santiago local time is still Dec 31 of the prior year -- a
+    # naive `datetime.now(timezone.utc).year` would wrongly report the new
+    # year here.
+    moment = datetime(2027, 1, 1, 2, 0, tzinfo=timezone.utc)
+
+    assert chile_issue_year(moment) == 2026
+
+
+def test_chile_issue_year_advances_once_santiago_local_time_crosses_midnight() -> (
+    None
+):
+    # Once enough hours have passed that Santiago's own local clock has
+    # crossed into the new year, the issue year must follow it.
+    moment = datetime(2027, 1, 1, 12, 0, tzinfo=timezone.utc)
+
+    assert chile_issue_year(moment) == 2027
+
+
 NOW = datetime(2026, 8, 30, 14, 0, tzinfo=timezone.utc)
 
+# Real-evidence-shaped numbering (see docs/architecture business evidence):
+# serial 1183 -> human quote_number "01183-26", document_number "CN01183".
 NUMBERING = QuoteNumberingConfig(
-    prefix="CN",
-    pad_width=6,
-    seed_next_serial=11729,
+    document_prefix="CN",
+    serial_pad_width=5,
+    seed_next_serial=1183,
 )
 
 
@@ -36,7 +66,10 @@ def _quote_row(**overrides: Any) -> dict[str, Any]:
     row: dict[str, Any] = {
         "quote_id": "quote_" + "a" * 32,
         "sales_opportunity_id": "sales_" + "b" * 32,
-        "quote_number": "CN011729",
+        "quote_number": "01183-26",
+        "serial": 1183,
+        "issue_year": 2026,
+        "document_number": "CN01183",
         "status": "draft",
         "version": 1,
         "created_by": "tatiana@origenlab.cl",
@@ -169,6 +202,9 @@ def _repository(
         "require_psycopg",
         lambda: FakePg(),
     )
+    # Deterministic issue year: NOW's America/Santiago calendar date is
+    # 2026-08-30 regardless of DST, well away from any year boundary.
+    monkeypatch.setattr(quotes_module, "_utcnow", lambda: NOW)
 
     return (
         PostgresCustomerQuoteRepository(Settings()),
@@ -202,8 +238,8 @@ def test_create_quote_allocates_number_atomically_in_one_transaction(
         [
             {"idempotency_key": "quote-create-1"},  # fresh claim
             {"sales_opportunity_id": SALES_ID, "title": "Centrífuga CEAF"},
-            {"prefix": "CN", "pad_width": 6},  # series upsert policy check
-            {"prefix": "CN", "pad_width": 6, "allocated_serial": 11729},
+            {"document_prefix": "CN", "pad_width": 5},  # series upsert policy check
+            {"document_prefix": "CN", "pad_width": 5, "allocated_serial": 1183},
             _quote_row(),
             _revision_row(),
             _workspace_row(),
@@ -212,7 +248,7 @@ def test_create_quote_allocates_number_atomically_in_one_transaction(
 
     bundle = repo.create_quote(**_create_kwargs())
 
-    assert bundle.quote.quote_number == "CN011729"
+    assert bundle.quote.quote_number == "01183-26"
     assert bundle.revision.revision_number == 1
     assert bundle.workspace.provisioning_status == "pending"
     assert bundle.sales_opportunity_title == "Centrífuga CEAF"
@@ -232,8 +268,8 @@ def test_create_quote_allocates_number_atomically_in_one_transaction(
     )
 
     series_upsert_params = cursor.executed[2][1]
-    # The series identity is fixed -- never the configured prefix -- so a
-    # later prefix/pad_width change can never silently start a second
+    # The series identity is fixed -- never the configured document prefix --
+    # so a later prefix/pad_width change can never silently start a second
     # series row.
     assert series_upsert_params["series_key"] == "customer_quote"
 
@@ -250,7 +286,10 @@ def test_create_quote_allocates_number_atomically_in_one_transaction(
     insert_sql, insert_params = cursor.executed[4]
 
     assert insert_sql.startswith("INSERT INTO commercial.customer_quote (")
-    assert insert_params["quote_number"] == "CN011729"
+    assert insert_params["quote_number"] == "01183-26"
+    assert insert_params["serial"] == 1183
+    assert insert_params["issue_year"] == 2026
+    assert insert_params["document_number"] == "CN01183"
     assert insert_params["sales_opportunity_id"] == SALES_ID
 
     assert cursor.executed[5][0].startswith(
@@ -271,7 +310,8 @@ def test_create_quote_allocates_number_atomically_in_one_transaction(
 
     payload = json.loads(event_params["payload"])
 
-    assert payload["quote_number"] == "CN011729"
+    assert payload["quote_number"] == "01183-26"
+    assert payload["document_number"] == "CN01183"
     assert payload["sales_opportunity_id"] == SALES_ID
 
     assert cursor.executed[8][0].startswith(
@@ -288,8 +328,8 @@ def test_create_quote_number_never_selects_serial_before_update(
         [
             {"idempotency_key": "quote-create-1"},
             {"sales_opportunity_id": SALES_ID, "title": "Centrífuga CEAF"},
-            {"prefix": "CN", "pad_width": 6},  # series upsert policy check
-            {"prefix": "CN", "pad_width": 6, "allocated_serial": 11729},
+            {"document_prefix": "CN", "pad_width": 5},  # series upsert policy check
+            {"document_prefix": "CN", "pad_width": 5, "allocated_serial": 1183},
             _quote_row(),
             _revision_row(),
             _workspace_row(),
@@ -393,14 +433,16 @@ def test_create_quote_fails_closed_on_prefix_drift_from_durable_policy(
         [
             {"idempotency_key": "quote-create-1"},
             {"sales_opportunity_id": SALES_ID, "title": "Centrífuga CEAF"},
-            # The durable series row already exists with a different prefix
-            # than the currently configured one -- must fail closed here,
-            # before any allocation or quote write.
-            {"prefix": "CN", "pad_width": 6},
+            # The durable series row already exists with a different
+            # document prefix than the currently configured one -- must fail
+            # closed here, before any allocation or quote write.
+            {"document_prefix": "CN", "pad_width": 5},
         ],
     )
 
-    drifted = QuoteNumberingConfig(prefix="CX", pad_width=6, seed_next_serial=1)
+    drifted = QuoteNumberingConfig(
+        document_prefix="CX", serial_pad_width=5, seed_next_serial=1
+    )
 
     with pytest.raises(QuoteNumberingPolicyMismatchError):
         repo.create_quote(**_create_kwargs(numbering=drifted))

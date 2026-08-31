@@ -154,7 +154,9 @@ def _clean_slate(admin_conn: object) -> Iterator[None]:
 
 
 def _numbering(prefix: str, *, seed: int = 1) -> QuoteNumberingConfig:
-    return QuoteNumberingConfig(prefix=prefix, pad_width=4, seed_next_serial=seed)
+    return QuoteNumberingConfig(
+        document_prefix=prefix, serial_pad_width=4, seed_next_serial=seed
+    )
 
 
 # --- D1: two concurrent first-ever allocations, no series row yet ---------
@@ -202,12 +204,15 @@ def test_concurrent_first_allocations_serialize_and_never_collide(
     assert errors == [None, None], errors
     assert results[0] is not None and results[1] is not None
 
-    numbers = {results[0].quote.quote_number, results[1].quote.quote_number}
+    # document_number (not quote_number, which no longer encodes the
+    # prefix) is what proves the allocated serials are distinct and
+    # sequential here.
+    documents = {results[0].quote.document_number, results[1].quote.document_number}
 
     # Both allocations succeeded, got distinct sequential numbers, and the
     # series row was seeded exactly once despite two concurrent first-ever
     # INSERT ... ON CONFLICT DO NOTHING attempts.
-    assert numbers == {f"{prefix}0001", f"{prefix}0002"}
+    assert documents == {f"{prefix}0001", f"{prefix}0002"}
 
     with admin_conn.cursor() as cur:
         cur.execute(

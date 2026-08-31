@@ -50,9 +50,9 @@ SHEET = DriveFileRef(
 
 def _settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
-        "quote_number_prefix": "CN",
-        "quote_number_pad_width": 6,
-        "quote_number_seed_next_serial": 11729,
+        "quote_document_prefix": "CN",
+        "quote_serial_pad_width": 5,
+        "quote_seed_next_serial": 1183,
         "drive_quote_template_file_id": "template-file-1",
     }
     values.update(overrides)
@@ -63,7 +63,10 @@ def _quote(**overrides: Any) -> CustomerQuote:
     values: dict[str, Any] = {
         "quote_id": QUOTE_ID,
         "sales_opportunity_id": SALES_ID,
-        "quote_number": "CN011729",
+        "quote_number": "01183-26",
+        "serial": 1183,
+        "issue_year": 2026,
+        "document_number": "CN01183",
         "status": "draft",
         "version": 1,
         "created_by": OPERATOR,
@@ -283,7 +286,7 @@ def test_create_quote_provisions_drive_workspace_end_to_end() -> None:
     assert create_call[1]["quote_id"].startswith("quote_")
     assert len(create_call[1]["quote_id"]) == len("quote_") + 32
     assert create_call[1]["numbering"] is not None
-    assert create_call[1]["numbering"].prefix == "CN"
+    assert create_call[1]["numbering"].document_prefix == "CN"
     assert create_call[1]["template_reference"] == "template-file-1"
 
     provider_methods = [name for name, _ in provider.calls]
@@ -296,8 +299,11 @@ def test_create_quote_provisions_drive_workspace_end_to_end() -> None:
         "copy_template_sheet",
     ]
 
-    # Artifact names carry the allocated number + sanitized title.
-    assert provider.calls[2][1]["name"] == "CN011729 — Centrífuga CEAF"
+    # Two distinct identifiers name two distinct artifacts: the folder
+    # carries the human quote_number, the copied template carries the
+    # separate document_number.
+    assert provider.calls[2][1]["name"] == "01183-26 — Centrífuga CEAF"
+    assert provider.calls[4][1]["name"] == "CN01183 — Centrífuga CEAF"
 
 
 def test_create_quote_without_numbering_config_fails_closed() -> None:
@@ -308,7 +314,7 @@ def test_create_quote_without_numbering_config_fails_closed() -> None:
 
     with pytest.raises(QuoteNumberingNotConfiguredError):
         _service(repository, FakeDriveProvider(), settings=_settings(
-            quote_number_prefix=None,
+            quote_document_prefix=None,
         )).create_quote(
             sales_opportunity_id=SALES_ID,
             operator=OPERATOR,
@@ -357,7 +363,7 @@ def test_drive_unconfigured_failure_keeps_quote_and_records_category() -> None:
         idempotency_key="quote-create-1",
     )
 
-    assert result.quote.quote_number == "CN011729"
+    assert result.quote.quote_number == "01183-26"
     assert result.workspace.provisioning_status == "failed"
     assert result.workspace.failure_category == "drive_not_configured"
 
@@ -529,17 +535,17 @@ def test_retry_validates_expected_version() -> None:
 
 def test_workspace_name_sanitizes_title() -> None:
     assert (
-        build_quote_workspace_name("CN011729", "  Centrífuga  CEAF  ")
-        == "CN011729 — Centrífuga CEAF"
+        build_quote_workspace_name("01183-26", "  Centrífuga  CEAF  ")
+        == "01183-26 — Centrífuga CEAF"
     )
     assert (
-        build_quote_workspace_name("CN011729", "a/b\\c\ncontrol\x00chars")
-        == "CN011729 — a-b-c control chars"
+        build_quote_workspace_name("CN01183", "a/b\\c\ncontrol\x00chars")
+        == "CN01183 — a-b-c control chars"
     )
-    assert build_quote_workspace_name("CN011729", "   ") == "CN011729"
+    assert build_quote_workspace_name("01183-26", "   ") == "01183-26"
 
     long_title = "x" * 500
-    name = build_quote_workspace_name("CN011729", long_title)
+    name = build_quote_workspace_name("01183-26", long_title)
 
     assert len(name) <= 120
-    assert name.startswith("CN011729 — ")
+    assert name.startswith("01183-26 — ")

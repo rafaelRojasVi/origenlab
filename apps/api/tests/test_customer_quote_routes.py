@@ -71,7 +71,10 @@ def _bundle(
         quote=CustomerQuote(
             quote_id=QUOTE_ID,
             sales_opportunity_id=SALES_ID,
-            quote_number="CN011729",
+            quote_number="01183-26",
+            serial=1183,
+            issue_year=2026,
+            document_number="CN01183",
             status="draft",
             version=1,
             created_by="tatiana@origenlab.cl",
@@ -183,7 +186,7 @@ def test_create_quote_returns_created_quote_with_workspace() -> None:
     body = response.json()
 
     assert body["quote_id"] == QUOTE_ID
-    assert body["quote_number"] == "CN011729"
+    assert body["quote_number"] == "01183-26"
     assert body["status"] == "draft"
     assert body["latest_revision_number"] == 1
     assert body["drive_workspace"]["provisioning_status"] == "ready"
@@ -493,7 +496,7 @@ def test_list_quotes_for_sales_opportunity() -> None:
     body = response.json()
 
     assert body["meta"]["count"] == 1
-    assert body["items"][0]["quote_number"] == "CN011729"
+    assert body["items"][0]["quote_number"] == "01183-26"
     assert body["items"][0]["drive_workspace"]["provisioning_status"] == "ready"
 
     method, kwargs = read_service.calls[0]
