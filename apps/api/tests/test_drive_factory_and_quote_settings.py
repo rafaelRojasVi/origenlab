@@ -11,7 +11,9 @@ authentication mode, and a credentials file). Two authentication modes exist:
   storage quota and cannot own files there).
 
 Numbering settings must resolve to a config only when the complete business
-decision (prefix, pad width, seed) is present and valid.
+decision (document prefix, serial pad width, seed) is present and valid. The
+document prefix is a Drive document_number component only -- never part of
+the human-facing quote_number.
 """
 
 from __future__ import annotations
@@ -47,11 +49,26 @@ def test_factory_fails_closed_when_only_root_folder_configured() -> None:
     assert excinfo.value.category == "drive_not_configured"
 
 
+def test_factory_fails_closed_when_pending_folder_not_configured() -> None:
+    # Root + template alone are not a complete decision: quote workspaces
+    # are created under Pendientes, so its folder ID is mandatory too.
+    with pytest.raises(DriveProvisioningError) as excinfo:
+        build_drive_workspace_provider(
+            _settings(
+                drive_quotes_root_folder_id="root-1",
+                drive_quote_template_file_id="template-1",
+            )
+        )
+
+    assert excinfo.value.category == "drive_not_configured"
+
+
 def test_factory_requires_explicit_auth_mode() -> None:
     with pytest.raises(DriveProvisioningError) as excinfo:
         build_drive_workspace_provider(
             _settings(
                 drive_quotes_root_folder_id="root-1",
+                drive_quotes_pending_folder_id="pending-1",
                 drive_quote_template_file_id="template-1",
             )
         )
@@ -68,6 +85,7 @@ def test_factory_rejects_unknown_auth_mode(bad_mode: str) -> None:
         build_drive_workspace_provider(
             _settings(
                 drive_quotes_root_folder_id="root-1",
+                drive_quotes_pending_folder_id="pending-1",
                 drive_quote_template_file_id="template-1",
                 drive_auth_mode=bad_mode,
             )
@@ -84,6 +102,7 @@ def test_service_account_mode_without_shared_drive_id_is_incompatible() -> None:
         build_drive_workspace_provider(
             _settings(
                 drive_quotes_root_folder_id="root-1",
+                drive_quotes_pending_folder_id="pending-1",
                 drive_quote_template_file_id="template-1",
                 drive_auth_mode="service_account_shared_drive",
             )
@@ -97,6 +116,7 @@ def test_factory_requires_credentials_once_mode_configured() -> None:
         build_drive_workspace_provider(
             _settings(
                 drive_quotes_root_folder_id="root-1",
+                drive_quotes_pending_folder_id="pending-1",
                 drive_quote_template_file_id="template-1",
                 drive_auth_mode="authorized_user_my_drive",
             )
@@ -112,6 +132,7 @@ def test_factory_fails_closed_when_credential_file_missing(
         build_drive_workspace_provider(
             _settings(
                 drive_quotes_root_folder_id="root-1",
+                drive_quotes_pending_folder_id="pending-1",
                 drive_quote_template_file_id="template-1",
                 drive_auth_mode="authorized_user_my_drive",
                 drive_credentials_file=tmp_path / "missing.json",
@@ -143,6 +164,7 @@ def test_factory_builds_authorized_user_provider(
     provider = build_drive_workspace_provider(
         _settings(
             drive_quotes_root_folder_id="root-1",
+            drive_quotes_pending_folder_id="pending-1",
             drive_quote_template_file_id="template-1",
             drive_auth_mode="authorized_user_my_drive",
             drive_credentials_file=credential_file,
@@ -152,6 +174,9 @@ def test_factory_builds_authorized_user_provider(
     assert isinstance(provider, GoogleDriveQuoteWorkspaceProvider)
     assert calls == [credential_file]
     assert provider.shared_drive_id is None
+    assert provider.root_folder_id == "root-1"
+    assert provider.pending_folder_id == "pending-1"
+    assert provider.sent_folder_id is None
 
 
 def test_factory_builds_service_account_provider_scoped_to_shared_drive(
@@ -170,6 +195,8 @@ def test_factory_builds_service_account_provider_scoped_to_shared_drive(
     provider = build_drive_workspace_provider(
         _settings(
             drive_quotes_root_folder_id="root-1",
+            drive_quotes_pending_folder_id="pending-1",
+            drive_quotes_sent_folder_id="sent-1",
             drive_quote_template_file_id="template-1",
             drive_auth_mode="service_account_shared_drive",
             drive_shared_drive_id="shared-drive-1",
@@ -179,6 +206,7 @@ def test_factory_builds_service_account_provider_scoped_to_shared_drive(
 
     assert isinstance(provider, GoogleDriveQuoteWorkspaceProvider)
     assert provider.shared_drive_id == "shared-drive-1"
+    assert provider.sent_folder_id == "sent-1"
 
 
 def test_authorized_user_mode_may_scope_to_a_shared_drive(
@@ -199,6 +227,7 @@ def test_authorized_user_mode_may_scope_to_a_shared_drive(
     provider = build_drive_workspace_provider(
         _settings(
             drive_quotes_root_folder_id="root-1",
+            drive_quotes_pending_folder_id="pending-1",
             drive_quote_template_file_id="template-1",
             drive_auth_mode="authorized_user_my_drive",
             drive_shared_drive_id="shared-drive-1",
@@ -246,6 +275,7 @@ def test_factory_maps_missing_dependency_to_dependency_category(
         build_drive_workspace_provider(
             _settings(
                 drive_quotes_root_folder_id="root-1",
+                drive_quotes_pending_folder_id="pending-1",
                 drive_quote_template_file_id="template-1",
                 drive_auth_mode=auth_mode,
                 drive_credentials_file=credential_file,
@@ -276,6 +306,7 @@ def test_factory_maps_malformed_credentials_to_credentials_category(
         build_drive_workspace_provider(
             _settings(
                 drive_quotes_root_folder_id="root-1",
+                drive_quotes_pending_folder_id="pending-1",
                 drive_quote_template_file_id="template-1",
                 drive_auth_mode="authorized_user_my_drive",
                 drive_credentials_file=credential_file,
@@ -293,12 +324,12 @@ def test_quote_numbering_config_requires_complete_decision() -> None:
     # A partial decision is not a decision: fail closed (None) rather than
     # invent the missing parts.
     assert (
-        _settings(quote_number_prefix="CN").quote_numbering_config() is None
+        _settings(quote_document_prefix="CN").quote_numbering_config() is None
     )
     assert (
         _settings(
-            quote_number_prefix="CN",
-            quote_number_pad_width=6,
+            quote_document_prefix="CN",
+            quote_serial_pad_width=5,
         ).quote_numbering_config()
         is None
     )
@@ -306,35 +337,52 @@ def test_quote_numbering_config_requires_complete_decision() -> None:
 
 def test_quote_numbering_config_complete_and_valid() -> None:
     config = _settings(
-        quote_number_prefix="CN",
-        quote_number_pad_width=6,
-        quote_number_seed_next_serial=11729,
+        quote_document_prefix="CN",
+        quote_serial_pad_width=5,
+        quote_seed_next_serial=1183,
     ).quote_numbering_config()
 
     assert config is not None
-    assert config.prefix == "CN"
-    assert config.pad_width == 6
-    assert config.seed_next_serial == 11729
+    assert config.document_prefix == "CN"
+    assert config.serial_pad_width == 5
+    assert config.seed_next_serial == 1183
+
+
+def test_quote_numbering_config_ignores_old_pre_correction_env_names() -> None:
+    # ORIGENLAB_QUOTE_NUMBER_PREFIX/_PAD_WIDTH/_SEED_NEXT_SERIAL (pre-CRM-Q1D)
+    # collapsed the document prefix into the human quote_number. CRM-Q1 was
+    # never activated in production, so there is no ambiguous configuration
+    # to migrate: the old field names are simply unrecognized now and the
+    # decision stays unconfigured (fails closed), rather than silently
+    # accepting a stale/ambiguous name under the corrected model.
+    settings = Settings(
+        _env_file=None,
+        quote_number_prefix="CN",  # type: ignore[call-arg]
+        quote_number_pad_width=6,  # type: ignore[call-arg]
+        quote_number_seed_next_serial=11729,  # type: ignore[call-arg]
+    )
+
+    assert settings.quote_numbering_config() is None
 
 
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"quote_number_prefix": "lowercase"},
-        {"quote_number_prefix": "TOOLONGPREFIX"},
-        {"quote_number_prefix": "CN 1"},
-        {"quote_number_pad_width": 0},
-        {"quote_number_pad_width": 11},
-        {"quote_number_seed_next_serial": 0},
+        {"quote_document_prefix": "lowercase"},
+        {"quote_document_prefix": "TOOLONGPREFIX"},
+        {"quote_document_prefix": "CN 1"},
+        {"quote_serial_pad_width": 0},
+        {"quote_serial_pad_width": 11},
+        {"quote_seed_next_serial": 0},
     ],
 )
 def test_quote_numbering_config_rejects_invalid_values(
     overrides: dict[str, object],
 ) -> None:
     values: dict[str, object] = {
-        "quote_number_prefix": "CN",
-        "quote_number_pad_width": 6,
-        "quote_number_seed_next_serial": 11729,
+        "quote_document_prefix": "CN",
+        "quote_serial_pad_width": 5,
+        "quote_seed_next_serial": 1183,
     }
     values.update(overrides)
 

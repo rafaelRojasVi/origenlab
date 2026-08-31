@@ -145,7 +145,11 @@ def _clean_slate(admin_conn: object) -> Iterator[None]:
 def _create_quote(
     repo: PostgresCustomerQuoteRepository, admin_conn: object
 ) -> str:
-    numbering = QuoteNumberingConfig(prefix=_uid("F")[:8].upper()[:8] or "FENCEPFX", pad_width=4, seed_next_serial=1)
+    numbering = QuoteNumberingConfig(
+        document_prefix=_uid("F")[:8].upper()[:8] or "FENCEPFX",
+        serial_pad_width=4,
+        seed_next_serial=1,
+    )
     sales_id = _uid("sales")
     _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
     bundle = repo.create_quote(

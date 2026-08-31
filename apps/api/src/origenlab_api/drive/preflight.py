@@ -1,10 +1,12 @@
-"""Read-only Drive configuration/preflight boundary (CRM-Q1).
+"""Read-only Drive configuration/preflight boundary (CRM-Q1D).
 
 Lets an operator verify a Drive configuration before activating quote
-workspace creation: credentials load, the root folder is a writable,
-non-trashed destination whose storage model matches the configured auth
-mode, and the template is readable, non-trashed, and copyable. Nothing here
-mutates Drive state.
+workspace creation: credentials load; the quotations root, Pendientes
+(create destination), and -- when configured -- Enviadas containers are
+each a writable, non-trashed folder whose storage model matches the
+configured auth mode and (for Pendientes/Enviadas) is actually parented by
+the root; and the template is readable, non-trashed, and copyable. Nothing
+here mutates Drive state.
 
 The result carries only a redacted step/category pair -- never a token,
 credential path, file content, or provider response.
@@ -63,11 +65,28 @@ def run_drive_preflight(
             )
 
     try:
+        provider.verify_root(expected_owner_email=expected_principal)
+    except DriveProvisioningError as exc:
+        return DrivePreflightResult(
+            ok=False, step="root", category=exc.category
+        )
+
+    try:
         provider.verify_destination(expected_owner_email=expected_principal)
     except DriveProvisioningError as exc:
         return DrivePreflightResult(
-            ok=False, step="destination", category=exc.category
+            ok=False, step="pending", category=exc.category
         )
+
+    sent_configured = bool((settings.drive_quotes_sent_folder_id or "").strip())
+
+    if sent_configured:
+        try:
+            provider.verify_sent(expected_owner_email=expected_principal)
+        except DriveProvisioningError as exc:
+            return DrivePreflightResult(
+                ok=False, step="sent", category=exc.category
+            )
 
     try:
         template_owned = provider.verify_template(

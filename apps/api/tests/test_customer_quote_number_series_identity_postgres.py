@@ -126,7 +126,9 @@ def test_prefix_change_after_first_allocation_fails_closed_no_second_series(
     admin_conn: object,
     repo: PostgresCustomerQuoteRepository,
 ) -> None:
-    numbering_v1 = QuoteNumberingConfig(prefix="CN", pad_width=6, seed_next_serial=11729)
+    numbering_v1 = QuoteNumberingConfig(
+        document_prefix="CN", serial_pad_width=6, seed_next_serial=11729
+    )
 
     sales_a = _uid("sales")
     sales_b = _uid("sales")
@@ -142,11 +144,15 @@ def test_prefix_change_after_first_allocation_fails_closed_no_second_series(
         numbering=numbering_v1,
         template_reference=None,
     )
-    assert first.quote.quote_number == "CN011729"
+    # quote_number no longer encodes the document prefix -- document_number
+    # is the identifier that proves the durable series policy applied.
+    assert first.quote.document_number == "CN011729"
 
     # A typo'd / changed prefix in later config must never start a second
     # series -- it must fail closed against the durable policy instead.
-    numbering_v2 = QuoteNumberingConfig(prefix="CX", pad_width=6, seed_next_serial=1)
+    numbering_v2 = QuoteNumberingConfig(
+        document_prefix="CX", serial_pad_width=6, seed_next_serial=1
+    )
 
     with pytest.raises(QuoteNumberingPolicyMismatchError):
         repo.create_quote(
@@ -166,13 +172,13 @@ def test_prefix_change_after_first_allocation_fails_closed_no_second_series(
         assert cur.fetchone()["n"] == 1
 
         cur.execute(
-            "SELECT prefix, pad_width, next_serial FROM "
+            "SELECT document_prefix, pad_width, next_serial FROM "
             "commercial.customer_quote_number_series WHERE series_key = %(key)s",
             {"key": CUSTOMER_QUOTE_SERIES_KEY},
         )
         row = cur.fetchone()
         assert row is not None
-        assert row["prefix"] == "CN"
+        assert row["document_prefix"] == "CN"
         assert row["pad_width"] == 6
         # The failed allocation attempt must not have consumed a serial.
         assert row["next_serial"] == 11730
@@ -189,7 +195,9 @@ def test_pad_width_change_after_first_allocation_fails_closed(
     admin_conn: object,
     repo: PostgresCustomerQuoteRepository,
 ) -> None:
-    numbering_v1 = QuoteNumberingConfig(prefix="CN", pad_width=6, seed_next_serial=1)
+    numbering_v1 = QuoteNumberingConfig(
+        document_prefix="CN", serial_pad_width=6, seed_next_serial=1
+    )
     sales_a = _uid("sales")
     _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_a)
 
@@ -203,7 +211,9 @@ def test_pad_width_change_after_first_allocation_fails_closed(
         template_reference=None,
     )
 
-    numbering_v2 = QuoteNumberingConfig(prefix="CN", pad_width=4, seed_next_serial=1)
+    numbering_v2 = QuoteNumberingConfig(
+        document_prefix="CN", serial_pad_width=4, seed_next_serial=1
+    )
     sales_b = _uid("sales")
     _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_b)
 
@@ -229,7 +239,9 @@ def test_matching_configuration_continues_the_same_series(
     admin_conn: object,
     repo: PostgresCustomerQuoteRepository,
 ) -> None:
-    numbering = QuoteNumberingConfig(prefix="CN", pad_width=6, seed_next_serial=11729)
+    numbering = QuoteNumberingConfig(
+        document_prefix="CN", serial_pad_width=6, seed_next_serial=11729
+    )
     sales_a = _uid("sales")
     sales_b = _uid("sales")
     _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_a)
@@ -254,5 +266,5 @@ def test_matching_configuration_continues_the_same_series(
         template_reference=None,
     )
 
-    assert first.quote.quote_number == "CN011729"
-    assert second.quote.quote_number == "CN011730"
+    assert first.quote.document_number == "CN011729"
+    assert second.quote.document_number == "CN011730"

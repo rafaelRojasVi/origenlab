@@ -202,13 +202,47 @@ Postgres URL is **not** required.
 
 | Variable | Purpose |
 |----------|---------|
-| `ORIGENLAB_DRIVE_QUOTES_ROOT_FOLDER_ID` | Drive folder that holds every quote workspace folder |
+| `ORIGENLAB_DRIVE_QUOTES_ROOT_FOLDER_ID` | Drive folder ID of the canonical quotations root (e.g. `Cotizaciones`); verified read-only by preflight, never a creation target itself |
+| `ORIGENLAB_DRIVE_QUOTES_PENDING_FOLDER_ID` | Drive folder ID under which every new quote workspace folder is created (e.g. `Cotizaciones/Pendientes`); must be a direct child of the root |
+| `ORIGENLAB_DRIVE_QUOTES_SENT_FOLDER_ID` | Optional Drive folder ID for quotes after being sent (e.g. `Cotizaciones/Enviadas`); verified read-only by preflight when set. No `sent` lifecycle exists yet, so nothing writes here today |
 | `ORIGENLAB_DRIVE_QUOTE_TEMPLATE_FILE_ID` | Master quotation spreadsheet template file ID |
 | `ORIGENLAB_DRIVE_AUTH_MODE` | `authorized_user_my_drive` or `service_account_shared_drive` — see below |
 | `ORIGENLAB_DRIVE_CREDENTIALS_FILE` | Credentials JSON path for the configured auth mode |
 | `ORIGENLAB_DRIVE_EXPECTED_PRINCIPAL_EMAIL` | Expected Drive identity (e.g. `contacto@origenlab.cl`); the preflight check fails closed as `drive_principal_mismatch` if the credentials belong to any other account |
 | `ORIGENLAB_DRIVE_SHARED_DRIVE_ID` | Shared Drive ID; **required** in `service_account_shared_drive` mode, optional in `authorized_user_my_drive` mode |
-| `ORIGENLAB_QUOTE_NUMBER_PREFIX` / `_PAD_WIDTH` / `_SEED_NEXT_SERIAL` | The recorded quote-numbering business decision; quote creation returns `quote_numbering_not_configured` (503) until all three are set. The seed applies only on the first allocation; the durable `commercial.customer_quote_number_series` row is the counter truth afterwards. |
+| `ORIGENLAB_QUOTE_DOCUMENT_PREFIX` / `_SERIAL_PAD_WIDTH` / `_SEED_NEXT_SERIAL` | The recorded quote-numbering business decision; quote creation returns `quote_numbering_not_configured` (503) until all three are set. The seed applies only on the first allocation; the durable `commercial.customer_quote_number_series` row is the counter truth afterwards. |
+
+**Quote numbering (CRM-Q1D):** one allocated serial powers two distinct
+identifiers -- they are never the same string:
+
+* **`quote_number`** (human, customer-facing): `<padded serial>-<2-digit
+  issue year>`, e.g. `01183-26`. The issue year is the business-local
+  (`America/Santiago`) calendar date at allocation time, never UTC's.
+* **`document_number`** (Drive artifact stem, currently internal):
+  `<document_prefix><padded serial>`, e.g. `CN01183`.
+
+`ORIGENLAB_QUOTE_DOCUMENT_PREFIX` seeds only `document_number` -- it is
+never part of `quote_number`.
+
+**Drive hierarchy (CRM-Q1D):** the quotations root is a fixed container that
+is never written to directly. Every new quote workspace folder is created
+under the configured Pendientes container instead, and the two Drive
+artifacts are named from the two distinct identifiers above:
+
+```text
+Cotizaciones/                              <- ORIGENLAB_DRIVE_QUOTES_ROOT_FOLDER_ID
+├── Pendientes/                            <- ORIGENLAB_DRIVE_QUOTES_PENDING_FOLDER_ID
+│   └── 01183-26 — Cliente — Producto/     <- folder: human quote_number
+│       └── CN01183 — Cliente — Producto   <- copied template: document_number
+└── Enviadas/                              <- ORIGENLAB_DRIVE_QUOTES_SENT_FOLDER_ID (optional)
+```
+
+Preflight verifies Pendientes/Enviadas are each a direct child of the root;
+the runtime provisioning path (`verify_destination`) verifies the same for
+Pendientes on every attempt, before any mutation. A future `sent` lifecycle
+transition would move the same folder (same ID, same Drive history) from
+Pendientes to Enviadas — never copy or recreate it. That transition is not
+implemented yet.
 
 Two Drive authentication modes are supported, because a bare service account
 has no My Drive storage quota and cannot own files there:
@@ -277,16 +311,20 @@ numbering decision — see the table above.
    production secret file (e.g. a Render secret file), referenced by
    `ORIGENLAB_DRIVE_CREDENTIALS_FILE` — never committed, never logged.
 7. While still signed in as `contacto@origenlab.cl` in Drive, create the
-   quotations root folder, e.g. named `OrigenLab — Cotizaciones CRM`.
-8. Share that root folder manually with Tatiana and Rafael (Drive's own
+   quotations root folder (e.g. `Cotizaciones`) and, inside it, the
+   `Pendientes` and `Enviadas` subfolders (see the hierarchy diagram above).
+8. Share the root folder manually with Tatiana and Rafael (Drive's own
    sharing UI) — this backend never manages Drive permissions itself (see
    the file-header note on `apps/api/src/origenlab_api/drive/google_drive.py`).
+   `Pendientes`/`Enviadas` inherit that sharing as children of the root.
 9. Copy the master quotation template into `contacto@origenlab.cl`'s Drive
    so the template is owned there too (preferred, not strictly required —
    `scripts/drive_preflight.py` reports template ownership status without
    blocking on a mismatch, since the template may legitimately still be
    shared from elsewhere for a while).
 10. Configure `ORIGENLAB_DRIVE_QUOTES_ROOT_FOLDER_ID`,
+    `ORIGENLAB_DRIVE_QUOTES_PENDING_FOLDER_ID`,
+    `ORIGENLAB_DRIVE_QUOTES_SENT_FOLDER_ID`,
     `ORIGENLAB_DRIVE_QUOTE_TEMPLATE_FILE_ID`,
     `ORIGENLAB_DRIVE_AUTH_MODE=authorized_user_my_drive`,
     `ORIGENLAB_DRIVE_CREDENTIALS_FILE`, and

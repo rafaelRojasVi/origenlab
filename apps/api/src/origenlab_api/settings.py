@@ -16,15 +16,21 @@ ApiBackend = Literal["sqlite", "postgres"]
 
 # Uppercase letters only, matching the historical CN-style evidence shape;
 # widening the charset is a numbering-policy change, not a convenience edit.
-_QUOTE_NUMBER_PREFIX_RE = re.compile(r"^[A-Z]{1,8}$")
+_DOCUMENT_PREFIX_RE = re.compile(r"^[A-Z]{1,8}$")
 
 
 @dataclass(frozen=True)
 class QuoteNumberingConfig:
-    """The complete, explicitly configured quote-numbering decision."""
+    """The complete, explicitly configured quote-numbering decision.
 
-    prefix: str
-    pad_width: int
+    The allocated serial powers two distinct identifiers, never one:
+    ``document_prefix`` is only ever a component of the Drive
+    ``document_number`` (e.g. "CN01183") -- it must never be treated as part
+    of the human-facing ``quote_number`` (e.g. "01183-26").
+    """
+
+    document_prefix: str
+    serial_pad_width: int
     seed_next_serial: int
 
 _API_ROOT = Path(__file__).resolve().parents[2]
@@ -99,8 +105,12 @@ class Settings(BaseSettings):
 
     # CRM-Q1 quote Drive workspace + numbering: every field below fails
     # closed until explicitly configured (placeholders in .env.example).
-    """Drive folder ID under which every quote workspace folder is created."""
+    """Drive folder ID of the canonical quotations root (e.g. "Cotizaciones"); verified read-only by preflight, never a creation target itself."""
     drive_quotes_root_folder_id: str | None = None
+    """Drive folder ID under which every new quote workspace folder is created (e.g. "Pendientes"); required for provisioning."""
+    drive_quotes_pending_folder_id: str | None = None
+    """Drive folder ID of the post-send container (e.g. "Enviadas"); optional -- verified read-only by preflight when set, not yet used by any write path (no sent lifecycle exists)."""
+    drive_quotes_sent_folder_id: str | None = None
     """Drive file ID of the master quotation spreadsheet template."""
     drive_quote_template_file_id: str | None = None
     """Explicit auth mode: authorized_user_my_drive | service_account_shared_drive."""
@@ -111,12 +121,12 @@ class Settings(BaseSettings):
     drive_shared_drive_id: str | None = None
     """Expected Drive principal email; preflight fails closed on any mismatch."""
     drive_expected_principal_email: str | None = None
-    """Quote-number series prefix (e.g. CN) — part of the numbering decision."""
-    quote_number_prefix: str | None = None
-    """Zero-pad width for the quote-number serial (1..10)."""
-    quote_number_pad_width: int | None = None
+    """Document-number prefix (e.g. CN) -- never part of the human quote_number."""
+    quote_document_prefix: str | None = None
+    """Zero-pad width for the allocated serial (1..10), shared by quote_number and document_number."""
+    quote_serial_pad_width: int | None = None
     """First serial the durable series is seeded with on first allocation."""
-    quote_number_seed_next_serial: int | None = None
+    quote_seed_next_serial: int | None = None
 
     _dotenv_disabled: bool = PrivateAttr(default=False)
 
@@ -220,22 +230,22 @@ class Settings(BaseSettings):
         configuration: quote-number allocation must never guess the missing
         parts of the business decision.
         """
-        prefix = (self.quote_number_prefix or "").strip()
-        pad_width = self.quote_number_pad_width
-        seed = self.quote_number_seed_next_serial
+        prefix = (self.quote_document_prefix or "").strip()
+        pad_width = self.quote_serial_pad_width
+        seed = self.quote_seed_next_serial
 
         if not prefix or pad_width is None or seed is None:
             return None
 
-        if _QUOTE_NUMBER_PREFIX_RE.fullmatch(prefix) is None:
+        if _DOCUMENT_PREFIX_RE.fullmatch(prefix) is None:
             return None
 
         if not (1 <= pad_width <= 10) or seed < 1:
             return None
 
         return QuoteNumberingConfig(
-            prefix=prefix,
-            pad_width=pad_width,
+            document_prefix=prefix,
+            serial_pad_width=pad_width,
             seed_next_serial=seed,
         )
 

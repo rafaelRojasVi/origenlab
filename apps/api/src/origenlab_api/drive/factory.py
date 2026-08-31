@@ -3,8 +3,11 @@
 Fails closed with redacted categories until the operator has explicitly
 configured the Drive quotations workspace:
 
-* ``ORIGENLAB_DRIVE_QUOTES_ROOT_FOLDER_ID`` + ``ORIGENLAB_DRIVE_QUOTE_TEMPLATE_FILE_ID``
-  missing/incomplete -> ``drive_not_configured``;
+* ``ORIGENLAB_DRIVE_QUOTES_ROOT_FOLDER_ID`` + ``ORIGENLAB_DRIVE_QUOTES_PENDING_FOLDER_ID``
+  + ``ORIGENLAB_DRIVE_QUOTE_TEMPLATE_FILE_ID`` missing/incomplete ->
+  ``drive_not_configured`` (``ORIGENLAB_DRIVE_QUOTES_SENT_FOLDER_ID`` is
+  optional: verified read-only by preflight when set, never required for
+  provisioning -- no ``sent`` lifecycle exists yet);
 * ``ORIGENLAB_DRIVE_AUTH_MODE`` missing or unknown ->
   ``drive_auth_mode_not_configured``;
 * ``service_account_shared_drive`` mode without
@@ -208,10 +211,13 @@ def build_drive_workspace_provider(
     settings: Settings,
 ) -> GoogleDriveQuoteWorkspaceProvider:
     root_folder_id = (settings.drive_quotes_root_folder_id or "").strip()
+    pending_folder_id = (settings.drive_quotes_pending_folder_id or "").strip()
     template_file_id = (settings.drive_quote_template_file_id or "").strip()
 
-    if not root_folder_id or not template_file_id:
+    if not root_folder_id or not pending_folder_id or not template_file_id:
         raise DriveProvisioningError("drive_not_configured")
+
+    sent_folder_id = (settings.drive_quotes_sent_folder_id or "").strip() or None
 
     auth_mode = (settings.drive_auth_mode or "").strip()
 
@@ -252,6 +258,8 @@ def build_drive_workspace_provider(
     return GoogleDriveQuoteWorkspaceProvider(
         transport=HttpxDriveTransport(token_supplier),
         root_folder_id=root_folder_id,
+        pending_folder_id=pending_folder_id,
+        sent_folder_id=sent_folder_id,
         template_file_id=template_file_id,
         shared_drive_id=shared_drive_id,
     )

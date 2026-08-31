@@ -141,7 +141,7 @@ def test_get_reads_a_pending_workspace_with_no_lease(
 ) -> None:
     sales_id = _uid("sales")
     _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
-    numbering = QuoteNumberingConfig(prefix="RD", pad_width=4, seed_next_serial=1)
+    numbering = QuoteNumberingConfig(document_prefix="RD", serial_pad_width=4, seed_next_serial=1)
 
     bundle = write_repo.create_quote(
         quote_id=_uid("quote"),
@@ -167,7 +167,7 @@ def test_get_reads_an_active_lease(
 ) -> None:
     sales_id = _uid("sales")
     _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
-    numbering = QuoteNumberingConfig(prefix="RE", pad_width=4, seed_next_serial=1)
+    numbering = QuoteNumberingConfig(document_prefix="RE", serial_pad_width=4, seed_next_serial=1)
 
     bundle = write_repo.create_quote(
         quote_id=_uid("quote"),
@@ -199,7 +199,7 @@ def test_list_for_sales_opportunity_reads_lease_expires_at(
 ) -> None:
     sales_id = _uid("sales")
     _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
-    numbering = QuoteNumberingConfig(prefix="RL", pad_width=4, seed_next_serial=1)
+    numbering = QuoteNumberingConfig(document_prefix="RL", serial_pad_width=4, seed_next_serial=1)
 
     bundle = write_repo.create_quote(
         quote_id=_uid("quote"),

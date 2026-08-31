@@ -46,11 +46,14 @@ _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]+")
 _WHITESPACE_RE = re.compile(r"\s+")
 
 
-def build_quote_workspace_name(quote_number: str, title: str) -> str:
-    """Folder/sheet display name: quote number + safely sanitized title.
+def build_quote_workspace_name(number: str, title: str) -> str:
+    """Drive artifact display name: an identifier + safely sanitized title.
 
-    When no usable title remains after sanitization the name is just the
-    quote number -- a customer name is never fabricated.
+    Called with the human ``quote_number`` for the workspace folder and
+    with the separate ``document_number`` for the copied template document
+    -- the two Drive artifacts are named from two distinct identifiers, never
+    the same string. When no usable title remains after sanitization the
+    name is just the identifier -- a customer name is never fabricated.
     """
 
     cleaned = _SEPARATOR_RE.sub("-", title)
@@ -58,9 +61,9 @@ def build_quote_workspace_name(quote_number: str, title: str) -> str:
     cleaned = _WHITESPACE_RE.sub(" ", cleaned).strip()
 
     if not cleaned:
-        return quote_number
+        return number
 
-    name = f"{quote_number} — {cleaned}"
+    name = f"{number} — {cleaned}"
 
     return name[:_MAX_WORKSPACE_NAME_LENGTH].rstrip()
 
@@ -256,8 +259,15 @@ class CustomerQuoteService:
         except DriveProvisioningError as exc:
             return fail(exc.category)
 
-        name = build_quote_workspace_name(
+        # Two distinct identifiers name two distinct Drive artifacts: the
+        # workspace folder carries the human quote_number, the copied
+        # template document carries the separate document_number.
+        folder_name = build_quote_workspace_name(
             bundle.quote.quote_number,
+            bundle.sales_opportunity_title,
+        )
+        document_name = build_quote_workspace_name(
+            bundle.quote.document_number,
             bundle.sales_opportunity_title,
         )
 
@@ -267,7 +277,7 @@ class CustomerQuoteService:
         try:
             folder = provider.find_folder(quote_id)
             if folder is None:
-                folder = provider.create_folder(quote_id, name=name)
+                folder = provider.create_folder(quote_id, name=folder_name)
         except DriveProvisioningError as exc:
             return fail(exc.category)
 
@@ -277,7 +287,7 @@ class CustomerQuoteService:
                 sheet = provider.copy_template_sheet(
                     quote_id,
                     folder_id=folder.file_id,
-                    name=name,
+                    name=document_name,
                 )
         except DriveProvisioningError as exc:
             return fail(
