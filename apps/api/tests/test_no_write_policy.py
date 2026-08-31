@@ -63,6 +63,14 @@ def test_app_exposes_only_sanctioned_mutating_routes() -> None:
             "/operations/tasks/{task_id}/cancel",
             "post",
         ),
+        (
+            "/operations/sales-opportunities/{sales_opportunity_id}/quotes",
+            "post",
+        ),
+        (
+            "/operations/customer-quotes/{quote_id}/drive-workspace",
+            "post",
+        ),
     }
 
     mutating_methods = {"post", "put", "patch", "delete"}

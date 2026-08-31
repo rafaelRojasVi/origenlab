@@ -22,6 +22,9 @@ from origenlab_api.repositories.postgres.commercial_operations import (
     CommercialOperationConflictError,
     CommercialOperationNotFoundError,
 )
+from origenlab_api.repositories.postgres.customer_quotes import (
+    QuoteNumberingNotConfiguredError,
+)
 from origenlab_api.schemas.commercial_operations import (
     ActivityCreateCommand,
     ActivityListResponse,
@@ -44,11 +47,25 @@ from origenlab_api.schemas.commercial_operations import (
     TaskResponse,
     TaskTransitionCommand,
 )
+from origenlab_api.schemas.customer_quotes import (
+    CustomerQuoteCreateCommand,
+    CustomerQuoteDriveWorkspaceRetryCommand,
+    CustomerQuoteListMeta,
+    CustomerQuoteListResponse,
+    CustomerQuoteReadResponse,
+    CustomerQuoteResponse,
+)
 from origenlab_api.services.commercial_operations_read_service import (
     CommercialOperationsReadService,
 )
 from origenlab_api.services.commercial_operations_service import (
     CommercialOperationsService,
+)
+from origenlab_api.services.customer_quote_read_service import (
+    CustomerQuoteReadService,
+)
+from origenlab_api.services.customer_quote_service import (
+    CustomerQuoteService,
 )
 from origenlab_api.settings import Settings, get_settings
 
@@ -69,6 +86,18 @@ def get_commercial_operations_read_service(
     settings: Settings = Depends(get_settings),
 ) -> CommercialOperationsReadService:
     return CommercialOperationsReadService(settings)
+
+
+def get_customer_quote_service(
+    settings: Settings = Depends(get_settings),
+) -> CustomerQuoteService:
+    return CustomerQuoteService(settings)
+
+
+def get_customer_quote_read_service(
+    settings: Settings = Depends(get_settings),
+) -> CustomerQuoteReadService:
+    return CustomerQuoteReadService(settings)
 
 
 def _raise_command_error(exc: Exception) -> NoReturn:
@@ -642,3 +671,154 @@ def cancel_task(
         ValueError,
     ) as exc:
         _raise_command_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# CRM-Q1: durable customer quotes + Google Drive workspace provisioning.
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/sales-opportunities/{sales_opportunity_id}/quotes",
+    response_model=CustomerQuoteResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_customer_quote(
+    command: CustomerQuoteCreateCommand,
+    request: Request,
+    sales_opportunity_id: str = PathParam(
+        min_length=1,
+        max_length=128,
+    ),
+    idempotency_key: str = Header(
+        alias="Idempotency-Key",
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    ),
+    settings: Settings = Depends(get_settings),
+    service: CustomerQuoteService = Depends(get_customer_quote_service),
+) -> CustomerQuoteResponse:
+    del command  # Empty body: every quote field is server-controlled.
+
+    operator = require_commercial_operator(
+        request,
+        settings,
+    )
+
+    try:
+        bundle = service.create_quote(
+            sales_opportunity_id=sales_opportunity_id,
+            operator=operator,
+            idempotency_key=idempotency_key,
+        )
+    except QuoteNumberingNotConfiguredError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "quote_numbering_not_configured: quote numbering has not "
+                "been activated"
+            ),
+        ) from exc
+    except (
+        CommercialOperationNotFoundError,
+        CommercialOperationConflictError,
+        ValueError,
+    ) as exc:
+        _raise_command_error(exc)
+
+    return CustomerQuoteResponse.from_bundle(bundle)
+
+
+@router.get(
+    "/sales-opportunities/{sales_opportunity_id}/quotes",
+    response_model=CustomerQuoteListResponse,
+)
+def list_customer_quotes(
+    sales_opportunity_id: str = PathParam(
+        min_length=1,
+        max_length=128,
+    ),
+    limit: int = Query(100, ge=1, le=200),
+    service: CustomerQuoteReadService = Depends(
+        get_customer_quote_read_service
+    ),
+) -> CustomerQuoteListResponse:
+    try:
+        bundles = service.list_quotes_for_sales_opportunity(
+            sales_opportunity_id,
+            limit=limit,
+        )
+    except ValueError as exc:
+        _raise_command_error(exc)
+
+    items = [CustomerQuoteResponse.from_bundle(bundle) for bundle in bundles]
+
+    return CustomerQuoteListResponse(
+        meta=CustomerQuoteListMeta(count=len(items)),
+        items=items,
+    )
+
+
+@router.get(
+    "/customer-quotes/{quote_id}",
+    response_model=CustomerQuoteReadResponse,
+)
+def get_customer_quote(
+    quote_id: str = PathParam(
+        min_length=1,
+        max_length=128,
+    ),
+    service: CustomerQuoteReadService = Depends(
+        get_customer_quote_read_service
+    ),
+) -> CustomerQuoteReadResponse:
+    try:
+        bundle = service.get_quote(quote_id)
+    except ValueError as exc:
+        _raise_command_error(exc)
+
+    if bundle is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(f"Customer quote not found: {quote_id}"),
+        )
+
+    return CustomerQuoteReadResponse(
+        item=CustomerQuoteResponse.from_bundle(bundle),
+    )
+
+
+@router.post(
+    "/customer-quotes/{quote_id}/drive-workspace",
+    response_model=CustomerQuoteResponse,
+)
+def retry_customer_quote_drive_workspace(
+    command: CustomerQuoteDriveWorkspaceRetryCommand,
+    request: Request,
+    quote_id: str = PathParam(
+        min_length=1,
+        max_length=128,
+    ),
+    settings: Settings = Depends(get_settings),
+    service: CustomerQuoteService = Depends(get_customer_quote_service),
+) -> CustomerQuoteResponse:
+    operator = require_commercial_operator(
+        request,
+        settings,
+    )
+
+    try:
+        bundle = service.retry_drive_provisioning(
+            quote_id=quote_id,
+            operator=operator,
+            expected_version=command.expected_version,
+        )
+    except (
+        CommercialOperationNotFoundError,
+        CommercialOperationConflictError,
+        ValueError,
+    ) as exc:
+        _raise_command_error(exc)
+
+    return CustomerQuoteResponse.from_bundle(bundle)
