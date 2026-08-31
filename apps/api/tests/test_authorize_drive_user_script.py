@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import stat
 import sys
 from pathlib import Path
@@ -234,6 +235,143 @@ def test_refuses_existing_output_without_replace_flag(
 
     # The pre-existing file must be untouched.
     assert json.loads(output_file.read_text(encoding="utf-8")) == {"existing": True}
+
+
+def test_create_only_mode_refuses_file_that_appears_during_the_oauth_flow(
+    module, tmp_path: Path
+) -> None:
+    # TOCTOU: the preflight "does it exist" check happens before the
+    # (potentially long) interactive OAuth flow and identity check. A file
+    # created at the exact output path during that window -- by another
+    # concurrent invocation, or anything else -- must never be silently
+    # truncated when --replace-existing was not passed.
+    client_secrets = tmp_path / "client-secrets.json"
+    client_secrets.write_text("{}", encoding="utf-8")
+
+    output_file = tmp_path / "creds.json"
+    sentinel = "sentinel content that must survive"
+
+    def racing_run_flow(client_secrets_file: Path, scopes: list[str]) -> dict[str, Any]:
+        # Simulates a file appearing during the flow, after the initial
+        # existence preflight already passed.
+        output_file.write_text(sentinel, encoding="utf-8")
+        return dict(FAKE_CREDENTIALS_JSON)
+
+    with pytest.raises(module.DriveAuthorizationError):
+        module.authorize_drive_user(
+            client_secrets_file=client_secrets,
+            output_file=output_file,
+            expected_email="contacto@origenlab.cl",
+            replace_existing=False,
+            run_flow=racing_run_flow,
+            fetch_identity=_fake_fetch_identity("contacto@origenlab.cl"),
+        )
+
+    # Never truncated -- the racing writer's content survives untouched.
+    assert output_file.read_text(encoding="utf-8") == sentinel
+
+
+def test_replace_existing_mode_atomically_replaces_file_that_appears_during_flow(
+    module, tmp_path: Path
+) -> None:
+    # --replace-existing explicitly authorizes overwriting whatever is at
+    # the destination path, including a file that raced in during the flow
+    # -- but the write itself must still be atomic (temp file + rename),
+    # never an in-place truncate.
+    client_secrets = tmp_path / "client-secrets.json"
+    client_secrets.write_text("{}", encoding="utf-8")
+
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output_file = output_dir / "creds.json"
+
+    def racing_run_flow(client_secrets_file: Path, scopes: list[str]) -> dict[str, Any]:
+        output_file.write_text("raced-in stale content", encoding="utf-8")
+        return dict(FAKE_CREDENTIALS_JSON)
+
+    email = module.authorize_drive_user(
+        client_secrets_file=client_secrets,
+        output_file=output_file,
+        expected_email="contacto@origenlab.cl",
+        replace_existing=True,
+        run_flow=racing_run_flow,
+        fetch_identity=_fake_fetch_identity("contacto@origenlab.cl"),
+    )
+
+    assert email == "contacto@origenlab.cl"
+    assert json.loads(output_file.read_text(encoding="utf-8")) == FAKE_CREDENTIALS_JSON
+
+    # No leftover temp file in the output directory.
+    leftovers = [
+        p for p in output_file.parent.iterdir() if p.name != output_file.name
+    ]
+    assert leftovers == []
+
+
+def test_replace_existing_mode_cleans_up_temp_file_when_rename_fails(
+    module, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client_secrets = tmp_path / "client-secrets.json"
+    client_secrets.write_text("{}", encoding="utf-8")
+
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output_file = output_dir / "creds.json"
+    output_file.write_text('{"existing": true}', encoding="utf-8")
+
+    def failing_replace(src: object, dst: object) -> None:
+        raise OSError("simulated rename failure")
+
+    monkeypatch.setattr(module.os, "replace", failing_replace)
+
+    with pytest.raises(OSError):
+        module.authorize_drive_user(
+            client_secrets_file=client_secrets,
+            output_file=output_file,
+            expected_email="contacto@origenlab.cl",
+            replace_existing=True,
+            run_flow=_fake_run_flow(),
+            fetch_identity=_fake_fetch_identity("contacto@origenlab.cl"),
+        )
+
+    # The pre-existing destination is untouched, and no temp file was left
+    # behind in the output directory.
+    assert json.loads(output_file.read_text(encoding="utf-8")) == {"existing": True}
+    leftovers = [
+        p for p in output_file.parent.iterdir() if p.name != output_file.name
+    ]
+    assert leftovers == []
+
+
+def test_create_only_mode_uses_exclusive_create_never_truncating_in_place(
+    module, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # White-box: create-only mode must use O_EXCL (never O_TRUNC-without-
+    # O_EXCL), so a colliding file can never be silently truncated.
+    client_secrets = tmp_path / "client-secrets.json"
+    client_secrets.write_text("{}", encoding="utf-8")
+
+    captured_flags: list[int] = []
+    real_open = module.os.open
+
+    def spying_open(path: str, flags: int, mode: int) -> int:
+        captured_flags.append(flags)
+        return real_open(path, flags, mode)
+
+    monkeypatch.setattr(module.os, "open", spying_open)
+
+    module.authorize_drive_user(
+        client_secrets_file=client_secrets,
+        output_file=tmp_path / "creds.json",
+        expected_email="contacto@origenlab.cl",
+        replace_existing=False,
+        run_flow=_fake_run_flow(),
+        fetch_identity=_fake_fetch_identity("contacto@origenlab.cl"),
+    )
+
+    assert len(captured_flags) == 1
+    assert captured_flags[0] & os.O_EXCL
+    assert captured_flags[0] & os.O_CREAT
 
 
 def test_allows_overwrite_with_replace_existing_flag(

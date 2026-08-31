@@ -39,6 +39,7 @@ import json
 import os
 import stat
 import sys
+import uuid
 from pathlib import Path
 from typing import Any, Callable
 
@@ -119,6 +120,83 @@ def _default_fetch_identity(credentials_json: dict[str, Any]) -> str:
     return email
 
 
+def _write_credentials_create_only(
+    resolved_output: Path, credentials_json: dict[str, Any]
+) -> None:
+    """Exclusive create: never truncates a file that appears at this exact
+    path after the earlier existence preflight (the OAuth flow and identity
+    check run in between and can take arbitrarily long). O_EXCL converts a
+    collision into a safe refusal instead of a silent overwrite."""
+
+    try:
+        fd = os.open(
+            str(resolved_output),
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW,
+            stat.S_IRUSR | stat.S_IWUSR,
+        )
+    except FileExistsError as exc:
+        raise DriveAuthorizationError(
+            f"credentials file appeared at {resolved_output} while this "
+            "bootstrap was running -- refusing to overwrite it (pass "
+            "--replace-existing if you intend to overwrite it, after "
+            "confirming what created it)"
+        ) from exc
+    except OSError as exc:
+        if _O_NOFOLLOW and exc.errno == errno.ELOOP:
+            raise DriveAuthorizationError(
+                f"refusing to write through a symlink at {resolved_output}"
+            ) from exc
+        raise
+
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(credentials_json, handle)
+    os.chmod(resolved_output, stat.S_IRUSR | stat.S_IWUSR)
+
+
+def _write_credentials_atomic_replace(
+    resolved_output: Path, credentials_json: dict[str, Any]
+) -> None:
+    """Write a fresh mode-0600 temp file in the same directory, fsync it,
+    then atomically replace the destination -- never an in-place truncate,
+    so a reader never observes a partially written file, and a collision
+    that appears during the (potentially long) OAuth flow is safely
+    overwritten as --replace-existing explicitly authorizes, rather than
+    corrupted by a racing writer. The temp file is removed on any failure
+    before the rename."""
+
+    tmp_path = (
+        resolved_output.parent
+        / f".{resolved_output.name}.tmp-{os.getpid()}-{uuid.uuid4().hex}"
+    )
+
+    try:
+        fd = os.open(
+            str(tmp_path),
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW,
+            stat.S_IRUSR | stat.S_IWUSR,
+        )
+    except OSError as exc:
+        if _O_NOFOLLOW and exc.errno == errno.ELOOP:
+            raise DriveAuthorizationError(
+                f"refusing to write through a symlink at {tmp_path}"
+            ) from exc
+        raise
+
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(credentials_json, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
+        os.replace(str(tmp_path), str(resolved_output))
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def authorize_drive_user(
     *,
     client_secrets_file: Path,
@@ -190,27 +268,18 @@ def authorize_drive_user(
 
     resolved_output.parent.mkdir(parents=True, exist_ok=True)
 
-    # Create with restrictive permissions from the start (no window where
-    # the file is world/group readable), then chmod again in case umask
-    # widened the mode passed to os.open. O_NOFOLLOW is defense-in-depth
-    # against a symlink appearing at this exact path in the (tiny) window
-    # since the is_symlink() check above -- the primary guarantee.
-    try:
-        fd = os.open(
-            str(resolved_output),
-            os.O_WRONLY | os.O_CREAT | os.O_TRUNC | _O_NOFOLLOW,
-            stat.S_IRUSR | stat.S_IWUSR,
-        )
-    except OSError as exc:
-        if _O_NOFOLLOW and exc.errno == errno.ELOOP:
-            raise DriveAuthorizationError(
-                f"refusing to write through a symlink at {resolved_output}"
-            ) from exc
-        raise
-
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump(credentials_json, handle)
-    os.chmod(resolved_output, stat.S_IRUSR | stat.S_IWUSR)
+    # Restrictive permissions from the start in both paths (no window where
+    # the file is world/group readable). O_NOFOLLOW is defense-in-depth
+    # against a symlink appearing at this exact path in the window since the
+    # is_symlink() check above -- the primary guarantee. Which path runs
+    # depends on --replace-existing: create-only uses O_EXCL so a file that
+    # appears during the (potentially long) OAuth flow above is refused
+    # rather than truncated; replace-existing writes a temp file and
+    # atomically renames it over the destination.
+    if replace_existing:
+        _write_credentials_atomic_replace(resolved_output, credentials_json)
+    else:
+        _write_credentials_create_only(resolved_output, credentials_json)
 
     return authenticated_email
 
