@@ -517,7 +517,7 @@ def test_dashboard_expected_alembic_head_includes_arch2a() -> None:
         EXPECTED_ALEMBIC_HEAD,
     )
 
-    assert EXPECTED_ALEMBIC_HEAD == "20260828_0039"
+    assert EXPECTED_ALEMBIC_HEAD == "20260830_0040"
 
 
 def test_safe_replace_rejects_zero_source_on_first_projection() -> None:
