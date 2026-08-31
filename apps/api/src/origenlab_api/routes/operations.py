@@ -24,6 +24,7 @@ from origenlab_api.repositories.postgres.commercial_operations import (
 )
 from origenlab_api.repositories.postgres.customer_quotes import (
     QuoteNumberingNotConfiguredError,
+    QuoteNumberingPolicyMismatchError,
 )
 from origenlab_api.schemas.commercial_operations import (
     ActivityCreateCommand,
@@ -718,6 +719,15 @@ def create_customer_quote(
             detail=(
                 "quote_numbering_not_configured: quote numbering has not "
                 "been activated"
+            ),
+        ) from exc
+    except QuoteNumberingPolicyMismatchError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "quote_numbering_policy_mismatch: configured quote "
+                "numbering disagrees with the already-activated durable "
+                "series policy"
             ),
         ) from exc
     except (

@@ -20,7 +20,8 @@ import re
 import uuid
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import NoReturn
 
 from origenlab_api.repositories.postgres.commercial_operations import (
     CommercialOperationConflictError,
@@ -35,6 +36,8 @@ from origenlab_api.repositories.postgres.write_common import (
 from origenlab_api.settings import QuoteNumberingConfig, Settings
 
 __all__ = [
+    "CUSTOMER_QUOTE_SERIES_KEY",
+    "PROVISION_ATTEMPT_LEASE_SECONDS",
     "CustomerQuote",
     "CustomerQuoteBundle",
     "CustomerQuoteDriveWorkspace",
@@ -42,12 +45,52 @@ __all__ = [
     "PostgresCustomerQuoteRepository",
     "QuoteNumberingConfig",
     "QuoteNumberingNotConfiguredError",
+    "QuoteNumberingPolicyMismatchError",
 ]
+
+
+# The single logical customer-quote numbering series. This is a fixed
+# identity, deliberately NOT the configured prefix: the configured prefix is
+# only ever a seed for this series' first allocation. Keying the series row
+# by prefix would let a later prefix typo or environment change silently
+# start a second series from the seed instead of failing closed against the
+# durable policy already recorded by the first allocation.
+CUSTOMER_QUOTE_SERIES_KEY = "customer_quote"
+
+# Server-owned active-attempt lease duration. A begun attempt exclusively
+# owns Drive-provider calls for at most this long; after it expires the
+# attempt is safely reclaimable (crash recovery). This must stay strictly
+# above the worst-case wall-clock duration of one provisioning attempt, not
+# an unexplained arbitrary number:
+#
+#   up to 5 Drive HTTP calls per attempt (verify_destination, find_folder,
+#   create_folder, find_sheet, copy_template_sheet) + up to 1 credential
+#   refresh (at most once per attempt: once refreshed, the token stays
+#   valid for its ~1 hour lifetime, far longer than one attempt) = 6 calls,
+#   each individually bounded by the single Drive request timeout
+#   (origenlab_api.drive.factory._REQUEST_TIMEOUT_SECONDS /
+#   _TOKEN_REFRESH_TIMEOUT_SECONDS, both 20s) = 6 * 20s = 120s worst case.
+#
+# 300s gives a >2x safety margin over that bound. This relationship is
+# asserted directly (not just documented) by
+# tests/test_customer_quote_drive_provision_fencing_postgres.py.
+PROVISION_ATTEMPT_LEASE_SECONDS = 300
 
 
 class QuoteNumberingNotConfiguredError(RuntimeError):
     """Quote-number allocation attempted before the numbering business
     decision (prefix / pad width / next serial) was configured."""
+
+
+class QuoteNumberingPolicyMismatchError(RuntimeError):
+    """Configured prefix/pad width disagrees with the durable series policy
+    already established by the first allocation.
+
+    The environment seed only ever affects first initialization; after that
+    the durable ``customer_quote_number_series`` row is the counter truth.
+    A later configuration drift (prefix typo, environment change) must fail
+    closed here -- it must never silently start a second series from the
+    seed."""
 
 
 # Redacted failure categories only: a safe slug, never provider payloads,
@@ -92,6 +135,7 @@ class CustomerQuoteDriveWorkspace:
     failure_category: str | None
     attempt_count: int
     version: int
+    lease_expires_at: datetime | None
     requested_at: datetime | None
     completed_at: datetime | None
     created_by: str
@@ -250,6 +294,39 @@ def _insert_event(
     )
 
 
+def _raise_stale_or_missing_workspace(
+    cur: object, *, quote_id: str, attempt_version: int
+) -> NoReturn:
+    """A complete/fail CAS update matched zero rows: distinguish "workspace
+    does not exist" from "stale attempt token" (already superseded by a
+    newer attempt, or the workspace is no longer 'pending') and raise the
+    appropriate error. Never modifies anything -- read-only diagnosis."""
+
+    cur.execute(
+        """
+        SELECT version, provisioning_status
+        FROM commercial.customer_quote_drive_workspace
+        WHERE quote_id = %(quote_id)s
+        LIMIT 1
+        """,
+        {"quote_id": quote_id},
+    )
+
+    existing = cur.fetchone()
+
+    if existing is None:
+        raise CommercialOperationNotFoundError(
+            f"Customer quote workspace not found: {quote_id}"
+        )
+
+    raise CommercialOperationConflictError(
+        "Stale Drive provisioning attempt: token "
+        f"{attempt_version} no longer matches current state "
+        f"(version={existing['version']}, "
+        f"status={existing['provisioning_status']})"
+    )
+
+
 class PostgresCustomerQuoteRepository:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -317,7 +394,15 @@ class PostgresCustomerQuoteRepository:
                     )
 
                 # Seed the series only on very first allocation; afterwards
-                # the durable row (not env config) is the counter truth.
+                # the durable row (not env config) is the counter truth. The
+                # series identity is the fixed CUSTOMER_QUOTE_SERIES_KEY, not
+                # the configured prefix -- so a later prefix/pad-width
+                # change can never silently start a second series. The
+                # no-op DO UPDATE (versus DO NOTHING) makes this an
+                # upsert-returning-always: on conflict it changes nothing
+                # (series_key back to itself) but still locks the row and
+                # returns its current, already-durable prefix/pad_width so
+                # they can be compared against the configured values below.
                 cur.execute(
                     """
                     INSERT INTO commercial.customer_quote_number_series (
@@ -343,10 +428,14 @@ class PostgresCustomerQuoteRepository:
                     ON CONFLICT (
                       series_key
                     )
-                    DO NOTHING
+                    DO UPDATE SET
+                      series_key = EXCLUDED.series_key
+                    RETURNING
+                      prefix,
+                      pad_width
                     """,
                     {
-                        "series_key": numbering.prefix,
+                        "series_key": CUSTOMER_QUOTE_SERIES_KEY,
                         "prefix": numbering.prefix,
                         "pad_width": numbering.pad_width,
                         "next_serial": numbering.seed_next_serial,
@@ -354,6 +443,26 @@ class PostgresCustomerQuoteRepository:
                         "now": now,
                     },
                 )
+
+                policy_row = cur.fetchone()
+
+                if policy_row is None:
+                    raise RuntimeError(
+                        "Quote number series policy row missing after upsert"
+                    )
+
+                if (
+                    str(policy_row["prefix"]) != numbering.prefix
+                    or int(policy_row["pad_width"]) != numbering.pad_width
+                ):
+                    raise QuoteNumberingPolicyMismatchError(
+                        "quote_numbering_policy_mismatch: configured "
+                        f"prefix/pad_width ({numbering.prefix}/"
+                        f"{numbering.pad_width}) disagrees with the durable "
+                        f"series policy ({policy_row['prefix']}/"
+                        f"{policy_row['pad_width']}) established by the "
+                        "first allocation"
+                    )
 
                 # Atomic allocation: the row lock serializes concurrent
                 # allocations; uq_customer_quote_number is the DB backstop.
@@ -371,7 +480,7 @@ class PostgresCustomerQuoteRepository:
                       next_serial - 1 AS allocated_serial
                     """,
                     {
-                        "series_key": numbering.prefix,
+                        "series_key": CUSTOMER_QUOTE_SERIES_KEY,
                         "operator": operator,
                         "now": now,
                     },
@@ -551,9 +660,19 @@ class PostgresCustomerQuoteRepository:
     ) -> CustomerQuoteDriveWorkspace:
         pg = require_psycopg()
         now = _utcnow()
+        lease_expires_at = now + timedelta(seconds=PROVISION_ATTEMPT_LEASE_SECONDS)
 
         with postgres_write_connection(self._settings) as conn:
             with conn.cursor(row_factory=pg.rows.dict_row) as cur:
+                # The version check alone only rejects a STALE version. The
+                # additional lease clause is what actually prevents two
+                # overlapping Drive-provider calls: an in-flight attempt's
+                # own begin_drive_provision_attempt already committed (this
+                # method's transaction ends here, well before the service
+                # layer calls Drive) and bumped the version, so a second
+                # caller reading that new version and retrying would
+                # otherwise satisfy the version check while the first
+                # attempt is still actively running.
                 cur.execute(
                     """
                     UPDATE commercial.customer_quote_drive_workspace
@@ -562,12 +681,18 @@ class PostgresCustomerQuoteRepository:
                       version = version + 1,
                       provisioning_status = 'pending',
                       failure_category = NULL,
+                      lease_expires_at = %(lease_expires_at)s,
                       requested_at = %(now)s,
                       updated_by = %(operator)s,
                       updated_at = %(now)s
                     WHERE quote_id = %(quote_id)s
                       AND version = %(expected_version)s
                       AND provisioning_status <> 'ready'
+                      AND (
+                        provisioning_status <> 'pending'
+                        OR lease_expires_at IS NULL
+                        OR lease_expires_at <= %(now)s
+                      )
                     RETURNING *
                     """,
                     {
@@ -575,6 +700,7 @@ class PostgresCustomerQuoteRepository:
                         "expected_version": expected_version,
                         "operator": operator,
                         "now": now,
+                        "lease_expires_at": lease_expires_at,
                     },
                 )
 
@@ -603,6 +729,18 @@ class PostgresCustomerQuoteRepository:
                             "Drive workspace already provisioned"
                         )
 
+                    if (
+                        existing["version"] == expected_version
+                        and existing["provisioning_status"] == "pending"
+                        and existing["lease_expires_at"] is not None
+                        and existing["lease_expires_at"] > now
+                    ):
+                        raise CommercialOperationConflictError(
+                            "Drive workspace provisioning attempt already "
+                            "active: retry after "
+                            f"{existing['lease_expires_at'].isoformat()}"
+                        )
+
                     raise CommercialOperationConflictError(
                         "Drive workspace version conflict: expected "
                         f"{expected_version}, found {existing['version']}"
@@ -628,6 +766,7 @@ class PostgresCustomerQuoteRepository:
         *,
         quote_id: str,
         operator: str,
+        attempt_version: int,
         folder_id: str,
         folder_web_url: str,
         sheet_file_id: str,
@@ -647,6 +786,11 @@ class PostgresCustomerQuoteRepository:
 
         with postgres_write_connection(self._settings) as conn:
             with conn.cursor(row_factory=pg.rows.dict_row) as cur:
+                # Compare-and-set against the exact attempt token
+                # begin_drive_provision_attempt returned: a stale completion
+                # (an attempt whose lease already expired and was reclaimed
+                # by a newer attempt) must conflict here rather than
+                # overwrite whatever the newer attempt is doing.
                 cur.execute(
                     """
                     UPDATE commercial.customer_quote_drive_workspace
@@ -659,13 +803,17 @@ class PostgresCustomerQuoteRepository:
                       failure_category = NULL,
                       completed_at = %(now)s,
                       version = version + 1,
+                      lease_expires_at = NULL,
                       updated_by = %(operator)s,
                       updated_at = %(now)s
                     WHERE quote_id = %(quote_id)s
+                      AND version = %(attempt_version)s
+                      AND provisioning_status = 'pending'
                     RETURNING *
                     """,
                     {
                         "quote_id": quote_id,
+                        "attempt_version": attempt_version,
                         "folder_id": folder_id,
                         "folder_web_url": safe_folder_url,
                         "sheet_file_id": sheet_file_id,
@@ -678,8 +826,8 @@ class PostgresCustomerQuoteRepository:
                 row = cur.fetchone()
 
                 if row is None:
-                    raise CommercialOperationNotFoundError(
-                        f"Customer quote workspace not found: {quote_id}"
+                    _raise_stale_or_missing_workspace(
+                        cur, quote_id=quote_id, attempt_version=attempt_version
                     )
 
                 workspace = CustomerQuoteDriveWorkspace(**dict(row))
@@ -703,6 +851,7 @@ class PostgresCustomerQuoteRepository:
         *,
         quote_id: str,
         operator: str,
+        attempt_version: int,
         failure_category: str,
         folder_id: str | None = None,
         folder_web_url: str | None = None,
@@ -722,6 +871,13 @@ class PostgresCustomerQuoteRepository:
                 # COALESCE keeps any partial artifacts discoverable: a folder
                 # created before a later step failed must never be dropped
                 # from durable state (and is never deleted in Drive).
+                # Compare-and-set against the exact attempt token, scoped to
+                # provisioning_status = 'pending': a stale failure (this
+                # attempt's lease already expired and was reclaimed by a
+                # newer attempt, or a newer attempt already completed it)
+                # must conflict rather than overwrite a newer attempt's
+                # state -- in particular it must never flip an already
+                # 'ready' workspace back to 'failed'.
                 cur.execute(
                     """
                     UPDATE commercial.customer_quote_drive_workspace
@@ -731,13 +887,17 @@ class PostgresCustomerQuoteRepository:
                       folder_id = COALESCE(%(folder_id)s, folder_id),
                       folder_web_url = COALESCE(%(folder_web_url)s, folder_web_url),
                       version = version + 1,
+                      lease_expires_at = NULL,
                       updated_by = %(operator)s,
                       updated_at = %(now)s
                     WHERE quote_id = %(quote_id)s
+                      AND version = %(attempt_version)s
+                      AND provisioning_status = 'pending'
                     RETURNING *
                     """,
                     {
                         "quote_id": quote_id,
+                        "attempt_version": attempt_version,
                         "failure_category": safe_category,
                         "folder_id": folder_id,
                         "folder_web_url": safe_folder_url,
@@ -749,8 +909,8 @@ class PostgresCustomerQuoteRepository:
                 row = cur.fetchone()
 
                 if row is None:
-                    raise CommercialOperationNotFoundError(
-                        f"Customer quote workspace not found: {quote_id}"
+                    _raise_stale_or_missing_workspace(
+                        cur, quote_id=quote_id, attempt_version=attempt_version
                     )
 
                 workspace = CustomerQuoteDriveWorkspace(**dict(row))

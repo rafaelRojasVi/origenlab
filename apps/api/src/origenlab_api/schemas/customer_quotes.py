@@ -7,7 +7,7 @@ operator identity).
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -53,6 +53,13 @@ class CustomerQuoteDriveWorkspaceResponse(BaseModel):
     attempt_count: int
     version: int
 
+    # Safe retryability exposure: while an attempt actively owns the
+    # server-side lease, the dashboard must not offer an immediate retry
+    # (it would only conflict). lease_expires_at is the raw retry-after
+    # boundary; retryable is the pre-computed convenience flag.
+    lease_expires_at: datetime | None = None
+    retryable: bool = True
+
     requested_at: datetime | None = None
     completed_at: datetime | None = None
 
@@ -75,6 +82,20 @@ class CustomerQuoteResponse(BaseModel):
 
     @classmethod
     def from_bundle(cls, bundle: CustomerQuoteBundle) -> "CustomerQuoteResponse":
+        workspace = bundle.workspace
+        lease_expires_at = workspace.lease_expires_at
+        now = datetime.now(timezone.utc)
+
+        # Retryable unless an attempt is actively pending under an
+        # unexpired lease -- the exact condition
+        # begin_drive_provision_attempt itself enforces, so the dashboard
+        # never offers a retry the server would just conflict.
+        retryable = not (
+            workspace.provisioning_status == "pending"
+            and lease_expires_at is not None
+            and lease_expires_at > now
+        )
+
         return cls(
             quote_id=bundle.quote.quote_id,
             sales_opportunity_id=bundle.quote.sales_opportunity_id,
@@ -86,9 +107,20 @@ class CustomerQuoteResponse(BaseModel):
             updated_by=bundle.quote.updated_by,
             created_at=bundle.quote.created_at,
             updated_at=bundle.quote.updated_at,
-            drive_workspace=CustomerQuoteDriveWorkspaceResponse.model_validate(
-                bundle.workspace,
-                from_attributes=True,
+            drive_workspace=CustomerQuoteDriveWorkspaceResponse(
+                provider=workspace.provider,  # type: ignore[arg-type]
+                provisioning_status=workspace.provisioning_status,  # type: ignore[arg-type]
+                folder_id=workspace.folder_id,
+                folder_web_url=workspace.folder_web_url,
+                sheet_file_id=workspace.sheet_file_id,
+                sheet_web_url=workspace.sheet_web_url,
+                failure_category=workspace.failure_category,
+                attempt_count=workspace.attempt_count,
+                version=workspace.version,
+                lease_expires_at=lease_expires_at,
+                retryable=retryable,
+                requested_at=workspace.requested_at,
+                completed_at=workspace.completed_at,
             ),
         )
 

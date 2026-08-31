@@ -56,6 +56,14 @@ function nullableString(value: unknown, label: string): string | null {
   return stringValue(value, label);
 }
 
+function booleanValue(value: unknown, label: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`${label} must be a boolean`);
+  }
+
+  return value;
+}
+
 function integerAtLeast(
   value: unknown,
   minimum: number,
@@ -136,6 +144,11 @@ function parseWorkspace(raw: unknown): CustomerQuoteDriveWorkspace {
       "drive_workspace.attempt_count",
     ),
     version: integerAtLeast(data.version, 1, "drive_workspace.version"),
+    retryable: booleanValue(data.retryable, "drive_workspace.retryable"),
+    lease_expires_at: nullableString(
+      data.lease_expires_at,
+      "drive_workspace.lease_expires_at",
+    ),
     requested_at: nullableString(
       data.requested_at,
       "drive_workspace.requested_at",

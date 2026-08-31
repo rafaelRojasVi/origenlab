@@ -23,11 +23,21 @@ Covers:
   D3. Retry after commit plus lost HTTP response returns the same quote.
   D4. Process failure after DB commit but before Drive provisioning cannot
       leave an unrecoverable pending workspace.
-  D5. Concurrent Drive retry attempts cannot create duplicate folders or
-      template copies (proven at the repository layer: only one concurrent
-      begin_drive_provision_attempt can win the version, so the service
-      layer above it can never issue two concurrent Drive writes for the
-      same workspace).
+  D5. Simultaneous begin_drive_provision_attempt racers presenting the
+      IDENTICAL expected_version: exactly one wins, the rest conflict.
+
+      CORRECTION (CRM-Q1C): this test alone does NOT prove the service
+      layer can never issue two concurrent Drive writes for the same
+      workspace, contrary to an earlier claim in this file/the PR
+      description. It only proves simultaneous callers cannot all win the
+      same version race. A caller that reads the version an in-flight
+      attempt has *just* produced (begin_drive_provision_attempt commits
+      its own transaction and releases the row lock before the service
+      layer ever calls the Drive provider) could still start a second,
+      concurrent attempt while the first was actively running under the
+      pre-fix version-only check. That sequential-steal race -- and the
+      active-attempt lease that closes it -- is covered separately in
+      test_customer_quote_drive_provision_fencing_postgres.py.
 """
 
 from __future__ import annotations
@@ -43,6 +53,7 @@ from origenlab_api.repositories.postgres.commercial_operations import (
     CommercialOperationConflictError,
 )
 from origenlab_api.repositories.postgres.customer_quotes import (
+    CUSTOMER_QUOTE_SERIES_KEY,
     PostgresCustomerQuoteRepository,
     QuoteNumberingConfig,
 )
@@ -201,8 +212,8 @@ def test_concurrent_first_allocations_serialize_and_never_collide(
     with admin_conn.cursor() as cur:
         cur.execute(
             "SELECT next_serial FROM commercial.customer_quote_number_series "
-            "WHERE series_key = %(prefix)s",
-            {"prefix": prefix},
+            "WHERE series_key = %(series_key)s",
+            {"series_key": CUSTOMER_QUOTE_SERIES_KEY},
         )
         row = cur.fetchone()
 
@@ -408,11 +419,13 @@ def test_concurrent_begin_provision_attempts_only_one_wins(
     for t in threads:
         t.join(timeout=15)
 
-    # Every one of the 5 racers targets the same expected_version: exactly
-    # one can win the optimistic version bump, so at most one concurrent
-    # provider-facing attempt can ever be underway for this workspace --
-    # the service layer above this can never issue two concurrent Drive
-    # writes (create_folder / copy_template_sheet) for the same quote.
+    # Every one of the 5 racers targets the identical expected_version:
+    # exactly one can win. This alone does NOT prove the service layer can
+    # never issue two concurrent Drive writes for the same quote -- see the
+    # module docstring's D5 correction and
+    # test_customer_quote_drive_provision_fencing_postgres.py for the
+    # sequential-steal race this test's shape cannot catch, and the
+    # active-attempt lease that actually closes it.
     assert outcomes.count("won") == 1
     assert outcomes.count("conflict") == 4
 

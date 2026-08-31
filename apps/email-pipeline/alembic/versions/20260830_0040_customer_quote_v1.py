@@ -210,6 +210,16 @@ def upgrade() -> None:
           attempt_count INTEGER NOT NULL DEFAULT 0,
           version INTEGER NOT NULL DEFAULT 1,
 
+          -- Server-owned active-attempt lease: set when an attempt begins,
+          -- cleared on completion/failure. While in the future, no other
+          -- caller may begin a new attempt against this workspace even if
+          -- it presents the current version -- this is what actually
+          -- prevents two concurrent Drive-provider calls for the same
+          -- quote (the version check alone only prevented two callers from
+          -- winning the *same* expected_version race, not a caller
+          -- reusing the version an in-flight attempt just produced).
+          lease_expires_at TIMESTAMPTZ,
+
           requested_at TIMESTAMPTZ,
           completed_at TIMESTAMPTZ,
 
@@ -468,6 +478,7 @@ def upgrade() -> None:
           failure_category,
           attempt_count,
           version,
+          lease_expires_at,
           requested_at,
           completed_at,
           created_by,

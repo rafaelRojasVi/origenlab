@@ -19,6 +19,7 @@ from origenlab_api.repositories.postgres.customer_quotes import (
     CustomerQuoteDriveWorkspace,
     CustomerQuoteRevision,
     QuoteNumberingNotConfiguredError,
+    QuoteNumberingPolicyMismatchError,
 )
 from origenlab_api.routes import operations
 from origenlab_api.settings import Settings, get_settings
@@ -51,6 +52,7 @@ def _workspace(**overrides: Any) -> CustomerQuoteDriveWorkspace:
         "failure_category": None,
         "attempt_count": 1,
         "version": 3,
+        "lease_expires_at": None,
         "requested_at": NOW,
         "completed_at": NOW,
         "created_by": "tatiana@origenlab.cl",
@@ -195,6 +197,89 @@ def test_create_quote_returns_created_quote_with_workspace() -> None:
     assert kwargs["idempotency_key"] == "quote-create-key-1"
 
 
+def test_create_quote_response_marks_active_lease_as_not_retryable() -> None:
+    from datetime import datetime, timedelta, timezone
+
+    active_lease = datetime.now(timezone.utc) + timedelta(minutes=2)
+    workspace = _workspace(
+        provisioning_status="pending",
+        lease_expires_at=active_lease,
+        folder_id=None,
+        folder_web_url=None,
+        sheet_file_id=None,
+        sheet_web_url=None,
+    )
+    service = FakeQuoteService()
+    service.create_result = _bundle(workspace)
+    client, service, _ = _client(service=service)
+
+    response = client.post(
+        f"/operations/sales-opportunities/{SALES_ID}/quotes",
+        json={},
+        headers=CREATE_HEADER,
+    )
+
+    body = response.json()
+
+    assert body["drive_workspace"]["provisioning_status"] == "pending"
+    assert body["drive_workspace"]["retryable"] is False
+    assert body["drive_workspace"]["lease_expires_at"] is not None
+
+
+def test_create_quote_response_marks_expired_lease_as_retryable() -> None:
+    from datetime import datetime, timedelta, timezone
+
+    expired_lease = datetime.now(timezone.utc) - timedelta(minutes=2)
+    workspace = _workspace(
+        provisioning_status="pending",
+        lease_expires_at=expired_lease,
+        folder_id=None,
+        folder_web_url=None,
+        sheet_file_id=None,
+        sheet_web_url=None,
+    )
+    service = FakeQuoteService()
+    service.create_result = _bundle(workspace)
+    client, service, _ = _client(service=service)
+
+    response = client.post(
+        f"/operations/sales-opportunities/{SALES_ID}/quotes",
+        json={},
+        headers=CREATE_HEADER,
+    )
+
+    body = response.json()
+
+    assert body["drive_workspace"]["provisioning_status"] == "pending"
+    assert body["drive_workspace"]["retryable"] is True
+
+
+def test_create_quote_response_marks_failed_workspace_as_retryable() -> None:
+    workspace = _workspace(
+        provisioning_status="failed",
+        failure_category="drive_unavailable",
+        lease_expires_at=None,
+        folder_id=None,
+        folder_web_url=None,
+        sheet_file_id=None,
+        sheet_web_url=None,
+    )
+    service = FakeQuoteService()
+    service.create_result = _bundle(workspace)
+    client, service, _ = _client(service=service)
+
+    response = client.post(
+        f"/operations/sales-opportunities/{SALES_ID}/quotes",
+        json={},
+        headers=CREATE_HEADER,
+    )
+
+    body = response.json()
+
+    assert body["drive_workspace"]["provisioning_status"] == "failed"
+    assert body["drive_workspace"]["retryable"] is True
+
+
 def test_create_quote_requires_operator_identity() -> None:
     client, service, _ = _client()
 
@@ -261,6 +346,22 @@ def test_create_quote_maps_numbering_not_configured_to_503() -> None:
 
     assert response.status_code == 503
     assert "quote_numbering_not_configured" in response.text
+
+
+def test_create_quote_maps_numbering_policy_mismatch_to_503() -> None:
+    client, service, _ = _client()
+    service.errors["create_quote"] = QuoteNumberingPolicyMismatchError(
+        "quote_numbering_policy_mismatch"
+    )
+
+    response = client.post(
+        f"/operations/sales-opportunities/{SALES_ID}/quotes",
+        json={},
+        headers=CREATE_HEADER,
+    )
+
+    assert response.status_code == 503
+    assert "quote_numbering_policy_mismatch" in response.text
 
 
 def test_create_quote_maps_missing_opportunity_to_404() -> None:

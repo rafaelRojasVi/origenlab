@@ -197,7 +197,7 @@ class CustomerQuoteService:
         quote_id = bundle.quote.quote_id
 
         try:
-            self._repository.begin_drive_provision_attempt(
+            attempt = self._repository.begin_drive_provision_attempt(
                 quote_id=quote_id,
                 operator=operator,
                 expected_version=expected_version,
@@ -206,8 +206,20 @@ class CustomerQuoteService:
             if raise_conflict:
                 raise
 
-            # A concurrent request already owns this provisioning attempt;
-            # the quote itself was created, so report the latest state.
+            # A concurrent request already owns this provisioning attempt
+            # (or it is actively leased by one still in flight); the quote
+            # itself was created, so report the latest state.
+            refreshed = self._repository.get_quote_bundle(quote_id=quote_id)
+            return refreshed if refreshed is not None else bundle
+
+        # The version begin_drive_provision_attempt returned is this
+        # attempt's fencing token: complete/fail below compare-and-set
+        # against this exact value, so a stale attempt (this thread's lease
+        # already expired and was reclaimed by a newer attempt) can never
+        # overwrite what the newer attempt is doing.
+        attempt_token = attempt.version
+
+        def _refreshed_or_bundle() -> CustomerQuoteBundle:
             refreshed = self._repository.get_quote_bundle(quote_id=quote_id)
             return refreshed if refreshed is not None else bundle
 
@@ -217,13 +229,22 @@ class CustomerQuoteService:
             folder_id: str | None = None,
             folder_web_url: str | None = None,
         ) -> CustomerQuoteBundle:
-            workspace = self._repository.fail_drive_provision(
-                quote_id=quote_id,
-                operator=operator,
-                failure_category=category,
-                folder_id=folder_id,
-                folder_web_url=folder_web_url,
-            )
+            try:
+                workspace = self._repository.fail_drive_provision(
+                    quote_id=quote_id,
+                    operator=operator,
+                    attempt_version=attempt_token,
+                    failure_category=category,
+                    folder_id=folder_id,
+                    folder_web_url=folder_web_url,
+                )
+            except CommercialOperationConflictError:
+                # This attempt's own token is stale (its lease already
+                # expired and a newer attempt reclaimed it, or that newer
+                # attempt already completed/failed it): a benign lost race,
+                # never a downgrade of a newer/ready state -- report the
+                # latest durable state instead of raising.
+                return _refreshed_or_bundle()
             return replace(bundle, workspace=workspace)
 
         try:
@@ -269,13 +290,21 @@ class CustomerQuoteService:
         # the exception propagates: the workspace stays pending with the
         # attempt recorded, and the next retry finds both artifacts and
         # completes without new Drive writes.
-        workspace = self._repository.complete_drive_provision(
-            quote_id=quote_id,
-            operator=operator,
-            folder_id=folder.file_id,
-            folder_web_url=folder.web_url,
-            sheet_file_id=sheet.file_id,
-            sheet_web_url=sheet.web_url,
-        )
+        try:
+            workspace = self._repository.complete_drive_provision(
+                quote_id=quote_id,
+                operator=operator,
+                attempt_version=attempt_token,
+                folder_id=folder.file_id,
+                folder_web_url=folder.web_url,
+                sheet_file_id=sheet.file_id,
+                sheet_web_url=sheet.web_url,
+            )
+        except CommercialOperationConflictError:
+            # Stale attempt token: a newer attempt already reclaimed (and
+            # likely already completed, via the same find-before-create
+            # lookup) this workspace. Drive itself is unaffected -- report
+            # the latest durable state rather than raising.
+            return _refreshed_or_bundle()
 
         return replace(bundle, workspace=workspace)

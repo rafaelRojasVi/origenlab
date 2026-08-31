@@ -23,6 +23,10 @@ export interface CustomerQuoteDriveWorkspace {
   failure_category: string | null;
   attempt_count: number;
   version: number;
+  /** Server-computed: false while an attempt actively owns the lease --
+   * an immediate retry would only conflict. */
+  retryable: boolean;
+  lease_expires_at: string | null;
   requested_at: string | null;
   completed_at: string | null;
 }

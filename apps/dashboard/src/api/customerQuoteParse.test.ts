@@ -19,6 +19,8 @@ function rawWorkspace(overrides: Record<string, unknown> = {}) {
     failure_category: null,
     attempt_count: 1,
     version: 3,
+    retryable: true,
+    lease_expires_at: null,
     requested_at: "2026-08-30T14:00:00+00:00",
     completed_at: "2026-08-30T14:00:05+00:00",
     ...overrides,
@@ -118,6 +120,32 @@ describe("parseCustomerQuote", () => {
 
     expect(quote.drive_workspace.folder_web_url).toBeNull();
     expect(quote.drive_workspace.sheet_web_url).toBeNull();
+  });
+
+  it("parses retryable and lease_expires_at", () => {
+    const leased = parseCustomerQuote(
+      rawQuote({
+        drive_workspace: rawWorkspace({
+          provisioning_status: "pending",
+          retryable: false,
+          lease_expires_at: "2026-08-30T14:05:00+00:00",
+        }),
+      }),
+    );
+
+    expect(leased.drive_workspace.retryable).toBe(false);
+    expect(leased.drive_workspace.lease_expires_at).toBe(
+      "2026-08-30T14:05:00+00:00",
+    );
+  });
+
+  it("rejects a missing retryable flag", () => {
+    const raw = rawWorkspace();
+    delete (raw as Record<string, unknown>).retryable;
+
+    expect(() =>
+      parseCustomerQuote(rawQuote({ drive_workspace: raw })),
+    ).toThrow();
   });
 
   it("rejects an unknown provisioning status", () => {

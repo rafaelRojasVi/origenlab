@@ -41,6 +41,8 @@ function quote(overrides: Partial<CustomerQuote> = {}): CustomerQuote {
       failure_category: null,
       attempt_count: 1,
       version: 3,
+      retryable: true,
+      lease_expires_at: null,
       requested_at: "2026-08-30T14:00:00+00:00",
       completed_at: "2026-08-30T14:00:05+00:00",
     },
@@ -60,6 +62,8 @@ function failedQuote(): CustomerQuote {
       failure_category: "drive_unavailable",
       attempt_count: 1,
       version: 3,
+      retryable: true,
+      lease_expires_at: null,
       requested_at: "2026-08-30T14:00:00+00:00",
       completed_at: null,
     },
@@ -161,6 +165,8 @@ describe("QuoteWorkspaceSection", () => {
           failure_category: null,
           attempt_count: 1,
           version: 2,
+          retryable: true,
+          lease_expires_at: null,
           requested_at: "2026-08-30T14:00:00+00:00",
           completed_at: null,
         },
@@ -204,6 +210,8 @@ describe("QuoteWorkspaceSection", () => {
             failure_category: null,
             attempt_count: 1,
             version: 2,
+            retryable: true,
+            lease_expires_at: null,
             requested_at: "2026-08-30T14:00:00+00:00",
             completed_at: null,
           },
@@ -234,6 +242,79 @@ describe("QuoteWorkspaceSection", () => {
     await waitFor(() =>
       expect(
         screen.getByRole("link", { name: "Abrir carpeta en Drive" }),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("does not offer a retry action while an attempt actively owns the lease", async () => {
+    // The server marks retryable: false while an attempt is actively
+    // in-flight -- offering a retry here would only conflict, so no button
+    // must be rendered at all.
+    vi.mocked(fetchCustomerQuotes).mockResolvedValue({
+      meta: { count: 1 },
+      items: [
+        quote({
+          drive_workspace: {
+            provider: "google_drive",
+            provisioning_status: "pending",
+            folder_id: null,
+            folder_web_url: null,
+            sheet_file_id: null,
+            sheet_web_url: null,
+            failure_category: null,
+            attempt_count: 1,
+            version: 2,
+            retryable: false,
+            lease_expires_at: "2026-08-30T14:05:00+00:00",
+            requested_at: "2026-08-30T14:00:00+00:00",
+            completed_at: null,
+          },
+        }),
+      ],
+    });
+
+    render(<QuoteWorkspaceSection salesOpportunityId={SALES_ID} />);
+
+    await waitFor(() =>
+      expect(screen.getByText("CN011729")).toBeInTheDocument(),
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Reintentar creación en Drive" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows a redacted message for a credentials failure, never provider details", async () => {
+    vi.mocked(fetchCustomerQuotes).mockResolvedValue({
+      meta: { count: 1 },
+      items: [
+        quote({
+          drive_workspace: {
+            provider: "google_drive",
+            provisioning_status: "failed",
+            folder_id: null,
+            folder_web_url: null,
+            sheet_file_id: null,
+            sheet_web_url: null,
+            failure_category: "drive_credentials_invalid",
+            attempt_count: 1,
+            version: 3,
+            retryable: true,
+            lease_expires_at: null,
+            requested_at: "2026-08-30T14:00:00+00:00",
+            completed_at: null,
+          },
+        }),
+      ],
+    });
+
+    render(<QuoteWorkspaceSection salesOpportunityId={SALES_ID} />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          "Las credenciales de Google Drive no son válidas. Avisa al administrador del sistema.",
+        ),
       ).toBeInTheDocument(),
     );
   });

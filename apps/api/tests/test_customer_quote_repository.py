@@ -18,6 +18,7 @@ from origenlab_api.repositories.postgres.customer_quotes import (
     PostgresCustomerQuoteRepository,
     QuoteNumberingConfig,
     QuoteNumberingNotConfiguredError,
+    QuoteNumberingPolicyMismatchError,
 )
 from origenlab_api.settings import Settings
 
@@ -78,6 +79,7 @@ def _workspace_row(**overrides: Any) -> dict[str, Any]:
         "failure_category": None,
         "attempt_count": 0,
         "version": 1,
+        "lease_expires_at": None,
         "requested_at": None,
         "completed_at": None,
         "created_by": "tatiana@origenlab.cl",
@@ -200,6 +202,7 @@ def test_create_quote_allocates_number_atomically_in_one_transaction(
         [
             {"idempotency_key": "quote-create-1"},  # fresh claim
             {"sales_opportunity_id": SALES_ID, "title": "Centrífuga CEAF"},
+            {"prefix": "CN", "pad_width": 6},  # series upsert policy check
             {"prefix": "CN", "pad_width": 6, "allocated_serial": 11729},
             _quote_row(),
             _revision_row(),
@@ -223,7 +226,16 @@ def test_create_quote_allocates_number_atomically_in_one_transaction(
     assert statements[2].startswith(
         "INSERT INTO commercial.customer_quote_number_series"
     )
-    assert "ON CONFLICT ( series_key ) DO NOTHING" in statements[2]
+    assert (
+        "ON CONFLICT ( series_key ) DO UPDATE SET series_key = EXCLUDED.series_key"
+        in statements[2]
+    )
+
+    series_upsert_params = cursor.executed[2][1]
+    # The series identity is fixed -- never the configured prefix -- so a
+    # later prefix/pad_width change can never silently start a second
+    # series row.
+    assert series_upsert_params["series_key"] == "customer_quote"
 
     allocate_sql, allocate_params = cursor.executed[3]
 
@@ -233,7 +245,7 @@ def test_create_quote_allocates_number_atomically_in_one_transaction(
     assert "next_serial = next_serial + 1" in allocate_sql
     assert "RETURNING" in allocate_sql
     assert "next_serial - 1 AS allocated_serial" in allocate_sql
-    assert allocate_params["series_key"] == "CN"
+    assert allocate_params["series_key"] == "customer_quote"
 
     insert_sql, insert_params = cursor.executed[4]
 
@@ -276,6 +288,7 @@ def test_create_quote_number_never_selects_serial_before_update(
         [
             {"idempotency_key": "quote-create-1"},
             {"sales_opportunity_id": SALES_ID, "title": "Centrífuga CEAF"},
+            {"prefix": "CN", "pad_width": 6},  # series upsert policy check
             {"prefix": "CN", "pad_width": 6, "allocated_serial": 11729},
             _quote_row(),
             _revision_row(),
@@ -368,6 +381,33 @@ def test_create_quote_without_numbering_config_fails_closed(
     assert not any(
         "customer_quote_number_series" in statement
         or statement.startswith("INSERT INTO commercial.customer_quote")
+        for statement, _ in cursor.executed
+    )
+
+
+def test_create_quote_fails_closed_on_prefix_drift_from_durable_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, cursor = _repository(
+        monkeypatch,
+        [
+            {"idempotency_key": "quote-create-1"},
+            {"sales_opportunity_id": SALES_ID, "title": "Centrífuga CEAF"},
+            # The durable series row already exists with a different prefix
+            # than the currently configured one -- must fail closed here,
+            # before any allocation or quote write.
+            {"prefix": "CN", "pad_width": 6},
+        ],
+    )
+
+    drifted = QuoteNumberingConfig(prefix="CX", pad_width=6, seed_next_serial=1)
+
+    with pytest.raises(QuoteNumberingPolicyMismatchError):
+        repo.create_quote(**_create_kwargs(numbering=drifted))
+
+    assert not any(
+        statement.startswith("UPDATE commercial.customer_quote_number_series")
+        or statement.startswith("INSERT INTO commercial.customer_quote (")
         for statement, _ in cursor.executed
     )
 
@@ -492,6 +532,7 @@ def test_complete_drive_provision_persists_references_and_event(
     workspace = repo.complete_drive_provision(
         quote_id=QUOTE_ID,
         operator="tatiana@origenlab.cl",
+        attempt_version=2,
         folder_id="folder-1",
         folder_web_url="https://drive.google.com/drive/folders/folder-1",
         sheet_file_id="sheet-1",
@@ -526,6 +567,7 @@ def test_complete_drive_provision_rejects_non_https_urls(
         repo.complete_drive_provision(
             quote_id=QUOTE_ID,
             operator="tatiana@origenlab.cl",
+            attempt_version=2,
             folder_id="folder-1",
             folder_web_url="http://drive.google.com/insecure",
             sheet_file_id="sheet-1",
@@ -554,6 +596,7 @@ def test_fail_drive_provision_keeps_partial_folder_and_redacted_category(
     workspace = repo.fail_drive_provision(
         quote_id=QUOTE_ID,
         operator="tatiana@origenlab.cl",
+        attempt_version=2,
         failure_category="drive_unavailable",
         folder_id="folder-1",
         folder_web_url="https://drive.google.com/drive/folders/folder-1",
@@ -588,6 +631,7 @@ def test_fail_drive_provision_rejects_unsafe_category(
         repo.fail_drive_provision(
             quote_id=QUOTE_ID,
             operator="tatiana@origenlab.cl",
+            attempt_version=2,
             failure_category="Error: SSLCertVerificationError at https://...",
         )
 

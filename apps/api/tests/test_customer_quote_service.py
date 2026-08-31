@@ -98,6 +98,7 @@ def _workspace(**overrides: Any) -> CustomerQuoteDriveWorkspace:
         "failure_category": None,
         "attempt_count": 0,
         "version": 1,
+        "lease_expires_at": None,
         "requested_at": None,
         "completed_at": None,
         "created_by": OPERATOR,

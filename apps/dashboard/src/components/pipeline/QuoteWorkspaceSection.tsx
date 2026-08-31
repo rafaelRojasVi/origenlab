@@ -24,6 +24,8 @@ const FAILURE_CATEGORY_MESSAGES: Record<string, string> = {
     "La cuenta de Drive no tiene permisos suficientes.",
   drive_not_found:
     "No se encontró la carpeta o plantilla configurada en Drive.",
+  drive_credentials_invalid:
+    "Las credenciales de Google Drive no son válidas. Avisa al administrador del sistema.",
 };
 
 function failureCategoryMessage(category: string | null): string {
@@ -108,7 +110,18 @@ function QuoteWorkspaceStatus({
     // A process crash (or a lost response) between the durable commit and
     // Drive completion can leave the workspace pending indefinitely with no
     // automatic recovery: an explicit retry action must always be reachable
-    // here, not only once the workspace has moved to "failed".
+    // here, not only once the workspace has moved to "failed" -- but only
+    // once the server confirms no attempt actively owns it (retryable):
+    // offering a retry while an attempt is in flight would only conflict.
+    if (!workspace.retryable) {
+      return (
+        <p className="text-sm text-slate-600" role="status">
+          Preparando carpeta en Drive… ya hay un intento en curso, intenta
+          de nuevo en unos minutos.
+        </p>
+      );
+    }
+
     return (
       <div className="space-y-2">
         <p className="text-sm text-slate-600" role="status">
