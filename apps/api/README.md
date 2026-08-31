@@ -205,7 +205,8 @@ Postgres URL is **not** required.
 | `ORIGENLAB_DRIVE_QUOTES_ROOT_FOLDER_ID` | Drive folder that holds every quote workspace folder |
 | `ORIGENLAB_DRIVE_QUOTE_TEMPLATE_FILE_ID` | Master quotation spreadsheet template file ID |
 | `ORIGENLAB_DRIVE_AUTH_MODE` | `authorized_user_my_drive` or `service_account_shared_drive` — see below |
-| `ORIGENLAB_DRIVE_CREDENTIALS_FILE` | Credentials JSON path for the configured auth mode (requires `uv sync --extra drive`) |
+| `ORIGENLAB_DRIVE_CREDENTIALS_FILE` | Credentials JSON path for the configured auth mode |
+| `ORIGENLAB_DRIVE_EXPECTED_PRINCIPAL_EMAIL` | Expected Drive identity (e.g. `contacto@origenlab.cl`); the preflight check fails closed as `drive_principal_mismatch` if the credentials belong to any other account |
 | `ORIGENLAB_DRIVE_SHARED_DRIVE_ID` | Shared Drive ID; **required** in `service_account_shared_drive` mode, optional in `authorized_user_my_drive` mode |
 | `ORIGENLAB_QUOTE_NUMBER_PREFIX` / `_PAD_WIDTH` / `_SEED_NEXT_SERIAL` | The recorded quote-numbering business decision; quote creation returns `quote_numbering_not_configured` (503) until all three are set. The seed applies only on the first allocation; the durable `commercial.customer_quote_number_series` row is the counter truth afterwards. |
 
@@ -232,12 +233,12 @@ uv run python scripts/drive_preflight.py
 
 Without Drive configuration, quote creation still succeeds durably and the
 workspace records a redacted `failed` category (`drive_not_configured`) that
-the dashboard can retry after activation. If Drive is configured but the
-optional `google-auth` dependency is not installed (the production Docker
-image installs it only when built with `uv sync --extra drive`, which it
-does not by default), creation fails closed as `drive_dependency_missing`
-rather than silently reporting `drive_not_configured`. No test or default
-code path calls Google APIs.
+the dashboard can retry after activation. The production Docker image
+installs the optional `google-auth` dependency (`uv sync --extra drive`,
+see [Dockerfile](Dockerfile)); an environment that runs without it (e.g. a
+stale image, a non-Docker deployment) still fails closed as
+`drive_dependency_missing` rather than silently reporting
+`drive_not_configured`. No test or default code path calls Google APIs.
 
 ## Tests
 
@@ -248,7 +249,7 @@ cd apps/api
 ./scripts/validate.sh
 ```
 
-`./scripts/validate.sh` first runs a **Render-style no-dev runtime import smoke** (`uv sync --frozen --no-dev`, then imports `psycopg` and `origenlab_api.main` without Postgres or network). That catches missing runtime dependencies before production deploy. It then runs **`scripts/check_runtime_dependency_boundary.py`**, which inspects effective `uv tree --no-dev` and `uv tree --group dev` output and fails if ML-heavy packages (for example `torch`, `transformers`, `faiss-cpu`) appear in those trees.
+`./scripts/validate.sh` first runs a **Render-style no-dev runtime import smoke** (`uv sync --frozen --no-dev --extra drive`, matching [Dockerfile](Dockerfile) exactly, then imports `psycopg`, `google.oauth2.credentials`/`service_account`, and `origenlab_api.main` without Postgres or network). That catches missing runtime dependencies before production deploy. It then runs **`scripts/check_runtime_dependency_boundary.py`**, which inspects effective `uv tree --no-dev` and `uv tree --group dev` output and fails if ML-heavy packages (for example `torch`, `transformers`, `faiss-cpu`) appear in those trees.
 
 **Runtime dependency boundary:** `apps/api` must remain ML-free at runtime and in dev test dependencies. Optional ML groups from `origenlab-email-pipeline` may still appear in `uv.lock`, but CI validates **effective** dependency trees — not raw lockfile entries — so Dependabot torch bumps are not merged blindly when they would enter the API install graph.
 
