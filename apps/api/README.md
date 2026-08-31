@@ -240,6 +240,68 @@ stale image, a non-Docker deployment) still fails closed as
 `drive_dependency_missing` rather than silently reporting
 `drive_not_configured`. No test or default code path calls Google APIs.
 
+### Production activation (contacto@origenlab.cl) — supervised setup
+
+**Not yet performed.** This records the exact steps for the human operator
+who will run them; nothing here is automated. Quote numbering also stays
+`quote_numbering_not_configured` until the owner separately records the
+numbering decision — see the table above.
+
+1. Confirm `contacto@origenlab.cl` is a real, Drive-enabled Google account
+   (not an alias, not a distribution list). It is unrelated to any personal
+   Gmail account used elsewhere (e.g. for a ChatGPT Drive connection).
+2. In Google Cloud Console, create (or reuse) a project for this OAuth
+   client. If `contacto@origenlab.cl` belongs to a Google Workspace, prefer
+   creating the OAuth consent screen as an **Internal** application over
+   leaving it in external **Testing** state: apps left in Testing can issue
+   refresh tokens that expire after roughly 7 days, which would silently
+   break quote creation; Internal (Workspace) or a verified External/
+   Production app does not have that limitation.
+3. Enable the Google Drive API for that project.
+4. Create an OAuth 2.0 **Desktop app** client and download its client
+   secrets JSON. Keep it outside git, exactly like any other credential.
+5. Run the bootstrap helper, signing in specifically as
+   `contacto@origenlab.cl` when the browser consent screen appears:
+   ```bash
+   cd apps/api
+   uv sync --extra drive-bootstrap
+   uv run python scripts/authorize_drive_user.py \
+     --client-secrets-file /secure/path/oauth-client.json \
+     --output-file /secure/path/origenlab-drive-credentials.json \
+     --expected-email contacto@origenlab.cl
+   ```
+   The script refuses to write anywhere inside this repository and refuses
+   to overwrite an existing file without `--replace-existing`; it never
+   prints the token, refresh token, client secret, or credential contents.
+6. Store the resulting authorized-user JSON outside git. It later becomes a
+   production secret file (e.g. a Render secret file), referenced by
+   `ORIGENLAB_DRIVE_CREDENTIALS_FILE` — never committed, never logged.
+7. While still signed in as `contacto@origenlab.cl` in Drive, create the
+   quotations root folder, e.g. named `OrigenLab — Cotizaciones CRM`.
+8. Share that root folder manually with Tatiana and Rafael (Drive's own
+   sharing UI) — this backend never manages Drive permissions itself (see
+   the file-header note on `apps/api/src/origenlab_api/drive/google_drive.py`).
+9. Copy the master quotation template into `contacto@origenlab.cl`'s Drive
+   so the template is owned there too (preferred, not strictly required —
+   `scripts/drive_preflight.py` reports template ownership status without
+   blocking on a mismatch, since the template may legitimately still be
+   shared from elsewhere for a while).
+10. Configure `ORIGENLAB_DRIVE_QUOTES_ROOT_FOLDER_ID`,
+    `ORIGENLAB_DRIVE_QUOTE_TEMPLATE_FILE_ID`,
+    `ORIGENLAB_DRIVE_AUTH_MODE=authorized_user_my_drive`,
+    `ORIGENLAB_DRIVE_CREDENTIALS_FILE`, and
+    `ORIGENLAB_DRIVE_EXPECTED_PRINCIPAL_EMAIL=contacto@origenlab.cl`.
+11. Run the read-only preflight check and confirm it reports
+    `principal_email: contacto@origenlab.cl` and `ok`:
+    ```bash
+    uv run python scripts/drive_preflight.py
+    ```
+12. Conduct the first real end-to-end test only against a disposable
+    Postgres (never the production database) and a clearly marked test
+    folder/template inside the quotations root — never against real
+    customer data or the eventual production template until that first
+    test is reviewed.
+
 ## Tests
 
 Default local pre-PR check (frozen sync + full pytest, same shape as CI):
