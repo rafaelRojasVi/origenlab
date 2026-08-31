@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import re
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -11,6 +13,19 @@ from pydantic import PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ApiBackend = Literal["sqlite", "postgres"]
+
+# Uppercase letters only, matching the historical CN-style evidence shape;
+# widening the charset is a numbering-policy change, not a convenience edit.
+_QUOTE_NUMBER_PREFIX_RE = re.compile(r"^[A-Z]{1,8}$")
+
+
+@dataclass(frozen=True)
+class QuoteNumberingConfig:
+    """The complete, explicitly configured quote-numbering decision."""
+
+    prefix: str
+    pad_width: int
+    seed_next_serial: int
 
 _API_ROOT = Path(__file__).resolve().parents[2]
 _EMAIL_PIPELINE_ROOT = _API_ROOT.parent / "email-pipeline"
@@ -81,6 +96,21 @@ class Settings(BaseSettings):
     env: str | None = None
     """Bearer/API-key token required for non-public routes when ORIGENLAB_ENV=production."""
     api_auth_token: str | None = None
+
+    # CRM-Q1 quote Drive workspace + numbering: every field below fails
+    # closed until explicitly configured (placeholders in .env.example).
+    """Drive folder ID under which every quote workspace folder is created."""
+    drive_quotes_root_folder_id: str | None = None
+    """Drive file ID of the master quotation spreadsheet template."""
+    drive_quote_template_file_id: str | None = None
+    """Path to a Google service-account JSON credential file (Drive scope)."""
+    drive_service_account_file: Path | None = None
+    """Quote-number series prefix (e.g. CN) — part of the numbering decision."""
+    quote_number_prefix: str | None = None
+    """Zero-pad width for the quote-number serial (1..10)."""
+    quote_number_pad_width: int | None = None
+    """First serial the durable series is seeded with on first allocation."""
+    quote_number_seed_next_serial: int | None = None
 
     _dotenv_disabled: bool = PrivateAttr(default=False)
 
@@ -176,6 +206,32 @@ class Settings(BaseSettings):
         if self.tender_terms_dir is not None:
             return self.tender_terms_dir.expanduser().resolve()
         return _DEFAULT_TENDER_TERMS_DIR.resolve()
+
+    def quote_numbering_config(self) -> QuoteNumberingConfig | None:
+        """The configured quote-numbering decision, or None to fail closed.
+
+        A partial or invalid configuration is treated exactly like no
+        configuration: quote-number allocation must never guess the missing
+        parts of the business decision.
+        """
+        prefix = (self.quote_number_prefix or "").strip()
+        pad_width = self.quote_number_pad_width
+        seed = self.quote_number_seed_next_serial
+
+        if not prefix or pad_width is None or seed is None:
+            return None
+
+        if _QUOTE_NUMBER_PREFIX_RE.fullmatch(prefix) is None:
+            return None
+
+        if not (1 <= pad_width <= 10) or seed < 1:
+            return None
+
+        return QuoteNumberingConfig(
+            prefix=prefix,
+            pad_width=pad_width,
+            seed_next_serial=seed,
+        )
 
     def resolved_operator_tender_import_dir(self) -> Path:
         if self.operator_tender_import_dir is not None:
