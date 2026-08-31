@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -12,8 +13,36 @@ NDR_REVIEW_SUMMARY_FILENAME = "ndr_review_summary.json"
 RECOMMENDED_ACTION_REVIEW_NDR = "review_ndr_allowlists"
 
 
+def _queue_generated_at_sort_key(path: Path) -> tuple[int, float, str]:
+    """Prefer queue generation time over filename suffix ordering.
+
+    Named campaign queues may share a date prefix with the canonical queue,
+    e.g. ``ndr_review_queue_2026_08_31_hielscher_14d``. Lexicographic
+    filename ordering is therefore not chronological.
+    """
+    summary_path = path / NDR_REVIEW_SUMMARY_FILENAME
+    try:
+        data = json.loads(summary_path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            raw = data.get("generated_at_utc", data.get("generated_at"))
+            if isinstance(raw, str) and raw.strip():
+                value = raw.strip()
+                if value.endswith("Z"):
+                    value = value[:-1] + "+00:00"
+                parsed = datetime.fromisoformat(value)
+                if parsed.tzinfo is not None:
+                    generated = parsed.astimezone(timezone.utc)
+                    return (1, generated.timestamp(), path.name)
+    except (OSError, json.JSONDecodeError, ValueError):
+        pass
+
+    # Preserve deterministic legacy behavior only as a fallback for
+    # directories without usable generation metadata.
+    return (0, 0.0, path.name)
+
+
 def find_latest_ndr_review_queue_dir(active_current: Path) -> Path | None:
-    """Return the newest ``ndr_review_queue_<date_label>`` directory under active/current."""
+    """Return the chronologically newest NDR queue under active/current."""
     if not active_current.is_dir():
         return None
     candidates = [
@@ -23,7 +52,7 @@ def find_latest_ndr_review_queue_dir(active_current: Path) -> Path | None:
     ]
     if not candidates:
         return None
-    return max(candidates, key=lambda path: path.name.removeprefix(NDR_REVIEW_QUEUE_DIR_PREFIX))
+    return max(candidates, key=_queue_generated_at_sort_key)
 
 
 def _empty_ndr_pending_review_status(*, parse_error: str | None = None) -> dict[str, Any]:

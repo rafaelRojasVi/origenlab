@@ -146,3 +146,42 @@ def test_apply_ndr_recommended_action_only_when_healthy_and_idle() -> None:
         )
         == "none"
     )
+
+
+def test_find_latest_ndr_review_queue_uses_generated_at_not_suffix(
+    active_current: Path,
+) -> None:
+    """A named same-day queue must not shadow a newer canonical queue."""
+    _write_queue(
+        active_current,
+        date_label="2026_08_31_hielscher_14d",
+        summary={
+            "generated_at": "2026-08-31T15:32:42+00:00",
+            "date_label": "2026_08_31",
+            "batch_counts": {
+                "A": 43,
+                "B": 14,
+                "C": 0,
+                "D": 75,
+                "E": 15,
+            },
+        },
+    )
+
+    canonical = _write_queue(
+        active_current,
+        date_label="2026_08_31",
+        summary={
+            "generated_at": "2026-08-31T21:54:18+00:00",
+            "date_label": "2026_08_31",
+            "batch_counts": {
+                "A": 18,
+                "B": 36,
+                "C": 0,
+                "D": 11,
+                "E": 3,
+            },
+        },
+    )
+
+    assert find_latest_ndr_review_queue_dir(active_current) == canonical

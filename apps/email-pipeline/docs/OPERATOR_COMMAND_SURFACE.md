@@ -27,6 +27,7 @@ uv run origenlab audit-institution-grouping
 uv run origenlab build-mart
 uv run origenlab build-commercial-intel
 uv run origenlab gmail-ingest
+uv run origenlab gmail-ingest-ndr -- --since-days 2
 uv run origenlab gmail-ingest-folders
 uv run origenlab mirror-dashboard
 uv run origenlab mirror-dashboard --apply
@@ -62,6 +63,7 @@ Module fallback: `uv run python -m origenlab_email_pipeline.cli <subcommand>`. P
 | `build-mart` | `mart/build_business_mart.py` | Break-glass; `--rebuild` deletes mart tables |
 | `build-commercial-intel` | `commercial/build_commercial_intel_v1.py` | SQLite; incremental `commercial_*` refresh; `--rebuild` break-glass via passthrough |
 | `gmail-ingest` | `ingest/05_workspace_gmail_imap_to_sqlite.py` (INBOX + Sent) | SQLite; daily refresh; rejects `--replace-source` |
+| `gmail-ingest-ndr` | `qa/ingest_ndr_mailboxes.py` (`[Gmail]/Todos` + `[Gmail]/Papelera`) | SQLite; bounded catch-up for archived/trashed NDR evidence; duplicate Message-ID protected |
 | `gmail-ingest-folders` | same (`--list-folders`) | No; discover Sent label if `[Gmail]/Enviados` differs |
 | `gmail-ingest-help` | same (`--help` only) | No; ingest flags reference |
 | `mirror-dashboard` | `sync/sync_dashboard_postgres_mirror.py` | Postgres (dry-run default); `--apply` writes — see [`pipeline/POSTGRES_MIRROR_REFRESH.md`](pipeline/POSTGRES_MIRROR_REFRESH.md) |
@@ -123,6 +125,7 @@ Workspace: `reports/out/active/current/`. Volume: `reviewed_marketing_contacts.c
 | `cli check-readiness` | Readiness | No |
 | `cli daily-health` | Bundled health | Reports |
 | `cli audit-overlap` | Overlap audit | Reports |
+| `cli gmail-ingest-ndr -- --since-days N` | Catch up archived + trashed Gmail before NDR review | SQLite |
 | `cli ndr-review` | NDR review batches | Reports |
 | `cli ndr-safe-auto-apply --batch A --dry-run` | Preview Batch A allowlist + audit JSONL | Reports |
 | `cli ndr-safe-auto-apply --batch A --apply --operator <name> --confirm-reviewed` | Guarded Batch A suppression apply | SQLite + Reports |
