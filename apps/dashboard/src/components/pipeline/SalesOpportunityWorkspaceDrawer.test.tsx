@@ -21,6 +21,12 @@ vi.mock("./SalesOpportunityWorkPanel", () => ({
   ),
 }));
 
+vi.mock("./QuoteWorkspaceSection", () => ({
+  QuoteWorkspaceSection: ({ salesOpportunityId }: { salesOpportunityId: string }) => (
+    <div data-testid="quote-workspace-stub">{salesOpportunityId}</div>
+  ),
+}));
+
 function item(overrides: Partial<SalesOpportunityListItem> = {}): SalesOpportunityListItem {
   return {
     sales_opportunity_id: "sales_1",
@@ -72,6 +78,12 @@ describe("SalesOpportunityWorkspaceDrawer", () => {
     expect(screen.getByText("uach.cl")).toBeInTheDocument();
     expect(screen.getByText("Centrífuga refrigerada")).toBeInTheDocument();
     expect(screen.getByTestId("work-panel-stub")).toBeInTheDocument();
+  });
+
+  it("renders the quote workspace section for the open opportunity", () => {
+    render(<SalesOpportunityWorkspaceDrawer item={item()} open onClose={vi.fn()} onStageChanged={vi.fn()} />);
+
+    expect(screen.getByTestId("quote-workspace-stub")).toHaveTextContent("sales_1");
   });
 
   it("prefers the resolved durable organization/contact identity over machine display strings", () => {

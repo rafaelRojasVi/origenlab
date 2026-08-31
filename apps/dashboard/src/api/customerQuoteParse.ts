@@ -1,0 +1,219 @@
+/**
+ * Strict parsers for durable customer-quote responses (CRM-Q1).
+ *
+ * Drive links pass through `safeDriveUrl`: only https URLs on the exact
+ * drive.google.com / docs.google.com hosts survive; anything else becomes
+ * null so the UI can never render an unvalidated link.
+ */
+
+import type {
+  CustomerQuote,
+  CustomerQuoteDriveWorkspace,
+  CustomerQuoteListResponse,
+  CustomerQuoteReadResponse,
+  CustomerQuoteStatus,
+  QuoteProvisioningStatus,
+} from "./customerQuoteTypes";
+
+const QUOTE_ID_RE = /^quote_[0-9a-f]{32}$/;
+const SALES_OPPORTUNITY_ID_RE = /^sales_[0-9a-f]{32}$/;
+
+const ALLOWED_DRIVE_HOSTS = new Set([
+  "drive.google.com",
+  "docs.google.com",
+]);
+
+const PROVISIONING_STATUSES: ReadonlySet<string> = new Set([
+  "pending",
+  "ready",
+  "failed",
+]);
+
+function record(
+  raw: unknown,
+  label: string,
+): Record<string, unknown> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`${label} must be an object`);
+  }
+
+  return raw as Record<string, unknown>;
+}
+
+function stringValue(value: unknown, label: string): string {
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be a string`);
+  }
+
+  return value;
+}
+
+function nullableString(value: unknown, label: string): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  return stringValue(value, label);
+}
+
+function integerAtLeast(
+  value: unknown,
+  minimum: number,
+  label: string,
+): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < minimum
+  ) {
+    throw new Error(`${label} must be an integer >= ${minimum}`);
+  }
+
+  return value;
+}
+
+export function safeDriveUrl(value: unknown): string | null {
+  if (typeof value !== "string" || !value) {
+    return null;
+  }
+
+  let parsed: URL;
+
+  try {
+    parsed = new URL(value);
+  } catch {
+    return null;
+  }
+
+  if (parsed.protocol !== "https:") {
+    return null;
+  }
+
+  if (!ALLOWED_DRIVE_HOSTS.has(parsed.hostname)) {
+    return null;
+  }
+
+  return value;
+}
+
+function parseWorkspace(raw: unknown): CustomerQuoteDriveWorkspace {
+  const data = record(raw, "drive_workspace");
+
+  const provider = stringValue(data.provider, "drive_workspace.provider");
+
+  if (provider !== "google_drive") {
+    throw new Error(`Unknown drive workspace provider: ${provider}`);
+  }
+
+  const provisioningStatus = stringValue(
+    data.provisioning_status,
+    "drive_workspace.provisioning_status",
+  );
+
+  if (!PROVISIONING_STATUSES.has(provisioningStatus)) {
+    throw new Error(
+      `Unknown drive workspace provisioning status: ${provisioningStatus}`,
+    );
+  }
+
+  return {
+    provider,
+    provisioning_status: provisioningStatus as QuoteProvisioningStatus,
+    folder_id: nullableString(data.folder_id, "drive_workspace.folder_id"),
+    folder_web_url: safeDriveUrl(data.folder_web_url),
+    sheet_file_id: nullableString(
+      data.sheet_file_id,
+      "drive_workspace.sheet_file_id",
+    ),
+    sheet_web_url: safeDriveUrl(data.sheet_web_url),
+    failure_category: nullableString(
+      data.failure_category,
+      "drive_workspace.failure_category",
+    ),
+    attempt_count: integerAtLeast(
+      data.attempt_count,
+      0,
+      "drive_workspace.attempt_count",
+    ),
+    version: integerAtLeast(data.version, 1, "drive_workspace.version"),
+    requested_at: nullableString(
+      data.requested_at,
+      "drive_workspace.requested_at",
+    ),
+    completed_at: nullableString(
+      data.completed_at,
+      "drive_workspace.completed_at",
+    ),
+  };
+}
+
+export function parseCustomerQuote(raw: unknown): CustomerQuote {
+  const data = record(raw, "customer quote");
+
+  const quoteId = stringValue(data.quote_id, "quote_id");
+
+  if (!QUOTE_ID_RE.test(quoteId)) {
+    throw new Error("quote_id has an unexpected format");
+  }
+
+  const salesOpportunityId = stringValue(
+    data.sales_opportunity_id,
+    "sales_opportunity_id",
+  );
+
+  if (!SALES_OPPORTUNITY_ID_RE.test(salesOpportunityId)) {
+    throw new Error("sales_opportunity_id has an unexpected format");
+  }
+
+  const status = stringValue(data.status, "status");
+
+  if (status !== "draft") {
+    throw new Error(`Unknown customer quote status: ${status}`);
+  }
+
+  return {
+    quote_id: quoteId,
+    sales_opportunity_id: salesOpportunityId,
+    quote_number: stringValue(data.quote_number, "quote_number"),
+    status: status as CustomerQuoteStatus,
+    version: integerAtLeast(data.version, 1, "version"),
+    latest_revision_number: integerAtLeast(
+      data.latest_revision_number,
+      1,
+      "latest_revision_number",
+    ),
+    created_by: stringValue(data.created_by, "created_by"),
+    updated_by: stringValue(data.updated_by, "updated_by"),
+    created_at: stringValue(data.created_at, "created_at"),
+    updated_at: stringValue(data.updated_at, "updated_at"),
+    drive_workspace: parseWorkspace(data.drive_workspace),
+  };
+}
+
+export function parseCustomerQuoteListResponse(
+  raw: unknown,
+): CustomerQuoteListResponse {
+  const data = record(raw, "customer quote list response");
+  const meta = record(data.meta, "meta");
+
+  if (!Array.isArray(data.items)) {
+    throw new Error("items must be an array");
+  }
+
+  return {
+    meta: {
+      count: integerAtLeast(meta.count, 0, "meta.count"),
+    },
+    items: data.items.map(parseCustomerQuote),
+  };
+}
+
+export function parseCustomerQuoteReadResponse(
+  raw: unknown,
+): CustomerQuoteReadResponse {
+  const data = record(raw, "customer quote read response");
+
+  return {
+    item: parseCustomerQuote(data.item),
+  };
+}

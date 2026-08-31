@@ -30,7 +30,7 @@ describe("dashboard read-only policy", () => {
     expect(entries.length).toBeGreaterThan(5);
   });
 
-  // Dashboard mutation authority is intentionally split across exactly two
+  // Dashboard mutation authority is intentionally split across exactly three
   // narrow modules:
   //
   // 1. institutionIntel/adapter.ts:
@@ -40,6 +40,10 @@ describe("dashboard read-only policy", () => {
   //    one shared POST transport used only by the five explicit CRM command
   //    shapes admitted by the production Worker.
   //
+  // 3. customerQuoteClient.ts (CRM-Q1):
+  //    two explicit quote POST commands (create quote, retry Drive
+  //    workspace provisioning) admitted by the production Worker.
+  //
   // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
 
   const ANNEX_MUTATION_FILE =
@@ -47,6 +51,9 @@ describe("dashboard read-only policy", () => {
 
   const COMMERCIAL_MUTATION_FILE =
     "../api/commercialOperationsClient.ts";
+
+  const CUSTOMER_QUOTE_MUTATION_FILE =
+    "../api/customerQuoteClient.ts";
 
   const ANNEX_MUTATION_ROUTES = [
     "`/operator/procurement/tenders/${encodeURIComponent(tenderCode)}/annex-bundle/preview`",
@@ -67,7 +74,8 @@ describe("dashboard read-only policy", () => {
 
       if (
         path !== ANNEX_MUTATION_FILE &&
-        path !== COMMERCIAL_MUTATION_FILE
+        path !== COMMERCIAL_MUTATION_FILE &&
+        path !== CUSTOMER_QUOTE_MUTATION_FILE
       ) {
         hits.push(
           `${path} (unsanctioned mutation module)`,
@@ -107,6 +115,62 @@ describe("dashboard read-only policy", () => {
               `${path} (expected sanctioned route exactly once: ${route}; found ${occurrences})`,
             );
           }
+        }
+
+        continue;
+      }
+
+      if (path === CUSTOMER_QUOTE_MUTATION_FILE) {
+        if (
+          methods.length !== 2 ||
+          methods.some(
+            (method) => method !== "POST",
+          )
+        ) {
+          hits.push(
+            `${path} (expected exactly 2 POST quote commands, found ${methods.join(", ") || "none"})`,
+          );
+        }
+
+        if (
+          !text.includes(
+            "salesOpportunityQuotesPath",
+          )
+        ) {
+          hits.push(
+            `${path} (missing quote-create command path)`,
+          );
+        }
+
+        if (
+          !text.includes(
+            "customerQuoteDriveWorkspacePath",
+          )
+        ) {
+          hits.push(
+            `${path} (missing drive-workspace retry command path)`,
+          );
+        }
+
+        if (
+          /method:\s*["'](PUT|PATCH|DELETE)["']/i.test(
+            text,
+          )
+        ) {
+          hits.push(
+            `${path} (PUT/PATCH/DELETE remain forbidden)`,
+          );
+        }
+
+        if (
+          /X-OriginLab-Operator-Email/i.test(text) &&
+          !/never supplies X-OriginLab-Operator-Email/i.test(
+            text,
+          )
+        ) {
+          hits.push(
+            `${path} (browser must not inject trusted operator identity)`,
+          );
         }
 
         continue;
