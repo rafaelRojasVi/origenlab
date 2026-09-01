@@ -79,10 +79,10 @@ describe("CommercialOpportunityDetailDrawer — promotion", () => {
     );
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Promover a CRM" })).toBeInTheDocument());
-    expect(screen.queryByText("Abrir en Pipeline")).not.toBeInTheDocument();
+    expect(screen.queryByText("Abrir en Ventas")).not.toBeInTheDocument();
   });
 
-  it("shows Abrir en Pipeline when already promoted", async () => {
+  it("shows Abrir en Ventas when already promoted", async () => {
     render(
       <CommercialOpportunityDetailDrawer
         opportunityId={OPPORTUNITY_ID}
@@ -95,7 +95,7 @@ describe("CommercialOpportunityDetailDrawer — promotion", () => {
       />,
     );
 
-    await waitFor(() => expect(screen.getByText("Abrir en Pipeline")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Abrir en Ventas")).toBeInTheDocument());
     expect(screen.queryByLabelText("Título de la oportunidad")).not.toBeInTheDocument();
   });
 
@@ -141,7 +141,7 @@ describe("CommercialOpportunityDetailDrawer — promotion", () => {
         expect.any(String),
       ),
     );
-    await waitFor(() => expect(screen.getByText("Abrir en Pipeline")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Abrir en Ventas")).toBeInTheDocument());
     expect(onPromoted).toHaveBeenCalledWith(OPPORTUNITY_ID, "sales_1");
   });
 

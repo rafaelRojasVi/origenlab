@@ -8,7 +8,7 @@ describe("CotizacionesPage", () => {
     const onOpenVentas = vi.fn();
     render(<CotizacionesPage onOpenVentas={onOpenVentas} />);
 
-    expect(screen.getByRole("heading", { name: "Cotizaciones" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Vista consolidada" })).toBeInTheDocument();
     expect(screen.getByText(/cada cotización vive dentro de su oportunidad/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Ir a Ventas" }));

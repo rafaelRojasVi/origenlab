@@ -5,7 +5,7 @@ export function CotizacionesPage({ onOpenVentas }: { onOpenVentas: () => void })
   return (
     <div className="space-y-4">
       <V2PageHeader
-        title="Cotizaciones"
+        title="Vista consolidada"
         subtitle="Vista consolidada de cotizaciones — próximamente."
       />
       <V2EmptyState

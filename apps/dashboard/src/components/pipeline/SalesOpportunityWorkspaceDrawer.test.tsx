@@ -78,6 +78,11 @@ describe("SalesOpportunityWorkspaceDrawer", () => {
     expect(screen.getAllByText("uach.cl").length).toBeGreaterThan(0);
     expect(screen.getByText("Centrífuga refrigerada")).toBeInTheDocument();
     expect(screen.getByTestId("work-panel-stub")).toBeInTheDocument();
+
+    // Scoped to the Identidad section itself, not just the header, so a
+    // regression isolated to the Identidad row (e.g. it being deleted) is
+    // actually caught rather than passing on the header's own fallback text.
+    expect(within(screen.getByLabelText("Identidad")).getByText("uach.cl")).toBeInTheDocument();
   });
 
   it("renders the quote workspace section for the open opportunity", () => {
@@ -304,6 +309,7 @@ describe("SalesOpportunityWorkspaceDrawer", () => {
     expect(screen.getByText("Próxima acción")).toBeInTheDocument();
     expect(screen.getByText("Llamar a comprador")).toBeInTheDocument();
     expect(screen.getByText("+1 seguimiento(s) más abajo")).toBeInTheDocument();
+    expect(screen.getByText(/^Vence: /)).toBeInTheDocument();
   });
 
   it("omits the próxima acción callout when there is no next task", () => {

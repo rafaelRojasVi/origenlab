@@ -326,10 +326,10 @@ describe("CommercialOpportunitiesCockpit", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Promover a CRM" }));
-    await waitFor(() => expect(screen.getByText("Abrir en Pipeline")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Abrir en Ventas")).toBeInTheDocument());
 
     // Close the drawer — the table row's badge must already reflect the promotion,
-    // and reopening the SAME row must show "Abrir en Pipeline" straight away, with
+    // and reopening the SAME row must show "Abrir en Ventas" straight away, with
     // no second fetchSalesOpportunities call triggered by either action.
     fireEvent.click(screen.getByRole("button", { name: "Cerrar" }));
 
@@ -337,7 +337,7 @@ describe("CommercialOpportunitiesCockpit", () => {
     expect(fetchSalesOpportunities).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Ver ciclo" }));
-    await waitFor(() => expect(screen.getByText("Abrir en Pipeline")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Abrir en Ventas")).toBeInTheDocument());
     expect(screen.queryByLabelText("Título de la oportunidad")).not.toBeInTheDocument();
     expect(fetchSalesOpportunities).toHaveBeenCalledTimes(1);
   });

@@ -105,7 +105,7 @@ export function DashboardShell({
                 : section === "pipeline"
                   ? "No envía correos · los cambios de etapa quedan registrados en el CRM"
                   : section === "deals"
-                    ? "No envía correos · promover a Pipeline es la única escritura"
+                    ? "No envía correos · promover a Ventas es la única escritura"
                     : "No envía correos ni modifica datos"}
             </span>
             <span className="hidden sm:inline" aria-hidden>

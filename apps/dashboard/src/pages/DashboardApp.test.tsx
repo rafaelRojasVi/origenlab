@@ -116,11 +116,20 @@ vi.mock("../api/commercialOperationsClient", async (importOriginal) => {
   return {
     ...actual,
     fetchCommercialWorkQueue: vi.fn(),
+    fetchSalesOpportunities: vi.fn(),
   };
 });
 
 vi.mock("../api/mirrorCatalogClient", () => ({
   fetchCatalogProductsMirror: vi.fn(),
+}));
+
+vi.mock("../api/mirrorLeadIntelClient", () => ({
+  fetchLeadProspectsMirror: vi.fn(),
+  fetchLeadProspectDetailMirror: vi.fn(),
+  fetchLeadResearchSummaryMirror: vi.fn(),
+  downloadLeadProspectsExportCsv: vi.fn(),
+  mirrorLeadProspectsExportUrl: vi.fn(),
 }));
 
 vi.mock("../lib/logo/threeBodyCanvasRunner", () => ({
@@ -156,9 +165,14 @@ vi.mock("../api/institutionIntel/adapter", () => ({
 
 import { fetchTodayPanel, fetchWarmCases } from "../api/operatorClient";
 import { fetchCommercialDealsMirror } from "../api/mirrorCommercialClient";
-import { fetchCommercialWorkQueue } from "../api/commercialOperationsClient";
+import { fetchCommercialWorkQueue, fetchSalesOpportunities } from "../api/commercialOperationsClient";
 import { fetchCatalogProductsMirror } from "../api/mirrorCatalogClient";
+import {
+  fetchLeadProspectsMirror,
+  fetchLeadResearchSummaryMirror,
+} from "../api/mirrorLeadIntelClient";
 import { catalogListFixture } from "../test/fixtures/catalogMirrorFixtures";
+import { leadListFixture, leadSummaryFixture } from "../test/fixtures/leadIntelFixtures";
 
 function mockAllOk() {
   vi.mocked(
@@ -171,6 +185,12 @@ function mockAllOk() {
   vi.mocked(fetchTodayPanel).mockResolvedValue(panelSqlite);
   vi.mocked(fetchWarmCases).mockResolvedValue(warmPayload);
   vi.mocked(fetchCatalogProductsMirror).mockResolvedValue(catalogListFixture());
+  vi.mocked(fetchSalesOpportunities).mockResolvedValue({
+    meta: { data_source: "postgres", read_only: true, count: 0, total_count: 0, limit: 200, offset: 0 },
+    items: [],
+  });
+  vi.mocked(fetchLeadResearchSummaryMirror).mockResolvedValue(leadSummaryFixture());
+  vi.mocked(fetchLeadProspectsMirror).mockResolvedValue(leadListFixture());
   vi.mocked(fetchCommercialDealsMirror).mockResolvedValue({
     table_available: true,
     read_only: true,
@@ -322,6 +342,19 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
     });
   });
 
+  it("Cotizaciones page renders and its 'Ir a Ventas' action navigates to Ventas", async () => {
+    render(<DashboardApp />);
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
+
+    await navigateTo("Cotizaciones");
+    screen.getByText(/cada cotización vive dentro de su oportunidad/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Ir a Ventas" }));
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { level: 1, name: "Ventas" })).toBeTruthy();
+    });
+  });
+
   it("Bandeja de revisión is still reachable by deep link even though it's hidden from nav", async () => {
     window.location.hash = "#/inbox";
     render(<DashboardApp />);
@@ -375,6 +408,18 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
 
     const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
     expect(within(nav).queryByRole("link", { name: "Negocios" })).toBeNull();
+  });
+
+  it("Prospectos is still reachable by deep link even though it's hidden from nav", async () => {
+    window.location.hash = "#/prospectos";
+    render(<DashboardApp />);
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
+    await waitFor(() => {
+      screen.getByText("Acme Labs");
+    });
+
+    const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
+    expect(within(nav).queryByRole("link", { name: "Prospectos" })).toBeNull();
   });
 
   it("global Refresh button reloads data", async () => {

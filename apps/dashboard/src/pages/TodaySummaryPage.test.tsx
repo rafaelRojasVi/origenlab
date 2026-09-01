@@ -171,7 +171,7 @@ describe("TodaySummaryPage actionable-opportunity summary (W1 procurement status
     // summary is sourced from W1, not from the old GET /opportunities/equipment feed.
     renderToday({ procurementStatus: procurementStatus({}, 4) });
     screen.getByLabelText(/Oportunidades accionables: 4/);
-    expect(screen.queryByText("Licitaciones / equipos")).toBeNull();
+    expect(screen.queryByText("Licitaciones")).toBeNull();
   });
 
   it("shows a healthy zero as a real 0, not N/D", () => {

@@ -226,7 +226,7 @@ export function SalesOpportunityWorkspaceDrawer({
                 {core.contact_display_name ?? core.contact_display_email ?? "—"}
               </DetailRow>
               <DetailRow label="Correo">
-                {core.contact_primary_email ?? core.contact_display_email}
+                {core.contact_primary_email ?? core.contact_display_email ?? "—"}
               </DetailRow>
             </dl>
           </section>
@@ -253,7 +253,7 @@ export function SalesOpportunityWorkspaceDrawer({
               <p className="text-xs font-semibold uppercase tracking-wide text-brand-700">Próxima acción</p>
               <p className="text-sm text-slate-800">{core.next_task_title}</p>
               {core.next_task_due_at ? (
-                <p className="text-xs text-slate-600">{formatCommercialOpportunityDate(core.next_task_due_at)}</p>
+                <p className="text-xs text-slate-600">Vence: {formatCommercialOpportunityDate(core.next_task_due_at)}</p>
               ) : null}
               {core.open_task_count > 1 ? (
                 <p className="text-xs text-slate-500">+{core.open_task_count - 1} seguimiento(s) más abajo</p>
