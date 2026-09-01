@@ -61,6 +61,35 @@ Add **`--write-outbound-summary`** to emit `<stem>_outbound_summary.json` next t
 - Keep the **CLI-produced CSV/JSON** (and readiness JSON if you ran it) as the record of what was selected for that batch.
 - **After post-send refresh** (follow [`POST_SEND_SAFE_LOOP.md`](POST_SEND_SAFE_LOOP.md)): review the Prospectos drift report under `prospectos_safety_drift_<date>/`. **Drift is not a send-safety failure** — raw `lead_research_prospect` can lag suppressions/contacted state; export gates and sidecars remain authoritative ([`SCHEMA_CLASSIFICATION_MODEL.md`](SCHEMA_CLASSIFICATION_MODEL.md)).
 
+## Campaign lane (durable SQLite ledger, e.g. `hielscher-sonicators-2026`)
+
+Multi-batch campaign operation does not use CSV as its operational record — canonical state
+(campaign row, per-recipient lifecycle, append-only send-attempt ledger, manual contact
+sidecar) lives in SQLite. See [`OUTBOUND_SOURCE_OF_TRUTH.md` § Campaign ledger](../OUTBOUND_SOURCE_OF_TRUTH.md).
+
+| Step | Command (from `apps/email-pipeline/`) |
+|------|----------------------------------------|
+| Create/init a campaign | `uv run python scripts/campaigns/outbound_campaign_cli.py init --campaign-id <id> --name <name> --sender-email <email> --sender-name <name> --subject <subject> --target <n> --baseline <n> [--db <path>]` |
+| Register/update a manual contact fact | `... contact-status set --email <email> --status active\|inactive\|hold [--org-domain ...] [--org-name ...] [--role ...] [--reason ...] [--evidence ...] [--effective-at ...]` |
+| Show a contact's manual status | `... contact-status show --email <email>` |
+| Add candidates | `... candidates add --campaign-id <id> --email <email> [--email <email2> ...] [--institution ...]` |
+| Select/reserve next N (canonical gate) | `... select --campaign-id <id> --n <n> [--gmail-user ...]` |
+| Inspect the reserved batch | `... batch show --campaign-id <id>` |
+| Dry-run send (default) | `... send --campaign-id <id> --html <path>` |
+| Explicit live send | `... send --campaign-id <id> --html <path> --live` |
+| Reconcile from Gmail Sent / suppression evidence | `... reconcile --campaign-id <id> [--gmail-user ...]` |
+| Show campaign status/progress | `... status --campaign-id <id>` |
+
+`status` reports: `target`, `baseline`, `ledger_attempts`, `total_accepted` (`baseline +
+ledger_attempts`), `remaining`, `candidates`, `selected_reserved`, `sent`, `blocked`,
+`bounced`. `select` and the sender's pre-send recheck both reuse the same shared gate as the
+archive/lead lanes above, plus a hard `manual_contact_status` inactive/hold exact-email block
+— an `active` manual fact is informational only and never bypasses suppression, domain
+suppression, Sent-history, outreach state, supplier-domain, or noise checks. `send` is
+dry-run unless `--live` is passed; a command retry never re-sends an already-accepted
+attempt. Default paths never write to a Windows Downloads path; `--out` (where supported) is
+refused if it points at one.
+
 ## What is **not** source of truth
 
 - **Dashboard/API read surfaces** — useful for operational visibility, but they do **not** replace the canonical CLI outputs for “what we exported this run.”

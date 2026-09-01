@@ -18,10 +18,10 @@ Think in **six layers**. Lower layers are evidence; upper layers are derived for
 | Layer | Question it answers | Primary stores / code |
 | --- | --- | --- |
 | **Evidence** | What happened in mail and imports? | `emails` (Gmail ingest), attachments, `external_leads_raw`, `lead_research_evidence`, commercial signal facts |
-| **Safety** | Must we block this exact email or domain? | `contact_email_suppression`, `contact_domain_suppression`, export gates (`candidate_export_gate`) |
+| **Safety** | Must we block this exact email or domain? | `contact_email_suppression`, `contact_domain_suppression`, `manual_contact_status` (operator inactive/hold — hard exact-email block, additive to `contact_master`), export gates (`candidate_export_gate`, wrapped for campaigns by `outbound_campaign_gate`) |
 | **Outreach lifecycle** | Did we already outreach this exact email? | `outreach_contact_state` (`contacted`, `snoozed`, `not_contacted`, …) |
 | **Business classification** | What kind of org/contact is this? | `buyer_type`, `sector`, `campaign_bucket`, warm-case role rules — **not** send approval alone |
-| **Workflow / review** | What should an operator do next? | `lead_research_prospect.status`, `is_blocked`, block-reason rows, campaign queues |
+| **Workflow / review** | What should an operator do next? | `lead_research_prospect.status`, `is_blocked`, block-reason rows, campaign queues, `outbound_campaign_recipient.state` (`candidate→…→sent/blocked/bounced`), `outbound_send_attempt` (append-only send ledger) |
 | **UI / read model** | What does the dashboard show? | Postgres `lead_intel.*`, `outbound.*`, API mirror routes, Spanish labels in dashboard TS |
 
 **Rule of thumb:** Evidence and safety are **facts**. Workflow and UI are **opinions and presentation** — rebuildable if inputs are refreshed.
@@ -36,6 +36,8 @@ Think in **six layers**. Lower layers are evidence; upper layers are derived for
 | **`contact_email_suppression`** | Exact-email safety (bounce, DNC, etc.) | **No** — operator/NDR writes are authoritative | Yes (mirror) |
 | **`contact_domain_suppression`** | Domain-level cold-outreach block | **No** | Yes (mirror) |
 | **`outreach_contact_state`** | Per-email contacted / snoozed lifecycle | **No** — backfill/sync updates | Yes (mirror) |
+| **`manual_contact_status`** | Operator contact lifecycle fact (`active`/`inactive`/`hold`); `inactive`/`hold` hard-blocks campaign eligibility | **No** — operator writes are authoritative; `active` is informational only, not consent | Not yet |
+| **`outbound_campaign` / `outbound_campaign_recipient` / `outbound_send_attempt`** | Durable SQLite campaign ledger (campaign row, per-recipient lifecycle, append-only send attempts) | **No** — this is the durable record of what was actually attempted/sent | Not yet |
 | **`lead_research_prospect`** (+ batch, block_reason, evidence) | Derived prospect **queue** from CSV/DeepSearch + overlays | **Yes** — rebuild from batch scripts | Yes (mirror) |
 | **`contact_master` / `organization_master`** | Derived business mart | **Yes** — `build_business_mart.py` | Yes |
 | **Postgres + dashboard API** | Read-only mirror / read model | N/A (reload from SQLite) | Yes |

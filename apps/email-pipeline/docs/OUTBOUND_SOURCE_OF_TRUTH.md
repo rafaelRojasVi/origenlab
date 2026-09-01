@@ -126,6 +126,29 @@ Behavior contract:
 
 This is a bridge toward future product/API workflows while preserving current operator artifacts.
 
+### Campaign ledger (SQLite) — durable campaign/safety state, distinct from the Postgres audit bridge above
+
+Multi-batch campaign operation (e.g. `hielscher-sonicators-2026`) does not use CSV as its
+operational source of truth. Canonical campaign state — the campaign row, per-recipient
+lifecycle (`candidate → selected/reserved → sent/blocked/bounced/replied/inactive`), and the
+append-only send-attempt ledger — lives in SQLite:
+[`outbound_campaign_schema.py`](../src/origenlab_email_pipeline/outbound_campaign_schema.py)
+(`outbound_campaign`, `outbound_campaign_recipient`, `outbound_send_attempt`,
+`manual_contact_status`). CSV/JSON remains an **explicit export/reproducible artifact only**
+(via `--out` on supporting commands) — never required runtime state, and default campaign
+commands never write to a Windows Downloads path (`/mnt/c/Users/*/Downloads`).
+
+This is a separate concept from the optional Postgres `outbound.outbound_batch` /
+`outbound.outbound_batch_recipient` audit bridge described above — that bridge mirrors the
+two existing CSV lanes' export runs; it does not orchestrate or record sends, and the
+campaign ledger does not write to it. Operator CLI:
+[`scripts/campaigns/outbound_campaign_cli.py`](../scripts/campaigns/outbound_campaign_cli.py)
+(`init`, `status`, `contact-status set/show`, `candidates add`, `select`, `batch show`,
+`send [--live]`, `reconcile`). Selection and the sender's immediate pre-send recheck both
+reuse the same shared gate (`candidate_export_gate.evaluate_export_eligibility`), wrapped by
+[`outbound_campaign_gate.py`](../src/origenlab_email_pipeline/outbound_campaign_gate.py) to add
+the `manual_contact_status` hard inactive/hold block — no gate logic is duplicated.
+
 ### Shared gate responsibilities
 
 [`candidate_export_gate.py`](../src/origenlab_email_pipeline/candidate_export_gate.py) centralizes blockers, including:
