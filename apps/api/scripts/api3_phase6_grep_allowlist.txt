@@ -16,7 +16,6 @@ apps/dashboard/src/pages/DashboardApp.today.test.tsx
 
 # Gate scripts (pattern literals)
 apps/api/scripts/api3_phase6_grep_gate.sh
-apps/api/scripts/api3_phase5a_deletion_audit.sh
 
 # Contact-hunt web server docs (unrelated HTTP port — not operator API)
 apps/email-pipeline/scripts/leads/README.md

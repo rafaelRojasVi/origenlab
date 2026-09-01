@@ -27,6 +27,3 @@ export const BODY_GLOW_COLORS = [
   LOGO_PALETTE.brand400,
   LOGO_PALETTE.brand500,
 ] as const;
-
-/** @deprecated use BODY_CORE_COLORS — kept for export script */
-export const BODY_COLORS = BODY_CORE_COLORS;
