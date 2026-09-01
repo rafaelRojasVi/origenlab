@@ -589,8 +589,10 @@ describe("CRM-Q1 customer quote allowlist", () => {
       "../src/allowlist"
     );
 
-    // Bare collection roots stay closed.
-    expect(isAllowedUpstreamPath("/operations/customer-quotes")).toBe(false);
+    // The bare collection root is now the CRM backend foundation global
+    // list route (see "manual sales-opportunity creation + global
+    // customer-quote list allowlist" below) -- only the trailing-slash
+    // variant stays closed.
     expect(isAllowedUpstreamPath("/operations/customer-quotes/")).toBe(false);
 
     // Malformed IDs.
@@ -635,5 +637,57 @@ describe("CRM-Q1 customer quote allowlist", () => {
         `/operations/customer-quotes/${quoteId}/drive-workspace`,
       ),
     ).toBe(false);
+  });
+});
+
+describe("manual sales-opportunity creation + global customer-quote list allowlist", () => {
+  it("allows the exact global customer-quote list GET path", () => {
+    expect(isAllowedUpstreamPath("/operations/customer-quotes")).toBe(true);
+    expect(
+      isAllowedUpstreamPath("/operations/customer-quotes?stage=quoting&limit=25"),
+    ).toBe(true);
+  });
+
+  it("rejects malformed or broadened global list paths", () => {
+    expect(isAllowedUpstreamPath("/operations/customer-quotes/")).toBe(false);
+    expect(isAllowedUpstreamPath("/operations/customer-quotes/extra")).toBe(false);
+    expect(isAllowedUpstreamPath("/operations/Customer-Quotes")).toBe(false);
+  });
+
+  it("allows only the exact manual sales-opportunity POST path", async () => {
+    const { isAllowedCommercialOperationsPostPath } = await import(
+      "../src/allowlist"
+    );
+
+    expect(
+      isAllowedCommercialOperationsPostPath("/operations/sales-opportunities/manual"),
+    ).toBe(true);
+  });
+
+  it("rejects malformed or broadened manual-create paths", async () => {
+    const { isAllowedCommercialOperationsPostPath } = await import(
+      "../src/allowlist"
+    );
+
+    expect(
+      isAllowedCommercialOperationsPostPath("/operations/sales-opportunities/manual/"),
+    ).toBe(false);
+    expect(
+      isAllowedCommercialOperationsPostPath("/operations/sales-opportunities/manual/extra"),
+    ).toBe(false);
+  });
+
+  it("does not make the manual-create command path GET-readable", () => {
+    expect(isAllowedUpstreamPath("/operations/sales-opportunities/manual")).toBe(false);
+  });
+
+  it("does not make the global customer-quote list path POST-writable", async () => {
+    const { isAllowedCommercialOperationsPostPath } = await import(
+      "../src/allowlist"
+    );
+
+    expect(isAllowedCommercialOperationsPostPath("/operations/customer-quotes")).toBe(
+      false,
+    );
   });
 });

@@ -28,6 +28,11 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // deliberately NOT GET-readable.
   /^\/operations\/sales-opportunities\/sales_[0-9a-f]{32}\/quotes$/,
   /^\/operations\/customer-quotes\/quote_[0-9a-f]{32}$/,
+  // CRM backend foundation: global Cotizaciones read (not scoped to a
+  // single sales opportunity). Deliberately listed before the per-quote
+  // detail regex has no bearing on matching (regex arrays are OR'd, not
+  // ordered) but keeps related entries adjacent for readability.
+  /^\/operations\/customer-quotes$/,
   /^\/operations\/opportunities\/o_[0-9a-f]{32}\/state$/,
   /^\/operations\/opportunities\/o_[0-9a-f]{32}\/activities$/,
   /^\/operations\/opportunities\/o_[0-9a-f]{32}\/tasks$/,
@@ -69,6 +74,9 @@ export const COMMERCIAL_OPERATIONS_POST_PATHS: readonly RegExp[] = [
   // durable sales opportunity, and retry Drive workspace provisioning.
   /^\/operations\/sales-opportunities\/sales_[0-9a-f]{32}\/quotes$/,
   /^\/operations\/customer-quotes\/quote_[0-9a-f]{32}\/drive-workspace$/,
+  // CRM backend foundation: manual (non-PR3) sales-opportunity creation —
+  // the Nueva Cotización "create a new opportunity first" path.
+  /^\/operations\/sales-opportunities\/manual$/,
 ];
 
 export function isAllowedCommercialOperationsPostPath(

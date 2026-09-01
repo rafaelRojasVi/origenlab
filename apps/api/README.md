@@ -144,6 +144,8 @@ Responses include `X-Request-ID` plus read-only timing headers `Server-Timing` /
 | GET | `/operations/sales-opportunities/{id}/quotes` | CRM-Q1: quotes for a sales opportunity |
 | GET | `/operations/customer-quotes/{quote_id}` | CRM-Q1: quote detail with Drive workspace state |
 | POST | `/operations/customer-quotes/{quote_id}/drive-workspace` | CRM-Q1: idempotent Drive provisioning retry (expected_version) |
+| GET | `/operations/customer-quotes` | Global durable customer-quote list across all sales opportunities (Cotizaciones) |
+| POST | `/operations/sales-opportunities/manual` | Create a manually-initiated durable sales opportunity (no PR3 source); Idempotency-Key |
 
 **Warm cases read-model boundary:** production serves `api.v_warm_case` through `PostgresWarmCaseRepository` when `ORIGENLAB_API_BACKEND=postgres`. Remote contract checks live in `scripts/remote_response_audit.py` (`require_warm_cases_contract`).
 
