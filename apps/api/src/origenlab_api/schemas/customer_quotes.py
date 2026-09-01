@@ -58,7 +58,7 @@ class CustomerQuoteDriveWorkspaceResponse(BaseModel):
     # (it would only conflict). lease_expires_at is the raw retry-after
     # boundary; retryable is the pre-computed convenience flag.
     lease_expires_at: datetime | None = None
-    retryable: bool = True
+    retryable: bool = False
 
     requested_at: datetime | None = None
     completed_at: datetime | None = None
@@ -86,14 +86,19 @@ class CustomerQuoteResponse(BaseModel):
         lease_expires_at = workspace.lease_expires_at
         now = datetime.now(timezone.utc)
 
-        # Retryable unless an attempt is actively pending under an
-        # unexpired lease -- the exact condition
-        # begin_drive_provision_attempt itself enforces, so the dashboard
-        # never offers a retry the server would just conflict.
-        retryable = not (
-            workspace.provisioning_status == "pending"
-            and lease_expires_at is not None
-            and lease_expires_at > now
+        # Retry is meaningful only while provisioning still needs work:
+        # failed workspaces can retry immediately; pending workspaces can
+        # retry only when no active lease remains. A ready workspace is
+        # terminal for provisioning and must never advertise retryability.
+        retryable = (
+            workspace.provisioning_status == "failed"
+            or (
+                workspace.provisioning_status == "pending"
+                and (
+                    lease_expires_at is None
+                    or lease_expires_at <= now
+                )
+            )
         )
 
         return cls(

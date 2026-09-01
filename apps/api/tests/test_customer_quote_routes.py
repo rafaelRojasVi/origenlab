@@ -190,6 +190,7 @@ def test_create_quote_returns_created_quote_with_workspace() -> None:
     assert body["status"] == "draft"
     assert body["latest_revision_number"] == 1
     assert body["drive_workspace"]["provisioning_status"] == "ready"
+    assert body["drive_workspace"]["retryable"] is False
     assert body["drive_workspace"]["folder_web_url"].startswith("https://")
 
     method, kwargs = service.calls[0]
