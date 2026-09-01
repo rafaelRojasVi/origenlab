@@ -315,7 +315,6 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
 
     expect(screen.queryByRole("button", { name: /Enviar/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /Aplicar/i })).toBeNull();
-    screen.getByTestId("read-only-chip");
   });
 
   it("Today summary renders queue count cards", async () => {

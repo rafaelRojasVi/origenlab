@@ -4,7 +4,6 @@ import { useDashboardData } from "../../context/DashboardDataContext";
 import { dashboardSectionLabel, type DashboardSection } from "../../lib/dashboardNav";
 import { backendChipClass, backendLabel, verdictTone } from "../../lib/verdictStyles";
 import { DevLegacyPortWarning } from "../operator/DevLegacyPortWarning";
-import { ReadOnlyBanner } from "../operator/ReadOnlyBanner";
 import { ContactProfilePanel } from "../commercial/ContactProfilePanel";
 import { DashboardSidebar } from "./DashboardSidebar";
 
@@ -59,18 +58,6 @@ export function DashboardShell({
               </h1>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <span
-                className="inline-flex items-center rounded-full px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 ring-1 ring-slate-200"
-                data-testid="read-only-chip"
-              >
-                {section === "tenders"
-                  ? "Lectura + documentos"
-                  : section === "pipeline"
-                    ? "CRM durable"
-                    : section === "deals"
-                      ? "Lectura + promoción"
-                      : "Solo lectura"}
-              </span>
               {verdict ? (
                 <span
                   className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${verdictTone(verdict).badge}`}
@@ -122,12 +109,6 @@ export function DashboardShell({
 
         <main className="flex-1 px-4 py-5 sm:px-6 lg:px-8">
           <div key={section} className="mx-auto w-full max-w-[1600px] space-y-5 animate-fade-in-up">
-            <ReadOnlyBanner
-              mirrorBackend={Boolean(mirrorBackend)}
-              documentImportEnabled={section === "tenders"}
-              promotionEnabled={section === "deals"}
-              crmWritesEnabled={section === "pipeline"}
-            />
             {devConfigWarning ? <DevLegacyPortWarning message={devConfigWarning} /> : null}
             {children}
           </div>
