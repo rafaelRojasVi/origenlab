@@ -20,6 +20,20 @@ class ReconcileSummary:
     no_evidence: int
 
 
+def _table_exists(conn, name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1", (name,)
+    ).fetchone()
+    return bool(row)
+
+
+def _load_suppressed_norms(conn) -> set[str]:
+    if not _table_exists(conn, "contact_email_suppression"):
+        return set()
+    rows = conn.execute("SELECT lower(trim(email)) FROM contact_email_suppression").fetchall()
+    return {row[0] for row in rows if row[0]}
+
+
 def reconcile_campaign(
     conn,
     campaign_id: str,
@@ -30,10 +44,7 @@ def reconcile_campaign(
 ) -> ReconcileSummary:
     ts = at_iso or now_iso()
     sent_norms = load_sent_recipient_norms(conn, gmail_user=gmail_user, sent_folders=sent_folders)
-    suppressed = {
-        row[0] for row in conn.execute("SELECT lower(trim(email)) FROM contact_email_suppression").fetchall()
-        if row[0]
-    }
+    suppressed = _load_suppressed_norms(conn)
 
     rows = conn.execute(
         "SELECT id, email_norm FROM outbound_campaign_recipient "

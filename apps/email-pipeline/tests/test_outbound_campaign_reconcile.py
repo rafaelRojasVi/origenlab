@@ -97,6 +97,28 @@ def test_reconcile_marks_bounced_from_suppression_without_mutating_suppression_t
     assert after_suppression_rows == before_suppression_rows  # reconciliation never writes suppression
 
 
+def test_reconcile_tolerates_missing_suppression_table(tmp_path: Path) -> None:
+    """A DB without contact_email_suppression ever created (e.g. campaign-only DB) must not error."""
+    c = connect(tmp_path / "no_suppression.sqlite")
+    init_schema(c)
+    ensure_outbound_campaign_tables(c)
+    create_campaign(
+        c, campaign_id="hielscher-sonicators-2026", name="N", sender_email="s@x.cl",
+        sender_name="S", subject="Subj", target_attempt_count=2000, baseline_attempt_count=874,
+    )
+    rid = upsert_recipient_candidate(c, campaign_id="hielscher-sonicators-2026", email="a@x.cl", source_kind="manual")
+    record_attempt(
+        c, campaign_id="hielscher-sonicators-2026", recipient_id=rid, email_norm="a@x.cl",
+        batch_id="b1", mode="live", result="accepted", gmail_message_id="M1",
+    )
+    c.commit()
+    summary = reconcile_campaign(
+        c, "hielscher-sonicators-2026", gmail_user="contacto@origenlab.cl", sent_folders=("[Gmail]/Sent Mail",),
+    )
+    assert summary.no_evidence == 1
+    c.close()
+
+
 def test_reconcile_marks_no_evidence_when_neither_matches(conn: sqlite3.Connection) -> None:
     rid = upsert_recipient_candidate(conn, campaign_id="hielscher-sonicators-2026", email="unknown@x.cl", source_kind="manual")
     record_attempt(
