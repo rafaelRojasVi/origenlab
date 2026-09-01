@@ -61,6 +61,50 @@ Add **`--write-outbound-summary`** to emit `<stem>_outbound_summary.json` next t
 - Keep the **CLI-produced CSV/JSON** (and readiness JSON if you ran it) as the record of what was selected for that batch.
 - **After post-send refresh** (follow [`POST_SEND_SAFE_LOOP.md`](POST_SEND_SAFE_LOOP.md)): review the Prospectos drift report under `prospectos_safety_drift_<date>/`. **Drift is not a send-safety failure** — raw `lead_research_prospect` can lag suppressions/contacted state; export gates and sidecars remain authoritative ([`SCHEMA_CLASSIFICATION_MODEL.md`](SCHEMA_CLASSIFICATION_MODEL.md)).
 
+## Campaign lane (durable SQLite ledger, e.g. `hielscher-sonicators-2026`)
+
+Multi-batch campaign operation does not use CSV as its operational record — canonical state
+(campaign row, per-recipient lifecycle, append-only send-attempt ledger, manual contact
+sidecar) lives in SQLite. See [`OUTBOUND_SOURCE_OF_TRUTH.md` § Campaign ledger](../OUTBOUND_SOURCE_OF_TRUTH.md).
+
+| Step | Command (from `apps/email-pipeline/`) |
+|------|----------------------------------------|
+| Create/init a campaign | `uv run python scripts/campaigns/outbound_campaign_cli.py init --campaign-id <id> --name <name> --sender-email <email> --sender-name <name> --subject <subject> --target <n> --baseline <n> [--db <path>]` |
+| Register/update a manual contact fact | `... contact-status set --email <email> --status active\|inactive\|hold [--org-domain ...] [--org-name ...] [--role ...] [--reason ...] [--evidence ...] [--effective-at ...]` |
+| Show a contact's manual status | `... contact-status show --email <email>` |
+| Add candidates | `... candidates add --campaign-id <id> --email <email> [--email <email2> ...] [--institution ...]` |
+| Select/reserve next N (canonical gate) | `... select --campaign-id <id> --n <n> [--gmail-user ...]` |
+| Inspect the reserved batch | `... batch show --campaign-id <id>` |
+| Dry-run send (default) | `... send --campaign-id <id> --html <path>` |
+| Explicit live send | `... send --campaign-id <id> --html <path> --live` |
+| Reconcile from Gmail Sent / suppression evidence | `... reconcile --campaign-id <id> [--gmail-user ...]` |
+| Show campaign status/progress | `... status --campaign-id <id>` |
+| Explicit export (never automatic) | `... export --campaign-id <id> --out <path.csv\|path.json> [--state <state>]` |
+
+`status` reports: `target`, `baseline`, `ledger_attempts`, `total_accepted` (`baseline +
+ledger_attempts`), `remaining`, `candidates`, `selected_reserved`, `sent`, `blocked`,
+`bounced`, `in_flight_attempts` (live sends whose Gmail outcome is unconfirmed — see below).
+`select` and the sender's pre-send recheck both build `GateContext` via
+`outbound_core.gate_context_for_archive_batch` (`strict_contact_graph_noise=True`) — the
+**strictest** canonical marketing gate, applied uniformly regardless of a recipient's
+`source_kind` (including candidates added manually via `candidates add`) — plus a hard
+`manual_contact_status` inactive/hold exact-email block. An `active` manual fact is
+informational only and never bypasses suppression, domain suppression, Sent-history, outreach
+state, supplier-domain, or noise checks. Known-vendor/platform noise (lab-equipment resellers,
+logistics/ESP senders, etc.) is blocked via the existing `supplier_master`-backed
+supplier-domain filter and `marketing_contact_noise` strict mode — no ad-hoc domain list is
+maintained in the campaign CLI itself.
+
+`send` is dry-run unless `--live` is passed; a command retry never re-sends an
+already-**accepted** attempt. A live send is two-phase (`in_flight` → `accepted`/`failed`): if
+the process dies between Gmail accepting the message and the terminal result being persisted,
+the attempt is left `in_flight` and a retry refuses to call Gmail again for that recipient —
+run `reconcile` (resolves `in_flight` to `accepted` on positive Sent-folder or bounce
+evidence) or inspect `status.in_flight_attempts` for operator follow-up. `send` writes no
+files of any kind (recipient state is read from and written to SQLite only); `export` is the
+only command that writes a file, and only when `--out` is explicitly given — including a
+Downloads-style path, since explicit operator export is exactly what Downloads is for.
+
 ## What is **not** source of truth
 
 - **Dashboard/API read surfaces** — useful for operational visibility, but they do **not** replace the canonical CLI outputs for “what we exported this run.”
