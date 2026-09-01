@@ -222,34 +222,28 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
     window.location.hash = "";
   });
 
-  it("sidebar renders grouped navigation and all sections", async () => {
+  it("sidebar renders exactly the flat V2 IA, in order, with no legacy sections", async () => {
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
-    for (const groupId of ["inicio", "comercial", "operacion", "sistema"]) {
-      expect(screen.getByTestId(`nav-group-${groupId}`)).toBeTruthy();
-    }
-    expect(screen.getByTestId("nav-group-inicio").textContent).toMatch(/Inicio/);
-    expect(screen.getByTestId("nav-group-comercial").textContent).toMatch(/Comercial/);
-    expect(screen.getByTestId("nav-group-operacion").textContent).toMatch(/Operación/);
+    const links = within(nav).getAllByRole("link").map((el) => el.textContent);
 
-    for (const label of [
-      "Hoy",
-      "Bandeja de revisión",
-      "Pipeline",
-      "Negocios",
-      "Prospectos",
-      "Catálogo",
+    expect(links).toEqual([
+      "Inicio",
+      "Ventas",
+      "Cotizaciones",
+      "Clientes",
+      "Licitaciones",
       "Proveedores",
-      "Licitaciones / equipos",
       "Pagos y logística",
-      "Clientes / instituciones",
+      "Catálogo",
       "Sistema",
-    ]) {
-      expect(within(nav).getByRole("link", { name: label })).toBeTruthy();
+    ]);
+
+    for (const removedLabel of ["Bandeja de revisión", "Negocios", "Prospectos"]) {
+      expect(within(nav).queryByRole("link", { name: removedLabel })).toBeNull();
     }
-    expect(within(nav).queryByRole("link", { name: "Oportunidades" })).toBeNull();
   });
 
   it("marks active nav item with aria-current", async () => {
@@ -257,7 +251,7 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
-    expect(within(nav).getByRole("link", { name: "Hoy" }).getAttribute("aria-current")).toBe(
+    expect(within(nav).getByRole("link", { name: "Inicio" }).getAttribute("aria-current")).toBe(
       "page",
     );
     expect(within(nav).getByRole("link", { name: "Sistema" }).getAttribute("aria-current")).toBe(
@@ -328,14 +322,16 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
     });
   });
 
-  it("Inbox page contains warm cases table", async () => {
+  it("Bandeja de revisión is still reachable by deep link even though it's hidden from nav", async () => {
+    window.location.hash = "#/inbox";
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
-
-    await navigateTo("Bandeja de revisión");
     await waitFor(() => {
       screen.getByText("buyer@acme.cl");
     });
+
+    const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
+    expect(within(nav).queryByRole("link", { name: "Bandeja de revisión" })).toBeNull();
   });
 
   it("Suppliers page excludes client opportunities", async () => {
@@ -367,16 +363,18 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
     expect(screen.queryByText("beatriz.bonon@ika.net.br")).toBeNull();
   });
 
-  it("Deals page renders commercial deal table", async () => {
+  it("Negocios is still reachable by deep link even though it's hidden from nav", async () => {
+    window.location.hash = "#/deals";
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
-
-    await navigateTo("Negocios");
     await waitFor(() => {
       screen.getByText("Negocios comerciales");
       screen.getByText("CEAF");
       screen.getByText("SERVA");
     });
+
+    const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
+    expect(within(nav).queryByRole("link", { name: "Negocios" })).toBeNull();
   });
 
   it("global Refresh button reloads data", async () => {

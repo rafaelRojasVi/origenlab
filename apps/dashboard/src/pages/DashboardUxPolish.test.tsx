@@ -217,9 +217,9 @@ describe("Dashboard UX polish (Phase 7B.3 ES)", () => {
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
-    expect(within(nav).getByRole("link", { name: "Hoy" })).toBeTruthy();
-    expect(within(nav).getByRole("link", { name: "Bandeja de revisión" })).toBeTruthy();
-    expect(within(nav).getByRole("link", { name: "Negocios" })).toBeTruthy();
+    expect(within(nav).getByRole("link", { name: "Inicio" })).toBeTruthy();
+    expect(within(nav).getByRole("link", { name: "Ventas" })).toBeTruthy();
+    expect(within(nav).getByRole("link", { name: "Clientes" })).toBeTruthy();
     expect(screen.queryByText(/client_opportunity/)).toBeNull();
   });
 
@@ -248,9 +248,12 @@ describe("Dashboard UX polish (Phase 7B.3 ES)", () => {
   });
 
   it("página Negocios muestra tarjeta CEAF × SERVA y bloqueos", async () => {
+    window.location.hash = "#/deals";
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
-    await navigateTo("Negocios");
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { level: 1, name: "Negocios" })).toBeTruthy();
+    });
 
     const card = screen.getByTestId("deal-highlight-card");
     expect(within(card).getByText(/CEAF/)).toBeTruthy();
