@@ -32,6 +32,7 @@ SUBCOMMAND_SCRIPTS: dict[str, str] = {
     "build-mart": "scripts/mart/build_business_mart.py",
     "build-email-mart-features": "scripts/mart/build_email_mart_features.py",
     "build-commercial-intel": "scripts/commercial/build_commercial_intel_v1.py",
+    "outbound-campaign": "scripts/campaigns/outbound_campaign_cli.py",
     "gmail-ingest-help": GMAIL_INGEST_SCRIPT,
 }
 
@@ -126,6 +127,11 @@ SUBCOMMAND_HELP: dict[str, str] = {
     "build-commercial-intel": (
         "Commercial intel incremental builder (build_commercial_intel_v1.py) — writes SQLite commercial_* "
         "tables; --rebuild is break-glass"
+    ),
+    "outbound-campaign": (
+        "Outbound campaign ledger (outbound_campaign_cli.py) — its own subcommands after "
+        "`--`: init/status/contact-status/candidates/select/batch/send/reconcile/export. "
+        "send is dry-run unless --live is passed"
     ),
     "gmail-ingest": (
         "Safe daily Gmail ingest: INBOX then Sent ([Gmail]/Enviados), --skip-duplicate-message-id; "
