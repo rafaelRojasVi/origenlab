@@ -18,6 +18,8 @@ PY
 
 uv run --no-sync python scripts/check_runtime_dependency_boundary.py
 
+./scripts/api3_phase6_grep_gate.sh
+
 uv sync --group dev --frozen
 ORIGENLAB_API_BACKEND=sqlite \
 ORIGENLAB_POSTGRES_URL= \
