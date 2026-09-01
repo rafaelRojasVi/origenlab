@@ -3,30 +3,29 @@ import { useSalesOpportunityBoard } from "../components/pipeline/useSalesOpportu
 import { SalesOpportunityBoard } from "../components/pipeline/SalesOpportunityBoard";
 import { MobileSalesOpportunityList } from "../components/pipeline/MobileSalesOpportunityList";
 import { SalesOpportunityWorkspaceDrawer } from "../components/pipeline/SalesOpportunityWorkspaceDrawer";
+import { V2PageHeader } from "../components/v2/V2PageHeader";
 import type { SalesOpportunityListItem } from "../api/commercialOperationsTypes";
 
-export function PipelinePage() {
+export function VentasPage() {
   const board = useSalesOpportunityBoard();
   const [openItem, setOpenItem] = useState<SalesOpportunityListItem | null>(null);
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-900">Pipeline</h2>
-          <p className="mt-1 text-sm text-[var(--color-muted)]">
-            Oportunidades de venta en gestión activa · CRM durable.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={board.refetch}
-          disabled={board.loading}
-          className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
-        >
-          {board.loading ? "Actualizando…" : "Actualizar datos"}
-        </button>
-      </div>
+      <V2PageHeader
+        title="Oportunidades activas"
+        subtitle="CRM durable · arrastra una tarjeta o cambia la etapa para mover una oportunidad."
+        actions={
+          <button
+            type="button"
+            onClick={board.refetch}
+            disabled={board.loading}
+            className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+          >
+            {board.loading ? "Actualizando…" : "Actualizar datos"}
+          </button>
+        }
+      />
 
       <SalesOpportunityBoard board={board} onOpenOpportunity={setOpenItem} />
       <MobileSalesOpportunityList board={board} onOpenOpportunity={setOpenItem} />

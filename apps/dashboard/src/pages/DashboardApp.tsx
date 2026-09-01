@@ -8,7 +8,8 @@ import { ContactsPage } from "./ContactsPage";
 import { DealsPage } from "./DealsPage";
 import { InboxTriagePage } from "./InboxTriagePage";
 import { PaymentsLogisticsPage } from "./PaymentsLogisticsPage";
-import { PipelinePage } from "./PipelinePage";
+import { VentasPage } from "./VentasPage";
+import { CotizacionesPage } from "./CotizacionesPage";
 import { SuppliersPage } from "./SuppliersPage";
 import { SystemPage } from "./SystemPage";
 import { TendersPage } from "./TendersPage";
@@ -27,7 +28,9 @@ function DashboardSectionView({
     case "inbox":
       return <InboxTriagePage />;
     case "pipeline":
-      return <PipelinePage />;
+      return <VentasPage />;
+    case "cotizaciones":
+      return <CotizacionesPage onOpenVentas={() => navigate("pipeline")} />;
     case "deals":
       return <DealsPage onOpenPipeline={() => navigate("pipeline")} />;
     case "prospectos":
