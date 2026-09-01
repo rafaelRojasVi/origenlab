@@ -90,6 +90,16 @@ def repo(settings: Settings) -> PostgresCommercialOperationsRepository:
 @pytest.fixture(autouse=True)
 def _clean_slate(admin_conn: object) -> Iterator[None]:
     with admin_conn.cursor() as cur:
+        # Other *_postgres.py test files in this suite share the same
+        # `commercial` tables and only clean up before their own tests run
+        # (not after), so a prior file's customer_quote rows can still be
+        # sitting on a sales_opportunity this fixture is about to delete --
+        # `customer_quote_sales_opportunity_id_fkey` is RESTRICT, not
+        # CASCADE. Clear the quote family first, regardless of file order.
+        cur.execute("DELETE FROM commercial.customer_quote_event")
+        cur.execute("DELETE FROM commercial.customer_quote_drive_workspace")
+        cur.execute("DELETE FROM commercial.customer_quote_revision")
+        cur.execute("DELETE FROM commercial.customer_quote")
         cur.execute("DELETE FROM commercial.sales_opportunity_event")
         cur.execute("DELETE FROM commercial.command_idempotency")
         cur.execute("DELETE FROM commercial.sales_opportunity")
