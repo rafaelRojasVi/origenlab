@@ -1,5 +1,16 @@
 # Commercial deal ledger — schema design v1
 
+Status: historical
+Owner: project-maintainers
+Last reviewed: 2026-09-01
+Canonical replacement: [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](../architecture/CURRENT_SYSTEM_TRUTH.md) (`commercial.deal` — historical deal ledger mirror)
+
+This is a point-in-time design document, not current system truth. Where it disagrees with
+`CURRENT_SYSTEM_TRUTH.md`, trust `CURRENT_SYSTEM_TRUTH.md`. Content below is preserved unmodified
+as historical design record.
+
+---
+
 **Status:** Design only (2026-05-26, rev. **v1.1** field provenance + money minor units). **No migrations applied.**  
 **Schema version constant (Phase 1):** `commercial_deal_schema_version = "1.1.0"`.
 **Worked example:** SERVA Electrophoresis GmbH → CEAF (OC 26172 / PO 174-26).  

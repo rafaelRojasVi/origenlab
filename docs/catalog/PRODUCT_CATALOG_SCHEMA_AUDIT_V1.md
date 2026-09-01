@@ -1,5 +1,16 @@
 # Product catalogue — schema audit v1 (Phase 8A)
 
+Status: historical
+Owner: project-maintainers
+Last reviewed: 2026-09-01
+Canonical replacement: [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](../architecture/CURRENT_SYSTEM_TRUTH.md) (`catalog.*` mirror — rebuildable projection)
+
+This is a point-in-time design/audit document, not current system truth. Where it disagrees with
+`CURRENT_SYSTEM_TRUTH.md`, trust `CURRENT_SYSTEM_TRUTH.md`. Content below is preserved unmodified
+as historical design record.
+
+---
+
 **Status:** Design / audit only (2026-05-27). **No Alembic migration applied.**  
 **Scope:** OrigenLab operator catalogue — unify website vitrine, commercial deals, supplier quotes, and equipment opportunities without inventing public pricing or inventory.
 

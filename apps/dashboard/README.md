@@ -122,7 +122,7 @@ npm test          # dashboard test suite
 npm run build
 ```
 
-Use **`npm run validate`** before opening or merging dashboard PRs. Today parser contract tests lock the dashboard boundary for `/cases/warm`, `/opportunities/commercial`, `/operator/status`, `/operator/automation-status`, and `/contacts/{email}`. Targeted Vitest runs (`vitest run path/to/file.test.tsx`) are useful while developing, but full validation should pass before review. This matters especially for Today / operator-status changes because fixtures span multiple test files (`TodaySummaryPage.test.tsx`, `TodayPage.test.tsx`, `DashboardApp.test.tsx`, component tests, etc.).
+Use **`npm run validate`** before opening or merging dashboard PRs. Today parser contract tests lock the dashboard boundary for `/cases/warm`, `/opportunities/commercial`, `/operator/status`, `/operator/automation-status`, and `/contacts/{email}`. Targeted Vitest runs (`vitest run path/to/file.test.tsx`) are useful while developing, but full validation should pass before review. This matters especially for Today / operator-status changes because fixtures span multiple test files (`TodaySummaryPage.test.tsx`, `DashboardApp.test.tsx`, `DashboardApp.today.test.tsx`, component tests, etc.).
 
 GitHub Actions workflow [`.github/workflows/dashboard.yml`](../../.github/workflows/dashboard.yml) runs `npm ci`, `npm test`, and `npm run build` for dashboard changes.
 
@@ -136,7 +136,7 @@ npm run smoke:contacts # same as smoke; includes GET /contacts/{email} when rows
 ./scripts/run-v1-postgres-matrix-check.sh  # optional; live disposable Postgres only
 ```
 
-Safety tests enforce: `App.tsx` → `TodayPage` only, Dashboard v1 GET routes (including `/contacts/{email}`), no legacy client, no mutating HTTP, no DB/pipeline imports.
+Safety tests enforce: `App.tsx` → `DashboardApp` (multi-section, hash-routed; `TodaySummaryPage` is the default/`today` section), Dashboard v1 GET routes (including `/contacts/{email}`), no legacy client, no DB/pipeline imports, and that POST/PUT/PATCH/DELETE HTTP is confined to the three narrowly allowlisted mutation modules described below (`noWritePolicy.test.ts`) — no other dashboard source file may issue a mutating request.
 
 ### Dashboard-2 — contact drilldown (frozen & validated)
 
@@ -180,8 +180,28 @@ Prove Dashboard v1 against **`apps/api`** sqlite and postgres mirror backends: [
 
 ## Mounted code map
 
+Current (hash-routed, multi-section):
+
 ```
-App.tsx → TodayPage.tsx
-  → api/operatorClient.ts (+ commercialParse, contactParse, operatorTypes, commercialTypes, contactTypes)
-  → components/commercial/* (tables + ContactProfilePanel), components/operator/ReadOnlyBanner.tsx
+App.tsx → pages/DashboardApp.tsx
+  → context/DashboardDataContext.tsx, components/layout/DashboardShell.tsx
+  → section pages (lib/dashboardHashRoute.ts picks one; "today" is default):
+      TodaySummaryPage.tsx      (Hoy)
+      InboxTriagePage.tsx       (Bandeja de revisión)
+      PipelinePage.tsx          (Pipeline)
+      DealsPage.tsx             (Negocios)
+      ProspectosPage.tsx        (Prospectos)
+      CatalogPage.tsx           (Catálogo)
+      SuppliersPage.tsx         (Proveedores)
+      TendersPage.tsx           (Licitaciones)
+      PaymentsLogisticsPage.tsx (Pagos y logística)
+      ContactsPage.tsx          (Contactos)
+      SystemPage.tsx            (Sistema)
+  → components/commercial/*, components/pipeline/*, components/operator/*,
+    components/tenders/*, components/institutionIntel/*, components/catalog/*
 ```
+
+**Historical (removed):** `TodayPage.tsx` was the original single-page mount
+(`App.tsx → TodayPage.tsx` directly). It no longer exists — do not reference
+or restore it; extend the current multi-section `DashboardApp` structure
+above instead.

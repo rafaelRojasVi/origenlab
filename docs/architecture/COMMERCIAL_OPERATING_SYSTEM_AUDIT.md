@@ -29,6 +29,13 @@ also on `main`. The findings below were re-examined by a later whole-repository 
 - **"This branch, 40 commits ahead of `main`"** (here and in Phase 9) — the branch chain has since
   merged; see `CURRENT_SYSTEM_TRUTH.md` for current deployment topology. Historical branch/commit
   references below are left as originally written.
+- **Customer-quote findings throughout this document** (Executive summary #6, and every "Does not
+  exist" / "BUILD LATER" verdict on `customer_quote`/`quote_revision` below) — **SUPERSEDED**:
+  CRM-Q1 (merged to `main`) shipped a durable customer-quote write path
+  (`commercial.customer_quote` + `_revision`/`_drive_workspace`/`_event`/`_number_series`, idempotent
+  commands). Supplier RFQ/offer conclusions elsewhere in this document are **unaffected** — that
+  half still holds. Short `SUPERSEDED` markers at each affected location point back to this note
+  rather than repeating it; `CURRENT_SYSTEM_TRUTH.md` is authoritative for current state.
 
 ## Executive summary
 
@@ -78,6 +85,9 @@ everything":
 6. **No durable customer-quote or supplier-RFQ/offer structures exist yet.** This is by design per
    `TARGET_COMMERCIAL_ARCHITECTURE.md` ("FUTURE commercial.customer_quote" / "FUTURE
    commercial.supplier_offer") — Quotes must stay read-only/evidence-based in the UI, not fabricated.
+
+   > **SUPERSEDED** (customer-quote half only) — see "Status note (post-merge corrections)" above.
+   > Supplier RFQ/offer half unaffected.
 7. **Documentation drift found and partially fixed in this pass**: `apps/dashboard/README.md` still
    describes the dashboard as "App.tsx → TodayPage only" / "GET only, no write/send/draft/archive
    actions," which was true before this branch's Pipeline work (durable stage transitions, task/
@@ -145,6 +155,9 @@ SQLite unless noted) · SOURCE OF TRUTH · WRITER · READERS · KEEP/MERGE/DEPRE
 | Supplier RFQ / Supplier Offer entities | **Does not exist** | 0 | — | — | BUILD LATER | "Offers" only exist informally as classified email threads |
 | `commercial.organization` (supplier role) | Durable, unused by UI | n/a | none | **SuppliersPage does not read this table at all** | EXTEND | Intended canonical supplier identity home, bypassed entirely today |
 | `SupplierEntityGroups` (dashboard) | UI-only | n/a | derived per-render from warm cases | operator | KEEP pattern, REPLACE identity source | The component's own code comment says canonical identity should be `commercial.organization` |
+
+> **SUPERSEDED** (`Durable customer_quote/quote_revision` row only) — see "Status note (post-merge
+> corrections)" above. `Supplier RFQ / Supplier Offer entities` row unaffected.
 
 **New-supplier-gap root cause** (traced to exact lines): the Suppliers view only shows warm cases
 whose `category` is `supplier_quote_received`/`supplier_followup`/`supplier_reply`
@@ -231,6 +244,9 @@ session produced)
 | 12 | Human promotes candidate to CRM | **Yes** (`sales_opportunity` + event) | `organization_id`/`primary_crm_contact_id` left NULL forever — CRM-4A gap |
 | 13 | Human changes CRM stage | **Yes** (versioned, idempotent) | Solid — no gap found |
 
+> **CORRECTED** (row 6-8, customer-quote half only) — see "Status note (post-merge corrections)"
+> above. Supplier-quote half unaffected.
+
 ## Phase 6 — target operator IA (decision)
 
 Given how much of the target IA already exists as working pages, the decision is **consolidate and
@@ -265,6 +281,9 @@ SYSTEM / ADMIN          — KEEP; this is where "Solo lectura", proxy/backend st
 `InboxTriagePage` (Bandeja de revisión) stays separate from Negocios/Detected Opportunities — it
 reads a different evidence stream (`/cases/warm`, general commercial signal triage) from PR3
 opportunity intake, and merging them would conflate two real, distinct machine surfaces.
+
+> **SUPERSEDED** (`Quotes` line in the IA sketch above only) — see "Status note (post-merge
+> corrections)" above.
 
 ## Phase 9 — deployment drift diagnosis (root cause, not executed)
 
@@ -306,6 +325,9 @@ step; `wrangler deploy` is a documented **manual** command
 | `commercial.opportunity_operator_state` | KEEP, do not merge into `sales_opportunity` | Distinct pre-promotion lifecycle, not a duplicate |
 | CRM-4A (`commercial.organization`/`commercial.contact`) | KEEP schema, BUILD the writer | Not a deletion candidate — it's the actual next increment |
 | Durable `customer_quote`/supplier RFQ/offer entities | DO NOT BUILD tonight | No evidence of readiness; `TARGET_COMMERCIAL_ARCHITECTURE.md` marks these "FUTURE" |
+
+> **SUPERSEDED** (customer-quote half only) — see "Status note (post-merge corrections)" above.
+> Supplier RFQ/offer entities remain not built.
 
 ## Open questions for the next PR (not blocking, not answered by this audit)
 
