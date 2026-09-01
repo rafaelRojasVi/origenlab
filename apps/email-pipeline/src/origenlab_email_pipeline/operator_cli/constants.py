@@ -130,8 +130,9 @@ SUBCOMMAND_HELP: dict[str, str] = {
     ),
     "outbound-campaign": (
         "Outbound campaign ledger (outbound_campaign_cli.py) — its own subcommands after "
-        "`--`: init/status/contact-status/candidates/select/batch/send/reconcile/export. "
-        "send is dry-run unless --live is passed"
+        "`--`: init/status/contact-status/candidates/select/batch/send/reconcile/export/"
+        "research-queue build. send is dry-run unless --live is passed; "
+        "research-queue build is read-only (mode=ro) and writes one CSV"
     ),
     "gmail-ingest": (
         "Safe daily Gmail ingest: INBOX then Sent ([Gmail]/Enviados), --skip-duplicate-message-id; "

@@ -264,6 +264,65 @@ def test_reconcile_runs_against_empty_campaign(db_path: Path, capsys) -> None:
     assert payload["checked"] == 0
 
 
+def test_research_queue_build_writes_csv_and_stays_read_only(db_path: Path, tmp_path: Path, capsys) -> None:
+    """research-queue build must never mutate lead_master/lead_contact_research/campaign
+    state -- it opens the DB in mode=ro, so any write attempt would raise, not silently
+    succeed. This proves the happy path also writes exactly one CSV to --out."""
+    from origenlab_email_pipeline.db import connect as real_connect, init_schema
+    from origenlab_email_pipeline.leads_schema import ensure_leads_tables_ddl_base
+
+    conn = real_connect(db_path)
+    init_schema(conn)
+    ensure_leads_tables_ddl_base(conn)
+    conn.execute(
+        "INSERT INTO lead_master (source_name, source_record_id, org_name, org_name_norm, "
+        "domain_norm, fit_bucket, priority_score, lab_context_score, lab_context_tags, "
+        "equipment_match_tags, upstream_sync_state) VALUES "
+        "('chilecompra', '1', 'UNIVERSIDAD DE PRUEBA', 'universidad de prueba', 'uprueba.cl', "
+        "'high_fit', 7.5, 1.0, 'laboratorio', 'centrifuga', 'active')"
+    )
+    conn.commit()
+    conn.close()
+    before_mtime = db_path.stat().st_mtime_ns
+
+    out_csv = tmp_path / "research_queue.csv"
+    code, out = _run(
+        db_path, "research-queue", "build", "--campaign-id", "hielscher-sonicators-2026",
+        "--out", str(out_csv), capsys=capsys,
+    )
+    assert code == 0
+    payload = json.loads(out)
+    assert payload["final_queue_count"] == 1
+    assert payload["leads_scanned"] == 1
+    assert out_csv.is_file()
+    content = out_csv.read_text(encoding="utf-8")
+    assert "UNIVERSIDAD DE PRUEBA" in content
+    assert "uprueba.cl" in content
+    assert db_path.stat().st_mtime_ns == before_mtime
+
+
+def test_research_queue_build_default_out_path_uses_campaign_id(db_path: Path, tmp_path: Path, monkeypatch, capsys) -> None:
+    from origenlab_email_pipeline.db import connect as real_connect, init_schema
+    from origenlab_email_pipeline.leads_schema import ensure_leads_tables_ddl_base
+
+    conn = real_connect(db_path)
+    init_schema(conn)
+    ensure_leads_tables_ddl_base(conn)
+    conn.commit()
+    conn.close()
+
+    fake_root = tmp_path / "fake_repo_root"
+    monkeypatch.setattr(outbound_campaign_cli, "_ROOT", fake_root)
+    code, out = _run(
+        db_path, "research-queue", "build", "--campaign-id", "hielscher-sonicators-2026", capsys=capsys,
+    )
+    assert code == 0
+    payload = json.loads(out)
+    default_path = Path(payload["out"])
+    assert default_path == fake_root / "reports" / "out" / "active" / "current" / "hielscher-sonicators-2026_fresh_public_research_queue.csv"
+    assert default_path.is_file()
+
+
 def test_default_db_path_never_resolves_under_downloads(monkeypatch, tmp_path: Path) -> None:
     """Sanity check on the config default — resolved_sqlite_path must never live under Downloads."""
     from origenlab_email_pipeline.config import load_settings

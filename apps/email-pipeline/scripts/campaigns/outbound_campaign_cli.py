@@ -2,7 +2,13 @@
 """Outbound campaign ledger operator CLI (durable SQLite campaign state).
 
 Subcommands: init, status, contact-status {set,show}, candidates add, select,
-batch show, send, reconcile, export.
+batch show, send, reconcile, export, research-queue build.
+
+``research-queue build`` is strictly read-only (opens SQLite with ``mode=ro``):
+it ranks ``lead_master`` organizations that still need fresh public contact
+research when the known-contact universe is exhausted, and writes one CSV
+artifact. It never mutates campaign, lead, or suppression state -- see
+``outbound_campaign_research_queue`` for the exclusion policy.
 
 Canonical campaign state lives in SQLite. No command writes batch artifacts
 anywhere by default — recipient/attempt state always comes from SQLite, never
@@ -33,6 +39,7 @@ import argparse
 import csv
 import json
 import os
+import sqlite3
 import sys
 import uuid
 from pathlib import Path
@@ -53,6 +60,12 @@ from origenlab_email_pipeline.manual_contact_status import (
 )
 from origenlab_email_pipeline.outbound_campaign_reconcile import reconcile_campaign
 from origenlab_email_pipeline.outbound_campaign_schema import ensure_outbound_campaign_tables
+from origenlab_email_pipeline.outbound_campaign_research_queue import (
+    DEFAULT_FIT_BUCKETS,
+    RESEARCH_QUEUE_FIELDNAMES,
+    compute_research_queue,
+    research_org_to_row,
+)
 from origenlab_email_pipeline.outbound_campaign_sender import send_campaign_batch
 from origenlab_email_pipeline.outbound_campaign_store import (
     CampaignAlreadyExistsError,
@@ -321,6 +334,58 @@ def _cmd_reconcile(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_research_queue_build(args: argparse.Namespace) -> int:
+    """Fresh-public organization research queue -- strictly read-only.
+
+    Opens the SQLite file in ``mode=ro`` (not the shared read/write ``connect``
+    used by every other subcommand here) so a bug in this command cannot mutate
+    campaign, lead, or suppression state even in principle. Writes exactly one
+    CSV to ``--out`` (or the campaign-derived default path) -- never Downloads,
+    never a numbered batch file.
+    """
+    db_path = _resolve_db(args)
+    if not db_path.is_file():
+        print(f"SQLite file not found: {db_path}", file=sys.stderr)
+        return 1
+    out_path = Path(args.out).expanduser() if args.out else (
+        _ROOT / "reports" / "out" / "active" / "current" / f"{args.campaign_id}_fresh_public_research_queue.csv"
+    )
+
+    fit_buckets = DEFAULT_FIT_BUCKETS
+    if args.include_low_fit:
+        fit_buckets = ("high_fit", "medium_fit", "low_fit")
+
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        orgs, stats = compute_research_queue(
+            conn, fit_buckets=fit_buckets, limit=args.limit,
+            include_discarded=args.include_discarded,
+        )
+    finally:
+        conn.close()
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(RESEARCH_QUEUE_FIELDNAMES))
+        writer.writeheader()
+        for org in orgs:
+            writer.writerow(research_org_to_row(org))
+
+    print(json.dumps({
+        "out": str(out_path),
+        "leads_scanned": stats.leads_scanned,
+        "orgs_scanned": stats.orgs_scanned,
+        "blocked_too_low_relevance_leads": stats.blocked_too_low_relevance_leads,
+        "blocked_already_has_contact": stats.blocked_already_has_contact,
+        "blocked_supplier": stats.blocked_supplier,
+        "blocked_suppression": stats.blocked_suppression,
+        "blocked_noise": stats.blocked_noise,
+        "blocked_discarded": stats.blocked_discarded,
+        "final_queue_count": stats.final_queue_count,
+    }, ensure_ascii=False, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="command", required=True)
@@ -417,6 +482,34 @@ def build_parser() -> argparse.ArgumentParser:
     p_export.add_argument("--state", choices=list(RECIPIENT_STATES), default=None, help="Filter by recipient state (default: all)")
     _add_db_arg(p_export)
     p_export.set_defaults(func=_cmd_export)
+
+    p_research = sub.add_parser(
+        "research-queue", help="Fresh-public organization/contact research queue (read-only)",
+    )
+    research_sub = p_research.add_subparsers(dest="research_queue_command", required=True)
+    p_research_build = research_sub.add_parser(
+        "build",
+        help="Rank lead_master organizations needing fresh public contact research and write one CSV",
+    )
+    p_research_build.add_argument(
+        "--campaign-id", required=True,
+        help="Used only to label the run and derive the default --out filename; no DB write.",
+    )
+    p_research_build.add_argument(
+        "--out", default=None,
+        help="Destination CSV path (default: reports/out/active/current/<campaign-id>_fresh_public_research_queue.csv)",
+    )
+    p_research_build.add_argument("--limit", type=int, default=200)
+    p_research_build.add_argument(
+        "--include-low-fit", action="store_true",
+        help="Also include low_fit organizations (default: high_fit/medium_fit only).",
+    )
+    p_research_build.add_argument(
+        "--include-discarded", action="store_true",
+        help="Also include organizations the operator already marked 'descartado' in lead_contact_research.",
+    )
+    _add_db_arg(p_research_build)
+    p_research_build.set_defaults(func=_cmd_research_queue_build)
 
     return ap
 
