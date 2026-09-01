@@ -166,6 +166,22 @@ def list_candidates(conn: sqlite3.Connection, campaign_id: str, limit: int | Non
     return [dict(zip(_RECIPIENT_COLS, row)) for row in rows]
 
 
+def list_campaign_recipients(
+    conn: sqlite3.Connection, campaign_id: str, *, state: str | None = None
+) -> list[dict]:
+    """All recipient rows for a campaign, optionally filtered by state. Read-only —
+    for explicit operator export (see the CLI's ``export`` subcommand), never used
+    by default/automatic command paths."""
+    sql = f"SELECT {', '.join(_RECIPIENT_COLS)} FROM outbound_campaign_recipient WHERE campaign_id = ?"
+    args: list[object] = [campaign_id]
+    if state is not None:
+        sql += " AND state = ?"
+        args.append(state)
+    sql += " ORDER BY id"
+    rows = conn.execute(sql, args).fetchall()
+    return [dict(zip(_RECIPIENT_COLS, row)) for row in rows]
+
+
 @dataclass(frozen=True)
 class BatchSelectionResult:
     batch_id: str

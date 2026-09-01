@@ -2,17 +2,35 @@
 """Outbound campaign ledger operator CLI (durable SQLite campaign state).
 
 Subcommands: init, status, contact-status {set,show}, candidates add, select,
-batch show, send, reconcile.
+batch show, send, reconcile, export.
 
-Canonical campaign state lives in SQLite. This CLI never writes batch
-artifacts to a Windows Downloads path by default; optional CSV/JSON export
-only happens when the operator explicitly passes --out to a command that
-supports it, and --out is refused if it points at a Downloads-style path.
+Canonical campaign state lives in SQLite. No command writes batch artifacts
+anywhere by default — recipient/attempt state always comes from SQLite, never
+from a file. The only way to get a CSV/JSON file out of this CLI is the
+explicit ``export`` subcommand, which always requires an operator-supplied
+``--out`` path and writes exactly there (Downloads included, if that's what
+the operator asks for — this CLI does not second-guess an explicit export
+destination; it only guarantees nothing is written *implicitly*).
+
+Selection (``select``) and the sender's immediate pre-send recheck both use
+the **strictest** canonical marketing gate (``outbound_core.gate_context_for_archive_batch``,
+i.e. ``strict_contact_graph_noise=True``) by default, regardless of a
+recipient's ``source_kind`` — including candidates added manually via
+``candidates add``. This is deliberate: campaign sourcing is not guaranteed to
+be pre-vetted (it can include contact_master/archive-derived contacts), so
+using the weaker lead-only noise profile here would have let obvious
+vendor/platform noise (e.g. supplier-domain rows such as Kalstein, Made-in-China,
+EasyMailing, FedEx-style logistics senders) through if manually added to the
+candidate table. No ad-hoc domain list was added for this — the existing
+canonical ``supplier_master``-backed supplier-domain filter and
+``marketing_contact_noise`` strict mode already own that responsibility and are
+reused as-is.
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import sys
@@ -39,31 +57,23 @@ from origenlab_email_pipeline.outbound_campaign_sender import send_campaign_batc
 from origenlab_email_pipeline.outbound_campaign_store import (
     CampaignAlreadyExistsError,
     CampaignNotFoundError,
+    RECIPIENT_STATES,
     campaign_progress,
     create_campaign,
+    list_campaign_recipients,
     list_reserved_batch,
     reserve_next_batch,
     upsert_recipient_candidate,
 )
 from origenlab_email_pipeline.outbound_core import (
-    gate_context_for_lead_master_export,
+    gate_context_for_archive_batch,
     resolve_outbound_gmail_user,
     resolve_outbound_sent_folders,
 )
 
-_DOWNLOADS_MARKER = "Downloads"
-
 
 def _resolve_db(args: argparse.Namespace) -> Path:
     return args.db or load_settings().resolved_sqlite_path()
-
-
-def _guard_out_path(path: str | None) -> None:
-    if path and _DOWNLOADS_MARKER in path:
-        raise SystemExit(
-            "Refusing to write to a Downloads-style path via campaign commands. "
-            "Use --out with an explicit reports/out/... path if you need an export."
-        )
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
@@ -164,7 +174,10 @@ def _cmd_select(args: argparse.Namespace) -> int:
         settings = load_settings()
         gmail_user = resolve_outbound_gmail_user(settings, explicit=args.gmail_user)
         sent_folders = resolve_outbound_sent_folders(args.sent_folder)
-        gate_ctx = gate_context_for_lead_master_export(
+        # Strict noise profile by default -- see module docstring. Campaign
+        # candidates are not guaranteed pre-vetted; this must not weaken to the
+        # lead-only profile just because a row's source_kind is "manual".
+        gate_ctx = gate_context_for_archive_batch(
             conn, gmail_user=gmail_user, sent_folders=sent_folders,
         )
         manual_status = load_manual_status_map(conn)
@@ -196,7 +209,6 @@ def _cmd_batch_show(args: argparse.Namespace) -> int:
 
 
 def _cmd_send(args: argparse.Namespace) -> int:
-    _guard_out_path(str(args.out) if args.out else None)
     db_path = _resolve_db(args)
     conn = connect(db_path)
     try:
@@ -216,7 +228,9 @@ def _cmd_send(args: argparse.Namespace) -> int:
         settings = load_settings()
         gmail_user = resolve_outbound_gmail_user(settings, explicit=args.gmail_user)
         sent_folders = resolve_outbound_sent_folders(args.sent_folder)
-        gate_ctx = gate_context_for_lead_master_export(
+        # Same strict gate as `select` -- the pre-send recheck must not be weaker
+        # than the selection check that already ran on these recipients.
+        gate_ctx = gate_context_for_archive_batch(
             conn, gmail_user=gmail_user, sent_folders=sent_folders,
         )
 
@@ -254,6 +268,40 @@ def _cmd_send(args: argparse.Namespace) -> int:
         "failed": failed, "skipped": skipped,
     }, ensure_ascii=False, indent=2))
     return 0 if failed == 0 else 2
+
+
+def _cmd_export(args: argparse.Namespace) -> int:
+    """Explicit, operator-invoked export only -- never called by any other command.
+
+    Writes exactly to the path the operator supplies via --out (CSV by default,
+    JSON if the path ends in .json), including a Downloads-style path if that is
+    what the operator asked for. Default campaign operation never calls this.
+    """
+    db_path = _resolve_db(args)
+    conn = connect(db_path)
+    try:
+        ensure_outbound_campaign_tables(conn)
+        rows = list_campaign_recipients(conn, args.campaign_id, state=args.state)
+    finally:
+        conn.close()
+
+    out_path = Path(args.out).expanduser()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    if out_path.suffix.lower() == ".json":
+        out_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+    else:
+        with out_path.open("w", newline="", encoding="utf-8") as f:
+            fieldnames = list(rows[0].keys()) if rows else [
+                "id", "campaign_id", "email", "email_norm", "state", "source_kind",
+                "source_ref", "institution_name", "selection_reason", "block_reason",
+                "selected_at", "last_attempt_at", "sent_at", "last_gmail_message_id",
+                "bounce_state", "created_at", "updated_at",
+            ]
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+    print(f"Exported {len(rows)} recipient row(s) to {out_path}")
+    return 0
 
 
 def _cmd_reconcile(args: argparse.Namespace) -> int:
@@ -351,7 +399,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_send.add_argument("--open-browser", action="store_true")
     p_send.add_argument("--gmail-user", default=None)
     p_send.add_argument("--sent-folder", action="append", default=None)
-    p_send.add_argument("--out", default=None, help="Optional explicit export path (never Downloads)")
     _add_db_arg(p_send)
     p_send.set_defaults(func=_cmd_send)
 
@@ -361,6 +408,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_recon.add_argument("--sent-folder", action="append", default=None)
     _add_db_arg(p_recon)
     p_recon.set_defaults(func=_cmd_reconcile)
+
+    p_export = sub.add_parser(
+        "export", help="Explicit operator export of recipient rows to CSV/JSON (never automatic)",
+    )
+    p_export.add_argument("--campaign-id", required=True)
+    p_export.add_argument("--out", required=True, help="Destination path (.json for JSON, else CSV)")
+    p_export.add_argument("--state", choices=list(RECIPIENT_STATES), default=None, help="Filter by recipient state (default: all)")
+    _add_db_arg(p_export)
+    p_export.set_defaults(func=_cmd_export)
 
     return ap
 
