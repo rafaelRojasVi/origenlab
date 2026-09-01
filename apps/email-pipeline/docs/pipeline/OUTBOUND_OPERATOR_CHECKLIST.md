@@ -79,16 +79,31 @@ sidecar) lives in SQLite. See [`OUTBOUND_SOURCE_OF_TRUTH.md` § Campaign ledger]
 | Explicit live send | `... send --campaign-id <id> --html <path> --live` |
 | Reconcile from Gmail Sent / suppression evidence | `... reconcile --campaign-id <id> [--gmail-user ...]` |
 | Show campaign status/progress | `... status --campaign-id <id>` |
+| Explicit export (never automatic) | `... export --campaign-id <id> --out <path.csv\|path.json> [--state <state>]` |
 
 `status` reports: `target`, `baseline`, `ledger_attempts`, `total_accepted` (`baseline +
 ledger_attempts`), `remaining`, `candidates`, `selected_reserved`, `sent`, `blocked`,
-`bounced`. `select` and the sender's pre-send recheck both reuse the same shared gate as the
-archive/lead lanes above, plus a hard `manual_contact_status` inactive/hold exact-email block
-— an `active` manual fact is informational only and never bypasses suppression, domain
-suppression, Sent-history, outreach state, supplier-domain, or noise checks. `send` is
-dry-run unless `--live` is passed; a command retry never re-sends an already-accepted
-attempt. Default paths never write to a Windows Downloads path; `--out` (where supported) is
-refused if it points at one.
+`bounced`, `in_flight_attempts` (live sends whose Gmail outcome is unconfirmed — see below).
+`select` and the sender's pre-send recheck both build `GateContext` via
+`outbound_core.gate_context_for_archive_batch` (`strict_contact_graph_noise=True`) — the
+**strictest** canonical marketing gate, applied uniformly regardless of a recipient's
+`source_kind` (including candidates added manually via `candidates add`) — plus a hard
+`manual_contact_status` inactive/hold exact-email block. An `active` manual fact is
+informational only and never bypasses suppression, domain suppression, Sent-history, outreach
+state, supplier-domain, or noise checks. Known-vendor/platform noise (lab-equipment resellers,
+logistics/ESP senders, etc.) is blocked via the existing `supplier_master`-backed
+supplier-domain filter and `marketing_contact_noise` strict mode — no ad-hoc domain list is
+maintained in the campaign CLI itself.
+
+`send` is dry-run unless `--live` is passed; a command retry never re-sends an
+already-**accepted** attempt. A live send is two-phase (`in_flight` → `accepted`/`failed`): if
+the process dies between Gmail accepting the message and the terminal result being persisted,
+the attempt is left `in_flight` and a retry refuses to call Gmail again for that recipient —
+run `reconcile` (resolves `in_flight` to `accepted` on positive Sent-folder or bounce
+evidence) or inspect `status.in_flight_attempts` for operator follow-up. `send` writes no
+files of any kind (recipient state is read from and written to SQLite only); `export` is the
+only command that writes a file, and only when `--out` is explicitly given — including a
+Downloads-style path, since explicit operator export is exactly what Downloads is for.
 
 ## What is **not** source of truth
 

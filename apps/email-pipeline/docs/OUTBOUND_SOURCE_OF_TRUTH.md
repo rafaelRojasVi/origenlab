@@ -134,9 +134,10 @@ lifecycle (`candidate → selected/reserved → sent/blocked/bounced/replied/ina
 append-only send-attempt ledger — lives in SQLite:
 [`outbound_campaign_schema.py`](../src/origenlab_email_pipeline/outbound_campaign_schema.py)
 (`outbound_campaign`, `outbound_campaign_recipient`, `outbound_send_attempt`,
-`manual_contact_status`). CSV/JSON remains an **explicit export/reproducible artifact only**
-(via `--out` on supporting commands) — never required runtime state, and default campaign
-commands never write to a Windows Downloads path (`/mnt/c/Users/*/Downloads`).
+`manual_contact_status`). CSV/JSON is only ever produced by the CLI's explicit `export`
+subcommand (requires `--out`) — never required runtime state, and no other campaign command
+writes a file of any kind; `export` respects whatever path the operator gives it, Downloads
+included, since an explicit export destination is the operator's call, not this CLI's.
 
 This is a separate concept from the optional Postgres `outbound.outbound_batch` /
 `outbound.outbound_batch_recipient` audit bridge described above — that bridge mirrors the
@@ -144,10 +145,31 @@ two existing CSV lanes' export runs; it does not orchestrate or record sends, an
 campaign ledger does not write to it. Operator CLI:
 [`scripts/campaigns/outbound_campaign_cli.py`](../scripts/campaigns/outbound_campaign_cli.py)
 (`init`, `status`, `contact-status set/show`, `candidates add`, `select`, `batch show`,
-`send [--live]`, `reconcile`). Selection and the sender's immediate pre-send recheck both
-reuse the same shared gate (`candidate_export_gate.evaluate_export_eligibility`), wrapped by
-[`outbound_campaign_gate.py`](../src/origenlab_email_pipeline/outbound_campaign_gate.py) to add
-the `manual_contact_status` hard inactive/hold block — no gate logic is duplicated.
+`send [--live]`, `reconcile`, `export`). Selection and the sender's immediate pre-send recheck
+both build `GateContext` via `outbound_core.gate_context_for_archive_batch`
+(`strict_contact_graph_noise=True`, the strictest canonical marketing profile — applied
+uniformly regardless of a recipient's `source_kind`) and call the shared gate
+(`candidate_export_gate.evaluate_export_eligibility`) through
+[`outbound_campaign_gate.py`](../src/origenlab_email_pipeline/outbound_campaign_gate.py), which
+adds the `manual_contact_status` hard inactive/hold block — no gate logic is duplicated, and no
+campaign-specific vendor/domain list is maintained (known-vendor noise is caught by the
+existing `supplier_master` supplier-domain filter, reused as-is).
+
+**Live-send crash safety:** a live send is two-phase — `outbound_campaign_store.begin_live_attempt`
+persists (and commits) an `in_flight` row *before* the Gmail API call; `finish_live_attempt`
+resolves it to `accepted`/`failed` afterward. If the process dies between Gmail accepting the
+message and the terminal result being persisted, the row is left `in_flight`; a retry checks
+this first and refuses to call Gmail again for that recipient (fail-closed — this is duplicate
+*prevention*, not an exactly-once delivery guarantee, which Gmail's API cannot provide). An
+`in_flight` attempt is resolved only by `reconcile` finding positive evidence (Sent-folder
+match → `confirmed_sent`; bounce-suppression match → `bounced`) or by explicit operator
+action; absent both, it stays `in_flight` and is surfaced via `status.in_flight_attempts`.
+Reconciliation matches by normalized recipient address against the same Sent-folder evidence
+the archive/lead lanes already use — **not** by comparing Gmail's internal send-response `id`
+to `emails.message_id`, which is populated from the RFC822 `Message-ID` header during IMAP
+ingest and is a different identifier space entirely (see `outbound_campaign_reconcile.py`
+module docstring for the full matching-strategy writeup, including bounce-vs-Sent precedence
+when both exist for the same address).
 
 ### Shared gate responsibilities
 
