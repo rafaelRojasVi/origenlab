@@ -101,20 +101,46 @@ describe("SalesOpportunityBoard", () => {
     expect(onOpenOpportunity).toHaveBeenCalledWith(item());
   });
 
-  it("toggling Ganadas calls toggleStage and reflects pressed state", () => {
+  it("defaults to the Activas view showing only the five active-stage columns", () => {
+    render(<SalesOpportunityBoard board={board({ items: [item()] })} onOpenOpportunity={vi.fn()} />);
+
+    expect(screen.getByRole("tab", { name: /Activas/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: "Nueva" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Ganadas" })).toBeNull();
+  });
+
+  it("switching to Cerradas hides active columns and shows the closed-stage toggles", () => {
+    render(<SalesOpportunityBoard board={board({ items: [item()] })} onOpenOpportunity={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Cerradas" }));
+
+    expect(screen.queryByRole("heading", { name: "Nueva" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Ganadas" })).toBeInTheDocument();
+    expect(screen.getByText(/Activa Ganadas, Perdidas o Dormidas/)).toBeInTheDocument();
+  });
+
+  it("toggling Ganadas from the Cerradas view calls toggleStage and renders that column once enabled", () => {
     const toggleStage = vi.fn();
     const { rerender } = render(
       <SalesOpportunityBoard board={board({ toggleStage })} onOpenOpportunity={vi.fn()} />,
     );
 
+    fireEvent.click(screen.getByRole("tab", { name: "Cerradas" }));
     const button = screen.getByRole("button", { name: "Ganadas" });
     expect(button).toHaveAttribute("aria-pressed", "false");
 
-    button.click();
+    fireEvent.click(button);
     expect(toggleStage).toHaveBeenCalledWith("won");
 
-    rerender(<SalesOpportunityBoard board={board({ toggleStage, enabledToggles: ["won"] })} onOpenOpportunity={vi.fn()} />);
+    rerender(
+      <SalesOpportunityBoard
+        board={board({ toggleStage, enabledToggles: ["won"], items: [item({ stage: "won" })] })}
+        onOpenOpportunity={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Cerradas" }));
     expect(screen.getByRole("button", { name: "Ganadas" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("heading", { name: "Ganada" })).toBeInTheDocument();
   });
 
   it("shows a dismissible stage-conflict banner", () => {
