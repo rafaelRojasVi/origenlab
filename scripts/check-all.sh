@@ -31,5 +31,11 @@ npm ci
 npm test
 npm run build
 
+section "dashboard-proxy"
+cd "$ROOT_DIR/apps/dashboard-proxy"
+npm ci
+npm run validate
+npm run typecheck
+
 section "done"
 echo "All monorepo checks passed."

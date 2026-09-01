@@ -29,3 +29,4 @@ jobs:
           cache-dependency-path: apps/dashboard-proxy/package-lock.json
       - run: npm ci
       - run: npm run validate
+      - run: npm run typecheck
