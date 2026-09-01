@@ -94,10 +94,6 @@ id_rsa.pub
 # Client / campaign collateral (local only — never public)
 docs/client/
 
-# Catalogue QA renders (generated)
-docs/origenlab-brochures/catalog-premium/qa-renders/
-docs/origenlab-brochures/catalog-premium/design-prototype.pdf
-
 # Pipeline input reports (may contain PII)
 apps/email-pipeline/reports/in/
 

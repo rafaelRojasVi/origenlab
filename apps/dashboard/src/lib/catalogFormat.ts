@@ -5,7 +5,6 @@ import type {
   CatalogProductCommercialHistoryUi,
   CatalogPriceSnapshotUi,
   CatalogProductDetailUi,
-  CatalogProductListItemUi,
   CatalogProductSpecUi,
   CatalogSupplierOfferUi,
 } from "../api/catalogTypes";
@@ -560,14 +559,4 @@ export function catalogWebsiteHref(slug: string | null | undefined): string | nu
     return null;
   }
   return `${CATALOG_WEBSITE_PRODUCT_BASE}${encodeURIComponent(trimmed)}`;
-}
-
-/** @deprecated use buildListOfferSummary with detail */
-export function listOfferHint(_item: CatalogProductListItemUi): string {
-  return "Ver detalle";
-}
-
-/** @deprecated use buildListLinksSummary with detail */
-export function listLinksHint(_item: CatalogProductListItemUi): string {
-  return "Ver detalle";
 }
