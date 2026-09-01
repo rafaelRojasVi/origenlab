@@ -17,8 +17,16 @@ def supplier_email_domains(conn: sqlite3.Connection) -> frozenset[str]:
     ).fetchone()
     if not row:
         return frozenset()
+    columns = {
+        str(row[1])
+        for row in conn.execute("PRAGMA table_info(supplier_master)").fetchall()
+    }
+    where = "domain_norm IS NOT NULL AND trim(domain_norm) != ''"
+    if "is_exclusion" in columns:
+        where += " AND is_exclusion = 1"
+
     rows = conn.execute(
-        "SELECT lower(trim(domain_norm)) FROM supplier_master WHERE domain_norm IS NOT NULL AND trim(domain_norm) != ''"
+        f"SELECT lower(trim(domain_norm)) FROM supplier_master WHERE {where}"
     ).fetchall()
     return frozenset(str(r[0]) for r in rows if r[0])
 
