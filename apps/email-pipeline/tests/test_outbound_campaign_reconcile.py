@@ -17,7 +17,9 @@ from origenlab_email_pipeline.db import connect, init_schema
 from origenlab_email_pipeline.outbound_campaign_reconcile import reconcile_campaign
 from origenlab_email_pipeline.outbound_campaign_schema import ensure_outbound_campaign_tables
 from origenlab_email_pipeline.outbound_campaign_store import (
+    begin_live_attempt,
     create_campaign,
+    latest_attempt_status,
     record_attempt,
     upsert_recipient_candidate,
 )
@@ -132,3 +134,104 @@ def test_reconcile_marks_no_evidence_when_neither_matches(conn: sqlite3.Connecti
     )
     assert summary.no_evidence == 1
     assert summary.checked == 1
+
+
+# --- Ambiguous / in_flight attempt resolution (hardening pass) -------------------------
+
+
+def test_reconcile_resolves_in_flight_to_confirmed_sent_from_sent_evidence(conn: sqlite3.Connection) -> None:
+    rid = upsert_recipient_candidate(conn, campaign_id="hielscher-sonicators-2026", email="a@x.cl", source_kind="manual")
+    conn.execute("UPDATE outbound_campaign_recipient SET state='reserved' WHERE id=?", (rid,))
+    attempt_id = begin_live_attempt(conn, campaign_id="hielscher-sonicators-2026", recipient_id=rid, email_norm="a@x.cl", batch_id="b0")
+    conn.commit()
+    _seed_sent_email(conn, gmail_user="contacto@origenlab.cl", recipient="a@x.cl")
+
+    summary = reconcile_campaign(
+        conn, "hielscher-sonicators-2026", gmail_user="contacto@origenlab.cl",
+        sent_folders=("[Gmail]/Sent Mail",),
+    )
+    assert summary.resolved_in_flight == 1
+    assert summary.confirmed_sent == 1
+    assert summary.still_in_flight == 0
+    row = conn.execute(
+        "SELECT result, reconciliation_status FROM outbound_send_attempt WHERE id=?", (attempt_id,)
+    ).fetchone()
+    assert row == ("accepted", "confirmed_sent")
+    recipient_state = conn.execute("SELECT state FROM outbound_campaign_recipient WHERE id=?", (rid,)).fetchone()[0]
+    assert recipient_state == "sent"
+
+
+def test_reconcile_resolves_in_flight_to_bounced_from_suppression(conn: sqlite3.Connection) -> None:
+    rid = upsert_recipient_candidate(conn, campaign_id="hielscher-sonicators-2026", email="bounced@x.cl", source_kind="manual")
+    conn.execute("UPDATE outbound_campaign_recipient SET state='reserved' WHERE id=?", (rid,))
+    attempt_id = begin_live_attempt(conn, campaign_id="hielscher-sonicators-2026", recipient_id=rid, email_norm="bounced@x.cl", batch_id="b0")
+    conn.commit()
+    upsert_contact_email_suppression(
+        conn,
+        payload=validate_contact_email_suppression_payload(
+            email="bounced@x.cl", suppression_reason_code="bounce_no_such_user",
+            suppression_reason_text=None, suppression_source="ndr", last_bounced_at=None, updated_by="test",
+        ),
+    )
+    conn.commit()
+
+    summary = reconcile_campaign(
+        conn, "hielscher-sonicators-2026", gmail_user="contacto@origenlab.cl",
+        sent_folders=("[Gmail]/Sent Mail",),
+    )
+    assert summary.resolved_in_flight == 1
+    assert summary.bounced == 1
+    row = conn.execute(
+        "SELECT result, reconciliation_status FROM outbound_send_attempt WHERE id=?", (attempt_id,)
+    ).fetchone()
+    assert row == ("accepted", "bounced")
+
+
+def test_reconcile_leaves_genuinely_ambiguous_in_flight_attempt_untouched(conn: sqlite3.Connection) -> None:
+    """No Sent evidence, no bounce evidence -- must not guess. Stays in_flight for the
+    operator (or a later reconcile run once evidence appears)."""
+    rid = upsert_recipient_candidate(conn, campaign_id="hielscher-sonicators-2026", email="unknown@x.cl", source_kind="manual")
+    conn.execute("UPDATE outbound_campaign_recipient SET state='reserved' WHERE id=?", (rid,))
+    begin_live_attempt(conn, campaign_id="hielscher-sonicators-2026", recipient_id=rid, email_norm="unknown@x.cl", batch_id="b0")
+    conn.commit()
+
+    summary = reconcile_campaign(
+        conn, "hielscher-sonicators-2026", gmail_user="contacto@origenlab.cl",
+        sent_folders=("[Gmail]/Sent Mail",),
+    )
+    assert summary.still_in_flight == 1
+    assert summary.resolved_in_flight == 0
+    assert latest_attempt_status(conn, "hielscher-sonicators-2026", rid)[0] == "in_flight"
+    recipient_state = conn.execute("SELECT state FROM outbound_campaign_recipient WHERE id=?", (rid,)).fetchone()[0]
+    assert recipient_state == "reserved"  # unresolved -- still eligible for operator/CLI recovery
+
+
+def test_ambiguous_evidence_bounce_takes_precedence_over_sent_history(conn: sqlite3.Connection) -> None:
+    """Same address has BOTH bounce-suppression and Sent-folder evidence -- bounce wins
+    because it is the more actionable, superset fact (sent, then rejected)."""
+    rid = upsert_recipient_candidate(conn, campaign_id="hielscher-sonicators-2026", email="both@x.cl", source_kind="manual")
+    record_attempt(
+        conn, campaign_id="hielscher-sonicators-2026", recipient_id=rid, email_norm="both@x.cl",
+        batch_id="b1", mode="live", result="accepted", gmail_message_id="M9",
+    )
+    conn.commit()
+    _seed_sent_email(conn, gmail_user="contacto@origenlab.cl", recipient="both@x.cl")
+    upsert_contact_email_suppression(
+        conn,
+        payload=validate_contact_email_suppression_payload(
+            email="both@x.cl", suppression_reason_code="bounce_no_such_user",
+            suppression_reason_text=None, suppression_source="ndr", last_bounced_at=None, updated_by="test",
+        ),
+    )
+    conn.commit()
+
+    summary = reconcile_campaign(
+        conn, "hielscher-sonicators-2026", gmail_user="contacto@origenlab.cl",
+        sent_folders=("[Gmail]/Sent Mail",),
+    )
+    assert summary.bounced == 1
+    assert summary.confirmed_sent == 0
+    status = conn.execute(
+        "SELECT reconciliation_status FROM outbound_send_attempt WHERE recipient_id=?", (rid,)
+    ).fetchone()[0]
+    assert status == "bounced"
