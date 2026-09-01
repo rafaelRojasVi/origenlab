@@ -76,6 +76,16 @@ def test_dry_run_does_not_call_gmail_api(conn: sqlite3.Connection, html_file: Pa
     assert outcomes[0].mode == "dry_run"
     assert outcomes[0].gmail_message_id is None
 
+    # A dry-run validates/builds the message only. It must not create a send
+    # attempt or consume the reserved recipient.
+    assert latest_attempt_status(conn, "hielscher-sonicators-2026", rid) is None
+    assert has_accepted_attempt(conn, "hielscher-sonicators-2026", rid) is None
+    state = conn.execute(
+        "SELECT state FROM outbound_campaign_recipient WHERE id = ?",
+        (rid,),
+    ).fetchone()[0]
+    assert state == "reserved"
+
 
 def test_live_send_normal_success_records_message_id(conn: sqlite3.Connection, html_file: Path) -> None:
     rid = _reserve(conn, "a@x.cl")

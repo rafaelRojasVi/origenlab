@@ -123,11 +123,11 @@ def send_campaign_batch(
         )
 
         if not live:
-            record_attempt(
-                conn, campaign_id=campaign_id, recipient_id=recipient_id, email_norm=email,
-                batch_id=batch_id, mode="dry_run", result="accepted",
-            )
-            conn.commit()
+            # True dry-run: eligibility was rechecked and the complete Gmail
+            # message was successfully built above, but campaign state must
+            # remain untouched. In particular, do not create an accepted
+            # attempt: accepted attempts represent actual Gmail acceptance and
+            # transition the recipient to sent.
             outcomes.append(SendOutcome(
                 recipient_id=recipient_id, email=email, mode="dry_run",
                 result="accepted", gmail_message_id=None, error=None,
