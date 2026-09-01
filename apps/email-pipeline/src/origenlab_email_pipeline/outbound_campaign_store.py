@@ -285,6 +285,82 @@ def record_attempt(
     return int(cur.lastrowid)
 
 
+def latest_attempt_status(
+    conn: sqlite3.Connection, campaign_id: str, recipient_id: int
+) -> tuple[str, int] | None:
+    """(result, attempt_id) of the most recent attempt for this recipient, or None."""
+    row = conn.execute(
+        "SELECT result, id FROM outbound_send_attempt "
+        "WHERE campaign_id = ? AND recipient_id = ? ORDER BY attempt_seq DESC LIMIT 1",
+        (campaign_id, recipient_id),
+    ).fetchone()
+    return (row[0], int(row[1])) if row else None
+
+
+def begin_live_attempt(
+    conn: sqlite3.Connection,
+    *,
+    campaign_id: str,
+    recipient_id: int,
+    email_norm: str,
+    batch_id: str,
+    at_iso: str | None = None,
+) -> int:
+    """Phase 1 of a live send: durably record intent to call Gmail *before* calling it.
+
+    Caller MUST commit immediately after this returns, before making the Gmail API
+    call — that is what makes the crash window fail-closed: if the process dies
+    after Gmail accepts the message but before ``finish_live_attempt`` runs, this
+    row is left ``in_flight`` and a retry will refuse to call Gmail again
+    (see ``latest_attempt_status`` / the sender's pre-call check).
+    """
+    ts = at_iso or now_iso()
+    seq = next_attempt_seq(conn, campaign_id, recipient_id)
+    cur = conn.execute(
+        """
+        INSERT INTO outbound_send_attempt (
+          campaign_id, recipient_id, email_norm, batch_id, attempt_seq, attempted_at,
+          mode, result, reconciliation_status, created_at
+        ) VALUES (?,?,?,?,?,?, 'live', 'in_flight', 'unreconciled', ?)
+        """,
+        (campaign_id, recipient_id, email_norm, batch_id, seq, ts, ts),
+    )
+    return int(cur.lastrowid)
+
+
+def finish_live_attempt(
+    conn: sqlite3.Connection,
+    *,
+    attempt_id: int,
+    recipient_id: int,
+    result: str,
+    gmail_message_id: str | None = None,
+    error_code: str | None = None,
+    error_detail: str | None = None,
+    at_iso: str | None = None,
+) -> None:
+    """Phase 2 of a live send: resolve an ``in_flight`` row to a terminal result."""
+    ts = at_iso or now_iso()
+    conn.execute(
+        """
+        UPDATE outbound_send_attempt
+        SET result = ?, gmail_message_id = ?, error_code = ?, error_detail = ?, resolved_at = ?
+        WHERE id = ?
+        """,
+        (result, gmail_message_id, error_code, error_detail, ts, attempt_id),
+    )
+    conn.execute(
+        "UPDATE outbound_campaign_recipient SET last_attempt_at = ?, updated_at = ? WHERE id = ?",
+        (ts, ts, recipient_id),
+    )
+    if result == "accepted":
+        conn.execute(
+            "UPDATE outbound_campaign_recipient "
+            "SET state = 'sent', sent_at = ?, last_gmail_message_id = ?, updated_at = ? WHERE id = ?",
+            (ts, gmail_message_id, ts, recipient_id),
+        )
+
+
 @dataclass(frozen=True)
 class CampaignProgress:
     target: int
@@ -297,6 +373,7 @@ class CampaignProgress:
     sent: int
     blocked: int
     bounced: int
+    in_flight_attempts: int
 
 
 def campaign_progress(conn: sqlite3.Connection, campaign_id: str) -> CampaignProgress:
@@ -306,6 +383,12 @@ def campaign_progress(conn: sqlite3.Connection, campaign_id: str) -> CampaignPro
     ledger_attempts = int(
         conn.execute(
             "SELECT COUNT(*) FROM outbound_send_attempt WHERE campaign_id = ? AND result = 'accepted'",
+            (campaign_id,),
+        ).fetchone()[0]
+    )
+    in_flight_attempts = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM outbound_send_attempt WHERE campaign_id = ? AND result = 'in_flight'",
             (campaign_id,),
         ).fetchone()[0]
     )
@@ -328,4 +411,5 @@ def campaign_progress(conn: sqlite3.Connection, campaign_id: str) -> CampaignPro
         sent=counts["sent"],
         blocked=counts["blocked"],
         bounced=counts["bounced"],
+        in_flight_attempts=in_flight_attempts,
     )

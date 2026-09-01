@@ -8,9 +8,15 @@ joined by normalized email/domain string only.
 
 - ``outbound_campaign``: one row per campaign, stable ``campaign_id`` key.
 - ``outbound_campaign_recipient``: one row per (campaign, email); durable lifecycle state.
-- ``outbound_send_attempt``: append-only attempt ledger; idempotency via
+- ``outbound_send_attempt``: attempt ledger; idempotency via
   ``UNIQUE(campaign_id, recipient_id, attempt_seq)`` plus an application-level
-  "already accepted" guard in ``outbound_campaign_store``.
+  "already accepted" guard in ``outbound_campaign_store``. A live send is a
+  two-phase write: ``in_flight`` is inserted and committed *before* the Gmail
+  API call, then updated to ``accepted``/``failed`` after the call returns.
+  If the process dies in between (Gmail accepted but the terminal state never
+  persisted), the row is left ``in_flight`` — a retry sees this and refuses to
+  call Gmail again (fail-closed) until reconciliation or an operator resolves
+  it. ``resolved_at`` records when an ``in_flight`` row left that state.
 - ``manual_contact_status``: operator-owned contact lifecycle sidecar (active/inactive/hold).
   Does not mutate ``contact_master``. inactive/hold is a hard exact-email campaign block.
   "active" is informational only — it is NOT marketing consent and does not bypass any
@@ -69,12 +75,13 @@ CREATE TABLE IF NOT EXISTS outbound_send_attempt (
   attempt_seq INTEGER NOT NULL,
   attempted_at TEXT NOT NULL,
   mode TEXT NOT NULL CHECK (mode IN ('dry_run','live')),
-  result TEXT NOT NULL CHECK (result IN ('accepted','failed','skipped')),
+  result TEXT NOT NULL CHECK (result IN ('in_flight','accepted','failed','skipped')),
   gmail_message_id TEXT,
   error_code TEXT,
   error_detail TEXT,
   reconciliation_status TEXT NOT NULL DEFAULT 'unreconciled'
     CHECK (reconciliation_status IN ('unreconciled','confirmed_sent','bounced','no_evidence')),
+  resolved_at TEXT,
   created_at TEXT NOT NULL,
   UNIQUE(campaign_id, recipient_id, attempt_seq)
 );

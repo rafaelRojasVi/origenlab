@@ -12,10 +12,13 @@ from origenlab_email_pipeline.outbound_campaign_schema import ensure_outbound_ca
 from origenlab_email_pipeline.outbound_campaign_store import (
     CampaignAlreadyExistsError,
     CampaignNotFoundError,
+    begin_live_attempt,
     campaign_progress,
     create_campaign,
+    finish_live_attempt,
     get_campaign,
     has_accepted_attempt,
+    latest_attempt_status,
     list_candidates,
     list_reserved_batch,
     record_attempt,
@@ -255,3 +258,58 @@ def test_campaign_progress_baseline_and_target_math(conn: sqlite3.Connection) ->
 def test_campaign_progress_unknown_campaign_raises(conn: sqlite3.Connection) -> None:
     with pytest.raises(CampaignNotFoundError):
         campaign_progress(conn, "nope")
+
+
+# --- Two-phase live attempt state machine (hardening pass) ---------------------------------
+
+
+def test_begin_live_attempt_persists_in_flight_before_any_gmail_call(conn: sqlite3.Connection) -> None:
+    _make_hielscher(conn)
+    rid = upsert_recipient_candidate(conn, campaign_id="hielscher-sonicators-2026", email="a@x.cl", source_kind="manual")
+    conn.execute("UPDATE outbound_campaign_recipient SET state='reserved' WHERE id=?", (rid,))
+    attempt_id = begin_live_attempt(conn, campaign_id="hielscher-sonicators-2026", recipient_id=rid, email_norm="a@x.cl", batch_id="b1")
+    conn.commit()
+    latest = latest_attempt_status(conn, "hielscher-sonicators-2026", rid)
+    assert latest == ("in_flight", attempt_id)
+    # Recipient is not yet marked sent -- only finish_live_attempt does that.
+    row = conn.execute("SELECT state FROM outbound_campaign_recipient WHERE id=?", (rid,)).fetchone()
+    assert row == ("reserved",)
+
+
+def test_finish_live_attempt_accepted_marks_recipient_sent(conn: sqlite3.Connection) -> None:
+    _make_hielscher(conn)
+    rid = upsert_recipient_candidate(conn, campaign_id="hielscher-sonicators-2026", email="a@x.cl", source_kind="manual")
+    attempt_id = begin_live_attempt(conn, campaign_id="hielscher-sonicators-2026", recipient_id=rid, email_norm="a@x.cl", batch_id="b1")
+    finish_live_attempt(conn, attempt_id=attempt_id, recipient_id=rid, result="accepted", gmail_message_id="MSG-1")
+    latest = latest_attempt_status(conn, "hielscher-sonicators-2026", rid)
+    assert latest == ("accepted", attempt_id)
+    row = conn.execute(
+        "SELECT state, last_gmail_message_id FROM outbound_campaign_recipient WHERE id=?", (rid,)
+    ).fetchone()
+    assert row == ("sent", "MSG-1")
+    resolved_at = conn.execute("SELECT resolved_at FROM outbound_send_attempt WHERE id=?", (attempt_id,)).fetchone()[0]
+    assert resolved_at is not None
+
+
+def test_finish_live_attempt_failed_leaves_recipient_reserved_for_retry(conn: sqlite3.Connection) -> None:
+    _make_hielscher(conn)
+    rid = upsert_recipient_candidate(conn, campaign_id="hielscher-sonicators-2026", email="a@x.cl", source_kind="manual")
+    conn.execute("UPDATE outbound_campaign_recipient SET state='reserved' WHERE id=?", (rid,))
+    attempt_id = begin_live_attempt(conn, campaign_id="hielscher-sonicators-2026", recipient_id=rid, email_norm="a@x.cl", batch_id="b1")
+    finish_live_attempt(conn, attempt_id=attempt_id, recipient_id=rid, result="failed", error_detail="quota exceeded")
+    latest = latest_attempt_status(conn, "hielscher-sonicators-2026", rid)
+    assert latest == ("failed", attempt_id)
+    row = conn.execute("SELECT state FROM outbound_campaign_recipient WHERE id=?", (rid,)).fetchone()
+    assert row == ("reserved",)
+
+
+def test_crash_window_leaves_attempt_in_flight_when_finish_never_runs(conn: sqlite3.Connection) -> None:
+    """Simulates: Gmail may have accepted the message, but the process died before
+    finish_live_attempt ran. The row must be left in_flight, not silently resolved."""
+    _make_hielscher(conn)
+    rid = upsert_recipient_candidate(conn, campaign_id="hielscher-sonicators-2026", email="a@x.cl", source_kind="manual")
+    begin_live_attempt(conn, campaign_id="hielscher-sonicators-2026", recipient_id=rid, email_norm="a@x.cl", batch_id="b1")
+    conn.commit()
+    # No finish_live_attempt call -- represents the crash.
+    assert latest_attempt_status(conn, "hielscher-sonicators-2026", rid)[0] == "in_flight"
+    assert has_accepted_attempt(conn, "hielscher-sonicators-2026", rid) is None

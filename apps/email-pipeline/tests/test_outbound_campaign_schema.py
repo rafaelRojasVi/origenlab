@@ -92,3 +92,35 @@ def test_attempt_seq_unique_per_recipient(tmp_path: Path) -> None:
             "attempted_at, mode, result, created_at) VALUES ('c1',1,'a@x.cl','b2',1,'t','dry_run','accepted','t')"
         )
     conn.close()
+
+
+def test_in_flight_is_a_valid_attempt_result(tmp_path: Path) -> None:
+    """The crash-window state machine needs an 'in_flight' result value."""
+    conn = sqlite3.connect(str(tmp_path / "t.sqlite"))
+    ensure_outbound_campaign_tables(conn)
+    conn.execute(
+        "INSERT INTO outbound_campaign_recipient (campaign_id, email, email_norm, state, created_at, updated_at) "
+        "VALUES ('c1','a@x.cl','a@x.cl','reserved','t','t')"
+    )
+    conn.execute(
+        "INSERT INTO outbound_send_attempt (campaign_id, recipient_id, email_norm, batch_id, attempt_seq, "
+        "attempted_at, mode, result, created_at) VALUES ('c1',1,'a@x.cl','b1',1,'t','live','in_flight','t')"
+    )
+    row = conn.execute("SELECT result, resolved_at FROM outbound_send_attempt WHERE id=1").fetchone()
+    assert row == ("in_flight", None)
+    conn.close()
+
+
+def test_invalid_attempt_result_rejected(tmp_path: Path) -> None:
+    conn = sqlite3.connect(str(tmp_path / "t.sqlite"))
+    ensure_outbound_campaign_tables(conn)
+    conn.execute(
+        "INSERT INTO outbound_campaign_recipient (campaign_id, email, email_norm, state, created_at, updated_at) "
+        "VALUES ('c1','a@x.cl','a@x.cl','reserved','t','t')"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO outbound_send_attempt (campaign_id, recipient_id, email_norm, batch_id, attempt_seq, "
+            "attempted_at, mode, result, created_at) VALUES ('c1',1,'a@x.cl','b1',1,'t','live','sent_maybe','t')"
+        )
+    conn.close()
