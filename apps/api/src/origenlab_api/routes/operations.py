@@ -52,6 +52,9 @@ from origenlab_api.schemas.commercial_operations import (
 from origenlab_api.schemas.customer_quotes import (
     CustomerQuoteCreateCommand,
     CustomerQuoteDriveWorkspaceRetryCommand,
+    CustomerQuoteGlobalItem,
+    CustomerQuoteGlobalListMeta,
+    CustomerQuoteGlobalListResponse,
     CustomerQuoteListMeta,
     CustomerQuoteListResponse,
     CustomerQuoteReadResponse,
@@ -807,6 +810,40 @@ def list_customer_quotes(
 
     return CustomerQuoteListResponse(
         meta=CustomerQuoteListMeta(count=len(items)),
+        items=items,
+    )
+
+
+@router.get(
+    "/customer-quotes",
+    response_model=CustomerQuoteGlobalListResponse,
+)
+def list_customer_quotes_global(
+    stage: list[str] | None = Query(None),
+    drive_status: list[str] | None = Query(None),
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    service: CustomerQuoteReadService = Depends(get_customer_quote_read_service),
+) -> CustomerQuoteGlobalListResponse:
+    try:
+        entries, total_count = service.list_all_quotes(
+            limit=limit,
+            offset=offset,
+            drive_status=drive_status,
+            stage=stage,
+        )
+    except ValueError as exc:
+        _raise_command_error(exc)
+
+    items = [CustomerQuoteGlobalItem.from_entry(entry) for entry in entries]
+
+    return CustomerQuoteGlobalListResponse(
+        meta=CustomerQuoteGlobalListMeta(
+            count=len(items),
+            total_count=total_count,
+            limit=limit,
+            offset=offset,
+        ),
         items=items,
     )
 
