@@ -39,6 +39,7 @@ from origenlab_api.schemas.commercial_operations import (
     SalesOpportunitiesMeta,
     SalesOpportunitiesResponse,
     SalesOpportunityListItem,
+    SalesOpportunityManualCreateCommand,
     SalesOpportunityPromoteCommand,
     SalesOpportunityReadResponse,
     SalesOpportunityResponse,
@@ -228,6 +229,46 @@ def promote_sales_opportunity(
         result,
         from_attributes=True,
     )
+
+
+@router.post(
+    "/sales-opportunities/manual",
+    response_model=SalesOpportunityResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_manual_sales_opportunity(
+    command: SalesOpportunityManualCreateCommand,
+    request: Request,
+    idempotency_key: str = Header(
+        alias="Idempotency-Key",
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    ),
+    settings: Settings = Depends(get_settings),
+    service: CommercialOperationsService = Depends(get_commercial_operations_service),
+) -> SalesOpportunityResponse:
+    operator = require_commercial_operator(request, settings)
+    try:
+        result = service.create_manual_sales_opportunity(
+            title=command.title,
+            owner_key=command.owner_key,
+            organization_id=command.organization_id,
+            organization_display_name=command.organization_display_name,
+            contact_id=command.contact_id,
+            contact_display_name=command.contact_display_name,
+            contact_email=command.contact_email,
+            operator=operator,
+            idempotency_key=idempotency_key,
+        )
+    except (
+        CommercialOperationNotFoundError,
+        CommercialOperationConflictError,
+        ValueError,
+    ) as exc:
+        _raise_command_error(exc)
+
+    return SalesOpportunityResponse.model_validate(result, from_attributes=True)
 
 
 @router.post(
