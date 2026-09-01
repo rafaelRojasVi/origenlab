@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseCustomerQuote,
+  parseCustomerQuoteGlobalListResponse,
   parseCustomerQuoteListResponse,
   parseCustomerQuoteReadResponse,
 } from "./customerQuoteParse";
@@ -186,5 +187,54 @@ describe("parseCustomerQuoteReadResponse", () => {
     });
 
     expect(response.item.quote_id).toBe(QUOTE_ID);
+  });
+});
+
+describe("parseCustomerQuoteGlobalListResponse", () => {
+  it("parses items with sales-opportunity context fields", () => {
+    const raw = {
+      meta: { count: 1, total_count: 1, limit: 100, offset: 0 },
+      items: [
+        {
+          quote: rawQuote(),
+          sales_opportunity_stage: "quoting",
+          sales_opportunity_owner_key: "tatiana@origenlab.cl",
+          organization_display_name: "Hospital Regional de Rancagua",
+          contact_display_name: "Marcela Soto",
+          contact_primary_email: "marcela.soto@hospitalrancagua.cl",
+          next_task_title: null,
+          next_task_due_at: null,
+        },
+      ],
+    };
+
+    const parsed = parseCustomerQuoteGlobalListResponse(raw);
+
+    expect(parsed.meta.total_count).toBe(1);
+    expect(parsed.items[0].quote.quote_number).toBe("CN011729");
+    expect(parsed.items[0].sales_opportunity_stage).toBe("quoting");
+    expect(parsed.items[0].organization_display_name).toBe(
+      "Hospital Regional de Rancagua",
+    );
+  });
+
+  it("rejects an unknown sales opportunity stage", () => {
+    expect(() =>
+      parseCustomerQuoteGlobalListResponse({
+        meta: { count: 1, total_count: 1, limit: 100, offset: 0 },
+        items: [
+          {
+            quote: rawQuote(),
+            sales_opportunity_stage: "invented",
+            sales_opportunity_owner_key: "tatiana@origenlab.cl",
+            organization_display_name: null,
+            contact_display_name: null,
+            contact_primary_email: null,
+            next_task_title: null,
+            next_task_due_at: null,
+          },
+        ],
+      }),
+    ).toThrow(/stage/);
   });
 });

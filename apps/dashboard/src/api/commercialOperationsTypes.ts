@@ -166,7 +166,7 @@ export type SalesOpportunityStage =
 export interface SalesOpportunity {
   sales_opportunity_id: string;
 
-  source_kind: "pr3";
+  source_kind: "pr3" | "manual";
   source_opportunity_id: string;
 
   account_id: string | null;
@@ -227,6 +227,16 @@ export interface PromoteSalesOpportunityCommand {
   source_opportunity_id: string;
   title: string;
   owner_key?: string | null;
+}
+
+export interface ManualSalesOpportunityCreateCommand {
+  title: string;
+  owner_key?: string;
+  organization_id?: string;
+  organization_display_name?: string;
+  contact_id?: string;
+  contact_display_name?: string;
+  contact_email?: string;
 }
 
 export interface TransitionSalesOpportunityStageCommand {

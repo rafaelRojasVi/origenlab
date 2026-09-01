@@ -6,6 +6,8 @@
  * never invents quote numbers, statuses, or Drive locations.
  */
 
+import type { SalesOpportunityStage } from "./commercialOperationsTypes";
+
 export type CustomerQuoteStatus = "draft";
 
 export type QuoteProvisioningStatus = "pending" | "ready" | "failed";
@@ -56,4 +58,27 @@ export interface CustomerQuoteReadResponse {
 
 export interface RetryCustomerQuoteDriveWorkspaceCommand {
   expected_version: number;
+}
+
+export interface CustomerQuoteGlobalItem {
+  quote: CustomerQuote;
+  sales_opportunity_stage: SalesOpportunityStage;
+  sales_opportunity_owner_key: string;
+  organization_display_name: string | null;
+  contact_display_name: string | null;
+  contact_primary_email: string | null;
+  next_task_title: string | null;
+  next_task_due_at: string | null;
+}
+
+export interface CustomerQuoteGlobalListMeta {
+  count: number;
+  total_count: number;
+  limit: number;
+  offset: number;
+}
+
+export interface CustomerQuoteGlobalListResponse {
+  meta: CustomerQuoteGlobalListMeta;
+  items: CustomerQuoteGlobalItem[];
 }

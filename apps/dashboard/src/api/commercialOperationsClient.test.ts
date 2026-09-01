@@ -12,6 +12,7 @@ import {
   commercialOpportunityOperatorStatePath,
   commercialOpportunityTasksPath,
   completeCommercialTask,
+  createManualSalesOpportunity,
   fetchCommercialOpportunityOperatorState,
   fetchCommercialWorkQueue,
   setCommercialOpportunityOperatorState,
@@ -517,6 +518,43 @@ describe("sales opportunity API client", () => {
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const headers = init.headers as Headers;
     expect(headers.get("Idempotency-Key")).toBe("promote-key-1");
+  });
+
+  it("createManualSalesOpportunity posts to /operations/sales-opportunities/manual with the idempotency key header", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          sales_opportunity_id: SALES_OPPORTUNITY_ID,
+          source_kind: "manual",
+          source_opportunity_id: SALES_OPPORTUNITY_ID,
+          account_id: null,
+          primary_contact_id: null,
+          organization_id: null,
+          primary_crm_contact_id: null,
+          title: "Centrífuga refrigerada",
+          stage: "new",
+          owner_key: "tatiana@origenlab.cl",
+          version: 1,
+          created_by: "tatiana@origenlab.cl",
+          updated_by: "tatiana@origenlab.cl",
+          created_at: "2026-09-01T00:00:00Z",
+          updated_at: "2026-09-01T00:00:00Z",
+        }),
+        { status: 201, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await createManualSalesOpportunity(
+      { title: "Centrífuga refrigerada" },
+      "manual:test:1",
+    );
+
+    expect(result.source_kind).toBe("manual");
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toContain("/operations/sales-opportunities/manual");
+    const headers = init.headers as Headers;
+    expect(headers.get("Idempotency-Key")).toBe("manual:test:1");
   });
 
   it("transitionSalesOpportunityStage posts the target stage and expected_version", async () => {

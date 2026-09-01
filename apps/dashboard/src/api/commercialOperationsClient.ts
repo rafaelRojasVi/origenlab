@@ -34,6 +34,7 @@ import type {
   CommercialTaskTransitionCommand,
   CreateCommercialActivityCommand,
   CreateCommercialTaskCommand,
+  ManualSalesOpportunityCreateCommand,
   PromoteSalesOpportunityCommand,
   SalesOpportunity,
   SalesOpportunitiesResponse,
@@ -451,6 +452,18 @@ export function promoteSalesOpportunity(
 ): Promise<SalesOpportunity> {
   return fetchJsonPost<unknown>(
     operatorApiUrl("/operations/sales-opportunities/promote"),
+    command,
+    idempotencyKey,
+  ).then(parseSalesOpportunity);
+}
+
+
+export function createManualSalesOpportunity(
+  command: ManualSalesOpportunityCreateCommand,
+  idempotencyKey: string,
+): Promise<SalesOpportunity> {
+  return fetchJsonPost<unknown>(
+    operatorApiUrl("/operations/sales-opportunities/manual"),
     command,
     idempotencyKey,
   ).then(parseSalesOpportunity);

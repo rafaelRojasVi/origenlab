@@ -255,6 +255,20 @@ describe("sales opportunity parsing", () => {
     ).toThrow(/stage/);
   });
 
+  it("parseSalesOpportunity parses a manually-created opportunity's source_kind", () => {
+    const result = parseSalesOpportunity({
+      ...salesOpportunityRow,
+      source_kind: "manual",
+    });
+    expect(result.source_kind).toBe("manual");
+  });
+
+  it("parseSalesOpportunity rejects an unknown source_kind", () => {
+    expect(() =>
+      parseSalesOpportunity({ ...salesOpportunityRow, source_kind: "tender" }),
+    ).toThrow(/source_kind/);
+  });
+
   it("parseSalesOpportunityListItem parses PR3 and task enrichment, tolerating nulls", () => {
     const result = parseSalesOpportunityListItem({
       ...salesOpportunityRow,

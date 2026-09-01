@@ -539,7 +539,11 @@ export function parseSalesOpportunity(
       row.sales_opportunity_id,
       "sales_opportunity_id",
     ),
-    source_kind: "pr3",
+    source_kind: enumValue<SalesOpportunity["source_kind"]>(
+      row.source_kind,
+      ["pr3", "manual"],
+      "source_kind",
+    ),
     source_opportunity_id: stringValue(
       row.source_opportunity_id,
       "source_opportunity_id",

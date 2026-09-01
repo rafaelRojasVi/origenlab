@@ -9,6 +9,8 @@
 import type {
   CustomerQuote,
   CustomerQuoteDriveWorkspace,
+  CustomerQuoteGlobalItem,
+  CustomerQuoteGlobalListResponse,
   CustomerQuoteListResponse,
   CustomerQuoteReadResponse,
   CustomerQuoteStatus,
@@ -17,6 +19,17 @@ import type {
 
 const QUOTE_ID_RE = /^quote_[0-9a-f]{32}$/;
 const SALES_OPPORTUNITY_ID_RE = /^sales_[0-9a-f]{32}$/;
+
+const SALES_OPPORTUNITY_STAGES: ReadonlySet<string> = new Set([
+  "new",
+  "qualifying",
+  "qualified",
+  "quoting",
+  "negotiating",
+  "won",
+  "lost",
+  "dormant",
+]);
 
 const ALLOWED_DRIVE_HOSTS = new Set([
   "drive.google.com",
@@ -228,5 +241,66 @@ export function parseCustomerQuoteReadResponse(
 
   return {
     item: parseCustomerQuote(data.item),
+  };
+}
+
+function parseCustomerQuoteGlobalItem(raw: unknown): CustomerQuoteGlobalItem {
+  const data = record(raw, "customer quote global item");
+
+  const stage = stringValue(
+    data.sales_opportunity_stage,
+    "sales_opportunity_stage",
+  );
+
+  if (!SALES_OPPORTUNITY_STAGES.has(stage)) {
+    throw new Error(`Unknown sales opportunity stage: ${stage}`);
+  }
+
+  return {
+    quote: parseCustomerQuote(data.quote),
+    sales_opportunity_stage:
+      stage as CustomerQuoteGlobalItem["sales_opportunity_stage"],
+    sales_opportunity_owner_key: stringValue(
+      data.sales_opportunity_owner_key,
+      "sales_opportunity_owner_key",
+    ),
+    organization_display_name: nullableString(
+      data.organization_display_name,
+      "organization_display_name",
+    ),
+    contact_display_name: nullableString(
+      data.contact_display_name,
+      "contact_display_name",
+    ),
+    contact_primary_email: nullableString(
+      data.contact_primary_email,
+      "contact_primary_email",
+    ),
+    next_task_title: nullableString(data.next_task_title, "next_task_title"),
+    next_task_due_at: nullableString(
+      data.next_task_due_at,
+      "next_task_due_at",
+    ),
+  };
+}
+
+export function parseCustomerQuoteGlobalListResponse(
+  raw: unknown,
+): CustomerQuoteGlobalListResponse {
+  const data = record(raw, "customer quote global list response");
+  const meta = record(data.meta, "meta");
+
+  if (!Array.isArray(data.items)) {
+    throw new Error("items must be an array");
+  }
+
+  return {
+    meta: {
+      count: integerAtLeast(meta.count, 0, "meta.count"),
+      total_count: integerAtLeast(meta.total_count, 0, "meta.total_count"),
+      limit: integerAtLeast(meta.limit, 1, "meta.limit"),
+      offset: integerAtLeast(meta.offset, 0, "meta.offset"),
+    },
+    items: data.items.map(parseCustomerQuoteGlobalItem),
   };
 }
