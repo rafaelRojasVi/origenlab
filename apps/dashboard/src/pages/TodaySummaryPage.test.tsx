@@ -186,7 +186,6 @@ describe("TodaySummaryPage actionable-opportunity summary (W1 procurement status
       "Fuente de oportunidades accionables no disponible",
     );
     screen.getByLabelText(/Oportunidades accionables: N\/D/);
-    screen.getByText("Catálogo");
   });
 
   it("shows N/D and the unavailable banner once the request has finished with no usable status", () => {

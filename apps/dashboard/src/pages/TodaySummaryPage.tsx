@@ -69,7 +69,6 @@ export function TodaySummaryPage() {
     procurementStatus,
     procurementStatusLoading,
     commercialDeals,
-    catalogProducts,
     leadResearchSummary,
     commercialWorkQueue,
     commercialWorkQueueLoading,
@@ -303,12 +302,6 @@ export function TodaySummaryPage() {
                 section="payments-logistics"
               />
               <SummaryCard
-                label="Negocios en curso"
-                value={counts.dealEvidence}
-                hint="Hilos ligados a un negocio en curso"
-                section="deals"
-              />
-              <SummaryCard
                 label="Bloqueos comerciales"
                 value={counts.dealBlockers}
                 hint="Negocios con bloqueos de margen"
@@ -335,12 +328,6 @@ export function TodaySummaryPage() {
                         : ACTIONABLE_OPPORTUNITIES_NORMAL_HINT
                 }
                 section="tenders"
-              />
-              <SummaryCard
-                label="Catálogo"
-                value={catalogProducts?.total ?? 0}
-                hint="Productos en catálogo operador"
-                section="catalogo"
               />
               <SummaryCard
                 label="Prospectos en revisión"

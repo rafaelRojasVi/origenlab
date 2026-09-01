@@ -324,9 +324,7 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
     expect(screen.getAllByText("Qué revisar hoy").length).toBeGreaterThan(0);
     screen.getByText("Clientes por responder");
     screen.getByText("Proveedores pendientes");
-    screen.getByText("Negocios en curso");
     screen.getByLabelText(/Oportunidades accionables:/);
-    screen.getByLabelText(/Catálogo:/);
     expect(screen.queryByText(/Casos tibios \/ Warm cases/)).toBeNull();
   });
 
