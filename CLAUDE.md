@@ -76,7 +76,10 @@ Full detail: `docs/architecture/CURRENT_SYSTEM_TRUTH.md`.
 ## Engineering rules
 
 - Do not rewrite shipped Alembic migrations; add corrective migrations
-  instead. Downgrades that would drop human data are fail-closed.
+  instead. Downgrades that would drop human data are fail-closed. Durable
+  commercial Postgres migrations used by `apps/api` physically live under
+  `apps/email-pipeline/alembic/versions/` — do not assume `apps/api` has
+  its own migrations directory.
 - Preserve append-only audit/event semantics, optimistic concurrency, and
   command idempotency where they already exist.
 - No durable foreign key into a rebuildable machine projection — attach

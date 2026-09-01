@@ -45,6 +45,8 @@ Historical API-3 migration notes (legacy `:8000` removal): [apps/api/docs/archiv
 
 - [RELEASE_PROCESS.md](./RELEASE_PROCESS.md) → **canonical** GitHub Release / tag workflow (changelog snapshots; not package distribution).
 - [business/BUSINESS_RULES_QUOTES_AND_SUPPLIERS.md](./business/BUSINESS_RULES_QUOTES_AND_SUPPLIERS.md) → **canonical** quote/supplier **truth rules** (cotizaciones, proveedores, research runs vs master data; schema design lives in [architecture/TARGET_COMMERCIAL_ARCHITECTURE.md](./architecture/TARGET_COMMERCIAL_ARCHITECTURE.md)).
+- [commercial/COMMERCIAL_DEAL_LEDGER_SCHEMA_V1.md](./commercial/COMMERCIAL_DEAL_LEDGER_SCHEMA_V1.md) → **historical** design-only doc, not current truth; canonical replacement is [architecture/CURRENT_SYSTEM_TRUTH.md](./architecture/CURRENT_SYSTEM_TRUTH.md) (`commercial.deal`).
+- [catalog/PRODUCT_CATALOG_SCHEMA_AUDIT_V1.md](./catalog/PRODUCT_CATALOG_SCHEMA_AUDIT_V1.md) → **historical** design/audit-only doc, not current truth; canonical replacement is [architecture/CURRENT_SYSTEM_TRUTH.md](./architecture/CURRENT_SYSTEM_TRUTH.md) (`catalog.*` mirror).
 
 ### Operator API (`apps/api`)
 
