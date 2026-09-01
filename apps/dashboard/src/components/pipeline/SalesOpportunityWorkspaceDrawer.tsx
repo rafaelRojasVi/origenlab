@@ -216,31 +216,57 @@ export function SalesOpportunityWorkspaceDrawer({
             </div>
           ) : null}
 
-          <section className="space-y-2">
-            <h3 className="text-sm font-semibold text-slate-800">Etapa</h3>
-            <StageChangeMenu stage={core.stage} disabled={stagePending} onChange={(next) => void changeStage(next)} />
+          <section className="space-y-2" aria-label="Identidad">
+            <h3 className="text-sm font-semibold text-slate-800">Identidad</h3>
+            <dl className="space-y-2">
+              <DetailRow label="Organización">
+                {core.organization_display_name ?? core.account_display_domain ?? "—"}
+              </DetailRow>
+              <DetailRow label="Contacto">
+                {core.contact_display_name ?? core.contact_display_email ?? "—"}
+              </DetailRow>
+              <DetailRow label="Correo">
+                {core.contact_primary_email ?? core.contact_display_email}
+              </DetailRow>
+            </dl>
           </section>
 
-          <dl className="space-y-2">
-            <DetailRow label="Responsable">{core.owner_key}</DetailRow>
-            <DetailRow label="Contacto">
-              {core.contact_display_name ?? core.contact_display_email ?? "—"}
-            </DetailRow>
-            <DetailRow label="Creada">{formatCommercialOpportunityDate(core.created_at)}</DetailRow>
-            <DetailRow label="Actualizada">{formatCommercialOpportunityDate(core.updated_at)}</DetailRow>
-          </dl>
+          <section className="space-y-2" aria-label="Oportunidad">
+            <h3 className="text-sm font-semibold text-slate-800">Oportunidad</h3>
+            <StageChangeMenu stage={core.stage} disabled={stagePending} onChange={(next) => void changeStage(next)} />
+            <dl className="space-y-2">
+              <DetailRow label="Responsable">{core.owner_key}</DetailRow>
+              <DetailRow label="Creada">{formatCommercialOpportunityDate(core.created_at)}</DetailRow>
+              <DetailRow label="Actualizada">{formatCommercialOpportunityDate(core.updated_at)}</DetailRow>
+            </dl>
+            <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              El sistema sugirió esta oportunidad a partir de evidencia de correo; este registro ahora es de gestión
+              humana.
+            </p>
+          </section>
 
-          <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-            El sistema sugirió esta oportunidad a partir de evidencia de correo; este registro ahora es de gestión
-            humana.
-          </p>
-
-          <QuoteWorkspaceSection salesOpportunityId={core.sales_opportunity_id} />
+          {core.next_task_title ? (
+            <section
+              className="rounded-lg border border-brand-200 bg-brand-50 px-3 py-2"
+              aria-label="Próxima acción"
+            >
+              <p className="text-xs font-semibold uppercase tracking-wide text-brand-700">Próxima acción</p>
+              <p className="text-sm text-slate-800">{core.next_task_title}</p>
+              {core.next_task_due_at ? (
+                <p className="text-xs text-slate-600">{formatCommercialOpportunityDate(core.next_task_due_at)}</p>
+              ) : null}
+              {core.open_task_count > 1 ? (
+                <p className="text-xs text-slate-500">+{core.open_task_count - 1} seguimiento(s) más abajo</p>
+              ) : null}
+            </section>
+          ) : null}
 
           <SalesOpportunityWorkPanel
             salesOpportunityId={core.sales_opportunity_id}
             onTaskChanged={onTaskChanged}
           />
+
+          <QuoteWorkspaceSection salesOpportunityId={core.sales_opportunity_id} />
         </div>
       </aside>
     </>

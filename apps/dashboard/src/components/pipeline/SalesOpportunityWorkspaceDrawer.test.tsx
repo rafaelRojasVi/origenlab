@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SalesOpportunityWorkspaceDrawer } from "./SalesOpportunityWorkspaceDrawer";
 import { fetchSalesOpportunity, transitionSalesOpportunityStage } from "../../api/commercialOperationsClient";
@@ -75,7 +75,7 @@ describe("SalesOpportunityWorkspaceDrawer", () => {
   it("shows the passed item immediately and the work panel", () => {
     render(<SalesOpportunityWorkspaceDrawer item={item()} open onClose={vi.fn()} onStageChanged={vi.fn()} />);
 
-    expect(screen.getByText("uach.cl")).toBeInTheDocument();
+    expect(screen.getAllByText("uach.cl").length).toBeGreaterThan(0);
     expect(screen.getByText("Centrífuga refrigerada")).toBeInTheDocument();
     expect(screen.getByTestId("work-panel-stub")).toBeInTheDocument();
   });
@@ -110,7 +110,7 @@ describe("SalesOpportunityWorkspaceDrawer", () => {
       />,
     );
 
-    expect(screen.getByText("Universidad Austral de Chile")).toBeInTheDocument();
+    expect(screen.getAllByText("Universidad Austral de Chile").length).toBeGreaterThan(0);
     expect(screen.getByText("Ana Compradora")).toBeInTheDocument();
     expect(screen.queryByText("uach.cl")).not.toBeInTheDocument();
   });
@@ -208,7 +208,7 @@ describe("SalesOpportunityWorkspaceDrawer", () => {
       <SalesOpportunityWorkspaceDrawer item={item()} open onClose={vi.fn()} onStageChanged={vi.fn()} />,
     );
 
-    // Close with item=null, matching what PipelinePage actually does
+    // Close with item=null, matching what VentasPage actually does
     act(() => {
       rerender(<SalesOpportunityWorkspaceDrawer item={null} open={false} onClose={vi.fn()} onStageChanged={vi.fn()} />);
     });
@@ -223,7 +223,7 @@ describe("SalesOpportunityWorkspaceDrawer", () => {
   });
 
   it("moves focus to close button even when drawer is persistently mounted with initial item=null", async () => {
-    // Simulates the real PipelinePage usage: drawer mounted once, props change over time
+    // Simulates the real VentasPage usage: drawer mounted once, props change over time
     const { rerender } = render(
       <SalesOpportunityWorkspaceDrawer item={null} open={false} onClose={vi.fn()} onStageChanged={vi.fn()} />,
     );
@@ -272,5 +272,42 @@ describe("SalesOpportunityWorkspaceDrawer", () => {
     } finally {
       document.body.removeChild(externalButton);
     }
+  });
+
+  it("orders sections Identidad → Oportunidad → work panel → Cotización", () => {
+    render(<SalesOpportunityWorkspaceDrawer item={item()} open onClose={vi.fn()} onStageChanged={vi.fn()} />);
+
+    const dialog = screen.getByTestId("sales-opportunity-workspace-drawer");
+    const headings = within(dialog)
+      .getAllByRole("heading", { level: 3 })
+      .map((el) => el.textContent);
+
+    expect(headings).toEqual(["Identidad", "Oportunidad"]);
+
+    const workPanel = screen.getByTestId("work-panel-stub");
+    const quoteWorkspace = screen.getByTestId("quote-workspace-stub");
+    expect(
+      workPanel.compareDocumentPosition(quoteWorkspace) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("shows a próxima acción callout when the item has a next task", () => {
+    render(
+      <SalesOpportunityWorkspaceDrawer
+        item={item({ next_task_title: "Llamar a comprador", next_task_due_at: "2026-09-05T15:00:00+00:00", open_task_count: 2 })}
+        open
+        onClose={vi.fn()}
+        onStageChanged={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Próxima acción")).toBeInTheDocument();
+    expect(screen.getByText("Llamar a comprador")).toBeInTheDocument();
+    expect(screen.getByText("+1 seguimiento(s) más abajo")).toBeInTheDocument();
+  });
+
+  it("omits the próxima acción callout when there is no next task", () => {
+    render(<SalesOpportunityWorkspaceDrawer item={item()} open onClose={vi.fn()} onStageChanged={vi.fn()} />);
+    expect(screen.queryByText("Próxima acción")).not.toBeInTheDocument();
   });
 });
