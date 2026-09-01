@@ -1,11 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { getOperatorApiBaseUrl } from "../../api/operatorClient";
 import { useDashboardData } from "../../context/DashboardDataContext";
-import {
-  dashboardSectionGroupLabel,
-  dashboardSectionLabel,
-  type DashboardSection,
-} from "../../lib/dashboardNav";
+import { dashboardSectionLabel, type DashboardSection } from "../../lib/dashboardNav";
 import { backendChipClass, backendLabel, verdictTone } from "../../lib/verdictStyles";
 import { DevLegacyPortWarning } from "../operator/DevLegacyPortWarning";
 import { ReadOnlyBanner } from "../operator/ReadOnlyBanner";
@@ -34,7 +30,6 @@ export function DashboardShell({
   } = useDashboardData();
 
   const pageTitle = dashboardSectionLabel(section);
-  const groupLabel = dashboardSectionGroupLabel(section);
   const verdict = data?.operator.verdict;
   const apiBase = getOperatorApiBaseUrl() || "(proxy Vite)";
 
@@ -52,11 +47,6 @@ export function DashboardShell({
           <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
-                {groupLabel ? (
-                  <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-muted)]">
-                    {groupLabel}
-                  </p>
-                ) : null}
                 <span
                   className="inline-flex items-center rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-slate-600 ring-1 ring-slate-200"
                   data-testid="operator-center-chip"

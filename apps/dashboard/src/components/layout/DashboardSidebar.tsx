@@ -1,6 +1,6 @@
 import { OrigenLabStaticLogo } from "../brand/OrigenLabStaticLogo";
 import {
-  DASHBOARD_NAV_GROUPS,
+  DASHBOARD_TOP_NAV_ITEMS,
   type DashboardNavItem,
   type DashboardSection,
 } from "../../lib/dashboardNav";
@@ -121,9 +121,6 @@ export function DashboardSidebar({
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 flex-1">
               <OrigenLabStaticLogo compact />
-              <p className="mt-1 text-[10px] uppercase tracking-wide text-slate-500">
-                Solo lectura
-              </p>
             </div>
             <SidebarCollapseToggle collapsed={collapsed} onToggle={onToggleCollapsed} />
           </div>
@@ -131,36 +128,18 @@ export function DashboardSidebar({
       </div>
 
       <nav className="flex-1 overflow-y-auto px-2 py-3" aria-label="Navegación del panel">
-        {DASHBOARD_NAV_GROUPS.map((group) => (
-          <div key={group.id} className={collapsed ? "mb-2" : "mb-4"}>
-            {!collapsed ? (
-              <p
-                className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500"
-                data-testid={`nav-group-${group.id}`}
-              >
-                {group.label}
-              </p>
-            ) : (
-              <div
-                className="mx-auto mb-1.5 h-px w-8 bg-slate-700"
-                aria-hidden
-                data-testid={`nav-group-${group.id}`}
+        <ul className="space-y-0.5">
+          {DASHBOARD_TOP_NAV_ITEMS.map((item) => (
+            <li key={item.id}>
+              <NavLink
+                item={item}
+                isActive={item.id === active}
+                collapsed={collapsed}
+                onNavigate={onNavigate}
               />
-            )}
-            <ul className="space-y-0.5">
-              {group.items.map((item) => (
-                <li key={item.id}>
-                  <NavLink
-                    item={item}
-                    isActive={item.id === active}
-                    collapsed={collapsed}
-                    onNavigate={onNavigate}
-                  />
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
+            </li>
+          ))}
+        </ul>
       </nav>
     </aside>
   );
