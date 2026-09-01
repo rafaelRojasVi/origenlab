@@ -174,10 +174,10 @@ def _resolve_sales_opportunity_source(
             f"Sales opportunity not found: {sales_opportunity_id}"
         )
 
-    if row["source_kind"] != "pr3":
+    if row["source_kind"] not in ("pr3", "manual"):
         raise CommercialOperationConflictError(
             "Sales opportunity cannot currently anchor activity/task work "
-            "without PR3 provenance"
+            "without PR3 or manual provenance"
         )
 
     source_opportunity_id = str(row["source_opportunity_id"])
@@ -565,6 +565,123 @@ def _resolve_or_create_contact(
         return str(winner["contact_id"])
 
     return None
+
+
+def _resolve_manual_organization(
+    cur: object,
+    *,
+    organization_id: str | None,
+    organization_display_name: str | None,
+    operator: str,
+    now: datetime,
+) -> str | None:
+    """Resolve or create the durable organization for a manual opportunity.
+
+    Manual entry has no PR2 account_id to key on, so this never touches
+    `organization_source` -- a manually created organization simply has no
+    PR2 provenance row, which the schema already allows.
+    """
+    if organization_id is not None:
+        cur.execute(
+            """
+            SELECT organization_id
+            FROM commercial.organization
+            WHERE organization_id = %(organization_id)s
+            LIMIT 1
+            """,
+            {"organization_id": organization_id},
+        )
+        if cur.fetchone() is None:
+            raise CommercialOperationNotFoundError(
+                f"Organization not found: {organization_id}"
+            )
+        return organization_id
+
+    if organization_display_name is None:
+        return None
+
+    new_organization_id = f"org_{uuid.uuid4().hex}"
+    cur.execute(
+        """
+        INSERT INTO commercial.organization (
+          organization_id, display_name, primary_domain,
+          version, created_by, updated_by, created_at, updated_at
+        ) VALUES (
+          %(organization_id)s, %(display_name)s, NULL,
+          1, %(operator)s, %(operator)s, %(now)s, %(now)s
+        )
+        """,
+        {
+            "organization_id": new_organization_id,
+            "display_name": organization_display_name,
+            "operator": operator,
+            "now": now,
+        },
+    )
+    return new_organization_id
+
+
+def _resolve_manual_contact(
+    cur: object,
+    *,
+    organization_id: str | None,
+    contact_id: str | None,
+    contact_display_name: str | None,
+    contact_email: str | None,
+    operator: str,
+    now: datetime,
+) -> str | None:
+    """Resolve or create the durable contact for a manual opportunity.
+
+    Org-first, matching `_resolve_or_create_contact`'s existing policy: a
+    contact is only created/linked when an organization was already
+    resolved, which is what the composite FK
+    `sales_opportunity_primary_contact_organization_fkey` requires anyway.
+    """
+    if organization_id is None:
+        return None
+
+    if contact_id is not None:
+        cur.execute(
+            """
+            SELECT contact_id
+            FROM commercial.contact
+            WHERE contact_id = %(contact_id)s
+              AND organization_id = %(organization_id)s
+            LIMIT 1
+            """,
+            {"contact_id": contact_id, "organization_id": organization_id},
+        )
+        if cur.fetchone() is None:
+            raise CommercialOperationNotFoundError(
+                f"Contact not found for this organization: {contact_id}"
+            )
+        return contact_id
+
+    if contact_display_name is None and contact_email is None:
+        return None
+
+    new_contact_id = f"contact_{uuid.uuid4().hex}"
+    cur.execute(
+        """
+        INSERT INTO commercial.contact (
+          contact_id, organization_id, display_name, primary_email,
+          version, created_by, updated_by, created_at, updated_at
+        ) VALUES (
+          %(contact_id)s, %(organization_id)s, %(display_name)s, %(primary_email)s,
+          1, %(operator)s, %(operator)s, %(now)s, %(now)s
+        )
+        """,
+        {
+            "contact_id": new_contact_id,
+            "organization_id": organization_id,
+            "display_name": contact_display_name,
+            "primary_email": contact_email,
+            "operator": operator,
+            "now": now,
+        },
+    )
+    return new_contact_id
 
 
 class PostgresCommercialOperationsRepository:
@@ -992,6 +1109,133 @@ class PostgresCommercialOperationsRepository:
                             }
                         ),
                         "created_at": now,
+                    },
+                )
+
+                _store_idempotency_result(
+                    cur,
+                    operator=operator,
+                    idempotency_key=idempotency_key,
+                    result_id=sales_opportunity_id,
+                )
+
+                return result
+
+    def create_manual_sales_opportunity(
+        self,
+        *,
+        sales_opportunity_id: str,
+        title: str,
+        owner_key: str,
+        organization_id: str | None,
+        organization_display_name: str | None,
+        contact_id: str | None,
+        contact_display_name: str | None,
+        contact_email: str | None,
+        operator: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+    ) -> SalesOpportunity:
+        pg = require_psycopg()
+        now = _utcnow()
+
+        with postgres_write_connection(self._settings) as conn:
+            with conn.cursor(row_factory=pg.rows.dict_row) as cur:
+                replay_result_id = _claim_idempotency(
+                    cur,
+                    operator=operator,
+                    idempotency_key=idempotency_key,
+                    command_kind="sales_opportunity_create_manual",
+                    request_fingerprint=request_fingerprint,
+                )
+                if replay_result_id is not None:
+                    cur.execute(
+                        "SELECT * FROM commercial.sales_opportunity"
+                        " WHERE sales_opportunity_id = %(id)s",
+                        {"id": replay_result_id},
+                    )
+                    row = cur.fetchone()
+                    if row is None:
+                        raise RuntimeError(
+                            "Idempotency replay result missing: "
+                            f"{replay_result_id}"
+                        )
+                    return SalesOpportunity(**dict(row))
+
+                resolved_organization_id = _resolve_manual_organization(
+                    cur,
+                    organization_id=organization_id,
+                    organization_display_name=organization_display_name,
+                    operator=operator,
+                    now=now,
+                )
+                resolved_contact_id = _resolve_manual_contact(
+                    cur,
+                    organization_id=resolved_organization_id,
+                    contact_id=contact_id,
+                    contact_display_name=contact_display_name,
+                    contact_email=contact_email,
+                    operator=operator,
+                    now=now,
+                )
+
+                cur.execute(
+                    """
+                    INSERT INTO commercial.sales_opportunity (
+                      sales_opportunity_id, source_kind, source_opportunity_id,
+                      account_id, primary_contact_id, title, stage, owner_key,
+                      version, created_by, updated_by, created_at, updated_at,
+                      organization_id, primary_crm_contact_id
+                    ) VALUES (
+                      %(sales_opportunity_id)s, 'manual', %(sales_opportunity_id)s,
+                      NULL, NULL, %(title)s, 'new',
+                      %(owner_key)s, 1, %(operator)s, %(operator)s, %(now)s,
+                      %(now)s, %(organization_id)s, %(contact_id)s
+                    )
+                    RETURNING *
+                    """,
+                    {
+                        "sales_opportunity_id": sales_opportunity_id,
+                        "title": title,
+                        "owner_key": owner_key,
+                        "operator": operator,
+                        "now": now,
+                        "organization_id": resolved_organization_id,
+                        "contact_id": resolved_contact_id,
+                    },
+                )
+                row = cur.fetchone()
+                result = SalesOpportunity(**dict(row))
+
+                cur.execute(
+                    """
+                    INSERT INTO commercial.sales_opportunity_event (
+                      event_id, sales_opportunity_id, event_type, actor_key,
+                      payload, created_at
+                    ) VALUES (
+                      %(event_id)s, %(sales_opportunity_id)s, 'created', %(operator)s,
+                      %(payload)s, %(now)s
+                    )
+                    """,
+                    {
+                        "event_id": f"evt_{uuid.uuid4().hex}",
+                        "sales_opportunity_id": sales_opportunity_id,
+                        "operator": operator,
+                        "now": now,
+                        "payload": json.dumps(
+                            {
+                                "source": {"kind": "manual"},
+                                "snapshot": {
+                                    "organization_id": resolved_organization_id,
+                                    "primary_crm_contact_id": resolved_contact_id,
+                                },
+                                "opportunity": {
+                                    "title": title,
+                                    "stage": "new",
+                                    "owner_key": owner_key,
+                                },
+                            }
+                        ),
                     },
                 )
 
