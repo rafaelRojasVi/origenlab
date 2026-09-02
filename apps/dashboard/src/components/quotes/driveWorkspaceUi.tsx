@@ -63,7 +63,10 @@ export function QuoteWorkspaceStatus({
 }) {
   const workspace = quote.drive_workspace;
 
-  if (workspace.provisioning_status === "ready") {
+  if (
+    workspace.provisioning_status === "ready" ||
+    workspace.provisioning_status === "folder_ready"
+  ) {
     return (
       <div className="flex flex-wrap gap-2">
         {workspace.folder_web_url ? (

@@ -175,9 +175,9 @@ export function QuoteDetailDrawer({
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">Cotización</p>
             <h2 id="quote-detail-heading" className="mt-1 text-lg font-semibold text-slate-900">
-              {quote.quote_number}
+              {quote.document_number}
             </h2>
-            <p className="mt-1 text-sm text-slate-500">{quote.document_number}</p>
+            <p className="mt-1 text-sm text-slate-500">{quote.quote_number}</p>
           </div>
           <button
             type="button"

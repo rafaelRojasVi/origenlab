@@ -43,6 +43,20 @@ describe("QuoteDetailDrawer", () => {
     );
   });
 
+  it("shows document_number as the drawer heading and quote_number as the subtitle", async () => {
+    const fixture = globalQuoteItemFixture();
+    vi.mocked(client.fetchCustomerQuote).mockResolvedValue({ item: fixture.quote });
+
+    render(<QuoteDetailDrawer item={fixture} open {...drawerProps()} />);
+
+    await waitFor(() => expect(client.fetchCustomerQuote).toHaveBeenCalledWith(fixture.quote.quote_id));
+
+    expect(
+      screen.getByRole("heading", { name: fixture.quote.document_number }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(fixture.quote.quote_number)).toBeInTheDocument();
+  });
+
   it("shows the failure category and a retry action for a failed workspace, reusing the retry command", async () => {
     const base = globalQuoteItemFixture();
     const failed = globalQuoteItemFixture({

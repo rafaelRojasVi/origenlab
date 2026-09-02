@@ -2,14 +2,19 @@ import type { ReactNode } from "react";
 import type { CustomerQuoteGlobalItem, QuoteProvisioningStatus } from "../../api/customerQuoteTypes";
 import { formatCommercialOpportunityDate } from "../../lib/commercialOpportunityFormat";
 
-const DRIVE_STATE_LABELS: Record<QuoteProvisioningStatus, "Drive listo" | "Aprovisionando" | "Error de Drive"> = {
+const DRIVE_STATE_LABELS: Record<
+  QuoteProvisioningStatus,
+  "Drive listo" | "Carpeta lista" | "Aprovisionando" | "Error de Drive"
+> = {
   ready: "Drive listo",
+  folder_ready: "Carpeta lista",
   pending: "Aprovisionando",
   failed: "Error de Drive",
 };
 
 const DRIVE_BADGE_CLASS: Record<string, string> = {
   "Drive listo": "bg-emerald-50 text-emerald-800 border-emerald-200",
+  "Carpeta lista": "bg-sky-50 text-sky-800 border-sky-200",
   "Aprovisionando": "bg-slate-100 text-slate-700 border-slate-200",
   "Error de Drive": "bg-amber-50 text-amber-900 border-amber-200",
 };
@@ -55,8 +60,8 @@ export function CotizacionesCard({
       className="motion-safe:transition-shadow motion-safe:duration-150 cursor-pointer space-y-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-3 shadow-sm hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
     >
       <div className="flex items-start justify-between gap-2">
-        <p className="min-w-0 truncate text-sm font-semibold text-slate-900">{item.quote.quote_number}</p>
-        <span className="shrink-0 text-xs text-slate-500">{item.quote.document_number}</span>
+        <p className="min-w-0 truncate text-sm font-semibold text-slate-900">{item.quote.document_number}</p>
+        <span className="shrink-0 text-xs text-slate-500">{item.quote.quote_number}</span>
       </div>
 
       <p className="truncate text-sm text-slate-700">

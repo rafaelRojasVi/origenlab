@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { CotizacionesBoard } from "./CotizacionesBoard";
 import {
@@ -70,6 +70,49 @@ describe("CotizacionesBoard", () => {
 
     const reviewColumn = screen.getByTestId("cotizaciones-column-drop-review");
     expect(reviewColumn).toHaveTextContent(item.quote.quote_number);
+  });
+
+  it("shows document_number as the prominent identifier on a card, with quote_number secondary", () => {
+    const item = globalQuoteItemFixture();
+    render(
+      <CotizacionesBoard
+        queue={queue({ items: [item] })}
+        onOpenQuote={vi.fn()}
+        onAdoptDriveFolder={vi.fn()}
+        onRequestAdjustments={vi.fn()}
+        onRequestConfirmSend={vi.fn()}
+      />,
+    );
+
+    const card = screen.getByText(item.quote.document_number).closest("article");
+    expect(card).not.toBeNull();
+    expect(within(card!).getByText(item.quote.quote_number)).toBeInTheDocument();
+  });
+
+  it("labels a folder_ready drive workspace distinctly from ready and failed", () => {
+    const base = globalQuoteItemFixture();
+    const item = globalQuoteItemFixture({
+      quote: {
+        ...base.quote,
+        drive_workspace: {
+          ...base.quote.drive_workspace,
+          provisioning_status: "folder_ready",
+          sheet_file_id: null,
+          sheet_web_url: null,
+        },
+      },
+    });
+    render(
+      <CotizacionesBoard
+        queue={queue({ items: [item] })}
+        onOpenQuote={vi.fn()}
+        onAdoptDriveFolder={vi.fn()}
+        onRequestAdjustments={vi.fn()}
+        onRequestConfirmSend={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Carpeta lista")).toBeInTheDocument();
   });
 
   it("shows Drive-only items in the Pendientes Drive lane", () => {
