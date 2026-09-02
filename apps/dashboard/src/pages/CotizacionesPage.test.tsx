@@ -58,4 +58,37 @@ describe("CotizacionesPage", () => {
 
     expect(screen.queryAllByRole("table")).toHaveLength(1);
   });
+
+  it("opens the detail drawer on row click and shows the quote number", async () => {
+    vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
+      meta: { count: 1, total_count: 1, limit: 200, offset: 0 },
+      items: [globalQuoteItemFixture()],
+    });
+    vi.mocked(client.fetchCustomerQuote).mockResolvedValue({ item: globalQuoteItemFixture().quote });
+
+    render(<CotizacionesPage onOpenVentas={vi.fn()} />);
+    await waitFor(() => screen.getByText("01183-26"));
+
+    fireEvent.click(screen.getByRole("button", { name: /01183-26/ }));
+    await waitFor(() => screen.getByRole("dialog"));
+  });
+
+  it("'Ver en Ventas' from the drawer passes the exact opportunity id through", async () => {
+    const fixture = globalQuoteItemFixture();
+    vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
+      meta: { count: 1, total_count: 1, limit: 200, offset: 0 },
+      items: [fixture],
+    });
+    vi.mocked(client.fetchCustomerQuote).mockResolvedValue({ item: fixture.quote });
+    const onOpenVentas = vi.fn();
+
+    render(<CotizacionesPage onOpenVentas={onOpenVentas} />);
+    await waitFor(() => screen.getByText("01183-26"));
+
+    fireEvent.click(screen.getByRole("button", { name: /01183-26/ }));
+    await waitFor(() => screen.getByRole("dialog"));
+    fireEvent.click(screen.getByRole("button", { name: "Ver en Ventas" }));
+
+    expect(onOpenVentas).toHaveBeenCalledWith(fixture.quote.sales_opportunity_id);
+  });
 });

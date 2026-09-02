@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSalesOpportunityBoard } from "../components/pipeline/useSalesOpportunityBoard";
 import { SalesOpportunityBoard } from "../components/pipeline/SalesOpportunityBoard";
 import { MobileSalesOpportunityList } from "../components/pipeline/MobileSalesOpportunityList";
@@ -6,9 +6,28 @@ import { SalesOpportunityWorkspaceDrawer } from "../components/pipeline/SalesOpp
 import { V2PageHeader } from "../components/v2/V2PageHeader";
 import type { SalesOpportunityListItem } from "../api/commercialOperationsTypes";
 
-export function VentasPage() {
+export function VentasPage({
+  deepLinkOpportunityId,
+}: {
+  /** Set from a "Ver en Ventas" deep link (e.g. #/ventas?opportunity=sales_...).
+   * Opens that exact opportunity's drawer once it's found among the loaded
+   * items; a stale, invalid, or not-yet-loaded id is silently ignored. */
+  deepLinkOpportunityId?: string | null;
+} = {}) {
   const board = useSalesOpportunityBoard();
   const [openItem, setOpenItem] = useState<SalesOpportunityListItem | null>(null);
+  const consumedDeepLinkRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!deepLinkOpportunityId || board.loading) return;
+    if (consumedDeepLinkRef.current === deepLinkOpportunityId) return;
+
+    const match = board.items.find((item) => item.sales_opportunity_id === deepLinkOpportunityId);
+    if (match) {
+      setOpenItem(match);
+      consumedDeepLinkRef.current = deepLinkOpportunityId;
+    }
+  }, [deepLinkOpportunityId, board.items, board.loading]);
 
   return (
     <div className="space-y-4">

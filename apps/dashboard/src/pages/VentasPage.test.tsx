@@ -41,7 +41,7 @@ vi.mock(
       onStageChanged,
       onTaskChanged,
     }: {
-      item: { title: string } | null;
+      item: { title: string; sales_opportunity_id: string } | null;
       open: boolean;
       onClose: () => void;
       onStageChanged: () => void;
@@ -50,6 +50,7 @@ vi.mock(
       open ? (
         <div data-testid="drawer-stub">
           <span>{item?.title}</span>
+          <span data-testid="drawer-stub-id">{item?.sales_opportunity_id}</span>
           <button onClick={onClose}>cerrar-drawer</button>
           <button onClick={onStageChanged}>disparar-cambio</button>
           <button onClick={() => onTaskChanged?.()}>disparar-tarea</button>
@@ -136,5 +137,60 @@ describe("VentasPage", () => {
 
     const button = screen.getByRole("button", { name: "Actualizando…" });
     expect(button).toBeDisabled();
+  });
+
+  it("safely opens the exact opportunity's drawer when a valid deep-link id matches a loaded item", async () => {
+    const targetId = "sales_" + "d".repeat(32);
+    vi.mocked(fetchSalesOpportunities).mockReset().mockResolvedValue({
+      meta: { data_source: "postgres", read_only: true, count: 1, total_count: 1, limit: 200, offset: 0 },
+      items: [
+        {
+          sales_opportunity_id: targetId,
+          source_kind: "manual",
+          source_opportunity_id: targetId,
+          account_id: null,
+          primary_contact_id: null,
+          organization_id: null,
+          primary_crm_contact_id: null,
+          title: "Reactor CEAF",
+          stage: "quoting",
+          owner_key: "op@origenlab.cl",
+          version: 1,
+          created_by: "op@origenlab.cl",
+          updated_by: "op@origenlab.cl",
+          created_at: "2026-08-30T10:00:00Z",
+          updated_at: "2026-08-30T10:00:00Z",
+          stage_updated_at: "2026-08-30T10:00:00Z",
+          contact_display_email: null,
+          account_display_domain: null,
+          organization_display_name: "CEAF",
+          contact_display_name: "Tatiana Rojas",
+          contact_primary_email: "tatiana@ceaf.cl",
+          open_task_count: 0,
+          next_task_id: null,
+          next_task_title: null,
+          next_task_due_at: null,
+        },
+      ],
+    });
+
+    render(<VentasPage deepLinkOpportunityId={targetId} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("drawer-stub")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("drawer-stub-id").textContent).toBe(targetId);
+  });
+
+  it("does nothing for an invalid or unmatched deep-link id — no crash, no drawer", async () => {
+    vi.mocked(fetchSalesOpportunities).mockReset().mockResolvedValue({
+      meta: { data_source: "postgres", read_only: true, count: 0, total_count: 0, limit: 200, offset: 0 },
+      items: [],
+    });
+
+    render(<VentasPage deepLinkOpportunityId="not-a-real-id" />);
+
+    await waitFor(() => expect(vi.mocked(fetchSalesOpportunities)).toHaveBeenCalled());
+    expect(screen.queryByTestId("drawer-stub")).not.toBeInTheDocument();
   });
 });

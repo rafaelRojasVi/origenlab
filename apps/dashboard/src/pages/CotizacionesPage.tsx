@@ -4,11 +4,18 @@ import { V2EmptyState } from "../components/v2/V2EmptyState";
 import { useCustomerQuotesGlobal } from "../components/quotes/useCustomerQuotesGlobal";
 import { CustomerQuoteQueueTable } from "../components/quotes/CustomerQuoteQueueTable";
 import { filterQuoteQueueItems, type QueueRecencyFilter } from "../components/quotes/customerQuoteQueueFilters";
+import { QuoteDetailDrawer } from "../components/quotes/QuoteDetailDrawer";
+import type { CustomerQuoteGlobalItem } from "../api/customerQuoteTypes";
 
-export function CotizacionesPage({ onOpenVentas }: { onOpenVentas: () => void }) {
+export function CotizacionesPage({
+  onOpenVentas,
+}: {
+  onOpenVentas: (opportunityId?: string) => void;
+}) {
   const queue = useCustomerQuotesGlobal();
   const [searchText, setSearchText] = useState("");
   const [recency, setRecency] = useState<QueueRecencyFilter>("all");
+  const [openItem, setOpenItem] = useState<CustomerQuoteGlobalItem | null>(null);
 
   const visibleItems = useMemo(
     () => filterQuoteQueueItems(queue.items, { searchText, recency }),
@@ -69,7 +76,7 @@ export function CotizacionesPage({ onOpenVentas }: { onOpenVentas: () => void })
             queue.items.length === 0 ? (
               <button
                 type="button"
-                onClick={onOpenVentas}
+                onClick={() => onOpenVentas()}
                 className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
               >
                 Ir a Ventas
@@ -78,9 +85,15 @@ export function CotizacionesPage({ onOpenVentas }: { onOpenVentas: () => void })
           }
         />
       ) : (
-        // Row click opens the quote detail drawer, wired in the next phase task.
-        <CustomerQuoteQueueTable items={visibleItems} onOpenQuote={() => {}} />
+        <CustomerQuoteQueueTable items={visibleItems} onOpenQuote={setOpenItem} />
       )}
+
+      <QuoteDetailDrawer
+        item={openItem}
+        open={openItem !== null}
+        onClose={() => setOpenItem(null)}
+        onOpenVentas={onOpenVentas}
+      />
     </div>
   );
 }

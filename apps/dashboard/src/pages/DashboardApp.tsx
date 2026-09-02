@@ -1,6 +1,7 @@
 import { DashboardDataProvider } from "../context/DashboardDataContext";
 import { DashboardShell } from "../components/layout/DashboardShell";
 import { useDashboardSection } from "../lib/dashboardHashRoute";
+import { buildVentasDeepLinkHash, useVentasDeepLinkOpportunityId } from "../lib/ventasDeepLink";
 import type { DashboardSection } from "../lib/dashboardNav";
 import { CatalogPage } from "./CatalogPage";
 import { ProspectosPage } from "./ProspectosPage";
@@ -22,15 +23,27 @@ function DashboardSectionView({
   section: DashboardSection;
   navigate: (section: DashboardSection) => void;
 }) {
+  const deepLinkOpportunityId = useVentasDeepLinkOpportunityId();
+
   switch (section) {
     case "today":
       return <TodaySummaryPage />;
     case "inbox":
       return <InboxTriagePage />;
     case "pipeline":
-      return <VentasPage />;
+      return <VentasPage deepLinkOpportunityId={deepLinkOpportunityId} />;
     case "cotizaciones":
-      return <CotizacionesPage onOpenVentas={() => navigate("pipeline")} />;
+      return (
+        <CotizacionesPage
+          onOpenVentas={(opportunityId) => {
+            if (opportunityId) {
+              window.location.hash = buildVentasDeepLinkHash(opportunityId);
+            } else {
+              navigate("pipeline");
+            }
+          }}
+        />
+      );
     case "deals":
       return <DealsPage onOpenPipeline={() => navigate("pipeline")} />;
     case "prospectos":

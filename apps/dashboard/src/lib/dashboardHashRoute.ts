@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { DEFAULT_DASHBOARD_SECTION, type DashboardSection } from "./dashboardNav";
 
+// "ventas" is a parse-time-only alias for the "pipeline" section id — it lets
+// deep links (e.g. from the Cotizaciones drawer's "Ver en Ventas") read as
+// #/ventas without renaming the section id everywhere else in the app.
+const HASH_SECTION_ALIASES: Record<string, DashboardSection> = {
+  ventas: "pipeline",
+};
+
 const VALID_SECTIONS = new Set<string>([
   "today",
   "inbox",
@@ -22,6 +29,9 @@ export function parseDashboardSectionFromHash(hash: string): DashboardSection {
     return DEFAULT_DASHBOARD_SECTION;
   }
   const section = raw.split("?")[0];
+  if (section in HASH_SECTION_ALIASES) {
+    return HASH_SECTION_ALIASES[section];
+  }
   if (VALID_SECTIONS.has(section)) {
     return section as DashboardSection;
   }
