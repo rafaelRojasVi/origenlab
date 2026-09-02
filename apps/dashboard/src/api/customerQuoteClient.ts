@@ -11,6 +11,7 @@ import { OperatorApiError, operatorApiUrl } from "./operatorClient";
 
 import {
   parseCustomerQuote,
+  parseCustomerQuoteDrivePendingListResponse,
   parseCustomerQuoteGlobalListResponse,
   parseCustomerQuoteListResponse,
   parseCustomerQuoteReadResponse,
@@ -18,6 +19,7 @@ import {
 
 import type {
   CustomerQuote,
+  CustomerQuoteDrivePendingListResponse,
   CustomerQuoteGlobalListResponse,
   CustomerQuoteListResponse,
   CustomerQuoteReadResponse,
@@ -176,6 +178,25 @@ export function fetchCustomerQuotesGlobal(params?: {
       },
     },
   ).then(parseCustomerQuoteGlobalListResponse);
+}
+
+
+export function drivePendingQuotesPath(): string {
+  return "/operations/customer-quotes/drive-pending";
+}
+
+
+export function fetchDrivePendingQuotes(): Promise<CustomerQuoteDrivePendingListResponse> {
+  return fetchJson<unknown>(
+    operatorApiUrl(drivePendingQuotesPath()),
+    {
+      method: "GET",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+      },
+    },
+  ).then(parseCustomerQuoteDrivePendingListResponse);
 }
 
 

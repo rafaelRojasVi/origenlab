@@ -33,6 +33,9 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // detail regex has no bearing on matching (regex arrays are OR'd, not
   // ordered) but keeps related entries adjacent for readability.
   /^\/operations\/customer-quotes$/,
+  // CRM-Q1D follow-up: read-only Drive Pendientes projection for
+  // operational visibility. Exact GET path only, no wildcard expansion.
+  /^\/operations\/customer-quotes\/drive-pending$/,
   /^\/operations\/opportunities\/o_[0-9a-f]{32}\/state$/,
   /^\/operations\/opportunities\/o_[0-9a-f]{32}\/activities$/,
   /^\/operations\/opportunities\/o_[0-9a-f]{32}\/tasks$/,

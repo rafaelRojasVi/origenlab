@@ -49,6 +49,7 @@ from origenlab_api.schemas.commercial_operations import (
     TaskResponse,
     TaskTransitionCommand,
 )
+from origenlab_api.drive.errors import DriveProvisioningError
 from origenlab_api.schemas.customer_quotes import (
     CustomerQuoteCreateCommand,
     CustomerQuoteDriveWorkspaceRetryCommand,
@@ -59,6 +60,11 @@ from origenlab_api.schemas.customer_quotes import (
     CustomerQuoteListResponse,
     CustomerQuoteReadResponse,
     CustomerQuoteResponse,
+)
+from origenlab_api.schemas.drive_pending_quotes import (
+    CustomerQuoteDrivePendingItem,
+    CustomerQuoteDrivePendingListMeta,
+    CustomerQuoteDrivePendingListResponse,
 )
 from origenlab_api.services.commercial_operations_read_service import (
     CommercialOperationsReadService,
@@ -71,6 +77,9 @@ from origenlab_api.services.customer_quote_read_service import (
 )
 from origenlab_api.services.customer_quote_service import (
     CustomerQuoteService,
+)
+from origenlab_api.services.drive_pending_quote_service import (
+    DrivePendingQuoteReadService,
 )
 from origenlab_api.settings import Settings, get_settings
 
@@ -103,6 +112,12 @@ def get_customer_quote_read_service(
     settings: Settings = Depends(get_settings),
 ) -> CustomerQuoteReadService:
     return CustomerQuoteReadService(settings)
+
+
+def get_drive_pending_quote_service(
+    settings: Settings = Depends(get_settings),
+) -> DrivePendingQuoteReadService:
+    return DrivePendingQuoteReadService(settings)
 
 
 def _raise_command_error(exc: Exception) -> NoReturn:
@@ -844,6 +859,37 @@ def list_customer_quotes_global(
             limit=limit,
             offset=offset,
         ),
+        items=items,
+    )
+
+
+@router.get(
+    "/customer-quotes/drive-pending",
+    response_model=CustomerQuoteDrivePendingListResponse,
+)
+def list_customer_quotes_drive_pending(
+    service: DrivePendingQuoteReadService = Depends(
+        get_drive_pending_quote_service
+    ),
+) -> CustomerQuoteDrivePendingListResponse:
+    try:
+        workspaces = service.list_drive_pending_workspaces()
+    except DriveProvisioningError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"{exc.category}: Drive pending workspaces are "
+                "temporarily unavailable"
+            ),
+        ) from exc
+
+    items = [
+        CustomerQuoteDrivePendingItem.from_workspace(workspace)
+        for workspace in workspaces
+    ]
+
+    return CustomerQuoteDrivePendingListResponse(
+        meta=CustomerQuoteDrivePendingListMeta(count=len(items)),
         items=items,
     )
 

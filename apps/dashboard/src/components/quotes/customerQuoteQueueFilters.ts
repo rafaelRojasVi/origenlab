@@ -1,4 +1,8 @@
-import type { CustomerQuoteGlobalItem, QuoteProvisioningStatus } from "../../api/customerQuoteTypes";
+import type {
+  CustomerQuoteGlobalItem,
+  QuoteProvisioningStatus,
+  QuoteQueueRow,
+} from "../../api/customerQuoteTypes";
 
 export type QueueRecencyFilter = "all" | "7d" | "30d";
 
@@ -7,34 +11,52 @@ const RECENCY_DAYS: Record<Exclude<QueueRecencyFilter, "all">, number> = {
   "30d": 30,
 };
 
-export function filterQuoteQueueItems(
-  items: readonly CustomerQuoteGlobalItem[],
+function rowSearchHaystack(row: QuoteQueueRow): string {
+  const values =
+    row.kind === "crm"
+      ? [
+          row.item.quote.quote_number,
+          row.item.quote.document_number,
+          row.item.quote.sales_opportunity_title,
+          row.item.organization_display_name,
+          row.item.contact_display_name,
+          row.item.contact_primary_email,
+        ]
+      : [row.item.folder_name, row.item.document_identifier];
+
+  return values
+    .filter((value): value is string => Boolean(value))
+    .join(" ")
+    .toLowerCase();
+}
+
+function rowRecencyTimestamp(row: QuoteQueueRow): string | null {
+  if (row.kind === "crm") {
+    return row.item.quote.updated_at;
+  }
+  return row.item.modified_time ?? row.item.created_time;
+}
+
+export function filterQuoteQueueRows(
+  rows: readonly QuoteQueueRow[],
   filters: { searchText: string; recency: QueueRecencyFilter },
   now: Date = new Date(),
-): CustomerQuoteGlobalItem[] {
+): QuoteQueueRow[] {
   const search = filters.searchText.trim().toLowerCase();
 
-  return items.filter((row) => {
-    if (search) {
-      const haystack = [
-        row.quote.quote_number,
-        row.quote.document_number,
-        row.quote.sales_opportunity_title,
-        row.organization_display_name,
-        row.contact_display_name,
-        row.contact_primary_email,
-      ]
-        .filter((value): value is string => Boolean(value))
-        .join(" ")
-        .toLowerCase();
-      if (!haystack.includes(search)) return false;
+  return rows.filter((row) => {
+    if (search && !rowSearchHaystack(row).includes(search)) {
+      return false;
     }
 
     if (filters.recency !== "all") {
-      const days = RECENCY_DAYS[filters.recency];
-      const updated = new Date(row.quote.updated_at);
-      const ageMs = now.getTime() - updated.getTime();
-      if (ageMs > days * 24 * 60 * 60 * 1000) return false;
+      const timestamp = rowRecencyTimestamp(row);
+      // Unknown recency never hides a row -- only a known, stale date does.
+      if (timestamp) {
+        const days = RECENCY_DAYS[filters.recency];
+        const ageMs = now.getTime() - new Date(timestamp).getTime();
+        if (ageMs > days * 24 * 60 * 60 * 1000) return false;
+      }
     }
 
     return true;

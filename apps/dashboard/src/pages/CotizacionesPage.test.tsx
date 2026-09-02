@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CotizacionesPage } from "./CotizacionesPage";
 import * as client from "../api/customerQuoteClient";
 import * as opsClient from "../api/commercialOperationsClient";
-import { globalQuoteItemFixture } from "../test/fixtures/customerQuoteFixtures";
+import {
+  drivePendingQuoteItemFixture,
+  globalQuoteItemFixture,
+} from "../test/fixtures/customerQuoteFixtures";
 
 vi.mock("../api/customerQuoteClient");
 vi.mock("../api/commercialOperationsClient");
@@ -16,6 +19,10 @@ describe("CotizacionesPage", () => {
       items: [],
     });
     vi.mocked(client.fetchCustomerQuotesGlobal).mockReset();
+    vi.mocked(client.fetchDrivePendingQuotes).mockReset().mockResolvedValue({
+      meta: { count: 0 },
+      items: [],
+    });
     vi.mocked(client.fetchCustomerQuote).mockReset();
     vi.mocked(client.createCustomerQuote).mockReset();
     vi.mocked(opsClient.createManualSalesOpportunity).mockReset();
@@ -174,5 +181,101 @@ describe("CotizacionesPage", () => {
     });
     await waitFor(() => screen.getByText("01186-26"));
     expect(client.fetchCustomerQuotesGlobal).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows the 3 live Drive Pendientes rows instead of the empty state when the CRM list is empty", async () => {
+    vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
+      meta: { count: 0, total_count: 0, limit: 200, offset: 0 },
+      items: [],
+    });
+    vi.mocked(client.fetchDrivePendingQuotes).mockResolvedValue({
+      meta: { count: 3 },
+      items: [
+        drivePendingQuoteItemFixture({ folder_id: "f1", folder_name: "CN01191-ICN Chile", document_identifier: "CN01191" }),
+        drivePendingQuoteItemFixture({
+          folder_id: "f2",
+          folder_name: "CN01190-Prof. Dr. Juan Matos Lale – Universidad Autónoma- UP400St",
+          document_identifier: "CN01190",
+        }),
+        drivePendingQuoteItemFixture({ folder_id: "f3", folder_name: "CN1185 — Gustavo Zúñiga - UP200St", document_identifier: "CN1185" }),
+      ],
+    });
+
+    render(<CotizacionesPage onOpenVentas={vi.fn()} />);
+
+    await waitFor(() => screen.getByText("CN01191-ICN Chile"));
+    expect(screen.queryByText("Aún no hay cotizaciones")).toBeNull();
+    expect(screen.getAllByText("Pendiente en Drive")).toHaveLength(3);
+  });
+
+  it("the empty state only fires when both the CRM list and the Drive-pending list are empty", async () => {
+    vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
+      meta: { count: 0, total_count: 0, limit: 200, offset: 0 },
+      items: [],
+    });
+    vi.mocked(client.fetchDrivePendingQuotes).mockResolvedValue({
+      meta: { count: 0 },
+      items: [],
+    });
+
+    render(<CotizacionesPage onOpenVentas={vi.fn()} />);
+
+    await waitFor(() => screen.getByText("Aún no hay cotizaciones"));
+  });
+
+  it("excludes a Drive folder already owned by a durable CRM quote (server-side dedup)", async () => {
+    vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
+      meta: { count: 1, total_count: 1, limit: 200, offset: 0 },
+      items: [globalQuoteItemFixture()],
+    });
+    // The server excludes CRM-owned folders; the client renders exactly
+    // what it's given, so a Drive-only fixture is simply absent here.
+    vi.mocked(client.fetchDrivePendingQuotes).mockResolvedValue({
+      meta: { count: 0 },
+      items: [],
+    });
+
+    render(<CotizacionesPage onOpenVentas={vi.fn()} />);
+
+    await waitFor(() => screen.getByText("01183-26"));
+    expect(screen.queryByText("Pendiente en Drive")).toBeNull();
+  });
+
+  it("'Recargar cotizaciones' refreshes both the CRM list and the Drive-pending list", async () => {
+    vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
+      meta: { count: 0, total_count: 0, limit: 200, offset: 0 },
+      items: [],
+    });
+    vi.mocked(client.fetchDrivePendingQuotes).mockResolvedValue({
+      meta: { count: 0 },
+      items: [],
+    });
+
+    render(<CotizacionesPage onOpenVentas={vi.fn()} />);
+    await waitFor(() => screen.getByText("Aún no hay cotizaciones"));
+
+    fireEvent.click(screen.getByRole("button", { name: /recargar cotizaciones/i }));
+
+    await waitFor(() => {
+      expect(client.fetchCustomerQuotesGlobal).toHaveBeenCalledTimes(2);
+      expect(client.fetchDrivePendingQuotes).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("clicking a Drive-only row's 'Abrir carpeta' never opens the CRM quote drawer", async () => {
+    vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
+      meta: { count: 0, total_count: 0, limit: 200, offset: 0 },
+      items: [],
+    });
+    vi.mocked(client.fetchDrivePendingQuotes).mockResolvedValue({
+      meta: { count: 1 },
+      items: [drivePendingQuoteItemFixture()],
+    });
+
+    render(<CotizacionesPage onOpenVentas={vi.fn()} />);
+    await waitFor(() => screen.getByText("Pendiente en Drive"));
+
+    fireEvent.click(screen.getByRole("link", { name: "Abrir carpeta" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

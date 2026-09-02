@@ -281,6 +281,7 @@ Operator plane (SQLite / active CSV):
 | GET    | `/operations/sales-opportunities/{sales_opportunity_id}/tasks` |
 | GET    | `/operations/sales-opportunities/{sales_opportunity_id}/quotes` |
 | GET    | `/operations/customer-quotes` |
+| GET    | `/operations/customer-quotes/drive-pending` |
 | GET    | `/operations/customer-quotes/{quote_id}` |
 | GET    | `/operations/opportunities/{opportunity_id}/state` |
 | GET    | `/operations/opportunities/{opportunity_id}/activities` |

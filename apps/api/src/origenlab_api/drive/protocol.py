@@ -10,6 +10,7 @@ creating duplicates.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
 
@@ -19,6 +20,19 @@ class DriveFileRef:
 
     file_id: str
     web_url: str
+
+
+@dataclass(frozen=True)
+class DrivePendingFolder:
+    """Safe metadata for one direct child folder of the Pendientes
+    container -- an operational-visibility read, never a durable CRM
+    reference."""
+
+    folder_id: str
+    folder_name: str
+    folder_web_url: str
+    created_time: datetime | None
+    modified_time: datetime | None
 
 
 class QuoteDriveWorkspaceProvider(Protocol):
@@ -72,3 +86,11 @@ class QuoteDriveWorkspaceProvider(Protocol):
         name: str,
     ) -> DriveFileRef:
         """Copy the master quotation template into the quote folder."""
+
+    def list_pending_children(self) -> list[DrivePendingFolder]:
+        """Read-only, non-recursive listing of direct child folders under
+        the configured Pendientes container, for operational visibility.
+
+        Never recurses, never inspects Enviadas or the template, and never
+        mutates Drive. A Drive-only folder returned here is not a durable
+        CRM quote -- callers must not fabricate one from this data."""

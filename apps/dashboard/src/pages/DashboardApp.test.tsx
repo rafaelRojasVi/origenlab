@@ -127,6 +127,7 @@ vi.mock("../api/mirrorCatalogClient", () => ({
 
 vi.mock("../api/customerQuoteClient", () => ({
   fetchCustomerQuotesGlobal: vi.fn(),
+  fetchDrivePendingQuotes: vi.fn(),
   fetchCustomerQuote: vi.fn(),
   createCustomerQuote: vi.fn(),
   retryCustomerQuoteDriveWorkspace: vi.fn(),
@@ -178,7 +179,7 @@ import {
   fetchSalesOpportunities,
   createManualSalesOpportunity,
 } from "../api/commercialOperationsClient";
-import { fetchCustomerQuotesGlobal } from "../api/customerQuoteClient";
+import { fetchCustomerQuotesGlobal, fetchDrivePendingQuotes } from "../api/customerQuoteClient";
 import { fetchCatalogProductsMirror } from "../api/mirrorCatalogClient";
 import {
   fetchLeadProspectsMirror,
@@ -204,6 +205,10 @@ function mockAllOk() {
   });
   vi.mocked(fetchCustomerQuotesGlobal).mockResolvedValue({
     meta: { count: 0, total_count: 0, limit: 200, offset: 0 },
+    items: [],
+  });
+  vi.mocked(fetchDrivePendingQuotes).mockResolvedValue({
+    meta: { count: 0 },
     items: [],
   });
   vi.mocked(fetchLeadResearchSummaryMirror).mockResolvedValue(leadSummaryFixture());
