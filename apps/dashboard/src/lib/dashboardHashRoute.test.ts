@@ -9,4 +9,14 @@ describe("dashboardHashRoute — pipeline section", () => {
   it("round-trips the pipeline section to its hash", () => {
     expect(dashboardSectionToHash("pipeline")).toBe("#/pipeline");
   });
+
+  it("parses #/ventas as an alias for the pipeline (Ventas) section", () => {
+    expect(parseDashboardSectionFromHash("#/ventas")).toBe("pipeline");
+  });
+
+  it("parses #/ventas with a query string as the pipeline section", () => {
+    expect(
+      parseDashboardSectionFromHash("#/ventas?opportunity=sales_" + "a".repeat(32)),
+    ).toBe("pipeline");
+  });
 });

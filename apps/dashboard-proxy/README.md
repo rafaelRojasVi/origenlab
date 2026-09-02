@@ -30,6 +30,7 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/contacts/*` | Contact drilldown |
 | `/opportunities/commercial`, `/opportunities/commercial/o_<32hex>` | PR3 machine-proposed opportunity intake (read-only) |
 | `/operations/work-queue`, `/operations/sales-opportunities/sales_<32hex>[/activities\|/tasks\|/quotes]`, `/operations/customer-quotes/quote_<32hex>`, `/operations/opportunities/o_<32hex>/[state\|activities\|tasks]` | Durable CRM reads |
+| `/operations/customer-quotes` | Global durable customer-quote list across all sales opportunities (Cotizaciones) |
 | `/mirror/*` | Postgres mirror reads |
 
 **POST** (the only human write path — trusted operator identity, `Idempotency-Key`, optimistic concurrency; each ID format is regex-constrained, no wildcard route):
@@ -38,6 +39,7 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 |---------------|---------|
 | `/operations/opportunities/o_<32hex>/state` | PR3 operator confirm/reject |
 | `/operations/sales-opportunities/promote`, `/sales_<32hex>/stage` | Durable sales-opportunity lifecycle |
+| `/operations/sales-opportunities/manual` | Create a manually-initiated durable sales opportunity (no PR3 source) |
 | `/operations/activities`, `/operations/tasks`, `/operations/tasks/task_<32hex>/[complete\|cancel]` | Durable activities/tasks |
 | `/operations/sales-opportunities/sales_<32hex>/quotes`, `/operations/customer-quotes/quote_<32hex>/drive-workspace` | CRM-Q1 customer-quote create + Drive workspace retry |
 | `/operator/procurement/tenders/<code>/annex-bundle/[preview\|import]` | Explicit tender annex evidence upload |

@@ -436,6 +436,100 @@ class CommercialOperationsService:
             request_fingerprint=fingerprint,
         )
 
+    def create_manual_sales_opportunity(
+        self,
+        *,
+        title: str,
+        operator: str,
+        idempotency_key: str,
+        owner_key: str | None = None,
+        organization_id: str | None = None,
+        organization_display_name: str | None = None,
+        contact_id: str | None = None,
+        contact_display_name: str | None = None,
+        contact_email: str | None = None,
+    ) -> SalesOpportunity:
+        normalized_title = _required_text(title, field="title", max_length=500)
+        normalized_operator = _required_text(
+            operator, field="operator", max_length=320
+        ).lower()
+        normalized_owner = (
+            _optional_text(owner_key, field="owner_key", max_length=320)
+            or normalized_operator
+        )
+        normalized_key = _idempotency_key(idempotency_key)
+
+        normalized_organization_id = _optional_text(
+            organization_id, field="organization_id", max_length=128
+        )
+        normalized_organization_name = _optional_text(
+            organization_display_name,
+            field="organization_display_name",
+            max_length=500,
+        )
+        normalized_contact_id = _optional_text(
+            contact_id, field="contact_id", max_length=128
+        )
+        normalized_contact_name = _optional_text(
+            contact_display_name, field="contact_display_name", max_length=500
+        )
+        normalized_contact_email = _optional_text(
+            contact_email, field="contact_email", max_length=320
+        )
+
+        if (
+            normalized_organization_id is not None
+            and normalized_organization_name is not None
+        ):
+            raise ValueError(
+                "Provide organization_id or organization_display_name, not both"
+            )
+
+        has_organization = (
+            normalized_organization_id is not None
+            or normalized_organization_name is not None
+        )
+
+        if normalized_contact_id is not None and not has_organization:
+            raise ValueError("contact_id requires an organization")
+
+        if (
+            normalized_contact_name is not None or normalized_contact_email is not None
+        ) and not has_organization:
+            raise ValueError("A new contact requires an organization")
+
+        if normalized_contact_id is not None and (
+            normalized_contact_name is not None or normalized_contact_email is not None
+        ):
+            raise ValueError("Provide contact_id or new contact details, not both")
+
+        fingerprint = _fingerprint(
+            "sales_opportunity_create_manual",
+            {
+                "title": normalized_title,
+                "owner_key": normalized_owner,
+                "organization_id": normalized_organization_id,
+                "organization_display_name": normalized_organization_name,
+                "contact_id": normalized_contact_id,
+                "contact_display_name": normalized_contact_name,
+                "contact_email": normalized_contact_email,
+            },
+        )
+
+        return self._repository.create_manual_sales_opportunity(
+            sales_opportunity_id=f"sales_{uuid4().hex}",
+            title=normalized_title,
+            owner_key=normalized_owner,
+            organization_id=normalized_organization_id,
+            organization_display_name=normalized_organization_name,
+            contact_id=normalized_contact_id,
+            contact_display_name=normalized_contact_name,
+            contact_email=normalized_contact_email,
+            operator=normalized_operator,
+            idempotency_key=normalized_key,
+            request_fingerprint=fingerprint,
+        )
+
     def transition_sales_opportunity_stage(
         self,
         *,

@@ -15,7 +15,13 @@ from pydantic import BaseModel, Field
 from origenlab_api.repositories.postgres.customer_quotes import (
     CustomerQuoteBundle,
 )
-from origenlab_api.schemas.commercial_operations import CommercialCommandModel
+from origenlab_api.repositories.postgres.customer_quotes_read import (
+    CustomerQuoteGlobalEntry,
+)
+from origenlab_api.schemas.commercial_operations import (
+    CommercialCommandModel,
+    SalesOpportunityStage,
+)
 
 
 QuoteStatus = Literal["draft"]
@@ -68,6 +74,8 @@ class CustomerQuoteResponse(BaseModel):
     quote_id: str
     sales_opportunity_id: str
     quote_number: str
+    document_number: str
+    sales_opportunity_title: str
     status: QuoteStatus
 
     version: int
@@ -105,6 +113,8 @@ class CustomerQuoteResponse(BaseModel):
             quote_id=bundle.quote.quote_id,
             sales_opportunity_id=bundle.quote.sales_opportunity_id,
             quote_number=bundle.quote.quote_number,
+            document_number=bundle.quote.document_number,
+            sales_opportunity_title=bundle.sales_opportunity_title,
             status=bundle.quote.status,  # type: ignore[arg-type]
             version=bundle.quote.version,
             latest_revision_number=bundle.revision.revision_number,
@@ -147,3 +157,39 @@ class CustomerQuoteListMeta(BaseModel):
 class CustomerQuoteListResponse(BaseModel):
     meta: CustomerQuoteListMeta
     items: list[CustomerQuoteResponse]
+
+
+class CustomerQuoteGlobalItem(BaseModel):
+    quote: CustomerQuoteResponse
+    sales_opportunity_stage: SalesOpportunityStage
+    sales_opportunity_owner_key: str
+    organization_display_name: str | None = None
+    contact_display_name: str | None = None
+    contact_primary_email: str | None = None
+    next_task_title: str | None = None
+    next_task_due_at: datetime | None = None
+
+    @classmethod
+    def from_entry(cls, entry: CustomerQuoteGlobalEntry) -> "CustomerQuoteGlobalItem":
+        return cls(
+            quote=CustomerQuoteResponse.from_bundle(entry.bundle),
+            sales_opportunity_stage=entry.sales_opportunity_stage,  # type: ignore[arg-type]
+            sales_opportunity_owner_key=entry.sales_opportunity_owner_key,
+            organization_display_name=entry.organization_display_name,
+            contact_display_name=entry.contact_display_name,
+            contact_primary_email=entry.contact_primary_email,
+            next_task_title=entry.next_task_title,
+            next_task_due_at=entry.next_task_due_at,
+        )
+
+
+class CustomerQuoteGlobalListMeta(BaseModel):
+    count: int
+    total_count: int
+    limit: int = 100
+    offset: int = 0
+
+
+class CustomerQuoteGlobalListResponse(BaseModel):
+    meta: CustomerQuoteGlobalListMeta
+    items: list[CustomerQuoteGlobalItem]

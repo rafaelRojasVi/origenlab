@@ -1,14 +1,9 @@
 import { useState, type ReactNode } from "react";
 import { getOperatorApiBaseUrl } from "../../api/operatorClient";
 import { useDashboardData } from "../../context/DashboardDataContext";
-import {
-  dashboardSectionGroupLabel,
-  dashboardSectionLabel,
-  type DashboardSection,
-} from "../../lib/dashboardNav";
+import { dashboardSectionLabel, type DashboardSection } from "../../lib/dashboardNav";
 import { backendChipClass, backendLabel, verdictTone } from "../../lib/verdictStyles";
 import { DevLegacyPortWarning } from "../operator/DevLegacyPortWarning";
-import { ReadOnlyBanner } from "../operator/ReadOnlyBanner";
 import { ContactProfilePanel } from "../commercial/ContactProfilePanel";
 import { DashboardSidebar } from "./DashboardSidebar";
 
@@ -34,7 +29,6 @@ export function DashboardShell({
   } = useDashboardData();
 
   const pageTitle = dashboardSectionLabel(section);
-  const groupLabel = dashboardSectionGroupLabel(section);
   const verdict = data?.operator.verdict;
   const apiBase = getOperatorApiBaseUrl() || "(proxy Vite)";
 
@@ -52,11 +46,6 @@ export function DashboardShell({
           <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
-                {groupLabel ? (
-                  <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-muted)]">
-                    {groupLabel}
-                  </p>
-                ) : null}
                 <span
                   className="inline-flex items-center rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-slate-600 ring-1 ring-slate-200"
                   data-testid="operator-center-chip"
@@ -69,18 +58,6 @@ export function DashboardShell({
               </h1>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <span
-                className="inline-flex items-center rounded-full px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 ring-1 ring-slate-200"
-                data-testid="read-only-chip"
-              >
-                {section === "tenders"
-                  ? "Lectura + documentos"
-                  : section === "pipeline"
-                    ? "CRM durable"
-                    : section === "deals"
-                      ? "Lectura + promoción"
-                      : "Solo lectura"}
-              </span>
               {verdict ? (
                 <span
                   className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${verdictTone(verdict).badge}`}
@@ -114,9 +91,11 @@ export function DashboardShell({
                 ? "No envía correos ni modifica datos comerciales"
                 : section === "pipeline"
                   ? "No envía correos · los cambios de etapa quedan registrados en el CRM"
-                  : section === "deals"
-                    ? "No envía correos · promover a Pipeline es la única escritura"
-                    : "No envía correos ni modifica datos"}
+                  : section === "cotizaciones"
+                    ? "No envía correos · crear una cotización queda registrado en el CRM"
+                    : section === "deals"
+                      ? "No envía correos · promover a Ventas es la única escritura"
+                      : "No envía correos ni modifica datos"}
             </span>
             <span className="hidden sm:inline" aria-hidden>
               ·
@@ -132,12 +111,6 @@ export function DashboardShell({
 
         <main className="flex-1 px-4 py-5 sm:px-6 lg:px-8">
           <div key={section} className="mx-auto w-full max-w-[1600px] space-y-5 animate-fade-in-up">
-            <ReadOnlyBanner
-              mirrorBackend={Boolean(mirrorBackend)}
-              documentImportEnabled={section === "tenders"}
-              promotionEnabled={section === "deals"}
-              crmWritesEnabled={section === "pipeline"}
-            />
             {devConfigWarning ? <DevLegacyPortWarning message={devConfigWarning} /> : null}
             {children}
           </div>

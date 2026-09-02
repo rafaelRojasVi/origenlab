@@ -10,6 +10,8 @@ const ICON_PATHS: Record<DashboardNavIconName, string> = {
     "M4 7h16v12H4V7Zm2 2v2h4V9H6Zm6 0v2h6V9h-6ZM6 13v2h4v-2H6Zm6 0v2h6v-2h-6Z",
   prospectos:
     "M12 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8Zm-7 14a7 7 0 0 1 14 0H5Z",
+  quotes:
+    "M7 3h7l4 4v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm7 0v4h4M9 12h6M9 16h6",
   contacts:
     "M8 8a4 4 0 1 1 8 0 4 4 0 0 1-8 0Zm-4 12a8 8 0 0 1 16 0H4Z",
   tenders:

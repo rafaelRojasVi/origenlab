@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { SalesOpportunityListItem, SalesOpportunityStage } from "../../api/commercialOperationsTypes";
 import {
   SALES_OPPORTUNITY_ACTIVE_STAGES,
@@ -20,10 +21,13 @@ export function SalesOpportunityBoard({
   board: ReturnType<typeof useSalesOpportunityBoard>;
   onOpenOpportunity: (item: SalesOpportunityListItem) => void;
 }) {
-  const columns: SalesOpportunityStage[] = [
-    ...SALES_OPPORTUNITY_ACTIVE_STAGES,
-    ...board.enabledToggles,
-  ];
+  const [view, setView] = useState<"active" | "closed">("active");
+
+  const closedColumns = SALES_OPPORTUNITY_TOGGLE_STAGES.filter((stage) =>
+    board.enabledToggles.includes(stage),
+  );
+  const columns: SalesOpportunityStage[] =
+    view === "active" ? [...SALES_OPPORTUNITY_ACTIVE_STAGES] : closedColumns;
 
   const grouped: Record<string, SalesOpportunityListItem[]> = {};
   for (const stage of columns) grouped[stage] = [];
@@ -31,31 +35,56 @@ export function SalesOpportunityBoard({
     if (grouped[item.stage]) grouped[item.stage].push(item);
   }
 
-  const isEmpty = !board.loading && !board.error && board.items.length === 0;
+  const isEmpty =
+    !board.loading && !board.error && columns.length > 0 && !columns.some((stage) => grouped[stage].length);
+  const closedViewUnselected = view === "closed" && closedColumns.length === 0;
 
   return (
     <div className="hidden space-y-4 md:block" data-testid="sales-opportunity-board-desktop">
-      <div className="flex flex-wrap gap-2">
-        {SALES_OPPORTUNITY_TOGGLE_STAGES.map((stage) => {
-          const key = stage as "won" | "lost" | "dormant";
-          const active = board.enabledToggles.includes(stage);
-          return (
+      <div className="flex items-center gap-4 border-b border-slate-200">
+        <div role="tablist" aria-label="Vista del tablero" className="flex gap-1">
+          {(["active", "closed"] as const).map((candidate) => (
             <button
-              key={stage}
+              key={candidate}
               type="button"
-              aria-pressed={active}
-              onClick={() => board.toggleStage(stage)}
-              className={`motion-safe:transition-colors rounded-full border px-3 py-1 text-xs font-medium ${
-                active
-                  ? "border-brand-600 bg-brand-50 text-brand-800"
-                  : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+              role="tab"
+              aria-selected={view === candidate}
+              onClick={() => setView(candidate)}
+              className={`motion-safe:transition-colors rounded-t-md px-3 py-1.5 text-sm font-medium ${
+                view === candidate
+                  ? "border-b-2 border-brand-600 text-brand-800"
+                  : "border-b-2 border-transparent text-slate-500 hover:text-slate-700"
               }`}
             >
-              {TOGGLE_LABELS[key]}
+              {candidate === "active" ? "Activas" : "Cerradas"}
             </button>
-          );
-        })}
+          ))}
+        </div>
       </div>
+
+      {view === "closed" ? (
+        <div className="flex flex-wrap gap-2">
+          {SALES_OPPORTUNITY_TOGGLE_STAGES.map((stage) => {
+            const key = stage as "won" | "lost" | "dormant";
+            const active = board.enabledToggles.includes(stage);
+            return (
+              <button
+                key={stage}
+                type="button"
+                aria-pressed={active}
+                onClick={() => board.toggleStage(stage)}
+                className={`motion-safe:transition-colors rounded-full border px-3 py-1 text-xs font-medium ${
+                  active
+                    ? "border-brand-600 bg-brand-50 text-brand-800"
+                    : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                {TOGGLE_LABELS[key]}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
 
       {board.stageError ? (
         <div
@@ -99,7 +128,16 @@ export function SalesOpportunityBoard({
         </div>
       ) : null}
 
-      {!board.loading && !board.error && isEmpty ? (
+      {!board.loading && !board.error && closedViewUnselected ? (
+        <div className="rounded-xl border border-dashed border-slate-300 px-6 py-10 text-center">
+          <p className="text-sm font-medium text-slate-800">Elige qué mostrar.</p>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">
+            Activa Ganadas, Perdidas o Dormidas arriba para ver oportunidades cerradas.
+          </p>
+        </div>
+      ) : null}
+
+      {!board.loading && !board.error && !closedViewUnselected && view === "active" && isEmpty ? (
         <div className="rounded-xl border border-dashed border-slate-300 px-6 py-10 text-center">
           <p className="text-sm font-medium text-slate-800">No hay oportunidades activas todavía.</p>
           <p className="mt-1 text-sm text-[var(--color-muted)]">
@@ -108,7 +146,7 @@ export function SalesOpportunityBoard({
         </div>
       ) : null}
 
-      {!board.loading && !board.error && !isEmpty ? (
+      {!board.loading && !board.error && !closedViewUnselected && !(view === "active" && isEmpty) ? (
         <div className="flex gap-4 overflow-x-auto pb-2">
           {columns.map((stage) => (
             <div

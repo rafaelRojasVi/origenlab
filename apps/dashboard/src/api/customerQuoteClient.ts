@@ -11,12 +11,14 @@ import { OperatorApiError, operatorApiUrl } from "./operatorClient";
 
 import {
   parseCustomerQuote,
+  parseCustomerQuoteGlobalListResponse,
   parseCustomerQuoteListResponse,
   parseCustomerQuoteReadResponse,
 } from "./customerQuoteParse";
 
 import type {
   CustomerQuote,
+  CustomerQuoteGlobalListResponse,
   CustomerQuoteListResponse,
   CustomerQuoteReadResponse,
   RetryCustomerQuoteDriveWorkspaceCommand,
@@ -150,6 +152,30 @@ export function createCustomerQuote(
       body: JSON.stringify({}),
     },
   ).then(parseCustomerQuote);
+}
+
+
+export function fetchCustomerQuotesGlobal(params?: {
+  stage?: readonly string[];
+  driveStatus?: readonly string[];
+  limit?: number;
+  offset?: number;
+}): Promise<CustomerQuoteGlobalListResponse> {
+  return fetchJson<unknown>(
+    operatorApiUrl("/operations/customer-quotes", {
+      stage: params?.stage,
+      drive_status: params?.driveStatus,
+      limit: params?.limit,
+      offset: params?.offset,
+    }),
+    {
+      method: "GET",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+      },
+    },
+  ).then(parseCustomerQuoteGlobalListResponse);
 }
 
 

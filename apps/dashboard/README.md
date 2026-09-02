@@ -186,20 +186,26 @@ Current (hash-routed, multi-section):
 App.tsx → pages/DashboardApp.tsx
   → context/DashboardDataContext.tsx, components/layout/DashboardShell.tsx
   → section pages (lib/dashboardHashRoute.ts picks one; "today" is default):
-      TodaySummaryPage.tsx      (Hoy)
+      TodaySummaryPage.tsx      (Inicio)
       InboxTriagePage.tsx       (Bandeja de revisión)
-      PipelinePage.tsx          (Pipeline)
+      VentasPage.tsx            (Ventas)
+      CotizacionesPage.tsx      (Cotizaciones)
       DealsPage.tsx             (Negocios)
       ProspectosPage.tsx        (Prospectos)
       CatalogPage.tsx           (Catálogo)
       SuppliersPage.tsx         (Proveedores)
       TendersPage.tsx           (Licitaciones)
       PaymentsLogisticsPage.tsx (Pagos y logística)
-      ContactsPage.tsx          (Contactos)
+      ContactsPage.tsx          (Clientes)
       SystemPage.tsx            (Sistema)
   → components/commercial/*, components/pipeline/*, components/operator/*,
     components/tenders/*, components/institutionIntel/*, components/catalog/*
 ```
+
+`InboxTriagePage.tsx`, `DealsPage.tsx`, and `ProspectosPage.tsx` are still mounted
+and reachable by direct hash (`#/inbox`, `#/deals`, `#/prospectos`), but are
+intentionally no longer in the sidebar nav under the flat V2 IA — don't "fix"
+them back into the nav.
 
 **Historical (removed):** `TodayPage.tsx` was the original single-page mount
 (`App.tsx → TodayPage.tsx` directly). It no longer exists — do not reference

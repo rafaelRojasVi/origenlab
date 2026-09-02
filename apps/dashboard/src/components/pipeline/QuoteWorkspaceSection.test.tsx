@@ -24,6 +24,8 @@ function quote(overrides: Partial<CustomerQuote> = {}): CustomerQuote {
     quote_id: QUOTE_ID,
     sales_opportunity_id: SALES_ID,
     quote_number: "CN011729",
+    document_number: "CN00011729",
+    sales_opportunity_title: "Centrífuga CEAF",
     status: "draft",
     version: 1,
     latest_revision_number: 1,

@@ -146,6 +146,37 @@ class SalesOpportunityPromoteCommand(CommercialCommandModel):
     )
 
 
+class SalesOpportunityManualCreateCommand(CommercialCommandModel):
+    title: str = Field(
+        min_length=1,
+        max_length=500,
+    )
+    owner_key: str | None = Field(
+        default=None,
+        max_length=320,
+    )
+    organization_id: str | None = Field(
+        default=None,
+        max_length=128,
+    )
+    organization_display_name: str | None = Field(
+        default=None,
+        max_length=500,
+    )
+    contact_id: str | None = Field(
+        default=None,
+        max_length=128,
+    )
+    contact_display_name: str | None = Field(
+        default=None,
+        max_length=500,
+    )
+    contact_email: str | None = Field(
+        default=None,
+        max_length=320,
+    )
+
+
 class SalesOpportunityStageCommand(CommercialCommandModel):
     stage: SalesOpportunityStage
     expected_version: int = Field(ge=1)
@@ -154,7 +185,7 @@ class SalesOpportunityStageCommand(CommercialCommandModel):
 class SalesOpportunityResponse(BaseModel):
     sales_opportunity_id: str
 
-    source_kind: Literal["pr3"]
+    source_kind: Literal["pr3", "manual"]
     source_opportunity_id: str
 
     account_id: str | None = None
@@ -192,7 +223,7 @@ class SalesOpportunityReadResponse(BaseModel):
 class SalesOpportunityListItem(BaseModel):
     sales_opportunity_id: str
 
-    source_kind: Literal["pr3"]
+    source_kind: Literal["pr3", "manual"]
     source_opportunity_id: str
 
     account_id: str | None = None

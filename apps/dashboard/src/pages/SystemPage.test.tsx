@@ -286,7 +286,7 @@ describe("SystemPage", () => {
     const activitySection = screen.getByRole("heading", { name: "Actividad del sistema" }).closest("section")!;
     within(activitySection).getByText("Oportunidades accionables");
     within(activitySection).getByText("4");
-    expect(within(activitySection).queryByText("Licitaciones / equipos")).toBeNull();
+    expect(within(activitySection).queryByText("Licitaciones")).toBeNull();
   });
 
   it("shows a healthy zero as a real 0", () => {

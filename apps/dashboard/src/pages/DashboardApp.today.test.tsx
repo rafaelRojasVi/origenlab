@@ -201,12 +201,13 @@ describe("DashboardApp (legacy TodayPage tests)", () => {
     expect(screen.queryByText(/daily_core_run_manifest\.json/)).toBeNull();
     expect(screen.queryByText(/\/secret\/active/)).toBeNull();
 
-    fireEvent.click(within(nav).getByRole("link", { name: "Licitaciones / equipos" }));
+    fireEvent.click(within(nav).getByRole("link", { name: "Licitaciones" }));
     await waitFor(() => screen.getByText("Oportunidades accionables"));
   });
 
   it("shows daily-core section when no run is registered", async () => {
     mockAllOk();
+    window.location.hash = "#/today";
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
     screen.getByText(/Este panel no envía correos ni aprueba contactos; las acciones comerciales se realizan dentro del ciclo de cada oportunidad/);
@@ -338,11 +339,9 @@ describe("DashboardApp (legacy TodayPage tests)", () => {
       warnings: [],
     });
 
+    window.location.hash = "#/inbox";
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
-
-    const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
-    fireEvent.click(within(nav).getByRole("link", { name: "Bandeja de revisión" }));
     await waitFor(() => screen.getByText("buyer@acme.cl"));
 
     fireEvent.click(screen.getByRole("button", { name: "buyer@acme.cl" }));

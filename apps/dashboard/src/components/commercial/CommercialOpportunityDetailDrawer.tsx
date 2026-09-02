@@ -84,7 +84,7 @@ function PromoteToCrmAction({
           onClick={onOpenPipeline}
           className="mt-2 rounded-md border border-emerald-300 bg-white px-3 py-1.5 text-sm font-medium text-emerald-800"
         >
-          Abrir en Pipeline
+          Abrir en Ventas
         </button>
       </div>
     );

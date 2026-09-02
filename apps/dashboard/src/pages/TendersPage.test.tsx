@@ -35,8 +35,8 @@ function stub(availability: Availed<readonly CurrentOpportunityRow[]>) {
 }
 
 describe("TendersPage", () => {
-  it("G: dashboard navigation still labels this section 'Licitaciones / equipos'", () => {
-    expect(dashboardSectionLabel("tenders")).toBe("Licitaciones / equipos");
+  it("G: dashboard navigation labels this section 'Licitaciones'", () => {
+    expect(dashboardSectionLabel("tenders")).toBe("Licitaciones");
   });
 
   it("W1 current_opportunity_queue is the page's only procurement-opportunity source", async () => {

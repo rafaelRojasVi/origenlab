@@ -39,6 +39,7 @@ from origenlab_api.schemas.commercial_operations import (
     SalesOpportunitiesMeta,
     SalesOpportunitiesResponse,
     SalesOpportunityListItem,
+    SalesOpportunityManualCreateCommand,
     SalesOpportunityPromoteCommand,
     SalesOpportunityReadResponse,
     SalesOpportunityResponse,
@@ -51,6 +52,9 @@ from origenlab_api.schemas.commercial_operations import (
 from origenlab_api.schemas.customer_quotes import (
     CustomerQuoteCreateCommand,
     CustomerQuoteDriveWorkspaceRetryCommand,
+    CustomerQuoteGlobalItem,
+    CustomerQuoteGlobalListMeta,
+    CustomerQuoteGlobalListResponse,
     CustomerQuoteListMeta,
     CustomerQuoteListResponse,
     CustomerQuoteReadResponse,
@@ -228,6 +232,46 @@ def promote_sales_opportunity(
         result,
         from_attributes=True,
     )
+
+
+@router.post(
+    "/sales-opportunities/manual",
+    response_model=SalesOpportunityResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_manual_sales_opportunity(
+    command: SalesOpportunityManualCreateCommand,
+    request: Request,
+    idempotency_key: str = Header(
+        alias="Idempotency-Key",
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    ),
+    settings: Settings = Depends(get_settings),
+    service: CommercialOperationsService = Depends(get_commercial_operations_service),
+) -> SalesOpportunityResponse:
+    operator = require_commercial_operator(request, settings)
+    try:
+        result = service.create_manual_sales_opportunity(
+            title=command.title,
+            owner_key=command.owner_key,
+            organization_id=command.organization_id,
+            organization_display_name=command.organization_display_name,
+            contact_id=command.contact_id,
+            contact_display_name=command.contact_display_name,
+            contact_email=command.contact_email,
+            operator=operator,
+            idempotency_key=idempotency_key,
+        )
+    except (
+        CommercialOperationNotFoundError,
+        CommercialOperationConflictError,
+        ValueError,
+    ) as exc:
+        _raise_command_error(exc)
+
+    return SalesOpportunityResponse.model_validate(result, from_attributes=True)
 
 
 @router.post(
@@ -766,6 +810,40 @@ def list_customer_quotes(
 
     return CustomerQuoteListResponse(
         meta=CustomerQuoteListMeta(count=len(items)),
+        items=items,
+    )
+
+
+@router.get(
+    "/customer-quotes",
+    response_model=CustomerQuoteGlobalListResponse,
+)
+def list_customer_quotes_global(
+    stage: list[str] | None = Query(None),
+    drive_status: list[str] | None = Query(None),
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    service: CustomerQuoteReadService = Depends(get_customer_quote_read_service),
+) -> CustomerQuoteGlobalListResponse:
+    try:
+        entries, total_count = service.list_all_quotes(
+            limit=limit,
+            offset=offset,
+            drive_status=drive_status,
+            stage=stage,
+        )
+    except ValueError as exc:
+        _raise_command_error(exc)
+
+    items = [CustomerQuoteGlobalItem.from_entry(entry) for entry in entries]
+
+    return CustomerQuoteGlobalListResponse(
+        meta=CustomerQuoteGlobalListMeta(
+            count=len(items),
+            total_count=total_count,
+            limit=limit,
+            offset=offset,
+        ),
         items=items,
     )
 

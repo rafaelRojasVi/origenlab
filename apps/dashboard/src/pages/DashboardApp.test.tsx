@@ -116,11 +116,28 @@ vi.mock("../api/commercialOperationsClient", async (importOriginal) => {
   return {
     ...actual,
     fetchCommercialWorkQueue: vi.fn(),
+    fetchSalesOpportunities: vi.fn(),
+    createManualSalesOpportunity: vi.fn(),
   };
 });
 
 vi.mock("../api/mirrorCatalogClient", () => ({
   fetchCatalogProductsMirror: vi.fn(),
+}));
+
+vi.mock("../api/customerQuoteClient", () => ({
+  fetchCustomerQuotesGlobal: vi.fn(),
+  fetchCustomerQuote: vi.fn(),
+  createCustomerQuote: vi.fn(),
+  retryCustomerQuoteDriveWorkspace: vi.fn(),
+}));
+
+vi.mock("../api/mirrorLeadIntelClient", () => ({
+  fetchLeadProspectsMirror: vi.fn(),
+  fetchLeadProspectDetailMirror: vi.fn(),
+  fetchLeadResearchSummaryMirror: vi.fn(),
+  downloadLeadProspectsExportCsv: vi.fn(),
+  mirrorLeadProspectsExportUrl: vi.fn(),
 }));
 
 vi.mock("../lib/logo/threeBodyCanvasRunner", () => ({
@@ -156,9 +173,19 @@ vi.mock("../api/institutionIntel/adapter", () => ({
 
 import { fetchTodayPanel, fetchWarmCases } from "../api/operatorClient";
 import { fetchCommercialDealsMirror } from "../api/mirrorCommercialClient";
-import { fetchCommercialWorkQueue } from "../api/commercialOperationsClient";
+import {
+  fetchCommercialWorkQueue,
+  fetchSalesOpportunities,
+  createManualSalesOpportunity,
+} from "../api/commercialOperationsClient";
+import { fetchCustomerQuotesGlobal } from "../api/customerQuoteClient";
 import { fetchCatalogProductsMirror } from "../api/mirrorCatalogClient";
+import {
+  fetchLeadProspectsMirror,
+  fetchLeadResearchSummaryMirror,
+} from "../api/mirrorLeadIntelClient";
 import { catalogListFixture } from "../test/fixtures/catalogMirrorFixtures";
+import { leadListFixture, leadSummaryFixture } from "../test/fixtures/leadIntelFixtures";
 
 function mockAllOk() {
   vi.mocked(
@@ -171,6 +198,16 @@ function mockAllOk() {
   vi.mocked(fetchTodayPanel).mockResolvedValue(panelSqlite);
   vi.mocked(fetchWarmCases).mockResolvedValue(warmPayload);
   vi.mocked(fetchCatalogProductsMirror).mockResolvedValue(catalogListFixture());
+  vi.mocked(fetchSalesOpportunities).mockResolvedValue({
+    meta: { data_source: "postgres", read_only: true, count: 0, total_count: 0, limit: 200, offset: 0 },
+    items: [],
+  });
+  vi.mocked(fetchCustomerQuotesGlobal).mockResolvedValue({
+    meta: { count: 0, total_count: 0, limit: 200, offset: 0 },
+    items: [],
+  });
+  vi.mocked(fetchLeadResearchSummaryMirror).mockResolvedValue(leadSummaryFixture());
+  vi.mocked(fetchLeadProspectsMirror).mockResolvedValue(leadListFixture());
   vi.mocked(fetchCommercialDealsMirror).mockResolvedValue({
     table_available: true,
     read_only: true,
@@ -222,34 +259,27 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
     window.location.hash = "";
   });
 
-  it("sidebar renders grouped navigation and all sections", async () => {
+  it("sidebar renders exactly the Cotizaciones-first primary IA, in order, with no legacy sections", async () => {
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
-    for (const groupId of ["inicio", "comercial", "operacion", "sistema"]) {
-      expect(screen.getByTestId(`nav-group-${groupId}`)).toBeTruthy();
-    }
-    expect(screen.getByTestId("nav-group-inicio").textContent).toMatch(/Inicio/);
-    expect(screen.getByTestId("nav-group-comercial").textContent).toMatch(/Comercial/);
-    expect(screen.getByTestId("nav-group-operacion").textContent).toMatch(/Operación/);
+    const links = within(nav).getAllByRole("link").map((el) => el.textContent);
 
-    for (const label of [
-      "Hoy",
-      "Bandeja de revisión",
-      "Pipeline",
-      "Negocios",
+    expect(links).toEqual([
+      "Cotizaciones",
+      "Licitaciones",
+      "Ventas",
+      "Clientes",
       "Prospectos",
+      "Correos",
       "Catálogo",
-      "Proveedores",
-      "Licitaciones / equipos",
-      "Pagos y logística",
-      "Clientes / instituciones",
       "Sistema",
-    ]) {
-      expect(within(nav).getByRole("link", { name: label })).toBeTruthy();
+    ]);
+
+    for (const removedLabel of ["Inicio", "Negocios", "Proveedores", "Pagos y logística"]) {
+      expect(within(nav).queryByRole("link", { name: removedLabel })).toBeNull();
     }
-    expect(within(nav).queryByRole("link", { name: "Oportunidades" })).toBeNull();
   });
 
   it("marks active nav item with aria-current", async () => {
@@ -257,9 +287,9 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
-    expect(within(nav).getByRole("link", { name: "Hoy" }).getAttribute("aria-current")).toBe(
-      "page",
-    );
+    expect(
+      within(nav).getByRole("link", { name: "Cotizaciones" }).getAttribute("aria-current"),
+    ).toBe("page");
     expect(within(nav).getByRole("link", { name: "Sistema" }).getAttribute("aria-current")).toBe(
       null,
     );
@@ -301,19 +331,17 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
 
     expect(screen.queryByRole("button", { name: /Enviar/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /Aplicar/i })).toBeNull();
-    screen.getByTestId("read-only-chip");
   });
 
   it("Today summary renders queue count cards", async () => {
+    window.location.hash = "#/today";
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     expect(screen.getAllByText("Qué revisar hoy").length).toBeGreaterThan(0);
     screen.getByText("Clientes por responder");
     screen.getByText("Proveedores pendientes");
-    screen.getByText("Negocios en curso");
     screen.getByLabelText(/Oportunidades accionables:/);
-    screen.getByLabelText(/Catálogo:/);
     expect(screen.queryByText(/Casos tibios \/ Warm cases/)).toBeNull();
   });
 
@@ -328,21 +356,37 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
     });
   });
 
-  it("Inbox page contains warm cases table", async () => {
+  it("root hash resolves to Cotizaciones and renders the durable queue empty state", async () => {
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
-    await navigateTo("Bandeja de revisión");
+    expect(screen.getByRole("heading", { level: 1, name: "Cotizaciones" })).toBeTruthy();
+    await waitFor(() => screen.getByText("Aún no hay cotizaciones"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Ir a Ventas" }));
     await waitFor(() => {
-      screen.getByText("buyer@acme.cl");
+      expect(screen.getByRole("heading", { level: 1, name: "Ventas" })).toBeTruthy();
     });
   });
 
-  it("Suppliers page excludes client opportunities", async () => {
+  it("Correos is promoted to primary nav (no longer deep-link-only)", async () => {
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
-    await navigateTo("Proveedores");
+    await navigateTo("Correos");
+    await waitFor(() => {
+      screen.getByText("buyer@acme.cl");
+    });
+
+    const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
+    expect(within(nav).getByRole("link", { name: "Correos" })).toBeTruthy();
+  });
+
+  it("Suppliers page excludes client opportunities (now deep-link-only)", async () => {
+    window.location.hash = "#/suppliers";
+    render(<DashboardApp />);
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
+
     await waitFor(() => {
       expect(screen.getByTestId("suppliers-workspace")).toBeTruthy();
       expect(screen.getByTestId("supplier-detail-title").textContent).toBe("IKA");
@@ -352,30 +396,49 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
       screen.getByText("beatriz.bonon@ika.net.br");
     });
     expect(screen.queryByText("buyer@acme.cl")).toBeNull();
+
+    const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
+    expect(within(nav).queryByRole("link", { name: "Proveedores" })).toBeNull();
   });
 
-  it("Payments & logistics excludes supplier and client rows", async () => {
+  it("Payments & logistics excludes supplier and client rows (now deep-link-only)", async () => {
+    window.location.hash = "#/payments-logistics";
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
-    await navigateTo("Pagos y logística");
     await waitFor(() => {
       screen.getByText("serviciodetransferencias@bancochile.cl");
       screen.getByText("monica.silva@dhl.com");
     });
     expect(screen.queryByText("buyer@acme.cl")).toBeNull();
     expect(screen.queryByText("beatriz.bonon@ika.net.br")).toBeNull();
+
+    const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
+    expect(within(nav).queryByRole("link", { name: "Pagos y logística" })).toBeNull();
   });
 
-  it("Deals page renders commercial deal table", async () => {
+  it("Negocios is still reachable by deep link even though it's hidden from nav", async () => {
+    window.location.hash = "#/deals";
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
-
-    await navigateTo("Negocios");
     await waitFor(() => {
       screen.getByText("Negocios comerciales");
       screen.getByText("CEAF");
       screen.getByText("SERVA");
+    });
+
+    const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
+    expect(within(nav).queryByRole("link", { name: "Negocios" })).toBeNull();
+  });
+
+  it("Prospectos is promoted to primary nav (no longer deep-link-only)", async () => {
+    render(<DashboardApp />);
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
+
+    const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
+    fireEvent.click(within(nav).getByRole("link", { name: "Prospectos" }));
+    await waitFor(() => {
+      screen.getByText("Acme Labs");
     });
   });
 
@@ -390,6 +453,23 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
 
     await waitFor(() => {
       expect(fetchTodayPanel).toHaveBeenCalled();
+    });
+  });
+
+  it("end to end: landing on Cotizaciones, opening a quote, and Nueva Cotización's dialog never allocates on open", async () => {
+    render(<DashboardApp />);
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
+
+    expect(screen.getByRole("heading", { level: 1, name: "Cotizaciones" })).toBeTruthy();
+    await waitFor(() => screen.getByText("Aún no hay cotizaciones"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Nueva Cotización" }));
+    await waitFor(() => screen.getByRole("dialog"));
+    expect(createManualSalesOpportunity).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => {
+      expect(screen.queryByTestId("nueva-cotizacion-dialog")).toBeNull();
     });
   });
 });
