@@ -52,6 +52,7 @@ from origenlab_api.schemas.commercial_operations import (
 from origenlab_api.drive.errors import DriveProvisioningError
 from origenlab_api.schemas.customer_quotes import (
     CustomerQuoteAdoptDriveFolderCommand,
+    CustomerQuoteCloseCommand,
     CustomerQuoteCreateCommand,
     CustomerQuoteDriveWorkspaceRetryCommand,
     CustomerQuoteEventListMeta,
@@ -1083,6 +1084,51 @@ def confirm_customer_quote_send(
             quote_id=quote_id,
             operator=operator,
             expected_version=command.expected_version,
+        )
+    except (
+        CommercialOperationNotFoundError,
+        CommercialOperationConflictError,
+        ValueError,
+    ) as exc:
+        _raise_command_error(exc)
+
+    return CustomerQuoteResponse.from_bundle(bundle)
+
+
+@router.post(
+    "/customer-quotes/{quote_id}/close",
+    response_model=CustomerQuoteResponse,
+)
+def close_customer_quote(
+    command: CustomerQuoteCloseCommand,
+    request: Request,
+    quote_id: str = PathParam(
+        min_length=1,
+        max_length=128,
+    ),
+    idempotency_key: str = Header(
+        alias="Idempotency-Key",
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    ),
+    settings: Settings = Depends(get_settings),
+    service: CustomerQuoteService = Depends(get_customer_quote_service),
+) -> CustomerQuoteResponse:
+    """"Cerrar cotización": explicit terminal outcome (Ganada/Nula) for a
+    sent quote. Never sends anything; never mutates the linked sales
+    opportunity -- that stays a separate, operator-visible action in
+    Ventas."""
+
+    operator = require_commercial_operator(request, settings)
+
+    try:
+        bundle = service.close_quote(
+            quote_id=quote_id,
+            operator=operator,
+            expected_version=command.expected_version,
+            outcome=command.outcome,
+            idempotency_key=idempotency_key,
         )
     except (
         CommercialOperationNotFoundError,

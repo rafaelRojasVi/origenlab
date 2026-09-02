@@ -733,6 +733,7 @@ describe("CRM-Q2 workflow/adoption allowlist", () => {
     "request-adjustments",
     "approve",
     "confirm-send",
+    "close",
   ];
 
   it("allows the exact revision-transition POST paths", async () => {
