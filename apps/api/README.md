@@ -208,6 +208,7 @@ Postgres URL is **not** required.
 | `ORIGENLAB_DRIVE_QUOTES_PENDING_FOLDER_ID` | Drive folder ID under which every new quote workspace folder is created (e.g. `Cotizaciones/Pendientes`); must be a direct child of the root |
 | `ORIGENLAB_DRIVE_QUOTES_SENT_FOLDER_ID` | Optional Drive folder ID for quotes after being sent (e.g. `Cotizaciones/Enviadas`); verified read-only by preflight when set. No `sent` lifecycle exists yet, so nothing writes here today |
 | `ORIGENLAB_DRIVE_QUOTE_TEMPLATE_FILE_ID` | Master quotation spreadsheet template file ID |
+| `ORIGENLAB_DRIVE_QUOTE_TEMPLATE_PROVISIONING_ENABLED` | Explicit activation gate for the template-copy step; **default `false`**. While off, generated quotes still get a Drive workspace folder under Pendientes (`provisioning_status: folder_ready`) — the master template does not need to exist or be copyable yet. Turn on only once the master template is finalized and `ORIGENLAB_DRIVE_QUOTE_TEMPLATE_FILE_ID` points at a real, copyable file |
 | `ORIGENLAB_DRIVE_AUTH_MODE` | `authorized_user_my_drive` or `service_account_shared_drive` — see below |
 | `ORIGENLAB_DRIVE_CREDENTIALS_FILE` | Credentials JSON path for the configured auth mode |
 | `ORIGENLAB_DRIVE_EXPECTED_PRINCIPAL_EMAIL` | Expected Drive identity (e.g. `contacto@origenlab.cl`); the preflight check fails closed as `drive_principal_mismatch` if the credentials belong to any other account |
@@ -226,18 +227,26 @@ identifiers -- they are never the same string:
 `ORIGENLAB_QUOTE_DOCUMENT_PREFIX` seeds only `document_number` -- it is
 never part of `quote_number`.
 
-**Drive hierarchy (CRM-Q1D):** the quotations root is a fixed container that
-is never written to directly. Every new quote workspace folder is created
-under the configured Pendientes container instead, and the two Drive
-artifacts are named from the two distinct identifiers above:
+**Drive hierarchy (CRM-Q1D, folder naming corrected in the CRM-Q2
+generated-quote automation slice):** the quotations root is a fixed
+container that is never written to directly. Every new quote workspace
+folder is created under the configured Pendientes container instead, named
+from `document_number` — matching real Pendientes naming (e.g. `CN01191 —
+ICN Chile`), never from the human-facing `quote_number`. When template
+provisioning is enabled, the copied template document shares the same
+`document_number` stem — the two Drive artifacts are two different files
+that happen to share a display-name stem, not two different names:
 
 ```text
 Cotizaciones/                              <- ORIGENLAB_DRIVE_QUOTES_ROOT_FOLDER_ID
 ├── Pendientes/                            <- ORIGENLAB_DRIVE_QUOTES_PENDING_FOLDER_ID
-│   └── 01183-26 — Cliente — Producto/     <- folder: human quote_number
-│       └── CN01183 — Cliente — Producto   <- copied template: document_number
+│   └── CN01183 — Cliente — Producto/      <- folder: document_number
+│       └── CN01183 — Cliente — Producto   <- copied template (when enabled): document_number
 └── Enviadas/                              <- ORIGENLAB_DRIVE_QUOTES_SENT_FOLDER_ID (optional)
 ```
+
+The human `quote_number` stays visible in the CRM drawer/board but never
+controls the Drive folder stem.
 
 Preflight verifies Pendientes/Enviadas are each a direct child of the root;
 the runtime provisioning path (`verify_destination`) verifies the same for
@@ -275,6 +284,14 @@ see [Dockerfile](Dockerfile)); an environment that runs without it (e.g. a
 stale image, a non-Docker deployment) still fails closed as
 `drive_dependency_missing` rather than silently reporting
 `drive_not_configured`. No test or default code path calls Google APIs.
+
+With Drive configured but `ORIGENLAB_DRIVE_QUOTE_TEMPLATE_PROVISIONING_ENABLED`
+left at its default `false`, a generated quote's workspace reaches
+`provisioning_status: folder_ready` instead of `ready` — the folder exists
+and is usable, and the template/document copy step is simply not attempted.
+`folder_ready` is a normal, non-error terminal state for this slice, not a
+Drive failure; the durable quote still lands as a CRM card in Preparation
+exactly as it does when fully provisioned.
 
 ### Production activation (contacto@origenlab.cl) — supervised setup
 
