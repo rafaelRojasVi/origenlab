@@ -1226,9 +1226,10 @@ class PostgresCustomerQuoteRepository:
         customer_quote_number_series (serial/issue_year stay NULL --
         quote_origin='adopted'), never calls the Drive provider (folder_id/
         folder_web_url are recorded as given; the workspace is inserted
-        already 'ready'), and never derives quote_number from
-        document_number -- both are mandatory, independent, operator-
-        confirmed inputs.
+        already 'folder_ready' -- a folder-level workspace with no template/
+        document step performed, never the fully-provisioned 'ready'
+        meaning), and never derives quote_number from document_number --
+        both are mandatory, independent, operator-confirmed inputs.
         """
 
         safe_folder_url = _require_https_url(
@@ -1395,7 +1396,7 @@ class PostgresCustomerQuoteRepository:
                         VALUES (
                           %(quote_id)s,
                           'google_drive',
-                          'ready',
+                          'folder_ready',
                           %(folder_id)s,
                           %(folder_web_url)s,
                           0,

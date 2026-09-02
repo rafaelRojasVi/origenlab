@@ -479,9 +479,15 @@ def test_transitions_never_touch_customer_quote_number_series(
 # --- adopt_drive_folder ---------------------------------------------------
 
 
-def test_adopt_drive_folder_creates_quote_revision_and_ready_workspace(
+def test_adopt_drive_folder_creates_quote_revision_and_folder_ready_workspace(
     admin_conn: object, repo: PostgresCustomerQuoteRepository
 ) -> None:
+    """An adopted folder only ever proves a folder exists/is attached --
+    no template/document step is ever performed on adoption, so the
+    workspace must land in 'folder_ready', never the fully-provisioned
+    'ready' (which would falsely claim a copied template document
+    exists)."""
+
     sales_id = _uid("sales")
     _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
 
@@ -504,9 +510,42 @@ def test_adopt_drive_folder_creates_quote_revision_and_ready_workspace(
     assert bundle.quote.quote_number == "01191-24"
     assert bundle.revision.revision_number == 1
     assert bundle.revision.status == "draft"
-    assert bundle.workspace.provisioning_status == "ready"
+    assert bundle.workspace.provisioning_status == "folder_ready"
+    assert bundle.workspace.provisioning_status != "ready"
     assert bundle.workspace.folder_id == "drive-folder-1191"
     assert bundle.workspace.sheet_file_id is None
+    assert bundle.workspace.sheet_web_url is None
+
+
+def test_adopt_drive_folder_never_attempts_drive_provisioning(
+    admin_conn: object, repo: PostgresCustomerQuoteRepository
+) -> None:
+    """Adoption performs zero Drive/template operations. attempt_count,
+    lease_expires_at and requested_at only ever move once
+    begin_drive_provision_attempt runs -- all three staying at their
+    insert defaults is the DB-observable proof that adoption never enters
+    the Drive-provisioning-attempt codepath (the repository also never
+    takes a Drive client dependency at all -- see
+    PostgresCustomerQuoteRepository.__init__)."""
+
+    sales_id = _uid("sales")
+    _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
+
+    bundle = repo.adopt_drive_folder(
+        quote_id=_uid("quote"),
+        sales_opportunity_id=sales_id,
+        document_number="CN01193",
+        quote_number="01193-24",
+        folder_id="drive-folder-1193",
+        folder_web_url="https://drive.google.com/drive/folders/drive-folder-1193",
+        operator=OPERATOR,
+        idempotency_key=_uid("idem"),
+        request_fingerprint="f" * 64,
+    )
+
+    assert bundle.workspace.attempt_count == 0
+    assert bundle.workspace.lease_expires_at is None
+    assert bundle.workspace.requested_at is None
 
 
 def test_adopt_drive_folder_appends_adoption_event(

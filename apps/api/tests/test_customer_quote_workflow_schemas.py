@@ -119,7 +119,13 @@ def test_response_exposes_board_stage_and_quote_origin_from_bundle() -> None:
     bundle = CustomerQuoteBundle(
         quote=_quote(quote_origin="adopted", serial=None, issue_year=None),
         revision=_revision(status="approved"),
-        workspace=_workspace(),
+        # An adopted workspace is folder_ready, never the fully-provisioned
+        # 'ready' -- adoption performs no template/document step.
+        workspace=_workspace(
+            provisioning_status="folder_ready",
+            sheet_file_id=None,
+            sheet_web_url=None,
+        ),
         sales_opportunity_title="Centrífuga CEAF",
     )
 
@@ -130,6 +136,7 @@ def test_response_exposes_board_stage_and_quote_origin_from_bundle() -> None:
     assert response.board_stage == "approved_to_send"
     assert response.revision_updated_by == OPERATOR
     assert response.revision_updated_at == NOW
+    assert response.drive_workspace.provisioning_status == "folder_ready"
 
 
 def test_folder_ready_provisioning_status_is_accepted_and_not_retryable() -> None:
