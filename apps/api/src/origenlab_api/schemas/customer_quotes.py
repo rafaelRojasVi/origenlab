@@ -47,15 +47,14 @@ RevisionStatus = Literal[
 # (latest) revision of a quote, which is the only revision this derives
 # from.
 BoardStage = Literal[
-    "preparation",
     "review",
     "approved_to_send",
     "sent_follow_up",
 ]
 
 _BOARD_STAGE_BY_REVISION_STATUS: dict[str, BoardStage] = {
-    "draft": "preparation",
-    "adjustments_requested": "preparation",
+    "draft": "review",
+    "adjustments_requested": "review",
     "pending_approval": "review",
     "approved": "approved_to_send",
     "sent": "sent_follow_up",
