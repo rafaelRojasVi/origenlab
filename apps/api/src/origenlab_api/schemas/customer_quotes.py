@@ -36,20 +36,25 @@ RevisionStatus = Literal[
     "approved",
     "sent",
     "superseded",
+    "closed_won",
+    "closed_null",
 ]
+
+QuoteOutcome = Literal["won", "null"]
 
 # The Cotizaciones Kanban lane, derived from the current revision's status --
 # never a stored column (see commercial.customer_quote_revision.status,
-# CRM-Q2). "drive_intake" is not produced here: it is the dashboard's label
-# for items sourced from the separate drive-pending endpoint, which never
-# have a durable revision at all. 'superseded' has no lane of its own: it is
-# reserved for a future multi-revision slice and is never the *current*
-# (latest) revision of a quote, which is the only revision this derives
-# from.
+# CRM-Q2/CRM-Q2B). "drive_intake" is not produced here: it is the
+# dashboard's label for items sourced from the separate drive-pending
+# endpoint, which never have a durable revision at all. 'superseded' has no
+# lane of its own: it is reserved for a future multi-revision slice and is
+# never the *current* (latest) revision of a quote, which is the only
+# revision this derives from.
 BoardStage = Literal[
     "review",
     "approved_to_send",
     "sent_follow_up",
+    "closed",
 ]
 
 _BOARD_STAGE_BY_REVISION_STATUS: dict[str, BoardStage] = {
@@ -58,6 +63,13 @@ _BOARD_STAGE_BY_REVISION_STATUS: dict[str, BoardStage] = {
     "pending_approval": "review",
     "approved": "approved_to_send",
     "sent": "sent_follow_up",
+    "closed_won": "closed",
+    "closed_null": "closed",
+}
+
+_OUTCOME_BY_REVISION_STATUS: dict[str, QuoteOutcome] = {
+    "closed_won": "won",
+    "closed_null": "null",
 }
 
 
@@ -68,6 +80,11 @@ def derive_board_stage(revision_status: str) -> BoardStage:
         raise ValueError(
             f"No board stage for current revision status: {revision_status!r}"
         ) from None
+
+
+def derive_quote_outcome(revision_status: str) -> QuoteOutcome | None:
+    """None while the quote is still active; 'won'/'null' once closed."""
+    return _OUTCOME_BY_REVISION_STATUS.get(revision_status)
 
 
 QuoteProvisioningStatus = Literal[
@@ -113,6 +130,15 @@ class CustomerQuoteAdoptDriveFolderCommand(CommercialCommandModel):
     folder_web_url: str = Field(min_length=1, max_length=2048)
 
 
+class CustomerQuoteCloseCommand(CommercialCommandModel):
+    """"Cerrar cotización": explicit terminal outcome for a sent quote.
+    Never sends anything; never mutates the linked sales opportunity -- that
+    stays a separate, operator-visible action in Ventas."""
+
+    expected_version: int = Field(ge=1)
+    outcome: QuoteOutcome
+
+
 class CustomerQuoteDriveWorkspaceResponse(BaseModel):
     provider: Literal["google_drive"]
     provisioning_status: QuoteProvisioningStatus
@@ -153,6 +179,7 @@ class CustomerQuoteResponse(BaseModel):
     revision_updated_by: str
     revision_updated_at: datetime
     board_stage: BoardStage
+    quote_outcome: QuoteOutcome | None = None
 
     created_by: str
     updated_by: str
@@ -196,6 +223,7 @@ class CustomerQuoteResponse(BaseModel):
             revision_updated_by=bundle.revision.updated_by,
             revision_updated_at=bundle.revision.updated_at,
             board_stage=derive_board_stage(bundle.revision.status),
+            quote_outcome=derive_quote_outcome(bundle.revision.status),
             created_by=bundle.quote.created_by,
             updated_by=bundle.quote.updated_by,
             created_at=bundle.quote.created_at,

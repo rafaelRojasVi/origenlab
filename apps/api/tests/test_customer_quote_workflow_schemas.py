@@ -18,6 +18,7 @@ from origenlab_api.schemas.customer_quotes import (
     BoardStage,
     CustomerQuoteResponse,
     derive_board_stage,
+    derive_quote_outcome,
 )
 
 
@@ -56,7 +57,26 @@ def test_preparation_is_no_longer_a_board_stage() -> None:
         "review",
         "approved_to_send",
         "sent_follow_up",
+        "closed",
     }
+
+
+def test_closed_won_derives_closed_board_stage() -> None:
+    assert derive_board_stage("closed_won") == "closed"
+
+
+def test_closed_null_derives_closed_board_stage() -> None:
+    assert derive_board_stage("closed_null") == "closed"
+
+
+def test_quote_outcome_none_for_active_revision_statuses() -> None:
+    for status in ("draft", "pending_approval", "adjustments_requested", "approved", "sent"):
+        assert derive_quote_outcome(status) is None
+
+
+def test_quote_outcome_won_and_null() -> None:
+    assert derive_quote_outcome("closed_won") == "won"
+    assert derive_quote_outcome("closed_null") == "null"
 
 
 def test_derive_board_stage_refuses_superseded() -> None:
