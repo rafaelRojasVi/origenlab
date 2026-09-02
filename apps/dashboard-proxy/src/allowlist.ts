@@ -36,6 +36,9 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // CRM-Q1D follow-up: read-only Drive Pendientes projection for
   // operational visibility. Exact GET path only, no wildcard expansion.
   /^\/operations\/customer-quotes\/drive-pending$/,
+  // CRM-Q2B: read-only "Incorporar al CRM" intake evidence resolution.
+  // Never mutates Drive or durable CRM state -- exact GET path only.
+  /^\/operations\/customer-quotes\/drive-pending\/resolve$/,
   // CRM-Q2: append-only revision-workflow event history for the
   // Cotizaciones drawer. Read-only -- the transition commands below stay
   // POST-only and are never GET-readable.

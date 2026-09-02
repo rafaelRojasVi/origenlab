@@ -724,6 +724,46 @@ describe("Drive Pendientes read-only projection allowlist (CRM-Q1D follow-up)", 
   });
 });
 
+describe("Intake resolution read-only allowlist (CRM-Q2B)", () => {
+  it("allows the exact GET path", () => {
+    expect(
+      isAllowedUpstreamPath("/operations/customer-quotes/drive-pending/resolve"),
+    ).toBe(true);
+  });
+
+  it("allows it with a folder_name query string (query is stripped before matching)", () => {
+    expect(
+      isAllowedUpstreamPath(
+        "/operations/customer-quotes/drive-pending/resolve?folder_name=CN01191-ICN%20Chile",
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects malformed or broadened variants", () => {
+    expect(
+      isAllowedUpstreamPath("/operations/customer-quotes/drive-pending/resolve/"),
+    ).toBe(false);
+    expect(
+      isAllowedUpstreamPath("/operations/customer-quotes/drive-pending/resolve/extra"),
+    ).toBe(false);
+    expect(
+      isAllowedUpstreamPath("/operations/customer-quotes/drive-pending/Resolve"),
+    ).toBe(false);
+  });
+
+  it("does not make it POST-writable", async () => {
+    const { isAllowedCommercialOperationsPostPath } = await import(
+      "../src/allowlist"
+    );
+
+    expect(
+      isAllowedCommercialOperationsPostPath(
+        "/operations/customer-quotes/drive-pending/resolve",
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("CRM-Q2 workflow/adoption allowlist", () => {
   const salesId = "sales_0123456789abcdef0123456789abcdef";
   const quoteId = "quote_0123456789abcdef0123456789abcdef";

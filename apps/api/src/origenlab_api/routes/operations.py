@@ -67,6 +67,9 @@ from origenlab_api.schemas.customer_quotes import (
     CustomerQuoteResponse,
     CustomerQuoteRevisionTransitionCommand,
 )
+from origenlab_api.schemas.customer_quote_intake_resolution import (
+    CustomerQuoteIntakeResolutionResponse,
+)
 from origenlab_api.schemas.drive_pending_quotes import (
     CustomerQuoteDrivePendingItem,
     CustomerQuoteDrivePendingListMeta,
@@ -77,6 +80,9 @@ from origenlab_api.services.commercial_operations_read_service import (
 )
 from origenlab_api.services.commercial_operations_service import (
     CommercialOperationsService,
+)
+from origenlab_api.services.customer_quote_intake_resolution_service import (
+    CustomerQuoteIntakeResolutionService,
 )
 from origenlab_api.services.customer_quote_read_service import (
     CustomerQuoteReadService,
@@ -124,6 +130,12 @@ def get_drive_pending_quote_service(
     settings: Settings = Depends(get_settings),
 ) -> DrivePendingQuoteReadService:
     return DrivePendingQuoteReadService(settings)
+
+
+def get_customer_quote_intake_resolution_service(
+    settings: Settings = Depends(get_settings),
+) -> CustomerQuoteIntakeResolutionService:
+    return CustomerQuoteIntakeResolutionService(settings)
 
 
 def _raise_command_error(exc: Exception) -> NoReturn:
@@ -898,6 +910,22 @@ def list_customer_quotes_drive_pending(
         meta=CustomerQuoteDrivePendingListMeta(count=len(items)),
         items=items,
     )
+
+
+@router.get(
+    "/customer-quotes/drive-pending/resolve",
+    response_model=CustomerQuoteIntakeResolutionResponse,
+)
+def resolve_customer_quote_drive_intake(
+    folder_name: str = Query(min_length=1, max_length=500),
+    service: CustomerQuoteIntakeResolutionService = Depends(
+        get_customer_quote_intake_resolution_service
+    ),
+) -> CustomerQuoteIntakeResolutionResponse:
+    """Read-only evidence resolution for "Incorporar al CRM" -- never
+    mutates Drive or durable CRM state; never auto-commits a match."""
+    resolution = service.resolve(folder_name=folder_name)
+    return CustomerQuoteIntakeResolutionResponse.from_resolution(resolution)
 
 
 @router.get(
