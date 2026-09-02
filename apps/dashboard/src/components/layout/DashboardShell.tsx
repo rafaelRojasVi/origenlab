@@ -91,9 +91,11 @@ export function DashboardShell({
                 ? "No envía correos ni modifica datos comerciales"
                 : section === "pipeline"
                   ? "No envía correos · los cambios de etapa quedan registrados en el CRM"
-                  : section === "deals"
-                    ? "No envía correos · promover a Ventas es la única escritura"
-                    : "No envía correos ni modifica datos"}
+                  : section === "cotizaciones"
+                    ? "No envía correos · crear una cotización queda registrado en el CRM"
+                    : section === "deals"
+                      ? "No envía correos · promover a Ventas es la única escritura"
+                      : "No envía correos ni modifica datos"}
             </span>
             <span className="hidden sm:inline" aria-hidden>
               ·

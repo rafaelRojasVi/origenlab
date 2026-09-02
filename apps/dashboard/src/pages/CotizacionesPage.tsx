@@ -5,6 +5,7 @@ import { useCustomerQuotesGlobal } from "../components/quotes/useCustomerQuotesG
 import { CustomerQuoteQueueTable } from "../components/quotes/CustomerQuoteQueueTable";
 import { filterQuoteQueueItems, type QueueRecencyFilter } from "../components/quotes/customerQuoteQueueFilters";
 import { QuoteDetailDrawer } from "../components/quotes/QuoteDetailDrawer";
+import { NuevaCotizacionDialog } from "../components/quotes/NuevaCotizacionDialog";
 import type { CustomerQuoteGlobalItem } from "../api/customerQuoteTypes";
 
 export function CotizacionesPage({
@@ -16,6 +17,7 @@ export function CotizacionesPage({
   const [searchText, setSearchText] = useState("");
   const [recency, setRecency] = useState<QueueRecencyFilter>("all");
   const [openItem, setOpenItem] = useState<CustomerQuoteGlobalItem | null>(null);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
   const visibleItems = useMemo(
     () => filterQuoteQueueItems(queue.items, { searchText, recency }),
@@ -28,14 +30,23 @@ export function CotizacionesPage({
         title="Cotizaciones"
         subtitle="Cola global de cotizaciones durables y su carpeta en Drive."
         actions={
-          <button
-            type="button"
-            onClick={queue.refetch}
-            disabled={queue.loading}
-            className="rounded-md border border-[var(--color-border)] bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          >
-            {queue.loading ? "Recargando…" : "Recargar cotizaciones"}
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => setCreateDialogOpen(true)}
+              className="rounded-md bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700"
+            >
+              Nueva Cotización
+            </button>
+            <button
+              type="button"
+              onClick={queue.refetch}
+              disabled={queue.loading}
+              className="rounded-md border border-[var(--color-border)] bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              {queue.loading ? "Recargando…" : "Recargar cotizaciones"}
+            </button>
+          </>
         }
       />
 
@@ -93,6 +104,16 @@ export function CotizacionesPage({
         open={openItem !== null}
         onClose={() => setOpenItem(null)}
         onOpenVentas={onOpenVentas}
+      />
+
+      <NuevaCotizacionDialog
+        open={createDialogOpen}
+        onClose={() => setCreateDialogOpen(false)}
+        onCreated={(item) => {
+          setCreateDialogOpen(false);
+          setOpenItem(item);
+          void queue.refetch();
+        }}
       />
     </div>
   );
