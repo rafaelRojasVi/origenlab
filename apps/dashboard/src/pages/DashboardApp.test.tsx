@@ -124,6 +124,13 @@ vi.mock("../api/mirrorCatalogClient", () => ({
   fetchCatalogProductsMirror: vi.fn(),
 }));
 
+vi.mock("../api/customerQuoteClient", () => ({
+  fetchCustomerQuotesGlobal: vi.fn(),
+  fetchCustomerQuote: vi.fn(),
+  createCustomerQuote: vi.fn(),
+  retryCustomerQuoteDriveWorkspace: vi.fn(),
+}));
+
 vi.mock("../api/mirrorLeadIntelClient", () => ({
   fetchLeadProspectsMirror: vi.fn(),
   fetchLeadProspectDetailMirror: vi.fn(),
@@ -166,6 +173,7 @@ vi.mock("../api/institutionIntel/adapter", () => ({
 import { fetchTodayPanel, fetchWarmCases } from "../api/operatorClient";
 import { fetchCommercialDealsMirror } from "../api/mirrorCommercialClient";
 import { fetchCommercialWorkQueue, fetchSalesOpportunities } from "../api/commercialOperationsClient";
+import { fetchCustomerQuotesGlobal } from "../api/customerQuoteClient";
 import { fetchCatalogProductsMirror } from "../api/mirrorCatalogClient";
 import {
   fetchLeadProspectsMirror,
@@ -187,6 +195,10 @@ function mockAllOk() {
   vi.mocked(fetchCatalogProductsMirror).mockResolvedValue(catalogListFixture());
   vi.mocked(fetchSalesOpportunities).mockResolvedValue({
     meta: { data_source: "postgres", read_only: true, count: 0, total_count: 0, limit: 200, offset: 0 },
+    items: [],
+  });
+  vi.mocked(fetchCustomerQuotesGlobal).mockResolvedValue({
+    meta: { count: 0, total_count: 0, limit: 200, offset: 0 },
     items: [],
   });
   vi.mocked(fetchLeadResearchSummaryMirror).mockResolvedValue(leadSummaryFixture());
@@ -339,12 +351,12 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
     });
   });
 
-  it("Cotizaciones page renders and its 'Ir a Ventas' action navigates to Ventas", async () => {
+  it("root hash resolves to Cotizaciones and renders the durable queue empty state", async () => {
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
-    await navigateTo("Cotizaciones");
-    screen.getByText(/cada cotización vive dentro de su oportunidad/);
+    expect(screen.getByRole("heading", { level: 1, name: "Cotizaciones" })).toBeTruthy();
+    await waitFor(() => screen.getByText("Aún no hay cotizaciones"));
 
     fireEvent.click(screen.getByRole("button", { name: "Ir a Ventas" }));
     await waitFor(() => {

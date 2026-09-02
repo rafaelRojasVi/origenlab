@@ -1,22 +1,61 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { CotizacionesPage } from "./CotizacionesPage";
+import * as client from "../api/customerQuoteClient";
+import { globalQuoteItemFixture } from "../test/fixtures/customerQuoteFixtures";
+
+vi.mock("../api/customerQuoteClient");
 
 describe("CotizacionesPage", () => {
-  it("renders an honest empty state and a link to Ventas", () => {
-    const onOpenVentas = vi.fn();
-    render(<CotizacionesPage onOpenVentas={onOpenVentas} />);
+  it("renders the durable global queue, not a placeholder", async () => {
+    vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
+      meta: { count: 1, total_count: 1, limit: 200, offset: 0 },
+      items: [globalQuoteItemFixture()],
+    });
 
-    expect(screen.getByRole("heading", { name: "Vista consolidada" })).toBeInTheDocument();
-    expect(screen.getByText(/cada cotización vive dentro de su oportunidad/)).toBeInTheDocument();
+    render(<CotizacionesPage onOpenVentas={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Ir a Ventas" }));
-    expect(onOpenVentas).toHaveBeenCalled();
+    await waitFor(() => screen.getByText("01183-26"));
+    screen.getByText("CEAF");
+    expect(screen.queryByText(/próximamente/)).toBeNull();
+    expect(screen.queryByText(/vive dentro de su oportunidad/)).toBeNull();
   });
 
-  it("does not claim any SQLite/dashboard implementation vocabulary", () => {
+  it("shows an honest empty state when there are no quotes yet", async () => {
+    vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
+      meta: { count: 0, total_count: 0, limit: 200, offset: 0 },
+      items: [],
+    });
+
     render(<CotizacionesPage onOpenVentas={vi.fn()} />);
-    expect(screen.queryByText(/SQLite/i)).not.toBeInTheDocument();
+
+    await waitFor(() => screen.getByText("Aún no hay cotizaciones"));
+  });
+
+  it("filters the visible rows by search text against quote/document number and customer", async () => {
+    vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
+      meta: { count: 1, total_count: 1, limit: 200, offset: 0 },
+      items: [globalQuoteItemFixture()],
+    });
+
+    render(<CotizacionesPage onOpenVentas={vi.fn()} />);
+    await waitFor(() => screen.getByText("01183-26"));
+
+    const search = screen.getByRole("searchbox", { name: /buscar/i });
+    fireEvent.change(search, { target: { value: "no-match" } });
+    await waitFor(() => screen.getByText("Sin resultados para estos filtros"));
+  });
+
+  it("does not render KPI cards above the queue — it is a work list, not a report", async () => {
+    vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
+      meta: { count: 1, total_count: 1, limit: 200, offset: 0 },
+      items: [globalQuoteItemFixture()],
+    });
+
+    render(<CotizacionesPage onOpenVentas={vi.fn()} />);
+    await waitFor(() => screen.getByText("01183-26"));
+
+    expect(screen.queryAllByRole("table")).toHaveLength(1);
   });
 });
