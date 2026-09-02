@@ -23,6 +23,7 @@ DRIVE_FAILURE_CATEGORIES = frozenset(
         "drive_sent_invalid",
         "drive_sent_container_mismatch",
         "drive_template_invalid",
+        "drive_template_not_configured",
         "drive_principal_mismatch",
         "drive_timeout",
         "drive_unavailable",

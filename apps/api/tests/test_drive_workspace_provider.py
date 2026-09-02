@@ -76,12 +76,13 @@ def _provider(
     *,
     shared_drive_id: str | None = None,
     sent_folder_id: str | None = None,
+    template_file_id: str | None = "template-file-1",
 ) -> GoogleDriveQuoteWorkspaceProvider:
     return GoogleDriveQuoteWorkspaceProvider(
         transport=transport,
         root_folder_id=ROOT_FOLDER_ID,
         pending_folder_id=PENDING_FOLDER_ID,
-        template_file_id="template-file-1",
+        template_file_id=template_file_id,
         sent_folder_id=sent_folder_id,
         shared_drive_id=shared_drive_id,
     )
@@ -703,6 +704,36 @@ def test_verify_sent_rejects_sent_not_parented_by_root() -> None:
         _provider(transport, sent_folder_id=SENT_FOLDER_ID).verify_sent()
 
     assert excinfo.value.category == "drive_sent_container_mismatch"
+
+
+def test_template_file_id_property_reflects_constructor_arg() -> None:
+    provider = _provider(FakeTransport(), template_file_id="tpl-9")
+    assert provider.template_file_id == "tpl-9"
+
+    provider_none = _provider(FakeTransport(), template_file_id=None)
+    assert provider_none.template_file_id is None
+
+
+def test_copy_template_sheet_fails_closed_when_template_not_configured() -> None:
+    transport = FakeTransport()
+    provider = _provider(transport, template_file_id=None)
+
+    with pytest.raises(DriveProvisioningError) as excinfo:
+        provider.copy_template_sheet(QUOTE_ID, folder_id="folder-1", name="x")
+
+    assert excinfo.value.category == "drive_template_not_configured"
+    assert transport.calls == []
+
+
+def test_verify_template_fails_closed_when_template_not_configured() -> None:
+    transport = FakeTransport()
+    provider = _provider(transport, template_file_id=None)
+
+    with pytest.raises(DriveProvisioningError) as excinfo:
+        provider.verify_template()
+
+    assert excinfo.value.category == "drive_template_not_configured"
+    assert transport.calls == []
 
 
 def test_verify_template_accepts_copyable_template() -> None:
