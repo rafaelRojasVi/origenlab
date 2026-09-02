@@ -12,6 +12,114 @@ import {
 vi.mock("../api/customerQuoteClient");
 vi.mock("../api/commercialOperationsClient");
 
+// The board and mobile-list child components are stubbed (not the
+// useCustomerQuotesGlobal hook) so these page-level tests drive
+// CotizacionesPage's own callback wiring -- open drawer / open adoption
+// modal / open the two confirmation dialogs -- through simple buttons,
+// while CotizacionesBoard.test.tsx / CotizacionesMobileList.test.tsx
+// separately cover the real grouping/drag-drop rendering logic. This also
+// sidesteps the two layouts both being mounted at once (desktop hidden via
+// CSS, not unmounted) duplicating every text match, exactly like
+// VentasPage.test.tsx's equivalent stubbing of SalesOpportunityBoard /
+// MobileSalesOpportunityList.
+vi.mock("../components/quotes/CotizacionesBoard", () => ({
+  CotizacionesBoard: ({
+    queue,
+    onOpenQuote,
+    onAdoptDriveFolder,
+    onRequestAdjustments,
+    onRequestConfirmSend,
+  }: {
+    queue: { items: unknown[]; driveItems: unknown[] };
+    onOpenQuote: (item: unknown) => void;
+    onAdoptDriveFolder: (item: unknown) => void;
+    onRequestAdjustments: (item: unknown) => void;
+    onRequestConfirmSend: (item: unknown) => void;
+  }) => (
+    <div data-testid="cotizaciones-board-desktop">
+      <span data-testid="board-item-count">{queue.items.length}</span>
+      <span data-testid="board-drive-item-count">{queue.driveItems.length}</span>
+      {queue.items[0] ? <button onClick={() => onOpenQuote(queue.items[0])}>abrir-desktop</button> : null}
+      {queue.driveItems[0] ? (
+        <button onClick={() => onAdoptDriveFolder(queue.driveItems[0])}>adoptar-desktop</button>
+      ) : null}
+      {queue.items[0] ? (
+        <button onClick={() => onRequestAdjustments(queue.items[0])}>ajustes-desktop</button>
+      ) : null}
+      {queue.items[0] ? (
+        <button onClick={() => onRequestConfirmSend(queue.items[0])}>enviar-desktop</button>
+      ) : null}
+    </div>
+  ),
+}));
+
+vi.mock("../components/quotes/CotizacionesMobileList", () => ({
+  CotizacionesMobileList: () => <div data-testid="mobile-stub" />,
+}));
+
+vi.mock("../components/quotes/QuoteDetailDrawer", () => ({
+  QuoteDetailDrawer: ({
+    item,
+    open,
+    onClose,
+    onOpenVentas,
+  }: {
+    item: { quote: { quote_number: string; sales_opportunity_id: string } } | null;
+    open: boolean;
+    onClose: () => void;
+    onOpenVentas: (opportunityId: string) => void;
+  }) =>
+    open && item ? (
+      <div role="dialog" data-testid="drawer-stub">
+        <span>{item.quote.quote_number}</span>
+        <button onClick={onClose}>cerrar-drawer</button>
+        <button onClick={() => onOpenVentas(item.quote.sales_opportunity_id)}>Ver en Ventas</button>
+      </div>
+    ) : null,
+}));
+
+vi.mock("../components/quotes/AdoptDriveFolderModal", () => ({
+  AdoptDriveFolderModal: ({
+    item,
+    open,
+    onClose,
+    onAdopted,
+  }: {
+    item: unknown;
+    open: boolean;
+    onClose: () => void;
+    onAdopted: (quote: unknown) => void;
+  }) =>
+    open && item ? (
+      <div data-testid="adopt-drive-folder-modal">
+        <button onClick={onClose}>cerrar-adopt</button>
+        <button onClick={() => onAdopted(globalQuoteItemFixture().quote)}>confirmar-adopt</button>
+      </div>
+    ) : null,
+}));
+
+vi.mock("../components/quotes/WorkflowConfirmDialog", () => ({
+  WorkflowConfirmDialog: ({
+    open,
+    item,
+    title,
+    onConfirm,
+    onClose,
+  }: {
+    open: boolean;
+    item: unknown;
+    title: string;
+    onConfirm: (item: unknown) => void;
+    onClose: () => void;
+  }) =>
+    open && item ? (
+      <div data-testid={`confirm-stub-${title}`}>
+        <button onClick={onClose}>{`cerrar-${title}`}</button>
+        <button onClick={() => onConfirm(item)}>{`confirmar-${title}`}</button>
+      </div>
+    ) : null,
+}));
+
 describe("CotizacionesPage", () => {
   beforeEach(() => {
     vi.mocked(opsClient.fetchSalesOpportunities).mockReset().mockResolvedValue({
@@ -36,10 +144,8 @@ describe("CotizacionesPage", () => {
 
     render(<CotizacionesPage onOpenVentas={vi.fn()} />);
 
-    await waitFor(() => screen.getByText("01183-26"));
-    screen.getByText("CEAF");
-    expect(screen.queryByText(/próximamente/)).toBeNull();
-    expect(screen.queryByText(/vive dentro de su oportunidad/)).toBeNull();
+    await waitFor(() => expect(screen.getByTestId("board-item-count")).toHaveTextContent("1"));
+    expect(screen.queryByText("Aún no hay cotizaciones")).toBeNull();
   });
 
   it("shows an honest empty state when there are no quotes yet", async () => {
@@ -51,6 +157,7 @@ describe("CotizacionesPage", () => {
     render(<CotizacionesPage onOpenVentas={vi.fn()} />);
 
     await waitFor(() => screen.getByText("Aún no hay cotizaciones"));
+    expect(screen.queryByTestId("cotizaciones-board-desktop")).toBeNull();
   });
 
   it("filters the visible rows by search text against quote/document number and customer", async () => {
@@ -60,37 +167,39 @@ describe("CotizacionesPage", () => {
     });
 
     render(<CotizacionesPage onOpenVentas={vi.fn()} />);
-    await waitFor(() => screen.getByText("01183-26"));
+    await waitFor(() => expect(screen.getByTestId("board-item-count")).toHaveTextContent("1"));
 
     const search = screen.getByRole("searchbox", { name: /buscar/i });
     fireEvent.change(search, { target: { value: "no-match" } });
     await waitFor(() => screen.getByText("Sin resultados para estos filtros"));
+    expect(screen.queryByTestId("cotizaciones-board-desktop")).toBeNull();
   });
 
-  it("does not render KPI cards above the queue — it is a work list, not a report", async () => {
+  it("renders both the desktop board and mobile list stubs (no report table)", async () => {
     vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
       meta: { count: 1, total_count: 1, limit: 200, offset: 0 },
       items: [globalQuoteItemFixture()],
     });
 
     render(<CotizacionesPage onOpenVentas={vi.fn()} />);
-    await waitFor(() => screen.getByText("01183-26"));
 
-    expect(screen.queryAllByRole("table")).toHaveLength(1);
+    await waitFor(() => screen.getByTestId("cotizaciones-board-desktop"));
+    expect(screen.getByTestId("mobile-stub")).toBeInTheDocument();
+    expect(screen.queryAllByRole("table")).toHaveLength(0);
   });
 
-  it("opens the detail drawer on row click and shows the quote number", async () => {
+  it("opens the detail drawer from the board's onOpenQuote callback", async () => {
     vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
       meta: { count: 1, total_count: 1, limit: 200, offset: 0 },
       items: [globalQuoteItemFixture()],
     });
-    vi.mocked(client.fetchCustomerQuote).mockResolvedValue({ item: globalQuoteItemFixture().quote });
 
     render(<CotizacionesPage onOpenVentas={vi.fn()} />);
-    await waitFor(() => screen.getByText("01183-26"));
+    await waitFor(() => screen.getByText("abrir-desktop"));
 
-    fireEvent.click(screen.getByRole("button", { name: /01183-26/ }));
-    await waitFor(() => screen.getByRole("dialog"));
+    fireEvent.click(screen.getByText("abrir-desktop"));
+    await waitFor(() => screen.getByTestId("drawer-stub"));
+    expect(screen.getByTestId("drawer-stub")).toHaveTextContent("01183-26");
   });
 
   it("'Ver en Ventas' from the drawer passes the exact opportunity id through", async () => {
@@ -99,16 +208,14 @@ describe("CotizacionesPage", () => {
       meta: { count: 1, total_count: 1, limit: 200, offset: 0 },
       items: [fixture],
     });
-    vi.mocked(client.fetchCustomerQuote).mockResolvedValue({ item: fixture.quote });
     const onOpenVentas = vi.fn();
 
     render(<CotizacionesPage onOpenVentas={onOpenVentas} />);
-    await waitFor(() => screen.getByText("01183-26"));
+    await waitFor(() => screen.getByText("abrir-desktop"));
+    fireEvent.click(screen.getByText("abrir-desktop"));
+    await waitFor(() => screen.getByTestId("drawer-stub"));
 
-    fireEvent.click(screen.getByRole("button", { name: /01183-26/ }));
-    await waitFor(() => screen.getByRole("dialog"));
-    fireEvent.click(screen.getByRole("button", { name: "Ver en Ventas" }));
-
+    fireEvent.click(screen.getByText("Ver en Ventas"));
     expect(onOpenVentas).toHaveBeenCalledWith(fixture.quote.sales_opportunity_id);
   });
 
@@ -122,7 +229,7 @@ describe("CotizacionesPage", () => {
     await waitFor(() => screen.getByText("Aún no hay cotizaciones"));
 
     fireEvent.click(screen.getByRole("button", { name: "Nueva Cotización" }));
-    await waitFor(() => screen.getByRole("dialog"));
+    await waitFor(() => screen.getByTestId("nueva-cotizacion-dialog"));
     expect(opsClient.createManualSalesOpportunity).not.toHaveBeenCalled();
     expect(client.createCustomerQuote).not.toHaveBeenCalled();
   });
@@ -166,7 +273,6 @@ describe("CotizacionesPage", () => {
     });
     const createdQuote = { ...globalQuoteItemFixture().quote, quote_number: "01186-26", sales_opportunity_id: "sales_" + "c".repeat(32) };
     vi.mocked(client.createCustomerQuote).mockResolvedValue(createdQuote);
-    vi.mocked(client.fetchCustomerQuote).mockResolvedValue({ item: createdQuote });
 
     render(<CotizacionesPage onOpenVentas={vi.fn()} />);
     await waitFor(() => screen.getByText("Aún no hay cotizaciones"));
@@ -179,11 +285,12 @@ describe("CotizacionesPage", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("nueva-cotizacion-dialog")).toBeNull();
     });
-    await waitFor(() => screen.getByText("01186-26"));
+    await waitFor(() => screen.getByTestId("drawer-stub"));
+    expect(screen.getByTestId("drawer-stub")).toHaveTextContent("01186-26");
     expect(client.fetchCustomerQuotesGlobal).toHaveBeenCalledTimes(2);
   });
 
-  it("shows the 3 live Drive Pendientes rows instead of the empty state when the CRM list is empty", async () => {
+  it("shows the Drive Pendientes items instead of the empty state when the CRM list is empty", async () => {
     vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
       meta: { count: 0, total_count: 0, limit: 200, offset: 0 },
       items: [],
@@ -203,9 +310,8 @@ describe("CotizacionesPage", () => {
 
     render(<CotizacionesPage onOpenVentas={vi.fn()} />);
 
-    await waitFor(() => screen.getByText("CN01191-ICN Chile"));
+    await waitFor(() => expect(screen.getByTestId("board-drive-item-count")).toHaveTextContent("3"));
     expect(screen.queryByText("Aún no hay cotizaciones")).toBeNull();
-    expect(screen.getAllByText("Pendiente en Drive")).toHaveLength(3);
   });
 
   it("the empty state only fires when both the CRM list and the Drive-pending list are empty", async () => {
@@ -221,24 +327,6 @@ describe("CotizacionesPage", () => {
     render(<CotizacionesPage onOpenVentas={vi.fn()} />);
 
     await waitFor(() => screen.getByText("Aún no hay cotizaciones"));
-  });
-
-  it("excludes a Drive folder already owned by a durable CRM quote (server-side dedup)", async () => {
-    vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
-      meta: { count: 1, total_count: 1, limit: 200, offset: 0 },
-      items: [globalQuoteItemFixture()],
-    });
-    // The server excludes CRM-owned folders; the client renders exactly
-    // what it's given, so a Drive-only fixture is simply absent here.
-    vi.mocked(client.fetchDrivePendingQuotes).mockResolvedValue({
-      meta: { count: 0 },
-      items: [],
-    });
-
-    render(<CotizacionesPage onOpenVentas={vi.fn()} />);
-
-    await waitFor(() => screen.getByText("01183-26"));
-    expect(screen.queryByText("Pendiente en Drive")).toBeNull();
   });
 
   it("'Recargar cotizaciones' refreshes both the CRM list and the Drive-pending list", async () => {
@@ -262,7 +350,7 @@ describe("CotizacionesPage", () => {
     });
   });
 
-  it("clicking a Drive-only row's 'Abrir carpeta' never opens the CRM quote drawer", async () => {
+  it('the board\'s onAdoptDriveFolder callback opens the adoption modal, never the quote drawer', async () => {
     vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
       meta: { count: 0, total_count: 0, limit: 200, offset: 0 },
       items: [],
@@ -273,9 +361,94 @@ describe("CotizacionesPage", () => {
     });
 
     render(<CotizacionesPage onOpenVentas={vi.fn()} />);
-    await waitFor(() => screen.getByText("Pendiente en Drive"));
+    await waitFor(() => screen.getByText("adoptar-desktop"));
 
-    fireEvent.click(screen.getByRole("link", { name: "Abrir carpeta" }));
-    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByText("adoptar-desktop"));
+
+    await waitFor(() => screen.getByTestId("adopt-drive-folder-modal"));
+    expect(screen.queryByTestId("drawer-stub")).toBeNull();
+  });
+
+  it("a successful adoption closes the modal and refetches the queue", async () => {
+    vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
+      meta: { count: 0, total_count: 0, limit: 200, offset: 0 },
+      items: [],
+    });
+    vi.mocked(client.fetchDrivePendingQuotes).mockResolvedValue({
+      meta: { count: 1 },
+      items: [drivePendingQuoteItemFixture()],
+    });
+
+    render(<CotizacionesPage onOpenVentas={vi.fn()} />);
+    await waitFor(() => screen.getByText("adoptar-desktop"));
+    fireEvent.click(screen.getByText("adoptar-desktop"));
+    await waitFor(() => screen.getByTestId("adopt-drive-folder-modal"));
+
+    fireEvent.click(screen.getByText("confirmar-adopt"));
+
+    await waitFor(() => expect(screen.queryByTestId("adopt-drive-folder-modal")).toBeNull());
+    expect(client.fetchCustomerQuotesGlobal).toHaveBeenCalledTimes(2);
+  });
+
+  it("the board's onRequestAdjustments callback opens the adjustments confirmation, not the drawer", async () => {
+    vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
+      meta: { count: 1, total_count: 1, limit: 200, offset: 0 },
+      items: [globalQuoteItemFixture()],
+    });
+
+    render(<CotizacionesPage onOpenVentas={vi.fn()} />);
+    await waitFor(() => screen.getByText("ajustes-desktop"));
+    fireEvent.click(screen.getByText("ajustes-desktop"));
+
+    await waitFor(() => screen.getByTestId("confirm-stub-Solicitar ajustes"));
+    expect(screen.queryByTestId("drawer-stub")).toBeNull();
+  });
+
+  it("confirming the adjustments dialog dispatches request_adjustments via the queue", async () => {
+    vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
+      meta: { count: 1, total_count: 1, limit: 200, offset: 0 },
+      items: [globalQuoteItemFixture()],
+    });
+    vi.mocked(client.requestCustomerQuoteAdjustments).mockResolvedValue(globalQuoteItemFixture().quote);
+
+    render(<CotizacionesPage onOpenVentas={vi.fn()} />);
+    await waitFor(() => screen.getByText("ajustes-desktop"));
+    fireEvent.click(screen.getByText("ajustes-desktop"));
+    await waitFor(() => screen.getByTestId("confirm-stub-Solicitar ajustes"));
+
+    fireEvent.click(screen.getByText("confirmar-Solicitar ajustes"));
+
+    await waitFor(() => expect(client.requestCustomerQuoteAdjustments).toHaveBeenCalledTimes(1));
+  });
+
+  it("the board's onRequestConfirmSend callback opens the send confirmation, not the drawer", async () => {
+    vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
+      meta: { count: 1, total_count: 1, limit: 200, offset: 0 },
+      items: [globalQuoteItemFixture()],
+    });
+
+    render(<CotizacionesPage onOpenVentas={vi.fn()} />);
+    await waitFor(() => screen.getByText("enviar-desktop"));
+    fireEvent.click(screen.getByText("enviar-desktop"));
+
+    await waitFor(() => screen.getByTestId("confirm-stub-Confirmar envío"));
+    expect(screen.queryByTestId("drawer-stub")).toBeNull();
+  });
+
+  it("confirming the send dialog dispatches confirm_send via the queue, never sends email itself", async () => {
+    vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
+      meta: { count: 1, total_count: 1, limit: 200, offset: 0 },
+      items: [globalQuoteItemFixture()],
+    });
+    vi.mocked(client.confirmCustomerQuoteSend).mockResolvedValue(globalQuoteItemFixture().quote);
+
+    render(<CotizacionesPage onOpenVentas={vi.fn()} />);
+    await waitFor(() => screen.getByText("enviar-desktop"));
+    fireEvent.click(screen.getByText("enviar-desktop"));
+    await waitFor(() => screen.getByTestId("confirm-stub-Confirmar envío"));
+
+    fireEvent.click(screen.getByText("confirmar-Confirmar envío"));
+
+    await waitFor(() => expect(client.confirmCustomerQuoteSend).toHaveBeenCalledTimes(1));
   });
 });

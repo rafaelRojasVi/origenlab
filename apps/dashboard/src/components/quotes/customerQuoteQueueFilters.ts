@@ -1,8 +1,4 @@
-import type {
-  CustomerQuoteGlobalItem,
-  QuoteProvisioningStatus,
-  QuoteQueueRow,
-} from "../../api/customerQuoteTypes";
+import type { QuoteQueueRow } from "../../api/customerQuoteTypes";
 
 export type QueueRecencyFilter = "all" | "7d" | "30d";
 
@@ -61,19 +57,4 @@ export function filterQuoteQueueRows(
 
     return true;
   });
-}
-
-const DRIVE_STATE_LABELS: Record<QuoteProvisioningStatus, "Drive listo" | "Aprovisionando" | "Error de Drive"> = {
-  ready: "Drive listo",
-  pending: "Aprovisionando",
-  failed: "Error de Drive",
-};
-
-export function quoteQueueStateLabel(
-  item: CustomerQuoteGlobalItem,
-): { status: "Borrador"; drive: "Drive listo" | "Aprovisionando" | "Error de Drive" } {
-  return {
-    status: "Borrador",
-    drive: DRIVE_STATE_LABELS[item.quote.drive_workspace.provisioning_status],
-  };
 }
