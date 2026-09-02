@@ -133,8 +133,13 @@ class CustomerQuoteService:
         ).lower()
         normalized_key = _idempotency_key(idempotency_key)
 
+        # Never record a template reference implying a copy that never
+        # happens: while template-document provisioning is gated off, no
+        # copy is attempted regardless of whether a template ID is staged.
         template_reference = (
-            (self._settings.drive_quote_template_file_id or "").strip() or None
+            ((self._settings.drive_quote_template_file_id or "").strip() or None)
+            if self._settings.drive_quote_template_provisioning_enabled
+            else None
         )
 
         fingerprint = _fingerprint(

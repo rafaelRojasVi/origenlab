@@ -588,6 +588,29 @@ def test_template_provisioning_disabled_completes_as_folder_ready() -> None:
     assert "copy_template_sheet" not in provider_methods
 
 
+def test_template_provisioning_disabled_records_no_template_reference_even_when_configured() -> None:
+    # A staged-but-not-yet-activated template ID must never be recorded as
+    # "this revision was copied from it" while the copy step never runs.
+    repository = FakeRepository(_bundle(_workspace()))
+    provider = FakeDriveProvider()
+
+    _service(
+        repository,
+        provider,
+        settings=_settings(
+            drive_quote_template_provisioning_enabled=False,
+            drive_quote_template_file_id="staged-template-1",
+        ),
+    ).create_quote(
+        sales_opportunity_id=SALES_ID,
+        operator=OPERATOR,
+        idempotency_key="quote-create-1",
+    )
+
+    create_call = repository.calls[0]
+    assert create_call[1]["template_reference"] is None
+
+
 def test_template_provisioning_disabled_never_fails_the_quote_even_with_no_template_configured() -> None:
     # The master template is not finalized: creation must succeed durably
     # regardless of drive_quote_template_file_id being unset/invalid.
