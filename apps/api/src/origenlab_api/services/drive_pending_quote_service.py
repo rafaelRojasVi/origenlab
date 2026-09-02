@@ -46,6 +46,31 @@ def parse_drive_pending_document_identifier(folder_name: str) -> str | None:
     return match.group(1) if match else None
 
 
+# Leading separator characters (hyphen, en/em dash, whitespace) stripped
+# from what follows the document identifier.
+_LEADING_SEPARATOR_RE = re.compile(r"^[\s\-–—]+")
+
+
+def parse_drive_pending_organization_candidate(folder_name: str) -> str | None:
+    """Everything after the document identifier and its separator, trimmed
+    -- the raw remainder, no further heuristics (equipment-code suffixes
+    like "UP400St" are NOT stripped). This is honestly low/medium-confidence
+    evidence for the operator to edit, not a claim of accuracy. Returns None
+    only when no identifier prefix is found, or nothing recognizable
+    remains."""
+
+    stripped = folder_name.strip()
+    match = _DOCUMENT_IDENTIFIER_RE.match(stripped)
+
+    if match is None:
+        return None
+
+    remainder = stripped[match.end() :]
+    remainder = _LEADING_SEPARATOR_RE.sub("", remainder).strip()
+
+    return remainder or None
+
+
 @dataclass(frozen=True)
 class DrivePendingQuoteWorkspace:
     folder_id: str
