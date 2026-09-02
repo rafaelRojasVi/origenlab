@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createManualSalesOpportunity, fetchSalesOpportunities } from "../../api/commercialOperationsClient";
 import { adoptCustomerQuoteDriveFolder } from "../../api/customerQuoteClient";
+import { describeCustomerQuoteCommandError } from "../../api/customerQuoteErrors";
 import type { SalesOpportunityListItem } from "../../api/commercialOperationsTypes";
 import type { CustomerQuote, DrivePendingQuoteItem } from "../../api/customerQuoteTypes";
 import { newIdempotencyKey } from "../../lib/idempotencyKey";
@@ -19,8 +20,6 @@ const EMPTY_MANUAL_FORM: ManualForm = {
   contactName: "",
   contactEmail: "",
 };
-
-const ADOPT_ERROR_MESSAGE = "No pudimos incorporar la carpeta al CRM. Reintenta.";
 
 /**
  * "Incorporar al CRM": attach an existing Drive-only folder to a new
@@ -169,8 +168,8 @@ export function AdoptDriveFolderModal({
 
       resetState();
       onAdopted(quote);
-    } catch {
-      setSubmitError(ADOPT_ERROR_MESSAGE);
+    } catch (reason: unknown) {
+      setSubmitError(describeCustomerQuoteCommandError(reason, "adopt"));
     } finally {
       setSubmitting(false);
     }

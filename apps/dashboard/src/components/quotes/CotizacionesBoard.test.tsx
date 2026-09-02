@@ -36,7 +36,7 @@ function dataTransferFor(quoteId: string) {
 }
 
 describe("CotizacionesBoard", () => {
-  it("renders the four Cotizaciones lanes with the exact Spanish labels (Preparación removed)", () => {
+  it("renders the five Cotizaciones lanes with the exact Spanish labels (Preparación removed, Cerrada added)", () => {
     render(
       <CotizacionesBoard
         queue={queue()}
@@ -51,6 +51,7 @@ describe("CotizacionesBoard", () => {
     expect(screen.getByRole("heading", { name: "Revisión" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Aprobada / por enviar" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Enviada / seguimiento" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Cerrada" })).toBeInTheDocument();
   });
 
   it("groups a durable quote into the column matching its board_stage", () => {
@@ -350,5 +351,52 @@ describe("CotizacionesBoard", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("cambió en otra sesión");
     fireEvent.click(screen.getByText("Cerrar"));
     expect(dismissActionError).toHaveBeenCalled();
+  });
+
+  it("groups a closed quote into the Cerrada column and shows its outcome", () => {
+    const item = globalQuoteItemFixture({
+      quote: {
+        ...globalQuoteItemFixture().quote,
+        revision_status: "closed_won",
+        board_stage: "closed",
+        quote_outcome: "won",
+      },
+    });
+    render(
+      <CotizacionesBoard
+        queue={queue({ items: [item] })}
+        onOpenQuote={vi.fn()}
+        onAdoptDriveFolder={vi.fn()}
+        onRequestConfirmSend={vi.fn()}
+      />,
+    );
+
+    const closedColumn = screen.getByTestId("cotizaciones-column-drop-closed");
+    expect(closedColumn).toHaveTextContent(item.quote.quote_number);
+    expect(closedColumn).toHaveTextContent("Cerrada · Ganada");
+  });
+
+  it("refuses dropping a sent quote directly into the Cerrada column -- closing is never drag-triggered", () => {
+    const item = globalQuoteItemFixture({
+      quote: { ...globalQuoteItemFixture().quote, revision_status: "sent", board_stage: "sent_follow_up" },
+    });
+    const dispatchWorkflowCommand = vi.fn();
+    const onRequestConfirmSend = vi.fn();
+    render(
+      <CotizacionesBoard
+        queue={queue({ items: [item], dispatchWorkflowCommand })}
+        onOpenQuote={vi.fn()}
+        onAdoptDriveFolder={vi.fn()}
+        onRequestConfirmSend={onRequestConfirmSend}
+      />,
+    );
+
+    fireEvent.drop(screen.getByTestId("cotizaciones-column-drop-closed"), {
+      dataTransfer: dataTransferFor(item.quote.quote_id),
+    });
+
+    expect(dispatchWorkflowCommand).not.toHaveBeenCalled();
+    expect(onRequestConfirmSend).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toBeInTheDocument();
   });
 });

@@ -83,6 +83,7 @@ function realQuote(overrides: Record<string, unknown> = {}) {
     revision_updated_by: "op@origenlab.cl",
     revision_updated_at: "2026-09-01T10:00:05Z",
     board_stage: "review" as const,
+    quote_outcome: null,
     created_by: "op@origenlab.cl",
     updated_by: "op@origenlab.cl",
     created_at: "2026-09-01T10:00:05Z",

@@ -59,12 +59,14 @@ vi.mock("../components/quotes/QuoteDetailDrawer", () => ({
     onClose,
     onOpenVentas,
     onRequestAdjustments,
+    onRequestClose,
   }: {
     item: { quote: { quote_number: string; sales_opportunity_id: string } } | null;
     open: boolean;
     onClose: () => void;
     onOpenVentas: (opportunityId: string) => void;
     onRequestAdjustments: (item: { quote: { quote_number: string; sales_opportunity_id: string } }) => void;
+    onRequestClose: (item: { quote: { quote_number: string; sales_opportunity_id: string } }) => void;
   }) =>
     open && item ? (
       <div role="dialog" data-testid="drawer-stub">
@@ -72,6 +74,7 @@ vi.mock("../components/quotes/QuoteDetailDrawer", () => ({
         <button onClick={onClose}>cerrar-drawer</button>
         <button onClick={() => onOpenVentas(item.quote.sales_opportunity_id)}>Ver en Ventas</button>
         <button onClick={() => onRequestAdjustments(item)}>ajustes-drawer</button>
+        <button onClick={() => onRequestClose(item)}>cerrar-cotizacion-drawer</button>
       </div>
     ) : null,
 }));
@@ -452,5 +455,41 @@ describe("CotizacionesPage", () => {
     fireEvent.click(screen.getByText("confirmar-Confirmar envío"));
 
     await waitFor(() => expect(client.confirmCustomerQuoteSend).toHaveBeenCalledTimes(1));
+  });
+
+  it("the drawer's onRequestClose callback opens the real CloseQuoteDialog, and confirming it closes the quote and refetches", async () => {
+    const item = globalQuoteItemFixture({
+      quote: { ...globalQuoteItemFixture().quote, revision_status: "sent", board_stage: "sent_follow_up" },
+    });
+    vi.mocked(client.fetchCustomerQuotesGlobal).mockResolvedValue({
+      meta: { count: 1, total_count: 1, limit: 200, offset: 0 },
+      items: [item],
+    });
+    vi.mocked(client.closeCustomerQuote).mockResolvedValue({
+      ...item.quote,
+      revision_status: "closed_won",
+      board_stage: "closed",
+      quote_outcome: "won",
+    });
+
+    render(<CotizacionesPage onOpenVentas={vi.fn()} />);
+    await waitFor(() => screen.getByText("abrir-desktop"));
+    fireEvent.click(screen.getByText("abrir-desktop"));
+    await waitFor(() => screen.getByTestId("drawer-stub"));
+    fireEvent.click(screen.getByText("cerrar-cotizacion-drawer"));
+
+    await waitFor(() => screen.getByTestId("close-quote-dialog"));
+    fireEvent.click(screen.getByRole("radio", { name: /^Ganada/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar cotización" }));
+
+    await waitFor(() =>
+      expect(client.closeCustomerQuote).toHaveBeenCalledWith(
+        item.quote.quote_id,
+        { expected_version: item.quote.version, outcome: "won" },
+        expect.any(String),
+      ),
+    );
+    await waitFor(() => expect(screen.queryByTestId("close-quote-dialog")).toBeNull());
+    expect(client.fetchCustomerQuotesGlobal).toHaveBeenCalledTimes(2);
   });
 });

@@ -19,6 +19,16 @@ const DRIVE_BADGE_CLASS: Record<string, string> = {
   "Error de Drive": "bg-amber-50 text-amber-900 border-amber-200",
 };
 
+const OUTCOME_LABELS: Record<"won" | "null", string> = {
+  won: "Cerrada · Ganada",
+  null: "Cerrada · Nula",
+};
+
+const OUTCOME_BADGE_CLASS: Record<"won" | "null", string> = {
+  won: "bg-emerald-50 text-emerald-800 border-emerald-200",
+  null: "bg-slate-100 text-slate-700 border-slate-200",
+};
+
 /** A durable CRM quote's Kanban card: draggable (dragged out only while no
  * command is already pending), and a click opens the full drawer. */
 export function CotizacionesCard({
@@ -70,6 +80,14 @@ export function CotizacionesCard({
       <p className="truncate text-xs text-[var(--color-muted)]">
         {item.contact_display_name ?? item.contact_primary_email ?? "Sin contacto"}
       </p>
+
+      {item.quote.quote_outcome ? (
+        <span
+          className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${OUTCOME_BADGE_CLASS[item.quote.quote_outcome]}`}
+        >
+          {OUTCOME_LABELS[item.quote.quote_outcome]}
+        </span>
+      ) : null}
 
       <div className="flex items-center justify-between gap-2 pt-1">
         <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${DRIVE_BADGE_CLASS[driveLabel]}`}>

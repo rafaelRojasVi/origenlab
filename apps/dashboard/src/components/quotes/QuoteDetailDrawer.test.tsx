@@ -16,6 +16,7 @@ function drawerProps(overrides: Record<string, unknown> = {}) {
     onDispatchWorkflowCommand: vi.fn().mockResolvedValue(undefined),
     onRequestAdjustments: vi.fn(),
     onRequestConfirmSend: vi.fn(),
+    onRequestClose: vi.fn(),
     dispatchPending: false,
     ...overrides,
   };
@@ -244,7 +245,7 @@ describe("QuoteDetailDrawer workflow state (CRM-Q2)", () => {
     expect(onDispatchWorkflowCommand).not.toHaveBeenCalled();
   });
 
-  it("shows no workflow actions for a sent (terminal) revision", async () => {
+  it("shows no submit/approve/adjust/send actions for a sent revision -- only Cerrar cotización", async () => {
     const fixture = globalQuoteItemFixture({
       quote: { ...globalQuoteItemFixture().quote, revision_status: "sent", board_stage: "sent_follow_up" },
     });
@@ -254,5 +255,50 @@ describe("QuoteDetailDrawer workflow state (CRM-Q2)", () => {
     await waitFor(() => screen.getByText(/Enviada/));
 
     expect(screen.queryByRole("button", { name: "Confirmar envío" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Cerrar cotización" })).toBeInTheDocument();
+  });
+
+  it("routes Cerrar cotización through onRequestClose for a sent revision", async () => {
+    const fixture = globalQuoteItemFixture({
+      quote: { ...globalQuoteItemFixture().quote, revision_status: "sent", board_stage: "sent_follow_up" },
+    });
+    vi.mocked(client.fetchCustomerQuote).mockResolvedValue({ item: fixture.quote });
+    const onRequestClose = vi.fn();
+
+    render(<QuoteDetailDrawer item={fixture} open {...drawerProps({ onRequestClose })} />);
+    await waitFor(() => screen.getByRole("button", { name: "Cerrar cotización" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar cotización" }));
+
+    expect(onRequestClose).toHaveBeenCalled();
+  });
+
+  it("does not show Cerrar cotización for a non-sent revision (e.g. approved)", async () => {
+    const fixture = globalQuoteItemFixture({
+      quote: { ...globalQuoteItemFixture().quote, revision_status: "approved", board_stage: "approved_to_send" },
+    });
+    vi.mocked(client.fetchCustomerQuote).mockResolvedValue({ item: fixture.quote });
+
+    render(<QuoteDetailDrawer item={fixture} open {...drawerProps()} />);
+    await waitFor(() => screen.getByRole("button", { name: "Confirmar envío" }));
+
+    expect(screen.queryByRole("button", { name: "Cerrar cotización" })).toBeNull();
+  });
+
+  it("shows the Ganada outcome for a closed_won revision, with no further action buttons", async () => {
+    const fixture = globalQuoteItemFixture({
+      quote: {
+        ...globalQuoteItemFixture().quote,
+        revision_status: "closed_won",
+        board_stage: "closed",
+        quote_outcome: "won",
+      },
+    });
+    vi.mocked(client.fetchCustomerQuote).mockResolvedValue({ item: fixture.quote });
+
+    render(<QuoteDetailDrawer item={fixture} open {...drawerProps()} />);
+    await waitFor(() => screen.getByText(/Cerrada · Ganada/));
+
+    expect(screen.queryByRole("button", { name: "Cerrar cotización" })).toBeNull();
   });
 });

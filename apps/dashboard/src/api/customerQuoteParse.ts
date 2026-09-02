@@ -20,6 +20,7 @@ import type {
   CustomerQuoteStatus,
   DrivePendingQuoteItem,
   QuoteOrigin,
+  QuoteOutcome,
   QuoteProvisioningStatus,
   RevisionStatus,
 } from "./customerQuoteTypes";
@@ -36,14 +37,18 @@ const REVISION_STATUSES: ReadonlySet<string> = new Set([
   "approved",
   "sent",
   "superseded",
+  "closed_won",
+  "closed_null",
 ]);
 
 const BOARD_STAGES: ReadonlySet<string> = new Set([
-  "preparation",
   "review",
   "approved_to_send",
   "sent_follow_up",
+  "closed",
 ]);
+
+const QUOTE_OUTCOMES: ReadonlySet<string> = new Set(["won", "null"]);
 
 const SALES_OPPORTUNITY_STAGES: ReadonlySet<string> = new Set([
   "new",
@@ -241,6 +246,12 @@ export function parseCustomerQuote(raw: unknown): CustomerQuote {
     throw new Error(`Unknown board_stage: ${boardStage}`);
   }
 
+  const quoteOutcome = nullableString(data.quote_outcome, "quote_outcome");
+
+  if (quoteOutcome !== null && !QUOTE_OUTCOMES.has(quoteOutcome)) {
+    throw new Error(`Unknown quote_outcome: ${quoteOutcome}`);
+  }
+
   return {
     quote_id: quoteId,
     sales_opportunity_id: salesOpportunityId,
@@ -268,6 +279,7 @@ export function parseCustomerQuote(raw: unknown): CustomerQuote {
       "revision_updated_at",
     ),
     board_stage: boardStage as BoardStage,
+    quote_outcome: quoteOutcome as QuoteOutcome | null,
     created_by: stringValue(data.created_by, "created_by"),
     updated_by: stringValue(data.updated_by, "updated_by"),
     created_at: stringValue(data.created_at, "created_at"),

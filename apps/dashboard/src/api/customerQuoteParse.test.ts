@@ -44,7 +44,7 @@ function rawQuote(overrides: Record<string, unknown> = {}) {
     revision_status: "draft",
     revision_updated_by: "tatiana@origenlab.cl",
     revision_updated_at: "2026-08-30T14:00:00+00:00",
-    board_stage: "preparation",
+    board_stage: "review",
     created_by: "tatiana@origenlab.cl",
     updated_by: "tatiana@origenlab.cl",
     created_at: "2026-08-30T14:00:00+00:00",
@@ -359,13 +359,23 @@ describe("parseCustomerQuote workflow fields", () => {
 
   it("accepts every board_stage the API can return", () => {
     for (const stage of [
-      "preparation",
       "review",
       "approved_to_send",
       "sent_follow_up",
+      "closed",
     ]) {
       expect(() => parseCustomerQuote(rawQuote({ board_stage: stage }))).not.toThrow();
     }
+  });
+
+  it("accepts every quote_outcome value, including null", () => {
+    expect(() => parseCustomerQuote(rawQuote({ quote_outcome: null }))).not.toThrow();
+    expect(() => parseCustomerQuote(rawQuote({ quote_outcome: "won" }))).not.toThrow();
+    expect(() => parseCustomerQuote(rawQuote({ quote_outcome: "null" }))).not.toThrow();
+  });
+
+  it("rejects an unknown quote_outcome", () => {
+    expect(() => parseCustomerQuote(rawQuote({ quote_outcome: "lost" }))).toThrow();
   });
 });
 

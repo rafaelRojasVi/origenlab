@@ -18,7 +18,14 @@ export type RevisionStatus =
   | "adjustments_requested"
   | "approved"
   | "sent"
-  | "superseded";
+  | "superseded"
+  | "closed_won"
+  | "closed_null";
+
+/** The two closure outcomes (CRM-Q2B). "null" here means the quote is void/
+ * cancelled -- NOT necessarily a lost sale; never conflated with the
+ * separate sales-opportunity "lost" stage. */
+export type QuoteOutcome = "won" | "null";
 
 /** The Cotizaciones Kanban lane a durable quote is in, derived server-side
  * from its current revision's status — never a stored field, never
@@ -28,7 +35,8 @@ export type RevisionStatus =
 export type BoardStage =
   | "review"
   | "approved_to_send"
-  | "sent_follow_up";
+  | "sent_follow_up"
+  | "closed";
 
 export type QuoteProvisioningStatus = "pending" | "ready" | "folder_ready" | "failed";
 
@@ -67,6 +75,8 @@ export interface CustomerQuote {
   revision_updated_by: string;
   revision_updated_at: string;
   board_stage: BoardStage;
+  /** null while the quote is still active; "won"/"null" once closed. */
+  quote_outcome: QuoteOutcome | null;
   created_by: string;
   updated_by: string;
   created_at: string;
@@ -76,6 +86,11 @@ export interface CustomerQuote {
 
 export interface CustomerQuoteRevisionTransitionCommand {
   expected_version: number;
+}
+
+export interface CustomerQuoteCloseCommand {
+  expected_version: number;
+  outcome: QuoteOutcome;
 }
 
 export interface AdoptCustomerQuoteDriveFolderCommand {

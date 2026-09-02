@@ -21,6 +21,7 @@ import {
 import type {
   AdoptCustomerQuoteDriveFolderCommand,
   CustomerQuote,
+  CustomerQuoteCloseCommand,
   CustomerQuoteDrivePendingListResponse,
   CustomerQuoteEventListResponse,
   CustomerQuoteGlobalListResponse,
@@ -309,6 +310,38 @@ export function confirmCustomerQuoteSend(
     customerQuoteConfirmSendPath(quoteId),
     command,
   );
+}
+
+
+export function customerQuoteClosePath(quoteId: string): string {
+  return `${customerQuotePath(quoteId)}/close`;
+}
+
+
+/**
+ * "Cerrar cotización": explicit terminal outcome (Ganada/Nula) for a sent
+ * quote. Unlike the other four revision-workflow commands, this carries a
+ * real Idempotency-Key -- a retry after a lost response must never append a
+ * second closure event.
+ */
+export function closeCustomerQuote(
+  quoteId: string,
+  command: CustomerQuoteCloseCommand,
+  idempotencyKey: string,
+): Promise<CustomerQuote> {
+  return fetchJson<unknown>(
+    operatorApiUrl(customerQuoteClosePath(quoteId)),
+    {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "Idempotency-Key": requireIdempotencyKey(idempotencyKey),
+      },
+      body: JSON.stringify(command),
+    },
+  ).then(parseCustomerQuote);
 }
 
 

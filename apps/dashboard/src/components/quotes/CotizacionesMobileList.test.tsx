@@ -39,6 +39,7 @@ describe("CotizacionesMobileList", () => {
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
         onRequestAdjustments={vi.fn()}
+        onRequestClose={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
@@ -60,6 +61,7 @@ describe("CotizacionesMobileList", () => {
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
         onRequestAdjustments={vi.fn()}
+        onRequestClose={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
@@ -76,6 +78,7 @@ describe("CotizacionesMobileList", () => {
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
         onRequestAdjustments={vi.fn()}
+        onRequestClose={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
@@ -93,6 +96,7 @@ describe("CotizacionesMobileList", () => {
         onOpenQuote={onOpenQuote}
         onAdoptDriveFolder={vi.fn()}
         onRequestAdjustments={vi.fn()}
+        onRequestClose={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
@@ -110,6 +114,7 @@ describe("CotizacionesMobileList", () => {
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={onAdoptDriveFolder}
         onRequestAdjustments={vi.fn()}
+        onRequestClose={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
@@ -129,6 +134,7 @@ describe("CotizacionesMobileList", () => {
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
         onRequestAdjustments={vi.fn()}
+        onRequestClose={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
@@ -150,6 +156,7 @@ describe("CotizacionesMobileList", () => {
         onAdoptDriveFolder={vi.fn()}
         onRequestAdjustments={onRequestAdjustments}
         onRequestConfirmSend={vi.fn()}
+        onRequestClose={vi.fn()}
       />,
     );
 
@@ -170,6 +177,7 @@ describe("CotizacionesMobileList", () => {
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
         onRequestAdjustments={vi.fn()}
+        onRequestClose={vi.fn()}
         onRequestConfirmSend={onRequestConfirmSend}
       />,
     );
@@ -179,7 +187,7 @@ describe("CotizacionesMobileList", () => {
     expect(dispatchWorkflowCommand).not.toHaveBeenCalled();
   });
 
-  it("sent_follow_up cards show no stage-action buttons (terminal)", () => {
+  it("sent_follow_up cards offer no submit/approve/adjust/send actions -- only Cerrar cotización (CRM-Q2B)", () => {
     const item = globalQuoteItemFixture({
       quote: { ...globalQuoteItemFixture().quote, revision_status: "sent", board_stage: "sent_follow_up" },
     });
@@ -189,6 +197,7 @@ describe("CotizacionesMobileList", () => {
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
         onRequestAdjustments={vi.fn()}
+        onRequestClose={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
@@ -196,6 +205,52 @@ describe("CotizacionesMobileList", () => {
     const section = screen.getByTestId("cotizaciones-mobile-section-sent_follow_up");
     // The card itself carries role="button" (opens the drawer) -- assert on
     // native <button> elements (the workflow-action buttons) specifically.
+    const buttons = section.querySelectorAll("button");
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]).toHaveTextContent("Cerrar cotización");
+  });
+
+  it("clicking Cerrar cotización on a sent card calls onRequestClose", () => {
+    const item = globalQuoteItemFixture({
+      quote: { ...globalQuoteItemFixture().quote, revision_status: "sent", board_stage: "sent_follow_up" },
+    });
+    const onRequestClose = vi.fn();
+    render(
+      <CotizacionesMobileList
+        queue={queue({ items: [item] })}
+        onOpenQuote={vi.fn()}
+        onAdoptDriveFolder={vi.fn()}
+        onRequestAdjustments={vi.fn()}
+        onRequestClose={onRequestClose}
+        onRequestConfirmSend={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar cotización" }));
+    expect(onRequestClose).toHaveBeenCalledWith(item);
+  });
+
+  it("closed cards (closed_won) show no further action buttons", () => {
+    const item = globalQuoteItemFixture({
+      quote: {
+        ...globalQuoteItemFixture().quote,
+        revision_status: "closed_won",
+        board_stage: "closed",
+        quote_outcome: "won",
+      },
+    });
+    render(
+      <CotizacionesMobileList
+        queue={queue({ items: [item] })}
+        onOpenQuote={vi.fn()}
+        onAdoptDriveFolder={vi.fn()}
+        onRequestAdjustments={vi.fn()}
+        onRequestClose={vi.fn()}
+        onRequestConfirmSend={vi.fn()}
+      />,
+    );
+
+    const section = screen.getByTestId("cotizaciones-mobile-section-closed");
     expect(section.querySelectorAll("button")).toHaveLength(0);
   });
 });

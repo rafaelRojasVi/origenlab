@@ -21,6 +21,7 @@ export function globalQuoteItemFixture(
       revision_updated_by: "op@origenlab.cl",
       revision_updated_at: "2026-08-30T10:00:00Z",
       board_stage: "review",
+      quote_outcome: null,
       created_by: "op@origenlab.cl",
       updated_by: "op@origenlab.cl",
       created_at: "2026-08-30T10:00:00Z",

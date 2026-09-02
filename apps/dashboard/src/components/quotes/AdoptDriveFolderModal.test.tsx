@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AdoptDriveFolderModal } from "./AdoptDriveFolderModal";
 import * as commercialClient from "../../api/commercialOperationsClient";
 import * as quoteClient from "../../api/customerQuoteClient";
+import { OperatorApiError } from "../../api/operatorClient";
 import { drivePendingQuoteItemFixture, globalQuoteItemFixture } from "../../test/fixtures/customerQuoteFixtures";
 import type { SalesOpportunityListItem } from "../../api/commercialOperationsTypes";
 
@@ -168,13 +169,18 @@ describe("AdoptDriveFolderModal", () => {
     expect(vi.mocked(quoteClient.adoptCustomerQuoteDriveFolder).mock.calls[0][0]).toBe(created.sales_opportunity_id);
   });
 
-  it("shows an error message and stays open when adoption fails", async () => {
+  it("shows a specific, actionable message (not a generic catch-all) when adoption fails with a known reason code", async () => {
     const driveItem = drivePendingQuoteItemFixture();
     vi.mocked(commercialClient.fetchSalesOpportunities).mockResolvedValue({
       meta: { data_source: "postgres", read_only: true, count: 1, total_count: 1, limit: 200, offset: 0 },
       items: [opportunity()],
     });
-    vi.mocked(quoteClient.adoptCustomerQuoteDriveFolder).mockRejectedValue(new Error("conflict"));
+    vi.mocked(quoteClient.adoptCustomerQuoteDriveFolder).mockRejectedValue(
+      new OperatorApiError(
+        JSON.stringify({ detail: "duplicate_document_number: document_number is already used by another quote" }),
+        409,
+      ),
+    );
     const onAdopted = vi.fn();
 
     render(<AdoptDriveFolderModal item={driveItem} open onClose={vi.fn()} onAdopted={onAdopted} />);
@@ -184,6 +190,29 @@ describe("AdoptDriveFolderModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "Incorporar al CRM" }));
 
     await waitFor(() => screen.getByRole("alert"));
+    expect(screen.getByRole("alert")).toHaveTextContent(/número de documento ya está en uso/i);
+    expect(onAdopted).not.toHaveBeenCalled();
+  });
+
+  it("shows a safe generic conflict message for an unrecognized reason code, never the raw code", async () => {
+    const driveItem = drivePendingQuoteItemFixture();
+    vi.mocked(commercialClient.fetchSalesOpportunities).mockResolvedValue({
+      meta: { data_source: "postgres", read_only: true, count: 1, total_count: 1, limit: 200, offset: 0 },
+      items: [opportunity()],
+    });
+    vi.mocked(quoteClient.adoptCustomerQuoteDriveFolder).mockRejectedValue(
+      new OperatorApiError(JSON.stringify({ detail: "some_unmapped_future_reason: internal detail" }), 409),
+    );
+    const onAdopted = vi.fn();
+
+    render(<AdoptDriveFolderModal item={driveItem} open onClose={vi.fn()} onAdopted={onAdopted} />);
+    await waitFor(() => screen.getByText("Balanza analítica"));
+    fireEvent.click(screen.getByText("Balanza analítica"));
+    fireEvent.change(screen.getByLabelText("Número de cotización"), { target: { value: "01191-24" } });
+    fireEvent.click(screen.getByRole("button", { name: "Incorporar al CRM" }));
+
+    await waitFor(() => screen.getByRole("alert"));
+    expect(screen.getByRole("alert")).not.toHaveTextContent("some_unmapped_future_reason");
     expect(onAdopted).not.toHaveBeenCalled();
   });
 

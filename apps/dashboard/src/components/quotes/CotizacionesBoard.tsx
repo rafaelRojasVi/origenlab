@@ -10,6 +10,7 @@ const COLUMN_ORDER: readonly CotizacionesLane[] = [
   "review",
   "approved_to_send",
   "sent_follow_up",
+  "closed",
 ];
 
 const COLUMN_LABELS: Record<CotizacionesLane, string> = {
@@ -17,6 +18,7 @@ const COLUMN_LABELS: Record<CotizacionesLane, string> = {
   review: "Revisión",
   approved_to_send: "Aprobada / por enviar",
   sent_follow_up: "Enviada / seguimiento",
+  closed: "Cerrada",
 };
 
 /**
@@ -46,6 +48,7 @@ export function CotizacionesBoard({
     review: [],
     approved_to_send: [],
     sent_follow_up: [],
+    closed: [],
   };
   for (const item of queue.items) {
     grouped[item.quote.board_stage].push(item);
