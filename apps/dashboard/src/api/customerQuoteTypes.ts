@@ -29,7 +29,7 @@ export type BoardStage =
   | "approved_to_send"
   | "sent_follow_up";
 
-export type QuoteProvisioningStatus = "pending" | "ready" | "failed";
+export type QuoteProvisioningStatus = "pending" | "ready" | "folder_ready" | "failed";
 
 export interface CustomerQuoteDriveWorkspace {
   provider: "google_drive";

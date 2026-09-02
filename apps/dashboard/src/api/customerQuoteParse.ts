@@ -64,6 +64,7 @@ const ALLOWED_DRIVE_HOSTS = new Set([
 const PROVISIONING_STATUSES: ReadonlySet<string> = new Set([
   "pending",
   "ready",
+  "folder_ready",
   "failed",
 ]);
 

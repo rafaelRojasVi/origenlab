@@ -105,6 +105,21 @@ describe("parseCustomerQuote", () => {
     expect(failed.drive_workspace.failure_category).toBe("drive_unavailable");
   });
 
+  it("accepts folder_ready as a valid drive_workspace.provisioning_status", () => {
+    const folderReady = parseCustomerQuote(
+      rawQuote({
+        drive_workspace: rawWorkspace({
+          provisioning_status: "folder_ready",
+          sheet_file_id: null,
+          sheet_web_url: null,
+        }),
+      }),
+    );
+
+    expect(folderReady.drive_workspace.provisioning_status).toBe("folder_ready");
+    expect(folderReady.drive_workspace.sheet_web_url).toBeNull();
+  });
+
   it("nulls Drive links that are not validated https Google URLs", () => {
     const quote = parseCustomerQuote(
       rawQuote({
