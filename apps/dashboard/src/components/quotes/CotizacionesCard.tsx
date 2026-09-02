@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { CustomerQuoteGlobalItem, QuoteProvisioningStatus } from "../../api/customerQuoteTypes";
 import { formatCommercialOpportunityDate } from "../../lib/commercialOpportunityFormat";
 
@@ -19,10 +20,14 @@ export function CotizacionesCard({
   item,
   onOpen,
   dragDisabled,
+  actions,
 }: {
   item: CustomerQuoteGlobalItem;
   onOpen: () => void;
   dragDisabled: boolean;
+  /** Optional explicit stage-action buttons (mobile list only -- the
+   * desktop board is drag-only, actions live in the drawer instead). */
+  actions?: ReactNode;
 }) {
   const driveLabel = DRIVE_STATE_LABELS[item.quote.drive_workspace.provisioning_status];
 
@@ -69,6 +74,8 @@ export function CotizacionesCard({
           {formatCommercialOpportunityDate(item.quote.revision_updated_at)}
         </span>
       </div>
+
+      {actions ? <div className="pt-1">{actions}</div> : null}
     </article>
   );
 }
