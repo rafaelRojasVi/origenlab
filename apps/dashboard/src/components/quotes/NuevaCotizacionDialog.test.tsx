@@ -15,6 +15,28 @@ function mockNoExistingOpportunities() {
   });
 }
 
+/**
+ * The picker's plain `fetchSalesOpportunities({limit,offset})` call (no
+ * filter) returns an empty existing-opportunity list; the dialog's
+ * post-manual-create resolve call (filtered by `sourceOpportunityId`)
+ * returns the given durable record. Mirrors the two distinct call shapes
+ * the component actually makes.
+ */
+function mockCreatedOpportunityResolvesTo(item: ReturnType<typeof existingOpportunity>) {
+  vi.mocked(opsClient.fetchSalesOpportunities).mockImplementation(async (params) => {
+    if (params?.sourceOpportunityId?.length) {
+      return {
+        meta: { data_source: "postgres", read_only: true, count: 1, total_count: 1, limit: 1, offset: 0 },
+        items: [item],
+      };
+    }
+    return {
+      meta: { data_source: "postgres", read_only: true, count: 0, total_count: 0, limit: 200, offset: 0 },
+      items: [],
+    };
+  });
+}
+
 function existingOpportunity(overrides: Record<string, unknown> = {}) {
   return {
     sales_opportunity_id: "sales_" + "c".repeat(32),
@@ -143,14 +165,18 @@ describe("NuevaCotizacionDialog — numbering invariants", () => {
     expect(quoteClient.createCustomerQuote).not.toHaveBeenCalled();
   });
 
-  it("the manual-intake fields are labeled as durable opportunity context, not customer-master creation", async () => {
+  it("the manual-intake fields are labeled accurately: they DO create a durable organization/contact, matching what the server actually does", async () => {
     render(<NuevaCotizacionDialog open onClose={vi.fn()} onCreated={vi.fn()} />);
     await waitFor(() => expect(opsClient.fetchSalesOpportunities).toHaveBeenCalled());
 
     fireEvent.click(screen.getByRole("tab", { name: "Oportunidad nueva" }));
-    expect(screen.queryByText(/nuevo cliente/i)).toBeNull();
-    expect(screen.queryByText(/crear cliente/i)).toBeNull();
-    screen.getByText(/no crean un cliente ni un contacto maestro/i);
+    // Manual intake resolves/creates real commercial.organization (and
+    // commercial.contact) rows server-side — see
+    // commercial_operations.py's _resolve_manual_organization /
+    // _resolve_manual_contact. The copy must not claim otherwise.
+    expect(screen.queryByText(/no crean un cliente/i)).toBeNull();
+    expect(screen.queryByText(/no crean un contacto/i)).toBeNull();
+    screen.getByText(/quedan registrados en el crm durable/i);
   });
 
   it("a successful manual-opportunity submit calls createManualSalesOpportunity then createCustomerQuote exactly once each, with idempotency keys, and hands back the real created quote with no placeholder", async () => {
@@ -172,6 +198,17 @@ describe("NuevaCotizacionDialog — numbering invariants", () => {
       created_at: "2026-09-01T10:00:00Z",
       updated_at: "2026-09-01T10:00:00Z",
     });
+    mockCreatedOpportunityResolvesTo(
+      existingOpportunity({
+        sales_opportunity_id: opportunityId,
+        source_opportunity_id: opportunityId,
+        title: "Balanza analítica",
+        stage: "new",
+        organization_display_name: "IKA",
+        contact_display_name: null,
+        contact_primary_email: null,
+      }),
+    );
     const created = realQuote({ sales_opportunity_id: opportunityId });
     vi.mocked(quoteClient.createCustomerQuote).mockResolvedValue(created);
     const onCreated = vi.fn();
@@ -191,6 +228,9 @@ describe("NuevaCotizacionDialog — numbering invariants", () => {
       { title: "Balanza analítica", organization_display_name: "IKA" },
       expect.stringMatching(/^opportunity:/),
     );
+    expect(opsClient.fetchSalesOpportunities).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceOpportunityId: [opportunityId] }),
+    );
     expect(quoteClient.createCustomerQuote).toHaveBeenCalledTimes(1);
     expect(quoteClient.createCustomerQuote).toHaveBeenCalledWith(opportunityId, expect.stringMatching(/^quote:/));
 
@@ -199,6 +239,59 @@ describe("NuevaCotizacionDialog — numbering invariants", () => {
     expect(passedItem.organization_display_name).toBe("IKA");
     expect(passedItem.sales_opportunity_stage).toBe("new");
     expect(passedItem.sales_opportunity_owner_key).toBe("op@origenlab.cl");
+  });
+
+  it("renders the server-returned durable opportunity, not the submitted form values, when they diverge (server normalization)", async () => {
+    const opportunityId = "sales_" + "d".repeat(32);
+    vi.mocked(opsClient.createManualSalesOpportunity).mockResolvedValue({
+      sales_opportunity_id: opportunityId,
+      source_kind: "manual",
+      source_opportunity_id: opportunityId,
+      account_id: null,
+      primary_contact_id: null,
+      organization_id: "org_" + "f".repeat(32),
+      primary_crm_contact_id: null,
+      title: "Balanza analítica",
+      stage: "new",
+      owner_key: "op@origenlab.cl",
+      version: 1,
+      created_by: "op@origenlab.cl",
+      updated_by: "op@origenlab.cl",
+      created_at: "2026-09-01T10:00:00Z",
+      updated_at: "2026-09-01T10:00:00Z",
+    });
+    // The server-normalized organization name differs from what the
+    // operator typed (e.g. dedup onto an existing canonical org, or
+    // display-name normalization) — the durable record is what must win.
+    mockCreatedOpportunityResolvesTo(
+      existingOpportunity({
+        sales_opportunity_id: opportunityId,
+        source_opportunity_id: opportunityId,
+        title: "Balanza analítica",
+        stage: "new",
+        organization_display_name: "IKA Chile S.A. (normalizado)",
+        contact_display_name: null,
+        contact_primary_email: null,
+      }),
+    );
+    const created = realQuote({ sales_opportunity_id: opportunityId });
+    vi.mocked(quoteClient.createCustomerQuote).mockResolvedValue(created);
+    const onCreated = vi.fn();
+
+    render(<NuevaCotizacionDialog open onClose={vi.fn()} onCreated={onCreated} />);
+    await waitFor(() => expect(opsClient.fetchSalesOpportunities).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("tab", { name: "Oportunidad nueva" }));
+    fireEvent.change(screen.getByLabelText("Título"), { target: { value: "Balanza analítica" } });
+    // Operator types "IKA" — the server's durable record says something else.
+    fireEvent.change(screen.getByLabelText("Organización"), { target: { value: "IKA" } });
+    fireEvent.click(screen.getByRole("button", { name: /Crear/ }));
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+
+    const passedItem = onCreated.mock.calls[0][0];
+    expect(passedItem.organization_display_name).toBe("IKA Chile S.A. (normalizado)");
+    expect(passedItem.organization_display_name).not.toBe("IKA");
   });
 
   it("a successful existing-opportunity submit calls createCustomerQuote exactly once, never calls createManualSalesOpportunity, and passes the real selected identity through", async () => {
@@ -247,6 +340,17 @@ describe("NuevaCotizacionDialog — numbering invariants", () => {
       created_at: "2026-09-01T10:00:00Z",
       updated_at: "2026-09-01T10:00:00Z",
     });
+    mockCreatedOpportunityResolvesTo(
+      existingOpportunity({
+        sales_opportunity_id: opportunityId,
+        source_opportunity_id: opportunityId,
+        title: "Balanza analítica",
+        stage: "new",
+        organization_display_name: "IKA",
+        contact_display_name: null,
+        contact_primary_email: null,
+      }),
+    );
     const created = realQuote({ sales_opportunity_id: opportunityId });
     vi.mocked(quoteClient.createCustomerQuote)
       .mockRejectedValueOnce(new Error("network blip"))
@@ -268,6 +372,12 @@ describe("NuevaCotizacionDialog — numbering invariants", () => {
     await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
 
     expect(opsClient.createManualSalesOpportunity).toHaveBeenCalledTimes(1);
+    // The identity re-fetch (filtered by sourceOpportunityId) is cached too
+    // — a retry of only the quote step must not re-fetch it either.
+    const identityFetchCalls = vi
+      .mocked(opsClient.fetchSalesOpportunities)
+      .mock.calls.filter((call) => call[0]?.sourceOpportunityId?.length);
+    expect(identityFetchCalls).toHaveLength(1);
     expect(quoteClient.createCustomerQuote).toHaveBeenCalledTimes(2);
     const [firstCallOpportunityId, firstKey] = vi.mocked(quoteClient.createCustomerQuote).mock.calls[0];
     const [secondCallOpportunityId, secondKey] = vi.mocked(quoteClient.createCustomerQuote).mock.calls[1];
@@ -321,6 +431,17 @@ describe("NuevaCotizacionDialog — numbering invariants", () => {
       created_at: "2026-09-01T10:00:00Z",
       updated_at: "2026-09-01T10:00:00Z",
     });
+    mockCreatedOpportunityResolvesTo(
+      existingOpportunity({
+        sales_opportunity_id: "sales_" + "d".repeat(32),
+        source_opportunity_id: "sales_" + "d".repeat(32),
+        title: "Balanza analítica",
+        stage: "new",
+        organization_display_name: "IKA",
+        contact_display_name: null,
+        contact_primary_email: null,
+      }),
+    );
     vi.mocked(quoteClient.createCustomerQuote)
       .mockRejectedValueOnce(new Error("boom"))
       .mockResolvedValueOnce(realQuote());
@@ -359,6 +480,17 @@ describe("NuevaCotizacionDialog — numbering invariants", () => {
       created_at: "2026-09-01T10:00:00Z",
       updated_at: "2026-09-01T10:00:00Z",
     });
+    mockCreatedOpportunityResolvesTo(
+      existingOpportunity({
+        sales_opportunity_id: "sales_" + "d".repeat(32),
+        source_opportunity_id: "sales_" + "d".repeat(32),
+        title: "Otra",
+        stage: "new",
+        organization_display_name: "IKA",
+        contact_display_name: null,
+        contact_primary_email: null,
+      }),
+    );
     vi.mocked(quoteClient.createCustomerQuote).mockResolvedValue(realQuote());
     const onClose = vi.fn();
     const { rerender } = render(<NuevaCotizacionDialog open onClose={onClose} onCreated={vi.fn()} />);

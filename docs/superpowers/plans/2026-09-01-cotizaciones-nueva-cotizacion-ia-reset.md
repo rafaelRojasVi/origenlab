@@ -132,6 +132,48 @@
    not failure (`customerQuoteQueueFilters.test.ts` already covers the
    label map — `QuoteDetailDrawer.test.tsx` adds a direct assertion).
 
+## Correction (2026-09-01, post-implementation review)
+
+**Amendment 3 above, and two pre-existing base-plan lines (audit summary
+line ~150, "Concrete blockers" item 2 near the plan's end), are factually
+wrong and superseded by this note.** They claimed `POST
+/operations/sales-opportunities/manual` stores `organization_display_name`/
+`contact_display_name`/`contact_email` as free-text columns on
+`sales_opportunity` only, creating no canonical CRM record. That claim was
+based on reading only the service layer
+(`commercial_operations_service.py`), which normalizes/validates the
+fields, not the repository layer that actually persists them.
+
+The repository layer
+(`apps/api/src/origenlab_api/repositories/postgres/commercial_operations.py`,
+`_resolve_manual_organization`/`_resolve_manual_contact`, called from
+`create_manual_sales_opportunity`) **does create real, durable
+`commercial.organization` and `commercial.contact` rows** from the
+free-text input (`INSERT INTO commercial.organization (...) VALUES (...)`
+when no `organization_id` is given; same for `commercial.contact` when an
+organization was resolved), and links the new `sales_opportunity` row to
+them via `organization_id`/`primary_crm_contact_id`. There is still no
+durable **search** endpoint for existing organizations/contacts by name
+(that part of amendment 3 / the audit's "not built in this phase" note
+stands) — but manual intake is canonical CRM **create**, not free-text
+opportunity context.
+
+Fixed in `NuevaCotizacionDialog.tsx`: after `createManualSalesOpportunity`
+succeeds, the dialog re-fetches the durable record via
+`fetchSalesOpportunities({sourceOpportunityId: [id]})` (the list endpoint
+filtered to that one id — the only read that returns
+`organization_display_name`/`contact_display_name`/`contact_primary_email`,
+since the singular `GET /operations/sales-opportunities/{id}` schema
+doesn't include them) and uses **only that server-returned record** to
+assemble the drawer item — never the submitted form values, which may
+diverge from server normalization. This re-fetch result is cached
+(`resolvedOpportunity` state) alongside the opportunity id
+(`createdOpportunityId`) so a retry after a quote-creation failure repeats
+neither the create nor the re-fetch. The manual-tab hint copy was
+corrected to say organization/contact ARE created in the CRM. Test:
+`NuevaCotizacionDialog.test.tsx` — "renders the server-returned durable
+opportunity, not the submitted form values, when they diverge".
+
 ---
 
 ## Audit summary (read before starting any task)

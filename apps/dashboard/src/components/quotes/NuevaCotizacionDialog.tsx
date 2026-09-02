@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { createManualSalesOpportunity } from "../../api/commercialOperationsClient";
+import { createManualSalesOpportunity, fetchSalesOpportunities } from "../../api/commercialOperationsClient";
 import { createCustomerQuote } from "../../api/customerQuoteClient";
-import type { SalesOpportunity, SalesOpportunityListItem } from "../../api/commercialOperationsTypes";
+import type { SalesOpportunityListItem } from "../../api/commercialOperationsTypes";
 import type { CustomerQuoteGlobalItem } from "../../api/customerQuoteTypes";
 import { newIdempotencyKey } from "../../lib/idempotencyKey";
 import { createErrorMessage } from "./driveWorkspaceUi";
@@ -23,27 +23,17 @@ const EMPTY_MANUAL_FORM: ManualForm = {
 
 function assembleCreatedItem(
   quote: CustomerQuoteGlobalItem["quote"],
-  identity: {
-    organization_display_name: string | null;
-    contact_display_name: string | null;
-    contact_primary_email: string | null;
-  },
-  context: {
-    stage: CustomerQuoteGlobalItem["sales_opportunity_stage"];
-    owner_key: string;
-    next_task_title: string | null;
-    next_task_due_at: string | null;
-  },
+  opportunity: SalesOpportunityListItem,
 ): CustomerQuoteGlobalItem {
   return {
     quote,
-    sales_opportunity_stage: context.stage,
-    sales_opportunity_owner_key: context.owner_key,
-    organization_display_name: identity.organization_display_name,
-    contact_display_name: identity.contact_display_name,
-    contact_primary_email: identity.contact_primary_email,
-    next_task_title: context.next_task_title,
-    next_task_due_at: context.next_task_due_at,
+    sales_opportunity_stage: opportunity.stage,
+    sales_opportunity_owner_key: opportunity.owner_key,
+    organization_display_name: opportunity.organization_display_name,
+    contact_display_name: opportunity.contact_display_name,
+    contact_primary_email: opportunity.contact_primary_email,
+    next_task_title: opportunity.next_task_title,
+    next_task_due_at: opportunity.next_task_due_at,
   };
 }
 
@@ -61,10 +51,20 @@ export function NuevaCotizacionDialog({
   const [tab, setTab] = useState<"existing" | "manual">("existing");
   const [selected, setSelected] = useState<SalesOpportunityListItem | null>(null);
   const [manual, setManual] = useState<ManualForm>(EMPTY_MANUAL_FORM);
-  // Crash-safety: once the manual-create command succeeds, its result is
-  // cached here so a retry after a quote-creation failure only replays the
-  // quote step — it must never call createManualSalesOpportunity again.
-  const [createdOpportunity, setCreatedOpportunity] = useState<SalesOpportunity | null>(null);
+  // Crash-safety: once the manual-create command succeeds, its id is cached
+  // here so a retry never calls createManualSalesOpportunity again, no
+  // matter which later step (the identity re-fetch or the quote create)
+  // failed.
+  const [createdOpportunityId, setCreatedOpportunityId] = useState<string | null>(null);
+  // The server-normalized record for that id (real organization/contact —
+  // manual intake resolves or creates canonical commercial.organization /
+  // commercial.contact rows server-side, see commercial_operations.py's
+  // _resolve_manual_organization/_resolve_manual_contact). Submitted form
+  // values are never used as display truth once the server has accepted
+  // the command; this is what the drawer is built from instead. Cached
+  // too, so a retry doesn't re-fetch stale-vs-current — it's already
+  // current as of the moment it was fetched, right after creation.
+  const [resolvedOpportunity, setResolvedOpportunity] = useState<SalesOpportunityListItem | null>(null);
   const [opportunityKey, setOpportunityKey] = useState(() => newIdempotencyKey("opportunity"));
   const [quoteKey, setQuoteKey] = useState(() => newIdempotencyKey("quote"));
   const [submitting, setSubmitting] = useState(false);
@@ -95,7 +95,8 @@ export function NuevaCotizacionDialog({
     setTab("existing");
     setSelected(null);
     setManual(EMPTY_MANUAL_FORM);
-    setCreatedOpportunity(null);
+    setCreatedOpportunityId(null);
+    setResolvedOpportunity(null);
     setSubmitError(null);
     setOpportunityKey(newIdempotencyKey("opportunity"));
     setQuoteKey(newIdempotencyKey("quote"));
@@ -118,35 +119,15 @@ export function NuevaCotizacionDialog({
 
     try {
       let opportunityId: string;
-      let identity: {
-        organization_display_name: string | null;
-        contact_display_name: string | null;
-        contact_primary_email: string | null;
-      };
-      let context: {
-        stage: CustomerQuoteGlobalItem["sales_opportunity_stage"];
-        owner_key: string;
-        next_task_title: string | null;
-        next_task_due_at: string | null;
-      };
+      let opportunity: SalesOpportunityListItem;
 
       if (tab === "existing") {
         opportunityId = selected!.sales_opportunity_id;
-        identity = {
-          organization_display_name: selected!.organization_display_name,
-          contact_display_name: selected!.contact_display_name,
-          contact_primary_email: selected!.contact_primary_email,
-        };
-        context = {
-          stage: selected!.stage,
-          owner_key: selected!.owner_key,
-          next_task_title: selected!.next_task_title,
-          next_task_due_at: selected!.next_task_due_at,
-        };
+        opportunity = selected!;
       } else {
-        let opportunity = createdOpportunity;
-        if (!opportunity) {
-          opportunity = await createManualSalesOpportunity(
+        opportunityId = createdOpportunityId ?? "";
+        if (!opportunityId) {
+          const created = await createManualSalesOpportunity(
             {
               title: manual.title.trim(),
               organization_display_name: manual.organizationName.trim(),
@@ -155,26 +136,33 @@ export function NuevaCotizacionDialog({
             },
             opportunityKey,
           );
-          // Durably created even if the quote step below now fails — never
+          // Durably created even if a later step now fails — never
           // re-create it on a retry of this submit.
-          setCreatedOpportunity(opportunity);
+          opportunityId = created.sales_opportunity_id;
+          setCreatedOpportunityId(opportunityId);
         }
-        opportunityId = opportunity.sales_opportunity_id;
-        identity = {
-          organization_display_name: manual.organizationName.trim(),
-          contact_display_name: manual.contactName.trim() || null,
-          contact_primary_email: manual.contactEmail.trim() || null,
-        };
-        context = {
-          stage: opportunity.stage,
-          owner_key: opportunity.owner_key,
-          next_task_title: null,
-          next_task_due_at: null,
-        };
+
+        let resolved = resolvedOpportunity;
+        if (!resolved) {
+          // Manual intake resolves/creates real commercial.organization and
+          // commercial.contact rows server-side — re-fetch the durable
+          // record by the id the server just returned instead of trusting
+          // the submitted form values as display truth.
+          const refreshed = await fetchSalesOpportunities({
+            sourceOpportunityId: [opportunityId],
+            limit: 1,
+          });
+          resolved = refreshed.items[0] ?? null;
+          if (!resolved) {
+            throw new Error("No pudimos confirmar la oportunidad creada. Reintenta.");
+          }
+          setResolvedOpportunity(resolved);
+        }
+        opportunity = resolved;
       }
 
       const quote = await createCustomerQuote(opportunityId, quoteKey);
-      const item = assembleCreatedItem(quote, identity, context);
+      const item = assembleCreatedItem(quote, opportunity);
       resetState();
       onCreated(item);
     } catch (reason: unknown) {
@@ -325,8 +313,9 @@ export function NuevaCotizacionDialog({
                   />
                 </div>
                 <p className="text-xs text-slate-500">
-                  Estos campos quedan guardados como contexto de la oportunidad durable — no crean un
-                  cliente ni un contacto maestro en el CRM.
+                  Organización y contacto quedan registrados en el CRM durable junto con la
+                  oportunidad — sin buscador de clientes existentes, cada envío crea una
+                  organización (y contacto, si lo completas) nuevos.
                 </p>
               </div>
             )}
