@@ -70,6 +70,7 @@ def _quote_row(**overrides: Any) -> dict[str, Any]:
         "serial": 1183,
         "issue_year": 2026,
         "document_number": "CN01183",
+        "quote_origin": "generated",
         "status": "draft",
         "version": 1,
         "created_by": "tatiana@origenlab.cl",
@@ -95,6 +96,8 @@ def _revision_row(**overrides: Any) -> dict[str, Any]:
         "status": "draft",
         "created_by": "tatiana@origenlab.cl",
         "created_at": NOW,
+        "updated_by": "tatiana@origenlab.cl",
+        "updated_at": NOW,
     }
     row.update(overrides)
     return row

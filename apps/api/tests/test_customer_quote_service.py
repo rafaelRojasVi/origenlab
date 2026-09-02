@@ -67,6 +67,7 @@ def _quote(**overrides: Any) -> CustomerQuote:
         "serial": 1183,
         "issue_year": 2026,
         "document_number": "CN01183",
+        "quote_origin": "generated",
         "status": "draft",
         "version": 1,
         "created_by": OPERATOR,
@@ -86,6 +87,8 @@ def _revision() -> CustomerQuoteRevision:
         status="draft",
         created_by=OPERATOR,
         created_at=NOW,
+        updated_by=OPERATOR,
+        updated_at=NOW,
     )
 
 

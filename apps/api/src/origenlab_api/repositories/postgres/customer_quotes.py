@@ -42,6 +42,7 @@ __all__ = [
     "CustomerQuote",
     "CustomerQuoteBundle",
     "CustomerQuoteDriveWorkspace",
+    "CustomerQuoteEvent",
     "CustomerQuoteRevision",
     "PostgresCustomerQuoteRepository",
     "QuoteNumberingConfig",
@@ -113,6 +114,7 @@ class QuoteNumberingPolicyMismatchError(RuntimeError):
 _FAILURE_CATEGORY_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 _CREATE_COMMAND_KIND = "customer_quote_create"
+_ADOPT_COMMAND_KIND = "customer_quote_adopt_drive"
 
 
 @dataclass(frozen=True)
@@ -125,10 +127,16 @@ class CustomerQuote:
     # (<serial>-<issue_year 2-digit>, e.g. "01183-26"); document_number is
     # the separate Drive document stem (<document_prefix><serial>, e.g.
     # "CN01183"). Neither is parsed from the other at read time.
+    #
+    # serial/issue_year are NULL when quote_origin == "adopted": an adopted
+    # quote's identifiers were never allocated by customer_quote_number_series
+    # (see adopt_drive_folder) -- quote_number/document_number stay
+    # mandatory and unique regardless of origin.
     quote_number: str
-    serial: int
-    issue_year: int
+    serial: int | None
+    issue_year: int | None
     document_number: str
+    quote_origin: str
 
     status: str
     version: int
@@ -145,6 +153,18 @@ class CustomerQuoteRevision:
     template_reference: str | None
     status: str
     created_by: str
+    created_at: datetime
+    updated_by: str
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class CustomerQuoteEvent:
+    event_id: str
+    quote_id: str
+    event_type: str
+    actor_key: str
+    payload: dict[str, object]
     created_at: datetime
 
 
@@ -211,6 +231,7 @@ def _quote_from_row(row: dict[str, object]) -> CustomerQuote:
             "serial",
             "issue_year",
             "document_number",
+            "quote_origin",
             "status",
             "version",
             "created_by",
@@ -589,13 +610,17 @@ class PostgresCustomerQuoteRepository:
                       template_reference,
                       status,
                       created_by,
-                      created_at
+                      created_at,
+                      updated_by,
+                      updated_at
                     )
                     VALUES (
                       %(quote_id)s,
                       %(revision_number)s,
                       %(template_reference)s,
                       'draft',
+                      %(operator)s,
+                      %(now)s,
                       %(operator)s,
                       %(now)s
                     )
@@ -970,3 +995,443 @@ class PostgresCustomerQuoteRepository:
                 )
 
                 return workspace
+
+    def _transition_revision(
+        self,
+        *,
+        quote_id: str,
+        operator: str,
+        expected_version: int,
+        legal_from_statuses: frozenset[str],
+        to_status: str,
+        event_type: str,
+    ) -> CustomerQuoteBundle:
+        """Shared CAS/event-append plumbing for the four revision-workflow
+        commands. The public methods below each hardcode their own
+        (legal_from_statuses, to_status, event_type) -- a caller of this
+        repository can only ever invoke one of those four fixed
+        transitions, never construct an arbitrary one.
+
+        Concurrency is customer_quote.version alone: the revision itself
+        carries no version column. Locking the customer_quote row FOR
+        UPDATE first serializes every transition/adoption attempt against
+        this quote_id, so a second SELECT ... FOR UPDATE on the revision
+        row is unnecessary.
+        """
+
+        pg = require_psycopg()
+        now = _utcnow()
+
+        with postgres_write_connection(self._settings) as conn:
+            with conn.cursor(row_factory=pg.rows.dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT version
+                    FROM commercial.customer_quote
+                    WHERE quote_id = %(quote_id)s
+                    FOR UPDATE
+                    """,
+                    {"quote_id": quote_id},
+                )
+
+                existing_quote = cur.fetchone()
+
+                if existing_quote is None:
+                    raise CommercialOperationNotFoundError(
+                        f"Customer quote not found: {quote_id}"
+                    )
+
+                current_version = int(existing_quote["version"])
+
+                if expected_version != current_version:
+                    raise CommercialOperationConflictError(
+                        "Customer quote version conflict"
+                    )
+
+                cur.execute(
+                    """
+                    SELECT revision_number, status
+                    FROM commercial.customer_quote_revision
+                    WHERE quote_id = %(quote_id)s
+                    ORDER BY revision_number DESC
+                    LIMIT 1
+                    """,
+                    {"quote_id": quote_id},
+                )
+
+                existing_revision = cur.fetchone()
+
+                if existing_revision is None:
+                    raise RuntimeError(
+                        f"Customer quote has no revision: {quote_id}"
+                    )
+
+                revision_number = int(existing_revision["revision_number"])
+                current_status = str(existing_revision["status"])
+
+                if current_status not in legal_from_statuses:
+                    raise CommercialOperationConflictError(
+                        f"Customer quote revision cannot transition from "
+                        f"'{current_status}' to '{to_status}'"
+                    )
+
+                cur.execute(
+                    """
+                    UPDATE commercial.customer_quote
+                    SET
+                      version = version + 1,
+                      updated_by = %(operator)s,
+                      updated_at = %(now)s
+                    WHERE quote_id = %(quote_id)s
+                      AND version = %(current_version)s
+                    RETURNING version
+                    """,
+                    {
+                        "quote_id": quote_id,
+                        "operator": operator,
+                        "now": now,
+                        "current_version": current_version,
+                    },
+                )
+
+                if cur.fetchone() is None:
+                    raise CommercialOperationConflictError(
+                        "Customer quote concurrent update conflict"
+                    )
+
+                cur.execute(
+                    """
+                    UPDATE commercial.customer_quote_revision
+                    SET
+                      status = %(to_status)s,
+                      updated_by = %(operator)s,
+                      updated_at = %(now)s
+                    WHERE quote_id = %(quote_id)s
+                      AND revision_number = %(revision_number)s
+                    """,
+                    {
+                        "quote_id": quote_id,
+                        "revision_number": revision_number,
+                        "to_status": to_status,
+                        "operator": operator,
+                        "now": now,
+                    },
+                )
+
+                _insert_event(
+                    cur,
+                    quote_id=quote_id,
+                    event_type=event_type,
+                    actor_key=operator,
+                    payload={
+                        "revision_number": revision_number,
+                        "from_status": current_status,
+                        "to_status": to_status,
+                    },
+                    created_at=now,
+                )
+
+                bundle = _fetch_bundle(cur, quote_id=quote_id)
+
+                if bundle is None:
+                    raise RuntimeError(
+                        f"Customer quote disappeared mid-transition: {quote_id}"
+                    )
+
+                return bundle
+
+    def submit_for_review(
+        self, *, quote_id: str, operator: str, expected_version: int
+    ) -> CustomerQuoteBundle:
+        return self._transition_revision(
+            quote_id=quote_id,
+            operator=operator,
+            expected_version=expected_version,
+            legal_from_statuses=frozenset({"draft", "adjustments_requested"}),
+            to_status="pending_approval",
+            event_type="quote_submitted_for_review",
+        )
+
+    def request_adjustments(
+        self, *, quote_id: str, operator: str, expected_version: int
+    ) -> CustomerQuoteBundle:
+        return self._transition_revision(
+            quote_id=quote_id,
+            operator=operator,
+            expected_version=expected_version,
+            legal_from_statuses=frozenset({"pending_approval"}),
+            to_status="adjustments_requested",
+            event_type="quote_adjustments_requested",
+        )
+
+    def approve(
+        self, *, quote_id: str, operator: str, expected_version: int
+    ) -> CustomerQuoteBundle:
+        return self._transition_revision(
+            quote_id=quote_id,
+            operator=operator,
+            expected_version=expected_version,
+            legal_from_statuses=frozenset({"pending_approval"}),
+            to_status="approved",
+            event_type="quote_approved",
+        )
+
+    def confirm_send(
+        self, *, quote_id: str, operator: str, expected_version: int
+    ) -> CustomerQuoteBundle:
+        return self._transition_revision(
+            quote_id=quote_id,
+            operator=operator,
+            expected_version=expected_version,
+            legal_from_statuses=frozenset({"approved"}),
+            to_status="sent",
+            event_type="quote_send_confirmed",
+        )
+
+    def adopt_drive_folder(
+        self,
+        *,
+        quote_id: str,
+        sales_opportunity_id: str,
+        document_number: str,
+        quote_number: str,
+        folder_id: str,
+        folder_web_url: str,
+        operator: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+    ) -> CustomerQuoteBundle:
+        """Attach a pre-existing Drive folder to a brand-new durable quote
+        ("Incorporar al CRM"). Never allocates from
+        customer_quote_number_series (serial/issue_year stay NULL --
+        quote_origin='adopted'), never calls the Drive provider (folder_id/
+        folder_web_url are recorded as given; the workspace is inserted
+        already 'ready'), and never derives quote_number from
+        document_number -- both are mandatory, independent, operator-
+        confirmed inputs.
+        """
+
+        safe_folder_url = _require_https_url(
+            folder_web_url,
+            field="folder_web_url",
+        )
+
+        pg = require_psycopg()
+        now = _utcnow()
+
+        with postgres_write_connection(self._settings) as conn:
+            with conn.cursor(row_factory=pg.rows.dict_row) as cur:
+                replay_result_id = _claim_idempotency(
+                    cur,
+                    operator=operator,
+                    idempotency_key=idempotency_key,
+                    command_kind=_ADOPT_COMMAND_KIND,
+                    request_fingerprint=request_fingerprint,
+                )
+
+                if replay_result_id is not None:
+                    replay = _fetch_bundle(cur, quote_id=replay_result_id)
+
+                    if replay is None:
+                        raise CommercialOperationConflictError(
+                            "Idempotency result customer quote is missing"
+                        )
+
+                    return replay
+
+                cur.execute(
+                    """
+                    SELECT
+                      sales_opportunity_id,
+                      title
+                    FROM commercial.sales_opportunity
+                    WHERE sales_opportunity_id = %(sales_opportunity_id)s
+                    LIMIT 1
+                    """,
+                    {"sales_opportunity_id": sales_opportunity_id},
+                )
+
+                source = cur.fetchone()
+
+                if source is None:
+                    raise CommercialOperationNotFoundError(
+                        f"Sales opportunity not found: {sales_opportunity_id}"
+                    )
+
+                title = str(source["title"])
+
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO commercial.customer_quote (
+                          quote_id,
+                          sales_opportunity_id,
+                          quote_number,
+                          document_number,
+                          quote_origin,
+                          serial,
+                          issue_year,
+                          status,
+                          version,
+                          created_by,
+                          updated_by,
+                          created_at,
+                          updated_at
+                        )
+                        VALUES (
+                          %(quote_id)s,
+                          %(sales_opportunity_id)s,
+                          %(quote_number)s,
+                          %(document_number)s,
+                          'adopted',
+                          NULL,
+                          NULL,
+                          'draft',
+                          1,
+                          %(operator)s,
+                          %(operator)s,
+                          %(now)s,
+                          %(now)s
+                        )
+                        RETURNING *
+                        """,
+                        {
+                            "quote_id": quote_id,
+                            "sales_opportunity_id": sales_opportunity_id,
+                            "quote_number": quote_number,
+                            "document_number": document_number,
+                            "operator": operator,
+                            "now": now,
+                        },
+                    )
+                except pg.errors.UniqueViolation as exc:
+                    raise CommercialOperationConflictError(
+                        "quote_number or document_number already in use"
+                    ) from exc
+
+                quote_row = cur.fetchone()
+
+                if quote_row is None:
+                    raise RuntimeError("Customer quote insert returned no row")
+
+                quote = _quote_from_row(dict(quote_row))
+
+                cur.execute(
+                    """
+                    INSERT INTO commercial.customer_quote_revision (
+                      quote_id,
+                      revision_number,
+                      template_reference,
+                      status,
+                      created_by,
+                      created_at,
+                      updated_by,
+                      updated_at
+                    )
+                    VALUES (
+                      %(quote_id)s,
+                      %(revision_number)s,
+                      NULL,
+                      'draft',
+                      %(operator)s,
+                      %(now)s,
+                      %(operator)s,
+                      %(now)s
+                    )
+                    RETURNING *
+                    """,
+                    {
+                        "quote_id": quote_id,
+                        "revision_number": 1,
+                        "operator": operator,
+                        "now": now,
+                    },
+                )
+
+                revision_row = cur.fetchone()
+
+                if revision_row is None:
+                    raise RuntimeError(
+                        "Customer quote revision insert returned no row"
+                    )
+
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO commercial.customer_quote_drive_workspace (
+                          quote_id,
+                          provider,
+                          provisioning_status,
+                          folder_id,
+                          folder_web_url,
+                          attempt_count,
+                          version,
+                          completed_at,
+                          created_by,
+                          updated_by,
+                          created_at,
+                          updated_at
+                        )
+                        VALUES (
+                          %(quote_id)s,
+                          'google_drive',
+                          'ready',
+                          %(folder_id)s,
+                          %(folder_web_url)s,
+                          0,
+                          1,
+                          %(now)s,
+                          %(operator)s,
+                          %(operator)s,
+                          %(now)s,
+                          %(now)s
+                        )
+                        RETURNING *
+                        """,
+                        {
+                            "quote_id": quote_id,
+                            "folder_id": folder_id,
+                            "folder_web_url": safe_folder_url,
+                            "operator": operator,
+                            "now": now,
+                        },
+                    )
+                except pg.errors.UniqueViolation as exc:
+                    raise CommercialOperationConflictError(
+                        "Drive folder is already attached to a durable quote"
+                    ) from exc
+
+                workspace_row = cur.fetchone()
+
+                if workspace_row is None:
+                    raise RuntimeError(
+                        "Customer quote workspace insert returned no row"
+                    )
+
+                _insert_event(
+                    cur,
+                    quote_id=quote_id,
+                    event_type="quote_adopted_from_drive",
+                    actor_key=operator,
+                    payload={
+                        "revision_number": 1,
+                        "document_number": document_number,
+                        "folder_id": folder_id,
+                        "sales_opportunity_id": sales_opportunity_id,
+                    },
+                    created_at=now,
+                )
+
+                _store_idempotency_result(
+                    cur,
+                    operator=operator,
+                    idempotency_key=idempotency_key,
+                    result_id=quote_id,
+                )
+
+                return CustomerQuoteBundle(
+                    quote=quote,
+                    revision=CustomerQuoteRevision(**dict(revision_row)),
+                    workspace=CustomerQuoteDriveWorkspace(**dict(workspace_row)),
+                    sales_opportunity_title=title,
+                )
