@@ -85,6 +85,16 @@ class CustomerQuoteCommandRepository(Protocol):
         self, **kwargs: object
     ) -> CustomerQuoteDriveWorkspace: ...
 
+    def submit_for_review(self, **kwargs: object) -> CustomerQuoteBundle: ...
+
+    def request_adjustments(self, **kwargs: object) -> CustomerQuoteBundle: ...
+
+    def approve(self, **kwargs: object) -> CustomerQuoteBundle: ...
+
+    def confirm_send(self, **kwargs: object) -> CustomerQuoteBundle: ...
+
+    def adopt_drive_folder(self, **kwargs: object) -> CustomerQuoteBundle: ...
+
 
 class CustomerQuoteService:
     def __init__(
@@ -187,6 +197,141 @@ class CustomerQuoteService:
             operator=normalized_operator,
             expected_version=expected_version,
             raise_conflict=True,
+        )
+
+    def submit_for_review(
+        self, *, quote_id: str, operator: str, expected_version: int
+    ) -> CustomerQuoteBundle:
+        return self._transition(
+            self._repository.submit_for_review,
+            quote_id=quote_id,
+            operator=operator,
+            expected_version=expected_version,
+        )
+
+    def request_adjustments(
+        self, *, quote_id: str, operator: str, expected_version: int
+    ) -> CustomerQuoteBundle:
+        return self._transition(
+            self._repository.request_adjustments,
+            quote_id=quote_id,
+            operator=operator,
+            expected_version=expected_version,
+        )
+
+    def approve(
+        self, *, quote_id: str, operator: str, expected_version: int
+    ) -> CustomerQuoteBundle:
+        return self._transition(
+            self._repository.approve,
+            quote_id=quote_id,
+            operator=operator,
+            expected_version=expected_version,
+        )
+
+    def confirm_send(
+        self, *, quote_id: str, operator: str, expected_version: int
+    ) -> CustomerQuoteBundle:
+        return self._transition(
+            self._repository.confirm_send,
+            quote_id=quote_id,
+            operator=operator,
+            expected_version=expected_version,
+        )
+
+    @staticmethod
+    def _transition(
+        repository_method: Callable[..., CustomerQuoteBundle],
+        *,
+        quote_id: str,
+        operator: str,
+        expected_version: int,
+    ) -> CustomerQuoteBundle:
+        normalized_quote_id = _required_text(
+            quote_id,
+            field="quote_id",
+            max_length=128,
+        )
+        normalized_operator = _required_text(
+            operator,
+            field="operator",
+            max_length=320,
+        ).lower()
+
+        if expected_version < 1:
+            raise ValueError("expected_version must be >= 1")
+
+        return repository_method(
+            quote_id=normalized_quote_id,
+            operator=normalized_operator,
+            expected_version=expected_version,
+        )
+
+    def adopt_drive_folder(
+        self,
+        *,
+        sales_opportunity_id: str,
+        document_number: str,
+        quote_number: str,
+        folder_id: str,
+        folder_web_url: str,
+        operator: str,
+        idempotency_key: str,
+    ) -> CustomerQuoteBundle:
+        normalized_sales_id = _required_text(
+            sales_opportunity_id,
+            field="sales_opportunity_id",
+            max_length=128,
+        )
+        normalized_document_number = _required_text(
+            document_number,
+            field="document_number",
+            max_length=32,
+        )
+        normalized_quote_number = _required_text(
+            quote_number,
+            field="quote_number",
+            max_length=32,
+        )
+        normalized_folder_id = _required_text(
+            folder_id,
+            field="folder_id",
+            max_length=256,
+        )
+        normalized_folder_web_url = _required_text(
+            folder_web_url,
+            field="folder_web_url",
+            max_length=2048,
+        )
+        normalized_operator = _required_text(
+            operator,
+            field="operator",
+            max_length=320,
+        ).lower()
+        normalized_key = _idempotency_key(idempotency_key)
+
+        # document_number and quote_number are independent, operator-
+        # confirmed inputs -- deliberately no derivation between them.
+        fingerprint = _fingerprint(
+            "customer_quote_adopt_drive",
+            {
+                "sales_opportunity_id": normalized_sales_id,
+                "document_number": normalized_document_number,
+                "quote_number": normalized_quote_number,
+                "folder_id": normalized_folder_id,
+            },
+        )
+
+        return self._repository.adopt_drive_folder(
+            quote_id=f"quote_{uuid4().hex}",
+            sales_opportunity_id=normalized_sales_id,
+            document_number=normalized_document_number,
+            quote_number=normalized_quote_number,
+            folder_id=normalized_folder_id,
+            folder_web_url=normalized_folder_web_url,
+            operator=normalized_operator,
+            idempotency_key=normalized_key,
+            request_fingerprint=fingerprint,
         )
 
     def _provision(

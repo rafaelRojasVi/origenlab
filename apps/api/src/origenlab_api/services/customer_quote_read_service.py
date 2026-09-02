@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from origenlab_api.repositories.postgres.customer_quotes import (
     CustomerQuoteBundle,
+    CustomerQuoteEvent,
 )
 from origenlab_api.repositories.postgres.customer_quotes_read import (
     CustomerQuoteGlobalEntry,
@@ -72,4 +73,9 @@ class CustomerQuoteReadService:
             offset=offset,
             drive_status=drive_status,
             stage=stage,
+        )
+
+    def list_events(self, quote_id: str) -> list[CustomerQuoteEvent]:
+        return self._repository.list_events(
+            _identifier(quote_id, field="quote_id"),
         )
