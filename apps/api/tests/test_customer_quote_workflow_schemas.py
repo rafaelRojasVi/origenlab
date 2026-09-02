@@ -130,3 +130,22 @@ def test_response_exposes_board_stage_and_quote_origin_from_bundle() -> None:
     assert response.board_stage == "approved_to_send"
     assert response.revision_updated_by == OPERATOR
     assert response.revision_updated_at == NOW
+
+
+def test_folder_ready_provisioning_status_is_accepted_and_not_retryable() -> None:
+    bundle = CustomerQuoteBundle(
+        quote=_quote(),
+        revision=_revision(status="draft"),
+        workspace=_workspace(
+            provisioning_status="folder_ready",
+            sheet_file_id=None,
+            sheet_web_url=None,
+            version=2,
+        ),
+        sales_opportunity_title="Centrífuga CEAF",
+    )
+
+    response = CustomerQuoteResponse.from_bundle(bundle)
+
+    assert response.drive_workspace.provisioning_status == "folder_ready"
+    assert response.drive_workspace.retryable is False

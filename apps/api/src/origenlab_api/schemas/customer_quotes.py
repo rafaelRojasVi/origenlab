@@ -74,6 +74,7 @@ def derive_board_stage(revision_status: str) -> BoardStage:
 QuoteProvisioningStatus = Literal[
     "pending",
     "ready",
+    "folder_ready",
     "failed",
 ]
 
