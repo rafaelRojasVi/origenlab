@@ -7,7 +7,6 @@ import type { useCustomerQuotesGlobal } from "./useCustomerQuotesGlobal";
 
 const COLUMN_ORDER: readonly CotizacionesLane[] = [
   "drive_intake",
-  "preparation",
   "review",
   "approved_to_send",
   "sent_follow_up",
@@ -15,7 +14,6 @@ const COLUMN_ORDER: readonly CotizacionesLane[] = [
 
 const COLUMN_LABELS: Record<CotizacionesLane, string> = {
   drive_intake: "Pendientes Drive",
-  preparation: "Preparación",
   review: "Revisión",
   approved_to_send: "Aprobada / por enviar",
   sent_follow_up: "Enviada / seguimiento",
@@ -24,27 +22,27 @@ const COLUMN_LABELS: Record<CotizacionesLane, string> = {
 /**
  * Desktop Kanban. A board gesture never writes a lane directly: every drop
  * resolves through resolveBoardMove to either an immediate command
- * dispatch, an explicit confirmation callback (request_adjustments /
- * confirm_send), or a refusal that never reaches the API.
+ * dispatch, an explicit confirmation callback (confirm_send), or a refusal
+ * that never reaches the API. submit_for_review/request_adjustments are
+ * never drag-triggerable post-CRM-Q2B (both start and end inside the
+ * single "review" lane) -- they are explicit buttons only, see
+ * QuoteWorkflowActions.
  */
 export function CotizacionesBoard({
   queue,
   onOpenQuote,
   onAdoptDriveFolder,
-  onRequestAdjustments,
   onRequestConfirmSend,
 }: {
   queue: ReturnType<typeof useCustomerQuotesGlobal>;
   onOpenQuote: (item: CustomerQuoteGlobalItem) => void;
   onAdoptDriveFolder: (item: (typeof queue.driveItems)[number]) => void;
-  onRequestAdjustments: (item: CustomerQuoteGlobalItem) => void;
   onRequestConfirmSend: (item: CustomerQuoteGlobalItem) => void;
 }) {
   const [moveError, setMoveError] = useState<string | null>(null);
 
   const grouped: Record<CotizacionesLane, CustomerQuoteGlobalItem[]> = {
     drive_intake: [],
-    preparation: [],
     review: [],
     approved_to_send: [],
     sent_follow_up: [],
@@ -73,11 +71,7 @@ export function CotizacionesBoard({
     setMoveError(null);
 
     if (decision.requiresConfirmation) {
-      if (decision.command === "request_adjustments") {
-        onRequestAdjustments(item);
-      } else {
-        onRequestConfirmSend(item);
-      }
+      onRequestConfirmSend(item);
       return;
     }
 

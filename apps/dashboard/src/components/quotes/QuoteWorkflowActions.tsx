@@ -1,24 +1,27 @@
-import type { BoardStage } from "../../api/customerQuoteTypes";
-import { legalActionsForStage, type WorkflowCommand } from "../../lib/quoteBoard";
+import type { RevisionStatus } from "../../api/customerQuoteTypes";
+import { legalActionsForRevisionStatus, type WorkflowCommand } from "../../lib/quoteBoard";
 
 /**
- * Explicit legal next actions for a durable quote's current board stage --
- * shared by the mobile list card and the detail drawer, both derived from
- * the same BOARD_TRANSITIONS table the desktop drag/drop uses. Never
- * offers a command outside the current stage's legal set.
+ * Explicit legal next actions for a durable quote's current revision_status
+ * -- shared by the mobile list card and the detail drawer, both derived
+ * from the same REVISION_TRANSITIONS table. Keyed on revision_status, not
+ * board_stage: since CRM-Q2B collapsed draft/adjustments_requested/
+ * pending_approval into one "review" lane, board_stage alone can no longer
+ * distinguish which actions are legal. Never offers a command outside the
+ * current status's legal set.
  */
 export function QuoteWorkflowActions({
-  boardStage,
+  revisionStatus,
   disabled,
   onDispatch,
   onRequestConfirmation,
 }: {
-  boardStage: BoardStage;
+  revisionStatus: RevisionStatus;
   disabled: boolean;
   onDispatch: (command: WorkflowCommand) => void;
   onRequestConfirmation: (command: WorkflowCommand) => void;
 }) {
-  const actions = legalActionsForStage(boardStage);
+  const actions = legalActionsForRevisionStatus(revisionStatus);
 
   if (actions.length === 0) {
     return null;

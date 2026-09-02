@@ -121,7 +121,6 @@ export function CotizacionesPage({
             queue={filteredQueue}
             onOpenQuote={setOpenItem}
             onAdoptDriveFolder={setAdoptItem}
-            onRequestAdjustments={setAdjustmentsTarget}
             onRequestConfirmSend={setSendTarget}
           />
           <CotizacionesMobileList

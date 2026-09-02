@@ -36,19 +36,18 @@ function dataTransferFor(quoteId: string) {
 }
 
 describe("CotizacionesBoard", () => {
-  it("renders the five Cotizaciones lanes with the exact Spanish labels", () => {
+  it("renders the four Cotizaciones lanes with the exact Spanish labels (Preparación removed)", () => {
     render(
       <CotizacionesBoard
         queue={queue()}
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
-        onRequestAdjustments={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
 
     expect(screen.getByRole("heading", { name: "Pendientes Drive" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Preparación" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Preparación" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Revisión" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Aprobada / por enviar" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Enviada / seguimiento" })).toBeInTheDocument();
@@ -63,13 +62,41 @@ describe("CotizacionesBoard", () => {
         queue={queue({ items: [item] })}
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
-        onRequestAdjustments={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
 
     const reviewColumn = screen.getByTestId("cotizaciones-column-drop-review");
     expect(reviewColumn).toHaveTextContent(item.quote.quote_number);
+  });
+
+  it("groups draft, adjustments_requested, and pending_approval quotes all into the same review column", () => {
+    const base = globalQuoteItemFixture();
+    const items = (["draft", "adjustments_requested", "pending_approval"] as const).map(
+      (revision_status, index) =>
+        globalQuoteItemFixture({
+          quote: {
+            ...base.quote,
+            quote_id: `quote_${index}${"a".repeat(31)}`,
+            quote_number: `0118${index}-26`,
+            revision_status,
+            board_stage: "review",
+          },
+        }),
+    );
+    render(
+      <CotizacionesBoard
+        queue={queue({ items })}
+        onOpenQuote={vi.fn()}
+        onAdoptDriveFolder={vi.fn()}
+        onRequestConfirmSend={vi.fn()}
+      />,
+    );
+
+    const reviewColumn = screen.getByTestId("cotizaciones-column-drop-review");
+    for (const item of items) {
+      expect(reviewColumn).toHaveTextContent(item.quote.quote_number);
+    }
   });
 
   it("shows document_number as the prominent identifier on a card, with quote_number secondary", () => {
@@ -79,7 +106,6 @@ describe("CotizacionesBoard", () => {
         queue={queue({ items: [item] })}
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
-        onRequestAdjustments={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
@@ -107,7 +133,6 @@ describe("CotizacionesBoard", () => {
         queue={queue({ items: [item] })}
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
-        onRequestAdjustments={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
@@ -122,7 +147,6 @@ describe("CotizacionesBoard", () => {
         queue={queue({ driveItems: [driveItem] })}
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
-        onRequestAdjustments={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
@@ -140,7 +164,6 @@ describe("CotizacionesBoard", () => {
         queue={queue({ items: [item] })}
         onOpenQuote={onOpenQuote}
         onAdoptDriveFolder={vi.fn()}
-        onRequestAdjustments={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
@@ -157,7 +180,6 @@ describe("CotizacionesBoard", () => {
         queue={queue({ driveItems: [driveItem] })}
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={onAdoptDriveFolder}
-        onRequestAdjustments={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
@@ -173,7 +195,6 @@ describe("CotizacionesBoard", () => {
         queue={queue({ driveItems: [driveItem] })}
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
-        onRequestAdjustments={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
@@ -181,32 +202,6 @@ describe("CotizacionesBoard", () => {
     const intakeColumn = screen.getByTestId("cotizaciones-column-drop-drive_intake");
     const card = intakeColumn.querySelector("article");
     expect(card).not.toHaveAttribute("draggable", "true");
-  });
-
-  it("dropping preparation -> review dispatches submit_for_review directly", () => {
-    const item = globalQuoteItemFixture({
-      quote: { ...globalQuoteItemFixture().quote, board_stage: "preparation" },
-    });
-    const dispatchWorkflowCommand = vi.fn();
-    const onRequestAdjustments = vi.fn();
-    const onRequestConfirmSend = vi.fn();
-    render(
-      <CotizacionesBoard
-        queue={queue({ items: [item], dispatchWorkflowCommand })}
-        onOpenQuote={vi.fn()}
-        onAdoptDriveFolder={vi.fn()}
-        onRequestAdjustments={onRequestAdjustments}
-        onRequestConfirmSend={onRequestConfirmSend}
-      />,
-    );
-
-    fireEvent.drop(screen.getByTestId("cotizaciones-column-drop-review"), {
-      dataTransfer: dataTransferFor(item.quote.quote_id),
-    });
-
-    expect(dispatchWorkflowCommand).toHaveBeenCalledWith(item, "submit_for_review");
-    expect(onRequestAdjustments).not.toHaveBeenCalled();
-    expect(onRequestConfirmSend).not.toHaveBeenCalled();
   });
 
   it("dropping review -> approved_to_send dispatches approve directly", () => {
@@ -219,7 +214,6 @@ describe("CotizacionesBoard", () => {
         queue={queue({ items: [item], dispatchWorkflowCommand })}
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
-        onRequestAdjustments={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
@@ -231,28 +225,28 @@ describe("CotizacionesBoard", () => {
     expect(dispatchWorkflowCommand).toHaveBeenCalledWith(item, "approve");
   });
 
-  it("dropping review -> preparation opens the adjustments confirmation instead of dispatching", () => {
+  it("dropping a card onto its own review column is a no-op (submit_for_review/request_adjustments are never drag-triggerable)", () => {
     const item = globalQuoteItemFixture({
       quote: { ...globalQuoteItemFixture().quote, board_stage: "review" },
     });
     const dispatchWorkflowCommand = vi.fn();
-    const onRequestAdjustments = vi.fn();
+    const onRequestConfirmSend = vi.fn();
     render(
       <CotizacionesBoard
         queue={queue({ items: [item], dispatchWorkflowCommand })}
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
-        onRequestAdjustments={onRequestAdjustments}
-        onRequestConfirmSend={vi.fn()}
+        onRequestConfirmSend={onRequestConfirmSend}
       />,
     );
 
-    fireEvent.drop(screen.getByTestId("cotizaciones-column-drop-preparation"), {
+    fireEvent.drop(screen.getByTestId("cotizaciones-column-drop-review"), {
       dataTransfer: dataTransferFor(item.quote.quote_id),
     });
 
-    expect(onRequestAdjustments).toHaveBeenCalledWith(item);
     expect(dispatchWorkflowCommand).not.toHaveBeenCalled();
+    expect(onRequestConfirmSend).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("ya está en esta etapa");
   });
 
   it("dropping approved_to_send -> sent_follow_up opens the send confirmation instead of dispatching", () => {
@@ -266,7 +260,6 @@ describe("CotizacionesBoard", () => {
         queue={queue({ items: [item], dispatchWorkflowCommand })}
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
-        onRequestAdjustments={vi.fn()}
         onRequestConfirmSend={onRequestConfirmSend}
       />,
     );
@@ -281,7 +274,7 @@ describe("CotizacionesBoard", () => {
 
   it("refuses a skip-stage drop and never dispatches", () => {
     const item = globalQuoteItemFixture({
-      quote: { ...globalQuoteItemFixture().quote, board_stage: "preparation" },
+      quote: { ...globalQuoteItemFixture().quote, board_stage: "review" },
     });
     const dispatchWorkflowCommand = vi.fn();
     render(
@@ -289,12 +282,11 @@ describe("CotizacionesBoard", () => {
         queue={queue({ items: [item], dispatchWorkflowCommand })}
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
-        onRequestAdjustments={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
 
-    fireEvent.drop(screen.getByTestId("cotizaciones-column-drop-approved_to_send"), {
+    fireEvent.drop(screen.getByTestId("cotizaciones-column-drop-sent_follow_up"), {
       dataTransfer: dataTransferFor(item.quote.quote_id),
     });
 
@@ -304,7 +296,7 @@ describe("CotizacionesBoard", () => {
 
   it("refuses dropping a durable card into the Drive intake lane", () => {
     const item = globalQuoteItemFixture({
-      quote: { ...globalQuoteItemFixture().quote, board_stage: "preparation" },
+      quote: { ...globalQuoteItemFixture().quote, board_stage: "review" },
     });
     const dispatchWorkflowCommand = vi.fn();
     render(
@@ -312,7 +304,6 @@ describe("CotizacionesBoard", () => {
         queue={queue({ items: [item], dispatchWorkflowCommand })}
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
-        onRequestAdjustments={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
@@ -326,7 +317,7 @@ describe("CotizacionesBoard", () => {
 
   it("ignores any drop while a workflow command is already pending", () => {
     const item = globalQuoteItemFixture({
-      quote: { ...globalQuoteItemFixture().quote, board_stage: "preparation" },
+      quote: { ...globalQuoteItemFixture().quote, board_stage: "review" },
     });
     const dispatchWorkflowCommand = vi.fn();
     render(
@@ -334,12 +325,11 @@ describe("CotizacionesBoard", () => {
         queue={queue({ items: [item], dispatchWorkflowCommand, pendingQuoteId: item.quote.quote_id })}
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
-        onRequestAdjustments={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
 
-    fireEvent.drop(screen.getByTestId("cotizaciones-column-drop-review"), {
+    fireEvent.drop(screen.getByTestId("cotizaciones-column-drop-approved_to_send"), {
       dataTransfer: dataTransferFor(item.quote.quote_id),
     });
 
@@ -353,7 +343,6 @@ describe("CotizacionesBoard", () => {
         queue={queue({ actionError: "Esta cotización cambió en otra sesión.", dismissActionError })}
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
-        onRequestAdjustments={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );

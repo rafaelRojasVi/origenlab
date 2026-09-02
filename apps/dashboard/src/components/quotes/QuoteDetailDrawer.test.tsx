@@ -155,7 +155,7 @@ describe("QuoteDetailDrawer workflow state (CRM-Q2)", () => {
     render(<QuoteDetailDrawer item={fixture} open {...drawerProps()} />);
     await waitFor(() => screen.getByText("01183-26"));
 
-    expect(screen.getByText(/En revisión/)).toBeInTheDocument();
+    expect(screen.getByText(/Lista para aprobación/)).toBeInTheDocument();
   });
 
   it("fetches and shows the event history", async () => {
@@ -182,15 +182,15 @@ describe("QuoteDetailDrawer workflow state (CRM-Q2)", () => {
 
   it("shows the legal next action for the current stage and dispatches it directly", async () => {
     const fixture = globalQuoteItemFixture({
-      quote: { ...globalQuoteItemFixture().quote, revision_status: "draft", board_stage: "preparation" },
+      quote: { ...globalQuoteItemFixture().quote, revision_status: "draft", board_stage: "review" },
     });
     vi.mocked(client.fetchCustomerQuote).mockResolvedValue({ item: fixture.quote });
     const onDispatchWorkflowCommand = vi.fn().mockResolvedValue(undefined);
 
     render(<QuoteDetailDrawer item={fixture} open {...drawerProps({ onDispatchWorkflowCommand })} />);
-    await waitFor(() => screen.getByRole("button", { name: "Enviar a revisión" }));
+    await waitFor(() => screen.getByRole("button", { name: "Enviar a aprobación" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Enviar a revisión" }));
+    fireEvent.click(screen.getByRole("button", { name: "Enviar a aprobación" }));
 
     expect(onDispatchWorkflowCommand).toHaveBeenCalledWith(
       expect.objectContaining({ quote: expect.objectContaining({ quote_id: fixture.quote.quote_id }) }),

@@ -4,22 +4,34 @@ import { describe, expect, it, vi } from "vitest";
 import { QuoteWorkflowActions } from "./QuoteWorkflowActions";
 
 describe("QuoteWorkflowActions", () => {
-  it("renders one button for preparation: Enviar a revisión", () => {
+  it("renders one button for draft: Enviar a aprobación", () => {
     render(
       <QuoteWorkflowActions
-        boardStage="preparation"
+        revisionStatus="draft"
         disabled={false}
         onDispatch={vi.fn()}
         onRequestConfirmation={vi.fn()}
       />,
     );
-    expect(screen.getByRole("button", { name: "Enviar a revisión" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Enviar a aprobación" })).toBeInTheDocument();
   });
 
-  it("renders two buttons for review: Aprobar and Solicitar ajustes", () => {
+  it("renders one button for adjustments_requested: Enviar a aprobación", () => {
     render(
       <QuoteWorkflowActions
-        boardStage="review"
+        revisionStatus="adjustments_requested"
+        disabled={false}
+        onDispatch={vi.fn()}
+        onRequestConfirmation={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Enviar a aprobación" })).toBeInTheDocument();
+  });
+
+  it("renders two buttons for pending_approval: Aprobar and Solicitar ajustes", () => {
+    render(
+      <QuoteWorkflowActions
+        revisionStatus="pending_approval"
         disabled={false}
         onDispatch={vi.fn()}
         onRequestConfirmation={vi.fn()}
@@ -29,10 +41,22 @@ describe("QuoteWorkflowActions", () => {
     expect(screen.getByRole("button", { name: "Solicitar ajustes" })).toBeInTheDocument();
   });
 
-  it("renders no actions for sent_follow_up (terminal)", () => {
+  it("renders one button for approved: Confirmar envío", () => {
+    render(
+      <QuoteWorkflowActions
+        revisionStatus="approved"
+        disabled={false}
+        onDispatch={vi.fn()}
+        onRequestConfirmation={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Confirmar envío" })).toBeInTheDocument();
+  });
+
+  it("renders no actions for sent (terminal for these four commands)", () => {
     const { container } = render(
       <QuoteWorkflowActions
-        boardStage="sent_follow_up"
+        revisionStatus="sent"
         disabled={false}
         onDispatch={vi.fn()}
         onRequestConfirmation={vi.fn()}
@@ -45,13 +69,13 @@ describe("QuoteWorkflowActions", () => {
     const onDispatch = vi.fn();
     render(
       <QuoteWorkflowActions
-        boardStage="preparation"
+        revisionStatus="draft"
         disabled={false}
         onDispatch={onDispatch}
         onRequestConfirmation={vi.fn()}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Enviar a revisión" }));
+    fireEvent.click(screen.getByRole("button", { name: "Enviar a aprobación" }));
     expect(onDispatch).toHaveBeenCalledWith("submit_for_review");
   });
 
@@ -60,7 +84,7 @@ describe("QuoteWorkflowActions", () => {
     const onRequestConfirmation = vi.fn();
     render(
       <QuoteWorkflowActions
-        boardStage="review"
+        revisionStatus="pending_approval"
         disabled={false}
         onDispatch={onDispatch}
         onRequestConfirmation={onRequestConfirmation}
@@ -71,11 +95,11 @@ describe("QuoteWorkflowActions", () => {
     expect(onDispatch).not.toHaveBeenCalled();
   });
 
-  it("clicking approved_to_send's confirm_send action calls onRequestConfirmation", () => {
+  it("clicking approved's confirm_send action calls onRequestConfirmation", () => {
     const onRequestConfirmation = vi.fn();
     render(
       <QuoteWorkflowActions
-        boardStage="approved_to_send"
+        revisionStatus="approved"
         disabled={false}
         onDispatch={vi.fn()}
         onRequestConfirmation={onRequestConfirmation}
@@ -88,7 +112,7 @@ describe("QuoteWorkflowActions", () => {
   it("disables every action button when disabled is true", () => {
     render(
       <QuoteWorkflowActions
-        boardStage="review"
+        revisionStatus="pending_approval"
         disabled={true}
         onDispatch={vi.fn()}
         onRequestConfirmation={vi.fn()}

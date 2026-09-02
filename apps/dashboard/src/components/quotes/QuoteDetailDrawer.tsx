@@ -17,7 +17,7 @@ const RETRY_CONFLICT_MESSAGE =
 
 const REVISION_STATUS_LABELS: Record<RevisionStatus, string> = {
   draft: "Borrador",
-  pending_approval: "En revisión",
+  pending_approval: "Lista para aprobación",
   adjustments_requested: "Ajustes solicitados",
   approved: "Aprobada",
   sent: "Enviada",
@@ -238,7 +238,7 @@ export function QuoteDetailDrawer({
               <DetailRow label="Actualizada">{formatCommercialOpportunityDate(quote.revision_updated_at)}</DetailRow>
             </dl>
             <QuoteWorkflowActions
-              boardStage={quote.board_stage}
+              revisionStatus={quote.revision_status}
               disabled={dispatchPending}
               onDispatch={(command) => void onDispatchWorkflowCommand({ ...item, quote }, command)}
               onRequestConfirmation={(command) =>

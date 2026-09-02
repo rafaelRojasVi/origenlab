@@ -22,9 +22,10 @@ export type RevisionStatus =
 
 /** The Cotizaciones Kanban lane a durable quote is in, derived server-side
  * from its current revision's status — never a stored field, never
- * computed client-side. */
+ * computed client-side. Preparación was removed as a separate lane
+ * (CRM-Q2B): draft/adjustments_requested/pending_approval all derive
+ * "review" — sub-state is shown via revision_status alone. */
 export type BoardStage =
-  | "preparation"
   | "review"
   | "approved_to_send"
   | "sent_follow_up";

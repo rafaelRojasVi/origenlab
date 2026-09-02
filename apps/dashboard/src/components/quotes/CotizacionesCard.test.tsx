@@ -42,7 +42,7 @@ function quote(overrides: Partial<CustomerQuote> = {}): CustomerQuote {
     revision_status: "draft",
     revision_updated_by: "tatiana@origenlab.cl",
     revision_updated_at: "2026-09-02T12:00:00+00:00",
-    board_stage: "preparation",
+    board_stage: "review",
     created_by: "tatiana@origenlab.cl",
     updated_by: "tatiana@origenlab.cl",
     created_at: "2026-09-02T12:00:00+00:00",

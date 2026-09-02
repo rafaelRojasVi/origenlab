@@ -7,7 +7,6 @@ import type { useCustomerQuotesGlobal } from "./useCustomerQuotesGlobal";
 
 const SECTION_ORDER: readonly CotizacionesLane[] = [
   "drive_intake",
-  "preparation",
   "review",
   "approved_to_send",
   "sent_follow_up",
@@ -15,7 +14,6 @@ const SECTION_ORDER: readonly CotizacionesLane[] = [
 
 const SECTION_LABELS: Record<CotizacionesLane, string> = {
   drive_intake: "Pendientes Drive",
-  preparation: "Preparación",
   review: "Revisión",
   approved_to_send: "Aprobada / por enviar",
   sent_follow_up: "Enviada / seguimiento",
@@ -42,7 +40,6 @@ export function CotizacionesMobileList({
 }) {
   const grouped: Record<CotizacionesLane, CustomerQuoteGlobalItem[]> = {
     drive_intake: [],
-    preparation: [],
     review: [],
     approved_to_send: [],
     sent_follow_up: [],
@@ -103,7 +100,7 @@ export function CotizacionesMobileList({
                           dragDisabled
                           actions={
                             <QuoteWorkflowActions
-                              boardStage={item.quote.board_stage}
+                              revisionStatus={item.quote.revision_status}
                               disabled={queue.pendingQuoteId !== null}
                               onDispatch={(command) => void queue.dispatchWorkflowCommand(item, command)}
                               onRequestConfirmation={(command) =>

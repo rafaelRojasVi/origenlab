@@ -44,7 +44,7 @@ describe("CotizacionesMobileList", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Pendientes Drive" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Preparación" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Preparación" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Revisión" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Aprobada / por enviar" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Enviada / seguimiento" })).toBeInTheDocument();
@@ -120,7 +120,7 @@ describe("CotizacionesMobileList", () => {
 
   it("clicking a non-confirmation stage action dispatches directly", () => {
     const item = globalQuoteItemFixture({
-      quote: { ...globalQuoteItemFixture().quote, board_stage: "preparation" },
+      quote: { ...globalQuoteItemFixture().quote, revision_status: "draft", board_stage: "review" },
     });
     const dispatchWorkflowCommand = vi.fn();
     render(
@@ -133,13 +133,13 @@ describe("CotizacionesMobileList", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Enviar a revisión" }));
+    fireEvent.click(screen.getByRole("button", { name: "Enviar a aprobación" }));
     expect(dispatchWorkflowCommand).toHaveBeenCalledWith(item, "submit_for_review");
   });
 
   it("clicking request_adjustments opens the confirmation callback instead of dispatching", () => {
     const item = globalQuoteItemFixture({
-      quote: { ...globalQuoteItemFixture().quote, board_stage: "review" },
+      quote: { ...globalQuoteItemFixture().quote, revision_status: "pending_approval", board_stage: "review" },
     });
     const dispatchWorkflowCommand = vi.fn();
     const onRequestAdjustments = vi.fn();
@@ -160,7 +160,7 @@ describe("CotizacionesMobileList", () => {
 
   it("clicking confirm_send opens the confirmation callback instead of dispatching", () => {
     const item = globalQuoteItemFixture({
-      quote: { ...globalQuoteItemFixture().quote, board_stage: "approved_to_send" },
+      quote: { ...globalQuoteItemFixture().quote, revision_status: "approved", board_stage: "approved_to_send" },
     });
     const dispatchWorkflowCommand = vi.fn();
     const onRequestConfirmSend = vi.fn();
@@ -181,7 +181,7 @@ describe("CotizacionesMobileList", () => {
 
   it("sent_follow_up cards show no stage-action buttons (terminal)", () => {
     const item = globalQuoteItemFixture({
-      quote: { ...globalQuoteItemFixture().quote, board_stage: "sent_follow_up" },
+      quote: { ...globalQuoteItemFixture().quote, revision_status: "sent", board_stage: "sent_follow_up" },
     });
     render(
       <CotizacionesMobileList
