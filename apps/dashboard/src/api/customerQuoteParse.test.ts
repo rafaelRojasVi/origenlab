@@ -33,6 +33,8 @@ function rawQuote(overrides: Record<string, unknown> = {}) {
     quote_id: QUOTE_ID,
     sales_opportunity_id: SALES_ID,
     quote_number: "CN011729",
+    document_number: "CN00011729",
+    sales_opportunity_title: "Centrífuga CEAF",
     status: "draft",
     version: 1,
     latest_revision_number: 1,
@@ -50,6 +52,8 @@ describe("parseCustomerQuote", () => {
     const quote = parseCustomerQuote(rawQuote());
 
     expect(quote.quote_number).toBe("CN011729");
+    expect(quote.document_number).toBe("CN00011729");
+    expect(quote.sales_opportunity_title).toBe("Centrífuga CEAF");
     expect(quote.status).toBe("draft");
     expect(quote.latest_revision_number).toBe(1);
     expect(quote.drive_workspace.provisioning_status).toBe("ready");

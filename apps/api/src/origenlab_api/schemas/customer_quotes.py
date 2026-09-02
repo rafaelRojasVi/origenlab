@@ -74,6 +74,8 @@ class CustomerQuoteResponse(BaseModel):
     quote_id: str
     sales_opportunity_id: str
     quote_number: str
+    document_number: str
+    sales_opportunity_title: str
     status: QuoteStatus
 
     version: int
@@ -111,6 +113,8 @@ class CustomerQuoteResponse(BaseModel):
             quote_id=bundle.quote.quote_id,
             sales_opportunity_id=bundle.quote.sales_opportunity_id,
             quote_number=bundle.quote.quote_number,
+            document_number=bundle.quote.document_number,
+            sales_opportunity_title=bundle.sales_opportunity_title,
             status=bundle.quote.status,  # type: ignore[arg-type]
             version=bundle.quote.version,
             latest_revision_number=bundle.revision.revision_number,

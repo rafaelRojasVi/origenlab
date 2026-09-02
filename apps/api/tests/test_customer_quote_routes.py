@@ -187,6 +187,8 @@ def test_create_quote_returns_created_quote_with_workspace() -> None:
 
     assert body["quote_id"] == QUOTE_ID
     assert body["quote_number"] == "01183-26"
+    assert body["document_number"] == "CN01183"
+    assert body["sales_opportunity_title"] == "Centrífuga CEAF"
     assert body["status"] == "draft"
     assert body["latest_revision_number"] == 1
     assert body["drive_workspace"]["provisioning_status"] == "ready"

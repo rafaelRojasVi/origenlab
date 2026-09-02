@@ -37,6 +37,8 @@ export interface CustomerQuote {
   quote_id: string;
   sales_opportunity_id: string;
   quote_number: string;
+  document_number: string;
+  sales_opportunity_title: string;
   status: CustomerQuoteStatus;
   version: number;
   latest_revision_number: number;

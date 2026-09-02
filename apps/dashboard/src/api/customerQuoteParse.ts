@@ -201,6 +201,11 @@ export function parseCustomerQuote(raw: unknown): CustomerQuote {
     quote_id: quoteId,
     sales_opportunity_id: salesOpportunityId,
     quote_number: stringValue(data.quote_number, "quote_number"),
+    document_number: stringValue(data.document_number, "document_number"),
+    sales_opportunity_title: stringValue(
+      data.sales_opportunity_title,
+      "sales_opportunity_title",
+    ),
     status: status as CustomerQuoteStatus,
     version: integerAtLeast(data.version, 1, "version"),
     latest_revision_number: integerAtLeast(
