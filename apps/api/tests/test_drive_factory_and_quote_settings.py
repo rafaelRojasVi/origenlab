@@ -63,6 +63,101 @@ def test_factory_fails_closed_when_pending_folder_not_configured() -> None:
     assert excinfo.value.category == "drive_not_configured"
 
 
+def test_factory_does_not_require_template_when_provisioning_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    credential_file = tmp_path / "authorized_user.json"
+    credential_file.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        factory_module,
+        "_build_authorized_user_token_supplier",
+        lambda path: (lambda: "fake-token"),
+    )
+
+    provider = build_drive_workspace_provider(
+        _settings(
+            drive_quotes_root_folder_id="root-1",
+            drive_quotes_pending_folder_id="pending-1",
+            drive_auth_mode="authorized_user_my_drive",
+            drive_credentials_file=credential_file,
+            # drive_quote_template_file_id deliberately unset.
+            # drive_quote_template_provisioning_enabled defaults to False.
+        )
+    )
+
+    assert isinstance(provider, GoogleDriveQuoteWorkspaceProvider)
+    assert provider.template_file_id is None
+
+
+def test_factory_ignores_configured_template_when_provisioning_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # A leftover/misconfigured template ID must never be silently used while
+    # the activation gate is off.
+    credential_file = tmp_path / "authorized_user.json"
+    credential_file.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        factory_module,
+        "_build_authorized_user_token_supplier",
+        lambda path: (lambda: "fake-token"),
+    )
+
+    provider = build_drive_workspace_provider(
+        _settings(
+            drive_quotes_root_folder_id="root-1",
+            drive_quotes_pending_folder_id="pending-1",
+            drive_quote_template_file_id="stale-template-id",
+            drive_auth_mode="authorized_user_my_drive",
+            drive_credentials_file=credential_file,
+            drive_quote_template_provisioning_enabled=False,
+        )
+    )
+
+    assert provider.template_file_id is None
+
+
+def test_factory_requires_template_when_provisioning_enabled() -> None:
+    with pytest.raises(DriveProvisioningError) as excinfo:
+        build_drive_workspace_provider(
+            _settings(
+                drive_quotes_root_folder_id="root-1",
+                drive_quotes_pending_folder_id="pending-1",
+                drive_quote_template_provisioning_enabled=True,
+                # drive_quote_template_file_id deliberately unset.
+            )
+        )
+
+    assert excinfo.value.category == "drive_not_configured"
+
+
+def test_factory_uses_configured_template_when_provisioning_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    credential_file = tmp_path / "authorized_user.json"
+    credential_file.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        factory_module,
+        "_build_authorized_user_token_supplier",
+        lambda path: (lambda: "fake-token"),
+    )
+
+    provider = build_drive_workspace_provider(
+        _settings(
+            drive_quotes_root_folder_id="root-1",
+            drive_quotes_pending_folder_id="pending-1",
+            drive_quote_template_file_id="template-1",
+            drive_quote_template_provisioning_enabled=True,
+            drive_auth_mode="authorized_user_my_drive",
+            drive_credentials_file=credential_file,
+        )
+    )
+
+    assert provider.template_file_id == "template-1"
+
+
 def test_factory_requires_explicit_auth_mode() -> None:
     with pytest.raises(DriveProvisioningError) as excinfo:
         build_drive_workspace_provider(

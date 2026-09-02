@@ -212,10 +212,26 @@ def build_drive_workspace_provider(
 ) -> GoogleDriveQuoteWorkspaceProvider:
     root_folder_id = (settings.drive_quotes_root_folder_id or "").strip()
     pending_folder_id = (settings.drive_quotes_pending_folder_id or "").strip()
-    template_file_id = (settings.drive_quote_template_file_id or "").strip()
 
-    if not root_folder_id or not pending_folder_id or not template_file_id:
+    if not root_folder_id or not pending_folder_id:
         raise DriveProvisioningError("drive_not_configured")
+
+    template_provisioning_enabled = (
+        settings.drive_quote_template_provisioning_enabled
+    )
+    configured_template_file_id = (
+        settings.drive_quote_template_file_id or ""
+    ).strip() or None
+
+    if template_provisioning_enabled and not configured_template_file_id:
+        raise DriveProvisioningError("drive_not_configured")
+
+    # Template-document provisioning is an explicit, separately-activated
+    # step: a leftover/misconfigured template ID must never be used while
+    # the gate is off (ORIGENLAB_DRIVE_QUOTE_TEMPLATE_PROVISIONING_ENABLED).
+    template_file_id = (
+        configured_template_file_id if template_provisioning_enabled else None
+    )
 
     sent_folder_id = (settings.drive_quotes_sent_folder_id or "").strip() or None
 
