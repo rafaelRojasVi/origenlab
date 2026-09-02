@@ -117,6 +117,7 @@ vi.mock("../api/commercialOperationsClient", async (importOriginal) => {
     ...actual,
     fetchCommercialWorkQueue: vi.fn(),
     fetchSalesOpportunities: vi.fn(),
+    createManualSalesOpportunity: vi.fn(),
   };
 });
 
@@ -172,7 +173,11 @@ vi.mock("../api/institutionIntel/adapter", () => ({
 
 import { fetchTodayPanel, fetchWarmCases } from "../api/operatorClient";
 import { fetchCommercialDealsMirror } from "../api/mirrorCommercialClient";
-import { fetchCommercialWorkQueue, fetchSalesOpportunities } from "../api/commercialOperationsClient";
+import {
+  fetchCommercialWorkQueue,
+  fetchSalesOpportunities,
+  createManualSalesOpportunity,
+} from "../api/commercialOperationsClient";
 import { fetchCustomerQuotesGlobal } from "../api/customerQuoteClient";
 import { fetchCatalogProductsMirror } from "../api/mirrorCatalogClient";
 import {
@@ -448,6 +453,23 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
 
     await waitFor(() => {
       expect(fetchTodayPanel).toHaveBeenCalled();
+    });
+  });
+
+  it("end to end: landing on Cotizaciones, opening a quote, and Nueva Cotización's dialog never allocates on open", async () => {
+    render(<DashboardApp />);
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
+
+    expect(screen.getByRole("heading", { level: 1, name: "Cotizaciones" })).toBeTruthy();
+    await waitFor(() => screen.getByText("Aún no hay cotizaciones"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Nueva Cotización" }));
+    await waitFor(() => screen.getByRole("dialog"));
+    expect(createManualSalesOpportunity).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => {
+      expect(screen.queryByTestId("nueva-cotizacion-dialog")).toBeNull();
     });
   });
 });
