@@ -7,20 +7,43 @@
  */
 
 import type {
+  BoardStage,
   CustomerQuote,
   CustomerQuoteDrivePendingListResponse,
   CustomerQuoteDriveWorkspace,
+  CustomerQuoteEvent,
+  CustomerQuoteEventListResponse,
   CustomerQuoteGlobalItem,
   CustomerQuoteGlobalListResponse,
   CustomerQuoteListResponse,
   CustomerQuoteReadResponse,
   CustomerQuoteStatus,
   DrivePendingQuoteItem,
+  QuoteOrigin,
   QuoteProvisioningStatus,
+  RevisionStatus,
 } from "./customerQuoteTypes";
 
 const QUOTE_ID_RE = /^quote_[0-9a-f]{32}$/;
 const SALES_OPPORTUNITY_ID_RE = /^sales_[0-9a-f]{32}$/;
+
+const QUOTE_ORIGINS: ReadonlySet<string> = new Set(["generated", "adopted"]);
+
+const REVISION_STATUSES: ReadonlySet<string> = new Set([
+  "draft",
+  "pending_approval",
+  "adjustments_requested",
+  "approved",
+  "sent",
+  "superseded",
+]);
+
+const BOARD_STAGES: ReadonlySet<string> = new Set([
+  "preparation",
+  "review",
+  "approved_to_send",
+  "sent_follow_up",
+]);
 
 const SALES_OPPORTUNITY_STAGES: ReadonlySet<string> = new Set([
   "new",
@@ -41,6 +64,7 @@ const ALLOWED_DRIVE_HOSTS = new Set([
 const PROVISIONING_STATUSES: ReadonlySet<string> = new Set([
   "pending",
   "ready",
+  "folder_ready",
   "failed",
 ]);
 
@@ -199,11 +223,30 @@ export function parseCustomerQuote(raw: unknown): CustomerQuote {
     throw new Error(`Unknown customer quote status: ${status}`);
   }
 
+  const quoteOrigin = stringValue(data.quote_origin, "quote_origin");
+
+  if (!QUOTE_ORIGINS.has(quoteOrigin)) {
+    throw new Error(`Unknown quote_origin: ${quoteOrigin}`);
+  }
+
+  const revisionStatus = stringValue(data.revision_status, "revision_status");
+
+  if (!REVISION_STATUSES.has(revisionStatus)) {
+    throw new Error(`Unknown revision_status: ${revisionStatus}`);
+  }
+
+  const boardStage = stringValue(data.board_stage, "board_stage");
+
+  if (!BOARD_STAGES.has(boardStage)) {
+    throw new Error(`Unknown board_stage: ${boardStage}`);
+  }
+
   return {
     quote_id: quoteId,
     sales_opportunity_id: salesOpportunityId,
     quote_number: stringValue(data.quote_number, "quote_number"),
     document_number: stringValue(data.document_number, "document_number"),
+    quote_origin: quoteOrigin as QuoteOrigin,
     sales_opportunity_title: stringValue(
       data.sales_opportunity_title,
       "sales_opportunity_title",
@@ -215,6 +258,16 @@ export function parseCustomerQuote(raw: unknown): CustomerQuote {
       1,
       "latest_revision_number",
     ),
+    revision_status: revisionStatus as RevisionStatus,
+    revision_updated_by: stringValue(
+      data.revision_updated_by,
+      "revision_updated_by",
+    ),
+    revision_updated_at: stringValue(
+      data.revision_updated_at,
+      "revision_updated_at",
+    ),
+    board_stage: boardStage as BoardStage,
     created_by: stringValue(data.created_by, "created_by"),
     updated_by: stringValue(data.updated_by, "updated_by"),
     created_at: stringValue(data.created_at, "created_at"),
@@ -325,6 +378,44 @@ function parseDrivePendingQuoteItem(raw: unknown): DrivePendingQuoteItem {
     ),
     created_time: nullableString(data.created_time, "created_time"),
     modified_time: nullableString(data.modified_time, "modified_time"),
+  };
+}
+
+function parseCustomerQuoteEvent(raw: unknown): CustomerQuoteEvent {
+  const data = record(raw, "customer quote event");
+
+  if (
+    !data.payload ||
+    typeof data.payload !== "object" ||
+    Array.isArray(data.payload)
+  ) {
+    throw new Error("payload must be an object");
+  }
+
+  return {
+    event_id: stringValue(data.event_id, "event_id"),
+    event_type: stringValue(data.event_type, "event_type"),
+    actor_key: stringValue(data.actor_key, "actor_key"),
+    payload: data.payload as Record<string, unknown>,
+    created_at: stringValue(data.created_at, "created_at"),
+  };
+}
+
+export function parseCustomerQuoteEventListResponse(
+  raw: unknown,
+): CustomerQuoteEventListResponse {
+  const data = record(raw, "customer quote event list response");
+  const meta = record(data.meta, "meta");
+
+  if (!Array.isArray(data.items)) {
+    throw new Error("items must be an array");
+  }
+
+  return {
+    meta: {
+      count: integerAtLeast(meta.count, 0, "meta.count"),
+    },
+    items: data.items.map(parseCustomerQuoteEvent),
   };
 }
 

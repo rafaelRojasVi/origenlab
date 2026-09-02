@@ -12,17 +12,21 @@ import { OperatorApiError, operatorApiUrl } from "./operatorClient";
 import {
   parseCustomerQuote,
   parseCustomerQuoteDrivePendingListResponse,
+  parseCustomerQuoteEventListResponse,
   parseCustomerQuoteGlobalListResponse,
   parseCustomerQuoteListResponse,
   parseCustomerQuoteReadResponse,
 } from "./customerQuoteParse";
 
 import type {
+  AdoptCustomerQuoteDriveFolderCommand,
   CustomerQuote,
   CustomerQuoteDrivePendingListResponse,
+  CustomerQuoteEventListResponse,
   CustomerQuoteGlobalListResponse,
   CustomerQuoteListResponse,
   CustomerQuoteReadResponse,
+  CustomerQuoteRevisionTransitionCommand,
   RetryCustomerQuoteDriveWorkspaceCommand,
 } from "./customerQuoteTypes";
 
@@ -212,6 +216,135 @@ export function retryCustomerQuoteDriveWorkspace(
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
+      },
+      body: JSON.stringify(command),
+    },
+  ).then(parseCustomerQuote);
+}
+
+
+export function customerQuoteSubmitForReviewPath(quoteId: string): string {
+  return `${customerQuotePath(quoteId)}/submit-for-review`;
+}
+
+
+export function customerQuoteRequestAdjustmentsPath(quoteId: string): string {
+  return `${customerQuotePath(quoteId)}/request-adjustments`;
+}
+
+
+export function customerQuoteApprovePath(quoteId: string): string {
+  return `${customerQuotePath(quoteId)}/approve`;
+}
+
+
+export function customerQuoteConfirmSendPath(quoteId: string): string {
+  return `${customerQuotePath(quoteId)}/confirm-send`;
+}
+
+
+export function customerQuoteEventsPath(quoteId: string): string {
+  return `${customerQuotePath(quoteId)}/events`;
+}
+
+
+export function salesOpportunityAdoptDriveFolderPath(
+  salesOpportunityId: string,
+): string {
+  return `${salesOpportunityQuotesPath(salesOpportunityId)}/adopt-drive-folder`;
+}
+
+
+function transitionCustomerQuote(
+  path: string,
+  command: CustomerQuoteRevisionTransitionCommand,
+): Promise<CustomerQuote> {
+  return fetchJson<unknown>(operatorApiUrl(path), {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(command),
+  }).then(parseCustomerQuote);
+}
+
+
+export function submitCustomerQuoteForReview(
+  quoteId: string,
+  command: CustomerQuoteRevisionTransitionCommand,
+): Promise<CustomerQuote> {
+  return transitionCustomerQuote(
+    customerQuoteSubmitForReviewPath(quoteId),
+    command,
+  );
+}
+
+
+export function requestCustomerQuoteAdjustments(
+  quoteId: string,
+  command: CustomerQuoteRevisionTransitionCommand,
+): Promise<CustomerQuote> {
+  return transitionCustomerQuote(
+    customerQuoteRequestAdjustmentsPath(quoteId),
+    command,
+  );
+}
+
+
+export function approveCustomerQuote(
+  quoteId: string,
+  command: CustomerQuoteRevisionTransitionCommand,
+): Promise<CustomerQuote> {
+  return transitionCustomerQuote(customerQuoteApprovePath(quoteId), command);
+}
+
+
+export function confirmCustomerQuoteSend(
+  quoteId: string,
+  command: CustomerQuoteRevisionTransitionCommand,
+): Promise<CustomerQuote> {
+  return transitionCustomerQuote(
+    customerQuoteConfirmSendPath(quoteId),
+    command,
+  );
+}
+
+
+export function fetchCustomerQuoteEvents(
+  quoteId: string,
+): Promise<CustomerQuoteEventListResponse> {
+  return fetchJson<unknown>(operatorApiUrl(customerQuoteEventsPath(quoteId)), {
+    method: "GET",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+    },
+  }).then(parseCustomerQuoteEventListResponse);
+}
+
+
+/**
+ * "Incorporar al CRM": attach an existing Drive-only folder to a new
+ * durable quote. Every field is an operator-confirmed input the caller
+ * already has (from the drive-pending listing + the adoption form) --
+ * never derived here, never a second Drive round-trip.
+ */
+export function adoptCustomerQuoteDriveFolder(
+  salesOpportunityId: string,
+  command: AdoptCustomerQuoteDriveFolderCommand,
+  idempotencyKey: string,
+): Promise<CustomerQuote> {
+  return fetchJson<unknown>(
+    operatorApiUrl(salesOpportunityAdoptDriveFolderPath(salesOpportunityId)),
+    {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "Idempotency-Key": requireIdempotencyKey(idempotencyKey),
       },
       body: JSON.stringify(command),
     },

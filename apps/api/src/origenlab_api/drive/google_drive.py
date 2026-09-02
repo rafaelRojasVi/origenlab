@@ -143,7 +143,7 @@ class GoogleDriveQuoteWorkspaceProvider:
         transport: DriveTransport,
         root_folder_id: str,
         pending_folder_id: str,
-        template_file_id: str,
+        template_file_id: str | None = None,
         sent_folder_id: str | None = None,
         shared_drive_id: str | None = None,
     ) -> None:
@@ -169,6 +169,10 @@ class GoogleDriveQuoteWorkspaceProvider:
     @property
     def sent_folder_id(self) -> str | None:
         return self._sent_folder_id
+
+    @property
+    def template_file_id(self) -> str | None:
+        return self._template_file_id
 
     def _request(
         self,
@@ -398,6 +402,9 @@ class GoogleDriveQuoteWorkspaceProvider:
         metadata is present, else ``None``.
         """
 
+        if self._template_file_id is None:
+            raise DriveProvisioningError("drive_template_not_configured")
+
         body = self._request(
             "GET",
             f"{DRIVE_API_BASE_URL}/drive/v3/files/{self._template_file_id}",
@@ -519,6 +526,9 @@ class GoogleDriveQuoteWorkspaceProvider:
         folder_id: str,
         name: str,
     ) -> DriveFileRef:
+        if self._template_file_id is None:
+            raise DriveProvisioningError("drive_template_not_configured")
+
         body = self._request(
             "POST",
             (

@@ -70,6 +70,7 @@ def _quote_row(**overrides: Any) -> dict[str, Any]:
         "serial": 1183,
         "issue_year": 2026,
         "document_number": "CN01183",
+        "quote_origin": "generated",
         "status": "draft",
         "version": 1,
         "created_by": "tatiana@origenlab.cl",
@@ -95,6 +96,8 @@ def _revision_row(**overrides: Any) -> dict[str, Any]:
         "status": "draft",
         "created_by": "tatiana@origenlab.cl",
         "created_at": NOW,
+        "updated_by": "tatiana@origenlab.cl",
+        "updated_at": NOW,
     }
     row.update(overrides)
     return row
@@ -585,8 +588,9 @@ def test_complete_drive_provision_persists_references_and_event(
 
     update_sql, update_params = cursor.executed[0]
 
-    assert "provisioning_status = 'ready'" in update_sql
+    assert "provisioning_status = %(target_status)s" in update_sql
     assert "failure_category = NULL" in update_sql
+    assert update_params["target_status"] == "ready"
     assert update_params["folder_id"] == "folder-1"
     assert update_params["sheet_file_id"] == "sheet-1"
 
@@ -598,6 +602,65 @@ def test_complete_drive_provision_persists_references_and_event(
 
     assert payload["folder_id"] == "folder-1"
     assert payload["sheet_file_id"] == "sheet-1"
+
+
+def test_complete_drive_provision_with_no_sheet_marks_folder_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, cursor = _repository(
+        monkeypatch,
+        [
+            _workspace_row(
+                provisioning_status="folder_ready",
+                folder_id="folder-1",
+                folder_web_url="https://drive.google.com/drive/folders/folder-1",
+                sheet_file_id=None,
+                sheet_web_url=None,
+                completed_at=NOW,
+                version=3,
+            ),
+        ],
+    )
+
+    workspace = repo.complete_drive_provision(
+        quote_id=QUOTE_ID,
+        operator="tatiana@origenlab.cl",
+        attempt_version=2,
+        folder_id="folder-1",
+        folder_web_url="https://drive.google.com/drive/folders/folder-1",
+    )
+
+    assert workspace.provisioning_status == "folder_ready"
+
+    update_sql, update_params = cursor.executed[0]
+
+    assert "provisioning_status = %(target_status)s" in update_sql
+    assert update_params["target_status"] == "folder_ready"
+    assert update_params["sheet_file_id"] is None
+    assert update_params["sheet_web_url"] is None
+
+    _, event_params = cursor.executed[1]
+
+    assert event_params["event_type"] == "drive_workspace_folder_ready"
+
+
+def test_complete_drive_provision_rejects_mismatched_sheet_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, cursor = _repository(monkeypatch, [])
+
+    with pytest.raises(ValueError, match="sheet_file_id"):
+        repo.complete_drive_provision(
+            quote_id=QUOTE_ID,
+            operator="tatiana@origenlab.cl",
+            attempt_version=2,
+            folder_id="folder-1",
+            folder_web_url="https://drive.google.com/drive/folders/folder-1",
+            sheet_file_id="sheet-1",
+            sheet_web_url=None,
+        )
+
+    assert cursor.executed == []
 
 
 def test_complete_drive_provision_rejects_non_https_urls(

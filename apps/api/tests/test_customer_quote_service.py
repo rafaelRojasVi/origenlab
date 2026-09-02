@@ -54,6 +54,10 @@ def _settings(**overrides: object) -> Settings:
         "quote_serial_pad_width": 5,
         "quote_seed_next_serial": 1183,
         "drive_quote_template_file_id": "template-file-1",
+        # Most of this file's existing tests exercise the full
+        # folder+template round trip; the dedicated gate-off tests below
+        # override this back to False (the real production default).
+        "drive_quote_template_provisioning_enabled": True,
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)
@@ -67,6 +71,7 @@ def _quote(**overrides: Any) -> CustomerQuote:
         "serial": 1183,
         "issue_year": 2026,
         "document_number": "CN01183",
+        "quote_origin": "generated",
         "status": "draft",
         "version": 1,
         "created_by": OPERATOR,
@@ -86,6 +91,8 @@ def _revision() -> CustomerQuoteRevision:
         status="draft",
         created_by=OPERATOR,
         created_at=NOW,
+        updated_by=OPERATOR,
+        updated_at=NOW,
     )
 
 
@@ -163,13 +170,14 @@ class FakeRepository:
     ) -> CustomerQuoteDriveWorkspace:
         self.calls.append(("complete_drive_provision", kwargs))
         bundle = self.bundles[kwargs["quote_id"]]
+        sheet_file_id = kwargs.get("sheet_file_id")
         workspace = replace(
             bundle.workspace,
-            provisioning_status="ready",
+            provisioning_status="ready" if sheet_file_id is not None else "folder_ready",
             folder_id=kwargs["folder_id"],
             folder_web_url=kwargs["folder_web_url"],
-            sheet_file_id=kwargs["sheet_file_id"],
-            sheet_web_url=kwargs["sheet_web_url"],
+            sheet_file_id=sheet_file_id,
+            sheet_web_url=kwargs.get("sheet_web_url"),
             failure_category=None,
             completed_at=NOW,
             version=bundle.workspace.version + 1,
@@ -299,10 +307,10 @@ def test_create_quote_provisions_drive_workspace_end_to_end() -> None:
         "copy_template_sheet",
     ]
 
-    # Two distinct identifiers name two distinct artifacts: the folder
-    # carries the human quote_number, the copied template carries the
-    # separate document_number.
-    assert provider.calls[2][1]["name"] == "01183-26 — Centrífuga CEAF"
+    # Both Drive artifacts are named from document_number now (CRM-Q2
+    # follow-up): the workspace folder must match real Pendientes naming
+    # (e.g. "CN01191-ICN Chile"), never the human-facing quote_number.
+    assert provider.calls[2][1]["name"] == "CN01183 — Centrífuga CEAF"
     assert provider.calls[4][1]["name"] == "CN01183 — Centrífuga CEAF"
 
 
@@ -531,6 +539,99 @@ def test_retry_validates_expected_version() -> None:
             operator=OPERATOR,
             expected_version=0,
         )
+
+
+def test_generated_folder_name_uses_document_number_not_quote_number() -> None:
+    repository = FakeRepository(_bundle(_workspace()))
+    provider = FakeDriveProvider()
+
+    _service(repository, provider).create_quote(
+        sales_opportunity_id=SALES_ID,
+        operator=OPERATOR,
+        idempotency_key="quote-create-1",
+    )
+
+    create_folder_call = next(
+        kwargs for name, kwargs in provider.calls if name == "create_folder"
+    )
+
+    assert create_folder_call["name"].startswith("CN01183")
+    assert not create_folder_call["name"].startswith("01183-26")
+
+
+def test_template_provisioning_disabled_completes_as_folder_ready() -> None:
+    repository = FakeRepository(_bundle(_workspace()))
+    provider = FakeDriveProvider()
+
+    result = _service(
+        repository,
+        provider,
+        settings=_settings(drive_quote_template_provisioning_enabled=False),
+    ).create_quote(
+        sales_opportunity_id=SALES_ID,
+        operator=OPERATOR,
+        idempotency_key="quote-create-1",
+    )
+
+    assert result.workspace.provisioning_status == "folder_ready"
+    assert result.workspace.folder_web_url == FOLDER.web_url
+    assert result.workspace.sheet_file_id is None
+    assert result.workspace.sheet_web_url is None
+
+    provider_methods = [name for name, _ in provider.calls]
+    assert provider_methods == [
+        "verify_destination",
+        "find_folder",
+        "create_folder",
+    ]
+    assert "find_sheet" not in provider_methods
+    assert "copy_template_sheet" not in provider_methods
+
+
+def test_template_provisioning_disabled_records_no_template_reference_even_when_configured() -> None:
+    # A staged-but-not-yet-activated template ID must never be recorded as
+    # "this revision was copied from it" while the copy step never runs.
+    repository = FakeRepository(_bundle(_workspace()))
+    provider = FakeDriveProvider()
+
+    _service(
+        repository,
+        provider,
+        settings=_settings(
+            drive_quote_template_provisioning_enabled=False,
+            drive_quote_template_file_id="staged-template-1",
+        ),
+    ).create_quote(
+        sales_opportunity_id=SALES_ID,
+        operator=OPERATOR,
+        idempotency_key="quote-create-1",
+    )
+
+    create_call = repository.calls[0]
+    assert create_call[1]["template_reference"] is None
+
+
+def test_template_provisioning_disabled_never_fails_the_quote_even_with_no_template_configured() -> None:
+    # The master template is not finalized: creation must succeed durably
+    # regardless of drive_quote_template_file_id being unset/invalid.
+    repository = FakeRepository(_bundle(_workspace()))
+    provider = FakeDriveProvider()
+
+    result = _service(
+        repository,
+        provider,
+        settings=_settings(
+            drive_quote_template_provisioning_enabled=False,
+            drive_quote_template_file_id=None,
+        ),
+    ).create_quote(
+        sales_opportunity_id=SALES_ID,
+        operator=OPERATOR,
+        idempotency_key="quote-create-1",
+    )
+
+    assert result.workspace.provisioning_status == "folder_ready"
+    assert result.workspace.failure_category is None
 
 
 def test_workspace_name_sanitizes_title() -> None:

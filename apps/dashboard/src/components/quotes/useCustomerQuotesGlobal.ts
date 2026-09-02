@@ -1,14 +1,37 @@
-import { useCallback, useEffect, useState } from "react";
-import { fetchCustomerQuotesGlobal, fetchDrivePendingQuotes } from "../../api/customerQuoteClient";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  approveCustomerQuote,
+  confirmCustomerQuoteSend,
+  fetchCustomerQuotesGlobal,
+  fetchDrivePendingQuotes,
+  requestCustomerQuoteAdjustments,
+  submitCustomerQuoteForReview,
+} from "../../api/customerQuoteClient";
+import { OperatorApiError } from "../../api/operatorClient";
 import type {
+  CustomerQuote,
   CustomerQuoteGlobalItem,
   DrivePendingQuoteItem,
   QuoteProvisioningStatus,
   QuoteQueueRow,
 } from "../../api/customerQuoteTypes";
 import type { SalesOpportunityStage } from "../../api/commercialOperationsTypes";
+import type { WorkflowCommand } from "../../lib/quoteBoard";
 
 const QUEUE_FETCH_LIMIT = 200;
+
+const WORKFLOW_CONFLICT_MESSAGE =
+  "Esta cotización cambió en otra sesión. Actualizamos el estado con la versión más reciente.";
+
+const WORKFLOW_COMMAND_CLIENTS: Record<
+  WorkflowCommand,
+  (quoteId: string, command: { expected_version: number }) => Promise<CustomerQuote>
+> = {
+  submit_for_review: submitCustomerQuoteForReview,
+  request_adjustments: requestCustomerQuoteAdjustments,
+  approve: approveCustomerQuote,
+  confirm_send: confirmCustomerQuoteSend,
+};
 
 function rowTimestamp(row: QuoteQueueRow): string {
   if (row.kind === "crm") {
@@ -36,6 +59,12 @@ export function useCustomerQuotesGlobal() {
   const [error, setError] = useState<string | null>(null);
   const [stageToggles, setStageToggles] = useState<SalesOpportunityStage[]>([]);
   const [driveStatusToggles, setDriveStatusToggles] = useState<QuoteProvisioningStatus[]>([]);
+  const [pendingQuoteId, setPendingQuoteId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  // Synchronous mutex, not state: rejects a second overlapping dispatch
+  // immediately, before React has a chance to re-render with pendingQuoteId
+  // set (mirrors useSalesOpportunityBoard's stageMutationInFlightRef).
+  const mutationInFlightRef = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -95,6 +124,41 @@ export function useCustomerQuotesGlobal() {
     );
   }, []);
 
+  const dispatchWorkflowCommand = useCallback(
+    async (item: CustomerQuoteGlobalItem, command: WorkflowCommand) => {
+      if (mutationInFlightRef.current) return;
+      mutationInFlightRef.current = true;
+
+      setActionError(null);
+      setPendingQuoteId(item.quote.quote_id);
+
+      try {
+        const updated = await WORKFLOW_COMMAND_CLIENTS[command](item.quote.quote_id, {
+          expected_version: item.quote.version,
+        });
+
+        setItems((current) =>
+          current.map((row) =>
+            row.quote.quote_id === item.quote.quote_id ? { ...row, quote: updated } : row,
+          ),
+        );
+      } catch (reason: unknown) {
+        if (reason instanceof OperatorApiError && reason.status === 409) {
+          setActionError(WORKFLOW_CONFLICT_MESSAGE);
+          await load();
+        } else {
+          setActionError(
+            reason instanceof Error ? reason.message : "No pudimos actualizar la cotización. Reintenta.",
+          );
+        }
+      } finally {
+        setPendingQuoteId(null);
+        mutationInFlightRef.current = false;
+      }
+    },
+    [load],
+  );
+
   const rows: QuoteQueueRow[] = sortRowsByRecency([
     ...items.map((item): QuoteQueueRow => ({ kind: "crm", item })),
     ...driveItems.map((item): QuoteQueueRow => ({ kind: "drive_pending", item })),
@@ -112,5 +176,9 @@ export function useCustomerQuotesGlobal() {
     toggleStage,
     driveStatusToggles,
     toggleDriveStatus,
+    dispatchWorkflowCommand,
+    pendingQuoteId,
+    actionError,
+    dismissActionError: () => setActionError(null),
   };
 }

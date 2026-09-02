@@ -36,6 +36,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // CRM-Q1D follow-up: read-only Drive Pendientes projection for
   // operational visibility. Exact GET path only, no wildcard expansion.
   /^\/operations\/customer-quotes\/drive-pending$/,
+  // CRM-Q2: append-only revision-workflow event history for the
+  // Cotizaciones drawer. Read-only -- the transition commands below stay
+  // POST-only and are never GET-readable.
+  /^\/operations\/customer-quotes\/quote_[0-9a-f]{32}\/events$/,
   /^\/operations\/opportunities\/o_[0-9a-f]{32}\/state$/,
   /^\/operations\/opportunities\/o_[0-9a-f]{32}\/activities$/,
   /^\/operations\/opportunities\/o_[0-9a-f]{32}\/tasks$/,
@@ -80,6 +84,16 @@ export const COMMERCIAL_OPERATIONS_POST_PATHS: readonly RegExp[] = [
   // CRM backend foundation: manual (non-PR3) sales-opportunity creation —
   // the Nueva Cotización "create a new opportunity first" path.
   /^\/operations\/sales-opportunities\/manual$/,
+  // CRM-Q2 revision-workflow commands. Each endpoint's legal-from-status
+  // set is fixed server-side (see apps/api) -- the body never carries a
+  // caller-chosen target status, only expected_version.
+  /^\/operations\/customer-quotes\/quote_[0-9a-f]{32}\/submit-for-review$/,
+  /^\/operations\/customer-quotes\/quote_[0-9a-f]{32}\/request-adjustments$/,
+  /^\/operations\/customer-quotes\/quote_[0-9a-f]{32}\/approve$/,
+  /^\/operations\/customer-quotes\/quote_[0-9a-f]{32}\/confirm-send$/,
+  // CRM-Q2 "Incorporar al CRM": attach an existing Drive-only folder to a
+  // new durable quote under an existing sales opportunity.
+  /^\/operations\/sales-opportunities\/sales_[0-9a-f]{32}\/quotes\/adopt-drive-folder$/,
 ];
 
 export function isAllowedCommercialOperationsPostPath(

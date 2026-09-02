@@ -129,8 +129,14 @@ vi.mock("../api/customerQuoteClient", () => ({
   fetchCustomerQuotesGlobal: vi.fn(),
   fetchDrivePendingQuotes: vi.fn(),
   fetchCustomerQuote: vi.fn(),
+  fetchCustomerQuoteEvents: vi.fn(),
   createCustomerQuote: vi.fn(),
   retryCustomerQuoteDriveWorkspace: vi.fn(),
+  submitCustomerQuoteForReview: vi.fn(),
+  requestCustomerQuoteAdjustments: vi.fn(),
+  approveCustomerQuote: vi.fn(),
+  confirmCustomerQuoteSend: vi.fn(),
+  adoptCustomerQuoteDriveFolder: vi.fn(),
 }));
 
 vi.mock("../api/mirrorLeadIntelClient", () => ({

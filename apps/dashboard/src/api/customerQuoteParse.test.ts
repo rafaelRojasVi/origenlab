@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseCustomerQuote,
   parseCustomerQuoteDrivePendingListResponse,
+  parseCustomerQuoteEventListResponse,
   parseCustomerQuoteGlobalListResponse,
   parseCustomerQuoteListResponse,
   parseCustomerQuoteReadResponse,
@@ -35,10 +36,15 @@ function rawQuote(overrides: Record<string, unknown> = {}) {
     sales_opportunity_id: SALES_ID,
     quote_number: "CN011729",
     document_number: "CN00011729",
+    quote_origin: "generated",
     sales_opportunity_title: "Centrífuga CEAF",
     status: "draft",
     version: 1,
     latest_revision_number: 1,
+    revision_status: "draft",
+    revision_updated_by: "tatiana@origenlab.cl",
+    revision_updated_at: "2026-08-30T14:00:00+00:00",
+    board_stage: "preparation",
     created_by: "tatiana@origenlab.cl",
     updated_by: "tatiana@origenlab.cl",
     created_at: "2026-08-30T14:00:00+00:00",
@@ -97,6 +103,21 @@ describe("parseCustomerQuote", () => {
 
     expect(failed.drive_workspace.provisioning_status).toBe("failed");
     expect(failed.drive_workspace.failure_category).toBe("drive_unavailable");
+  });
+
+  it("accepts folder_ready as a valid drive_workspace.provisioning_status", () => {
+    const folderReady = parseCustomerQuote(
+      rawQuote({
+        drive_workspace: rawWorkspace({
+          provisioning_status: "folder_ready",
+          sheet_file_id: null,
+          sheet_web_url: null,
+        }),
+      }),
+    );
+
+    expect(folderReady.drive_workspace.provisioning_status).toBe("folder_ready");
+    expect(folderReady.drive_workspace.sheet_web_url).toBeNull();
   });
 
   it("nulls Drive links that are not validated https Google URLs", () => {
@@ -306,5 +327,73 @@ describe("parseCustomerQuoteDrivePendingListResponse", () => {
     const parsed = parseCustomerQuoteDrivePendingListResponse(raw);
 
     expect(parsed.items[0].document_identifier).toBeNull();
+  });
+});
+
+describe("parseCustomerQuote workflow fields", () => {
+  it("parses quote_origin, revision_status, and board_stage", () => {
+    const quote = parseCustomerQuote(
+      rawQuote({
+        quote_origin: "adopted",
+        revision_status: "approved",
+        board_stage: "approved_to_send",
+      }),
+    );
+
+    expect(quote.quote_origin).toBe("adopted");
+    expect(quote.revision_status).toBe("approved");
+    expect(quote.board_stage).toBe("approved_to_send");
+  });
+
+  it("rejects an unknown quote_origin", () => {
+    expect(() => parseCustomerQuote(rawQuote({ quote_origin: "invented" }))).toThrow();
+  });
+
+  it("rejects an unknown revision_status", () => {
+    expect(() => parseCustomerQuote(rawQuote({ revision_status: "invented" }))).toThrow();
+  });
+
+  it("rejects an unknown board_stage", () => {
+    expect(() => parseCustomerQuote(rawQuote({ board_stage: "drive_intake" }))).toThrow();
+  });
+
+  it("accepts every board_stage the API can return", () => {
+    for (const stage of [
+      "preparation",
+      "review",
+      "approved_to_send",
+      "sent_follow_up",
+    ]) {
+      expect(() => parseCustomerQuote(rawQuote({ board_stage: stage }))).not.toThrow();
+    }
+  });
+});
+
+describe("parseCustomerQuoteEventListResponse", () => {
+  it("parses an event history list", () => {
+    const raw = {
+      meta: { count: 1 },
+      items: [
+        {
+          event_id: "event_1",
+          event_type: "quote_submitted_for_review",
+          actor_key: "tatiana@origenlab.cl",
+          payload: { revision_number: 1, from_status: "draft", to_status: "pending_approval" },
+          created_at: "2026-09-02T12:00:00+00:00",
+        },
+      ],
+    };
+
+    const parsed = parseCustomerQuoteEventListResponse(raw);
+
+    expect(parsed.meta.count).toBe(1);
+    expect(parsed.items[0].event_type).toBe("quote_submitted_for_review");
+    expect(parsed.items[0].payload.from_status).toBe("draft");
+  });
+
+  it("rejects a non-array items field", () => {
+    expect(() =>
+      parseCustomerQuoteEventListResponse({ meta: { count: 0 }, items: {} }),
+    ).toThrow();
   });
 });

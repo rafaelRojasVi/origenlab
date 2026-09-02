@@ -77,6 +77,11 @@ def _settings(url: str) -> Settings:
         postgres_url=url,
         commercial_operations_writes_enabled=True,
         drive_quote_template_file_id="template-file-1",
+        # This suite exercises the full folder+template-copy Drive round
+        # trip through a fake provider; explicitly enable the gate that
+        # defaults off (ORIGENLAB_DRIVE_QUOTE_TEMPLATE_PROVISIONING_ENABLED)
+        # so completion still reaches 'ready', not the new 'folder_ready'.
+        drive_quote_template_provisioning_enabled=True,
     )
 
 

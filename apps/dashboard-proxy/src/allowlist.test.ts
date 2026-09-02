@@ -723,3 +723,127 @@ describe("Drive Pendientes read-only projection allowlist (CRM-Q1D follow-up)", 
     ).toBe(false);
   });
 });
+
+describe("CRM-Q2 workflow/adoption allowlist", () => {
+  const salesId = "sales_0123456789abcdef0123456789abcdef";
+  const quoteId = "quote_0123456789abcdef0123456789abcdef";
+
+  const transitionSegments = [
+    "submit-for-review",
+    "request-adjustments",
+    "approve",
+    "confirm-send",
+  ];
+
+  it("allows the exact revision-transition POST paths", async () => {
+    const { isAllowedCommercialOperationsPostPath } = await import(
+      "../src/allowlist"
+    );
+
+    for (const segment of transitionSegments) {
+      expect(
+        isAllowedCommercialOperationsPostPath(
+          `/operations/customer-quotes/${quoteId}/${segment}`,
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("does not make the transition command paths GET-readable", () => {
+    for (const segment of transitionSegments) {
+      expect(
+        isAllowedUpstreamPath(
+          `/operations/customer-quotes/${quoteId}/${segment}`,
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it("rejects malformed quote IDs and extra segments on transition paths", async () => {
+    const { isAllowedCommercialOperationsPostPath } = await import(
+      "../src/allowlist"
+    );
+
+    for (const segment of transitionSegments) {
+      expect(
+        isAllowedCommercialOperationsPostPath(
+          `/operations/customer-quotes/not-an-id/${segment}`,
+        ),
+      ).toBe(false);
+      expect(
+        isAllowedCommercialOperationsPostPath(
+          `/operations/customer-quotes/${quoteId}/${segment}/extra`,
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it("allows the exact adopt-drive-folder POST path", async () => {
+    const { isAllowedCommercialOperationsPostPath } = await import(
+      "../src/allowlist"
+    );
+
+    expect(
+      isAllowedCommercialOperationsPostPath(
+        `/operations/sales-opportunities/${salesId}/quotes/adopt-drive-folder`,
+      ),
+    ).toBe(true);
+  });
+
+  it("does not make the adopt-drive-folder path GET-readable", () => {
+    expect(
+      isAllowedUpstreamPath(
+        `/operations/sales-opportunities/${salesId}/quotes/adopt-drive-folder`,
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects malformed sales-opportunity IDs and extra segments on adopt-drive-folder", async () => {
+    const { isAllowedCommercialOperationsPostPath } = await import(
+      "../src/allowlist"
+    );
+
+    expect(
+      isAllowedCommercialOperationsPostPath(
+        "/operations/sales-opportunities/not-an-id/quotes/adopt-drive-folder",
+      ),
+    ).toBe(false);
+    expect(
+      isAllowedCommercialOperationsPostPath(
+        `/operations/sales-opportunities/${salesId}/quotes/adopt-drive-folder/extra`,
+      ),
+    ).toBe(false);
+    // Never lets adoption ride the plain quote-create path or vice versa.
+    expect(
+      isAllowedCommercialOperationsPostPath(
+        `/operations/sales-opportunities/${salesId}/quotes`,
+      ),
+    ).toBe(true);
+  });
+
+  it("allows the exact event-history GET path and rejects malformed/extended variants", () => {
+    expect(
+      isAllowedUpstreamPath(`/operations/customer-quotes/${quoteId}/events`),
+    ).toBe(true);
+    expect(
+      isAllowedUpstreamPath("/operations/customer-quotes/not-an-id/events"),
+    ).toBe(false);
+    expect(
+      isAllowedUpstreamPath(
+        `/operations/customer-quotes/${quoteId}/events/extra`,
+      ),
+    ).toBe(false);
+  });
+
+  it("does not make the event-history path POST-writable", async () => {
+    const { isAllowedCommercialOperationsPostPath } = await import(
+      "../src/allowlist"
+    );
+
+    expect(
+      isAllowedCommercialOperationsPostPath(
+        `/operations/customer-quotes/${quoteId}/events`,
+      ),
+    ).toBe(false);
+  });
+});

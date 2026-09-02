@@ -1,13 +1,44 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { fetchCustomerQuote, retryCustomerQuoteDriveWorkspace } from "../../api/customerQuoteClient";
+import {
+  fetchCustomerQuote,
+  fetchCustomerQuoteEvents,
+  retryCustomerQuoteDriveWorkspace,
+} from "../../api/customerQuoteClient";
 import { OperatorApiError } from "../../api/operatorClient";
-import type { CustomerQuote, CustomerQuoteGlobalItem } from "../../api/customerQuoteTypes";
+import type { CustomerQuote, CustomerQuoteEvent, CustomerQuoteGlobalItem, RevisionStatus } from "../../api/customerQuoteTypes";
 import { salesOpportunityStageLabel } from "../../lib/salesOpportunityFormat";
 import { formatCommercialOpportunityDate } from "../../lib/commercialOpportunityFormat";
+import type { WorkflowCommand } from "../../lib/quoteBoard";
 import { QuoteWorkspaceStatus } from "./driveWorkspaceUi";
+import { QuoteWorkflowActions } from "./QuoteWorkflowActions";
 
 const RETRY_CONFLICT_MESSAGE =
   "La cotización cambió en otra sesión. Actualizamos el estado con la versión más reciente.";
+
+const REVISION_STATUS_LABELS: Record<RevisionStatus, string> = {
+  draft: "Borrador",
+  pending_approval: "En revisión",
+  adjustments_requested: "Ajustes solicitados",
+  approved: "Aprobada",
+  sent: "Enviada",
+  superseded: "Reemplazada",
+};
+
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  quote_created: "Cotización creada",
+  drive_provision_requested: "Aprovisionamiento de Drive solicitado",
+  drive_workspace_ready: "Carpeta de Drive lista",
+  drive_provision_failed: "Error al aprovisionar Drive",
+  quote_adopted_from_drive: "Incorporada desde Drive",
+  quote_submitted_for_review: "Enviada a revisión",
+  quote_adjustments_requested: "Ajustes solicitados",
+  quote_approved: "Aprobada",
+  quote_send_confirmed: "Envío confirmado",
+};
+
+function eventTypeLabel(eventType: string): string {
+  return EVENT_TYPE_LABELS[eventType] ?? eventType;
+}
 
 /** Refreshing on open must never revert a faster local mutation to stale data. */
 function mergeIfNewer(current: CustomerQuote | null, incoming: CustomerQuote): CustomerQuote | null {
@@ -30,15 +61,27 @@ export function QuoteDetailDrawer({
   open,
   onClose,
   onOpenVentas,
+  onDispatchWorkflowCommand,
+  onRequestAdjustments,
+  onRequestConfirmSend,
+  dispatchPending,
 }: {
   item: CustomerQuoteGlobalItem | null;
   open: boolean;
   onClose: () => void;
   onOpenVentas: (opportunityId: string) => void;
+  onDispatchWorkflowCommand: (
+    item: CustomerQuoteGlobalItem,
+    command: WorkflowCommand,
+  ) => Promise<void>;
+  onRequestAdjustments: (item: CustomerQuoteGlobalItem) => void;
+  onRequestConfirmSend: (item: CustomerQuoteGlobalItem) => void;
+  dispatchPending: boolean;
 }) {
   const [quote, setQuote] = useState<CustomerQuote | null>(item?.quote ?? null);
   const [retryPending, setRetryPending] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
+  const [events, setEvents] = useState<CustomerQuoteEvent[]>([]);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
@@ -51,11 +94,16 @@ export function QuoteDetailDrawer({
     if (open && item) {
       setQuote(item.quote);
       setRetryError(null);
+      setEvents([]);
 
       void fetchCustomerQuote(item.quote.quote_id)
         .then((result) => {
           setQuote((current) => mergeIfNewer(current, result.item));
         })
+        .catch(() => undefined);
+
+      void fetchCustomerQuoteEvents(item.quote.quote_id)
+        .then((result) => setEvents(result.items))
         .catch(() => undefined);
     }
   }, [open, item]);
@@ -127,9 +175,9 @@ export function QuoteDetailDrawer({
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">Cotización</p>
             <h2 id="quote-detail-heading" className="mt-1 text-lg font-semibold text-slate-900">
-              {quote.quote_number}
+              {quote.document_number}
             </h2>
-            <p className="mt-1 text-sm text-slate-500">{quote.document_number}</p>
+            <p className="mt-1 text-sm text-slate-500">{quote.quote_number}</p>
           </div>
           <button
             type="button"
@@ -183,10 +231,22 @@ export function QuoteDetailDrawer({
           <section className="space-y-2" aria-label="Cotización">
             <h3 className="text-sm font-semibold text-slate-800">Cotización</h3>
             <dl className="space-y-2">
-              <DetailRow label="Estado">Borrador · Rev. {quote.latest_revision_number}</DetailRow>
+              <DetailRow label="Estado">
+                {REVISION_STATUS_LABELS[quote.revision_status]} · Rev. {quote.latest_revision_number}
+              </DetailRow>
               <DetailRow label="Creada">{formatCommercialOpportunityDate(quote.created_at)}</DetailRow>
-              <DetailRow label="Actualizada">{formatCommercialOpportunityDate(quote.updated_at)}</DetailRow>
+              <DetailRow label="Actualizada">{formatCommercialOpportunityDate(quote.revision_updated_at)}</DetailRow>
             </dl>
+            <QuoteWorkflowActions
+              boardStage={quote.board_stage}
+              disabled={dispatchPending}
+              onDispatch={(command) => void onDispatchWorkflowCommand({ ...item, quote }, command)}
+              onRequestConfirmation={(command) =>
+                command === "request_adjustments"
+                  ? onRequestAdjustments({ ...item, quote })
+                  : onRequestConfirmSend({ ...item, quote })
+              }
+            />
           </section>
 
           <section className="space-y-2" aria-label="Carpeta en Drive">
@@ -197,6 +257,24 @@ export function QuoteDetailDrawer({
               retryError={retryError}
               onRetry={() => void handleRetry()}
             />
+          </section>
+
+          <section className="space-y-2" aria-label="Historial">
+            <h3 className="text-sm font-semibold text-slate-800">Historial</h3>
+            {events.length === 0 ? (
+              <p className="text-sm text-[var(--color-muted)]">Sin eventos registrados.</p>
+            ) : (
+              <ul className="space-y-1.5">
+                {events.map((event) => (
+                  <li key={event.event_id} className="text-sm text-slate-700">
+                    <span className="font-medium text-slate-800">{eventTypeLabel(event.event_type)}</span>
+                    <span className="ml-2 text-xs text-[var(--color-muted)]">
+                      {formatCommercialOpportunityDate(event.created_at)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </section>
         </div>
       </aside>

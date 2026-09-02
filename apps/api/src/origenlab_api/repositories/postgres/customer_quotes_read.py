@@ -18,6 +18,7 @@ from origenlab_api.repositories.postgres.customer_quotes import (
     CustomerQuote,
     CustomerQuoteBundle,
     CustomerQuoteDriveWorkspace,
+    CustomerQuoteEvent,
     CustomerQuoteRevision,
 )
 from origenlab_api.settings import Settings
@@ -37,12 +38,15 @@ SELECT
   q.serial,
   q.issue_year,
   q.document_number,
+  q.quote_origin,
   so.title AS sales_opportunity_title,
   r.revision_number AS revision_revision_number,
   r.template_reference AS revision_template_reference,
   r.status AS revision_status,
   r.created_by AS revision_created_by,
   r.created_at AS revision_created_at,
+  r.updated_by AS revision_updated_by,
+  r.updated_at AS revision_updated_at,
   w.provider AS workspace_provider,
   w.provisioning_status AS workspace_provisioning_status,
   w.folder_id AS workspace_folder_id,
@@ -70,7 +74,9 @@ JOIN LATERAL (
     template_reference,
     status,
     created_by,
-    created_at
+    created_at,
+    updated_by,
+    updated_at
   FROM api.v_commercial_customer_quote_revision rev
   WHERE rev.quote_id = q.quote_id
   ORDER BY rev.revision_number DESC
@@ -88,6 +94,7 @@ def _bundle_from_row(row: dict[str, Any]) -> CustomerQuoteBundle:
             serial=row["serial"],
             issue_year=row["issue_year"],
             document_number=row["document_number"],
+            quote_origin=row["quote_origin"],
             status=row["status"],
             version=row["version"],
             created_by=row["created_by"],
@@ -102,6 +109,8 @@ def _bundle_from_row(row: dict[str, Any]) -> CustomerQuoteBundle:
             status=row["revision_status"],
             created_by=row["revision_created_by"],
             created_at=row["revision_created_at"],
+            updated_by=row["revision_updated_by"],
+            updated_at=row["revision_updated_at"],
         ),
         workspace=CustomerQuoteDriveWorkspace(
             quote_id=row["quote_id"],
@@ -152,6 +161,7 @@ SELECT
   q.serial,
   q.issue_year,
   q.document_number,
+  q.quote_origin,
   so.title AS sales_opportunity_title,
   so.stage AS sales_opportunity_stage,
   so.owner_key AS sales_opportunity_owner_key,
@@ -160,6 +170,8 @@ SELECT
   r.status AS revision_status,
   r.created_by AS revision_created_by,
   r.created_at AS revision_created_at,
+  r.updated_by AS revision_updated_by,
+  r.updated_at AS revision_updated_at,
   w.provider AS workspace_provider,
   w.provisioning_status AS workspace_provisioning_status,
   w.folder_id AS workspace_folder_id,
@@ -192,7 +204,9 @@ JOIN LATERAL (
     template_reference,
     status,
     created_by,
-    created_at
+    created_at,
+    updated_by,
+    updated_at
   FROM api.v_commercial_customer_quote_revision rev
   WHERE rev.quote_id = q.quote_id
   ORDER BY rev.revision_number DESC
@@ -332,6 +346,40 @@ class PostgresCustomerQuoteReadRepository:
                 entries = [_global_entry_from_row(dict(row)) for row in cur.fetchall()]
 
                 return entries, total_count
+
+    def list_events(
+        self,
+        quote_id: str,
+        *,
+        limit: int = 200,
+    ) -> list[CustomerQuoteEvent]:
+        """Append-only audit trail for the Cotizaciones drawer, most-recent
+        first. Reads api.v_commercial_customer_quote_event -- the raw
+        commercial.customer_quote_event table stays INSERT/SELECT only for
+        the writer role and is never targeted directly here."""
+
+        pg = require_psycopg()
+
+        with postgres_connection(self._settings) as conn:
+            with conn.cursor(row_factory=pg.rows.dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT
+                      event_id,
+                      quote_id,
+                      event_type,
+                      actor_key,
+                      payload,
+                      created_at
+                    FROM api.v_commercial_customer_quote_event
+                    WHERE quote_id = %(quote_id)s
+                    ORDER BY created_at DESC
+                    LIMIT %(limit)s
+                    """,
+                    {"quote_id": quote_id, "limit": limit},
+                )
+
+                return [CustomerQuoteEvent(**dict(row)) for row in cur.fetchall()]
 
     def list_known_drive_folder_ids(self) -> set[str]:
         """Every Drive folder_id already referenced by a durable customer

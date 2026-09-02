@@ -40,9 +40,13 @@ describe("dashboard read-only policy", () => {
   //    one shared POST transport used only by the five explicit CRM command
   //    shapes admitted by the production Worker.
   //
-  // 3. customerQuoteClient.ts (CRM-Q1):
-  //    two explicit quote POST commands (create quote, retry Drive
-  //    workspace provisioning) admitted by the production Worker.
+  // 3. customerQuoteClient.ts (CRM-Q1 + CRM-Q2):
+  //    seven explicit quote POST commands (create quote, retry Drive
+  //    workspace provisioning, submit-for-review, request-adjustments,
+  //    approve, confirm-send, adopt-drive-folder) admitted by the
+  //    production Worker -- the four revision-transition commands share
+  //    one literal `method: "POST"` fetch call site (transitionCustomerQuote),
+  //    so only 4 literal POST occurrences appear in the source text.
   //
   // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
 
@@ -122,34 +126,30 @@ describe("dashboard read-only policy", () => {
 
       if (path === CUSTOMER_QUOTE_MUTATION_FILE) {
         if (
-          methods.length !== 2 ||
+          methods.length !== 4 ||
           methods.some(
             (method) => method !== "POST",
           )
         ) {
           hits.push(
-            `${path} (expected exactly 2 POST quote commands, found ${methods.join(", ") || "none"})`,
+            `${path} (expected exactly 4 literal POST fetch call sites -- create, retry-drive-workspace, the shared revision-transition helper, and adopt-drive-folder -- found ${methods.join(", ") || "none"})`,
           );
         }
 
-        if (
-          !text.includes(
-            "salesOpportunityQuotesPath",
-          )
-        ) {
-          hits.push(
-            `${path} (missing quote-create command path)`,
-          );
-        }
+        const requiredPathBuilders = [
+          "salesOpportunityQuotesPath",
+          "customerQuoteDriveWorkspacePath",
+          "customerQuoteSubmitForReviewPath",
+          "customerQuoteRequestAdjustmentsPath",
+          "customerQuoteApprovePath",
+          "customerQuoteConfirmSendPath",
+          "salesOpportunityAdoptDriveFolderPath",
+        ];
 
-        if (
-          !text.includes(
-            "customerQuoteDriveWorkspacePath",
-          )
-        ) {
-          hits.push(
-            `${path} (missing drive-workspace retry command path)`,
-          );
+        for (const builder of requiredPathBuilders) {
+          if (!text.includes(builder)) {
+            hits.push(`${path} (missing command path builder: ${builder})`);
+          }
         }
 
         if (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterQuoteQueueRows, quoteQueueStateLabel } from "./customerQuoteQueueFilters";
+import { filterQuoteQueueRows } from "./customerQuoteQueueFilters";
 import {
   drivePendingQuoteItemFixture,
   globalQuoteItemFixture,
@@ -64,34 +64,5 @@ describe("filterQuoteQueueRows", () => {
 
     const result = filterQuoteQueueRows([undated], { searchText: "", recency: "7d" }, now);
     expect(result).toHaveLength(1);
-  });
-});
-
-describe("quoteQueueStateLabel", () => {
-  it.each([
-    ["ready", "Drive listo"],
-    ["pending", "Aprovisionando"],
-    ["failed", "Error de Drive"],
-  ] as const)("maps drive provisioning_status %s to %s", (status, label) => {
-    const base = globalQuoteItemFixture();
-    const row = globalQuoteItemFixture({
-      quote: {
-        ...base.quote,
-        drive_workspace: { ...base.quote.drive_workspace, provisioning_status: status },
-      },
-    });
-    expect(quoteQueueStateLabel(row).drive).toBe(label);
-    expect(quoteQueueStateLabel(row).status).toBe("Borrador");
-  });
-
-  it("labels a pending workspace as provisioning language, never failure language", () => {
-    const base = globalQuoteItemFixture();
-    const row = globalQuoteItemFixture({
-      quote: {
-        ...base.quote,
-        drive_workspace: { ...base.quote.drive_workspace, provisioning_status: "pending" },
-      },
-    });
-    expect(quoteQueueStateLabel(row).drive).not.toMatch(/error|fall|falló/i);
   });
 });

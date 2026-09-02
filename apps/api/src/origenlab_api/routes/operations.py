@@ -51,8 +51,12 @@ from origenlab_api.schemas.commercial_operations import (
 )
 from origenlab_api.drive.errors import DriveProvisioningError
 from origenlab_api.schemas.customer_quotes import (
+    CustomerQuoteAdoptDriveFolderCommand,
     CustomerQuoteCreateCommand,
     CustomerQuoteDriveWorkspaceRetryCommand,
+    CustomerQuoteEventListMeta,
+    CustomerQuoteEventListResponse,
+    CustomerQuoteEventResponse,
     CustomerQuoteGlobalItem,
     CustomerQuoteGlobalListMeta,
     CustomerQuoteGlobalListResponse,
@@ -60,6 +64,7 @@ from origenlab_api.schemas.customer_quotes import (
     CustomerQuoteListResponse,
     CustomerQuoteReadResponse,
     CustomerQuoteResponse,
+    CustomerQuoteRevisionTransitionCommand,
 )
 from origenlab_api.schemas.drive_pending_quotes import (
     CustomerQuoteDrivePendingItem,
@@ -956,3 +961,207 @@ def retry_customer_quote_drive_workspace(
         _raise_command_error(exc)
 
     return CustomerQuoteResponse.from_bundle(bundle)
+
+
+@router.post(
+    "/customer-quotes/{quote_id}/submit-for-review",
+    response_model=CustomerQuoteResponse,
+)
+def submit_customer_quote_for_review(
+    command: CustomerQuoteRevisionTransitionCommand,
+    request: Request,
+    quote_id: str = PathParam(
+        min_length=1,
+        max_length=128,
+    ),
+    settings: Settings = Depends(get_settings),
+    service: CustomerQuoteService = Depends(get_customer_quote_service),
+) -> CustomerQuoteResponse:
+    operator = require_commercial_operator(request, settings)
+
+    try:
+        bundle = service.submit_for_review(
+            quote_id=quote_id,
+            operator=operator,
+            expected_version=command.expected_version,
+        )
+    except (
+        CommercialOperationNotFoundError,
+        CommercialOperationConflictError,
+        ValueError,
+    ) as exc:
+        _raise_command_error(exc)
+
+    return CustomerQuoteResponse.from_bundle(bundle)
+
+
+@router.post(
+    "/customer-quotes/{quote_id}/request-adjustments",
+    response_model=CustomerQuoteResponse,
+)
+def request_customer_quote_adjustments(
+    command: CustomerQuoteRevisionTransitionCommand,
+    request: Request,
+    quote_id: str = PathParam(
+        min_length=1,
+        max_length=128,
+    ),
+    settings: Settings = Depends(get_settings),
+    service: CustomerQuoteService = Depends(get_customer_quote_service),
+) -> CustomerQuoteResponse:
+    operator = require_commercial_operator(request, settings)
+
+    try:
+        bundle = service.request_adjustments(
+            quote_id=quote_id,
+            operator=operator,
+            expected_version=command.expected_version,
+        )
+    except (
+        CommercialOperationNotFoundError,
+        CommercialOperationConflictError,
+        ValueError,
+    ) as exc:
+        _raise_command_error(exc)
+
+    return CustomerQuoteResponse.from_bundle(bundle)
+
+
+@router.post(
+    "/customer-quotes/{quote_id}/approve",
+    response_model=CustomerQuoteResponse,
+)
+def approve_customer_quote(
+    command: CustomerQuoteRevisionTransitionCommand,
+    request: Request,
+    quote_id: str = PathParam(
+        min_length=1,
+        max_length=128,
+    ),
+    settings: Settings = Depends(get_settings),
+    service: CustomerQuoteService = Depends(get_customer_quote_service),
+) -> CustomerQuoteResponse:
+    operator = require_commercial_operator(request, settings)
+
+    try:
+        bundle = service.approve(
+            quote_id=quote_id,
+            operator=operator,
+            expected_version=command.expected_version,
+        )
+    except (
+        CommercialOperationNotFoundError,
+        CommercialOperationConflictError,
+        ValueError,
+    ) as exc:
+        _raise_command_error(exc)
+
+    return CustomerQuoteResponse.from_bundle(bundle)
+
+
+@router.post(
+    "/customer-quotes/{quote_id}/confirm-send",
+    response_model=CustomerQuoteResponse,
+)
+def confirm_customer_quote_send(
+    command: CustomerQuoteRevisionTransitionCommand,
+    request: Request,
+    quote_id: str = PathParam(
+        min_length=1,
+        max_length=128,
+    ),
+    settings: Settings = Depends(get_settings),
+    service: CustomerQuoteService = Depends(get_customer_quote_service),
+) -> CustomerQuoteResponse:
+    """The human operator's confirmation that external sending already
+    happened -- this never sends email or moves a Drive folder itself."""
+
+    operator = require_commercial_operator(request, settings)
+
+    try:
+        bundle = service.confirm_send(
+            quote_id=quote_id,
+            operator=operator,
+            expected_version=command.expected_version,
+        )
+    except (
+        CommercialOperationNotFoundError,
+        CommercialOperationConflictError,
+        ValueError,
+    ) as exc:
+        _raise_command_error(exc)
+
+    return CustomerQuoteResponse.from_bundle(bundle)
+
+
+@router.post(
+    "/sales-opportunities/{sales_opportunity_id}/quotes/adopt-drive-folder",
+    response_model=CustomerQuoteResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def adopt_customer_quote_drive_folder(
+    command: CustomerQuoteAdoptDriveFolderCommand,
+    request: Request,
+    sales_opportunity_id: str = PathParam(
+        min_length=1,
+        max_length=128,
+    ),
+    idempotency_key: str = Header(
+        alias="Idempotency-Key",
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    ),
+    settings: Settings = Depends(get_settings),
+    service: CustomerQuoteService = Depends(get_customer_quote_service),
+) -> CustomerQuoteResponse:
+    """"Incorporar al CRM": attach an existing Drive-only folder to a new
+    durable quote. Never allocates a quote number series serial, never
+    calls the Drive provider."""
+
+    operator = require_commercial_operator(request, settings)
+
+    try:
+        bundle = service.adopt_drive_folder(
+            sales_opportunity_id=sales_opportunity_id,
+            document_number=command.document_number,
+            quote_number=command.quote_number,
+            folder_id=command.folder_id,
+            folder_web_url=command.folder_web_url,
+            operator=operator,
+            idempotency_key=idempotency_key,
+        )
+    except (
+        CommercialOperationNotFoundError,
+        CommercialOperationConflictError,
+        ValueError,
+    ) as exc:
+        _raise_command_error(exc)
+
+    return CustomerQuoteResponse.from_bundle(bundle)
+
+
+@router.get(
+    "/customer-quotes/{quote_id}/events",
+    response_model=CustomerQuoteEventListResponse,
+)
+def list_customer_quote_events(
+    quote_id: str = PathParam(
+        min_length=1,
+        max_length=128,
+    ),
+    service: CustomerQuoteReadService = Depends(
+        get_customer_quote_read_service
+    ),
+) -> CustomerQuoteEventListResponse:
+    try:
+        events = service.list_events(quote_id)
+    except ValueError as exc:
+        _raise_command_error(exc)
+
+    items = [CustomerQuoteEventResponse.from_event(event) for event in events]
+
+    return CustomerQuoteEventListResponse(
+        meta=CustomerQuoteEventListMeta(count=len(items)),
+        items=items,
+    )
