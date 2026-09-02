@@ -180,14 +180,6 @@ function mockAll() {
   });
 }
 
-async function navigateTo(label: string) {
-  const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
-  fireEvent.click(within(nav).getByRole("link", { name: label }));
-  await waitFor(() => {
-    expect(screen.getByRole("heading", { level: 1, name: label })).toBeTruthy();
-  });
-}
-
 describe("Dashboard UX polish (Phase 7B.3 ES)", () => {
   beforeEach(() => {
     window.location.hash = "#/";
@@ -217,13 +209,14 @@ describe("Dashboard UX polish (Phase 7B.3 ES)", () => {
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
-    expect(within(nav).getByRole("link", { name: "Inicio" })).toBeTruthy();
+    expect(within(nav).getByRole("link", { name: "Cotizaciones" })).toBeTruthy();
     expect(within(nav).getByRole("link", { name: "Ventas" })).toBeTruthy();
     expect(within(nav).getByRole("link", { name: "Clientes" })).toBeTruthy();
     expect(screen.queryByText(/client_opportunity/)).toBeNull();
   });
 
   it("tarjetas de Hoy en español navegan", async () => {
+    window.location.hash = "#/today";
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
@@ -236,9 +229,9 @@ describe("Dashboard UX polish (Phase 7B.3 ES)", () => {
   });
 
   it("proveedores agrupados y filas al hacer clic", async () => {
+    window.location.hash = "#/suppliers";
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
-    await navigateTo("Proveedores");
 
     fireEvent.click(screen.getByRole("button", { name: /SERVA, 1 caso en espejo/i }));
     await waitFor(() => {
@@ -262,9 +255,9 @@ describe("Dashboard UX polish (Phase 7B.3 ES)", () => {
   });
 
   it("pagos y logística en dos secciones", async () => {
+    window.location.hash = "#/payments-logistics";
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
-    await navigateTo("Pagos y logística");
 
     screen.getByRole("heading", { name: "Pagos" });
     screen.getByRole("heading", { name: "Logística" });

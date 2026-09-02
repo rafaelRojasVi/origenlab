@@ -1,4 +1,4 @@
-/** Secciones principales del panel operador (Dashboard V2 — IA plana). */
+/** Secciones principales del panel operador (Dashboard V2 — IA Cotizaciones-first). */
 
 export type DashboardSection =
   | "today"
@@ -37,9 +37,10 @@ export interface DashboardNavItem {
 }
 
 /**
- * Full section registry (12 ids), used for id → label lookups so deep-linked
- * hidden sections (inbox/deals/prospectos) still get a correct page title.
- * Sidebar rendering uses `DASHBOARD_TOP_NAV_ITEMS` below, not this list.
+ * Full section registry (12 ids), used for id -> label lookups so deep-linked
+ * hidden sections (today/deals/suppliers/payments-logistics) still get a
+ * correct page title. Sidebar rendering uses `DASHBOARD_TOP_NAV_ITEMS`
+ * below, not this list.
  */
 export const DASHBOARD_NAV_ITEMS: DashboardNavItem[] = [
   {
@@ -50,46 +51,11 @@ export const DASHBOARD_NAV_ITEMS: DashboardNavItem[] = [
     iconName: "home",
   },
   {
-    id: "inbox",
-    label: "Bandeja de revisión",
-    shortLabel: "Bandeja",
-    description: "Correos tibios con filtros por rol",
-    iconName: "inbox",
-  },
-  {
-    id: "pipeline",
-    label: "Ventas",
-    shortLabel: "Ventas",
-    description: "Oportunidades de venta en gestión activa (CRM durable)",
-    iconName: "pipeline",
-  },
-  {
-    id: "deals",
-    label: "Negocios",
-    shortLabel: "Negocios",
-    description: "Espejo de negocios comerciales",
-    iconName: "deals",
-  },
-  {
-    id: "prospectos",
-    label: "Prospectos",
-    shortLabel: "Prospectos",
-    description: "Nuevas oportunidades de clientes (investigación DeepSearch)",
-    iconName: "prospectos",
-  },
-  {
     id: "cotizaciones",
     label: "Cotizaciones",
     shortLabel: "Cotiz.",
-    description: "Vista consolidada de cotizaciones (próximamente)",
+    description: "Cola global de cotizaciones y su carpeta en Drive (CRM durable)",
     iconName: "quotes",
-  },
-  {
-    id: "contacts",
-    label: "Clientes",
-    shortLabel: "Clientes",
-    description: "Instituciones compradoras, contactos e historial",
-    iconName: "contacts",
   },
   {
     id: "tenders",
@@ -99,18 +65,32 @@ export const DASHBOARD_NAV_ITEMS: DashboardNavItem[] = [
     iconName: "tenders",
   },
   {
-    id: "suppliers",
-    label: "Proveedores",
-    shortLabel: "Prov.",
-    description: "Cotizaciones y seguimientos de proveedores",
-    iconName: "suppliers",
+    id: "pipeline",
+    label: "Ventas",
+    shortLabel: "Ventas",
+    description: "Oportunidades de venta en gestión activa (CRM durable)",
+    iconName: "pipeline",
   },
   {
-    id: "payments-logistics",
-    label: "Pagos y logística",
-    shortLabel: "Pagos",
-    description: "Banco, transferencias, DHL e importación",
-    iconName: "payments",
+    id: "contacts",
+    label: "Clientes",
+    shortLabel: "Clientes",
+    description: "Instituciones compradoras, contactos e historial",
+    iconName: "contacts",
+  },
+  {
+    id: "prospectos",
+    label: "Prospectos",
+    shortLabel: "Prospectos",
+    description: "Nuevas oportunidades de clientes (investigación DeepSearch)",
+    iconName: "prospectos",
+  },
+  {
+    id: "inbox",
+    label: "Correos",
+    shortLabel: "Correos",
+    description: "Correspondencia entrante con filtros por rol",
+    iconName: "inbox",
   },
   {
     id: "catalogo",
@@ -126,17 +106,37 @@ export const DASHBOARD_NAV_ITEMS: DashboardNavItem[] = [
     description: "Estado del servicio y política de lectura",
     iconName: "system",
   },
+  {
+    id: "deals",
+    label: "Negocios",
+    shortLabel: "Negocios",
+    description: "Espejo de negocios comerciales",
+    iconName: "deals",
+  },
+  {
+    id: "suppliers",
+    label: "Proveedores",
+    shortLabel: "Prov.",
+    description: "Cotizaciones y seguimientos de proveedores",
+    iconName: "suppliers",
+  },
+  {
+    id: "payments-logistics",
+    label: "Pagos y logística",
+    shortLabel: "Pagos",
+    description: "Banco, transferencias, DHL e importación",
+    iconName: "payments",
+  },
 ];
 
-/** The flat, ordered top-level nav — exactly the 9 sections in the new IA. */
+/** The flat, ordered top-level nav — exactly the 8 primary sections, Cotizaciones-first. */
 export const DASHBOARD_TOP_NAV_IDS: readonly DashboardSection[] = [
-  "today",
-  "pipeline",
   "cotizaciones",
-  "contacts",
   "tenders",
-  "suppliers",
-  "payments-logistics",
+  "pipeline",
+  "contacts",
+  "prospectos",
+  "inbox",
   "catalogo",
   "system",
 ];
@@ -145,7 +145,14 @@ export const DASHBOARD_TOP_NAV_ITEMS: DashboardNavItem[] = DASHBOARD_TOP_NAV_IDS
   (id) => DASHBOARD_NAV_ITEMS.find((item) => item.id === id)!,
 );
 
-export const DEFAULT_DASHBOARD_SECTION: DashboardSection = "today";
+/** Visually emphasized primary-work items, per the Phase 2 IA reset. */
+export const DASHBOARD_EMPHASIZED_NAV_IDS: ReadonlySet<DashboardSection> = new Set([
+  "cotizaciones",
+  "tenders",
+  "pipeline",
+]);
+
+export const DEFAULT_DASHBOARD_SECTION: DashboardSection = "cotizaciones";
 
 export function dashboardSectionLabel(section: DashboardSection): string {
   return DASHBOARD_NAV_ITEMS.find((item) => item.id === section)?.label ?? section;

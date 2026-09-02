@@ -207,6 +207,7 @@ describe("DashboardApp (legacy TodayPage tests)", () => {
 
   it("shows daily-core section when no run is registered", async () => {
     mockAllOk();
+    window.location.hash = "#/today";
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
     screen.getByText(/Este panel no envía correos ni aprueba contactos; las acciones comerciales se realizan dentro del ciclo de cada oportunidad/);

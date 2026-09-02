@@ -1,13 +1,15 @@
 import { OrigenLabStaticLogo } from "../brand/OrigenLabStaticLogo";
 import {
   DASHBOARD_TOP_NAV_ITEMS,
+  DASHBOARD_EMPHASIZED_NAV_IDS,
+  DEFAULT_DASHBOARD_SECTION,
   type DashboardNavItem,
   type DashboardSection,
 } from "../../lib/dashboardNav";
 import { NavIcon } from "./NavIcon";
 
 function navHref(section: DashboardSection): string {
-  return section === "today" ? "#/" : `#/${section}`;
+  return section === DEFAULT_DASHBOARD_SECTION ? "#/" : `#/${section}`;
 }
 
 function SidebarCollapseToggle({
@@ -54,6 +56,7 @@ function NavLink({
   collapsed: boolean;
   onNavigate: (section: DashboardSection) => void;
 }) {
+  const emphasized = DASHBOARD_EMPHASIZED_NAV_IDS.has(item.id);
   return (
     <a
       href={navHref(item.id)}
@@ -64,12 +67,15 @@ function NavLink({
       aria-current={isActive ? "page" : undefined}
       aria-label={item.label}
       title={collapsed ? item.label : item.description}
-      className={`group flex items-center gap-3 rounded-lg text-sm font-medium transition-colors motion-reduce:transition-none ${
+      data-emphasized={emphasized ? "true" : "false"}
+      className={`group flex items-center gap-3 rounded-lg text-sm transition-colors motion-reduce:transition-none ${
         collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2"
-      } ${
+      } ${emphasized ? "font-semibold" : "font-medium"} ${
         isActive
           ? "bg-brand-600 text-white shadow-sm ring-1 ring-brand-700/50"
-          : "text-slate-300 hover:bg-slate-800 hover:text-white"
+          : emphasized
+            ? "border-l-2 border-brand-400 text-slate-200 hover:bg-slate-800 hover:text-white"
+            : "border-l-2 border-transparent text-slate-300 hover:bg-slate-800 hover:text-white"
       }`}
     >
       <NavIcon

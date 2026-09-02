@@ -242,7 +242,7 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
     window.location.hash = "";
   });
 
-  it("sidebar renders exactly the flat V2 IA, in order, with no legacy sections", async () => {
+  it("sidebar renders exactly the Cotizaciones-first primary IA, in order, with no legacy sections", async () => {
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
@@ -250,18 +250,17 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
     const links = within(nav).getAllByRole("link").map((el) => el.textContent);
 
     expect(links).toEqual([
-      "Inicio",
-      "Ventas",
       "Cotizaciones",
-      "Clientes",
       "Licitaciones",
-      "Proveedores",
-      "Pagos y logística",
+      "Ventas",
+      "Clientes",
+      "Prospectos",
+      "Correos",
       "Catálogo",
       "Sistema",
     ]);
 
-    for (const removedLabel of ["Bandeja de revisión", "Negocios", "Prospectos"]) {
+    for (const removedLabel of ["Inicio", "Negocios", "Proveedores", "Pagos y logística"]) {
       expect(within(nav).queryByRole("link", { name: removedLabel })).toBeNull();
     }
   });
@@ -271,9 +270,9 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
     const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
-    expect(within(nav).getByRole("link", { name: "Inicio" }).getAttribute("aria-current")).toBe(
-      "page",
-    );
+    expect(
+      within(nav).getByRole("link", { name: "Cotizaciones" }).getAttribute("aria-current"),
+    ).toBe("page");
     expect(within(nav).getByRole("link", { name: "Sistema" }).getAttribute("aria-current")).toBe(
       null,
     );
@@ -318,6 +317,7 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
   });
 
   it("Today summary renders queue count cards", async () => {
+    window.location.hash = "#/today";
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
@@ -352,23 +352,24 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
     });
   });
 
-  it("Bandeja de revisión is still reachable by deep link even though it's hidden from nav", async () => {
-    window.location.hash = "#/inbox";
+  it("Correos is promoted to primary nav (no longer deep-link-only)", async () => {
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
+
+    await navigateTo("Correos");
     await waitFor(() => {
       screen.getByText("buyer@acme.cl");
     });
 
     const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
-    expect(within(nav).queryByRole("link", { name: "Bandeja de revisión" })).toBeNull();
+    expect(within(nav).getByRole("link", { name: "Correos" })).toBeTruthy();
   });
 
-  it("Suppliers page excludes client opportunities", async () => {
+  it("Suppliers page excludes client opportunities (now deep-link-only)", async () => {
+    window.location.hash = "#/suppliers";
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
-    await navigateTo("Proveedores");
     await waitFor(() => {
       expect(screen.getByTestId("suppliers-workspace")).toBeTruthy();
       expect(screen.getByTestId("supplier-detail-title").textContent).toBe("IKA");
@@ -378,19 +379,25 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
       screen.getByText("beatriz.bonon@ika.net.br");
     });
     expect(screen.queryByText("buyer@acme.cl")).toBeNull();
+
+    const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
+    expect(within(nav).queryByRole("link", { name: "Proveedores" })).toBeNull();
   });
 
-  it("Payments & logistics excludes supplier and client rows", async () => {
+  it("Payments & logistics excludes supplier and client rows (now deep-link-only)", async () => {
+    window.location.hash = "#/payments-logistics";
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
 
-    await navigateTo("Pagos y logística");
     await waitFor(() => {
       screen.getByText("serviciodetransferencias@bancochile.cl");
       screen.getByText("monica.silva@dhl.com");
     });
     expect(screen.queryByText("buyer@acme.cl")).toBeNull();
     expect(screen.queryByText("beatriz.bonon@ika.net.br")).toBeNull();
+
+    const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
+    expect(within(nav).queryByRole("link", { name: "Pagos y logística" })).toBeNull();
   });
 
   it("Negocios is still reachable by deep link even though it's hidden from nav", async () => {
@@ -407,16 +414,15 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
     expect(within(nav).queryByRole("link", { name: "Negocios" })).toBeNull();
   });
 
-  it("Prospectos is still reachable by deep link even though it's hidden from nav", async () => {
-    window.location.hash = "#/prospectos";
+  it("Prospectos is promoted to primary nav (no longer deep-link-only)", async () => {
     render(<DashboardApp />);
     await waitFor(() => screen.getByTestId("operator-verdict-chip"));
+
+    const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
+    fireEvent.click(within(nav).getByRole("link", { name: "Prospectos" }));
     await waitFor(() => {
       screen.getByText("Acme Labs");
     });
-
-    const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
-    expect(within(nav).queryByRole("link", { name: "Prospectos" })).toBeNull();
   });
 
   it("global Refresh button reloads data", async () => {

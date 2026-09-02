@@ -3,35 +3,54 @@ import {
   DASHBOARD_NAV_ITEMS,
   DASHBOARD_TOP_NAV_ITEMS,
   DASHBOARD_TOP_NAV_IDS,
+  DASHBOARD_EMPHASIZED_NAV_IDS,
+  DEFAULT_DASHBOARD_SECTION,
   dashboardSectionLabel,
 } from "./dashboardNav";
 
 describe("dashboardNav", () => {
-  it("exposes exactly the 9-item flat V2 IA, in order", () => {
+  it("exposes exactly the 8-item Cotizaciones-first primary IA, in order", () => {
     expect(DASHBOARD_TOP_NAV_ITEMS.map((item) => item.label)).toEqual([
-      "Inicio",
-      "Ventas",
       "Cotizaciones",
-      "Clientes",
       "Licitaciones",
-      "Proveedores",
-      "Pagos y logística",
+      "Ventas",
+      "Clientes",
+      "Prospectos",
+      "Correos",
       "Catálogo",
       "Sistema",
     ]);
   });
 
-  it("does not surface removed legacy sections as top-level nav items", () => {
+  it("defaults to Cotizaciones as the landing section", () => {
+    expect(DEFAULT_DASHBOARD_SECTION).toBe("cotizaciones");
+  });
+
+  it("does not surface retired primary-nav concepts as top-level nav items", () => {
     const topIds = new Set(DASHBOARD_TOP_NAV_IDS as readonly string[]);
-    expect(topIds.has("inbox")).toBe(false);
+    expect(topIds.has("today")).toBe(false);
     expect(topIds.has("deals")).toBe(false);
-    expect(topIds.has("prospectos")).toBe(false);
+    expect(topIds.has("suppliers")).toBe(false);
+    expect(topIds.has("payments-logistics")).toBe(false);
   });
 
   it("keeps hidden sections resolvable by id for deep links", () => {
-    expect(dashboardSectionLabel("inbox")).toBe("Bandeja de revisión");
+    expect(dashboardSectionLabel("today")).toBe("Inicio");
     expect(dashboardSectionLabel("deals")).toBe("Negocios");
-    expect(dashboardSectionLabel("prospectos")).toBe("Prospectos");
+    expect(dashboardSectionLabel("suppliers")).toBe("Proveedores");
+    expect(dashboardSectionLabel("payments-logistics")).toBe("Pagos y logística");
+  });
+
+  it("relabels the former Bandeja de revisión as Correos and promotes it to primary nav", () => {
+    const inbox = DASHBOARD_NAV_ITEMS.find((item) => item.id === "inbox")!;
+    expect(inbox.label).toBe("Correos");
+    expect((DASHBOARD_TOP_NAV_IDS as readonly string[]).includes("inbox")).toBe(true);
+  });
+
+  it("emphasizes exactly Cotizaciones, Licitaciones and Ventas", () => {
+    expect([...DASHBOARD_EMPHASIZED_NAV_IDS].sort()).toEqual(
+      ["cotizaciones", "pipeline", "tenders"].sort(),
+    );
   });
 
   it("has no duplicate ids across the full registry", () => {
@@ -39,11 +58,8 @@ describe("dashboardNav", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("maps section labels", () => {
-    expect(dashboardSectionLabel("today")).toBe("Inicio");
-    expect(dashboardSectionLabel("pipeline")).toBe("Ventas");
-    expect(dashboardSectionLabel("cotizaciones")).toBe("Cotizaciones");
-    expect(dashboardSectionLabel("system")).toBe("Sistema");
+  it("still resolves the full 12-id registry (nothing deleted, only reordered/relabeled)", () => {
+    expect(DASHBOARD_NAV_ITEMS).toHaveLength(12);
   });
 
   it("the removed dev-only 'intel-preview' section stays out of the nav", () => {
