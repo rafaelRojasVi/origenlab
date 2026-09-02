@@ -227,8 +227,15 @@ def _cmd_send(args: argparse.Namespace) -> int:
     try:
         ensure_outbound_campaign_tables(conn)
         ensure_manual_contact_status_table(conn)
+        if args.limit is not None and args.limit <= 0:
+            print("--limit must be a positive integer.", file=sys.stderr)
+            return 2
         rows = list_reserved_batch(conn, args.campaign_id)
         recipients = [(r["id"], r["email"]) for r in rows]
+        if args.limit is not None:
+            # list_reserved_batch orders by id (FIFO reservation order) -- keep the
+            # oldest-reserved N and leave the rest untouched in 'reserved' state.
+            recipients = recipients[: args.limit]
         if not recipients:
             print(json.dumps({
                 "mode": "live" if args.live else "dry_run",
@@ -460,6 +467,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_send.add_argument("--campaign-id", required=True)
     p_send.add_argument("--html", required=True, type=Path)
     p_send.add_argument("--live", action="store_true", help="Actually call the Gmail API (default: dry-run)")
+    p_send.add_argument(
+        "--limit", type=int, default=None,
+        help="Process at most this many currently-reserved recipients (FIFO by reservation order). "
+             "Default: process all reserved recipients. Remaining reserved rows beyond the limit are "
+             "left untouched for a later invocation.",
+    )
     p_send.add_argument("--no-stop-on-error", action="store_true")
     p_send.add_argument("--open-browser", action="store_true")
     p_send.add_argument("--gmail-user", default=None)

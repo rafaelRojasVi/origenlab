@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sqlite3
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -117,6 +119,132 @@ def test_send_dry_run_end_to_end(db_path: Path, tmp_path: Path, capsys) -> None:
     mock_send.assert_called_once()
     _, kwargs = mock_send.call_args
     assert kwargs["live"] is False
+
+
+def _init_and_reserve_three(db_path: Path, capsys) -> None:
+    _run(
+        db_path, "init", "--campaign-id", "hielscher-sonicators-2026", "--name", "N",
+        "--sender-email", "contacto@origenlab.cl", "--sender-name", "S",
+        "--subject", "Subj", "--target", "2000", "--baseline", "874", capsys=capsys,
+    )
+    for email in ("a@x.cl", "b@x.cl", "c@x.cl"):
+        _run(db_path, "candidates", "add", "--campaign-id", "hielscher-sonicators-2026", "--email", email, capsys=capsys)
+    _run(
+        db_path, "select", "--campaign-id", "hielscher-sonicators-2026", "--n", "10",
+        "--gmail-user", "contacto@origenlab.cl", capsys=capsys,
+    )
+
+
+def _recipient_states(db_path: Path) -> dict[str, str]:
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT email_norm, state FROM outbound_campaign_recipient "
+            "WHERE campaign_id = 'hielscher-sonicators-2026' ORDER BY id"
+        ).fetchall()
+    finally:
+        conn.close()
+    return dict(rows)
+
+
+def test_send_dry_run_limit_processes_subset_and_stays_non_mutating(db_path: Path, tmp_path: Path, capsys) -> None:
+    """Requirement 1: 3 reserved + dry-run --limit 2 => 2 processed, all 3 remain reserved."""
+    _init_and_reserve_three(db_path, capsys)
+    assert set(_recipient_states(db_path).values()) == {"reserved"}
+
+    html_file = tmp_path / "campaign.html"
+    html_file.write_text("<html><body>Hola</body></html>", encoding="utf-8")
+
+    code, out = _run(
+        db_path, "send", "--campaign-id", "hielscher-sonicators-2026", "--html", str(html_file),
+        "--limit", "2", "--gmail-user", "contacto@origenlab.cl", capsys=capsys,
+    )
+    assert code == 0
+    payload = json.loads(out)
+    assert payload["mode"] == "dry_run"
+    assert payload["accepted"] == 2
+
+    states = _recipient_states(db_path)
+    assert len(states) == 3
+    assert set(states.values()) == {"reserved"}, "dry-run must never mutate recipient state"
+
+
+def test_send_no_limit_preserves_existing_behavior(db_path: Path, tmp_path: Path, capsys) -> None:
+    """Requirement 4: omitting --limit still processes every reserved recipient."""
+    _init_and_reserve_three(db_path, capsys)
+    html_file = tmp_path / "campaign.html"
+    html_file.write_text("<html><body>Hola</body></html>", encoding="utf-8")
+
+    code, out = _run(
+        db_path, "send", "--campaign-id", "hielscher-sonicators-2026", "--html", str(html_file),
+        "--gmail-user", "contacto@origenlab.cl", capsys=capsys,
+    )
+    assert code == 0
+    payload = json.loads(out)
+    assert payload["mode"] == "dry_run"
+    assert payload["accepted"] == 3
+    assert set(_recipient_states(db_path).values()) == {"reserved"}
+
+
+@pytest.mark.parametrize("bad_limit", ["0", "-1"])
+def test_send_rejects_non_positive_limit(db_path: Path, tmp_path: Path, capsys, bad_limit: str) -> None:
+    """Requirement 5: invalid --limit values fail closed (no recipients processed)."""
+    _init_and_reserve_three(db_path, capsys)
+    html_file = tmp_path / "campaign.html"
+    html_file.write_text("<html><body>Hola</body></html>", encoding="utf-8")
+
+    code, out = _run(
+        db_path, "send", "--campaign-id", "hielscher-sonicators-2026", "--html", str(html_file),
+        "--limit", bad_limit, "--gmail-user", "contacto@origenlab.cl", capsys=capsys,
+    )
+    assert code != 0
+    assert set(_recipient_states(db_path).values()) == {"reserved"}, "a rejected --limit must not touch state"
+
+
+def test_send_live_limit_transitions_only_the_limited_recipients_then_finishes_remainder(
+    db_path: Path, tmp_path: Path, capsys, monkeypatch,
+) -> None:
+    """Requirements 2 & 3: live mocked send --limit 2 transitions exactly 2 (1 stays
+    reserved); a second --live invocation (no limit) finishes the remainder."""
+    _init_and_reserve_three(db_path, capsys)
+    html_file = tmp_path / "campaign.html"
+    html_file.write_text("<html><body>Hola</body></html>", encoding="utf-8")
+
+    monkeypatch.setenv("ORIGENLAB_GMAIL_OAUTH_CLIENT_JSON", str(tmp_path / "client.json"))
+    fake_creds = SimpleNamespace(token="fake-token")
+
+    with patch(
+        "origenlab_email_pipeline.gmail_workspace_oauth.load_credentials_for_gmail_imap",
+        return_value=fake_creds,
+    ), patch(
+        "origenlab_email_pipeline.outbound_campaign_sender.gmail_api_send_message",
+        return_value={"id": "M1"},
+    ):
+        code, out = _run(
+            db_path, "send", "--campaign-id", "hielscher-sonicators-2026", "--html", str(html_file),
+            "--live", "--limit", "2", "--gmail-user", "contacto@origenlab.cl", capsys=capsys,
+        )
+        assert code == 0
+        payload = json.loads(out)
+        assert payload["mode"] == "live"
+        assert payload["accepted"] == 2
+
+        states = _recipient_states(db_path)
+        assert sum(1 for s in states.values() if s == "sent") == 2
+        assert sum(1 for s in states.values() if s == "reserved") == 1
+
+        # Second invocation (no --limit) must pick up exactly the remaining recipient.
+        code2, out2 = _run(
+            db_path, "send", "--campaign-id", "hielscher-sonicators-2026", "--html", str(html_file),
+            "--live", "--gmail-user", "contacto@origenlab.cl", capsys=capsys,
+        )
+        assert code2 == 0
+        payload2 = json.loads(out2)
+        assert payload2["mode"] == "live"
+        assert payload2["accepted"] == 1
+
+    final_states = _recipient_states(db_path)
+    assert set(final_states.values()) == {"sent"}
 
 
 def test_send_no_longer_accepts_out_flag(db_path: Path, tmp_path: Path, capsys) -> None:
