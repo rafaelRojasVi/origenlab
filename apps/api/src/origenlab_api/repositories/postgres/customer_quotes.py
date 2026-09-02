@@ -836,16 +836,35 @@ class PostgresCustomerQuoteRepository:
         attempt_version: int,
         folder_id: str,
         folder_web_url: str,
-        sheet_file_id: str,
-        sheet_web_url: str,
+        sheet_file_id: str | None = None,
+        sheet_web_url: str | None = None,
     ) -> CustomerQuoteDriveWorkspace:
         safe_folder_url = _require_https_url(
             folder_web_url,
             field="folder_web_url",
         )
-        safe_sheet_url = _require_https_url(
-            sheet_web_url,
-            field="sheet_web_url",
+
+        if (sheet_file_id is None) != (sheet_web_url is None):
+            raise ValueError(
+                "sheet_file_id and sheet_web_url must both be set or both "
+                "be None"
+            )
+
+        safe_sheet_url = (
+            _require_https_url(sheet_web_url, field="sheet_web_url")
+            if sheet_web_url is not None
+            else None
+        )
+
+        # Template-document provisioning is an explicit, separately-gated
+        # step (see origenlab_api.drive.factory): completing with no sheet
+        # means the workspace is honestly folder_ready, never ready (which
+        # means folder + copied template document both exist).
+        target_status = "ready" if sheet_file_id is not None else "folder_ready"
+        event_type = (
+            "drive_workspace_ready"
+            if sheet_file_id is not None
+            else "drive_workspace_folder_ready"
         )
 
         pg = require_psycopg()
@@ -862,7 +881,7 @@ class PostgresCustomerQuoteRepository:
                     """
                     UPDATE commercial.customer_quote_drive_workspace
                     SET
-                      provisioning_status = 'ready',
+                      provisioning_status = %(target_status)s,
                       folder_id = %(folder_id)s,
                       folder_web_url = %(folder_web_url)s,
                       sheet_file_id = %(sheet_file_id)s,
@@ -881,6 +900,7 @@ class PostgresCustomerQuoteRepository:
                     {
                         "quote_id": quote_id,
                         "attempt_version": attempt_version,
+                        "target_status": target_status,
                         "folder_id": folder_id,
                         "folder_web_url": safe_folder_url,
                         "sheet_file_id": sheet_file_id,
@@ -902,7 +922,7 @@ class PostgresCustomerQuoteRepository:
                 _insert_event(
                     cur,
                     quote_id=quote_id,
-                    event_type="drive_workspace_ready",
+                    event_type=event_type,
                     actor_key=operator,
                     payload={
                         "folder_id": folder_id,

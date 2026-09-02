@@ -445,3 +445,101 @@ def test_concurrent_begin_provision_attempts_only_one_wins(
     assert row is not None
     assert row["attempt_count"] == 1
     assert row["version"] == expected_version + 1
+
+
+# --- CRM-Q2 follow-up: folder-only completion (template provisioning off) -
+
+
+def test_complete_drive_provision_with_no_sheet_marks_folder_ready(
+    admin_conn: object,
+    repo: PostgresCustomerQuoteRepository,
+) -> None:
+    numbering = _numbering(_uid("FR")[:8].upper().replace("_", "")[:8] or "FRPREFIX")
+
+    sales_id = _uid("sales")
+    _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
+
+    bundle = repo.create_quote(
+        quote_id=_uid("quote"),
+        sales_opportunity_id=sales_id,
+        operator="tatiana@origenlab.cl",
+        idempotency_key=_uid("idem"),
+        request_fingerprint="f" * 64,
+        numbering=numbering,
+        template_reference=None,
+    )
+
+    attempt = repo.begin_drive_provision_attempt(
+        quote_id=bundle.quote.quote_id,
+        operator="tatiana@origenlab.cl",
+        expected_version=bundle.workspace.version,
+    )
+
+    workspace = repo.complete_drive_provision(
+        quote_id=bundle.quote.quote_id,
+        operator="tatiana@origenlab.cl",
+        attempt_version=attempt.version,
+        folder_id="folder-only-1",
+        folder_web_url="https://drive.google.com/drive/folders/folder-only-1",
+    )
+
+    assert workspace.provisioning_status == "folder_ready"
+    assert workspace.folder_id == "folder-only-1"
+    assert workspace.sheet_file_id is None
+    assert workspace.sheet_web_url is None
+
+    reloaded = repo.get_quote_bundle(quote_id=bundle.quote.quote_id)
+    assert reloaded is not None
+    assert reloaded.workspace.provisioning_status == "folder_ready"
+
+    with admin_conn.cursor() as cur:
+        cur.execute(
+            "SELECT event_type FROM commercial.customer_quote_event "
+            "WHERE quote_id = %(id)s ORDER BY created_at DESC LIMIT 1",
+            {"id": bundle.quote.quote_id},
+        )
+        row = cur.fetchone()
+
+    assert row is not None
+    assert row["event_type"] == "drive_workspace_folder_ready"
+
+
+def test_complete_drive_provision_with_sheet_still_marks_ready(
+    admin_conn: object,
+    repo: PostgresCustomerQuoteRepository,
+) -> None:
+    # Regression guard: the pre-existing full folder+sheet completion path
+    # must be unaffected by the new optional sheet_file_id/sheet_web_url.
+    numbering = _numbering(_uid("FR")[:8].upper().replace("_", "")[:8] or "FRPREFIX2")
+
+    sales_id = _uid("sales")
+    _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
+
+    bundle = repo.create_quote(
+        quote_id=_uid("quote"),
+        sales_opportunity_id=sales_id,
+        operator="tatiana@origenlab.cl",
+        idempotency_key=_uid("idem"),
+        request_fingerprint="f" * 64,
+        numbering=numbering,
+        template_reference=None,
+    )
+
+    attempt = repo.begin_drive_provision_attempt(
+        quote_id=bundle.quote.quote_id,
+        operator="tatiana@origenlab.cl",
+        expected_version=bundle.workspace.version,
+    )
+
+    workspace = repo.complete_drive_provision(
+        quote_id=bundle.quote.quote_id,
+        operator="tatiana@origenlab.cl",
+        attempt_version=attempt.version,
+        folder_id="folder-1",
+        folder_web_url="https://drive.google.com/drive/folders/folder-1",
+        sheet_file_id="sheet-1",
+        sheet_web_url="https://docs.google.com/spreadsheets/d/sheet-1",
+    )
+
+    assert workspace.provisioning_status == "ready"
+    assert workspace.sheet_file_id == "sheet-1"
