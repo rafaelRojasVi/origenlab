@@ -113,6 +113,13 @@ class Settings(BaseSettings):
     drive_quotes_sent_folder_id: str | None = None
     """Drive file ID of the master quotation spreadsheet template."""
     drive_quote_template_file_id: str | None = None
+    """Explicit, separately-activated gate for template-document
+    provisioning. Fail-safe default false: the master quotation template is
+    not yet finalized, so a generated quote's Drive workspace folder must
+    provision on its own -- the template copy step is only attempted once an
+    operator deliberately turns this on. Never inferred from whether
+    drive_quote_template_file_id happens to be set."""
+    drive_quote_template_provisioning_enabled: bool = False
     """Explicit auth mode: authorized_user_my_drive | service_account_shared_drive."""
     drive_auth_mode: str | None = None
     """Path to the Google credentials JSON file for the configured auth mode."""

@@ -320,6 +320,21 @@ def test_quote_numbering_config_absent_by_default() -> None:
     assert _settings().quote_numbering_config() is None
 
 
+def test_template_provisioning_disabled_by_default() -> None:
+    # Fail-safe default: the master template is not yet finalized, so
+    # template-document provisioning must never be implicitly on.
+    assert _settings().drive_quote_template_provisioning_enabled is False
+
+
+def test_template_provisioning_can_be_explicitly_enabled() -> None:
+    assert (
+        _settings(
+            drive_quote_template_provisioning_enabled=True
+        ).drive_quote_template_provisioning_enabled
+        is True
+    )
+
+
 def test_quote_numbering_config_requires_complete_decision() -> None:
     # A partial decision is not a decision: fail closed (None) rather than
     # invent the missing parts.
