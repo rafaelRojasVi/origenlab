@@ -10,6 +10,25 @@ import type { SalesOpportunityStage } from "./commercialOperationsTypes";
 
 export type CustomerQuoteStatus = "draft";
 
+export type QuoteOrigin = "generated" | "adopted";
+
+export type RevisionStatus =
+  | "draft"
+  | "pending_approval"
+  | "adjustments_requested"
+  | "approved"
+  | "sent"
+  | "superseded";
+
+/** The Cotizaciones Kanban lane a durable quote is in, derived server-side
+ * from its current revision's status — never a stored field, never
+ * computed client-side. */
+export type BoardStage =
+  | "preparation"
+  | "review"
+  | "approved_to_send"
+  | "sent_follow_up";
+
 export type QuoteProvisioningStatus = "pending" | "ready" | "failed";
 
 export interface CustomerQuoteDriveWorkspace {
@@ -38,15 +57,44 @@ export interface CustomerQuote {
   sales_opportunity_id: string;
   quote_number: string;
   document_number: string;
+  quote_origin: QuoteOrigin;
   sales_opportunity_title: string;
   status: CustomerQuoteStatus;
   version: number;
   latest_revision_number: number;
+  revision_status: RevisionStatus;
+  revision_updated_by: string;
+  revision_updated_at: string;
+  board_stage: BoardStage;
   created_by: string;
   updated_by: string;
   created_at: string;
   updated_at: string;
   drive_workspace: CustomerQuoteDriveWorkspace;
+}
+
+export interface CustomerQuoteRevisionTransitionCommand {
+  expected_version: number;
+}
+
+export interface AdoptCustomerQuoteDriveFolderCommand {
+  document_number: string;
+  quote_number: string;
+  folder_id: string;
+  folder_web_url: string;
+}
+
+export interface CustomerQuoteEvent {
+  event_id: string;
+  event_type: string;
+  actor_key: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface CustomerQuoteEventListResponse {
+  meta: { count: number };
+  items: CustomerQuoteEvent[];
 }
 
 export interface CustomerQuoteListResponse {
