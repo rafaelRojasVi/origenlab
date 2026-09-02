@@ -75,6 +75,26 @@ def test_app_exposes_only_sanctioned_mutating_routes() -> None:
             "/operations/customer-quotes/{quote_id}/drive-workspace",
             "post",
         ),
+        (
+            "/operations/customer-quotes/{quote_id}/submit-for-review",
+            "post",
+        ),
+        (
+            "/operations/customer-quotes/{quote_id}/request-adjustments",
+            "post",
+        ),
+        (
+            "/operations/customer-quotes/{quote_id}/approve",
+            "post",
+        ),
+        (
+            "/operations/customer-quotes/{quote_id}/confirm-send",
+            "post",
+        ),
+        (
+            "/operations/sales-opportunities/{sales_opportunity_id}/quotes/adopt-drive-folder",
+            "post",
+        ),
     }
 
     mutating_methods = {"post", "put", "patch", "delete"}

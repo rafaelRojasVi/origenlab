@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from origenlab_api.repositories.postgres.customer_quotes import (
     CustomerQuoteBundle,
+    CustomerQuoteEvent,
 )
 from origenlab_api.repositories.postgres.customer_quotes_read import (
     CustomerQuoteGlobalEntry,
@@ -25,6 +26,50 @@ from origenlab_api.schemas.commercial_operations import (
 
 
 QuoteStatus = Literal["draft"]
+
+QuoteOrigin = Literal["generated", "adopted"]
+
+RevisionStatus = Literal[
+    "draft",
+    "pending_approval",
+    "adjustments_requested",
+    "approved",
+    "sent",
+    "superseded",
+]
+
+# The Cotizaciones Kanban lane, derived from the current revision's status --
+# never a stored column (see commercial.customer_quote_revision.status,
+# CRM-Q2). "drive_intake" is not produced here: it is the dashboard's label
+# for items sourced from the separate drive-pending endpoint, which never
+# have a durable revision at all. 'superseded' has no lane of its own: it is
+# reserved for a future multi-revision slice and is never the *current*
+# (latest) revision of a quote, which is the only revision this derives
+# from.
+BoardStage = Literal[
+    "preparation",
+    "review",
+    "approved_to_send",
+    "sent_follow_up",
+]
+
+_BOARD_STAGE_BY_REVISION_STATUS: dict[str, BoardStage] = {
+    "draft": "preparation",
+    "adjustments_requested": "preparation",
+    "pending_approval": "review",
+    "approved": "approved_to_send",
+    "sent": "sent_follow_up",
+}
+
+
+def derive_board_stage(revision_status: str) -> BoardStage:
+    try:
+        return _BOARD_STAGE_BY_REVISION_STATUS[revision_status]
+    except KeyError:
+        raise ValueError(
+            f"No board stage for current revision status: {revision_status!r}"
+        ) from None
+
 
 QuoteProvisioningStatus = Literal[
     "pending",
@@ -43,6 +88,29 @@ class CustomerQuoteCreateCommand(CommercialCommandModel):
 
 class CustomerQuoteDriveWorkspaceRetryCommand(CommercialCommandModel):
     expected_version: int = Field(ge=1)
+
+
+class CustomerQuoteRevisionTransitionCommand(CommercialCommandModel):
+    """Shared body shape for submit-for-review / request-adjustments /
+    approve / confirm-send: each is its own endpoint with its own fixed
+    legal-from-status set enforced by the repository -- this command only
+    ever carries the optimistic-concurrency token, never a caller-chosen
+    target status."""
+
+    expected_version: int = Field(ge=1)
+
+
+class CustomerQuoteAdoptDriveFolderCommand(CommercialCommandModel):
+    """"Incorporar al CRM": attach an existing Drive-only folder to a new
+    durable quote. document_number/quote_number are independent,
+    operator-confirmed inputs -- neither is ever derived from the other,
+    and no field here can allocate a customer_quote_number_series serial.
+    """
+
+    document_number: str = Field(min_length=1, max_length=32)
+    quote_number: str = Field(min_length=1, max_length=32)
+    folder_id: str = Field(min_length=1, max_length=256)
+    folder_web_url: str = Field(min_length=1, max_length=2048)
 
 
 class CustomerQuoteDriveWorkspaceResponse(BaseModel):
@@ -75,11 +143,16 @@ class CustomerQuoteResponse(BaseModel):
     sales_opportunity_id: str
     quote_number: str
     document_number: str
+    quote_origin: QuoteOrigin
     sales_opportunity_title: str
     status: QuoteStatus
 
     version: int
     latest_revision_number: int
+    revision_status: RevisionStatus
+    revision_updated_by: str
+    revision_updated_at: datetime
+    board_stage: BoardStage
 
     created_by: str
     updated_by: str
@@ -114,10 +187,15 @@ class CustomerQuoteResponse(BaseModel):
             sales_opportunity_id=bundle.quote.sales_opportunity_id,
             quote_number=bundle.quote.quote_number,
             document_number=bundle.quote.document_number,
+            quote_origin=bundle.quote.quote_origin,  # type: ignore[arg-type]
             sales_opportunity_title=bundle.sales_opportunity_title,
             status=bundle.quote.status,  # type: ignore[arg-type]
             version=bundle.quote.version,
             latest_revision_number=bundle.revision.revision_number,
+            revision_status=bundle.revision.status,  # type: ignore[arg-type]
+            revision_updated_by=bundle.revision.updated_by,
+            revision_updated_at=bundle.revision.updated_at,
+            board_stage=derive_board_stage(bundle.revision.status),
             created_by=bundle.quote.created_by,
             updated_by=bundle.quote.updated_by,
             created_at=bundle.quote.created_at,
@@ -193,3 +271,30 @@ class CustomerQuoteGlobalListMeta(BaseModel):
 class CustomerQuoteGlobalListResponse(BaseModel):
     meta: CustomerQuoteGlobalListMeta
     items: list[CustomerQuoteGlobalItem]
+
+
+class CustomerQuoteEventResponse(BaseModel):
+    event_id: str
+    event_type: str
+    actor_key: str
+    payload: dict[str, object]
+    created_at: datetime
+
+    @classmethod
+    def from_event(cls, event: CustomerQuoteEvent) -> "CustomerQuoteEventResponse":
+        return cls(
+            event_id=event.event_id,
+            event_type=event.event_type,
+            actor_key=event.actor_key,
+            payload=event.payload,
+            created_at=event.created_at,
+        )
+
+
+class CustomerQuoteEventListMeta(BaseModel):
+    count: int
+
+
+class CustomerQuoteEventListResponse(BaseModel):
+    meta: CustomerQuoteEventListMeta
+    items: list[CustomerQuoteEventResponse]
