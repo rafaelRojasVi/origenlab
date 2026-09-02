@@ -3,7 +3,7 @@ import { V2PageHeader } from "../components/v2/V2PageHeader";
 import { V2EmptyState } from "../components/v2/V2EmptyState";
 import { useCustomerQuotesGlobal } from "../components/quotes/useCustomerQuotesGlobal";
 import { CustomerQuoteQueueTable } from "../components/quotes/CustomerQuoteQueueTable";
-import { filterQuoteQueueItems, type QueueRecencyFilter } from "../components/quotes/customerQuoteQueueFilters";
+import { filterQuoteQueueRows, type QueueRecencyFilter } from "../components/quotes/customerQuoteQueueFilters";
 import { QuoteDetailDrawer } from "../components/quotes/QuoteDetailDrawer";
 import { NuevaCotizacionDialog } from "../components/quotes/NuevaCotizacionDialog";
 import type { CustomerQuoteGlobalItem } from "../api/customerQuoteTypes";
@@ -19,9 +19,9 @@ export function CotizacionesPage({
   const [openItem, setOpenItem] = useState<CustomerQuoteGlobalItem | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
-  const visibleItems = useMemo(
-    () => filterQuoteQueueItems(queue.items, { searchText, recency }),
-    [queue.items, searchText, recency],
+  const visibleRows = useMemo(
+    () => filterQuoteQueueRows(queue.rows, { searchText, recency }),
+    [queue.rows, searchText, recency],
   );
 
   return (
@@ -75,16 +75,16 @@ export function CotizacionesPage({
         <p role="alert" className="text-sm text-amber-900">{queue.error}</p>
       ) : null}
 
-      {!queue.loading && !queue.error && visibleItems.length === 0 ? (
+      {!queue.loading && !queue.error && visibleRows.length === 0 ? (
         <V2EmptyState
-          title={queue.items.length === 0 ? "Aún no hay cotizaciones" : "Sin resultados para estos filtros"}
+          title={queue.isEmpty ? "Aún no hay cotizaciones" : "Sin resultados para estos filtros"}
           description={
-            queue.items.length === 0
+            queue.isEmpty
               ? "Crea la primera cotización desde una oportunidad en Ventas, o usa Nueva Cotización aquí."
               : "Ajusta la búsqueda o los filtros."
           }
           action={
-            queue.items.length === 0 ? (
+            queue.isEmpty ? (
               <button
                 type="button"
                 onClick={() => onOpenVentas()}
@@ -96,7 +96,7 @@ export function CotizacionesPage({
           }
         />
       ) : (
-        <CustomerQuoteQueueTable items={visibleItems} onOpenQuote={setOpenItem} />
+        <CustomerQuoteQueueTable rows={visibleRows} onOpenQuote={setOpenItem} />
       )}
 
       <QuoteDetailDrawer

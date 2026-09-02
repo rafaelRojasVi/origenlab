@@ -332,3 +332,23 @@ class PostgresCustomerQuoteReadRepository:
                 entries = [_global_entry_from_row(dict(row)) for row in cur.fetchall()]
 
                 return entries, total_count
+
+    def list_known_drive_folder_ids(self) -> set[str]:
+        """Every Drive folder_id already referenced by a durable customer
+        quote workspace -- used to exclude Drive-only folders that are
+        already represented in the CRM so the operator queue never shows
+        the same workspace twice."""
+
+        pg = require_psycopg()
+
+        with postgres_connection(self._settings) as conn:
+            with conn.cursor(row_factory=pg.rows.dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT DISTINCT folder_id
+                    FROM api.v_commercial_customer_quote_drive_workspace
+                    WHERE folder_id IS NOT NULL
+                    """
+                )
+
+                return {row["folder_id"] for row in cur.fetchall()}

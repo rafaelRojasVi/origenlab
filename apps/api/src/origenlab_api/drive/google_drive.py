@@ -20,10 +20,11 @@ preflight verification only -- no runtime path writes to them.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol
 
 from origenlab_api.drive.errors import DriveProvisioningError
-from origenlab_api.drive.protocol import DriveFileRef
+from origenlab_api.drive.protocol import DriveFileRef, DrivePendingFolder
 
 
 DRIVE_API_BASE_URL = "https://www.googleapis.com"
@@ -34,6 +35,9 @@ DRIVE_ARTIFACT_PROPERTY = "origenlab_artifact"
 _FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 _FIELDS_SINGLE = "id,webViewLink"
 _FIELDS_LIST = "files(id,webViewLink)"
+_FIELDS_PENDING_LIST = (
+    "nextPageToken,files(id,name,webViewLink,createdTime,modifiedTime)"
+)
 
 
 class DriveTransportTimeoutError(RuntimeError):
@@ -101,6 +105,35 @@ def _safe_ref(item: dict[str, Any]) -> DriveFileRef:
         raise DriveProvisioningError("drive_error")
 
     return DriveFileRef(file_id=file_id, web_url=web_url)
+
+
+def _parse_drive_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        # Drive RFC3339 timestamps end in "Z"; fromisoformat needs "+00:00".
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _safe_pending_folder(item: dict[str, Any]) -> DrivePendingFolder | None:
+    folder_id = str(item.get("id") or "").strip()
+    folder_name = str(item.get("name") or "").strip()
+    web_url = str(item.get("webViewLink") or "").strip()
+
+    if not folder_id or not folder_name or not web_url.startswith("https://"):
+        # This is a read-only visibility projection, not a mutation path:
+        # skip a malformed row instead of failing the whole listing.
+        return None
+
+    return DrivePendingFolder(
+        folder_id=folder_id,
+        folder_name=folder_name,
+        folder_web_url=web_url,
+        created_time=_parse_drive_timestamp(item.get("createdTime")),
+        modified_time=_parse_drive_timestamp(item.get("modifiedTime")),
+    )
 
 
 class GoogleDriveQuoteWorkspaceProvider:
@@ -423,6 +456,53 @@ class GoogleDriveQuoteWorkspaceProvider:
         )
 
         return _safe_ref(body)
+
+    def list_pending_children(self) -> list[DrivePendingFolder]:
+        # Read-only, non-recursive listing of direct children of Pendientes
+        # only -- never Enviadas, never the template, never a mutation call.
+        clauses = [
+            "'%s' in parents" % _escape_query_value(self._pending_folder_id),
+            f"mimeType='{_FOLDER_MIME_TYPE}'",
+            "trashed=false",
+        ]
+
+        params: dict[str, Any] = {
+            "q": " and ".join(clauses),
+            "fields": _FIELDS_PENDING_LIST,
+            "pageSize": 100,
+            "orderBy": "createdTime",
+            "supportsAllDrives": True,
+            "includeItemsFromAllDrives": True,
+        }
+
+        if self._shared_drive_id is not None:
+            params["corpora"] = "drive"
+            params["driveId"] = self._shared_drive_id
+
+        folders: list[DrivePendingFolder] = []
+        page_token: str | None = None
+
+        while True:
+            request_params = dict(params)
+            if page_token:
+                request_params["pageToken"] = page_token
+
+            body = self._request(
+                "GET",
+                f"{DRIVE_API_BASE_URL}/drive/v3/files",
+                params=request_params,
+            )
+
+            for item in body.get("files") or []:
+                folder = _safe_pending_folder(item)
+                if folder is not None:
+                    folders.append(folder)
+
+            page_token = body.get("nextPageToken")
+            if not page_token:
+                break
+
+        return folders
 
     def find_sheet(self, quote_id: str, *, folder_id: str) -> DriveFileRef | None:
         return self._find_artifact(

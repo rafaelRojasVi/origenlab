@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseCustomerQuote,
+  parseCustomerQuoteDrivePendingListResponse,
   parseCustomerQuoteGlobalListResponse,
   parseCustomerQuoteListResponse,
   parseCustomerQuoteReadResponse,
@@ -240,5 +241,70 @@ describe("parseCustomerQuoteGlobalListResponse", () => {
         ],
       }),
     ).toThrow(/stage/);
+  });
+});
+
+describe("parseCustomerQuoteDrivePendingListResponse", () => {
+  it("parses a Drive-only pending workspace item", () => {
+    const raw = {
+      meta: { count: 1 },
+      items: [
+        {
+          folder_id: "folder-1",
+          folder_name: "CN01191-ICN Chile",
+          folder_web_url: "https://drive.google.com/drive/folders/folder-1",
+          document_identifier: "CN01191",
+          created_time: "2026-08-01T12:00:00+00:00",
+          modified_time: "2026-08-15T09:30:00+00:00",
+        },
+      ],
+    };
+
+    const parsed = parseCustomerQuoteDrivePendingListResponse(raw);
+
+    expect(parsed.meta.count).toBe(1);
+    expect(parsed.items[0].folder_id).toBe("folder-1");
+    expect(parsed.items[0].folder_name).toBe("CN01191-ICN Chile");
+    expect(parsed.items[0].document_identifier).toBe("CN01191");
+  });
+
+  it("nulls out a non-Drive-hosted folder_web_url instead of trusting it", () => {
+    const raw = {
+      meta: { count: 1 },
+      items: [
+        {
+          folder_id: "folder-1",
+          folder_name: "CN01191-ICN Chile",
+          folder_web_url: "https://evil.example.com/phish",
+          document_identifier: "CN01191",
+          created_time: null,
+          modified_time: null,
+        },
+      ],
+    };
+
+    const parsed = parseCustomerQuoteDrivePendingListResponse(raw);
+
+    expect(parsed.items[0].folder_web_url).toBeNull();
+  });
+
+  it("accepts a null document_identifier for an ambiguous folder name", () => {
+    const raw = {
+      meta: { count: 1 },
+      items: [
+        {
+          folder_id: "folder-1",
+          folder_name: "Sin prefijo reconocible",
+          folder_web_url: "https://drive.google.com/drive/folders/folder-1",
+          document_identifier: null,
+          created_time: null,
+          modified_time: null,
+        },
+      ],
+    };
+
+    const parsed = parseCustomerQuoteDrivePendingListResponse(raw);
+
+    expect(parsed.items[0].document_identifier).toBeNull();
   });
 });

@@ -875,3 +875,139 @@ def test_non_https_web_link_from_provider_is_rejected() -> None:
         _provider(transport).find_folder(QUOTE_ID)
 
     assert excinfo.value.category == "drive_error"
+
+
+# ---------------------------------------------------------------------------
+# list_pending_children (Drive Pendientes read-only projection follow-up)
+# ---------------------------------------------------------------------------
+
+
+def test_list_pending_children_queries_direct_non_trashed_folders_only() -> None:
+    transport = FakeTransport()
+    transport.queue(DriveTransportResponse(status_code=200, body={"files": []}))
+
+    result = _provider(transport).list_pending_children()
+
+    assert result == []
+    call = transport.calls[0]
+
+    assert call["method"] == "GET"
+    assert call["url"].endswith("/drive/v3/files")
+
+    query = call["params"]["q"]
+    assert f"'{PENDING_FOLDER_ID}' in parents" in query
+    assert "mimeType='application/vnd.google-apps.folder'" in query
+    assert "trashed=false" in query
+    # Never recurses -- no clause references the root or Enviadas folders.
+    assert ROOT_FOLDER_ID not in query
+    assert SENT_FOLDER_ID not in query
+
+
+def test_list_pending_children_returns_safe_metadata() -> None:
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body={
+                "files": [
+                    {
+                        "id": "folder-1",
+                        "name": "CN01191-ICN Chile",
+                        "webViewLink": "https://drive.google.com/drive/folders/folder-1",
+                        "createdTime": "2026-08-01T12:00:00.000Z",
+                        "modifiedTime": "2026-08-15T09:30:00.000Z",
+                    }
+                ]
+            },
+        )
+    )
+
+    result = _provider(transport).list_pending_children()
+
+    assert len(result) == 1
+    folder = result[0]
+    assert folder.folder_id == "folder-1"
+    assert folder.folder_name == "CN01191-ICN Chile"
+    assert folder.folder_web_url == "https://drive.google.com/drive/folders/folder-1"
+    assert folder.created_time is not None
+    assert folder.modified_time is not None
+
+
+def test_list_pending_children_skips_malformed_rows_without_raising() -> None:
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body={
+                "files": [
+                    {"id": "", "name": "no id", "webViewLink": "https://drive.google.com/x"},
+                    {"id": "f2", "name": "no link", "webViewLink": ""},
+                    {"id": "f3", "name": "insecure", "webViewLink": "http://drive.google.com/f3"},
+                    {
+                        "id": "f4",
+                        "name": "good",
+                        "webViewLink": "https://drive.google.com/drive/folders/f4",
+                    },
+                ]
+            },
+        )
+    )
+
+    result = _provider(transport).list_pending_children()
+
+    assert [folder.folder_id for folder in result] == ["f4"]
+
+
+def test_list_pending_children_paginates_through_next_page_token() -> None:
+    transport = FakeTransport()
+    transport.queue(
+        DriveTransportResponse(
+            status_code=200,
+            body={
+                "nextPageToken": "page-2",
+                "files": [
+                    {
+                        "id": "f1",
+                        "name": "first",
+                        "webViewLink": "https://drive.google.com/drive/folders/f1",
+                    }
+                ],
+            },
+        ),
+        DriveTransportResponse(
+            status_code=200,
+            body={
+                "files": [
+                    {
+                        "id": "f2",
+                        "name": "second",
+                        "webViewLink": "https://drive.google.com/drive/folders/f2",
+                    }
+                ]
+            },
+        ),
+    )
+
+    result = _provider(transport).list_pending_children()
+
+    assert [folder.folder_id for folder in result] == ["f1", "f2"]
+    assert transport.calls[1]["params"]["pageToken"] == "page-2"
+
+
+def test_list_pending_children_never_calls_a_mutation_method() -> None:
+    transport = FakeTransport()
+    transport.queue(DriveTransportResponse(status_code=200, body={"files": []}))
+
+    _provider(transport).list_pending_children()
+
+    assert all(call["method"] == "GET" for call in transport.calls)
+
+
+def test_list_pending_children_maps_transport_failure_to_redacted_category() -> None:
+    transport = FakeTransport()
+    transport.queue(DriveTransportUnavailableError("boom"))
+
+    with pytest.raises(DriveProvisioningError) as excinfo:
+        _provider(transport).list_pending_children()
+
+    assert excinfo.value.category == "drive_unavailable"

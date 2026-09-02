@@ -8,12 +8,14 @@
 
 import type {
   CustomerQuote,
+  CustomerQuoteDrivePendingListResponse,
   CustomerQuoteDriveWorkspace,
   CustomerQuoteGlobalItem,
   CustomerQuoteGlobalListResponse,
   CustomerQuoteListResponse,
   CustomerQuoteReadResponse,
   CustomerQuoteStatus,
+  DrivePendingQuoteItem,
   QuoteProvisioningStatus,
 } from "./customerQuoteTypes";
 
@@ -307,5 +309,39 @@ export function parseCustomerQuoteGlobalListResponse(
       offset: integerAtLeast(meta.offset, 0, "meta.offset"),
     },
     items: data.items.map(parseCustomerQuoteGlobalItem),
+  };
+}
+
+function parseDrivePendingQuoteItem(raw: unknown): DrivePendingQuoteItem {
+  const data = record(raw, "drive pending quote item");
+
+  return {
+    folder_id: stringValue(data.folder_id, "folder_id"),
+    folder_name: stringValue(data.folder_name, "folder_name"),
+    folder_web_url: safeDriveUrl(data.folder_web_url),
+    document_identifier: nullableString(
+      data.document_identifier,
+      "document_identifier",
+    ),
+    created_time: nullableString(data.created_time, "created_time"),
+    modified_time: nullableString(data.modified_time, "modified_time"),
+  };
+}
+
+export function parseCustomerQuoteDrivePendingListResponse(
+  raw: unknown,
+): CustomerQuoteDrivePendingListResponse {
+  const data = record(raw, "drive pending quote list response");
+  const meta = record(data.meta, "meta");
+
+  if (!Array.isArray(data.items)) {
+    throw new Error("items must be an array");
+  }
+
+  return {
+    meta: {
+      count: integerAtLeast(meta.count, 0, "meta.count"),
+    },
+    items: data.items.map(parseDrivePendingQuoteItem),
   };
 }

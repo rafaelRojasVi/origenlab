@@ -1,4 +1,7 @@
-import type { CustomerQuoteGlobalItem } from "../../api/customerQuoteTypes";
+import type {
+  CustomerQuoteGlobalItem,
+  DrivePendingQuoteItem,
+} from "../../api/customerQuoteTypes";
 
 export function globalQuoteItemFixture(
   overrides: Partial<CustomerQuoteGlobalItem> = {},
@@ -40,6 +43,20 @@ export function globalQuoteItemFixture(
     contact_primary_email: "tatiana@ceaf.cl",
     next_task_title: null,
     next_task_due_at: null,
+    ...overrides,
+  };
+}
+
+export function drivePendingQuoteItemFixture(
+  overrides: Partial<DrivePendingQuoteItem> = {},
+): DrivePendingQuoteItem {
+  return {
+    folder_id: "folder-1",
+    folder_name: "CN01191-ICN Chile",
+    folder_web_url: "https://drive.google.com/drive/folders/folder-1",
+    document_identifier: "CN01191",
+    created_time: "2026-08-01T12:00:00Z",
+    modified_time: "2026-08-15T09:30:00Z",
     ...overrides,
   };
 }

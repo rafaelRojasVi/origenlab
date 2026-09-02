@@ -691,3 +691,35 @@ describe("manual sales-opportunity creation + global customer-quote list allowli
     );
   });
 });
+
+describe("Drive Pendientes read-only projection allowlist (CRM-Q1D follow-up)", () => {
+  it("allows the exact GET path", () => {
+    expect(
+      isAllowedUpstreamPath("/operations/customer-quotes/drive-pending"),
+    ).toBe(true);
+  });
+
+  it("rejects malformed or broadened variants", () => {
+    expect(
+      isAllowedUpstreamPath("/operations/customer-quotes/drive-pending/"),
+    ).toBe(false);
+    expect(
+      isAllowedUpstreamPath("/operations/customer-quotes/drive-pending/extra"),
+    ).toBe(false);
+    expect(
+      isAllowedUpstreamPath("/operations/customer-quotes/Drive-Pending"),
+    ).toBe(false);
+  });
+
+  it("does not make it POST-writable", async () => {
+    const { isAllowedCommercialOperationsPostPath } = await import(
+      "../src/allowlist"
+    );
+
+    expect(
+      isAllowedCommercialOperationsPostPath(
+        "/operations/customer-quotes/drive-pending",
+      ),
+    ).toBe(false);
+  });
+});

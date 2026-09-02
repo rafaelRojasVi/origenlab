@@ -84,3 +84,35 @@ export interface CustomerQuoteGlobalListResponse {
   meta: CustomerQuoteGlobalListMeta;
   items: CustomerQuoteGlobalItem[];
 }
+
+/**
+ * A Drive-only pending workspace (CRM-Q1D follow-up): a folder that exists
+ * in the human Pendientes working directory but has no durable
+ * customer_quote record yet. Never carries a quote_id, opportunity,
+ * lifecycle status, revision, or provisioning-retry field -- those only
+ * exist once a durable quote is created.
+ */
+export interface DrivePendingQuoteItem {
+  folder_id: string;
+  folder_name: string;
+  /** Validated https Google URL — never rendered otherwise. */
+  folder_web_url: string | null;
+  /** Conservatively parsed CN/document identifier, or null when ambiguous. */
+  document_identifier: string | null;
+  created_time: string | null;
+  modified_time: string | null;
+}
+
+export interface CustomerQuoteDrivePendingListMeta {
+  count: number;
+}
+
+export interface CustomerQuoteDrivePendingListResponse {
+  meta: CustomerQuoteDrivePendingListMeta;
+  items: DrivePendingQuoteItem[];
+}
+
+/** One row of the unified Cotizaciones operator queue. */
+export type QuoteQueueRow =
+  | { kind: "crm"; item: CustomerQuoteGlobalItem }
+  | { kind: "drive_pending"; item: DrivePendingQuoteItem };

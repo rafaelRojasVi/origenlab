@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   customerQuoteDriveWorkspacePath,
   customerQuotePath,
+  drivePendingQuotesPath,
   salesOpportunityQuotesPath,
 } from "./customerQuoteClient";
 
@@ -31,5 +32,11 @@ describe("customer quote client paths", () => {
     expect(() =>
       customerQuoteDriveWorkspacePath("quote_../../etc"),
     ).toThrow();
+  });
+
+  it("exposes the exact Drive Pendientes projection path", () => {
+    expect(drivePendingQuotesPath()).toBe(
+      "/operations/customer-quotes/drive-pending",
+    );
   });
 });
