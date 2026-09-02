@@ -413,6 +413,30 @@ def downgrade() -> None:
         """
     )
 
+    # ------------------------------------------------------------------
+    # Permissions: reverse the UPDATE grant upgrade step 6 added. Dropping
+    # and recreating the views below also drops their grants -- each
+    # recreated view gets its pre-0043 SELECT grants restored immediately
+    # after it is recreated, matching 0041's guarded-DO$$ pattern.
+    # ------------------------------------------------------------------
+    op.execute(
+        """
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1
+            FROM pg_roles
+            WHERE rolname = 'origenlab_api_rw'
+          ) THEN
+            REVOKE UPDATE ON
+              commercial.customer_quote,
+              commercial.customer_quote_revision
+            FROM origenlab_api_rw;
+          END IF;
+        END $$
+        """
+    )
+
     op.execute("DROP VIEW IF EXISTS api.v_commercial_customer_quote_event")
 
     op.execute("DROP VIEW IF EXISTS api.v_commercial_customer_quote_revision")
@@ -427,6 +451,30 @@ def downgrade() -> None:
           created_by,
           created_at
         FROM commercial.customer_quote_revision
+        """
+    )
+    op.execute(
+        """
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1
+            FROM pg_roles
+            WHERE rolname = 'origenlab_api_ro'
+          ) THEN
+            GRANT SELECT ON api.v_commercial_customer_quote_revision
+              TO origenlab_api_ro;
+          END IF;
+
+          IF EXISTS (
+            SELECT 1
+            FROM pg_roles
+            WHERE rolname = 'origenlab_api_rw'
+          ) THEN
+            GRANT SELECT ON api.v_commercial_customer_quote_revision
+              TO origenlab_api_rw;
+          END IF;
+        END $$
         """
     )
 
@@ -448,6 +496,30 @@ def downgrade() -> None:
           issue_year,
           document_number
         FROM commercial.customer_quote
+        """
+    )
+    op.execute(
+        """
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1
+            FROM pg_roles
+            WHERE rolname = 'origenlab_api_ro'
+          ) THEN
+            GRANT SELECT ON api.v_commercial_customer_quote
+              TO origenlab_api_ro;
+          END IF;
+
+          IF EXISTS (
+            SELECT 1
+            FROM pg_roles
+            WHERE rolname = 'origenlab_api_rw'
+          ) THEN
+            GRANT SELECT ON api.v_commercial_customer_quote
+              TO origenlab_api_rw;
+          END IF;
+        END $$
         """
     )
 

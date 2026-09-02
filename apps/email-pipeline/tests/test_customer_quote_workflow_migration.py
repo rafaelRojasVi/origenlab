@@ -260,3 +260,67 @@ def test_downgrade_drops_the_new_event_view_and_restores_originals() -> None:
     assert "DROP COLUMN updated_at" in downgrade
     assert "ALTER COLUMN serial SET NOT NULL" in downgrade
     assert "ALTER COLUMN issue_year SET NOT NULL" in downgrade
+
+
+def test_downgrade_revokes_the_update_grant_on_both_raw_tables() -> None:
+    """Dropping a view drops its grants, but REVOKE on the raw tables is
+    independent of the view drop/recreate below -- the downgrade must undo
+    upgrade step 6's GRANT UPDATE explicitly, guarded the same way the
+    GRANT itself is."""
+
+    downgrade = _norm(_downgrade())
+
+    assert re.search(
+        r"IF EXISTS \(\s*SELECT 1\s*FROM pg_roles\s*"
+        r"WHERE rolname = 'origenlab_api_rw'\s*\)\s*THEN\s*"
+        r"REVOKE UPDATE ON\s*commercial\.customer_quote,\s*"
+        r"commercial\.customer_quote_revision\s*FROM origenlab_api_rw",
+        downgrade,
+    )
+
+    # Never revoke SELECT (never granted for UPDATE) or touch the ro role,
+    # which never received the UPDATE grant in the first place.
+    assert "REVOKE UPDATE ON api.v_" not in downgrade
+    assert "FROM origenlab_api_ro" not in downgrade
+
+
+def test_downgrade_restores_select_grants_on_both_recreated_views() -> None:
+    """Recreating a dropped view does NOT restore its grants -- the
+    downgrade must GRANT SELECT again for both roles, immediately after
+    each view is recreated, matching 0041's guarded pattern."""
+
+    downgrade = _norm(_downgrade())
+
+    for view in (
+        "api.v_commercial_customer_quote",
+        "api.v_commercial_customer_quote_revision",
+    ):
+        for role in ("origenlab_api_ro", "origenlab_api_rw"):
+            assert re.search(
+                rf"IF EXISTS \(\s*SELECT 1\s*FROM pg_roles\s*"
+                rf"WHERE rolname = '{role}'\s*\)\s*THEN\s*"
+                rf"GRANT SELECT ON {re.escape(view)}\s*TO {role}",
+                downgrade,
+            ), f"missing guarded SELECT re-grant for {view} -> {role}"
+
+
+def test_downgrade_regrants_happen_after_each_views_create() -> None:
+    """The SELECT re-grant for each view must textually follow that view's
+    own CREATE VIEW, not merely appear anywhere in the downgrade (which
+    would be true even if it were misplaced before the view exists)."""
+
+    downgrade = _downgrade()
+
+    quote_view_create = downgrade.index("CREATE VIEW api.v_commercial_customer_quote AS")
+    quote_view_grant = downgrade.index(
+        "GRANT SELECT ON api.v_commercial_customer_quote\n"
+    )
+    assert quote_view_create < quote_view_grant
+
+    revision_view_create = downgrade.index(
+        "CREATE VIEW api.v_commercial_customer_quote_revision AS"
+    )
+    revision_view_grant = downgrade.index(
+        "GRANT SELECT ON api.v_commercial_customer_quote_revision\n"
+    )
+    assert revision_view_create < revision_view_grant
