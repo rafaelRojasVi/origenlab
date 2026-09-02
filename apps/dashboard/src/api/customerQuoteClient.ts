@@ -14,6 +14,7 @@ import {
   parseCustomerQuoteDrivePendingListResponse,
   parseCustomerQuoteEventListResponse,
   parseCustomerQuoteGlobalListResponse,
+  parseCustomerQuoteIntakeResolution,
   parseCustomerQuoteListResponse,
   parseCustomerQuoteReadResponse,
 } from "./customerQuoteParse";
@@ -25,6 +26,7 @@ import type {
   CustomerQuoteDrivePendingListResponse,
   CustomerQuoteEventListResponse,
   CustomerQuoteGlobalListResponse,
+  CustomerQuoteIntakeResolution,
   CustomerQuoteListResponse,
   CustomerQuoteReadResponse,
   CustomerQuoteRevisionTransitionCommand,
@@ -202,6 +204,32 @@ export function fetchDrivePendingQuotes(): Promise<CustomerQuoteDrivePendingList
       },
     },
   ).then(parseCustomerQuoteDrivePendingListResponse);
+}
+
+
+export function driveIntakeResolutionPath(): string {
+  return `${drivePendingQuotesPath()}/resolve`;
+}
+
+
+/**
+ * Read-only evidence resolution for "Incorporar al CRM" (CRM-Q2B). Never
+ * mutates Drive or durable CRM state -- the operator confirms/edits before
+ * any durable write happens via the existing adopt/manual-create commands.
+ */
+export function fetchDriveIntakeResolution(
+  folderName: string,
+): Promise<CustomerQuoteIntakeResolution> {
+  return fetchJson<unknown>(
+    operatorApiUrl(driveIntakeResolutionPath(), { folder_name: folderName }),
+    {
+      method: "GET",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+      },
+    },
+  ).then(parseCustomerQuoteIntakeResolution);
 }
 
 

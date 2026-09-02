@@ -4,6 +4,7 @@ import {
   parseCustomerQuoteDrivePendingListResponse,
   parseCustomerQuoteEventListResponse,
   parseCustomerQuoteGlobalListResponse,
+  parseCustomerQuoteIntakeResolution,
   parseCustomerQuoteListResponse,
   parseCustomerQuoteReadResponse,
 } from "./customerQuoteParse";
@@ -405,5 +406,102 @@ describe("parseCustomerQuoteEventListResponse", () => {
     expect(() =>
       parseCustomerQuoteEventListResponse({ meta: { count: 0 }, items: {} }),
     ).toThrow();
+  });
+});
+
+describe("parseCustomerQuoteIntakeResolution", () => {
+  function rawResolution(overrides: Record<string, unknown> = {}) {
+    return {
+      document_number_candidate: "CN01191",
+      document_number_conflict: false,
+      organization: {
+        organization_id: "org_icn",
+        display_name: "ICN Chile",
+        confidence: "confirmed_durable_match",
+        evidence: [{ source: "durable_crm", reason: "normalized_name_match", detail: "..." }],
+        alternates: [],
+      },
+      contacts: [
+        {
+          contact_id: null,
+          display_name: "Ana Example",
+          email: "ana.example@icn.example",
+          confidence: "possible_match",
+          evidence: [{ source: "gmail_history", reason: "gmail_contact_history", detail: "Encontrado en 8 correos" }],
+        },
+      ],
+      opportunity: { sales_opportunity_id: null, title: "ICN Chile — Cotización", confidence: "unresolved" },
+      quote_number_resolved: false,
+      ...overrides,
+    };
+  }
+
+  it("parses a full intake resolution response", () => {
+    const result = parseCustomerQuoteIntakeResolution(rawResolution());
+
+    expect(result.document_number_candidate).toBe("CN01191");
+    expect(result.organization?.organization_id).toBe("org_icn");
+    expect(result.contacts[0].email).toBe("ana.example@icn.example");
+    expect(result.opportunity?.title).toBe("ICN Chile — Cotización");
+    expect(result.quote_number_resolved).toBe(false);
+  });
+
+  it("parses a null organization and null opportunity (ambiguous folder name)", () => {
+    const result = parseCustomerQuoteIntakeResolution(
+      rawResolution({ organization: null, contacts: [], opportunity: null, document_number_candidate: null }),
+    );
+
+    expect(result.organization).toBeNull();
+    expect(result.opportunity).toBeNull();
+    expect(result.contacts).toEqual([]);
+  });
+
+  it("parses organization alternates for a possible_match with multiple durable candidates", () => {
+    const result = parseCustomerQuoteIntakeResolution(
+      rawResolution({
+        organization: {
+          organization_id: null,
+          display_name: "ICN Chile",
+          confidence: "possible_match",
+          evidence: [],
+          alternates: [
+            { organization_id: "org_a", display_name: "ICN Chile SPA" },
+            { organization_id: "org_b", display_name: "ICN Chile Ltda" },
+          ],
+        },
+      }),
+    );
+
+    expect(result.organization?.alternates).toHaveLength(2);
+  });
+
+  it("rejects an unknown confidence value", () => {
+    expect(() =>
+      parseCustomerQuoteIntakeResolution(
+        rawResolution({
+          organization: {
+            organization_id: "org_icn",
+            display_name: "ICN Chile",
+            confidence: "very_sure",
+            evidence: [],
+            alternates: [],
+          },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it("rejects quote_number_resolved: true (server contract violation)", () => {
+    expect(() =>
+      parseCustomerQuoteIntakeResolution(rawResolution({ quote_number_resolved: true })),
+    ).toThrow();
+  });
+
+  it("rejects a malformed response instead of returning a half-parsed object", () => {
+    expect(() => parseCustomerQuoteIntakeResolution({ document_number_candidate: 123 })).toThrow();
+  });
+
+  it("rejects a non-array contacts field", () => {
+    expect(() => parseCustomerQuoteIntakeResolution(rawResolution({ contacts: {} }))).toThrow();
   });
 });

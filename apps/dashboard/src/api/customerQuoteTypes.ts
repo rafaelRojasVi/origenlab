@@ -180,3 +180,57 @@ export interface CustomerQuoteDrivePendingListResponse {
 export type QuoteQueueRow =
   | { kind: "crm"; item: CustomerQuoteGlobalItem }
   | { kind: "drive_pending"; item: DrivePendingQuoteItem };
+
+/**
+ * Intake evidence resolution ("Incorporar al CRM", CRM-Q2B). Read-only,
+ * ephemeral -- nothing here is durable CRM truth until the operator
+ * confirms and submits the adoption command. Confidence is always one of
+ * three reason-coded levels, never a numeric ML score.
+ */
+export type IntakeConfidence = "confirmed_durable_match" | "possible_match" | "unresolved";
+
+export interface IntakeEvidenceItem {
+  source: string;
+  reason: string;
+  detail: string;
+}
+
+export interface IntakeOrganizationAlternate {
+  organization_id: string;
+  display_name: string;
+}
+
+export interface IntakeOrganizationCandidate {
+  organization_id: string | null;
+  display_name: string;
+  confidence: IntakeConfidence;
+  evidence: IntakeEvidenceItem[];
+  /** Populated only when confidence is "possible_match" with 2+ durable
+   * candidates -- the operator picks, nothing is auto-selected. */
+  alternates: IntakeOrganizationAlternate[];
+}
+
+export interface IntakeContactCandidate {
+  contact_id: string | null;
+  display_name: string | null;
+  email: string | null;
+  confidence: IntakeConfidence;
+  evidence: IntakeEvidenceItem[];
+}
+
+export interface IntakeOpportunityCandidate {
+  sales_opportunity_id: string | null;
+  title: string;
+  confidence: IntakeConfidence;
+}
+
+export interface CustomerQuoteIntakeResolution {
+  document_number_candidate: string | null;
+  document_number_conflict: boolean;
+  organization: IntakeOrganizationCandidate | null;
+  contacts: IntakeContactCandidate[];
+  opportunity: IntakeOpportunityCandidate | null;
+  /** Always false in this slice -- quote_number is never auto-resolved;
+   * the operator always confirms it explicitly. */
+  quote_number_resolved: false;
+}
