@@ -404,27 +404,43 @@ class CustomerQuoteService:
         except DriveProvisioningError as exc:
             return fail(exc.category)
 
-        # Two distinct identifiers name two distinct Drive artifacts: the
-        # workspace folder carries the human quote_number, the copied
-        # template document carries the separate document_number.
-        folder_name = build_quote_workspace_name(
-            bundle.quote.quote_number,
-            bundle.sales_opportunity_title,
-        )
-        document_name = build_quote_workspace_name(
+        # Both Drive artifacts are named from document_number (CRM-Q2
+        # follow-up): real Pendientes folders are named "CN01191 —
+        # Customer" style, never from the human-facing quote_number, which
+        # stays visible in the CRM/drawer without controlling the Drive
+        # folder stem.
+        workspace_name = build_quote_workspace_name(
             bundle.quote.document_number,
             bundle.sales_opportunity_title,
         )
 
-        # Find-before-create on both artifacts: the internal quote identity
+        # Find-before-create on the folder: the internal quote identity
         # stamped into Drive appProperties makes retries reuse prior
         # artifacts instead of creating duplicates.
         try:
             folder = provider.find_folder(quote_id)
             if folder is None:
-                folder = provider.create_folder(quote_id, name=folder_name)
+                folder = provider.create_folder(quote_id, name=workspace_name)
         except DriveProvisioningError as exc:
             return fail(exc.category)
+
+        if not self._settings.drive_quote_template_provisioning_enabled:
+            # Template-document provisioning is an explicit, separately-
+            # activated step (the master template is not yet finalized): the
+            # workspace is folder_ready, not ready -- the durable quote and
+            # CRM card must still land normally on this.
+            try:
+                workspace = self._repository.complete_drive_provision(
+                    quote_id=quote_id,
+                    operator=operator,
+                    attempt_version=attempt_token,
+                    folder_id=folder.file_id,
+                    folder_web_url=folder.web_url,
+                )
+            except CommercialOperationConflictError:
+                return _refreshed_or_bundle()
+
+            return replace(bundle, workspace=workspace)
 
         try:
             sheet = provider.find_sheet(quote_id, folder_id=folder.file_id)
@@ -432,7 +448,7 @@ class CustomerQuoteService:
                 sheet = provider.copy_template_sheet(
                     quote_id,
                     folder_id=folder.file_id,
-                    name=document_name,
+                    name=workspace_name,
                 )
         except DriveProvisioningError as exc:
             return fail(
