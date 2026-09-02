@@ -119,6 +119,21 @@ _CLOSE_COMMAND_KIND = "customer_quote_close"
 
 _CLOSED_STATUS_BY_OUTCOME = {"won": "closed_won", "null": "closed_null"}
 
+# Distinguishes which unique constraint fired on the customer_quote insert
+# during adoption -- the two candidates from migration 20260830_0040. Never
+# guess: an unrecognized constraint name falls back to the old combined
+# message rather than mislabeling the failure.
+_ADOPT_UNIQUE_VIOLATION_REASONS = {
+    "uq_customer_quote_document_number": (
+        "duplicate_document_number: document_number is already used by "
+        "another quote"
+    ),
+    "uq_customer_quote_number": (
+        "duplicate_quote_number: quote_number is already used by another "
+        "quote"
+    ),
+}
+
 
 @dataclass(frozen=True)
 class CustomerQuote:
@@ -1448,7 +1463,8 @@ class PostgresCustomerQuoteRepository:
 
                 if source is None:
                     raise CommercialOperationNotFoundError(
-                        f"Sales opportunity not found: {sales_opportunity_id}"
+                        f"sales_opportunity_not_found: Sales opportunity "
+                        f"not found: {sales_opportunity_id}"
                     )
 
                 title = str(source["title"])
@@ -1498,9 +1514,13 @@ class PostgresCustomerQuoteRepository:
                         },
                     )
                 except pg.errors.UniqueViolation as exc:
-                    raise CommercialOperationConflictError(
-                        "quote_number or document_number already in use"
-                    ) from exc
+                    constraint = getattr(exc.diag, "constraint_name", None)
+                    message = _ADOPT_UNIQUE_VIOLATION_REASONS.get(
+                        constraint,
+                        "duplicate_identifier: quote_number or document_number "
+                        "already in use",
+                    )
+                    raise CommercialOperationConflictError(message) from exc
 
                 quote_row = cur.fetchone()
 
@@ -1591,7 +1611,8 @@ class PostgresCustomerQuoteRepository:
                     )
                 except pg.errors.UniqueViolation as exc:
                     raise CommercialOperationConflictError(
-                        "Drive folder is already attached to a durable quote"
+                        "drive_folder_already_incorporated: this Drive "
+                        "folder is already attached to a durable quote"
                     ) from exc
 
                 workspace_row = cur.fetchone()

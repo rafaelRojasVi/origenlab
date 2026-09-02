@@ -693,7 +693,7 @@ def test_adopt_drive_folder_rejects_duplicate_document_number(
         request_fingerprint="f" * 64,
     )
 
-    with pytest.raises(CommercialOperationConflictError):
+    with pytest.raises(CommercialOperationConflictError, match=r"^duplicate_document_number: "):
         repo.adopt_drive_folder(
             quote_id=_uid("quote"),
             sales_opportunity_id=sales_id,
@@ -701,6 +701,76 @@ def test_adopt_drive_folder_rejects_duplicate_document_number(
             quote_number="05001-24",
             folder_id="drive-folder-5001",
             folder_web_url="https://drive.google.com/drive/folders/drive-folder-5001",
+            operator=OPERATOR,
+            idempotency_key=_uid("idem"),
+            request_fingerprint="f" * 64,
+        )
+
+
+def test_adopt_drive_folder_rejects_duplicate_quote_number(
+    admin_conn: object, repo: PostgresCustomerQuoteRepository
+) -> None:
+    """CRM-Q2B: the previous shared message conflated document_number and
+    quote_number duplicates -- distinguished via the psycopg constraint
+    name so the operator sees which field actually collided."""
+
+    sales_id = _uid("sales")
+    _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
+
+    repo.adopt_drive_folder(
+        quote_id=_uid("quote"),
+        sales_opportunity_id=sales_id,
+        document_number="CN06000",
+        quote_number="06000-24",
+        folder_id="drive-folder-6000",
+        folder_web_url="https://drive.google.com/drive/folders/drive-folder-6000",
+        operator=OPERATOR,
+        idempotency_key=_uid("idem"),
+        request_fingerprint="f" * 64,
+    )
+
+    with pytest.raises(CommercialOperationConflictError, match=r"^duplicate_quote_number: "):
+        repo.adopt_drive_folder(
+            quote_id=_uid("quote"),
+            sales_opportunity_id=sales_id,
+            document_number="CN06001",
+            quote_number="06000-24",
+            folder_id="drive-folder-6001",
+            folder_web_url="https://drive.google.com/drive/folders/drive-folder-6001",
+            operator=OPERATOR,
+            idempotency_key=_uid("idem"),
+            request_fingerprint="f" * 64,
+        )
+
+
+def test_adopt_drive_folder_rejects_already_incorporated_folder(
+    admin_conn: object, repo: PostgresCustomerQuoteRepository
+) -> None:
+    sales_id = _uid("sales")
+    _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
+
+    repo.adopt_drive_folder(
+        quote_id=_uid("quote"),
+        sales_opportunity_id=sales_id,
+        document_number="CN07000",
+        quote_number="07000-24",
+        folder_id="drive-folder-7000",
+        folder_web_url="https://drive.google.com/drive/folders/drive-folder-7000",
+        operator=OPERATOR,
+        idempotency_key=_uid("idem"),
+        request_fingerprint="f" * 64,
+    )
+
+    with pytest.raises(
+        CommercialOperationConflictError, match=r"^drive_folder_already_incorporated: "
+    ):
+        repo.adopt_drive_folder(
+            quote_id=_uid("quote"),
+            sales_opportunity_id=sales_id,
+            document_number="CN07001",
+            quote_number="07001-24",
+            folder_id="drive-folder-7000",
+            folder_web_url="https://drive.google.com/drive/folders/drive-folder-7000",
             operator=OPERATOR,
             idempotency_key=_uid("idem"),
             request_fingerprint="f" * 64,
