@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from origenlab_api.repositories.postgres.customer_quote_intake_resolution import (
     OrganizationMatch,
+    SalesOpportunityMatch,
 )
 from origenlab_api.services.customer_quote_intake_resolution_service import (
     IntakeResolution,
@@ -51,10 +52,20 @@ class ContactCandidateResponse(BaseModel):
     evidence: list[EvidenceItemResponse]
 
 
+class OpportunityAlternateResponse(BaseModel):
+    sales_opportunity_id: str
+    title: str
+
+    @classmethod
+    def from_match(cls, match: SalesOpportunityMatch) -> "OpportunityAlternateResponse":
+        return cls(sales_opportunity_id=match.sales_opportunity_id, title=match.title)
+
+
 class OpportunityCandidateResponse(BaseModel):
     sales_opportunity_id: str | None
     title: str
     confidence: str
+    alternates: list[OpportunityAlternateResponse]
 
 
 class CustomerQuoteIntakeResolutionResponse(BaseModel):
@@ -94,6 +105,10 @@ class CustomerQuoteIntakeResolutionResponse(BaseModel):
                 sales_opportunity_id=resolution.opportunity.sales_opportunity_id,
                 title=resolution.opportunity.title,
                 confidence=resolution.opportunity.confidence,
+                alternates=[
+                    OpportunityAlternateResponse.from_match(match)
+                    for match in resolution.opportunity.alternates
+                ],
             )
             if resolution.opportunity is not None
             else None

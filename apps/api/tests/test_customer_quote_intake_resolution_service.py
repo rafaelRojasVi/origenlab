@@ -26,7 +26,7 @@ class FakeRepository:
     organization_matches: list[OrganizationMatch] = field(default_factory=list)
     contacts_by_org: dict[str, list[ContactMatch]] = field(default_factory=dict)
     lead_intel_evidence: list[LeadIntelEvidence] = field(default_factory=list)
-    open_opportunity_by_org: dict[str, SalesOpportunityMatch] = field(default_factory=dict)
+    active_opportunities_by_org: dict[str, list[SalesOpportunityMatch]] = field(default_factory=dict)
     document_numbers_in_use: set[str] = field(default_factory=set)
 
     def find_organization_matches(self, *, name_candidate: str, limit: int = 5) -> list[OrganizationMatch]:
@@ -41,8 +41,8 @@ class FakeRepository:
         del name_candidate, limit
         return self.lead_intel_evidence
 
-    def find_open_sales_opportunity_for_organization(self, *, organization_id: str) -> SalesOpportunityMatch | None:
-        return self.open_opportunity_by_org.get(organization_id)
+    def find_active_sales_opportunities_for_organization(self, *, organization_id: str) -> list[SalesOpportunityMatch]:
+        return self.active_opportunities_by_org.get(organization_id, [])
 
     def document_number_in_use(self, *, document_number: str) -> bool:
         return document_number in self.document_numbers_in_use
@@ -76,6 +76,56 @@ def test_multiple_durable_organization_matches_are_possible_not_auto_selected() 
     assert resolution.organization.confidence == "possible_match"
     assert resolution.organization.organization_id is None
     assert len(resolution.organization.alternates) == 2
+
+
+def test_single_partial_organization_match_is_possible_not_confirmed() -> None:
+    """candidate 'ICN' vs CRM 'ICN Chile' -- a substring hit is never an
+    exact match, so this must stay possible_match, never auto-confirmed."""
+
+    fake = FakeRepository(organization_matches=[OrganizationMatch(organization_id="org_icn", display_name="ICN Chile")])
+    resolution = _service(fake).resolve(folder_name="CN01191-ICN")
+
+    assert resolution.organization is not None
+    assert resolution.organization.confidence == "possible_match"
+    assert resolution.organization.organization_id is None
+
+
+def test_exact_match_wins_over_unrelated_partial_matches() -> None:
+    fake = FakeRepository(
+        organization_matches=[
+            OrganizationMatch(organization_id="org_exact", display_name="ICN Chile"),
+            OrganizationMatch(organization_id="org_partial", display_name="ICN Chile Holdings"),
+        ]
+    )
+    resolution = _service(fake).resolve(folder_name="CN01191-ICN Chile")
+
+    assert resolution.organization is not None
+    assert resolution.organization.confidence == "confirmed_durable_match"
+    assert resolution.organization.organization_id == "org_exact"
+
+
+def test_multiple_exact_organization_matches_are_ambiguous_not_auto_selected() -> None:
+    fake = FakeRepository(
+        organization_matches=[
+            OrganizationMatch(organization_id="org_a", display_name="ICN Chile"),
+            OrganizationMatch(organization_id="org_b", display_name="ICN Chile"),
+        ]
+    )
+    resolution = _service(fake).resolve(folder_name="CN01191-ICN Chile")
+
+    assert resolution.organization is not None
+    assert resolution.organization.confidence == "possible_match"
+    assert resolution.organization.organization_id is None
+    assert len(resolution.organization.alternates) == 2
+
+
+def test_exact_organization_match_normalizes_case_and_whitespace() -> None:
+    fake = FakeRepository(organization_matches=[OrganizationMatch(organization_id="org_icn", display_name="  icn chile  ")])
+    resolution = _service(fake).resolve(folder_name="CN01191-ICN Chile")
+
+    assert resolution.organization is not None
+    assert resolution.organization.confidence == "confirmed_durable_match"
+    assert resolution.organization.organization_id == "org_icn"
 
 
 def test_no_organization_match_anywhere_proposes_create_new() -> None:
@@ -156,16 +206,72 @@ def test_durable_contact_outranks_lead_intel_when_organization_is_confirmed() ->
     assert resolution.contacts[0].confidence == "confirmed_durable_match"
 
 
-def test_existing_open_opportunity_is_proposed_when_found() -> None:
+def test_two_durable_contacts_are_ambiguous_neither_auto_selected() -> None:
+    """Never pick alphabetically-first: 2+ durable contacts must not carry
+    confirmed_durable_match -- the operator must pick explicitly."""
+
     fake = FakeRepository(
         organization_matches=[OrganizationMatch(organization_id="org_icn", display_name="ICN Chile")],
-        open_opportunity_by_org={"org_icn": SalesOpportunityMatch(sales_opportunity_id="sales_existing", title="ICN Chile deal", stage="quoting")},
+        contacts_by_org={
+            "org_icn": [
+                ContactMatch(contact_id="contact_ana", organization_id="org_icn", display_name="Ana", primary_email="ana@icn.cl"),
+                ContactMatch(contact_id="contact_bruno", organization_id="org_icn", display_name="Bruno", primary_email="bruno@icn.cl"),
+            ]
+        },
+    )
+    resolution = _service(fake).resolve(folder_name="CN01191-ICN Chile")
+
+    assert len(resolution.contacts) == 2
+    assert all(c.confidence != "confirmed_durable_match" for c in resolution.contacts)
+    assert {c.contact_id for c in resolution.contacts} == {"contact_ana", "contact_bruno"}
+
+
+def test_existing_active_opportunity_is_proposed_when_exactly_one() -> None:
+    fake = FakeRepository(
+        organization_matches=[OrganizationMatch(organization_id="org_icn", display_name="ICN Chile")],
+        active_opportunities_by_org={
+            "org_icn": [SalesOpportunityMatch(sales_opportunity_id="sales_existing", title="ICN Chile deal", stage="quoting")]
+        },
     )
     resolution = _service(fake).resolve(folder_name="CN01191-ICN Chile")
 
     assert resolution.opportunity is not None
     assert resolution.opportunity.sales_opportunity_id == "sales_existing"
     assert resolution.opportunity.confidence == "confirmed_durable_match"
+
+
+def test_only_dormant_opportunity_proposes_no_active_opportunity() -> None:
+    """The repository already excludes dormant -- this proves the service
+    treats an empty active list the same as "no opportunity found", never
+    surfacing a dormant deal as confirmed."""
+
+    fake = FakeRepository(
+        organization_matches=[OrganizationMatch(organization_id="org_icn", display_name="ICN Chile")],
+        active_opportunities_by_org={"org_icn": []},
+    )
+    resolution = _service(fake).resolve(folder_name="CN01191-ICN Chile")
+
+    assert resolution.opportunity is not None
+    assert resolution.opportunity.sales_opportunity_id is None
+    assert resolution.opportunity.confidence == "unresolved"
+
+
+def test_two_active_opportunities_are_ambiguous_not_silently_latest() -> None:
+    fake = FakeRepository(
+        organization_matches=[OrganizationMatch(organization_id="org_icn", display_name="ICN Chile")],
+        active_opportunities_by_org={
+            "org_icn": [
+                SalesOpportunityMatch(sales_opportunity_id="sales_older", title="ICN Chile — Balanza", stage="new"),
+                SalesOpportunityMatch(sales_opportunity_id="sales_newer", title="ICN Chile — Centrífuga", stage="quoting"),
+            ]
+        },
+    )
+    resolution = _service(fake).resolve(folder_name="CN01191-ICN Chile")
+
+    assert resolution.opportunity is not None
+    assert resolution.opportunity.sales_opportunity_id is None
+    assert resolution.opportunity.confidence == "ambiguous_match"
+    assert {a.sales_opportunity_id for a in resolution.opportunity.alternates} == {"sales_older", "sales_newer"}
 
 
 def test_no_opportunity_found_proposes_auto_create_title() -> None:

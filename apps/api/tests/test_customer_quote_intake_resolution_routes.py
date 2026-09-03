@@ -8,6 +8,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from origenlab_api.errors import register_exception_handlers
+from origenlab_api.repositories.postgres.customer_quote_intake_resolution import (
+    SalesOpportunityMatch,
+)
 from origenlab_api.routes import operations
 from origenlab_api.services.customer_quote_intake_resolution_service import (
     ContactCandidate,
@@ -125,6 +128,42 @@ def test_resolve_route_returns_evidence_shaped_response() -> None:
     assert body["organization"]["confidence"] == "confirmed_durable_match"
     assert body["contacts"][0]["email"] == "ana.example@icn.example"
     assert body["opportunity"]["title"] == "ICN Chile — Cotización"
+
+
+def test_resolve_route_serializes_ambiguous_opportunity_alternates() -> None:
+    service = FakeIntakeResolutionService()
+    service.result = IntakeResolution(
+        document_number_candidate="CN01191",
+        document_number_conflict=False,
+        organization=OrganizationCandidate(
+            organization_id="org_icn",
+            display_name="ICN Chile",
+            confidence="confirmed_durable_match",
+            evidence=[],
+        ),
+        contacts=[],
+        opportunity=OpportunityCandidate(
+            sales_opportunity_id=None,
+            title="ICN Chile — Cotización",
+            confidence="ambiguous_match",
+            alternates=[
+                SalesOpportunityMatch(sales_opportunity_id="sales_a", title="ICN Chile — Balanza", stage="new"),
+                SalesOpportunityMatch(sales_opportunity_id="sales_b", title="ICN Chile — Centrífuga", stage="quoting"),
+            ],
+        ),
+        quote_number_resolved=False,
+    )
+    client, _service = _client(service)
+
+    response = client.get(
+        "/operations/customer-quotes/drive-pending/resolve",
+        params={"folder_name": "CN01191-ICN Chile"},
+    )
+
+    body: dict[str, Any] = response.json()
+    assert body["opportunity"]["confidence"] == "ambiguous_match"
+    assert body["opportunity"]["sales_opportunity_id"] is None
+    assert {a["sales_opportunity_id"] for a in body["opportunity"]["alternates"]} == {"sales_a", "sales_b"}
 
 
 def test_resolve_route_never_mutates_anything_no_write_dependencies_used() -> None:

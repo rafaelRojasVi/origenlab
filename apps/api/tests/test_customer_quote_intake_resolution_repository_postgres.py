@@ -174,16 +174,19 @@ def _seed_prospect(
     contact_name: str | None,
     email: str | None,
     gmail_sent_count: int | None = None,
+    gmail_received_count: int | None = None,
+    gmail_last_contacted_at: str | None = None,
 ) -> None:
     with admin_conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO lead_intel.prospect (
               prospect_key, organization_name, contact_name, email,
-              classification, status, gmail_sent_count
+              classification, status, gmail_sent_count, gmail_received_count,
+              gmail_last_contacted_at
             ) VALUES (
               %(key)s, %(org_name)s, %(contact_name)s, %(email)s,
-              'prospect', 'new', %(sent_count)s
+              'prospect', 'new', %(sent_count)s, %(received_count)s, %(last_contacted)s
             )
             """,
             {
@@ -192,6 +195,8 @@ def _seed_prospect(
                 "contact_name": contact_name,
                 "email": email,
                 "sent_count": gmail_sent_count,
+                "received_count": gmail_received_count,
+                "last_contacted": gmail_last_contacted_at,
             },
         )
 
@@ -211,6 +216,23 @@ def test_find_organization_matches_returns_empty_for_no_match(
     repo: PostgresCustomerQuoteIntakeResolutionRepository,
 ) -> None:
     assert repo.find_organization_matches(name_candidate="Nonexistent Corp XYZ") == []
+
+
+def test_find_organization_matches_treats_percent_and_underscore_literally(
+    admin_conn: object, repo: PostgresCustomerQuoteIntakeResolutionRepository
+) -> None:
+    literal_id = _uid("org")
+    trap_id = _uid("org")
+    _seed_organization(admin_conn, organization_id=literal_id, display_name="Labs A_B%C Chile")
+    # If `_`/`%` were left as live LIKE wildcards, this unrelated name would
+    # also match the candidate below (any-char, then any-sequence).
+    _seed_organization(admin_conn, organization_id=trap_id, display_name="Labs AxByzC Chile")
+
+    matches = repo.find_organization_matches(name_candidate="A_B%C")
+
+    ids = {m.organization_id for m in matches}
+    assert literal_id in ids
+    assert trap_id not in ids
 
 
 def test_find_contacts_for_organization_scoped_to_organization_id(
@@ -249,17 +271,84 @@ def test_find_lead_intel_evidence_matches_by_organization_name(
     assert evidence[0].email == "ana.example@icn.example"
 
 
-def test_find_open_sales_opportunity_excludes_terminal_stages(
+def test_find_lead_intel_evidence_excludes_zero_interaction_rows(
+    admin_conn: object, repo: PostgresCustomerQuoteIntakeResolutionRepository
+) -> None:
+    _seed_prospect(
+        admin_conn,
+        prospect_key=_uid("prospect"),
+        organization_name="ICN Chile",
+        contact_name="No Interaction",
+        email="noreply@icn.example",
+        gmail_sent_count=0,
+        gmail_received_count=0,
+        gmail_last_contacted_at=None,
+    )
+
+    assert repo.find_lead_intel_evidence(name_candidate="ICN Chile") == []
+
+
+def test_find_lead_intel_evidence_includes_received_only_interaction(
+    admin_conn: object, repo: PostgresCustomerQuoteIntakeResolutionRepository
+) -> None:
+    _seed_prospect(
+        admin_conn,
+        prospect_key=_uid("prospect"),
+        organization_name="ICN Chile",
+        contact_name="Received Only",
+        email="received@icn.example",
+        gmail_sent_count=0,
+        gmail_received_count=3,
+        gmail_last_contacted_at=None,
+    )
+
+    evidence = repo.find_lead_intel_evidence(name_candidate="ICN Chile")
+
+    assert len(evidence) == 1
+    assert evidence[0].email == "received@icn.example"
+
+
+def test_find_lead_intel_evidence_orders_by_interaction_strength_then_recency(
+    admin_conn: object, repo: PostgresCustomerQuoteIntakeResolutionRepository
+) -> None:
+    _seed_prospect(
+        admin_conn,
+        prospect_key=_uid("prospect"),
+        organization_name="ICN Chile",
+        contact_name="Weaker, More Recent",
+        email="weaker@icn.example",
+        gmail_sent_count=1,
+        gmail_received_count=0,
+        gmail_last_contacted_at="2026-09-01",
+    )
+    _seed_prospect(
+        admin_conn,
+        prospect_key=_uid("prospect"),
+        organization_name="ICN Chile",
+        contact_name="Stronger, Older",
+        email="stronger@icn.example",
+        gmail_sent_count=8,
+        gmail_received_count=3,
+        gmail_last_contacted_at="2026-01-01",
+    )
+
+    evidence = repo.find_lead_intel_evidence(name_candidate="ICN Chile")
+
+    assert [e.email for e in evidence] == ["stronger@icn.example", "weaker@icn.example"]
+
+
+def test_find_active_sales_opportunities_excludes_won_lost_and_dormant(
     admin_conn: object, repo: PostgresCustomerQuoteIntakeResolutionRepository
 ) -> None:
     org_id = _uid("org")
     _seed_organization(admin_conn, organization_id=org_id, display_name="ICN Chile")
-    _seed_sales_opportunity(admin_conn, sales_opportunity_id=_uid("sales"), organization_id=org_id, stage="won")
+    for stage in ("won", "lost", "dormant"):
+        _seed_sales_opportunity(admin_conn, sales_opportunity_id=_uid("sales"), organization_id=org_id, stage=stage)
 
-    assert repo.find_open_sales_opportunity_for_organization(organization_id=org_id) is None
+    assert repo.find_active_sales_opportunities_for_organization(organization_id=org_id) == []
 
 
-def test_find_open_sales_opportunity_returns_the_open_one(
+def test_find_active_sales_opportunities_returns_the_single_active_one(
     admin_conn: object, repo: PostgresCustomerQuoteIntakeResolutionRepository
 ) -> None:
     org_id = _uid("org")
@@ -267,10 +356,25 @@ def test_find_open_sales_opportunity_returns_the_open_one(
     _seed_organization(admin_conn, organization_id=org_id, display_name="ICN Chile")
     _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id, organization_id=org_id, stage="quoting")
 
-    match = repo.find_open_sales_opportunity_for_organization(organization_id=org_id)
+    matches = repo.find_active_sales_opportunities_for_organization(organization_id=org_id)
 
-    assert match is not None
-    assert match.sales_opportunity_id == sales_id
+    assert len(matches) == 1
+    assert matches[0].sales_opportunity_id == sales_id
+
+
+def test_find_active_sales_opportunities_returns_all_when_multiple_active(
+    admin_conn: object, repo: PostgresCustomerQuoteIntakeResolutionRepository
+) -> None:
+    org_id = _uid("org")
+    sales_a = _uid("sales")
+    sales_b = _uid("sales")
+    _seed_organization(admin_conn, organization_id=org_id, display_name="ICN Chile")
+    _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_a, organization_id=org_id, stage="new")
+    _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_b, organization_id=org_id, stage="quoting")
+
+    matches = repo.find_active_sales_opportunities_for_organization(organization_id=org_id)
+
+    assert {m.sales_opportunity_id for m in matches} == {sales_a, sales_b}
 
 
 def test_document_number_and_quote_number_conflict_checks(

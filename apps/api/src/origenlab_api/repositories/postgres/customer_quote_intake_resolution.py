@@ -50,7 +50,24 @@ class SalesOpportunityMatch:
     stage: str
 
 
-_TERMINAL_STAGES = ["won", "lost"]
+# Excluded from automatic "active opportunity" resolution -- won/lost are
+# durably closed, and the existing Ventas UI treats dormant the same as
+# closed for operator purposes (never a silent auto-pick candidate).
+_INACTIVE_STAGES = ["won", "lost", "dormant"]
+
+# psycopg passes queries through the server's own parameter binding, never
+# Python string interpolation -- this escapes only ILIKE's own wildcard
+# metacharacters (`%`, `_`, and the escape character itself) so a folder-
+# name candidate containing them is matched literally, never as a pattern.
+_LIKE_ESCAPE_CHAR = "\\"
+
+
+def _escape_ilike(value: str) -> str:
+    return (
+        value.replace(_LIKE_ESCAPE_CHAR, _LIKE_ESCAPE_CHAR * 2)
+        .replace("%", f"{_LIKE_ESCAPE_CHAR}%")
+        .replace("_", f"{_LIKE_ESCAPE_CHAR}_")
+    )
 
 
 class PostgresCustomerQuoteIntakeResolutionRepository:
@@ -71,11 +88,11 @@ class PostgresCustomerQuoteIntakeResolutionRepository:
                     """
                     SELECT organization_id, display_name
                     FROM api.v_commercial_organization
-                    WHERE display_name ILIKE %(pattern)s
+                    WHERE display_name ILIKE %(pattern)s ESCAPE '\\'
                     ORDER BY display_name
                     LIMIT %(limit)s
                     """,
-                    {"pattern": f"%{normalized}%", "limit": limit},
+                    {"pattern": f"%{_escape_ilike(normalized)}%", "limit": limit},
                 )
                 return [OrganizationMatch(**dict(row)) for row in cur.fetchall()]
 
@@ -113,17 +130,24 @@ class PostgresCustomerQuoteIntakeResolutionRepository:
                            gmail_sent_count, gmail_received_count,
                            gmail_last_contacted_at
                     FROM api.v_lead_intel_prospect_evidence
-                    WHERE organization_name ILIKE %(pattern)s
-                    ORDER BY gmail_sent_count DESC NULLS LAST
+                    WHERE organization_name ILIKE %(pattern)s ESCAPE '\\'
+                      AND (
+                        COALESCE(gmail_sent_count, 0) > 0
+                        OR COALESCE(gmail_received_count, 0) > 0
+                        OR gmail_last_contacted_at IS NOT NULL
+                      )
+                    ORDER BY
+                      COALESCE(gmail_sent_count, 0) + COALESCE(gmail_received_count, 0) DESC,
+                      gmail_last_contacted_at DESC NULLS LAST
                     LIMIT %(limit)s
                     """,
-                    {"pattern": f"%{normalized}%", "limit": limit},
+                    {"pattern": f"%{_escape_ilike(normalized)}%", "limit": limit},
                 )
                 return [LeadIntelEvidence(**dict(row)) for row in cur.fetchall()]
 
-    def find_open_sales_opportunity_for_organization(
+    def find_active_sales_opportunities_for_organization(
         self, *, organization_id: str
-    ) -> SalesOpportunityMatch | None:
+    ) -> list[SalesOpportunityMatch]:
         pg = require_psycopg()
         with postgres_connection(self._settings) as conn:
             with conn.cursor(row_factory=pg.rows.dict_row) as cur:
@@ -132,14 +156,12 @@ class PostgresCustomerQuoteIntakeResolutionRepository:
                     SELECT sales_opportunity_id, title, stage
                     FROM api.v_commercial_sales_opportunity
                     WHERE organization_id = %(organization_id)s
-                      AND NOT (stage = ANY(%(terminal)s))
+                      AND NOT (stage = ANY(%(inactive)s))
                     ORDER BY created_at DESC
-                    LIMIT 1
                     """,
-                    {"organization_id": organization_id, "terminal": _TERMINAL_STAGES},
+                    {"organization_id": organization_id, "inactive": _INACTIVE_STAGES},
                 )
-                row = cur.fetchone()
-                return SalesOpportunityMatch(**dict(row)) if row else None
+                return [SalesOpportunityMatch(**dict(row)) for row in cur.fetchall()]
 
     def document_number_in_use(self, *, document_number: str) -> bool:
         return self._exists(

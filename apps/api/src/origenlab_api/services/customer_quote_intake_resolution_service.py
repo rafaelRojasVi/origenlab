@@ -34,6 +34,10 @@ from origenlab_api.services.drive_pending_quote_service import (
 from origenlab_api.settings import Settings
 
 
+def _normalize_org_name(value: str) -> str:
+    return value.strip().casefold()
+
+
 @dataclass(frozen=True)
 class EvidenceItem:
     source: str
@@ -66,6 +70,10 @@ class OpportunityCandidate:
     sales_opportunity_id: str | None
     title: str
     confidence: str
+    # Populated only when confidence == "ambiguous_match" -- 2+ active
+    # sales opportunities exist for the confirmed organization and the
+    # operator must pick, never a silent latest-created auto-selection.
+    alternates: list[SalesOpportunityMatch] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -95,9 +103,9 @@ class CustomerQuoteIntakeResolutionRepositoryProtocol(Protocol):
         self, *, name_candidate: str, limit: int = 5
     ) -> list[LeadIntelEvidence]: ...
 
-    def find_open_sales_opportunity_for_organization(
+    def find_active_sales_opportunities_for_organization(
         self, *, organization_id: str
-    ) -> SalesOpportunityMatch | None: ...
+    ) -> list[SalesOpportunityMatch]: ...
 
     def document_number_in_use(self, *, document_number: str) -> bool: ...
 
@@ -157,8 +165,13 @@ class CustomerQuoteIntakeResolutionService:
     def _build_organization_candidate(
         self, candidate_name: str, matches: list[OrganizationMatch]
     ) -> OrganizationCandidate:
-        if len(matches) == 1:
-            match = matches[0]
+        normalized_candidate = _normalize_org_name(candidate_name)
+        exact_matches = [
+            m for m in matches if _normalize_org_name(m.display_name) == normalized_candidate
+        ]
+
+        if len(exact_matches) == 1:
+            match = exact_matches[0]
             return OrganizationCandidate(
                 organization_id=match.organization_id,
                 display_name=match.display_name,
@@ -166,13 +179,16 @@ class CustomerQuoteIntakeResolutionService:
                 evidence=[
                     EvidenceItem(
                         source="durable_crm",
-                        reason="normalized_name_match",
+                        reason="exact_normalized_name_match",
                         detail=f"Coincidencia exacta con organización CRM: {match.display_name}",
                     )
                 ],
             )
 
-        if len(matches) > 1:
+        if len(exact_matches) > 1:
+            # Never call a tie an "exact match" outright -- two durable
+            # organizations sharing a normalized name is ambiguous, not
+            # auto-selectable, no matter how it happened.
             return OrganizationCandidate(
                 organization_id=None,
                 display_name=candidate_name,
@@ -180,10 +196,33 @@ class CustomerQuoteIntakeResolutionService:
                 evidence=[
                     EvidenceItem(
                         source="durable_crm",
-                        reason="multiple_name_matches",
+                        reason="multiple_exact_name_matches",
+                        detail=(
+                            f"{len(exact_matches)} organizaciones del CRM coinciden "
+                            "exactamente con este nombre"
+                        ),
+                    )
+                ],
+                alternates=exact_matches,
+            )
+
+        if matches:
+            # 1+ partial (substring) matches, zero exact ones -- always
+            # possible_match, never confirmed, even when there is exactly
+            # one partial hit (e.g. candidate "ICN" vs CRM "ICN Chile").
+            return OrganizationCandidate(
+                organization_id=None,
+                display_name=candidate_name,
+                confidence="possible_match",
+                evidence=[
+                    EvidenceItem(
+                        source="durable_crm",
+                        reason="multiple_name_matches" if len(matches) > 1 else "partial_name_match",
                         detail=(
                             f"{len(matches)} organizaciones del CRM coinciden "
                             "parcialmente con este nombre"
+                            if len(matches) > 1
+                            else f"Coincidencia parcial con organización CRM: {matches[0].display_name}"
                         ),
                     )
                 ],
@@ -235,17 +274,30 @@ class CustomerQuoteIntakeResolutionService:
                 organization_id=organization.organization_id,
             )
             if durable_contacts:
+                # Exactly one durable contact may be proposed/selected
+                # automatically. 2+ is ambiguous -- never silently pick
+                # alphabetically-first; the operator must choose explicitly.
+                single = len(durable_contacts) == 1
+                confidence = "confirmed_durable_match" if single else "possible_match"
+                detail = (
+                    "Contacto existente en el CRM para esta organización"
+                    if single
+                    else (
+                        f"{len(durable_contacts)} contactos existen en el CRM para "
+                        "esta organización -- elige el correcto"
+                    )
+                )
                 return [
                     ContactCandidate(
                         contact_id=contact.contact_id,
                         display_name=contact.display_name,
                         email=contact.primary_email,
-                        confidence="confirmed_durable_match",
+                        confidence=confidence,
                         evidence=[
                             EvidenceItem(
                                 source="durable_crm",
-                                reason="organization_contact_match",
-                                detail="Contacto existente en el CRM para esta organización",
+                                reason="organization_contact_match" if single else "multiple_organization_contacts",
+                                detail=detail,
                             )
                         ],
                     )
@@ -285,14 +337,26 @@ class CustomerQuoteIntakeResolutionService:
         self, organization: OrganizationCandidate
     ) -> OpportunityCandidate:
         if organization.organization_id is not None:
-            existing = self._repository.find_open_sales_opportunity_for_organization(
+            active = self._repository.find_active_sales_opportunities_for_organization(
                 organization_id=organization.organization_id,
             )
-            if existing is not None:
+            if len(active) == 1:
+                existing = active[0]
                 return OpportunityCandidate(
                     sales_opportunity_id=existing.sales_opportunity_id,
                     title=existing.title,
                     confidence="confirmed_durable_match",
+                )
+
+            if len(active) > 1:
+                # Never silently select the newest -- the operator must
+                # choose among the active opportunities, or no duplicate
+                # is auto-created while this stays unresolved.
+                return OpportunityCandidate(
+                    sales_opportunity_id=None,
+                    title=f"{organization.display_name} — Cotización",
+                    confidence="ambiguous_match",
+                    alternates=active,
                 )
 
         return OpportunityCandidate(
