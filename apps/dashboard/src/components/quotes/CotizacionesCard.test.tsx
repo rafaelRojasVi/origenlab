@@ -107,4 +107,43 @@ describe("CotizacionesCard", () => {
     expect(screen.getByText("Drive listo")).toBeTruthy();
     expect(screen.queryByText("Carpeta lista")).toBeNull();
   });
+
+  it("shows a distinct 'Borrador' badge for a draft review-lane quote, without opening the drawer", () => {
+    render(
+      <CotizacionesCard
+        item={item({ quote: quote({ revision_status: "draft", board_stage: "review" }) })}
+        onOpen={vi.fn()}
+        dragDisabled={false}
+      />,
+    );
+
+    expect(screen.getByText("Borrador")).toBeTruthy();
+  });
+
+  it("shows a distinct 'Ajustes solicitados' badge for adjustments_requested, not confusable with draft", () => {
+    render(
+      <CotizacionesCard
+        item={item({ quote: quote({ revision_status: "adjustments_requested", board_stage: "review" }) })}
+        onOpen={vi.fn()}
+        dragDisabled={false}
+      />,
+    );
+
+    expect(screen.getByText("Ajustes solicitados")).toBeTruthy();
+    expect(screen.queryByText("Borrador")).toBeNull();
+  });
+
+  it("shows a distinct 'Lista para aprobación' badge for pending_approval, not confusable with the other two review sub-states", () => {
+    render(
+      <CotizacionesCard
+        item={item({ quote: quote({ revision_status: "pending_approval", board_stage: "review" }) })}
+        onOpen={vi.fn()}
+        dragDisabled={false}
+      />,
+    );
+
+    expect(screen.getByText("Lista para aprobación")).toBeTruthy();
+    expect(screen.queryByText("Borrador")).toBeNull();
+    expect(screen.queryByText("Ajustes solicitados")).toBeNull();
+  });
 });

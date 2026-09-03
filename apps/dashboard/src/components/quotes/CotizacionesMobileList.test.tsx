@@ -70,6 +70,37 @@ describe("CotizacionesMobileList", () => {
     expect(within(section).getByText(item.quote.quote_number)).toBeInTheDocument();
   });
 
+  it("shows each Revisión sub-state as a distinct visible badge in the Revisión section, without opening the drawer", () => {
+    const base = globalQuoteItemFixture();
+    const items = (["draft", "adjustments_requested", "pending_approval"] as const).map(
+      (revision_status, index) =>
+        globalQuoteItemFixture({
+          quote: {
+            ...base.quote,
+            quote_id: `quote_${index}${"a".repeat(31)}`,
+            quote_number: `0118${index}-26`,
+            revision_status,
+            board_stage: "review",
+          },
+        }),
+    );
+    render(
+      <CotizacionesMobileList
+        queue={queue({ items })}
+        onOpenQuote={vi.fn()}
+        onAdoptDriveFolder={vi.fn()}
+        onRequestAdjustments={vi.fn()}
+        onRequestClose={vi.fn()}
+        onRequestConfirmSend={vi.fn()}
+      />,
+    );
+
+    const section = screen.getByTestId("cotizaciones-mobile-section-review");
+    for (const label of ["Borrador", "Ajustes solicitados", "Lista para aprobación"]) {
+      expect(within(section).getByText(label)).toBeTruthy();
+    }
+  });
+
   it("shows Drive-only items under the Pendientes Drive section", () => {
     const driveItem = drivePendingQuoteItemFixture();
     render(

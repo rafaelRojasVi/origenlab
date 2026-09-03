@@ -100,6 +100,35 @@ describe("CotizacionesBoard", () => {
     }
   });
 
+  it("shows each Revisión sub-state as a distinct visible badge in the review column, without opening the drawer", () => {
+    const base = globalQuoteItemFixture();
+    const items = (["draft", "adjustments_requested", "pending_approval"] as const).map(
+      (revision_status, index) =>
+        globalQuoteItemFixture({
+          quote: {
+            ...base.quote,
+            quote_id: `quote_${index}${"a".repeat(31)}`,
+            quote_number: `0118${index}-26`,
+            revision_status,
+            board_stage: "review",
+          },
+        }),
+    );
+    render(
+      <CotizacionesBoard
+        queue={queue({ items })}
+        onOpenQuote={vi.fn()}
+        onAdoptDriveFolder={vi.fn()}
+        onRequestConfirmSend={vi.fn()}
+      />,
+    );
+
+    const reviewColumn = screen.getByTestId("cotizaciones-column-drop-review");
+    for (const label of ["Borrador", "Ajustes solicitados", "Lista para aprobación"]) {
+      expect(within(reviewColumn).getByText(label)).toBeTruthy();
+    }
+  });
+
   it("shows document_number as the prominent identifier on a card, with quote_number secondary", () => {
     const item = globalQuoteItemFixture();
     render(

@@ -5,26 +5,16 @@ import {
   retryCustomerQuoteDriveWorkspace,
 } from "../../api/customerQuoteClient";
 import { OperatorApiError } from "../../api/operatorClient";
-import type { CustomerQuote, CustomerQuoteEvent, CustomerQuoteGlobalItem, RevisionStatus } from "../../api/customerQuoteTypes";
+import type { CustomerQuote, CustomerQuoteEvent, CustomerQuoteGlobalItem } from "../../api/customerQuoteTypes";
 import { salesOpportunityStageLabel } from "../../lib/salesOpportunityFormat";
 import { formatCommercialOpportunityDate } from "../../lib/commercialOpportunityFormat";
+import { REVISION_STATUS_LABELS } from "../../lib/revisionStatusLabel";
 import type { WorkflowCommand } from "../../lib/quoteBoard";
 import { QuoteWorkspaceStatus } from "./driveWorkspaceUi";
 import { QuoteWorkflowActions } from "./QuoteWorkflowActions";
 
 const RETRY_CONFLICT_MESSAGE =
   "La cotización cambió en otra sesión. Actualizamos el estado con la versión más reciente.";
-
-const REVISION_STATUS_LABELS: Record<RevisionStatus, string> = {
-  draft: "Borrador",
-  pending_approval: "Lista para aprobación",
-  adjustments_requested: "Ajustes solicitados",
-  approved: "Aprobada",
-  sent: "Enviada",
-  superseded: "Reemplazada",
-  closed_won: "Cerrada · Ganada",
-  closed_null: "Cerrada · Nula",
-};
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
   quote_created: "Cotización creada",

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { CustomerQuoteGlobalItem, QuoteProvisioningStatus } from "../../api/customerQuoteTypes";
 import { formatCommercialOpportunityDate } from "../../lib/commercialOpportunityFormat";
+import { revisionStatusLabel } from "../../lib/revisionStatusLabel";
 
 const DRIVE_STATE_LABELS: Record<
   QuoteProvisioningStatus,
@@ -80,6 +81,12 @@ export function CotizacionesCard({
       <p className="truncate text-xs text-[var(--color-muted)]">
         {item.contact_display_name ?? item.contact_primary_email ?? "Sin contacto"}
       </p>
+
+      {item.quote.board_stage === "review" ? (
+        <span className="inline-block rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-700">
+          {revisionStatusLabel(item.quote.revision_status)}
+        </span>
+      ) : null}
 
       {item.quote.quote_outcome ? (
         <span
