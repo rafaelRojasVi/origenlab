@@ -1,0 +1,6 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_origenlab_payment_milestone_user,origenlab.payment.milestone user,model_origenlab_payment_milestone,sales_team.group_sale_salesman,1,1,1,1
+access_origenlab_payment_milestone_manager,origenlab.payment.milestone manager,model_origenlab_payment_milestone,sales_team.group_sale_manager,1,1,1,1
+access_origenlab_quote_cost_user,origenlab.quote.cost user,model_origenlab_quote_cost,sales_team.group_sale_salesman,1,1,1,1
+access_origenlab_quote_cost_manager,origenlab.quote.cost manager,model_origenlab_quote_cost,sales_team.group_sale_manager,1,1,1,1
+access_origenlab_dhl_freight_wizard,origenlab.dhl.freight.wizard,model_origenlab_dhl_freight_wizard,sales_team.group_sale_salesman,1,1,1,1

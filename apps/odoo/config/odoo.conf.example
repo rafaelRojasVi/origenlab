@@ -1,0 +1,21 @@
+[options]
+; Plantilla versionada. El archivo real `config/odoo.conf` NO se versiona:
+; contiene la master password del gestor de bases de datos.
+;
+; Generar el real con:  ./scripts/bootstrap_config.sh
+;
+; Evaluación local. Todo queda ligado a 127.0.0.1 por el mapeo de puertos
+; de docker-compose; nada se expone a la red local.
+admin_passwd = __ODOO_MASTER_PASSWORD__
+addons_path = /usr/lib/python3/dist-packages/odoo/addons,/mnt/extra-addons
+data_dir = /var/lib/odoo
+
+; Deja accesible el gestor de bases de datos para el asistente de instalación.
+; Apagar (list_db = False) antes de cualquier despliegue en red.
+list_db = True
+
+; Un solo operador: pocos workers basta y mantiene la RAM baja.
+workers = 0
+max_cron_threads = 1
+
+log_level = info
