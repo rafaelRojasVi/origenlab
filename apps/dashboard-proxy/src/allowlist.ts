@@ -36,6 +36,9 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // CRM-Q1D follow-up: read-only Drive Pendientes projection for
   // operational visibility. Exact GET path only, no wildcard expansion.
   /^\/operations\/customer-quotes\/drive-pending$/,
+  // CRM-Q2B: read-only "Incorporar al CRM" intake evidence resolution.
+  // Never mutates Drive or durable CRM state -- exact GET path only.
+  /^\/operations\/customer-quotes\/drive-pending\/resolve$/,
   // CRM-Q2: append-only revision-workflow event history for the
   // Cotizaciones drawer. Read-only -- the transition commands below stay
   // POST-only and are never GET-readable.
@@ -91,6 +94,9 @@ export const COMMERCIAL_OPERATIONS_POST_PATHS: readonly RegExp[] = [
   /^\/operations\/customer-quotes\/quote_[0-9a-f]{32}\/request-adjustments$/,
   /^\/operations\/customer-quotes\/quote_[0-9a-f]{32}\/approve$/,
   /^\/operations\/customer-quotes\/quote_[0-9a-f]{32}\/confirm-send$/,
+  // CRM-Q2B: explicit terminal outcome for a sent quote (Ganada/Nula).
+  // Never sends anything, never mutates the linked sales opportunity.
+  /^\/operations\/customer-quotes\/quote_[0-9a-f]{32}\/close$/,
   // CRM-Q2 "Incorporar al CRM": attach an existing Drive-only folder to a
   // new durable quote under an existing sales opportunity.
   /^\/operations\/sales-opportunities\/sales_[0-9a-f]{32}\/quotes\/adopt-drive-folder$/,

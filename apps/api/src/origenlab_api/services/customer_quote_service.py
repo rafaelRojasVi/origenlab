@@ -93,6 +93,8 @@ class CustomerQuoteCommandRepository(Protocol):
 
     def confirm_send(self, **kwargs: object) -> CustomerQuoteBundle: ...
 
+    def close_quote(self, **kwargs: object) -> CustomerQuoteBundle: ...
+
     def adopt_drive_folder(self, **kwargs: object) -> CustomerQuoteBundle: ...
 
 
@@ -242,6 +244,46 @@ class CustomerQuoteService:
             quote_id=quote_id,
             operator=operator,
             expected_version=expected_version,
+        )
+
+    def close_quote(
+        self,
+        *,
+        quote_id: str,
+        operator: str,
+        expected_version: int,
+        outcome: str,
+        idempotency_key: str,
+    ) -> CustomerQuoteBundle:
+        normalized_quote_id = _required_text(
+            quote_id, field="quote_id", max_length=128
+        )
+        normalized_operator = _required_text(
+            operator, field="operator", max_length=320
+        ).lower()
+        normalized_key = _idempotency_key(idempotency_key)
+
+        if expected_version < 1:
+            raise ValueError("expected_version must be >= 1")
+
+        if outcome not in ("won", "null"):
+            raise ValueError(f"Unsupported quote outcome: {outcome!r}")
+
+        fingerprint = _fingerprint(
+            "customer_quote_close",
+            {
+                "quote_id": normalized_quote_id,
+                "outcome": outcome,
+            },
+        )
+
+        return self._repository.close_quote(
+            quote_id=normalized_quote_id,
+            operator=normalized_operator,
+            expected_version=expected_version,
+            outcome=outcome,
+            idempotency_key=normalized_key,
+            request_fingerprint=fingerprint,
         )
 
     @staticmethod

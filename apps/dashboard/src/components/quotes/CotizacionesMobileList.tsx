@@ -7,18 +7,18 @@ import type { useCustomerQuotesGlobal } from "./useCustomerQuotesGlobal";
 
 const SECTION_ORDER: readonly CotizacionesLane[] = [
   "drive_intake",
-  "preparation",
   "review",
   "approved_to_send",
   "sent_follow_up",
+  "closed",
 ];
 
 const SECTION_LABELS: Record<CotizacionesLane, string> = {
   drive_intake: "Pendientes Drive",
-  preparation: "Preparación",
   review: "Revisión",
   approved_to_send: "Aprobada / por enviar",
   sent_follow_up: "Enviada / seguimiento",
+  closed: "Cerrada",
 };
 
 /**
@@ -33,19 +33,21 @@ export function CotizacionesMobileList({
   onAdoptDriveFolder,
   onRequestAdjustments,
   onRequestConfirmSend,
+  onRequestClose,
 }: {
   queue: ReturnType<typeof useCustomerQuotesGlobal>;
   onOpenQuote: (item: CustomerQuoteGlobalItem) => void;
   onAdoptDriveFolder: (item: (typeof queue.driveItems)[number]) => void;
   onRequestAdjustments: (item: CustomerQuoteGlobalItem) => void;
   onRequestConfirmSend: (item: CustomerQuoteGlobalItem) => void;
+  onRequestClose: (item: CustomerQuoteGlobalItem) => void;
 }) {
   const grouped: Record<CotizacionesLane, CustomerQuoteGlobalItem[]> = {
     drive_intake: [],
-    preparation: [],
     review: [],
     approved_to_send: [],
     sent_follow_up: [],
+    closed: [],
   };
   for (const item of queue.items) {
     grouped[item.quote.board_stage].push(item);
@@ -102,16 +104,31 @@ export function CotizacionesMobileList({
                           onOpen={() => onOpenQuote(item)}
                           dragDisabled
                           actions={
-                            <QuoteWorkflowActions
-                              boardStage={item.quote.board_stage}
-                              disabled={queue.pendingQuoteId !== null}
-                              onDispatch={(command) => void queue.dispatchWorkflowCommand(item, command)}
-                              onRequestConfirmation={(command) =>
-                                command === "request_adjustments"
-                                  ? onRequestAdjustments(item)
-                                  : onRequestConfirmSend(item)
-                              }
-                            />
+                            <div className="flex flex-wrap gap-2">
+                              <QuoteWorkflowActions
+                                revisionStatus={item.quote.revision_status}
+                                disabled={queue.pendingQuoteId !== null}
+                                onDispatch={(command) => void queue.dispatchWorkflowCommand(item, command)}
+                                onRequestConfirmation={(command) =>
+                                  command === "request_adjustments"
+                                    ? onRequestAdjustments(item)
+                                    : onRequestConfirmSend(item)
+                                }
+                              />
+                              {item.quote.revision_status === "sent" ? (
+                                <button
+                                  type="button"
+                                  disabled={queue.pendingQuoteId !== null}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    onRequestClose(item);
+                                  }}
+                                  className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 transition-colors hover:border-slate-400 hover:bg-slate-50 disabled:opacity-50"
+                                >
+                                  Cerrar cotización
+                                </button>
+                              ) : null}
+                            </div>
                           }
                         />
                       ))}

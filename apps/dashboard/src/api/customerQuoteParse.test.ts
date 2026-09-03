@@ -4,6 +4,7 @@ import {
   parseCustomerQuoteDrivePendingListResponse,
   parseCustomerQuoteEventListResponse,
   parseCustomerQuoteGlobalListResponse,
+  parseCustomerQuoteIntakeResolution,
   parseCustomerQuoteListResponse,
   parseCustomerQuoteReadResponse,
 } from "./customerQuoteParse";
@@ -44,7 +45,7 @@ function rawQuote(overrides: Record<string, unknown> = {}) {
     revision_status: "draft",
     revision_updated_by: "tatiana@origenlab.cl",
     revision_updated_at: "2026-08-30T14:00:00+00:00",
-    board_stage: "preparation",
+    board_stage: "review",
     created_by: "tatiana@origenlab.cl",
     updated_by: "tatiana@origenlab.cl",
     created_at: "2026-08-30T14:00:00+00:00",
@@ -359,13 +360,23 @@ describe("parseCustomerQuote workflow fields", () => {
 
   it("accepts every board_stage the API can return", () => {
     for (const stage of [
-      "preparation",
       "review",
       "approved_to_send",
       "sent_follow_up",
+      "closed",
     ]) {
       expect(() => parseCustomerQuote(rawQuote({ board_stage: stage }))).not.toThrow();
     }
+  });
+
+  it("accepts every quote_outcome value, including null", () => {
+    expect(() => parseCustomerQuote(rawQuote({ quote_outcome: null }))).not.toThrow();
+    expect(() => parseCustomerQuote(rawQuote({ quote_outcome: "won" }))).not.toThrow();
+    expect(() => parseCustomerQuote(rawQuote({ quote_outcome: "null" }))).not.toThrow();
+  });
+
+  it("rejects an unknown quote_outcome", () => {
+    expect(() => parseCustomerQuote(rawQuote({ quote_outcome: "lost" }))).toThrow();
   });
 });
 
@@ -395,5 +406,141 @@ describe("parseCustomerQuoteEventListResponse", () => {
     expect(() =>
       parseCustomerQuoteEventListResponse({ meta: { count: 0 }, items: {} }),
     ).toThrow();
+  });
+});
+
+describe("parseCustomerQuoteIntakeResolution", () => {
+  function rawResolution(overrides: Record<string, unknown> = {}) {
+    return {
+      document_number_candidate: "CN01191",
+      document_number_conflict: false,
+      organization: {
+        organization_id: "org_icn",
+        display_name: "ICN Chile",
+        confidence: "confirmed_durable_match",
+        evidence: [{ source: "durable_crm", reason: "normalized_name_match", detail: "..." }],
+        alternates: [],
+      },
+      contacts: [
+        {
+          contact_id: null,
+          display_name: "Ana Example",
+          email: "ana.example@icn.example",
+          confidence: "possible_match",
+          evidence: [{ source: "gmail_history", reason: "gmail_contact_history", detail: "Encontrado en 8 correos" }],
+        },
+      ],
+      opportunity: {
+        sales_opportunity_id: null,
+        title: "ICN Chile — Cotización",
+        confidence: "unresolved",
+        alternates: [],
+      },
+      quote_number_resolved: false,
+      ...overrides,
+    };
+  }
+
+  it("parses a full intake resolution response", () => {
+    const result = parseCustomerQuoteIntakeResolution(rawResolution());
+
+    expect(result.document_number_candidate).toBe("CN01191");
+    expect(result.organization?.organization_id).toBe("org_icn");
+    expect(result.contacts[0].email).toBe("ana.example@icn.example");
+    expect(result.opportunity?.title).toBe("ICN Chile — Cotización");
+    expect(result.quote_number_resolved).toBe(false);
+  });
+
+  it("parses a null organization and null opportunity (ambiguous folder name)", () => {
+    const result = parseCustomerQuoteIntakeResolution(
+      rawResolution({ organization: null, contacts: [], opportunity: null, document_number_candidate: null }),
+    );
+
+    expect(result.organization).toBeNull();
+    expect(result.opportunity).toBeNull();
+    expect(result.contacts).toEqual([]);
+  });
+
+  it("parses organization alternates for a possible_match with multiple durable candidates", () => {
+    const result = parseCustomerQuoteIntakeResolution(
+      rawResolution({
+        organization: {
+          organization_id: null,
+          display_name: "ICN Chile",
+          confidence: "possible_match",
+          evidence: [],
+          alternates: [
+            { organization_id: "org_a", display_name: "ICN Chile SPA" },
+            { organization_id: "org_b", display_name: "ICN Chile Ltda" },
+          ],
+        },
+      }),
+    );
+
+    expect(result.organization?.alternates).toHaveLength(2);
+  });
+
+  it("parses opportunity alternates for an ambiguous_match with multiple active opportunities", () => {
+    const result = parseCustomerQuoteIntakeResolution(
+      rawResolution({
+        opportunity: {
+          sales_opportunity_id: null,
+          title: "ICN Chile — Cotización",
+          confidence: "ambiguous_match",
+          alternates: [
+            { sales_opportunity_id: "sales_a", title: "ICN Chile — Balanza" },
+            { sales_opportunity_id: "sales_b", title: "ICN Chile — Centrífuga" },
+          ],
+        },
+      }),
+    );
+
+    expect(result.opportunity?.confidence).toBe("ambiguous_match");
+    expect(result.opportunity?.alternates).toHaveLength(2);
+  });
+
+  it("rejects a non-array opportunity.alternates field", () => {
+    expect(() =>
+      parseCustomerQuoteIntakeResolution(
+        rawResolution({
+          opportunity: {
+            sales_opportunity_id: null,
+            title: "ICN Chile — Cotización",
+            confidence: "unresolved",
+            alternates: {},
+          },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it("rejects an unknown confidence value", () => {
+    expect(() =>
+      parseCustomerQuoteIntakeResolution(
+        rawResolution({
+          organization: {
+            organization_id: "org_icn",
+            display_name: "ICN Chile",
+            confidence: "very_sure",
+            evidence: [],
+            alternates: [],
+          },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it("rejects quote_number_resolved: true (server contract violation)", () => {
+    expect(() =>
+      parseCustomerQuoteIntakeResolution(rawResolution({ quote_number_resolved: true })),
+    ).toThrow();
+  });
+
+  it("rejects a malformed response instead of returning a half-parsed object", () => {
+    expect(() => parseCustomerQuoteIntakeResolution({ document_number_candidate: 123 })).toThrow();
+  });
+
+  it("rejects a non-array contacts field", () => {
+    expect(() => parseCustomerQuoteIntakeResolution(rawResolution({ contacts: {} }))).toThrow();
   });
 });

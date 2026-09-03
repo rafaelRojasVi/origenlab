@@ -16,6 +16,7 @@ from origenlab_api.drive.protocol import DrivePendingFolder
 from origenlab_api.services.drive_pending_quote_service import (
     DrivePendingQuoteReadService,
     parse_drive_pending_document_identifier,
+    parse_drive_pending_organization_candidate,
 )
 from origenlab_api.settings import Settings
 
@@ -164,3 +165,31 @@ def test_parse_drive_pending_document_identifier_is_conservative(
     folder_name: str, expected: str | None
 ) -> None:
     assert parse_drive_pending_document_identifier(folder_name) == expected
+
+
+def test_organization_candidate_from_simple_folder_name() -> None:
+    assert parse_drive_pending_organization_candidate("CN01191-ICN Chile") == "ICN Chile"
+
+
+def test_organization_candidate_from_verbose_folder_name() -> None:
+    result = parse_drive_pending_organization_candidate(
+        "CN01190-Prof. Dr. Juan Matos Lale – Universidad Autónoma- UP400St"
+    )
+    assert result == "Prof. Dr. Juan Matos Lale – Universidad Autónoma- UP400St"
+
+
+def test_organization_candidate_handles_em_dash_separator() -> None:
+    assert (
+        parse_drive_pending_organization_candidate("CN1185 — Gustavo Zúñiga - UP200St")
+        == "Gustavo Zúñiga - UP200St"
+    )
+
+
+def test_organization_candidate_none_when_no_document_identifier() -> None:
+    assert parse_drive_pending_organization_candidate("Sin prefijo reconocible") is None
+
+
+def test_organization_candidate_none_when_nothing_remains_after_identifier() -> None:
+    assert parse_drive_pending_organization_candidate("CN01191") is None
+    assert parse_drive_pending_organization_candidate("CN01191-") is None
+    assert parse_drive_pending_organization_candidate("CN01191   ") is None

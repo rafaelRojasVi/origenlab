@@ -92,6 +92,10 @@ def test_app_exposes_only_sanctioned_mutating_routes() -> None:
             "post",
         ),
         (
+            "/operations/customer-quotes/{quote_id}/close",
+            "post",
+        ),
+        (
             "/operations/sales-opportunities/{sales_opportunity_id}/quotes/adopt-drive-folder",
             "post",
         ),

@@ -18,16 +18,25 @@ export type RevisionStatus =
   | "adjustments_requested"
   | "approved"
   | "sent"
-  | "superseded";
+  | "superseded"
+  | "closed_won"
+  | "closed_null";
+
+/** The two closure outcomes (CRM-Q2B). "null" here means the quote is void/
+ * cancelled -- NOT necessarily a lost sale; never conflated with the
+ * separate sales-opportunity "lost" stage. */
+export type QuoteOutcome = "won" | "null";
 
 /** The Cotizaciones Kanban lane a durable quote is in, derived server-side
  * from its current revision's status — never a stored field, never
- * computed client-side. */
+ * computed client-side. Preparación was removed as a separate lane
+ * (CRM-Q2B): draft/adjustments_requested/pending_approval all derive
+ * "review" — sub-state is shown via revision_status alone. */
 export type BoardStage =
-  | "preparation"
   | "review"
   | "approved_to_send"
-  | "sent_follow_up";
+  | "sent_follow_up"
+  | "closed";
 
 export type QuoteProvisioningStatus = "pending" | "ready" | "folder_ready" | "failed";
 
@@ -66,6 +75,8 @@ export interface CustomerQuote {
   revision_updated_by: string;
   revision_updated_at: string;
   board_stage: BoardStage;
+  /** null while the quote is still active; "won"/"null" once closed. */
+  quote_outcome: QuoteOutcome | null;
   created_by: string;
   updated_by: string;
   created_at: string;
@@ -75,6 +86,11 @@ export interface CustomerQuote {
 
 export interface CustomerQuoteRevisionTransitionCommand {
   expected_version: number;
+}
+
+export interface CustomerQuoteCloseCommand {
+  expected_version: number;
+  outcome: QuoteOutcome;
 }
 
 export interface AdoptCustomerQuoteDriveFolderCommand {
@@ -164,3 +180,70 @@ export interface CustomerQuoteDrivePendingListResponse {
 export type QuoteQueueRow =
   | { kind: "crm"; item: CustomerQuoteGlobalItem }
   | { kind: "drive_pending"; item: DrivePendingQuoteItem };
+
+/**
+ * Intake evidence resolution ("Incorporar al CRM", CRM-Q2B). Read-only,
+ * ephemeral -- nothing here is durable CRM truth until the operator
+ * confirms and submits the adoption command. Confidence is always one of
+ * three reason-coded levels, never a numeric ML score.
+ */
+export type IntakeConfidence =
+  | "confirmed_durable_match"
+  | "possible_match"
+  | "ambiguous_match"
+  | "unresolved";
+
+export interface IntakeEvidenceItem {
+  source: string;
+  reason: string;
+  detail: string;
+}
+
+export interface IntakeOrganizationAlternate {
+  organization_id: string;
+  display_name: string;
+}
+
+export interface IntakeOrganizationCandidate {
+  organization_id: string | null;
+  display_name: string;
+  confidence: IntakeConfidence;
+  evidence: IntakeEvidenceItem[];
+  /** Populated only when confidence is "possible_match" with 2+ durable
+   * candidates -- the operator picks, nothing is auto-selected. */
+  alternates: IntakeOrganizationAlternate[];
+}
+
+export interface IntakeContactCandidate {
+  contact_id: string | null;
+  display_name: string | null;
+  email: string | null;
+  confidence: IntakeConfidence;
+  evidence: IntakeEvidenceItem[];
+}
+
+export interface IntakeOpportunityAlternate {
+  sales_opportunity_id: string;
+  title: string;
+}
+
+export interface IntakeOpportunityCandidate {
+  sales_opportunity_id: string | null;
+  title: string;
+  confidence: IntakeConfidence;
+  /** Populated only when confidence is "ambiguous_match" -- 2+ active
+   * sales opportunities exist for the organization -- the operator picks,
+   * nothing is auto-selected and no duplicate is auto-created. */
+  alternates: IntakeOpportunityAlternate[];
+}
+
+export interface CustomerQuoteIntakeResolution {
+  document_number_candidate: string | null;
+  document_number_conflict: boolean;
+  organization: IntakeOrganizationCandidate | null;
+  contacts: IntakeContactCandidate[];
+  opportunity: IntakeOpportunityCandidate | null;
+  /** Always false in this slice -- quote_number is never auto-resolved;
+   * the operator always confirms it explicitly. */
+  quote_number_resolved: false;
+}

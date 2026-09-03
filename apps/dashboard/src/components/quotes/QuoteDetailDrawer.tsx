@@ -5,24 +5,16 @@ import {
   retryCustomerQuoteDriveWorkspace,
 } from "../../api/customerQuoteClient";
 import { OperatorApiError } from "../../api/operatorClient";
-import type { CustomerQuote, CustomerQuoteEvent, CustomerQuoteGlobalItem, RevisionStatus } from "../../api/customerQuoteTypes";
+import type { CustomerQuote, CustomerQuoteEvent, CustomerQuoteGlobalItem } from "../../api/customerQuoteTypes";
 import { salesOpportunityStageLabel } from "../../lib/salesOpportunityFormat";
 import { formatCommercialOpportunityDate } from "../../lib/commercialOpportunityFormat";
+import { REVISION_STATUS_LABELS } from "../../lib/revisionStatusLabel";
 import type { WorkflowCommand } from "../../lib/quoteBoard";
 import { QuoteWorkspaceStatus } from "./driveWorkspaceUi";
 import { QuoteWorkflowActions } from "./QuoteWorkflowActions";
 
 const RETRY_CONFLICT_MESSAGE =
   "La cotización cambió en otra sesión. Actualizamos el estado con la versión más reciente.";
-
-const REVISION_STATUS_LABELS: Record<RevisionStatus, string> = {
-  draft: "Borrador",
-  pending_approval: "En revisión",
-  adjustments_requested: "Ajustes solicitados",
-  approved: "Aprobada",
-  sent: "Enviada",
-  superseded: "Reemplazada",
-};
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
   quote_created: "Cotización creada",
@@ -34,6 +26,7 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   quote_adjustments_requested: "Ajustes solicitados",
   quote_approved: "Aprobada",
   quote_send_confirmed: "Envío confirmado",
+  quote_closed: "Cotización cerrada",
 };
 
 function eventTypeLabel(eventType: string): string {
@@ -64,6 +57,7 @@ export function QuoteDetailDrawer({
   onDispatchWorkflowCommand,
   onRequestAdjustments,
   onRequestConfirmSend,
+  onRequestClose,
   dispatchPending,
 }: {
   item: CustomerQuoteGlobalItem | null;
@@ -76,6 +70,7 @@ export function QuoteDetailDrawer({
   ) => Promise<void>;
   onRequestAdjustments: (item: CustomerQuoteGlobalItem) => void;
   onRequestConfirmSend: (item: CustomerQuoteGlobalItem) => void;
+  onRequestClose: (item: CustomerQuoteGlobalItem) => void;
   dispatchPending: boolean;
 }) {
   const [quote, setQuote] = useState<CustomerQuote | null>(item?.quote ?? null);
@@ -160,7 +155,7 @@ export function QuoteDetailDrawer({
       <button
         type="button"
         className="fixed inset-0 z-40 hidden bg-slate-900/30 md:block"
-        aria-label="Cerrar cotización"
+        aria-label="Cerrar detalle de cotización"
         onClick={onClose}
       />
 
@@ -237,16 +232,28 @@ export function QuoteDetailDrawer({
               <DetailRow label="Creada">{formatCommercialOpportunityDate(quote.created_at)}</DetailRow>
               <DetailRow label="Actualizada">{formatCommercialOpportunityDate(quote.revision_updated_at)}</DetailRow>
             </dl>
-            <QuoteWorkflowActions
-              boardStage={quote.board_stage}
-              disabled={dispatchPending}
-              onDispatch={(command) => void onDispatchWorkflowCommand({ ...item, quote }, command)}
-              onRequestConfirmation={(command) =>
-                command === "request_adjustments"
-                  ? onRequestAdjustments({ ...item, quote })
-                  : onRequestConfirmSend({ ...item, quote })
-              }
-            />
+            <div className="flex flex-wrap gap-2">
+              <QuoteWorkflowActions
+                revisionStatus={quote.revision_status}
+                disabled={dispatchPending}
+                onDispatch={(command) => void onDispatchWorkflowCommand({ ...item, quote }, command)}
+                onRequestConfirmation={(command) =>
+                  command === "request_adjustments"
+                    ? onRequestAdjustments({ ...item, quote })
+                    : onRequestConfirmSend({ ...item, quote })
+                }
+              />
+              {quote.revision_status === "sent" ? (
+                <button
+                  type="button"
+                  disabled={dispatchPending}
+                  onClick={() => onRequestClose({ ...item, quote })}
+                  className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 transition-colors hover:border-slate-400 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Cerrar cotización
+                </button>
+              ) : null}
+            </div>
           </section>
 
           <section className="space-y-2" aria-label="Carpeta en Drive">

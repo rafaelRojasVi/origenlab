@@ -15,8 +15,10 @@ from origenlab_api.repositories.postgres.customer_quotes import (
     CustomerQuoteRevision,
 )
 from origenlab_api.schemas.customer_quotes import (
+    BoardStage,
     CustomerQuoteResponse,
     derive_board_stage,
+    derive_quote_outcome,
 )
 
 
@@ -29,8 +31,8 @@ OPERATOR = "tatiana@origenlab.cl"
 @pytest.mark.parametrize(
     ("revision_status", "expected_stage"),
     [
-        ("draft", "preparation"),
-        ("adjustments_requested", "preparation"),
+        ("draft", "review"),
+        ("adjustments_requested", "review"),
         ("pending_approval", "review"),
         ("approved", "approved_to_send"),
         ("sent", "sent_follow_up"),
@@ -40,6 +42,41 @@ def test_derive_board_stage_maps_every_reachable_revision_status(
     revision_status: str, expected_stage: str
 ) -> None:
     assert derive_board_stage(revision_status) == expected_stage
+
+
+def test_preparation_is_no_longer_a_board_stage() -> None:
+    """CRM-Q2B removes Preparación as a visible lane: draft and
+    adjustments_requested now land in the same Revisión lane as
+    pending_approval -- distinguished only by revision_status, never by a
+    separate board column."""
+
+    import typing
+
+    assert "preparation" not in typing.get_args(BoardStage)
+    assert set(typing.get_args(BoardStage)) == {
+        "review",
+        "approved_to_send",
+        "sent_follow_up",
+        "closed",
+    }
+
+
+def test_closed_won_derives_closed_board_stage() -> None:
+    assert derive_board_stage("closed_won") == "closed"
+
+
+def test_closed_null_derives_closed_board_stage() -> None:
+    assert derive_board_stage("closed_null") == "closed"
+
+
+def test_quote_outcome_none_for_active_revision_statuses() -> None:
+    for status in ("draft", "pending_approval", "adjustments_requested", "approved", "sent"):
+        assert derive_quote_outcome(status) is None
+
+
+def test_quote_outcome_won_and_null() -> None:
+    assert derive_quote_outcome("closed_won") == "won"
+    assert derive_quote_outcome("closed_null") == "null"
 
 
 def test_derive_board_stage_refuses_superseded() -> None:

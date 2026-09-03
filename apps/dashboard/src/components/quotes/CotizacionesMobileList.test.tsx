@@ -39,12 +39,13 @@ describe("CotizacionesMobileList", () => {
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
         onRequestAdjustments={vi.fn()}
+        onRequestClose={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
 
     expect(screen.getByRole("heading", { name: "Pendientes Drive" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Preparación" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Preparación" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Revisión" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Aprobada / por enviar" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Enviada / seguimiento" })).toBeInTheDocument();
@@ -60,12 +61,44 @@ describe("CotizacionesMobileList", () => {
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
         onRequestAdjustments={vi.fn()}
+        onRequestClose={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
 
     const section = screen.getByTestId("cotizaciones-mobile-section-approved_to_send");
     expect(within(section).getByText(item.quote.quote_number)).toBeInTheDocument();
+  });
+
+  it("shows each Revisión sub-state as a distinct visible badge in the Revisión section, without opening the drawer", () => {
+    const base = globalQuoteItemFixture();
+    const items = (["draft", "adjustments_requested", "pending_approval"] as const).map(
+      (revision_status, index) =>
+        globalQuoteItemFixture({
+          quote: {
+            ...base.quote,
+            quote_id: `quote_${index}${"a".repeat(31)}`,
+            quote_number: `0118${index}-26`,
+            revision_status,
+            board_stage: "review",
+          },
+        }),
+    );
+    render(
+      <CotizacionesMobileList
+        queue={queue({ items })}
+        onOpenQuote={vi.fn()}
+        onAdoptDriveFolder={vi.fn()}
+        onRequestAdjustments={vi.fn()}
+        onRequestClose={vi.fn()}
+        onRequestConfirmSend={vi.fn()}
+      />,
+    );
+
+    const section = screen.getByTestId("cotizaciones-mobile-section-review");
+    for (const label of ["Borrador", "Ajustes solicitados", "Lista para aprobación"]) {
+      expect(within(section).getByText(label)).toBeTruthy();
+    }
   });
 
   it("shows Drive-only items under the Pendientes Drive section", () => {
@@ -76,6 +109,7 @@ describe("CotizacionesMobileList", () => {
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
         onRequestAdjustments={vi.fn()}
+        onRequestClose={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
@@ -93,6 +127,7 @@ describe("CotizacionesMobileList", () => {
         onOpenQuote={onOpenQuote}
         onAdoptDriveFolder={vi.fn()}
         onRequestAdjustments={vi.fn()}
+        onRequestClose={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
@@ -110,6 +145,7 @@ describe("CotizacionesMobileList", () => {
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={onAdoptDriveFolder}
         onRequestAdjustments={vi.fn()}
+        onRequestClose={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
@@ -120,7 +156,7 @@ describe("CotizacionesMobileList", () => {
 
   it("clicking a non-confirmation stage action dispatches directly", () => {
     const item = globalQuoteItemFixture({
-      quote: { ...globalQuoteItemFixture().quote, board_stage: "preparation" },
+      quote: { ...globalQuoteItemFixture().quote, revision_status: "draft", board_stage: "review" },
     });
     const dispatchWorkflowCommand = vi.fn();
     render(
@@ -129,17 +165,18 @@ describe("CotizacionesMobileList", () => {
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
         onRequestAdjustments={vi.fn()}
+        onRequestClose={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Enviar a revisión" }));
+    fireEvent.click(screen.getByRole("button", { name: "Enviar a aprobación" }));
     expect(dispatchWorkflowCommand).toHaveBeenCalledWith(item, "submit_for_review");
   });
 
   it("clicking request_adjustments opens the confirmation callback instead of dispatching", () => {
     const item = globalQuoteItemFixture({
-      quote: { ...globalQuoteItemFixture().quote, board_stage: "review" },
+      quote: { ...globalQuoteItemFixture().quote, revision_status: "pending_approval", board_stage: "review" },
     });
     const dispatchWorkflowCommand = vi.fn();
     const onRequestAdjustments = vi.fn();
@@ -150,6 +187,7 @@ describe("CotizacionesMobileList", () => {
         onAdoptDriveFolder={vi.fn()}
         onRequestAdjustments={onRequestAdjustments}
         onRequestConfirmSend={vi.fn()}
+        onRequestClose={vi.fn()}
       />,
     );
 
@@ -160,7 +198,7 @@ describe("CotizacionesMobileList", () => {
 
   it("clicking confirm_send opens the confirmation callback instead of dispatching", () => {
     const item = globalQuoteItemFixture({
-      quote: { ...globalQuoteItemFixture().quote, board_stage: "approved_to_send" },
+      quote: { ...globalQuoteItemFixture().quote, revision_status: "approved", board_stage: "approved_to_send" },
     });
     const dispatchWorkflowCommand = vi.fn();
     const onRequestConfirmSend = vi.fn();
@@ -170,6 +208,7 @@ describe("CotizacionesMobileList", () => {
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
         onRequestAdjustments={vi.fn()}
+        onRequestClose={vi.fn()}
         onRequestConfirmSend={onRequestConfirmSend}
       />,
     );
@@ -179,9 +218,9 @@ describe("CotizacionesMobileList", () => {
     expect(dispatchWorkflowCommand).not.toHaveBeenCalled();
   });
 
-  it("sent_follow_up cards show no stage-action buttons (terminal)", () => {
+  it("sent_follow_up cards offer no submit/approve/adjust/send actions -- only Cerrar cotización (CRM-Q2B)", () => {
     const item = globalQuoteItemFixture({
-      quote: { ...globalQuoteItemFixture().quote, board_stage: "sent_follow_up" },
+      quote: { ...globalQuoteItemFixture().quote, revision_status: "sent", board_stage: "sent_follow_up" },
     });
     render(
       <CotizacionesMobileList
@@ -189,6 +228,7 @@ describe("CotizacionesMobileList", () => {
         onOpenQuote={vi.fn()}
         onAdoptDriveFolder={vi.fn()}
         onRequestAdjustments={vi.fn()}
+        onRequestClose={vi.fn()}
         onRequestConfirmSend={vi.fn()}
       />,
     );
@@ -196,6 +236,52 @@ describe("CotizacionesMobileList", () => {
     const section = screen.getByTestId("cotizaciones-mobile-section-sent_follow_up");
     // The card itself carries role="button" (opens the drawer) -- assert on
     // native <button> elements (the workflow-action buttons) specifically.
+    const buttons = section.querySelectorAll("button");
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]).toHaveTextContent("Cerrar cotización");
+  });
+
+  it("clicking Cerrar cotización on a sent card calls onRequestClose", () => {
+    const item = globalQuoteItemFixture({
+      quote: { ...globalQuoteItemFixture().quote, revision_status: "sent", board_stage: "sent_follow_up" },
+    });
+    const onRequestClose = vi.fn();
+    render(
+      <CotizacionesMobileList
+        queue={queue({ items: [item] })}
+        onOpenQuote={vi.fn()}
+        onAdoptDriveFolder={vi.fn()}
+        onRequestAdjustments={vi.fn()}
+        onRequestClose={onRequestClose}
+        onRequestConfirmSend={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar cotización" }));
+    expect(onRequestClose).toHaveBeenCalledWith(item);
+  });
+
+  it("closed cards (closed_won) show no further action buttons", () => {
+    const item = globalQuoteItemFixture({
+      quote: {
+        ...globalQuoteItemFixture().quote,
+        revision_status: "closed_won",
+        board_stage: "closed",
+        quote_outcome: "won",
+      },
+    });
+    render(
+      <CotizacionesMobileList
+        queue={queue({ items: [item] })}
+        onOpenQuote={vi.fn()}
+        onAdoptDriveFolder={vi.fn()}
+        onRequestAdjustments={vi.fn()}
+        onRequestClose={vi.fn()}
+        onRequestConfirmSend={vi.fn()}
+      />,
+    );
+
+    const section = screen.getByTestId("cotizaciones-mobile-section-closed");
     expect(section.querySelectorAll("button")).toHaveLength(0);
   });
 });

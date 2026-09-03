@@ -9,6 +9,7 @@ import { QuoteDetailDrawer } from "../components/quotes/QuoteDetailDrawer";
 import { NuevaCotizacionDialog } from "../components/quotes/NuevaCotizacionDialog";
 import { AdoptDriveFolderModal } from "../components/quotes/AdoptDriveFolderModal";
 import { WorkflowConfirmDialog } from "../components/quotes/WorkflowConfirmDialog";
+import { CloseQuoteDialog } from "../components/quotes/CloseQuoteDialog";
 import type { CustomerQuoteGlobalItem, DrivePendingQuoteItem, QuoteQueueRow } from "../api/customerQuoteTypes";
 
 export function CotizacionesPage({
@@ -24,6 +25,7 @@ export function CotizacionesPage({
   const [adoptItem, setAdoptItem] = useState<DrivePendingQuoteItem | null>(null);
   const [adjustmentsTarget, setAdjustmentsTarget] = useState<CustomerQuoteGlobalItem | null>(null);
   const [sendTarget, setSendTarget] = useState<CustomerQuoteGlobalItem | null>(null);
+  const [closeTarget, setCloseTarget] = useState<CustomerQuoteGlobalItem | null>(null);
 
   const visibleRows = useMemo(
     () => filterQuoteQueueRows(queue.rows, { searchText, recency }),
@@ -121,7 +123,6 @@ export function CotizacionesPage({
             queue={filteredQueue}
             onOpenQuote={setOpenItem}
             onAdoptDriveFolder={setAdoptItem}
-            onRequestAdjustments={setAdjustmentsTarget}
             onRequestConfirmSend={setSendTarget}
           />
           <CotizacionesMobileList
@@ -130,6 +131,7 @@ export function CotizacionesPage({
             onAdoptDriveFolder={setAdoptItem}
             onRequestAdjustments={setAdjustmentsTarget}
             onRequestConfirmSend={setSendTarget}
+            onRequestClose={setCloseTarget}
           />
         </>
       )}
@@ -142,6 +144,7 @@ export function CotizacionesPage({
         onDispatchWorkflowCommand={queue.dispatchWorkflowCommand}
         onRequestAdjustments={setAdjustmentsTarget}
         onRequestConfirmSend={setSendTarget}
+        onRequestClose={setCloseTarget}
         dispatchPending={dispatchPending}
       />
 
@@ -169,7 +172,7 @@ export function CotizacionesPage({
         open={adjustmentsTarget !== null}
         item={adjustmentsTarget}
         title="Solicitar ajustes"
-        message="La cotización volverá a Preparación para que el equipo la ajuste antes de reenviarla a revisión."
+        message="La cotización quedará marcada como Ajustes solicitados dentro de Revisión, para que el equipo la ajuste antes de reenviarla a aprobación."
         confirmLabel="Solicitar ajustes"
         onConfirm={(item) => queue.dispatchWorkflowCommand(item, "request_adjustments")}
         onClose={() => setAdjustmentsTarget(null)}
@@ -183,6 +186,16 @@ export function CotizacionesPage({
         confirmLabel="Confirmar envío"
         onConfirm={(item) => queue.dispatchWorkflowCommand(item, "confirm_send")}
         onClose={() => setSendTarget(null)}
+      />
+
+      <CloseQuoteDialog
+        open={closeTarget !== null}
+        item={closeTarget}
+        onClose={() => setCloseTarget(null)}
+        onClosed={() => {
+          setCloseTarget(null);
+          void queue.refetch();
+        }}
       />
     </div>
   );

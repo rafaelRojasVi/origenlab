@@ -14,6 +14,7 @@ import {
   parseCustomerQuoteDrivePendingListResponse,
   parseCustomerQuoteEventListResponse,
   parseCustomerQuoteGlobalListResponse,
+  parseCustomerQuoteIntakeResolution,
   parseCustomerQuoteListResponse,
   parseCustomerQuoteReadResponse,
 } from "./customerQuoteParse";
@@ -21,9 +22,11 @@ import {
 import type {
   AdoptCustomerQuoteDriveFolderCommand,
   CustomerQuote,
+  CustomerQuoteCloseCommand,
   CustomerQuoteDrivePendingListResponse,
   CustomerQuoteEventListResponse,
   CustomerQuoteGlobalListResponse,
+  CustomerQuoteIntakeResolution,
   CustomerQuoteListResponse,
   CustomerQuoteReadResponse,
   CustomerQuoteRevisionTransitionCommand,
@@ -204,6 +207,32 @@ export function fetchDrivePendingQuotes(): Promise<CustomerQuoteDrivePendingList
 }
 
 
+export function driveIntakeResolutionPath(): string {
+  return `${drivePendingQuotesPath()}/resolve`;
+}
+
+
+/**
+ * Read-only evidence resolution for "Incorporar al CRM" (CRM-Q2B). Never
+ * mutates Drive or durable CRM state -- the operator confirms/edits before
+ * any durable write happens via the existing adopt/manual-create commands.
+ */
+export function fetchDriveIntakeResolution(
+  folderName: string,
+): Promise<CustomerQuoteIntakeResolution> {
+  return fetchJson<unknown>(
+    operatorApiUrl(driveIntakeResolutionPath(), { folder_name: folderName }),
+    {
+      method: "GET",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+      },
+    },
+  ).then(parseCustomerQuoteIntakeResolution);
+}
+
+
 export function retryCustomerQuoteDriveWorkspace(
   quoteId: string,
   command: RetryCustomerQuoteDriveWorkspaceCommand,
@@ -309,6 +338,38 @@ export function confirmCustomerQuoteSend(
     customerQuoteConfirmSendPath(quoteId),
     command,
   );
+}
+
+
+export function customerQuoteClosePath(quoteId: string): string {
+  return `${customerQuotePath(quoteId)}/close`;
+}
+
+
+/**
+ * "Cerrar cotización": explicit terminal outcome (Ganada/Nula) for a sent
+ * quote. Unlike the other four revision-workflow commands, this carries a
+ * real Idempotency-Key -- a retry after a lost response must never append a
+ * second closure event.
+ */
+export function closeCustomerQuote(
+  quoteId: string,
+  command: CustomerQuoteCloseCommand,
+  idempotencyKey: string,
+): Promise<CustomerQuote> {
+  return fetchJson<unknown>(
+    operatorApiUrl(customerQuoteClosePath(quoteId)),
+    {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "Idempotency-Key": requireIdempotencyKey(idempotencyKey),
+      },
+      body: JSON.stringify(command),
+    },
+  ).then(parseCustomerQuote);
 }
 
 

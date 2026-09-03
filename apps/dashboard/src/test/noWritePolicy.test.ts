@@ -40,13 +40,17 @@ describe("dashboard read-only policy", () => {
   //    one shared POST transport used only by the five explicit CRM command
   //    shapes admitted by the production Worker.
   //
-  // 3. customerQuoteClient.ts (CRM-Q1 + CRM-Q2):
-  //    seven explicit quote POST commands (create quote, retry Drive
+  // 3. customerQuoteClient.ts (CRM-Q1 + CRM-Q2 + CRM-Q2B):
+  //    eight explicit quote POST commands (create quote, retry Drive
   //    workspace provisioning, submit-for-review, request-adjustments,
-  //    approve, confirm-send, adopt-drive-folder) admitted by the
+  //    approve, confirm-send, adopt-drive-folder, close) admitted by the
   //    production Worker -- the four revision-transition commands share
   //    one literal `method: "POST"` fetch call site (transitionCustomerQuote),
-  //    so only 4 literal POST occurrences appear in the source text.
+  //    so only 5 literal POST occurrences appear in the source text (the
+  //    shared transition helper, create, retry-drive-workspace,
+  //    adopt-drive-folder, and close -- close carries an Idempotency-Key
+  //    like create/adopt, so it is its own call site, not routed through
+  //    the shared transition helper).
   //
   // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
 
@@ -126,13 +130,13 @@ describe("dashboard read-only policy", () => {
 
       if (path === CUSTOMER_QUOTE_MUTATION_FILE) {
         if (
-          methods.length !== 4 ||
+          methods.length !== 5 ||
           methods.some(
             (method) => method !== "POST",
           )
         ) {
           hits.push(
-            `${path} (expected exactly 4 literal POST fetch call sites -- create, retry-drive-workspace, the shared revision-transition helper, and adopt-drive-folder -- found ${methods.join(", ") || "none"})`,
+            `${path} (expected exactly 5 literal POST fetch call sites -- create, retry-drive-workspace, the shared revision-transition helper, adopt-drive-folder, and close -- found ${methods.join(", ") || "none"})`,
           );
         }
 
@@ -144,6 +148,7 @@ describe("dashboard read-only policy", () => {
           "customerQuoteApprovePath",
           "customerQuoteConfirmSendPath",
           "salesOpportunityAdoptDriveFolderPath",
+          "customerQuoteClosePath",
         ];
 
         for (const builder of requiredPathBuilders) {

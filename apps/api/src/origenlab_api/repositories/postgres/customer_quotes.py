@@ -115,6 +115,24 @@ _FAILURE_CATEGORY_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 _CREATE_COMMAND_KIND = "customer_quote_create"
 _ADOPT_COMMAND_KIND = "customer_quote_adopt_drive"
+_CLOSE_COMMAND_KIND = "customer_quote_close"
+
+_CLOSED_STATUS_BY_OUTCOME = {"won": "closed_won", "null": "closed_null"}
+
+# Distinguishes which unique constraint fired on the customer_quote insert
+# during adoption -- the two candidates from migration 20260830_0040. Never
+# guess: an unrecognized constraint name falls back to the old combined
+# message rather than mislabeling the failure.
+_ADOPT_UNIQUE_VIOLATION_REASONS = {
+    "uq_customer_quote_document_number": (
+        "duplicate_document_number: document_number is already used by "
+        "another quote"
+    ),
+    "uq_customer_quote_number": (
+        "duplicate_quote_number: quote_number is already used by another "
+        "quote"
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -1208,6 +1226,175 @@ class PostgresCustomerQuoteRepository:
             event_type="quote_send_confirmed",
         )
 
+    def close_quote(
+        self,
+        *,
+        quote_id: str,
+        operator: str,
+        expected_version: int,
+        outcome: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+    ) -> CustomerQuoteBundle:
+        """Explicit terminal outcome for a sent quote ("Cerrar cotización").
+
+        Unlike the four revision-workflow transitions above, this command
+        carries a real idempotency claim (like create_quote/adopt_drive_folder):
+        a retry after a lost response must never append a second
+        quote_closed event. Never touches commercial.sales_opportunity --
+        that stays a separate, operator-visible action in Ventas."""
+
+        to_status = _CLOSED_STATUS_BY_OUTCOME[outcome]
+
+        pg = require_psycopg()
+        now = _utcnow()
+
+        with postgres_write_connection(self._settings) as conn:
+            with conn.cursor(row_factory=pg.rows.dict_row) as cur:
+                replay_result_id = _claim_idempotency(
+                    cur,
+                    operator=operator,
+                    idempotency_key=idempotency_key,
+                    command_kind=_CLOSE_COMMAND_KIND,
+                    request_fingerprint=request_fingerprint,
+                )
+
+                if replay_result_id is not None:
+                    replay = _fetch_bundle(cur, quote_id=replay_result_id)
+
+                    if replay is None:
+                        raise CommercialOperationConflictError(
+                            "Idempotency result customer quote is missing"
+                        )
+
+                    return replay
+
+                cur.execute(
+                    """
+                    SELECT version
+                    FROM commercial.customer_quote
+                    WHERE quote_id = %(quote_id)s
+                    FOR UPDATE
+                    """,
+                    {"quote_id": quote_id},
+                )
+
+                existing_quote = cur.fetchone()
+
+                if existing_quote is None:
+                    raise CommercialOperationNotFoundError(
+                        f"customer_quote_not_found: {quote_id}"
+                    )
+
+                current_version = int(existing_quote["version"])
+
+                if expected_version != current_version:
+                    raise CommercialOperationConflictError(
+                        "customer_quote_version_conflict: expected "
+                        f"{expected_version}, found {current_version}"
+                    )
+
+                cur.execute(
+                    """
+                    SELECT revision_number, status
+                    FROM commercial.customer_quote_revision
+                    WHERE quote_id = %(quote_id)s
+                    ORDER BY revision_number DESC
+                    LIMIT 1
+                    """,
+                    {"quote_id": quote_id},
+                )
+
+                existing_revision = cur.fetchone()
+
+                if existing_revision is None:
+                    raise RuntimeError(
+                        f"Customer quote has no revision: {quote_id}"
+                    )
+
+                revision_number = int(existing_revision["revision_number"])
+                current_status = str(existing_revision["status"])
+
+                if current_status != "sent":
+                    raise CommercialOperationConflictError(
+                        "customer_quote_illegal_transition: cannot close "
+                        f"from '{current_status}' (only 'sent' quotes can "
+                        "be closed)"
+                    )
+
+                cur.execute(
+                    """
+                    UPDATE commercial.customer_quote
+                    SET
+                      version = version + 1,
+                      updated_by = %(operator)s,
+                      updated_at = %(now)s
+                    WHERE quote_id = %(quote_id)s
+                      AND version = %(current_version)s
+                    RETURNING version
+                    """,
+                    {
+                        "quote_id": quote_id,
+                        "operator": operator,
+                        "now": now,
+                        "current_version": current_version,
+                    },
+                )
+
+                if cur.fetchone() is None:
+                    raise CommercialOperationConflictError(
+                        "customer_quote_version_conflict: concurrent update"
+                    )
+
+                cur.execute(
+                    """
+                    UPDATE commercial.customer_quote_revision
+                    SET
+                      status = %(to_status)s,
+                      updated_by = %(operator)s,
+                      updated_at = %(now)s
+                    WHERE quote_id = %(quote_id)s
+                      AND revision_number = %(revision_number)s
+                    """,
+                    {
+                        "quote_id": quote_id,
+                        "revision_number": revision_number,
+                        "to_status": to_status,
+                        "operator": operator,
+                        "now": now,
+                    },
+                )
+
+                _insert_event(
+                    cur,
+                    quote_id=quote_id,
+                    event_type="quote_closed",
+                    actor_key=operator,
+                    payload={
+                        "revision_number": revision_number,
+                        "from_status": current_status,
+                        "to_status": to_status,
+                        "outcome": outcome,
+                    },
+                    created_at=now,
+                )
+
+                _store_idempotency_result(
+                    cur,
+                    operator=operator,
+                    idempotency_key=idempotency_key,
+                    result_id=quote_id,
+                )
+
+                bundle = _fetch_bundle(cur, quote_id=quote_id)
+
+                if bundle is None:
+                    raise RuntimeError(
+                        f"Customer quote disappeared mid-close: {quote_id}"
+                    )
+
+                return bundle
+
     def adopt_drive_folder(
         self,
         *,
@@ -1276,7 +1463,8 @@ class PostgresCustomerQuoteRepository:
 
                 if source is None:
                     raise CommercialOperationNotFoundError(
-                        f"Sales opportunity not found: {sales_opportunity_id}"
+                        f"sales_opportunity_not_found: Sales opportunity "
+                        f"not found: {sales_opportunity_id}"
                     )
 
                 title = str(source["title"])
@@ -1326,9 +1514,13 @@ class PostgresCustomerQuoteRepository:
                         },
                     )
                 except pg.errors.UniqueViolation as exc:
-                    raise CommercialOperationConflictError(
-                        "quote_number or document_number already in use"
-                    ) from exc
+                    constraint = getattr(exc.diag, "constraint_name", None)
+                    message = _ADOPT_UNIQUE_VIOLATION_REASONS.get(
+                        constraint,
+                        "duplicate_identifier: quote_number or document_number "
+                        "already in use",
+                    )
+                    raise CommercialOperationConflictError(message) from exc
 
                 quote_row = cur.fetchone()
 
@@ -1419,7 +1611,8 @@ class PostgresCustomerQuoteRepository:
                     )
                 except pg.errors.UniqueViolation as exc:
                     raise CommercialOperationConflictError(
-                        "Drive folder is already attached to a durable quote"
+                        "drive_folder_already_incorporated: this Drive "
+                        "folder is already attached to a durable quote"
                     ) from exc
 
                 workspace_row = cur.fetchone()

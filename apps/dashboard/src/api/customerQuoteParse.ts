@@ -15,11 +15,20 @@ import type {
   CustomerQuoteEventListResponse,
   CustomerQuoteGlobalItem,
   CustomerQuoteGlobalListResponse,
+  CustomerQuoteIntakeResolution,
   CustomerQuoteListResponse,
   CustomerQuoteReadResponse,
   CustomerQuoteStatus,
   DrivePendingQuoteItem,
+  IntakeConfidence,
+  IntakeContactCandidate,
+  IntakeEvidenceItem,
+  IntakeOpportunityAlternate,
+  IntakeOpportunityCandidate,
+  IntakeOrganizationAlternate,
+  IntakeOrganizationCandidate,
   QuoteOrigin,
+  QuoteOutcome,
   QuoteProvisioningStatus,
   RevisionStatus,
 } from "./customerQuoteTypes";
@@ -36,13 +45,24 @@ const REVISION_STATUSES: ReadonlySet<string> = new Set([
   "approved",
   "sent",
   "superseded",
+  "closed_won",
+  "closed_null",
 ]);
 
 const BOARD_STAGES: ReadonlySet<string> = new Set([
-  "preparation",
   "review",
   "approved_to_send",
   "sent_follow_up",
+  "closed",
+]);
+
+const QUOTE_OUTCOMES: ReadonlySet<string> = new Set(["won", "null"]);
+
+const INTAKE_CONFIDENCES: ReadonlySet<string> = new Set([
+  "confirmed_durable_match",
+  "possible_match",
+  "ambiguous_match",
+  "unresolved",
 ]);
 
 const SALES_OPPORTUNITY_STAGES: ReadonlySet<string> = new Set([
@@ -241,6 +261,12 @@ export function parseCustomerQuote(raw: unknown): CustomerQuote {
     throw new Error(`Unknown board_stage: ${boardStage}`);
   }
 
+  const quoteOutcome = nullableString(data.quote_outcome, "quote_outcome");
+
+  if (quoteOutcome !== null && !QUOTE_OUTCOMES.has(quoteOutcome)) {
+    throw new Error(`Unknown quote_outcome: ${quoteOutcome}`);
+  }
+
   return {
     quote_id: quoteId,
     sales_opportunity_id: salesOpportunityId,
@@ -268,6 +294,7 @@ export function parseCustomerQuote(raw: unknown): CustomerQuote {
       "revision_updated_at",
     ),
     board_stage: boardStage as BoardStage,
+    quote_outcome: quoteOutcome as QuoteOutcome | null,
     created_by: stringValue(data.created_by, "created_by"),
     updated_by: stringValue(data.updated_by, "updated_by"),
     created_at: stringValue(data.created_at, "created_at"),
@@ -434,5 +461,132 @@ export function parseCustomerQuoteDrivePendingListResponse(
       count: integerAtLeast(meta.count, 0, "meta.count"),
     },
     items: data.items.map(parseDrivePendingQuoteItem),
+  };
+}
+
+function intakeConfidence(value: unknown, label: string): IntakeConfidence {
+  const parsed = stringValue(value, label);
+
+  if (!INTAKE_CONFIDENCES.has(parsed)) {
+    throw new Error(`Unknown ${label}: ${parsed}`);
+  }
+
+  return parsed as IntakeConfidence;
+}
+
+function parseIntakeEvidenceItem(raw: unknown): IntakeEvidenceItem {
+  const data = record(raw, "intake evidence item");
+
+  return {
+    source: stringValue(data.source, "evidence.source"),
+    reason: stringValue(data.reason, "evidence.reason"),
+    detail: stringValue(data.detail, "evidence.detail"),
+  };
+}
+
+function parseIntakeEvidenceList(raw: unknown, label: string): IntakeEvidenceItem[] {
+  if (!Array.isArray(raw)) {
+    throw new Error(`${label} must be an array`);
+  }
+
+  return raw.map(parseIntakeEvidenceItem);
+}
+
+function parseIntakeOrganizationAlternate(raw: unknown): IntakeOrganizationAlternate {
+  const data = record(raw, "intake organization alternate");
+
+  return {
+    organization_id: stringValue(data.organization_id, "alternate.organization_id"),
+    display_name: stringValue(data.display_name, "alternate.display_name"),
+  };
+}
+
+function parseIntakeOrganizationCandidate(raw: unknown): IntakeOrganizationCandidate {
+  const data = record(raw, "intake organization candidate");
+
+  if (!Array.isArray(data.alternates)) {
+    throw new Error("organization.alternates must be an array");
+  }
+
+  return {
+    organization_id: nullableString(data.organization_id, "organization.organization_id"),
+    display_name: stringValue(data.display_name, "organization.display_name"),
+    confidence: intakeConfidence(data.confidence, "organization.confidence"),
+    evidence: parseIntakeEvidenceList(data.evidence, "organization.evidence"),
+    alternates: data.alternates.map(parseIntakeOrganizationAlternate),
+  };
+}
+
+function parseIntakeContactCandidate(raw: unknown): IntakeContactCandidate {
+  const data = record(raw, "intake contact candidate");
+
+  return {
+    contact_id: nullableString(data.contact_id, "contact.contact_id"),
+    display_name: nullableString(data.display_name, "contact.display_name"),
+    email: nullableString(data.email, "contact.email"),
+    confidence: intakeConfidence(data.confidence, "contact.confidence"),
+    evidence: parseIntakeEvidenceList(data.evidence, "contact.evidence"),
+  };
+}
+
+function parseIntakeOpportunityAlternate(raw: unknown): IntakeOpportunityAlternate {
+  const data = record(raw, "intake opportunity alternate");
+
+  return {
+    sales_opportunity_id: stringValue(data.sales_opportunity_id, "alternate.sales_opportunity_id"),
+    title: stringValue(data.title, "alternate.title"),
+  };
+}
+
+function parseIntakeOpportunityCandidate(raw: unknown): IntakeOpportunityCandidate {
+  const data = record(raw, "intake opportunity candidate");
+
+  if (!Array.isArray(data.alternates)) {
+    throw new Error("opportunity.alternates must be an array");
+  }
+
+  return {
+    sales_opportunity_id: nullableString(
+      data.sales_opportunity_id,
+      "opportunity.sales_opportunity_id",
+    ),
+    title: stringValue(data.title, "opportunity.title"),
+    confidence: intakeConfidence(data.confidence, "opportunity.confidence"),
+    alternates: data.alternates.map(parseIntakeOpportunityAlternate),
+  };
+}
+
+export function parseCustomerQuoteIntakeResolution(
+  raw: unknown,
+): CustomerQuoteIntakeResolution {
+  const data = record(raw, "customer quote intake resolution");
+
+  if (!Array.isArray(data.contacts)) {
+    throw new Error("contacts must be an array");
+  }
+
+  if (data.quote_number_resolved !== false) {
+    throw new Error("quote_number_resolved must be false");
+  }
+
+  return {
+    document_number_candidate: nullableString(
+      data.document_number_candidate,
+      "document_number_candidate",
+    ),
+    document_number_conflict: booleanValue(
+      data.document_number_conflict,
+      "document_number_conflict",
+    ),
+    organization:
+      data.organization === null || data.organization === undefined
+        ? null
+        : parseIntakeOrganizationCandidate(data.organization),
+    contacts: data.contacts.map(parseIntakeContactCandidate),
+    opportunity:
+      data.opportunity === null || data.opportunity === undefined
+        ? null
+        : parseIntakeOpportunityCandidate(data.opportunity),
+    quote_number_resolved: false,
   };
 }
