@@ -70,6 +70,10 @@ export function AdoptDriveFolderModal({
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
   const [organizationDisplayName, setOrganizationDisplayName] = useState("");
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
+  // Which contacts[] row is checked in the ambiguous-contact picker --
+  // purely a UI selection index (contact_id alone can't disambiguate two
+  // Gmail-only candidates, which both carry contact_id: null).
+  const [selectedContactIndex, setSelectedContactIndex] = useState<number | null>(null);
   const [contactDisplayName, setContactDisplayName] = useState("");
   const [contactEmail, setContactEmail] = useState("");
   const [opportunityTitle, setOpportunityTitle] = useState("");
@@ -128,8 +132,12 @@ export function AdoptDriveFolderModal({
           setMode("override");
         }
 
-        const contact = result.contacts[0] ?? null;
-        if (contact) {
+        // Exactly one contact candidate may be proposed automatically.
+        // 2+ is ambiguous (whether 2+ durable contacts or 2+ Gmail-only
+        // candidates) -- never silently choose the first; the operator
+        // picks explicitly from the radio list rendered below.
+        if (result.contacts.length === 1) {
+          const contact = result.contacts[0];
           setContactDisplayName(contact.display_name ?? "");
           setContactEmail(contact.email ?? "");
           if (contact.confidence === "confirmed_durable_match") {
@@ -139,7 +147,9 @@ export function AdoptDriveFolderModal({
 
         if (result.opportunity) {
           setOpportunityTitle(result.opportunity.title);
-          setExistingOpportunityId(result.opportunity.sales_opportunity_id);
+          if (result.opportunity.confidence === "confirmed_durable_match") {
+            setExistingOpportunityId(result.opportunity.sales_opportunity_id);
+          }
         }
       })
       .catch((reason: unknown) => {
@@ -183,6 +193,7 @@ export function AdoptDriveFolderModal({
     setSelectedOrganizationId(null);
     setOrganizationDisplayName("");
     setSelectedContactId(null);
+    setSelectedContactIndex(null);
     setContactDisplayName("");
     setContactEmail("");
     setOpportunityTitle("");
@@ -212,10 +223,21 @@ export function AdoptDriveFolderModal({
   const hasOverrideOpportunitySource =
     tab === "existing" ? selected !== null : manual.title.trim() !== "" && hasManualOrganization;
 
+  // Ambiguous resolution must fail closed: an operator-visible picker with
+  // nothing chosen yet must never leave enough "source" behind to slip
+  // through and auto-create a new organization/opportunity.
+  const organizationAmbiguous =
+    resolution?.organization?.confidence === "possible_match" &&
+    resolution.organization.alternates.length > 1;
+  const opportunityAmbiguous = resolution?.opportunity?.confidence === "ambiguous_match";
+
+  const hasResolvedOrganizationSource =
+    selectedOrganizationId !== null ||
+    (!organizationAmbiguous && organizationDisplayName.trim() !== "");
+
   const hasResolvedOpportunitySource =
     existingOpportunityId !== null ||
-    selectedOrganizationId !== null ||
-    organizationDisplayName.trim() !== "";
+    (!opportunityAmbiguous && hasResolvedOrganizationSource);
 
   const hasOpportunitySource =
     mode === "override" ? hasOverrideOpportunitySource : hasResolvedOpportunitySource;
@@ -435,11 +457,34 @@ export function AdoptDriveFolderModal({
 
                 <div className="space-y-1">
                   <span className="text-sm font-medium text-slate-700">Contacto</span>
-                  {contact?.confidence === "confirmed_durable_match" ? (
+                  {resolution && resolution.contacts.length === 1 && resolution.contacts[0].confidence === "confirmed_durable_match" ? (
                     <>
-                      <p className="text-sm text-slate-900">{contact.display_name ?? contact.email ?? "—"}</p>
+                      <p className="text-sm text-slate-900">{contact?.display_name ?? contact?.email ?? "—"}</p>
                       <EvidenceBadge ok={true}>Contacto existente en el CRM</EvidenceBadge>
                     </>
+                  ) : resolution && resolution.contacts.length > 1 ? (
+                    <div className="space-y-1">
+                      <EvidenceBadge ok={false}>Elige el contacto correcto</EvidenceBadge>
+                      {resolution.contacts.map((candidate, index) => (
+                        <label
+                          key={candidate.contact_id ?? `${candidate.email ?? candidate.display_name ?? "contact"}-${index}`}
+                          className="flex items-center gap-2 text-sm"
+                        >
+                          <input
+                            type="radio"
+                            name="adopt-contact-alternate"
+                            checked={selectedContactIndex === index}
+                            onChange={() => {
+                              setSelectedContactIndex(index);
+                              setContactDisplayName(candidate.display_name ?? "");
+                              setContactEmail(candidate.email ?? "");
+                              setSelectedContactId(candidate.contact_id);
+                            }}
+                          />
+                          {candidate.display_name ?? candidate.email ?? "Contacto sin nombre"}
+                        </label>
+                      ))}
+                    </div>
                   ) : (
                     <>
                       <input
@@ -472,6 +517,24 @@ export function AdoptDriveFolderModal({
                       <p className="text-sm text-slate-900">{opportunity?.title}</p>
                       <EvidenceBadge ok={true}>Oportunidad existente encontrada</EvidenceBadge>
                     </>
+                  ) : opportunity?.confidence === "ambiguous_match" ? (
+                    <div className="space-y-1">
+                      <EvidenceBadge ok={false}>Hay varias oportunidades activas — elige la correcta</EvidenceBadge>
+                      {opportunity.alternates.map((alternate) => (
+                        <label key={alternate.sales_opportunity_id} className="flex items-center gap-2 text-sm">
+                          <input
+                            type="radio"
+                            name="adopt-opportunity-alternate"
+                            checked={existingOpportunityId === alternate.sales_opportunity_id}
+                            onChange={() => {
+                              setExistingOpportunityId(alternate.sales_opportunity_id);
+                              setOpportunityTitle(alternate.title);
+                            }}
+                          />
+                          {alternate.title}
+                        </label>
+                      ))}
+                    </div>
                   ) : (
                     <>
                       <p className="text-xs text-slate-500">No existe una oportunidad CRM todavía — se creará automáticamente:</p>

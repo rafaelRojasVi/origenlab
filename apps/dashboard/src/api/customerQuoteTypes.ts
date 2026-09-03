@@ -187,7 +187,11 @@ export type QuoteQueueRow =
  * confirms and submits the adoption command. Confidence is always one of
  * three reason-coded levels, never a numeric ML score.
  */
-export type IntakeConfidence = "confirmed_durable_match" | "possible_match" | "unresolved";
+export type IntakeConfidence =
+  | "confirmed_durable_match"
+  | "possible_match"
+  | "ambiguous_match"
+  | "unresolved";
 
 export interface IntakeEvidenceItem {
   source: string;
@@ -218,10 +222,19 @@ export interface IntakeContactCandidate {
   evidence: IntakeEvidenceItem[];
 }
 
+export interface IntakeOpportunityAlternate {
+  sales_opportunity_id: string;
+  title: string;
+}
+
 export interface IntakeOpportunityCandidate {
   sales_opportunity_id: string | null;
   title: string;
   confidence: IntakeConfidence;
+  /** Populated only when confidence is "ambiguous_match" -- 2+ active
+   * sales opportunities exist for the organization -- the operator picks,
+   * nothing is auto-selected and no duplicate is auto-created. */
+  alternates: IntakeOpportunityAlternate[];
 }
 
 export interface CustomerQuoteIntakeResolution {

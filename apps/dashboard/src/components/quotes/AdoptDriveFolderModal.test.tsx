@@ -118,7 +118,7 @@ describe("AdoptDriveFolderModal", () => {
           evidence: [{ source: "durable_crm", reason: "normalized_name_match", detail: "..." }],
           alternates: [],
         },
-        opportunity: { sales_opportunity_id: null, title: "ICN Chile — Cotización", confidence: "unresolved" },
+        opportunity: { sales_opportunity_id: null, title: "ICN Chile — Cotización", confidence: "unresolved", alternates: [] },
       }),
     );
 
@@ -142,13 +142,168 @@ describe("AdoptDriveFolderModal", () => {
             { organization_id: "org_b", display_name: "ICN Chile Ltda" },
           ],
         },
-        opportunity: { sales_opportunity_id: null, title: "ICN Chile — Cotización", confidence: "unresolved" },
+        opportunity: { sales_opportunity_id: null, title: "ICN Chile — Cotización", confidence: "unresolved", alternates: [] },
       }),
     );
 
     render(<AdoptDriveFolderModal item={drivePendingQuoteItemFixture()} open onClose={vi.fn()} onAdopted={vi.fn()} />);
 
     await waitFor(() => expect(screen.getAllByRole("radio")).toHaveLength(2));
+  });
+
+  it("an ambiguous organization match keeps Incorporar al CRM disabled until the operator picks one, and never auto-creates", async () => {
+    vi.mocked(quoteClient.fetchDriveIntakeResolution).mockResolvedValue(
+      emptyResolution({
+        organization: {
+          organization_id: null,
+          display_name: "ICN Chile",
+          confidence: "possible_match",
+          evidence: [],
+          alternates: [
+            { organization_id: "org_a", display_name: "ICN Chile SPA" },
+            { organization_id: "org_b", display_name: "ICN Chile Ltda" },
+          ],
+        },
+        opportunity: { sales_opportunity_id: null, title: "ICN Chile — Cotización", confidence: "unresolved", alternates: [] },
+      }),
+    );
+
+    render(<AdoptDriveFolderModal item={drivePendingQuoteItemFixture()} open onClose={vi.fn()} onAdopted={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getAllByRole("radio")).toHaveLength(2));
+    fireEvent.change(screen.getByLabelText("Número de cotización"), { target: { value: "01191-26" } });
+
+    expect(screen.getByRole("button", { name: "Incorporar al CRM" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Incorporar al CRM" }));
+    expect(commercialClient.createManualSalesOpportunity).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("radio", { name: "ICN Chile SPA" }));
+    expect(screen.getByRole("button", { name: "Incorporar al CRM" })).not.toBeDisabled();
+  });
+
+  it("2+ durable contacts render a picker, never silently choose the first, and submit the operator's explicit pick", async () => {
+    vi.mocked(quoteClient.fetchDriveIntakeResolution).mockResolvedValue(
+      emptyResolution({
+        organization: {
+          organization_id: "org_icn",
+          display_name: "ICN Chile",
+          confidence: "confirmed_durable_match",
+          evidence: [],
+          alternates: [],
+        },
+        contacts: [
+          { contact_id: "contact_ana", display_name: "Ana Aguirre", email: "ana@icn.cl", confidence: "possible_match", evidence: [] },
+          { contact_id: "contact_bruno", display_name: "Bruno Soto", email: "bruno@icn.cl", confidence: "possible_match", evidence: [] },
+        ],
+        opportunity: { sales_opportunity_id: null, title: "ICN Chile — Cotización", confidence: "unresolved", alternates: [] },
+      }),
+    );
+    vi.mocked(commercialClient.createManualSalesOpportunity).mockResolvedValue({ sales_opportunity_id: "sales_new" } as never);
+    vi.mocked(commercialClient.fetchSalesOpportunities).mockResolvedValue({
+      meta: { data_source: "postgres", read_only: true, count: 1, total_count: 1, limit: 200, offset: 0 },
+      items: [opportunity({ sales_opportunity_id: "sales_new" })],
+    });
+    vi.mocked(quoteClient.adoptCustomerQuoteDriveFolder).mockResolvedValue(globalQuoteItemFixture().quote);
+
+    render(<AdoptDriveFolderModal item={drivePendingQuoteItemFixture()} open onClose={vi.fn()} onAdopted={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getAllByRole("radio", { name: /Ana Aguirre|Bruno Soto/ })).toHaveLength(2));
+    expect(screen.queryByLabelText("Nombre de contacto")).toBeNull();
+    for (const radio of screen.getAllByRole("radio", { name: /Ana Aguirre|Bruno Soto/ })) {
+      expect(radio).not.toBeChecked();
+    }
+
+    fireEvent.click(screen.getByRole("radio", { name: "Bruno Soto" }));
+    expect(screen.getByRole("radio", { name: "Bruno Soto" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Ana Aguirre" })).not.toBeChecked();
+
+    fireEvent.change(screen.getByLabelText("Número de cotización"), { target: { value: "01191-26" } });
+    fireEvent.click(screen.getByRole("button", { name: "Incorporar al CRM" }));
+
+    await waitFor(() =>
+      expect(commercialClient.createManualSalesOpportunity).toHaveBeenCalledWith(
+        expect.objectContaining({ contact_id: "contact_bruno" }),
+        expect.any(String),
+      ),
+    );
+  });
+
+  it("a single durable contact auto-selects and is submitted as contact_id, not a free-text display name", async () => {
+    vi.mocked(quoteClient.fetchDriveIntakeResolution).mockResolvedValue(
+      emptyResolution({
+        organization: {
+          organization_id: "org_icn",
+          display_name: "ICN Chile",
+          confidence: "confirmed_durable_match",
+          evidence: [],
+          alternates: [],
+        },
+        contacts: [
+          { contact_id: "contact_ana", display_name: "Ana CRM", email: "ana@icn.cl", confidence: "confirmed_durable_match", evidence: [] },
+        ],
+        opportunity: { sales_opportunity_id: null, title: "ICN Chile — Cotización", confidence: "unresolved", alternates: [] },
+      }),
+    );
+    vi.mocked(commercialClient.createManualSalesOpportunity).mockResolvedValue({ sales_opportunity_id: "sales_new" } as never);
+    vi.mocked(commercialClient.fetchSalesOpportunities).mockResolvedValue({
+      meta: { data_source: "postgres", read_only: true, count: 1, total_count: 1, limit: 200, offset: 0 },
+      items: [opportunity({ sales_opportunity_id: "sales_new" })],
+    });
+    vi.mocked(quoteClient.adoptCustomerQuoteDriveFolder).mockResolvedValue(globalQuoteItemFixture().quote);
+
+    render(<AdoptDriveFolderModal item={drivePendingQuoteItemFixture()} open onClose={vi.fn()} onAdopted={vi.fn()} />);
+
+    await waitFor(() => screen.getByDisplayValue("ICN Chile — Cotización"));
+    fireEvent.change(screen.getByLabelText("Número de cotización"), { target: { value: "01191-26" } });
+    fireEvent.click(screen.getByRole("button", { name: "Incorporar al CRM" }));
+
+    await waitFor(() =>
+      expect(commercialClient.createManualSalesOpportunity).toHaveBeenCalledWith(
+        expect.objectContaining({ contact_id: "contact_ana" }),
+        expect.any(String),
+      ),
+    );
+    expect(commercialClient.createManualSalesOpportunity).toHaveBeenCalledWith(
+      expect.not.objectContaining({ contact_display_name: expect.anything() }),
+      expect.any(String),
+    );
+  });
+
+  it("2+ active opportunities render a picker, block submission until chosen, and never auto-create a duplicate", async () => {
+    vi.mocked(quoteClient.fetchDriveIntakeResolution).mockResolvedValue(
+      emptyResolution({
+        organization: {
+          organization_id: "org_icn",
+          display_name: "ICN Chile",
+          confidence: "confirmed_durable_match",
+          evidence: [],
+          alternates: [],
+        },
+        opportunity: {
+          sales_opportunity_id: null,
+          title: "ICN Chile — Cotización",
+          confidence: "ambiguous_match",
+          alternates: [
+            { sales_opportunity_id: "sales_a", title: "ICN Chile — Balanza" },
+            { sales_opportunity_id: "sales_b", title: "ICN Chile — Centrífuga" },
+          ],
+        },
+      }),
+    );
+
+    render(<AdoptDriveFolderModal item={drivePendingQuoteItemFixture()} open onClose={vi.fn()} onAdopted={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getAllByRole("radio", { name: /ICN Chile —/ })).toHaveLength(2));
+    fireEvent.change(screen.getByLabelText("Número de cotización"), { target: { value: "01191-26" } });
+
+    expect(screen.getByRole("button", { name: "Incorporar al CRM" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Incorporar al CRM" }));
+    expect(commercialClient.createManualSalesOpportunity).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("radio", { name: "ICN Chile — Balanza" }));
+    expect(screen.getByRole("button", { name: "Incorporar al CRM" })).not.toBeDisabled();
   });
 
   it("an unresolved organization renders an editable create-new field prefilled from the folder name", async () => {
@@ -161,7 +316,7 @@ describe("AdoptDriveFolderModal", () => {
           evidence: [{ source: "drive_folder_name", reason: "no_crm_or_email_evidence", detail: "..." }],
           alternates: [],
         },
-        opportunity: { sales_opportunity_id: null, title: "ICN Chile — Cotización", confidence: "unresolved" },
+        opportunity: { sales_opportunity_id: null, title: "ICN Chile — Cotización", confidence: "unresolved", alternates: [] },
       }),
     );
 
@@ -183,7 +338,7 @@ describe("AdoptDriveFolderModal", () => {
           evidence: [],
           alternates: [],
         },
-        opportunity: { sales_opportunity_id: null, title: "ICN Chile — Cotización", confidence: "unresolved" },
+        opportunity: { sales_opportunity_id: null, title: "ICN Chile — Cotización", confidence: "unresolved", alternates: [] },
       }),
     );
     vi.mocked(commercialClient.createManualSalesOpportunity).mockResolvedValue({
@@ -227,6 +382,7 @@ describe("AdoptDriveFolderModal", () => {
           sales_opportunity_id: "sales_existing",
           title: "ICN Chile deal",
           confidence: "confirmed_durable_match",
+          alternates: [],
         },
       }),
     );
@@ -264,7 +420,7 @@ describe("AdoptDriveFolderModal", () => {
             evidence: [{ source: "gmail_history", reason: "gmail_contact_history", detail: "Encontrado en 8 correos" }],
           },
         ],
-        opportunity: { sales_opportunity_id: null, title: "ICN Chile — Cotización", confidence: "unresolved" },
+        opportunity: { sales_opportunity_id: null, title: "ICN Chile — Cotización", confidence: "unresolved", alternates: [] },
       }),
     );
 
@@ -287,7 +443,7 @@ describe("AdoptDriveFolderModal", () => {
           evidence: [],
           alternates: [],
         },
-        opportunity: { sales_opportunity_id: null, title: "ICN Chile — Cotización", confidence: "unresolved" },
+        opportunity: { sales_opportunity_id: null, title: "ICN Chile — Cotización", confidence: "unresolved", alternates: [] },
       }),
     );
     vi.mocked(commercialClient.fetchSalesOpportunities).mockResolvedValue({
@@ -394,7 +550,7 @@ describe("AdoptDriveFolderModal", () => {
           evidence: [],
           alternates: [],
         },
-        opportunity: { sales_opportunity_id: "sales_existing", title: "ICN Chile deal", confidence: "confirmed_durable_match" },
+        opportunity: { sales_opportunity_id: "sales_existing", title: "ICN Chile deal", confidence: "confirmed_durable_match", alternates: [] },
       }),
     );
     vi.mocked(quoteClient.adoptCustomerQuoteDriveFolder).mockRejectedValue(
@@ -425,7 +581,7 @@ describe("AdoptDriveFolderModal", () => {
           evidence: [],
           alternates: [],
         },
-        opportunity: { sales_opportunity_id: "sales_existing", title: "ICN Chile deal", confidence: "confirmed_durable_match" },
+        opportunity: { sales_opportunity_id: "sales_existing", title: "ICN Chile deal", confidence: "confirmed_durable_match", alternates: [] },
       }),
     );
     vi.mocked(quoteClient.adoptCustomerQuoteDriveFolder).mockRejectedValue(

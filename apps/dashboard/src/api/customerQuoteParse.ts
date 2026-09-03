@@ -23,6 +23,7 @@ import type {
   IntakeConfidence,
   IntakeContactCandidate,
   IntakeEvidenceItem,
+  IntakeOpportunityAlternate,
   IntakeOpportunityCandidate,
   IntakeOrganizationAlternate,
   IntakeOrganizationCandidate,
@@ -60,6 +61,7 @@ const QUOTE_OUTCOMES: ReadonlySet<string> = new Set(["won", "null"]);
 const INTAKE_CONFIDENCES: ReadonlySet<string> = new Set([
   "confirmed_durable_match",
   "possible_match",
+  "ambiguous_match",
   "unresolved",
 ]);
 
@@ -527,8 +529,21 @@ function parseIntakeContactCandidate(raw: unknown): IntakeContactCandidate {
   };
 }
 
+function parseIntakeOpportunityAlternate(raw: unknown): IntakeOpportunityAlternate {
+  const data = record(raw, "intake opportunity alternate");
+
+  return {
+    sales_opportunity_id: stringValue(data.sales_opportunity_id, "alternate.sales_opportunity_id"),
+    title: stringValue(data.title, "alternate.title"),
+  };
+}
+
 function parseIntakeOpportunityCandidate(raw: unknown): IntakeOpportunityCandidate {
   const data = record(raw, "intake opportunity candidate");
+
+  if (!Array.isArray(data.alternates)) {
+    throw new Error("opportunity.alternates must be an array");
+  }
 
   return {
     sales_opportunity_id: nullableString(
@@ -537,6 +552,7 @@ function parseIntakeOpportunityCandidate(raw: unknown): IntakeOpportunityCandida
     ),
     title: stringValue(data.title, "opportunity.title"),
     confidence: intakeConfidence(data.confidence, "opportunity.confidence"),
+    alternates: data.alternates.map(parseIntakeOpportunityAlternate),
   };
 }
 

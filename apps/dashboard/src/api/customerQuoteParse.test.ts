@@ -430,7 +430,12 @@ describe("parseCustomerQuoteIntakeResolution", () => {
           evidence: [{ source: "gmail_history", reason: "gmail_contact_history", detail: "Encontrado en 8 correos" }],
         },
       ],
-      opportunity: { sales_opportunity_id: null, title: "ICN Chile — Cotización", confidence: "unresolved" },
+      opportunity: {
+        sales_opportunity_id: null,
+        title: "ICN Chile — Cotización",
+        confidence: "unresolved",
+        alternates: [],
+      },
       quote_number_resolved: false,
       ...overrides,
     };
@@ -473,6 +478,40 @@ describe("parseCustomerQuoteIntakeResolution", () => {
     );
 
     expect(result.organization?.alternates).toHaveLength(2);
+  });
+
+  it("parses opportunity alternates for an ambiguous_match with multiple active opportunities", () => {
+    const result = parseCustomerQuoteIntakeResolution(
+      rawResolution({
+        opportunity: {
+          sales_opportunity_id: null,
+          title: "ICN Chile — Cotización",
+          confidence: "ambiguous_match",
+          alternates: [
+            { sales_opportunity_id: "sales_a", title: "ICN Chile — Balanza" },
+            { sales_opportunity_id: "sales_b", title: "ICN Chile — Centrífuga" },
+          ],
+        },
+      }),
+    );
+
+    expect(result.opportunity?.confidence).toBe("ambiguous_match");
+    expect(result.opportunity?.alternates).toHaveLength(2);
+  });
+
+  it("rejects a non-array opportunity.alternates field", () => {
+    expect(() =>
+      parseCustomerQuoteIntakeResolution(
+        rawResolution({
+          opportunity: {
+            sales_opportunity_id: null,
+            title: "ICN Chile — Cotización",
+            confidence: "unresolved",
+            alternates: {},
+          },
+        }),
+      ),
+    ).toThrow();
   });
 
   it("rejects an unknown confidence value", () => {
