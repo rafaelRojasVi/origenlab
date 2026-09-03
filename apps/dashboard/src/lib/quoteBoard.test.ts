@@ -57,6 +57,19 @@ describe("resolveBoardMove", () => {
     }
   });
 
+  it("special-cases a drag into closed with an actionable message, not the generic adjacency refusal", () => {
+    for (const source of ["review", "approved_to_send", "sent_follow_up"] as const) {
+      const decision = resolveBoardMove(source, "closed");
+      expect(decision.allowed).toBe(false);
+      if (!decision.allowed) {
+        expect(decision.reason).toBe(
+          'Para cerrar una cotización usa "Cerrar cotización" y selecciona Ganada o Nula.',
+        );
+        expect(decision.reason).not.toMatch(/transiciones adyacentes/);
+      }
+    }
+  });
+
   it("every refusal carries an operator-readable reason", () => {
     const decision = resolveBoardMove("review", "sent_follow_up");
     expect(decision.allowed).toBe(false);

@@ -153,6 +153,16 @@ export function resolveBoardMove(
     return { allowed: false, reason: "La cotización ya está en esta etapa." };
   }
 
+  if (to === "closed") {
+    // Cerrada is visually adjacent to every other lane, so the generic
+    // "solo se permiten transiciones adyacentes" refusal would be actively
+    // misleading here -- closing is never drag-triggered, always explicit.
+    return {
+      allowed: false,
+      reason: 'Para cerrar una cotización usa "Cerrar cotización" y selecciona Ganada o Nula.',
+    };
+  }
+
   const match = LANE_TRANSITIONS.find(
     (transition) => transition.from === from && transition.to === to,
   );
