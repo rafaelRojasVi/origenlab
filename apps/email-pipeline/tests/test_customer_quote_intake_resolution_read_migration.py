@@ -54,17 +54,25 @@ def test_creates_narrow_lead_intel_evidence_view() -> None:
     ):
         assert safe_field in select_clause
     for excluded_field in (
+        # Internal freeform prospecting fields -- never exposed.
         "evidence_note",
         "risk_flags",
         "block_or_review_reason",
         "spanish_message_angle",
+        # Not consumed by the resolver -- least-privilege: don't expose a
+        # field merely because the source table has it.
+        "prospect_key",
     ):
         assert excluded_field not in select_clause
 
 
-def test_grants_read_access_to_both_roles() -> None:
+def test_grants_only_narrow_view_select_never_schema_usage() -> None:
+    """A plain (non-security_invoker) view runs with the view owner's own
+    privileges -- the API roles never need USAGE on lead_intel or SELECT on
+    lead_intel.prospect itself, only SELECT on the one narrow view."""
+
     upgrade = _read_migration().split("def upgrade()")[1].split("def downgrade()")[0]
-    assert "GRANT USAGE ON SCHEMA lead_intel" in upgrade
+    assert "GRANT USAGE ON SCHEMA lead_intel" not in upgrade
     assert "origenlab_api_ro" in upgrade
     assert "origenlab_api_rw" in upgrade
     assert "GRANT SELECT ON api.v_lead_intel_prospect_evidence" in upgrade
@@ -76,7 +84,8 @@ def test_migration_touches_no_existing_table() -> None:
         assert forbidden not in upgrade
 
 
-def test_downgrade_drops_the_view_and_revokes_grants() -> None:
+def test_downgrade_drops_the_view_and_revokes_grants_never_touching_schema_usage() -> None:
     downgrade = _read_migration().split("def downgrade()")[1]
     assert "DROP VIEW IF EXISTS api.v_lead_intel_prospect_evidence" in downgrade
-    assert "REVOKE" in downgrade
+    assert "REVOKE SELECT ON api.v_lead_intel_prospect_evidence" in downgrade
+    assert "REVOKE USAGE ON SCHEMA lead_intel" not in downgrade

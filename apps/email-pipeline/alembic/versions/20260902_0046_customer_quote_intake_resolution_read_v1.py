@@ -11,10 +11,17 @@ at all today. Rather than a broad cross-schema grant, this adds one narrow
 view exposing only the fields a resolver may safely show an operator as
 evidence -- never evidence_note/risk_flags/block_or_review_reason/
 spanish_message_angle, which are internal freeform prospecting fields with
-no place in a durable-adjacent evidence payload.
+no place in a durable-adjacent evidence payload, and never prospect_key,
+which the resolver never reads.
 
-Purely additive: one new view, two guarded GRANT statements. No existing
+Purely additive: one new view, one guarded GRANT statement. No existing
 table/column touched.
+
+Least privilege: this is a plain view (no `security_invoker`), so Postgres
+runs it with the *view owner's* privileges, not the querying role's -- the
+API roles need SELECT on the view alone, never USAGE on the lead_intel
+schema or SELECT on lead_intel.prospect itself. Only the view's owner needs
+those, and it already has them as the migration's own connection role.
 """
 
 from __future__ import annotations
@@ -35,7 +42,6 @@ def upgrade() -> None:
         """
         CREATE VIEW api.v_lead_intel_prospect_evidence AS
         SELECT
-          prospect_key,
           organization_name,
           contact_name,
           email,
@@ -54,7 +60,6 @@ def upgrade() -> None:
           IF EXISTS (
             SELECT 1 FROM pg_roles WHERE rolname = 'origenlab_api_ro'
           ) THEN
-            GRANT USAGE ON SCHEMA lead_intel TO origenlab_api_ro;
             GRANT SELECT ON api.v_lead_intel_prospect_evidence
               TO origenlab_api_ro;
           END IF;
@@ -62,7 +67,6 @@ def upgrade() -> None:
           IF EXISTS (
             SELECT 1 FROM pg_roles WHERE rolname = 'origenlab_api_rw'
           ) THEN
-            GRANT USAGE ON SCHEMA lead_intel TO origenlab_api_rw;
             GRANT SELECT ON api.v_lead_intel_prospect_evidence
               TO origenlab_api_rw;
           END IF;
@@ -73,7 +77,7 @@ def upgrade() -> None:
     op.execute(
         """
         COMMENT ON VIEW api.v_lead_intel_prospect_evidence IS
-          'Narrow read-only evidence surface for the Cotizaciones intake resolver (CRM-Q2B). Deliberately excludes evidence_note/risk_flags/block_or_review_reason/spanish_message_angle.'
+          'Narrow read-only evidence surface for the Cotizaciones intake resolver (CRM-Q2B). Deliberately excludes prospect_key/evidence_note/risk_flags/block_or_review_reason/spanish_message_angle.'
         """
     )
 
@@ -88,7 +92,6 @@ def downgrade() -> None:
           ) THEN
             REVOKE SELECT ON api.v_lead_intel_prospect_evidence
               FROM origenlab_api_ro;
-            REVOKE USAGE ON SCHEMA lead_intel FROM origenlab_api_ro;
           END IF;
 
           IF EXISTS (
@@ -96,7 +99,6 @@ def downgrade() -> None:
           ) THEN
             REVOKE SELECT ON api.v_lead_intel_prospect_evidence
               FROM origenlab_api_rw;
-            REVOKE USAGE ON SCHEMA lead_intel FROM origenlab_api_rw;
           END IF;
         END $$
         """
