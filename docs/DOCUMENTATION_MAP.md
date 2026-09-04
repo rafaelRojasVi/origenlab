@@ -2,7 +2,7 @@
 
 Status: canonical  
 Owner: project-maintainers  
-Last reviewed: 2026-08-28
+Last reviewed: 2026-09-03 (added re-foundation docs; see changelog below)
 
 This file is the source of truth for documentation placement, intent, and lifecycle.
 
@@ -24,6 +24,11 @@ This file is the source of truth for documentation placement, intent, and lifecy
 - Email pipeline operator script map: [apps/email-pipeline/docs/SCRIPT_MAP.md](../apps/email-pipeline/docs/SCRIPT_MAP.md)
 - Operator API: [apps/api/README.md](../apps/api/README.md) · [apps/api/docs/README.md](../apps/api/docs/README.md)
 - Dashboard (Today UI): [apps/dashboard/README.md](../apps/dashboard/README.md) · [apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md](../apps/dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md)
+- Data authority map: [data/DATA_AUTHORITY_MAP.md](./data/DATA_AUTHORITY_MAP.md)
+- SQLite database register: [data/SQLITE_REGISTER.md](./data/SQLITE_REGISTER.md)
+- Repository system inventory: [refoundation/SYSTEM_INVENTORY.md](./refoundation/SYSTEM_INVENTORY.md)
+- Re-foundation plan and decision register: [refoundation/REFOUNDATION_PLAN.md](./refoundation/REFOUNDATION_PLAN.md)
+- Business workflow docs: [workflows/README.md](./workflows/README.md)
 
 **Architecture entrypoint (monorepo):** [architecture/CURRENT_SYSTEM_TRUTH.md](./architecture/CURRENT_SYSTEM_TRUTH.md) (durable CRM vs machine mirrors, write paths, ownership) with [PROJECT_CONTEXT.md](./PROJECT_CONTEXT.md) for per-app context. [architecture/COMMERCIAL_RESET_LEDGER.md](./architecture/COMMERCIAL_RESET_LEDGER.md) is the completed 2026-08 reset migration record.
 
@@ -68,6 +73,16 @@ Historical API-3 migration notes (legacy `:8000` removal): [apps/api/docs/archiv
 - [security-audit-v1.md](../apps/web/docs/security-audit-v1.md) → canonical baseline audit.
 - [company-scope.md](../apps/web/docs/company-scope.md) → canonical human-facing business brief; **should match** [`apps/web/src/data/`](../apps/web/src/data/) (manually maintained; not an automated sync).
 - Live chat (Tidio in `Layout.astro`; legacy FloatingChat removed) → [stage-4 web audit](../apps/web/docs/audits/stage-4-cleanup-hardening-2026-05-16.md) (historical; `floating-chat-widget-notes.md` not retained in-repo).
+
+### Re-foundation docs (2026-09, added this pass)
+
+- [data/DATA_AUTHORITY_MAP.md](./data/DATA_AUTHORITY_MAP.md) → **canonical**, per-business-concept authority (canonical store, evidence source, writers/readers, durability, desired future authority). Companion to [architecture/CURRENT_SYSTEM_TRUTH.md](./architecture/CURRENT_SYSTEM_TRUTH.md)'s durable/rebuildable split — this file is the wider concept-by-concept detail; `CURRENT_SYSTEM_TRUTH.md` remains authoritative if the two ever disagree. Supersedes no existing file; builds on and credits [architecture/COMMERCIAL_OPERATING_SYSTEM_AUDIT.md](./architecture/COMMERCIAL_OPERATING_SYSTEM_AUDIT.md)'s domain matrix (historical, point-in-time) with a current, maintained equivalent.
+- [data/SQLITE_REGISTER.md](./data/SQLITE_REGISTER.md) → **canonical**, read-only forensic inventory of every SQLite file found at the configured runtime path and its immediate directory. Cross-references the existing `apps/email-pipeline/docs/SQLITE_*.md` operational docs rather than duplicating their maintenance/cutover procedures.
+- [refoundation/SYSTEM_INVENTORY.md](./refoundation/SYSTEM_INVENTORY.md) → **canonical**, per-app and per-internal-module business responsibility, data owned vs. read-only, and lifecycle status (active/transitional/experimental/obsolete-candidate).
+- [refoundation/REFOUNDATION_PLAN.md](./refoundation/REFOUNDATION_PLAN.md) → **canonical**, the re-foundation effort's own scope, decision register, and unresolved-questions log. Not an architecture-truth document itself — points back to `CURRENT_SYSTEM_TRUTH.md`/`TARGET_COMMERCIAL_ARCHITECTURE.md` for that.
+- [workflows/README.md](./workflows/README.md) and [workflows/*.md](./workflows/) → **canonical**, non-technical business-workflow descriptions filled from [templates/WORKFLOW_TEMPLATE.md](./templates/WORKFLOW_TEMPLATE.md). `CAMPAIGN_TO_REPLY.md` is deliberately left with open design questions rather than a designed answer — see `REFOUNDATION_PLAN.md`.
+- **Drift found and fixed in this pass:** [architecture/CURRENT_SYSTEM_TRUTH.md](./architecture/CURRENT_SYSTEM_TRUTH.md) stated Alembic head `20260830_0040`; actual head at the time of this pass was `20260902_0046` (6 migrations of drift — the customer-quote workflow, closure, and Drive-intake-resolution shape had all shipped without a doc update). Fixed in place; see that file's "Partially refreshed" note for exact scope.
+- **Drift flagged, not yet fixed (needs an operator/maintainer decision, not a doc fix):** root [`AGENTS.md`](../AGENTS.md) directs agents to read `apps/email-pipeline/docs/EXPERIMENTAL_PARKED.md` "before Postgres/API... work," but that doc (last reviewed 2026-05-19) predates every durable-CRM migration (`sales_opportunity` 0035 onward) and, read literally, only covers email-pipeline's own mirror-sync/migrate/break-glass scripts — not `apps/api`'s durable command layer, which it does not mention and which ships/writes independently. A reader can reasonably over-generalize "Postgres/API is parked" from a doc whose actual claims are narrower. See `refoundation/REFOUNDATION_PLAN.md`'s decision register.
 
 ### Email pipeline docs
 
