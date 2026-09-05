@@ -13,10 +13,11 @@ shutdown; rollback execution; and credential handling.
 what the roles may write ([`ARCHITECTURE.md`](ARCHITECTURE.md)), the cutover
 plan ([`MIGRATION.md`](MIGRATION.md)).
 
-> **Every command block below is `EXAMPLE — NOT YET IMPLEMENTED`.** V2 does not
-> exist. The commands show the intended shape of each procedure so it can be
-> built and reviewed; **none of them can be run today**, and none should be
-> presented to an operator as available.
+> **Every command block below marked `EXAMPLE — NOT YET IMPLEMENTED` describes
+> a procedure that does not exist yet.** The commands show the intended shape of
+> each procedure so it can be built and reviewed; none of them can be run today,
+> and none should be presented to an operator as available. The single exception
+> is §4.1, the local schema foundation, whose commands exist and run locally.
 
 ## 1. Environments
 
@@ -131,6 +132,42 @@ ol audit definers --env production     # fails on any SECURITY DEFINER function
                                        # or executable by PUBLIC/anon/
                                        # authenticated/service_role
 ```
+
+### 4.1 Local foundation (implemented — Migration Slice 0, local portion)
+
+The reproducible local foundation lives under `supabase/`: `config.toml` (PostgreSQL 17,
+database only, Data API off), `roles.sql` (the idempotent cluster-role bootstrap the CLI runs
+before migrations), `migrations/` (thirteen ordered migrations: schemas and default
+privileges, then the 32 tables schema by schema, then grants, then RLS policies), `tests/`
+(pgTAP) and `scripts/`. Requirements: Docker, the Supabase CLI and `psql`. No hosted project
+is involved and nothing here holds a credential: the three `LOGIN` roles are created without
+a password.
+
+```bash
+supabase start                            # PostgreSQL 17 container; runs roles.sql, then migrations
+supabase db reset --local                 # replay roles.sql + migrations from scratch
+supabase test db --local                  # pgTAP: inventory, roles, grant boundary, matrix, RLS,
+                                          # constraints, SECURITY DEFINER semantics, no leftovers
+supabase/scripts/verify_direct_logins.sh  # MIGRATION.md §5.2 checks 6-9 with real LOGIN connections;
+                                          # throw-away passwords, cleared on exit
+supabase/scripts/replay_evidence.sh       # two resets; schema dump and catalogue hashes must match
+supabase db lint --local -s crm,comms,outbound,evidence,catalog,procurement,platform
+```
+
+Rules that hold for every later migration:
+
+- Create the file with `supabase migration new <descriptive_name>`; never write a timestamp
+  by hand, never edit a migration that has been applied anywhere but locally.
+- Begin with `set role origenlab_owner;` and end with `reset role;`, so every object is
+  owned by the owner and the CLI can still record the migration as itself.
+- A new table is created with `enable row level security` in the same migration and gets
+  its grants and named policies in explicit statements; the pgTAP matrix in
+  `supabase/tests/040_grant_matrix.sql` and `050_rls.sql` must be extended in the same
+  change, or the suite fails.
+- A new function is `SECURITY INVOKER` unless it is on the closed list
+  ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.2), pins `search_path = pg_catalog`, and has
+  `EXECUTE` revoked from `PUBLIC`, `anon`, `authenticated` and `service_role` explicitly,
+  even though the owner's default privileges already do so.
 
 ## 5. Send control
 

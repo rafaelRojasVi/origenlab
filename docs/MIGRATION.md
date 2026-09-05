@@ -84,7 +84,7 @@ are owned by [`DATA.md`](DATA.md) §11.
 
 ## 5. Ordered slices and gates
 
-**[PLANNED]** — nothing below has been executed.
+**[PLANNED]** — of the slices below, only the **local, executable portion of slice 0** has been executed (2026-09-05): `supabase/roles.sql` and the migrations under `supabase/migrations/` create the roles, the seven schemas, the 32 tables, their grants and RLS policies against a local PostgreSQL 17 container, proven by the pgTAP suite in `supabase/tests/` and the scripts in `supabase/scripts/` ([`OPERATIONS.md`](OPERATIONS.md) §4.1). Every hosted gate of slice 0 — the Supabase project, the security advisors, the Data API exposure check, private buckets, `pg_cron`, `pgmq`, backups and both restore drills — remains open, and no later slice has begun.
 
 | # | Slice | Gate |
 |---|---|---|
@@ -136,6 +136,12 @@ Checks 3–5 are not redundant with RLS. `service_role` bypasses RLS by platform
 attribute; it does **not** bypass an ordinary object grant, so the revocations
 and their default privileges are the boundary that actually holds it out
 ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.4).
+
+Checks 1–9 are proven **locally** by `supabase/tests/` (catalogue and rolled-back
+fixtures, run with `supabase test db`) and by
+`supabase/scripts/verify_direct_logins.sh` (real LOGIN connections for checks 6–9);
+the same checks must be re-run against the hosted project before slice 1. Checks
+10 and 11 are hosted gates and have not been run.
 
 ## 6. V1 → V2 writer handoff
 

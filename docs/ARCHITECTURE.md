@@ -152,6 +152,16 @@ only the migrator may assume it, and only to run DDL. Neither runtime role is
 a member of `origenlab_owner` or of the other runtime role, and **neither the
 API nor the worker ever issues `SET ROLE`**.
 
+**(impl)** The Supabase CLI applies `supabase/roles.sql` and every migration as
+the platform `postgres` login, which is not a superuser and holds `ADMIN OPTION`
+on every role it creates. `roles.sql` therefore grants `postgres` the same
+SET-only, non-inheriting membership in `origenlab_owner` that the migrator
+holds, so `set role origenlab_owner` inside a migration succeeds. `postgres`
+remains a control-plane identity: never a runtime role, never a login for any
+OrigenLab process. Because a non-superuser may not mention `SUPERUSER`,
+`BYPASSRLS` or `REPLICATION` in `ALTER ROLE`, `roles.sql` sets those attributes
+only at `CREATE ROLE` and asserts them fail-closed on every run.
+
 ### 6.1 How grants, RLS and privileged functions divide the work
 
 Three layers do three different jobs and are never substituted for one
