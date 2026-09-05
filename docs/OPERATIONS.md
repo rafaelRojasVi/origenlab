@@ -94,24 +94,42 @@ ol verify --env production             # health, JWKS, queue depth, send flags
   list is closed ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.2); adding to it is
   an architecture decision with its own review, not a migration detail.
 - After every migration: run the database linter **and the Supabase security
-  advisors**, confirm the Data API is still off, confirm no role gained
-  `BYPASSRLS` and no runtime role can assume `origenlab_owner`, confirm every
-  `SECURITY DEFINER` function still matches the closed list — right owner,
-  pinned `search_path`, `EXECUTE` revoked from `PUBLIC`, `anon`,
-  `authenticated` and `service_role` — and confirm both send flags are
-  unchanged.
+  advisors**, confirm the Data API is still off, confirm **no OrigenLab-created
+  role gained `BYPASSRLS`** and no runtime role can assume `origenlab_owner`,
+  confirm every `SECURITY DEFINER` function still matches the closed list —
+  right owner, pinned `search_path`, a `session_user` assertion rather than a
+  `current_user` one, `EXECUTE` revoked from `PUBLIC`, `anon`, `authenticated`
+  and `service_role` — confirm the schema, object and default privileges for
+  those four are still revoked, and confirm both send flags are unchanged.
+- **`service_role` is expected to carry `BYPASSRLS`.** It is Supabase-managed,
+  its attribute is never altered here, and the audit must not treat it as an
+  OrigenLab role or report it as drift. What the audit does check is the
+  boundary that actually contains it: revoked grants, revoked `EXECUTE`,
+  matching default privileges, and unexposed schemas
+  ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.4). Revocation is a **necessary
+  independent boundary**, not a reason to call the role safe.
 
 ```bash
 # EXAMPLE — NOT YET IMPLEMENTED
 ol migrate status --env production
 ol migrate up --env production
-ol audit roles --env production        # fails if any role has BYPASSRLS, or a
-                                       # runtime role can assume origenlab_owner
+ol audit roles --env production        # fails if any OrigenLab-created role has
+                                       # BYPASSRLS, or a runtime role can assume
+                                       # origenlab_owner. Supabase-managed
+                                       # service_role keeps its platform
+                                       # BYPASSRLS and is reported, not failed
+ol audit grants --env production       # fails if PUBLIC/anon/authenticated/
+                                       # service_role hold schema USAGE, an
+                                       # object privilege or EXECUTE, or if the
+                                       # owner's default privileges no longer
+                                       # match
 ol audit exposure --env production     # fails if a private schema is exposed
 ol audit definers --env production     # fails on any SECURITY DEFINER function
                                        # off the closed list, wrongly owned, with
-                                       # an unpinned search_path, or executable
-                                       # by PUBLIC/anon/authenticated/service_role
+                                       # an unpinned search_path, asserting
+                                       # current_user rather than session_user,
+                                       # or executable by PUBLIC/anon/
+                                       # authenticated/service_role
 ```
 
 ## 5. Send control
@@ -270,8 +288,9 @@ Drill procedure:
 | Queue depth or oldest message age | above threshold | investigate |
 | Failed migration or failed loader | any | investigate |
 | Restore drill overdue | past cadence | investigate |
-| Runtime role privileges | any role gains `BYPASSRLS`, a runtime role becomes able to assume `origenlab_owner`, or a private schema becomes exposed | **page** |
-| Privileged-function drift | a `SECURITY DEFINER` function appears off the closed list, changes owner, loses its pinned `search_path`, or becomes executable by `PUBLIC`, `anon`, `authenticated` or `service_role` | **page** |
+| Runtime role privileges | any **OrigenLab-created** role gains `BYPASSRLS`, a runtime role becomes able to assume `origenlab_owner` or issues `SET ROLE`, or a private schema becomes exposed | **page** |
+| Grant boundary drift | `PUBLIC`, `anon`, `authenticated` or `service_role` regains schema `USAGE`, an object privilege or `EXECUTE`, or the owner's default privileges stop matching ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.4) | **page** |
+| Privileged-function drift | a `SECURITY DEFINER` function appears off the closed list, changes owner, loses its pinned `search_path`, replaces its `session_user` assertion with a `current_user` one, or becomes executable by `PUBLIC`, `anon`, `authenticated` or `service_role` | **page** |
 
 ## 12. Rollback execution
 
@@ -298,7 +317,13 @@ one state that can send the same message twice.
 - The dashboard holds **only** the Supabase publishable key, used only for
   sign-in, refresh and MFA. **A project secret key never reaches a browser.**
 - Storage access from FastAPI and the worker uses the project secret key from
-  server environment only. S3 access keys are not issued.
+  server environment only, and **only for the Storage API**. S3 access keys are
+  not issued.
+- **No Supabase secret key or legacy service-role key is used as an
+  application-data or database credential.** FastAPI and the worker reach
+  application data over direct PostgreSQL connections as `origenlab_api` and
+  `origenlab_worker`. No such key appears in dashboard or web runtime
+  configuration at all ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.4).
 - The Gmail OAuth credential for the production sender is held by the worker
   only. **A V1 Gmail credential is never revoked without written proof that it
   serves no ingestion path** ([`MIGRATION.md`](MIGRATION.md) §7).

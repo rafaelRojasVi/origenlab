@@ -141,8 +141,10 @@ whose "applies to" column covers the attempt's purpose — never a subset of it.
 
 The two SQL steps are `SECURITY DEFINER` functions on the closed list in
 [`ARCHITECTURE.md`](ARCHITECTURE.md) §6.2: `EXECUTE` belongs to
-`origenlab_worker` alone, the worker holds no direct DML on
-`outbound.send_attempt`, and each function validates its caller and arguments
+`origenlab_worker` alone and is the primary authorization boundary, the worker
+holds no direct DML on `outbound.send_attempt`, and each function asserts that
+`session_user` is `origenlab_worker` — not `current_user`, which inside a
+definer call is the owner `origenlab_owner` — and validates its arguments
 before it writes.
 
 | # | Where | What it does |

@@ -5,8 +5,8 @@ responsibility lives.
 
 **This document owns:** the topology; the FastAPI command boundary; dashboard,
 web and worker responsibilities; the seven private schemas; the one-writer
-rules; Supabase Auth and JWKS verification; database roles, grants, RLS and
-the `SECURITY DEFINER` doctrine;
+rules; Supabase Auth and JWKS verification; database roles, grants, RLS, the
+`SECURITY DEFINER` doctrine and the `service_role` boundary;
 private Storage; Queues and Cron; worker deployment; observability; the
 independent Storage backup; and the diagrams.
 
@@ -132,13 +132,24 @@ stated exactly.
 | `origenlab_migrator` | LOGIN, **`NOINHERIT`**, `NOSUPERUSER`, `NOBYPASSRLS`, member of `origenlab_owner` | DDL and data-fixing migrations, run under an explicit `SET ROLE origenlab_owner`. Never serves a request |
 | `origenlab_api` | LOGIN, `NOSUPERUSER`, **`NOBYPASSRLS`**, `NOCREATEDB`, `NOCREATEROLE`; **not a member of `origenlab_owner`** | FastAPI runtime |
 | `origenlab_worker` | LOGIN, `NOSUPERUSER`, **`NOBYPASSRLS`**, `NOCREATEDB`, `NOCREATEROLE`; **not a member of `origenlab_owner`** | worker runtime |
-| `postgres` | — | never used at runtime |
-| `anon`, `authenticated`, `service_role` | Supabase-managed | **no grants at all** on the seven schemas: `USAGE` on those schemas is revoked, and `EXECUTE` is revoked on every application function |
+| `postgres` | Supabase-managed platform / control-plane identity — **not an OrigenLab role** | never used by any OrigenLab runtime process |
+| `anon`, `authenticated` | Supabase-managed; `NOBYPASSRLS` | **no grants at all** on the seven schemas: `USAGE` on those schemas is revoked, and `EXECUTE` is revoked on every application function |
+| `service_role` | Supabase-managed; **retains its platform-defined `BYPASSRLS` attribute** — not an OrigenLab role and outside the OrigenLab trust boundary | never used by OrigenLab application code. Held out by revoked grants and unexposed schemas, **not** by RLS ([§6.4](#m-arch-service-role)) |
 
-**No role in this system is granted `BYPASSRLS`** — not the API role, not the
-worker role, not the owner, not now, not as a convenience later. **A runtime
-role can neither inherit nor `SET ROLE` to `origenlab_owner`**; only the
-migrator may assume it, and only to run DDL.
+**No OrigenLab-created role is granted `BYPASSRLS`** — `origenlab_owner`,
+`origenlab_migrator`, `origenlab_api` and `origenlab_worker` are all
+`NOBYPASSRLS`, not now and not as a convenience later. **No OrigenLab runtime
+process connects as `postgres`, `service_role` or any other Supabase
+administrative role**; those are platform / control-plane identities, not
+application runtime roles. Supabase's managed `service_role` keeps its
+platform-defined `BYPASSRLS` attribute — this design neither claims otherwise
+nor proposes altering or removing it, and contains it by the grant and
+schema-exposure boundary of [§6.4](#m-arch-service-role) instead.
+
+**A runtime role can neither inherit nor `SET ROLE` to `origenlab_owner`**;
+only the migrator may assume it, and only to run DDL. Neither runtime role is
+a member of `origenlab_owner` or of the other runtime role, and **neither the
+API nor the worker ever issues `SET ROLE`**.
 
 ### 6.1 How grants, RLS and privileged functions divide the work
 
@@ -160,11 +171,16 @@ as ordinary arguments.
 
 How the database-side mechanisms interact — precisely:
 
-1. **RLS is `ENABLE`d on all 30 tables** and is **not** `FORCE`d. Because it
-   is not forced, the object owner (`origenlab_owner`) is exempt. That single
+1. **RLS is `ENABLE`d on all 30 tables** and is **not** `FORCE`d. Because the
+   application tables are deliberately not `FORCE ROW LEVEL SECURITY`, the
+   object owner (`origenlab_owner`) crosses RLS by virtue of owning them. That
    ownership exemption is what makes migrations workable and what gives layer
-   B its power; it is the only exemption in the design, and it belongs to a
-   role nothing can log in as.
+   B its power; it is **the only application-owned RLS exemption** in the
+   design, and it belongs to a role nothing can log in as. It is not the only
+   identity in the cluster that can cross RLS — Supabase's managed
+   `service_role` carries `BYPASSRLS` from the platform — but that role sits
+   outside the OrigenLab trust boundary and is held out by grants and schema
+   exposure, never by a policy ([§6.4](#m-arch-service-role)).
 2. **Both runtime roles lack `BYPASSRLS`, so RLS does apply to them.** Each
    table a runtime role may touch carries an **explicit named policy** for
    that role. A table with no policy for a role is unreachable by that role —
@@ -182,11 +198,14 @@ How the database-side mechanisms interact — precisely:
    deny-by-default backstop, not the authorization model. Authorization is
    grants (layer A), the closed definer list (layer B), and FastAPI's operator
    checks (layer C). Row-level predicates are meaningful only where a row
-   belongs to one operator; elsewhere the policy is a role gate. RLS also
-   guarantees that if the Data API were ever switched on by accident,
-   Supabase's built-in roles would still see nothing. It does **not** protect
-   the writes performed inside a definer function
-   ([§6.2](#m-arch-definer)).
+   belongs to one operator; elsewhere the policy is a role gate. If the Data
+   API were ever switched on by accident, RLS would still stop `anon` and
+   `authenticated`, which are `NOBYPASSRLS` — but it would **not** stop
+   `service_role`, which is not. What holds `service_role` out is the revoked
+   schema `USAGE` and the revoked object and `EXECUTE` privileges of
+   [§6.4](#m-arch-service-role), because bypassing RLS does not bypass an
+   ordinary object grant. RLS also does **not** protect the writes performed
+   inside a definer function ([§6.2](#m-arch-definer)).
 6. **The Data API (PostgREST) is off** and the application schemas are never
    added to the exposed-schema list. Turning it on is a decision, not a
    default.
@@ -239,20 +258,40 @@ rejected:
 6. `EXECUTE` is **revoked from `PUBLIC`, `anon`, `authenticated` and
    `service_role`** in the same migration that creates it — PostgreSQL grants
    `EXECUTE` to `PUBLIC` by default — and granted **only** to the specific
-   role named in the table above.
-7. It **validates its caller and its arguments** before writing: it asserts
-   that `current_user` is a role permitted to call it and raises otherwise,
-   and it checks every argument for existence, current state, enum membership
-   and row ownership.
+   role named in the table above. The matching `ALTER DEFAULT PRIVILEGES` for
+   objects created by `origenlab_owner` ([§6.4](#m-arch-service-role)) is what
+   keeps a later function from silently regaining that access.
+7. It **validates its arguments and asserts its calling login** before
+   writing. **The `EXECUTE` privilege is the primary authorization
+   boundary**; the login assertion is defence in depth. That assertion is made
+   on **`session_user`**, never on `current_user`: during `SECURITY DEFINER`
+   execution `current_user`, `current_role` and `user` are the effective
+   function owner — expected to be `origenlab_owner` — and **do not identify
+   the invoking runtime login**. Because a privileged application function may
+   be invoked only over a **direct database connection**, `session_user` is
+   the authenticated database login and is asserted against the exact
+   permitted role: the two roles named in the table above for
+   `outbound.add_contact_control`, and exactly the one documented grantee for
+   every other function. The function then checks every argument for
+   existence, current state, enum membership and row ownership. It is **never
+   callable through PostgREST / the Data API**, and it never substitutes
+   `auth.uid()` or `auth.jwt()` for the direct database login (§6.1, layer C).
 8. It **exposes the smallest possible operation**: one state transition on one
    aggregate. No general-purpose update surface, no free-form predicate or
    SQL fragment argument, no "and also do X" flag.
 9. It is covered by three kinds of test: **authorization** (the wrong runtime
-   role, `anon`, `authenticated`, `service_role` and `PUBLIC` are all
-   refused), **RLS bypass** (the function touches only its declared tables and
-   columns, and the calling role still cannot reach those tables directly),
-   and **state transition** (every legal transition, every rejected one, and
-   the concurrent cases).
+   role, `anon`, `authenticated`, `service_role` and `PUBLIC` are all refused
+   — by the absent `EXECUTE` grant first, and by the `session_user` assertion
+   for any role that does hold `EXECUTE` but is not a permitted caller),
+   **RLS bypass** (the function touches only its declared tables and columns,
+   and the calling role still cannot reach those tables directly), and **state
+   transition** (every legal transition, every rejected one, and the
+   concurrent cases). The authorization tests connect **directly as the
+   runtime login under test**, and one of them demonstrates the definer
+   semantics themselves: inside the call, `current_user` is `origenlab_owner`
+   while `session_user` is the direct runtime login. That demonstration uses a
+   **transactional or migration-test fixture that is rolled back** — no
+   permanent diagnostic function is created for it.
 10. It is cleared by the **Supabase and PostgreSQL security advisors** —
     definer-function, mutable-`search_path` and schema-exposure checks —
     before it reaches production ([`MIGRATION.md`](MIGRATION.md) §5 slice 0,
@@ -278,13 +317,57 @@ neither is a decision this document freezes. Migrations connect as
 `origenlab_migrator` and run their DDL under an explicit
 `SET ROLE origenlab_owner` ([§6](#m-arch-roles)).
 
+<a id="m-arch-service-role"></a>
+### 6.4 The `service_role` and platform-role boundary
+
+`postgres` and `service_role` are **Supabase-managed platform and
+control-plane identities, not OrigenLab application roles**. `service_role`
+carries `BYPASSRLS` as a platform-defined attribute. This design does not
+alter it, does not remove it, and does not rely on RLS to contain it.
+
+What contains it is an independent boundary that must hold on its own:
+
+1. **OrigenLab application code never receives or uses a Supabase secret key
+   or a legacy service-role key for application data.** FastAPI and the worker
+   reach application data only over **direct PostgreSQL connections
+   authenticated as their own dedicated custom `LOGIN` roles**
+   (`origenlab_api`, `origenlab_worker`). The one permitted server-side use of
+   the project secret key is the Storage API (§7) — server environment only,
+   never a browser, never a client bundle, and never a database credential.
+2. **The browser receives only the publishable key**, and only for Supabase
+   Auth sign-in, refresh and MFA (§5).
+3. **The seven application schemas are private and are not exposed through the
+   Data API** (§6.1, point 6). A privileged application function is therefore
+   never reachable through PostgREST.
+4. **Schema `USAGE` and every object privilege are revoked from `PUBLIC`,
+   `anon`, `authenticated` and `service_role`** on all seven application
+   schemas, and **`EXECUTE` is revoked from those same roles on every
+   application function** — unless an explicit future architecture decision
+   says otherwise.
+5. **`ALTER DEFAULT PRIVILEGES` for objects created by `origenlab_owner`
+   matches those revocations**, so a table, sequence or function added by a
+   later migration does not silently regain access.
+
+**Bypassing RLS is not bypassing a grant.** A role holding `BYPASSRLS` still
+needs `USAGE` on the schema and a privilege on the object; without them the
+statement fails before any policy would have been consulted. The grant and
+exposure boundary above is therefore **mandatory and independent**, not
+belt-and-braces — and `service_role` is never described as safe merely because
+a policy exists or because grants were revoked in one migration. Both the
+revocations and their default privileges are audited on every migration
+([`OPERATIONS.md`](OPERATIONS.md) §4).
+
 ## 7. Storage
 
 - **All buckets are private. There are zero storage policies and zero public
   paths.**
 - FastAPI and the worker reach Storage with the **project secret key** from
-  server environment only. **A secret key never reaches the dashboard**, never
-  appears in a client bundle, and never appears in these documents.
+  server environment only. That key is a **Storage-API credential only**: it is
+  never used as an application-data or database credential, and it cannot reach
+  the application schemas, which are unexposed and have every privilege revoked
+  from `service_role` ([§6.4](#m-arch-service-role)). **A secret key never
+  reaches the dashboard**, never appears in a client bundle, and never appears
+  in these documents.
 - A browser receives a **signed URL valid for at most 10 minutes**, minted
   only after FastAPI has authorized that specific operator for that specific
   object. Uploads go through FastAPI.
@@ -410,7 +493,10 @@ race window are owned by [`WORKFLOWS.md`](WORKFLOWS.md) §2.
 | Edge Functions on any critical path | the work is too heavy and too stateful |
 | A SQLite runtime tier, mirror, mart or projection table | one database, one truth, views for everything else |
 | A second database, an event bus, a generic workflow engine, microservices | the product does not need them |
-| `BYPASSRLS` on any role, runtime or otherwise | least-privilege grants and RLS, plus a closed list of narrowly scoped `SECURITY DEFINER` functions owned by a `NOLOGIN` role ([§6.2](#m-arch-definer)) |
+| `BYPASSRLS` on any **OrigenLab-created** role | least-privilege grants and RLS, plus a closed list of narrowly scoped `SECURITY DEFINER` functions owned by a `NOLOGIN` role ([§6.2](#m-arch-definer)). Supabase's managed `service_role` keeps its platform `BYPASSRLS`; it is held out by revoked grants and unexposed schemas ([§6.4](#m-arch-service-role)) |
+| `current_user` as the caller check inside a `SECURITY DEFINER` function | inside a definer call `current_user` is the owner, not the invoker; `EXECUTE` is the boundary and the login assertion is on `session_user` ([§6.2](#m-arch-definer)) |
+| A Supabase secret or legacy service-role key as an application-data credential | direct PostgreSQL connections as `origenlab_api` / `origenlab_worker`; the secret key serves the Storage API only ([§6.4](#m-arch-service-role)) |
+| `SET ROLE` from the API or the worker | only `origenlab_migrator` may `SET ROLE origenlab_owner`, and only for DDL ([§6](#m-arch-roles)) |
 | `SECURITY DEFINER` as a cure for a permission or RLS error | the fix is the missing grant or the missing policy; the definer list is closed |
 | A definer function in `public`, or one owned by a runtime login | private schemas only, `origenlab_owner` only |
 | `auth.uid()` inside an application function | the database session is a server role; FastAPI authorizes the operator and passes validated arguments |

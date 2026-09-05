@@ -88,12 +88,12 @@ are owned by [`DATA.md`](DATA.md) §11.
 
 | # | Slice | Gate |
 |---|---|---|
-| 0 | Supabase project on PostgreSQL 17; seven schemas; 30 tables; RLS enabled; least-privilege roles with **no `BYPASSRLS`**; `origenlab_owner` (`NOLOGIN`) owning every object; private buckets; `pg_cron`; `pgmq`; the independent bucket-backup job | database linter and **Supabase security advisors clean**; Data API off; application schemas not exposed; no runtime role can assume `origenlab_owner`; no `SECURITY DEFINER` function exists yet outside the closed list ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.2); **both send flags false**; a database restore drill **and** a bucket restore drill both pass |
+| 0 | Supabase project on PostgreSQL 17; seven schemas; 30 tables; RLS enabled; least-privilege **OrigenLab-created roles, all `NOBYPASSRLS`**; `origenlab_owner` (`NOLOGIN`) owning every object; grants and default privileges revoked from `PUBLIC`, `anon`, `authenticated` and `service_role`; private buckets; `pg_cron`; `pgmq`; the independent bucket-backup job | every check in **[§5.2](#m-mig-slice0-gates)** passes; database linter and **Supabase security advisors clean**; Data API off; application schemas not exposed; no runtime role can assume `origenlab_owner`; no `SECURITY DEFINER` function exists yet outside the closed list ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.2); **both send flags false**; a database restore drill **and** a bucket restore drill both pass |
 | 1 | Supabase Auth; `platform.*`; FastAPI JWKS verification; dashboard login; MFA for admin | sign-ups off; a disabled operator is rejected; the V1 proxy still live in parallel |
 | 2 | CRM identity, affiliation, opportunity, task, activity, events; migrate the durable V1 rows | V1 `commercial_operations_writes_enabled = false`; per-table row and event counts match exactly; **no V1 writer remains** |
 | 3 | Quotes, lines, FX, the totals trigger, PDF rendering, Drive workspace; migrate V1 quotes as `adopted` | frozen-revision and totals tests pass; a PDF hash round-trips |
 | 4 | Evidence, comms, **shadow** Gmail sync, catalog, ChileCompra notices | checkpoint reconciliation against the Wave 1A set; **zero writes to `outbound.*`** |
-| 5 | Wave 1A safety load; the send functions; the reconciler; **dry-run only** | the [`DATA.md`](DATA.md) §7.3 load gate is green; a test proves **no code path can send without a `dispatching` attempt row**; each privileged send function passes its authorization, RLS-bypass and state-transition tests, is owned by `origenlab_owner` with a pinned `search_path`, and has `EXECUTE` revoked from `PUBLIC`, `anon`, `authenticated` and `service_role` ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.2) |
+| 5 | Wave 1A safety load; the send functions; the reconciler; **dry-run only** | the [`DATA.md`](DATA.md) §7.3 load gate is green; a test proves **no code path can send without a `dispatching` attempt row**; each privileged send function passes its authorization, RLS-bypass and state-transition tests, is owned by `origenlab_owner` with a pinned `search_path`, asserts its permitted `session_user` rather than `current_user`, and has `EXECUTE` revoked from `PUBLIC`, `anon`, `authenticated` and `service_role` with matching default privileges ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.2, §6.4); the [§5.2](#m-mig-slice0-gates) checks 6–9 are re-run against the new functions |
 | 6 | **Sender handoff** (§7) | V1 sender proven absent **before** any V2 flag becomes true |
 | 7 | Rollback window: 30 days of V2 sending | zero unresolved `ambiguous` attempts older than 7 days |
 | 8 | Delete V1 sender code; stop V1 cron; archive SQLite and PST; drop V1 PostgreSQL after a hashed `pg_dump` | archives verified on **two** copies |
@@ -109,6 +109,33 @@ are owned by [`DATA.md`](DATA.md) §11.
 | Quote integrity | every migrated `sent` revision has a `pdf_sha256` and sending evidence; every total recomputes |
 | Idempotency | re-running any loader changes nothing and writes no second event |
 | Fail-closed | any mismatch aborts the loader; no partial state is committed |
+
+<a id="m-mig-slice0-gates"></a>
+### 5.2 Slice 0 — privileged-role, grant and definer proofs
+
+Slice 0 does not pass on assertion. Each line below is a check the slice-0 SQL
+must actually prove, against the live project, before slice 1 begins. The
+semantics they encode are owned by [`ARCHITECTURE.md`](ARCHITECTURE.md) §6,
+§6.2 and §6.4 — this table is the proof obligation, not a second definition.
+
+| # | Must be proven |
+|---|---|
+| 1 | `pg_roles.rolbypassrls` is **false** for every OrigenLab-created role — `origenlab_owner`, `origenlab_migrator`, `origenlab_api`, `origenlab_worker` |
+| 2 | `service_role` is recognised as a **Supabase-managed `BYPASSRLS` role** and is **not** treated as an OrigenLab role: the check records its platform attribute rather than failing on it, and never proposes altering it |
+| 3 | `PUBLIC`, `anon`, `authenticated` and `service_role` hold **no schema `USAGE` and no object privilege** on any of the seven OrigenLab application schemas |
+| 4 | Those same roles hold **no `EXECUTE`** on any application function |
+| 5 | **Default privileges owned by `origenlab_owner`** preserve checks 3 and 4 — a table, sequence or function created by a later migration does not silently regain access |
+| 6 | Connecting **directly as `origenlab_worker`** permits only the worker's functions |
+| 7 | Connecting **directly as `origenlab_api`** permits only the API's functions |
+| 8 | **Cross-role and ungranted function calls fail** — the wrong runtime role and any role without `EXECUTE` are both refused |
+| 9 | Inside a `SECURITY DEFINER` call, **`current_user` is `origenlab_owner` while `session_user` is the direct runtime login**. Proven by a **transactional or migration-test fixture that is rolled back** — **no permanent diagnostic function is created** for this check |
+| 10 | **No secret or legacy service-role key** is present in API, worker, dashboard or web runtime configuration as an application-data or database credential; the only permitted server-side secret-key use is the Storage API ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.4, §7) |
+| 11 | **Supabase and PostgreSQL security advisors pass** before production |
+
+Checks 3–5 are not redundant with RLS. `service_role` bypasses RLS by platform
+attribute; it does **not** bypass an ordinary object grant, so the revocations
+and their default privileges are the boundary that actually holds it out
+([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.4).
 
 ## 6. V1 → V2 writer handoff
 
