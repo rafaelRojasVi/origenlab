@@ -63,6 +63,23 @@ truth.** No rebuildable projection may own a durable operator decision.
 
 Full detail: `docs/architecture/CURRENT_SYSTEM_TRUTH.md`.
 
+## Data authority and business workflows
+
+For "which system owns this fact" or "what does this business workflow
+actually do" questions beyond the durable/rebuildable split above:
+
+| Question | Doc |
+|---|---|
+| Full data-authority map (organization/contact/supplier/prospect/customer/quote/campaign/...) | [`docs/data/DATA_AUTHORITY_MAP.md`](docs/data/DATA_AUTHORITY_MAP.md) |
+| SQLite database/backup inventory | [`docs/data/SQLITE_REGISTER.md`](docs/data/SQLITE_REGISTER.md) |
+| Per-app/module business responsibility | [`docs/refoundation/SYSTEM_INVENTORY.md`](docs/refoundation/SYSTEM_INVENTORY.md) |
+| Non-technical business-workflow shape (lead→opportunity, opportunity→quote, campaign→reply) | [`docs/workflows/README.md`](docs/workflows/README.md) |
+| Open architectural questions / re-foundation status | [`docs/refoundation/REFOUNDATION_PLAN.md`](docs/refoundation/REFOUNDATION_PLAN.md) |
+
+These are reference maps from a documentation re-foundation pass — consult
+them when a task needs data-ownership or business-workflow context; they
+are not required reading for routine code changes.
+
 ## Per-app entry points
 
 | App | README | Notes |

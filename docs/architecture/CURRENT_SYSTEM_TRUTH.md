@@ -2,6 +2,12 @@
 
 Status: canonical
 Last verified against code: 2026-08-29, `main` @ `a789b9b915407b223ddbd5592ca23a872e9a4359`
+Partially refreshed: 2026-09-03, `main` @ `774cc36cf4dee2b90ff043e4307544573787b229` —
+migrations, the customer-quote write paths, and the dashboard sections table
+below were re-verified against this SHA during the repository re-foundation
+pass ([`docs/refoundation/REFOUNDATION_PLAN.md`](../refoundation/REFOUNDATION_PLAN.md));
+other sections (deployment, non-quote dashboard sections) were not
+independently re-checked in this pass.
 
 One page of what the system actually is today — the current authoritative source of truth
 for this repository. If another doc contradicts this one (including
@@ -47,8 +53,10 @@ apps/dashboard-proxy      Cloudflare Worker at dashboard.origenlab.cl/api* —
                           /operations/* commands + annex preview/import
         ^
         v
-apps/dashboard (React)    operator UI (hash-routed sections):
-                          Hoy · Bandeja · Pipeline (durable, real writes) ·
+apps/dashboard (React)    operator UI (hash-routed sections; Cotizaciones is
+                          the default landing section):
+                          Cotizaciones (durable, real writes) · Hoy · Bandeja ·
+                          Pipeline (durable, real writes) ·
                           Negocios · Prospectos · Clientes ·
                           Licitaciones/equipos · Pagos y logística · Proveedores ·
                           Catálogo · Sistema
@@ -64,7 +72,7 @@ apps/web (Astro)          public marketing site — no operator/CRM code
 | Machine-proposed opportunities (`o_*`) | PR3 read model → `commercial.opportunity*` | rebuildable projection |
 | Human opportunity decisions | `commercial.sales_opportunity` (`sales_*`), `commercial.opportunity_operator_state` | **durable** |
 | Human work (tasks, activities) | `commercial.task`, `commercial.activity` | **durable** |
-| Customer quotes (number, revision 1, Drive workspace refs) | `commercial.customer_quote` (+`_revision`, `_drive_workspace`, `_event`, `_number_series`) | **durable** — Google Drive holds the human working documents; the CRM stores only safe references and provisioning state |
+| Customer quotes (number, revision workflow, Drive workspace refs) | `commercial.customer_quote` (+`_revision`, `_drive_workspace`, `_event`, `_number_series`) | **durable** — one workflow axis on `_revision.status` (draft → review → approved → sent → closed_won/closed_null), collapsed into one "Revisión" lane in the dashboard; closure is deliberately uncoupled from `sales_opportunity`. Google Drive holds the human working documents; the CRM stores only safe references and provisioning state |
 | Organization / contact identity | `commercial.organization`, `commercial.contact` (+`*_source` provenance) | **durable**, reconciled by sales-opportunity promotion (no standalone CRUD routes) |
 | Historical deal ledger | SQLite deal ledger → `commercial.deal` mirror | historical evidence |
 | Catalog + supplier offers + price snapshots | `catalog.*` mirror | rebuildable projection |
@@ -86,9 +94,25 @@ Rules:
    transaction + append-only event. Requires trusted operator identity and
    `Idempotency-Key`; stage/state transitions use `expected_version`.
    Current commands: PR3 operator state (confirm/reject + manual_stage),
-   sales-opportunity promote + stage, activity create, task create/complete/cancel,
-   customer-quote create (CRM-Q1: transactional quote-number allocation, revision 1,
-   Drive-workspace provisioning state) + Drive-workspace provisioning retry.
+   sales-opportunity promote + stage + manual create, activity create, task
+   create/complete/cancel, customer-quote create (transactional quote-number
+   allocation, `quote_origin` generated/adopted) + Drive-workspace
+   provisioning retry + Drive-folder adoption (`adopt_drive_folder`, skips
+   both the number series and any Drive mutation). Quote lifecycle (CRM-Q2/
+   Q2B, migrations 0043/0045/0046) is four workflow transitions plus a
+   separate closure command, all on one axis, `customer_quote_revision.status`
+   (`draft → pending_approval/adjustments_requested → approved → sent →
+   closed_won/closed_null`), collapsed into a single "Revisión" lane in the
+   dashboard: `submit_for_review`, `request_adjustments`, `approve`,
+   `confirm_send`, and `close_quote` (`outcome ∈ {won, null}` — deliberately
+   does not also change `commercial.sales_opportunity`; moving the linked
+   opportunity is a separate operator action in Pipeline). A read-only
+   `customer_quote_intake_resolution_service` ranks evidence from Drive
+   folder names, durable CRM, and a narrow `lead_intel.prospect` view into a
+   closed confidence vocabulary (`confirmed_durable_match` / `possible_match`
+   / `ambiguous_match` / `unresolved`) for the "Incorporar al CRM" flow — it
+   never writes and never returns a single match when more than one
+   candidate exists.
    Promote also conservatively reconciles durable CRM identity in the same
    transaction: it resolves an existing `commercial.organization`/
    `commercial.contact` via the `*_source` provenance tables' `(source_kind,
@@ -110,6 +134,7 @@ Anything else is read-only. `apps/api` write policy is enforced by
 
 | Section | Reads | Writes | Nature |
 |---|---|---|---|
+| Cotizaciones | `GET /operations/customer-quotes` (+ drive-intake resolve) | `POST /operations/customer-quotes/*` (submit-for-review, request-adjustments, approve, confirm-send, close, drive-workspace retry, adopt-drive-folder), `POST /operations/sales-opportunities/manual` | **durable** — default landing section; kanban board over `customer_quote_revision.status`, plus read-only Drive-intake evidence resolution |
 | Hoy | operator status, warm counts, `/operations/work-queue` | — | durable work queue + machine counts |
 | Bandeja de revisión | `/cases/warm` | local-only view labels (browser) | machine evidence |
 | Pipeline | `GET /operations/sales-opportunities` (+ task/activity routes) | `POST /operations/*` stage transitions, activity/task CRUD | **durable** — the post-promotion sales-opportunity board (Kanban, drag/drop, workspace drawer); real writes, not read-only |
@@ -128,13 +153,22 @@ The dashboard's `/cases/warm` category set (`WarmCaseCategory` in
 
 ## Migrations
 
-Alembic lives in `apps/email-pipeline/alembic`; head `20260830_0040`.
+Alembic lives in `apps/email-pipeline/alembic`; head `20260902_0046`
+(`EXPECTED_ALEMBIC_HEAD` in `dashboard_postgres_sync.py`).
 Durable CRM tables were introduced through 0032–0038; 0039 adds the CRM-4A
 writer grants and organization/contact API read views (no table/column/
 constraint or data changes); 0040 adds the CRM-Q1 durable customer-quote
 aggregate (quote, revision, Drive-workspace provisioning state, append-only
 events, transactional number-series allocator — seeded only via explicit
-operator configuration, never by migration). Shipped migrations are never rewritten;
+operator configuration, never by migration). 0041 activates business quote
+numbering. 0043 (CRM-Q2) widens `customer_quote_revision.status` to the
+full workflow vocabulary and adds the `quote_origin` generated/adopted
+sum-type (adopted quotes never fabricate a serial); 0044 adds an additive,
+feature-gated `folder_ready` provisioning state (template copy not yet
+finalized); 0045 (CRM-Q2B) adds closure (`closed_won`/`closed_null`) with
+**no cross-aggregate coupling** to `commercial.sales_opportunity` by design;
+0046 (CRM-Q2B) adds a narrow read-only view over `lead_intel.prospect` for
+Drive-intake evidence resolution. Shipped migrations are never rewritten;
 corrections are new migrations. Downgrades that would drop human data are
 fail-closed.
 
