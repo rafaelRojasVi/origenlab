@@ -4,9 +4,9 @@
 allowed to change.
 
 **This document owns:** every state vocabulary and transition table; the
-twelve operator workflows; the send predicate and its three enforcement
-points; the dispatch linearization limit; the quotation arithmetic and
-supersession rules.
+twelve operator workflows; the purpose-scoped send predicate and its three
+enforcement points; the dispatch linearization limit; the quotation
+arithmetic, party snapshot and supersession rules.
 
 **It does not own:** entity definitions ([`DOMAIN.md`](DOMAIN.md)), authority
 and retention ([`DATA.md`](DATA.md)), infrastructure
@@ -102,17 +102,28 @@ policy_supplier, policy_no_channel, precheck_block, precheck_switch}`.
 does not erase that fact. **Submission state, delivery state and
 campaign-recipient state are three separate things and are never collapsed.**
 
-### 1.6 Contact control kinds
+### 1.6 Contact control kinds and purposes
 
-| Kind | Meaning | Expires | Campaign-overridable |
-|---|---|---|---|
-| `block` | permanent refusal to send — bounce, complaint, unsubscribe, operator decision | never | **never** |
-| `prior_contact` | the permanent fact that this address was contacted at least once | **never** | only by an explicit, approved, per-recipient campaign override |
-| `cooldown` | a dated pause, `until_at` in the future | yes, at `until_at` | **never** |
+Every `outbound.contact_control` row carries `purpose ∈ {all, marketing}`,
+and `(scope, value_norm, kind, purpose)` is unique.
+
+| Kind | Purpose | Meaning | Expires | Campaign-overridable |
+|---|---|---|---|---|
+| `block` | `all` — hard bounce, complaint, operator decision; **`marketing`** — unsubscribe, operator decision | permanent refusal to send for that purpose | never | **never** |
+| `prior_contact` | `all` only — a fact, consulted by marketing clauses alone | the permanent fact that this address was contacted at least once | **never** | only by an explicit, approved, per-recipient campaign override |
+| `cooldown` | `marketing` only | a dated pause, `until_at` in the future | yes, at `until_at` | **never** |
+
+**Applicability.** A row applies to an attempt when its `purpose` is `all` or
+equals the attempt's purpose. A `marketing` block — an unsubscribe — never
+stops a quotation the customer asked for; an `all` block stops everything.
+The kind ⇒ purpose restrictions above are CHECK constraints. **V2 records
+refusals, not permissions**: there is no opt-in or consent state, and nothing
+is ever sent because a flag says "consented" — only because every clause of
+§2 applicable to the purpose holds.
 
 `prior_contact` rows are never deleted and never expire. The 8,580 Wave 1A
-historical addresses are permanent prior-contact facts
-([`DATA.md`](DATA.md) §7).
+historical addresses are permanent prior-contact facts, and every Wave 1A
+block is `purpose = all` ([`DATA.md`](DATA.md) §7).
 
 ## 2. The send predicate
 
@@ -127,13 +138,15 @@ only when **every clause applicable to that purpose** holds.
 | 1 | `send_control` has the flag for this purpose set (`marketing_enabled` or `transactional_enabled`) | both |
 | 2 | The campaign is `active` and approved | marketing only |
 | 3 | The mailbox is the production sender and is authorized | both |
-| 4 | No `block` exists on the address **or** its domain | both |
+| 4 | No **applicable** `block` — `purpose = all`, or equal to the attempt's purpose — exists on the address **or** its domain | both |
 | 5 | No `prior_contact` exists, **or** the recipient carries an approved recontact override | marketing only |
 | 6 | No `cooldown` with `until_at > now()` exists | marketing only |
 | 7 | Campaign policy admits the recipient (supplier policy, channel policy) | marketing only |
 
 Clauses 5, 6 and 7 do not apply to a transactional send: a quotation the
-customer asked for is not cold outreach (W5). **A `block` always applies.**
+customer asked for is not cold outreach (W5). **A `purpose = all` block
+always applies, to every purpose**; a `marketing` block applies to marketing
+attempts and is ignored by transactional ones (§1.6).
 "The complete applicable predicate" below means every clause in this table
 whose "applies to" column covers the attempt's purpose — never a subset of it.
 
@@ -201,25 +214,32 @@ Nothing here runs on a timer. A pending assertion is never counted or sent to.
 | Step | Actor · command | Preconditions | State change | Durable evidence | Failure |
 |---|---|---|---|---|---|
 | 1 | operator · `set_relationship` | organization exists | `organization_relationship(prospect)` opened | event | overlapping same role → refused |
-| 2 | operator · `create_opportunity` | ≥1 target; target consistency ([`DOMAIN.md`](DOMAIN.md) §3.3) | opportunity at `stage = lead` | event | inconsistent targets → refused with the failing rule |
-| 3 | operator · `advance_stage(qualifying)` | transition allowed | stage changed | event | — |
-| 4 | operator · `advance_stage(qualified)` | **`organization_id` is set** | stage changed | event | no organization → refused |
-| 5 | operator · `advance_stage(abandoned\|lost)` | non-terminal | `closed_at` set | event | — |
+| 2 | operator · `create_opportunity` | an organization **or** ≥1 participant supplied; participant consistency ([`DOMAIN.md`](DOMAIN.md) §3.3) | opportunity at `stage = lead` with its first participants, in one transaction | event | neither organization nor participant, or an inconsistent participant → refused with the failing rule |
+| 3 | operator · `add_participant(role, person and/or contact point, is_primary)` | consistency; no overlap for the same subject and role; at most one current primary per role | participant row inserted | event | violation → refused with the failing rule |
+| 4 | operator · `link_participant_person` | the row has no `person_id`; `contact_point.person_id` is NULL or equals the supplied person | `person_id` set on the **same** row | event | mismatch → refused |
+| 5 | operator · `set_primary_participant` / `end_participant` | row current | primary flag re-pointed within the role / `valid_to` closed | event | ending the last current participant of an opportunity with no organization → refused |
+| 6 | operator · `set_organization` | no quote exists; consistency with every current participant's contact point | `organization_id` set | event | quote exists or inconsistent → refused |
+| 7 | operator · `add_address` / `supersede_address` | organization exists; required structured fields present ([`DOMAIN.md`](DOMAIN.md) §2.8) | address row inserted; on supersession the predecessor's `valid_to` closed and `superseded_by_address_id` set | event | duplicate current address → refused |
+| 8 | operator · `advance_stage(qualifying)` | transition allowed | stage changed | event | — |
+| 9 | operator · `advance_stage(qualified)` | **`organization_id` is set** | stage changed | event | no organization → refused |
+| 10 | operator · `advance_stage(abandoned\|lost)` | non-terminal | `closed_at` set | event | — |
 
-An opportunity may live at `lead` with only a person or only a contact point.
-It may not reach `qualified`, and no quote may exist, without an organization.
+An opportunity may live at `lead` with participants only — even a single
+unresolved contact point. It may not reach `qualified`, and no quote may
+exist, without an organization. Participants are the only record of who is
+involved; the opportunity row names no person and no channel.
 
 ### W3 — Opportunity → quotation → approval → send → outcome
 
 | Step | Actor · command | Preconditions | State change | Durable evidence | Failure |
 |---|---|---|---|---|---|
 | 1 | operator · `create_quote` | opportunity has an organization and is non-terminal | `crm.quote` with a unique number | event | terminal stage or no organization → refused |
-| 2 | operator · `create_revision` | no open revision for this quote | revision `draft`, lines copied from the previous revision if any | event | second open revision → refused |
-| 3 | operator · `edit_lines` | revision `draft` | lines changed | — | revision `approved`/`sent` → trigger rejects |
+| 2 | operator · `create_revision` | no open revision for this quote | revision `draft`, lines and party references (addresses, recipient, signatory, terms) copied from the previous revision if any | event | second open revision → refused |
+| 3 | operator · `edit_lines` / `edit_parties` | revision `draft` | lines changed / `billing_address_id`, `delivery_address_id`, recipient and signatory participants, terms changed | — | revision `approved`/`sent` → trigger rejects |
 | 4 | operator · `submit_for_review` | `draft`; ≥1 priced line | `in_review` | event | — |
-| 5 | approver · `approve_revision` | `in_review`; every derived total recomputes to the stored value | `approved`; FX and totals frozen; the previous approved/sent revision gains `superseded_by_revision_no` | event | any total mismatch → **approval refused** |
-| 6 | worker · `render_pdf` | `approved` | `pdf_sha256` written through `crm.record_quote_pdf`, which can write no other column | Storage object + hash | render failure → retry; status unchanged |
-| 7 | operator · `send_quote` | `approved`; `pdf_sha256` present; `transactional_enabled`; no `block` on the address | transactional send (W5); on acceptance `sent` with `sent_attempt_id` | attempt row, event | any precondition false → refused |
+| 5 | approver · `approve_revision` | `in_review`; every derived total recomputes to the stored value; a current `billing_address_id`; a current primary `quote_recipient` participant with an email contact point | `approved`; FX, totals **and the party snapshot** frozen (W3b); the previous approved/sent revision gains `superseded_by_revision_no` | event | any total mismatch, superseded address or missing recipient → **approval refused** |
+| 6 | worker · `render_pdf` | `approved` | `pdf_sha256` written through `crm.record_quote_pdf`, which can write no other column; the PDF renders from the snapshot only | Storage object + hash | render failure → retry; status unchanged |
+| 7 | operator · `send_quote` | `approved`; `pdf_sha256` present; `transactional_enabled`; no `purpose = all` block on the snapshot's recipient address or its domain | transactional send (W5) to the snapshot's recipient; on acceptance `sent` with `sent_attempt_id` | attempt row, event | any precondition false → refused |
 | 7' | operator · `link_sent_message` | `approved`; a Gmail message whose attachment hash equals `pdf_sha256` | `sent` with `sent_message_id` | event | hash mismatch → refused |
 | 8 | operator · `close_opportunity(won, quote, revision_no)` | revision `sent`; opportunity `negotiating` | opportunity `won`; `closed_at` set | event | quote not sent → refused |
 
@@ -234,6 +254,9 @@ earlier one.
   `price_decimals` (0 for CLP, 2 for USD/EUR), `tax_rate` (IVA, default 0.19),
   `rounding_rule = half_up`, and stored `subtotal`, `discount_total`,
   `tax_base`, `tax_total`, `grand_total`, `totals_computed_at`.
+- **Commercial terms live on the revision too**: `payment_terms`,
+  `valid_until`, `delivery_terms` (Incoterm or plain text), `tax_note` — all
+  frozen with the party snapshot (W3b).
 - **Every cost-bearing line carries its own supplier cost currency and FX
   snapshot**: `cost_currency`, `unit_cost`, `fx_rate` (cost → quote currency,
   1 when equal), `fx_as_of`, `fx_source ∈ {bcentral, supplier_quote, manual}`.
@@ -270,6 +293,45 @@ discounts price on their own.
   the approval on any difference. Both run `SECURITY INVOKER`, as the
   operator's own command inside the FastAPI transaction.
 
+<a id="m-wf-snapshot"></a>
+#### W3b — Party snapshot
+
+Every revision carries `party_snapshot jsonb` with `party_snapshot_version`:
+**NULL while `draft` or `in_review`, written by `approve_revision` in the same
+transaction that freezes FX and totals, and immutable from then on.** The
+trigger that rejects line and price changes on an `approved` or `sent`
+revision rejects snapshot changes too. The closed key set is validated by a
+`SECURITY INVOKER` check function, exactly as the `crm.domain_event` payload
+is ([`DATA.md`](DATA.md) §1.1); a new key or a changed meaning is a new
+`party_snapshot_version` by migration.
+
+| Key | Captured from | Content |
+|---|---|---|
+| `sold_to` | the opportunity's organization and its `rut` external identifier | legal name, tax identifier scheme and value, organization id |
+| `billing_address`, `delivery_address` | the revision's `billing_address_id`, `delivery_address_id` (delivery optional) | every structured `crm.address` field plus the address id |
+| `recipient` | the current primary `quote_recipient` participant | display name, email `value_norm`, person id, contact point id, participant id |
+| `signatory` | the current primary `signatory` participant, when one exists | as `recipient`; otherwise absent |
+| `terms` | the revision's own columns | `payment_terms`, `valid_until`, `delivery_terms`, `tax_rate`, `tax_note` |
+| `currency` | the revision and its lines, already frozen by W3a | `quote_currency`, `price_decimals`, and the distinct `(cost_currency, fx_rate, fx_as_of, fx_source)` tuples used |
+
+- **The PDF and every later read of an issued revision render from the
+  snapshot only.** `billing_address_id`, `delivery_address_id`,
+  `recipient_participant_id` and `signatory_participant_id` on the revision
+  are nullable typed FKs kept as lineage: they answer "which rows were used",
+  never "what does the document say".
+- **A superseded address or an ended participant changes nothing on an issued
+  revision.** Correcting a party on a quotation is a new revision, which
+  captures its own snapshot at its own approval.
+- `send_quote` delivers to the snapshot's recipient address. Reaching another
+  address with the same revision is a manual forward plus
+  `link_sent_message`, or a new revision — never an edit.
+- **The snapshot is a document value, not a relationship store.** It is never
+  a join target, never queried for CRM facts, and carries no key outside the
+  closed set. Relational questions go through the lineage FKs.
+- **Adopted V1 revisions** carry a snapshot assembled only from the values V1
+  stored, with absent values null — never back-filled from current V2 rows
+  ([`MIGRATION.md`](MIGRATION.md) §5, slice 3).
+
 ### W4 — Campaign: draft → frozen audience → approval → sending → reply
 
 | Step | Actor · command | Preconditions | State change | Durable evidence | Failure |
@@ -297,9 +359,10 @@ a dated cooldown.** The cooldown expires; the prior-contact fact does not.
 
 The same functions with `purpose = transactional`, a `quote_revision`
 reference, `send_control.transactional_enabled`, **no campaign and no budget**,
-and **`block` checks only** — prior contact and cooldown do not apply to a
-quote the customer asked for. Acceptance still writes a permanent
-`prior_contact` fact.
+and **applicable-`block` checks only** — a `purpose = all` block stops the
+send; a `marketing` block (an unsubscribe), prior contact and cooldown do not
+apply to a quote the customer asked for (§1.6). Acceptance still writes a
+permanent `prior_contact` fact.
 
 ### W6 — Inbound Gmail reply
 
@@ -307,7 +370,7 @@ quote the customer asked for. Acceptance still writes a permanent
 |---|---|---|---|---|---|
 | 1 | worker · sync | mailbox cursor valid | `comms.message` inserted on `(mailbox, provider_message_id)`; participants; attachments to Storage | message rows | duplicate → `DO NOTHING`; **no domain event** |
 | 2 | worker · match | message is a reply to a minted id in the sender mailbox | `send_attempt` / recipient linked | event | inbound message carrying a minted id but not outbound in the sender mailbox → **flagged, never linked** |
-| 3 | operator · `resolve_participant` | address not yet a contact point | contact point created and linked | event | ambiguous person → refused |
+| 3 | operator · `resolve_participant` | a `comms.message_participant` address not yet a contact point (not an opportunity participant) | contact point created and linked | event | ambiguous person → refused |
 | 4 | operator · `link_activity` | message and CRM object chosen | `crm.activity` created | event | duplicate `(message, opportunity)` → refused |
 
 A message nobody linked is evidence, not an activity
@@ -378,9 +441,13 @@ without an operator command.
 |---|---|---|---|---|---|
 | 1 | worker · NDR match | an NDR arrives | matched by the minted id in the NDR headers or body, else by address plus time window | — | unmatched → review queue |
 | 2 | worker · `record_delivery` | matched attempt is `accepted` | `delivery_state = bounced(hard\|soft)` or `complained`; **`submission_state` stays `accepted`** | event | — |
-| 3 | worker · `add_contact_control` | hard bounce, complaint, or unsubscribe | `contact_control(block)` with reason `bounce_hard` / `complaint` / `unsubscribe` | control row, event | — |
+| 3 | worker · `add_contact_control` | hard bounce, complaint, or unsubscribe | `contact_control(block, purpose=all)` with reason `bounce_hard` / `complaint`; `contact_control(block, purpose=marketing)` with reason `unsubscribe` | control row, event | — |
 | 4 | — | — | recipient `bounced` / `unsubscribed`; **`prior_contact` remains** | — | — |
-| 5 | admin · `revoke_block` | explicit reason | block removed | event | **campaigns can never override a block** |
+| 5 | admin · `revoke_block` / `add_contact_control(block, purpose)` | explicit reason; an operator block defaults to `purpose = all` and is `marketing` only when the reason is an unsubscribe request | block removed / added | event | **campaigns can never override a block** |
+
+An unsubscribe is a marketing refusal, so it is recorded with
+`purpose = marketing` and leaves transactional quotations reachable; a bounce
+or a complaint says the channel itself is bad, so it is `purpose = all`.
 
 **[OPEN]** unsubscribe mechanism; recommended default is a `List-Unsubscribe`
 mailto plus a one-click endpoint on FastAPI.

@@ -21,16 +21,17 @@ Cloudflare Worker proxy, and a React operator dashboard. It works, and it is
 the authority for outbound safety today.
 
 **V2** (accepted, not built) is one Supabase PostgreSQL 17 project with seven
-private schemas and exactly **30 application tables**, one FastAPI command
-boundary, one Python worker, and one operator dashboard. SQLite and the PST
-archives become cold evidence. See [`ARCHITECTURE.md`](ARCHITECTURE.md).
+private schemas and **32 application tables** — the current reviewed
+foundation, not a permanent budget — one FastAPI command boundary, one Python
+worker, and one operator dashboard. SQLite and the PST archives become cold
+evidence. See [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Current phase
 
 | Item | State |
 |---|---|
 | V2 architecture decision | **Accepted** (2026-09-05), with binding amendments folded into these seven documents |
-| These seven documents | **Written** — Documentation Slice D0 |
+| These seven documents | **Written** — Documentation Slice D0; amended by D0.2 (privileged-role semantics) and D0.3 (external CRM benchmark, [`ARCHITECTURE.md`](ARCHITECTURE.md) §13) |
 | V2 database, code, Supabase project | **Not created.** No schema, migration, role, bucket or table exists |
 | V1 | **Running and authoritative** for every fact it owns today |
 | Legacy documentation tree | Present, **superseded but not deleted** — see [`MIGRATION.md`](MIGRATION.md) |
@@ -45,10 +46,10 @@ to the owner instead of restating the rule.
 
 | Owning document | Owns |
 |---|---|
-| [`DOMAIN.md`](DOMAIN.md) | Glossary; organization / unit / domain / person / affiliation / contact-point semantics; prospect vs lead vs signal vs opportunity vs quote; product / manufacturer / supplier; identity, merge and evidence-promotion principles; **the 30-table inventory** |
+| [`DOMAIN.md`](DOMAIN.md) | Glossary; organization / unit / domain / person / affiliation / contact-point semantics; prospect vs lead vs signal vs opportunity vs quote; product / manufacturer / supplier; address and opportunity-participant semantics; identity, merge and evidence-promotion principles; **the 32-table inventory** |
 | [`DATA.md`](DATA.md) | Authority and trust matrix; evidence vs accepted truth; provenance and external identifiers; retention classes; active Postgres vs private Storage vs cold archive; Gmail message identity and ingestion checkpoints; Wave 1A counts and hashes; quarantine; rebuildable views; backup principles; **what will never be migrated** |
-| [`WORKFLOWS.md`](WORKFLOWS.md) | Every state machine and operator workflow: actor, command, preconditions, state change, durable evidence, failure behaviour; the dispatch linearization limit |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Topology; FastAPI command boundary; dashboard / web / worker responsibilities; the seven schemas; one-writer rules; Supabase Auth and JWKS; database roles, grants, RLS, the closed `SECURITY DEFINER` list and the `service_role` boundary; private Storage; Queues and Cron; worker deployment; observability; backups of Storage; the ERD |
+| [`WORKFLOWS.md`](WORKFLOWS.md) | Every state machine and operator workflow: actor, command, preconditions, state change, durable evidence, failure behaviour; the purpose-scoped send predicate; the quotation party snapshot; the dispatch linearization limit |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Topology; FastAPI command boundary; dashboard / web / worker responsibilities; the seven schemas; one-writer rules; Supabase Auth and JWKS; database roles, grants, RLS, the closed `SECURITY DEFINER` list and the `service_role` boundary; private Storage; Queues and Cron; worker deployment; observability; backups of Storage; the ERD; the external CRM benchmark conclusions |
 | [`MIGRATION.md`](MIGRATION.md) | Verified V1 baseline; mirror containment; the Wave 1A bundle; retain / migrate / archive / rebuild / discard classes; the eight implementation slices and their gates; V1→V2 writer and sender handoff; rollback; final dump; deletion gates; proposed legacy disposition |
 | [`OPERATIONS.md`](OPERATIONS.md) | Environments; operator roles; deployment; migrations; send control; campaign and quotation checklists; ambiguous-attempt procedure; Gmail sync recovery; backup and restore drills; monitoring; emergency shutdown; rollback execution; credential handling |
 | This file | The map above, reading order, phase, separation rule, documentation authority |

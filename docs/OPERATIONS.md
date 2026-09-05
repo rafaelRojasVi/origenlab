@@ -175,10 +175,13 @@ Every line must be true before `activate_campaign`.
 
 ### 6.2 Quotation send
 
-1. The revision is `approved`; its totals recompute from the stored inputs.
+1. The revision is `approved`; its totals recompute from the stored inputs;
+   its party snapshot is present, and the PDF shows the snapshot — the current
+   address and participant rows are not consulted.
 2. `pdf_sha256` is present and matches the object in Storage.
-3. The recipient address has **no block**. (Prior contact and cooldown do not
-   apply to a transactional quotation.)
+3. The snapshot's recipient address and its domain have **no `purpose = all`
+   block**. (A `marketing` block from an unsubscribe, prior contact and
+   cooldown do not apply to a transactional quotation.)
 4. `transactional_enabled` is true.
 5. After acceptance: the revision is `sent`, `sent_attempt_id` is set, and a
    permanent `prior_contact` fact now exists for that address.
@@ -244,9 +247,10 @@ In order, fastest first:
 2. Pause the affected campaign.
 3. Stop the worker only if step 1 is insufficient. Stopping the worker leaves
    `dispatching` rows that become `ambiguous` and need §7 — step 1 is cleaner.
-4. If an address must never be contacted again, add a `block`. A block takes
-   effect for every attempt that has not yet begun its provider call; it
-   **cannot recall a message already handed to Gmail**.
+4. If an address must never be contacted again, add a `block` with
+   `purpose = all`. A block takes effect for every attempt that has not yet
+   begun its provider call; it **cannot recall a message already handed to
+   Gmail**.
 5. Record what happened. The domain event stream is the incident record.
 
 **Never** disable a constraint, edit `outbound.send_attempt` directly, or grant
@@ -267,9 +271,9 @@ Drill procedure:
 
 1. Restore the database to a scratch project at a chosen point in time.
 2. Restore the bucket backup into that project's Storage.
-3. Verify: the 30 tables exist; row counts are plausible; a sample quotation
-   revision's `pdf_sha256` matches the restored object byte-for-byte; the
-   domain event stream is contiguous.
+3. Verify: the 32 tables exist; row counts are plausible; a sample quotation
+   revision's `pdf_sha256` matches the restored object byte-for-byte and its
+   party snapshot is intact; the domain event stream is contiguous.
 4. Confirm **both send flags are false** in the restored copy.
 5. Record the drill as a domain event in production. **[OPEN]** cadence;
    recommended default is quarterly and after any schema change touching
@@ -316,14 +320,19 @@ one state that can send the same message twice.
   secret store and in the operator's password manager.
 - The dashboard holds **only** the Supabase publishable key, used only for
   sign-in, refresh and MFA. **A project secret key never reaches a browser.**
-- Storage access from FastAPI and the worker uses the project secret key from
-  server environment only, and **only for the Storage API**. S3 access keys are
+- Storage access from FastAPI and the worker uses a current `sb_secret_...`
+  key from server environment only, and **only for the Storage API**. Treat
+  that key as what it is: it resolves to `service_role` and bypasses RLS, so
+  the restriction is a rule of use, not a scope of the key. The API and the
+  worker hold separate keys and rotate them independently. S3 access keys are
   not issued.
 - **No Supabase secret key or legacy service-role key is used as an
-  application-data or database credential.** FastAPI and the worker reach
-  application data over direct PostgreSQL connections as `origenlab_api` and
-  `origenlab_worker`. No such key appears in dashboard or web runtime
-  configuration at all ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.4).
+  application-data or database credential**, and no legacy JWT `service_role`
+  key is configured anywhere in V2. FastAPI and the worker reach application
+  data over direct PostgreSQL connections as `origenlab_api` and
+  `origenlab_worker`. No secret key appears in dashboard or web runtime
+  configuration, in a browser bundle, or in source control
+  ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.4).
 - The Gmail OAuth credential for the production sender is held by the worker
   only. **A V1 Gmail credential is never revoked without written proof that it
   serves no ingestion path** ([`MIGRATION.md`](MIGRATION.md) §7).

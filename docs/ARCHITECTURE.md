@@ -8,7 +8,8 @@ web and worker responsibilities; the seven private schemas; the one-writer
 rules; Supabase Auth and JWKS verification; database roles, grants, RLS, the
 `SECURITY DEFINER` doctrine and the `service_role` boundary;
 private Storage; Queues and Cron; worker deployment; observability; the
-independent Storage backup; and the diagrams.
+independent Storage backup; the diagrams; and the external CRM benchmark
+conclusions.
 
 **It does not own:** what the tables mean ([`DOMAIN.md`](DOMAIN.md)), who owns
 which fact ([`DATA.md`](DATA.md)), the transitions
@@ -26,7 +27,7 @@ flowchart TB
   WEB["apps/web — Astro<br/>public marketing site"]
   API["apps/api — FastAPI<br/>the only business command boundary"]
   WORKER["apps/worker — Python<br/>Gmail · MIME · PDF · ChileCompra · LLM"]
-  PG[("Supabase PostgreSQL 17<br/>7 private schemas · 30 tables")]
+  PG[("Supabase PostgreSQL 17<br/>7 private schemas · 32 tables")]
   ST[("Private Storage<br/>eml · attachments · PDFs")]
   AUTH["Supabase Auth<br/>ES256 JWT + JWKS"]
   GMAIL["Gmail API<br/>one production mailbox"]
@@ -61,13 +62,13 @@ with the operator's JWT.
 ## 3. Schemas and tables
 
 Seven **private** schemas — `crm`, `comms`, `outbound`, `evidence`, `catalog`,
-`procurement`, `platform` — holding **exactly 30 application tables**
-(`crm` 14, `comms` 4, `outbound` 5, `evidence` 2, `catalog` 2, `procurement` 1,
-`platform` 2). The inventory, with each table's unique responsibility, is
-owned by [`DOMAIN.md`](DOMAIN.md) §7.
+`procurement`, `platform` — holding **32 application tables** (`crm` 16,
+`comms` 4, `outbound` 5, `evidence` 2, `catalog` 2, `procurement` 1,
+`platform` 2), the current reviewed foundation. The inventory, with each
+table's unique responsibility, is owned by [`DOMAIN.md`](DOMAIN.md) §7.
 
 `public` holds nothing. Supabase-managed `auth`, `storage`, `pgmq` and
-migration-metadata objects are outside the 30 and are not application tables.
+migration-metadata objects are outside the 32 and are not application tables.
 
 ### 3.1 One-writer rules
 
@@ -171,7 +172,7 @@ as ordinary arguments.
 
 How the database-side mechanisms interact — precisely:
 
-1. **RLS is `ENABLE`d on all 30 tables** and is **not** `FORCE`d. Because the
+1. **RLS is `ENABLE`d on all 32 tables** and is **not** `FORCE`d. Because the
    application tables are deliberately not `FORCE ROW LEVEL SECURITY`, the
    object owner (`origenlab_owner`) crosses RLS by virtue of owning them. That
    ownership exemption is what makes migrations workable and what gives layer
@@ -234,7 +235,7 @@ worker-written quote columns. Nothing else qualifies, and the list is closed:
 | `outbound.resolve_ambiguous(attempt_id, verdict, reason)` | the resolution fields of one `send_attempt` | `origenlab_api` |
 | `outbound.authorize_retry(attempt_id, reason)` | one new `send_attempt` | `origenlab_api` |
 | `outbound.set_send_control(flag, value, reason)` | `send_control` | `origenlab_api` |
-| `outbound.add_contact_control(kind, normalized_address, reason, …)` | `contact_control` | `origenlab_api` (admin block and revoke) **and** `origenlab_worker` (hard bounce, complaint, unsubscribe) |
+| `outbound.add_contact_control(kind, purpose, normalized_address, reason, …)` | `contact_control` | `origenlab_api` (admin block and revoke) **and** `origenlab_worker` (hard bounce, complaint, unsubscribe) |
 | `crm.record_quote_pdf(revision_id, pdf_sha256, sent_evidence_ids)` | only `quote_revision.pdf_sha256` and the sent-evidence ids | `origenlab_worker` |
 
 Each writes exactly one `crm.domain_event`. Every one of them satisfies all of
@@ -327,13 +328,22 @@ alter it, does not remove it, and does not rely on RLS to contain it.
 
 What contains it is an independent boundary that must hold on its own:
 
-1. **OrigenLab application code never receives or uses a Supabase secret key
-   or a legacy service-role key for application data.** FastAPI and the worker
-   reach application data only over **direct PostgreSQL connections
-   authenticated as their own dedicated custom `LOGIN` roles**
-   (`origenlab_api`, `origenlab_worker`). The one permitted server-side use of
-   the project secret key is the Storage API (§7) — server environment only,
-   never a browser, never a client bundle, and never a database credential.
+1. **OrigenLab application code never uses a Supabase secret key or a legacy
+   service-role key for application data.** FastAPI and the worker reach
+   application data only over **direct PostgreSQL connections authenticated
+   as their own dedicated custom `LOGIN` roles** (`origenlab_api`,
+   `origenlab_worker`). Server-side API and worker components may hold a
+   current Supabase **`sb_secret_...`** key and use it **exclusively to call
+   the Storage API** (§7). That is a rule of use, not a property of the key:
+   an `sb_secret_...` key is **not intrinsically Storage-scoped** — it
+   resolves to `service_role` and bypasses RLS wherever it is presented. The
+   isolation of application data from that key therefore rests entirely on
+   the unexposed application schemas, the revoked grants, the revoked
+   `EXECUTE` and the controlled default privileges of points 3–5, never on the
+   key's nature. The dashboard, `apps/web`, every browser bundle and source
+   control never receive it. Legacy JWT-format `service_role` keys are **not
+   selected** for the new implementation; where the API and the worker both
+   need Storage, each holds its **own, separately rotatable** secret key.
 2. **The browser receives only the publishable key**, and only for Supabase
    Auth sign-in, refresh and MFA (§5).
 3. **The seven application schemas are private and are not exposed through the
@@ -361,13 +371,15 @@ revocations and their default privileges are audited on every migration
 
 - **All buckets are private. There are zero storage policies and zero public
   paths.**
-- FastAPI and the worker reach Storage with the **project secret key** from
-  server environment only. That key is a **Storage-API credential only**: it is
-  never used as an application-data or database credential, and it cannot reach
-  the application schemas, which are unexposed and have every privilege revoked
-  from `service_role` ([§6.4](#m-arch-service-role)). **A secret key never
-  reaches the dashboard**, never appears in a client bundle, and never appears
-  in these documents.
+- FastAPI and the worker reach Storage with a current **`sb_secret_...`** key
+  from server environment only, and use it **only for the Storage API**. That
+  is a use restriction, not a scope: the key resolves to `service_role`,
+  bypasses RLS, and is kept away from application data solely by the
+  unexposed schemas, revoked grants, revoked `EXECUTE` and default privileges
+  of [§6.4](#m-arch-service-role). The API and the worker hold separate,
+  separately rotatable keys; legacy JWT `service_role` keys are not used.
+  **A secret key never reaches the dashboard, `apps/web`, a browser bundle or
+  source control**, and never appears in these documents.
 - A browser receives a **signed URL valid for at most 10 minutes**, minted
   only after FastAPI has authorized that specific operator for that specific
   object. Uploads go through FastAPI.
@@ -423,9 +435,15 @@ erDiagram
   PERSON o|--o{ EXTERNAL_IDENTIFIER : identified_by
   OPPORTUNITY o|--o{ EXTERNAL_IDENTIFIER : identified_by
   QUOTE o|--o{ EXTERNAL_IDENTIFIER : identified_by
-  ORGANIZATION o|--o{ OPPORTUNITY : target_org
-  PERSON o|--o{ OPPORTUNITY : target_person
-  CONTACT_POINT o|--o{ OPPORTUNITY : target_channel
+  ORGANIZATION ||--o{ ADDRESS : sited_at
+  ADDRESS o|--o| ADDRESS : superseded_by
+  ORGANIZATION o|--o{ OPPORTUNITY : customer
+  OPPORTUNITY ||--o{ OPPORTUNITY_PARTICIPANT : involves
+  PERSON o|--o{ OPPORTUNITY_PARTICIPANT : acts_as
+  CONTACT_POINT o|--o{ OPPORTUNITY_PARTICIPANT : reached_at
+  ADDRESS o|--o{ QUOTE_REVISION : billing_lineage
+  ADDRESS o|--o{ QUOTE_REVISION : delivery_lineage
+  OPPORTUNITY_PARTICIPANT o|--o{ QUOTE_REVISION : recipient_lineage
   OPPORTUNITY ||--o{ TASK : has
   OPPORTUNITY ||--o{ ACTIVITY : has
   MESSAGE o|--o{ ACTIVITY : linked_by
@@ -443,6 +461,8 @@ erDiagram
   SEND_ATTEMPT o|--o{ SEND_ATTEMPT : retry_of
   SOURCE_RECORD ||--|{ ASSERTION : yields
   SOURCE_RECORD o|--o{ AFFILIATION : provenance
+  SOURCE_RECORD o|--o{ ADDRESS : provenance
+  SOURCE_RECORD o|--o{ OPPORTUNITY_PARTICIPANT : provenance
   PRODUCT ||--o{ SUPPLIER_PRODUCT : priced_by
   NOTICE o|--o{ OPPORTUNITY : promoted_to
 ```
@@ -451,7 +471,9 @@ erDiagram
 from the diagram: `send_control` is a single global row, and `contact_control`
 is keyed by **normalized text, not by a foreign key**, so a safety fact
 survives every identity merge and covers addresses that were never contact
-points ([`DATA.md`](DATA.md) §3).
+points ([`DATA.md`](DATA.md) §3). The `QUOTE_REVISION` edges from `ADDRESS`
+and `OPPORTUNITY_PARTICIPANT` are lineage only: an issued revision renders
+from its own party snapshot ([`WORKFLOWS.md`](WORKFLOWS.md) §W3b).
 
 ## 11. The send path
 
@@ -495,7 +517,7 @@ race window are owned by [`WORKFLOWS.md`](WORKFLOWS.md) §2.
 | A second database, an event bus, a generic workflow engine, microservices | the product does not need them |
 | `BYPASSRLS` on any **OrigenLab-created** role | least-privilege grants and RLS, plus a closed list of narrowly scoped `SECURITY DEFINER` functions owned by a `NOLOGIN` role ([§6.2](#m-arch-definer)). Supabase's managed `service_role` keeps its platform `BYPASSRLS`; it is held out by revoked grants and unexposed schemas ([§6.4](#m-arch-service-role)) |
 | `current_user` as the caller check inside a `SECURITY DEFINER` function | inside a definer call `current_user` is the owner, not the invoker; `EXECUTE` is the boundary and the login assertion is on `session_user` ([§6.2](#m-arch-definer)) |
-| A Supabase secret or legacy service-role key as an application-data credential | direct PostgreSQL connections as `origenlab_api` / `origenlab_worker`; the secret key serves the Storage API only ([§6.4](#m-arch-service-role)) |
+| A Supabase secret or legacy service-role key as an application-data credential | direct PostgreSQL connections as `origenlab_api` / `origenlab_worker`; a current `sb_secret_...` key is permitted server-side for the Storage API only — a use restriction, because the key itself resolves to `service_role` and is not Storage-scoped ([§6.4](#m-arch-service-role), §7); legacy JWT `service_role` keys are not selected |
 | `SET ROLE` from the API or the worker | only `origenlab_migrator` may `SET ROLE origenlab_owner`, and only for DDL ([§6](#m-arch-roles)) |
 | `SECURITY DEFINER` as a cure for a permission or RLS error | the fix is the missing grant or the missing policy; the definer list is closed |
 | A definer function in `public`, or one owned by a runtime login | private schemas only, `origenlab_owner` only |
@@ -503,3 +525,37 @@ race window are owned by [`WORKFLOWS.md`](WORKFLOWS.md) §2.
 | A break-glass sender or any second send path | one sender path ([`WORKFLOWS.md`](WORKFLOWS.md) §2) |
 | A browser-held database or secret key | the dashboard holds only the publishable key |
 | A shared package | none until two consumers actually exist |
+
+<a id="m-arch-benchmark"></a>
+## 13. External CRM benchmark — conclusions
+
+Reviewed 2026-09-05 (Documentation Slice D0.3) against current official
+sources: Odoo 19 (`res.partner`, `sale.order`, `mail.blacklist` and
+`mailing.subscription` in the `odoo/odoo` 19.0 tree), ERPNext / Frappe (the
+`Address`, `Contact`, `Opportunity` and `Quotation` doctypes and the address
+manual), SuiteCRM (`AOS_Quotes` vardefs and module documentation), Twenty
+(data-model and field-type documentation), Salesforce (the object and field
+reference for `OpportunityContactRole`, `Quote`, `Individual`,
+`ContactPointConsent` and `DataUsePurpose`) and HubSpot (Associations v4 and
+subscription-type documentation). The purpose was to extract stable concepts,
+not to import a schema; per [`README.md`](README.md), nothing is copied
+mechanically.
+
+| Concept | What the benchmark shows | OrigenLab decision |
+|---|---|---|
+| Address as an entity | Odoo: one `res.partner` row is person, company and address at once, typed `contact` / `invoice` / `delivery` / `other` under `parent_id`. ERPNext: a separate `Address` doctype — structured fields, closed `address_type`, `disabled` to retain history — linked to parties by a generic `Dynamic Link` (`link_doctype`, `link_name`). Salesforce, HubSpot, SuiteCRM, Twenty: compound fields or columns on the account / company, not records | a separate `crm.address` with structured fields and supersession (ERPNext's stable ideas), bound to `crm.organization` by a typed FK — the generic link and the combined partner row both rejected — [`DOMAIN.md`](DOMAIN.md) §2.8 |
+| Structured versus formatted address | every system stores components — street lines, city, state / region, postal code, country; ERPNext renders `address_display` from a per-country template | structured fields are canonical; formatted text is derived per `country_code` at render time; `locality` / `administrative_area` hold comuna / región for Chile and city / state elsewhere |
+| People on an opportunity | Salesforce `OpportunityContactRole` (`ContactId`, `Role`, `IsPrimary`, at most one primary) and HubSpot labelled contact ↔ deal associations (several labels per pair) are many-to-many with roles. ERPNext (`contact_person`), Twenty (`pointOfContact`) and Odoo (`partner_id`) hold one contact per deal — a limitation their users ask to lift | `crm.opportunity_participant`: many participants, closed `role`, one current primary per role, validity — typed FKs rather than a generic junction or label table. The single `person_id` / `contact_point_id` on the opportunity is removed — [`DOMAIN.md`](DOMAIN.md) §3.3 |
+| Participant before resolution | Odoo `crm.lead` carries `contact_name`, `partner_name` and `email_from` as text until conversion creates a partner | a participant may be a contact point alone and gain `person_id` later; no text-only party fields on the opportunity and no lead table |
+| Party values on an issued document | Salesforce `Quote` owns `BillingAddress`, `ShippingAddress`, `QuoteToAddress`, `ExpirationDate`; SuiteCRM `AOS_Quotes` stores `billing_address_*` / `shipping_address_*` columns filled from the account; ERPNext `Quotation` keeps the link **and** the rendered value (`customer_address` + `address_display`, `contact_person` + `contact_display` / `contact_email`) plus `valid_till`, `currency`, `conversion_rate`, `payment_terms_template`. Odoo `sale.order` keeps only live `partner_invoice_id` / `partner_shipping_id` references, so a partner edit changes how an issued order renders | a validated, versioned `party_snapshot` on `crm.quote_revision`, frozen at approval, plus nullable typed lineage FKs — the link-plus-value pattern generalized, the live-reference pattern rejected; no snapshot table — [`WORKFLOWS.md`](WORKFLOWS.md) §W3b |
+| Global block versus purpose opt-out | Odoo separates `mail.blacklist` (global, `unique (email)`) from `mailing.subscription.opt_out` (per list); HubSpot separates global unsubscribe / bounce suppression from per-subscription-type status, and transactional email ignores subscription status but not suppression; Salesforce scopes `ContactPointConsent` by `DataUsePurpose`; ERPNext has one `unsubscribed` flag | one `outbound.contact_control` with a `purpose` discriminator (`all`, `marketing`) and explicit applicability rules in the send predicate; transactional sends obey `purpose = all` blocks and ignore marketing-only rules. No consent framework, no second table — [`WORKFLOWS.md`](WORKFLOWS.md) §1.6, §2 |
+| Extensibility | Salesforce, HubSpot, Twenty and Frappe offer custom objects and custom fields as a platform feature | not adopted: a new role, scheme or subject is a migration extending a CHECK or adding a typed FK ([`DOMAIN.md`](DOMAIN.md) §2.6) |
+
+**Not imported, deliberately:** Odoo's combined person / company / address
+record and its `commercial_partner_id` derivation; Frappe's `Dynamic Link` or
+any `parent_type` / `parent_id` association; a metadata-driven custom-object
+engine or arbitrary custom fields; pricebooks, warehouses, inventory, invoices
+and accounting; a lead table or lead conversion; a second email history or
+suppression authority; association-label tables. The inventory after this
+review is 32 tables ([`DOMAIN.md`](DOMAIN.md) §7) — the current reviewed
+foundation, not a permanent budget.

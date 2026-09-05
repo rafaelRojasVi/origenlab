@@ -26,10 +26,12 @@ one writer per authority.
 | Who an organization or person is; affiliations | `crm` identity tables | FastAPI promotion, merge and affiliation commands | No |
 | Which channel exists, who uses it, who operates it | `crm.contact_point` | FastAPI | No |
 | What role an organization plays for OrigenLab | `crm.organization_relationship` | FastAPI | No |
-| Opportunity stage, targets, outcome | `crm.opportunity` | FastAPI | No |
-| Quote content, FX, totals, approval, sent proof | `crm.quote_revision`, `crm.quote_line`, the PDF in Storage | FastAPI; the worker writes only `pdf_sha256` and sent-evidence ids, and only through `crm.record_quote_pdf` ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.2) | No |
+| Opportunity stage, customer organization, outcome | `crm.opportunity` | FastAPI | No |
+| Who holds which human role on an opportunity | `crm.opportunity_participant` | FastAPI | No |
+| Where an organization is sited, billed or delivered to | `crm.address` | FastAPI | No |
+| Quote content, party snapshot, FX, totals, approval, sent proof | `crm.quote_revision`, `crm.quote_line`, the PDF in Storage | FastAPI; the worker writes only `pdf_sha256` and sent-evidence ids, and only through `crm.record_quote_pdf` ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.2) | No |
 | Was this address ever contacted | `outbound.contact_control` kind `prior_contact`, plus accepted attempts | the privileged send functions, the reconciler, the Wave 1A loader — never direct DML from a runtime role | No |
-| May we send to this address now | `outbound.send_control` + `contact_control` (`block`, `cooldown`) + campaign policy + recipient override | admin command, NDR/unsubscribe handlers, send functions | No |
+| May we send to this address now, for this purpose | `outbound.send_control` + `contact_control` (purpose-scoped `block`, `cooldown`) + campaign policy + recipient override | admin command, NDR/unsubscribe handlers, send functions | No |
 | What a message said | `comms.message` plus the `.eml` in Storage | the worker's Gmail sync | Only while Gmail retains it |
 | An operator-relevant interaction | `crm.activity` | FastAPI | No |
 | What happened, when, by whom | `crm.domain_event` | every command, the privileged send functions, the loaders — INSERT only | No |
@@ -49,11 +51,12 @@ one writer per authority.
   enforced by a CHECK constraint, a `payload_version`, and a `payload jsonb`
   validated by a `SECURITY INVOKER` function. New event types and payload
   versions require a migration. Event families: identity created/merged/confirmed, affiliation
-  opened/closed, relationship changed, opportunity staged/closed, quote
-  revision transitioned/superseded, campaign transitioned/approved/
-  override granted, attempt submission/delivery changed, contact control
-  added/revoked, send control changed, operator changed, migration manifest
-  recorded.
+  opened/closed, address added/superseded, relationship changed, opportunity
+  staged/closed/organization set, participant added/linked/primary
+  changed/ended, quote revision transitioned/superseded, campaign
+  transitioned/approved/override granted, attempt submission/delivery
+  changed, contact control added/revoked, send control changed, operator
+  changed, migration manifest recorded.
 
 ## 2. Evidence versus accepted truth
 
@@ -82,15 +85,19 @@ resolved by picking a candidate.
   payload, not as external identifiers — they name rows, not subjects.
 - Evidence→truth links are logical (`resolved_kind`, `resolved_id`). **No
   durable table takes a foreign key into rebuildable machine output.**
-- `outbound.contact_control` is keyed by normalized text, deliberately not by
-  FK, so a safety fact survives identity merges and covers addresses that are
-  not contact points.
+- An address's provenance is the same `origin_source_record_id` and
+  `postal_address`-assertion path as every other promoted row
+  ([`DOMAIN.md`](DOMAIN.md) §2.8). No address-specific provenance, history or
+  geocoding store exists.
+- `outbound.contact_control` is keyed by normalized text and a `purpose`,
+  deliberately not by FK, so a safety fact survives identity merges and covers
+  addresses that are not contact points.
 
 ## 4. Retention classes
 
 | Class | Contents | Where | Retention |
 |---|---|---|---|
-| **Durable commercial truth** | all 30 tables' committed rows | active PostgreSQL | forever; deletion only by an explicit, evented command |
+| **Durable commercial truth** | all 32 tables' committed rows | active PostgreSQL | forever; deletion only by an explicit, evented command |
 | **Immutable proof** | sent quotation PDFs, their SHA-256, sending evidence | private Storage + `crm.quote_revision` | forever; never overwritten |
 | **Communication evidence** | `.eml` bodies, attachments | private Storage, referenced from `comms.*` | forever unless an operator deletes with a reason **[OPEN]** |
 | **Machine evidence** | source records, assertions, notices, catalog observations | active PostgreSQL | retained; superseded rows kept |
@@ -157,11 +164,11 @@ attachment bytes, no full database copy, and no credentials**.
 
 | V1 source | Count | V2 target |
 |---|---|---|
-| Recipient ledger — contacted union | **8,577** | `contact_control(kind=prior_contact, scope=address)`, `source = wave1a_union` |
-| RFC 2047 decoded addresses absent from that union | **3** | `contact_control(kind=prior_contact, scope=address)`, `source = wave1a_rfc2047_addendum` |
+| Recipient ledger — contacted union | **8,577** | `contact_control(kind=prior_contact, scope=address, purpose=all)`, `source = wave1a_union` |
+| RFC 2047 decoded addresses absent from that union | **3** | `contact_control(kind=prior_contact, scope=address, purpose=all)`, `source = wave1a_rfc2047_addendum` |
 | **Permanent prior-contact total** | **8,580** | — |
-| `contact_email_suppression` (700) ∪ manual hard-block addresses (5), deduplicated | **704** | `contact_control(kind=block, scope=address)` |
-| `contact_domain_suppression` | **91** | `contact_control(kind=block, scope=domain)` |
+| `contact_email_suppression` (700) ∪ manual hard-block addresses (5), deduplicated | **704** | `contact_control(kind=block, scope=address, purpose=all)` |
+| `contact_domain_suppression` | **91** | `contact_control(kind=block, scope=domain, purpose=all)` |
 | Cooldown rows carried from V1 | **0** | none — V1 has no cooldown concept |
 | `outreach_contact_state` in a blocking state | 1,826 | already inside the 8,577 union; no separate rows, flags preserved on the prior-contact row |
 | `outbound_campaign` | 1 | one archived `outbound.campaign` |
@@ -173,6 +180,11 @@ attachment bytes, no full database copy, and no credentials**.
 The three decoded addresses are a **separate loader input file**, kept
 alongside the bundle and hashed independently. **The immutable bundle is never
 edited to include them.**
+
+V1 suppressions do not distinguish an unsubscribe from a bounce or an operator
+decision, so **every Wave 1A block loads with `purpose = all`** — the
+fail-safe reading, which stops transactional sends too
+([`WORKFLOWS.md`](WORKFLOWS.md) §1.6).
 
 ### 7.2 Counts kept as archive facts only
 
@@ -193,10 +205,10 @@ addresses live in the bundle and in the loaded rows.
 ### 7.3 Load gate
 
 A Wave 1A load is accepted only when, after loading: 8,580 `prior_contact`
-rows, 704 address blocks, 91 domain blocks, and **zero** cooldown rows exist
-from V1 input. Loaders are idempotent, record every input SHA-256 and count in
-the manifest source record and one domain event, and fail closed on any
-mismatch.
+rows, 704 address blocks, 91 domain blocks — every one of them
+`purpose = all` — and **zero** cooldown rows exist from V1 input. Loaders
+are idempotent, record every input SHA-256 and count in the manifest source
+record and one domain event, and fail closed on any mismatch.
 
 ## 8. Data quality and quarantine
 
@@ -217,7 +229,7 @@ mismatch.
 ## 9. Rebuildable views
 
 Every dashboard, funnel, pipeline board and count is an **ordinary SQL view**
-over the 30 tables. **[V2 DECISION]**
+over the 32 tables. **[V2 DECISION]**
 
 - No projection table, mart, mirror or denormalized copy exists.
 - A materialized view requires a measured query-time justification, is a
@@ -228,7 +240,7 @@ over the 30 tables. **[V2 DECISION]**
 
 **[V2 DECISION]**, **[PLANNED]**
 
-1. Database backups with point-in-time recovery cover the 30 tables.
+1. Database backups with point-in-time recovery cover the 32 tables.
 2. **Database backups do not include Storage objects.** Storage buckets are
    therefore backed up **independently**, on their own schedule, to separate
    storage, with a manifest and hashes.
