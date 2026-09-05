@@ -30,8 +30,8 @@ one writer per authority.
 | Who holds which human role on an opportunity | `crm.opportunity_participant` | FastAPI | No |
 | Where an organization is sited, billed or delivered to | `crm.address` | FastAPI | No |
 | Quote content, party snapshot, FX, totals, approval, sent proof | `crm.quote_revision`, `crm.quote_line`, the PDF in Storage | FastAPI; the worker writes only `pdf_sha256` and sent-evidence ids, and only through `crm.record_quote_pdf` ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.2) | No |
-| Was this address ever contacted | `outbound.contact_control` kind `prior_contact`, plus accepted attempts | the privileged send functions, the reconciler, the Wave 1A loader — never direct DML from a runtime role | No |
-| May we send to this address now, for this purpose | `outbound.send_control` + `contact_control` (purpose-scoped `block`, `cooldown`) + campaign policy + recipient override | admin command, NDR/unsubscribe handlers, send functions | No |
+| Was this address ever contacted | `outbound.contact_control` kind `prior_contact` (always `marketing`), plus accepted attempts | the privileged send functions, the reconciler, the Wave 1A loader — never direct DML from a runtime role | No |
+| May we send to this address now, for this purpose | `outbound.send_control` + `contact_control` (`block`, `prior_contact`, `cooldown`, each purpose-scoped — truth table in [`WORKFLOWS.md`](WORKFLOWS.md) §1.6) + campaign policy + recipient override | admin command, NDR/unsubscribe handlers, send functions | No |
 | What a message said | `comms.message` plus the `.eml` in Storage | the worker's Gmail sync | Only while Gmail retains it |
 | An operator-relevant interaction | `crm.activity` | FastAPI | No |
 | What happened, when, by whom | `crm.domain_event` | every command, the privileged send functions, the loaders — INSERT only | No |
@@ -157,18 +157,18 @@ attachment bytes, no full database copy, and no credentials**.
 | Archive SHA-256 | `776dd73ee6931a006249b893493f9effbb2303493d4d8b580cfea379ffe8631a` |
 | `manifest.json` SHA-256 | `201b7fab58c4b17fd3e7495b9a175625f9d5ae6882afe72ef9e19e1432510e48` |
 | Source database | the configured V1 runtime SQLite path, 66 GB, `sqlite_master` fingerprint `9148c90c0246fdf11f911233176c2f6b89dd63b4f9b7bf5263cafedf7bd2f5f1` |
-| Runtime code at extraction | git `66623060` (the tree production cron executes; 51 commits behind `origin/main` at the time) |
+| Runtime code at extraction | git `66623060` (the tree production cron executes; older than the `774cc36c` baseline at extraction) |
 | Per-file integrity | `SHA256SUMS` covers every file including `manifest.json` |
 
 ### 7.1 Corrected safety mapping
 
 | V1 source | Count | V2 target |
 |---|---|---|
-| Recipient ledger — contacted union | **8,577** | `contact_control(kind=prior_contact, scope=address, purpose=all)`, `source = wave1a_union` |
-| RFC 2047 decoded addresses absent from that union | **3** | `contact_control(kind=prior_contact, scope=address, purpose=all)`, `source = wave1a_rfc2047_addendum` |
+| Recipient ledger — contacted union | **8,577** | `contact_control(kind=prior_contact, scope=address, purpose=marketing)`, `source = wave1a_union` |
+| RFC 2047 decoded addresses absent from that union | **3** | `contact_control(kind=prior_contact, scope=address, purpose=marketing)`, `source = wave1a_rfc2047_addendum` |
 | **Permanent prior-contact total** | **8,580** | — |
-| `contact_email_suppression` (700) ∪ manual hard-block addresses (5), deduplicated | **704** | `contact_control(kind=block, scope=address, purpose=all)` |
-| `contact_domain_suppression` | **91** | `contact_control(kind=block, scope=domain, purpose=all)` |
+| `contact_email_suppression` (700) ∪ manual hard-block addresses (5), deduplicated | **704** | `contact_control(kind=block, scope=address)`; `purpose` from the recorded V1 `suppression_reason_code` per the truth table — bounce, non-delivery, invalid-address and explicit do-not-contact codes → `all`; an explicit marketing-unsubscribe code → `marketing`; any other or missing code → `all`, flagged for operator review |
+| `contact_domain_suppression` | **91** | `contact_control(kind=block, scope=domain, purpose=marketing)` — campaign, supplier and domain exclusions are marketing-only; `all` only where the recorded `suppression_reason_text` explicitly states a global operational block |
 | Cooldown rows carried from V1 | **0** | none — V1 has no cooldown concept |
 | `outreach_contact_state` in a blocking state | 1,826 | already inside the 8,577 union; no separate rows, flags preserved on the prior-contact row |
 | `outbound_campaign` | 1 | one archived `outbound.campaign` |
@@ -181,10 +181,18 @@ The three decoded addresses are a **separate loader input file**, kept
 alongside the bundle and hashed independently. **The immutable bundle is never
 edited to include them.**
 
-V1 suppressions do not distinguish an unsubscribe from a bounce or an operator
-decision, so **every Wave 1A block loads with `purpose = all`** — the
-fail-safe reading, which stops transactional sends too
-([`WORKFLOWS.md`](WORKFLOWS.md) §1.6).
+**[V1 FACT]** the address suppressions carry a `suppression_reason_code`; the
+domain suppressions carry only free `suppression_reason_text`. The loader sets
+each block's `purpose` from that recorded reason exactly as the truth table in
+[`WORKFLOWS.md`](WORKFLOWS.md) §1.6 prescribes, and **fails closed on doubt: an
+address suppression whose reason cannot be safely classified loads as `block`
+/ `all` and is flagged for operator review** — never silently as `marketing`.
+Reviewing such a row is an admin command that may narrow it to `marketing`
+with a reason and an event; nothing widens or narrows a block automatically.
+The historical-contact populations — the recipient ledger, Gmail Sent
+evidence, accepted campaign recipients and `outreach_contact_state` — are
+outreach facts and load only as `prior_contact` / `marketing`; they never
+become blocks and never stop a transactional delivery.
 
 ### 7.2 Counts kept as archive facts only
 
@@ -205,10 +213,14 @@ addresses live in the bundle and in the loaded rows.
 ### 7.3 Load gate
 
 A Wave 1A load is accepted only when, after loading: 8,580 `prior_contact`
-rows, 704 address blocks, 91 domain blocks — every one of them
-`purpose = all` — and **zero** cooldown rows exist from V1 input. Loaders
-are idempotent, record every input SHA-256 and count in the manifest source
-record and one domain event, and fail closed on any mismatch.
+rows, all `purpose = marketing`; 704 address `block` rows and 91 domain
+`block` rows whose `purpose` follows the recorded reason per the truth table,
+every address row lacking a safely classifiable reason loaded as `all` and
+flagged for review; no `prior_contact` or `cooldown` row with `purpose = all`;
+and **zero** cooldown rows from V1 input. The loader records the per-purpose
+and flagged-for-review counts, every input SHA-256 and every count in the
+manifest source record and one domain event, is idempotent, and fails closed
+on any mismatch.
 
 ## 8. Data quality and quarantine
 
@@ -274,5 +286,6 @@ over the 32 tables. **[V2 DECISION]**
 promote **one** archive row at a time into `evidence.source_record` (kind
 `v1_parse_failure` or `v1_evidence_edge`, dedupe key `bundle:row`). A recovered
 address becomes a pending `contacted_address` assertion, and only an operator
-promotion turns it into `prior_contact` with `source = wave1a_investigation`.
+promotion turns it into `prior_contact` / `marketing` with
+`source = wave1a_investigation`.
 The bundle and its manifest are never modified.

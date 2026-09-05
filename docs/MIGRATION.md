@@ -22,9 +22,9 @@ manifest.
 
 | Item | Value |
 |---|---|
-| Design branch | `docs/origenlab-refoundation-v1` at `28c31097`, one commit ahead of `origin/main` `774cc36c` |
+| Design branch | `docs/origenlab-refoundation-v1`, branched from `origin/main` `774cc36c` (PR #549); its ahead/behind position is read from Git, never recorded here |
 | Shipped Alembic head | `20260902_0046` |
-| Production runtime tree | `66623060`, **51 commits behind** `origin/main` — this is the tree the production cron jobs execute |
+| Production runtime tree | `66623060` — the tree the production cron jobs execute; **older than the `774cc36c` baseline** and expecting Alembic `20260901_0042` (§2) |
 | Durable CRM | `commercial.*` on PostgreSQL: organization, contact, sales_opportunity, task, activity, customer_quote (+revision, Drive workspace, events, number series), command_idempotency |
 | Durable write path | dashboard → Cloudflare Worker proxy → `apps/api` `POST /operations/*` → service → repository → transaction + append-only event |
 | Durable write flag | `commercial_operations_writes_enabled`, **default false** in `apps/api` settings |
@@ -72,7 +72,7 @@ file** stored beside the bundle. The archive is never edited to include them.
 
 | Class | Meaning | Contents |
 |---|---|---|
-| **MIGRATE** | becomes a row in the 32 tables | durable `commercial.*` CRM rows (~11 rows across organization, contact, sales_opportunity, task, activity) — each V1 `sales_opportunity.primary_crm_contact_id` becomes one current primary `opportunity_participant` (`role = other`, the migrated person and its `primary_email` contact point) and V1 stores no organization addresses, so `crm.address` starts empty; V1 customer quotes as `adopted`; the compact Wave 1A safety set, every block `purpose = all`; the archived V1 campaign, its 1,161 recipients and 1,127 attempts; one migration-manifest source record |
+| **MIGRATE** | becomes a row in the 32 tables | durable `commercial.*` CRM rows (~11 rows across organization, contact, sales_opportunity, task, activity) — each V1 `sales_opportunity.primary_crm_contact_id` becomes one current primary `opportunity_participant` (`role = other`, the migrated person and its `primary_email` contact point) and V1 stores no organization addresses, so `crm.address` starts empty; V1 customer quotes as `adopted`; the compact Wave 1A safety set — historical contacts as `prior_contact` / `marketing`, blocks classified by recorded reason ([`DATA.md`](DATA.md) §7.1); the archived V1 campaign, its 1,161 recipients and 1,127 attempts; one migration-manifest source record |
 | **EVIDENCE** | enters as pending `evidence.*`, never as CRM truth | 172 V1 supplier candidates with their evidence and channels; ~159 historical quote candidates; the one orphan supplier-review row, **quarantined** |
 | **RECONCILE** | read from the archive as input, never imported | the 6,091 Gmail ingest checkpoint rows and the operator watermarks |
 | **ARCHIVE** | cold storage, two verified copies | the V1 SQLite databases and their cutover snapshots; the Outlook/PST corpus; the Wave 1A bundle; the final V1 `pg_dump` |
@@ -93,7 +93,7 @@ are owned by [`DATA.md`](DATA.md) §11.
 | 2 | CRM identity, affiliation, address, opportunity, participants, task, activity, events; migrate the durable V1 rows | V1 `commercial_operations_writes_enabled = false`; per-table row and event counts match exactly; every migrated opportunity satisfies the existence rule (organization or ≥1 current participant) and `crm.opportunity` carries no person or contact-point column ([`DOMAIN.md`](DOMAIN.md) §3.3); **no V1 writer remains** |
 | 3 | Quotes, lines, FX, party snapshot, the totals trigger, PDF rendering, Drive workspace; migrate V1 quotes as `adopted` | frozen-revision, snapshot-immutability and totals tests pass; a PDF hash round-trips; every adopted revision's snapshot holds only V1-stored values with absent values null ([`WORKFLOWS.md`](WORKFLOWS.md) §W3b) |
 | 4 | Evidence, comms, **shadow** Gmail sync, catalog, ChileCompra notices | checkpoint reconciliation against the Wave 1A set; **zero writes to `outbound.*`** |
-| 5 | Wave 1A safety load (every block `purpose = all`); the send functions; the reconciler; **dry-run only** | the [`DATA.md`](DATA.md) §7.3 load gate is green; a test proves **no code path can send without a `dispatching` attempt row**; a dry run proves a transactional attempt is stopped by a `purpose = all` block and not by a `marketing` block, and a marketing attempt by both ([`WORKFLOWS.md`](WORKFLOWS.md) §1.6); each privileged send function passes its authorization, RLS-bypass and state-transition tests, is owned by `origenlab_owner` with a pinned `search_path`, asserts its permitted `session_user` rather than `current_user`, and has `EXECUTE` revoked from `PUBLIC`, `anon`, `authenticated` and `service_role` with matching default privileges ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.2, §6.4); the [§5.2](#m-mig-slice0-gates) checks 6–9 are re-run against the new functions |
+| 5 | Wave 1A safety load (`prior_contact` as `marketing`; blocks classified by recorded reason, unclassifiable → `all` pending review); the send functions; the reconciler; **dry-run only** | the [`DATA.md`](DATA.md) §7.3 load gate is green; a test proves **no code path can send without a `dispatching` attempt row**; a dry run proves a transactional attempt is stopped by a `purpose = all` block and by nothing else — not by a `marketing` block, a `prior_contact` or a `cooldown` — and a marketing attempt by all four ([`WORKFLOWS.md`](WORKFLOWS.md) §1.6); no `prior_contact` or `cooldown` row has `purpose = all`; each privileged send function passes its authorization, RLS-bypass and state-transition tests, is owned by `origenlab_owner` with a pinned `search_path`, asserts its permitted `session_user` rather than `current_user`, and has `EXECUTE` revoked from `PUBLIC`, `anon`, `authenticated` and `service_role` with matching default privileges ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.2, §6.4); the [§5.2](#m-mig-slice0-gates) checks 6–9 are re-run against the new functions |
 | 6 | **Sender handoff** (§7) | V1 sender proven absent **before** any V2 flag becomes true |
 | 7 | Rollback window: 30 days of V2 sending | zero unresolved `ambiguous` attempts older than 7 days |
 | 8 | Delete V1 sender code; stop V1 cron; archive SQLite and PST; drop V1 PostgreSQL after a hashed `pg_dump` | archives verified on **two** copies |
@@ -103,7 +103,7 @@ are owned by [`DATA.md`](DATA.md) §11.
 | Gate | Check |
 |---|---|
 | Row equality | for every MIGRATE table, V2 count = V1 count, matched by `external_identifier` scheme `v1_*` |
-| Safety set | exactly 8,580 `prior_contact`, 704 address blocks, 91 domain blocks — all `purpose = all` — and **zero** cooldown rows from V1 input |
+| Safety set | exactly 8,580 `prior_contact` rows, all `marketing`; 704 address blocks and 91 domain blocks with the per-purpose and flagged-for-review split recorded ([`DATA.md`](DATA.md) §7.3); no `prior_contact` or `cooldown` row with `purpose = all`; **zero** cooldown rows from V1 input |
 | Attempt shape | 1,126 `accepted` (957 `sent_copy_confirmed`, 112 `bounced`, 57 `pending`) and 1 `rejected`; minted id NULL on all |
 | Gmail coverage | every Wave 1A checkpoint message id is either present in `comms.message` after the shadow sync or explicitly recorded as absent from Gmail |
 | Quote integrity | every migrated `sent` revision has a `pdf_sha256` and sending evidence; every total recomputes |
@@ -257,7 +257,7 @@ seven canonical files plus the per-app READMEs that survive.
 | # | Decision | Recommended default |
 |---|---|---|
 | 1 | Quote numbering across the cutover | continue the V1 serial; a sequence with gaps is acceptable |
-| 2 | Recontacting the 8,580 legacy addresses | never, except a per-recipient approved override with a reason; a V2-era cooldown of 180 days after each accepted send |
+| 2 | Recontacting the 8,580 legacy addresses | never by marketing, except a per-recipient approved override with a reason; a transactional delivery to such an address is governed only by `all` blocks ([`WORKFLOWS.md`](WORKFLOWS.md) §1.6); a V2-era cooldown of 180 days after each accepted marketing send |
 | 3 | Promotion of the 172 supplier candidates | none automatic; a review queue; batch promotion only for records an operator marks approved |
 | 4 | Archive promotion scope | only messages tied to a historical quotation or an existing customer |
 | 5 | Retiring Cloudflare Access and the proxy | after MFA enforcement passes slice 1 |

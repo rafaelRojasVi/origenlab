@@ -102,28 +102,55 @@ policy_supplier, policy_no_channel, precheck_block, precheck_switch}`.
 does not erase that fact. **Submission state, delivery state and
 campaign-recipient state are three separate things and are never collapsed.**
 
-### 1.6 Contact control kinds and purposes
+<a id="m-wf-control-truth"></a>
+### 1.6 Contact control kinds and purposes — the truth table
 
 Every `outbound.contact_control` row carries `purpose ∈ {all, marketing}`,
-and `(scope, value_norm, kind, purpose)` is unique.
+and `(scope, value_norm, kind, purpose)` is unique. **One applicability rule,
+no exceptions: a row applies to an attempt when its `purpose` is `all` or
+equals the attempt's purpose.** `all` therefore reaches marketing and
+transactional attempts alike; `marketing` reaches marketing attempts only.
+This table is the single normative statement; other documents link here.
 
-| Kind | Purpose | Meaning | Expires | Campaign-overridable |
-|---|---|---|---|---|
-| `block` | `all` — hard bounce, complaint, operator decision; **`marketing`** — unsubscribe, operator decision | permanent refusal to send for that purpose | never | **never** |
-| `prior_contact` | `all` only — a fact, consulted by marketing clauses alone | the permanent fact that this address was contacted at least once | **never** | only by an explicit, approved, per-recipient campaign override |
-| `cooldown` | `marketing` only | a dated pause, `until_at` in the future | yes, at `until_at` | **never** |
+| Kind | Purpose | Recorded when | Marketing attempt | Transactional attempt | Expires | Campaign-overridable |
+|---|---|---|---|---|---|---|
+| `block` | `all` | hard bounce, invalid address, complaint, explicit global operator block, legacy suppression whose reason cannot be safely classified (pending operator review) | **refused** | **refused** | never | **never** |
+| `block` | `marketing` | marketing unsubscribe; marketing-only exclusion (campaign, supplier or domain policy) | **refused** | ignored | never | **never** |
+| `prior_contact` | `marketing` | every accepted send of either purpose; every Wave 1A historical contact | **refused**, unless an approved per-recipient override (W12) | ignored | **never** | override only |
+| `cooldown` | `marketing` | an accepted marketing send; `until_at = accepted_at + recontact_interval_days` | **refused** while `until_at > now()` | ignored | at `until_at` | **never** |
+| `prior_contact`, `cooldown` | `all` | — | — | — | — | **does not exist** — rejected by CHECK |
 
-**Applicability.** A row applies to an attempt when its `purpose` is `all` or
-equals the attempt's purpose. A `marketing` block — an unsubscribe — never
-stops a quotation the customer asked for; an `all` block stops everything.
-The kind ⇒ purpose restrictions above are CHECK constraints. **V2 records
-refusals, not permissions**: there is no opt-in or consent state, and nothing
-is ever sent because a flag says "consented" — only because every clause of
-§2 applicable to the purpose holds.
+`prior_contact` and `cooldown` are facts about outreach, so they are always
+`marketing`: a previously contacted address stays reachable for a legitimate
+transactional delivery unless an applicable `all` block exists. The kind ⇒
+purpose restrictions are CHECK constraints. **Refusals, not permissions**:
+there is no opt-in or consent state, and nothing is ever sent because a flag
+says "consented" — only because every clause of §2 applicable to the purpose
+holds.
+
+**Transactional is a workflow property, never an operator choice.** An
+attempt's purpose is set by the command that creates it, from a closed list of
+eligible transactional workflows, and every transactional attempt carries a
+typed reference to its business object or triggering evidence. Today the list
+has one entry — `send_quote`, referencing an `approved` `quote_revision` (W5).
+Candidates for later entries — a reply to a customer's inbound `comms.message`,
+a communication on an existing non-terminal opportunity to one of its current
+participants — enter only by migration and review, each with its own mandatory
+reference. Campaign content, bulk sends and any message without such a
+reference are marketing; `begin_dispatch` and `send_one` refuse a transactional
+attempt whose reference is missing or fails its workflow's preconditions.
+Marketing content cannot be relabelled transactional.
+
+**Transactional duplicates are prevented by idempotency, not by
+`prior_contact`**: the command receipt (`platform.command_receipt`), the
+one-open-attempt-per-address index on `send_attempt`, and the document-delivery
+invariant that a revision becomes `sent` with exactly one `sent_attempt_id`
+and is never sent again (§1.2).
 
 `prior_contact` rows are never deleted and never expire. The 8,580 Wave 1A
-historical addresses are permanent prior-contact facts, and every Wave 1A
-block is `purpose = all` ([`DATA.md`](DATA.md) §7).
+historical addresses load as `prior_contact` / `marketing`; Wave 1A blocks are
+classified by their recorded V1 reason per this table ([`DATA.md`](DATA.md)
+§7).
 
 ## 2. The send predicate
 
@@ -345,7 +372,7 @@ is ([`DATA.md`](DATA.md) §1.1); a new key or a changed meaning is a new
 | 7 | worker · `reserve_attempts` | `active`; predicate true; budget available | recipients `reserved`, attempts `reserved` | attempt rows | predicate false → recipient `excluded` with reason |
 | 8 | worker · `begin_dispatch` | attempt `reserved` | `dispatching`, lease, minted id | event | predicate false → `skipped`, recipient released |
 | 9 | worker · `send_one` | attempt `dispatching`, < 5 s old, full predicate re-check | provider call | — | see W9 |
-| 10 | worker · `finish_attempt(accepted)` | provider returned ids | `accepted`; `prior_contact` upserted; `cooldown` set to `accepted_at + recontact_interval_days`; recipient `sent` | attempt, contact controls, event | — |
+| 10 | worker · `finish_attempt(accepted)` | provider returned ids | `accepted`; `prior_contact` (`marketing`) upserted; `cooldown` (`marketing`) set to `accepted_at + recontact_interval_days`; recipient `sent` | attempt, contact controls, event | — |
 | 11 | worker · Gmail sync | reply arrives | recipient `replied`; message stored | `comms.message` | — |
 | 12 | operator · `link_activity` / `create_opportunity` | operator judgement | activity and/or opportunity created | event | — |
 
@@ -357,12 +384,17 @@ a dated cooldown.** The cooldown expires; the prior-contact fact does not.
 
 ### W5 — Transactional quote email
 
-The same functions with `purpose = transactional`, a `quote_revision`
-reference, `send_control.transactional_enabled`, **no campaign and no budget**,
-and **applicable-`block` checks only** — a `purpose = all` block stops the
-send; a `marketing` block (an unsubscribe), prior contact and cooldown do not
-apply to a quote the customer asked for (§1.6). Acceptance still writes a
-permanent `prior_contact` fact.
+The same functions with `purpose = transactional` — set by `send_quote`, the
+one eligible transactional workflow (§1.6), never chosen by an operator — a
+mandatory `quote_revision` reference to an `approved` revision,
+`send_control.transactional_enabled`, **no campaign and no budget**, and
+**applicable-`block` checks only**: a `purpose = all` block stops the send; a
+`marketing` block (an unsubscribe), `prior_contact` and `cooldown` are
+`marketing` rows and do not apply to a quote the customer asked for. Duplicate
+delivery is prevented by the command receipt, the one-open-attempt index and
+the revision's unique `sent_attempt_id` — not by `prior_contact`. Acceptance
+still writes a permanent `prior_contact` / `marketing` fact, so a quoted
+address is never cold-contacted later without an override.
 
 ### W6 — Inbound Gmail reply
 
@@ -414,8 +446,8 @@ without an operator command.
 1. The reconciler searches the sender mailbox for `rfc822msgid:<minted>`
    across all labels.
 2. **Found** → `accepted` + `sent_copy_confirmed`, the message linked through
-   the unique `message.send_attempt_id`, prior contact and cooldown upserted
-   if missing.
+   the unique `message.send_attempt_id`, `prior_contact` — and, for a
+   marketing attempt, `cooldown` — upserted if missing.
 3. **Not found** → `search_evidence` (history id, searched-at, grace elapsed)
    is recorded on the row and it stays `ambiguous` with `needs_human = true`.
    **Absence from Gmail is evidence for a human, never an automatic
@@ -441,9 +473,9 @@ without an operator command.
 |---|---|---|---|---|---|
 | 1 | worker · NDR match | an NDR arrives | matched by the minted id in the NDR headers or body, else by address plus time window | — | unmatched → review queue |
 | 2 | worker · `record_delivery` | matched attempt is `accepted` | `delivery_state = bounced(hard\|soft)` or `complained`; **`submission_state` stays `accepted`** | event | — |
-| 3 | worker · `add_contact_control` | hard bounce, complaint, or unsubscribe | `contact_control(block, purpose=all)` with reason `bounce_hard` / `complaint`; `contact_control(block, purpose=marketing)` with reason `unsubscribe` | control row, event | — |
+| 3 | worker · `add_contact_control` | hard bounce, invalid address, complaint, or unsubscribe | `contact_control(block, purpose=all)` with reason `bounce_hard` / `invalid_address` / `complaint`; `contact_control(block, purpose=marketing)` with reason `unsubscribe` (§1.6) | control row, event | — |
 | 4 | — | — | recipient `bounced` / `unsubscribed`; **`prior_contact` remains** | — | — |
-| 5 | admin · `revoke_block` / `add_contact_control(block, purpose)` | explicit reason; an operator block defaults to `purpose = all` and is `marketing` only when the reason is an unsubscribe request | block removed / added | event | **campaigns can never override a block** |
+| 5 | admin · `revoke_block` / `add_contact_control(block, purpose)` | explicit reason; an operator block defaults to `purpose = all` and is `marketing` only for an unsubscribe request or an explicitly marketing-only exclusion (§1.6) | block removed / added | event | **campaigns can never override a block** |
 
 An unsubscribe is a marketing refusal, so it is recorded with
 `purpose = marketing` and leaves transactional quotations reachable; a bounce

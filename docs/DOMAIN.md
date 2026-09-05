@@ -401,7 +401,7 @@ outside this count and outside this inventory.
 | 20 | `outbound.campaign` | lifecycle, budget, policy, approval | status machine; budget serialized by a row lock |
 | 21 | `outbound.campaign_recipient` | frozen audience, state, immutable recontact override | `(campaign_id, address_norm)` unique; inserts only while `draft` |
 | 22 | `outbound.send_attempt` | the only send ledger, marketing and transactional | minted RFC 822 id unique; at most one open attempt per address |
-| 23 | `outbound.contact_control` | purpose-scoped `block` / `prior_contact` / `cooldown` | `(scope, value_norm, kind, purpose)` unique; `block.purpose ∈ {all, marketing}`; `prior_contact` ⇒ `all`, never deleted, never expires; `cooldown` ⇒ `marketing` |
+| 23 | `outbound.contact_control` | purpose-scoped `block` / `prior_contact` / `cooldown` | `(scope, value_norm, kind, purpose)` unique; `block.purpose ∈ {all, marketing}`; `prior_contact` and `cooldown` ⇒ `marketing` only; `prior_contact` never deleted, never expires; truth table in [`WORKFLOWS.md`](WORKFLOWS.md) §1.6 |
 | 24 | `evidence.source_record` | acquired external record and migration manifests | `dedupe_key` unique; supersession chain; quarantine flag |
 | 25 | `evidence.assertion` | typed observation with resolution | `(source_record_id, kind, value_norm)`; closed `kind` |
 | 26 | `catalog.product` | manufacturer model | `(manufacturer_organization_id, model_number)` unique |
