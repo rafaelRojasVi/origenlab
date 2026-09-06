@@ -137,8 +137,8 @@ attribute; it does **not** bypass an ordinary object grant, so the revocations
 and their default privileges are the boundary that actually holds it out
 ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.4).
 
-Checks 1–9 are proven **locally** by `supabase/tests/` (339 pgTAP assertions across
-nine files — catalogue facts and rolled-back fixtures, run with `supabase test db`)
+Checks 1–9 are proven **locally** by `supabase/tests/` (348 pgTAP assertions across
+ten files — catalogue facts and rolled-back fixtures, run with `supabase test db`)
 and by `supabase/scripts/verify_direct_logins.sh` (45 proofs over real LOGIN
 connections for checks 6–9); the same checks must be re-run against the hosted
 project before slice 1. `supabase/scripts/replay_evidence.sh` proves the whole
@@ -158,6 +158,18 @@ Checks 10 and 11 are hosted gates and have not been run. **(impl)** the local
 equivalents of check 11 do pass: `supabase db lint --local` over the seven schemas
 with `--fail-on warning` reports no schema error, and `supabase db advisors --local`
 reports zero SECURITY findings and nothing above INFO.
+
+**(impl)** every one of the 97 foreign keys in the seven application schemas is
+index-covered, so the performance advisors report **zero** `unindexed_foreign_keys`.
+79 are covered by an unconditional B-tree index and 18 by a Slice 0 partial index
+`... where <referencing column> is not null`, a predicate the referential-action
+lookup itself implies. `supabase/tests/090_foreign_key_indexes.sql` proves the
+invariant from `pg_constraint` rather than from a list, so a foreign key added later
+is judged by the same rule; its exception allowlist is closed and empty. The gate is
+deliberately stricter than the advisor, which ignores `pg_index.indpred` and
+therefore accepted an index partial on an unrelated column as coverage. The
+remaining `unused_index` notices are an artefact of an empty database with no query
+history — they are reported, not acted on, and no index is dropped on their strength.
 
 ## 6. V1 → V2 writer handoff
 

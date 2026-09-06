@@ -137,19 +137,19 @@ ol audit definers --env production     # fails on any SECURITY DEFINER function
 
 The reproducible local foundation lives under `supabase/`: `config.toml` (PostgreSQL 17,
 database only, Data API off), `roles.sql` (the idempotent cluster-role bootstrap the CLI runs
-before migrations), `migrations/` (fourteen ordered migrations: schemas and default
+before migrations), `migrations/` (fifteen ordered migrations: schemas and default
 privileges, then the 32 tables schema by schema, then grants, then RLS policies, then the
-revocation of the owner's database-level `CREATE`), `tests/` (pgTAP, 339 assertions across
-nine files) and `scripts/`. Requirements: Docker, the Supabase CLI and `psql`. No hosted
-project is involved and nothing here holds a credential: the three `LOGIN` roles are created
-without a password.
+revocation of the owner's database-level `CREATE`, then the covering indexes for every
+foreign key), `tests/` (pgTAP, 348 assertions across ten files) and `scripts/`. Requirements:
+Docker, the Supabase CLI and `psql`. No hosted project is involved and nothing here holds a
+credential: the three `LOGIN` roles are created without a password.
 
 ```bash
 supabase start                            # PostgreSQL 17 container; runs roles.sql, then migrations
 supabase db reset --local                 # replay roles.sql + migrations from scratch
 supabase test db --local                  # pgTAP: inventory, roles, predefined-role boundary, grant
                                           # boundary, matrix, RLS, constraints, SECURITY DEFINER
-                                          # semantics, no leftovers
+                                          # semantics, no leftovers, foreign-key index coverage
 supabase/scripts/verify_direct_logins.sh  # MIGRATION.md §5.2 checks 6-9 with real LOGIN connections;
                                           # throw-away passwords, cleared fail-closed on exit
 supabase/scripts/replay_evidence.sh       # two resets; every CLI exit status enforced, every dump and
