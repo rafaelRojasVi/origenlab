@@ -1,0 +1,92 @@
+---
+import type { RequiredLegalFact } from '../../data/legal';
+
+/**
+ * Datos legales que faltan, a la vista.
+ *
+ * La alternativa habitual es redactar alrededor del hueco con lenguaje
+ * genérico, y eso deja un texto que parece completo sin serlo. Aquí el hueco se
+ * nombra: qué falta, quién lo aporta y qué queda bloqueado mientras tanto.
+ */
+interface Props {
+  facts: readonly RequiredLegalFact[];
+  caption: string;
+}
+
+const { facts, caption } = Astro.props;
+---
+
+<div class="pending">
+  <p class="t-small pending__caption">{caption}</p>
+  <ul class="pending__list">
+    {
+      facts.map((fact) => (
+        <li class="pending__row">
+          <p class="pending__label">{fact.label}</p>
+          <p class="t-data pending__value">Pendiente de confirmación</p>
+          <p class="t-small pending__blocks">
+            <span class="pending__owner">{fact.owner}</span>
+            {fact.blocks}
+          </p>
+        </li>
+      ))
+    }
+  </ul>
+</div>
+
+<style>
+  .pending__caption {
+    color: var(--color-ink-600);
+    max-width: 62ch;
+  }
+  .pending__list {
+    list-style: none;
+    margin: 1.5rem 0 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .pending__row {
+    display: grid;
+    gap: 0.25rem;
+    padding-block: 1rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .pending__label {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+  .pending__value {
+    font-size: 0.8125rem;
+    color: var(--color-teal-800);
+  }
+  .pending__blocks {
+    color: var(--color-ink-600);
+    max-width: 60ch;
+  }
+  .pending__owner {
+    display: inline-block;
+    margin-right: 0.625rem;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    letter-spacing: 0.04em;
+    color: var(--color-ink-500);
+  }
+  @media (min-width: 768px) {
+    .pending__row {
+      grid-template-columns: minmax(0, 5fr) 13rem;
+      column-gap: 2rem;
+      align-items: baseline;
+      padding-block: 1.125rem;
+    }
+    .pending__value {
+      grid-column: 2;
+      grid-row: 1;
+      text-align: right;
+    }
+    .pending__blocks {
+      grid-column: 1;
+      grid-row: 2;
+    }
+  }
+</style>

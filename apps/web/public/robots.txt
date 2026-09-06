@@ -6,4 +6,8 @@ Allow: /
 Disallow: /logo-lab/
 Disallow: /email/
 
+# Borradores legales en revisión: existen para revisarse, no para indexarse.
+Disallow: /privacidad/
+Disallow: /aviso-legal/
+
 Sitemap: https://origenlab.cl/sitemap-index.xml

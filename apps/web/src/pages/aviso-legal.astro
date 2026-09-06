@@ -1,0 +1,152 @@
+---
+import Layout from '../layouts/Layout.astro';
+import PageIntro from '../components/ui/PageIntro.astro';
+import SectionIndex from '../components/ui/SectionIndex.astro';
+import LegalDraftNotice from '../components/ui/LegalDraftNotice.astro';
+import PendingFactsTable from '../components/ui/PendingFactsTable.astro';
+import Notice from '../components/ui/Notice.astro';
+import { site } from '../config/site';
+import { contact } from '../data/contact';
+import { isLegalTextApproved, pendingLegalFacts } from '../data/legal';
+
+/**
+ * Aviso legal y condiciones de uso del sitio, borrador de revisión.
+ *
+ * El título es «Aviso legal» y no «Condiciones de venta» a propósito: este
+ * sitio no tiene carrito, formulario, pasarela ni ningún punto en el que se
+ * cierre una compra. Regula el uso de un sitio informativo, no una relación
+ * comercial. Las condiciones de una venta viven en la cotización firmada, que
+ * es otro documento.
+ *
+ * Mientras `isLegalTextApproved()` sea falso la ruta va con `noindex`, fuera
+ * del sitemap y con `Disallow` en robots.txt.
+ */
+const approved = isLegalTextApproved();
+const identityFacts = pendingLegalFacts().filter((fact) =>
+  ['razon-social', 'rut', 'domicilio-legal', 'representante-legal'].includes(fact.id),
+);
+---
+
+<Layout
+  title="Aviso legal"
+  description="Borrador del aviso legal y las condiciones de uso del sitio de OrigenLab, en revisión. El sitio es informativo y no vende en línea."
+  noindex={!approved}
+>
+  <div class="shell">
+    <PageIntro
+      title="Aviso legal y condiciones de uso"
+      lead="Condiciones de uso de este sitio informativo. No son condiciones de venta: aquí no se compra nada, y lo acordado en una operación vive en la cotización correspondiente."
+      crumbs={[{ label: 'Aviso legal' }]}
+    />
+    {!approved && <LegalDraftNotice />}
+  </div>
+
+  <section class="shell section rule-top" aria-labelledby="titular-title">
+    <SectionIndex index={1} label="Titular del sitio" />
+    <h2 id="titular-title" class="t-h2">Quién responde por este sitio</h2>
+    <p class="t-lead mt-5">
+      El sitio {site.domain} lo opera OrigenLab, con base en {contact.locationPublic} y atención
+      comercial en todo Chile. Los canales publicados son {contact.email} y el teléfono y WhatsApp
+      {' '}{contact.phoneDisplay}.
+    </p>
+    <p class="t-body mt-6">
+      La identificación legal completa todavía no puede publicarse. Mientras falte, este documento
+      no identifica formalmente al titular y por eso no puede presentarse como aviso legal vigente.
+    </p>
+
+    <div class="mt-10">
+      <PendingFactsTable
+        caption="Datos de identidad que el negocio tiene que aportar antes de publicar esta página."
+        facts={identityFacts}
+      />
+    </div>
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="uso-title">
+    <SectionIndex index={2} label="Uso del sitio" />
+    <h2 id="uso-title" class="t-h2">Qué es y qué no es este sitio</h2>
+
+    <div class="terms">
+      <div class="terms__row">
+        <h3 class="terms__title">Sitio informativo, sin venta en línea</h3>
+        <p class="t-body terms__body">
+          El sitio publica información sobre equipamiento de laboratorio y canales de contacto. No
+          tiene carrito, formulario de pedido ni medio de pago, y ninguna página constituye una
+          oferta contractual. Toda operación se cierra por cotización escrita.
+        </p>
+      </div>
+      <div class="terms__row">
+        <h3 class="terms__title">Precios, disponibilidad y plazos</h3>
+        <p class="t-body terms__body">
+          El sitio no publica precios ni stock. La configuración, los accesorios, la disponibilidad,
+          la garantía y los plazos se confirman en cada cotización y pueden depender del fabricante,
+          del flete y de la confirmación de entrega.
+        </p>
+      </div>
+      <div class="terms__row">
+        <h3 class="terms__title">Información técnica de producto</h3>
+        <p class="t-body terms__body">
+          Las especificaciones publicadas provienen de la documentación pública de cada fabricante y
+          se atribuyen en la ficha correspondiente. OrigenLab no fabrica estos equipos. Ante una
+          discrepancia, manda la documentación vigente del fabricante.
+        </p>
+      </div>
+      <div class="terms__row">
+        <h3 class="terms__title">Marcas de terceros</h3>
+        <p class="t-body terms__body">
+          Los nombres y logotipos de fabricante pertenecen a sus titulares y se usan para
+          identificar las líneas que OrigenLab cotiza. OrigenLab no declara representación oficial,
+          distribución exclusiva ni certificación de ninguna de esas marcas.
+        </p>
+      </div>
+      <div class="terms__row">
+        <h3 class="terms__title">Enlaces externos</h3>
+        <p class="t-body terms__body">
+          El sitio enlaza a sitios de fabricante y a WhatsApp. Esos destinos son ajenos y se rigen
+          por sus propias condiciones. El sitio no carga ningún recurso de terceros al mostrarse.
+        </p>
+      </div>
+      <div class="terms__row">
+        <h3 class="terms__title">Legislación aplicable</h3>
+        <p class="t-body terms__body">
+          Pendiente de revisión profesional. La ley aplicable, la jurisdicción y el tratamiento de
+          reclamos no se declaran aquí hasta que un abogado habilitado en Chile los confirme.
+        </p>
+      </div>
+    </div>
+
+    <Notice class="mt-12">
+      Este texto es un borrador de trabajo. No sustituye asesoría legal y no puede publicarse ni
+      invocarse hasta que un profesional habilitado en Chile lo revise y el negocio aporte la
+      identidad legal que falta.
+    </Notice>
+  </section>
+</Layout>
+
+<style>
+  .terms {
+    margin-top: 3rem;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .terms__row {
+    display: grid;
+    gap: 0.625rem;
+    padding-block: 1.75rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .terms__title {
+    font-size: 1.0625rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+  .terms__body {
+    color: var(--color-ink-600);
+  }
+  @media (min-width: 768px) {
+    .terms__row {
+      grid-template-columns: minmax(0, 4fr) minmax(0, 7fr);
+      column-gap: 3rem;
+      padding-block: 2rem;
+    }
+  }
+</style>

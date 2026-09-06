@@ -1,0 +1,47 @@
+---
+import { legalStatus, pendingLegalFacts } from '../../data/legal';
+
+/**
+ * Cabecera de estado de las páginas legales.
+ *
+ * Se muestra siempre mientras el texto no esté revisado por un profesional
+ * habilitado en Chile. No se suaviza ni se esconde al final de la página: quien
+ * llegue tiene que saber en la primera línea que está leyendo un borrador.
+ */
+const pending = pendingLegalFacts();
+---
+
+<div class="draft" role="note" aria-label="Estado del documento">
+  <p class="t-label draft__tag">Borrador en revisión</p>
+  <p class="draft__body">{legalStatus.draftNotice}</p>
+  <p class="t-data draft__meta">
+    {`Última edición ${legalStatus.lastReviewed}. Revisión profesional pendiente. ${pending.length} datos por confirmar.`}
+  </p>
+</div>
+
+<style>
+  .draft {
+    padding: 1.5rem;
+    background-color: var(--color-surface);
+    border-left: 2px solid var(--color-teal-700);
+  }
+  .draft__tag {
+    color: var(--color-teal-800);
+  }
+  .draft__body {
+    margin-top: 0.75rem;
+    line-height: 1.6;
+    color: var(--color-ink-800);
+    max-width: 66ch;
+  }
+  .draft__meta {
+    margin-top: 0.875rem;
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+  }
+  @media (min-width: 768px) {
+    .draft {
+      padding: 2rem;
+    }
+  }
+</style>

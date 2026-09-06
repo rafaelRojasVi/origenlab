@@ -26,9 +26,10 @@ ErrorDocument 404 /404.html
   # son propios. Por eso la CSP puede ser estricta sin romper nada.
   Header set Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'self'; base-uri 'self'; object-src 'none'"
 
-  # Superficies internas: no indexar aunque alguien las enlace.
+  # Superficies internas y borradores legales: no indexar aunque alguien las
+  # enlace. Las rutas legales salen de aquí cuando el texto esté revisado.
   <FilesMatch "\.(html)$">
-    <If "%{REQUEST_URI} =~ m#^/(email|logo-lab)/#">
+    <If "%{REQUEST_URI} =~ m#^/(email|logo-lab|privacidad|aviso-legal)/#">
       Header set X-Robots-Tag "noindex, nofollow"
     </If>
   </FilesMatch>

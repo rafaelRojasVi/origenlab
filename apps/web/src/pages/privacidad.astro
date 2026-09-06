@@ -1,0 +1,174 @@
+---
+import Layout from '../layouts/Layout.astro';
+import PageIntro from '../components/ui/PageIntro.astro';
+import SectionIndex from '../components/ui/SectionIndex.astro';
+import LegalDraftNotice from '../components/ui/LegalDraftNotice.astro';
+import PendingFactsTable from '../components/ui/PendingFactsTable.astro';
+import Notice from '../components/ui/Notice.astro';
+import { contact } from '../data/contact';
+import {
+  isLegalTextApproved,
+  outboundChannels,
+  pendingLegalFacts,
+  siteBehaviour,
+} from '../data/legal';
+
+/**
+ * Privacidad, borrador de revisión.
+ *
+ * No es una política vigente y la página lo dice en su primera línea. Se
+ * publica en la rama para que el negocio y un abogado la revisen sobre algo
+ * concreto, no sobre una plantilla.
+ *
+ * Lo que sí puede afirmarse está comprobado en el código y en el build:
+ * `siteBehaviour` en `legal.ts` lleva la evidencia de cada punto. Lo que no
+ * puede afirmarse aparece nombrado como pendiente, no disuelto en lenguaje
+ * jurídico genérico.
+ *
+ * Mientras `isLegalTextApproved()` sea falso la ruta va con `noindex`, fuera
+ * del sitemap y con `Disallow` en robots.txt.
+ */
+const approved = isLegalTextApproved();
+const privacyFacts = pendingLegalFacts().filter((fact) =>
+  [
+    'razon-social',
+    'rut',
+    'domicilio-legal',
+    'responsable-tratamiento',
+    'canal-derechos',
+    'bases-licitud',
+    'plazos-conservacion',
+    'encargados-tratamiento',
+    'necesidad-aviso-cookies',
+  ].includes(fact.id),
+);
+---
+
+<Layout
+  title="Privacidad"
+  description="Borrador de la política de privacidad de OrigenLab, en revisión. Describe qué hace el sitio y qué datos faltan por confirmar antes de publicarla."
+  noindex={!approved}
+>
+  <div class="shell">
+    <PageIntro
+      title="Privacidad"
+      lead="Qué hace este sitio con los datos de quien lo visita, qué ocurre cuando usted nos escribe y qué falta por confirmar antes de que este texto pueda considerarse una política."
+      crumbs={[{ label: 'Privacidad' }]}
+    />
+    {!approved && <LegalDraftNotice />}
+  </div>
+
+  <section class="shell section rule-top" aria-labelledby="sitio-title">
+    <SectionIndex index={1} label="Qué hace el sitio" />
+    <h2 id="sitio-title" class="t-h2">Comportamiento verificado</h2>
+    <p class="t-lead mt-5">
+      Cada punto de esta lista está comprobado en el código o en el sitio construido, no asumido.
+      La comprobación se indica junto a cada uno.
+    </p>
+
+    <dl class="behaviour">
+      {
+        siteBehaviour.map((fact) => (
+          <div class="behaviour__row">
+            <dt class="behaviour__label">{fact.label}</dt>
+            <dd class="behaviour__detail">
+              <p class="t-body">{fact.detail}</p>
+              <p class="t-small behaviour__evidence">Comprobación: {fact.evidence}</p>
+            </dd>
+          </div>
+        ))
+      }
+    </dl>
+
+    <Notice class="mt-12">
+      El sitio no muestra aviso de cookies porque no fija ninguna. Si en el futuro se incorpora
+      analítica, chat o cualquier recurso de terceros, este texto y esa decisión dejan de ser
+      válidos y hay que rehacerlos.
+    </Notice>
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="canales-title">
+    <SectionIndex index={2} label="Sus canales" />
+    <h2 id="canales-title" class="t-h2">El sitio y lo que usted decide enviarnos</h2>
+    <p class="t-lead mt-5">
+      Son cosas distintas y conviene no mezclarlas. El sitio entrega páginas. El correo y WhatsApp
+      son canales suyos, que usted abre cuando quiere.
+    </p>
+
+    <dl class="channels-list">
+      {
+        outboundChannels.map((channel) => (
+          <div class="channels-list__row">
+            <dt class="channels-list__label">{channel.label}</dt>
+            <dd class="channels-list__detail t-body">{channel.detail}</dd>
+          </div>
+        ))
+      }
+    </dl>
+
+    <p class="t-small channels-note">
+      Los canales publicados son {contact.email} y el teléfono y WhatsApp {contact.phoneDisplay}.
+    </p>
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="falta-title">
+    <SectionIndex index={3} label="Lo que falta" />
+    <h2 id="falta-title" class="t-h2">Sin estos datos no hay política</h2>
+    <div class="mt-8">
+      <PendingFactsTable
+        caption="Ninguno de estos datos puede redactarse desde el repositorio. Los marcados CONTENIDO los aporta el negocio; los marcados LEGAL los tiene que resolver un profesional habilitado en Chile. El seguimiento vive en docs/design/CONTENT_NEEDED.md."
+        facts={privacyFacts}
+      />
+    </div>
+    <p class="t-small pending-foot">
+      La Ley 21.719 entra en vigor el 1 de diciembre de 2026. Qué obligaciones concretas alcanzan a
+      OrigenLab es una pregunta legal y no de ingeniería, y este borrador no la responde.
+    </p>
+  </section>
+</Layout>
+
+<style>
+  .behaviour,
+  .channels-list {
+    margin: 3rem 0 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .behaviour__row,
+  .channels-list__row {
+    display: grid;
+    gap: 0.5rem;
+    padding-block: 1.5rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .behaviour__label,
+  .channels-list__label {
+    font-size: 1.0625rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+  .behaviour__detail,
+  .channels-list__detail {
+    margin: 0;
+    color: var(--color-ink-600);
+  }
+  .behaviour__evidence {
+    margin-top: 0.625rem;
+    color: var(--color-ink-500);
+    max-width: 62ch;
+  }
+  .channels-note,
+  .pending-foot {
+    margin-top: 2rem;
+    color: var(--color-ink-500);
+    max-width: 62ch;
+  }
+
+  @media (min-width: 768px) {
+    .behaviour__row,
+    .channels-list__row {
+      grid-template-columns: minmax(0, 4fr) minmax(0, 7fr);
+      column-gap: 3rem;
+      padding-block: 1.75rem;
+    }
+  }
+</style>

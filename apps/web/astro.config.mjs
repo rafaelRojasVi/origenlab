@@ -13,8 +13,13 @@ export default defineConfig({
   },
   integrations: [
     sitemap({
-      // Superficies internas: no se indexan y no entran al sitemap.
-      filter: (page) => !page.includes('/logo-lab/'),
+      // Superficies internas y borradores legales: no se indexan y no entran
+      // al sitemap. Las rutas legales vuelven al índice cuando `legal.ts`
+      // registre la revisión profesional y dejen de servirse con noindex.
+      filter: (page) =>
+        !page.includes('/logo-lab/') &&
+        !page.includes('/privacidad/') &&
+        !page.includes('/aviso-legal/'),
     }),
   ],
   vite: {
