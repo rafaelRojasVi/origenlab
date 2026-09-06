@@ -4,7 +4,7 @@
 -- because SET ROLE is authorised against the session user and pgTAP runs as one login.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(21);
+select plan(28);
 
 -- Check 1: every OrigenLab-created role is NOSUPERUSER, NOBYPASSRLS, NOREPLICATION, with the
 -- documented LOGIN / INHERIT / CREATEDB / CREATEROLE attributes.
@@ -60,6 +60,65 @@ select is(
 select is(
   (select count(*)::int from pg_auth_members am where am.member in ('origenlab_api'::regrole, 'origenlab_worker'::regrole)),
   0, 'the runtime roles are members of nothing');
+
+-- ---------------------------------------------------------------------------------------------
+-- The predefined-role boundary (docs/ARCHITECTURE.md §6.5).
+--
+-- PostgreSQL's predefined roles pg_read_all_data and pg_write_all_data confer effective access
+-- without leaving an entry in any object's relacl, so a grant audit alone would not see them. They
+-- are therefore asserted here directly, as memberships.
+--
+-- OL_PLATFORM_READ_ALL_ALLOWLIST — the LOCAL Supabase platform and control-plane identities that
+-- may legitimately hold such a membership. It is an allowlist of provider identities, not of
+-- OrigenLab grants: `postgres` (the CLI control-plane login), `supabase_admin` (superuser, which
+-- reaches every role implicitly and needs no explicit membership), `supabase_etl_admin` (managed
+-- replication) and `supabase_read_only_user` (the read-only SQL editor role). Membership is
+-- asserted as a SUBSET, never as equality: the hosted project's role catalogue is a different
+-- catalogue and must be verified independently before slice 1 — do not assume every local platform
+-- role exists hosted, or that the hosted set is this set. What must hold in both is the direction
+-- below: no OrigenLab-created role and no Data-API-facing role is ever inside these predefined
+-- roles. Supabase-managed memberships are asserted here, never altered or revoked.
+select is(
+  (select count(*)::int
+     from (values ('origenlab_owner'), ('origenlab_migrator'), ('origenlab_api'), ('origenlab_worker')) r(n)
+    where pg_has_role(r.n, 'pg_read_all_data', 'MEMBER')),
+  0, 'no OrigenLab-created role is a member of pg_read_all_data');
+select is(
+  (select count(*)::int
+     from (values ('origenlab_owner'), ('origenlab_migrator'), ('origenlab_api'), ('origenlab_worker')) r(n)
+    where pg_has_role(r.n, 'pg_write_all_data', 'MEMBER')),
+  0, 'no OrigenLab-created role is a member of pg_write_all_data');
+select is(
+  (select count(*)::int
+     from (values ('anon'), ('authenticated'), ('service_role'), ('authenticator')) r(n)
+    where pg_has_role(r.n, 'pg_read_all_data', 'MEMBER') or pg_has_role(r.n, 'pg_write_all_data', 'MEMBER')),
+  0, 'anon, authenticated, service_role and authenticator are outside pg_read_all_data and pg_write_all_data');
+select is(
+  (select coalesce(string_agg(r.rolname::text, ', ' order by r.rolname), '')
+     from pg_auth_members am
+     join pg_roles m on m.oid = am.roleid
+     join pg_roles r on r.oid = am.member
+    where m.rolname = 'pg_read_all_data'
+      and r.rolname not in ('postgres', 'supabase_admin', 'supabase_etl_admin', 'supabase_read_only_user')),
+  '', 'every member of pg_read_all_data is inside OL_PLATFORM_READ_ALL_ALLOWLIST (local; the hosted catalogue is verified separately)');
+select is(
+  (select coalesce(string_agg(r.rolname::text, ', ' order by r.rolname), '')
+     from pg_auth_members am
+     join pg_roles m on m.oid = am.roleid
+     join pg_roles r on r.oid = am.member
+    where m.rolname = 'pg_write_all_data'
+      and r.rolname not in ('supabase_admin')),
+  '', 'every member of pg_write_all_data is inside OL_PLATFORM_READ_ALL_ALLOWLIST (local; the hosted catalogue is verified separately)');
+
+-- Recorded, not failed on: the platform identity the CLI connects as reads every application table
+-- and crosses RLS. This is a provider/control-plane trust boundary, not an OrigenLab grant, and RLS
+-- is not a security boundary against it (docs/ARCHITECTURE.md §6.5).
+select is(
+  pg_has_role('postgres', 'pg_read_all_data', 'MEMBER'), true,
+  'recorded: the local platform postgres identity reads all data through pg_read_all_data (provider boundary, not an OrigenLab grant)');
+select is(
+  (select rolbypassrls from pg_roles where rolname = 'postgres'), true,
+  'recorded: the local platform postgres identity carries BYPASSRLS and therefore crosses RLS (provider boundary)');
 
 select * from finish();
 rollback;

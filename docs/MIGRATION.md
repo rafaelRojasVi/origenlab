@@ -137,11 +137,27 @@ attribute; it does **not** bypass an ordinary object grant, so the revocations
 and their default privileges are the boundary that actually holds it out
 ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.4).
 
-Checks 1–9 are proven **locally** by `supabase/tests/` (catalogue and rolled-back
-fixtures, run with `supabase test db`) and by
-`supabase/scripts/verify_direct_logins.sh` (real LOGIN connections for checks 6–9);
-the same checks must be re-run against the hosted project before slice 1. Checks
-10 and 11 are hosted gates and have not been run.
+Checks 1–9 are proven **locally** by `supabase/tests/` (339 pgTAP assertions across
+nine files — catalogue facts and rolled-back fixtures, run with `supabase test db`)
+and by `supabase/scripts/verify_direct_logins.sh` (45 proofs over real LOGIN
+connections for checks 6–9); the same checks must be re-run against the hosted
+project before slice 1. `supabase/scripts/replay_evidence.sh` proves the whole
+foundation replays deterministically, and
+`supabase/scripts/evidence_tool_failure_tests.sh` proves *those two scripts*
+themselves fail closed — a failed reset, a failed dump, a successful but empty
+dump, a failed local-target discovery and unequal applied-migration lists each
+terminate the procedure non-zero with no PASS conclusion
+([`OPERATIONS.md`](OPERATIONS.md) §4.1).
+
+Two things are **recorded rather than proven safe** and must be re-derived against
+the hosted role catalogue: the platform identities that hold `pg_read_all_data` or
+`BYPASSRLS` ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.5), and the fact that RLS
+constrains the OrigenLab runtime roles only, never the provider's control plane.
+
+Checks 10 and 11 are hosted gates and have not been run. **(impl)** the local
+equivalents of check 11 do pass: `supabase db lint --local` over the seven schemas
+with `--fail-on warning` reports no schema error, and `supabase db advisors --local`
+reports zero SECURITY findings and nothing above INFO.
 
 ## 6. V1 → V2 writer handoff
 

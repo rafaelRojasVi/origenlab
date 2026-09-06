@@ -5,7 +5,7 @@
 -- because bypassing RLS is not bypassing a grant.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(25);
+select plan(27);
 
 -- Fixture (rolled back): let this session SET ROLE to the OrigenLab roles. The test login is the
 -- CLI's `postgres`, which holds ADMIN OPTION on every role roles.sql created; it can already SET
@@ -137,6 +137,21 @@ select is(left(pg_temp.run_as('authenticated', 'select 1 from crm.quote_revision
   'authenticated is refused on crm.quote_revision');
 select is(left(pg_temp.run_as('service_role', 'insert into outbound.contact_control (scope, value_norm, kind, purpose, reason, source) values (''address'', ''x@example.test'', ''block'', ''all'', ''probe'', ''operator_command'')'), 5), '42501',
   'service_role cannot write outbound.contact_control');
+
+-- Database-level CREATE (docs/ARCHITECTURE.md §6.4; migration M14). M01 grants origenlab_owner
+-- CREATE ON DATABASE so it can create the seven schemas, and M14 revokes it again as soon as they
+-- exist. A migration that adds a schema re-grants it, creates the schema and revokes it in the same
+-- reviewed change; between migrations the privilege is absent, and these assertions fail if it is
+-- ever left behind.
+select is(
+  has_database_privilege('origenlab_owner', current_database(), 'CREATE'), false,
+  'origenlab_owner holds no CREATE on the database: it can add objects to the seven schemas it owns, not a new schema');
+select is(
+  (select count(*)::int
+     from (values ('origenlab_owner'), ('origenlab_migrator'), ('origenlab_api'), ('origenlab_worker'),
+                  ('anon'), ('authenticated'), ('service_role'), ('authenticator')) r(n)
+    where has_database_privilege(r.n, current_database(), 'CREATE')),
+  0, 'no OrigenLab-created role and no Data-API-facing role holds CREATE on the database');
 
 select * from finish();
 rollback;
