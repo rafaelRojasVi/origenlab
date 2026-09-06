@@ -1,6 +1,9 @@
 # build output
 dist/
 
+# salida de QA visual (npm run qa:screens)
+.qa/
+
 # generated types
 .astro/
 

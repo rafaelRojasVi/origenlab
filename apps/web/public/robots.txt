@@ -1,4 +1,9 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://origenlab.cl/sitemap.xml
+# Superficies internas: página de trabajo de marca y fuentes HTML de la firma
+# de correo. Se sirven porque el hosting es estático, pero no son parte del sitio.
+Disallow: /logo-lab/
+Disallow: /email/
+
+Sitemap: https://origenlab.cl/sitemap-index.xml

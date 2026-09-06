@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 /**
- * Catalog + asset integrity checks (no TypeScript runner required).
+ * Integridad del catálogo y de los activos (sin runtime de TypeScript).
+ *
+ * Verifica hechos de negocio y contratos de datos, no decisiones visuales:
+ * las páginas pueden rediseñarse sin tocar este archivo, pero no pueden
+ * publicar una marca sin logotipo, un producto sin imagen ni una
+ * especificación sin grupo.
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -11,28 +16,31 @@ let failed = false;
 
 function assert(condition, message) {
   if (!condition) {
-    console.error(message);
+    console.error(`  x ${message}`);
     failed = true;
   }
 }
 
-function walkAstro(dir, acc = []) {
+function read(rel) {
+  return readFileSync(join(root, rel), 'utf8');
+}
+
+function walk(dir, ext, acc = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
-    if (entry.isDirectory()) walkAstro(full, acc);
-    else if (entry.name.endsWith('.astro')) acc.push(full);
+    if (entry.isDirectory()) walk(full, ext, acc);
+    else if (entry.name.endsWith(ext)) acc.push(full);
   }
   return acc;
 }
 
-const brandsSrc = readFileSync(join(root, 'src/data/brands.ts'), 'utf8');
-const productsSrc = readFileSync(join(root, 'src/data/products.ts'), 'utf8');
-const familiesSrc = readFileSync(join(root, 'src/data/productFamilies.ts'), 'utf8');
-const contactSrc = readFileSync(join(root, 'src/data/contact.ts'), 'utf8');
-const layoutSrc = readFileSync(join(root, 'src/layouts/Layout.astro'), 'utf8');
-const sitemapSrc = readFileSync(join(root, 'public/sitemap.xml'), 'utf8');
+const brandsSrc = read('src/data/brands.ts');
+const productsSrc = read('src/data/products.ts');
+const familiesSrc = read('src/data/productFamilies.ts');
+const categoriesSrc = read('src/data/categories.ts');
+const contactSrc = read('src/data/contact.ts');
+const specGroupsSrc = read('src/data/specGroups.ts');
 
-const REMOVED_SLUGS = ['bioprocen-22-r'];
 const CANONICAL_ORTO_ORDER = [
   'biocen-22',
   'biocen-22-r',
@@ -40,228 +48,214 @@ const CANONICAL_ORTO_ORDER = [
   'digicen-22-r',
   'consul-22',
 ];
+const REMOVED_SLUGS = ['bioprocen-22-r'];
+const IMAGE_WIDTHS = [480, 960];
 
-const ACTIVE_ORTO_ASSETS = CANONICAL_ORTO_ORDER.map(
-  (slug) => `public/products/ortoalresa/${slug}.avif`,
-);
+/* -- 1. Copy comercial: nada que no se pueda sostener -------------------- */
 
-const brandIds = [...brandsSrc.matchAll(/id: '([^']+)'/g)].map((m) => m[1]);
-
-assert(brandsSrc.includes("id: 'ortoalresa'"), 'brands.ts: missing ortoalresa');
-assert(brandsSrc.includes('showOnHomeBrandsSection: true'), 'brands.ts: home brands section flags');
-assert(
-  (brandsSrc.match(/showOnHomeBrandsSection: true/g) ?? []).length >= 2,
-  'brands.ts: expected SERVA and Ortoalresa on home brands section',
-);
-assert(!brandsSrc.includes('featuredOnHome:'), 'brands.ts: remove featuredOnHome hierarchy');
-assert(!brandsSrc.includes('secondaryFeaturedOnHome'), 'brands.ts: remove secondaryFeaturedOnHome');
-assert(!brandsSrc.includes('featuredIntro'), 'brands.ts: use brandIntro instead of featuredIntro');
-assert(brandsSrc.includes('brandIntro:'), 'brands.ts: brandIntro expected for SERVA page');
-assert(!brandsSrc.match(/distribuidor exclusivo|representante oficial/i), 'brands.ts: unsafe copy');
-
-assert(!productsSrc.includes('showOnHome:'), 'products.ts: remove unused showOnHome');
-assert(!productsSrc.includes('featured:'), 'products.ts: remove unused featured flag');
-assert(!productsSrc.match(/\bfeatured\b/), 'products.ts: no featured field remnants');
-
-assert(
-  !existsSync(join(root, 'src/components/FloatingChat.astro')),
-  'FloatingChat.astro should be removed (Tidio is active chat)',
-);
-
-assert(existsSync(join(root, 'public/og/origenlab-og.svg')), 'Missing default OG image');
-assert(layoutSrc.includes('property="og:image"'), 'Layout.astro: missing og:image');
-assert(layoutSrc.includes('twitter:card'), 'Layout.astro: missing twitter card');
-assert(layoutSrc.includes('ogImageUrl'), 'Layout.astro: og image should use absolute site URL');
-
-assert(
-  !existsSync(join(root, 'public/brands/serva-wordmark.svg')),
-  'serva-wordmark.svg removed; use serva-logo.png',
-);
-
-for (const slug of REMOVED_SLUGS) {
-  assert(!productsSrc.includes(`slug: '${slug}'`), `products.ts: removed product still present: ${slug}`);
-  assert(!sitemapSrc.includes(`/centrifugas/${slug}/`), `sitemap: removed route ${slug}`);
-  assert(!sitemapSrc.includes(slug), `sitemap: removed slug ${slug}`);
+const UNSAFE_CLAIMS =
+  /distribuidor (oficial|exclusivo)|representante oficial|representación exclusiva|certificad[oa] por|único distribuidor/i;
+for (const rel of ['src/data/brands.ts', 'src/data/products.ts', 'src/data/categories.ts', 'src/data/company.ts']) {
+  assert(!UNSAFE_CLAIMS.test(read(rel)), `${rel}: afirmación de representación o certificación sin respaldo`);
 }
-
-const pageSources = walkAstro(join(root, 'src/pages')).map((p) => readFileSync(p, 'utf8')).join('\n');
-for (const slug of REMOVED_SLUGS) {
-  assert(!pageSources.includes(slug), `pages: public route/data for removed ${slug}`);
-}
-
-const slugMatches = [...productsSrc.matchAll(/slug: '([^']+)'/g)].map((m) => m[1]);
-const slugCounts = new Map();
-for (const slug of slugMatches) {
-  slugCounts.set(slug, (slugCounts.get(slug) ?? 0) + 1);
-}
-for (const [slug, count] of slugCounts) {
-  if (count > 1) {
-    assert(false, `Duplicate slug in products.ts: ${slug}`);
+for (const file of walk(join(root, 'src'), '.astro')) {
+  const src = readFileSync(file, 'utf8');
+  const rel = file.slice(root.length + 1);
+  // El texto que niega la representación es legítimo; el que la afirma, no.
+  const affirms = src.match(UNSAFE_CLAIMS);
+  if (affirms) {
+    const line = src.slice(Math.max(0, src.indexOf(affirms[0]) - 60), src.indexOf(affirms[0]) + 40);
+    assert(/no (declara|implica|se declara)|sin confirmación|salvo confirmación/i.test(line), `${rel}: "${affirms[0]}" sin la negación que lo acota`);
   }
 }
 
-for (const slug of CANONICAL_ORTO_ORDER) {
-  assert(productsSrc.includes(`slug: '${slug}'`), `products.ts: missing active product ${slug}`);
-  assert(sitemapSrc.includes(`/productos/centrifugas/${slug}/`), `sitemap: missing ${slug}`);
-}
+/* -- 2. Marcas ----------------------------------------------------------- */
 
-const familiesOrderMatch = familiesSrc.match(
-  /ortoalresaCentrifugeSlugs\s*=\s*\[([\s\S]*?)\]\s*as const/,
-);
-assert(familiesOrderMatch, 'productFamilies.ts: ortoalresaCentrifugeSlugs not found');
-for (const slug of CANONICAL_ORTO_ORDER) {
-  assert(
-    familiesOrderMatch[1].includes(`'${slug}'`),
-    `productFamilies.ts: canonical order missing ${slug}`,
-  );
-}
+const brandBlocks = brandsSrc.split(/\n  \{\n/).slice(1);
+assert(brandBlocks.length >= 6, 'brands.ts: se esperan al menos las 6 marcas de la firma corporativa');
+
+const signature = read('public/email/origenlab-contacto-signature.html');
 assert(
-  !familiesSrc.includes('ortoalresaHomeShowcaseSlugs'),
-  'productFamilies.ts: remove duplicate home slug list; use ortoalresaCentrifugeSlugs only',
+  signature.includes('Marcas con las que trabajamos'),
+  'La firma corporativa ya no contiene el texto que respalda el muro de marcas',
+);
+assert(
+  brandsSrc.includes("brandsWallHeading = 'Marcas con las que trabajamos'"),
+  'brands.ts: el encabezado del muro debe repetir literalmente el texto verificado de la firma',
 );
 
-function blockForSlug(src, slug) {
+for (const block of brandBlocks) {
+  const id = block.match(/id: '([^']+)'/)?.[1];
+  const name = block.match(/name: '([^']+)'/)?.[1];
+  assert(id, 'brands.ts: bloque de marca sin id');
+  if (!id) continue;
+
+  assert(/catalogPublished: (true|false)/.test(block), `${id}: falta catalogPublished`);
+  const published = block.includes('catalogPublished: true');
+
+  const logoPath = block.match(/logoPath: '([^']+)'/)?.[1];
+  assert(logoPath, `${id}: falta logoPath`);
+  if (logoPath) {
+    assert(existsSync(join(root, 'public', logoPath)), `${id}: falta el archivo public${logoPath}`);
+  }
+  assert(/logoWidth: \d+/.test(block), `${id}: falta logoWidth (evita CLS)`);
+  assert(/logoHeight: \d+/.test(block), `${id}: falta logoHeight (evita CLS)`);
+  assert(/logoDisplayHeight: \d+/.test(block), `${id}: falta logoDisplayHeight (equilibrio óptico del muro)`);
+  assert(/logoSourceUrl: '?\n?\s*'?https/.test(block) || /logoSourceUrl:/.test(block), `${id}: falta la procedencia del logotipo`);
+  assert(/websiteUrl: 'https:/.test(block), `${id}: falta websiteUrl del fabricante`);
+
+  if (published) {
+    assert(/summary:/.test(block), `${id}: una marca con catálogo publicado necesita summary`);
+    assert(/commercialNote:/.test(block), `${id}: falta commercialNote`);
+    assert(
+      productsSrc.includes(`brandId: '${id}'`),
+      `${id}: catalogPublished sin productos en products.ts`,
+    );
+  } else {
+    // Sin datos confirmados no se describe la marca: sólo logotipo y enlace.
+    assert(
+      !/summary:|listSummary:|commercialNote:/.test(block),
+      `${id}: marca sin catálogo publicado no debe llevar descripción propia (ver docs/design/CONTENT_NEEDED.md)`,
+    );
+  }
+  assert(name, `${id}: falta name`);
+}
+
+const brandIds = brandBlocks.map((block) => block.match(/id: '([^']+)'/)?.[1]).filter(Boolean);
+for (const brandId of [...productsSrc.matchAll(/brandId: '([^']+)'/g)].map((m) => m[1])) {
+  assert(brandIds.includes(brandId), `products.ts: brandId desconocido ${brandId}`);
+}
+
+/* -- 3. Productos -------------------------------------------------------- */
+
+const slugs = [...productsSrc.matchAll(/slug: '([^']+)'/g)].map((m) => m[1]);
+const seen = new Map();
+for (const slug of slugs) seen.set(slug, (seen.get(slug) ?? 0) + 1);
+for (const [slug, count] of seen) assert(count === 1, `products.ts: slug duplicado ${slug}`);
+
+function blockForSlug(slug) {
   const marker = `slug: '${slug}'`;
-  const idx = src.indexOf(marker);
-  if (idx < 0) return '';
-  const start = src.lastIndexOf('\n  {', idx);
-  const end = src.indexOf('\n  },', idx);
-  return src.slice(start, end);
+  const index = productsSrc.indexOf(marker);
+  if (index < 0) return '';
+  return productsSrc.slice(productsSrc.lastIndexOf('\n  {', index), productsSrc.indexOf('\n  },', index));
 }
 
-const requiredFields = [
-  'manufacturerUrl:',
-  'datasheetUrl:',
-  'imagePath:',
-  'availabilityNote:',
-  'commercialNote:',
-  'productFamilySlug:',
-];
-
-for (const slug of CANONICAL_ORTO_ORDER) {
-  const block = blockForSlug(productsSrc, slug);
-  assert(block.length > 0, `Could not parse product block for ${slug}`);
-  for (const field of requiredFields) {
-    assert(block.includes(field), `${slug}: missing ${field}`);
-  }
-  assert(
-    block.includes("ctaText: 'Solicitar cotización'"),
-    `${slug}: ctaText should be Solicitar cotización`,
-  );
-
-  const imageMatch = block.match(/imagePath: '([^']+)'/);
-  const datasheetMatch = block.match(/datasheetUrl: '([^']+)'/);
-  const manufacturerMatch = block.match(/manufacturerUrl: '([^']+)'/);
-  assert(imageMatch, `${slug}: imagePath parse failed`);
-  assert(datasheetMatch?.[1].startsWith('https://'), `${slug}: datasheetUrl must be https`);
-  assert(manufacturerMatch?.[1].startsWith('https://'), `${slug}: manufacturerUrl must be https`);
-  const publicImage = `public${imageMatch[1]}`;
-  assert(existsSync(join(root, publicImage)), `${slug}: missing image ${publicImage}`);
-  assert(
-    imageMatch[1] === `/products/ortoalresa/${slug}.avif`,
-    `${slug}: imagePath must match product slug`,
-  );
+for (const slug of REMOVED_SLUGS) {
+  assert(!productsSrc.includes(`slug: '${slug}'`), `products.ts: producto retirado presente: ${slug}`);
+  const pages = walk(join(root, 'src/pages'), '.astro')
+    .map((file) => readFileSync(file, 'utf8'))
+    .join('\n');
+  assert(!pages.includes(slug), `pages: ruta pública para el producto retirado ${slug}`);
 }
-
-for (const brandId of brandIds) {
-  assert(
-    productsSrc.includes(`brandId: '${brandId}'`),
-    `products.ts: no products for brand ${brandId}`,
-  );
-}
-
-const productBrandIds = [...productsSrc.matchAll(/brandId: '([^']+)'/g)].map((m) => m[1]);
-for (const brandId of productBrandIds) {
-  assert(brandIds.includes(brandId), `products.ts: unknown brandId ${brandId}`);
-}
-
-for (const rel of ['public/brands/ortoalresa-logo.svg', 'public/brands/serva-logo.png', ...ACTIVE_ORTO_ASSETS]) {
-  assert(existsSync(join(root, rel)), `Missing asset: ${rel}`);
-}
-
 assert(
   existsSync(join(root, 'public/products/ortoalresa/bioprocen-22-r.avif')),
-  'bioprocen asset archived on disk (do not delete without approval)',
+  'bioprocen archivado en disco (no borrar sin aprobación explícita)',
 );
 
+const familyOrder = familiesSrc.match(/ortoalresaCentrifugeSlugs\s*=\s*\[([\s\S]*?)\]\s*as const/);
+assert(familyOrder, 'productFamilies.ts: no se encontró ortoalresaCentrifugeSlugs');
+
+for (const slug of CANONICAL_ORTO_ORDER) {
+  const block = blockForSlug(slug);
+  assert(block.length > 0, `products.ts: falta el producto activo ${slug}`);
+  if (!block) continue;
+
+  assert(familyOrder?.[1].includes(`'${slug}'`), `productFamilies.ts: orden canónico sin ${slug}`);
+
+  for (const field of [
+    'manufacturerUrl:',
+    'datasheetUrl:',
+    'imagePath:',
+    'availabilityNote:',
+    'commercialNote:',
+    'productFamilySlug:',
+    'specsAttribution:',
+    'equipmentType:',
+  ]) {
+    assert(block.includes(field), `${slug}: falta ${field}`);
+  }
+
+  assert(
+    block.match(/datasheetUrl: '(https:[^']+)'/)?.[1],
+    `${slug}: datasheetUrl debe ser https`,
+  );
+  assert(
+    block.match(/manufacturerUrl: '(https:[^']+)'/)?.[1],
+    `${slug}: manufacturerUrl debe ser https`,
+  );
+
+  const imagePath = block.match(/imagePath: '([^']+)'/)?.[1];
+  assert(imagePath === `/products/ortoalresa/${slug}.avif`, `${slug}: imagePath debe seguir el slug`);
+  assert(existsSync(join(root, 'public', imagePath ?? '')), `${slug}: falta el original ${imagePath}`);
+  // Derivados que consume <picture>; sin ellos el srcset apunta a 404.
+  for (const width of IMAGE_WIDTHS) {
+    for (const ext of ['avif', 'webp']) {
+      const derived = `public/products/ortoalresa/${slug}-${width}.${ext}`;
+      assert(existsSync(join(root, derived)), `${slug}: falta el derivado ${derived} (npm run build:product-images)`);
+    }
+  }
+}
+
+/* -- 4. Especificaciones: toda etiqueta necesita grupo -------------------- */
+
+const labels = [...productsSrc.matchAll(/\{ label: '([^']+)', value:/g)].map((m) => m[1]);
+assert(labels.length > 0, 'products.ts: no se encontró ninguna especificación');
+const groupedExact = new Set([...specGroupsSrc.matchAll(/^\s+'?([^':\n]+)'?: '(rendimiento|construccion|instalacion)'/gm)].map((m) => m[1].trim()));
+const prefixes = [...specGroupsSrc.matchAll(/\['([^']+)', '(rendimiento|construccion|instalacion)'\]/g)].map((m) => m[1]);
+for (const label of new Set(labels)) {
+  const covered =
+    groupedExact.has(label) || prefixes.some((prefix) => label.startsWith(prefix));
+  assert(covered, `specGroups.ts: la especificación "${label}" no tiene grupo asignado`);
+}
+
+/* -- 5. Categorías y contacto -------------------------------------------- */
+
+for (const slug of ['alimentos', 'control-de-calidad', 'laboratorio-clinico']) {
+  assert(categoriesSrc.includes(`slug: '${slug}'`), `categories.ts: falta ${slug}`);
+}
 assert(
-  productsSrc.includes('buildWhatsAppQuoteUrl') === false,
-  'sanity: products.ts should not import whatsapp helper',
+  (categoriesSrc.match(/shortName: '/g) ?? []).length ===
+    (categoriesSrc.match(/slug: '/g) ?? []).length,
+  'categories.ts: cada categoría necesita shortName para navegación y migas',
 );
-assert(existsSync(join(root, 'src/lib/whatsapp.ts')), 'Missing src/lib/whatsapp.ts');
 assert(
   contactSrc.includes('buildWhatsAppQuoteUrl'),
-  'contact.ts: whatsappUrl should delegate to buildWhatsAppQuoteUrl',
+  'contact.ts: whatsappUrl debe delegar en buildWhatsAppQuoteUrl',
 );
+assert(
+  !/addressLine[\s\S]{0,200}locationPublic: '[^']*Oettinger/.test(contactSrc),
+  'contact.ts: la dirección de calle no puede formar parte del texto público',
+);
+const publicPages = walk(join(root, 'src/pages'), '.astro')
+  .concat(walk(join(root, 'src/components'), '.astro'))
+  .map((file) => readFileSync(file, 'utf8'))
+  .join('\n');
+assert(!publicPages.includes('Oettinger'), 'pages/components: la dirección de calle no se publica');
 
-const showcaseSrc = readFileSync(join(root, 'src/lib/productShowcase.ts'), 'utf8');
-for (const slug of CANONICAL_ORTO_ORDER) {
-  assert(
-    showcaseSrc.includes(`'${slug}':`),
-    `productShowcase.ts: missing home showcase copy for ${slug}`,
-  );
-}
-assert(
-  !existsSync(join(root, 'src/components/ProductScrollRow.astro')),
-  'ProductScrollRow.astro should be removed (static showcase)',
-);
-assert(
-  existsSync(join(root, 'src/components/BrandSkuCard.astro')),
-  'BrandSkuCard.astro expected for SERVA SKU cards without detail pages',
-);
+/* -- 6. Activos de marca y sociales -------------------------------------- */
 
-const homeCommercialSrc = readFileSync(
-  join(root, 'src/components/HomeCommercialLines.astro'),
-  'utf8',
-);
-const indexSrc = readFileSync(join(root, 'src/pages/index.astro'), 'utf8');
-assert(
-  existsSync(join(root, 'src/components/HomeProductImagePreview.astro')),
-  'HomeProductImagePreview.astro expected for compact Ortoalresa tiles on home',
-);
-assert(
-  homeCommercialSrc.includes('HomeProductImagePreview'),
-  'HomeCommercialLines should render HomeProductImagePreview',
-);
-const homePreviewLib = readFileSync(join(root, 'src/lib/homeProductPreview.ts'), 'utf8');
-assert(
-  homePreviewLib.includes("HOME_HERO_FEATURED_SLUG = 'biocen-22'"),
-  'homeProductPreview: hero featured centrifuge is Biocen 22',
-);
-assert(
-  homePreviewLib.includes('digicen-22-r'),
-  'homeProductPreview: featured centrifuge slug for commercial card',
-);
-const homePreviewSrc = readFileSync(join(root, 'src/components/HomeProductImagePreview.astro'), 'utf8');
-assert(
-  !homePreviewSrc.includes('truncate') && !homePreviewSrc.includes('line-clamp'),
-  'HomeProductImagePreview: product names must not be truncated',
-);
-assert(
-  (homePreviewSrc.match(/role="list"/g) ?? []).length >= 1,
-  'HomeProductImagePreview: supporting models as list rows',
-);
-assert(
-  CANONICAL_ORTO_ORDER.length === 5,
-  'expected 5 Ortoalresa centrifuges on home preview',
-);
-assert(indexSrc.includes('HomeHero'), 'homepage should use HomeHero');
-assert(indexSrc.includes('HomeCategoryCards'), 'homepage should use HomeCategoryCards');
-assert(indexSrc.includes('HomeProcess'), 'homepage should use HomeProcess');
-assert(indexSrc.includes('HomeFinalCTA'), 'homepage should use HomeFinalCTA');
-assert(!indexSrc.includes('HomeBrandsSection'), 'homepage must not duplicate HomeBrandsSection');
-assert(!indexSrc.includes('ProductShowcaseGrid'), 'homepage must not use ProductShowcaseGrid');
-assert(!indexSrc.includes('ProductComparisonStrip'), 'homepage must not use ProductComparisonStrip');
-
-const servaBlocks = [...productsSrc.matchAll(/brandId: 'serva'[\s\S]*?slug: '([^']+)'/g)];
-for (const match of servaBlocks) {
-  const slug = match[1];
-  const block = blockForSlug(productsSrc, slug);
-  assert(
-    !block.includes('productFamilySlug:'),
-    `SERVA ${slug}: must not have productFamilySlug until detail pages exist`,
-  );
+for (const rel of [
+  'public/og/origenlab-og.png',
+  'public/apple-touch-icon.png',
+  'public/favicon.ico',
+  'public/favicon.svg',
+  'public/fonts/plus-jakarta-sans-latin-wght-normal.woff2',
+  'public/fonts/ibm-plex-mono-latin-400-normal.woff2',
+]) {
+  assert(existsSync(join(root, rel)), `Falta el activo ${rel}`);
 }
 
-if (failed) process.exit(1);
-console.log('Catalog validation OK');
+/* -- 7. Terceros: el sitio no carga nada de fuera ------------------------- */
+
+const layoutSrc = read('src/layouts/Layout.astro');
+const seoSrc = read('src/components/Seo.astro');
+for (const [label, src] of [['Layout.astro', layoutSrc], ['Seo.astro', seoSrc]]) {
+  assert(!/tidio|googletagmanager|google-analytics|fonts\.googleapis|fonts\.gstatic/i.test(src), `${label}: script o tipografía de terceros`);
+}
+assert(!layoutSrc.includes('Astro.generator'), 'Layout.astro: no exponer la versión del generador');
+
+if (failed) {
+  console.error('\nvalidate:catalog FALLÓ');
+  process.exit(1);
+}
+console.log('validate:catalog OK');
