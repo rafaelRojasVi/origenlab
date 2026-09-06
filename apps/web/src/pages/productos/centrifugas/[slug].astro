@@ -5,6 +5,7 @@ import SectionIndex from '../../../components/ui/SectionIndex.astro';
 import ProductFigure from '../../../components/ui/ProductFigure.astro';
 import KeyFacts from '../../../components/ui/KeyFacts.astro';
 import SpecGroups from '../../../components/ui/SpecGroups.astro';
+import ModelList from '../../../components/ui/ModelList.astro';
 import ModelRow from '../../../components/ui/ModelRow.astro';
 import ClosingQuoteBand from '../../../components/ui/ClosingQuoteBand.astro';
 import ExternalLink from '../../../components/ui/ExternalLink.astro';
@@ -135,9 +136,9 @@ const metaDescription = (
   <section class="shell section rule-top" aria-labelledby="relacionados-title">
     <SectionIndex index={3} label="Modelos relacionados" />
     <h2 id="relacionados-title" class="t-h2">Otros modelos de la familia</h2>
-    <ul class="model-list">
+    <ModelList class="mt-10">
       {related.map((item) => <ModelRow product={item} size="compact" />)}
-    </ul>
+    </ModelList>
     <a href="/productos/centrifugas/" class="link-arrow mt-8">
       Ver la familia y la comparativa
       <Icon name="arrow-right" size={18} class="arrow" />
@@ -216,12 +217,6 @@ const metaDescription = (
     flex-wrap: wrap;
     gap: 1rem 2.5rem;
     margin-top: 2.5rem;
-  }
-  .model-list {
-    list-style: none;
-    margin: 2.5rem 0 0;
-    padding: 0;
-    border-top: 1px solid var(--color-ink-950);
   }
   .conditions {
     margin-top: 1.5rem;

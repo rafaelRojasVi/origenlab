@@ -3,7 +3,9 @@ import Layout from '../layouts/Layout.astro';
 import Hero from '../components/home/Hero.astro';
 import BrandWall from '../components/home/BrandWall.astro';
 import SectionIndex from '../components/ui/SectionIndex.astro';
+import ModelList from '../components/ui/ModelList.astro';
 import ModelRow from '../components/ui/ModelRow.astro';
+import ApplicationList from '../components/ui/ApplicationList.astro';
 import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
 import Icon from '../components/ui/Icon.astro';
 import Notice from '../components/ui/Notice.astro';
@@ -67,9 +69,9 @@ const quoteSteps = [
       </a>
     </div>
 
-    <ul class="model-list">
+    <ModelList class="mt-10">
       {centrifuges.map((product) => <ModelRow product={product} />)}
-    </ul>
+    </ModelList>
 
     {
       serva && servaProducts.length > 0 && (
@@ -100,23 +102,7 @@ const quoteSteps = [
     <SectionIndex index={2} label="Aplicaciones" />
     <h2 id="aplicaciones-title" class="t-h2">Tres líneas de trabajo</h2>
     <p class="t-lead mt-5">{company.homeIntro}</p>
-
-    <ol class="line-list">
-      {
-        categories.map((category, i) => (
-          <li>
-            <a href={`/categorias/${category.slug}/`}>
-              <span class="line-list__num t-data" aria-hidden="true">{String(i + 1).padStart(2, '0')}</span>
-              <span class="line-list__body">
-                <span class="line-list__name">{category.shortName}</span>
-                <span class="line-list__desc t-small">{category.description}</span>
-              </span>
-              <Icon name="arrow-right" size={20} class="line-list__go" />
-            </a>
-          </li>
-        ))
-      }
-    </ol>
+    <ApplicationList class="mt-12" />
     <a href="/aplicaciones/" class="link-arrow mt-8">
       Ver todas las aplicaciones y sectores
       <Icon name="arrow-right" size={18} class="arrow" />
@@ -177,12 +163,6 @@ const quoteSteps = [
   .lead-row__body {
     margin-top: 1rem;
   }
-  .model-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    border-top: 1px solid var(--color-ink-950);
-  }
 
   .other-line {
     display: grid;
@@ -204,52 +184,6 @@ const quoteSteps = [
     color: var(--color-ink-500);
   }
 
-  /* --- Aplicaciones --- */
-  .line-list {
-    list-style: none;
-    margin: 3rem 0 0;
-    padding: 0;
-    border-top: 1px solid var(--color-ink-950);
-  }
-  .line-list li {
-    border-bottom: 1px solid var(--color-hairline);
-  }
-  .line-list a {
-    display: grid;
-    grid-template-columns: 2.5rem minmax(0, 1fr) 1.5rem;
-    align-items: baseline;
-    gap: 1rem;
-    padding-block: 1.5rem;
-    transition: background-color 150ms;
-  }
-  .line-list a:hover {
-    background-color: var(--color-surface);
-  }
-  .line-list__num {
-    color: var(--color-ink-500);
-    font-size: 0.8125rem;
-  }
-  .line-list__name {
-    display: block;
-    font-size: 1.375rem;
-    font-weight: 600;
-    color: var(--color-ink-950);
-    letter-spacing: -0.015em;
-  }
-  .line-list__desc {
-    display: block;
-    margin-top: 0.375rem;
-    color: var(--color-ink-600);
-    max-width: 56ch;
-  }
-  .line-list__go {
-    align-self: center;
-    justify-self: end;
-    color: var(--color-ink-500);
-  }
-  .line-list a:hover .line-list__go {
-    color: var(--color-teal-800);
-  }
 
   /* --- Pasos --- */
   /* Los cuatro pasos comparten un solo filete: el proceso es uno, no cuatro
@@ -346,11 +280,6 @@ const quoteSteps = [
     .step {
       border-bottom: none;
       padding-top: 1.75rem;
-    }
-    .line-list a {
-      grid-template-columns: 3.5rem minmax(0, 1fr) 2rem;
-      gap: 2rem;
-      padding-block: 2rem;
     }
   }
 </style>

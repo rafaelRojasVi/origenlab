@@ -1,0 +1,66 @@
+---
+import type { Product } from '../../data/products';
+
+/**
+ * Referencias sin ficha propia: nombre, número de ítem y una línea. Se usa para
+ * la línea SERVA en /productos/ y en su página de marca. No se enlaza a ningún
+ * detalle porque no existe: inventar una ruta vacía sería peor que la fila.
+ */
+interface Props {
+  products: readonly Product[];
+  /** Añade la frase de aplicación además del resumen. */
+  withApplication?: boolean;
+  class?: string;
+  [key: string]: unknown;
+}
+
+const { products, withApplication = false, class: className = '', ...rest } = Astro.props;
+---
+
+<dl class:list={['sku-list', className]} {...rest}>
+  {
+    products.map((product) => (
+      <div class="sku">
+        <dt>
+          <span class="sku__name" translate="no">{product.name}</span>
+          {product.sku && <span class="sku__code t-data">Ítem {product.sku}</span>}
+        </dt>
+        <dd class="t-small sku__desc">
+          {product.summary}
+          {withApplication && ` ${product.application}`}
+        </dd>
+      </div>
+    ))
+  }
+</dl>
+
+<style>
+  .sku-list {
+    margin: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .sku {
+    padding-block: 1.5rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .sku dt {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem 1.25rem;
+  }
+  .sku__name {
+    font-size: 1.0625rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+  .sku__code {
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+  }
+  .sku__desc {
+    margin: 0.5rem 0 0;
+    color: var(--color-ink-600);
+    max-width: 62ch;
+  }
+</style>

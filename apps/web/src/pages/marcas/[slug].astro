@@ -2,7 +2,9 @@
 import Layout from '../../layouts/Layout.astro';
 import PageIntro from '../../components/ui/PageIntro.astro';
 import SectionIndex from '../../components/ui/SectionIndex.astro';
+import ModelList from '../../components/ui/ModelList.astro';
 import ModelRow from '../../components/ui/ModelRow.astro';
+import SkuList from '../../components/ui/SkuList.astro';
 import ClosingQuoteBand from '../../components/ui/ClosingQuoteBand.astro';
 import BrandLogo from '../../components/ui/BrandLogo.astro';
 import ExternalLink from '../../components/ui/ExternalLink.astro';
@@ -94,9 +96,9 @@ const family = productFamilies.find((item) =>
             </a>
           )}
         </div>
-        <ul class="model-list">
+        <ModelList class="mt-6">
           {withPages.map((product) => <ModelRow product={product} size="compact" />)}
-        </ul>
+        </ModelList>
       </section>
     )
   }
@@ -110,19 +112,7 @@ const family = productFamilies.find((item) =>
           Estas referencias se cotizan por pedido y no tienen ficha técnica propia en el sitio;
           la documentación se entrega durante la cotización.
         </p>
-        <dl class="sku-list">
-          {skuOnly.map((product) => (
-            <div class="sku">
-              <dt>
-                <span class="sku__name" translate="no">{product.name}</span>
-                {product.sku && <span class="sku__code t-data">Ítem {product.sku}</span>}
-              </dt>
-              <dd class="t-small sku__desc">
-                {product.summary} {product.application}
-              </dd>
-            </div>
-          ))}
-        </dl>
+        <SkuList products={skuOnly} withApplication class="mt-10" />
       </section>
     )
   }
@@ -187,41 +177,7 @@ const family = productFamilies.find((item) =>
     gap: 1rem;
     margin-bottom: 1rem;
   }
-  .model-list {
-    list-style: none;
-    margin: 1.5rem 0 0;
-    padding: 0;
-    border-top: 1px solid var(--color-ink-950);
-  }
 
-  .sku-list {
-    margin: 2.5rem 0 0;
-    border-top: 1px solid var(--color-ink-950);
-  }
-  .sku {
-    padding-block: 1.5rem;
-    border-bottom: 1px solid var(--color-hairline);
-  }
-  .sku dt {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 0.5rem 1.25rem;
-  }
-  .sku__name {
-    font-size: 1.0625rem;
-    font-weight: 600;
-    color: var(--color-ink-950);
-  }
-  .sku__code {
-    font-size: 0.8125rem;
-    color: var(--color-ink-500);
-  }
-  .sku__desc {
-    margin: 0.5rem 0 0;
-    color: var(--color-ink-600);
-    max-width: 62ch;
-  }
   .conditions {
     margin-top: 1.5rem;
   }

@@ -296,6 +296,23 @@
     }
   }
 
+  /* Fila de enlaces con flecha: se apila en móvil y se alinea en una fila
+     desde 768 px. Usada en las páginas que enlazan a varias aplicaciones. */
+  .link-row {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.75rem;
+  }
+  @media (min-width: 768px) {
+    .link-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem 2.5rem;
+    }
+  }
+
   .link-plain {
     color: var(--color-teal-800);
     text-decoration: underline;

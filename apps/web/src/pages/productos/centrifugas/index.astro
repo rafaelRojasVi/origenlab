@@ -2,6 +2,7 @@
 import Layout from '../../../layouts/Layout.astro';
 import PageIntro from '../../../components/ui/PageIntro.astro';
 import SectionIndex from '../../../components/ui/SectionIndex.astro';
+import ModelList from '../../../components/ui/ModelList.astro';
 import ModelRow from '../../../components/ui/ModelRow.astro';
 import CompareTable from '../../../components/ui/CompareTable.astro';
 import ClosingQuoteBand from '../../../components/ui/ClosingQuoteBand.astro';
@@ -68,9 +69,9 @@ const relatedCategories = categories.filter((category) =>
       Ordenados de menor a mayor capacidad. Las cifras provienen de la documentación del
       fabricante; la configuración de rotores y accesorios se define al cotizar.
     </p>
-    <ul class="model-list">
+    <ModelList class="mt-10">
       {products.map((product) => <ModelRow product={product} />)}
-    </ul>
+    </ModelList>
   </section>
 
   <section class="shell section rule-top" aria-labelledby="comparativa-title">
@@ -93,7 +94,7 @@ const relatedCategories = categories.filter((category) =>
     <SectionIndex index={3} label="Aplicaciones" />
     <h2 id="aplicaciones-title" class="t-h2">Dónde se usan</h2>
     <p class="t-body mt-5 applications">{applications.join(', ')}.</p>
-    <ul class="app-links">
+    <ul class="link-row mt-8">
       {
         relatedCategories.map((category) => (
           <li>
@@ -156,22 +157,9 @@ const relatedCategories = categories.filter((category) =>
   .brand-link__label {
     color: var(--color-ink-500);
   }
-  .model-list {
-    list-style: none;
-    margin: 2.5rem 0 0;
-    padding: 0;
-    border-top: 1px solid var(--color-ink-950);
-  }
   .applications {
     color: var(--color-ink-600);
     max-width: 62ch;
-  }
-  .app-links {
-    list-style: none;
-    margin: 2rem 0 0;
-    padding: 0;
-    display: grid;
-    gap: 0.75rem;
   }
   .brand-block {
     display: grid;
@@ -192,11 +180,6 @@ const relatedCategories = categories.filter((category) =>
     margin-top: 1.75rem;
   }
   @media (min-width: 768px) {
-    .app-links {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 1rem 2.5rem;
-    }
     .brand-block {
       grid-template-columns: minmax(0, 1fr) auto;
       gap: 4rem;

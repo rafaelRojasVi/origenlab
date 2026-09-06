@@ -132,6 +132,9 @@ estas resuelve el problema.
 | `ui/PageIntro` | Migas, H1 y frase de contexto de toda página interior |
 | `ui/Breadcrumbs` | Ruta + `BreadcrumbList` en JSON-LD |
 | `ui/ModelRow` | Fila de modelo: fotografía, nombre, tipo y cifras. Sustituye a las fichas de producto |
+| `ui/ModelList` | Contenedor de filas de modelo (filete superior y reinicio de lista) |
+| `ui/ApplicationList` | Las tres líneas comerciales como lista numerada |
+| `ui/SkuList` | Referencias sin ficha propia: nombre, número de ítem y una línea |
 | `ui/ProductFigure` | Fotografía de equipo en caja cuadrada sobre papel, con `<picture>` AVIF/WebP |
 | `ui/KeyFacts` | Tres o cuatro cifras de cabecera en mono |
 | `ui/SpecGroups` | Ficha técnica agrupada en listas de definición |
@@ -141,6 +144,10 @@ estas resuelve el problema.
 | `ui/Notice` | Aviso comercial, uno por página |
 | `ui/ExternalLink` | Enlace externo, anunciado y marcado |
 | `ui/Icon` | Trazos de Tabler Icons (MIT), 24x24, stroke 1,5 |
+
+Utilidades globales en `global.css`: `.shell` (ancho y márgenes de página),
+`.section` (ritmo vertical), `.rule-top` (filete de separación), `.link-row`
+(fila de enlaces con flecha) y los roles tipográficos.
 
 Acciones: `.btn-primary` (relleno teal), `.btn-secondary` (contorno tinta),
 `.btn-invert` (sólo sobre la banda) y `.link-arrow` (texto y flecha, nunca

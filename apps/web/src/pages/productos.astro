@@ -2,10 +2,12 @@
 import Layout from '../layouts/Layout.astro';
 import PageIntro from '../components/ui/PageIntro.astro';
 import SectionIndex from '../components/ui/SectionIndex.astro';
+import ModelList from '../components/ui/ModelList.astro';
 import ModelRow from '../components/ui/ModelRow.astro';
 import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
 import ProductFigure from '../components/ui/ProductFigure.astro';
 import BrandLogo from '../components/ui/BrandLogo.astro';
+import SkuList from '../components/ui/SkuList.astro';
 import Notice from '../components/ui/Notice.astro';
 import Icon from '../components/ui/Icon.astro';
 import { productFamilies } from '../data/productFamilies';
@@ -59,9 +61,9 @@ const familyCover = getProductBySlug('digicen-22-r');
       </div>
     </div>
 
-    <ul class="model-list">
+    <ModelList>
       {centrifuges.map((product) => <ModelRow product={product} size="compact" />)}
-    </ul>
+    </ModelList>
   </section>
 
   {
@@ -76,17 +78,7 @@ const familyCover = getProductBySlug('digicen-22-r');
           <BrandLogo brand={serva} scale={1.2} />
         </div>
 
-        <dl class="sku-list">
-          {servaProducts.map((product) => (
-            <div class="sku">
-              <dt>
-                <span class="sku__name" translate="no">{product.name}</span>
-                {product.sku && <span class="sku__code t-data">Ítem {product.sku}</span>}
-              </dt>
-              <dd class="t-small sku__desc">{product.summary}</dd>
-            </div>
-          ))}
-        </dl>
+        <SkuList products={servaProducts} class="mt-10" />
 
         <a href={`/marcas/${serva.slug}/`} class="link-arrow mt-8">
           Condiciones y áreas de aplicación SERVA
@@ -103,7 +95,7 @@ const familyCover = getProductBySlug('digicen-22-r');
       Describa el ensayo, el volumen de trabajo o la norma que maneja. Cotizamos equipamiento
       alineado a ese entorno aunque no esté publicado en el catálogo.
     </p>
-    <ul class="app-links">
+    <ul class="link-row mt-10">
       {
         categories.map((category) => (
           <li>
@@ -150,12 +142,6 @@ const familyCover = getProductBySlug('digicen-22-r');
   .family__cta {
     margin-top: 2rem;
   }
-  .model-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    border-top: 1px solid var(--color-ink-950);
-  }
 
   .sku-head {
     display: grid;
@@ -166,42 +152,7 @@ const familyCover = getProductBySlug('digicen-22-r');
   .sku-head__desc {
     margin-top: 1rem;
   }
-  .sku-list {
-    margin: 0;
-    border-top: 1px solid var(--color-ink-950);
-  }
-  .sku {
-    padding-block: 1.5rem;
-    border-bottom: 1px solid var(--color-hairline);
-  }
-  .sku dt {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 0.5rem 1.25rem;
-  }
-  .sku__name {
-    font-size: 1.0625rem;
-    font-weight: 600;
-    color: var(--color-ink-950);
-  }
-  .sku__code {
-    font-size: 0.8125rem;
-    color: var(--color-ink-500);
-  }
-  .sku__desc {
-    margin: 0.5rem 0 0;
-    color: var(--color-ink-600);
-    max-width: 62ch;
-  }
 
-  .app-links {
-    list-style: none;
-    margin: 2.5rem 0 0;
-    padding: 0;
-    display: grid;
-    gap: 0.75rem;
-  }
 
   @media (min-width: 768px) {
     .family {
@@ -216,11 +167,6 @@ const familyCover = getProductBySlug('digicen-22-r');
     .sku-head {
       grid-template-columns: minmax(0, 1fr) auto;
       gap: 3rem;
-    }
-    .app-links {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 1rem 2.5rem;
     }
   }
 </style>

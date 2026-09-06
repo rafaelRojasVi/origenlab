@@ -2,6 +2,7 @@
 import Layout from '../../layouts/Layout.astro';
 import PageIntro from '../../components/ui/PageIntro.astro';
 import SectionIndex from '../../components/ui/SectionIndex.astro';
+import ModelList from '../../components/ui/ModelList.astro';
 import ModelRow from '../../components/ui/ModelRow.astro';
 import ClosingQuoteBand from '../../components/ui/ClosingQuoteBand.astro';
 import Notice from '../../components/ui/Notice.astro';
@@ -63,9 +64,9 @@ const metaDescription =
             Preparación de muestras y separación, según configuración de rotor y requerimientos del
             laboratorio.
           </p>
-          <ul class="model-list">
+          <ModelList class="mt-10">
             {related.map((product) => <ModelRow product={product} size="compact" />)}
-          </ul>
+          </ModelList>
           <a href="/productos/centrifugas/" class="link-arrow mt-8">
             Ver la familia y la comparativa
             <Icon name="arrow-right" size={18} class="arrow" />
@@ -159,12 +160,6 @@ const metaDescription =
     font-family: var(--font-mono);
     font-size: 0.8125rem;
     color: var(--color-teal-800);
-  }
-  .model-list {
-    list-style: none;
-    margin: 2.5rem 0 0;
-    padding: 0;
-    border-top: 1px solid var(--color-ink-950);
   }
   .clinical {
     margin-top: 1.75rem;
