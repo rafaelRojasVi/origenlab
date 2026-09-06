@@ -1,15 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
-  <title id="title">OrigenLab</title>
-  <desc id="desc">Equipos para laboratorio — Valdivia, Chile</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
   <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#042f2e" />
-      <stop offset="100%" style="stop-color:#0f766e" />
-    </linearGradient>
+    <style>
+      @font-face { font-family: 'PJS'; src: url('file:///home/rafael/dev/origenlab-web-v2/apps/web/public/fonts/plus-jakarta-sans-latin-wght-normal.woff2') format('woff2-variations'); font-weight: 200 800; }
+      @font-face { font-family: 'IPM'; src: url('file:///home/rafael/dev/origenlab-web-v2/apps/web/public/fonts/ibm-plex-mono-latin-400-normal.woff2') format('woff2'); font-weight: 400; }
+    </style>
   </defs>
-  <rect width="1200" height="630" fill="url(#bg)" />
-  <text x="600" y="260" text-anchor="middle" fill="#f0fdfa" font-family="system-ui, sans-serif" font-size="72" font-weight="700">OrigenLab</text>
-  <text x="600" y="330" text-anchor="middle" fill="#ccfbf1" font-family="system-ui, sans-serif" font-size="36" font-weight="500">Equipos para laboratorio</text>
-  <text x="600" y="400" text-anchor="middle" fill="#99f6e4" font-family="system-ui, sans-serif" font-size="28">contacto@origenlab.cl</text>
-  <text x="600" y="450" text-anchor="middle" fill="#5eead4" font-family="system-ui, sans-serif" font-size="26">Valdivia, Chile</text>
+  <rect width="1200" height="630" fill="#FAFAF7"/>
+  <rect x="0" y="0" width="1200" height="4" fill="#0F766E"/>
+  <g transform="translate(96 92)"><ellipse cx="0" cy="0" rx="43.03" ry="14.560000000000002" transform="rotate(0)" fill="none" stroke="#0F766E" stroke-width="1.17" opacity="0.35"/><ellipse cx="0" cy="0" rx="43.03" ry="14.560000000000002" transform="rotate(60)" fill="none" stroke="#0F766E" stroke-width="1.17" opacity="0.35"/><ellipse cx="0" cy="0" rx="43.03" ry="14.560000000000002" transform="rotate(-60)" fill="none" stroke="#0F766E" stroke-width="1.17" opacity="0.35"/><circle cx="0" cy="0" r="3.9" fill="none" stroke="#0F766E" stroke-width="0.715" opacity="0.4"/><circle cx="0" cy="0" r="2.86" fill="#0F766E"/><circle cx="33.800000000000004" cy="7.15" r="2.08" fill="#0F766E"/><circle cx="-24.7" cy="-19.5" r="2.08" fill="#0F766E"/><circle cx="-9.1" cy="22.099999999999998" r="2.08" fill="#0F766E"/></g>
+  <text x="140" y="103" font-family="PJS" font-size="34" font-weight="700" fill="#141617" letter-spacing="-0.8">OrigenLab</text>
+  <line x1="96" y1="176" x2="1104" y2="176" stroke="#E3E3DE" stroke-width="1"/>
+  <text x="96" y="312" font-family="PJS" font-size="64" font-weight="600" fill="#141617" letter-spacing="-1.4">Equipos de laboratorio,</text>
+  <text x="96" y="386" font-family="PJS" font-size="64" font-weight="600" fill="#141617" letter-spacing="-1.4">cotizados con criterio técnico.</text>
+  <text x="96" y="466" font-family="PJS" font-size="30" font-weight="400" fill="#54595D">Venta de equipos para laboratorios de servicio e investigación.</text>
+  <line x1="96" y1="530" x2="1104" y2="530" stroke="#E3E3DE" stroke-width="1"/>
+  <text x="96" y="574" font-family="IPM" font-size="24" fill="#54595D" letter-spacing="0.8">VALDIVIA, CHILE</text>
+  <text x="1104" y="574" text-anchor="end" font-family="IPM" font-size="24" fill="#54595D" letter-spacing="0.8">ORIGENLAB.CL</text>
 </svg>
