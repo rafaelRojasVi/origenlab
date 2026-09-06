@@ -20,10 +20,12 @@ Sitio estático para **OrigenLab**, empresa de equipamiento y soluciones para la
 | `npm run build` | Build de producción → carpeta `dist/` |
 | `npm run preview` | Vista previa del build local |
 | `npm run check` | Verificación de tipos y contenido (Astro) |
-| `npm run validate` | **Puerta completa:** check + build + validate:catalog + validate:dist |
+| `npm run validate` | **Puerta completa:** check, build, validate:catalog, validate:dist, qa:contrast y qa:interaction |
 | `npm run validate:catalog` | Verdad de catálogo: marcas, productos, activos, especificaciones agrupadas, copy comercial |
 | `npm run validate:dist` | Invariantes del HTML construido: cero terceros, encabezados, imágenes, sitemap, presupuesto de peso |
 | `npm run qa:screens` | Recorrido en Chromium a 375 / 768 / 1440 px con capturas e informe en `.qa/` |
+| `npm run qa:contrast` | Contraste calculado de cada texto visible sobre su fondo efectivo |
+| `npm run qa:interaction` | Menú móvil, recorrido de teclado, movimiento reducido y enlaces |
 
 ### Regeneración de activos
 

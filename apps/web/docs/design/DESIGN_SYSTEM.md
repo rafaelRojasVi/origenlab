@@ -60,6 +60,10 @@ Contraste verificado (WCAG 2.x): `ink-950` sobre `paper` 17,4:1; `ink-800` 13,1:
 `ink-600` 6,8:1; `ink-500` 5,0:1; `teal-800` sobre `paper` 7,3:1; blanco sobre
 `teal-700` 5,5:1; `teal-500` sobre `ink-950` 7,3:1.
 
+`npm run qa:contrast` recalcula el contraste de cada texto visible del sitio
+construido sobre su fondo efectivo. El par más ajustado hoy es `ink-500` sobre
+`surface` con 4,67:1, en las etiquetas mono de la banda de marcas.
+
 Reglas: un solo acento en todo el sitio; sin degradados; el color nunca es el
 único portador de significado; los filetes no transportan información.
 

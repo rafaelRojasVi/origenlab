@@ -76,7 +76,10 @@ const jsonLd = {
   .breadcrumbs [aria-current='page'] {
     color: var(--color-ink-800);
   }
+  /* El separador se pintaba con el color de filete y quedaba en 1,23:1: un
+     glifo visible que nadie podía ver. Los filetes no llevan información;
+     este signo sí estructura la ruta, así que va al mismo tono que el resto. */
   .sep {
-    color: var(--color-hairline);
+    color: var(--color-ink-500);
   }
 </style>
