@@ -7,7 +7,10 @@ const catalogBullet =
 
 export interface Category {
   id: string;
+  /** Nombre completo, usado como H1 de la página de aplicación. */
   name: string;
+  /** Nombre corto para navegación, listas y migas. */
+  shortName: string;
   slug: string;
   description?: string;
   buyerGuide: string;
@@ -18,6 +21,7 @@ export const categories: Category[] = [
   {
     id: '1',
     name: 'Equipos para alimentos',
+    shortName: 'Alimentos',
     slug: 'alimentos',
     description:
       'Equipamiento para análisis y control en entornos de alimentos y calidad asociada.',
@@ -32,6 +36,7 @@ export const categories: Category[] = [
   {
     id: '2',
     name: 'Equipos para control de calidad',
+    shortName: 'Control de calidad',
     slug: 'control-de-calidad',
     description:
       'Instrumentación y equipos orientados a control de calidad y ensayos en laboratorio.',
@@ -46,6 +51,7 @@ export const categories: Category[] = [
   {
     id: '3',
     name: 'Equipos para laboratorio clínico',
+    shortName: 'Laboratorio clínico',
     slug: 'laboratorio-clinico',
     description:
       'Líneas de equipamiento para laboratorio clínico; cotización y asesoría según necesidad.',
