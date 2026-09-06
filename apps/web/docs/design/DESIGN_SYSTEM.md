@@ -97,16 +97,36 @@ en el rol `.t-label`; medidas de 60 a 66 caracteres en texto corrido; sin rayas
 - Ancho de página 80 rem, con 20 / 32 / 48 px de margen exterior (`.shell`).
 - **Un solo radio: 2 px** (`--radius-edge`), en botones, imágenes y campos.
 - **Sin sombras.** La cabecera fija se separa con un filete, no con desenfoque.
-- Movimiento: sólo respuesta a hover y foco, más el desplazamiento de 2 px de la
-  flecha en los enlaces. Nada en bucle, nada de parallax, ninguna librería de
-  animación. Todo lo que se mueve está bajo `prefers-reduced-motion`.
+- Movimiento: respuesta a hover y foco, el desplazamiento de 2 px de la flecha
+  en los enlaces y el revelado al desplazarse de la portada. Nada en bucle, nada
+  de parallax, ninguna librería de animación. Todo lo que se mueve está bajo
+  `prefers-reduced-motion`.
+
+**Revelado al desplazarse** (`[data-reveal]`, definido en `global.css`): una
+transición de opacidad y 12 px de desplazamiento vertical cuando el elemento
+entra en pantalla. Condiciones, todas obligatorias:
+
+1. Es mejora progresiva estricta. El estado inicial oculto sólo existe mientras
+   el documento lleva `data-reveal-ready`, que pone el script de la portada. Sin
+   JavaScript no se oculta nada nunca.
+2. Todo el bloque vive bajo `prefers-reduced-motion: no-preference`, y un cambio
+   de preferencia con la página abierta descarta el estado oculto.
+3. Ningún elemento de la primera pantalla lo lleva: allí el script llegaría
+   después del primer pintado y se vería el parpadeo.
+4. `@media print` fuerza la visibilidad: en papel no hay desplazamiento que
+   dispare nada.
+5. Es una transición, no una animación: `qa:interaction` comprueba que con
+   movimiento reducido no queda ninguna animación activa.
+6. Ningún contenido depende del movimiento para entenderse, y no hay secuestro
+   del desplazamiento.
 
 ---
 
 ## 3. Numeración de secciones
 
-Cada sección de primer nivel lleva un índice: numeral mono, filete y nombre en
-lenguaje llano. Funciona como el índice de capítulos de un manual técnico.
+Cada sección de primer nivel de una **página interior** lleva un índice: numeral
+mono, filete y nombre en lenguaje llano. Funciona como el índice de capítulos de
+un manual técnico.
 
 ```text
 01 ──────── EQUIPOS
@@ -119,9 +139,15 @@ Reglas:
   a mano.
 - Una vez por sección de primer nivel. Nunca dentro de una fila, una ficha o el
   hero.
-- La banda de cotización siempre lleva el último número de la página.
+- En una página interior, la banda de cotización lleva el último número.
 - Es un índice, no una etiqueta decorativa: si una sección no es un capítulo del
   documento, no lleva numeral.
+
+**La portada no se numera.** Encadenar `01` a `05` en la página de inicio la
+convertía en un documento formateado y no en un primer encuentro comercial: el
+numeral prometía un manual que la portada no es. Allí la identidad de cada
+sección la da la etiqueta mono y, sobre todo, el cambio de fondo, de escala y de
+densidad. `ClosingQuoteBand` acepta `index` opcional justamente para eso.
 
 ---
 
@@ -148,6 +174,14 @@ estas resuelve el problema.
 | `ui/Notice` | Aviso comercial, uno por página |
 | `ui/ExternalLink` | Enlace externo, anunciado y marcado |
 | `ui/Icon` | Trazos de Tabler Icons (MIT), 24x24, stroke 1,5 |
+| `ui/LegalDraftNotice` | Estado de borrador de las rutas legales |
+| `ui/PendingFactsTable` | Datos legales que faltan, nombrados uno a uno |
+| `home/Hero` | Portada: titular a escala propia e índice de alcance |
+| `home/BrandWall` | Marcas en dos niveles, por catálogo publicado |
+| `home/ScopeSection` | Las cinco familias, en tres composiciones distintas |
+| `home/ConsultationSection` | Asesoría técnica y la especialista |
+| `home/ProcessSection` | De la consulta a la cotización, en cinco pasos |
+| `home/AudienceSection` | Sectores atendidos y las tres líneas comerciales |
 
 Utilidades globales en `global.css`: `.shell` (ancho y márgenes de página),
 `.section` (ritmo vertical), `.rule-top` (filete de separación), `.link-row`
@@ -155,9 +189,18 @@ Utilidades globales en `global.css`: `.shell` (ancho y márgenes de página),
 
 Acciones: `.btn-primary` (relleno teal), `.btn-secondary` (contorno tinta),
 `.btn-invert` (sólo sobre la banda) y `.link-arrow` (texto y flecha, nunca
-compite con el primario). Una intención, una etiqueta:
-**«Solicitar cotización»**, con la forma corta «Cotizar» sólo en la cabecera
-estrecha, donde el nombre accesible sigue siendo el completo.
+compite con el primario). Una intención, una etiqueta, y el sitio tiene dos:
+
+- **«Solicitar cotización»** pide una propuesta formal. Es la acción de la
+  cabecera, de la banda de cierre y de las páginas de producto. La forma corta
+  «Cotizar» existe sólo en la cabecera estrecha, donde el nombre accesible sigue
+  siendo el completo.
+- **«Cuéntenos su aplicación»** abre la conversación técnica previa. Es la
+  acción de la portada y de la sección de asesoría, porque quien todavía no sabe
+  qué equipo necesita no está pidiendo un precio.
+
+Ambas llegan a `/contacto/`. Las etiquetas viven en `lib/ctaLabels.ts` y no se
+escriben a mano en una plantilla.
 
 ---
 
@@ -190,5 +233,49 @@ producto cargan con prioridad; el resto es diferido.
 - Repetir el aviso de disponibilidad en cada fila.
 - Cualquier script, tipografía o imagen servida desde un tercero.
 - Analítica, píxeles, gestores de etiquetas o chat externo.
-- Movimiento en bucle, parallax o coreografía de scroll.
+- Movimiento en bucle, parallax o secuestro del desplazamiento. El revelado de
+  `[data-reveal]` es la única excepción y sólo con las seis condiciones de la
+  sección 2.
 - Afirmar representación oficial, distribución exclusiva o certificación.
+
+---
+
+## 7. Cifras visibles
+
+Ninguna cifra comercial se escribe en una plantilla. Toda afirmación numérica
+pública vive en `src/data/claims.ts` con redacción exacta, fuente, fecha de
+medición, quién la aprobó, cuándo y si es pública, y llega a la página por
+`publicClaim(id)`, que devuelve `undefined` si falta cualquiera de esos campos.
+Cuando devuelve `undefined` la plantilla omite el elemento entero: no hay texto
+de reserva que pueda confundirse con la cifra no aprobada.
+
+Dos guardas lo sostienen. `validate:catalog` comprueba la forma de cada registro
+y que una plantilla no importe el arreglo `claims` para saltarse la puerta.
+`validate:dist` busca la redacción literal de toda afirmación no aprobada dentro
+del HTML construido y falla si aparece.
+
+El registro también guarda, con `status: 'unavailable'`, las cifras que se
+evaluaron y se descartaron: clientes, ventas, cotizaciones, proyectos, años de
+experiencia e historial de tiempos de respuesta. Están ahí para que nadie las
+vuelva a proponer sin la evidencia que falta. **Los contactos, organizaciones y
+destinatarios de campaña del CRM no son clientes.**
+
+## 8. Rutas legales en borrador
+
+`/privacidad/` y `/aviso-legal/` se construyen desde `src/data/legal.ts` y son
+borradores de revisión, no política vigente. Mientras `isLegalTextApproved()`
+sea falso:
+
+- ambas se sirven con `noindex`, fuera del sitemap, con `Disallow` en
+  `robots.txt` y con `X-Robots-Tag` en `.htaccess`;
+- el pie las enlaza marcadas como borrador, porque un enlace honesto a un
+  borrador es mejor que un enlace ausente;
+- cada página abre con `LegalDraftNotice`, que dice en su primera línea que no
+  es asesoría legal;
+- lo que falta se nombra con `PendingFactsTable` en vez de disolverse en
+  lenguaje jurídico genérico.
+
+Ningún `value` de `legal.ts` puede rellenarse desde el repositorio, y
+`validate:catalog` lo comprueba. El título es «Aviso legal y condiciones de uso»
+y no «Condiciones de venta»: el sitio no tiene carrito, formulario ni pasarela,
+y lo acordado en una operación vive en la cotización.
