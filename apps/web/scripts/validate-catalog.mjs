@@ -40,6 +40,10 @@ const familiesSrc = read('src/data/productFamilies.ts');
 const categoriesSrc = read('src/data/categories.ts');
 const contactSrc = read('src/data/contact.ts');
 const specGroupsSrc = read('src/data/specGroups.ts');
+const claimsSrc = read('src/data/claims.ts');
+const scopeSrc = read('src/data/equipmentScope.ts');
+const consultationSrc = read('src/data/consultation.ts');
+const legalSrc = read('src/data/legal.ts');
 
 const CANONICAL_ORTO_ORDER = [
   'biocen-22',
@@ -231,6 +235,121 @@ const publicPages = walk(join(root, 'src/pages'), '.astro')
   .map((file) => readFileSync(file, 'utf8'))
   .join('\n');
 assert(!publicPages.includes('Oettinger'), 'pages/components: la dirección de calle no se publica');
+
+/* -- 5b. Registro de afirmaciones ---------------------------------------- */
+
+/**
+ * Una cifra visible tiene que ser comprobable por quien llegue después. El
+ * registro obliga a redacción, fuente, fecha de medición, aprobación y estado
+ * público; aquí se comprueba que ningún bloque se salte alguno de esos campos.
+ */
+const claimBlocks = claimsSrc.split(/\n  \{\n/).slice(1);
+assert(claimBlocks.length > 0, 'claims.ts: no se encontró ninguna afirmación');
+
+const claimIds = [];
+for (const block of claimBlocks) {
+  const id = block.match(/id: '([^']+)'/)?.[1];
+  assert(id, 'claims.ts: bloque sin id');
+  if (!id) continue;
+  claimIds.push(id);
+
+  for (const field of ['text:', 'value:', 'source:', 'measuredOn:', 'approvedBy:', 'approvedOn:', 'status:', 'visibility:']) {
+    assert(block.includes(field), `claims.ts ${id}: falta ${field}`);
+  }
+
+  const status = block.match(/status: '([^']+)'/)?.[1];
+  assert(
+    ['approved', 'proposed', 'unavailable'].includes(status ?? ''),
+    `claims.ts ${id}: status desconocido ${status}`,
+  );
+
+  if (status === 'approved') {
+    // Aprobar sin fuente ni fecha convertiría el registro en decoración.
+    assert(!/source: null/.test(block), `claims.ts ${id}: aprobada sin fuente`);
+    assert(!/measuredOn: null/.test(block), `claims.ts ${id}: aprobada sin fecha de medición`);
+    assert(!/approvedBy: null/.test(block), `claims.ts ${id}: aprobada sin responsable`);
+    assert(!/approvedOn: null/.test(block), `claims.ts ${id}: aprobada sin fecha de aprobación`);
+    assert(!/text: '',/.test(block), `claims.ts ${id}: aprobada sin redacción pública`);
+  } else {
+    assert(
+      /visibility: 'internal'/.test(block),
+      `claims.ts ${id}: una afirmación no aprobada no puede ser pública`,
+    );
+    assert(block.includes('note:'), `claims.ts ${id}: sin aprobar y sin explicar por qué`);
+  }
+}
+
+for (const id of ['clientes-atendidos', 'ventas-cerradas', 'anos-de-experiencia']) {
+  assert(claimIds.includes(id), `claims.ts: falta la constancia de la cifra omitida ${id}`);
+}
+
+// Ninguna plantilla puede saltarse la puerta: `publicClaim` es el único acceso.
+for (const file of walk(join(root, 'src'), '.astro')) {
+  const src = readFileSync(file, 'utf8');
+  const rel = file.slice(root.length + 1);
+  if (!src.includes("from '../../data/claims'") && !src.includes("from '../data/claims'")) continue;
+  // `claims.ts` en un comentario es legítimo; `claims.filter(...)` en una
+  // plantilla se salta la puerta y publicaría una cifra sin aprobar.
+  assert(
+    !/\bclaims\.(?!ts\b)[a-zA-Z_$]/.test(src) && !/import \{[^}]*\bclaims\b[^}]*\}/.test(src),
+    `${rel}: usar publicClaim(), no el arreglo claims directamente`,
+  );
+}
+
+/* -- 5c. Alcance, asesoría y estado legal -------------------------------- */
+
+// Las familias sin ficha no pueden llevar modelo, marca ni cifra asociada.
+const consultaEntries = scopeSrc.split(/\n  \{\n/).slice(1).filter((block) => block.includes("tier: 'consulta'"));
+assert(consultaEntries.length >= 3, 'equipmentScope.ts: se esperan al menos 3 familias por consulta');
+for (const block of consultaEntries) {
+  const id = block.match(/id: '([^']+)'/)?.[1] ?? '(sin id)';
+  for (const field of ['href:', 'countClaimId:', 'imageProductSlug:', 'brandSlug:']) {
+    assert(!block.includes(field), `equipmentScope.ts ${id}: una familia por consulta no puede declarar ${field}`);
+  }
+  assert(block.includes('question:'), `equipmentScope.ts ${id}: falta la pregunta que abre la consulta`);
+}
+
+// Sobre la especialista sólo viven los tres hechos confirmados.
+assert(
+  /name: 'Tatiana Vivanco'/.test(consultationSrc),
+  'consultation.ts: falta el nombre confirmado de la especialista',
+);
+for (const field of ['bio', 'photo', 'yearsOfExperience', 'linkedin', 'degree']) {
+  assert(
+    !new RegExp(`\\b${field}\\b\\s*:`, 'i').test(consultationSrc),
+    `consultation.ts: ${field} no está confirmado y no puede publicarse`,
+  );
+}
+assert(
+  !/consultant[\s\S]{0,400}(años de experiencia|experiencia de \d)/i.test(consultationSrc),
+  'consultation.ts: no declarar años de experiencia sin dato confirmado',
+);
+
+// Ningún dato legal puede rellenarse desde el repositorio.
+const legalFactBlocks = legalSrc.split(/\n  \{\n/).slice(1).filter((block) => block.includes('owner:'));
+assert(legalFactBlocks.length >= 8, 'legal.ts: inventario de datos legales incompleto');
+for (const block of legalFactBlocks) {
+  const id = block.match(/id: '([^']+)'/)?.[1] ?? '(sin id)';
+  assert(/value: null/.test(block), `legal.ts ${id}: un dato legal no puede rellenarse desde el repositorio`);
+  assert(/owner: '(CONTENIDO|LEGAL)'/.test(block), `legal.ts ${id}: falta owner`);
+  assert(block.includes('blocks:'), `legal.ts ${id}: falta qué bloquea`);
+}
+assert(
+  /reviewedBy: null as string \| null/.test(legalSrc),
+  'legal.ts: el texto legal no puede darse por revisado sin nombre de profesional',
+);
+// El sitio no tiene carrito ni pasarela: sus condiciones regulan el uso de un
+// sitio informativo, no una venta. El título tiene que decir eso.
+const avisoSrc = read('src/pages/aviso-legal.astro');
+const avisoTitle = avisoSrc.match(/<PageIntro\s+title="([^"]+)"/)?.[1] ?? '';
+assert(
+  /aviso legal/i.test(avisoTitle) && !/condiciones de venta/i.test(avisoTitle),
+  `aviso-legal.astro: el título "${avisoTitle}" no refleja un sitio informativo sin venta en línea`,
+);
+assert(
+  !existsSync(join(root, 'src/pages/condiciones-de-venta.astro')),
+  'pages: no crear condiciones de venta; el sitio no cierra ninguna operación en línea',
+);
 
 /* -- 6. Activos de marca y sociales -------------------------------------- */
 

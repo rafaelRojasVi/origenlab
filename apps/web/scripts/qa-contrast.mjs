@@ -32,6 +32,8 @@ const ROUTES = [
   '/servicios/',
   '/nosotros/',
   '/contacto/',
+  '/privacidad/',
+  '/aviso-legal/',
   '/404.html',
 ];
 

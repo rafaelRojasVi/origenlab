@@ -40,7 +40,36 @@ function walk(dir, ext, acc = []) {
 const pages = walk(dist, '.html').filter((file) => !relative(dist, file).startsWith('email/'));
 assert(pages.length >= 20, `dist: se esperaban al menos 20 páginas, hay ${pages.length}`);
 
-const INTERNAL = ['logo-lab/index.html', '404.html'];
+/**
+ * Superficies que no se indexan: la página de trabajo de marca, el 404 y los
+ * dos borradores legales. Las rutas legales salen de esta lista el día que
+ * `legal.ts` registre una revisión profesional; hasta entonces se sirven con
+ * noindex, fuera del sitemap y con Disallow en robots.txt.
+ */
+const INTERNAL = [
+  'logo-lab/index.html',
+  '404.html',
+  'privacidad/index.html',
+  'aviso-legal/index.html',
+];
+
+/**
+ * Afirmaciones sin aprobar: su redacción literal no puede aparecer en ninguna
+ * página construida. Es la comprobación de extremo a extremo del registro de
+ * `src/data/claims.ts`; la forma de cada registro la comprueba
+ * `validate:catalog`.
+ */
+const claimsSrc = readFileSync(join(root, 'src/data/claims.ts'), 'utf8');
+const withheldTexts = claimsSrc
+  .split(/\n  \{\n/)
+  .slice(1)
+  .filter((block) => !/status: 'approved'/.test(block))
+  .map((block) => ({
+    id: block.match(/id: '([^']+)'/)?.[1] ?? '(sin id)',
+    text: block.match(/text: '([^']*)'/)?.[1] ?? '',
+  }))
+  .filter((claim) => claim.text.length > 0);
+assert(withheldTexts.length > 0, 'claims.ts: se esperaba al menos una afirmación redactada sin aprobar');
 
 for (const file of pages) {
   const rel = relative(dist, file);
@@ -54,7 +83,14 @@ for (const file of pages) {
   for (const match of html.matchAll(/<link[^>]+rel="stylesheet"[^>]+href="([^"]+)"/g)) {
     assert(!/^(https?:)?\/\//.test(match[1]), at(`hoja de estilo externa ${match[1]}`));
   }
-  assert(!/tidio|googletagmanager|google-analytics|fonts\.googleapis|fonts\.gstatic|hotjar|facebook\.net/i.test(html), at('rastro de un tercero'));
+  // Sólo sobre el marcado: el rastro de un tercero vive en un atributo, no en
+  // una frase. La política de privacidad nombra a Tidio y a las tipografías de
+  // Google justamente para dejar constancia de que se retiraron.
+  const markup = (html.match(/<[^>]+>/g) ?? []).join(' ');
+  assert(
+    !/tidio|googletagmanager|google-analytics|fonts\.googleapis|fonts\.gstatic|hotjar|facebook\.net/i.test(markup),
+    at('rastro de un tercero'),
+  );
   assert(!html.includes('name="generator"'), at('expone la versión del generador'));
 
   /* -- Cabecera ---------------------------------------------------------- */
@@ -110,6 +146,15 @@ for (const file of pages) {
   assert(!/\s–\s/.test(visible), at('semirraya usada como separador en la copia visible'));
   assert(!visible.includes('...'), at('tres puntos en vez de puntos suspensivos'));
 
+  /* -- Afirmaciones sin aprobar ------------------------------------------ */
+  const flat = visible.replace(/\s+/g, ' ');
+  for (const claim of withheldTexts) {
+    assert(
+      !flat.includes(claim.text),
+      at(`publica la afirmación sin aprobar "${claim.text}" (claims.ts: ${claim.id})`),
+    );
+  }
+
   /* -- Superficies internas --------------------------------------------- */
   if (INTERNAL.includes(rel)) {
     assert(/<meta name="robots" content="noindex/.test(html), at('superficie interna sin noindex'));
@@ -146,11 +191,19 @@ const robots = readFileSync(join(dist, 'robots.txt'), 'utf8');
 assert(robots.includes('Sitemap: https://origenlab.cl/sitemap-index.xml'), 'robots.txt: sitemap mal referenciado');
 assert(robots.includes('Disallow: /logo-lab/'), 'robots.txt: /logo-lab/ debe quedar fuera del índice');
 assert(robots.includes('Disallow: /email/'), 'robots.txt: /email/ debe quedar fuera del índice');
+for (const route of ['/privacidad/', '/aviso-legal/']) {
+  assert(robots.includes(`Disallow: ${route}`), `robots.txt: el borrador ${route} debe quedar fuera del índice`);
+  assert(!sitemapUrls.some((url) => url.includes(route)), `sitemap: contiene el borrador legal ${route}`);
+}
 
 const htaccess = readFileSync(join(dist, '.htaccess'), 'utf8');
 assert(htaccess.includes('ErrorDocument 404 /404.html'), '.htaccess: falta ErrorDocument');
 assert(/RewriteCond %\{HTTP_HOST\} \^www\\\./.test(htaccess), '.htaccess: falta la redirección de www al dominio raíz');
 assert(htaccess.includes('Content-Security-Policy'), '.htaccess: falta la CSP');
+assert(
+  /X-Robots-Tag[\s\S]{0,200}privacidad|privacidad[\s\S]{0,200}X-Robots-Tag/.test(htaccess),
+  '.htaccess: los borradores legales necesitan X-Robots-Tag noindex',
+);
 
 /* -- Peso ----------------------------------------------------------------- */
 

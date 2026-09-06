@@ -33,6 +33,8 @@ const ROUTES = [
   ['servicios', '/servicios/'],
   ['nosotros', '/nosotros/'],
   ['contacto', '/contacto/'],
+  ['privacidad', '/privacidad/'],
+  ['aviso-legal', '/aviso-legal/'],
   ['404', '/404.html'],
 ];
 
@@ -113,13 +115,23 @@ for (const [name, path] of ROUTES) {
     // eventos `load` (una imagen que el navegador decidió no cargar nunca los
     // emite y la espera no terminaría).
     await page.evaluate(async () => {
+      // `scroll-behavior: smooth` convierte cada salto en una animación: a los
+      // 120 ms el navegador ha recorrido una fracción y el siguiente salto la
+      // reinicia, de modo que el recorrido nunca llegaba al pie de la página.
+      // Se desactiva durante el recorrido y se restaura al terminar.
+      const root = document.documentElement;
+      const previous = root.style.scrollBehavior;
+      root.style.scrollBehavior = 'auto';
+
       const step = Math.round(window.innerHeight * 0.8);
       for (let y = 0; y < document.body.scrollHeight; y += step) {
         window.scrollTo(0, y);
         await new Promise((resolve) => setTimeout(resolve, 120));
       }
       window.scrollTo(0, 0);
-      await new Promise((resolve) => setTimeout(resolve, 120));
+      // Margen para que terminen las transiciones de revelado antes de capturar.
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      root.style.scrollBehavior = previous;
     });
     await page.waitForLoadState('networkidle');
 
