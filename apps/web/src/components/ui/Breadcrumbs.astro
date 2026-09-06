@@ -1,0 +1,82 @@
+---
+import { site } from '../../config/site';
+
+export interface Crumb {
+  label: string;
+  href?: string;
+}
+
+interface Props {
+  items: readonly Crumb[];
+}
+
+const { items } = Astro.props;
+const trail: Crumb[] = [{ label: 'Inicio', href: '/' }, ...items];
+
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'BreadcrumbList',
+  itemListElement: trail.map((crumb, i) => ({
+    '@type': 'ListItem',
+    position: i + 1,
+    name: crumb.label,
+    ...(crumb.href ? { item: `${site.baseUrl}${crumb.href}` } : {}),
+  })),
+};
+---
+
+<nav aria-label="Ruta de navegación" class="breadcrumbs">
+  <ol>
+    {
+      trail.map((crumb, i) => (
+        <li>
+          {crumb.href && i < trail.length - 1 ? (
+            <a href={crumb.href}>{crumb.label}</a>
+          ) : (
+            <span aria-current="page">{crumb.label}</span>
+          )}
+          {i < trail.length - 1 && <span class="sep" aria-hidden="true">/</span>}
+        </li>
+      ))
+    }
+  </ol>
+</nav>
+<script type="application/ld+json" set:html={JSON.stringify(jsonLd)} is:inline />
+
+<style>
+  .breadcrumbs {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+  }
+  .breadcrumbs ol {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .breadcrumbs li {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .breadcrumbs a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.5rem;
+    color: var(--color-ink-500);
+    transition: color 150ms;
+  }
+  .breadcrumbs a:hover {
+    color: var(--color-ink-950);
+  }
+  .breadcrumbs [aria-current='page'] {
+    color: var(--color-ink-800);
+  }
+  .sep {
+    color: var(--color-hairline);
+  }
+</style>

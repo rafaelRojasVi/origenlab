@@ -1,0 +1,174 @@
+---
+import { site } from '../config/site';
+import { contact, telUrl } from '../data/contact';
+import { buildWhatsAppQuoteUrl } from '../lib/whatsapp';
+import { categories } from '../data/categories';
+import { productFamilies } from '../data/productFamilies';
+import SiteLogo from './SiteLogo.astro';
+import Icon from './ui/Icon.astro';
+
+const year = new Date().getFullYear();
+const whatsappHref = buildWhatsAppQuoteUrl();
+---
+
+<footer class="site-footer on-ink">
+  <div class="shell site-footer__inner">
+    <div class="site-footer__grid">
+      <nav aria-label="Productos">
+        <h2 class="t-label site-footer__heading">Productos</h2>
+        <ul>
+          {
+            productFamilies.map((family) => (
+              <li>
+                <a href={`/productos/${family.slug}/`}>{family.name}</a>
+              </li>
+            ))
+          }
+          <li><a href="/marcas/serva-electrophoresis/">Reactivos SERVA</a></li>
+          <li><a href="/productos/">Todo el catálogo</a></li>
+        </ul>
+      </nav>
+
+      <nav aria-label="Aplicaciones">
+        <h2 class="t-label site-footer__heading">Aplicaciones</h2>
+        <ul>
+          {
+            categories.map((category) => (
+              <li>
+                <a href={`/categorias/${category.slug}/`}>{category.shortName}</a>
+              </li>
+            ))
+          }
+          <li><a href="/aplicaciones/">Todas las aplicaciones</a></li>
+        </ul>
+      </nav>
+
+      <nav aria-label="Empresa">
+        <h2 class="t-label site-footer__heading">Empresa</h2>
+        <ul>
+          <li><a href="/nosotros/">Nosotros</a></li>
+          <li><a href="/servicios/">Servicios</a></li>
+          <li><a href="/marcas/">Marcas</a></li>
+          <li><a href="/contacto/">Contacto</a></li>
+        </ul>
+      </nav>
+
+      <div class="site-footer__contact">
+        <h2 class="t-label site-footer__heading">Contacto</h2>
+        <ul>
+          <li>
+            <a href={`mailto:${contact.email}`}>
+              <Icon name="mail" size={17} />{contact.email}
+            </a>
+          </li>
+          <li>
+            <a href={telUrl()}>
+              <Icon name="phone" size={17} />{contact.phoneDisplay}
+            </a>
+          </li>
+          <li>
+            <a href={whatsappHref} target="_blank" rel="noopener noreferrer">
+              <Icon name="whatsapp" size={17} />WhatsApp
+              <span class="sr-only">(abre WhatsApp en una pestaña nueva)</span>
+            </a>
+          </li>
+          <li class="site-footer__static">
+            <Icon name="clock" size={17} />Lunes a viernes, {contact.hours}
+          </li>
+          <li class="site-footer__static">
+            <Icon name="map-pin" size={17} />{contact.locationPublic}
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <!--
+      Fila legal. El sitio deja preparado el lugar para «Privacidad» y «Aviso
+      legal», pero no los enlaza hasta que exista texto revisado: publicar una
+      política redactada sin revisión jurídica sería peor que no tenerla.
+      Pendientes en docs/design/CONTENT_NEEDED.md (identidad legal, política de
+      privacidad, canal de derechos del titular).
+    -->
+    <div class="site-footer__legal">
+      <a href="/" class="site-footer__brand" aria-label="OrigenLab, ir al inicio">
+        <SiteLogo tone="paper" size={26} />
+      </a>
+      <p class="site-footer__copy">
+        &copy; {year} {site.name}. Equipos para laboratorio. Base en {contact.city}, atención en todo Chile.
+      </p>
+    </div>
+  </div>
+</footer>
+
+<style>
+  .site-footer {
+    background-color: var(--color-ink-950);
+    color: var(--color-onink-300);
+  }
+  .site-footer__inner {
+    padding-block: 3.5rem 2.5rem;
+  }
+  .site-footer__grid {
+    display: grid;
+    gap: 2.5rem;
+  }
+  .site-footer__heading {
+    color: var(--color-onink-500);
+    margin-bottom: 0.875rem;
+  }
+  .site-footer ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .site-footer a,
+  .site-footer__static {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 2.25rem;
+    font-size: 0.9375rem;
+    color: var(--color-onink-300);
+    transition: color 150ms;
+  }
+  .site-footer a:hover {
+    color: #fff;
+  }
+  .site-footer__static {
+    color: var(--color-onink-500);
+  }
+  .site-footer__legal {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.25rem;
+    margin-top: 3.5rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--color-onink-hairline);
+  }
+  .site-footer__brand {
+    display: inline-flex;
+    border-radius: var(--radius-edge);
+  }
+  .site-footer__copy {
+    font-size: 0.8125rem;
+    color: var(--color-onink-500);
+    margin: 0;
+  }
+  @media (min-width: 640px) {
+    .site-footer__grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 2.5rem 3rem;
+    }
+  }
+  @media (min-width: 1024px) {
+    .site-footer__inner {
+      padding-block: 5rem 3rem;
+    }
+    .site-footer__grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr)) 1.3fr;
+      gap: 4rem;
+    }
+  }
+</style>

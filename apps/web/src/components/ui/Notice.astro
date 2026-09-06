@@ -1,0 +1,24 @@
+---
+/**
+ * Aviso comercial o de alcance. Una sola vez por página: la repetición de
+ * descargos en cada ficha se lee como ansiedad, no como rigor.
+ */
+interface Props {
+  class?: string;
+  [key: string]: unknown;
+}
+const { class: className = '', ...rest } = Astro.props;
+---
+
+<p class:list={['notice t-small', className]} {...rest}>
+  <slot />
+</p>
+
+<style>
+  .notice {
+    border-left: 1px solid var(--color-teal-700);
+    padding-left: 1rem;
+    color: var(--color-ink-600);
+    max-width: 62ch;
+  }
+</style>

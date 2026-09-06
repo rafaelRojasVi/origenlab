@@ -1,61 +1,356 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import HomeHero from '../components/HomeHero.astro';
-import HomeCommercialLines from '../components/HomeCommercialLines.astro';
-import HomeCategoryCards from '../components/HomeCategoryCards.astro';
-import HomeProcess from '../components/HomeProcess.astro';
-import HomeFinalCTA from '../components/HomeFinalCTA.astro';
+import Hero from '../components/home/Hero.astro';
+import BrandWall from '../components/home/BrandWall.astro';
+import SectionIndex from '../components/ui/SectionIndex.astro';
+import ModelRow from '../components/ui/ModelRow.astro';
+import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
+import Icon from '../components/ui/Icon.astro';
+import Notice from '../components/ui/Notice.astro';
+import BrandLogo from '../components/ui/BrandLogo.astro';
 import { site } from '../config/site';
+import { company } from '../data/company';
+import { categories } from '../data/categories';
 import { faqItems } from '../data/faq';
+import { getBrandBySlug, getOrtoalresaCentrifuges, getProductsByBrandId } from '../lib/catalog';
+import { faqJsonLd, organizationJsonLd, websiteJsonLd } from '../lib/jsonld';
+
+const centrifuges = getOrtoalresaCentrifuges();
+const serva = getBrandBySlug('serva-electrophoresis');
+const servaProducts = serva ? getProductsByBrandId(serva.id) : [];
+
+/** Cómo se llega de una consulta a una cotización. Cada paso corresponde a algo
+ *  que el negocio ya declara en `services.ts`, `faq.ts` o `categories.ts`. */
+const quoteSteps = [
+  {
+    title: 'Nos escribe',
+    body: 'Indique aplicación o equipo de referencia, institución y ciudad. Con eso podemos orientar la primera respuesta.',
+  },
+  {
+    title: 'Acotamos alternativas',
+    body: 'Asesoría técnica para reducir opciones según su flujo de trabajo, sin compromiso de compra.',
+  },
+  {
+    title: 'Cotización',
+    body: 'Propuesta formal con configuración, accesorios y condiciones comerciales confirmadas por escrito.',
+  },
+  {
+    title: 'Después de la compra',
+    body: 'Soporte, garantía según fabricante e instalación o puesta en marcha cuando el equipo lo requiere.',
+  },
+];
 ---
 
 <Layout
-  title={`${site.name} — ${site.tagline}`}
+  title={`${site.name} | ${site.tagline}`}
   description={site.description}
-  mainClass="mx-auto max-w-7xl px-5 pb-16 pt-0 md:px-6 md:pb-20"
+  isHome
+  jsonLd={[organizationJsonLd(), websiteJsonLd(), faqJsonLd(faqItems)]}
 >
-  <HomeHero />
+  <Hero />
 
-  <div class="space-y-2 md:space-y-4">
-    <HomeCommercialLines />
-    <HomeCategoryCards />
-    <HomeProcess />
+  <BrandWall />
 
-    <section class="home-section" aria-labelledby="faq-heading">
-      <header class="max-w-2xl">
-        <h2 id="faq-heading" class="text-2xl font-bold tracking-tight text-brand-950 md:text-3xl">
-          Preguntas frecuentes
-        </h2>
-        <p class="mt-2 text-sm text-slate-600">Respuestas breves sobre cotización y atención comercial.</p>
-      </header>
-      <div
-        class="mt-8 divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200/60 bg-white shadow-sm"
-        role="region"
-        aria-label="Preguntas frecuentes"
-      >
-        {
-          faqItems.map((item) => (
-            <details class="group px-5 py-4 open:bg-slate-50/60" name="faq">
-              <summary
-                class="cursor-pointer list-none text-sm font-semibold text-slate-900 marker:content-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden"
-              >
-                <span class="flex items-center justify-between gap-3">
-                  {item.question}
-                  <span
-                    class="shrink-0 text-slate-400 motion-safe:transition group-open:rotate-180"
-                    aria-hidden="true"
-                  >
-                    ▼
-                  </span>
-                </span>
-              </summary>
-              <p class="mt-3 text-sm leading-relaxed text-slate-600">{item.answer}</p>
-            </details>
-          ))
-        }
+  <section class="shell section" aria-labelledby="equipos-title">
+    <SectionIndex index={1} label="Equipos" />
+    <div class="lead-row">
+      <div>
+        <h2 id="equipos-title" class="t-h2">Centrífugas Ortoalresa</h2>
+        <p class="t-body lead-row__body">
+          Cinco modelos de catálogo, desde microcentrífugas ventiladas hasta equipos
+          refrigerados de gran capacidad. Especificaciones según documentación del fabricante.
+        </p>
       </div>
-    </section>
+      <a href="/productos/centrifugas/" class="link-arrow lead-row__link">
+        Ver la familia completa
+        <Icon name="arrow-right" size={18} class="arrow" />
+      </a>
+    </div>
 
-    <HomeFinalCTA />
-  </div>
+    <ul class="model-list">
+      {centrifuges.map((product) => <ModelRow product={product} />)}
+    </ul>
+
+    {
+      serva && servaProducts.length > 0 && (
+        <div class="other-line">
+          <BrandLogo brand={serva} scale={1.1} class="other-line__logo" />
+          <div>
+            <h3 class="t-h3">Reactivos e insumos</h3>
+            <p class="t-small other-line__body">{serva.listSummary}</p>
+            <p class="t-data other-line__meta">
+              {servaProducts.length} referencias publicadas, pedidos gestionados por OrigenLab
+            </p>
+          </div>
+          <a href={`/marcas/${serva.slug}/`} class="link-arrow">
+            Ver la línea SERVA
+            <Icon name="arrow-right" size={18} class="arrow" />
+          </a>
+        </div>
+      )
+    }
+
+    <Notice class="mt-10">
+      Cotización y disponibilidad sujetas a confirmación comercial. La configuración, los
+      accesorios y las condiciones se confirman en la cotización.
+    </Notice>
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="aplicaciones-title">
+    <SectionIndex index={2} label="Aplicaciones" />
+    <h2 id="aplicaciones-title" class="t-h2">Tres líneas de trabajo</h2>
+    <p class="t-lead mt-5">{company.homeIntro}</p>
+
+    <ol class="line-list">
+      {
+        categories.map((category, i) => (
+          <li>
+            <a href={`/categorias/${category.slug}/`}>
+              <span class="line-list__num t-data" aria-hidden="true">{String(i + 1).padStart(2, '0')}</span>
+              <span class="line-list__body">
+                <span class="line-list__name">{category.shortName}</span>
+                <span class="line-list__desc t-small">{category.description}</span>
+              </span>
+              <Icon name="arrow-right" size={20} class="line-list__go" />
+            </a>
+          </li>
+        ))
+      }
+    </ol>
+    <a href="/aplicaciones/" class="link-arrow mt-8">
+      Ver todas las aplicaciones y sectores
+      <Icon name="arrow-right" size={18} class="arrow" />
+    </a>
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="proceso-title">
+    <SectionIndex index={3} label="Cómo cotizamos" />
+    <h2 id="proceso-title" class="t-h2">De la consulta a la cotización</h2>
+    <ol class="steps">
+      {
+        quoteSteps.map((step, i) => (
+          <li class="step">
+            <span class="step__num t-data" aria-hidden="true">{i + 1}</span>
+            <h3 class="step__title">{step.title}</h3>
+            <p class="step__body t-small">{step.body}</p>
+          </li>
+        ))
+      }
+    </ol>
+    <a href="/servicios/" class="link-arrow mt-10">
+      Servicios y postventa
+      <Icon name="arrow-right" size={18} class="arrow" />
+    </a>
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="faq-title">
+    <SectionIndex index={4} label="Preguntas frecuentes" />
+    <h2 id="faq-title" class="t-h2">Antes de escribirnos</h2>
+    <div class="faq">
+      {
+        faqItems.map((item) => (
+          <details name="faq" class="faq__item">
+            <summary>
+              <span>{item.question}</span>
+              <Icon name="chevron-down" size={20} class="faq__chevron" />
+            </summary>
+            <p class="t-body faq__answer">{item.answer}</p>
+          </details>
+        ))
+      }
+    </div>
+  </section>
+
+  <ClosingQuoteBand
+    index={5}
+    title="Cuéntenos qué necesita medir, separar o preparar."
+    body="Responda con la aplicación, la institución y su ciudad. Con eso acotamos alternativas y preparamos una cotización con configuración y condiciones por escrito."
+  />
 </Layout>
+
+<style>
+  .lead-row {
+    display: grid;
+    gap: 1.5rem;
+    margin-bottom: 2.5rem;
+  }
+  .lead-row__body {
+    margin-top: 1rem;
+  }
+  .model-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+
+  .other-line {
+    display: grid;
+    gap: 1.25rem;
+    padding-block: 1.75rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .other-line__logo {
+    margin-bottom: 1.25rem;
+  }
+  .other-line__body {
+    margin-top: 0.5rem;
+    color: var(--color-ink-600);
+    max-width: 60ch;
+  }
+  .other-line__meta {
+    margin-top: 0.75rem;
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+  }
+
+  /* --- Aplicaciones --- */
+  .line-list {
+    list-style: none;
+    margin: 3rem 0 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .line-list li {
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .line-list a {
+    display: grid;
+    grid-template-columns: 2.5rem minmax(0, 1fr) 1.5rem;
+    align-items: baseline;
+    gap: 1rem;
+    padding-block: 1.5rem;
+    transition: background-color 150ms;
+  }
+  .line-list a:hover {
+    background-color: var(--color-surface);
+  }
+  .line-list__num {
+    color: var(--color-ink-500);
+    font-size: 0.8125rem;
+  }
+  .line-list__name {
+    display: block;
+    font-size: 1.375rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+    letter-spacing: -0.015em;
+  }
+  .line-list__desc {
+    display: block;
+    margin-top: 0.375rem;
+    color: var(--color-ink-600);
+    max-width: 56ch;
+  }
+  .line-list__go {
+    align-self: center;
+    justify-self: end;
+    color: var(--color-ink-500);
+  }
+  .line-list a:hover .line-list__go {
+    color: var(--color-teal-800);
+  }
+
+  /* --- Pasos --- */
+  /* Los cuatro pasos comparten un solo filete: el proceso es uno, no cuatro
+     bloques. En escritorio la regla es continua y las columnas cuelgan de ella. */
+  .steps {
+    list-style: none;
+    margin: 3rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .step {
+    padding-block: 1.5rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .step__num {
+    color: var(--color-teal-800);
+    font-size: 0.8125rem;
+  }
+  .step__title {
+    margin-top: 0.5rem;
+    font-size: 1.0625rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+  .step__body {
+    margin-top: 0.5rem;
+    color: var(--color-ink-600);
+  }
+
+  /* --- FAQ --- */
+  .faq {
+    margin-top: 3rem;
+    border-top: 1px solid var(--color-ink-950);
+    max-width: 52rem;
+  }
+  .faq__item {
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .faq__item summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    min-height: 3.5rem;
+    padding-block: 1rem;
+    font-size: 1.0625rem;
+    font-weight: 500;
+    color: var(--color-ink-950);
+    cursor: pointer;
+    list-style: none;
+  }
+  .faq__item summary::-webkit-details-marker {
+    display: none;
+  }
+  .faq__chevron {
+    color: var(--color-ink-500);
+    flex-shrink: 0;
+  }
+  .faq__item[open] .faq__chevron {
+    transform: rotate(180deg);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .faq__chevron {
+      transition: transform 150ms;
+    }
+  }
+  .faq__answer {
+    padding-bottom: 1.5rem;
+    color: var(--color-ink-600);
+  }
+
+  @media (min-width: 768px) {
+    .lead-row {
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: end;
+      gap: 3rem;
+      margin-bottom: 3rem;
+    }
+    .other-line {
+      grid-template-columns: 15rem minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 3rem;
+      padding-block: 2.25rem;
+    }
+    .other-line__logo {
+      margin-bottom: 0;
+    }
+    .steps {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      column-gap: 3rem;
+    }
+    .step {
+      border-bottom: none;
+      padding-top: 1.75rem;
+    }
+    .line-list a {
+      grid-template-columns: 3.5rem minmax(0, 1fr) 2rem;
+      gap: 2rem;
+      padding-block: 2rem;
+    }
+  }
+</style>

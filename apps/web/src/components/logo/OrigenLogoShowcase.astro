@@ -1,5 +1,5 @@
 ---
-/** Dev-only layout helper for `/logo-lab` — compares the three mark directions. */
+/** Dev-only layout helper for `/logo-lab`, compares the three mark directions. */
 import OrigenLogoMarkStatic from './OrigenLogoMarkStatic.astro';
 import OrigenLogoLockupAnimated from './OrigenLogoLockupAnimated.astro';
 import OrigenThreeBodyCanvas from './OrigenThreeBodyCanvas.astro';
@@ -20,7 +20,7 @@ const tradeoffs: Record<MarkSolution, string> = {
   <article class="overflow-hidden rounded-2xl border border-brand-800/40 bg-brand-950 shadow-lg">
     <header class="border-b border-brand-800/50 px-6 py-5">
       <h2 class="text-xl font-bold text-brand-50">Animated hero</h2>
-      <p class="mt-1 text-sm text-brand-200/90">Strongest motion — {heroMotion.label}.</p>
+      <p class="mt-1 text-sm text-brand-200/90">Strongest motion, {heroMotion.label}.</p>
       <p class="mt-2 text-sm font-semibold text-brand-300">Recommended for home hero · {heroMotion.loopSeconds}s loop</p>
       <p class="mt-1 text-xs text-brand-400/90">Tradeoff: {tradeoffs.premium} Needs JS; static fallback for reduced motion.</p>
     </header>
@@ -74,7 +74,7 @@ const tradeoffs: Record<MarkSolution, string> = {
       <OrigenLogoMarkStatic size={16} variant="dark" solution="minimal" showRings={false} />
       <OrigenLogoMarkStatic size={24} variant="dark" solution="minimal" showRings={false} />
       <OrigenLogoMarkStatic size={32} variant="dark" solution="minimal" showRings={false} />
-      <span class="text-xs text-slate-500">16 / 24 / 32px static — minimal solution</span>
+      <span class="text-xs text-slate-500">16 / 24 / 32px static, minimal solution</span>
     </div>
     <p class="mt-3 text-xs text-slate-600">Tradeoff: {tradeoffs.minimal}. Favicon stays static in production.</p>
   </article>
@@ -135,7 +135,7 @@ const tradeoffs: Record<MarkSolution, string> = {
               <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">Favicon scale (16px static)</h3>
               <div class="flex items-center gap-4 rounded-xl border border-slate-200 bg-brand-950 px-6 py-6">
                 <OrigenLogoMarkStatic size={16} variant="dark" solution={solution} showRings={solution !== 'trace'} />
-                <span class="text-xs text-brand-200">Browser tab — static only</span>
+                <span class="text-xs text-brand-200">Browser tab, static only</span>
               </div>
             </div>
 

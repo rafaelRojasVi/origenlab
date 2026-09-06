@@ -1,0 +1,72 @@
+---
+import { site } from '../config/site';
+
+/**
+ * Cabecera del documento. Un solo patrón de título («Página | OrigenLab»),
+ * canónica con barra final coherente con `trailingSlash: 'always'`, previsualización
+ * social en PNG y un hueco para JSON-LD por página.
+ */
+interface Props {
+  title: string;
+  description: string;
+  /** `true` sólo en la portada, donde el título ya es la marca. */
+  isHome?: boolean;
+  noindex?: boolean;
+  /** Objetos JSON-LD adicionales de la página. */
+  jsonLd?: readonly unknown[];
+  /** Imagen social específica (ruta bajo public/). */
+  ogImagePath?: string;
+}
+
+const { title, description, isHome = false, noindex = false, jsonLd = [], ogImagePath } =
+  Astro.props;
+
+const fullTitle = isHome ? title : `${title} | ${site.name}`;
+const path = Astro.url.pathname.replace(/\/+$/, '');
+const canonicalUrl = path === '' ? `${site.baseUrl}/` : `${site.baseUrl}${path}/`;
+const ogImageUrl = `${site.baseUrl}${ogImagePath ?? site.ogImagePath}`;
+---
+
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{fullTitle}</title>
+<meta name="description" content={description} />
+<link rel="canonical" href={canonicalUrl} />
+{noindex && <meta name="robots" content="noindex, nofollow" />}
+<meta name="theme-color" content={site.themeColor} />
+
+<link rel="icon" href="/favicon.ico" sizes="32x32" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+<link
+  rel="preload"
+  href="/fonts/plus-jakarta-sans-latin-wght-normal.woff2"
+  as="font"
+  type="font/woff2"
+  crossorigin
+/>
+<link
+  rel="preload"
+  href="/fonts/ibm-plex-mono-latin-400-normal.woff2"
+  as="font"
+  type="font/woff2"
+  crossorigin
+/>
+
+<meta property="og:type" content="website" />
+<meta property="og:locale" content="es_CL" />
+<meta property="og:site_name" content={site.name} />
+<meta property="og:title" content={fullTitle} />
+<meta property="og:description" content={description} />
+<meta property="og:url" content={canonicalUrl} />
+<meta property="og:image" content={ogImageUrl} />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content={site.ogImageAlt} />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content={fullTitle} />
+<meta name="twitter:description" content={description} />
+<meta name="twitter:image" content={ogImageUrl} />
+
+{jsonLd.map((entry) => <script type="application/ld+json" set:html={JSON.stringify(entry)} is:inline />)}

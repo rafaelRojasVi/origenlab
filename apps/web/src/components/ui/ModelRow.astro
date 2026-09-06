@@ -1,0 +1,204 @@
+---
+import type { Product } from '../../data/products';
+import { keyFactsFor, productPageHref } from '../../lib/catalog';
+import { productImageSources } from '../../lib/productImage';
+import Icon from './Icon.astro';
+
+/**
+ * Fila de modelo: fotografía grande, nombre, tipo de equipo y dos o tres cifras.
+ * Es el sustituto de la ficha de producto en todo el sitio.
+ *
+ * Toda la fila es el enlace y su único nombre accesible es el modelo, de modo
+ * que un lector de pantalla no encuentra cinco enlaces llamados "Ver ficha".
+ *
+ * `size="feature"` da a la imagen el peso de una página de familia;
+ * `size="compact"` es para listas secundarias (modelos relacionados).
+ */
+interface Props {
+  product: Product;
+  size?: 'feature' | 'compact';
+}
+
+const { product, size = 'feature' } = Astro.props;
+const href = productPageHref(product);
+const image = productImageSources(product);
+const facts = keyFactsFor(product).slice(0, size === 'feature' ? 3 : 2);
+const sizes =
+  size === 'feature' ? '(min-width: 768px) 240px, 33vw' : '(min-width: 768px) 120px, 25vw';
+---
+
+<li class:list={['model-row', `model-row--${size}`]}>
+  <a href={href} class="model-row__link">
+    {
+      image && (
+        <div class="model-row__media">
+          <picture>
+            <source type="image/avif" srcset={image.avifSrcset} sizes={sizes} />
+            <source type="image/webp" srcset={image.webpSrcset} sizes={sizes} />
+            <img
+              src={image.src}
+              alt=""
+              width="480"
+              height="480"
+              sizes={sizes}
+              loading="lazy"
+              decoding="async"
+            />
+          </picture>
+        </div>
+      )
+    }
+
+    <div class="model-row__body">
+      <h3 class="model-row__name">{product.name}</h3>
+      {product.equipmentType && <p class="model-row__type">{product.equipmentType}</p>}
+      {size === 'feature' && <p class="model-row__summary t-small">{product.summary}</p>}
+    </div>
+
+    {
+      facts.length > 0 && (
+        <dl class="model-row__facts">
+          {facts.map((fact) => (
+            <div>
+              <dt>{fact.label}</dt>
+              <dd class="t-data">{fact.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )
+    }
+
+    <span class="model-row__go" aria-hidden="true">
+      <Icon name="arrow-right" size={20} />
+    </span>
+  </a>
+</li>
+
+<style>
+  .model-row {
+    border-bottom: 1px solid var(--color-hairline);
+  }
+
+  /*
+   * Móvil: imagen y nombre en la primera fila, cifras cruzando el ancho
+   * completo. Es la única forma de que las medidas quepan en dos columnas;
+   * dentro de la columna del nombre cada cifra ocuparía una línea propia y la
+   * fila se estiraría a media pantalla.
+   */
+  .model-row__link {
+    display: grid;
+    grid-template-columns: 5rem minmax(0, 1fr) 1.25rem;
+    column-gap: 1rem;
+    row-gap: 1rem;
+    padding-block: 1.25rem;
+    transition: background-color 150ms;
+  }
+  .model-row__link:hover {
+    background-color: var(--color-surface);
+  }
+  .model-row__media {
+    grid-column: 1;
+    grid-row: 1;
+    align-self: center;
+  }
+  .model-row__body {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: center;
+  }
+  .model-row__go {
+    grid-column: 3;
+    grid-row: 1;
+    align-self: center;
+    justify-self: end;
+    color: var(--color-ink-500);
+    transition: color 150ms, transform 150ms;
+  }
+  .model-row__facts {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: 0.75rem 1.75rem;
+    margin: 0;
+  }
+
+  .model-row__media img {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1 / 1;
+    object-fit: contain;
+    padding: 4%;
+  }
+  .model-row__name {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+    letter-spacing: -0.01em;
+  }
+  .model-row__type {
+    margin-top: 0.125rem;
+    font-size: 0.9375rem;
+    color: var(--color-ink-600);
+  }
+  .model-row__summary {
+    display: none;
+    margin-top: 0.625rem;
+    color: var(--color-ink-600);
+    max-width: 52ch;
+  }
+  .model-row__facts dt {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--color-ink-500);
+  }
+  .model-row__facts dd {
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--color-ink-800);
+  }
+  .model-row__link:hover .model-row__go {
+    color: var(--color-teal-800);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .model-row__link:hover .model-row__go {
+      transform: translateX(2px);
+    }
+  }
+
+  /* Desde 768 px hay ancho para que las cifras vivan bajo el nombre. */
+  @media (min-width: 768px) {
+    .model-row--feature .model-row__link {
+      grid-template-columns: 15rem minmax(0, 1fr) 2rem;
+      column-gap: 3rem;
+      row-gap: 1rem;
+      padding-block: 2.25rem;
+    }
+    .model-row--compact .model-row__link {
+      grid-template-columns: 6.5rem minmax(0, 1fr) 2rem;
+      column-gap: 1.5rem;
+      padding-block: 1.5rem;
+    }
+    .model-row__media {
+      grid-row: 1 / span 2;
+    }
+    .model-row__go {
+      grid-row: 1 / span 2;
+    }
+    .model-row__facts {
+      grid-column: 2;
+      grid-row: 2;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 2.5rem;
+    }
+    .model-row--feature .model-row__summary {
+      display: block;
+    }
+    .model-row--feature .model-row__name {
+      font-size: 1.375rem;
+    }
+  }
+</style>

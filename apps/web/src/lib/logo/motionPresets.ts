@@ -20,22 +20,22 @@ export const MOTION_PRESETS: Record<MotionContext, MotionPreset> = {
   header: {
     loopSeconds: 18,
     trailLength: 68,
-    label: 'Compact header — restrained motion, brighter atom',
+    label: 'Compact header, restrained motion, brighter atom',
   },
   footer: {
     loopSeconds: 17,
     trailLength: 82,
-    label: 'Footer — subtle',
+    label: 'Footer, subtle',
   },
   surface: {
     loopSeconds: 16,
     trailLength: 92,
-    label: 'Light surface — subtle',
+    label: 'Light surface, subtle',
   },
   favicon: {
     loopSeconds: 22,
     trailLength: 32,
-    label: 'Tiny demo — barely-there',
+    label: 'Tiny demo, barely-there',
   },
 };
 

@@ -1,0 +1,50 @@
+---
+import OrigenLogoMarkStatic from './logo/OrigenLogoMarkStatic.astro';
+
+/**
+ * Lockup de OrigenLab para la cabecera y el pie.
+ *
+ * Usa la marca atómica existente (sin rediseño) con la tipografía y los colores
+ * del sistema V2. La versión animada sigue disponible como activo de marca en
+ * /logo-lab/, pero no se ejecuta en el shell del sitio: un bucle de 18 s sin
+ * control de pausa incumple WCAG 2.2.2 y cuesta hilo principal en cada página.
+ */
+interface Props {
+  tone?: 'ink' | 'paper';
+  size?: number;
+  class?: string;
+}
+
+const { tone = 'ink', size = 30, class: className = '' } = Astro.props;
+---
+
+<span class:list={['site-logo', `site-logo--${tone}`, className]}>
+  <OrigenLogoMarkStatic
+    size={size}
+    variant={tone === 'ink' ? 'light' : 'color'}
+    solution="premium"
+    transparentBg
+    title="OrigenLab"
+  />
+  <span class="site-logo__word">OrigenLab</span>
+</span>
+
+<style>
+  .site-logo {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+  }
+  .site-logo__word {
+    font-size: 1.1875rem;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1;
+  }
+  .site-logo--ink .site-logo__word {
+    color: var(--color-ink-950);
+  }
+  .site-logo--paper .site-logo__word {
+    color: var(--color-paper);
+  }
+</style>

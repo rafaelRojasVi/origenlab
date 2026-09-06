@@ -57,7 +57,7 @@ export function getMarkGeometry(solution: MarkSolution): MarkGeometry {
   const bodyPositions = spreadElectronPositions(history, loopEnd);
 
   if (solution === 'premium') {
-    // Short outer-lobe accents only — no full ghost loops (reads squiggly at 32px)
+    // Short outer-lobe accents only, no full ghost loops (reads squiggly at 32px)
     const segments: [number, number][] = [
       [0.1, 0.2],
       [0.42, 0.52],
@@ -112,7 +112,7 @@ export const MARK_NOTES: Record<
     recommended: 'Recommended for hero animation / technical brand motion',
     bestFor: 'Hero animation, technical storytelling',
     description:
-      'Simulation paths are the identity. Lighter atom frame — motion and trails carry the mark.',
+      'Simulation paths are the identity. Lighter atom frame: motion and trails carry the mark.',
   },
   minimal: {
     title: 'Minimal Scientific',

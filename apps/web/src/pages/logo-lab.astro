@@ -1,6 +1,6 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import PageHeader from '../components/PageHeader.astro';
+import PageIntro from '../components/ui/PageIntro.astro';
 import OrigenLogoShowcase from '../components/logo/OrigenLogoShowcase.astro';
 import OrigenLogoLockupAnimated from '../components/logo/OrigenLogoLockupAnimated.astro';
 import OrigenThreeBodyCanvas from '../components/logo/OrigenThreeBodyCanvas.astro';
@@ -28,13 +28,13 @@ const comparison = [
   {
     option: 'Minimal Scientific',
     label: 'Favicon candidate only',
-    bestUse: 'Favicon, app icon, 16–24px UI',
+    bestUse: 'Favicon, app icon, 16-24px UI',
     strengths: 'Clearest silhouette; fewest strokes',
     issue: 'Too simple for main header lockup',
   },
   {
     option: 'Animated canvas (premium)',
-    label: 'Lab only — not production hero',
+    label: 'Lab only , not production hero',
     bestUse: 'This page’s hero section; brand experiments',
     strengths: 'Visible atom rings + fluorescent bodies; long loop',
     issue: 'Home page hero uses text eyebrow only',
@@ -42,15 +42,22 @@ const comparison = [
 ] as const;
 ---
 
+<!--
+  Página interna de trabajo de marca. No forma parte de la navegación pública:
+  lleva `noindex`, queda fuera del sitemap y está bloqueada en robots.txt.
+-->
 <Layout
-  title="OrigenLab logo lab"
-  description="Internal preview of OrigenLab logo candidates — three-body atom mark. Not production assets yet."
-  mainClass="mx-auto max-w-6xl px-6 py-10 md:py-14"
+  title="Laboratorio de logotipo"
+  description="Vista interna de las variantes del logotipo OrigenLab. Página de trabajo, no forma parte del sitio público."
+  noindex
 >
-  <PageHeader
-    title="OrigenLab logo lab"
-    lead="Production: animated atom + wordmark in the site header; static atom favicon; home hero eyebrow is plain text; footer is a static lockup. This page compares candidates and lab-only hero animation. OG image unchanged."
-  />
+  <div class="shell">
+    <PageIntro
+      title="Laboratorio de logotipo"
+      lead="Página interna de trabajo. Desde el rediseño V2 el shell del sitio usa el lockup estático (la marca animada incumple WCAG 2.2.2 sin control de pausa); aquí se conservan las variantes y la animación como activo de marca."
+    />
+  </div>
+  <div class="shell">
 
   <section class="mt-10 space-y-6" aria-labelledby="header-preview-heading">
     <h2 id="header-preview-heading" class="section-title">Production header (animated)</h2>
@@ -120,16 +127,16 @@ const comparison = [
     <article class="rounded-xl border border-slate-200 bg-slate-50 p-6 md:col-span-2">
       <h3 class="text-sm font-bold uppercase tracking-wider text-slate-500">Favicon scale</h3>
       <p class="mt-1 text-xs text-slate-500">
-        16px stays <strong>static</strong> (recommended). Optional 24px motion demo — very restrained.
+        16px stays <strong>static</strong> (recommended). Optional 24px motion demo , very restrained.
       </p>
       <div class="mt-4 flex flex-wrap items-center gap-8">
         <div class="flex items-center gap-3 rounded-2xl bg-brand-950 px-4 py-3">
           <img src="/favicon.svg" width="16" height="16" alt="" class="size-4 shrink-0" />
-          <span class="text-xs text-brand-100">16px — matches /favicon.svg</span>
+          <span class="text-xs text-brand-100">16px , matches /favicon.svg</span>
         </div>
         <div class="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
           <OrigenLogoMarkStatic size={16} variant="light" solution="premium" showRings />
-          <span class="text-xs text-slate-600">16px light — static</span>
+          <span class="text-xs text-slate-600">16px light , static</span>
         </div>
         <div class="flex flex-col items-center gap-2 rounded-2xl border border-brand-800/30 bg-brand-950 px-5 py-4">
           <OrigenThreeBodyCanvas
@@ -224,5 +231,6 @@ const comparison = [
 
   <div class="mt-16 border-t border-slate-200 pt-12">
     <OrigenLogoShowcase />
+  </div>
   </div>
 </Layout>

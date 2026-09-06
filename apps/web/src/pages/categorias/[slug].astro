@@ -1,117 +1,187 @@
 ---
 import Layout from '../../layouts/Layout.astro';
-import PageHeader from '../../components/PageHeader.astro';
-import QuoteCTA from '../../components/QuoteCTA.astro';
+import PageIntro from '../../components/ui/PageIntro.astro';
+import SectionIndex from '../../components/ui/SectionIndex.astro';
+import ModelRow from '../../components/ui/ModelRow.astro';
+import ClosingQuoteBand from '../../components/ui/ClosingQuoteBand.astro';
+import Notice from '../../components/ui/Notice.astro';
+import Icon from '../../components/ui/Icon.astro';
 import { categories } from '../../data/categories';
 import { company } from '../../data/company';
-import ProductPreviewCard from '../../components/ProductPreviewCard.astro';
-import { getBrandById, getCategoryRelatedProducts } from '../../lib/catalog';
-import { buildWhatsAppQuoteUrl } from '../../lib/whatsapp';
+import { documentsForCategory } from '../../data/documents';
+import { getCategoryRelatedProducts } from '../../lib/catalog';
 
 export function getStaticPaths() {
-  return categories.map((cat) => ({ params: { slug: cat.slug } }));
+  return categories.map((category) => ({ params: { slug: category.slug } }));
 }
 
 const { slug } = Astro.params;
-const category = categories.find((c) => c.slug === slug);
-if (!category) return Astro.redirect('/productos');
+const category = categories.find((item) => item.slug === slug);
+if (!category) return Astro.redirect('/aplicaciones');
 
-const metaDescription = `${category.name}. ${category.description ?? ''} ${company.oneLiner} Cotización: correo y WhatsApp.`.slice(0, 158);
-const relatedProducts = getCategoryRelatedProducts(category.slug);
-const isLaboratorioClinico = category.slug === 'laboratorio-clinico';
-const ortoalresaCentrifugeQuoteHref = buildWhatsAppQuoteUrl({ brandName: 'Ortoalresa' });
+const related = getCategoryRelatedProducts(category.slug);
+const documents = documentsForCategory(category.slug);
+const isClinical = category.slug === 'laboratorio-clinico';
+const shortName = category.shortName;
+
+const metaDescription =
+  `${category.description ?? ''} Cotización y asesoría técnica a través de OrigenLab, con atención en todo Chile.`.slice(
+    0,
+    158,
+  );
 ---
 
-<Layout title={`${category.name} — OrigenLab`} description={metaDescription}>
-  <PageHeader title={category.name} lead={category.description} />
-
-  <div class="mt-8 space-y-6 text-slate-700">
-    <p class="max-w-2xl leading-relaxed">{category.buyerGuide}</p>
-    <div class="rounded-lg border border-slate-100 bg-slate-50/80 p-5">
-      <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">
-        Antes de cotizar
-      </h2>
-      <ul class="mt-3 list-inside list-disc space-y-2 text-sm text-slate-600">
-        {category.buyerBullets.map((b) => (
-          <li>{b}</li>
-        ))}
-      </ul>
-    </div>
-    <p class="text-sm text-slate-600">{company.catalogNote}</p>
-
-    {relatedProducts.length > 0 && (
-      <section class="mt-10" aria-labelledby="equipos-relacionados-heading">
-        <h2 id="equipos-relacionados-heading" class="text-sm font-semibold uppercase tracking-wide text-slate-500">
-          Equipos relacionados (cotización)
-        </h2>
-        <p class="mt-2 max-w-2xl text-sm text-slate-600">
-          Centrífugas Ortoalresa para preparación de muestras y análisis en control de calidad, según
-          configuración y requerimientos del laboratorio.
-        </p>
-        <ul class="mt-4 grid gap-4 sm:grid-cols-2">
-          {relatedProducts.map((product) => {
-            const brand = getBrandById(product.brandId);
-            return (
-              <li>
-                <ProductPreviewCard
-                  product={product}
-                  brandName={brand?.name}
-                  showBrand={true}
-                  showImage={Boolean(product.imagePath)}
-                  showWhatsApp={true}
-                  brandNameForQuote="Ortoalresa"
-                />
-              </li>
-            );
-          })}
-        </ul>
-        <p class="mt-3 text-sm">
-          <a href="/productos/centrifugas" class="font-medium text-brand-700 hover:text-brand-800">
-            Ver familia Centrífugas →
-          </a>
-        </p>
-      </section>
-    )}
-
-    {isLaboratorioClinico && (
-      <section
-        class="mt-10 rounded-xl border border-brand-100 bg-brand-50/40 p-5 md:p-6"
-        aria-labelledby="centrifugas-clinico-callout-heading"
-      >
-        <h2
-          id="centrifugas-clinico-callout-heading"
-          class="text-sm font-semibold uppercase tracking-wide text-slate-500"
-        >
-          Equipamiento de apoyo
-        </h2>
-        <p class="mt-3 max-w-2xl text-sm leading-relaxed text-slate-600">
-          Algunos modelos de centrífugas pueden evaluarse para preparación de muestras en laboratorio
-          clínico según configuración y requerimientos del laboratorio. No implica certificación
-          clínica ni idoneidad diagnóstica sin confirmación del responsable técnico y del fabricante.
-        </p>
-        <div class="mt-5 flex flex-col gap-3 sm:flex-row">
-          <a href="/productos/centrifugas" class="btn-outline-dark text-center">
-            Ver centrífugas Ortoalresa
-          </a>
-          <a
-            href={ortoalresaCentrifugeQuoteHref}
-            class="btn-whatsapp text-center"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Cotizar por WhatsApp
-          </a>
-        </div>
-      </section>
-    )}
-
-    <QuoteCTA
-      title={`Cotizar: ${category.name}`}
-      description="Correo o WhatsApp — indique laboratorio, ciudad y lo que busca."
+<Layout title={shortName} description={metaDescription}>
+  <div class="shell">
+    <PageIntro
+      title={category.name}
+      lead={category.description}
+      crumbs={[{ label: 'Aplicaciones', href: '/aplicaciones/' }, { label: shortName }]}
     />
   </div>
 
-  <p class="mt-10">
-    <a href="/productos" class="link-muted text-sm font-medium">← Volver a productos</a>
-  </p>
+  <section class="shell section rule-top" aria-labelledby="antes-title">
+    <SectionIndex index={1} label="Antes de cotizar" />
+    <div class="guide">
+      <div>
+        <h2 id="antes-title" class="t-h2">Qué conviene traer a la conversación</h2>
+        <p class="t-body guide__text">{category.buyerGuide}</p>
+      </div>
+      <ol class="checklist">
+        {category.buyerBullets.map((bullet) => <li>{bullet}</li>)}
+      </ol>
+    </div>
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="equipos-title">
+    <SectionIndex index={2} label="Equipos relacionados" />
+    {
+      related.length > 0 ? (
+        <>
+          <h2 id="equipos-title" class="t-h2">Centrífugas Ortoalresa</h2>
+          <p class="t-lead mt-5">
+            Preparación de muestras y separación, según configuración de rotor y requerimientos del
+            laboratorio.
+          </p>
+          <ul class="model-list">
+            {related.map((product) => <ModelRow product={product} size="compact" />)}
+          </ul>
+          <a href="/productos/centrifugas/" class="link-arrow mt-8">
+            Ver la familia y la comparativa
+            <Icon name="arrow-right" size={18} class="arrow" />
+          </a>
+        </>
+      ) : (
+        <>
+          <h2 id="equipos-title" class="t-h2">Aún sin familia publicada</h2>
+          <p class="t-lead mt-5">
+            No hay una familia de equipos publicada para esta línea todavía. Cotizamos igualmente:
+            indique el ensayo, el volumen de trabajo y la norma asociada si aplica, y le
+            respondemos con alternativas concretas.
+          </p>
+          {isClinical && (
+            <p class="t-body clinical">
+              Algunos modelos de centrífugas pueden evaluarse para preparación de muestras en
+              laboratorio clínico según configuración y requerimientos. Esto no implica
+              certificación clínica ni idoneidad diagnóstica sin confirmación del responsable
+              técnico y del fabricante.
+            </p>
+          )}
+          <a href="/productos/" class="link-arrow mt-8">
+            Ver el catálogo publicado
+            <Icon name="arrow-right" size={18} class="arrow" />
+          </a>
+        </>
+      )
+    }
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="documentacion-title">
+    <SectionIndex index={3} label="Documentación" />
+    <h2 id="documentacion-title" class="t-h2">Catálogos y fichas técnicas</h2>
+    {
+      documents.length > 0 ? (
+        <ul class="doc-list">
+          {documents.map((document) => (
+            <li>
+              <a href={document.fileUrl} class="link-arrow">
+                <Icon name="file" size={18} />
+                {document.title}
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p class="t-lead mt-5">{company.catalogNote}</p>
+      )
+    }
+    <Notice class="mt-10">
+      Cotización y disponibilidad sujetas a confirmación comercial. La configuración, los
+      accesorios y las condiciones se confirman en la cotización.
+    </Notice>
+  </section>
+
+  <ClosingQuoteBand
+    index={4}
+    title={`Cotizar equipamiento para ${shortName.toLowerCase()}`}
+    body="Indique el ensayo o la función que necesita cubrir, el volumen de trabajo y su institución. Con eso acotamos alternativas y preparamos la cotización."
+  />
 </Layout>
+
+<style>
+  .guide {
+    display: grid;
+    gap: 2.5rem;
+  }
+  .guide__text {
+    margin-top: 1.25rem;
+  }
+  .checklist {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    counter-reset: item;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .checklist li {
+    counter-increment: item;
+    display: grid;
+    grid-template-columns: 2rem minmax(0, 1fr);
+    gap: 1rem;
+    padding-block: 1rem;
+    font-size: 0.9375rem;
+    line-height: 1.55;
+    color: var(--color-ink-800);
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .checklist li::before {
+    content: counter(item, decimal-leading-zero);
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    color: var(--color-teal-800);
+  }
+  .model-list {
+    list-style: none;
+    margin: 2.5rem 0 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .clinical {
+    margin-top: 1.75rem;
+    color: var(--color-ink-600);
+  }
+  .doc-list {
+    list-style: none;
+    margin: 2rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: 0.75rem;
+  }
+  @media (min-width: 768px) {
+    .guide {
+      grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
+      gap: 4rem;
+      align-items: start;
+    }
+  }
+</style>

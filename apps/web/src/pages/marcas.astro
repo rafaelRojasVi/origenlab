@@ -1,87 +1,248 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import PageHeader from '../components/PageHeader.astro';
-import QuoteCTA from '../components/QuoteCTA.astro';
-import { brands } from '../data/brands';
-import { company } from '../data/company';
-import { site } from '../config/site';
-import { products } from '../data/products';
-import { productPageHref } from '../lib/catalog';
+import PageIntro from '../components/ui/PageIntro.astro';
+import SectionIndex from '../components/ui/SectionIndex.astro';
+import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
+import BrandLogo from '../components/ui/BrandLogo.astro';
+import ExternalLink from '../components/ui/ExternalLink.astro';
+import Notice from '../components/ui/Notice.astro';
+import Icon from '../components/ui/Icon.astro';
+import { brandsWallHeading } from '../data/brands';
+import { getCatalogBrands, getProductsByBrandId, getWorkingBrands } from '../lib/catalog';
 
-const homeBrands = brands.filter((brand) => brand.showOnHomeBrandsSection);
-
-function brandProducts(brandId: string) {
-  return products.filter((product) => product.brandId === brandId && product.showOnBrandPage);
-}
+const catalogBrands = getCatalogBrands();
+const workingBrands = getWorkingBrands();
 ---
 
 <Layout
-  title="Marcas — OrigenLab"
-  description={`Líneas y marcas disponibles según alcance comercial. ${company.primaryOffer}, atención en ${company.geography}. ${site.location}.`}
+  title="Marcas"
+  description="Marcas con las que trabaja OrigenLab: Ortoalresa, SERVA, IKA, Hielscher, Ollital y CRTOP. Catálogo publicado, condiciones y cotización a través de OrigenLab."
 >
-  <PageHeader
-    title="Marcas"
-    lead="Trabajamos con líneas y marcas según alcance comercial vigente. La disponibilidad, documentación y condiciones se confirman durante la cotización."
-  />
-
-  <section class="mt-10" aria-labelledby="marcas-intro-heading">
-    <h2 id="marcas-intro-heading" class="section-title">Marcas y líneas para cotización</h2>
-    <p class="mt-3 max-w-3xl text-slate-600">
-      Si busca una marca en particular, cotización o recomendación según su laboratorio, escríbanos.
-      Definimos alcance, condiciones comerciales y documentación técnica durante el proceso de cotización.
-    </p>
-  </section>
-
-  <ul class="mt-8 grid gap-4 sm:grid-cols-2">
-    {homeBrands.map((brand) => {
-      const items = brandProducts(brand.id);
-      return (
-        <li class="card-elevated flex h-full flex-col border border-brand-100">
-          <div class="flex items-start justify-between gap-3">
-            <div>
-              <h3 class="font-semibold text-brand-950">{brand.homeCardTitle ?? brand.name}</h3>
-            </div>
-            {brand.logoPath && (
-              <img
-                src={brand.logoPath}
-                alt={brand.logoAlt ?? brand.name}
-                loading="lazy"
-                class="h-10 w-auto shrink-0 object-contain md:h-12"
-              />
-            )}
-          </div>
-          <p class="mt-3 text-sm leading-relaxed text-slate-600">
-            {brand.homeCardDescription ?? brand.summary}
-          </p>
-          {items.length > 0 && (
-            <ul class="mt-4 space-y-1.5 text-sm text-slate-600">
-              {items.slice(0, 5).map((product) => (
-                <li>
-                  <a
-                    href={productPageHref(product) ?? `/marcas/${brand.slug}`}
-                    class="font-medium text-brand-700 hover:text-brand-800"
-                  >
-                    {product.name}
-                  </a>
-                </li>
-              ))}
-              {items.length > 5 && <li class="text-slate-500">y más modelos en la ficha de marca</li>}
-            </ul>
-          )}
-          <div class="mt-auto flex flex-col gap-2 pt-5">
-            <a href={`/marcas/${brand.slug}`} class="btn-outline-dark text-center">
-              {brand.homeCardCtaLabel ?? `Ver ${brand.name}`}
-            </a>
-          </div>
-        </li>
-      );
-    })}
-  </ul>
-
-  <div class="mt-14">
-    <QuoteCTA
-      title="¿Marca o equipo específico?"
-      description="Consúltenos por disponibilidad y condiciones; respondemos por correo o WhatsApp."
+  <div class="shell">
+    <PageIntro
+      title="Marcas"
+      lead="Dos marcas con catálogo publicado en este sitio y cuatro más con las que trabajamos por cotización. La disponibilidad, la documentación técnica y las condiciones se confirman al cotizar."
+      crumbs={[{ label: 'Marcas' }]}
     />
   </div>
+
+  <section class="shell section rule-top" aria-labelledby="catalogo-title">
+    <SectionIndex index={1} label="Con catálogo publicado" />
+    <h2 id="catalogo-title" class="t-h2">Productos que puede ver en detalle</h2>
+
+    <ul class="brand-rows">
+      {
+        catalogBrands.map((brand) => {
+          const count = getProductsByBrandId(brand.id).length;
+          return (
+            <li class="brand-row">
+              <a href={`/marcas/${brand.slug}/`}>
+                <span class="brand-row__logo">
+                  <BrandLogo brand={brand} scale={1.4} />
+                </span>
+                <span class="brand-row__body">
+                  <span class="brand-row__name" translate="no">{brand.name}</span>
+                  {brand.legalName && <span class="brand-row__legal">{brand.legalName}</span>}
+                  <span class="brand-row__summary t-small">{brand.listSummary ?? brand.summary}</span>
+                </span>
+                <span class="brand-row__count">
+                  <span class="brand-row__count-value t-data">{count}</span>
+                  <span class="brand-row__count-label">
+                    {count === 1 ? 'referencia publicada' : 'referencias publicadas'}
+                  </span>
+                </span>
+                <Icon name="arrow-right" size={20} class="brand-row__go" />
+              </a>
+            </li>
+          );
+        })
+      }
+    </ul>
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="trabajamos-title">
+    <SectionIndex index={2} label="Otras marcas" />
+    <h2 id="trabajamos-title" class="t-h2">{brandsWallHeading}</h2>
+    <p class="t-lead mt-5">
+      Fabricantes que forman parte de nuestro trabajo comercial y que aún no tienen catálogo
+      publicado en el sitio. Consulte por equipos o insumos de estas líneas y le indicamos qué
+      podemos gestionar.
+    </p>
+
+    <ul class="working-list">
+      {
+        workingBrands.map((brand) => (
+          <li class="working">
+            <span class="working__logo">
+              <BrandLogo brand={brand} scale={1.5} />
+            </span>
+            {brand.websiteUrl && (
+              <ExternalLink href={brand.websiteUrl} context={`sitio de ${brand.name}`}>
+                <span translate="no">{brand.name}</span>
+              </ExternalLink>
+            )}
+          </li>
+        ))
+      }
+    </ul>
+
+    <Notice class="mt-12">
+      OrigenLab no declara representación oficial, distribución exclusiva ni certificación de
+      ninguna de estas marcas. El alcance comercial de cada línea se confirma por escrito al
+      cotizar.
+    </Notice>
+  </section>
+
+  <ClosingQuoteBand
+    index={3}
+    title="¿Busca una marca o un modelo concreto?"
+    body="Indíquenos la marca, el modelo de referencia y para qué laboratorio es. Le confirmamos qué podemos gestionar y en qué condiciones."
+  />
 </Layout>
+
+<style>
+  .brand-rows {
+    list-style: none;
+    margin: 2.5rem 0 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .brand-row {
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .brand-row a {
+    display: grid;
+    /* Móvil: logotipo y texto apilados en la primera columna, flecha en la
+       segunda. Sin colocación explícita el navegador crea una tercera columna
+       implícita y el texto se comprime a 24 px. */
+    grid-template-columns: minmax(0, 1fr) 1.5rem;
+    gap: 0 1.5rem;
+    padding-block: 2rem;
+    transition: background-color 150ms;
+  }
+  .brand-row__logo,
+  .brand-row__body,
+  .brand-row__count {
+    grid-column: 1;
+  }
+  .brand-row__go {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+  }
+  .brand-row a:hover {
+    background-color: var(--color-surface);
+  }
+  .brand-row__logo {
+    display: block;
+    margin-bottom: 1.5rem;
+  }
+  .brand-row__name {
+    display: block;
+    font-size: 1.375rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+    letter-spacing: -0.015em;
+  }
+  .brand-row__legal {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.875rem;
+    color: var(--color-ink-500);
+  }
+  .brand-row__summary {
+    display: block;
+    margin-top: 0.75rem;
+    color: var(--color-ink-600);
+    max-width: 56ch;
+  }
+  .brand-row__count {
+    display: block;
+    margin-top: 1.25rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--color-hairline);
+  }
+  .brand-row__count-value {
+    font-size: 1.5rem;
+    color: var(--color-ink-950);
+  }
+  .brand-row__count-label {
+    display: block;
+    margin-top: 0.125rem;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--color-ink-500);
+  }
+  .brand-row__go {
+    align-self: center;
+    justify-self: end;
+    color: var(--color-ink-500);
+  }
+  .brand-row a > * {
+    min-width: 0;
+  }
+  .brand-row a:hover .brand-row__go {
+    color: var(--color-teal-800);
+  }
+
+  .working-list {
+    list-style: none;
+    margin: 3rem 0 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2.5rem 2rem;
+  }
+  .working {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1.125rem;
+    min-width: 0;
+  }
+  .working__logo {
+    /* Caja común: los lockups tienen proporciones muy distintas y sin una altura
+       compartida la fila se lee desalineada. */
+    display: flex;
+    align-items: center;
+    min-height: 3.25rem;
+    max-width: 100%;
+  }
+
+  @media (min-width: 768px) {
+    .brand-row a {
+      grid-template-columns: 13rem minmax(0, 1fr) 9rem 2rem;
+      align-items: center;
+      gap: 3rem;
+      padding-block: 2.5rem;
+    }
+    .brand-row__logo {
+      margin-bottom: 0;
+      grid-column: 1;
+    }
+    .brand-row__body {
+      grid-column: 2;
+    }
+    .brand-row__count {
+      grid-column: 3;
+      grid-row: auto;
+      margin-top: 0;
+      padding-top: 0;
+      border-top: none;
+      text-align: right;
+    }
+    .brand-row__count-label {
+      max-width: 7rem;
+      margin-left: auto;
+    }
+    .brand-row__go {
+      grid-column: 4;
+      grid-row: auto;
+    }
+    .working-list {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 3rem;
+    }
+  }
+</style>

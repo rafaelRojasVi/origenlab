@@ -1,0 +1,241 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import PageIntro from '../../components/ui/PageIntro.astro';
+import SectionIndex from '../../components/ui/SectionIndex.astro';
+import ModelRow from '../../components/ui/ModelRow.astro';
+import ClosingQuoteBand from '../../components/ui/ClosingQuoteBand.astro';
+import BrandLogo from '../../components/ui/BrandLogo.astro';
+import ExternalLink from '../../components/ui/ExternalLink.astro';
+import Icon from '../../components/ui/Icon.astro';
+import {
+  getBrandBySlug,
+  getCatalogBrands,
+  getProductsByBrandId,
+  productPageHref,
+} from '../../lib/catalog';
+import { productFamilies } from '../../data/productFamilies';
+
+export function getStaticPaths() {
+  return getCatalogBrands().map((brand) => ({ params: { slug: brand.slug } }));
+}
+
+const { slug } = Astro.params;
+const brand = slug ? getBrandBySlug(slug) : undefined;
+if (!brand) return Astro.redirect('/marcas');
+
+const products = getProductsByBrandId(brand.id);
+/** Modelos con ficha propia frente a referencias que sólo se cotizan. */
+const withPages = products.filter((product) => productPageHref(product) !== undefined);
+const skuOnly = products.filter((product) => productPageHref(product) === undefined);
+const family = productFamilies.find((item) =>
+  withPages.some((product) => product.productFamilySlug === item.slug),
+);
+---
+
+<Layout
+  title={brand.name}
+  description={brand.metaDescription ?? `${brand.name}. Cotización y condiciones comerciales a través de OrigenLab, con atención en todo Chile.`}
+>
+  <div class="shell">
+    <PageIntro
+      title={brand.name}
+      lead={brand.pageSubtitle ?? brand.summary}
+      crumbs={[{ label: 'Marcas', href: '/marcas/' }, { label: brand.name }]}
+    >
+      <div slot="aside">
+        <BrandLogo brand={brand} scale={1.6} />
+      </div>
+    </PageIntro>
+  </div>
+
+  <section class="shell section rule-top" aria-labelledby="marca-title">
+    <SectionIndex index={1} label="La marca" />
+    <div class="brand-intro">
+      <div class="prose-block">
+        <h2 id="marca-title" class="t-h2">Quién fabrica</h2>
+        {brand.legalName && <p class="t-small brand-intro__legal">{brand.legalName}</p>}
+        <p class="t-body brand-intro__text">{brand.summary}</p>
+        {brand.brandIntro && <p class="t-body">{brand.brandIntro}</p>}
+        {brand.manufacturerAttribution && (
+          <p class="t-small brand-intro__attr">{brand.manufacturerAttribution}</p>
+        )}
+        {brand.websiteUrl && (
+          <p class="brand-intro__site">
+            <ExternalLink href={brand.websiteUrl} context="sitio del fabricante">
+              Sitio del fabricante
+            </ExternalLink>
+          </p>
+        )}
+      </div>
+
+      {
+        brand.applicationAreas && brand.applicationAreas.length > 0 && (
+          <div class="areas">
+            <h3 class="t-label areas__title">Áreas de aplicación</h3>
+            <ul class="areas__list">
+              {brand.applicationAreas.map((area) => <li>{area}</li>)}
+            </ul>
+          </div>
+        )
+      }
+    </div>
+  </section>
+
+  {
+    withPages.length > 0 && (
+      <section class="shell section rule-top" aria-labelledby="modelos-title">
+        <SectionIndex index={2} label="Modelos disponibles" />
+        <div class="models-head">
+          <h2 id="modelos-title" class="t-h2">{withPages.length} modelos en catálogo</h2>
+          {family && (
+            <a href={`/productos/${family.slug}/`} class="link-arrow">
+              Ver la familia y la comparativa
+              <Icon name="arrow-right" size={18} class="arrow" />
+            </a>
+          )}
+        </div>
+        <ul class="model-list">
+          {withPages.map((product) => <ModelRow product={product} size="compact" />)}
+        </ul>
+      </section>
+    )
+  }
+
+  {
+    skuOnly.length > 0 && (
+      <section class="shell section rule-top" aria-labelledby="referencias-title">
+        <SectionIndex index={2} label="Referencias" />
+        <h2 id="referencias-title" class="t-h2">Referencias disponibles para cotización</h2>
+        <p class="t-lead mt-5">
+          Estas referencias se cotizan por pedido y no tienen ficha técnica propia en el sitio;
+          la documentación se entrega durante la cotización.
+        </p>
+        <dl class="sku-list">
+          {skuOnly.map((product) => (
+            <div class="sku">
+              <dt>
+                <span class="sku__name" translate="no">{product.name}</span>
+                {product.sku && <span class="sku__code t-data">Ítem {product.sku}</span>}
+              </dt>
+              <dd class="t-small sku__desc">
+                {product.summary} {product.application}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+    )
+  }
+
+  {
+    brand.commercialNote && (
+      <section class="shell section rule-top" aria-labelledby="condiciones-title">
+        <SectionIndex index={3} label="Condiciones comerciales" />
+        <h2 id="condiciones-title" class="t-h2">Cómo trabajamos esta línea</h2>
+        <p class="t-body conditions">{brand.commercialNote}</p>
+      </section>
+    )
+  }
+
+  <ClosingQuoteBand
+    index={4}
+    title={`Cotizar productos ${brand.name}`}
+    body="Indique el modelo o la referencia, la aplicación y su institución. Confirmamos disponibilidad, configuración y condiciones por escrito."
+    brandName={brand.name}
+  />
+</Layout>
+
+<style>
+  .brand-intro {
+    display: grid;
+    gap: 2.5rem;
+  }
+  .brand-intro__legal {
+    margin-top: 0.5rem;
+    color: var(--color-ink-500);
+  }
+  .brand-intro__text {
+    margin-top: 1.5rem;
+  }
+  .brand-intro__attr {
+    margin-top: 1.5rem;
+    color: var(--color-ink-500);
+    max-width: 60ch;
+  }
+  .brand-intro__site {
+    margin-top: 1.5rem;
+  }
+  .areas__title {
+    color: var(--color-ink-950);
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--color-ink-950);
+  }
+  .areas__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .areas__list li {
+    padding-block: 0.75rem;
+    font-size: 0.9375rem;
+    color: var(--color-ink-800);
+    border-bottom: 1px solid var(--color-hairline);
+  }
+
+  .models-head {
+    display: grid;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .model-list {
+    list-style: none;
+    margin: 1.5rem 0 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+
+  .sku-list {
+    margin: 2.5rem 0 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .sku {
+    padding-block: 1.5rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .sku dt {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem 1.25rem;
+  }
+  .sku__name {
+    font-size: 1.0625rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+  .sku__code {
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+  }
+  .sku__desc {
+    margin: 0.5rem 0 0;
+    color: var(--color-ink-600);
+    max-width: 62ch;
+  }
+  .conditions {
+    margin-top: 1.5rem;
+  }
+
+  @media (min-width: 768px) {
+    .brand-intro {
+      grid-template-columns: minmax(0, 7fr) minmax(0, 4fr);
+      gap: 4rem;
+      align-items: start;
+    }
+    .models-head {
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: baseline;
+      gap: 3rem;
+    }
+  }
+</style>

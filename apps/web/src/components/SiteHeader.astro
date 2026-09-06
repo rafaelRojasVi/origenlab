@@ -1,0 +1,278 @@
+---
+import { site } from '../config/site';
+import { ctaLabels } from '../lib/ctaLabels';
+import SiteLogo from './SiteLogo.astro';
+import Icon from './ui/Icon.astro';
+
+const path = Astro.url.pathname;
+
+/** Las rutas de `site.nav` llevan barra final, igual que `Astro.url.pathname`. */
+function isActive(href: string, matches?: readonly string[]): boolean {
+  const prefixes = [href, ...(matches ?? [])];
+  return prefixes.some((prefix) => path === prefix || path.startsWith(prefix));
+}
+---
+
+<header class="site-header">
+  <div class="shell site-header__bar">
+    <a href="/" class="site-header__home" aria-label="OrigenLab, ir al inicio">
+      <SiteLogo />
+    </a>
+
+    <nav class="site-header__nav" aria-label="Navegación principal">
+      <ul>
+        {
+          site.nav.map((item) => (
+            <li>
+              <a
+                href={item.href}
+                aria-current={isActive(item.href, item.matches) ? 'page' : undefined}
+              >
+                {item.label}
+              </a>
+            </li>
+          ))
+        }
+      </ul>
+    </nav>
+
+    <div class="site-header__actions">
+      <a
+        href={site.quoteHref}
+        class="btn btn-primary site-header__cta"
+        aria-label={ctaLabels.solicitarCotizacion}
+      >
+        <span class="site-header__cta-long">{ctaLabels.solicitarCotizacion}</span>
+        <span class="site-header__cta-short">{ctaLabels.cotizar}</span>
+      </a>
+
+      <details class="site-menu" data-site-menu>
+        <summary aria-label="Abrir menú de navegación">
+          <span class="site-menu__open"><Icon name="menu" size={22} /></span>
+          <span class="site-menu__close"><Icon name="close" size={22} /></span>
+        </summary>
+        <div class="site-menu__panel">
+          <nav aria-label="Navegación">
+            <ul>
+              {
+                site.nav.map((item) => (
+                  <li>
+                    <a
+                      href={item.href}
+                      aria-current={isActive(item.href, item.matches) ? 'page' : undefined}
+                    >
+                      {item.label}
+                    </a>
+                  </li>
+                ))
+              }
+            </ul>
+          </nav>
+          <a href={site.quoteHref} class="btn btn-primary site-menu__cta">
+            {ctaLabels.solicitarCotizacion}
+          </a>
+        </div>
+      </details>
+    </div>
+  </div>
+</header>
+
+<script>
+  /**
+   * Mejora progresiva del menú móvil: sin este script el <details> ya abre y
+   * cierra. Con él, Escape y el clic fuera cierran el panel y el foco vuelve al
+   * disparador, que es lo que espera quien navega con teclado.
+   */
+  const menu = document.querySelector<HTMLDetailsElement>('[data-site-menu]');
+  if (menu) {
+    const summary = menu.querySelector('summary');
+    const close = (returnFocus: boolean) => {
+      if (!menu.open) return;
+      menu.open = false;
+      if (returnFocus) summary?.focus();
+    };
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') close(true);
+    });
+    document.addEventListener('click', (event) => {
+      if (menu.open && !menu.contains(event.target as Node)) close(false);
+    });
+    menu.addEventListener('toggle', () => {
+      document.documentElement.style.overflow = menu.open ? 'hidden' : '';
+    });
+    const wide = window.matchMedia('(min-width: 1024px)');
+    wide.addEventListener('change', (event) => {
+      if (event.matches) close(false);
+    });
+  }
+</script>
+
+<style>
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    background-color: var(--color-paper);
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .site-header__bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    height: 4rem;
+  }
+  .site-header__home {
+    display: inline-flex;
+    align-items: center;
+    border-radius: var(--radius-edge);
+  }
+  .site-header__nav {
+    display: none;
+  }
+  .site-header__nav ul {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .site-header__nav a {
+    display: inline-flex;
+    align-items: center;
+    height: 2.5rem;
+    padding-inline: 0.75rem;
+    border-radius: var(--radius-edge);
+    font-size: 0.9375rem;
+    font-weight: 500;
+    color: var(--color-ink-600);
+    transition: color 150ms;
+  }
+  .site-header__nav a:hover {
+    color: var(--color-ink-950);
+  }
+  .site-header__nav a[aria-current='page'] {
+    color: var(--color-ink-950);
+    box-shadow: inset 0 -1px 0 0 var(--color-teal-700);
+  }
+  .site-header__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .site-header__cta {
+    min-height: 2.5rem;
+    padding-inline: 1rem;
+    font-size: 0.875rem;
+    white-space: nowrap;
+  }
+  /* Bajo 1024 px la barra no cabe con la etiqueta larga; se usa la forma corta
+     de la misma intención y el nombre accesible se mantiene completo. */
+  .site-header__cta-long {
+    display: none;
+  }
+
+  /* --- Menú móvil --- */
+  .site-menu summary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    margin-right: -0.5rem;
+    border-radius: var(--radius-edge);
+    color: var(--color-ink-950);
+    cursor: pointer;
+    list-style: none;
+    touch-action: manipulation;
+  }
+  .site-menu summary::-webkit-details-marker {
+    display: none;
+  }
+  .site-menu__open,
+  .site-menu__close {
+    display: flex;
+  }
+  .site-menu__close {
+    display: none;
+  }
+  .site-menu[open] .site-menu__open {
+    display: none;
+  }
+  .site-menu[open] .site-menu__close {
+    display: block;
+  }
+  /* Un <details> cerrado con contenido posicionado sigue generando caja en
+     Chromium y provoca desborde horizontal en móvil. Se oculta explícitamente. */
+  .site-menu:not([open]) .site-menu__panel {
+    display: none;
+  }
+  .site-menu__panel {
+    position: fixed;
+    inset: 4rem 0 0;
+    z-index: 39;
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+    padding: 2rem 1.25rem calc(2rem + env(safe-area-inset-bottom, 0px));
+    background-color: var(--color-paper);
+    border-top: 1px solid var(--color-hairline);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .site-menu__panel ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .site-menu__panel li + li {
+    border-top: 1px solid var(--color-hairline);
+  }
+  .site-menu__panel a {
+    display: flex;
+    align-items: center;
+    min-height: 3.5rem;
+    font-size: 1.25rem;
+    font-weight: 500;
+    color: var(--color-ink-950);
+  }
+  .site-menu__panel a[aria-current='page'] {
+    color: var(--color-teal-800);
+  }
+  .site-menu__cta {
+    align-self: flex-start;
+    font-size: 1rem;
+  }
+
+  @media (min-width: 1024px) {
+    .site-header__bar {
+      height: 4.5rem;
+    }
+    .site-header__nav {
+      display: block;
+    }
+    .site-menu {
+      display: none;
+    }
+    .site-header__cta {
+      min-height: 2.625rem;
+      font-size: 0.9375rem;
+    }
+    .site-header__cta-long {
+      display: inline;
+    }
+    .site-header__cta-short {
+      display: none;
+    }
+  }
+  @media (max-width: 26rem) {
+    /* En pantallas muy estrechas el CTA cede espacio, nunca desaparece. */
+    .site-header__bar {
+      gap: 0.75rem;
+    }
+    .site-header__cta {
+      padding-inline: 0.875rem;
+    }
+  }
+</style>

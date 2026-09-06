@@ -1,0 +1,106 @@
+---
+import { company } from '../../data/company';
+import { site } from '../../config/site';
+import { ctaLabels } from '../../lib/ctaLabels';
+import { getProductBySlug } from '../../lib/catalog';
+import ProductFigure from '../ui/ProductFigure.astro';
+import Icon from '../ui/Icon.astro';
+
+/**
+ * Portada, primer momento. Composición asimétrica: mensaje a la izquierda,
+ * una fotografía real de equipo a la derecha. Cuatro elementos de texto como
+ * máximo (H1, frase, dos acciones); sin píldoras de confianza ni chips.
+ */
+const featured = getProductBySlug('biocen-22-r');
+---
+
+<section class="hero" aria-labelledby="hero-title">
+  <div class="shell hero__inner">
+    <div class="hero__copy">
+      <h1 id="hero-title" class="t-display hero__title">
+        Equipos de laboratorio, cotizados con criterio técnico.
+      </h1>
+      <p class="t-lead hero__lead">{company.oneLiner}</p>
+      <div class="hero__actions">
+        <a href={site.quoteHref} class="btn btn-primary">{ctaLabels.solicitarCotizacion}</a>
+        <a href="/productos/" class="link-arrow">
+          Ver equipos
+          <Icon name="arrow-right" size={18} class="arrow" />
+        </a>
+      </div>
+    </div>
+
+    {
+      featured && (
+        <div class="hero__media">
+          <ProductFigure
+            product={featured}
+            priority
+            sizes="(min-width: 1024px) 440px, (min-width: 640px) 384px, 78vw"
+            caption="Biocen 22 R, microcentrífuga refrigerada, 18.100 rpm"
+          />
+        </div>
+      )
+    }
+  </div>
+</section>
+
+<style>
+  .hero__inner {
+    display: grid;
+    gap: 2.5rem;
+    padding-top: 3rem;
+    padding-bottom: 4rem;
+  }
+  /*
+   * El titular no lleva `max-width`: la columna ya lo limita. Una caja en `ch`
+   * se calcula sobre el tamaño de fuente vigente, y con tipografía fluida
+   * recortaba el titular a tres líneas en tablet cuando cabía en dos.
+   */
+  .hero__lead {
+    margin-top: 1.5rem;
+  }
+  .hero__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem 2rem;
+    margin-top: 2.5rem;
+  }
+  .hero__media {
+    max-width: 20rem;
+  }
+
+  @media (min-width: 640px) {
+    .hero__media {
+      max-width: 24rem;
+    }
+  }
+
+  /*
+   * El hero se parte en dos columnas sólo desde 1024 px. Entre 768 y 1023 la
+   * columna de texto quedaría en 430 px y el titular caería a cuatro líneas;
+   * apilado, el mismo titular cabe en dos y la fotografía gana tamaño.
+   */
+  @media (min-width: 1024px) {
+    .hero__inner {
+      grid-template-columns: minmax(0, 8fr) minmax(0, 5fr);
+      align-items: center;
+      gap: 3rem;
+      padding-top: 4rem;
+      padding-bottom: 5.5rem;
+    }
+    .hero__media {
+      max-width: none;
+      justify-self: end;
+      width: min(100%, 27rem);
+    }
+  }
+  @media (min-width: 1280px) {
+    .hero__inner {
+      padding-top: 5rem;
+      padding-bottom: 7rem;
+      gap: 5rem;
+    }
+  }
+</style>

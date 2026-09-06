@@ -1,0 +1,84 @@
+---
+import { brands, brandsWallHeading } from '../../data/brands';
+import BrandLogo from '../ui/BrandLogo.astro';
+import Icon from '../ui/Icon.astro';
+
+/**
+ * Muro de marcas. Aparece pronto en la portada porque la evidencia de con qué
+ * fabricantes trabaja OrigenLab es lo que un comprador institucional busca
+ * primero.
+ *
+ * El encabezado repite literalmente el texto ya publicado en la firma
+ * corporativa. No se añade descriptor por logotipo ni lenguaje de
+ * representación oficial, distribución exclusiva o certificación.
+ */
+interface Props {
+  href?: string;
+  linkLabel?: string;
+}
+
+const { href = '/marcas/', linkLabel = 'Ver marcas y catálogo' } = Astro.props;
+---
+
+<section class="brand-wall" aria-labelledby="brand-wall-title">
+  <div class="shell brand-wall__inner">
+    <h2 id="brand-wall-title" class="t-label brand-wall__title">{brandsWallHeading}</h2>
+    <ul class="brand-wall__list">
+      {
+        brands.map((brand) => (
+          <li>
+            <BrandLogo brand={brand} />
+          </li>
+        ))
+      }
+    </ul>
+    <a href={href} class="link-arrow brand-wall__link">
+      {linkLabel}
+      <Icon name="arrow-right" size={18} class="arrow" />
+    </a>
+  </div>
+</section>
+
+<style>
+  .brand-wall {
+    background-color: var(--color-surface);
+    border-block: 1px solid var(--color-hairline);
+  }
+  .brand-wall__inner {
+    padding-block: 2.5rem;
+  }
+  .brand-wall__title {
+    color: var(--color-ink-500);
+  }
+  .brand-wall__list {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2rem 2.5rem;
+    list-style: none;
+    margin: 1.75rem 0 0;
+    padding: 0;
+  }
+  .brand-wall__list li {
+    display: flex;
+    align-items: center;
+    /* Altura común: los lockups tienen proporciones muy distintas y sin una
+       caja compartida el muro se lee como una fila desalineada. */
+    min-height: 2.25rem;
+  }
+  .brand-wall__link {
+    margin-top: 2rem;
+  }
+  @media (min-width: 768px) {
+    .brand-wall__inner {
+      padding-block: 3.5rem;
+    }
+    .brand-wall__list {
+      gap: 2.5rem 4rem;
+      margin-top: 2rem;
+    }
+    .brand-wall__link {
+      margin-top: 2.5rem;
+    }
+  }
+</style>

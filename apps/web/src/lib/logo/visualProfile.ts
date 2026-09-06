@@ -19,7 +19,7 @@ export interface CanvasVisualProfile {
   bodyCoreStroke: string;
   trailGlowMul: number;
   trailCoreMul: number;
-  /** No fill rect — blends into header bar */
+  /** No fill rect, blends into header bar */
   transparentBg: boolean;
   /** Fewer halo layers (cleaner electrons) */
   compactBodies: boolean;
@@ -50,7 +50,7 @@ const DEFAULT_PROFILE: CanvasVisualProfile = {
   compactBodies: false,
 };
 
-/** Production site header — integrated on #042f2e */
+/** Production site header, integrated on #042f2e */
 const HEADER_PROFILE: CanvasVisualProfile = {
   ringColor: LOGO_PALETTE.brand500,
   ringAlpha: 0.24,
@@ -76,7 +76,7 @@ const HEADER_PROFILE: CanvasVisualProfile = {
   compactBodies: true,
 };
 
-/** Logo-lab favicon motion demo — light atom on dark tile */
+/** Logo-lab favicon motion demo, light atom on dark tile */
 const FAVICON_PROFILE: CanvasVisualProfile = {
   ringColor: LOGO_PALETTE.brand200,
   ringAlpha: 0.34,

@@ -1,0 +1,147 @@
+---
+import Layout from '../layouts/Layout.astro';
+import PageIntro from '../components/ui/PageIntro.astro';
+import SectionIndex from '../components/ui/SectionIndex.astro';
+import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
+import Icon from '../components/ui/Icon.astro';
+import { categories } from '../data/categories';
+import { company } from '../data/company';
+---
+
+<Layout
+  title="Aplicaciones"
+  description="Las tres líneas de trabajo de OrigenLab: alimentos, control de calidad y laboratorio clínico, y los tipos de laboratorio que atendemos en todo Chile."
+>
+  <div class="shell">
+    <PageIntro
+      title="Aplicaciones"
+      lead="Si sabe qué necesita hacer en el laboratorio pero no qué equipo pedir, empiece por aquí. Cada línea reúne lo que conviene traer a la conversación antes de cotizar."
+      crumbs={[{ label: 'Aplicaciones' }]}
+    />
+  </div>
+
+  <section class="shell section rule-top" aria-labelledby="lineas-title">
+    <SectionIndex index={1} label="Líneas de trabajo" />
+    <h2 id="lineas-title" class="t-h2">Tres entornos, un mismo proceso de cotización</h2>
+
+    <ol class="line-list">
+      {
+        categories.map((category, i) => (
+          <li>
+            <a href={`/categorias/${category.slug}/`}>
+              <span class="line-list__num t-data" aria-hidden="true">
+                {String(i + 1).padStart(2, '0')}
+              </span>
+              <span class="line-list__body">
+                <span class="line-list__name">
+                  {category.shortName}
+                </span>
+                <span class="line-list__desc t-small">{category.description}</span>
+              </span>
+              <Icon name="arrow-right" size={20} class="line-list__go" />
+            </a>
+          </li>
+        ))
+      }
+    </ol>
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="sectores-title">
+    <SectionIndex index={2} label="A quién atendemos" />
+    <div class="sectors">
+      <div>
+        <h2 id="sectores-title" class="t-h2">Tipos de laboratorio</h2>
+        <p class="t-body sectors__intro">{company.homeIntro}</p>
+      </div>
+      <ul class="sectors__list">
+        {company.audience.map((item) => <li>{item}</li>)}
+      </ul>
+    </div>
+  </section>
+
+  <ClosingQuoteBand
+    index={3}
+    title="Describa el ensayo, no el modelo."
+    body="Con el tipo de análisis, el volumen de trabajo y la norma que maneja (si aplica) podemos acotar alternativas antes de emitir una cotización."
+  />
+</Layout>
+
+<style>
+  .line-list {
+    list-style: none;
+    margin: 3rem 0 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .line-list li {
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .line-list a {
+    display: grid;
+    grid-template-columns: 2.5rem minmax(0, 1fr) 1.5rem;
+    align-items: baseline;
+    gap: 1rem;
+    padding-block: 1.75rem;
+    transition: background-color 150ms;
+  }
+  .line-list a:hover {
+    background-color: var(--color-surface);
+  }
+  .line-list__num {
+    color: var(--color-ink-500);
+    font-size: 0.8125rem;
+  }
+  .line-list__name {
+    display: block;
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+    letter-spacing: -0.015em;
+  }
+  .line-list__desc {
+    display: block;
+    margin-top: 0.5rem;
+    color: var(--color-ink-600);
+    max-width: 58ch;
+  }
+  .line-list__go {
+    align-self: center;
+    justify-self: end;
+    color: var(--color-ink-500);
+  }
+  .line-list a:hover .line-list__go {
+    color: var(--color-teal-800);
+  }
+
+  .sectors {
+    display: grid;
+    gap: 2.5rem;
+  }
+  .sectors__intro {
+    margin-top: 1.25rem;
+  }
+  .sectors__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .sectors__list li {
+    padding-block: 0.875rem;
+    font-size: 1rem;
+    color: var(--color-ink-800);
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  @media (min-width: 768px) {
+    .line-list a {
+      grid-template-columns: 3.5rem minmax(0, 1fr) 2rem;
+      gap: 2rem;
+      padding-block: 2.25rem;
+    }
+    .sectors {
+      grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
+      gap: 4rem;
+      align-items: start;
+    }
+  }
+</style>

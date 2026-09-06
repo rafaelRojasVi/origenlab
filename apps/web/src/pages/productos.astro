@@ -1,134 +1,226 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import PageHeader from '../components/PageHeader.astro';
-import QuoteCTA from '../components/QuoteCTA.astro';
-import Card from '../components/Card.astro';
-import ProductPreviewCard from '../components/ProductPreviewCard.astro';
-import BrandSkuCard from '../components/BrandSkuCard.astro';
+import PageIntro from '../components/ui/PageIntro.astro';
+import SectionIndex from '../components/ui/SectionIndex.astro';
+import ModelRow from '../components/ui/ModelRow.astro';
+import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
+import ProductFigure from '../components/ui/ProductFigure.astro';
+import BrandLogo from '../components/ui/BrandLogo.astro';
+import Notice from '../components/ui/Notice.astro';
+import Icon from '../components/ui/Icon.astro';
+import { productFamilies } from '../data/productFamilies';
 import { categories } from '../data/categories';
 import { company } from '../data/company';
-import { getBrandById, getOrtoalresaCentrifuges, getProductsByBrandId } from '../lib/catalog';
-import { buildWhatsAppQuoteUrl } from '../lib/whatsapp';
-import { ctaLabels } from '../lib/ctaLabels';
+import {
+  getBrandById,
+  getBrandBySlug,
+  getOrtoalresaCentrifuges,
+  getProductBySlug,
+  getProductsByBrandId,
+} from '../lib/catalog';
 
-const ortoalresaCentrifuges = getOrtoalresaCentrifuges().filter((p) => p.showOnProductsPage);
-const servaBrand = getBrandById('serva');
-const servaProducts = servaBrand
-  ? getProductsByBrandId(servaBrand.id).filter((p) => p.showOnProductsPage)
-  : [];
-const servaBrandName = servaBrand?.homeCardTitle ?? servaBrand?.name ?? 'SERVA Electrophoresis';
-const servaBrandHref = servaBrand ? `/marcas/${servaBrand.slug}` : '/marcas';
-const ortoalresaQuoteHref = buildWhatsAppQuoteUrl({ brandName: 'Ortoalresa' });
+const family = productFamilies[0];
+const centrifuges = getOrtoalresaCentrifuges();
+const ortoalresa = getBrandById('ortoalresa');
+const serva = getBrandBySlug('serva-electrophoresis');
+const servaProducts = serva ? getProductsByBrandId(serva.id) : [];
+const familyCover = getProductBySlug('digicen-22-r');
 ---
 
 <Layout
-  title="Productos — OrigenLab"
-  description={`Equipos para alimentos, control de calidad y laboratorio clínico. ${company.catalogNote}`}
+  title="Productos"
+  description="Centrífugas Ortoalresa y reactivos SERVA disponibles para cotización a través de OrigenLab, con asesoría técnica y atención en todo Chile."
 >
-  <PageHeader
-    title="Productos"
-    lead={`${company.primaryOffer} en tres categorías. ${company.catalogNote}`}
-  />
-
-  <div class="mt-10">
-    <ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {categories.map((cat) => (
-        <li>
-          <Card
-            title={cat.name}
-            href={`/categorias/${cat.slug}`}
-            description={cat.description}
-          />
-        </li>
-      ))}
-    </ul>
-  </div>
-
-  <section class="mt-14" aria-labelledby="lineas-cotizacion-heading">
-    <h2 id="lineas-cotizacion-heading" class="section-title">
-      Líneas y productos disponibles para cotización
-    </h2>
-    <p class="mt-2 max-w-2xl text-sm leading-relaxed text-slate-600">
-      Cotización y disponibilidad sujetas a confirmación comercial. La configuración, accesorios y
-      condiciones comerciales se confirman en la cotización.
-    </p>
-
-    {ortoalresaCentrifuges.length > 0 && (
-      <section class="mt-10" aria-labelledby="ortoalresa-centrifugas-heading">
-        <div class="rounded-2xl border border-brand-100 bg-gradient-to-br from-brand-50/80 to-white p-6 shadow-sm md:p-8">
-          <h3 id="ortoalresa-centrifugas-heading" class="text-lg font-bold text-brand-950">
-            Centrífugas Ortoalresa
-          </h3>
-          <p class="mt-2 max-w-2xl text-sm leading-relaxed text-slate-600">
-            Microcentrífugas y centrífugas ventiladas o refrigeradas para preparación de muestras.
-            Equipos disponibles para evaluación técnica y cotización a través de OrigenLab.
-          </p>
-          <div class="mt-5 flex flex-col gap-3 sm:flex-row">
-            <a href="/productos/centrifugas" class="btn-primary text-center">Ver línea completa</a>
-            <a
-              href={ortoalresaQuoteHref}
-              class="btn-whatsapp text-center"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              {ctaLabels.quoteLine}
-            </a>
-          </div>
-          <ul class="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {ortoalresaCentrifuges.map((product) => (
-              <li class="h-full">
-                <ProductPreviewCard
-                  product={product}
-                  brandName="Ortoalresa"
-                  showBrand={true}
-                  showApplication={true}
-                  showImage={true}
-                  showWhatsApp={true}
-                  brandNameForQuote="Ortoalresa"
-                />
-              </li>
-            ))}
-          </ul>
-        </div>
-      </section>
-    )}
-
-    {servaProducts.length > 0 && (
-      <section class="mt-10" aria-labelledby="serva-linea-heading">
-        <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
-          <h3 id="serva-linea-heading" class="text-lg font-bold text-brand-950">
-            Reactivos y soluciones SERVA
-          </h3>
-          <p class="mt-2 max-w-2xl text-sm leading-relaxed text-slate-600">
-            Referencias para electroforesis y preparación de muestras. Pedidos gestionados por OrigenLab
-            según confirmación comercial; disponibilidad y condiciones se validan al cotizar.
-          </p>
-          <p class="mt-3">
-            <a href={servaBrandHref} class="text-sm font-semibold text-brand-700 hover:text-brand-800">
-              Ver línea SERVA →
-            </a>
-          </p>
-          <ul class="mt-6 grid gap-4 md:grid-cols-3">
-            {servaProducts.map((product) => (
-              <li class="h-full">
-                <BrandSkuCard
-                  product={product}
-                  brandName={servaBrandName}
-                  brandHref={servaBrandHref}
-                  brandLineLabel="Ver línea SERVA"
-                />
-              </li>
-            ))}
-          </ul>
-        </div>
-      </section>
-    )}
-  </section>
-
-  <div class="mt-14">
-    <QuoteCTA
-      title="¿Busca un equipo en particular?"
-      description="Consulte por disponibilidad y cotización; sin compromiso."
+  <div class="shell">
+    <PageIntro
+      title="Productos"
+      lead="Catálogo publicado: una familia de equipos y una línea de reactivos. Fuera de catálogo cotizamos según la aplicación de su laboratorio."
+      crumbs={[{ label: 'Productos' }]}
     />
   </div>
+
+  <section class="shell section rule-top" aria-labelledby="familias-title">
+    <SectionIndex index={1} label="Familias de equipos" />
+
+    <div class="family">
+      <div class="family__media">
+        {familyCover && <ProductFigure product={familyCover} sizes="(min-width: 1024px) 400px, 60vw" />}
+      </div>
+      <div class="family__body">
+        {ortoalresa && <BrandLogo brand={ortoalresa} scale={1.1} class="family__logo" />}
+        <h2 id="familias-title" class="t-h2 family__title">{family.name}</h2>
+        <p class="t-body family__desc">{family.description}</p>
+        <p class="t-small family__meta">
+          {centrifuges.length} modelos de catálogo, marca {ortoalresa?.name}.
+        </p>
+        <a href={`/productos/${family.slug}/`} class="btn btn-secondary family__cta">
+          Ver la familia
+        </a>
+      </div>
+    </div>
+
+    <ul class="model-list">
+      {centrifuges.map((product) => <ModelRow product={product} size="compact" />)}
+    </ul>
+  </section>
+
+  {
+    serva && servaProducts.length > 0 && (
+      <section class="shell section rule-top" aria-labelledby="reactivos-title">
+        <SectionIndex index={2} label="Reactivos e insumos" />
+        <div class="sku-head">
+          <div>
+            <h2 id="reactivos-title" class="t-h2">SERVA Electrophoresis</h2>
+            <p class="t-body sku-head__desc">{serva.summary}</p>
+          </div>
+          <BrandLogo brand={serva} scale={1.2} />
+        </div>
+
+        <dl class="sku-list">
+          {servaProducts.map((product) => (
+            <div class="sku">
+              <dt>
+                <span class="sku__name" translate="no">{product.name}</span>
+                {product.sku && <span class="sku__code t-data">Ítem {product.sku}</span>}
+              </dt>
+              <dd class="t-small sku__desc">{product.summary}</dd>
+            </div>
+          ))}
+        </dl>
+
+        <a href={`/marcas/${serva.slug}/`} class="link-arrow mt-8">
+          Condiciones y áreas de aplicación SERVA
+          <Icon name="arrow-right" size={18} class="arrow" />
+        </a>
+      </section>
+    )
+  }
+
+  <section class="shell section rule-top" aria-labelledby="por-aplicacion-title">
+    <SectionIndex index={3} label="Por aplicación" />
+    <h2 id="por-aplicacion-title" class="t-h2">Si no sabe qué equipo pedir</h2>
+    <p class="t-lead mt-5">
+      Describa el ensayo, el volumen de trabajo o la norma que maneja. Cotizamos equipamiento
+      alineado a ese entorno aunque no esté publicado en el catálogo.
+    </p>
+    <ul class="app-links">
+      {
+        categories.map((category) => (
+          <li>
+            <a href={`/categorias/${category.slug}/`} class="link-arrow">
+              {category.name}
+              <Icon name="arrow-right" size={18} class="arrow" />
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+    <Notice class="mt-10">
+      {company.catalogNote} Cotización y disponibilidad sujetas a confirmación comercial.
+    </Notice>
+  </section>
+
+  <ClosingQuoteBand
+    index={4}
+    title="¿Busca un equipo que no está en el catálogo?"
+    body="Cotizamos según aplicación, capacidad y requisitos técnicos. Indique qué necesita hacer en el laboratorio y desde dónde escribe."
+  />
 </Layout>
+
+<style>
+  .family {
+    display: grid;
+    gap: 2rem;
+    padding-bottom: 3rem;
+  }
+  .family__media {
+    max-width: 17rem;
+  }
+  .family__logo {
+    margin-bottom: 1.5rem;
+  }
+  .family__desc {
+    margin-top: 1rem;
+  }
+  .family__meta {
+    margin-top: 1rem;
+    color: var(--color-ink-500);
+    font-family: var(--font-mono);
+  }
+  .family__cta {
+    margin-top: 2rem;
+  }
+  .model-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+
+  .sku-head {
+    display: grid;
+    gap: 1.75rem;
+    align-items: start;
+    margin-bottom: 2.5rem;
+  }
+  .sku-head__desc {
+    margin-top: 1rem;
+  }
+  .sku-list {
+    margin: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .sku {
+    padding-block: 1.5rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .sku dt {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem 1.25rem;
+  }
+  .sku__name {
+    font-size: 1.0625rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+  .sku__code {
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+  }
+  .sku__desc {
+    margin: 0.5rem 0 0;
+    color: var(--color-ink-600);
+    max-width: 62ch;
+  }
+
+  .app-links {
+    list-style: none;
+    margin: 2.5rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  @media (min-width: 768px) {
+    .family {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+      align-items: center;
+      gap: 3.5rem;
+      padding-bottom: 4rem;
+    }
+    .family__media {
+      max-width: none;
+    }
+    .sku-head {
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 3rem;
+    }
+    .app-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem 2.5rem;
+    }
+  }
+</style>
