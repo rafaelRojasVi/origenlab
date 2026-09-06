@@ -1,0 +1,106 @@
+---
+import { company } from '../../data/company';
+import ApplicationList from '../ui/ApplicationList.astro';
+import Icon from '../ui/Icon.astro';
+
+/**
+ * A quién atendemos.
+ *
+ * Categorías de cliente en lenguaje cualitativo, tomadas de `company.audience`.
+ * Sin logotipos de cliente, sin nombres, sin testimonios y sin conteos: nada de
+ * eso existe verificado en el repositorio, y el registro de afirmaciones deja
+ * constancia de que se evaluó y se descartó.
+ */
+---
+
+<section class="shell section audience" aria-labelledby="audiencia-title">
+  <div class="audience__head">
+    <div>
+      <p class="t-label">A quién atendemos</p>
+      <h2 id="audiencia-title" class="t-h2 audience__title">
+        Laboratorios que compran para trabajar, no para exhibir.
+      </h2>
+    </div>
+    <p class="t-body audience__body">
+      {company.homeIntro}
+    </p>
+  </div>
+
+  <ul class="sectors" data-reveal>
+    {company.audience.map((item) => <li class="sectors__item">{item}</li>)}
+  </ul>
+
+  <div class="lines">
+    <h3 class="t-label lines__title">Tres líneas de trabajo</h3>
+    <ApplicationList class="lines__list" />
+    <a href="/aplicaciones/" class="link-arrow lines__link">
+      Ver todas las aplicaciones y sectores
+      <Icon name="arrow-right" size={18} class="arrow" />
+    </a>
+  </div>
+</section>
+
+<style>
+  .audience__head {
+    display: grid;
+    gap: 1.5rem;
+  }
+  .audience__title {
+    margin-top: 1rem;
+    max-width: 18ch;
+  }
+  .audience__body {
+    color: var(--color-ink-600);
+  }
+
+  /* Lista corrida separada por filetes, no píldoras ni rejilla de fichas: son
+     etiquetas de sector y su peso visual tiene que quedar por debajo de las
+     tres líneas comerciales. */
+  .sectors {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 0;
+    margin: 2.5rem 0 0;
+    padding: 0;
+  }
+  .sectors__item {
+    padding-inline: 1.125rem;
+    border-left: 1px solid var(--color-hairline);
+    font-size: 1.0625rem;
+    color: var(--color-ink-800);
+  }
+  .sectors__item:first-child {
+    padding-left: 0;
+    border-left: none;
+  }
+
+  .lines {
+    margin-top: 4rem;
+  }
+  .lines__title {
+    padding-bottom: 1rem;
+  }
+  .lines__link {
+    margin-top: 2rem;
+  }
+
+  @media (min-width: 768px) {
+    .sectors {
+      margin-top: 3rem;
+    }
+    .lines {
+      margin-top: 5rem;
+    }
+  }
+  /* Dos columnas desde 1024 px: por debajo, el titular caía a tres líneas
+     junto a un párrafo más alto y la etiqueta quedaba descolgada. */
+  @media (min-width: 1024px) {
+    .audience__head {
+      grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
+      gap: 4rem;
+      align-items: end;
+    }
+  }
+
+</style>

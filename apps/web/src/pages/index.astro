@@ -2,284 +2,95 @@
 import Layout from '../layouts/Layout.astro';
 import Hero from '../components/home/Hero.astro';
 import BrandWall from '../components/home/BrandWall.astro';
-import SectionIndex from '../components/ui/SectionIndex.astro';
-import ModelList from '../components/ui/ModelList.astro';
-import ModelRow from '../components/ui/ModelRow.astro';
-import ApplicationList from '../components/ui/ApplicationList.astro';
+import ScopeSection from '../components/home/ScopeSection.astro';
+import ConsultationSection from '../components/home/ConsultationSection.astro';
+import ProcessSection from '../components/home/ProcessSection.astro';
+import AudienceSection from '../components/home/AudienceSection.astro';
 import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
-import Icon from '../components/ui/Icon.astro';
-import Notice from '../components/ui/Notice.astro';
-import BrandLogo from '../components/ui/BrandLogo.astro';
 import { site } from '../config/site';
-import { company } from '../data/company';
-import { categories } from '../data/categories';
-import { faqItems } from '../data/faq';
-import { getBrandBySlug, getOrtoalresaCentrifuges, getProductsByBrandId } from '../lib/catalog';
-import { faqJsonLd, organizationJsonLd, websiteJsonLd } from '../lib/jsonld';
+import { organizationJsonLd, websiteJsonLd } from '../lib/jsonld';
 
-const centrifuges = getOrtoalresaCentrifuges();
-const serva = getBrandBySlug('serva-electrophoresis');
-const servaProducts = serva ? getProductsByBrandId(serva.id) : [];
-
-/** Cómo se llega de una consulta a una cotización. Cada paso corresponde a algo
- *  que el negocio ya declara en `services.ts`, `faq.ts` o `categories.ts`. */
-const quoteSteps = [
-  {
-    title: 'Nos escribe',
-    body: 'Indique aplicación o equipo de referencia, institución y ciudad. Con eso podemos orientar la primera respuesta.',
-  },
-  {
-    title: 'Acotamos alternativas',
-    body: 'Asesoría técnica para reducir opciones según su flujo de trabajo, sin compromiso de compra.',
-  },
-  {
-    title: 'Cotización',
-    body: 'Propuesta formal con configuración, accesorios y condiciones comerciales confirmadas por escrito.',
-  },
-  {
-    title: 'Después de la compra',
-    body: 'Soporte, garantía según fabricante e instalación o puesta en marcha cuando el equipo lo requiere.',
-  },
-];
+/**
+ * Portada.
+ *
+ * La portada no lleva índice numerado de secciones. En las páginas interiores
+ * el numeral funciona como el índice de un manual, pero encadenado de 01 a 05
+ * en la portada convertía la página en un documento formateado y no en un
+ * primer encuentro comercial. Aquí la identidad de cada sección la da la
+ * etiqueta mono y, sobre todo, el cambio de fondo, de escala y de densidad.
+ *
+ * Ritmo de la página, deliberadamente desigual:
+ *
+ *   papel     hero tipográfico, la escala mayor del sitio
+ *   superficie marcas, compacto
+ *   papel     alcance, tres composiciones distintas y la única fotografía
+ *   papel     asesoría técnica, aire y preguntas a gran escala
+ *   superficie proceso, denso
+ *   papel     a quién atendemos, medio
+ *   tinta     banda de cierre
+ *
+ * Las preguntas frecuentes se movieron a /contacto/, junto con su JSON-LD:
+ * el acordeón de la portada repetía lo que la sección de asesoría ya resuelve
+ * mejor, y los datos estructurados tienen que vivir donde está el contenido
+ * visible que describen.
+ */
 ---
 
 <Layout
   title={`${site.name} | ${site.tagline}`}
   description={site.description}
   isHome
-  jsonLd={[organizationJsonLd(), websiteJsonLd(), faqJsonLd(faqItems)]}
+  jsonLd={[organizationJsonLd(), websiteJsonLd()]}
 >
   <Hero />
-
   <BrandWall />
-
-  <section class="shell section" aria-labelledby="equipos-title">
-    <SectionIndex index={1} label="Equipos" />
-    <div class="lead-row">
-      <div>
-        <h2 id="equipos-title" class="t-h2">Centrífugas Ortoalresa</h2>
-        <p class="t-body lead-row__body">
-          Cinco modelos de catálogo, desde microcentrífugas ventiladas hasta equipos
-          refrigerados de gran capacidad. Especificaciones según documentación del fabricante.
-        </p>
-      </div>
-      <a href="/productos/centrifugas/" class="link-arrow lead-row__link">
-        Ver la familia completa
-        <Icon name="arrow-right" size={18} class="arrow" />
-      </a>
-    </div>
-
-    <ModelList class="mt-10">
-      {centrifuges.map((product) => <ModelRow product={product} />)}
-    </ModelList>
-
-    {
-      serva && servaProducts.length > 0 && (
-        <div class="other-line">
-          <BrandLogo brand={serva} scale={1.1} class="other-line__logo" />
-          <div>
-            <h3 class="t-h3">Reactivos e insumos</h3>
-            <p class="t-small other-line__body">{serva.listSummary}</p>
-            <p class="t-data other-line__meta">
-              {servaProducts.length} referencias publicadas, pedidos gestionados por OrigenLab
-            </p>
-          </div>
-          <a href={`/marcas/${serva.slug}/`} class="link-arrow">
-            Ver la línea SERVA
-            <Icon name="arrow-right" size={18} class="arrow" />
-          </a>
-        </div>
-      )
-    }
-
-    <Notice class="mt-10">
-      Cotización y disponibilidad sujetas a confirmación comercial. La configuración, los
-      accesorios y las condiciones se confirman en la cotización.
-    </Notice>
-  </section>
-
-  <section class="shell section rule-top" aria-labelledby="aplicaciones-title">
-    <SectionIndex index={2} label="Aplicaciones" />
-    <h2 id="aplicaciones-title" class="t-h2">Tres líneas de trabajo</h2>
-    <p class="t-lead mt-5">{company.homeIntro}</p>
-    <ApplicationList class="mt-12" />
-    <a href="/aplicaciones/" class="link-arrow mt-8">
-      Ver todas las aplicaciones y sectores
-      <Icon name="arrow-right" size={18} class="arrow" />
-    </a>
-  </section>
-
-  <section class="shell section rule-top" aria-labelledby="proceso-title">
-    <SectionIndex index={3} label="Cómo cotizamos" />
-    <h2 id="proceso-title" class="t-h2">De la consulta a la cotización</h2>
-    <ol class="steps">
-      {
-        quoteSteps.map((step, i) => (
-          <li class="step">
-            <span class="step__num t-data" aria-hidden="true">{i + 1}</span>
-            <h3 class="step__title">{step.title}</h3>
-            <p class="step__body t-small">{step.body}</p>
-          </li>
-        ))
-      }
-    </ol>
-    <a href="/servicios/" class="link-arrow mt-10">
-      Servicios y postventa
-      <Icon name="arrow-right" size={18} class="arrow" />
-    </a>
-  </section>
-
-  <section class="shell section rule-top" aria-labelledby="faq-title">
-    <SectionIndex index={4} label="Preguntas frecuentes" />
-    <h2 id="faq-title" class="t-h2">Antes de escribirnos</h2>
-    <div class="faq">
-      {
-        faqItems.map((item) => (
-          <details name="faq" class="faq__item">
-            <summary>
-              <span>{item.question}</span>
-              <Icon name="chevron-down" size={20} class="faq__chevron" />
-            </summary>
-            <p class="t-body faq__answer">{item.answer}</p>
-          </details>
-        ))
-      }
-    </div>
-  </section>
+  <ScopeSection />
+  <ConsultationSection />
+  <ProcessSection />
+  <AudienceSection />
 
   <ClosingQuoteBand
-    index={5}
     title="Cuéntenos qué necesita medir, separar o preparar."
-    body="Responda con la aplicación, la institución y su ciudad. Con eso acotamos alternativas y preparamos una cotización con configuración y condiciones por escrito."
+    body="Con la aplicación, la institución y su ciudad acotamos alternativas y preparamos una cotización con configuración y condiciones por escrito."
   />
 </Layout>
 
-<style>
-  .lead-row {
-    display: grid;
-    gap: 1.5rem;
-    margin-bottom: 2.5rem;
-  }
-  .lead-row__body {
-    margin-top: 1rem;
-  }
+<script>
+  /**
+   * Revelado al desplazarse. Mejora progresiva estricta.
+   *
+   * Sin este script no se oculta nada: el estado inicial de `[data-reveal]`
+   * sólo existe mientras el documento lleva `data-reveal-ready`, que se pone
+   * aquí. Con movimiento reducido no se pone y la portada se pinta completa.
+   *
+   * No hay parallax, no hay secuestro del desplazamiento y ningún contenido
+   * depende del movimiento para leerse. Cada elemento se observa una sola vez.
+   */
+  const targets = document.querySelectorAll<HTMLElement>('[data-reveal]');
+  const motionOk = window.matchMedia('(prefers-reduced-motion: no-preference)');
 
-  .other-line {
-    display: grid;
-    gap: 1.25rem;
-    padding-block: 1.75rem;
-    border-bottom: 1px solid var(--color-hairline);
-  }
-  .other-line__logo {
-    margin-bottom: 1.25rem;
-  }
-  .other-line__body {
-    margin-top: 0.5rem;
-    color: var(--color-ink-600);
-    max-width: 60ch;
-  }
-  .other-line__meta {
-    margin-top: 0.75rem;
-    font-size: 0.8125rem;
-    color: var(--color-ink-500);
-  }
+  if (targets.length > 0 && motionOk.matches && 'IntersectionObserver' in window) {
+    document.documentElement.setAttribute('data-reveal-ready', '');
 
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          entry.target.classList.add('is-revealed');
+          observer.unobserve(entry.target);
+        }
+      },
+      { rootMargin: '0px 0px -10% 0px', threshold: 0.08 },
+    );
 
-  /* --- Pasos --- */
-  /* Los cuatro pasos comparten un solo filete: el proceso es uno, no cuatro
-     bloques. En escritorio la regla es continua y las columnas cuelgan de ella. */
-  .steps {
-    list-style: none;
-    margin: 3rem 0 0;
-    padding: 0;
-    display: grid;
-    gap: 0;
-    border-top: 1px solid var(--color-ink-950);
-  }
-  .step {
-    padding-block: 1.5rem;
-    border-bottom: 1px solid var(--color-hairline);
-  }
-  .step__num {
-    color: var(--color-teal-800);
-    font-size: 0.8125rem;
-  }
-  .step__title {
-    margin-top: 0.5rem;
-    font-size: 1.0625rem;
-    font-weight: 600;
-    color: var(--color-ink-950);
-  }
-  .step__body {
-    margin-top: 0.5rem;
-    color: var(--color-ink-600);
-  }
+    for (const target of targets) observer.observe(target);
 
-  /* --- FAQ --- */
-  .faq {
-    margin-top: 3rem;
-    border-top: 1px solid var(--color-ink-950);
-    max-width: 52rem;
+    /* Si alguien pide movimiento reducido con la página abierta, se descarta el
+       estado oculto en lugar de dejar contenido invisible. */
+    motionOk.addEventListener('change', (event) => {
+      if (event.matches) return;
+      observer.disconnect();
+      document.documentElement.removeAttribute('data-reveal-ready');
+    });
   }
-  .faq__item {
-    border-bottom: 1px solid var(--color-hairline);
-  }
-  .faq__item summary {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1.5rem;
-    min-height: 3.5rem;
-    padding-block: 1rem;
-    font-size: 1.0625rem;
-    font-weight: 500;
-    color: var(--color-ink-950);
-    cursor: pointer;
-    list-style: none;
-  }
-  .faq__item summary::-webkit-details-marker {
-    display: none;
-  }
-  .faq__chevron {
-    color: var(--color-ink-500);
-    flex-shrink: 0;
-  }
-  .faq__item[open] .faq__chevron {
-    transform: rotate(180deg);
-  }
-  @media (prefers-reduced-motion: no-preference) {
-    .faq__chevron {
-      transition: transform 150ms;
-    }
-  }
-  .faq__answer {
-    padding-bottom: 1.5rem;
-    color: var(--color-ink-600);
-  }
-
-  @media (min-width: 768px) {
-    .lead-row {
-      grid-template-columns: minmax(0, 1fr) auto;
-      align-items: end;
-      gap: 3rem;
-      margin-bottom: 3rem;
-    }
-    .other-line {
-      grid-template-columns: 15rem minmax(0, 1fr) auto;
-      align-items: center;
-      gap: 3rem;
-      padding-block: 2.25rem;
-    }
-    .other-line__logo {
-      margin-bottom: 0;
-    }
-    .steps {
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      column-gap: 3rem;
-    }
-    .step {
-      border-bottom: none;
-      padding-top: 1.75rem;
-    }
-  }
-</style>
+</script>

@@ -11,7 +11,11 @@ import SectionIndex from './SectionIndex.astro';
  * Un solo botón primario; los canales de apoyo van como enlaces de texto.
  */
 interface Props {
-  index: number;
+  /**
+   * Numeral del índice de sección. Se omite en la portada, que no se numera:
+   * es una portada, no un capítulo del documento.
+   */
+  index?: number;
   title: string;
   body: string;
   /** Contexto para prellenar el mensaje de WhatsApp. */
@@ -25,7 +29,11 @@ const whatsappHref = buildWhatsAppQuoteUrl({ productName, brandName });
 
 <section class="band on-ink" aria-labelledby="band-title">
   <div class="shell band__inner">
-    <SectionIndex index={index} label="Solicitar cotización" class="band__index" />
+    {index === undefined ? (
+      <p class="t-label band__label">Solicitar cotización</p>
+    ) : (
+      <SectionIndex index={index} label="Solicitar cotización" class="band__index" />
+    )}
     <div class="band__grid">
       <div>
         <h2 id="band-title" class="t-h2 band__title">{title}</h2>
@@ -76,6 +84,15 @@ const whatsappHref = buildWhatsAppQuoteUrl({ productName, brandName });
   }
   .band__index {
     color: var(--color-onink-500);
+  }
+  .band__label {
+    margin-bottom: 1.5rem;
+    color: var(--color-onink-500);
+  }
+  @media (min-width: 768px) {
+    .band__label {
+      margin-bottom: 2rem;
+    }
   }
   .band__title {
     color: #fff;

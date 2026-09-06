@@ -1,84 +1,149 @@
 ---
-import { brands, brandsWallHeading } from '../../data/brands';
+import { brandsWallHeading } from '../../data/brands';
+import { getCatalogBrands, getWorkingBrands } from '../../lib/catalog';
 import BrandLogo from '../ui/BrandLogo.astro';
 import Icon from '../ui/Icon.astro';
 
 /**
- * Muro de marcas. Aparece pronto en la portada porque la evidencia de con qué
- * fabricantes trabaja OrigenLab es lo que un comprador institucional busca
- * primero.
+ * Marcas.
  *
- * El encabezado repite literalmente el texto ya publicado en la firma
- * corporativa. No se añade descriptor por logotipo ni lenguaje de
- * representación oficial, distribución exclusiva o certificación.
+ * No es un muro de logotipos igualados: la banda distingue las dos marcas cuyo
+ * catálogo se puede consultar aquí, a mayor escala, de las cuatro con las que
+ * OrigenLab trabaja y cuya línea todavía no tiene ficha publicada, en una fila
+ * más pequeña y sin descripción. Esa jerarquía es la misma que `brands.ts`
+ * declara con `catalogPublished`, y describir las cuatro sin datos confirmados
+ * está bloqueado en `validate:catalog`.
+ *
+ * El encabezado repite literalmente el texto de la firma corporativa. El
+ * recuento de seis marcas se declara una sola vez en la página, en el índice
+ * de alcance del hero: repetirlo bajo un encabezado que ya dice las mismas
+ * palabras no añade evidencia, sólo ruido.
  */
-interface Props {
-  href?: string;
-  linkLabel?: string;
-}
-
-const { href = '/marcas/', linkLabel = 'Ver marcas y catálogo' } = Astro.props;
+const catalogBrands = getCatalogBrands();
+const workingBrands = getWorkingBrands();
 ---
 
-<section class="brand-wall" aria-labelledby="brand-wall-title">
-  <div class="shell brand-wall__inner">
-    <h2 id="brand-wall-title" class="t-label brand-wall__title">{brandsWallHeading}</h2>
-    <ul class="brand-wall__list">
-      {
-        brands.map((brand) => (
-          <li>
-            <BrandLogo brand={brand} />
-          </li>
-        ))
-      }
-    </ul>
-    <a href={href} class="link-arrow brand-wall__link">
-      {linkLabel}
-      <Icon name="arrow-right" size={18} class="arrow" />
-    </a>
+<section class="brand-band" aria-labelledby="brand-band-title">
+  <div class="shell brand-band__inner">
+    <div class="brand-band__intro">
+      <h2 id="brand-band-title" class="t-h2 brand-band__title">{brandsWallHeading}</h2>
+      <p class="t-body brand-band__body">
+        Fabricantes cuyos equipos e insumos cotizamos. No declaramos representación oficial,
+        distribución exclusiva ni certificación de ninguno.
+      </p>
+      <a href="/marcas/" class="link-arrow brand-band__link">
+        Ver las marcas en detalle
+        <Icon name="arrow-right" size={18} class="arrow" />
+      </a>
+    </div>
+
+    <div class="brand-band__tiers">
+      <div class="tier">
+        <h3 class="t-label tier__title">Con catálogo publicado</h3>
+        <ul class="tier__list tier__list--lead">
+          {
+            catalogBrands.map((brand) => (
+              <li>
+                <a href={`/marcas/${brand.slug}/`} class="tier__link">
+                  <BrandLogo brand={brand} scale={1.5} />
+                  <span class="sr-only">{brand.name}</span>
+                </a>
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+
+      <div class="tier">
+        <h3 class="t-label tier__title">También trabajamos con</h3>
+        <ul class="tier__list tier__list--quiet">
+          {
+            workingBrands.map((brand) => (
+              <li>
+                <BrandLogo brand={brand} scale={1.05} />
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+    </div>
   </div>
 </section>
 
 <style>
-  .brand-wall {
+  .brand-band {
     background-color: var(--color-surface);
     border-block: 1px solid var(--color-hairline);
   }
-  .brand-wall__inner {
-    padding-block: 2.5rem;
+  .brand-band__inner {
+    display: grid;
+    gap: 2.5rem;
+    padding-block: 3rem;
   }
-  .brand-wall__title {
-    color: var(--color-ink-500);
+  .brand-band__body {
+    margin-top: 1rem;
+    color: var(--color-ink-600);
+    max-width: 44ch;
   }
-  .brand-wall__list {
+  .brand-band__link {
+    margin-top: 1.5rem;
+  }
+
+  .brand-band__tiers {
+    display: grid;
+    gap: 2.5rem;
+  }
+  .tier__title {
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .tier__list {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 2rem 2.5rem;
     list-style: none;
-    margin: 1.75rem 0 0;
+    margin: 1.5rem 0 0;
     padding: 0;
   }
-  .brand-wall__list li {
+  /* Dos escalas, una jerarquía: las marcas con ficha pesan más que aquellas de
+     las que todavía no podemos publicar nada. */
+  .tier__list--lead {
+    gap: 1.75rem 3rem;
+  }
+  .tier__list--quiet {
+    gap: 1.5rem 2.5rem;
+  }
+  .tier__list li {
     display: flex;
     align-items: center;
-    /* Altura común: los lockups tienen proporciones muy distintas y sin una
-       caja compartida el muro se lee como una fila desalineada. */
-    min-height: 2.25rem;
+    min-height: 2.75rem;
   }
-  .brand-wall__link {
-    margin-top: 2rem;
+  .tier__link {
+    display: flex;
+    align-items: center;
+    min-height: 2.75rem;
+    border-radius: var(--radius-edge);
+    transition: opacity 150ms;
+  }
+  .tier__link:hover {
+    opacity: 0.65;
   }
   @media (min-width: 768px) {
-    .brand-wall__inner {
-      padding-block: 3.5rem;
+    .brand-band__inner {
+      padding-block: 4rem;
     }
-    .brand-wall__list {
-      gap: 2.5rem 4rem;
-      margin-top: 2rem;
+    .brand-band__tiers {
+      gap: 3rem;
     }
-    .brand-wall__link {
-      margin-top: 2.5rem;
+  }
+
+  /* Dos columnas desde 1024 px: por debajo, el encabezado quedaba en tres
+     líneas dentro de una columna de 250 px. */
+  @media (min-width: 1024px) {
+    .brand-band__inner {
+      grid-template-columns: minmax(0, 4fr) minmax(0, 7fr);
+      gap: 4rem;
+      align-items: start;
     }
   }
 </style>

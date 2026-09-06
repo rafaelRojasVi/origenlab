@@ -1,0 +1,319 @@
+---
+import { scopeByTier } from '../../data/equipmentScope';
+import { publicClaim } from '../../data/claims';
+import { getBrandBySlug, getProductBySlug } from '../../lib/catalog';
+import { productImageSources } from '../../lib/productImage';
+import BrandLogo from '../ui/BrandLogo.astro';
+import Notice from '../ui/Notice.astro';
+import Icon from '../ui/Icon.astro';
+
+/**
+ * Alcance de equipamiento.
+ *
+ * Tres composiciones distintas, no una rejilla de fichas iguales:
+ *
+ * 1. Centrifugación, la única familia con fotografía aprobada, en dos columnas
+ *    con la imagen a gran escala. Es la única fotografía de producto de toda la
+ *    portada.
+ * 2. Electroforesis, sin fotografía aprobada, resuelta con el logotipo del
+ *    fabricante entre filetes y el recuento en monoespaciada. Falta imagen y
+ *    se nota como decisión, no como hueco. Es una composición, no una caja: el
+ *    sistema agrupa con filetes y espacio.
+ * 3. Las familias por consulta, en una lista más densa y de menor escala, con
+ *    la pregunta que trae el cliente en lugar de la especificación que aquí no
+ *    podemos publicar.
+ *
+ * Ningún modelo, cifra ni marca se atribuye a las familias del tercer bloque.
+ */
+const [centrifugacion, electroforesis] = scopeByTier('catalogo');
+const consulta = scopeByTier('consulta');
+
+const centrifugeProduct = centrifugacion?.imageProductSlug
+  ? getProductBySlug(centrifugacion.imageProductSlug)
+  : undefined;
+const centrifugeImage = centrifugeProduct ? productImageSources(centrifugeProduct) : undefined;
+const ortoalresa = centrifugacion?.brandSlug ? getBrandBySlug(centrifugacion.brandSlug) : undefined;
+const serva = electroforesis?.brandSlug ? getBrandBySlug(electroforesis.brandSlug) : undefined;
+
+const centrifugeCount = centrifugacion?.countClaimId
+  ? publicClaim(centrifugacion.countClaimId)
+  : undefined;
+const servaCount = electroforesis?.countClaimId ? publicClaim(electroforesis.countClaimId) : undefined;
+---
+
+<section class="shell section" aria-labelledby="alcance-title">
+  <div class="scope-head">
+    <div>
+      <p class="t-label">Alcance</p>
+      <h2 id="alcance-title" class="t-h2 scope-head__title">
+        Cinco familias de equipo, una sola conversación técnica.
+      </h2>
+    </div>
+    <p class="t-body scope-head__body">
+      Dos familias tienen ficha publicada en este sitio, con especificaciones y documentación del
+      fabricante. Las demás se cotizan a partir de su aplicación: nos cuenta qué necesita hacer y
+      acotamos las alternativas antes de que exista un precio.
+    </p>
+  </div>
+
+  {
+    centrifugacion && (
+      <article class="feature" data-reveal>
+        {centrifugeImage && (
+          <div class="feature__media">
+            <picture>
+              <source type="image/avif" srcset={centrifugeImage.avifSrcset} sizes="(min-width: 1024px) 26rem, 78vw" />
+              <source type="image/webp" srcset={centrifugeImage.webpSrcset} sizes="(min-width: 1024px) 26rem, 78vw" />
+              <img
+                src={centrifugeImage.src}
+                alt={centrifugeImage.alt}
+                width="960"
+                height="960"
+                sizes="(min-width: 1024px) 26rem, 78vw"
+                loading="lazy"
+                decoding="async"
+              />
+            </picture>
+          </div>
+        )}
+        <div class="feature__body">
+          {ortoalresa && <BrandLogo brand={ortoalresa} scale={1.1} class="feature__logo" />}
+          <h3 class="feature__name">{centrifugacion.name}</h3>
+          <p class="t-body feature__purpose">{centrifugacion.purpose}</p>
+          <p class="feature__question">{centrifugacion.question}</p>
+          <div class="feature__foot">
+            {centrifugeCount && <span class="t-data feature__count">{centrifugeCount}</span>}
+            {centrifugacion.href && (
+              <a href={centrifugacion.href} class="link-arrow">
+                Ver la familia
+                <Icon name="arrow-right" size={18} class="arrow" />
+              </a>
+            )}
+          </div>
+        </div>
+      </article>
+    )
+  }
+
+  {
+    electroforesis && (
+      <article class="feature feature--flip" data-reveal>
+        <div class="feature__body">
+          <h3 class="feature__name">{electroforesis.name}</h3>
+          <p class="t-body feature__purpose">{electroforesis.purpose}</p>
+          <p class="feature__question">{electroforesis.question}</p>
+          <div class="feature__foot">
+            {electroforesis.href && (
+              <a href={electroforesis.href} class="link-arrow">
+                Ver la línea
+                <Icon name="arrow-right" size={18} class="arrow" />
+              </a>
+            )}
+          </div>
+        </div>
+        <div class="feature__mark">
+          {serva && <BrandLogo brand={serva} scale={2.4} class="feature__mark-logo" />}
+          {servaCount && <p class="t-data feature__mark-count">{servaCount}</p>}
+        </div>
+      </article>
+    )
+  }
+
+  <div class="consulta" data-reveal>
+    <h3 class="t-label consulta__title">Por consulta técnica</h3>
+    <ul class="consulta__list">
+      {
+        consulta.map((entry) => (
+          <li class="consulta__row">
+            <h4 class="consulta__name">{entry.name}</h4>
+            <p class="t-small consulta__purpose">{entry.purpose}</p>
+            <p class="consulta__question">{entry.question}</p>
+          </li>
+        ))
+      }
+    </ul>
+  </div>
+
+  <Notice class="scope-notice">
+    De estas familias no publicamos modelos ni especificaciones hasta tener ficha propia con
+    documentación del fabricante. Cotización, configuración y disponibilidad se confirman por
+    escrito al cotizar.
+  </Notice>
+</section>
+
+<style>
+  .scope-head {
+    display: grid;
+    gap: 1.5rem;
+  }
+  .scope-head__title {
+    margin-top: 1rem;
+    max-width: 20ch;
+  }
+  .scope-head__body {
+    color: var(--color-ink-600);
+  }
+
+  /* --- Familias con ficha publicada --------------------------------------- */
+  .feature {
+    display: grid;
+    gap: 2rem;
+    margin-top: 3.5rem;
+    padding-top: 3rem;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .feature--flip {
+    border-top-color: var(--color-hairline);
+  }
+  /* Apilada, la fotografía a ancho completo aplasta al texto que la acompaña.
+     Se acota hasta que hay dos columnas de verdad. */
+  .feature__media {
+    max-width: 22rem;
+  }
+  .feature__media img {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1 / 1;
+    object-fit: contain;
+  }
+  .feature__logo {
+    margin-bottom: 1.5rem;
+  }
+  .feature__name {
+    font-size: clamp(1.75rem, 1.3rem + 1.9vw, 2.75rem);
+    line-height: 1.08;
+    letter-spacing: -0.022em;
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+  .feature__purpose {
+    margin-top: 1.25rem;
+    color: var(--color-ink-600);
+    max-width: 46ch;
+  }
+  /* La pregunta del cliente ocupa el lugar de la especificación que esta
+     familia no puede publicar aquí. Va en tinta plena para que se lea como
+     contenido, no como pie. */
+  .feature__question {
+    margin-top: 1.5rem;
+    padding-left: 1rem;
+    border-left: 1px solid var(--color-teal-700);
+    font-size: 1.0625rem;
+    color: var(--color-ink-950);
+    max-width: 40ch;
+  }
+  .feature__foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem 2rem;
+    margin-top: 2rem;
+  }
+  .feature__count {
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+  }
+
+  /* Sin fotografía aprobada, el logotipo del fabricante y el recuento sostienen
+     la composición, entre dos filetes y con mucho aire. El bloque es alto a
+     propósito: iguala el peso óptico de la fotografía de la familia anterior
+     sin fingir que hay imagen y sin convertirse en una ficha. */
+  .feature__mark {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 1.25rem;
+    padding-block: 2.5rem;
+    border-block: 1px solid var(--color-hairline);
+  }
+  .feature__mark-count {
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+  }
+
+  /* --- Familias por consulta ----------------------------------------------
+     Escala menor y ritmo más apretado: el cambio de densidad es lo que
+     distingue lo que tiene ficha de lo que todavía no la tiene. */
+  .consulta {
+    margin-top: 4rem;
+  }
+  .consulta__title {
+    padding-bottom: 1rem;
+  }
+  .consulta__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .consulta__row {
+    padding-block: 1.5rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .consulta__name {
+    font-size: 1.1875rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+    letter-spacing: -0.012em;
+  }
+  .consulta__purpose {
+    margin-top: 0.5rem;
+    color: var(--color-ink-600);
+    max-width: 52ch;
+  }
+  .consulta__question {
+    margin-top: 0.75rem;
+    font-size: 0.9375rem;
+    color: var(--color-teal-800);
+  }
+
+  .scope-notice {
+    margin-top: 3rem;
+  }
+
+  /*
+   * Toda la sección pasa a dos y tres columnas desde 1024 px. A 768 px el
+   * titular caía a tres líneas junto a un párrafo más alto, cada familia por
+   * consulta quedaba en 213 px y el texto se rompía en columnas de dos
+   * palabras. Apilado se lee mejor que comprimido.
+   */
+  @media (min-width: 1024px) {
+    .scope-head {
+      grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
+      gap: 4rem;
+      align-items: end;
+    }
+
+    .consulta__list {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      column-gap: 3rem;
+      border-bottom: 1px solid var(--color-hairline);
+    }
+    .consulta__row {
+      border-bottom: none;
+      padding-block: 1.75rem;
+    }
+
+    .feature {
+      grid-template-columns: minmax(0, 26rem) minmax(0, 1fr);
+      align-items: center;
+      gap: 5rem;
+      margin-top: 5rem;
+      padding-top: 4rem;
+    }
+    /* Invertida: el texto a la izquierda y la marca a la derecha. El documento
+       ya viene en ese orden, así que apilado se lee igual de bien. */
+    .feature--flip {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 26rem);
+    }
+    .feature__media {
+      max-width: none;
+    }
+    .feature__mark {
+      min-height: 18rem;
+      padding-block: 3rem;
+    }
+  }
+</style>

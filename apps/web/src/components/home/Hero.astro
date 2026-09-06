@@ -1,64 +1,99 @@
 ---
-import { company } from '../../data/company';
 import { site } from '../../config/site';
 import { ctaLabels } from '../../lib/ctaLabels';
-import { getProductBySlug } from '../../lib/catalog';
-import ProductFigure from '../ui/ProductFigure.astro';
+import { equipmentScope } from '../../data/equipmentScope';
+import { publicClaim } from '../../data/claims';
 import Icon from '../ui/Icon.astro';
 
 /**
- * Portada, primer momento. Composición asimétrica: mensaje a la izquierda,
- * una fotografía real de equipo a la derecha. Cuatro elementos de texto como
- * máximo (H1, frase, dos acciones); sin píldoras de confianza ni chips.
+ * Portada, primer momento.
+ *
+ * El hero es tipográfico a propósito. La única fotografía de producto aprobada
+ * en el repositorio es de centrífugas, de modo que ilustrar aquí con imagen
+ * significaría abrir el sitio declarando que OrigenLab es una casa de
+ * centrífugas. La amplitud se comunica con el índice de alcance de la derecha,
+ * que nombra las cinco familias en la primera pantalla, y la fotografía aparece
+ * una sola vez más abajo, atada a la familia que documenta.
+ *
+ * El recuento de marcas sale del registro de afirmaciones: si alguien retira la
+ * aprobación, la línea desaparece sola.
  */
-const featured = getProductBySlug('biocen-22-r');
+const brandsClaim = publicClaim('marcas-con-las-que-trabajamos');
 ---
 
 <section class="hero" aria-labelledby="hero-title">
   <div class="shell hero__inner">
     <div class="hero__copy">
-      <h1 id="hero-title" class="t-display hero__title">
-        Equipos de laboratorio, cotizados con criterio técnico.
+      <p class="t-label hero__eyebrow">{site.tagline}</p>
+      <h1 id="hero-title" class="hero__title">
+        Equipamiento científico, elegido con criterio técnico.
       </h1>
-      <p class="t-lead hero__lead">{company.oneLiner}</p>
+      <p class="hero__lead">
+        Acompañamos a laboratorios, universidades e industria a elegir y cotizar equipos para
+        preparación de muestras, análisis y procesos.
+      </p>
       <div class="hero__actions">
-        <a href={site.quoteHref} class="btn btn-primary">{ctaLabels.solicitarCotizacion}</a>
+        <a href={site.quoteHref} class="btn btn-primary">{ctaLabels.contarAplicacion}</a>
         <a href="/productos/" class="link-arrow">
-          Ver equipos
+          Explorar equipos
           <Icon name="arrow-right" size={18} class="arrow" />
         </a>
       </div>
     </div>
 
-    {
-      featured && (
-        <div class="hero__media">
-          <ProductFigure
-            product={featured}
-            priority
-            sizes="(min-width: 1024px) 440px, (min-width: 640px) 384px, 78vw"
-            caption="Biocen 22 R, microcentrífuga refrigerada, 18.100 rpm"
-          />
-        </div>
-      )
-    }
+    <div class="hero__scope">
+      <h2 class="t-label hero__scope-title">Qué cotizamos</h2>
+      <ul class="scope-index">
+        {
+          equipmentScope.map((entry) => (
+            <li class="scope-index__row">
+              <span class="scope-index__name">{entry.name}</span>
+              <span class="scope-index__tier t-data">
+                {entry.tier === 'catalogo' ? 'Con ficha' : 'Por consulta'}
+              </span>
+            </li>
+          ))
+        }
+      </ul>
+      {
+        brandsClaim && (
+          <p class="hero__brands t-data">
+            {brandsClaim}
+          </p>
+        )
+      }
+    </div>
   </div>
 </section>
 
 <style>
   .hero__inner {
     display: grid;
-    gap: 2.5rem;
+    gap: 3rem;
     padding-top: 3rem;
-    padding-bottom: 4rem;
+    padding-bottom: 3.5rem;
+  }
+  .hero__eyebrow {
+    margin-bottom: 1.25rem;
   }
   /*
-   * El titular no lleva `max-width`: la columna ya lo limita. Una caja en `ch`
-   * se calcula sobre el tamaño de fuente vigente, y con tipografía fluida
-   * recortaba el titular a tres líneas en tablet cuando cabía en dos.
+   * La portada usa una escala de titular propia, mayor que `.t-display`. Es el
+   * único sitio del sitio donde la tipografía trabaja como imagen, y ese salto
+   * de escala es lo que separa la portada de una página interior.
    */
+  .hero__title {
+    font-size: clamp(2.25rem, 1.3rem + 3.9vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    font-weight: 600;
+    text-wrap: balance;
+  }
   .hero__lead {
-    margin-top: 1.5rem;
+    margin-top: 1.75rem;
+    font-size: clamp(1.0625rem, 1rem + 0.35vw, 1.3125rem);
+    line-height: 1.5;
+    color: var(--color-ink-600);
+    max-width: 46ch;
   }
   .hero__actions {
     display: flex;
@@ -67,40 +102,75 @@ const featured = getProductBySlug('biocen-22-r');
     gap: 1rem 2rem;
     margin-top: 2.5rem;
   }
-  .hero__media {
-    max-width: 20rem;
+
+  /* --- Índice de alcance ---------------------------------------------------
+     Es un índice, no una tarjeta: filete superior grueso, filas con filete de
+     un píxel y ninguna caja. */
+  .hero__scope-title {
+    padding-bottom: 0.875rem;
+  }
+  .scope-index {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .scope-index__row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1.25rem;
+    padding-block: 0.8125rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .scope-index__name {
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--color-ink-950);
+  }
+  .scope-index__tier {
+    flex-shrink: 0;
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+  }
+  .hero__brands {
+    margin-top: 1.25rem;
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
   }
 
-  @media (min-width: 640px) {
-    .hero__media {
-      max-width: 24rem;
+  @media (min-width: 768px) {
+    .hero__inner {
+      padding-top: 4rem;
+      padding-bottom: 4.5rem;
+    }
+    .scope-index__name {
+      font-size: 1.0625rem;
     }
   }
 
   /*
-   * El hero se parte en dos columnas sólo desde 1024 px. Entre 768 y 1023 la
-   * columna de texto quedaría en 430 px y el titular caería a cuatro líneas;
-   * apilado, el mismo titular cabe en dos y la fotografía gana tamaño.
+   * Dos columnas desde 1024 px. Por debajo, el índice de alcance queda bajo el
+   * titular: sigue estando en la primera pantalla larga de un móvil y no
+   * compite con el mensaje.
    */
   @media (min-width: 1024px) {
     .hero__inner {
-      grid-template-columns: minmax(0, 8fr) minmax(0, 5fr);
-      align-items: center;
-      gap: 3rem;
-      padding-top: 4rem;
-      padding-bottom: 5.5rem;
+      grid-template-columns: minmax(0, 7fr) minmax(0, 4fr);
+      align-items: end;
+      gap: 4.5rem;
+      padding-top: 5rem;
+      padding-bottom: 6rem;
     }
-    .hero__media {
-      max-width: none;
-      justify-self: end;
-      width: min(100%, 27rem);
+    .hero__scope {
+      padding-bottom: 0.5rem;
     }
   }
   @media (min-width: 1280px) {
     .hero__inner {
-      padding-top: 5rem;
+      gap: 6rem;
+      padding-top: 6rem;
       padding-bottom: 7rem;
-      gap: 5rem;
     }
   }
 </style>

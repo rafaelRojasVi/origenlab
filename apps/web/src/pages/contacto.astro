@@ -6,8 +6,10 @@ import Notice from '../components/ui/Notice.astro';
 import Icon from '../components/ui/Icon.astro';
 import { contact, telUrl } from '../data/contact';
 import { company } from '../data/company';
+import { faqItems } from '../data/faq';
 import { buildQuoteMailtoWithTemplate, buildWhatsAppQuoteUrl } from '../lib/whatsapp';
 import { ctaLabels } from '../lib/ctaLabels';
+import { faqJsonLd } from '../lib/jsonld';
 
 const mailtoHref = buildQuoteMailtoWithTemplate();
 const whatsappHref = buildWhatsAppQuoteUrl();
@@ -39,6 +41,7 @@ const intake = [
 <Layout
   title="Contacto"
   description={`Cotizaciones y consultas técnicas de OrigenLab: ${contact.email}, teléfono y WhatsApp ${contact.phoneDisplay}, lunes a viernes ${contact.hours}. Atención en todo Chile.`}
+  jsonLd={[faqJsonLd(faqItems)]}
 >
   <div class="shell">
     <PageIntro
@@ -130,6 +133,24 @@ const intake = [
       <a href={mailtoHref} class="btn btn-secondary">Escribir con estos datos</a>
     </p>
   </section>
+
+  <section class="shell section rule-top" aria-labelledby="faq-title">
+    <SectionIndex index={3} label="Preguntas frecuentes" />
+    <h2 id="faq-title" class="t-h2">Antes de escribirnos</h2>
+    <div class="faq">
+      {
+        faqItems.map((item) => (
+          <details name="faq" class="faq__item">
+            <summary>
+              <span>{item.question}</span>
+              <Icon name="chevron-down" size={20} class="faq__chevron" />
+            </summary>
+            <p class="t-body faq__answer">{item.answer}</p>
+          </details>
+        ))
+      }
+    </div>
+  </section>
 </Layout>
 
 <style>
@@ -217,6 +238,51 @@ const intake = [
     margin-top: 0.5rem;
     color: var(--color-ink-600);
     max-width: 60ch;
+  }
+
+  /* --- Preguntas frecuentes ---
+     Vive aquí y no en la portada: las respuestas son sobre cómo escribirnos, y
+     los datos estructurados FAQPage tienen que acompañar al contenido visible
+     que describen. */
+  .faq {
+    margin-top: 3rem;
+    border-top: 1px solid var(--color-ink-950);
+    max-width: 52rem;
+  }
+  .faq__item {
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .faq__item summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    min-height: 3.5rem;
+    padding-block: 1rem;
+    font-size: 1.0625rem;
+    font-weight: 500;
+    color: var(--color-ink-950);
+    cursor: pointer;
+    list-style: none;
+  }
+  .faq__item summary::-webkit-details-marker {
+    display: none;
+  }
+  .faq__chevron {
+    color: var(--color-ink-500);
+    flex-shrink: 0;
+  }
+  .faq__item[open] .faq__chevron {
+    transform: rotate(180deg);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .faq__chevron {
+      transition: transform 150ms;
+    }
+  }
+  .faq__answer {
+    padding-bottom: 1.5rem;
+    color: var(--color-ink-600);
   }
 
   @media (min-width: 768px) {

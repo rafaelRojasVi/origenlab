@@ -344,4 +344,50 @@
   .prose-block p + p {
     margin-top: 1rem;
   }
+
+  /* --- Revelado al desplazarse --------------------------------------------
+   * Mejora progresiva estricta. El estado inicial oculto sólo existe cuando el
+   * script ha marcado el documento con `data-reveal-ready`, de modo que sin
+   * JavaScript no se oculta nada nunca y la portada se lee entera. Todo el
+   * bloque vive bajo `prefers-reduced-motion: no-preference`, así que con
+   * movimiento reducido tampoco llega a aplicarse.
+   *
+   * Es una transición, no una animación en bucle: no hay parallax, no hay
+   * secuestro del desplazamiento y ningún contenido depende del movimiento
+   * para entenderse. Ningún elemento de la primera pantalla lleva la marca,
+   * porque ahí el script llegaría después del primer pintado y se vería el
+   * parpadeo.
+   */
+  @media (prefers-reduced-motion: no-preference) {
+    [data-reveal-ready] [data-reveal] {
+      opacity: 0;
+      transform: translateY(0.75rem);
+      transition:
+        opacity 500ms cubic-bezier(0.22, 0.61, 0.36, 1),
+        transform 500ms cubic-bezier(0.22, 0.61, 0.36, 1);
+    }
+    [data-reveal-ready] [data-reveal].is-revealed {
+      opacity: 1;
+      transform: none;
+    }
+    [data-reveal-ready] [data-reveal][data-reveal-delay='1'] {
+      transition-delay: 70ms;
+    }
+    [data-reveal-ready] [data-reveal][data-reveal-delay='2'] {
+      transition-delay: 140ms;
+    }
+    [data-reveal-ready] [data-reveal][data-reveal-delay='3'] {
+      transition-delay: 210ms;
+    }
+
+    /* Al imprimir no hay desplazamiento que dispare nada: sin esto, una sección
+       aún sin revelar saldría en blanco sobre el papel. */
+    @media print {
+      [data-reveal-ready] [data-reveal] {
+        opacity: 1;
+        transform: none;
+        transition: none;
+      }
+    }
+  }
 }

@@ -1,0 +1,280 @@
+---
+import {
+  consultant,
+  consultationInputs,
+  consultationQuestions,
+} from '../../data/consultation';
+import { contact, telUrl } from '../../data/contact';
+import { buildWhatsAppQuoteUrl } from '../../lib/whatsapp';
+import { ctaLabels } from '../../lib/ctaLabels';
+import { site } from '../../config/site';
+import Icon from '../ui/Icon.astro';
+
+/**
+ * Asesoría técnica antes de cotizar.
+ *
+ * Abre con las preguntas reales que traen los laboratorios, a gran escala: es
+ * el sustituto honesto de la prueba social que el repositorio no puede
+ * sostener. Ni testimonios, ni logotipos de cliente, ni casos.
+ *
+ * De Tatiana Vivanco sólo se publican los tres hechos confirmados que viven en
+ * `consultation.ts`: nombre, profesión y cargo. No hay retrato, biografía,
+ * titulación concreta ni años de experiencia, y los canales son los
+ * corporativos.
+ */
+const whatsappHref = buildWhatsAppQuoteUrl();
+---
+
+<section class="consult" aria-labelledby="asesoria-title">
+  <div class="shell">
+    <p class="t-label">Asesoría técnica</p>
+    <h2 id="asesoria-title" class="consult__title">
+      Hable con una especialista, no sólo con un catálogo.
+    </h2>
+
+    <ul class="questions">
+      {
+        consultationQuestions.map((question, i) => (
+          <li class="questions__item" data-reveal data-reveal-delay={String((i % 3) + 1)}>
+            {question}
+          </li>
+        ))
+      }
+    </ul>
+
+    <div class="consult__grid">
+      <div class="consult__lead">
+        <p class="t-body">
+          Antes de emitir una cotización revisamos qué exige de verdad su aplicación. A veces el
+          equipo que llega en la consulta no es el que corresponde al método, al volumen o al
+          espacio disponible, y conviene saberlo antes y no después de la compra.
+        </p>
+        <p class="t-body consult__lead-p">
+          Con eso comparamos las alternativas que tienen sentido para su laboratorio y recién
+          entonces preparamos la propuesta formal.
+        </p>
+
+        <div class="specialist">
+          <p class="specialist__name">{consultant.name}</p>
+          <p class="t-data specialist__role">
+            {consultant.profession}. {consultant.role} de {consultant.company}.
+          </p>
+          <ul class="specialist__channels">
+            <li>
+              <a href={`mailto:${contact.email}`}>
+                <Icon name="mail" size={18} />{contact.email}
+              </a>
+            </li>
+            <li>
+              <a href={whatsappHref} target="_blank" rel="noopener noreferrer">
+                <Icon name="whatsapp" size={18} />WhatsApp {contact.phoneDisplay}
+                <span class="sr-only">(abre WhatsApp en una pestaña nueva)</span>
+              </a>
+            </li>
+            <li>
+              <a href={telUrl()}>
+                <Icon name="phone" size={18} />{contact.phoneDisplay}
+              </a>
+            </li>
+          </ul>
+        </div>
+
+        <a href={site.quoteHref} class="btn btn-primary consult__cta">{ctaLabels.contarAplicacion}</a>
+      </div>
+
+      <div class="consult__inputs">
+        <h3 class="t-label inputs__title">Qué conviene contarnos</h3>
+        <dl class="inputs">
+          {
+            consultationInputs.map((input) => (
+              <div class="inputs__row">
+                <dt class="inputs__label">{input.label}</dt>
+                <dd class="inputs__hint t-small">{input.hint}</dd>
+              </div>
+            ))
+          }
+        </dl>
+        <p class="inputs__foot t-small">
+          No hace falta traerlo todo. Con dos o tres de estos datos ya podemos orientar la primera
+          respuesta.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .consult {
+    padding-block: 4rem;
+  }
+  .consult__title {
+    margin-top: 1rem;
+    font-size: clamp(1.625rem, 1.25rem + 1.6vw, 2.5rem);
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    font-weight: 600;
+    max-width: 22ch;
+  }
+
+  /* --- Preguntas reales ---------------------------------------------------
+     Escalonadas y a gran escala: son el momento de mayor tamaño tipográfico
+     después del titular de portada, y el único sitio del sitio donde el texto
+     está en primera persona del cliente. */
+  .questions {
+    list-style: none;
+    margin: 3rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: 0.75rem;
+  }
+  .questions__item {
+    font-size: clamp(1.25rem, 1.05rem + 0.85vw, 1.875rem);
+    line-height: 1.25;
+    letter-spacing: -0.015em;
+    color: var(--color-ink-950);
+    font-weight: 500;
+  }
+  .questions__item:nth-child(2) {
+    color: var(--color-ink-600);
+  }
+  .questions__item:nth-child(4) {
+    color: var(--color-ink-600);
+  }
+
+  .consult__grid {
+    display: grid;
+    gap: 3rem;
+    margin-top: 3.5rem;
+    padding-top: 3rem;
+    border-top: 1px solid var(--color-hairline);
+  }
+  .consult__lead-p {
+    margin-top: 1rem;
+  }
+  .consult__lead .t-body {
+    color: var(--color-ink-600);
+  }
+
+  /* --- La especialista ----------------------------------------------------
+     Sin retrato: no hay activo aprobado en el repositorio. El bloque se sostiene
+     con el filete de acento y la escala del nombre. */
+  .specialist {
+    margin-top: 2.5rem;
+    padding-left: 1.25rem;
+    border-left: 2px solid var(--color-teal-700);
+  }
+  .specialist__name {
+    font-size: 1.375rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+    letter-spacing: -0.015em;
+  }
+  .specialist__role {
+    margin-top: 0.375rem;
+    font-size: 0.875rem;
+    color: var(--color-ink-600);
+  }
+  .specialist__channels {
+    list-style: none;
+    margin: 1rem 0 0;
+    padding: 0;
+  }
+  .specialist__channels a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 2.25rem;
+    font-size: 0.9375rem;
+    color: var(--color-teal-800);
+    transition: color 150ms;
+  }
+  .specialist__channels a:hover {
+    color: var(--color-ink-950);
+  }
+
+  /* --- Qué conviene contarnos --------------------------------------------- */
+  .inputs__title {
+    padding-bottom: 0.875rem;
+  }
+  .inputs {
+    margin: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .inputs__row {
+    display: grid;
+    gap: 0.25rem;
+    padding-block: 0.875rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .inputs__label {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+  .inputs__hint {
+    margin: 0;
+    color: var(--color-ink-600);
+  }
+  .inputs__foot {
+    margin-top: 1.5rem;
+    color: var(--color-ink-500);
+    max-width: 46ch;
+  }
+  /* La acción sigue a los canales de la especialista: es el gesto que continúa
+     a "hable con ella". Desde 768 px se descuelga al pie de su columna, de modo
+     que las dos columnas terminan a la misma altura en lugar de quedar
+     desiguales por 250 px. */
+  .consult__cta {
+    align-self: flex-start;
+    margin-top: 2rem;
+  }
+
+  @media (min-width: 640px) {
+    .questions {
+      gap: 0.5rem;
+    }
+    /* El escalonado es el que da movimiento a la composición sin animación. */
+    .questions__item:nth-child(2) {
+      padding-left: 8%;
+    }
+    .questions__item:nth-child(3) {
+      padding-left: 16%;
+    }
+    .questions__item:nth-child(4) {
+      padding-left: 24%;
+    }
+  }
+
+  @media (min-width: 768px) {
+    .consult {
+      padding-block: 6rem;
+    }
+    .consult__grid {
+      margin-top: 4.5rem;
+      padding-top: 3.5rem;
+    }
+  }
+
+  /* Dos columnas desde 1024 px. A 768 px la columna de la derecha quedaba en
+     330 px y la lista de dos columnas se rompía palabra a palabra. */
+  @media (min-width: 1024px) {
+    .consult__grid {
+      grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
+      column-gap: 4.5rem;
+    }
+    .consult__lead {
+      display: flex;
+      flex-direction: column;
+    }
+    .consult__cta {
+      margin-top: auto;
+      padding-top: 0.75rem;
+    }
+    .inputs__row {
+      grid-template-columns: 11rem minmax(0, 1fr);
+      gap: 1.5rem;
+      align-items: baseline;
+      padding-block: 1rem;
+    }
+  }
+</style>
