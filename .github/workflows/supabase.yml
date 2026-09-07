@@ -1,0 +1,80 @@
+name: supabase
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "supabase/**"
+      - "docs/ARCHITECTURE.md"
+      - "docs/DOMAIN.md"
+      - "docs/MIGRATION.md"
+      - "docs/OPERATIONS.md"
+      - "docs/README.md"
+      - ".github/workflows/supabase.yml"
+  pull_request:
+    paths:
+      - "supabase/**"
+      - "docs/ARCHITECTURE.md"
+      - "docs/DOMAIN.md"
+      - "docs/MIGRATION.md"
+      - "docs/OPERATIONS.md"
+      - "docs/README.md"
+      - ".github/workflows/supabase.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: supabase-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  slice0-local:
+    name: Slice 0 local evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3
+        with:
+          version: 2.116.0
+
+      - name: Verify toolchain and guardrails
+        run: |
+          set -euo pipefail
+          supabase --version
+          docker --version
+          psql --version
+          bash -n supabase/scripts/*.sh supabase/scripts/lib/*.sh
+          scripts/security/check-public-repo-hygiene.sh
+
+      - name: Start local database
+        run: supabase start
+
+      - name: Prove deterministic migration replay
+        run: supabase/scripts/replay_evidence.sh "$RUNNER_TEMP/supabase-replay"
+
+      - name: Run pgTAP database tests
+        run: supabase test db --local
+
+      - name: Prove runtime-role behavior with direct logins
+        run: supabase/scripts/verify_direct_logins.sh
+
+      - name: Prove evidence tooling fails closed
+        run: supabase/scripts/evidence_tool_failure_tests.sh
+
+      - name: Run database linter and advisors
+        run: |
+          set -euo pipefail
+          supabase db lint --local \
+            -s crm,comms,outbound,evidence,catalog,procurement,platform \
+            --level warning --fail-on warning
+          supabase db advisors --local --type all --level info --fail-on warn
+
+      - name: Stop local stack
+        if: always()
+        run: supabase stop

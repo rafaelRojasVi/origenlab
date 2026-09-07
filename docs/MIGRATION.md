@@ -84,7 +84,7 @@ are owned by [`DATA.md`](DATA.md) §11.
 
 ## 5. Ordered slices and gates
 
-**[PLANNED]** — nothing below has been executed.
+**[PLANNED]** — of the slices below, only the **local, executable portion of slice 0** has been executed (2026-09-05): `supabase/roles.sql` and the migrations under `supabase/migrations/` create the roles, the seven schemas, the 32 tables, their grants and RLS policies against a local PostgreSQL 17 container, proven by the pgTAP suite in `supabase/tests/` and the scripts in `supabase/scripts/` ([`OPERATIONS.md`](OPERATIONS.md) §4.1). Every hosted gate of slice 0 — the Supabase project, the security advisors, the Data API exposure check, private buckets, `pg_cron`, `pgmq`, backups and both restore drills — remains open, and no later slice has begun.
 
 | # | Slice | Gate |
 |---|---|---|
@@ -136,6 +136,40 @@ Checks 3–5 are not redundant with RLS. `service_role` bypasses RLS by platform
 attribute; it does **not** bypass an ordinary object grant, so the revocations
 and their default privileges are the boundary that actually holds it out
 ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.4).
+
+Checks 1–9 are proven **locally** by `supabase/tests/` (348 pgTAP assertions across
+ten files — catalogue facts and rolled-back fixtures, run with `supabase test db`)
+and by `supabase/scripts/verify_direct_logins.sh` (45 proofs over real LOGIN
+connections for checks 6–9); the same checks must be re-run against the hosted
+project before slice 1. `supabase/scripts/replay_evidence.sh` proves the whole
+foundation replays deterministically, and
+`supabase/scripts/evidence_tool_failure_tests.sh` proves *those two scripts*
+themselves fail closed — a failed reset, a failed dump, a successful but empty
+dump, a failed local-target discovery and unequal applied-migration lists each
+terminate the procedure non-zero with no PASS conclusion
+([`OPERATIONS.md`](OPERATIONS.md) §4.1).
+
+Two things are **recorded rather than proven safe** and must be re-derived against
+the hosted role catalogue: the platform identities that hold `pg_read_all_data` or
+`BYPASSRLS` ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.5), and the fact that RLS
+constrains the OrigenLab runtime roles only, never the provider's control plane.
+
+Checks 10 and 11 are hosted gates and have not been run. **(impl)** the local
+equivalents of check 11 do pass: `supabase db lint --local` over the seven schemas
+with `--fail-on warning` reports no schema error, and `supabase db advisors --local`
+reports zero SECURITY findings and nothing above INFO.
+
+**(impl)** every one of the 97 foreign keys in the seven application schemas is
+index-covered, so the performance advisors report **zero** `unindexed_foreign_keys`.
+79 are covered by an unconditional B-tree index and 18 by a Slice 0 partial index
+`... where <referencing column> is not null`, a predicate the referential-action
+lookup itself implies. `supabase/tests/090_foreign_key_indexes.sql` proves the
+invariant from `pg_constraint` rather than from a list, so a foreign key added later
+is judged by the same rule; its exception allowlist is closed and empty. The gate is
+deliberately stricter than the advisor, which ignores `pg_index.indpred` and
+therefore accepted an index partial on an unrelated column as coverage. The
+remaining `unused_index` notices are an artefact of an empty database with no query
+history — they are reported, not acted on, and no index is dropped on their strength.
 
 ## 6. V1 → V2 writer handoff
 

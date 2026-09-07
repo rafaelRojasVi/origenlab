@@ -1,0 +1,59 @@
+# OrigenLab V2 — local Supabase configuration (Migration Slice 0, local portion).
+# Reference: https://supabase.com/docs/guides/local-development/cli/config
+# Operator procedure: docs/OPERATIONS.md §4. Design: docs/ARCHITECTURE.md §3, §6, §12.
+#
+# Only the database runs locally. Every other service is off: the Data API is off by
+# design, Auth is Slice 1, Storage buckets are a hosted gate. Nothing here is a secret.
+project_id = "origenlab"
+
+[api]
+# The Data API (PostgREST) is off (docs/ARCHITECTURE.md §6.1 point 6, §12). The seven
+# application schemas are never added to `schemas`.
+enabled = false
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+# Require explicit GRANTs even for `postgres`-created objects in `public`.
+auto_expose_new_tables = false
+
+[db]
+port = 54322
+shadow_port = 54320
+health_timeout = "2m"
+# PostgreSQL 17 (docs/README.md, docs/ARCHITECTURE.md §1).
+major_version = 17
+
+[db.pooler]
+enabled = false
+
+[db.migrations]
+enabled = true
+schema_paths = []
+
+[db.seed]
+# No seed data. Cluster roles come from supabase/roles.sql; application state only from
+# supabase/migrations. Test fixtures live in supabase/tests and roll back.
+enabled = false
+sql_paths = []
+
+[realtime]
+enabled = false
+
+[studio]
+enabled = false
+
+[local_smtp]
+enabled = false
+
+[storage]
+enabled = false
+
+[auth]
+enabled = false
+
+[edge_runtime]
+enabled = false
+
+[analytics]
+enabled = false

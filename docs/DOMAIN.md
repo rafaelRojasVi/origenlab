@@ -60,6 +60,9 @@ laboratory and a purchasing department are organization rows with a parent.
   operators may create units below the second level by hand; recommended
   default is that they create root plus one level, and deeper rows arrive
   only from evidence promotion.
+- **[OPEN]** the closed list of organization `kind` values. Until it is decided,
+  the schema enforces only a lower_snake_case token shape on `kind`; the closed
+  list arrives as a `CHECK` constraint by migration, like every other vocabulary.
 
 ### 2.2 Domains
 
