@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * QA de interacción sobre `dist/`: teclado, menú móvil, riel de marcas,
- * movimiento reducido y enlaces internos. Complementa `qa-screenshots.mjs`,
- * que cubre la parte visual.
+ * QA de interacción sobre `dist/`: teclado, menú móvil, constelación del hero,
+ * riel de marcas, movimiento reducido y enlaces internos. Complementa
+ * `qa-screenshots.mjs`, que cubre la parte visual.
  *
  * Ejecutar: node scripts/qa-interaction.mjs
  */
@@ -153,6 +153,106 @@ console.log('\nTeclado (1440 px)');
   await context.close();
 }
 
+/* -- 2a. Constelación del hero: la relación va en las dos direcciones ----- */
+
+/**
+ * El diagrama no es decoración: es la mitad de una interacción cuya otra mitad
+ * es el índice de alcance. Si el vínculo se rompe queda un dibujo de seis
+ * puntos y una tabla, y la página sigue pareciendo correcta. De ahí esta
+ * sección.
+ *
+ * También se comprueba lo que no debe pasar: que el diagrama, que lleva
+ * `aria-hidden`, no aporte nada enfocable ni un segundo juego de enlaces.
+ */
+console.log('\nConstelación del hero (1440 px)');
+{
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const page = await context.newPage();
+  await page.goto(`${base}/`, { waitUntil: 'load' });
+
+  const figure = page.locator('[data-constellation]');
+  check(await figure.count() === 1, 'hay una constelación en la portada');
+  check(
+    await figure.evaluate((el) => el.getAttribute('aria-hidden') === 'true'),
+    'el diagrama está oculto a tecnologías de asistencia',
+  );
+  check(
+    await figure.locator('a, button, [tabindex]').count() === 0,
+    'el diagrama no aporta nada enfocable (los enlaces son las filas)',
+  );
+
+  const nodes = page.locator('[data-family-node]');
+  const rows = page.locator('[data-family-row]');
+  check(await nodes.count() === 6, `seis nodos de capacidad (${await nodes.count()})`);
+  check(await rows.count() === 6, `seis filas de índice (${await rows.count()})`);
+
+  // Cada fila es un enlace con destino propio, y ninguna repite el destino.
+  const hrefs = await rows.evaluateAll((els) => els.map((el) => el.getAttribute('href')));
+  check(
+    hrefs.every((href) => typeof href === 'string' && href.startsWith('/') && href.endsWith('/')),
+    `las seis filas llevan a una ruta interna (${hrefs.join(', ')})`,
+  );
+  check(new Set(hrefs).size === 6, 'las seis filas llevan a destinos distintos');
+
+  // Los nodos no son equidistantes: seis puntos repartidos en sextos se leerían
+  // como un ciclo, y el mensaje de la portada es el contrario.
+  const radii = await nodes.evaluateAll((els) =>
+    els.map((el) => {
+      const parent = el.parentElement.getBoundingClientRect();
+      const box = el.getBoundingClientRect();
+      const cx = parent.left + parent.width / 2;
+      const cy = parent.top + parent.height / 2;
+      return Math.round(Math.hypot(box.left + box.width / 2 - cx, box.top + box.height / 2 - cy));
+    }),
+  );
+  const spread = Math.max(...radii) - Math.min(...radii);
+  check(spread > 8, `los nodos están a radios distintos, no en un círculo (${spread} px de diferencia)`);
+
+  // Del índice al diagrama.
+  const first = rows.first();
+  const familyId = await first.evaluate((el) => el.dataset.familyRow);
+  await first.hover();
+  check(
+    await figure.evaluate((el) => el.hasAttribute('data-active')),
+    'el cursor sobre una fila enciende el diagrama',
+  );
+  check(
+    await page.locator(`[data-family-node="${familyId}"]`).evaluate((el) =>
+      el.hasAttribute('data-node-active'),
+    ),
+    'se enciende el nodo de esa familia y no otro',
+  );
+  await page.mouse.move(0, 0);
+  check(
+    !(await figure.evaluate((el) => el.hasAttribute('data-active'))),
+    'al salir el cursor el diagrama vuelve a reposo',
+  );
+
+  // Con el teclado, que es el caso que se rompe sin que nadie lo note.
+  await first.focus();
+  check(
+    await first.evaluate((el) => el.hasAttribute('data-row-active')),
+    'el foco de teclado en una fila la marca activa',
+  );
+  check(
+    await page.locator(`[data-family-node="${familyId}"]`).evaluate((el) =>
+      el.hasAttribute('data-node-active'),
+    ),
+    'y enciende su nodo en el diagrama',
+  );
+
+  // Del diagrama al índice.
+  await page.locator(`[data-family-node="${familyId}"]`).hover();
+  check(
+    await page.locator(`[data-family-row="${familyId}"]`).evaluate((el) =>
+      el.hasAttribute('data-row-active'),
+    ),
+    'apuntar un nodo enciende su fila del índice',
+  );
+
+  await context.close();
+}
+
 /* -- 2b. Riel de marcas: bucle con control, y sin enlace duplicado -------- */
 
 /**
@@ -278,6 +378,23 @@ console.log('\nMovimiento reducido');
   check(animated.length === 0, `sin animaciones activas (${animated.join(', ') || 'ninguna'})`);
   const smooth = await page.evaluate(() => getComputedStyle(document.documentElement).scrollBehavior);
   check(smooth !== 'smooth', `scroll-behavior es "${smooth}"`);
+
+  // La constelación conserva la interacción y pierde el movimiento: el estado
+  // cambia de golpe, que sigue siendo legible.
+  const figure = page.locator('[data-constellation]');
+  const transitions = await page
+    .locator('[data-family-node] .cnode__dot')
+    .evaluateAll((els) => [...new Set(els.map((el) => getComputedStyle(el).transitionDuration))]);
+  check(
+    transitions.every((value) => value === '0s'),
+    `los nodos no tienen transición con movimiento reducido (${transitions.join(', ')})`,
+  );
+  await page.locator('[data-family-row]').first().hover();
+  check(
+    await figure.evaluate((el) => el.hasAttribute('data-active')),
+    'la relación fila-nodo sigue funcionando con movimiento reducido',
+  );
+  await page.mouse.move(0, 0);
 
   // El riel tiene que ser una fila estática legible, no una marquesina parada:
   // sin copia del bucle, sin control que no controla nada, y con las seis

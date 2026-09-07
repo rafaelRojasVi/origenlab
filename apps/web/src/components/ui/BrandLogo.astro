@@ -9,11 +9,18 @@ interface Props {
   brand: Brand;
   /** Multiplicador sobre la altura óptica declarada en los datos. */
   scale?: number;
+  /**
+   * Diferido por omisión. `eager` sólo donde el logotipo entra en la primera
+   * pantalla o puede entrar en cuadro por movimiento sin que el visitante
+   * desplace la página, que es el caso del riel de la portada: allí un
+   * logotipo aún sin cargar aparecería en blanco al llegar a cuadro.
+   */
+  loading?: 'lazy' | 'eager';
   class?: string;
   [key: string]: unknown;
 }
 
-const { brand, scale = 1, class: className = '', ...rest } = Astro.props;
+const { brand, scale = 1, loading = 'lazy', class: className = '', ...rest } = Astro.props;
 const height = Math.round((brand.logoDisplayHeight ?? 30) * scale);
 const ratio = (brand.logoWidth ?? 1) / (brand.logoHeight ?? 1);
 const width = Math.round(height * ratio);
@@ -26,7 +33,7 @@ const width = Math.round(height * ratio);
       alt={brand.logoAlt ?? `Logotipo de ${brand.name}`}
       width={width}
       height={height}
-      loading="lazy"
+      loading={loading}
       decoding="async"
       style={`height:${height}px;width:auto`}
       class:list={['brand-logo', className]}

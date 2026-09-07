@@ -5,32 +5,42 @@ import { getBrandByFamilyId } from '../../lib/catalog';
 import { publicClaim } from '../../data/claims';
 import { site } from '../../config/site';
 import Icon from '../ui/Icon.astro';
-import OrigenMarkAnimated from '../logo/OrigenMarkAnimated.astro';
+import SampleConstellation from './SampleConstellation.astro';
 
 /**
  * Portada, primer momento.
  *
- * El hero tiene un trabajo por encima de cualquier otro: que en la primera
- * pantalla se vea que OrigenLab cotiza seis familias de equipo distintas, y no
- * una. La versión anterior nombraba cinco en un índice lateral; ésta las nombra
- * con su marca al lado, porque el nombre de la familia sin fabricante todavía
- * se lee como una promesa genérica.
+ * El titular, la entradilla y las dos acciones son los aprobados y no cambian.
+ * Lo que cambia es el visual y lo que se puede hacer con él.
+ *
+ * El hero anterior abría con la marca animada sola, a la derecha, y las seis
+ * familias vivían debajo en una tabla que el dibujo no tocaba. Decía bien quién
+ * es OrigenLab y no decía nada de qué hace.
+ *
+ * Ahora las dos mitades son una sola pieza. La marca sigue siendo el ancla, y a
+ * su alrededor hay seis nodos, uno por capacidad, con radios y ángulos
+ * irregulares a propósito: seis puntos equidistantes en un círculo se leerían
+ * como un ciclo, y el mensaje es el contrario. El índice de abajo lleva el
+ * mismo numeral que cada nodo, y al pasar el cursor o el foco por una fila se
+ * enciende su nodo, y al apuntar o tocar un nodo se enciende su fila.
+ *
+ * Las filas del índice son ahora enlaces. Antes eran una tabla de alcance sin
+ * destino: nombraba seis familias y no llevaba a ninguna, porque cuatro de las
+ * seis no tenían página. Ya la tienen.
  *
  * No se ilustra con fotografía. La única fotografía de producto con procedencia
  * en el repositorio es de centrífugas, y abrir con ella declararía que esto es
  * una casa de centrífugas: exactamente lo que el rediseño tiene que deshacer.
- * En su lugar abre la marca animada, que es material propio y dice lo mismo que
- * la página entera va a decir: una muestra que se mueve y tres cuerpos que la
- * acompañan.
  *
  * El recuento sale del registro de afirmaciones: si alguien retira la
  * aprobación, la línea desaparece sola.
  */
 const familiesClaim = publicClaim('familias-de-equipo');
 
-const families = equipmentScope.map((entry) => ({
+const families = equipmentScope.map((entry, index) => ({
   ...entry,
   brand: getBrandByFamilyId(entry.id),
+  numeral: String(index + 1).padStart(2, '0'),
 }));
 ---
 
@@ -55,14 +65,15 @@ const families = equipmentScope.map((entry) => ({
       </div>
     </div>
 
-    <div class="hero__mark" aria-hidden="true">
-      <OrigenMarkAnimated size={180} />
+    <div class="hero__figure">
+      <SampleConstellation />
     </div>
   </div>
 
   <!--
     El índice de familias cierra la primera pantalla. Es una tabla de alcance,
-    no una rejilla de tarjetas: filete, nombre, fabricante y tipo de trabajo.
+    no una rejilla de tarjetas: filete, numeral, nombre, fabricante y tipo de
+    trabajo. El numeral es el mismo que lleva el nodo de la constelación.
   -->
   <div class="shell">
     <div class="hero__index">
@@ -74,9 +85,13 @@ const families = equipmentScope.map((entry) => ({
         {
           families.map((entry) => (
             <li class="scope-index__row">
-              <span class="scope-index__name">{entry.name}</span>
-              <span class="scope-index__brand t-data">{entry.brand?.name}</span>
-              <span class="scope-index__work t-data">{entry.workType}</span>
+              <a href={entry.href} class="scope-index__link" data-family-row={entry.id}>
+                <span class="scope-index__num t-data" aria-hidden="true">{entry.numeral}</span>
+                <span class="scope-index__name">{entry.name}</span>
+                <span class="scope-index__brand t-data">{entry.brand?.name}</span>
+                <span class="scope-index__work t-data">{entry.workType}</span>
+                <Icon name="arrow-right" size={16} class="scope-index__go" />
+              </a>
             </li>
           ))
         }
@@ -122,10 +137,16 @@ const families = equipmentScope.map((entry) => ({
     margin-top: 2.5rem;
   }
 
-  /* En móvil la marca animada no entra: ocuparía la mitad de la primera
-     pantalla y el mensaje es el titular, no el dibujo. */
-  .hero__mark {
-    display: none;
+  /*
+   * La constelación se muestra en todos los anchos. La marca sola no se
+   * mostraba en móvil, y con razón: ocupaba media pantalla y no aportaba nada.
+   * Ésta sí aporta, porque es la mitad de una interacción cuya otra mitad es el
+   * índice que va justo debajo, y porque en el toque es el camino corto a una
+   * familia. Va después de la copia en el documento: el mensaje sigue siendo el
+   * titular.
+   */
+  .hero__figure {
+    margin-top: 0.5rem;
   }
 
   /* --- Índice de alcance ---------------------------------------------------
@@ -152,27 +173,66 @@ const families = equipmentScope.map((entry) => ({
     border-top: 1px solid var(--color-ink-950);
   }
   .scope-index__row {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    align-items: baseline;
-    gap: 0.25rem 1.25rem;
-    padding-block: 0.8125rem;
     border-bottom: 1px solid var(--color-hairline);
   }
+  .scope-index__link {
+    display: grid;
+    grid-template-columns: 2.25rem minmax(0, 1fr) 1.25rem;
+    align-items: baseline;
+    gap: 0.25rem 0.875rem;
+    padding-block: 0.8125rem;
+    transition: background-color 150ms;
+  }
+  .scope-index__link:hover {
+    background-color: var(--color-surface);
+  }
+  .scope-index__num {
+    grid-column: 1;
+    grid-row: 1;
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+    transition: color 150ms;
+  }
   .scope-index__name {
+    grid-column: 2;
+    grid-row: 1;
     font-size: 1rem;
     font-weight: 500;
     color: var(--color-ink-950);
   }
   .scope-index__brand {
+    grid-column: 2;
+    grid-row: 2;
     font-size: 0.8125rem;
     color: var(--color-teal-800);
-    text-align: right;
   }
-  /* El tipo de trabajo es la tercera columna sólo cuando hay sitio: en móvil
+  /* El tipo de trabajo es una columna propia sólo cuando hay sitio: en móvil
      repetiría información que la sección de familias ya agrupa. */
   .scope-index__work {
     display: none;
+  }
+  .scope-index__go {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    align-self: center;
+    justify-self: end;
+    color: var(--color-ink-500);
+    transition: color 150ms;
+  }
+  .scope-index__link:hover .scope-index__go {
+    color: var(--color-teal-800);
+  }
+
+  /*
+   * Fila activa. La enciende el nodo de la constelación, o ella misma al recibir
+   * cursor o foco. El numeral toma el color de la familia, que es el mismo del
+   * nodo: es lo que hace visible el vínculo entre el diagrama y la tabla.
+   */
+  .scope-index__link[data-row-active] .scope-index__num {
+    color: var(--row-hue, var(--color-teal-800));
+  }
+  .scope-index__link[data-row-active] {
+    background-color: var(--color-surface);
   }
 
   @media (min-width: 768px) {
@@ -180,17 +240,57 @@ const families = equipmentScope.map((entry) => ({
       padding-top: 3.5rem;
       padding-bottom: 3rem;
     }
-    .scope-index__row {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 13rem) 12rem;
+    /* Tres columnas de contenido: el nombre y el fabricante ya caben en una
+       línea cada uno. El tipo de trabajo espera a que haya sitio de verdad. */
+    .scope-index__link {
+      grid-template-columns: 2.5rem minmax(0, 1fr) minmax(0, 13rem) 1.5rem;
+      align-items: center;
+      gap: 1.25rem;
     }
     .scope-index__name {
+      grid-column: 2;
+      grid-row: 1;
       font-size: 1.0625rem;
     }
     .scope-index__brand {
-      text-align: left;
+      grid-column: 3;
+      grid-row: 1;
+    }
+    .scope-index__go {
+      grid-column: 4;
+      grid-row: 1;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    /*
+     * Cinco doceavos para la figura: con los tres de antes la constelación no
+     * cabía sin apretar los nodos contra el borde. Es el único ajuste de
+     * composición del hero; la copia no cambia.
+     */
+    .hero__inner {
+      grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+      align-items: center;
+      gap: 3.5rem;
+      padding-top: 4.5rem;
+      padding-bottom: 3.5rem;
+    }
+    .hero__figure {
+      margin-top: 0;
+    }
+    .hero__index {
+      padding-bottom: 4.5rem;
+    }
+    /* La cuarta columna. A 768 px el nombre de familia más largo se partía en
+       tres líneas para dejarle sitio, y una fila de índice que ocupa tres
+       líneas deja de ser una fila. */
+    .scope-index__link {
+      grid-template-columns: 2.5rem minmax(0, 1fr) minmax(0, 13rem) 11rem 1.5rem;
     }
     .scope-index__work {
       display: block;
+      grid-column: 4;
+      grid-row: 1;
       font-size: 0.8125rem;
       color: var(--color-ink-500);
       text-align: right;
@@ -198,22 +298,80 @@ const families = equipmentScope.map((entry) => ({
          fila y se lee como si fueran dos datos distintos. */
       white-space: nowrap;
     }
-  }
-
-  @media (min-width: 1024px) {
-    .hero__inner {
-      grid-template-columns: minmax(0, 8fr) minmax(0, 3fr);
-      align-items: center;
-      gap: 4rem;
-      padding-top: 4.5rem;
-      padding-bottom: 3.5rem;
-    }
-    .hero__mark {
-      display: flex;
-      justify-content: flex-end;
-    }
-    .hero__index {
-      padding-bottom: 4.5rem;
+    .scope-index__go {
+      grid-column: 5;
+      grid-row: 1;
     }
   }
 </style>
+
+<script>
+  /**
+   * Constelación del hero: el diagrama y el índice se encienden a la vez.
+   *
+   * Es la única lógica del hero y no hay ninguna biblioteca detrás. Sólo pone y
+   * quita atributos; el movimiento y el color los decide el CSS, que es lo que
+   * permite que con `prefers-reduced-motion: reduce` el estado cambie de golpe
+   * sin que este archivo tenga que saberlo.
+   *
+   * Va en las dos direcciones porque las dos ocurren: el cursor y el foco
+   * llegan por el índice, que es lo que tiene nombre y destino, y el dedo llega
+   * por el nodo, que es lo que se ve primero en una pantalla pequeña.
+   *
+   * El diagrama es `aria-hidden`, así que nada de esto es la única forma de
+   * llegar a una familia: la fila es un enlace normal.
+   */
+  const figure = document.querySelector<HTMLElement>('[data-constellation]');
+  const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-family-row]'));
+
+  if (figure && rows.length > 0) {
+    const nodes = Array.from(figure.querySelectorAll<HTMLElement>('[data-family-node]'));
+    const wires = Array.from(figure.querySelectorAll<SVGElement>('[data-family-wire]'));
+
+    const setActive = (familyId: string | null) => {
+      if (familyId) figure.setAttribute('data-active', familyId);
+      else figure.removeAttribute('data-active');
+
+      for (const node of nodes) {
+        node.toggleAttribute('data-node-active', node.dataset.familyNode === familyId);
+      }
+      for (const wire of wires) {
+        const match = wire.getAttribute('data-family-wire') === familyId;
+        if (match) wire.setAttribute('data-wire-active', '');
+        else wire.removeAttribute('data-wire-active');
+      }
+      for (const row of rows) {
+        const match = row.dataset.familyRow === familyId;
+        row.toggleAttribute('data-row-active', match);
+        /* El numeral de la fila toma el color del nodo. El valor lo lleva ya el
+           nodo en su propia variable, así que no hay una segunda tabla de
+           colores que pueda desincronizarse. */
+        if (match) {
+          const node = nodes.find((item) => item.dataset.familyNode === familyId);
+          const hue = node?.style.getPropertyValue('--hue');
+          if (hue) row.style.setProperty('--row-hue', hue);
+        } else {
+          row.style.removeProperty('--row-hue');
+        }
+      }
+    };
+
+    for (const row of rows) {
+      const id = row.dataset.familyRow ?? null;
+      row.addEventListener('pointerenter', () => setActive(id));
+      row.addEventListener('pointerleave', () => setActive(null));
+      row.addEventListener('focus', () => setActive(id));
+      row.addEventListener('blur', () => setActive(null));
+    }
+
+    for (const node of nodes) {
+      const id = node.dataset.familyNode ?? null;
+      node.addEventListener('pointerenter', () => setActive(id));
+      node.addEventListener('pointerleave', () => setActive(null));
+    }
+
+    /* Fuera de la figura y del índice no queda nada encendido: en un toque el
+       `pointerleave` del nodo puede no llegar nunca. */
+    figure.addEventListener('pointerleave', () => setActive(null));
+  }
+</script>

@@ -77,6 +77,27 @@
   --color-teal-100: #ccfbf1;
   --color-teal-50: #f0fdfa;
 
+  /*
+   * Familias de equipo. Seis tintas, y sólo para la constelación del hero y la
+   * fila del índice que le corresponde.
+   *
+   * El sistema tiene un acento, el teal, y sigue teniéndolo: estas seis no son
+   * un segundo acento suelto sino una escala de identificación, y no aparecen
+   * en ningún otro sitio del sitio. Existen porque el hero tiene que decir de
+   * un vistazo que hay seis capacidades distintas, y seis puntos del mismo
+   * color dicen lo contrario.
+   *
+   * Las seis están medidas: todas superan 5,6:1 sobre papel y sobre superficie,
+   * de modo que pueden teñir texto y no sólo un punto. Centrifugación reutiliza
+   * el teal del sistema en vez de inventar un séptimo verde.
+   */
+  --color-family-sonicacion: #1d4f7c;
+  --color-family-dispersion: #6b3f96;
+  --color-family-centrifugacion: #115e59;
+  --color-family-pesaje: #7d5310;
+  --color-family-osmometria: #15697f;
+  --color-family-electroforesis: #8f2f4f;
+
   /* Radius: one step, everywhere */
   --radius-edge: 2px;
 

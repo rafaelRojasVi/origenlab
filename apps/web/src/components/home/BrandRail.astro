@@ -86,7 +86,7 @@ const rail = brandRailOrder
           rail.map(({ brand, family }) => (
             <li class="rail__cell">
               <a href={`/marcas/${brand.slug}/`} class="rail__link-cell">
-                <BrandLogo brand={brand} scale={1.25} class="rail__logo" />
+                <BrandLogo brand={brand} scale={1.25} loading="eager" class="rail__logo" />
                 <span class="rail__name sr-only">{brand.name}</span>
                 {family && <span class="rail__family t-data">{family.name}</span>}
               </a>
@@ -104,7 +104,7 @@ const rail = brandRailOrder
           rail.map(({ brand, family }) => (
             <li class="rail__cell">
               <span class="rail__link-cell">
-                <BrandLogo brand={brand} scale={1.25} class="rail__logo" alt="" />
+                <BrandLogo brand={brand} scale={1.25} loading="eager" class="rail__logo" alt="" />
                 {family && <span class="rail__family t-data">{family.name}</span>}
               </span>
             </li>

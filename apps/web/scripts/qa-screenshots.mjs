@@ -152,17 +152,25 @@ for (const [name, path] of ROUTES) {
       const smallTargets = [];
       const missingDims = [];
 
-      const inScrollRegion = (el) => {
+      /**
+       * Un elemento cuyo ancestro lo recorta o lo hace desplazable no puede
+       * desbordar la página: o se ve dentro de su caja o no se ve. Antes sólo
+       * se eximían `auto` y `scroll`, así que una marquesina dentro de
+       * `overflow: hidden` (el riel de marcas) salía como diez desbordes
+       * mientras la página no tenía ni un píxel de scroll horizontal. El
+       * desborde de verdad lo comprueba `scrollWidth > clientWidth`, más abajo.
+       */
+      const inClippedRegion = (el) => {
         for (let node = el.parentElement; node; node = node.parentElement) {
           const overflowX = getComputedStyle(node).overflowX;
-          if (overflowX === 'auto' || overflowX === 'scroll') return true;
+          if (overflowX !== 'visible') return true;
         }
         return false;
       };
 
       for (const el of document.querySelectorAll('body *')) {
         const rect = el.getBoundingClientRect();
-        if (inScrollRegion(el)) continue;
+        if (inClippedRegion(el)) continue;
         if (rect.width > 0 && rect.right > docWidth + 1) {
           overflow.push(
             `${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]} right=${Math.round(rect.right)}`,

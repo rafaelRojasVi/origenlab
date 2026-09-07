@@ -2,10 +2,12 @@
 /**
  * Comprueba que todo enlace externo que el sitio publica sigue respondiendo.
  *
- * Cubre las tres listas de destinos externos que existen:
+ * Cubre las cuatro listas de destinos externos que existen:
  *   - `src/data/sourceRegistry.ts`  página oficial y PDF por marca
  *   - `src/data/brands.ts`          sitio del fabricante
  *   - `src/data/products.ts`        página de producto y ficha PDF por modelo
+ *   - `src/data/brandModels.ts`     página y PDF por modelo documentado, y la
+ *                                   documentación de cada familia
  *
  * **No** forma parte de `npm run validate`. Sale a la red, y una puerta de
  * calidad que depende de que seis servidores ajenos estén levantados falla por
@@ -35,6 +37,7 @@ function read(rel) {
 const registrySrc = read('src/data/sourceRegistry.ts');
 const brandsSrc = read('src/data/brands.ts');
 const productsSrc = read('src/data/products.ts');
+const modelsSrc = read('src/data/brandModels.ts');
 
 /** Destinos: [etiqueta, url, tipo esperado]. */
 const targets = [];
@@ -70,6 +73,21 @@ for (const [, label, url] of [
   return out;
 })) {
   targets.push([label, url, url.endsWith('.pdf') ? 'pdf' : 'html']);
+}
+
+/*
+ * Modelos documentados y documentación de familia. Es la lista más larga: las
+ * cifras que publica el sitio de las cinco familias sin ficha propia salen de
+ * estos destinos, así que si uno deja de responder hay que volver a leerlo
+ * antes de seguir publicando lo que dice.
+ */
+for (const block of modelsSrc.split(/\n  \{\n/).slice(1)) {
+  const id = block.match(/id: '([^']+)'/)?.[1] ?? block.match(/familyId: '([^']+)'/)?.[1];
+  if (!id) continue;
+  const official = block.match(/officialUrl:\s*\n?\s*'([^']+)'/)?.[1];
+  const pdf = block.match(/officialPdfUrl:\s*\n?\s*'([^']+)'/)?.[1];
+  if (official) targets.push([`${id} · página del fabricante`, official, 'html']);
+  if (pdf) targets.push([`${id} · PDF del fabricante`, pdf, 'pdf']);
 }
 
 /** Sin duplicados: varios modelos comparten el PDF de serie. */

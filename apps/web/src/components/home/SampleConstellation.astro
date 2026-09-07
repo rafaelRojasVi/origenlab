@@ -1,0 +1,256 @@
+---
+import { equipmentScope } from '../../data/equipmentScope';
+import { getBrandByFamilyId } from '../../lib/catalog';
+import OrigenMarkAnimated from '../logo/OrigenMarkAnimated.astro';
+
+/**
+ * Constelación de la muestra. Visual del hero.
+ *
+ * El hero anterior abría con la marca animada sola. Decía bien quién es
+ * OrigenLab y no decía nada de qué hace: las seis familias vivían abajo, en una
+ * tabla, y el dibujo no las tocaba.
+ *
+ * Ahora la marca es el ancla y a su alrededor hay seis nodos, uno por
+ * capacidad. La colocación es deliberadamente irregular: radios distintos y
+ * ángulos que no reparten la vuelta en sextos. Seis puntos equidistantes en un
+ * círculo se leen como un ciclo, y el mensaje es el contrario: son capacidades
+ * modulares, un laboratorio puede necesitar una sola o combinarlas en el orden
+ * que pida su método.
+ *
+ * # Qué es interactivo, y por qué así
+ *
+ * El diagrama lleva `aria-hidden`: los enlaces de verdad son las seis filas del
+ * índice de alcance que va debajo, que tienen nombre visible, fabricante y
+ * destino. Meter seis enlaces más dentro del SVG habría duplicado el tabulador
+ * y dado a un lector de pantalla doce destinos donde hay seis.
+ *
+ * La relación va en las dos direcciones y la hace el script del hero: al pasar
+ * el cursor o el foco por una fila se enciende su nodo, y al tocar o apuntar un
+ * nodo se enciende su fila. Lo que el diagrama ofrece (identificar la familia,
+ * ir a ella) está entero en las filas, así que ocultarlo a tecnologías de
+ * asistencia no quita nada.
+ *
+ * El numeral es lo que ata las dos mitades: el 03 del diagrama y el 03 de la
+ * fila son el mismo. Sin él el diagrama serían seis puntos de colores.
+ *
+ * # Movimiento
+ *
+ * Los nodos no tienen bucle. Todo su movimiento es respuesta a una acción:
+ * `transform: scale` y `opacity`, que componen y no pueden desplazar nada de la
+ * página. El único bucle es la órbita de los tres cuerpos de la marca, que ya
+ * existía y no cambia. Con `prefers-reduced-motion: reduce` desaparecen las
+ * transiciones y el estado cambia de golpe, que sigue siendo legible.
+ *
+ * La caja reserva su alto con `aspect-ratio` y los nodos son absolutos, así que
+ * nada de esto puede provocar desplazamiento de contenido.
+ */
+
+/**
+ * Posición de cada nodo en el lienzo, en porcentaje. Fijadas a mano, no
+ * generadas: el objetivo es que no se lea como una rueda, y un reparto
+ * calculado por ángulo regular es exactamente lo que hay que evitar.
+ */
+const PLACEMENT: Record<string, { x: number; y: number }> = {
+  sonicacion: { x: 13, y: 20 },
+  'dispersion-homogeneizacion': { x: 16, y: 63 },
+  centrifugacion: { x: 43, y: 91 },
+  'pesaje-humedad': { x: 88, y: 28 },
+  osmometria: { x: 83, y: 71 },
+  electroforesis: { x: 58, y: 7 },
+};
+
+/** Token de color por familia. Declarados en `global.css`. */
+const HUE: Record<string, string> = {
+  sonicacion: 'var(--color-family-sonicacion)',
+  'dispersion-homogeneizacion': 'var(--color-family-dispersion)',
+  centrifugacion: 'var(--color-family-centrifugacion)',
+  'pesaje-humedad': 'var(--color-family-pesaje)',
+  osmometria: 'var(--color-family-osmometria)',
+  electroforesis: 'var(--color-family-electroforesis)',
+};
+
+const CENTRE = 50;
+/** Radio del ancla: el conector arranca fuera de la marca, no debajo. */
+const ANCHOR_RADIUS = 17;
+/** El conector se detiene antes del nodo para que el punto no lo remate. */
+const NODE_GAP = 5;
+
+const nodes = equipmentScope.map((entry, index) => {
+  const place = PLACEMENT[entry.id] ?? { x: CENTRE, y: CENTRE };
+  const dx = place.x - CENTRE;
+  const dy = place.y - CENTRE;
+  const length = Math.hypot(dx, dy) || 1;
+  const ux = dx / length;
+  const uy = dy / length;
+  return {
+    id: entry.id,
+    name: entry.name,
+    brand: getBrandByFamilyId(entry.id)?.name,
+    numeral: String(index + 1).padStart(2, '0'),
+    hue: HUE[entry.id] ?? 'var(--color-teal-800)',
+    x: place.x,
+    y: place.y,
+    /** Conector, del borde del ancla al borde del nodo. */
+    x1: Number((CENTRE + ux * ANCHOR_RADIUS).toFixed(2)),
+    y1: Number((CENTRE + uy * ANCHOR_RADIUS).toFixed(2)),
+    x2: Number((place.x - ux * NODE_GAP).toFixed(2)),
+    y2: Number((place.y - uy * NODE_GAP).toFixed(2)),
+  };
+});
+---
+
+<figure class="constellation" data-constellation aria-hidden="true">
+  <svg
+    class="constellation__wires"
+    viewBox="0 0 100 100"
+    xmlns="http://www.w3.org/2000/svg"
+    focusable="false"
+  >
+    {
+      nodes.map((node) => (
+        <line
+          class="wire"
+          data-family-wire={node.id}
+          x1={node.x1}
+          y1={node.y1}
+          x2={node.x2}
+          y2={node.y2}
+          style={`--hue: ${node.hue}`}
+        />
+      ))
+    }
+  </svg>
+
+  <div class="constellation__mark">
+    <OrigenMarkAnimated size={132} />
+  </div>
+
+  {
+    nodes.map((node) => (
+      <span
+        class="cnode"
+        data-family-node={node.id}
+        style={`--hue: ${node.hue}; left: ${node.x}%; top: ${node.y}%`}
+      >
+        <span class="cnode__dot"></span>
+        <span class="cnode__num">{node.numeral}</span>
+      </span>
+    ))
+  }
+</figure>
+
+<style>
+  .constellation {
+    position: relative;
+    /* Cuadrado y con alto reservado: los nodos son absolutos y no participan
+       del flujo, así que la caja no puede cambiar de tamaño al interactuar. */
+    aspect-ratio: 1;
+    width: 100%;
+    max-width: 21rem;
+    margin: 0 auto;
+  }
+
+  .constellation__wires {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+  .wire {
+    stroke: var(--hue);
+    stroke-width: 1;
+    /* El trazo no engorda al escalar la caja: el conector tiene que leerse como
+       un filete a cualquier ancho, igual que los del resto del sitio. */
+    vector-effect: non-scaling-stroke;
+    stroke-linecap: round;
+    opacity: 0.34;
+  }
+
+  .constellation__mark {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 34%;
+    transform: translate(-50%, -50%);
+  }
+  .constellation__mark :global(svg) {
+    width: 100%;
+    height: auto;
+  }
+
+  /* --- Nodo de capacidad --------------------------------------------------- */
+  .cnode {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: 0.4375rem;
+    transform: translate(-50%, -50%);
+    /* Área de toque cómoda sin agrandar el punto. */
+    padding: 0.5rem;
+    margin: -0.5rem;
+  }
+  .cnode__dot {
+    width: 0.6875rem;
+    height: 0.6875rem;
+    border-radius: 50%;
+    background-color: var(--hue);
+    /* Halo del color de la familia, del grosor de un filete. */
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--hue) 14%, transparent);
+  }
+  .cnode__num {
+    font-family: var(--font-mono);
+    /* 13 px es el suelo del sitio. */
+    font-size: 0.8125rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-ink-500);
+    white-space: nowrap;
+  }
+
+  /*
+   * Estado activo. Lo pone el script del hero, desde la fila del índice o desde
+   * el propio nodo. Sólo cambian `transform`, `opacity` y color.
+   */
+  .constellation[data-active] .cnode:not([data-node-active]) .cnode__dot {
+    opacity: 0.3;
+  }
+  .constellation[data-active] .cnode:not([data-node-active]) .cnode__num {
+    opacity: 0.4;
+  }
+  .constellation[data-active] .wire:not([data-wire-active]) {
+    opacity: 0.1;
+  }
+  .cnode[data-node-active] .cnode__dot {
+    transform: scale(1.55);
+  }
+  .cnode[data-node-active] .cnode__num {
+    color: var(--hue);
+  }
+  .wire[data-wire-active] {
+    opacity: 1;
+    stroke-width: 1.5;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .cnode__dot,
+    .cnode__num,
+    .wire {
+      transition:
+        transform 220ms cubic-bezier(0.22, 0.61, 0.36, 1),
+        opacity 220ms,
+        color 220ms,
+        stroke-width 220ms;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .constellation {
+      max-width: 24rem;
+      margin-inline: auto 0;
+    }
+    .cnode__dot {
+      width: 0.75rem;
+      height: 0.75rem;
+    }
+  }
+</style>
