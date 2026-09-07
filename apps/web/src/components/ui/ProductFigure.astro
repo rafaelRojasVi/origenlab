@@ -3,9 +3,14 @@ import type { Product } from '../../data/products';
 import { productImageSources } from '../../lib/productImage';
 
 /**
- * Imagen de producto. Todas las fotografías del sitio se presentan igual:
- * recorte del fabricante, caja cuadrada, fondo papel, misma escala óptica.
- * Sin marcos, sombras ni etiquetas superpuestas.
+ * Imagen de producto con ficha propia. Todas las fotografías del sitio se
+ * presentan igual: recorte del fabricante, caja cuadrada, fondo papel, misma
+ * escala óptica. Sin marcos, sombras ni etiquetas superpuestas.
+ *
+ * La fotografía sale de `productImages.ts` a través de `productImageSources`:
+ * si el registro no respalda la imagen del producto, no se dibuja nada. Las
+ * dimensiones que declara `<img>` son las del derivado mayor, para que el
+ * navegador reserve el alto antes de descargarlo.
  */
 interface Props {
   product: Product;
@@ -40,8 +45,8 @@ const image = productImageSources(product);
           <img
             src={image.src}
             alt={image.alt}
-            width="960"
-            height="960"
+            width={image.width}
+            height={image.height}
             sizes={sizes}
             loading={priority ? 'eager' : 'lazy'}
             fetchpriority={priority ? 'high' : 'auto'}

@@ -1,14 +1,17 @@
 ---
 import type { BrandModel } from '../../data/brandModels';
+import type { ProductImageRecord } from '../../data/productImages';
 import ExternalLink from './ExternalLink.astro';
+import ModelPhoto from './ModelPhoto.astro';
 
 /**
  * Ficha de un modelo que el sitio describe pero no aloja.
  *
- * Es el equivalente de `ModelRow` para los modelos sin fotografía autorizada ni
- * página interna: donde `ModelRow` abre con la imagen y lleva a una ficha,
- * ésta abre con el nombre y lleva al fabricante. No finge ser una ficha de
- * producto y no reserva un hueco de imagen que quedaría vacío.
+ * Es el equivalente de `ModelRow` para los modelos sin página interna: donde
+ * `ModelRow` lleva a una ficha, ésta lleva al fabricante. Si el registro de
+ * imágenes tiene una fotografía `VERIFIED` del modelo, la ficha abre con ella
+ * (`image`); si no, abre con el nombre y no reserva un hueco que quedaría
+ * vacío. Nunca ilustra un modelo con el equipo de otro fabricante.
  *
  * Cuatro bloques, siempre en el mismo orden, porque es el orden en que se
  * decide una compra: qué hace, para qué se usa, qué decide la elección, y de
@@ -21,13 +24,25 @@ import ExternalLink from './ExternalLink.astro';
  */
 interface Props {
   model: BrandModel;
+  /** Fila `VERIFIED` de `productImages.ts` para este modelo, si existe. */
+  image?: ProductImageRecord;
+  /** Nombre del fabricante para el rótulo de la fotografía. */
+  brandName?: string;
   variant?: 'stack' | 'split' | 'compact';
   /** Nivel del encabezado del nombre. La página manda, no el componente. */
   headingLevel?: 3 | 4;
   class?: string;
 }
 
-const { model, variant = 'stack', headingLevel = 3, class: className = '' } = Astro.props;
+const {
+  model,
+  image,
+  brandName,
+  variant = 'stack',
+  headingLevel = 3,
+  class: className = '',
+} = Astro.props;
+const hasPhoto = image?.status === 'VERIFIED';
 const Heading = `h${headingLevel}` as 'h3' | 'h4';
 const officialLabel =
   model.officialUrlScope === 'modelo'
@@ -35,7 +50,14 @@ const officialLabel =
     : 'Página del fabricante';
 ---
 
-<li class:list={['sheet', `sheet--${variant}`, className]}>
+<li class:list={['sheet', `sheet--${variant}`, hasPhoto && 'sheet--photo', className]}>
+  {
+    hasPhoto && (
+      <div class="sheet__media">
+        <ModelPhoto image={image} brandName={brandName} size="sheet" captioned />
+      </div>
+    )
+  }
   <div class="sheet__head">
     <Heading class="sheet__name" translate="no">{model.name}</Heading>
     <p class="sheet__meta t-data">
@@ -190,9 +212,27 @@ const officialLabel =
     max-width: 62ch;
   }
 
+  /* Con fotografía: la imagen ocupa una columna propia desde 768 px y el
+     resto de la ficha fluye a su derecha. El equipo entero, sin recorte. */
+  .sheet__media {
+    max-width: 16rem;
+  }
+
   @media (min-width: 768px) {
     .sheet__specs {
       grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .sheet--photo {
+      grid-template-columns: minmax(0, 12rem) minmax(0, 1fr);
+      column-gap: 2.5rem;
+    }
+    .sheet--photo .sheet__media {
+      grid-column: 1;
+      grid-row: 1 / span 5;
+      max-width: none;
+    }
+    .sheet--photo > :not(.sheet__media) {
+      grid-column: 2;
     }
   }
 
@@ -203,6 +243,22 @@ const officialLabel =
     }
     .sheet--split {
       grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+    }
+    .sheet--split.sheet--photo {
+      grid-template-columns: minmax(0, 14rem) minmax(0, 5fr) minmax(0, 6fr);
+    }
+    .sheet--split.sheet--photo .sheet__head {
+      grid-column: 2;
+    }
+    .sheet--split.sheet--photo .sheet__text {
+      grid-column: 2;
+    }
+    .sheet--split.sheet--photo .sheet__criteria {
+      grid-column: 3;
+    }
+    .sheet--split.sheet--photo .sheet__source,
+    .sheet--split.sheet--photo .sheet__note {
+      grid-column: 2 / -1;
     }
     .sheet--split .sheet__head {
       grid-column: 1;

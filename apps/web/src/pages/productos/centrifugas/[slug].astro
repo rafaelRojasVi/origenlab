@@ -10,6 +10,7 @@ import ModelRow from '../../../components/ui/ModelRow.astro';
 import ClosingQuoteBand from '../../../components/ui/ClosingQuoteBand.astro';
 import ExternalLink from '../../../components/ui/ExternalLink.astro';
 import Icon from '../../../components/ui/Icon.astro';
+import FamilyMotif from '../../../components/home/FamilyMotif.astro';
 import { site } from '../../../config/site';
 import { ctaLabels } from '../../../lib/ctaLabels';
 import { buildWhatsAppQuoteUrl } from '../../../lib/whatsapp';
@@ -67,6 +68,7 @@ const metaDescription = (
         product={product}
         priority
         sizes="(min-width: 1024px) 460px, (min-width: 768px) 45vw, 82vw"
+        caption={brand ? `${product.name}, ${brand.name}` : product.name}
       />
     </div>
 
@@ -101,9 +103,20 @@ const metaDescription = (
     product.applications && product.applications.length > 0 && (
       <section class="shell section rule-top" aria-labelledby="aplicaciones-title">
         <SectionIndex index={1} label="Aplicaciones" />
-        <h2 id="aplicaciones-title" class="t-h2">Para qué se usa</h2>
-        <p class="t-body product-apps">{product.applications.join(', ')}.</p>
-        <p class="t-small product-apps__note">{product.application}</p>
+        <div class="product-apps__grid">
+          <div>
+            <h2 id="aplicaciones-title" class="t-h2">Para qué se usa</h2>
+            <p class="t-body product-apps">{product.applications.join(', ')}.</p>
+            <p class="t-small product-apps__note">{product.application}</p>
+          </div>
+          {/* El diagrama de la familia acompaña a la fotografía: la fotografía
+              dice cómo es el equipo y el diagrama qué le hace a la muestra. */}
+          {brand && (
+            <div class="product-apps__motif">
+              <FamilyMotif familyId={brand.familyId} />
+            </div>
+          )}
+        </div>
       </section>
     )
   }
@@ -212,6 +225,15 @@ const metaDescription = (
     color: var(--color-ink-600);
     max-width: 62ch;
   }
+  .product-apps__grid {
+    display: grid;
+    gap: 2rem;
+    align-items: center;
+  }
+  .product-apps__motif {
+    max-width: 12rem;
+    color: var(--color-ink-800);
+  }
   .product-docs {
     display: flex;
     flex-wrap: wrap;
@@ -233,6 +255,10 @@ const metaDescription = (
       max-width: none;
       position: sticky;
       top: 6rem;
+    }
+    .product-apps__grid {
+      grid-template-columns: minmax(0, 1fr) 12rem;
+      gap: 4rem;
     }
   }
 </style>

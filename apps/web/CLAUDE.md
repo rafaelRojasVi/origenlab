@@ -13,6 +13,7 @@
 | Modelos del fabricante que el sitio describe y enlaza pero no aloja | `src/data/brandModels.ts` |
 | Las seis tareas de laboratorio de `/aplicaciones/` | `src/data/applications.ts` |
 | Fuente oficial, PDF, procedencia y permiso de imagen | `src/data/sourceRegistry.ts` |
+| Procedencia y permiso de cada fotografía de producto | `src/data/productImages.ts` (`validate:images`) |
 | Sistema de marca: construcción, colores, animación | `docs/logo-system.md` |
 | Asesoría técnica y hechos de la especialista | `src/data/consultation.ts` |
 | Estado legal y datos de identidad pendientes | `src/data/legal.ts` |
@@ -26,7 +27,7 @@
 
 Stack: Astro + Tailwind v4, static site, Spanish-first. Build: `npm run build` → `dist/`.
 Full gate before declaring work done: `npm run validate` (check + build + catalog +
-brands + dist + contrast + interaction), then `npm run qa:screens` for the visual
+brands + images + dist + contrast + interaction), then `npm run qa:screens` for the visual
 and accessibility pass. `npm run verify:sources` comprueba los enlaces externos
 contra la red y por eso queda fuera de `validate`.
 
@@ -60,11 +61,19 @@ que no esté en ese destino. Nada de precio, plazo, stock, garantía ni imagen:
 `validate:catalog` los bloquea. `npm run verify:sources` comprueba con
 peticiones reales que los destinos siguen respondiendo.
 
-**Ninguna imagen de fabricante se publica sin procedencia y permiso en
-`src/data/sourceRegistry.ts`.** Que una imagen sea visible en público no implica
-permiso de reutilización, no se rehospedan PDF del fabricante y jamás se ilustra
-una marca con el equipo de otra. Las familias sin fotografía autorizada se
-componen con el diagrama de `src/lib/familyMotif.ts`.
+**Ninguna fotografía de fabricante se publica sin fila `VERIFIED` en
+`src/data/productImages.ts`.** Es el único camino por el que una imagen de
+equipo llega a una plantilla (`ModelPhoto`, `ProductFigure`, `ModelRow`), y
+`validate:images` comprueba la fila contra el catálogo, los archivos de
+`public/products/` y el HTML construido: fila por imagen local, ningún host
+remoto, marca y modelo del catálogo, dimensiones y alt, ninguna fila sin
+permiso renderizada, y toda imagen de familia rotulada como representativa. Que
+una imagen sea visible en público no implica permiso de reutilización: los seis
+fabricantes reservan sus imágenes (ver `sourceRegistry.ts`), no se rehospedan
+PDF del fabricante y jamás se ilustra una marca con el equipo de otra. Las
+familias sin fotografía autorizada se componen con el diagrama de
+`src/lib/familyMotif.ts`, que se conserva como capa conceptual también donde
+hay fotografía.
 
 Do not invent brands, certifications, specs, lead times, or warranty details not in data or docs.
 

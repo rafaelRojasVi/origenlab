@@ -2,7 +2,7 @@
 
 Status: canonical  
 Owner: web-maintainers  
-Last reviewed: 2026-09-06
+Last reviewed: 2026-09-07
 
 Assets for public product/brand pages are stored under `public/` (not hotlinked in production).
 
@@ -15,6 +15,93 @@ Assets for public product/brand pages are stored under `public/` (not hotlinked 
 > que todos esos destinos responden; `npm run validate:brands` comprueba que
 > exista una fila por marca. Este documento conserva el detalle por modelo de
 > Ortoalresa, que es más fino que una fila por marca.
+
+## Registro por fotografía (V2, 2026-09-07)
+
+`src/data/productImages.ts` tiene una fila por fotografía de producto, publicada
+o candidata: marca, modelo o familia exacta, página oficial, origen de la
+imagen, tipo de fuente, base de permiso, prueba, original local, dimensiones,
+derivados, fecha de comprobación, clasificación (`modelo-exacto` o
+`familia-representativa`), alt en español y estado (`VERIFIED`,
+`ASSET_PERMISSION_NEEDED`, `CONTENT_NEEDED`, `REJECTED`). Sólo las filas
+`VERIFIED` llegan a una plantilla, siempre a través de `ModelPhoto`,
+`ProductFigure` o `ModelRow`; `npm run validate:images` comprueba el registro
+contra el catálogo, los archivos y el HTML construido.
+
+Estado tras la investigación de imagen del 2026-09-07 (seis dominios oficiales,
+sin descargar nada, sin extraer de PDF):
+
+| Fabricante | Modelos publicados | Con fotografía | Base | Qué dice el fabricante |
+|---|---|---|---|---|
+| Ortoalresa | 5 | 5 (`VERIFIED`) | Activo de OrigenLab con procedencia por modelo; publicación asumida por el negocio | El Aviso Legal reserva la reproducción a su autorización expresa. **Permiso escrito pendiente** |
+| Hielscher Ultrasonics | 4 | 0 | `ASSET_PERMISSION_NEEDED` | Imprint & Copyright: las imágenes no pueden copiarse ni mostrarse en otros sitios sin consentimiento |
+| IKA | 3 | 0 | `ASSET_PERMISSION_NEEDED` | Sitio inaccesible por máquina (403); el folleto oficial no autoriza reutilización |
+| Adam Equipment | 3 familias | 0 | `ASSET_PERMISSION_NEEDED` | Brand Toolkit para distribuidores cede logotipos y banners, no fotografías |
+| Löser Messtechnik | 4 | 0 | `ASSET_PERMISSION_NEEDED` | Impressum: prohibida la reproducción sin acuerdo de Löser |
+| SERVA Electrophoresis | 5 | 0 | `ASSET_PERMISSION_NEEDED` | Sin términos de reutilización publicados; imágenes de 126 a 500 px |
+
+Ninguna de las 19 fotografías identificadas se descargó ni se publica. Cada
+fila del registro nombra el archivo exacto del fabricante para que la petición
+sea concreta.
+
+### Peticiones de permiso pendientes de enviar
+
+Redactadas para el negocio; el texto de cada una puede enviarse tal cual.
+
+**Ortoalresa** (marketing@ortoalresa.com, cc sales@ y info@; Álvarez Redondo,
+S.A., Daganzo). Pedir autorización previa, expresa y por escrito, según los
+apartados 2 y 5 de su Aviso Legal y la cláusula 3 de sus Condiciones Generales
+de Venta, para reproducir en origenlab.cl y en material comercial las
+fotografías oficiales de Biocen 22, Biocen 22 R, Digicen 22, Digicen 22 R y
+Consul 22 (`imagen_producto/Biocen_22.avif` y siguientes), sin alteración salvo
+redimensionado y conversión de formato, y para usar la marca y el logotipo
+Ortoalresa junto a esos productos, con crédito «Imágenes: © Ortoalresa /
+Álvarez Redondo, S.A.». Pedir también, si existe, el kit de imágenes en alta
+resolución para distribuidores.
+
+**Hielscher Ultrasonics GmbH** (formulario hielscher.com/email.htm; Teltow).
+Pedir, según su Imprint & Copyright (copy_1.htm), permiso escrito para
+reproducir en origenlab.cl: UP100H (`up100h_02_p0500.jpg`,
+`up100h_05_p1000.jpg`), UP200St (`UP200St_silver_cut.png`,
+`up200st-s26d2-vial-p300-opt.jpg`), UP400St
+(`Ultrasonic_Homogenizer_UP400St_S24d22D-05-p1000.jpg`) y UIP2000hdT
+(`UIP2000hdT-sonicator-transducer-generator-HielscherUltrasonics.jpg`).
+Pedir que confirmen que Hielscher tiene los derechos (su aviso advierte de
+fotografías de terceros), el crédito exigido, las condiciones de recorte y
+redimensionado, y el consentimiento para enlazar sus páginas, que el mismo
+aviso también exige.
+
+**IKA-Werke GmbH & Co. KG** (sales@ika.de, cc service@ika.com; formulario
+ika.com/owa/ika/content.contact_form; Staufen). Pedir los archivos oficiales
+en alta resolución y el permiso escrito para T 10 basic ULTRA-TURRAX
+(0003737000), T 18 digital ULTRA-TURRAX (0003720000) y T 25 digital
+ULTRA-TURRAX (0003725000), con el crédito y las condiciones de uso de la marca
+ULTRA-TURRAX®, y preguntar si existe una oficina para Latinoamérica que
+gestione material de distribuidores.
+
+**Adam Equipment** (marketing@adamequipment.com, cc sales@adamequipment.com).
+Pedir permiso escrito, o el alta en la Dealer Zone, para reproducir las
+fotografías oficiales de las familias PMB (53, 163, 202), Solis (SAB 124e a
+514i) y Highland (HCB 123 a 6001), los originales en alta resolución (el sitio
+sólo sirve 1.100 px con protección de enlace directo) y las condiciones de
+atribución. Confirmar de paso si el Brand Toolkit de logotipos y banners aplica
+a OrigenLab.
+
+**Löser Messtechnik** (info@loeser-osmometer.de, Axel Löser, Berlín). Pedir,
+según su Impressum, permiso escrito para publicar `Tp7E.jpg` (Osmometer basic),
+`Tp7iE.jpg` (i Osmometer basic), `Tp16E-New.jpg` (i Osmometer) y
+`Tp21E-New.jpg` (i Cryometer), con crédito «© Löser Messtechnik, Berlin», y
+originales de mayor resolución que los 400 × 500 px publicados. Su lista de
+distribuidores no tiene entrada para Chile.
+
+**SERVA Electrophoresis GmbH / LICORbio** (info@licorbio.com; Heidelberg).
+Pedir permiso escrito y originales en alta resolución de BlueVertical PRiME
+(`BV-104-s.jpg`), HPE BlueHorizon (`HPE-BH-s.jpg`), BlueMarine 100
+(`BM-100-s.jpg`), las cuatro fuentes BluePower (`BP-600-PRI-s.jpg`,
+`BP-300-BLO-s.jpg`, `BP-3000-HPE-s.jpg`, `BP-6000-IPG-s.jpg`) y BlueSlick
+(`42500-s.jpg`), con el crédito y el uso de sus marcas registradas. Su lista de
+distribuidores para Chile nombra a LabDelivery, no a OrigenLab: conviene
+explicar la relación de suministro.
 
 ## Ortoalresa — active catalog (2026-05-16)
 
@@ -30,15 +117,19 @@ Assets for public product/brand pages are stored under `public/` (not hotlinked 
 
 ### Derivados de producto (V2)
 
-`npm run build:product-images` genera, desde cada AVIF original, los tamaños que
-sirve el sitio: `{slug}-480.avif`, `{slug}-960.avif` y sus equivalentes WebP.
+`npm run build:product-images` genera, desde cada original (AVIF, JPEG, PNG o
+WebP) en `public/products/<marca>/`, los tamaños que sirve el sitio:
+`{slug}-480.avif`, `{slug}-960.avif` y sus equivalentes WebP, e imprime las
+dimensiones de cada derivado para copiarlas a `productImages.ts`.
 
-El proceso convierte el blanco de estudio en transparencia mediante un relleno
-por inundación **desde los bordes** del lienzo, no por umbral global: así el gris
-claro de las carcasas y los reflejos internos, que no tocan el borde, quedan
-intactos. Después recorta el aire sobrante para que todos los equipos ocupen la
-misma superficie óptica. **No se retoca, recorta ni recompone el equipo
-fotografiado.** Los originales se conservan sin modificar.
+Si el borde del lienzo es blanco de estudio (se mide, no se decide a mano), el
+proceso convierte ese blanco en transparencia mediante un relleno por inundación
+**desde los bordes**, no por umbral global: así el gris claro de las carcasas y
+los reflejos internos, que no tocan el borde, quedan intactos, y después recorta
+el aire sobrante para que todos los equipos ocupen la misma superficie óptica.
+Un original con fondo ambientado o de color se deja tal cual. **No se retoca,
+recorta ni recompone el equipo fotografiado.** Los originales se conservan sin
+modificar y son el maestro de alta calidad.
 
 ## Logotipos de marca (V2)
 

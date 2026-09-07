@@ -213,6 +213,7 @@ estas resuelve el problema.
 | `ui/ApplicationList` | Las tres líneas comerciales como lista numerada |
 | `ui/SkuList` | Referencias sin ficha propia: nombre, número de ítem y una línea |
 | `ui/ProductFigure` | Fotografía de equipo en caja cuadrada sobre papel, con `<picture>` AVIF/WebP |
+| `ui/ModelPhoto` | Fotografía de un modelo o familia desde `productImages.ts`; sólo dibuja filas `VERIFIED`, `object-fit: contain`, rótulo con modelo y fabricante, y rotula las imágenes de familia como representativas |
 | `ui/KeyFacts` | Tres o cuatro cifras de cabecera en mono |
 | `ui/SpecGroups` | Ficha técnica agrupada en listas de definición |
 | `ui/CompareTable` | Comparativa: tabla con región desplazable en escritorio, listas apiladas bajo 768 px |

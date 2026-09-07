@@ -1,0 +1,126 @@
+---
+import type { ProductImageRecord } from '../../data/productImages';
+import { imageSourcesFor } from '../../lib/productImage';
+
+/**
+ * Fotografía de un modelo o de una familia, desde el registro de imágenes.
+ *
+ * Es la única forma en que una fotografía de fabricante entra en una plantilla:
+ * recibe una fila de `productImages.ts` y no dibuja nada si esa fila no está
+ * `VERIFIED`. Así la decisión de qué se publica vive en el registro y no en
+ * cada página.
+ *
+ * Presentación común a todo el sitio: caja de proporción fija, el equipo
+ * entero dentro (`object-fit: contain`, nunca recorte), sobre papel. Sin marco
+ * ni sombra. El rótulo, cuando se pide, dice el modelo y el fabricante y, si la
+ * imagen representa a una familia y no a un modelo concreto, lo dice también:
+ * `validate:images` comprueba que ese rótulo esté en el HTML.
+ *
+ * `size` decide el `sizes` del `<picture>` y por tanto qué derivado descarga
+ * el navegador; el ancho real lo pone el contenedor.
+ */
+interface Props {
+  image: ProductImageRecord | undefined;
+  /** Nombre del fabricante para el rótulo. */
+  brandName?: string;
+  /** `hero` carga con prioridad (LCP de la ficha); el resto es diferido. */
+  priority?: boolean;
+  /** Ancho aproximado de presentación, para `sizes`. */
+  size?: 'thumb' | 'row' | 'sheet' | 'hero';
+  /** Rótulo bajo la imagen con modelo y fabricante. */
+  captioned?: boolean;
+  /** Proporción de la caja. Las fotografías de catálogo suelen ser casi cuadradas. */
+  ratio?: '1 / 1' | '4 / 5';
+  class?: string;
+}
+
+const {
+  image,
+  brandName,
+  priority = false,
+  size = 'row',
+  captioned = false,
+  ratio = '1 / 1',
+  class: className = '',
+} = Astro.props;
+
+const sources = imageSourcesFor(image);
+
+const SIZES: Record<NonNullable<Props['size']>, string> = {
+  thumb: '(min-width: 768px) 96px, 22vw',
+  row: '(min-width: 768px) 160px, 34vw',
+  sheet: '(min-width: 1024px) 280px, (min-width: 768px) 32vw, 70vw',
+  hero: '(min-width: 1024px) 460px, (min-width: 768px) 45vw, 82vw',
+};
+const sizes = SIZES[size];
+
+const representative = sources?.scope === 'familia-representativa';
+const captionText = sources
+  ? [
+      representative ? `Imagen representativa de la familia ${sources.model}` : sources.model,
+      brandName,
+    ]
+      .filter(Boolean)
+      .join(', ')
+  : '';
+---
+
+{
+  sources && (
+    <figure
+      class:list={['model-photo', `model-photo--${size}`, className]}
+      data-image-id={sources.record.id}
+      data-image-scope={sources.scope}
+    >
+      <div class="model-photo__frame" style={`aspect-ratio: ${ratio}`}>
+        <picture>
+          <source type="image/avif" srcset={sources.avifSrcset} sizes={sizes} />
+          <source type="image/webp" srcset={sources.webpSrcset} sizes={sizes} />
+          <img
+            src={sources.src}
+            alt={sources.alt}
+            width={sources.width}
+            height={sources.height}
+            sizes={sizes}
+            loading={priority ? 'eager' : 'lazy'}
+            fetchpriority={priority ? 'high' : 'auto'}
+            decoding={priority ? 'sync' : 'async'}
+          />
+        </picture>
+      </div>
+      {captioned && <figcaption class="model-photo__caption t-data">{captionText}</figcaption>}
+      {/* Sin rótulo visible, la condición de imagen representativa sigue en el
+          documento para lectores de pantalla y para la validación. */}
+      {!captioned && representative && (
+        <figcaption class="sr-only">{captionText}</figcaption>
+      )}
+    </figure>
+  )
+}
+
+<style>
+  .model-photo {
+    margin: 0;
+  }
+  .model-photo__frame {
+    display: grid;
+    place-items: center;
+    background-color: var(--color-paper);
+  }
+  .model-photo__frame picture {
+    display: contents;
+  }
+  .model-photo__frame img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    /* Los recortes del fabricante traen aire propio; se compensa aquí para que
+       todos los equipos ocupen la misma superficie óptica. */
+    padding: 4%;
+  }
+  .model-photo__caption {
+    margin-top: 0.625rem;
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+  }
+</style>

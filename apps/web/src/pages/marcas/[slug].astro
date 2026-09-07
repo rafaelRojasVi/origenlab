@@ -22,7 +22,7 @@ import { productFamilies } from '../../data/productFamilies';
 import { familyDocsFor, modelsForBrand } from '../../data/brandModels';
 import { scopeById } from '../../data/equipmentScope';
 import { applicationsForFamily } from '../../data/applications';
-import { sourceForBrand } from '../../data/sourceRegistry';
+import { imageForModel, publishedImagesForBrand } from '../../data/productImages';
 
 /**
  * Página de marca. Las seis.
@@ -71,8 +71,9 @@ const family = productFamilies.find((item) =>
 const models = modelsForBrand(brand.id);
 const scope = scopeById(brand.familyId);
 const familyDocs = familyDocsFor(brand.familyId);
-const source = sourceForBrand(brand.id);
 const tasks = applicationsForFamily(brand.familyId);
+/** Fotografías con procedencia y permiso: sólo ellas se publican. */
+const publishedPhotos = publishedImagesForBrand(brand.id);
 
 /** Una disposición por marca. Ver la cabecera. */
 const layout = brand.layout;
@@ -304,12 +305,19 @@ const equipmentSectionLabel =
       )
     }
 
-    <!-- Modelos documentados desde la fuente oficial, sin ficha interna. -->
+    <!-- Modelos documentados desde la fuente oficial, sin ficha interna. La
+         fotografía entra sólo si productImages.ts la respalda. -->
     {
       models.length > 0 && (
         <ul class:list={['sheets', withPages.length > 0 && 'sheets--after']}>
           {models.map((model) => (
-            <ModelSheet model={model} variant={sheetVariant} headingLevel={3} />
+            <ModelSheet
+              model={model}
+              image={imageForModel(model.id)}
+              brandName={brand.name}
+              variant={sheetVariant}
+              headingLevel={3}
+            />
           ))}
         </ul>
       )
@@ -368,8 +376,10 @@ const equipmentSectionLabel =
       OrigenLab no declara representación oficial, distribución exclusiva ni certificación de esta
       marca. Los datos de producto de esta página se redactaron desde la documentación pública del
       fabricante y se enlaza la fuente en cada modelo.
-      {source?.status === 'ASSET_PERMISSION_NEEDED' &&
-        ' No se publica fotografía de equipo de esta marca: falta el permiso de reproducción documentado.'}
+      {publishedPhotos.length === 0 &&
+        ' No se publica fotografía de equipo de esta marca: falta el permiso de reproducción documentado, y la familia se ilustra con un diagrama propio.'}
+      {publishedPhotos.length > 0 &&
+        ' Las fotografías de equipo son del fabricante y se publican con la procedencia registrada por modelo.'}
     </Notice>
   </section>
 

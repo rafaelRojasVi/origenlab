@@ -16,6 +16,9 @@ import { familiesInProductOrder } from '../data/equipmentScope';
 import { company } from '../data/company';
 import { modelsForFamily } from '../data/brandModels';
 import { applicationsForFamily } from '../data/applications';
+import { imageForModel } from '../data/productImages';
+import ModelPhoto from '../components/ui/ModelPhoto.astro';
+import { site } from '../config/site';
 import {
   getBrandByFamilyId,
   getProductsByBrandId,
@@ -44,6 +47,16 @@ import {
  *
  * Ninguna familia sin fotografía autorizada lleva imagen de relleno: lleva el
  * diagrama de `familyMotif.ts`, que dibuja qué le hace el equipo a la muestra.
+ * El diagrama se queda aunque llegue fotografía: es la capa conceptual de la
+ * familia, y la fotografía es la de cada modelo.
+ *
+ * Cada modelo documentado se compone con lo que el visitante necesita para
+ * reconocer el equipo sin abrir otra página: la fotografía del modelo exacto
+ * cuando `productImages.ts` la tiene `VERIFIED`, el nombre tal como lo escribe
+ * el fabricante, qué hace y su uso principal, y tres salidas: la página de
+ * marca, la fuente oficial y la consulta de cotización. Sin fotografía
+ * autorizada la fila no reserva hueco: se compone a texto, y el diagrama de la
+ * familia sigue arriba.
  */
 const families = familiesInProductOrder().map((scope) => {
   const brand = getBrandByFamilyId(scope.id);
@@ -53,7 +66,10 @@ const families = familiesInProductOrder().map((scope) => {
     brand,
     withPages: products.filter((product) => productPageHref(product) !== undefined),
     skuOnly: products.filter((product) => productPageHref(product) === undefined),
-    documented: modelsForFamily(scope.id),
+    documented: modelsForFamily(scope.id).map((model) => ({
+      model,
+      image: imageForModel(model.id),
+    })),
     tasks: applicationsForFamily(scope.id),
   };
 });
@@ -131,8 +147,9 @@ const families = familiesInProductOrder().map((scope) => {
             </div>
           </div>
 
-          {/* Las cinco familias sin fotografía autorizada llevan diagrama, no
-              una imagen de archivo ni el equipo de otro fabricante. */}
+          {/* El diagrama de la familia es la capa conceptual y se conserva con
+              o sin fotografía de modelo. La familia con ficha propia abre con
+              sus fotografías y no lo necesita en la cabecera. */}
           {withPages.length === 0 && (
             <div class="family__motif">
               <FamilyMotif familyId={scope.id} />
@@ -150,13 +167,34 @@ const families = familiesInProductOrder().map((scope) => {
 
         {documented.length > 0 && (
           <ul class="refs">
-            {documented.map((model) => (
-              <li class="ref">
+            {documented.map(({ model, image }) => (
+              <li class:list={['ref', image && 'ref--photo']}>
+                {image && brand && (
+                  <div class="ref__media">
+                    <ModelPhoto image={image} brandName={brand.name} size="row" />
+                  </div>
+                )}
                 <div class="ref__body">
                   <h3 class="ref__name" translate="no">{model.name}</h3>
+                  <p class="ref__kind t-data">
+                    {model.scope === 'familia' ? 'Familia de modelos' : 'Modelo'}
+                    {model.code && <span class="ref__code">Cat. {model.code}</span>}
+                  </p>
                   <p class="t-small ref__does">{model.does}</p>
+                  {model.uses.length > 0 && (
+                    <p class="t-small ref__use">
+                      <span class="ref__use-label">Uso principal</span>
+                      {model.uses[0]}
+                    </p>
+                  )}
                 </div>
                 <div class="ref__links">
+                  {brand && (
+                    <a href={`/marcas/${brand.slug}/`} class="link-arrow">
+                      Ver {brand.name}
+                      <Icon name="arrow-right" size={16} class="arrow" />
+                    </a>
+                  )}
                   <ExternalLink
                     href={model.officialUrl}
                     context={`documentación de ${model.name}`}
@@ -168,6 +206,11 @@ const families = familiesInProductOrder().map((scope) => {
                       PDF
                     </ExternalLink>
                   )}
+                  <a href={site.quoteHref} class="link-arrow">
+                    Consultar cotización
+                    <span class="sr-only"> de {model.name}</span>
+                    <Icon name="arrow-right" size={16} class="arrow" />
+                  </a>
                 </div>
               </li>
             ))}
@@ -303,8 +346,8 @@ const families = familiesInProductOrder().map((scope) => {
     margin-top: 3rem;
   }
 
-  /* Referencias documentadas: fila de índice, no ficha. Sin hueco de imagen,
-     porque no hay imagen y reservarlo dejaría un vacío en cada fila. */
+  /* Referencias documentadas: fila de índice, no ficha. La fotografía sólo
+     ocupa columna cuando existe con permiso; sin ella no se reserva hueco. */
   .refs {
     list-style: none;
     margin: 2.5rem 0 0;
@@ -322,10 +365,41 @@ const families = familiesInProductOrder().map((scope) => {
     font-weight: 600;
     color: var(--color-ink-950);
   }
+  .ref__kind {
+    margin-top: 0.125rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+  }
+  .ref__code {
+    color: var(--color-teal-800);
+  }
   .ref__does {
-    margin-top: 0.375rem;
+    margin-top: 0.5rem;
     color: var(--color-ink-600);
     max-width: 66ch;
+  }
+  .ref__use {
+    margin-top: 0.5rem;
+    color: var(--color-ink-800);
+    max-width: 66ch;
+  }
+  .ref__use-label {
+    display: inline-block;
+    margin-right: 0.625rem;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--color-ink-500);
+  }
+  .ref--photo {
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+  }
+  .ref--photo .ref__links {
+    grid-column: 1 / -1;
   }
   .ref__links {
     display: flex;
@@ -358,8 +432,16 @@ const families = familiesInProductOrder().map((scope) => {
       gap: 2.5rem;
       padding-block: 1.625rem;
     }
+    .ref--photo {
+      grid-template-columns: 9rem minmax(0, 1fr) minmax(0, 13rem);
+    }
+    .ref--photo .ref__links {
+      grid-column: 3;
+    }
     .ref__links {
-      justify-content: flex-end;
+      display: grid;
+      justify-items: end;
+      gap: 0.5rem;
     }
   }
 

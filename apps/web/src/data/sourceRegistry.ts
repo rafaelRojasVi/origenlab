@@ -29,7 +29,9 @@
  * Este registro es por marca: la fuente oficial de la familia, el permiso de
  * imagen y el estado. La fuente **por modelo** vive en `src/data/brandModels.ts`,
  * con su propia URL y su propia fecha de lectura, porque un modelo puede tener
- * ficha PDF propia mientras la familia no la tiene, y al revés.
+ * ficha PDF propia mientras la familia no la tiene, y al revés. La procedencia
+ * y el permiso **por fotografía** viven en `src/data/productImages.ts`, que es
+ * lo único que una plantilla puede renderizar como imagen de equipo.
  */
 
 export type SourceStatus =
@@ -89,7 +91,7 @@ export const brandSources: readonly BrandSource[] = [
     permissionBasis: LOGO_PERMISSION_PENDING,
     lastVerified: VERIFIED_ON,
     status: 'ASSET_PERMISSION_NEEDED',
-    note: 'Página y catálogo PDF oficiales comprobados. No hay fotografía de equipo con permiso documentado: la familia se compone sin fotografía.',
+    note: 'Página y catálogo PDF oficiales comprobados. Fotografía de equipo: el aviso legal del fabricante (copy_1.htm, leído el 2026-09-07) prohíbe copiar o mostrar sus imágenes en otros sitios sin consentimiento escrito, y no hay portal de prensa ni de distribuidores. Las cuatro imágenes de modelo identificadas y la petición que hay que enviar están en productImages.ts.',
   },
   {
     brandId: 'ortoalresa',
@@ -103,7 +105,7 @@ export const brandSources: readonly BrandSource[] = [
       'Imágenes de producto ya en poder de OrigenLab desde 2026-05 con procedencia registrada por modelo en docs/product-assets.md. Permiso escrito de reproducción pendiente.',
     lastVerified: VERIFIED_ON,
     status: 'ASSET_PERMISSION_NEEDED',
-    note: 'Única familia con fotografía publicada. El PDF por modelo vive en products.ts; aquí figura el de la serie Digicen. Falta el permiso escrito, abierto desde 2026-05.',
+    note: 'Única familia con fotografía publicada; la procedencia por imagen vive en productImages.ts. El PDF por modelo vive en products.ts; aquí figura el de la serie Digicen. El Aviso Legal del fabricante (ortoalresa.com/aviso-legal, leído el 2026-09-07) reserva la reproducción de sus imágenes y de su marca a la autorización expresa de Ortoalresa: la petición escrita a marketing@ortoalresa.com sigue pendiente desde 2026-05 y conviene enviarla de inmediato.',
   },
   {
     brandId: 'ika',
@@ -117,7 +119,7 @@ export const brandSources: readonly BrandSource[] = [
     permissionBasis: LOGO_PERMISSION_PENDING,
     lastVerified: VERIFIED_ON,
     status: 'ASSET_PERMISSION_NEEDED',
-    note: 'El PDF oficial responde (200, application/pdf). Las páginas HTML de ika.com devuelven 403 con el interstitial de Cloudflare a todo cliente automatizado, incluido un navegador headless real, de modo que la URL de la página **no está comprobada por máquina**: queda pendiente de abrirla una persona. El dominio y la ruta se dan por vivos porque el PDF cuelga del mismo servidor. Sin fotografía con permiso documentado.',
+    note: 'El PDF oficial responde (200, application/pdf). Las páginas HTML de ika.com devuelven 403 con el interstitial de Cloudflare a todo cliente automatizado, incluido un navegador headless real, de modo que la URL de la página **no está comprobada por máquina**: queda pendiente de abrirla una persona. El dominio y la ruta se dan por vivos porque el PDF cuelga del mismo servidor. Fotografía: el aviso legal y las páginas de modelo tampoco se pudieron leer (403, 2026-09-07) y el folleto no autoriza reutilización; la petición a sales@ika.de está en productImages.ts.',
   },
   {
     brandId: 'adam-equipment',
@@ -130,7 +132,7 @@ export const brandSources: readonly BrandSource[] = [
     permissionBasis: LOGO_PERMISSION_PENDING,
     lastVerified: VERIFIED_ON,
     status: 'ASSET_PERMISSION_NEEDED',
-    note: 'Índice de productos del fabricante y ficha PDF de la serie PMB comprobados. El enlace de familia pasó de la página de analizadores de humedad al índice de productos, porque la familia publicada incluye ahora balanzas analíticas y de precisión. Sin fotografía de equipo con permiso documentado.',
+    note: 'Índice de productos del fabricante y ficha PDF de la serie PMB comprobados. El enlace de familia pasó de la página de analizadores de humedad al índice de productos, porque la familia publicada incluye ahora balanzas analíticas y de precisión. Fotografía: el Adam Brand Toolkit (adamequipment.com/toolkit, leído el 2026-09-07) cede a distribuidores logotipos, banners y textos, pero no fotografías de producto, y la página legal sólo reserva derechos; la petición a marketing@adamequipment.com está en productImages.ts.',
   },
   {
     brandId: 'loeser',
@@ -143,7 +145,7 @@ export const brandSources: readonly BrandSource[] = [
     permissionBasis: LOGO_PERMISSION_PENDING,
     lastVerified: VERIFIED_ON,
     status: 'PDF_NOT_FOUND',
-    note: 'El fabricante no publica PDF descargable: los folletos se piden por formulario (anfrage-eng.html). Su sitio no ofrece HTTPS (el servidor rechaza el saludo TLS), así que el enlace oficial es http. El logotipo original es un JPEG de 70x70; conviene pedir uno vectorial.',
+    note: 'El fabricante no publica PDF descargable: los folletos se piden por formulario (anfrage-eng.html). Su sitio no ofrece HTTPS (el servidor rechaza el saludo TLS), así que el enlace oficial es http. El logotipo original es un JPEG de 70x70; conviene pedir uno vectorial. Fotografía: el Impressum (leído el 2026-09-07) prohíbe reproducir textos y gráficos sin acuerdo de Löser Messtechnik; las cuatro imágenes de modelo (400 × 500 px) y la petición a info@loeser-osmometer.de están en productImages.ts.',
   },
   {
     brandId: 'serva',
@@ -156,7 +158,7 @@ export const brandSources: readonly BrandSource[] = [
     permissionBasis: LOGO_PERMISSION_PENDING,
     lastVerified: VERIFIED_ON,
     status: 'ASSET_PERMISSION_NEEDED',
-    note: 'Centro de descargas y catálogo de electroforesis comprobados. Sin fotografía de producto con permiso documentado.',
+    note: 'Centro de descargas y catálogo de electroforesis comprobados. Fotografía: serva.de no publica términos de reutilización (sólo el © del pie, leído el 2026-09-07) y sus imágenes de producto miden entre 126 y 500 px; la petición a info@licorbio.com está en productImages.ts.',
   },
 ];
 

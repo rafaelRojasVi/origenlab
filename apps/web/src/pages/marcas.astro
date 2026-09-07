@@ -6,10 +6,12 @@ import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
 import BrandLogo from '../components/ui/BrandLogo.astro';
 import Notice from '../components/ui/Notice.astro';
 import Icon from '../components/ui/Icon.astro';
+import ModelPhoto from '../components/ui/ModelPhoto.astro';
 import { brands, brandsWallHeading } from '../data/brands';
-import { productCountForBrand } from '../lib/catalog';
+import { getProductsByBrandId, productCountForBrand, productPageHref } from '../lib/catalog';
 import { modelsForBrand } from '../data/brandModels';
 import { scopeById } from '../data/equipmentScope';
+import { imageForModel, imageForProduct } from '../data/productImages';
 
 /**
  * Índice de marcas. Seis filas, un peso.
@@ -27,12 +29,47 @@ import { scopeById } from '../data/equipmentScope';
  *
  * SERVA va última, como en toda lista del sitio: es la única línea de reactivos
  * e insumos y puesta antes desplazaría a las familias de equipo.
+ *
+ * Cada fila muestra además hasta tres equipos notables de la marca, con el
+ * nombre del modelo, para qué sirve y, cuando `productImages.ts` la tiene
+ * `VERIFIED`, su fotografía. Tres y no más para que ninguna marca pese más que
+ * otra por tener más modelos documentados; sin fotografía autorizada la
+ * entrada se compone a texto y no reserva hueco.
  */
+const NOTABLE = 3;
+
+interface Notable {
+  name: string;
+  purpose: string;
+  href: string;
+  image: ReturnType<typeof imageForModel>;
+}
+
+function notableFor(brandId: string, slug: string): Notable[] {
+  const withPages = getProductsByBrandId(brandId).filter(
+    (product) => productPageHref(product) !== undefined,
+  );
+  const fromProducts: Notable[] = withPages.map((product) => ({
+    name: product.name,
+    purpose: product.equipmentType ?? product.summary,
+    href: productPageHref(product) ?? `/marcas/${slug}/`,
+    image: imageForProduct(product.id),
+  }));
+  const fromModels: Notable[] = modelsForBrand(brandId).map((model) => ({
+    name: model.name,
+    purpose: model.uses[0] ?? model.does,
+    href: `/marcas/${slug}/`,
+    image: imageForModel(model.id),
+  }));
+  return [...fromProducts, ...fromModels].slice(0, NOTABLE);
+}
+
 const rows = brands.map((brand) => ({
   brand,
   family: scopeById(brand.familyId),
   fichas: productCountForBrand(brand.id),
   documentados: modelsForBrand(brand.id).length,
+  notable: notableFor(brand.id, brand.slug),
 }));
 ---
 
@@ -59,9 +96,9 @@ const rows = brands.map((brand) => ({
 
     <ul class="brand-rows">
       {
-        rows.map(({ brand, family, fichas, documentados }) => (
+        rows.map(({ brand, family, fichas, documentados, notable }) => (
           <li class="brand-row">
-            <a href={`/marcas/${brand.slug}/`}>
+            <a href={`/marcas/${brand.slug}/`} class="brand-row__link">
               <span class="brand-row__logo">
                 <BrandLogo brand={brand} scale={1.4} />
               </span>
@@ -91,6 +128,23 @@ const rows = brands.map((brand) => ({
               </span>
               <Icon name="arrow-right" size={20} class="brand-row__go" />
             </a>
+            {notable.length > 0 && (
+              <ul class="notable" aria-label={`Equipos notables de ${brand.name}`}>
+                {notable.map((item) => (
+                  <li class:list={['notable__item', item.image && 'notable__item--photo']}>
+                    {item.image && (
+                      <span class="notable__media">
+                        <ModelPhoto image={item.image} brandName={brand.name} size="thumb" />
+                      </span>
+                    )}
+                    <span class="notable__text">
+                      <a href={item.href} class="notable__name" translate="no">{item.name}</a>
+                      <span class="notable__purpose t-small">{item.purpose}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </li>
         ))
       }
@@ -121,7 +175,7 @@ const rows = brands.map((brand) => ({
   .brand-row {
     border-bottom: 1px solid var(--color-hairline);
   }
-  .brand-row a {
+  .brand-row__link {
     display: grid;
     /* Móvil: logotipo y texto apilados en la primera columna, flecha en la
        segunda. Sin colocación explícita el navegador crea una tercera columna
@@ -140,7 +194,7 @@ const rows = brands.map((brand) => ({
     grid-column: 2;
     grid-row: 1 / span 3;
   }
-  .brand-row a:hover {
+  .brand-row__link:hover {
     background-color: var(--color-surface);
   }
   .brand-row__logo {
@@ -199,15 +253,57 @@ const rows = brands.map((brand) => ({
     justify-self: end;
     color: var(--color-ink-500);
   }
-  .brand-row a > * {
+  .brand-row__link > * {
     min-width: 0;
   }
-  .brand-row a:hover .brand-row__go {
+  .brand-row__link:hover .brand-row__go {
     color: var(--color-teal-800);
   }
 
+  /* Equipos notables: tres como máximo por marca, misma altura de fila para
+     las seis. La fotografía sólo aparece si el registro la respalda. */
+  .notable {
+    list-style: none;
+    margin: 0 0 2rem;
+    padding: 0;
+    display: grid;
+    gap: 1rem;
+  }
+  .notable__item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.875rem;
+    align-items: center;
+  }
+  .notable__item--photo {
+    grid-template-columns: 4.5rem minmax(0, 1fr);
+  }
+  .notable__media {
+    display: block;
+    width: 4.5rem;
+  }
+  .notable__name {
+    display: block;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+  .notable__name:hover {
+    color: var(--color-teal-800);
+  }
+  .notable__purpose {
+    display: block;
+    margin-top: 0.125rem;
+    color: var(--color-ink-600);
+  }
+
   @media (min-width: 768px) {
-    .brand-row a {
+    .notable {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1.5rem 2rem;
+      margin: -0.5rem 0 2.5rem 16rem;
+    }
+    .brand-row__link {
       grid-template-columns: 13rem minmax(0, 1fr) 11rem 2rem;
       align-items: center;
       gap: 3rem;
