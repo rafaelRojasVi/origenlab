@@ -9,9 +9,10 @@
  *   interna. Hoy son las cinco centrífugas Ortoalresa y BlueSlick.
  * - este archivo — modelos y familias que el sitio **describe y enlaza** pero
  *   no aloja: qué hace el equipo, para qué se usa en el laboratorio, qué
- *   criterios deciden la elección, y de ahí al fabricante. Sin fotografía,
- *   porque no hay ninguna con permiso, y sin página interna, porque una ficha
- *   sin imagen ni documentación propia sería una página vacía con un título.
+ *   criterios deciden la elección, y de ahí al fabricante. La fotografía no
+ *   vive aquí sino en `productImages.ts`, que la publica con su procedencia y
+ *   su permiso; y sin página interna, porque una ficha sin documentación
+ *   propia sería una página vacía con un título.
  *
  * # De dónde sale cada dato
  *
@@ -29,7 +30,8 @@
  * # Lo que este archivo no puede tener
  *
  * Precio, plazo, stock, garantía, condición comercial ni fotografía. Nada de
- * eso está verificado para estas cinco marcas y `validate:catalog` lo bloquea.
+ * eso está verificado para estas cinco marcas y `validate:catalog` lo bloquea;
+ * la fotografía tiene su propio registro con permiso y procedencia por imagen.
  *
  * # El caso de IKA
  *

@@ -51,6 +51,7 @@ function walk(dir, ext, acc = []) {
 
 const STATUSES = ['VERIFIED', 'ASSET_PERMISSION_NEEDED', 'CONTENT_NEEDED', 'REJECTED'];
 const SOURCE_TYPES = [
+  'autorizacion-fabricante',
   'activo-origenlab',
   'recurso-distribuidor',
   'portal-prensa',

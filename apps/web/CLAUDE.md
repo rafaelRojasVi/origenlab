@@ -68,12 +68,18 @@ equipo llega a una plantilla (`ModelPhoto`, `ProductFigure`, `ModelRow`), y
 `public/products/` y el HTML construido: fila por imagen local, ningún host
 remoto, marca y modelo del catálogo, dimensiones y alt, ninguna fila sin
 permiso renderizada, y toda imagen de familia rotulada como representativa. Que
-una imagen sea visible en público no implica permiso de reutilización: los seis
-fabricantes reservan sus imágenes (ver `sourceRegistry.ts`), no se rehospedan
+una imagen sea visible en público no implica permiso de reutilización. La base
+de permiso vigente para las seis marcas es la autorización previa del
+fabricante que el titular del negocio confirmó el 2026-09-07
+(`MANUFACTURER_AUTHORIZATION_BASIS`): no es una licencia pública y no se
+inventa documento, cláusula, vigencia ni exclusividad. Permiso y procedencia van
+separados: cada fila nombra la página, folleto o activo oficial exacto del que
+salió la imagen. Sólo fuentes oficiales del fabricante: nada de revendedores,
+catálogos raspados, fotografía de archivo ni imagen generada; no se rehospedan
 PDF del fabricante y jamás se ilustra una marca con el equipo de otra. Las
-familias sin fotografía autorizada se componen con el diagrama de
-`src/lib/familyMotif.ts`, que se conserva como capa conceptual también donde
-hay fotografía.
+fotografías se muestran sin ampliar por encima de su tamaño real. El diagrama de
+`src/lib/familyMotif.ts` se conserva como capa conceptual de cada familia
+también donde hay fotografía.
 
 Do not invent brands, certifications, specs, lead times, or warranty details not in data or docs.
 
