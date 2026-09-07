@@ -13,10 +13,11 @@ shutdown; rollback execution; and credential handling.
 what the roles may write ([`ARCHITECTURE.md`](ARCHITECTURE.md)), the cutover
 plan ([`MIGRATION.md`](MIGRATION.md)).
 
-> **Every command block below is `EXAMPLE — NOT YET IMPLEMENTED`.** V2 does not
-> exist. The commands show the intended shape of each procedure so it can be
-> built and reviewed; **none of them can be run today**, and none should be
-> presented to an operator as available.
+> **Every command block below marked `EXAMPLE — NOT YET IMPLEMENTED` describes
+> a procedure that does not exist yet.** The commands show the intended shape of
+> each procedure so it can be built and reviewed; none of them can be run today,
+> and none should be presented to an operator as available. The single exception
+> is §4.1, the local schema foundation, whose commands exist and run locally.
 
 ## 1. Environments
 
@@ -131,6 +132,77 @@ ol audit definers --env production     # fails on any SECURITY DEFINER function
                                        # or executable by PUBLIC/anon/
                                        # authenticated/service_role
 ```
+
+### 4.1 Local foundation (implemented — Migration Slice 0, local portion)
+
+The reproducible local foundation lives under `supabase/`: `config.toml` (PostgreSQL 17,
+database only, Data API off), `roles.sql` (the idempotent cluster-role bootstrap the CLI runs
+before migrations), `migrations/` (fifteen ordered migrations: schemas and default
+privileges, then the 32 tables schema by schema, then grants, then RLS policies, then the
+revocation of the owner's database-level `CREATE`, then the covering indexes for every
+foreign key), `tests/` (pgTAP, 348 assertions across ten files) and `scripts/`. Requirements:
+Docker, the Supabase CLI and `psql`. No hosted project is involved and nothing here holds a
+credential: the three `LOGIN` roles are created without a password.
+
+```bash
+supabase start                            # PostgreSQL 17 container; runs roles.sql, then migrations
+supabase db reset --local                 # replay roles.sql + migrations from scratch
+supabase test db --local                  # pgTAP: inventory, roles, predefined-role boundary, grant
+                                          # boundary, matrix, RLS, constraints, SECURITY DEFINER
+                                          # semantics, no leftovers, foreign-key index coverage
+supabase/scripts/verify_direct_logins.sh  # MIGRATION.md §5.2 checks 6-9 with real LOGIN connections;
+                                          # throw-away passwords, cleared fail-closed on exit
+supabase/scripts/replay_evidence.sh       # two resets; every CLI exit status enforced, every dump and
+                                          # catalogue asserted complete, then compared byte for byte
+supabase/scripts/evidence_tool_failure_tests.sh
+                                          # failure injection: proves the two scripts above actually
+                                          # fail on a failed reset, a failed or empty dump, a failed
+                                          # local-status discovery and unequal migration lists
+supabase db lint --local -s crm,comms,outbound,evidence,catalog,procurement,platform \
+  --level warning --fail-on warning
+supabase db advisors --local --type all --level info --fail-on warn
+supabase stop                             # keeps the data volume; never `--no-backup`
+```
+
+**Every script that opens a `psql` connection resolves its target through
+`supabase/scripts/lib/local_target.sh` and nothing else.** The guard takes the URL only from
+`supabase status`, requires a loopback host on this project's configured port, refuses an
+unparseable URL, and unsets the inherited `PG*` libpq environment so `PGHOST`, `PGPORT`,
+`PGUSER` or `PGDATABASE` can never redirect a command or serve as a fallback. If any of that
+fails it exits non-zero **before** a connection is attempted. `evidence_tool_failure_tests.sh`
+proves that: with `supabase status` made to fail and hostile `PG*` variables set, both scripts
+refuse and `psql` is never invoked.
+
+**Stop the stack when the evidence run is finished.** `supabase stop` keeps the data volume
+and releases the published ports (54322 for PostgreSQL, 54321 for Kong), which are bound on
+all interfaces while the stack runs. **Never `supabase stop --no-backup`** — it deletes the
+data volumes.
+
+Rules that hold for every later migration:
+
+- Create the file with `supabase migration new <descriptive_name>`; never write a timestamp
+  by hand, never edit a migration that has been applied anywhere but locally.
+- Begin with `set role origenlab_owner;` and end with `reset role;`, so every object is
+  owned by the owner and the CLI can still record the migration as itself. The exception is
+  a migration whose whole purpose is something the owner cannot do to itself — M14, which
+  revokes the owner's database-level `CREATE`, runs as the connection role throughout and
+  says so in its header.
+- A new table is created with `enable row level security` in the same migration and gets
+  its grants and named policies in explicit statements; the pgTAP matrix in
+  `supabase/tests/040_grant_matrix.sql` and `050_rls.sql` must be extended in the same
+  change, or the suite fails.
+- A new function is `SECURITY INVOKER` unless it is on the closed list
+  ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.2), pins `search_path = pg_catalog`, and has
+  `EXECUTE` revoked from `PUBLIC`, `anon`, `authenticated` and `service_role` explicitly,
+  even though the owner's default privileges already do so.
+- A new schema is exceptional. `origenlab_owner` holds no `CREATE` on the database between
+  migrations ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.4 point 6); a migration that adds one
+  re-grants the privilege in its first statement and revokes it in its last, in the same
+  reviewed change. Leaving it granted fails `supabase/tests/030_grant_boundary.sql`.
+- Never alter, revoke or grant a Supabase-managed platform role or a PostgreSQL predefined
+  role ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.5). Their memberships are asserted, not
+  managed; a new one appearing in the catalogue fails `supabase/tests/020_roles.sql` and is a
+  question for the provider, not something to repair by migration.
 
 ## 5. Send control
 

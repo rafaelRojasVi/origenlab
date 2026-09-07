@@ -6,10 +6,10 @@ responsibility lives.
 **This document owns:** the topology; the FastAPI command boundary; dashboard,
 web and worker responsibilities; the seven private schemas; the one-writer
 rules; Supabase Auth and JWKS verification; database roles, grants, RLS, the
-`SECURITY DEFINER` doctrine and the `service_role` boundary;
-private Storage; Queues and Cron; worker deployment; observability; the
-independent Storage backup; the diagrams; and the external CRM benchmark
-conclusions.
+`SECURITY DEFINER` doctrine, the `service_role` boundary and the
+predefined-role boundary; private Storage; Queues and Cron; worker
+deployment; observability; the independent Storage backup; the diagrams; and
+the external CRM benchmark conclusions.
 
 **It does not own:** what the tables mean ([`DOMAIN.md`](DOMAIN.md)), who owns
 which fact ([`DATA.md`](DATA.md)), the transitions
@@ -151,6 +151,16 @@ schema-exposure boundary of [§6.4](#m-arch-service-role) instead.
 only the migrator may assume it, and only to run DDL. Neither runtime role is
 a member of `origenlab_owner` or of the other runtime role, and **neither the
 API nor the worker ever issues `SET ROLE`**.
+
+**(impl)** The Supabase CLI applies `supabase/roles.sql` and every migration as
+the platform `postgres` login, which is not a superuser and holds `ADMIN OPTION`
+on every role it creates. `roles.sql` therefore grants `postgres` the same
+SET-only, non-inheriting membership in `origenlab_owner` that the migrator
+holds, so `set role origenlab_owner` inside a migration succeeds. `postgres`
+remains a control-plane identity: never a runtime role, never a login for any
+OrigenLab process. Because a non-superuser may not mention `SUPERUSER`,
+`BYPASSRLS` or `REPLICATION` in `ALTER ROLE`, `roles.sql` sets those attributes
+only at `CREATE ROLE` and asserts them fail-closed on every run.
 
 ### 6.1 How grants, RLS and privileged functions divide the work
 
@@ -357,6 +367,17 @@ What contains it is an independent boundary that must hold on its own:
 5. **`ALTER DEFAULT PRIVILEGES` for objects created by `origenlab_owner`
    matches those revocations**, so a table, sequence or function added by a
    later migration does not silently regain access.
+6. **`origenlab_owner` holds no `CREATE` on the database.** **(impl)** M01
+   grants it for the one statement that needs it — creating the seven schemas
+   — and M14 revokes it again immediately afterwards. Everything a later
+   migration creates lives inside a schema the owner already owns, which needs
+   `CREATE` on the *schema*, not on the database. A deliberately approved
+   future schema addition re-grants the privilege in its own first statement,
+   creates the schema under `SET ROLE origenlab_owner` and revokes it in its
+   last statement, inside one reviewed migration; between migrations the
+   privilege is absent. `supabase/tests/030_grant_boundary.sql` fails if any
+   migration leaves it granted, and fails if any Data-API-facing role acquires
+   it.
 
 **Bypassing RLS is not bypassing a grant.** A role holding `BYPASSRLS` still
 needs `USAGE` on the schema and a privilege on the object; without them the
@@ -366,6 +387,61 @@ belt-and-braces — and `service_role` is never described as safe merely because
 a policy exists or because grants were revoked in one migration. Both the
 revocations and their default privileges are audited on every migration
 ([`OPERATIONS.md`](OPERATIONS.md) §4).
+
+<a id="m-arch-predefined-roles"></a>
+### 6.5 Predefined roles — access that leaves no `relacl` entry
+
+The boundary in [§6.4](#m-arch-service-role) is audited from `nspacl`,
+`relacl`, `proacl` and `pg_default_acl`. **PostgreSQL's predefined roles
+confer effective access without writing anything into any of them.** A role
+that is a member of `pg_read_all_data` reads every table in every schema as
+though it had been granted `SELECT`, and `pg_write_all_data` is its write
+counterpart — yet no object's ACL mentions either. A grant audit alone is
+therefore blind to them, and membership must be asserted directly against
+`pg_auth_members`.
+
+**Two facts are recorded here rather than defended against:**
+
+- **The local platform `postgres` identity — the login the Supabase CLI uses
+  to apply `roles.sql` and every migration — is a member of
+  `pg_read_all_data` and carries `BYPASSRLS`.** It therefore reads every
+  OrigenLab table and crosses every RLS policy, without holding a single
+  OrigenLab grant.
+- **Supabase-managed platform roles may hold the same access for managed work
+  the provider performs on the project.** Locally that is `supabase_admin`
+  (a superuser), `supabase_etl_admin` (managed replication) and
+  `supabase_read_only_user` (the read-only SQL editor identity), each of which
+  reads all data and bypasses RLS.
+
+This is a **provider and control-plane trust boundary, not an OrigenLab
+application grant.** It is not something this design confers, and it is not
+something this design may revoke: altering or removing a Supabase-managed
+platform membership is out of scope and must not be attempted. The
+consequence is stated plainly rather than left implicit:
+
+> **RLS is not a security boundary against a database administrator or against
+> any role holding `BYPASSRLS` or a predefined read-all membership.** It
+> constrains the OrigenLab runtime roles and nothing above them. Whoever
+> controls the Supabase project controls the data in it; the protections that
+> hold against *that* are organisational — who holds project access, how keys
+> are issued and rotated (§6.4 points 1–2) — not `CREATE POLICY`.
+
+**What must hold, and is tested:** `anon`, `authenticated`, `service_role`,
+`authenticator` and all four OrigenLab-created roles (`origenlab_owner`,
+`origenlab_migrator`, `origenlab_api`, `origenlab_worker`) are **outside
+`pg_read_all_data` and `pg_write_all_data`**, directly and transitively.
+`supabase/tests/020_roles.sql` asserts that, and additionally asserts that
+every member of either predefined role is inside a named allowlist,
+**`OL_PLATFORM_READ_ALL_ALLOWLIST`**, so a new membership appearing in the
+catalogue fails the suite instead of passing unnoticed.
+
+That allowlist enumerates the **local** Supabase platform identities and is
+asserted as a *subset*, never as an equality. **The hosted project has its own
+role catalogue and must be verified independently before slice 1** — do not
+assume every local platform role exists hosted, that the hosted set is this
+set, or that a role present in both carries the same memberships. What
+transfers unchanged is the direction of the assertion: no OrigenLab-created
+role and no Data-API-facing role is ever inside these predefined roles.
 
 ## 7. Storage
 
