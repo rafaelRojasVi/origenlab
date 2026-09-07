@@ -1,236 +1,352 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import PageIntro from '../components/ui/PageIntro.astro';
-import OrigenLogoShowcase from '../components/logo/OrigenLogoShowcase.astro';
-import OrigenLogoLockupAnimated from '../components/logo/OrigenLogoLockupAnimated.astro';
-import OrigenThreeBodyCanvas from '../components/logo/OrigenThreeBodyCanvas.astro';
-import OrigenLogoMarkStatic from '../components/logo/OrigenLogoMarkStatic.astro';
-import { getMotionPreset } from '../lib/logo/motionPresets';
+import OrigenMark from '../components/logo/OrigenMark.astro';
+import OrigenMarkAnimated from '../components/logo/OrigenMarkAnimated.astro';
+import SiteLogo from '../components/SiteLogo.astro';
+import {
+  MARK_CANVAS,
+  MARK_NODES,
+  MARK_NODE_RADIUS,
+  MARK_STROKE_WIDTH,
+} from '../lib/logo/generatedMark';
 
-const heroMotion = getMotionPreset('hero');
-const headerMotion = getMotionPreset('header');
+/**
+ * Sistema de marca. Superficie interna: `noindex`, fuera del sitemap y con
+ * `Disallow` en robots.txt (comprobado por `validate:dist`).
+ *
+ * No es una galería de opciones: la decisión ya está tomada y las tres
+ * exploraciones viven en `design/logo-explorations/`. Esta página es la regla
+ * de uso, para que quien tenga que aplicar la marca no tenga que adivinarla.
+ */
+const SIZES = [16, 24, 32, 48, 64];
 
-const comparison = [
-  {
-    option: 'Premium Atom',
-    label: 'Production header (animated)',
-    bestUse: 'Site header lockup',
-    strengths: 'Three orbit ellipses + nucleus; reads as atom at 36px on #042f2e',
-    issue: 'Busier than minimal at 16px favicon',
-  },
-  {
-    option: 'Mathematical Trace',
-    label: 'Lab / technical storytelling',
-    bestUse: 'Logo lab hero canvas, long-trail demos',
-    strengths: 'Longest trails; physics-forward identity',
-    issue: 'Not used on production home page',
-  },
-  {
-    option: 'Minimal Scientific',
-    label: 'Favicon candidate only',
-    bestUse: 'Favicon, app icon, 16-24px UI',
-    strengths: 'Clearest silhouette; fewest strokes',
-    issue: 'Too simple for main header lockup',
-  },
-  {
-    option: 'Animated canvas (premium)',
-    label: 'Lab only , not production hero',
-    bestUse: 'This page’s hero section; brand experiments',
-    strengths: 'Visible atom rings + fluorescent bodies; long loop',
-    issue: 'Home page hero uses text eyebrow only',
-  },
-] as const;
+const files = [
+  ['origenlab-mark-light.svg', 'Marca sobre papel'],
+  ['origenlab-mark-dark.svg', 'Marca sobre tinta o color de marca'],
+  ['origenlab-mark-mono.svg', 'Una tinta (hereda el color del contexto)'],
+  ['origenlab-mark-favicon.svg', 'Marca reforzada para 16 a 24 px'],
+  ['origenlab-lockup-light.svg', 'Lockup horizontal sobre papel'],
+  ['origenlab-lockup-dark.svg', 'Lockup horizontal sobre tinta'],
+  ['origenlab-lockup-stacked-light.svg', 'Lockup apilado sobre papel'],
+  ['origenlab-lockup-stacked-dark.svg', 'Lockup apilado sobre tinta'],
+];
+
+const colours = [
+  ['Traza sobre papel', 'ink-950', '#141617', '17.4:1'],
+  ['Nodos sobre papel', 'teal-700', '#0f766e', '5.2:1'],
+  ['Traza sobre tinta', 'paper', '#fafaf7', '17.4:1'],
+  ['Nodos sobre tinta', 'teal-500', '#14b8a6', '7.3:1'],
+];
 ---
 
-<!--
-  Página interna de trabajo de marca. No forma parte de la navegación pública:
-  lleva `noindex`, queda fuera del sitemap y está bloqueada en robots.txt.
--->
 <Layout
-  title="Laboratorio de logotipo"
-  description="Vista interna de las variantes del logotipo OrigenLab. Página de trabajo, no forma parte del sitio público."
+  title="Sistema de marca | OrigenLab"
+  description="Construcción, área de respeto, tamaño mínimo, colores permitidos y reglas de animación de la marca OrigenLab."
   noindex
 >
-  <div class="shell">
-    <PageIntro
-      title="Laboratorio de logotipo"
-      lead="Página interna de trabajo. Desde el rediseño V2 el shell del sitio usa el lockup estático (la marca animada incumple WCAG 2.2.2 sin control de pausa); aquí se conservan las variantes y la animación como activo de marca."
-    />
-  </div>
-  <div class="shell">
+  <PageIntro
+    title="Sistema de marca"
+    lead="La marca es la lemniscata de la coreografía en ocho de los tres cuerpos, con los tres cuerpos macizos sobre ella. Un solo trazo, tres nodos y ninguna transparencia."
+  />
 
-  <section class="mt-10 space-y-6" aria-labelledby="header-preview-heading">
-    <h2 id="header-preview-heading" class="section-title">Production header (animated)</h2>
-    <p class="text-sm text-slate-600">
-      Matches the live site header (<code class="rounded bg-slate-100 px-1">#042f2e</code>): transparent canvas,
-      brand-50 wordmark, brand-500 rings, short trails. {headerMotion.label} · {headerMotion.loopSeconds}s loop.
+  <section class="shell section" aria-labelledby="construccion">
+    <h2 id="construccion" class="t-h2">Construcción</h2>
+    <p class="t-body mt-4">
+      Lienzo de {MARK_CANVAS} por {MARK_CANVAS}, centro en 24, 24. La trayectoria es una
+      lemniscata de Bernoulli estirada en vertical y girada 30 grados: la misma curva que
+      describen tres cuerpos de igual masa en la coreografía en ocho de Moore y Chenciner. Los
+      tres nodos se reparten por longitud de arco, no por parámetro, y su peso crece de izquierda
+      a derecha, de la muestra al resultado.
     </p>
-    <div
-      class="flex min-h-[4.5rem] items-center justify-between gap-4 rounded-xl border border-brand-800/40 bg-brand-950 px-6 py-4 shadow-lg"
-    >
-      <OrigenLogoLockupAnimated
-        variant="dark"
-        size="md"
-        solution="premium"
-        motion="header"
-        gap="tight"
-        decorative
-      />
-      <span class="hidden text-sm font-semibold text-white/70 sm:inline">Wired in production header</span>
+    <div class="grid mt-8">
+      <div class="cell">
+        <OrigenMark size={160} tone="ink" />
+        <p class="t-label mt-4">Marca sobre papel</p>
+      </div>
+      <div class="cell cell--ink">
+        <OrigenMark size={160} tone="paper" />
+        <p class="t-label mt-4 on-ink-label">Marca sobre tinta</p>
+      </div>
+      <div class="cell cell--brand">
+        <OrigenMark size={160} tone="paper" />
+        <p class="t-label mt-4 on-ink-label">Marca sobre color de marca</p>
+      </div>
+    </div>
+    <dl class="facts mt-8">
+      <div><dt class="t-label">Grosor de traza</dt><dd class="t-data">{MARK_STROKE_WIDTH} / 48</dd></div>
+      <div><dt class="t-label">Radio de nodo</dt><dd class="t-data">{MARK_NODE_RADIUS} / 48</dd></div>
+      <div><dt class="t-label">Nodos</dt><dd class="t-data">{MARK_NODES.length}</dd></div>
+      <div><dt class="t-label">Opacidad mínima</dt><dd class="t-data">1</dd></div>
+    </dl>
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="tamanos">
+    <h2 id="tamanos" class="t-h2">Tamaño mínimo</h2>
+    <p class="t-body mt-4">
+      El mínimo es 16 px. Por debajo, los tres nodos dejan de contarse y la marca pasa a ser una
+      mancha. A 24 px e inferiores se usa la variante reforzada, con la traza un 25 por ciento
+      más gruesa y los nodos un 12 por ciento mayores: es la misma marca con más cuerpo, no un
+      dibujo distinto.
+    </p>
+    <div class="sizes mt-8">
+      {
+        SIZES.map((size) => (
+          <figure class="size">
+            <OrigenMark size={size} tone="ink" />
+            <figcaption class="t-data">{size} px</figcaption>
+          </figure>
+        ))
+      }
+    </div>
+    <div class="sizes sizes--ink mt-3">
+      {
+        SIZES.map((size) => (
+          <figure class="size">
+            <OrigenMark size={size} tone="paper" />
+            <figcaption class="t-data on-ink-label">{size} px</figcaption>
+          </figure>
+        ))
+      }
     </div>
   </section>
 
-  <section class="mt-12 space-y-6" aria-labelledby="hero-animation-heading">
-    <h2 id="hero-animation-heading" class="section-title">Hero animation (lab only)</h2>
-    <p class="text-sm text-slate-600">
-      Not on the production home page (eyebrow is text-only). {heroMotion.label} · {heroMotion.loopSeconds}s loop · longest trails.
+  <section class="shell section rule-top" aria-labelledby="respeto">
+    <h2 id="respeto" class="t-h2">Área de respeto</h2>
+    <p class="t-body mt-4">
+      Alrededor de la marca queda libre, como mínimo, un cuarto de su lado. Nada entra en esa
+      banda: ni texto, ni filete, ni borde de imagen. En el lockup, la separación entre marca y
+      palabra es fija y no se ajusta a ojo.
     </p>
-    <div class="flex flex-col items-center gap-8 rounded-2xl bg-brand-950 px-6 py-12 md:flex-row md:justify-center">
-      <OrigenThreeBodyCanvas
-        size={300}
-        solution="premium"
-        loopSeconds={heroMotion.loopSeconds}
-        trailLength={heroMotion.trailLength}
-        showRings={true}
-      />
-      <OrigenThreeBodyCanvas
-        size={300}
-        solution="premium"
-        loopSeconds={heroMotion.loopSeconds}
-        trailLength={heroMotion.trailLength}
-        showWordmark={true}
-        showRings={true}
-        class="hidden md:block"
-      />
-    </div>
-  </section>
-
-  <section class="mt-12 grid gap-6 md:grid-cols-2" aria-labelledby="surface-preview-heading">
-    <h2 id="surface-preview-heading" class="section-title md:col-span-2">Surface previews (lab)</h2>
-
-    <article class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-      <h3 class="text-sm font-bold uppercase tracking-wider text-slate-500">White background</h3>
-      <p class="mt-1 text-xs text-slate-500">md lockup · 36px icon · surface motion preset</p>
-      <div class="mt-4 flex min-h-[5rem] items-center justify-center rounded-lg border border-slate-100 bg-white py-8">
-        <OrigenLogoLockupAnimated variant="light" size="md" solution="premium" motion="surface" />
+    <div class="clearspace mt-8">
+      <div class="clearspace__box">
+        <OrigenMark size={96} tone="ink" />
       </div>
-    </article>
-
-    <article class="rounded-xl border border-brand-800/30 bg-brand-950 p-6 shadow-sm">
-      <h3 class="text-sm font-bold uppercase tracking-wider text-brand-300">Footer / dark (production: static)</h3>
-      <p class="mt-1 text-xs text-brand-400/80">Production footer uses static sm lockup; animated preset shown for comparison</p>
-      <div class="mt-4 flex min-h-[5rem] items-center justify-center py-8">
-        <OrigenLogoLockupAnimated variant="dark" size="md" solution="premium" motion="footer" />
-      </div>
-    </article>
-
-    <article class="rounded-xl border border-slate-200 bg-slate-50 p-6 md:col-span-2">
-      <h3 class="text-sm font-bold uppercase tracking-wider text-slate-500">Favicon scale</h3>
-      <p class="mt-1 text-xs text-slate-500">
-        16px stays <strong>static</strong> (recommended). Optional 24px motion demo , very restrained.
+      <p class="t-small clearspace__note">
+        La banda punteada marca el cuarto de lado que queda libre a cada lado.
       </p>
-      <div class="mt-4 flex flex-wrap items-center gap-8">
-        <div class="flex items-center gap-3 rounded-2xl bg-brand-950 px-4 py-3">
-          <img src="/favicon.svg" width="16" height="16" alt="" class="size-4 shrink-0" />
-          <span class="text-xs text-brand-100">16px , matches /favicon.svg</span>
-        </div>
-        <div class="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
-          <OrigenLogoMarkStatic size={16} variant="light" solution="premium" showRings />
-          <span class="text-xs text-slate-600">16px light , static</span>
-        </div>
-        <div class="flex flex-col items-center gap-2 rounded-2xl border border-brand-800/30 bg-brand-950 px-5 py-4">
-          <OrigenThreeBodyCanvas
-            size={24}
-            variant="dark"
-            solution="premium"
-            showRings={true}
-            motionContext="favicon"
-            loopSeconds={getMotionPreset('favicon').loopSeconds}
-            trailLength={getMotionPreset('favicon').trailLength}
-          />
-          <span class="text-xs text-brand-100">24px motion demo</span>
-        </div>
-        <a
-          href="/logo/origenlab-favicon-candidate.svg"
-          class="text-sm font-semibold text-brand-700 hover:underline"
-          download
-        >
-          Download favicon candidate SVG
-        </a>
-      </div>
-    </article>
+    </div>
   </section>
 
-  <section class="mt-14 overflow-x-auto" aria-labelledby="comparison-heading">
-    <h2 id="comparison-heading" class="section-title mb-4">Comparison</h2>
-    <table class="w-full min-w-[36rem] border-collapse text-left text-sm">
+  <section class="shell section rule-top" aria-labelledby="colores">
+    <h2 id="colores" class="t-h2">Colores permitidos</h2>
+    <p class="t-body mt-4">
+      Dos parejas y una tinta única. No hay degradados, no hay sombras y no hay ninguna
+      aplicación con opacidad reducida: si la marca no cabe a plena tinta, se usa a menor tamaño,
+      no más tenue. El contraste indicado es contra el fondo previsto y todos superan el 3 a 1
+      que exige WCAG 1.4.11 para gráficos no textuales.
+    </p>
+    <table class="table mt-8">
       <thead>
-        <tr class="border-b border-slate-200 bg-slate-50">
-          <th class="px-4 py-3 font-bold text-brand-950">Option</th>
-          <th class="px-4 py-3 font-bold text-brand-950">Recommendation</th>
-          <th class="px-4 py-3 font-bold text-brand-950">Best use</th>
-          <th class="px-4 py-3 font-bold text-brand-950">Strengths</th>
-          <th class="px-4 py-3 font-bold text-brand-950">Possible issue</th>
-        </tr>
+        <tr><th>Uso</th><th>Token</th><th>Valor</th><th>Contraste</th></tr>
       </thead>
       <tbody>
         {
-          comparison.map((row) => (
-            <tr class="border-b border-slate-100">
-              <td class="px-4 py-3 font-semibold text-brand-900">{row.option}</td>
-              <td class="px-4 py-3 font-medium text-brand-700">{row.label}</td>
-              <td class="px-4 py-3 text-slate-700">{row.bestUse}</td>
-              <td class="px-4 py-3 text-slate-700">{row.strengths}</td>
-              <td class="px-4 py-3 text-slate-600">{row.issue}</td>
+          colours.map(([use, token, value, ratio]) => (
+            <tr>
+              <td>{use}</td>
+              <td class="t-data">{token}</td>
+              <td class="t-data">{value}</td>
+              <td class="t-data">{ratio}</td>
             </tr>
           ))
         }
       </tbody>
     </table>
-  </section>
 
-  <section class="mt-14" aria-labelledby="static-assets-heading">
-    <h2 id="static-assets-heading" class="section-title mb-4">Exported candidates</h2>
-    <p class="mb-4 text-sm text-slate-600">
-      Pre-rendered SVGs in <code class="rounded bg-slate-100 px-1">public/logo/</code> (do not overwrite
-      <code class="rounded bg-slate-100 px-1">favicon.svg</code> or OG until approved).
+    <h3 class="t-h3 mt-10">Una tinta</h3>
+    <p class="t-body mt-3">
+      Para grabado, sello, fax y cualquier soporte de un solo color. Hereda el color del
+      contexto; los nodos llevan un recorte del fondo para no fundirse con la traza.
     </p>
-    <ul class="grid gap-2 text-sm sm:grid-cols-2">
-      <li>
-        <a class="font-semibold text-brand-700 hover:underline" href="/logo/origenlab-mark-premium.svg"
-          >origenlab-mark-premium.svg</a
-        >
-      </li>
-      <li>
-        <a class="font-semibold text-brand-700 hover:underline" href="/logo/origenlab-mark-trace.svg"
-          >origenlab-mark-trace.svg</a
-        >
-      </li>
-      <li>
-        <a class="font-semibold text-brand-700 hover:underline" href="/logo/origenlab-mark-minimal.svg"
-          >origenlab-mark-minimal.svg</a
-        >
-      </li>
-      <li>
-        <a class="font-semibold text-brand-700 hover:underline" href="/logo/origenlab-lockup-dark.svg"
-          >origenlab-lockup-dark.svg</a
-        >
-      </li>
-      <li>
-        <a class="font-semibold text-brand-700 hover:underline" href="/logo/origenlab-lockup-light.svg"
-          >origenlab-lockup-light.svg</a
-        >
-      </li>
-      <li>
-        <a class="font-semibold text-brand-700 hover:underline" href="/logo/origenlab-favicon-candidate.svg"
-          >origenlab-favicon-candidate.svg</a
-        >
-      </li>
-    </ul>
+    <div class="grid mt-6">
+      <div class="cell mono-ink"><OrigenMark size={120} tone="mono" /></div>
+      <div class="cell cell--ink mono-paper"><OrigenMark size={120} tone="mono" /></div>
+    </div>
   </section>
 
-  <div class="mt-16 border-t border-slate-200 pt-12">
-    <OrigenLogoShowcase />
-  </div>
-  </div>
+  <section class="shell section rule-top" aria-labelledby="lockup">
+    <h2 id="lockup" class="t-h2">Lockup</h2>
+    <p class="t-body mt-4">
+      En el sitio, el lockup se compone con HTML: la palabra es texto real, seleccionable y
+      traducible, y no un trazado dentro del SVG. Los archivos de <code class="t-data">public/logo/</code>
+      llevan el texto vectorizado sólo porque se entregan a terceros.
+    </p>
+    <div class="grid mt-8">
+      <div class="cell"><SiteLogo /></div>
+      <div class="cell cell--ink"><SiteLogo tone="paper" /></div>
+    </div>
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="animacion">
+    <h2 id="animacion" class="t-h2">Animación</h2>
+    <p class="t-body mt-4">
+      La marca es estática en todas partes menos en el hero de la portada. Allí los tres cuerpos
+      recorren la propia trayectoria, desfasados un tercio de vuelta, en un bucle de 34 segundos.
+      Es <code class="t-data">offset-path</code> sobre la misma curva: sólo compone, no toca el
+      layout y no lleva JavaScript.
+    </p>
+    <p class="t-body mt-4">
+      No se anima en cabecera ni en pie. Un bucle permanente en el shell del sitio no tendría
+      control de pausa y eso incumpliría WCAG 2.2.2. Con <code class="t-data">prefers-reduced-motion:
+      reduce</code> la animación no llega a declararse y los cuerpos se quedan donde los deja la
+      marca estática.
+    </p>
+    <div class="grid mt-8">
+      <div class="cell"><OrigenMarkAnimated size={160} /></div>
+    </div>
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="archivos">
+    <h2 id="archivos" class="t-h2">Archivos</h2>
+    <p class="t-body mt-4">
+      Todos salen de <code class="t-data">scripts/lib/mark-geometry.mjs</code> con
+      <code class="t-data">npm run build:brand</code>. No se editan a mano: un archivo retocado
+      deja de coincidir con la marca del sitio.
+    </p>
+    <ul class="index-list mt-8">
+      {
+        files.map(([name, note]) => (
+          <li class="index-row file">
+            <a href={`/logo/${name}`} class="file__name t-data">{name}</a>
+            <span class="t-small file__note">{note}</span>
+          </li>
+        ))
+      }
+    </ul>
+    <p class="t-small mt-6">
+      Las tres exploraciones y la hoja de comparación con la que se eligió esta viven en
+      <code class="t-data">design/logo-explorations/</code>, fuera de <code class="t-data">public/</code>.
+    </p>
+  </section>
 </Layout>
+
+<style>
+  .grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  }
+  .cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    min-height: 15rem;
+    padding: 2rem;
+    border: 1px solid var(--color-hairline);
+  }
+  .cell--ink {
+    background-color: var(--color-ink-950);
+    border-color: var(--color-onink-hairline);
+  }
+  .cell--brand {
+    background-color: var(--color-teal-800);
+    border-color: var(--color-teal-800);
+  }
+  .on-ink-label {
+    color: var(--color-onink-500);
+  }
+  /* La versión a una tinta hereda el color: aquí se le da uno distinto en cada
+     celda para comprobar justamente eso. */
+  .mono-ink {
+    color: var(--color-ink-950);
+    --mark-void: var(--color-paper);
+  }
+  .mono-paper {
+    color: var(--color-paper);
+    --mark-void: var(--color-ink-950);
+  }
+
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: 1.5rem;
+    border-top: 1px solid var(--color-ink-950);
+    padding-top: 1.25rem;
+  }
+  .facts dt {
+    margin-bottom: 0.375rem;
+  }
+  .facts dd {
+    margin: 0;
+  }
+
+  .sizes {
+    display: flex;
+    align-items: flex-end;
+    gap: 2.5rem;
+    flex-wrap: wrap;
+    padding: 2rem;
+    border: 1px solid var(--color-hairline);
+  }
+  .sizes--ink {
+    background-color: var(--color-ink-950);
+    border-color: var(--color-onink-hairline);
+  }
+  .size {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0;
+  }
+  .size figcaption {
+    font-size: 0.75rem;
+    color: var(--color-ink-500);
+  }
+
+  .clearspace__box {
+    display: inline-flex;
+    padding: 1.5rem; /* un cuarto de 96 px */
+    outline: 1px dashed var(--color-teal-700);
+    outline-offset: -1px;
+  }
+  .clearspace__note {
+    margin-top: 1rem;
+    color: var(--color-ink-500);
+  }
+
+  .table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .table th,
+  .table td {
+    text-align: left;
+    padding: 0.75rem 1.5rem 0.75rem 0;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .table th {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-ink-500);
+    border-bottom-color: var(--color-ink-950);
+  }
+
+  .file {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem 1.5rem;
+    padding-block: 0.875rem;
+  }
+  .file__name {
+    color: var(--color-teal-800);
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+  }
+  .file__note {
+    color: var(--color-ink-500);
+  }
+
+  .mt-3 { margin-top: 0.75rem; }
+  .mt-4 { margin-top: 1rem; }
+  .mt-6 { margin-top: 1.5rem; }
+  .mt-8 { margin-top: 2rem; }
+  .mt-10 { margin-top: 2.5rem; }
+</style>

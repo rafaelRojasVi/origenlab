@@ -29,3 +29,8 @@ pnpm-debug.log*
 # deploy artifacts (generated from dist/)
 origenlab-deploy.zip
 origenlab-dist.zip
+
+# Capturas de revisión: se regeneran con `npm run design:review-shots` y pesan
+# megabytes. Mismo criterio que `.qa/`. Las exploraciones de marca sí se
+# versionan: son el material con el que se decidió, no una captura del estado.
+design/review-*/

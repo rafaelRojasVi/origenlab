@@ -1,0 +1,110 @@
+---
+import {
+  MARK_CANVAS,
+  MARK_NODES,
+  MARK_NODE_RADIUS,
+  MARK_NODE_SCALE,
+  MARK_PATH,
+  MARK_STROKE_WIDTH,
+} from '../../lib/logo/generatedMark';
+
+/**
+ * Marca animada. Sólo para el hero de la portada.
+ *
+ * Los tres cuerpos recorren la misma lemniscata que dibuja la marca estática,
+ * separados un tercio de vuelta, que es la coreografía real: tres cuerpos de
+ * igual masa siguiendo una única órbita en ocho, desfasados en el tiempo.
+ *
+ * Sin JavaScript. El movimiento es `offset-distance` sobre `offset-path`, de
+ * modo que sólo compone: no toca el layout, no provoca reflow y no puede
+ * desplazar nada de la página. La marca del encabezado y del pie no se anima:
+ * un bucle permanente en el shell del sitio incumpliría WCAG 2.2.2, que exige
+ * poder pararlo, y aquí no hay control de pausa.
+ *
+ * Con `prefers-reduced-motion: reduce` la animación no llega a declararse y los
+ * cuerpos se quedan exactamente donde los deja la marca estática: no es una
+ * versión degradada, es el mismo dibujo quieto.
+ */
+interface Props {
+  size?: number;
+  class?: string;
+  title?: string;
+}
+
+const { size = 132, class: className = '', title } = Astro.props;
+
+/** 34 s: lo bastante lento para leerse como deriva y no como parpadeo. */
+const LOOP_SECONDS = 34;
+---
+
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox={`0 0 ${MARK_CANVAS} ${MARK_CANVAS}`}
+  width={size}
+  height={size}
+  class:list={['origen-mark-animated', className]}
+  role={title ? 'img' : undefined}
+  aria-label={title}
+  aria-hidden={title ? undefined : 'true'}
+  focusable="false"
+>
+  {title && <title>{title}</title>}
+
+  <path
+    d={MARK_PATH}
+    fill="none"
+    stroke="var(--color-ink-950)"
+    stroke-width={MARK_STROKE_WIDTH}
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  {
+    MARK_NODES.map(([x, y], index) => (
+      <circle
+        class="origen-mark-animated__body"
+        cx={x}
+        cy={y}
+        r={MARK_NODE_RADIUS * (MARK_NODE_SCALE[index] ?? 1)}
+        fill="var(--color-teal-700)"
+        style={`--body-delay: ${(-LOOP_SECONDS / 3) * index}s`}
+      />
+    ))
+  }
+</svg>
+
+<style define:vars={{ markPath: `path('${MARK_PATH}')`, loop: `${LOOP_SECONDS}s` }}>
+  .origen-mark-animated {
+    display: block;
+    flex-shrink: 0;
+  }
+
+  /*
+   * El bloque entero vive bajo `no-preference`. Sin esta consulta el navegador
+   * aplicaría `offset-path`, que reposiciona el elemento respecto del origen
+   * del SVG: con movimiento reducido los cuerpos saltarían de sitio en vez de
+   * quedarse donde los dibuja la marca estática.
+   */
+  @media (prefers-reduced-motion: no-preference) {
+    .origen-mark-animated__body {
+      offset-path: var(--markPath);
+      offset-rotate: 0deg;
+      /* `cx`/`cy` ya no posicionan cuando hay offset-path: el punto de anclaje
+         pasa a ser el origen del elemento. */
+      cx: 0;
+      cy: 0;
+      animation: origen-body var(--loop) linear infinite;
+      animation-delay: var(--body-delay);
+      will-change: offset-distance;
+    }
+  }
+
+  @keyframes origen-body {
+    from {
+      offset-distance: 0%;
+    }
+    to {
+      offset-distance: 100%;
+    }
+  }
+</style>

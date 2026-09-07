@@ -1,13 +1,18 @@
 ---
-import OrigenLogoMarkStatic from './logo/OrigenLogoMarkStatic.astro';
+import OrigenMark from './logo/OrigenMark.astro';
 
 /**
  * Lockup de OrigenLab para la cabecera y el pie.
  *
- * Usa la marca atómica existente (sin rediseño) con la tipografía y los colores
- * del sistema V2. La versión animada sigue disponible como activo de marca en
- * /logo-lab/, pero no se ejecuta en el shell del sitio: un bucle de 18 s sin
- * control de pausa incumple WCAG 2.2.2 y cuesta hilo principal en cada página.
+ * El texto es texto, no un trazado dentro del SVG: se selecciona, se busca, se
+ * traduce y hereda la tipografía del sitio. La marca sólo aporta el símbolo.
+ *
+ * La marca del shell es siempre estática. La versión animada existe, pero vive
+ * únicamente en el hero de la portada: un bucle permanente en cada página no
+ * tiene control de pausa y eso incumpliría WCAG 2.2.2.
+ *
+ * El símbolo no lleva texto accesible propio porque «OrigenLab» ya está escrito
+ * al lado; anunciarlo dos veces sólo alarga el lector de pantalla.
  */
 interface Props {
   tone?: 'ink' | 'paper';
@@ -19,13 +24,7 @@ const { tone = 'ink', size = 30, class: className = '' } = Astro.props;
 ---
 
 <span class:list={['site-logo', `site-logo--${tone}`, className]}>
-  <OrigenLogoMarkStatic
-    size={size}
-    variant={tone === 'ink' ? 'light' : 'color'}
-    solution="premium"
-    transparentBg
-    title="OrigenLab"
-  />
+  <OrigenMark size={size} tone={tone === 'ink' ? 'ink' : 'paper'} />
   <span class="site-logo__word">OrigenLab</span>
 </span>
 
@@ -33,7 +32,9 @@ const { tone = 'ink', size = 30, class: className = '' } = Astro.props;
   .site-logo {
     display: inline-flex;
     align-items: center;
-    gap: 0.375rem;
+    /* La lemniscata llega hasta el borde de su lienzo por la izquierda; un
+       espacio de marca completo la separaría demasiado de la palabra. */
+    gap: 0.5rem;
   }
   .site-logo__word {
     font-size: 1.1875rem;

@@ -1,0 +1,100 @@
+---
+import {
+  MARK_CANVAS,
+  MARK_NODES,
+  MARK_NODE_RADIUS,
+  MARK_NODE_SCALE,
+  MARK_PATH,
+  MARK_SMALL_NODE_MULTIPLIER,
+  MARK_SMALL_STROKE_MULTIPLIER,
+  MARK_STROKE_WIDTH,
+} from '../../lib/logo/generatedMark';
+
+/**
+ * Marca OrigenLab, estática.
+ *
+ * Dibuja las constantes de `generatedMark.ts`, que salen de la misma geometría
+ * que los archivos de `public/logo/`. Los componentes no inventan trazado.
+ *
+ * La marca es la lemniscata de la coreografía en ocho de los tres cuerpos, con
+ * los tres cuerpos macizos sobre ella. Nada se dibuja por debajo de opacidad 1
+ * ni por debajo de un píxel: la marca anterior trazaba las órbitas al 24% y los
+ * nodos con 0,38 px de radio a 32 px, y por eso desaparecía.
+ *
+ * `tone`:
+ *   ink   traza en tinta y nodos en teal-700, para fondos de papel
+ *   paper traza en papel y nodos en teal-500, para fondos de tinta o de marca
+ *   mono  todo hereda `currentColor`; los nodos llevan recorte para no fundirse
+ *
+ * Accesibilidad: con `title` la marca es una imagen con nombre; sin él queda
+ * `aria-hidden`, que es lo correcto cuando el nombre ya está en texto al lado.
+ */
+export type MarkTone = 'ink' | 'paper' | 'mono';
+
+interface Props {
+  size?: number;
+  tone?: MarkTone;
+  /** Texto accesible. Omitir cuando el lockup ya escribe "OrigenLab" al lado. */
+  title?: string;
+  class?: string;
+}
+
+const { size = 32, tone = 'ink', title, class: className = '' } = Astro.props;
+
+const TONES: Record<MarkTone, { trace: string; node: string }> = {
+  ink: { trace: 'var(--color-ink-950)', node: 'var(--color-teal-700)' },
+  paper: { trace: 'var(--color-paper)', node: 'var(--color-teal-500)' },
+  mono: { trace: 'currentColor', node: 'currentColor' },
+};
+const colors = TONES[tone];
+
+/* Por debajo de 24 px la traza y los nodos se refuerzan: es la misma marca con
+   más cuerpo, no un dibujo distinto. */
+const small = size <= 24;
+const stroke = small ? MARK_STROKE_WIDTH * MARK_SMALL_STROKE_MULTIPLIER : MARK_STROKE_WIDTH;
+const radius = small ? MARK_NODE_RADIUS * MARK_SMALL_NODE_MULTIPLIER : MARK_NODE_RADIUS;
+---
+
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox={`0 0 ${MARK_CANVAS} ${MARK_CANVAS}`}
+  width={size}
+  height={size}
+  class:list={['origen-mark', className]}
+  role={title ? 'img' : undefined}
+  aria-label={title}
+  aria-hidden={title ? undefined : 'true'}
+  focusable="false"
+>
+  {title && <title>{title}</title>}
+
+  <path
+    d={MARK_PATH}
+    fill="none"
+    stroke={colors.trace}
+    stroke-width={stroke}
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  {
+    MARK_NODES.map(([x, y], index) => {
+      const r = radius * (MARK_NODE_SCALE[index] ?? 1);
+      return (
+        <>
+          {tone === 'mono' && (
+            <circle cx={x} cy={y} r={r + stroke * 0.42} fill="var(--mark-void, var(--color-paper))" />
+          )}
+          <circle cx={x} cy={y} r={r} fill={colors.node} />
+        </>
+      );
+    })
+  }
+</svg>
+
+<style>
+  .origen-mark {
+    display: block;
+    flex-shrink: 0;
+  }
+</style>
