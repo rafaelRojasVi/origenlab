@@ -1,0 +1,51 @@
+---
+import OrigenMark from './logo/OrigenMark.astro';
+
+/**
+ * Lockup de OrigenLab para la cabecera y el pie.
+ *
+ * El texto es texto, no un trazado dentro del SVG: se selecciona, se busca, se
+ * traduce y hereda la tipografía del sitio. La marca sólo aporta el símbolo.
+ *
+ * La marca del shell es siempre estática. La versión animada existe, pero vive
+ * únicamente en el hero de la portada: un bucle permanente en cada página no
+ * tiene control de pausa y eso incumpliría WCAG 2.2.2.
+ *
+ * El símbolo no lleva texto accesible propio porque «OrigenLab» ya está escrito
+ * al lado; anunciarlo dos veces sólo alarga el lector de pantalla.
+ */
+interface Props {
+  tone?: 'ink' | 'paper';
+  size?: number;
+  class?: string;
+}
+
+const { tone = 'ink', size = 30, class: className = '' } = Astro.props;
+---
+
+<span class:list={['site-logo', `site-logo--${tone}`, className]}>
+  <OrigenMark size={size} tone={tone === 'ink' ? 'ink' : 'paper'} />
+  <span class="site-logo__word">OrigenLab</span>
+</span>
+
+<style>
+  .site-logo {
+    display: inline-flex;
+    align-items: center;
+    /* La lemniscata llega hasta el borde de su lienzo por la izquierda; un
+       espacio de marca completo la separaría demasiado de la palabra. */
+    gap: 0.5rem;
+  }
+  .site-logo__word {
+    font-size: 1.1875rem;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1;
+  }
+  .site-logo--ink .site-logo__word {
+    color: var(--color-ink-950);
+  }
+  .site-logo--paper .site-logo__word {
+    color: var(--color-paper);
+  }
+</style>

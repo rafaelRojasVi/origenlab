@@ -22,7 +22,13 @@ This index is the navigation hub for website documentation and agent context.
 
 ## Features
 
-- **Live chat (Tidio):** active in `Layout.astro`. Legacy `FloatingChat.astro` was removed; historical context in [`audits/stage-4-cleanup-hardening-2026-05-16.md`](audits/stage-4-cleanup-hardening-2026-05-16.md) (`floating-chat-widget-notes.md` was not retained in-repo).
+- **Sin terceros.** El sitio no carga ningún script, tipografía, imagen ni hoja de estilo desde otro dominio. El chat de Tidio se retiró en el rediseño V2 y no se sustituyó; contexto y correcciones en [`security-audit-v1.md`](security-audit-v1.md). `npm run validate:dist` hace cumplir la regla en cada build.
+
+## Diseño
+
+- [`design/DESIGN_SYSTEM.md`](design/DESIGN_SYSTEM.md) — tokens, primitivas y reglas del sistema visual V2. Leer antes de añadir un color, un radio o un componente.
+- [`design/CONTENT_NEEDED.md`](design/CONTENT_NEEDED.md) — lo que falta confirmar antes de publicar, separado en negocio y revisión legal.
+- [`design/WEBSITE_V2_DESIGN_BRIEF.md`](design/WEBSITE_V2_DESIGN_BRIEF.md) — descubrimiento y brief que originó el rediseño.
 
 ## Detailed docs
 
@@ -30,4 +36,5 @@ This index is the navigation hub for website documentation and agent context.
 - [`deployment.md`](deployment.md)
 - [`deployment-status.md`](deployment-status.md)
 - [`email-setup.md`](email-setup.md)
+- [`product-assets.md`](product-assets.md)
 - [`security-audit-v1.md`](security-audit-v1.md)

@@ -1,0 +1,88 @@
+---
+import { groupProductSpecs } from '../../lib/catalog';
+import type { ProductSpec } from '../../data/products';
+
+/**
+ * Especificaciones agrupadas. Listas de definición, no una tabla de 19 filas
+ * con filete bajo cada una: el agrupamiento es lo que hace legible una ficha.
+ */
+interface Props {
+  specs: readonly ProductSpec[];
+  attribution?: string;
+}
+
+const { specs, attribution } = Astro.props;
+const groups = groupProductSpecs(specs);
+---
+
+<div class="spec-groups">
+  {
+    groups.map((group) => (
+      <section class="spec-group">
+        <h3 class="t-label spec-group__title">{group.name}</h3>
+        <dl class="spec-group__list">
+          {group.specs.map((spec) => (
+            <div class="spec-group__row">
+              <dt>{spec.label}</dt>
+              <dd class="t-data">{spec.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+    ))
+  }
+</div>
+{attribution && <p class="t-small spec-groups__attribution">{attribution}</p>}
+
+<style>
+  .spec-groups {
+    display: grid;
+    gap: 2.5rem;
+  }
+  .spec-group__title {
+    color: var(--color-ink-950);
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--color-ink-950);
+  }
+  .spec-group__list {
+    margin: 0;
+  }
+  .spec-group__row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.125rem 1.5rem;
+    padding-block: 0.75rem;
+  }
+  .spec-group__row + .spec-group__row {
+    border-top: 1px solid var(--color-hairline);
+  }
+  .spec-group__row dt {
+    font-size: 0.9375rem;
+    color: var(--color-ink-600);
+  }
+  .spec-group__row dd {
+    margin: 0;
+    color: var(--color-ink-950);
+  }
+  .spec-groups__attribution {
+    margin-top: 2rem;
+    color: var(--color-ink-500);
+    max-width: 62ch;
+  }
+  @media (min-width: 640px) {
+    .spec-group__row {
+      grid-template-columns: 15rem minmax(0, 1fr);
+      align-items: baseline;
+    }
+  }
+  @media (min-width: 1024px) {
+    .spec-groups {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 3rem 4rem;
+      align-items: start;
+    }
+    .spec-group__row {
+      grid-template-columns: 12rem minmax(0, 1fr);
+    }
+  }
+</style>

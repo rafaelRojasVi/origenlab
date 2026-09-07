@@ -1,0 +1,422 @@
+---
+import { equipmentScope, scopeById } from '../../data/equipmentScope';
+import { publicClaim } from '../../data/claims';
+import { getBrandByFamilyId, getProductBySlug } from '../../lib/catalog';
+import { productImageSources } from '../../lib/productImage';
+import BrandLogo from '../ui/BrandLogo.astro';
+import FamilyMotif from './FamilyMotif.astro';
+import Notice from '../ui/Notice.astro';
+import Icon from '../ui/Icon.astro';
+
+/**
+ * Las seis familias de equipo.
+ *
+ * Cuatro composiciones distintas, no una rejilla de seis fichas iguales. El
+ * orden no es un flujo de trabajo y la sección lo dice en voz alta: son
+ * capacidades modulares y cada laboratorio combina las que su método pide.
+ *
+ *   1. Medición          dos familias en paralelo, escala media, motivo arriba
+ *   2. Preparación       dos familias en una banda de fondo distinto, asimétrica
+ *   3. Separación        la única fotografía aprobada, a gran escala, dos columnas
+ *   4. Análisis          logotipo del fabricante y recuento, sin ilustración
+ *
+ * Centrifugación aparece la tercera, después de cuatro familias. Es deliberado:
+ * es la única con fotografía y, puesta primero, se come la sección entera.
+ *
+ * Las cinco familias sin fotografía no llevan una imagen de relleno ni la de
+ * otro fabricante: llevan un diagrama propio de lo que el equipo le hace a la
+ * muestra. Ver `src/lib/familyMotif.ts` y `src/data/sourceRegistry.ts`.
+ */
+const medicion = equipmentScope.filter((entry) => entry.workType === 'Medición');
+const preparacion = equipmentScope.filter(
+  (entry) => entry.workType === 'Preparación de muestra',
+);
+const separacion = scopeById('centrifugacion');
+const analisis = scopeById('electroforesis');
+
+const centrifugeProduct = separacion?.imageProductSlug
+  ? getProductBySlug(separacion.imageProductSlug)
+  : undefined;
+const centrifugeImage = centrifugeProduct ? productImageSources(centrifugeProduct) : undefined;
+
+const separacionBrand = separacion ? getBrandByFamilyId(separacion.id) : undefined;
+const analisisBrand = analisis ? getBrandByFamilyId(analisis.id) : undefined;
+
+const centrifugeCount = separacion?.countClaimId ? publicClaim(separacion.countClaimId) : undefined;
+const servaCount = analisis?.countClaimId ? publicClaim(analisis.countClaimId) : undefined;
+
+const brandFor = (id: string) => getBrandByFamilyId(id);
+---
+
+<section id="familias" class="families" aria-labelledby="familias-title" tabindex="-1">
+  <div class="shell">
+    <div class="families__head">
+      <div>
+        <p class="t-label">Alcance</p>
+        <h2 id="familias-title" class="t-h2 families__title">
+          Seis familias de equipo, una sola conversación técnica.
+        </h2>
+      </div>
+      <div>
+        <p class="t-body families__body">
+          Dos familias tienen ficha publicada en este sitio, con especificaciones y documentación
+          del fabricante. Las otras cuatro se cotizan a partir de su aplicación: nos cuenta qué
+          necesita hacer y acotamos las alternativas antes de que exista un precio.
+        </p>
+        <p class="t-small families__note">
+          No es una secuencia. Son capacidades independientes: un laboratorio puede necesitar sólo
+          una, o combinarlas en el orden que pida su método.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 1. Medición: dos familias en paralelo, misma escala -->
+  <div class="shell">
+    <div class="group">
+      <h3 class="t-label group__title">Medición</h3>
+      <div class="pair">
+        {
+          medicion.map((entry, index) => (
+            <article class="pair__item" data-reveal data-reveal-delay={index + 1}>
+              <div class="pair__motif">
+                <FamilyMotif familyId={entry.id} />
+              </div>
+              <div class="pair__body">
+                {brandFor(entry.id) && (
+                  <BrandLogo brand={brandFor(entry.id)!} scale={0.95} class="pair__logo" />
+                )}
+                <h4 class="family-name family-name--md">{entry.name}</h4>
+                <p class="t-small family-purpose">{entry.purpose}</p>
+                <p class="family-question">{entry.question}</p>
+              </div>
+            </article>
+          ))
+        }
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. Preparación: banda de superficie, composición asimétrica -->
+  <div class="band">
+    <div class="shell">
+      <h3 class="t-label group__title">Preparación de muestra</h3>
+      <div class="split">
+        {
+          preparacion.map((entry, index) => (
+            <article class:list={['split__item', index === 0 && 'split__item--lead']} data-reveal>
+              <div class="split__motif">
+                <FamilyMotif familyId={entry.id} />
+              </div>
+              <div>
+                {brandFor(entry.id) && (
+                  <BrandLogo brand={brandFor(entry.id)!} scale={1} class="pair__logo" />
+                )}
+                <h4 class:list={['family-name', index === 0 ? 'family-name--lg' : 'family-name--md']}>
+                  {entry.name}
+                </h4>
+                <p class="t-small family-purpose">{entry.purpose}</p>
+                <p class="family-question">{entry.question}</p>
+              </div>
+            </article>
+          ))
+        }
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. Separación: la fotografía, a la mayor escala de la sección -->
+  {
+    separacion && (
+      <div class="shell">
+        <article class="feature" data-reveal>
+          {centrifugeImage && (
+            <div class="feature__media">
+              <picture>
+                <source
+                  type="image/avif"
+                  srcset={centrifugeImage.avifSrcset}
+                  sizes="(min-width: 1024px) 28rem, 78vw"
+                />
+                <source
+                  type="image/webp"
+                  srcset={centrifugeImage.webpSrcset}
+                  sizes="(min-width: 1024px) 28rem, 78vw"
+                />
+                <img
+                  src={centrifugeImage.src}
+                  alt={centrifugeImage.alt}
+                  width="960"
+                  height="960"
+                  sizes="(min-width: 1024px) 28rem, 78vw"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </picture>
+            </div>
+          )}
+          <div class="feature__body">
+            <h3 class="t-label group__title group__title--flush">Separación</h3>
+            {separacionBrand && <BrandLogo brand={separacionBrand} scale={1.1} class="pair__logo" />}
+            <h4 class="family-name family-name--xl">{separacion.name}</h4>
+            <p class="t-body family-purpose">{separacion.purpose}</p>
+            <p class="family-question">{separacion.question}</p>
+            <div class="feature__foot">
+              {centrifugeCount && <span class="t-data family-count">{centrifugeCount}</span>}
+              {separacion.href && (
+                <a href={separacion.href} class="link-arrow">
+                  Ver la familia
+                  <Icon name="arrow-right" size={18} class="arrow" />
+                </a>
+              )}
+            </div>
+          </div>
+        </article>
+      </div>
+    )
+  }
+
+  <!-- 4. Análisis: sin fotografía y sin fingirla; el logotipo sostiene -->
+  {
+    analisis && (
+      <div class="shell">
+        <article class="feature feature--flip" data-reveal>
+          <div class="feature__body">
+            <h3 class="t-label group__title group__title--flush">Análisis</h3>
+            <h4 class="family-name family-name--lg">{analisis.name}</h4>
+            <p class="t-body family-purpose">{analisis.purpose}</p>
+            <p class="family-question">{analisis.question}</p>
+            <div class="feature__foot">
+              {analisis.href && (
+                <a href={analisis.href} class="link-arrow">
+                  Ver la línea
+                  <Icon name="arrow-right" size={18} class="arrow" />
+                </a>
+              )}
+            </div>
+          </div>
+          <div class="feature__mark">
+            {analisisBrand && <BrandLogo brand={analisisBrand} scale={2.2} />}
+            <div class="feature__mark-motif">
+              <FamilyMotif familyId={analisis.id} />
+            </div>
+            {servaCount && <p class="t-data family-count">{servaCount}</p>}
+          </div>
+        </article>
+      </div>
+    )
+  }
+
+  <div class="shell">
+    <Notice class="families__notice">
+      De las familias sin ficha propia no publicamos modelos ni especificaciones hasta tenerla con
+      documentación del fabricante. Los diagramas ilustran qué hace cada equipo con la muestra; no
+      son fotografías de producto. Cotización, configuración y disponibilidad se confirman por
+      escrito al cotizar.
+    </Notice>
+  </div>
+</section>
+
+<style>
+  .families {
+    padding-block: 4rem;
+  }
+  .families:focus {
+    outline: none;
+  }
+  .families__head {
+    display: grid;
+    gap: 1.5rem;
+  }
+  .families__title {
+    margin-top: 1rem;
+    max-width: 20ch;
+  }
+  .families__body {
+    color: var(--color-ink-600);
+  }
+  .families__note {
+    margin-top: 1rem;
+    color: var(--color-ink-500);
+    max-width: 52ch;
+  }
+
+  .group {
+    margin-top: 3.5rem;
+  }
+  .group__title {
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--color-ink-950);
+    margin-bottom: 2rem;
+  }
+  /* Dentro de una composición a dos columnas el filete sobra: ya hay borde. */
+  .group__title--flush {
+    border-bottom: none;
+    padding-bottom: 0;
+    margin-bottom: 1.25rem;
+  }
+
+  /* --- Nombres de familia: cuatro escalas, una por composición ------------- */
+  .family-name {
+    line-height: 1.08;
+    letter-spacing: -0.02em;
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+  .family-name--md {
+    font-size: clamp(1.25rem, 1.1rem + 0.6vw, 1.5rem);
+  }
+  .family-name--lg {
+    font-size: clamp(1.5rem, 1.2rem + 1.2vw, 2.125rem);
+  }
+  .family-name--xl {
+    font-size: clamp(1.75rem, 1.3rem + 1.9vw, 2.75rem);
+  }
+  .family-purpose {
+    margin-top: 0.875rem;
+    color: var(--color-ink-600);
+    max-width: 46ch;
+  }
+  /* La pregunta del cliente ocupa el lugar de la especificación que estas
+     familias no pueden publicar. Va en tinta plena: es contenido, no pie. */
+  .family-question {
+    margin-top: 1.25rem;
+    padding-left: 1rem;
+    border-left: 1px solid var(--color-teal-700);
+    font-size: 1rem;
+    color: var(--color-ink-950);
+    max-width: 40ch;
+  }
+  .family-count {
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+  }
+  .pair__logo {
+    margin-bottom: 1.125rem;
+  }
+
+  /* --- 1. Par de medición -------------------------------------------------- */
+  .pair {
+    display: grid;
+    gap: 3rem;
+  }
+  .pair__motif {
+    max-width: 15rem;
+    margin-bottom: 1.5rem;
+    color: var(--color-ink-800);
+  }
+
+  /* --- 2. Banda de preparación -------------------------------------------- */
+  .band {
+    margin-top: 4.5rem;
+    padding-block: 4rem;
+    background-color: var(--color-surface);
+    border-block: 1px solid var(--color-hairline);
+  }
+  .split {
+    display: grid;
+    gap: 3rem;
+  }
+  .split__motif {
+    max-width: 15rem;
+    margin-bottom: 1.5rem;
+  }
+  .split__item--lead .split__motif {
+    max-width: 20rem;
+  }
+
+  /* --- 3. Fotografía ------------------------------------------------------- */
+  .feature {
+    display: grid;
+    gap: 2rem;
+    margin-top: 4.5rem;
+    padding-top: 3rem;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .feature--flip {
+    border-top-color: var(--color-hairline);
+  }
+  /* Apilada, la fotografía a ancho completo aplasta al texto que la acompaña. */
+  .feature__media {
+    max-width: 22rem;
+  }
+  .feature__media img {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1 / 1;
+    object-fit: contain;
+  }
+  .feature__foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem 2rem;
+    margin-top: 2rem;
+  }
+
+  /* --- 4. Composición de marca -------------------------------------------- */
+  .feature__mark {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 1.5rem;
+    padding-block: 2.5rem;
+    border-block: 1px solid var(--color-hairline);
+  }
+  .feature__mark-motif {
+    width: 100%;
+    max-width: 16rem;
+  }
+
+  .families__notice {
+    margin-top: 3.5rem;
+  }
+
+  @media (min-width: 768px) {
+    .families {
+      padding-block: 6rem;
+    }
+    .pair {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 3.5rem;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .families__head {
+      grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
+      gap: 4rem;
+      align-items: end;
+    }
+    .pair {
+      gap: 5rem;
+    }
+    /* Asimetría deliberada: la primera familia de preparación pesa más. */
+    .split {
+      grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+      gap: 4.5rem;
+      align-items: start;
+    }
+    .split__item:not(.split__item--lead) {
+      padding-top: 3rem;
+    }
+    .feature {
+      grid-template-columns: minmax(0, 28rem) minmax(0, 1fr);
+      align-items: center;
+      gap: 5rem;
+      margin-top: 6rem;
+      padding-top: 4rem;
+    }
+    .feature--flip {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 26rem);
+    }
+    .feature__media {
+      max-width: none;
+    }
+    .feature__mark {
+      min-height: 20rem;
+      padding-block: 3rem;
+    }
+  }
+</style>

@@ -1,69 +1,65 @@
 ---
 import '../styles/global.css';
-import { site } from '../config/site';
-import Header from '../components/Header.astro';
-import Footer from '../components/Footer.astro';
+import Seo from '../components/Seo.astro';
+import SiteHeader from '../components/SiteHeader.astro';
+import SiteFooter from '../components/SiteFooter.astro';
 
 interface Props {
-  title?: string;
-  description?: string;
-  /** Clases del contenedor main (p. ej. inicio sin padding superior). */
-  mainClass?: string;
+  title: string;
+  description: string;
+  isHome?: boolean;
+  noindex?: boolean;
+  jsonLd?: readonly unknown[];
+  ogImagePath?: string;
 }
 
-const {
-  title = site.name,
-  description = site.description,
-  mainClass = 'mx-auto max-w-6xl px-6 py-10 md:py-12',
-} = Astro.props;
-
-const path = Astro.url.pathname.replace(/\/$/, '') || '/';
-const canonicalUrl = path === '/' ? `${site.baseUrl}/` : `${site.baseUrl}${path}/`;
-const ogTitle = title.length > 70 ? site.name : title;
-const ogImageUrl = `${site.baseUrl}${site.ogImagePath}`;
+const { title, description, isHome, noindex, jsonLd, ogImagePath } = Astro.props;
 ---
 
 <!doctype html>
-<html lang="es">
+<html lang="es-CL">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="apple-touch-icon" href="/favicon.svg" />
-    <link rel="canonical" href={canonicalUrl} />
-    <meta name="generator" content={Astro.generator} />
-    <title>{title}</title>
-    <meta name="description" content={description} />
-    <meta property="og:type" content="website" />
-    <meta property="og:locale" content="es_CL" />
-    <meta property="og:site_name" content={site.name} />
-    <meta property="og:title" content={ogTitle} />
-    <meta property="og:description" content={description} />
-    <meta property="og:url" content={canonicalUrl} />
-    <meta property="og:image" content={ogImageUrl} />
-    <meta property="og:image:alt" content={site.ogImageAlt} />
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content={ogTitle} />
-    <meta name="twitter:description" content={description} />
-    <meta name="twitter:image" content={ogImageUrl} />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap"
-      rel="stylesheet"
+    <Seo
+      title={title}
+      description={description}
+      isHome={isHome}
+      noindex={noindex}
+      jsonLd={jsonLd}
+      ogImagePath={ogImagePath}
     />
   </head>
-  <body class="min-h-screen overflow-x-hidden bg-slate-50 text-slate-900 antialiased [padding-bottom:env(safe-area-inset-bottom,0px)]">
-    <a
-      href="#contenido-principal"
-      class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-brand-800 focus:px-4 focus:py-2 focus:text-white focus:shadow-lg"
-      >Ir al contenido</a
-    >
-    <Header />
-    <main id="contenido-principal" class={mainClass} tabindex="-1">
+  <body>
+    <a href="#contenido" class="skip-link">Ir al contenido</a>
+    <SiteHeader />
+    <main id="contenido" tabindex="-1">
       <slot />
     </main>
-    <Footer />
-    <script is:inline src="//code.tidio.co/fhlfx2hwx24jm3sa2koagvs4vsn0jtbj.js" async></script>
+    <SiteFooter />
+
+    <style is:global>
+      .skip-link {
+        position: absolute;
+        left: -9999px;
+        top: 0;
+        z-index: 60;
+      }
+      .skip-link:focus {
+        left: 1rem;
+        top: 1rem;
+        padding: 0.75rem 1.25rem;
+        background-color: var(--color-ink-950);
+        color: var(--color-paper);
+        border-radius: var(--radius-edge);
+        font-weight: 600;
+      }
+      main:focus {
+        outline: none;
+      }
+      body {
+        min-height: 100vh;
+        overflow-x: hidden;
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+      }
+    </style>
   </body>
 </html>

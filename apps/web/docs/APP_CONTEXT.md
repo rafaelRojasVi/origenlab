@@ -2,7 +2,7 @@
 
 Status: canonical  
 Owner: web-maintainers  
-Last reviewed: 2026-03-24
+Last reviewed: 2026-09-06
 
 Primary context for [`apps/web/`](../).
 
@@ -17,6 +17,7 @@ Static Spanish-first B2B website for OrigenLab that helps visitors understand of
 0. Monorepo factual entry (when unsure which app): [`../../../docs/PROJECT_CONTEXT.md`](../../../docs/PROJECT_CONTEXT.md#m-proj-start)
 1. Business/scope constraints → [`BUSINESS_CONTEXT.md`](BUSINESS_CONTEXT.md)
 2. Technical structure → [`ARCHITECTURE.md`](ARCHITECTURE.md)
+2b. Sistema visual y sus reglas → [`design/DESIGN_SYSTEM.md`](design/DESIGN_SYSTEM.md)
 3. Operations/deploy → [`RUNBOOK.md`](RUNBOOK.md#m-webrun-local)
 
 <a id="m-web-facts"></a>
@@ -31,6 +32,8 @@ Static Spanish-first B2B website for OrigenLab that helps visitors understand of
 - Deployment model: static build → HostGator shared hosting.
 - Mail operations: documented in [`email-setup.md`](email-setup.md).
 - Security baseline: [`security-audit-v1.md`](security-audit-v1.md).
+- Sin terceros: la producción no carga script, tipografía, imagen ni hoja de estilo de otro dominio; `npm run validate` lo hace cumplir.
+- Contenido y textos legales pendientes: [`design/CONTENT_NEEDED.md`](design/CONTENT_NEEDED.md).
 
 <a id="m-web-historical"></a>
 ## Historical boundary

@@ -1,0 +1,49 @@
+---
+import type { ProductSpec } from '../../data/products';
+
+/**
+ * Cifras de cabecera de un equipo: pocas, en mono, con dígitos tabulares.
+ * Es el motivo de medición del sistema visual y sustituye a las píldoras.
+ */
+interface Props {
+  facts: readonly ProductSpec[];
+  class?: string;
+  [key: string]: unknown;
+}
+
+const { facts, class: className = '', ...rest } = Astro.props;
+---
+
+{
+  facts.length > 0 && (
+    <dl class:list={['key-facts', className]} {...rest}>
+      {facts.map((fact) => (
+        <div class="key-facts__item">
+          <dt class="t-label">{fact.label}</dt>
+          <dd class="t-data">{fact.value}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+<style>
+  .key-facts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1.25rem 2rem;
+    margin: 0;
+    border-top: 1px solid var(--color-hairline);
+    padding-top: 1.5rem;
+  }
+  .key-facts__item dt {
+    text-transform: none;
+    letter-spacing: 0.01em;
+    margin-bottom: 0.25rem;
+  }
+  .key-facts__item dd {
+    margin: 0;
+    color: var(--color-ink-950);
+    font-weight: 500;
+  }
+</style>

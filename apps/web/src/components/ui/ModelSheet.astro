@@ -1,0 +1,297 @@
+---
+import type { BrandModel } from '../../data/brandModels';
+import type { ProductImageRecord } from '../../data/productImages';
+import ExternalLink from './ExternalLink.astro';
+import ModelPhoto from './ModelPhoto.astro';
+
+/**
+ * Ficha de un modelo que el sitio describe pero no aloja.
+ *
+ * Es el equivalente de `ModelRow` para los modelos sin página interna: donde
+ * `ModelRow` lleva a una ficha, ésta lleva al fabricante. Si el registro de
+ * imágenes tiene una fotografía `VERIFIED` del modelo, la ficha abre con ella
+ * (`image`); si no, abre con el nombre y no reserva un hueco que quedaría
+ * vacío. Nunca ilustra un modelo con el equipo de otro fabricante.
+ *
+ * Cuatro bloques, siempre en el mismo orden, porque es el orden en que se
+ * decide una compra: qué hace, para qué se usa, qué decide la elección, y de
+ * dónde sale el dato.
+ *
+ * `variant` cambia la disposición, no el contenido:
+ *   `stack`   una columna, el criterio como rejilla ancha
+ *   `split`   dos columnas desde 1024 px, texto a la izquierda y criterio a la derecha
+ *   `compact` sin lista de usos, para páginas donde el uso ya se explicó arriba
+ */
+interface Props {
+  model: BrandModel;
+  /** Fila `VERIFIED` de `productImages.ts` para este modelo, si existe. */
+  image?: ProductImageRecord;
+  /** Nombre del fabricante para el rótulo de la fotografía. */
+  brandName?: string;
+  variant?: 'stack' | 'split' | 'compact';
+  /** Nivel del encabezado del nombre. La página manda, no el componente. */
+  headingLevel?: 3 | 4;
+  class?: string;
+}
+
+const {
+  model,
+  image,
+  brandName,
+  variant = 'stack',
+  headingLevel = 3,
+  class: className = '',
+} = Astro.props;
+const hasPhoto = image?.status === 'VERIFIED';
+const Heading = `h${headingLevel}` as 'h3' | 'h4';
+const officialLabel =
+  model.officialUrlScope === 'modelo'
+    ? `Página oficial de ${model.name}`
+    : 'Página del fabricante';
+---
+
+<li class:list={['sheet', `sheet--${variant}`, hasPhoto && 'sheet--photo', className]}>
+  {
+    hasPhoto && (
+      <div class="sheet__media">
+        <ModelPhoto image={image} brandName={brandName} size="sheet" captioned />
+      </div>
+    )
+  }
+  <div class="sheet__head">
+    <Heading class="sheet__name" translate="no">{model.name}</Heading>
+    <p class="sheet__meta t-data">
+      {model.scope === 'familia' ? 'Familia de modelos' : 'Modelo'}
+      {model.code && <span class="sheet__code">Cat. {model.code}</span>}
+    </p>
+  </div>
+
+  <div class="sheet__text">
+    <p class="sheet__does">{model.does}</p>
+
+    {
+      variant !== 'compact' && model.uses.length > 0 && (
+        <div class="sheet__uses">
+          <p class="t-label sheet__uses-title">Usos típicos</p>
+          <ul class="sheet__uses-list">
+            {model.uses.map((use) => <li>{use}</li>)}
+          </ul>
+        </div>
+      )
+    }
+  </div>
+
+  <div class="sheet__criteria">
+    <p class="t-label sheet__criteria-title">Qué decide la elección</p>
+    <dl class="sheet__specs">
+      {
+        model.criteria.map((criterion) => (
+          <div class="sheet__spec">
+            <dt>{criterion.label}</dt>
+            <dd class="t-data">{criterion.value}</dd>
+          </div>
+        ))
+      }
+    </dl>
+  </div>
+
+  <div class="sheet__source">
+    <ExternalLink href={model.officialUrl} context={officialLabel}>
+      {officialLabel}
+    </ExternalLink>
+    {
+      model.officialPdfUrl && (
+        <ExternalLink href={model.officialPdfUrl} context={`documento PDF de ${model.name}`}>
+          Documento PDF del fabricante
+        </ExternalLink>
+      )
+    }
+    {
+      /* Sin PDF y sin nota: se dice aquí. Con nota, la nota ya lo explica y
+         repetirlo dejaba la misma frase dos veces en la misma ficha. */
+      !model.officialPdfUrl && !model.sourceNote && (
+        <span class="sheet__nopdf t-small">El fabricante no publica PDF descargable.</span>
+      )
+    }
+  </div>
+
+  {model.sourceNote && <p class="sheet__note t-small">{model.sourceNote}</p>}
+</li>
+
+<style>
+  .sheet {
+    display: grid;
+    gap: 1.25rem;
+    padding-block: 2rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .sheet__name {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+    letter-spacing: -0.012em;
+  }
+  .sheet__meta {
+    margin-top: 0.25rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+  }
+  .sheet__code {
+    color: var(--color-teal-800);
+  }
+  .sheet__does {
+    line-height: 1.6;
+    max-width: 62ch;
+  }
+  .sheet__uses {
+    margin-top: 1.25rem;
+  }
+  .sheet__uses-title,
+  .sheet__criteria-title {
+    color: var(--color-ink-500);
+  }
+  .sheet__uses-list {
+    list-style: none;
+    margin: 0.625rem 0 0;
+    padding: 0;
+    max-width: 56ch;
+  }
+  .sheet__uses-list li {
+    position: relative;
+    padding-left: 1rem;
+    font-size: 0.9375rem;
+    color: var(--color-ink-600);
+    line-height: 1.55;
+  }
+  .sheet__uses-list li + li {
+    margin-top: 0.3125rem;
+  }
+  /* Guion de lista dibujado, no un carácter: un signo en la copia lo marcaría
+     `validate:dist` como semirraya suelta. */
+  .sheet__uses-list li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.7em;
+    width: 0.4375rem;
+    height: 1px;
+    background-color: var(--color-teal-700);
+  }
+
+  .sheet__specs {
+    margin: 0.625rem 0 0;
+    display: grid;
+    gap: 0.75rem 2rem;
+  }
+  .sheet__spec dt {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--color-ink-500);
+  }
+  .sheet__spec dd {
+    margin: 0.125rem 0 0;
+    font-size: 0.9375rem;
+    color: var(--color-ink-900);
+    font-family: inherit;
+  }
+
+  .sheet__source {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.625rem 2rem;
+  }
+  .sheet__nopdf,
+  .sheet__note {
+    color: var(--color-ink-500);
+    max-width: 62ch;
+  }
+
+  /* Con fotografía: la imagen ocupa una columna propia desde 768 px y el
+     resto de la ficha fluye a su derecha. El equipo entero, sin recorte. */
+  .sheet__media {
+    max-width: 16rem;
+  }
+
+  @media (min-width: 768px) {
+    .sheet__specs {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .sheet--photo {
+      grid-template-columns: minmax(0, 12rem) minmax(0, 1fr);
+      column-gap: 2.5rem;
+    }
+    .sheet--photo .sheet__media {
+      grid-column: 1;
+      grid-row: 1 / span 5;
+      max-width: none;
+    }
+    .sheet--photo > :not(.sheet__media) {
+      grid-column: 2;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .sheet {
+      padding-block: 2.5rem;
+      column-gap: 3.5rem;
+    }
+    .sheet--split {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+    }
+    .sheet--split.sheet--photo {
+      grid-template-columns: minmax(0, 14rem) minmax(0, 5fr) minmax(0, 6fr);
+    }
+    .sheet--split.sheet--photo .sheet__head {
+      grid-column: 2;
+    }
+    .sheet--split.sheet--photo .sheet__text {
+      grid-column: 2;
+    }
+    .sheet--split.sheet--photo .sheet__criteria {
+      grid-column: 3;
+    }
+    .sheet--split.sheet--photo .sheet__source,
+    .sheet--split.sheet--photo .sheet__note {
+      grid-column: 2 / -1;
+    }
+    .sheet--split .sheet__head {
+      grid-column: 1;
+    }
+    .sheet--split .sheet__text {
+      grid-column: 1;
+      grid-row: 2;
+    }
+    .sheet--split .sheet__criteria {
+      grid-column: 2;
+      grid-row: 1 / span 2;
+    }
+    .sheet--split .sheet__source,
+    .sheet--split .sheet__note {
+      grid-column: 1 / -1;
+    }
+    .sheet--split .sheet__specs {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.625rem;
+    }
+    .sheet--split .sheet__spec {
+      display: grid;
+      grid-template-columns: minmax(0, 11rem) minmax(0, 1fr);
+      align-items: baseline;
+      gap: 1rem;
+      padding-bottom: 0.625rem;
+      border-bottom: 1px solid var(--color-hairline);
+    }
+    .sheet--split .sheet__spec dd {
+      margin-top: 0;
+    }
+    .sheet--stack .sheet__specs {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+</style>

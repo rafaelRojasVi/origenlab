@@ -1,87 +1,357 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import PageHeader from '../components/PageHeader.astro';
-import QuoteCTA from '../components/QuoteCTA.astro';
-import { brands } from '../data/brands';
-import { company } from '../data/company';
-import { site } from '../config/site';
-import { products } from '../data/products';
-import { productPageHref } from '../lib/catalog';
+import PageIntro from '../components/ui/PageIntro.astro';
+import SectionIndex from '../components/ui/SectionIndex.astro';
+import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
+import BrandLogo from '../components/ui/BrandLogo.astro';
+import Notice from '../components/ui/Notice.astro';
+import Icon from '../components/ui/Icon.astro';
+import ModelPhoto from '../components/ui/ModelPhoto.astro';
+import { brands, brandsWallHeading } from '../data/brands';
+import { getProductsByBrandId, productCountForBrand, productPageHref } from '../lib/catalog';
+import { modelsForBrand } from '../data/brandModels';
+import { scopeById } from '../data/equipmentScope';
+import { imageForModel, imageForProduct } from '../data/productImages';
 
-const homeBrands = brands.filter((brand) => brand.showOnHomeBrandsSection);
+/**
+ * Índice de marcas. Seis filas, un peso.
+ *
+ * La versión anterior partía la página en dos secciones, «con catálogo
+ * publicado» y «también trabajamos con», y ponía a cuatro marcas en la segunda
+ * a menor escala. Esa jerarquía describía el estado del repositorio, no el del
+ * negocio: las cinco familias de maquinaria pesan igual, y ahora las seis
+ * tienen página con el mismo estándar.
+ *
+ * Lo que sí se dice de cada una, porque es cierto y es lo que el visitante
+ * necesita: cuántas referencias tienen ficha propia aquí y cuántos modelos se
+ * describen con la documentación del fabricante. Son dos cosas distintas y se
+ * cuentan por separado.
+ *
+ * SERVA va última, como en toda lista del sitio: es la única línea de reactivos
+ * e insumos y puesta antes desplazaría a las familias de equipo.
+ *
+ * Cada fila muestra además hasta tres equipos notables de la marca, con el
+ * nombre del modelo, para qué sirve y, cuando `productImages.ts` la tiene
+ * `VERIFIED`, su fotografía. Tres y no más para que ninguna marca pese más que
+ * otra por tener más modelos documentados; sin fotografía autorizada la
+ * entrada se compone a texto y no reserva hueco.
+ */
+const NOTABLE = 3;
 
-function brandProducts(brandId: string) {
-  return products.filter((product) => product.brandId === brandId && product.showOnBrandPage);
+interface Notable {
+  name: string;
+  purpose: string;
+  href: string;
+  image: ReturnType<typeof imageForModel>;
 }
+
+function notableFor(brandId: string, slug: string): Notable[] {
+  const withPages = getProductsByBrandId(brandId).filter(
+    (product) => productPageHref(product) !== undefined,
+  );
+  const fromProducts: Notable[] = withPages.map((product) => ({
+    name: product.name,
+    purpose: product.equipmentType ?? product.summary,
+    href: productPageHref(product) ?? `/marcas/${slug}/`,
+    image: imageForProduct(product.id),
+  }));
+  const fromModels: Notable[] = modelsForBrand(brandId).map((model) => ({
+    name: model.name,
+    purpose: model.uses[0] ?? model.does,
+    href: `/marcas/${slug}/`,
+    image: imageForModel(model.id),
+  }));
+  return [...fromProducts, ...fromModels].slice(0, NOTABLE);
+}
+
+const rows = brands.map((brand) => ({
+  brand,
+  family: scopeById(brand.familyId),
+  fichas: productCountForBrand(brand.id),
+  documentados: modelsForBrand(brand.id).length,
+  notable: notableFor(brand.id, brand.slug),
+}));
 ---
 
 <Layout
-  title="Marcas — OrigenLab"
-  description={`Líneas y marcas disponibles según alcance comercial. ${company.primaryOffer}, atención en ${company.geography}. ${site.location}.`}
+  title="Marcas"
+  description="Marcas con las que trabaja OrigenLab: Hielscher, Ortoalresa, IKA, Adam Equipment, Löser y SERVA. Catálogo, documentación y cotización."
 >
-  <PageHeader
-    title="Marcas"
-    lead="Trabajamos con líneas y marcas según alcance comercial vigente. La disponibilidad, documentación y condiciones se confirman durante la cotización."
-  />
-
-  <section class="mt-10" aria-labelledby="marcas-intro-heading">
-    <h2 id="marcas-intro-heading" class="section-title">Marcas y líneas para cotización</h2>
-    <p class="mt-3 max-w-3xl text-slate-600">
-      Si busca una marca en particular, cotización o recomendación según su laboratorio, escríbanos.
-      Definimos alcance, condiciones comerciales y documentación técnica durante el proceso de cotización.
-    </p>
-  </section>
-
-  <ul class="mt-8 grid gap-4 sm:grid-cols-2">
-    {homeBrands.map((brand) => {
-      const items = brandProducts(brand.id);
-      return (
-        <li class="card-elevated flex h-full flex-col border border-brand-100">
-          <div class="flex items-start justify-between gap-3">
-            <div>
-              <h3 class="font-semibold text-brand-950">{brand.homeCardTitle ?? brand.name}</h3>
-            </div>
-            {brand.logoPath && (
-              <img
-                src={brand.logoPath}
-                alt={brand.logoAlt ?? brand.name}
-                loading="lazy"
-                class="h-10 w-auto shrink-0 object-contain md:h-12"
-              />
-            )}
-          </div>
-          <p class="mt-3 text-sm leading-relaxed text-slate-600">
-            {brand.homeCardDescription ?? brand.summary}
-          </p>
-          {items.length > 0 && (
-            <ul class="mt-4 space-y-1.5 text-sm text-slate-600">
-              {items.slice(0, 5).map((product) => (
-                <li>
-                  <a
-                    href={productPageHref(product) ?? `/marcas/${brand.slug}`}
-                    class="font-medium text-brand-700 hover:text-brand-800"
-                  >
-                    {product.name}
-                  </a>
-                </li>
-              ))}
-              {items.length > 5 && <li class="text-slate-500">y más modelos en la ficha de marca</li>}
-            </ul>
-          )}
-          <div class="mt-auto flex flex-col gap-2 pt-5">
-            <a href={`/marcas/${brand.slug}`} class="btn-outline-dark text-center">
-              {brand.homeCardCtaLabel ?? `Ver ${brand.name}`}
-            </a>
-          </div>
-        </li>
-      );
-    })}
-  </ul>
-
-  <div class="mt-14">
-    <QuoteCTA
-      title="¿Marca o equipo específico?"
-      description="Consúltenos por disponibilidad y condiciones; respondemos por correo o WhatsApp."
+  <div class="shell">
+    <PageIntro
+      title="Marcas"
+      lead="Seis fabricantes, cada uno con su página, su familia de equipo y sus modelos documentados desde la fuente oficial. La disponibilidad, la documentación técnica y las condiciones se confirman al cotizar."
+      crumbs={[{ label: 'Marcas' }]}
     />
   </div>
+
+  <section class="shell section rule-top" aria-labelledby="marcas-title">
+    <SectionIndex index={1} label={brandsWallHeading} />
+    <h2 id="marcas-title" class="t-h2">Con quién trabajamos, y qué fabrica cada uno</h2>
+    <p class="t-lead mt-5">
+      Es una lista cerrada. Una comprobación automática impide que una séptima marca aparezca en
+      cualquier página, en el buscador, en el mapa del sitio o en el pie sin pasar por la
+      confirmación del negocio.
+    </p>
+
+    <ul class="brand-rows">
+      {
+        rows.map(({ brand, family, fichas, documentados, notable }) => (
+          <li class="brand-row">
+            <a href={`/marcas/${brand.slug}/`} class="brand-row__link">
+              <span class="brand-row__logo">
+                <BrandLogo brand={brand} scale={1.4} />
+              </span>
+              <span class="brand-row__body">
+                <span class="brand-row__name" translate="no">{brand.name}</span>
+                {brand.legalName && <span class="brand-row__legal">{brand.legalName}</span>}
+                <span class="brand-row__summary t-small">{brand.listSummary}</span>
+                {family && <span class="brand-row__family t-data">{family.name}</span>}
+              </span>
+              <span class="brand-row__count">
+                {documentados > 0 && (
+                  <span class="brand-row__stat">
+                    <span class="brand-row__count-value t-data">{documentados}</span>
+                    <span class="brand-row__count-label">
+                      {documentados === 1 ? 'modelo documentado' : 'modelos documentados'}
+                    </span>
+                  </span>
+                )}
+                {fichas > 0 && (
+                  <span class="brand-row__stat">
+                    <span class="brand-row__count-value t-data">{fichas}</span>
+                    <span class="brand-row__count-label">
+                      {fichas === 1 ? 'ficha en el sitio' : 'fichas en el sitio'}
+                    </span>
+                  </span>
+                )}
+              </span>
+              <Icon name="arrow-right" size={20} class="brand-row__go" />
+            </a>
+            {notable.length > 0 && (
+              <ul class="notable" aria-label={`Equipos notables de ${brand.name}`}>
+                {notable.map((item) => (
+                  <li class:list={['notable__item', item.image && 'notable__item--photo']}>
+                    {item.image && (
+                      <span class="notable__media">
+                        <ModelPhoto image={item.image} brandName={brand.name} size="thumb" />
+                      </span>
+                    )}
+                    <span class="notable__text">
+                      <a href={item.href} class="notable__name" translate="no">{item.name}</a>
+                      <span class="notable__purpose t-small">{item.purpose}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </li>
+        ))
+      }
+    </ul>
+
+    <Notice class="mt-12">
+      OrigenLab no declara representación oficial, distribución exclusiva ni certificación de
+      ninguna de estas marcas. El alcance comercial de cada línea se confirma por escrito al
+      cotizar. Los datos de producto se redactaron desde la documentación pública de cada
+      fabricante y la fuente se enlaza en cada modelo.
+    </Notice>
+  </section>
+
+  <ClosingQuoteBand
+    index={2}
+    title="¿Busca una marca o un modelo concreto?"
+    body="Indíquenos la marca, el modelo de referencia y para qué laboratorio es. Le confirmamos qué podemos gestionar y en qué condiciones."
+  />
 </Layout>
+
+<style>
+  .brand-rows {
+    list-style: none;
+    margin: 2.5rem 0 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .brand-row {
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .brand-row__link {
+    display: grid;
+    /* Móvil: logotipo y texto apilados en la primera columna, flecha en la
+       segunda. Sin colocación explícita el navegador crea una tercera columna
+       implícita y el texto se comprime a 24 px. */
+    grid-template-columns: minmax(0, 1fr) 1.5rem;
+    gap: 0 1.5rem;
+    padding-block: 2rem;
+    transition: background-color 150ms;
+  }
+  .brand-row__logo,
+  .brand-row__body,
+  .brand-row__count {
+    grid-column: 1;
+  }
+  .brand-row__go {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+  }
+  .brand-row__link:hover {
+    background-color: var(--color-surface);
+  }
+  .brand-row__logo {
+    display: block;
+    margin-bottom: 1.5rem;
+  }
+  .brand-row__name {
+    display: block;
+    font-size: 1.375rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+    letter-spacing: -0.015em;
+  }
+  .brand-row__legal {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.875rem;
+    color: var(--color-ink-500);
+  }
+  .brand-row__summary {
+    display: block;
+    margin-top: 0.75rem;
+    color: var(--color-ink-600);
+    max-width: 56ch;
+  }
+  .brand-row__family {
+    display: block;
+    margin-top: 0.5rem;
+    /* 13 px es el suelo del sitio: por debajo, `qa:screens` lo marca. */
+    font-size: 0.8125rem;
+    color: var(--color-teal-800);
+  }
+  .brand-row__count {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem 2rem;
+    margin-top: 1.25rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--color-hairline);
+  }
+  .brand-row__count-value {
+    font-size: 1.5rem;
+    color: var(--color-ink-950);
+  }
+  .brand-row__count-label {
+    display: block;
+    margin-top: 0.125rem;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--color-ink-500);
+  }
+  .brand-row__go {
+    align-self: center;
+    justify-self: end;
+    color: var(--color-ink-500);
+  }
+  .brand-row__link > * {
+    min-width: 0;
+  }
+  .brand-row__link:hover .brand-row__go {
+    color: var(--color-teal-800);
+  }
+
+  /* Equipos notables: tres como máximo por marca, misma altura de fila para
+     las seis. La fotografía sólo aparece si el registro la respalda. */
+  .notable {
+    list-style: none;
+    margin: 0 0 2rem;
+    padding: 0;
+    display: grid;
+    gap: 1rem;
+  }
+  .notable__item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.875rem;
+    align-items: center;
+  }
+  .notable__item--photo {
+    grid-template-columns: 4.5rem minmax(0, 1fr);
+  }
+  .notable__media {
+    display: block;
+    width: 4.5rem;
+  }
+  .notable__name {
+    display: block;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+  .notable__name:hover {
+    color: var(--color-teal-800);
+  }
+  .notable__purpose {
+    display: block;
+    margin-top: 0.125rem;
+    color: var(--color-ink-600);
+  }
+
+  .notable__text {
+    min-width: 0;
+  }
+
+  @media (min-width: 768px) {
+    .notable {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1.5rem 2rem;
+      margin: -0.5rem 0 2.5rem 16rem;
+    }
+    /* Tres columnas junto al margen del logotipo dejan unos 130 px por equipo:
+       la fotografía va encima del nombre, no al lado, hasta que hay ancho. */
+    .notable__item--photo {
+      grid-template-columns: minmax(0, 1fr);
+      align-items: start;
+    }
+  }
+  @media (min-width: 1024px) {
+    .notable__item--photo {
+      grid-template-columns: 4.5rem minmax(0, 1fr);
+      align-items: center;
+    }
+  }
+
+  @media (min-width: 768px) {
+    .brand-row__link {
+      grid-template-columns: 13rem minmax(0, 1fr) 11rem 2rem;
+      align-items: center;
+      gap: 3rem;
+      padding-block: 2.5rem;
+    }
+    .brand-row__logo {
+      margin-bottom: 0;
+      grid-column: 1;
+    }
+    .brand-row__body {
+      grid-column: 2;
+    }
+    .brand-row__count {
+      grid-column: 3;
+      grid-row: auto;
+      display: grid;
+      gap: 0.875rem;
+      margin-top: 0;
+      padding-top: 0;
+      border-top: none;
+      text-align: right;
+      justify-items: end;
+    }
+    .brand-row__count-label {
+      max-width: 8rem;
+    }
+    .brand-row__go {
+      grid-column: 4;
+      grid-row: auto;
+    }
+  }
+</style>

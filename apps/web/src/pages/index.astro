@@ -1,61 +1,97 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import HomeHero from '../components/HomeHero.astro';
-import HomeCommercialLines from '../components/HomeCommercialLines.astro';
-import HomeCategoryCards from '../components/HomeCategoryCards.astro';
-import HomeProcess from '../components/HomeProcess.astro';
-import HomeFinalCTA from '../components/HomeFinalCTA.astro';
+import Hero from '../components/home/Hero.astro';
+import BrandRail from '../components/home/BrandRail.astro';
+import EquipmentFamilies from '../components/home/EquipmentFamilies.astro';
+import ConsultationSection from '../components/home/ConsultationSection.astro';
+import ProcessSection from '../components/home/ProcessSection.astro';
+import AudienceSection from '../components/home/AudienceSection.astro';
+import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
 import { site } from '../config/site';
-import { faqItems } from '../data/faq';
+import { organizationJsonLd, websiteJsonLd } from '../lib/jsonld';
+
+/**
+ * Portada.
+ *
+ * La portada no lleva índice numerado de secciones. En las páginas interiores
+ * el numeral funciona como el índice de un manual, pero encadenado de 01 a 05
+ * en la portada convertía la página en un documento formateado y no en un
+ * primer encuentro comercial. Aquí la identidad de cada sección la da la
+ * etiqueta mono y, sobre todo, el cambio de fondo, de escala y de densidad.
+ *
+ * Ritmo de la página, deliberadamente desigual:
+ *
+ *   papel     hero: titular, constelación de la muestra e índice de familias
+ *   superficie riel de marcas, una sola altura, gris y en movimiento lento
+ *   papel     familias: cuatro composiciones distintas
+ *   superficie   dentro de ellas, la banda de preparación cambia de fondo
+ *   papel     asesoría técnica, aire y preguntas a gran escala
+ *   superficie proceso, denso
+ *   papel     a quién atendemos, medio
+ *   tinta     banda de cierre
+ *
+ * Las preguntas frecuentes se movieron a /contacto/, junto con su JSON-LD:
+ * el acordeón de la portada repetía lo que la sección de asesoría ya resuelve
+ * mejor, y los datos estructurados tienen que vivir donde está el contenido
+ * visible que describen.
+ */
 ---
 
 <Layout
-  title={`${site.name} — ${site.tagline}`}
+  title={`${site.name} | ${site.tagline}`}
   description={site.description}
-  mainClass="mx-auto max-w-7xl px-5 pb-16 pt-0 md:px-6 md:pb-20"
+  isHome
+  jsonLd={[organizationJsonLd(), websiteJsonLd()]}
 >
-  <HomeHero />
+  <Hero />
+  <BrandRail />
+  <EquipmentFamilies />
+  <ConsultationSection />
+  <ProcessSection />
+  <AudienceSection />
 
-  <div class="space-y-2 md:space-y-4">
-    <HomeCommercialLines />
-    <HomeCategoryCards />
-    <HomeProcess />
-
-    <section class="home-section" aria-labelledby="faq-heading">
-      <header class="max-w-2xl">
-        <h2 id="faq-heading" class="text-2xl font-bold tracking-tight text-brand-950 md:text-3xl">
-          Preguntas frecuentes
-        </h2>
-        <p class="mt-2 text-sm text-slate-600">Respuestas breves sobre cotización y atención comercial.</p>
-      </header>
-      <div
-        class="mt-8 divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200/60 bg-white shadow-sm"
-        role="region"
-        aria-label="Preguntas frecuentes"
-      >
-        {
-          faqItems.map((item) => (
-            <details class="group px-5 py-4 open:bg-slate-50/60" name="faq">
-              <summary
-                class="cursor-pointer list-none text-sm font-semibold text-slate-900 marker:content-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden"
-              >
-                <span class="flex items-center justify-between gap-3">
-                  {item.question}
-                  <span
-                    class="shrink-0 text-slate-400 motion-safe:transition group-open:rotate-180"
-                    aria-hidden="true"
-                  >
-                    ▼
-                  </span>
-                </span>
-              </summary>
-              <p class="mt-3 text-sm leading-relaxed text-slate-600">{item.answer}</p>
-            </details>
-          ))
-        }
-      </div>
-    </section>
-
-    <HomeFinalCTA />
-  </div>
+  <ClosingQuoteBand
+    title="Cuéntenos qué necesita medir, separar o preparar."
+    body="Con la aplicación, la institución y su ciudad acotamos alternativas y preparamos una cotización con configuración y condiciones por escrito."
+  />
 </Layout>
+
+<script>
+  /**
+   * Revelado al desplazarse. Mejora progresiva estricta.
+   *
+   * Sin este script no se oculta nada: el estado inicial de `[data-reveal]`
+   * sólo existe mientras el documento lleva `data-reveal-ready`, que se pone
+   * aquí. Con movimiento reducido no se pone y la portada se pinta completa.
+   *
+   * No hay parallax, no hay secuestro del desplazamiento y ningún contenido
+   * depende del movimiento para leerse. Cada elemento se observa una sola vez.
+   */
+  const targets = document.querySelectorAll<HTMLElement>('[data-reveal]');
+  const motionOk = window.matchMedia('(prefers-reduced-motion: no-preference)');
+
+  if (targets.length > 0 && motionOk.matches && 'IntersectionObserver' in window) {
+    document.documentElement.setAttribute('data-reveal-ready', '');
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          entry.target.classList.add('is-revealed');
+          observer.unobserve(entry.target);
+        }
+      },
+      { rootMargin: '0px 0px -10% 0px', threshold: 0.08 },
+    );
+
+    for (const target of targets) observer.observe(target);
+
+    /* Si alguien pide movimiento reducido con la página abierta, se descarta el
+       estado oculto en lugar de dejar contenido invisible. */
+    motionOk.addEventListener('change', (event) => {
+      if (event.matches) return;
+      observer.disconnect();
+      document.documentElement.removeAttribute('data-reveal-ready');
+    });
+  }
+</script>

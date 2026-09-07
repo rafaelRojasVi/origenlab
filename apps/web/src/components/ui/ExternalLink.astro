@@ -1,0 +1,29 @@
+---
+import Icon from './Icon.astro';
+
+/**
+ * Enlace a un sitio de terceros. Anuncia el destino a lectores de pantalla y
+ * marca visualmente que abre una pestaña nueva (WCAG 3.2.5).
+ */
+interface Props {
+  href: string;
+  /** Texto para lectores de pantalla, p. ej. "sitio del fabricante". */
+  context?: string;
+  class?: string;
+  [key: string]: unknown;
+}
+
+const { href, context = 'sitio externo', class: className = '', ...rest } = Astro.props;
+---
+
+<a
+  href={href}
+  target="_blank"
+  rel="noopener noreferrer"
+  class:list={['link-arrow', className]}
+  {...rest}
+>
+  <slot />
+  <Icon name="external" size={16} class="arrow" />
+  <span class="sr-only">({context}, abre en una pestaña nueva)</span>
+</a>

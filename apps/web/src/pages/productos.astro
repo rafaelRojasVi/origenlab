@@ -1,134 +1,456 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import PageHeader from '../components/PageHeader.astro';
-import QuoteCTA from '../components/QuoteCTA.astro';
-import Card from '../components/Card.astro';
-import ProductPreviewCard from '../components/ProductPreviewCard.astro';
-import BrandSkuCard from '../components/BrandSkuCard.astro';
-import { categories } from '../data/categories';
+import PageIntro from '../components/ui/PageIntro.astro';
+import SectionIndex from '../components/ui/SectionIndex.astro';
+import ModelList from '../components/ui/ModelList.astro';
+import ModelRow from '../components/ui/ModelRow.astro';
+import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
+import BrandLogo from '../components/ui/BrandLogo.astro';
+import SkuList from '../components/ui/SkuList.astro';
+import ExternalLink from '../components/ui/ExternalLink.astro';
+import Notice from '../components/ui/Notice.astro';
+import Icon from '../components/ui/Icon.astro';
+import FamilyMotif from '../components/home/FamilyMotif.astro';
+import ApplicationList from '../components/ui/ApplicationList.astro';
+import { familiesInProductOrder } from '../data/equipmentScope';
 import { company } from '../data/company';
-import { getBrandById, getOrtoalresaCentrifuges, getProductsByBrandId } from '../lib/catalog';
-import { buildWhatsAppQuoteUrl } from '../lib/whatsapp';
-import { ctaLabels } from '../lib/ctaLabels';
+import { modelsForFamily } from '../data/brandModels';
+import { applicationsForFamily } from '../data/applications';
+import { imageForModel } from '../data/productImages';
+import ModelPhoto from '../components/ui/ModelPhoto.astro';
+import { site } from '../config/site';
+import {
+  getBrandByFamilyId,
+  getProductsByBrandId,
+  productPageHref,
+} from '../lib/catalog';
 
-const ortoalresaCentrifuges = getOrtoalresaCentrifuges().filter((p) => p.showOnProductsPage);
-const servaBrand = getBrandById('serva');
-const servaProducts = servaBrand
-  ? getProductsByBrandId(servaBrand.id).filter((p) => p.showOnProductsPage)
-  : [];
-const servaBrandName = servaBrand?.homeCardTitle ?? servaBrand?.name ?? 'SERVA Electrophoresis';
-const servaBrandHref = servaBrand ? `/marcas/${servaBrand.slug}` : '/marcas';
-const ortoalresaQuoteHref = buildWhatsAppQuoteUrl({ brandName: 'Ortoalresa' });
+/**
+ * Productos, por familia de equipo.
+ *
+ * La versión anterior publicaba dos cosas: una familia de centrífugas con
+ * fotografía a gran escala y una lista de referencias SERVA. Con eso, cuatro de
+ * las seis familias que la portada anuncia no aparecían en la página de
+ * productos, y el visitante que llegaba buscando un sonicador o una balanza
+ * concluía, razonablemente, que aquí se venden centrífugas.
+ *
+ * Ahora la página son las seis familias, en el orden de `productsFamilyOrder`,
+ * que no es el alfabético ni el del archivo de datos: abre con preparación de
+ * muestra, deja centrifugación en el centro (es la única con ficha propia y
+ * puesta primero se come la página) y cierra con electroforesis.
+ *
+ * Cada familia publica lo que de verdad tiene, y se ve la diferencia sin que
+ * haya que explicarla:
+ *
+ *   con ficha propia   fila con fotografía, cifras y enlace a la ficha interna
+ *   documentada        fila con nombre, qué hace y enlace al fabricante
+ *
+ * Ninguna familia lleva imagen de relleno: cada una abre con el diagrama de
+ * `familyMotif.ts`, que dibuja qué le hace el equipo a la muestra, y ese
+ * diagrama se queda aunque haya fotografía: es la capa conceptual de la
+ * familia, y la fotografía es la de cada modelo.
+ *
+ * Cada modelo documentado se compone con lo que el visitante necesita para
+ * reconocer el equipo sin abrir otra página: la fotografía oficial del modelo
+ * (o de la familia, rotulada como representativa) que `productImages.ts` tiene
+ * `VERIFIED`, a su lado el nombre tal como lo escribe el fabricante, qué hace
+ * y su uso principal, y tres salidas: la página de marca, la fuente oficial y
+ * la consulta de cotización. Si una fila perdiera la fotografía no reservaría
+ * hueco: se compondría a texto, y el diagrama de la familia seguiría arriba.
+ */
+const families = familiesInProductOrder().map((scope) => {
+  const brand = getBrandByFamilyId(scope.id);
+  const products = brand ? getProductsByBrandId(brand.id) : [];
+  return {
+    scope,
+    brand,
+    withPages: products.filter((product) => productPageHref(product) !== undefined),
+    skuOnly: products.filter((product) => productPageHref(product) === undefined),
+    documented: modelsForFamily(scope.id).map((model) => ({
+      model,
+      image: imageForModel(model.id),
+    })),
+    tasks: applicationsForFamily(scope.id),
+  };
+});
 ---
 
 <Layout
-  title="Productos — OrigenLab"
-  description={`Equipos para alimentos, control de calidad y laboratorio clínico. ${company.catalogNote}`}
+  title="Productos"
+  description="Seis familias de equipo de laboratorio: sonicación, dispersión, centrifugación, pesaje y humedad, osmometría y electroforesis. Cotización por aplicación."
 >
-  <PageHeader
-    title="Productos"
-    lead={`${company.primaryOffer} en tres categorías. ${company.catalogNote}`}
-  />
-
-  <div class="mt-10">
-    <ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {categories.map((cat) => (
-        <li>
-          <Card
-            title={cat.name}
-            href={`/categorias/${cat.slug}`}
-            description={cat.description}
-          />
-        </li>
-      ))}
-    </ul>
-  </div>
-
-  <section class="mt-14" aria-labelledby="lineas-cotizacion-heading">
-    <h2 id="lineas-cotizacion-heading" class="section-title">
-      Líneas y productos disponibles para cotización
-    </h2>
-    <p class="mt-2 max-w-2xl text-sm leading-relaxed text-slate-600">
-      Cotización y disponibilidad sujetas a confirmación comercial. La configuración, accesorios y
-      condiciones comerciales se confirman en la cotización.
-    </p>
-
-    {ortoalresaCentrifuges.length > 0 && (
-      <section class="mt-10" aria-labelledby="ortoalresa-centrifugas-heading">
-        <div class="rounded-2xl border border-brand-100 bg-gradient-to-br from-brand-50/80 to-white p-6 shadow-sm md:p-8">
-          <h3 id="ortoalresa-centrifugas-heading" class="text-lg font-bold text-brand-950">
-            Centrífugas Ortoalresa
-          </h3>
-          <p class="mt-2 max-w-2xl text-sm leading-relaxed text-slate-600">
-            Microcentrífugas y centrífugas ventiladas o refrigeradas para preparación de muestras.
-            Equipos disponibles para evaluación técnica y cotización a través de OrigenLab.
-          </p>
-          <div class="mt-5 flex flex-col gap-3 sm:flex-row">
-            <a href="/productos/centrifugas" class="btn-primary text-center">Ver línea completa</a>
-            <a
-              href={ortoalresaQuoteHref}
-              class="btn-whatsapp text-center"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              {ctaLabels.quoteLine}
-            </a>
-          </div>
-          <ul class="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {ortoalresaCentrifuges.map((product) => (
-              <li class="h-full">
-                <ProductPreviewCard
-                  product={product}
-                  brandName="Ortoalresa"
-                  showBrand={true}
-                  showApplication={true}
-                  showImage={true}
-                  showWhatsApp={true}
-                  brandNameForQuote="Ortoalresa"
-                />
-              </li>
-            ))}
-          </ul>
-        </div>
-      </section>
-    )}
-
-    {servaProducts.length > 0 && (
-      <section class="mt-10" aria-labelledby="serva-linea-heading">
-        <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
-          <h3 id="serva-linea-heading" class="text-lg font-bold text-brand-950">
-            Reactivos y soluciones SERVA
-          </h3>
-          <p class="mt-2 max-w-2xl text-sm leading-relaxed text-slate-600">
-            Referencias para electroforesis y preparación de muestras. Pedidos gestionados por OrigenLab
-            según confirmación comercial; disponibilidad y condiciones se validan al cotizar.
-          </p>
-          <p class="mt-3">
-            <a href={servaBrandHref} class="text-sm font-semibold text-brand-700 hover:text-brand-800">
-              Ver línea SERVA →
-            </a>
-          </p>
-          <ul class="mt-6 grid gap-4 md:grid-cols-3">
-            {servaProducts.map((product) => (
-              <li class="h-full">
-                <BrandSkuCard
-                  product={product}
-                  brandName={servaBrandName}
-                  brandHref={servaBrandHref}
-                  brandLineLabel="Ver línea SERVA"
-                />
-              </li>
-            ))}
-          </ul>
-        </div>
-      </section>
-    )}
-  </section>
-
-  <div class="mt-14">
-    <QuoteCTA
-      title="¿Busca un equipo en particular?"
-      description="Consulte por disponibilidad y cotización; sin compromiso."
+  <div class="shell">
+    <PageIntro
+      title="Productos"
+      lead="Seis familias de equipo, cada una de un fabricante, con la fotografía oficial de cada modelo. Una tiene ficha completa en este sitio, con especificaciones; las otras cinco se publican con la documentación del propio fabricante y se cotizan a partir de su aplicación."
+      crumbs={[{ label: 'Productos' }]}
     />
   </div>
+
+  <section class="shell section rule-top" aria-labelledby="familias-title">
+    <SectionIndex index={1} label="Familias de equipo" />
+    <div class="scope-head">
+      <h2 id="familias-title" class="t-h2">Las seis familias, y qué publica cada una</h2>
+      <p class="t-body scope-head__body">
+        No es una secuencia de trabajo: son capacidades independientes. El índice dice de una vez
+        qué fabricante está detrás de cada familia y cuántas referencias puede consultar aquí, para
+        que no haya que recorrer la página entera para averiguarlo.
+      </p>
+    </div>
+
+    <ul class="scope-index" aria-label="Índice de las seis familias de equipo">
+      {
+        families.map(({ scope, brand, withPages, documented }) => (
+          <li class="scope-index__row">
+            <a href={`#${scope.id}`} class="scope-index__link">
+              <span class="scope-index__name">{scope.name}</span>
+              <span class="scope-index__brand t-data">{brand?.name}</span>
+              <span class="scope-index__count t-data">
+                {withPages.length > 0
+                  ? `${withPages.length} con ficha`
+                  : `${documented.length} documentados`}
+              </span>
+              <Icon name="arrow-right" size={16} class="scope-index__go" />
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+  </section>
+
+  {
+    families.map(({ scope, brand, withPages, skuOnly, documented, tasks }, index) => (
+      <section
+        id={scope.id}
+        class:list={['shell', 'section', 'rule-top', 'family']}
+        aria-labelledby={`${scope.id}-title`}
+      >
+        <SectionIndex index={index + 2} label={scope.workType} />
+
+        <div class="family__head">
+          <div class="family__lead">
+            {brand && <BrandLogo brand={brand} scale={1.1} class="family__logo" />}
+            <h2 id={`${scope.id}-title`} class="t-h2 family__name">{scope.name}</h2>
+            <p class="t-body family__purpose">{scope.purpose}</p>
+            <p class="family__question">{scope.question}</p>
+            <div class="family__actions">
+              <a href={scope.href} class="link-arrow">
+                {scope.tier === 'catalogo' ? 'Ver la familia' : `Ver ${brand?.name}`}
+                <Icon name="arrow-right" size={18} class="arrow" />
+              </a>
+              {tasks.length > 0 && (
+                <a href={`/aplicaciones/#${tasks[0].slug}`} class="link-arrow">
+                  {tasks[0].name}
+                  <Icon name="arrow-right" size={18} class="arrow" />
+                </a>
+              )}
+            </div>
+          </div>
+
+          {/* El diagrama de la familia es la capa conceptual y se conserva con
+              o sin fotografía de modelo. La familia con ficha propia abre con
+              sus fotografías y no lo necesita en la cabecera. */}
+          {withPages.length === 0 && (
+            <div class="family__motif">
+              <FamilyMotif familyId={scope.id} />
+            </div>
+          )}
+        </div>
+
+        {withPages.length > 0 && (
+          <ModelList class="family__models">
+            {withPages.map((product) => (
+              <ModelRow product={product} size="compact" />
+            ))}
+          </ModelList>
+        )}
+
+        {documented.length > 0 && (
+          <ul class="refs">
+            {documented.map(({ model, image }) => (
+              <li class:list={['ref', image && 'ref--photo']}>
+                {image && brand && (
+                  <div class="ref__media">
+                    <ModelPhoto image={image} brandName={brand.name} size="row" />
+                  </div>
+                )}
+                <div class="ref__body">
+                  <h3 class="ref__name" translate="no">{model.name}</h3>
+                  <p class="ref__kind t-data">
+                    {model.scope === 'familia' ? 'Familia de modelos' : 'Modelo'}
+                    {model.code && <span class="ref__code">Cat. {model.code}</span>}
+                  </p>
+                  <p class="t-small ref__does">{model.does}</p>
+                  {model.uses.length > 0 && (
+                    <p class="t-small ref__use">
+                      <span class="ref__use-label">Uso principal</span>
+                      {model.uses[0]}
+                    </p>
+                  )}
+                </div>
+                <div class="ref__links">
+                  {brand && (
+                    <a href={`/marcas/${brand.slug}/`} class="link-arrow">
+                      Ver {brand.name}
+                      <Icon name="arrow-right" size={16} class="arrow" />
+                    </a>
+                  )}
+                  <ExternalLink
+                    href={model.officialUrl}
+                    context={`documentación de ${model.name}`}
+                  >
+                    {model.officialUrlScope === 'modelo' ? 'Página oficial' : 'Página del fabricante'}
+                  </ExternalLink>
+                  {model.officialPdfUrl && (
+                    <ExternalLink href={model.officialPdfUrl} context={`PDF de ${model.name}`}>
+                      PDF
+                    </ExternalLink>
+                  )}
+                  <a href={site.quoteHref} class="link-arrow">
+                    Consultar cotización
+                    <span class="sr-only"> de {model.name}</span>
+                    <Icon name="arrow-right" size={16} class="arrow" />
+                  </a>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {skuOnly.length > 0 && (
+          <div class="family__skus">
+            <h3 class="t-h3">Consumibles</h3>
+            <SkuList products={skuOnly} class="mt-5" />
+          </div>
+        )}
+      </section>
+    ))
+  }
+
+  <section class="shell section rule-top" aria-labelledby="tipos-title">
+    <SectionIndex index={families.length + 2} label="Por tipo de laboratorio" />
+    <h2 id="tipos-title" class="t-h2">Si prefiere partir del tipo de laboratorio</h2>
+    <p class="t-lead mt-5">
+      Las seis familias describen el equipo. Estas tres líneas describen el entorno, y reúnen lo que
+      conviene traer a la conversación en cada caso.
+    </p>
+    <ApplicationList class="mt-10" />
+    <Notice class="mt-10">
+      {company.catalogNote} Cotización y disponibilidad sujetas a confirmación comercial. Los datos
+      de producto de esta página se redactaron desde la documentación pública de cada fabricante y
+      la fuente se enlaza en cada modelo.
+    </Notice>
+  </section>
+
+  <ClosingQuoteBand
+    index={families.length + 3}
+    title="¿Busca un equipo que no está en el catálogo?"
+    body="Cotizamos según aplicación, capacidad y requisitos técnicos. Indique qué necesita hacer en el laboratorio y desde dónde escribe."
+  />
 </Layout>
+
+<style>
+  .scope-head {
+    display: grid;
+    gap: 1.25rem;
+  }
+  .scope-head__body {
+    color: var(--color-ink-600);
+  }
+
+  .scope-index {
+    list-style: none;
+    margin: 2.5rem 0 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .scope-index__row {
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .scope-index__link {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 1.25rem;
+    align-items: baseline;
+    gap: 0.25rem 1.25rem;
+    padding-block: 0.9375rem;
+    transition: background-color 150ms;
+  }
+  .scope-index__link:hover {
+    background-color: var(--color-surface);
+  }
+  .scope-index__name {
+    font-size: 1.0625rem;
+    font-weight: 500;
+    color: var(--color-ink-950);
+  }
+  .scope-index__brand {
+    font-size: 0.8125rem;
+    color: var(--color-teal-800);
+  }
+  .scope-index__count {
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+  }
+  .scope-index__go {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+    align-self: center;
+    justify-self: end;
+    color: var(--color-ink-500);
+  }
+  .scope-index__link:hover .scope-index__go {
+    color: var(--color-teal-800);
+  }
+
+  /* --- Bloque de familia -------------------------------------------------- */
+  .family__head {
+    display: grid;
+    gap: 2rem;
+    align-items: start;
+  }
+  .family__logo {
+    margin-bottom: 1.25rem;
+  }
+  .family__name {
+    max-width: 24ch;
+  }
+  .family__purpose {
+    margin-top: 1rem;
+    color: var(--color-ink-600);
+  }
+  /* La pregunta del cliente ocupa el lugar de la especificación que estas
+     familias no siempre pueden publicar. Va en tinta plena: es contenido. */
+  .family__question {
+    margin-top: 1.25rem;
+    padding-left: 1rem;
+    border-left: 1px solid var(--color-teal-700);
+    font-size: 1rem;
+    color: var(--color-ink-950);
+    max-width: 40ch;
+  }
+  .family__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.875rem 2rem;
+    margin-top: 1.75rem;
+  }
+  .family__motif {
+    max-width: 15rem;
+    color: var(--color-ink-800);
+  }
+  .family__models {
+    margin-top: 2.5rem;
+  }
+  .family__skus {
+    margin-top: 3rem;
+  }
+
+  /* Referencias documentadas: fila de índice, no ficha. La fotografía abre la
+     fila y sólo ocupa columna cuando existe con permiso; sin ella no se
+     reserva hueco. */
+  .refs {
+    list-style: none;
+    margin: 2.5rem 0 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .ref {
+    display: grid;
+    gap: 0.875rem;
+    padding-block: 1.375rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .ref__name {
+    font-size: 1.0625rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+  .ref__kind {
+    margin-top: 0.125rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+  }
+  .ref__code {
+    color: var(--color-teal-800);
+  }
+  .ref__does {
+    margin-top: 0.5rem;
+    color: var(--color-ink-600);
+    max-width: 66ch;
+  }
+  .ref__use {
+    margin-top: 0.5rem;
+    color: var(--color-ink-800);
+    max-width: 66ch;
+  }
+  .ref__use-label {
+    display: inline-block;
+    margin-right: 0.625rem;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--color-ink-500);
+  }
+  .ref--photo {
+    grid-template-columns: 6.5rem minmax(0, 1fr);
+  }
+  .ref--photo .ref__links {
+    grid-column: 1 / -1;
+  }
+  .ref__links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1.75rem;
+  }
+
+  @media (min-width: 768px) {
+    .scope-head {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+      gap: 3rem;
+      align-items: baseline;
+    }
+    .scope-index__link {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 13rem) 9rem 1.5rem;
+      gap: 1.5rem;
+      padding-block: 1.0625rem;
+    }
+    .scope-index__go {
+      grid-column: 4;
+      grid-row: auto;
+    }
+    .scope-index__count {
+      text-align: right;
+    }
+    .ref {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 15rem);
+      align-items: start;
+      gap: 2.5rem;
+      padding-block: 1.625rem;
+    }
+    .ref--photo {
+      grid-template-columns: 11rem minmax(0, 1fr) minmax(0, 13rem);
+    }
+    .ref--photo .ref__links {
+      grid-column: 3;
+    }
+    .ref__links {
+      display: grid;
+      justify-items: end;
+      gap: 0.5rem;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .family__head {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 15rem);
+      gap: 4rem;
+      align-items: center;
+    }
+  }
+</style>

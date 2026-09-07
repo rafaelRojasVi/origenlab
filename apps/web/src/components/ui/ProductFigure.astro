@@ -1,0 +1,85 @@
+---
+import type { Product } from '../../data/products';
+import { productImageSources } from '../../lib/productImage';
+
+/**
+ * Imagen de producto con ficha propia. Todas las fotografías del sitio se
+ * presentan igual: recorte del fabricante, caja cuadrada, fondo papel, misma
+ * escala óptica. Sin marcos, sombras ni etiquetas superpuestas.
+ *
+ * La fotografía sale de `productImages.ts` a través de `productImageSources`:
+ * si el registro no respalda la imagen del producto, no se dibuja nada. Las
+ * dimensiones que declara `<img>` son las del derivado mayor, para que el
+ * navegador reserve el alto antes de descargarlo.
+ */
+interface Props {
+  product: Product;
+  /** `hero` carga con prioridad (LCP de la ficha); el resto es diferido. */
+  priority?: boolean;
+  /** Ancho de presentación para el atributo `sizes`. */
+  sizes?: string;
+  /** Pie de imagen en mono; sólo cuando aporta un dato que no está al lado. */
+  caption?: string;
+  class?: string;
+  [key: string]: unknown;
+}
+
+const {
+  product,
+  priority = false,
+  sizes = '(min-width: 768px) 420px, 70vw',
+  caption,
+  class: className = '',
+  ...rest
+} = Astro.props;
+const image = productImageSources(product);
+---
+
+{
+  image && (
+    <figure class:list={['product-figure', className]} {...rest}>
+      <div class="product-figure__frame">
+        <picture>
+          <source type="image/avif" srcset={image.avifSrcset} sizes={sizes} />
+          <source type="image/webp" srcset={image.webpSrcset} sizes={sizes} />
+          <img
+            src={image.src}
+            alt={image.alt}
+            width={image.width}
+            height={image.height}
+            sizes={sizes}
+            loading={priority ? 'eager' : 'lazy'}
+            fetchpriority={priority ? 'high' : 'auto'}
+            decoding={priority ? 'sync' : 'async'}
+          />
+        </picture>
+      </div>
+      {caption && <figcaption class="t-label product-figure__caption">{caption}</figcaption>}
+    </figure>
+  )
+}
+
+<style>
+  .product-figure {
+    margin: 0;
+  }
+  .product-figure__frame {
+    aspect-ratio: 1 / 1;
+    display: grid;
+    place-items: center;
+    background-color: var(--color-paper);
+  }
+  .product-figure__frame img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    /* Los recortes del fabricante traen aire propio; se compensa aquí para que
+       todos los equipos ocupen la misma superficie óptica. */
+    padding: 4%;
+  }
+  .product-figure__caption {
+    margin-top: 0.875rem;
+    text-transform: none;
+    letter-spacing: 0.01em;
+  }
+</style>

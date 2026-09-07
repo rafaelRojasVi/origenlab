@@ -1,0 +1,384 @@
+---
+import { brandRailOrder, brandsWallHeading } from '../../data/brands';
+import { getBrandById } from '../../lib/catalog';
+import { scopeById } from '../../data/equipmentScope';
+import BrandLogo from '../ui/BrandLogo.astro';
+import Icon from '../ui/Icon.astro';
+
+/**
+ * Riel de marcas. Sustituye al muro de dos alturas.
+ *
+ * El muro anterior partía las seis marcas en dos filas de distinto tamaño,
+ * «con catálogo publicado» arriba y «también trabajamos con» abajo. Esa
+ * jerarquía describía el estado del repositorio, no el del negocio:
+ * Hielscher, Ortoalresa, IKA, Adam Equipment y Löser son cinco familias de
+ * maquinaria de igual peso, y ponerlas a dos escalas decía lo contrario.
+ *
+ * Ahora es un riel horizontal, en el orden de la lista cerrada
+ * (`brandRailOrder`), con una sola altura óptica por lockup y ninguna
+ * distinción de tamaño entre marcas.
+ *
+ * # Por qué el riel entero es gris
+ *
+ * Cuatro de los seis originales tienen color de fabricante utilizable
+ * (Hielscher, Ortoalresa, IKA y SERVA). Los otros dos no:
+ *
+ * - **Adam Equipment**: el único original en el repositorio ya es monocromo
+ *   (`public/email/brands/adam-equipment-source.png`, 300 x 125, media RGB
+ *   90,90,90). No hay versión en color.
+ * - **Löser Messtechnik**: su único original es un JPEG de 70 x 70 calado sobre
+ *   un azulejo naranja. Tiene color, pero no resolución.
+ *
+ * Con cuatro de seis, revelar color al pasar el cursor dejaría a dos marcas en
+ * gris y a cuatro en color: una jerarquía involuntaria, y justo entre las
+ * marcas que se acaba de igualar. El riel se queda gris entero, y lo que
+ * revela el cursor o el foco es tinta plena y la familia en acento. Los dos
+ * activos que faltan están registrados como `ASSET_PERMISSION_NEEDED` y
+ * `CONTENT_NEEDED` en `docs/design/CONTENT_NEEDED.md`.
+ *
+ * # Movimiento
+ *
+ * El desplazamiento es una sola animación de `transform` sobre la pista, así
+ * que compone y no puede desplazar el contenido de la página. Vive bajo tres
+ * condiciones, y si falla cualquiera el riel es una fila estática legible:
+ *
+ *   1. `prefers-reduced-motion: no-preference`
+ *   2. `data-rail-ready`, que pone el script
+ *   3. la copia duplicada de la pista, que sólo se muestra en ese estado
+ *
+ * La segunda condición es lo que hace legítimo el bucle. WCAG 2.2.2 exige poder
+ * pararlo, y el control de pausa lo aporta el script: sin script no hay control,
+ * y por tanto tampoco movimiento. Se para además al pasar el cursor y al
+ * recibir el foco cualquier enlace del riel.
+ *
+ * La copia duplicada lleva `aria-hidden="true"` y sus elementos son `span`, no
+ * enlaces: un lector de pantalla no encuentra doce marcas donde hay seis, y el
+ * tabulador no cae en un enlace invisible.
+ */
+const rail = brandRailOrder
+  .map((id) => {
+    const brand = getBrandById(id);
+    if (!brand) return undefined;
+    return { brand, family: scopeById(brand.familyId) };
+  })
+  .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined);
+---
+
+<section class="rail" aria-labelledby="rail-title" data-rail>
+  <div class="shell rail__intro">
+    <div>
+      <h2 id="rail-title" class="t-h2">{brandsWallHeading}</h2>
+      <p class="t-body rail__body">
+        Seis fabricantes, cada uno con su familia de equipo. No declaramos representación oficial,
+        distribución exclusiva ni certificación de ninguno.
+      </p>
+    </div>
+    <a href="/marcas/" class="link-arrow rail__link">
+      Ver las marcas en detalle
+      <Icon name="arrow-right" size={18} class="arrow" />
+    </a>
+  </div>
+
+  <div class="shell rail__viewport">
+    <div class="rail__track" id="rail-track" data-rail-track>
+      <ul class="rail__set">
+        {
+          rail.map(({ brand, family }) => (
+            <li class="rail__cell">
+              <a href={`/marcas/${brand.slug}/`} class="rail__link-cell">
+                <BrandLogo brand={brand} scale={1.25} loading="eager" class="rail__logo" />
+                <span class="rail__name sr-only">{brand.name}</span>
+                {family && <span class="rail__family t-data">{family.name}</span>}
+              </a>
+            </li>
+          ))
+        }
+      </ul>
+
+      <!--
+        Copia para el bucle. `aria-hidden` y sin enlaces: no aporta contenido,
+        sólo continúa la pista mientras la primera mitad sale de cuadro.
+      -->
+      <ul class="rail__set rail__set--clone" aria-hidden="true">
+        {
+          rail.map(({ brand, family }) => (
+            <li class="rail__cell">
+              <span class="rail__link-cell">
+                <BrandLogo brand={brand} scale={1.25} loading="eager" class="rail__logo" alt="" />
+                {family && <span class="rail__family t-data">{family.name}</span>}
+              </span>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+  </div>
+
+  <div class="shell rail__controls">
+    <button
+      type="button"
+      class="rail__toggle"
+      data-rail-toggle
+      aria-controls="rail-track"
+      aria-pressed="false"
+    >
+      <span class="rail__toggle-glyph" aria-hidden="true"></span>
+      <span data-rail-toggle-label>Pausar el desplazamiento</span>
+    </button>
+  </div>
+</section>
+
+<style>
+  .rail {
+    background-color: var(--color-surface);
+    border-block: 1px solid var(--color-hairline);
+    padding-block: 3rem;
+  }
+  .rail__intro {
+    display: grid;
+    gap: 1.25rem;
+  }
+  .rail__body {
+    margin-top: 1rem;
+    color: var(--color-ink-600);
+    max-width: 52ch;
+  }
+
+  /* --- Pista ---------------------------------------------------------------
+     Estado base: fila estática que envuelve. Es lo que se ve sin JavaScript y
+     con movimiento reducido, y no es una versión degradada: se lee entera. */
+  /* En reposo el riel es una fila dentro del `shell`, alineada con la
+     entradilla. Sólo cuando hay bucle se sale de la caja: una marquesina que
+     empieza y acaba dentro del margen se lee como una tabla que se mueve. */
+  .rail__viewport {
+    margin-top: 2.5rem;
+  }
+  .rail__track {
+    display: flex;
+  }
+  .rail__set {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    /* El relleno derecho iguala la separación interna, de modo que las dos
+       mitades de la pista midan exactamente lo mismo y el bucle a -50 % no
+       tenga salto. Sin esto la separación entre copias mide la mitad. */
+    gap: 2rem 2.75rem;
+    padding-right: 2.75rem;
+  }
+  /* La copia sólo existe cuando hay bucle. */
+  .rail__set--clone {
+    display: none;
+  }
+  .rail__cell {
+    display: flex;
+    min-width: 0;
+  }
+  .rail__link-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-end;
+    gap: 0.625rem;
+    /* Caja común: los seis lockups tienen proporciones distintas y sin una
+       altura compartida la fila se lee desalineada. */
+    min-height: 4.25rem;
+    border-radius: var(--radius-edge);
+  }
+  /*
+   * Gris por omisión, tinta plena al revelar. Los seis logotipos son la misma
+   * tinta (#2b2e30), así que una sola opacidad los iguala de verdad: no hay una
+   * marca que quede más clara que otra por su propio color.
+   */
+  .rail__logo {
+    opacity: 0.5;
+    transition: opacity 200ms;
+  }
+  .rail__family {
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+    transition: color 200ms;
+    white-space: nowrap;
+  }
+  .rail__link-cell:hover .rail__logo,
+  .rail__link-cell:focus-visible .rail__logo {
+    opacity: 1;
+  }
+  .rail__link-cell:hover .rail__family,
+  .rail__link-cell:focus-visible .rail__family {
+    color: var(--color-teal-800);
+  }
+
+  /* --- Control de pausa ---------------------------------------------------
+     Oculto hasta que el script marca el riel: sin script no hay movimiento que
+     parar, y un botón que no hace nada es peor que ninguno. */
+  .rail__controls {
+    display: none;
+    margin-top: 2rem;
+  }
+  .rail__toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 2.75rem;
+    padding-inline: 0.125rem;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--color-ink-600);
+    border-radius: var(--radius-edge);
+    transition: color 150ms;
+  }
+  .rail__toggle:hover {
+    color: var(--color-ink-950);
+  }
+  /* Dos barras (pausa) o un triángulo (reproducir), dibujados con bordes para
+     no cargar un icono más. */
+  .rail__toggle-glyph {
+    width: 0.625rem;
+    height: 0.75rem;
+    border-inline: 3px solid currentColor;
+    box-sizing: border-box;
+  }
+  .rail__toggle[aria-pressed='true'] .rail__toggle-glyph {
+    width: 0;
+    height: 0;
+    border-inline: none;
+    border-block: 0.375rem solid transparent;
+    border-left: 0.625rem solid currentColor;
+  }
+
+  @media (min-width: 768px) {
+    .rail {
+      padding-block: 4rem;
+    }
+    .rail__intro {
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: end;
+      gap: 3rem;
+    }
+  }
+
+  /*
+   * El bucle. Todo el bloque vive bajo `no-preference` y bajo `data-rail-ready`,
+   * que pone el script sólo después de instalar el control de pausa.
+   */
+  @media (prefers-reduced-motion: no-preference) {
+    [data-rail-ready] .rail__viewport {
+      overflow: hidden;
+      /* Se sale de la caja del `shell`: la pista ocupa el ancho de la ventana y
+         el borde de la sección es el único límite. */
+      max-width: none;
+      margin-inline: 0;
+      padding-inline: 0;
+      /* Difuminado en los cantos, para que un logotipo no se corte en seco.
+         En móvil es la mitad: a 390 px un difuminado de 3,5 rem se come el
+         primer logotipo entero. */
+      --rail-fade: 1.5rem;
+      mask-image: linear-gradient(
+        to right,
+        transparent,
+        #000 var(--rail-fade),
+        #000 calc(100% - var(--rail-fade)),
+        transparent
+      );
+    }
+    @media (min-width: 768px) {
+      [data-rail-ready] .rail__viewport {
+        --rail-fade: 3.5rem;
+      }
+    }
+    /*
+     * En móvil la pista es sólo logotipos. La familia bajo cada marca mide
+     * hasta 38 caracteres, y con ella a 390 px caben una marca y media en
+     * pantalla: el riel dejaba de leerse como una fila de fabricantes. La
+     * familia sigue estando en la fila estática, en `/marcas/` y en
+     * `/productos/`, que es donde se lee de verdad.
+     */
+    @media (max-width: 767px) {
+      [data-rail-ready] .rail__family {
+        display: none;
+      }
+      [data-rail-ready] .rail__set {
+        gap: 2rem;
+        padding-right: 2rem;
+      }
+    }
+    [data-rail-ready] .rail__track {
+      width: max-content;
+      animation: rail-slide 52s linear infinite;
+      will-change: transform;
+    }
+    [data-rail-ready] .rail__set {
+      flex-wrap: nowrap;
+    }
+    [data-rail-ready] .rail__set--clone {
+      display: flex;
+    }
+    [data-rail-ready] .rail__controls {
+      display: flex;
+    }
+    /* Se para al pasar el cursor, al recibir el foco un enlace del riel y con
+       el control explícito. Los tres, no uno. */
+    [data-rail-ready] .rail__viewport:hover .rail__track,
+    [data-rail-ready] .rail__viewport:focus-within .rail__track,
+    [data-rail-ready][data-rail-paused] .rail__track {
+      animation-play-state: paused;
+    }
+  }
+
+  @keyframes rail-slide {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-50%);
+    }
+  }
+</style>
+
+<script>
+  /**
+   * Control de pausa del riel de marcas. Mejora progresiva estricta.
+   *
+   * El movimiento no existe hasta que este script marca el riel con
+   * `data-rail-ready`, y sólo lo marca si el navegador no pide movimiento
+   * reducido. Es lo que hace legítimo un bucle permanente: WCAG 2.2.2 exige un
+   * mecanismo para pararlo, y el mecanismo lo instala este archivo. Si el
+   * script no llega, el riel es una fila estática y el botón no se muestra.
+   *
+   * Si alguien cambia la preferencia con la página abierta, el riel vuelve al
+   * estado estático en el sitio en lugar de quedarse animado.
+   */
+  const rail = document.querySelector<HTMLElement>('[data-rail]');
+  const toggle = document.querySelector<HTMLButtonElement>('[data-rail-toggle]');
+  const label = document.querySelector<HTMLElement>('[data-rail-toggle-label]');
+  const motionOk = window.matchMedia('(prefers-reduced-motion: no-preference)');
+
+  if (rail && toggle && label) {
+    const PAUSE = 'Pausar el desplazamiento';
+    const PLAY = 'Reanudar el desplazamiento';
+
+    const setPaused = (paused: boolean) => {
+      rail.toggleAttribute('data-rail-paused', paused);
+      toggle.setAttribute('aria-pressed', String(paused));
+      label.textContent = paused ? PLAY : PAUSE;
+    };
+
+    const apply = (enabled: boolean) => {
+      rail.toggleAttribute('data-rail-ready', enabled);
+      if (!enabled) setPaused(false);
+    };
+
+    toggle.addEventListener('click', () => {
+      setPaused(!rail.hasAttribute('data-rail-paused'));
+    });
+
+    apply(motionOk.matches);
+    motionOk.addEventListener('change', (event) => apply(event.matches));
+  }
+</script>

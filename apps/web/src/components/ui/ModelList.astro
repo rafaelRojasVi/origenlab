@@ -1,0 +1,26 @@
+---
+/**
+ * Contenedor de filas de modelo. Existe para que el filete superior de la lista
+ * y el reinicio de la lista se declaren una sola vez: seis páginas montan listas
+ * de modelos y antes cada una repetía el mismo bloque de estilos.
+ */
+interface Props {
+  class?: string;
+  [key: string]: unknown;
+}
+
+const { class: className = '', ...rest } = Astro.props;
+---
+
+<ul class:list={['model-list', className]} {...rest}>
+  <slot />
+</ul>
+
+<style>
+  .model-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+</style>

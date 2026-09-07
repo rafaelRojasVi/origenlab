@@ -20,7 +20,24 @@ Sitio estático para **OrigenLab**, empresa de equipamiento y soluciones para la
 | `npm run build` | Build de producción → carpeta `dist/` |
 | `npm run preview` | Vista previa del build local |
 | `npm run check` | Verificación de tipos y contenido (Astro) |
-| `npm run lint` | Mismo que `check` |
+| `npm run validate` | **Puerta completa:** check, build, validate:catalog, validate:dist, qa:contrast y qa:interaction |
+| `npm run validate:catalog` | Verdad de catálogo: marcas, productos, activos, especificaciones agrupadas, copy comercial |
+| `npm run validate:dist` | Invariantes del HTML construido: cero terceros, encabezados, imágenes, sitemap, presupuesto de peso |
+| `npm run qa:screens` | Recorrido en Chromium a 375 / 768 / 1440 px con capturas e informe en `.qa/` |
+| `npm run qa:contrast` | Contraste calculado de cada texto visible sobre su fondo efectivo |
+| `npm run qa:interaction` | Menú móvil, recorrido de teclado, movimiento reducido y enlaces |
+
+### Regeneración de activos
+
+Estos comandos sólo se ejecutan cuando cambian los archivos de origen; su salida
+se versiona.
+
+| Comando | Salida |
+|---------|--------|
+| `npm run sync:fonts` | `public/fonts/*.woff2` desde los paquetes de Fontsource |
+| `npm run build:brand-logos` | `public/brands/*.png` a tinta única desde `public/email/brands/*-source.*` |
+| `npm run build:product-images` | Derivados 480/960 px en AVIF y WebP, con el fondo blanco recortado |
+| `npm run build:social` | `public/og/origenlab-og.png` y `public/apple-touch-icon.png` |
 
 ## Despliegue (HostGator)
 
@@ -32,13 +49,33 @@ Checklist completo y pasos: [docs/deployment.md](docs/deployment.md). Estado act
 
 ## Estructura del proyecto
 
-- `src/config/site.ts` — Configuración central (nombre, dominio, email, baseUrl, nav).
-- `src/layouts/Layout.astro` — Layout principal (español, meta, canonical, Header/Footer).
-- `src/pages/` — Inicio, nosotros, productos, marcas, contacto; categorías en `categorias/[slug].astro`.
-- `src/components/` — Header, Footer, Hero, QuoteCTA, PageHeader, Card.
-- `src/data/` — Categorías y marcas (datos estáticos).
-- `src/styles/global.css` — Estilos globales y Tailwind.
-- `public/.htaccess` — Se copia a `dist/`; forzar HTTPS y cabeceras básicas en el servidor.
+- `src/config/site.ts` — Configuración central (nombre, dominio, navegación, destino del CTA).
+- `src/layouts/Layout.astro` — Documento base; la cabecera del documento vive en `components/Seo.astro`.
+- `src/pages/` — Inicio, productos (las seis familias), familia y ficha de
+  centrífugas, aplicaciones (las seis tareas), categorías
+  (`categorias/[slug].astro`, «por tipo de laboratorio»), marcas
+  (`marcas/[slug].astro`, una por cada una de las seis), servicios, nosotros,
+  contacto, 404 y la página interna `logo-lab`.
+- `src/components/ui/` — Primitivas del sistema de diseño (ver
+  [docs/design/DESIGN_SYSTEM.md](docs/design/DESIGN_SYSTEM.md)).
+- `src/components/home/` — Hero con la constelación de la muestra, riel de
+  marcas, familias de equipo, asesoría, proceso y audiencia.
+- `src/data/` — Verdad de negocio: empresa, contacto, servicios, categorías,
+  marcas, modelos del fabricante (`brandModels.ts`), aplicaciones, productos,
+  familias, agrupación de especificaciones, FAQ, documentos.
+- `src/styles/global.css` — Tokens del sistema (`@theme`) y primitivas de CSS.
+- `public/.htaccess` — Se copia a `dist/`: HTTPS, redirección de `www`, 404, CSP y cabeceras.
+
+## Sistema de diseño
+
+El sitio público se rediseñó por completo en la V2. Antes de añadir un color, un
+radio, una sombra o un componente, leer
+[docs/design/DESIGN_SYSTEM.md](docs/design/DESIGN_SYSTEM.md): define los tokens,
+las primitivas y lo que el sistema no admite. Lo que el negocio todavía debe
+aportar está en [docs/design/CONTENT_NEEDED.md](docs/design/CONTENT_NEEDED.md).
+
+**El sitio no carga nada de terceros.** Ni scripts, ni tipografías, ni imágenes,
+ni hojas de estilo. `npm run validate:dist` falla si alguno se cuela.
 
 ## Documentación
 
@@ -52,7 +89,11 @@ Inicio rápido para agentes: [docs/APP_CONTEXT.md](docs/APP_CONTEXT.md)
 | [docs/deployment-status.md](docs/deployment-status.md) | Estado actual, hosting, DNS, advertencias |
 | [docs/email-setup.md](docs/email-setup.md) | Email contacto@origenlab.cl (Titan, IMAP/SMTP, DKIM) |
 | [docs/company-scope.md](docs/company-scope.md) | Alcance, contacto, servicios, tono y prompt para redactar cotizaciones |
-| [docs/security-audit-v1.md](docs/security-audit-v1.md) | Auditoría de seguridad y arquitectura v1 |
+| [docs/security-audit-v1.md](docs/security-audit-v1.md) | Auditoría de seguridad y arquitectura v1, con la actualización del rediseño V2 |
+| [docs/design/DESIGN_SYSTEM.md](docs/design/DESIGN_SYSTEM.md) | Sistema visual V2: tokens, primitivas, reglas |
+| [docs/design/CONTENT_NEEDED.md](docs/design/CONTENT_NEEDED.md) | Contenido y revisión legal pendientes |
+| [docs/design/WEBSITE_V2_DESIGN_BRIEF.md](docs/design/WEBSITE_V2_DESIGN_BRIEF.md) | Descubrimiento y brief que originó el rediseño |
+| [docs/product-assets.md](docs/product-assets.md) | Procedencia de imágenes, logotipos, activos sociales y tipografías |
 | [CLAUDE.md](CLAUDE.md) | Instrucciones para asistencia con IA |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Guía para colaboradores y uso con Claude/Cursor (reglas, skills, alcance) |
 

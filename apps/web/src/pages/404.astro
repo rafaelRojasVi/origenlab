@@ -1,0 +1,104 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Icon from '../components/ui/Icon.astro';
+import { site } from '../config/site';
+import { ctaLabels } from '../lib/ctaLabels';
+
+const destinations = [
+  { href: '/productos/', label: 'Productos', body: 'Centrífugas Ortoalresa y reactivos SERVA.' },
+  { href: '/aplicaciones/', label: 'Aplicaciones', body: 'Alimentos, control de calidad y laboratorio clínico.' },
+  { href: '/marcas/', label: 'Marcas', body: 'Con quién trabajamos y qué catálogo está publicado.' },
+  { href: '/contacto/', label: 'Contacto', body: 'Correo, teléfono y WhatsApp para cotizar.' },
+];
+---
+
+<Layout
+  title="Página no encontrada"
+  description="La página solicitada no existe en origenlab.cl. Vuelva al catálogo, a las aplicaciones o escríbanos para cotizar."
+  noindex
+>
+  <div class="shell notfound">
+    <p class="t-label notfound__code">Error 404</p>
+    <h1 class="t-display notfound__title">Esta página no existe.</h1>
+    <p class="t-lead notfound__lead">
+      Puede que el enlace esté desactualizado o que el producto ya no forme parte del catálogo
+      publicado. Estos son los puntos de entrada del sitio.
+    </p>
+
+    <ul class="notfound__list">
+      {
+        destinations.map((item) => (
+          <li>
+            <a href={item.href}>
+              <span class="notfound__name">{item.label}</span>
+              <span class="notfound__body t-small">{item.body}</span>
+              <Icon name="arrow-right" size={20} class="notfound__go" />
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+
+    <a href={site.quoteHref} class="btn btn-primary notfound__cta">{ctaLabels.solicitarCotizacion}</a>
+  </div>
+</Layout>
+
+<style>
+  .notfound {
+    padding-block: 4rem 6rem;
+    max-width: 46rem;
+  }
+  .notfound__code {
+    color: var(--color-teal-800);
+  }
+  .notfound__title {
+    margin-top: 1.25rem;
+  }
+  .notfound__lead {
+    margin-top: 1.5rem;
+  }
+  .notfound__list {
+    list-style: none;
+    margin: 3rem 0 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .notfound__list li {
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .notfound__list a {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 1.5rem;
+    align-items: center;
+    gap: 1rem;
+    padding-block: 1.25rem;
+    transition: background-color 150ms;
+  }
+  .notfound__list a:hover {
+    background-color: var(--color-surface);
+  }
+  .notfound__name {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+    grid-column: 1;
+  }
+  .notfound__body {
+    grid-column: 1;
+    color: var(--color-ink-600);
+  }
+  .notfound__go {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    justify-self: end;
+    color: var(--color-ink-500);
+  }
+  .notfound__cta {
+    margin-top: 3rem;
+  }
+  @media (min-width: 768px) {
+    .notfound {
+      padding-block: 5rem 8rem;
+    }
+  }
+</style>

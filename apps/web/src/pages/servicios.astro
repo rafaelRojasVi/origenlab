@@ -1,0 +1,80 @@
+---
+import Layout from '../layouts/Layout.astro';
+import PageIntro from '../components/ui/PageIntro.astro';
+import SectionIndex from '../components/ui/SectionIndex.astro';
+import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
+import Notice from '../components/ui/Notice.astro';
+import { serviceOfferings } from '../data/services';
+---
+
+<Layout
+  title="Servicios"
+  description="Asesoría, soporte, garantía según fabricante, instalación y puesta en marcha. Alcance acordado por escrito en cada cotización de OrigenLab."
+>
+  <div class="shell">
+    <PageIntro
+      title="Servicios"
+      lead="Lo que acompaña a la venta del equipo. Cada alcance se define por escrito en la cotización: aquí no se prometen plazos ni coberturas que no estén confirmadas."
+      crumbs={[{ label: 'Servicios' }]}
+    />
+  </div>
+
+  <section class="shell section rule-top" aria-labelledby="servicios-title">
+    <SectionIndex index={1} label="Qué incluye" />
+    <h2 id="servicios-title" class="t-h2">Cinco servicios, todos condicionados al equipo</h2>
+
+    <dl class="services">
+      {
+        serviceOfferings.map((service) => (
+          <div class="service">
+            <dt class="service__name">{service.name}</dt>
+            <dd class="service__body t-body">{service.shortDescription}</dd>
+          </div>
+        ))
+      }
+    </dl>
+
+    <Notice class="mt-12">
+      La garantía se rige por las condiciones del fabricante y del equipo, y su detalle se entrega
+      en la cotización. La instalación y la puesta en marcha se coordinan cuando el equipo lo exige,
+      con el alcance acordado por escrito.
+    </Notice>
+  </section>
+
+  <ClosingQuoteBand
+    index={2}
+    title="La asesoría empieza antes de comprar."
+    body="Puede escribirnos sólo para acotar opciones. No hay compromiso de compra ni costo por la conversación técnica."
+  />
+</Layout>
+
+<style>
+  .services {
+    margin: 3rem 0 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .service {
+    display: grid;
+    gap: 0.5rem;
+    padding-block: 1.75rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .service__name {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+    letter-spacing: -0.012em;
+  }
+  .service__body {
+    margin: 0;
+    color: var(--color-ink-600);
+  }
+  @media (min-width: 768px) {
+    .service {
+      grid-template-columns: minmax(0, 4fr) minmax(0, 7fr);
+      gap: 3rem;
+      align-items: baseline;
+      padding-block: 2rem;
+    }
+  }
+</style>

@@ -1,68 +1,308 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import PageHeader from '../components/PageHeader.astro';
-import { site } from '../config/site';
-import { contact, whatsappUrl, telUrl } from '../data/contact';
-import { buildQuoteMailtoUrl } from '../lib/whatsapp';
-import { ctaLabels } from '../lib/ctaLabels';
-
-const mailtoHref = buildQuoteMailtoUrl();
+import PageIntro from '../components/ui/PageIntro.astro';
+import SectionIndex from '../components/ui/SectionIndex.astro';
+import Notice from '../components/ui/Notice.astro';
+import Icon from '../components/ui/Icon.astro';
+import { contact, telUrl } from '../data/contact';
 import { company } from '../data/company';
+import { faqItems } from '../data/faq';
+import { buildQuoteMailtoWithTemplate, buildWhatsAppQuoteUrl } from '../lib/whatsapp';
+import { ctaLabels } from '../lib/ctaLabels';
+import { faqJsonLd } from '../lib/jsonld';
+
+const mailtoHref = buildQuoteMailtoWithTemplate();
+const whatsappHref = buildWhatsAppQuoteUrl();
+
+/**
+ * Lista de intake operativa de docs/company-scope.md. Es lo mínimo que
+ * necesitamos para responder con algo concreto en el primer intercambio.
+ */
+const intake = [
+  {
+    title: 'Quién compra',
+    body: 'Institución o empresa, nombre y cargo de quien coordina, y un correo o teléfono de contacto.',
+  },
+  {
+    title: 'Qué necesita hacer',
+    body: 'La aplicación o el ensayo, no sólo el nombre del equipo. Si conoce requisitos técnicos (capacidad, rango, resolución, norma asociada), inclúyalos.',
+  },
+  {
+    title: 'Dónde y cuándo',
+    body: 'Ciudad y región para entrega o facturación, y cuándo necesita el equipo operativo.',
+  },
+  {
+    title: 'Cuánto',
+    body: 'Cantidad y, si corresponde, si hay varias líneas o alternativas que quiera comparar.',
+  },
+];
 ---
 
 <Layout
-  title="Contacto — OrigenLab"
-  description={`${site.name}: ${contact.email} · ${contact.phoneDisplay} · ${site.location} · Lun–vie ${site.hours} · Atención en ${company.geography}.`}
+  title="Contacto"
+  description={`Cotizaciones y consultas técnicas de OrigenLab: ${contact.email}, teléfono y WhatsApp ${contact.phoneDisplay}, lunes a viernes ${contact.hours}. Atención en todo Chile.`}
+  jsonLd={[faqJsonLd(faqItems)]}
 >
-  <PageHeader
-    title="Contacto"
-    lead="Cotizaciones y consultas por correo, teléfono o WhatsApp. Atención en todo Chile."
-  />
-
-  <div class="mt-10 rounded-2xl border border-brand-100 bg-white p-8 shadow-sm">
-    <dl class="space-y-4 text-slate-700">
-      <div>
-        <dt class="font-medium text-slate-900">Correo</dt>
-        <dd>
-          <a href={`mailto:${site.email}`} class="link-muted">{site.email}</a>
-        </dd>
-      </div>
-      <div>
-        <dt class="font-medium text-slate-900">Teléfono</dt>
-        <dd>
-          <a href={telUrl()} class="link-muted">{contact.phoneDisplay}</a>
-        </dd>
-      </div>
-      <div>
-        <dt class="font-medium text-slate-900">WhatsApp</dt>
-        <dd>
-          <a href={whatsappUrl()} class="link-muted" target="_blank" rel="noopener noreferrer"
-            >WhatsApp</a
-          >
-        </dd>
-      </div>
-      <div>
-        <dt class="font-medium text-slate-900">Ubicación</dt>
-        <dd>{site.location}</dd>
-      </div>
-      <div>
-        <dt class="font-medium text-slate-900">Horario</dt>
-        <dd class="text-slate-600">Lun–vie {site.hours}</dd>
-      </div>
-    </dl>
-    <p class="mt-6 flex flex-wrap gap-3">
-      <a href={mailtoHref} class="btn-primary" aria-label={ctaLabels.solicitarCotizacion}>
-        {ctaLabels.solicitarCotizacion}
-      </a>
-      <a
-        href={whatsappUrl()}
-        class="btn-whatsapp"
-        target="_blank"
-        rel="noopener noreferrer"
-        aria-label={ctaLabels.whatsapp}
-      >
-        {ctaLabels.whatsapp}
-      </a>
-    </p>
+  <div class="shell">
+    <PageIntro
+      title="Solicitar cotización"
+      lead="Escríbanos por el canal que prefiera. Respondemos con alternativas acotadas a lo que su laboratorio necesita, no con un catálogo completo."
+      crumbs={[{ label: 'Contacto' }]}
+    />
   </div>
+
+  <section class="shell section rule-top" aria-labelledby="canales-title">
+    <SectionIndex index={1} label="Canales" />
+    <div class="channels">
+      <div>
+        <h2 id="canales-title" class="t-h2">Tres formas de llegar a nosotros</h2>
+        <p class="t-lead mt-5">
+          El correo es el mejor canal para una cotización formal: permite adjuntar documentación y
+          deja registro escrito. WhatsApp funciona bien para consultas rápidas.
+        </p>
+        <div class="channels__actions">
+          <a href={mailtoHref} class="btn btn-primary">{ctaLabels.solicitarCotizacion}</a>
+          <a href={whatsappHref} class="link-arrow" target="_blank" rel="noopener noreferrer">
+            <Icon name="whatsapp" size={18} />
+            Escribir por WhatsApp
+            <span class="sr-only">(abre WhatsApp en una pestaña nueva)</span>
+          </a>
+        </div>
+        <p class="t-small channels__hint">
+          El botón abre su cliente de correo con el asunto y los campos ya preparados. Si no se abre,
+          escriba directamente a <a href={`mailto:${contact.email}`} class="link-plain">{contact.email}</a>.
+        </p>
+      </div>
+
+      <dl class="details">
+        <div class="detail">
+          <dt><Icon name="mail" size={18} />Correo</dt>
+          <dd><a href={`mailto:${contact.email}`} class="link-plain">{contact.email}</a></dd>
+        </div>
+        <div class="detail">
+          <dt><Icon name="phone" size={18} />Teléfono y WhatsApp</dt>
+          <dd><a href={telUrl()} class="link-plain">{contact.phoneDisplay}</a></dd>
+        </div>
+        <div class="detail">
+          <dt><Icon name="clock" size={18} />Horario</dt>
+          <dd class="t-data">Lunes a viernes, {contact.hours}</dd>
+        </div>
+        <div class="detail">
+          <dt><Icon name="map-pin" size={18} />Ubicación</dt>
+          <dd class="t-data">{contact.locationPublic}</dd>
+        </div>
+        <div class="detail">
+          <dt><Icon name="arrow-right" size={18} />Cobertura</dt>
+          <dd class="t-data">Todo {company.geography}</dd>
+        </div>
+      </dl>
+    </div>
+
+    <Notice class="mt-12">
+      Este sitio no usa formularios, analítica ni scripts de terceros: su consulta llega
+      directamente a nuestro correo o a WhatsApp. El horario es de referencia y conviene
+      confirmarlo por el canal que use.
+    </Notice>
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="incluir-title">
+    <SectionIndex index={2} label="Qué incluir" />
+    <div class="intake-head">
+      <h2 id="incluir-title" class="t-h2">Con estos cuatro datos respondemos mejor</h2>
+      <p class="t-body intake-head__body">
+        No es un requisito: puede escribirnos con lo que tenga. Pero mientras más concreto sea el
+        punto de partida, menos ida y vuelta antes de una propuesta real.
+      </p>
+    </div>
+
+    <ol class="intake">
+      {
+        intake.map((item, i) => (
+          <li class="intake__item">
+            <span class="intake__num t-data" aria-hidden="true">{String(i + 1).padStart(2, '0')}</span>
+            <div>
+              <h3 class="intake__title">{item.title}</h3>
+              <p class="intake__body t-small">{item.body}</p>
+            </div>
+          </li>
+        ))
+      }
+    </ol>
+
+    <p class="mt-10">
+      <a href={mailtoHref} class="btn btn-secondary">Escribir con estos datos</a>
+    </p>
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="faq-title">
+    <SectionIndex index={3} label="Preguntas frecuentes" />
+    <h2 id="faq-title" class="t-h2">Antes de escribirnos</h2>
+    <div class="faq">
+      {
+        faqItems.map((item) => (
+          <details name="faq" class="faq__item">
+            <summary>
+              <span>{item.question}</span>
+              <Icon name="chevron-down" size={20} class="faq__chevron" />
+            </summary>
+            <p class="t-body faq__answer">{item.answer}</p>
+          </details>
+        ))
+      }
+    </div>
+  </section>
 </Layout>
+
+<style>
+  .channels {
+    display: grid;
+    gap: 3rem;
+  }
+  .channels__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem 2rem;
+    margin-top: 2.5rem;
+  }
+  .channels__hint {
+    margin-top: 1.5rem;
+    color: var(--color-ink-500);
+    max-width: 52ch;
+  }
+
+  .details {
+    margin: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .detail {
+    display: grid;
+    gap: 0.25rem;
+    padding-block: 1rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .detail dt {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--color-ink-500);
+  }
+  .detail dd {
+    margin: 0;
+    padding-left: 1.75rem;
+    color: var(--color-ink-950);
+    font-size: 0.9375rem;
+  }
+  .detail dd a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2rem;
+  }
+
+  .intake-head {
+    display: grid;
+    gap: 1.25rem;
+  }
+  .intake-head__body {
+    max-width: 60ch;
+  }
+  .intake {
+    list-style: none;
+    margin: 3rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .intake__item {
+    display: grid;
+    grid-template-columns: 2.5rem minmax(0, 1fr);
+    gap: 1rem;
+    padding-block: 1.5rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .intake__num {
+    color: var(--color-teal-800);
+    font-size: 0.8125rem;
+  }
+  .intake__title {
+    font-size: 1.0625rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+  .intake__body {
+    margin-top: 0.5rem;
+    color: var(--color-ink-600);
+    max-width: 60ch;
+  }
+
+  /* --- Preguntas frecuentes ---
+     Vive aquí y no en la portada: las respuestas son sobre cómo escribirnos, y
+     los datos estructurados FAQPage tienen que acompañar al contenido visible
+     que describen. */
+  .faq {
+    margin-top: 3rem;
+    border-top: 1px solid var(--color-ink-950);
+    max-width: 52rem;
+  }
+  .faq__item {
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .faq__item summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    min-height: 3.5rem;
+    padding-block: 1rem;
+    font-size: 1.0625rem;
+    font-weight: 500;
+    color: var(--color-ink-950);
+    cursor: pointer;
+    list-style: none;
+  }
+  .faq__item summary::-webkit-details-marker {
+    display: none;
+  }
+  .faq__chevron {
+    color: var(--color-ink-500);
+    flex-shrink: 0;
+  }
+  .faq__item[open] .faq__chevron {
+    transform: rotate(180deg);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .faq__chevron {
+      transition: transform 150ms;
+    }
+  }
+  .faq__answer {
+    padding-bottom: 1.5rem;
+    color: var(--color-ink-600);
+  }
+
+  @media (min-width: 768px) {
+    .channels {
+      grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
+      gap: 4rem;
+      align-items: start;
+    }
+    .intake-head {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+      gap: 4rem;
+      align-items: baseline;
+    }
+    .intake {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      column-gap: 4rem;
+    }
+    .intake__item {
+      grid-template-columns: 3rem minmax(0, 1fr);
+      padding-block: 1.75rem;
+    }
+  }
+</style>

@@ -1,0 +1,49 @@
+---
+import { MOTIF_ALT, MOTIF_HEIGHT, MOTIF_WIDTH, familyMotif } from '../../lib/familyMotif';
+
+/**
+ * Motivo de muestra de una familia.
+ *
+ * Es un diagrama, no una fotografía ni un sustituto de una fotografía: dibuja
+ * lo que el equipo le hace a la muestra. La familia que sí tiene fotografía
+ * aprobada no lo usa.
+ *
+ * El `viewBox` es fijo y el ancho lo pone el contenedor, así que el bloque
+ * reserva su alto por `aspect-ratio` y nunca desplaza el contenido al cargar.
+ */
+interface Props {
+  familyId: string;
+  /** Descripción accesible. Sin ella el diagrama queda como decorativo. */
+  labelled?: boolean;
+  class?: string;
+}
+
+const { familyId, labelled = true, class: className = '' } = Astro.props;
+
+const markup = familyMotif(familyId);
+const alt = MOTIF_ALT[familyId];
+---
+
+{
+  markup && (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox={`0 0 ${MOTIF_WIDTH} ${MOTIF_HEIGHT}`}
+      class:list={['motif', className]}
+      role={labelled && alt ? 'img' : undefined}
+      aria-label={labelled && alt ? alt : undefined}
+      aria-hidden={labelled && alt ? undefined : 'true'}
+      focusable="false"
+      set:html={markup}
+    />
+  )
+}
+
+<style>
+  .motif {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 4 / 3;
+  }
+</style>

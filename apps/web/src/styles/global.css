@@ -1,121 +1,414 @@
 @import "tailwindcss";
 
-/* OrigenLab — tipografía + marca (inspiración B2B laboratorio, sin copiar sitios de terceros) */
+/* ============================================================================
+   OrigenLab Website V2 — design tokens
+   Paper, ink, one accent. See docs/design/DESIGN_SYSTEM.md.
+   Every value below is a token; components must not invent colors or radii.
+   ============================================================================ */
+
+/* --- Self-hosted type (SIL OFL). Provenance: scripts/sync-fonts.mjs -------- */
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200 800;
+  src: url('/fonts/plus-jakarta-sans-latin-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200 800;
+  src: url('/fonts/plus-jakarta-sans-latin-ext-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0,
+    U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url('/fonts/ibm-plex-mono-latin-400-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url('/fonts/ibm-plex-mono-latin-500-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+
 @theme {
-  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
-  --color-brand-50: #f0fdfa;
-  --color-brand-100: #ccfbf1;
-  --color-brand-200: #99f6e4;
-  --color-brand-300: #5eead4;
-  --color-brand-400: #2dd4bf;
-  --color-brand-500: #14b8a6;
-  --color-brand-600: #0d9488;
-  --color-brand-700: #0f766e;
-  --color-brand-800: #115e59;
-  --color-brand-900: #134e4a;
-  --color-brand-950: #042f2e;
+  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Ground and structure */
+  --color-paper: #fafaf7;
+  --color-surface: #f2f2ee;
+  --color-hairline: #e3e3de;
+
+  /* Ink */
+  --color-ink-950: #141617;
+  --color-ink-900: #1d2022;
+  --color-ink-800: #2b2e30;
+  --color-ink-600: #54595d;
+  --color-ink-500: #676d71;
+
+  /* Ink-on-dark (used only inside the closing band and footer) */
+  --color-onink-100: #ececeb;
+  --color-onink-300: #b9bcbd;
+  --color-onink-500: #8d9295;
+  --color-onink-hairline: #33383a;
+
+  /* Accent — one teal, used for action, place, and one rule per page */
+  --color-teal-800: #115e59;
+  --color-teal-700: #0f766e;
+  --color-teal-500: #14b8a6;
+  --color-teal-100: #ccfbf1;
+  --color-teal-50: #f0fdfa;
+
+  /*
+   * Familias de equipo. Seis tintas, y sólo para la constelación del hero y la
+   * fila del índice que le corresponde.
+   *
+   * El sistema tiene un acento, el teal, y sigue teniéndolo: estas seis no son
+   * un segundo acento suelto sino una escala de identificación, y no aparecen
+   * en ningún otro sitio del sitio. Existen porque el hero tiene que decir de
+   * un vistazo que hay seis capacidades distintas, y seis puntos del mismo
+   * color dicen lo contrario.
+   *
+   * Las seis están medidas: todas superan 5,6:1 sobre papel y sobre superficie,
+   * de modo que pueden teñir texto y no sólo un punto. Centrifugación reutiliza
+   * el teal del sistema en vez de inventar un séptimo verde.
+   */
+  --color-family-sonicacion: #1d4f7c;
+  --color-family-dispersion: #6b3f96;
+  --color-family-centrifugacion: #115e59;
+  --color-family-pesaje: #7d5310;
+  --color-family-osmometria: #15697f;
+  --color-family-electroforesis: #8f2f4f;
+
+  /* Radius: one step, everywhere */
+  --radius-edge: 2px;
+
+  /* Page shell */
+  --spacing-gutter: 1.25rem;
 }
 
-html {
-  scroll-behavior: smooth;
-}
+@layer base {
+  html {
+    color-scheme: light;
+    -webkit-text-size-adjust: 100%;
+    /* La cabecera es fija: sin este margen el navegador deja el elemento
+       enfocado o anclado justo debajo de ella y queda invisible. */
+    scroll-padding-top: 5.5rem;
+  }
 
-/* Entrada suave del contenido principal (respeta reduced-motion en Hero si aplica) */
-@keyframes fade-up {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
   }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-@media (prefers-reduced-motion: no-preference) {
-  #contenido-principal > *:first-child {
-    animation: fade-up 0.55s ease-out both;
-  }
-}
 
-body {
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
+  body {
+    background-color: var(--color-paper);
+    color: var(--color-ink-800);
+    font-family: var(--font-sans);
+    font-size: 1rem;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    color: var(--color-ink-950);
+    font-weight: 600;
+    text-wrap: balance;
+  }
+
+  /* The sticky header must never hide an anchored heading. */
+  :target,
+  [id] {
+    scroll-margin-top: 6rem;
+  }
+
+  ::selection {
+    background-color: var(--color-teal-100);
+    color: var(--color-ink-950);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-teal-700);
+    outline-offset: 2px;
+    border-radius: var(--radius-edge);
+  }
+
+  /* Inverted surfaces get a light focus ring so it stays visible. */
+  .on-ink :focus-visible {
+    outline-color: var(--color-teal-500);
+  }
 }
 
 @layer components {
+  /* --- Page shell ---------------------------------------------------------- */
+  .shell {
+    width: 100%;
+    max-width: 80rem;
+    margin-inline: auto;
+    padding-inline: 1.25rem;
+  }
+  @media (min-width: 768px) {
+    .shell {
+      padding-inline: 2rem;
+    }
+  }
+  @media (min-width: 1280px) {
+    .shell {
+      padding-inline: 3rem;
+    }
+  }
+
+  /* Vertical rhythm: one section spacing scale for the whole site. */
+  .section {
+    padding-block: 4rem;
+  }
+  @media (min-width: 768px) {
+    .section {
+      padding-block: 6rem;
+    }
+  }
+
+  .rule-top {
+    border-top: 1px solid var(--color-hairline);
+  }
+
+  /* --- Type roles ---------------------------------------------------------- */
+  .t-display {
+    font-size: clamp(2rem, 1.45rem + 2.2vw, 3rem);
+    line-height: 1.06;
+    letter-spacing: -0.022em;
+    font-weight: 600;
+  }
+  .t-h2 {
+    font-size: clamp(1.5rem, 1.24rem + 1.05vw, 2rem);
+    line-height: 1.15;
+    letter-spacing: -0.014em;
+    font-weight: 600;
+  }
+  .t-h3 {
+    font-size: clamp(1.125rem, 1.08rem + 0.2vw, 1.25rem);
+    line-height: 1.3;
+    font-weight: 600;
+  }
+  .t-lead {
+    font-size: clamp(1.0625rem, 1.02rem + 0.2vw, 1.25rem);
+    line-height: 1.5;
+    color: var(--color-ink-600);
+    max-width: 58ch;
+  }
+  .t-body {
+    line-height: 1.65;
+    max-width: 66ch;
+  }
+  .t-small {
+    font-size: 0.875rem;
+    line-height: 1.55;
+  }
+  /* Mono label: the only place uppercase tracking is allowed. */
+  .t-label {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-ink-500);
+  }
+  /* Mono data: measurements, model codes, item numbers. */
+  .t-data {
+    font-family: var(--font-mono);
+    font-size: 0.9375rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-ink-800);
+  }
+
+  /* --- Actions ------------------------------------------------------------- */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 2.875rem;
+    padding: 0.75rem 1.375rem;
+    border-radius: var(--radius-edge);
+    border: 1px solid transparent;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    line-height: 1.2;
+    text-align: center;
+    touch-action: manipulation;
+    transition-property: background-color, border-color, color;
+    transition-duration: 150ms;
+  }
   .btn-primary {
-    @apply inline-block rounded-lg bg-brand-700 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-800 hover:shadow;
-    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-2;
+    background-color: var(--color-teal-700);
+    color: #fff;
   }
-  .btn-primary-light {
-    @apply inline-block rounded-lg bg-white px-6 py-3 text-sm font-semibold text-brand-900 shadow-md transition hover:bg-brand-50 hover:shadow-lg;
-    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-brand-800;
+  .btn-primary:hover {
+    background-color: var(--color-teal-800);
   }
-  .link-muted {
-    @apply text-slate-600 transition hover:text-brand-700 hover:underline;
-    @apply focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2;
+  .btn-secondary {
+    border-color: var(--color-ink-950);
+    color: var(--color-ink-950);
   }
-  .nav-link {
-    @apply rounded text-slate-600 transition hover:text-brand-800;
-    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2;
+  .btn-secondary:hover {
+    background-color: var(--color-ink-950);
+    color: var(--color-paper);
   }
-  .nav-link-invert {
-    @apply rounded text-white/90 transition hover:text-white;
-    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-900;
+  /* On the inverted band only. */
+  .btn-invert {
+    background-color: var(--color-paper);
+    color: var(--color-ink-950);
   }
-  .btn-outline {
-    @apply inline-flex items-center justify-center rounded-lg border-2 border-white/40 bg-white/10 px-4 py-2 text-sm font-semibold text-white backdrop-blur-sm transition hover:bg-white/20;
-    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-brand-800;
+  .btn-invert:hover {
+    background-color: #fff;
   }
-  .btn-outline-dark {
-    @apply inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm transition hover:border-brand-400 hover:bg-brand-50;
-    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2;
+  .btn-invert-outline {
+    border-color: var(--color-onink-hairline);
+    color: var(--color-onink-100);
   }
-  .btn-whatsapp {
-    @apply inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700;
-    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2;
+  .btn-invert-outline:hover {
+    border-color: var(--color-onink-500);
+    background-color: rgb(255 255 255 / 0.06);
   }
-  .section-title {
-    @apply text-xl font-bold tracking-tight text-brand-950 md:text-2xl;
+
+  /* Quiet action: text plus arrow. Never competes with the primary button. */
+  .link-arrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 1.75rem;
+    font-weight: 600;
+    font-size: 0.9375rem;
+    color: var(--color-teal-800);
+    transition: color 150ms;
   }
-  .card-elevated {
-    @apply rounded-xl border border-slate-200/80 bg-white p-5 shadow-sm transition hover:border-brand-200 hover:shadow-md;
+  .link-arrow:hover {
+    color: var(--color-ink-950);
   }
-  .showcase-panel {
-    @apply bg-gradient-to-b from-slate-50/90 via-white to-white;
+  .link-arrow > .arrow {
+    transition: transform 150ms;
   }
-  .showcase-product-card {
-    @apply overflow-hidden rounded-xl border border-slate-200/80 bg-white shadow-sm transition duration-200;
-    @apply hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md;
+  @media (prefers-reduced-motion: no-preference) {
+    .link-arrow:hover > .arrow {
+      transform: translateX(2px);
+    }
   }
-  .showcase-spec-chip {
-    @apply rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700;
+
+  /* Fila de enlaces con flecha: se apila en móvil y se alinea en una fila
+     desde 768 px. Usada en las páginas que enlazan a varias aplicaciones. */
+  .link-row {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.75rem;
   }
-  .showcase-comparison-table {
-    @apply overflow-x-hidden;
+  @media (min-width: 768px) {
+    .link-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem 2.5rem;
+    }
   }
-  .home-line-card {
-    @apply transition duration-200 hover:border-brand-200 hover:shadow-md;
+
+  .link-plain {
+    color: var(--color-teal-800);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.2em;
+    text-decoration-color: color-mix(in srgb, var(--color-teal-800) 35%, transparent);
+    transition: text-decoration-color 150ms, color 150ms;
   }
-  .home-section {
-    @apply py-14 md:py-16;
+  .link-plain:hover {
+    color: var(--color-ink-950);
+    text-decoration-color: currentColor;
   }
-  .home-section-alt {
-    @apply rounded-3xl bg-gradient-to-b from-slate-100/80 via-white to-white px-5 py-12 md:px-8 md:py-14;
+
+  /* --- Structure ----------------------------------------------------------- */
+  /* Index row: the default grouping device. Replaces cards across the site. */
+  .index-list {
+    border-top: 1px solid var(--color-hairline);
   }
-  .home-chip {
-    @apply inline-flex items-center rounded-full border border-brand-200/80 bg-white/90 px-3 py-1 text-xs font-medium text-brand-900 shadow-sm;
+  .index-row {
+    position: relative;
+    display: block;
+    border-bottom: 1px solid var(--color-hairline);
+    transition: background-color 150ms;
   }
-  .home-panel {
-    @apply overflow-hidden rounded-2xl border border-white/20 bg-white/95 shadow-xl shadow-brand-950/10 backdrop-blur-sm;
+  .index-row:hover {
+    background-color: var(--color-surface);
   }
-  .home-category-card {
-    @apply relative flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-white p-6 shadow-sm transition hover:border-brand-300 hover:shadow-lg;
+
+  .prose-block p + p {
+    margin-top: 1rem;
   }
-  .home-process-step {
-    @apply relative flex flex-col rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm;
-  }
-  .home-final-cta {
-    @apply relative overflow-hidden rounded-3xl bg-gradient-to-br from-brand-800 via-brand-700 to-brand-900 px-6 py-12 text-white shadow-xl md:px-10 md:py-14;
+
+  /* --- Revelado al desplazarse --------------------------------------------
+   * Mejora progresiva estricta. El estado inicial oculto sólo existe cuando el
+   * script ha marcado el documento con `data-reveal-ready`, de modo que sin
+   * JavaScript no se oculta nada nunca y la portada se lee entera. Todo el
+   * bloque vive bajo `prefers-reduced-motion: no-preference`, así que con
+   * movimiento reducido tampoco llega a aplicarse.
+   *
+   * Es una transición, no una animación en bucle: no hay parallax, no hay
+   * secuestro del desplazamiento y ningún contenido depende del movimiento
+   * para entenderse. Ningún elemento de la primera pantalla lleva la marca,
+   * porque ahí el script llegaría después del primer pintado y se vería el
+   * parpadeo.
+   */
+  @media (prefers-reduced-motion: no-preference) {
+    [data-reveal-ready] [data-reveal] {
+      opacity: 0;
+      transform: translateY(0.75rem);
+      transition:
+        opacity 500ms cubic-bezier(0.22, 0.61, 0.36, 1),
+        transform 500ms cubic-bezier(0.22, 0.61, 0.36, 1);
+    }
+    [data-reveal-ready] [data-reveal].is-revealed {
+      opacity: 1;
+      transform: none;
+    }
+    [data-reveal-ready] [data-reveal][data-reveal-delay='1'] {
+      transition-delay: 70ms;
+    }
+    [data-reveal-ready] [data-reveal][data-reveal-delay='2'] {
+      transition-delay: 140ms;
+    }
+    [data-reveal-ready] [data-reveal][data-reveal-delay='3'] {
+      transition-delay: 210ms;
+    }
+
+    /* Al imprimir no hay desplazamiento que dispare nada: sin esto, una sección
+       aún sin revelar saldría en blanco sobre el papel. */
+    @media print {
+      [data-reveal-ready] [data-reveal] {
+        opacity: 1;
+        transform: none;
+        transition: none;
+      }
+    }
   }
 }

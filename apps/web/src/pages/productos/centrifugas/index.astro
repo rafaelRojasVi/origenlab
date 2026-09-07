@@ -1,101 +1,188 @@
 ---
 import Layout from '../../../layouts/Layout.astro';
-import PageHeader from '../../../components/PageHeader.astro';
-import QuoteCTA from '../../../components/QuoteCTA.astro';
-import ProductPreviewCard from '../../../components/ProductPreviewCard.astro';
-import ProductQuoteActions from '../../../components/ProductQuoteActions.astro';
-import ProductComparisonStrip from '../../../components/ProductComparisonStrip.astro';
+import PageIntro from '../../../components/ui/PageIntro.astro';
+import SectionIndex from '../../../components/ui/SectionIndex.astro';
+import ModelList from '../../../components/ui/ModelList.astro';
+import ModelRow from '../../../components/ui/ModelRow.astro';
+import CompareTable from '../../../components/ui/CompareTable.astro';
+import ClosingQuoteBand from '../../../components/ui/ClosingQuoteBand.astro';
+import BrandLogo from '../../../components/ui/BrandLogo.astro';
+import ExternalLink from '../../../components/ui/ExternalLink.astro';
+import Notice from '../../../components/ui/Notice.astro';
+import Icon from '../../../components/ui/Icon.astro';
 import { getProductFamilyBySlug } from '../../../data/productFamilies';
-import { getProductsByFamilySlug, getBrandById } from '../../../lib/catalog';
+import { categories } from '../../../data/categories';
+import { getBrandById, getOrtoalresaCentrifuges } from '../../../lib/catalog';
+import { itemListJsonLd } from '../../../lib/jsonld';
 
 const family = getProductFamilyBySlug('centrifugas');
-const familyProducts = getProductsByFamilySlug('centrifugas').filter((p) => p.showOnProductsPage);
-const ortoBrand = getBrandById('ortoalresa');
+const products = getOrtoalresaCentrifuges();
+const brand = getBrandById('ortoalresa');
 
-const filterLabels = [
-  'ventilada',
-  'refrigerada',
-  'microcentrífuga',
-  'universal',
-  'gran capacidad',
-] as const;
+/** Filas de la comparativa: sólo etiquetas presentes en todos los modelos o
+ *  claramente diferenciadoras. El resto vive en cada ficha. */
+const compareRows = [
+  'Versión',
+  'Capacidad máxima',
+  'Velocidad máxima',
+  'Temperatura',
+  'Pantalla',
+  'Cámara',
+];
+
+/** Aplicaciones declaradas en las fichas, sin repetir, en orden de aparición. */
+const applications = [...new Set(products.flatMap((product) => product.applications ?? []))];
+
+const relatedCategories = categories.filter((category) =>
+  family?.categorySlugs.includes(category.slug),
+);
 ---
 
 <Layout
-  title="Centrífugas de laboratorio — OrigenLab"
-  description="Centrífugas Ortoalresa para preparación de muestras y análisis. Cotización y disponibilidad sujetas a confirmación comercial."
+  title="Centrífugas de laboratorio"
+  description="Cinco modelos de centrífugas Ortoalresa: microcentrífugas ventiladas y refrigeradas, universales y de gran capacidad. Cotización a través de OrigenLab."
+  jsonLd={[itemListJsonLd(products, 'Centrífugas Ortoalresa')]}
 >
-  <PageHeader
-    title={family?.name ?? 'Centrífugas'}
-    lead={family?.description ?? 'Equipos de centrifugación para laboratorio.'}
-  />
-
-  <p class="mt-6 max-w-3xl text-sm leading-relaxed text-slate-600">
-    Equipos disponibles para evaluación técnica y cotización a través de OrigenLab. No implica stock ni
-    representación exclusiva salvo confirmación comercial por escrito.
-  </p>
-
-  <div class="mt-6">
-    <ProductQuoteActions brandName={ortoBrand?.name ?? 'Ortoalresa'} />
+  <div class="shell">
+    <PageIntro
+      title={family?.name ?? 'Centrífugas'}
+      lead={family?.description}
+      crumbs={[{ label: 'Productos', href: '/productos/' }, { label: 'Centrífugas' }]}
+    >
+      <div slot="aside">
+        {
+          brand && (
+            <a href={`/marcas/${brand.slug}/`} class="brand-link">
+              <BrandLogo brand={brand} scale={1.3} />
+              <span class="t-label brand-link__label">Marca del catálogo</span>
+            </a>
+          )
+        }
+      </div>
+    </PageIntro>
   </div>
 
-  <div class="mt-8 flex flex-wrap gap-2" aria-label="Referencias de tipo de equipo">
-    {filterLabels.map((label) => (
-      <span class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600">
-        {label}
-      </span>
-    ))}
-  </div>
-  <p class="mt-2 text-xs text-slate-500">
-    Etiquetas según ficha del fabricante; la configuración aplicable se confirma al cotizar.
-  </p>
+  <section class="shell section rule-top" aria-labelledby="modelos-title">
+    <SectionIndex index={1} label="Modelos" />
+    <h2 id="modelos-title" class="t-h2">Cinco modelos de catálogo</h2>
+    <p class="t-lead mt-5">
+      Ordenados de menor a mayor capacidad. Las cifras provienen de la documentación del
+      fabricante; la configuración de rotores y accesorios se define al cotizar.
+    </p>
+    <ModelList class="mt-10">
+      {products.map((product) => <ModelRow product={product} />)}
+    </ModelList>
+  </section>
 
-  {familyProducts.length > 0 && (
-    <ul class="mt-8 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-      {familyProducts.map((product) => {
-        const brand = getBrandById(product.brandId);
-        return (
-          <li class="flex flex-col">
-            <ProductPreviewCard
-              product={product}
-              brandName={brand?.name}
-              showBrand={true}
-              showApplication={true}
-              showImage={true}
-              showWhatsApp={true}
-              brandNameForQuote="Ortoalresa"
-            />
-            {product.filterTags && product.filterTags.length > 0 && (
-              <ul class="mt-2 flex flex-wrap gap-1 px-1">
-                {product.filterTags.map((tag) => (
-                  <li class="rounded border border-slate-100 bg-white px-2 py-0.5 text-[0.65rem] text-slate-500">
-                    {tag}
-                  </li>
-                ))}
-              </ul>
-            )}
+  <section class="shell section rule-top" aria-labelledby="comparativa-title">
+    <SectionIndex index={2} label="Comparativa" />
+    <h2 id="comparativa-title" class="t-h2">Qué diferencia a cada modelo</h2>
+    <p class="t-lead mt-5">
+      La elección suele resolverse en tres decisiones: volumen por ciclo, si necesita control de
+      temperatura y qué formatos de tubo va a usar.
+    </p>
+    <div class="mt-10">
+      <CompareTable
+        products={products}
+        rows={compareRows}
+        caption="Comparativa de especificaciones de las centrífugas Ortoalresa"
+      />
+    </div>
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="aplicaciones-title">
+    <SectionIndex index={3} label="Aplicaciones" />
+    <h2 id="aplicaciones-title" class="t-h2">Dónde se usan</h2>
+    <p class="t-body mt-5 applications">{applications.join(', ')}.</p>
+    <ul class="link-row mt-8">
+      {
+        relatedCategories.map((category) => (
+          <li>
+            <a href={`/categorias/${category.slug}/`} class="link-arrow">
+              {category.name}
+              <Icon name="arrow-right" size={18} class="arrow" />
+            </a>
           </li>
-        );
-      })}
+        ))
+      }
     </ul>
-  )}
+  </section>
 
-  <ProductComparisonStrip products={familyProducts} />
+  {
+    brand && (
+      <section class="shell section rule-top" aria-labelledby="marca-title">
+        <SectionIndex index={4} label="Marca" />
+        <div class="brand-block">
+          <div>
+            <h2 id="marca-title" class="t-h2">{brand.name}</h2>
+            {brand.legalName && <p class="t-small brand-block__legal">{brand.legalName}</p>}
+            <p class="t-body brand-block__summary">{brand.summary}</p>
+            <div class="brand-block__links">
+              <a href={`/marcas/${brand.slug}/`} class="link-arrow">
+                Ver la marca
+                <Icon name="arrow-right" size={18} class="arrow" />
+              </a>
+              {brand.websiteUrl && (
+                <ExternalLink href={brand.websiteUrl} context="sitio del fabricante">
+                  Sitio del fabricante
+                </ExternalLink>
+              )}
+            </div>
+          </div>
+          <BrandLogo brand={brand} scale={1.5} />
+        </div>
+        <Notice class="mt-10">
+          {brand.manufacturerAttribution} {brand.commercialNote}
+        </Notice>
+      </section>
+    )
+  }
 
-  <p class="mt-8 text-sm">
-    <a href="/marcas/ortoalresa" class="font-medium text-brand-700 hover:text-brand-800">
-      Ver marca Ortoalresa →
-    </a>
-  </p>
-
-  <div class="mt-14">
-    <QuoteCTA
-      title="Solicitar cotización"
-      description="Indique equipo de interés, aplicación y ciudad. Correo o WhatsApp."
-    />
-  </div>
-
-  <p class="mt-10">
-    <a href="/productos" class="link-muted text-sm font-medium">← Volver a productos</a>
-  </p>
+  <ClosingQuoteBand
+    index={5}
+    title="Cotice la centrífuga adecuada para su flujo de trabajo."
+    body="Indique volumen por ciclo, formato de tubo, si necesita refrigeración y para qué laboratorio es. Con eso proponemos modelo, rotor y accesorios."
+    brandName={brand?.name}
+  />
 </Layout>
+
+<style>
+  .brand-link {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.625rem;
+    border-radius: var(--radius-edge);
+  }
+  .brand-link__label {
+    color: var(--color-ink-500);
+  }
+  .applications {
+    color: var(--color-ink-600);
+    max-width: 62ch;
+  }
+  .brand-block {
+    display: grid;
+    gap: 2rem;
+    align-items: start;
+  }
+  .brand-block__legal {
+    margin-top: 0.375rem;
+    color: var(--color-ink-500);
+  }
+  .brand-block__summary {
+    margin-top: 1.25rem;
+  }
+  .brand-block__links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem 2rem;
+    margin-top: 1.75rem;
+  }
+  @media (min-width: 768px) {
+    .brand-block {
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 4rem;
+    }
+  }
+</style>

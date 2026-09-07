@@ -10,6 +10,13 @@ Last reviewed: 2026-03-24
 
 **Current state (as documented, not guaranteed by repo):** The site is described as live at origenlab.cl on HostGator shared hosting.
 
+**Cloudflare (registrado 2026-09-05):** la respuesta en producción incluye
+`server: cloudflare` y `cf-ray`, es decir hay un proxy de Cloudflare delante del
+origen HostGator. Esto no estaba documentado. Implica que Cloudflare procesa las
+IP de los visitantes como proveedor de infraestructura y que las cabeceras del
+origen pueden verse alteradas o complementadas en el borde. Verificar en el panel
+de Cloudflare antes de dar por hecho el comportamiento de caché o de cabeceras.
+
 ---
 
 ## What is deployed

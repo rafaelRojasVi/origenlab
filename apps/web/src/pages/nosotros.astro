@@ -1,52 +1,178 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import PageHeader from '../components/PageHeader.astro';
-import QuoteCTA from '../components/QuoteCTA.astro';
+import PageIntro from '../components/ui/PageIntro.astro';
+import SectionIndex from '../components/ui/SectionIndex.astro';
+import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
+import Icon from '../components/ui/Icon.astro';
 import { company } from '../data/company';
+import { contact } from '../data/contact';
+import { brands } from '../data/brands';
+import BrandLogo from '../components/ui/BrandLogo.astro';
 ---
 
 <Layout
-  title="Nosotros — OrigenLab"
-  description={`${company.name}, ${company.oneLiner} Base en Valdivia; atención en todo Chile.`}
+  title="Nosotros"
+  description="OrigenLab vende equipos para laboratorios de servicio e investigación. Base en Valdivia, atención en todo Chile, asesoría técnica antes de la compra."
 >
-  <PageHeader
-    title="Nosotros"
-    lead={company.oneLiner + ' Base operativa en Valdivia.'}
-  />
-
-  <div class="mt-10 space-y-10">
-    <section>
-      <h2 class="text-lg font-semibold text-slate-900">Qué hacemos</h2>
-      <p class="mt-3 text-slate-600">
-        Nos dedicamos a la venta de equipos para laboratorio, con foco en alimentos, control de
-        calidad y laboratorio clínico. Ofrecemos asesoría comercial y técnica antes de la compra.
-        La garantía se rige por las condiciones del fabricante y se confirma en cada cotización. En
-        equipos complejos, la instalación o puesta en marcha puede coordinarse cuando quede acordada
-        por escrito. {company.catalogNote}
-      </p>
-    </section>
-
-    <section>
-      <h2 class="text-lg font-semibold text-slate-900">A quién servimos</h2>
-      <p class="mt-3 text-slate-600">
-        {company.audience.join(', ')}. Atendemos consultas y cotizaciones desde todo Chile.
-      </p>
-    </section>
-
-    <section>
-      <h2 class="text-lg font-semibold text-slate-900">Cómo trabajamos</h2>
-      <p class="mt-3 text-slate-600">
-        Priorizamos claridad en la oferta, respuestas por los canales indicados en contacto y
-        acuerdos alineados al equipo y al fabricante. Sin prometer plazos ni coberturas que no estén
-        confirmados por escrito.
-      </p>
-    </section>
-  </div>
-
-  <div class="mt-14">
-    <QuoteCTA
-      title="¿Cotización o consulta?"
-      description="Correo, WhatsApp o página de contacto con dirección y horario."
+  <div class="shell">
+    <PageIntro
+      title="OrigenLab"
+      lead={`${company.oneLiner} Base operativa en ${contact.city}.`}
+      crumbs={[{ label: 'Nosotros' }]}
     />
   </div>
+
+  <section class="shell section rule-top" aria-labelledby="que-hacemos-title">
+    <SectionIndex index={1} label="Qué hacemos" />
+    <div class="split">
+      <h2 id="que-hacemos-title" class="t-h2">Vender equipos con criterio, no catálogos</h2>
+      <div class="prose-block split__body">
+        <p class="t-body">
+          Vendemos equipamiento para laboratorio con foco en tres líneas: alimentos, control de
+          calidad y laboratorio clínico. El trabajo empieza antes de la compra, acotando qué equipo
+          corresponde a la aplicación, al volumen de trabajo y al presupuesto disponible.
+        </p>
+        <p class="t-body">
+          La garantía se rige por las condiciones del fabricante y se confirma en cada cotización. En
+          equipos complejos, la instalación o la puesta en marcha se coordinan cuando quedan
+          acordadas por escrito. {company.catalogNote}
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="a-quien-title">
+    <SectionIndex index={2} label="A quién servimos" />
+    <div class="split">
+      <h2 id="a-quien-title" class="t-h2">Laboratorios que compran para trabajar</h2>
+      <div class="split__body">
+        <p class="t-body">{company.homeIntro}</p>
+        <ul class="audience">
+          {company.audience.map((item) => <li>{item}</li>)}
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="como-title">
+    <SectionIndex index={3} label="Cómo trabajamos" />
+    <div class="split">
+      <h2 id="como-title" class="t-h2">Lo que decimos es lo que podemos sostener</h2>
+      <div class="prose-block split__body">
+        <p class="t-body">
+          Priorizamos claridad en la oferta y respuestas por los canales publicados. No prometemos
+          plazos, stock ni coberturas que no estén confirmados por escrito con el fabricante o
+          proveedor.
+        </p>
+        <p class="t-body">
+          Trabajamos con fabricantes de equipamiento e insumos de laboratorio. Publicamos el
+          catálogo de las líneas que podemos documentar y no declaramos representación oficial,
+          distribución exclusiva ni certificación de ninguna marca.
+        </p>
+        <p class="brands-link">
+          <a href="/marcas/" class="link-arrow">
+            Ver las marcas con las que trabajamos
+            <Icon name="arrow-right" size={18} class="arrow" />
+          </a>
+        </p>
+      </div>
+    </div>
+    <ul class="mini-wall">
+      {brands.map((brand) => <li><BrandLogo brand={brand} scale={0.85} /></li>)}
+    </ul>
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="cobertura-title">
+    <SectionIndex index={4} label="Cobertura" />
+    <div class="split">
+      <h2 id="cobertura-title" class="t-h2">Base en Valdivia, atención en todo Chile</h2>
+      <div class="split__body">
+        <dl class="coverage">
+          <div>
+            <dt class="t-label">Base operativa</dt>
+            <dd class="t-data">{contact.locationPublic}</dd>
+          </div>
+          <div>
+            <dt class="t-label">Cobertura comercial</dt>
+            <dd class="t-data">Todo {company.geography}</dd>
+          </div>
+          <div>
+            <dt class="t-label">Horario de referencia</dt>
+            <dd class="t-data">Lunes a viernes, {contact.hours}</dd>
+          </div>
+          <div>
+            <dt class="t-label">Canales</dt>
+            <dd class="t-data">Correo, teléfono y WhatsApp</dd>
+          </div>
+        </dl>
+      </div>
+    </div>
+  </section>
+
+  <ClosingQuoteBand
+    index={5}
+    title="Hablemos de lo que necesita su laboratorio."
+    body="Escríbanos con la aplicación, la institución y su ciudad. Respondemos por el canal que prefiera dentro del horario publicado."
+  />
 </Layout>
+
+<style>
+  .split {
+    display: grid;
+    gap: 1.5rem;
+  }
+  .split__body {
+    max-width: 62ch;
+  }
+  .audience {
+    list-style: none;
+    margin: 2rem 0 0;
+    padding: 0;
+    border-top: 1px solid var(--color-hairline);
+  }
+  .audience li {
+    padding-block: 0.75rem;
+    font-size: 0.9375rem;
+    color: var(--color-ink-800);
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .brands-link {
+    margin-top: 1.75rem;
+  }
+  .mini-wall {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1.75rem 2.5rem;
+    margin: 3rem 0 0;
+    padding-top: 2.5rem;
+    border-top: 1px solid var(--color-hairline);
+  }
+  .coverage {
+    margin: 0;
+    display: grid;
+    gap: 1.5rem 2.5rem;
+  }
+  .coverage dt {
+    text-transform: none;
+    letter-spacing: 0.01em;
+    margin-bottom: 0.25rem;
+  }
+  .coverage dd {
+    margin: 0;
+    color: var(--color-ink-950);
+  }
+  @media (min-width: 640px) {
+    .coverage {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (min-width: 768px) {
+    .split {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+      gap: 4rem;
+      align-items: start;
+    }
+  }
+</style>

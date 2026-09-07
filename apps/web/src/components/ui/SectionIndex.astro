@@ -1,0 +1,59 @@
+---
+/**
+ * Índice estructural de sección: numeral mono, filete y nombre en lenguaje
+ * llano. Funciona como el índice de capítulos de un manual técnico.
+ *
+ * Reglas (docs/design/DESIGN_SYSTEM.md):
+ * - una vez por sección de primer nivel, nunca dentro de filas o fichas;
+ * - nunca en el hero;
+ * - el numeral lo genera el componente a partir de `index`, no se escribe a mano.
+ */
+interface Props {
+  /** Posición dentro de la página, comenzando en 1. */
+  index: number;
+  label: string;
+  class?: string;
+  [key: string]: unknown;
+}
+
+const { index, label, class: className = '', ...rest } = Astro.props;
+const numeral = String(index).padStart(2, '0');
+---
+
+<p class:list={['section-index', className]} aria-hidden="true" {...rest}>
+  <span class="section-index__numeral">{numeral}</span>
+  <span class="section-index__rule"></span>
+  <span class="section-index__label">{label}</span>
+</p>
+
+<style>
+  .section-index {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-ink-500);
+  }
+  .section-index__numeral {
+    color: var(--color-teal-800);
+    font-variant-numeric: tabular-nums;
+  }
+  .section-index__rule {
+    width: 2.5rem;
+    height: 1px;
+    background-color: var(--color-hairline);
+  }
+  @media (min-width: 768px) {
+    .section-index {
+      margin-bottom: 2rem;
+    }
+    .section-index__rule {
+      width: 4rem;
+    }
+  }
+</style>

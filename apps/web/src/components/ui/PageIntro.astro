@@ -1,0 +1,62 @@
+---
+import Breadcrumbs, { type Crumb } from './Breadcrumbs.astro';
+
+/**
+ * Cabecera estándar de página interior: ruta, H1 y una frase de contexto.
+ * Todas las páginas interiores usan esta composición; no hay variantes por página.
+ */
+interface Props {
+  title: string;
+  lead?: string;
+  crumbs?: readonly Crumb[];
+  /** Contenido opcional a la derecha en escritorio (logotipo, dato clave). */
+  aside?: boolean;
+}
+
+const { title, lead, crumbs } = Astro.props;
+const hasAside = Astro.slots.has('aside');
+---
+
+<header class="page-intro">
+  {crumbs && <Breadcrumbs items={crumbs} />}
+  <div class:list={['page-intro__body', hasAside && 'page-intro__body--split']}>
+    <div>
+      <h1 class="t-display">{title}</h1>
+      {lead && <p class="t-lead mt-5">{lead}</p>}
+    </div>
+    {hasAside && (
+      <div class="page-intro__aside">
+        <slot name="aside" />
+      </div>
+    )}
+  </div>
+  <slot />
+</header>
+
+<style>
+  .page-intro {
+    padding-top: 2rem;
+    padding-bottom: 3rem;
+  }
+  .page-intro__body {
+    margin-top: 1.5rem;
+  }
+  .page-intro__aside {
+    margin-top: 2.5rem;
+  }
+  @media (min-width: 768px) {
+    .page-intro {
+      padding-top: 3rem;
+      padding-bottom: 4.5rem;
+    }
+    .page-intro__body--split {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: end;
+      gap: 3rem;
+    }
+    .page-intro__aside {
+      margin-top: 0;
+    }
+  }
+</style>
