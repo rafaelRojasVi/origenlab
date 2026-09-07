@@ -138,7 +138,19 @@ export function getCatalogBrands(): Brand[] {
   return brands.filter((brand) => brand.catalogPublished);
 }
 
-/** Marcas sin catálogo publicado: sólo logotipo y enlace al fabricante. */
+/** Marcas sin catálogo publicado: logotipo, familia y enlace al fabricante. */
 export function getWorkingBrands(): Brand[] {
   return brands.filter((brand) => !brand.catalogPublished);
+}
+
+/**
+ * Marca que fabrica una familia de equipo.
+ *
+ * La correspondencia se declara una sola vez, en `brands.ts` (`familyId`), y en
+ * una sola dirección. `equipmentScope.ts` no nombra marcas: si lo hiciera,
+ * habría dos listas que mantener sincronizadas y la portada podría atribuir una
+ * familia a una marca que el negocio no ha confirmado.
+ */
+export function getBrandByFamilyId(familyId: string): Brand | undefined {
+  return brands.find((brand) => brand.familyId === familyId);
 }

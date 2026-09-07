@@ -212,13 +212,18 @@ console.log('\nEnlaces');
 
   check(broken.size === 0, `sin enlaces internos rotos (${[...broken].slice(0, 5).join('; ') || 'ninguno'})`);
   // Los externos sólo pueden ser destinos de navegación (fabricantes, WhatsApp).
+  // Los seis fabricantes aprobados y nada más. Si aparece otro host, o es una
+  // marca que ya no se publica o es un tercero que se coló: las dos cosas hay
+  // que verlas. La lista la respalda `src/data/brands.ts`.
   const allowed = new Set([
-    'ortoalresa.com',
-    'www.serva.de',
-    'www.ika.com',
     'www.hielscher.com',
-    'www.ollital.com',
-    'www.crtopmachine.com',
+    'ortoalresa.com',
+    'www.ika.com',
+    'adamequipment.com',
+    // Löser no ofrece HTTPS: su servidor de 2005 rechaza el saludo TLS.
+    // Declarado en brands.ts (`websiteInsecure`) y en CONTENT_NEEDED.md.
+    'www.loeser-osmometer.de',
+    'www.serva.de',
     'wa.me',
     'origenlab.cl',
     'www.w3.org',

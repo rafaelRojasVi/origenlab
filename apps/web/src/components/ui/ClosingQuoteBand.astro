@@ -7,6 +7,12 @@ import { ctaLabels } from '../../lib/ctaLabels';
 import SectionIndex from './SectionIndex.astro';
 
 /**
+ * El número aparece una sola vez y en un solo formato: junto al icono de
+ * teléfono. Antes se repetía dentro de la etiqueta de WhatsApp, de modo que la
+ * misma banda mostraba dos veces la misma cifra con dos aspectos distintos y el
+ * visitante tenía que decidir cuál era la buena. WhatsApp se nombra por su
+ * canal; el número lo lleva el enlace.
+ *
  * Banda de cierre. Única superficie invertida de cada página (además del pie).
  * Un solo botón primario; los canales de apoyo van como enlaces de texto.
  */
@@ -45,7 +51,7 @@ const whatsappHref = buildWhatsAppQuoteUrl({ productName, brandName });
           <li>
             <a href={whatsappHref} target="_blank" rel="noopener noreferrer">
               <Icon name="whatsapp" size={18} />
-              WhatsApp {contact.phoneDisplay}
+              WhatsApp
               <span class="sr-only">(abre WhatsApp en una pestaña nueva)</span>
             </a>
           </li>

@@ -6,6 +6,16 @@ Last reviewed: 2026-09-06
 
 Assets for public product/brand pages are stored under `public/` (not hotlinked in production).
 
+> **La fuente única de procedencia y permisos es ahora
+> [`src/data/sourceRegistry.ts`](../src/data/sourceRegistry.ts).** Tiene una fila
+> por marca publicada con la página oficial, el PDF oficial, el origen de la
+> imagen, la ruta local, la base de permiso, la fecha de verificación y el
+> estado (`VERIFIED` / `PDF_NOT_FOUND` / `ASSET_PERMISSION_NEEDED` /
+> `CONTENT_NEEDED`). `npm run verify:sources` comprueba con peticiones reales
+> que todos esos destinos responden; `npm run validate:brands` comprueba que
+> exista una fila por marca. Este documento conserva el detalle por modelo de
+> Ortoalresa, que es más fino que una fila por marca.
+
 ## Ortoalresa — active catalog (2026-05-16)
 
 | Product | Local image | Source image | PDF |
@@ -32,38 +42,45 @@ fotografiado.** Los originales se conservan sin modificar.
 
 ## Logotipos de marca (V2)
 
-`npm run build-brand-logos` normaliza los seis logotipos a `public/brands/*.png`
-a 3x, a una sola tinta (`ink-800`), con alfa derivado de la luminancia. Es el
-mismo criterio ya aplicado en la tira de marcas de la firma de correo
-(`public/email/brands/README.md`), que también las normaliza a escala de grises.
+`npm run build:brand-logos` normaliza los seis logotipos aprobados a
+`public/brands/*.png` a 3x y a una sola tinta (`ink-800`). Es el mismo criterio
+aplicado en la tira de marcas de la firma de correo.
 
-Fuentes oficiales y procedencia: `public/email/brands/README.md`.
+El script trata tres tipos de original, porque los seis no llegan igual:
 
-| Marca | Salida web | Fuente |
-|-------|-----------|--------|
-| Ortoalresa | `public/brands/ortoalresa-logo.png` | `ortoalresa-source.svg` |
-| SERVA | `public/brands/serva-logo.png` | `serva-source.png` |
-| IKA | `public/brands/ika-logo.png` | `ika-source.png` |
-| Hielscher | `public/brands/hielscher-logo.png` | `hielscher-source.svg` |
-| Ollital | `public/brands/ollital-logo.png` | `ollital-source.jpeg` |
-| CRTOP | `public/brands/crtop-logo.png` | `crtop-source.jpg` |
+| `mode` | Original | Tratamiento |
+|---|---|---|
+| `ink` | trazo oscuro sobre blanco | alfa desde la luminancia invertida |
+| `alpha` | trazo claro sobre transparente | se conserva el alfa del original; aplanarlo sobre blanco lo borraría |
+| `reversed` | trazo claro calado sobre color macizo | umbral que aísla lo casi blanco, con recorte previo del borde del azulejo |
 
-**TODO (abierto):** confirmar con OrigenLab el permiso de reproducción de los
-logotipos de las seis marcas y de las imágenes de producto de Ortoalresa en
-origenlab.cl. Registrado también en
-[`design/CONTENT_NEEDED.md`](design/CONTENT_NEEDED.md).
+| Marca | Salida web | Fuente | `mode` |
+|-------|-----------|--------|--------|
+| Hielscher Ultrasonics | `public/brands/hielscher-logo.png` | `hielscher-source.svg` | ink |
+| Ortoalresa | `public/brands/ortoalresa-logo.png` | `ortoalresa-source.svg` | ink |
+| IKA | `public/brands/ika-logo.png` | `ika-source.png` | ink |
+| Adam Equipment | `public/brands/adam-equipment-logo.png` | `adam-equipment-source.png` | alpha |
+| Löser Messtechnik | `public/brands/loeser-logo.png` | `loeser-source.jpg` | reversed |
+| SERVA Electrophoresis | `public/brands/serva-logo.png` | `serva-source.png` | ink |
 
-`public/brands/serva-wordmark.svg` y los antiguos `ortoalresa-logo.svg` /
-`serva-logo.png` fueron reemplazados por la salida normalizada del script.
+Ollital y CRTOP salieron del sitio público en la revisión de marca del
+2026-09-06. Sus `*-source.*` siguen en `public/email/brands/` porque la firma de
+correo aún los usa; sus salidas web (`public/brands/ollital-logo.png`,
+`crtop-logo.png`) se borraron y `validate:brands` falla si reaparecen.
+
+**TODO (abierto):** confirmar con OrigenLab el permiso escrito de reproducción
+de los logotipos de las seis marcas y de las imágenes de producto de Ortoalresa
+en origenlab.cl. Registrado en `src/data/sourceRegistry.ts`
+(`ASSET_PERMISSION_NEEDED`) y en [`design/CONTENT_NEEDED.md`](design/CONTENT_NEEDED.md).
 
 ## Open Graph e iconos (sitio)
 
 | Asset | Notes |
 |-------|--------|
-| `public/og/origenlab-og.png` | Previsualización social 1200x630 (`og:image` / `twitter:image`). Generada por `npm run build:social`. Las redes no renderizan SVG en las previsualizaciones. |
+| `public/og/origenlab-og.png` | Previsualización social 1200x630 (`og:image` / `twitter:image`). Generada por `npm run build:brand`. Las redes no renderizan SVG en las previsualizaciones. |
 | `public/og/origenlab-og.svg` | Fuente vectorial de la anterior. No se referencia desde el HTML. |
-| `public/apple-touch-icon.png` | 180x180. iOS ignora un `apple-touch-icon` en SVG. |
-| `public/favicon.svg`, `public/favicon.ico` | Ambos enlazados desde `Seo.astro`. |
+| `public/apple-touch-icon.png` | 180x180, generado por `npm run build:brand`. iOS ignora un `apple-touch-icon` en SVG. |
+| `public/favicon.svg`, `public/favicon.ico` | Ambos enlazados desde `Seo.astro`. Generados por `npm run build:brand` desde la misma geometría que la marca del sitio. |
 
 ## Tipografías
 

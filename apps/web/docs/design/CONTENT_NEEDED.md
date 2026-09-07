@@ -60,18 +60,32 @@ a OrigenLab como operador B2B pequeño es una pregunta legal, no de ingeniería.
 
 ## 2. Marcas
 
-El muro de marcas del sitio se apoya en la firma de correo corporativa
-(`public/email/origenlab-contacto-signature.html`), que ya publica el texto
-verificado «Marcas con las que trabajamos» junto a los seis logotipos: SERVA,
-Ortoalresa, IKA, CRTOP, Ollital y Hielscher.
+**Lista cerrada de seis, fijada por el negocio en la revisión de marca del
+2026-09-06:** Hielscher Ultrasonics (sonicación), Ortoalresa (centrifugación),
+IKA (dispersión y homogeneización), Adam Equipment (pesaje y análisis de
+humedad), Löser Messtechnik (osmometría) y SERVA Electrophoresis
+(electroforesis).
+
+Esa revisión resolvió el punto que llevaba abierto desde mayo, «qué fabrica cada
+marca sin catálogo»: ahora la correspondencia marca–familia vive en
+`src/data/brands.ts` (`familyId`) y el sitio puede nombrar la familia junto al
+logotipo. **Ollital y CRTOP salieron del sitio público.**
+
+`npm run validate:brands` comprueba la lista en cuatro capas: los registros de
+`brands.ts`, los archivos de `public/brands/`, las filas de
+`src/data/sourceRegistry.ts` y el HTML de `dist/`. Una marca retirada que
+reaparezca en cualquiera de ellas hace fallar la validación.
 
 | Pendiente | Tipo | Bloquea |
 |---|---|---|
-| Descripción de una línea para IKA, CRTOP, Ollital y Hielscher (qué fabrica cada una) | CONTENIDO | Estas cuatro marcas aparecen sólo como logotipo con enlace al fabricante; `validate:catalog` impide describirlas sin este dato |
-| Alcance comercial formal por marca (distribuidor, revendedor, pedidos gestionados) | CONTENIDO | Copy más claro en las páginas de marca; hoy se usa la redacción acotada actual |
-| Permiso escrito de reproducción de logotipos e imágenes de producto de Ortoalresa y SERVA | CONTENIDO | TODO abierto desde 2026-05 en `docs/product-assets.md`. Se extiende ahora a IKA, CRTOP, Ollital y Hielscher |
-| Un logotipo de CRTOP sin el bloque de razón social | CONTENIDO | La versión oficial disponible es un lockup de 8:1 cuyo texto secundario resulta ilegible en el muro |
+| Alcance comercial formal por marca (distribuidor, revendedor, pedidos gestionados) | CONTENIDO | `commercialNote` en las cuatro marcas sin catálogo; `validate:catalog` impide declararlo sin este dato. Hoy se dice qué fabrica cada una, no en qué condiciones la vende OrigenLab |
+| Permiso escrito de reproducción de los seis logotipos y de las imágenes de producto de Ortoalresa | CONTENIDO | TODO abierto desde 2026-05. Registrado por marca en `src/data/sourceRegistry.ts` como `ASSET_PERMISSION_NEEDED` |
+| Fotografía de equipo de Hielscher, IKA, Adam Equipment, Löser y SERVA | CONTENIDO | Las cinco familias se componen con un diagrama propio (`src/lib/familyMotif.ts`), no con fotografía. Nunca se ilustra una marca con el equipo de otra |
 | Catálogo publicable de las cuatro marcas sin ficha | CONTENIDO | Páginas `/marcas/{slug}/` propias para ellas |
+| Logotipo vectorial de Löser Messtechnik | CONTENIDO | El único original disponible es un JPEG de 70 × 70 calado sobre un azulejo naranja. Se normaliza a una tinta y se lee, pero no escala |
+| HTTPS en el sitio de Löser Messtechnik | TERCERO | `loeser-osmometer.de` rechaza el saludo TLS: el sitio de 2005 sólo responde por http. El enlace oficial es http y la excepción está declarada en `brands.ts` (`websiteInsecure`). No depende de OrigenLab |
+| Regenerar la firma de correo corporativa | CONTENIDO | `public/email/origenlab-contacto-signature.html` sigue mostrando Ollital y CRTOP, y no incluye a Adam Equipment ni a Löser. Dejó de respaldar la cifra «6 marcas con las que trabajamos», que ahora se apoya en `brands.ts` y en `validate:brands` |
+| Verificar en navegador la página de dispersores de IKA | CONTENIDO | `ika.com` devuelve el interstitial de Cloudflare (403) a todo cliente automatizado, incluido un navegador headless. El PDF oficial sí responde. La URL de la página no está comprobada por máquina |
 
 ---
 
@@ -80,10 +94,10 @@ Ortoalresa, IKA, CRTOP, Ollital y Hielscher.
 | Pendiente | Tipo | Bloquea |
 |---|---|---|
 | PDF de catálogos y fichas con permiso de publicación | CONTENIDO | `documents.ts` está vacío; las páginas de aplicación muestran el texto genérico de `company.catalogNote` |
-| Familias de equipo más allá de centrífugas | CONTENIDO | `/productos/` publica hoy una familia y una línea de reactivos |
-| Modelos, especificaciones e imágenes de sonicación, dispersión y pesaje | CONTENIDO | La portada nombra esas tres familias como alcance de cotización (`equipmentScope.ts`, nivel `consulta`), pero no puede publicar un solo modelo. `validate:catalog` impide asociarles marca, cifra o imagen |
-| Qué familia fabrica cada marca sin catálogo | CONTENIDO | Ninguna plantilla puede deducir que Hielscher hace ultrasonido o IKA dispersión. El alcance y las marcas se publican por separado justamente por esto |
-| Fotografía de producto de familias distintas de centrifugación | CONTENIDO | Toda la fotografía aprobada del repositorio es de centrífugas Ortoalresa. Por eso el hero es tipográfico y la única fotografía de la portada está atada a esa familia |
+| Familias de equipo más allá de centrífugas | CONTENIDO | `/productos/` publica hoy una familia y una línea de reactivos; la portada nombra las seis |
+| Modelos, especificaciones e imágenes de las cuatro familias por consulta | CONTENIDO | La portada las nombra con su fabricante (`equipmentScope.ts`, nivel `consulta`), pero no puede publicar un solo modelo. `validate:catalog` impide asociarles cifra o fotografía |
+| ~~Qué familia fabrica cada marca sin catálogo~~ | **Resuelto 2026-09-06** | Confirmado por el negocio; vive en `brands.ts` (`familyId`) |
+| Fotografía de producto de familias distintas de centrifugación | CONTENIDO | Toda la fotografía aprobada del repositorio es de centrífugas Ortoalresa. Las otras cinco familias usan un diagrama propio y la portada no abre con fotografía |
 | Equipos asociados a alimentos | CONTENIDO | `/categorias/alimentos/` declara con franqueza que aún no hay familia publicada |
 | Términos de garantía, instalación y puesta en marcha más allá de «según fabricante» y «por escrito» | CONTENIDO | Copy de `/servicios/`; se mantiene la redacción acotada actual |
 | Expectativa de plazo de respuesta a una cotización | CONTENIDO | Propuesta redactada en `claims.ts` como `respuesta-inicial-un-dia-habil`, en estado `proposed` y sin aprobar: **no se renderiza**, y `validate:dist` comprueba que su texto literal no aparezca en el HTML. El sitio usa mientras tanto la redacción cualitativa aprobada «Respuesta ágil y seguimiento claro». Para aprobarla hace falta que el negocio la asuma por escrito y defina qué cuenta como respuesta inicial |
@@ -168,3 +182,32 @@ los laboratorios, no con testimonios inventados.
 10. **Se corrigió un fallo del arnés de QA**: `scroll-behavior: smooth` hacía
     que el recorrido de `qa:screens` nunca llegara al pie de la página, de modo
     que el contenido diferido de la mitad inferior no se comprobaba.
+
+### Revisión de marca y portada, 2026-09-06 (rediseño V2)
+
+11. **Se cerró la lista de marcas en seis** y se retiraron Ollital y CRTOP del
+    sitio público. La lista es ahora una constante (`APPROVED_BRAND_IDS`) con
+    una puerta automática, `npm run validate:brands`, que la comprueba también
+    sobre el HTML construido. Sus activos de correo se conservan.
+12. **Se rediseñó la marca.** El átomo anterior dibujaba los nodos con 0,38 px
+    de radio a 32 px y las órbitas al 24 % de opacidad: era invisible. La marca
+    nueva («Órbita») no usa ninguna opacidad menor que 1. Las tres exploraciones
+    y la hoja de comparación están en `design/logo-explorations/`, y el sistema
+    completo en `docs/logo-system.md`.
+13. **Se retiró el sistema de logotipo anterior entero**: cinco componentes,
+    ocho módulos de `src/lib/logo/`, cinco SVG y tres scripts. Con ello el sitio
+    pasó de un canvas animado con simulación en el hilo principal a **0 kB de
+    JavaScript**. La animación del hero es `offset-path` en CSS.
+14. **La portada dejó de abrir con una sola familia.** El hero nombra las seis
+    con su fabricante en la primera pantalla, y centrifugación (la única con
+    fotografía) aparece la tercera de cuatro composiciones distintas.
+15. **Las cinco familias sin fotografía llevan un diagrama propio** de lo que el
+    equipo le hace a la muestra (`src/lib/familyMotif.ts`), no una fotografía de
+    archivo ni el equipo de otro fabricante.
+16. **Se creó `src/data/sourceRegistry.ts`**, con página oficial, PDF oficial,
+    origen de imagen, base de permiso, fecha de verificación y estado por marca.
+    `npm run verify:sources` comprueba con peticiones reales que los 25 destinos
+    externos publicados responden.
+17. **El número de teléfono aparece una sola vez por bloque y en un solo
+    formato.** Antes se repetía dentro de la etiqueta de WhatsApp y como enlace
+    `tel:` en la misma sección.

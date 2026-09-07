@@ -1,24 +1,37 @@
 ---
-import { site } from '../../config/site';
 import { ctaLabels } from '../../lib/ctaLabels';
 import { equipmentScope } from '../../data/equipmentScope';
+import { getBrandByFamilyId } from '../../lib/catalog';
 import { publicClaim } from '../../data/claims';
+import { site } from '../../config/site';
 import Icon from '../ui/Icon.astro';
+import OrigenMarkAnimated from '../logo/OrigenMarkAnimated.astro';
 
 /**
  * Portada, primer momento.
  *
- * El hero es tipográfico a propósito. La única fotografía de producto aprobada
- * en el repositorio es de centrífugas, de modo que ilustrar aquí con imagen
- * significaría abrir el sitio declarando que OrigenLab es una casa de
- * centrífugas. La amplitud se comunica con el índice de alcance de la derecha,
- * que nombra las cinco familias en la primera pantalla, y la fotografía aparece
- * una sola vez más abajo, atada a la familia que documenta.
+ * El hero tiene un trabajo por encima de cualquier otro: que en la primera
+ * pantalla se vea que OrigenLab cotiza seis familias de equipo distintas, y no
+ * una. La versión anterior nombraba cinco en un índice lateral; ésta las nombra
+ * con su marca al lado, porque el nombre de la familia sin fabricante todavía
+ * se lee como una promesa genérica.
  *
- * El recuento de marcas sale del registro de afirmaciones: si alguien retira la
+ * No se ilustra con fotografía. La única fotografía de producto con procedencia
+ * en el repositorio es de centrífugas, y abrir con ella declararía que esto es
+ * una casa de centrífugas: exactamente lo que el rediseño tiene que deshacer.
+ * En su lugar abre la marca animada, que es material propio y dice lo mismo que
+ * la página entera va a decir: una muestra que se mueve y tres cuerpos que la
+ * acompañan.
+ *
+ * El recuento sale del registro de afirmaciones: si alguien retira la
  * aprobación, la línea desaparece sola.
  */
-const brandsClaim = publicClaim('marcas-con-las-que-trabajamos');
+const familiesClaim = publicClaim('familias-de-equipo');
+
+const families = equipmentScope.map((entry) => ({
+  ...entry,
+  brand: getBrandByFamilyId(entry.id),
+}));
 ---
 
 <section class="hero" aria-labelledby="hero-title">
@@ -26,42 +39,48 @@ const brandsClaim = publicClaim('marcas-con-las-que-trabajamos');
     <div class="hero__copy">
       <p class="t-label hero__eyebrow">{site.tagline}</p>
       <h1 id="hero-title" class="hero__title">
-        Equipamiento científico, elegido con criterio técnico.
+        Equipamiento científico para cada etapa de su muestra.
       </h1>
       <p class="hero__lead">
-        Acompañamos a laboratorios, universidades e industria a elegir y cotizar equipos para
-        preparación de muestras, análisis y procesos.
+        Pesaje, dispersión, ultrasonido, centrifugación, osmometría y electroforesis. Seis
+        familias de equipo de seis fabricantes, cotizadas a partir de lo que su laboratorio
+        necesita hacer con la muestra.
       </p>
       <div class="hero__actions">
         <a href={site.quoteHref} class="btn btn-primary">{ctaLabels.contarAplicacion}</a>
-        <a href="/productos/" class="link-arrow">
-          Explorar equipos
+        <a href="#familias" class="link-arrow">
+          Ver las seis familias
           <Icon name="arrow-right" size={18} class="arrow" />
         </a>
       </div>
     </div>
 
-    <div class="hero__scope">
-      <h2 class="t-label hero__scope-title">Qué cotizamos</h2>
-      <ul class="scope-index">
+    <div class="hero__mark" aria-hidden="true">
+      <OrigenMarkAnimated size={180} />
+    </div>
+  </div>
+
+  <!--
+    El índice de familias cierra la primera pantalla. Es una tabla de alcance,
+    no una rejilla de tarjetas: filete, nombre, fabricante y tipo de trabajo.
+  -->
+  <div class="shell">
+    <div class="hero__index">
+      <div class="hero__index-head">
+        <h2 class="t-label" id="alcance-hero">Qué cotizamos</h2>
+        {familiesClaim && <p class="t-data hero__count">{familiesClaim}</p>}
+      </div>
+      <ul class="scope-index" aria-labelledby="alcance-hero">
         {
-          equipmentScope.map((entry) => (
+          families.map((entry) => (
             <li class="scope-index__row">
               <span class="scope-index__name">{entry.name}</span>
-              <span class="scope-index__tier t-data">
-                {entry.tier === 'catalogo' ? 'Con ficha' : 'Por consulta'}
-              </span>
+              <span class="scope-index__brand t-data">{entry.brand?.name}</span>
+              <span class="scope-index__work t-data">{entry.workType}</span>
             </li>
           ))
         }
       </ul>
-      {
-        brandsClaim && (
-          <p class="hero__brands t-data">
-            {brandsClaim}
-          </p>
-        )
-      }
     </div>
   </div>
 </section>
@@ -69,9 +88,9 @@ const brandsClaim = publicClaim('marcas-con-las-que-trabajamos');
 <style>
   .hero__inner {
     display: grid;
-    gap: 3rem;
-    padding-top: 3rem;
-    padding-bottom: 3.5rem;
+    gap: 2.5rem;
+    padding-top: 2.5rem;
+    padding-bottom: 2.5rem;
   }
   .hero__eyebrow {
     margin-bottom: 1.25rem;
@@ -82,18 +101,18 @@ const brandsClaim = publicClaim('marcas-con-las-que-trabajamos');
    * de escala es lo que separa la portada de una página interior.
    */
   .hero__title {
-    font-size: clamp(2.25rem, 1.3rem + 3.9vw, 4rem);
-    line-height: 1.02;
+    font-size: clamp(2.125rem, 1.2rem + 3.7vw, 3.75rem);
+    line-height: 1.03;
     letter-spacing: -0.028em;
     font-weight: 600;
     text-wrap: balance;
   }
   .hero__lead {
     margin-top: 1.75rem;
-    font-size: clamp(1.0625rem, 1rem + 0.35vw, 1.3125rem);
+    font-size: clamp(1.0625rem, 1rem + 0.35vw, 1.25rem);
     line-height: 1.5;
     color: var(--color-ink-600);
-    max-width: 46ch;
+    max-width: 52ch;
   }
   .hero__actions {
     display: flex;
@@ -103,11 +122,28 @@ const brandsClaim = publicClaim('marcas-con-las-que-trabajamos');
     margin-top: 2.5rem;
   }
 
+  /* En móvil la marca animada no entra: ocuparía la mitad de la primera
+     pantalla y el mensaje es el titular, no el dibujo. */
+  .hero__mark {
+    display: none;
+  }
+
   /* --- Índice de alcance ---------------------------------------------------
      Es un índice, no una tarjeta: filete superior grueso, filas con filete de
      un píxel y ninguna caja. */
-  .hero__scope-title {
+  .hero__index {
+    padding-bottom: 3rem;
+  }
+  .hero__index-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
     padding-bottom: 0.875rem;
+  }
+  .hero__count {
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
   }
   .scope-index {
     list-style: none;
@@ -116,10 +152,10 @@ const brandsClaim = publicClaim('marcas-con-las-que-trabajamos');
     border-top: 1px solid var(--color-ink-950);
   }
   .scope-index__row {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto;
     align-items: baseline;
-    justify-content: space-between;
-    gap: 1.25rem;
+    gap: 0.25rem 1.25rem;
     padding-block: 0.8125rem;
     border-bottom: 1px solid var(--color-hairline);
   }
@@ -128,49 +164,56 @@ const brandsClaim = publicClaim('marcas-con-las-que-trabajamos');
     font-weight: 500;
     color: var(--color-ink-950);
   }
-  .scope-index__tier {
-    flex-shrink: 0;
+  .scope-index__brand {
     font-size: 0.8125rem;
-    color: var(--color-ink-500);
+    color: var(--color-teal-800);
+    text-align: right;
   }
-  .hero__brands {
-    margin-top: 1.25rem;
-    font-size: 0.8125rem;
-    color: var(--color-ink-500);
+  /* El tipo de trabajo es la tercera columna sólo cuando hay sitio: en móvil
+     repetiría información que la sección de familias ya agrupa. */
+  .scope-index__work {
+    display: none;
   }
 
   @media (min-width: 768px) {
     .hero__inner {
-      padding-top: 4rem;
-      padding-bottom: 4.5rem;
+      padding-top: 3.5rem;
+      padding-bottom: 3rem;
+    }
+    .scope-index__row {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 13rem) 12rem;
     }
     .scope-index__name {
       font-size: 1.0625rem;
     }
+    .scope-index__brand {
+      text-align: left;
+    }
+    .scope-index__work {
+      display: block;
+      font-size: 0.8125rem;
+      color: var(--color-ink-500);
+      text-align: right;
+      /* Es una etiqueta, no una frase: partida en dos líneas desalinea toda la
+         fila y se lee como si fueran dos datos distintos. */
+      white-space: nowrap;
+    }
   }
 
-  /*
-   * Dos columnas desde 1024 px. Por debajo, el índice de alcance queda bajo el
-   * titular: sigue estando en la primera pantalla larga de un móvil y no
-   * compite con el mensaje.
-   */
   @media (min-width: 1024px) {
     .hero__inner {
-      grid-template-columns: minmax(0, 7fr) minmax(0, 4fr);
-      align-items: end;
-      gap: 4.5rem;
-      padding-top: 5rem;
-      padding-bottom: 6rem;
+      grid-template-columns: minmax(0, 8fr) minmax(0, 3fr);
+      align-items: center;
+      gap: 4rem;
+      padding-top: 4.5rem;
+      padding-bottom: 3.5rem;
     }
-    .hero__scope {
-      padding-bottom: 0.5rem;
+    .hero__mark {
+      display: flex;
+      justify-content: flex-end;
     }
-  }
-  @media (min-width: 1280px) {
-    .hero__inner {
-      gap: 6rem;
-      padding-top: 6rem;
-      padding-bottom: 7rem;
+    .hero__index {
+      padding-bottom: 4.5rem;
     }
   }
 </style>

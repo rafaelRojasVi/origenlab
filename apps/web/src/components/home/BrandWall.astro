@@ -1,6 +1,7 @@
 ---
 import { brandsWallHeading } from '../../data/brands';
 import { getCatalogBrands, getWorkingBrands } from '../../lib/catalog';
+import { scopeById } from '../../data/equipmentScope';
 import BrandLogo from '../ui/BrandLogo.astro';
 import Icon from '../ui/Icon.astro';
 
@@ -10,15 +11,18 @@ import Icon from '../ui/Icon.astro';
  * No es un muro de logotipos igualados: la banda distingue las dos marcas cuyo
  * catálogo se puede consultar aquí, a mayor escala, de las cuatro con las que
  * OrigenLab trabaja y cuya línea todavía no tiene ficha publicada, en una fila
- * más pequeña y sin descripción. Esa jerarquía es la misma que `brands.ts`
- * declara con `catalogPublished`, y describir las cuatro sin datos confirmados
- * está bloqueado en `validate:catalog`.
+ * más pequeña. Esa jerarquía es la misma que `brands.ts` declara con
+ * `catalogPublished`.
+ *
+ * Cada logotipo va acompañado de la familia que fabrica. Esa asociación existe
+ * desde la revisión de marca del 2026-09-06 y antes estaba prohibida: sin ella
+ * el muro era una fila de logotipos que el visitante no podía interpretar.
+ * Sigue sin publicarse el alcance comercial por marca, que es otra pregunta.
  *
  * El encabezado repite literalmente el texto de la firma corporativa. El
- * recuento de seis marcas se declara una sola vez en la página, en el índice
- * de alcance del hero: repetirlo bajo un encabezado que ya dice las mismas
- * palabras no añade evidencia, sólo ruido.
+ * recuento se declara una sola vez en la página, en el índice del hero.
  */
+const withFamily = (brand: { familyId: string }) => scopeById(brand.familyId)?.name;
 const catalogBrands = getCatalogBrands();
 const workingBrands = getWorkingBrands();
 ---
@@ -43,11 +47,12 @@ const workingBrands = getWorkingBrands();
         <ul class="tier__list tier__list--lead">
           {
             catalogBrands.map((brand) => (
-              <li>
+              <li class="tier__cell">
                 <a href={`/marcas/${brand.slug}/`} class="tier__link">
                   <BrandLogo brand={brand} scale={1.5} />
                   <span class="sr-only">{brand.name}</span>
                 </a>
+                <span class="tier__family t-data">{withFamily(brand)}</span>
               </li>
             ))
           }
@@ -59,8 +64,9 @@ const workingBrands = getWorkingBrands();
         <ul class="tier__list tier__list--quiet">
           {
             workingBrands.map((brand) => (
-              <li>
+              <li class="tier__cell">
                 <BrandLogo brand={brand} scale={1.05} />
+                <span class="tier__family t-data">{withFamily(brand)}</span>
               </li>
             ))
           }
@@ -113,10 +119,20 @@ const workingBrands = getWorkingBrands();
   .tier__list--quiet {
     gap: 1.5rem 2.5rem;
   }
-  .tier__list li {
+  .tier__cell {
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
     min-height: 2.75rem;
+  }
+  /* La familia bajo el logotipo: es lo que convierte una fila de marcas en
+     información. Va en monoespaciada y a menor escala para no competir. */
+  .tier__family {
+    /* 13 px es el suelo del sitio: por debajo, `qa:screens` lo marca y en un
+       móvil deja de leerse cómodamente. */
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
   }
   .tier__link {
     display: flex;

@@ -2,7 +2,7 @@
 import Layout from '../layouts/Layout.astro';
 import Hero from '../components/home/Hero.astro';
 import BrandWall from '../components/home/BrandWall.astro';
-import ScopeSection from '../components/home/ScopeSection.astro';
+import EquipmentFamilies from '../components/home/EquipmentFamilies.astro';
 import ConsultationSection from '../components/home/ConsultationSection.astro';
 import ProcessSection from '../components/home/ProcessSection.astro';
 import AudienceSection from '../components/home/AudienceSection.astro';
@@ -21,9 +21,10 @@ import { organizationJsonLd, websiteJsonLd } from '../lib/jsonld';
  *
  * Ritmo de la página, deliberadamente desigual:
  *
- *   papel     hero tipográfico, la escala mayor del sitio
- *   superficie marcas, compacto
- *   papel     alcance, tres composiciones distintas y la única fotografía
+ *   papel     hero: titular, marca animada e índice de las seis familias
+ *   superficie marcas, compacto, cada logotipo con su familia
+ *   papel     familias: cuatro composiciones distintas
+ *   superficie   dentro de ellas, la banda de preparación cambia de fondo
  *   papel     asesoría técnica, aire y preguntas a gran escala
  *   superficie proceso, denso
  *   papel     a quién atendemos, medio
@@ -44,7 +45,7 @@ import { organizationJsonLd, websiteJsonLd } from '../lib/jsonld';
 >
   <Hero />
   <BrandWall />
-  <ScopeSection />
+  <EquipmentFamilies />
   <ConsultationSection />
   <ProcessSection />
   <AudienceSection />

@@ -76,17 +76,17 @@ for (const file of walk(join(root, 'src'), '.astro')) {
 /* -- 2. Marcas ----------------------------------------------------------- */
 
 const brandBlocks = brandsSrc.split(/\n  \{\n/).slice(1);
-assert(brandBlocks.length >= 6, 'brands.ts: se esperan al menos las 6 marcas de la firma corporativa');
+assert(brandBlocks.length === 6, `brands.ts: se esperan exactamente 6 marcas, hay ${brandBlocks.length}`);
 
-const signature = read('public/email/origenlab-contacto-signature.html');
-assert(
-  signature.includes('Marcas con las que trabajamos'),
-  'La firma corporativa ya no contiene el texto que respalda el muro de marcas',
-);
+// La lista cerrada, la ortografía de los nombres y la correspondencia con los
+// logotipos y el registro de fuentes las comprueba `validate:brands`. Aquí sólo
+// se miran los contratos de datos de cada registro.
 assert(
   brandsSrc.includes("brandsWallHeading = 'Marcas con las que trabajamos'"),
   'brands.ts: el encabezado del muro debe repetir literalmente el texto verificado de la firma',
 );
+
+const registrySrc = read('src/data/sourceRegistry.ts');
 
 for (const block of brandBlocks) {
   const id = block.match(/id: '([^']+)'/)?.[1];
@@ -105,8 +105,23 @@ for (const block of brandBlocks) {
   assert(/logoWidth: \d+/.test(block), `${id}: falta logoWidth (evita CLS)`);
   assert(/logoHeight: \d+/.test(block), `${id}: falta logoHeight (evita CLS)`);
   assert(/logoDisplayHeight: \d+/.test(block), `${id}: falta logoDisplayHeight (equilibrio óptico del muro)`);
-  assert(/logoSourceUrl: '?\n?\s*'?https/.test(block) || /logoSourceUrl:/.test(block), `${id}: falta la procedencia del logotipo`);
-  assert(/websiteUrl: 'https:/.test(block), `${id}: falta websiteUrl del fabricante`);
+  // La procedencia del logotipo vive ahora en el registro de fuentes, junto con
+  // la base por la que puede publicarse; tenerla en dos sitios la dejaba
+  // desincronizada.
+  assert(
+    new RegExp(`brandId: '${id}'`).test(registrySrc),
+    `${id}: sin fila en src/data/sourceRegistry.ts (procedencia del logotipo y de la imagen)`,
+  );
+  // El enlace al fabricante va por https salvo excepción declarada.
+  assert(
+    /websiteUrl: 'https:/.test(block) || /websiteInsecure: true/.test(block),
+    `${id}: websiteUrl no es https y no declara websiteInsecure`,
+  );
+
+  // Qué fabrica cada marca lo confirmó el negocio el 2026-09-06: es lo que
+  // permite nombrar la familia junto al logotipo.
+  assert(/familyId: '[^']+'/.test(block), `${id}: falta familyId`);
+  assert(/listSummary:/.test(block), `${id}: falta listSummary (qué fabrica, en una línea)`);
 
   if (published) {
     assert(/summary:/.test(block), `${id}: una marca con catálogo publicado necesita summary`);
@@ -116,10 +131,11 @@ for (const block of brandBlocks) {
       `${id}: catalogPublished sin productos en products.ts`,
     );
   } else {
-    // Sin datos confirmados no se describe la marca: sólo logotipo y enlace.
+    // El alcance comercial por marca sigue sin confirmar: se puede decir qué
+    // fabrica, no en qué condiciones la vende OrigenLab.
     assert(
-      !/summary:|listSummary:|commercialNote:/.test(block),
-      `${id}: marca sin catálogo publicado no debe llevar descripción propia (ver docs/design/CONTENT_NEEDED.md)`,
+      !/\n    summary:|commercialNote:/.test(block),
+      `${id}: marca sin catálogo publicado no puede declarar summary ni commercialNote (ver docs/design/CONTENT_NEEDED.md)`,
     );
   }
   assert(name, `${id}: falta name`);

@@ -9,6 +9,9 @@
 | Business facts, copy, categories, contact | `src/data/*` (`company`, `contact`, `categories`, `services`, `brands`, `faq`, `documents`) |
 | Cifras públicas: redacción, fuente, aprobación | `src/data/claims.ts` (usar `publicClaim(id)`, nunca el arreglo) |
 | Alcance de equipamiento por familia | `src/data/equipmentScope.ts` |
+| Marcas publicadas (lista cerrada de seis) | `src/data/brands.ts` (`APPROVED_BRAND_IDS`) |
+| Fuente oficial, PDF, procedencia y permiso de imagen | `src/data/sourceRegistry.ts` |
+| Sistema de marca: construcción, colores, animación | `docs/logo-system.md` |
 | Asesoría técnica y hechos de la especialista | `src/data/consultation.ts` |
 | Estado legal y datos de identidad pendientes | `src/data/legal.ts` |
 | Deploy, `dist/`, HostGator | `docs/deployment.md` |
@@ -20,8 +23,10 @@
 | Company scope & quotation prompt | `docs/company-scope.md` |
 
 Stack: Astro + Tailwind v4, static site, Spanish-first. Build: `npm run build` → `dist/`.
-Full gate before declaring work done: `npm run validate` (check + build + catalog + dist),
-then `npm run qa:screens` for the visual and accessibility pass.
+Full gate before declaring work done: `npm run validate` (check + build + catalog +
+brands + dist + contrast + interaction), then `npm run qa:screens` for the visual
+and accessibility pass. `npm run verify:sources` comprueba los enlaces externos
+contra la red y por eso queda fuera de `validate`.
 
 Two hard constraints beyond the content rules:
 
@@ -31,6 +36,18 @@ Two hard constraints beyond the content rules:
 - **One design system.** Colors, radii, spacing and type roles come from the
   tokens in `src/styles/global.css`; group with hairlines and space, not cards.
   Read `docs/design/DESIGN_SYSTEM.md` before adding a component.
+
+**Las marcas son una lista cerrada de seis.** `APPROVED_BRAND_IDS` en
+`src/data/brands.ts` es la única lista que el sitio público puede mostrar, y
+`validate:brands` la comprueba en `brands.ts`, en `public/brands/`, en
+`src/data/sourceRegistry.ts` y en el HTML de `dist/`. Añadir o quitar una marca
+exige confirmación escrita del negocio.
+
+**Ninguna imagen de fabricante se publica sin procedencia y permiso en
+`src/data/sourceRegistry.ts`.** Que una imagen sea visible en público no implica
+permiso de reutilización, no se rehospedan PDF del fabricante y jamás se ilustra
+una marca con el equipo de otra. Las familias sin fotografía autorizada se
+componen con el diagrama de `src/lib/familyMotif.ts`.
 
 Do not invent brands, certifications, specs, lead times, or warranty details not in data or docs.
 

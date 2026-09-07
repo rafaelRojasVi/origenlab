@@ -52,9 +52,23 @@ export const claims: readonly Claim[] = [
     text: '6 marcas con las que trabajamos',
     value: 6,
     source:
-      'src/data/brands.ts (6 registros) y public/email/origenlab-contacto-signature.html, que publica esos mismos 6 logotipos bajo el texto verificado',
+      'src/data/brands.ts: APPROVED_BRAND_IDS tiene 6 entradas y validate:brands comprueba que el sitio construido no publique ninguna otra. La lista la fijó el negocio en la revisión de marca del 2026-09-06',
     measuredOn: '2026-09-06',
-    approvedBy: 'Negocio, revisión de portada del 2026-09-06',
+    approvedBy: 'Negocio, revisión de marca y portada del 2026-09-06',
+    approvedOn: '2026-09-06',
+    status: 'approved',
+    visibility: 'public',
+    note:
+      'La firma de correo corporativa publica otras seis marcas: sigue mostrando Ollital y CRTOP, y no incluye a Adam Equipment ni a Löser. Dejó de ser fuente de esta cifra en la revisión del 2026-09-06 y hay que regenerarla; registrado en docs/design/CONTENT_NEEDED.md.',
+  },
+  {
+    id: 'familias-de-equipo',
+    text: '6 familias de equipo',
+    value: 6,
+    source:
+      'src/data/equipmentScope.ts: 6 entradas, una por marca aprobada, con la correspondencia declarada en brands.ts (familyId) y comprobada por validate:brands',
+    measuredOn: '2026-09-06',
+    approvedBy: 'Negocio, revisión de marca y portada del 2026-09-06',
     approvedOn: '2026-09-06',
     status: 'approved',
     visibility: 'public',

@@ -59,6 +59,11 @@ const whatsappHref = buildWhatsAppQuoteUrl();
           <p class="t-data specialist__role">
             {consultant.profession}. {consultant.role} de {consultant.company}.
           </p>
+          <!--
+            Tres canales, un solo número. WhatsApp se nombra por el canal y no
+            repite la cifra: con el número en las dos filas, la misma sección lo
+            mostraba dos veces con dos formatos y obligaba a elegir.
+          -->
           <ul class="specialist__channels">
             <li>
               <a href={`mailto:${contact.email}`}>
@@ -67,7 +72,7 @@ const whatsappHref = buildWhatsAppQuoteUrl();
             </li>
             <li>
               <a href={whatsappHref} target="_blank" rel="noopener noreferrer">
-                <Icon name="whatsapp" size={18} />WhatsApp {contact.phoneDisplay}
+                <Icon name="whatsapp" size={18} />WhatsApp
                 <span class="sr-only">(abre WhatsApp en una pestaña nueva)</span>
               </a>
             </li>
