@@ -4,99 +4,93 @@ import PageIntro from '../components/ui/PageIntro.astro';
 import SectionIndex from '../components/ui/SectionIndex.astro';
 import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
 import BrandLogo from '../components/ui/BrandLogo.astro';
-import ExternalLink from '../components/ui/ExternalLink.astro';
 import Notice from '../components/ui/Notice.astro';
 import Icon from '../components/ui/Icon.astro';
-import { brandsWallHeading } from '../data/brands';
-import { getCatalogBrands, getProductsByBrandId, getWorkingBrands } from '../lib/catalog';
+import { brands, brandsWallHeading } from '../data/brands';
+import { productCountForBrand } from '../lib/catalog';
+import { modelsForBrand } from '../data/brandModels';
 import { scopeById } from '../data/equipmentScope';
-import { sourceForBrand } from '../data/sourceRegistry';
 
-const catalogBrands = getCatalogBrands();
-const workingBrands = getWorkingBrands().map((brand) => ({
+/**
+ * Índice de marcas. Seis filas, un peso.
+ *
+ * La versión anterior partía la página en dos secciones, «con catálogo
+ * publicado» y «también trabajamos con», y ponía a cuatro marcas en la segunda
+ * a menor escala. Esa jerarquía describía el estado del repositorio, no el del
+ * negocio: las cinco familias de maquinaria pesan igual, y ahora las seis
+ * tienen página con el mismo estándar.
+ *
+ * Lo que sí se dice de cada una, porque es cierto y es lo que el visitante
+ * necesita: cuántas referencias tienen ficha propia aquí y cuántos modelos se
+ * describen con la documentación del fabricante. Son dos cosas distintas y se
+ * cuentan por separado.
+ *
+ * SERVA va última, como en toda lista del sitio: es la única línea de reactivos
+ * e insumos y puesta antes desplazaría a las familias de equipo.
+ */
+const rows = brands.map((brand) => ({
   brand,
   family: scopeById(brand.familyId),
-  source: sourceForBrand(brand.id),
+  fichas: productCountForBrand(brand.id),
+  documentados: modelsForBrand(brand.id).length,
 }));
 ---
 
 <Layout
   title="Marcas"
-  description="Marcas con las que trabaja OrigenLab: Hielscher, Ortoalresa, IKA, Adam Equipment, Löser y SERVA. Catálogo, condiciones y cotización."
+  description="Marcas con las que trabaja OrigenLab: Hielscher, Ortoalresa, IKA, Adam Equipment, Löser y SERVA. Catálogo, documentación y cotización."
 >
   <div class="shell">
     <PageIntro
       title="Marcas"
-      lead="Dos marcas con catálogo publicado en este sitio y cuatro más con las que trabajamos por cotización. La disponibilidad, la documentación técnica y las condiciones se confirman al cotizar."
+      lead="Seis fabricantes, cada uno con su página, su familia de equipo y sus modelos documentados desde la fuente oficial. La disponibilidad, la documentación técnica y las condiciones se confirman al cotizar."
       crumbs={[{ label: 'Marcas' }]}
     />
   </div>
 
-  <section class="shell section rule-top" aria-labelledby="catalogo-title">
-    <SectionIndex index={1} label="Con catálogo publicado" />
-    <h2 id="catalogo-title" class="t-h2">Productos que puede ver en detalle</h2>
+  <section class="shell section rule-top" aria-labelledby="marcas-title">
+    <SectionIndex index={1} label={brandsWallHeading} />
+    <h2 id="marcas-title" class="t-h2">Con quién trabajamos, y qué fabrica cada uno</h2>
+    <p class="t-lead mt-5">
+      Es una lista cerrada. Una comprobación automática impide que una séptima marca aparezca en
+      cualquier página, en el buscador, en el mapa del sitio o en el pie sin pasar por la
+      confirmación del negocio.
+    </p>
 
     <ul class="brand-rows">
       {
-        catalogBrands.map((brand) => {
-          const count = getProductsByBrandId(brand.id).length;
-          return (
-            <li class="brand-row">
-              <a href={`/marcas/${brand.slug}/`}>
-                <span class="brand-row__logo">
-                  <BrandLogo brand={brand} scale={1.4} />
-                </span>
-                <span class="brand-row__body">
-                  <span class="brand-row__name" translate="no">{brand.name}</span>
-                  {brand.legalName && <span class="brand-row__legal">{brand.legalName}</span>}
-                  <span class="brand-row__summary t-small">{brand.listSummary ?? brand.summary}</span>
-                </span>
-                <span class="brand-row__count">
-                  <span class="brand-row__count-value t-data">{count}</span>
-                  <span class="brand-row__count-label">
-                    {count === 1 ? 'referencia publicada' : 'referencias publicadas'}
+        rows.map(({ brand, family, fichas, documentados }) => (
+          <li class="brand-row">
+            <a href={`/marcas/${brand.slug}/`}>
+              <span class="brand-row__logo">
+                <BrandLogo brand={brand} scale={1.4} />
+              </span>
+              <span class="brand-row__body">
+                <span class="brand-row__name" translate="no">{brand.name}</span>
+                {brand.legalName && <span class="brand-row__legal">{brand.legalName}</span>}
+                <span class="brand-row__summary t-small">{brand.listSummary}</span>
+                {family && <span class="brand-row__family t-data">{family.name}</span>}
+              </span>
+              <span class="brand-row__count">
+                {documentados > 0 && (
+                  <span class="brand-row__stat">
+                    <span class="brand-row__count-value t-data">{documentados}</span>
+                    <span class="brand-row__count-label">
+                      {documentados === 1 ? 'modelo documentado' : 'modelos documentados'}
+                    </span>
                   </span>
-                </span>
-                <Icon name="arrow-right" size={20} class="brand-row__go" />
-              </a>
-            </li>
-          );
-        })
-      }
-    </ul>
-  </section>
-
-  <section class="shell section rule-top" aria-labelledby="trabajamos-title">
-    <SectionIndex index={2} label="Otras marcas" />
-    <h2 id="trabajamos-title" class="t-h2">{brandsWallHeading}</h2>
-    <p class="t-lead mt-5">
-      Fabricantes que forman parte de nuestro trabajo comercial y que aún no tienen catálogo
-      publicado en el sitio. Se indica qué fabrica cada uno y se enlaza su documentación oficial.
-      Consulte por equipos o insumos de estas líneas y le indicamos qué podemos gestionar.
-    </p>
-
-    <ul class="working-list">
-      {
-        workingBrands.map(({ brand, family, source }) => (
-          <li class="working">
-            <span class="working__logo">
-              <BrandLogo brand={brand} scale={1.5} />
-            </span>
-            <span class="working__name" translate="no">{brand.name}</span>
-            {family && <span class="working__family t-data">{family.name}</span>}
-            <span class="t-small working__summary">{brand.listSummary}</span>
-            <span class="working__links">
-              {source && (
-                <ExternalLink href={source.officialUrl} context={`productos de ${brand.name}`}>
-                  Productos del fabricante
-                </ExternalLink>
-              )}
-              {source?.officialPdfUrl && (
-                <ExternalLink href={source.officialPdfUrl} context={`catálogo PDF de ${brand.name}`}>
-                  Catálogo PDF del fabricante
-                </ExternalLink>
-              )}
-            </span>
+                )}
+                {fichas > 0 && (
+                  <span class="brand-row__stat">
+                    <span class="brand-row__count-value t-data">{fichas}</span>
+                    <span class="brand-row__count-label">
+                      {fichas === 1 ? 'ficha en el sitio' : 'fichas en el sitio'}
+                    </span>
+                  </span>
+                )}
+              </span>
+              <Icon name="arrow-right" size={20} class="brand-row__go" />
+            </a>
           </li>
         ))
       }
@@ -105,12 +99,13 @@ const workingBrands = getWorkingBrands().map((brand) => ({
     <Notice class="mt-12">
       OrigenLab no declara representación oficial, distribución exclusiva ni certificación de
       ninguna de estas marcas. El alcance comercial de cada línea se confirma por escrito al
-      cotizar.
+      cotizar. Los datos de producto se redactaron desde la documentación pública de cada
+      fabricante y la fuente se enlaza en cada modelo.
     </Notice>
   </section>
 
   <ClosingQuoteBand
-    index={3}
+    index={2}
     title="¿Busca una marca o un modelo concreto?"
     body="Indíquenos la marca, el modelo de referencia y para qué laboratorio es. Le confirmamos qué podemos gestionar y en qué condiciones."
   />
@@ -171,8 +166,17 @@ const workingBrands = getWorkingBrands().map((brand) => ({
     color: var(--color-ink-600);
     max-width: 56ch;
   }
-  .brand-row__count {
+  .brand-row__family {
     display: block;
+    margin-top: 0.5rem;
+    /* 13 px es el suelo del sitio: por debajo, `qa:screens` lo marca. */
+    font-size: 0.8125rem;
+    color: var(--color-teal-800);
+  }
+  .brand-row__count {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem 2rem;
     margin-top: 1.25rem;
     padding-top: 0.75rem;
     border-top: 1px solid var(--color-hairline);
@@ -202,61 +206,9 @@ const workingBrands = getWorkingBrands().map((brand) => ({
     color: var(--color-teal-800);
   }
 
-  .working-list {
-    list-style: none;
-    margin: 3rem 0 0;
-    padding: 0;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 2.5rem 2rem;
-  }
-  .working {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.625rem;
-    min-width: 0;
-    padding-top: 1.5rem;
-    border-top: 1px solid var(--color-hairline);
-  }
-  .working__logo {
-    /* Caja común: los lockups tienen proporciones muy distintas y sin una altura
-       compartida la fila se lee desalineada. */
-    display: flex;
-    align-items: center;
-    min-height: 3.25rem;
-    max-width: 100%;
-    margin-bottom: 0.375rem;
-  }
-  .working__name {
-    font-size: 1.0625rem;
-    font-weight: 600;
-    color: var(--color-ink-950);
-    letter-spacing: -0.012em;
-  }
-  .working__family {
-    /* 13 px es el suelo del sitio: por debajo, `qa:screens` lo marca y en un
-       móvil deja de leerse cómodamente. */
-    font-size: 0.8125rem;
-    color: var(--color-teal-800);
-  }
-  .working__summary {
-    color: var(--color-ink-600);
-    max-width: 40ch;
-  }
-  /* Los dos enlaces oficiales, apilados: son destinos externos y conviene que
-     se lean como una lista corta y no como una frase con dos enlaces dentro. */
-  .working__links {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.375rem;
-    margin-top: 0.5rem;
-  }
-
   @media (min-width: 768px) {
     .brand-row a {
-      grid-template-columns: 13rem minmax(0, 1fr) 9rem 2rem;
+      grid-template-columns: 13rem minmax(0, 1fr) 11rem 2rem;
       align-items: center;
       gap: 3rem;
       padding-block: 2.5rem;
@@ -271,22 +223,20 @@ const workingBrands = getWorkingBrands().map((brand) => ({
     .brand-row__count {
       grid-column: 3;
       grid-row: auto;
+      display: grid;
+      gap: 0.875rem;
       margin-top: 0;
       padding-top: 0;
       border-top: none;
       text-align: right;
+      justify-items: end;
     }
     .brand-row__count-label {
-      max-width: 7rem;
-      margin-left: auto;
+      max-width: 8rem;
     }
     .brand-row__go {
       grid-column: 4;
       grid-row: auto;
-    }
-    .working-list {
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 3rem;
     }
   }
 </style>

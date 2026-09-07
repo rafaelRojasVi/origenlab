@@ -4,21 +4,56 @@ import PageIntro from '../../components/ui/PageIntro.astro';
 import SectionIndex from '../../components/ui/SectionIndex.astro';
 import ModelList from '../../components/ui/ModelList.astro';
 import ModelRow from '../../components/ui/ModelRow.astro';
+import ModelSheet from '../../components/ui/ModelSheet.astro';
 import SkuList from '../../components/ui/SkuList.astro';
 import ClosingQuoteBand from '../../components/ui/ClosingQuoteBand.astro';
 import BrandLogo from '../../components/ui/BrandLogo.astro';
 import ExternalLink from '../../components/ui/ExternalLink.astro';
+import Notice from '../../components/ui/Notice.astro';
 import Icon from '../../components/ui/Icon.astro';
+import FamilyMotif from '../../components/home/FamilyMotif.astro';
 import {
   getBrandBySlug,
-  getCatalogBrands,
+  getEditorialBrands,
   getProductsByBrandId,
   productPageHref,
 } from '../../lib/catalog';
 import { productFamilies } from '../../data/productFamilies';
+import { familyDocsFor, modelsForBrand } from '../../data/brandModels';
+import { scopeById } from '../../data/equipmentScope';
+import { applicationsForFamily } from '../../data/applications';
+import { sourceForBrand } from '../../data/sourceRegistry';
 
+/**
+ * Página de marca. Las seis.
+ *
+ * Hasta la revisión del 2026-09-07 sólo existían dos, porque una sola bandera
+ * (`catalogPublished`) decidía a la vez si había página y si se podía describir
+ * el alcance comercial. Con eso, cuatro familias de equipo enteras no tenían
+ * ninguna página que las explicara y la portada las nombraba sin destino.
+ *
+ * Ahora las seis tienen página y el estándar de calidad es el mismo: qué
+ * fabrica y cómo, la familia de equipo, los modelos con la documentación del
+ * fabricante, la condición comercial que corresponda y las tareas de
+ * laboratorio que esa marca resuelve.
+ *
+ * Lo que **no** es igual es la composición. `brand.layout` da a cada marca una
+ * disposición distinta, porque seis páginas idénticas con el nombre cambiado se
+ * leen como un formulario y no como un catálogo:
+ *
+ *   escala       Hielscher   escalera de potencia antes de los modelos
+ *   fotografia   Ortoalresa  la fotografía aprobada manda; filas con imagen
+ *   mecanismo    IKA         el diagrama del principio abre la sección
+ *   medicion     Adam        rejilla de capacidad y legibilidad como entrada
+ *   instrumento  Löser       lo que comparten los cuatro, y luego lo que cambia
+ *   sistema      SERVA       equipos y consumible, con la advertencia de encaje
+ *
+ * La condición comercial es lo único que sigue dependiendo de la confirmación
+ * del negocio: sin ella la página dice qué fabrica el fabricante y que
+ * OrigenLab cotiza la línea, nunca en qué calidad.
+ */
 export function getStaticPaths() {
-  return getCatalogBrands().map((brand) => ({ params: { slug: brand.slug } }));
+  return getEditorialBrands().map((brand) => ({ params: { slug: brand.slug } }));
 }
 
 const { slug } = Astro.params;
@@ -32,16 +67,67 @@ const skuOnly = products.filter((product) => productPageHref(product) === undefi
 const family = productFamilies.find((item) =>
   withPages.some((product) => product.productFamilySlug === item.slug),
 );
+
+const models = modelsForBrand(brand.id);
+const scope = scopeById(brand.familyId);
+const familyDocs = familyDocsFor(brand.familyId);
+const source = sourceForBrand(brand.id);
+const tasks = applicationsForFamily(brand.familyId);
+
+/** Una disposición por marca. Ver la cabecera. */
+const layout = brand.layout;
+const sheetVariant =
+  layout === 'mecanismo' || layout === 'medicion' ? 'split' : layout === 'instrumento' ? 'compact' : 'stack';
+
+/**
+ * Escalera de potencia (sólo Hielscher). Se deriva del criterio «Potencia» de
+ * cada modelo: si un día cambia el dato, cambia la escalera. No se escribe a
+ * mano en la plantilla.
+ */
+const powerLadder =
+  layout === 'escala'
+    ? models.map((model) => ({
+        name: model.name,
+        value: model.criteria.find((criterion) => criterion.label === 'Potencia')?.value,
+      }))
+    : [];
+
+/** Rejilla de entrada de Adam: capacidad y legibilidad, que es lo que se compara. */
+const measurementGrid =
+  layout === 'medicion'
+    ? models.map((model) => ({
+        name: model.name,
+        capacity:
+          model.criteria.find((criterion) => criterion.label === 'Capacidad')?.value ??
+          model.criteria.find((criterion) => criterion.label === 'Capacidad y legibilidad')?.value,
+        readability: model.criteria.find((criterion) => criterion.label === 'Legibilidad')?.value,
+      }))
+    : [];
+
+/** Lo que comparten los cuatro instrumentos Löser, dicho una sola vez. */
+const sharedInstrumentFacts =
+  layout === 'instrumento'
+    ? [
+        { label: 'Principio', value: 'Descenso del punto de congelación' },
+        { label: 'Volumen de muestra', value: 'De 50 a 200 µl según instrumento' },
+        { label: 'Tiempo de medición', value: 'Aprox. minuto y medio' },
+        { label: 'Servicios', value: 'Sin suministro de agua; 100 a 230 V' },
+      ]
+    : [];
+
+const equipmentSectionLabel =
+  layout === 'fotografia'
+    ? 'Modelos disponibles'
+    : layout === 'sistema'
+      ? 'Equipos y consumibles'
+      : 'Modelos documentados';
 ---
 
-<Layout
-  title={brand.name}
-  description={brand.metaDescription ?? `${brand.name}. Cotización y condiciones comerciales a través de OrigenLab, con atención en todo Chile.`}
->
+<Layout title={brand.name} description={brand.metaDescription}>
   <div class="shell">
     <PageIntro
       title={brand.name}
-      lead={brand.pageSubtitle ?? brand.summary}
+      lead={brand.pageSubtitle}
       crumbs={[{ label: 'Marcas', href: '/marcas/' }, { label: brand.name }]}
     >
       <div slot="aside">
@@ -58,37 +144,66 @@ const family = productFamilies.find((item) =>
         {brand.legalName && <p class="t-small brand-intro__legal">{brand.legalName}</p>}
         <p class="t-body brand-intro__text">{brand.summary}</p>
         {brand.brandIntro && <p class="t-body">{brand.brandIntro}</p>}
-        {brand.manufacturerAttribution && (
-          <p class="t-small brand-intro__attr">{brand.manufacturerAttribution}</p>
-        )}
-        {brand.websiteUrl && (
-          <p class="brand-intro__site">
-            <ExternalLink href={brand.websiteUrl} context="sitio del fabricante">
-              Sitio del fabricante
-            </ExternalLink>
-          </p>
-        )}
+        <p class="t-small brand-intro__attr">{brand.manufacturerAttribution}</p>
+        <p class="brand-intro__site">
+          <ExternalLink href={brand.websiteUrl} context="sitio del fabricante">
+            Sitio del fabricante
+          </ExternalLink>
+        </p>
       </div>
 
-      {
-        brand.applicationAreas && brand.applicationAreas.length > 0 && (
-          <div class="areas">
-            <h3 class="t-label areas__title">Áreas de aplicación</h3>
-            <ul class="areas__list">
-              {brand.applicationAreas.map((area) => <li>{area}</li>)}
-            </ul>
-          </div>
-        )
-      }
+      <div class="aside-stack">
+        {
+          scope && (
+            <div class="aside-block">
+              <h3 class="t-label aside-block__title">Familia de equipo</h3>
+              <p class="aside-block__lead">{scope.name}</p>
+              <p class="t-small aside-block__body">{scope.purpose}</p>
+            </div>
+          )
+        }
+        <div class="aside-block">
+          <h3 class="t-label aside-block__title">Áreas de aplicación</h3>
+          <ul class="areas__list">
+            {brand.applicationAreas.map((area) => <li>{area}</li>)}
+          </ul>
+        </div>
+      </div>
     </div>
   </section>
 
-  {
-    withPages.length > 0 && (
-      <section class="shell section rule-top" aria-labelledby="modelos-title">
-        <SectionIndex index={2} label="Modelos disponibles" />
+  <section class="shell section rule-top" aria-labelledby="equipos-title">
+    <SectionIndex index={2} label={equipmentSectionLabel} />
+
+    <!-- Entrada de sección: distinta por marca. Es lo que evita seis páginas iguales. -->
+    {
+      layout === 'escala' && (
+        <div class="lead-in">
+          <div>
+            <h2 id="equipos-title" class="t-h2">Una sola técnica, cuatro escalas</h2>
+            <p class="t-lead mt-5">
+              Los cuatro equipos hacen lo mismo con la muestra. Lo que cambia es la potencia, y con
+              ella el volumen que se puede tratar de una vez. Elegir es situarse en esta escalera.
+            </p>
+          </div>
+          <ol class="ladder" aria-label="Escalera de potencia de los modelos publicados">
+            {powerLadder.map((step) => (
+              <li class="ladder__step">
+                <span class="ladder__name" translate="no">{step.name}</span>
+                {step.value && <span class="ladder__value t-data">{step.value}</span>}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )
+    }
+
+    {
+      layout === 'fotografia' && (
         <div class="models-head">
-          <h2 id="modelos-title" class="t-h2">{withPages.length} modelos en catálogo</h2>
+          <h2 id="equipos-title" class="t-h2">
+            {withPages.length} modelos con ficha publicada
+          </h2>
           {family && (
             <a href={`/productos/${family.slug}/`} class="link-arrow">
               Ver la familia y la comparativa
@@ -96,40 +211,194 @@ const family = productFamilies.find((item) =>
             </a>
           )}
         </div>
+      )
+    }
+
+    {
+      layout === 'mecanismo' && (
+        <div class="lead-in lead-in--motif">
+          <div class="lead-in__motif">
+            <FamilyMotif familyId={brand.familyId} />
+          </div>
+          <div>
+            <h2 id="equipos-title" class="t-h2">Rotor, estátor y la herramienta que elija</h2>
+            <p class="t-lead mt-5">
+              El equipo aporta el motor y el rango de revoluciones. El resultado lo decide la
+              herramienta dispersora que se monta en él, y esa se cotiza aparte. Los tres modelos se
+              distinguen por el volumen que aceptan y por la serie de herramientas que admiten.
+            </p>
+          </div>
+        </div>
+      )
+    }
+
+    {
+      layout === 'medicion' && (
+        <div class="lead-in">
+          <div>
+            <h2 id="equipos-title" class="t-h2">Se compara por legibilidad, no por capacidad</h2>
+            <p class="t-lead mt-5">
+              Las tres familias publicadas cubren tres trabajos distintos. La entrada a la
+              conversación es siempre la misma cifra: qué resolución exige el método.
+            </p>
+          </div>
+          <dl class="grid-facts">
+            {measurementGrid.map((row) => (
+              <div class="grid-facts__row">
+                <dt translate="no">{row.name}</dt>
+                <dd>
+                  {row.capacity}
+                  {row.readability && <span class="grid-facts__second">{row.readability}</span>}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )
+    }
+
+    {
+      layout === 'instrumento' && (
+        <div class="lead-in">
+          <div>
+            <h2 id="equipos-title" class="t-h2">La medición no cambia; el registro sí</h2>
+            <p class="t-lead mt-5">
+              Los cuatro instrumentos comparten volumen de muestra, tiempo y reproducibilidad. Por
+              eso la elección no se juega en la exactitud sino en cuánto tiene que quedar
+              documentado de cada medición.
+            </p>
+          </div>
+          <dl class="grid-facts">
+            {sharedInstrumentFacts.map((fact) => (
+              <div class="grid-facts__row">
+                <dt>{fact.label}</dt>
+                <dd>{fact.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )
+    }
+
+    {
+      layout === 'sistema' && (
+        <div class="lead-in">
+          <div>
+            <h2 id="equipos-title" class="t-h2">La cubeta, la fuente y el consumible</h2>
+            <p class="t-lead mt-5">
+              Tres piezas que tienen que encajar. Se publican juntas a propósito: una cubeta sin la
+              fuente que su formato pide no resuelve la corrida, y el consumible de montaje es lo
+              que la hace repetible.
+            </p>
+          </div>
+        </div>
+      )
+    }
+
+    <!-- Modelos con ficha propia: sólo Ortoalresa tiene fotografía aprobada. -->
+    {
+      withPages.length > 0 && (
         <ModelList class="mt-6">
           {withPages.map((product) => <ModelRow product={product} size="compact" />)}
         </ModelList>
-      </section>
-    )
-  }
+      )
+    }
 
-  {
-    skuOnly.length > 0 && (
-      <section class="shell section rule-top" aria-labelledby="referencias-title">
-        <SectionIndex index={2} label="Referencias" />
-        <h2 id="referencias-title" class="t-h2">Referencias disponibles para cotización</h2>
-        <p class="t-lead mt-5">
-          Estas referencias se cotizan por pedido y no tienen ficha técnica propia en el sitio;
-          la documentación se entrega durante la cotización.
-        </p>
-        <SkuList products={skuOnly} withApplication class="mt-10" />
-      </section>
-    )
-  }
+    <!-- Modelos documentados desde la fuente oficial, sin ficha interna. -->
+    {
+      models.length > 0 && (
+        <ul class:list={['sheets', withPages.length > 0 && 'sheets--after']}>
+          {models.map((model) => (
+            <ModelSheet model={model} variant={sheetVariant} headingLevel={3} />
+          ))}
+        </ul>
+      )
+    }
 
-  {
-    brand.commercialNote && (
-      <section class="shell section rule-top" aria-labelledby="condiciones-title">
-        <SectionIndex index={3} label="Condiciones comerciales" />
-        <h2 id="condiciones-title" class="t-h2">Cómo trabajamos esta línea</h2>
+    {
+      skuOnly.length > 0 && (
+        <div class="skus">
+          <h3 class="t-h3 skus__title">Consumibles con ficha publicada</h3>
+          <p class="t-small skus__lead">
+            Se cotizan por pedido y la documentación se entrega durante la cotización.
+          </p>
+          <SkuList products={skuOnly} withApplication class="mt-6" />
+        </div>
+      )
+    }
+
+    {
+      familyDocs && (
+        <div class="family-docs">
+          <h3 class="t-label family-docs__title">Documentación de la familia</h3>
+          <div class="family-docs__links">
+            <ExternalLink href={familyDocs.officialUrl} context={`catálogo de ${brand.name}`}>
+              Catálogo del fabricante
+            </ExternalLink>
+            {familyDocs.officialPdfUrl && (
+              <ExternalLink href={familyDocs.officialPdfUrl} context={`PDF de ${brand.name}`}>
+                Catálogo PDF del fabricante
+              </ExternalLink>
+            )}
+          </div>
+          {familyDocs.note && <p class="t-small family-docs__note">{familyDocs.note}</p>}
+        </div>
+      )
+    }
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="condiciones-title">
+    <SectionIndex index={3} label="Cómo trabajamos esta línea" />
+    <h2 id="condiciones-title" class="t-h2">
+      {brand.commercialScopeConfirmed ? 'Condiciones confirmadas' : 'Qué podemos decir hoy'}
+    </h2>
+    {
+      brand.commercialScopeConfirmed ? (
         <p class="t-body conditions">{brand.commercialNote}</p>
+      ) : (
+        <p class="t-body conditions">
+          OrigenLab cotiza esta línea y puede acotar alternativas con usted a partir de su
+          aplicación. El alcance comercial formal de la marca todavía no está confirmado por
+          escrito, así que esta página no lo describe: la disponibilidad, el plazo y las condiciones
+          se confirman al cotizar, caso por caso.
+        </p>
+      )
+    }
+    <Notice class="mt-8">
+      OrigenLab no declara representación oficial, distribución exclusiva ni certificación de esta
+      marca. Los datos de producto de esta página se redactaron desde la documentación pública del
+      fabricante y se enlaza la fuente en cada modelo.
+      {source?.status === 'ASSET_PERMISSION_NEEDED' &&
+        ' No se publica fotografía de equipo de esta marca: falta el permiso de reproducción documentado.'}
+    </Notice>
+  </section>
+
+  {
+    tasks.length > 0 && (
+      <section class="shell section rule-top" aria-labelledby="tareas-title">
+        <SectionIndex index={4} label="Para qué se usa" />
+        <h2 id="tareas-title" class="t-h2">Tareas de laboratorio que resuelve</h2>
+        <p class="t-lead mt-5">
+          Si llegó buscando la marca, éste es el camino de vuelta: la tarea concreta, con lo que
+          conviene traer a la conversación antes de cotizar.
+        </p>
+        <ul class="link-row mt-10">
+          {tasks.map((task) => (
+            <li>
+              <a href={`/aplicaciones/#${task.slug}`} class="link-arrow">
+                {task.name}
+                <Icon name="arrow-right" size={18} class="arrow" />
+              </a>
+            </li>
+          ))}
+        </ul>
       </section>
     )
   }
 
   <ClosingQuoteBand
-    index={4}
-    title={`Cotizar productos ${brand.name}`}
+    index={5}
+    title={`Cotizar equipos ${brand.name}`}
     body="Indique el modelo o la referencia, la aplicación y su institución. Confirmamos disponibilidad, configuración y condiciones por escrito."
     brandName={brand.name}
   />
@@ -155,10 +424,26 @@ const family = productFamilies.find((item) =>
   .brand-intro__site {
     margin-top: 1.5rem;
   }
-  .areas__title {
+
+  .aside-stack {
+    display: grid;
+    gap: 2.5rem;
+    align-content: start;
+  }
+  .aside-block__title {
     color: var(--color-ink-950);
     padding-bottom: 0.75rem;
     border-bottom: 1px solid var(--color-ink-950);
+  }
+  .aside-block__lead {
+    margin-top: 0.875rem;
+    font-size: 1.0625rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+  .aside-block__body {
+    margin-top: 0.5rem;
+    color: var(--color-ink-600);
   }
   .areas__list {
     list-style: none;
@@ -172,10 +457,117 @@ const family = productFamilies.find((item) =>
     border-bottom: 1px solid var(--color-hairline);
   }
 
+  /* --- Entradas de sección por marca -------------------------------------- */
+  .lead-in {
+    display: grid;
+    gap: 2.5rem;
+    margin-bottom: 1rem;
+  }
+
+  /* Escalera de potencia: filas que crecen, no una tabla. */
+  .ladder {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+    counter-reset: step;
+  }
+  .ladder__step {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    padding-block: 0.875rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .ladder__step:nth-child(2) {
+    padding-left: 0.75rem;
+  }
+  .ladder__step:nth-child(3) {
+    padding-left: 1.5rem;
+  }
+  .ladder__step:nth-child(4) {
+    padding-left: 2.25rem;
+  }
+  .ladder__name {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+  .ladder__value {
+    font-size: 0.9375rem;
+    color: var(--color-teal-800);
+  }
+
+  .lead-in__motif {
+    max-width: 15rem;
+    color: var(--color-ink-800);
+  }
+
+  .grid-facts {
+    margin: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .grid-facts__row {
+    display: grid;
+    gap: 0.25rem;
+    padding-block: 0.875rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .grid-facts__row dt {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+  .grid-facts__row dd {
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--color-ink-600);
+  }
+  .grid-facts__second {
+    display: block;
+  }
+
   .models-head {
     display: grid;
     gap: 1rem;
     margin-bottom: 1rem;
+  }
+
+  .sheets {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .sheets--after {
+    margin-top: 3.5rem;
+  }
+
+  .skus {
+    margin-top: 3.5rem;
+  }
+  .skus__lead {
+    margin-top: 0.625rem;
+    color: var(--color-ink-600);
+    max-width: 62ch;
+  }
+
+  .family-docs {
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--color-hairline);
+  }
+  .family-docs__links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 2rem;
+    margin-top: 1rem;
+  }
+  .family-docs__note {
+    margin-top: 1rem;
+    color: var(--color-ink-500);
+    max-width: 62ch;
   }
 
   .conditions {
@@ -192,6 +584,29 @@ const family = productFamilies.find((item) =>
       grid-template-columns: minmax(0, 1fr) auto;
       align-items: baseline;
       gap: 3rem;
+    }
+    .grid-facts__row {
+      grid-template-columns: minmax(0, 13rem) minmax(0, 1fr);
+      gap: 1.5rem;
+      align-items: baseline;
+    }
+    .grid-facts__second {
+      display: inline;
+      margin-left: 0.75rem;
+      color: var(--color-ink-500);
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .lead-in {
+      grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
+      gap: 4rem;
+      align-items: start;
+      margin-bottom: 2rem;
+    }
+    .lead-in--motif {
+      grid-template-columns: minmax(0, 15rem) minmax(0, 1fr);
+      align-items: center;
     }
   }
 </style>

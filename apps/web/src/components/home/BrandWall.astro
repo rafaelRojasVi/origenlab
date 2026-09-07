@@ -1,6 +1,7 @@
 ---
 import { brandsWallHeading } from '../../data/brands';
-import { getCatalogBrands, getWorkingBrands } from '../../lib/catalog';
+import { brands } from '../../data/brands';
+import { getBrandsWithProductPages } from '../../lib/catalog';
 import { scopeById } from '../../data/equipmentScope';
 import BrandLogo from '../ui/BrandLogo.astro';
 import Icon from '../ui/Icon.astro';
@@ -23,8 +24,8 @@ import Icon from '../ui/Icon.astro';
  * recuento se declara una sola vez en la página, en el índice del hero.
  */
 const withFamily = (brand: { familyId: string }) => scopeById(brand.familyId)?.name;
-const catalogBrands = getCatalogBrands();
-const workingBrands = getWorkingBrands();
+const catalogBrands = getBrandsWithProductPages();
+const workingBrands = brands.filter((brand) => !catalogBrands.includes(brand));
 ---
 
 <section class="brand-band" aria-labelledby="brand-band-title">

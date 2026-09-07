@@ -8,7 +8,10 @@
  *   1. `src/data/brands.ts`      la lista y los registros coinciden
  *   2. `public/brands/`          hay un logotipo por marca y ninguno de sobra
  *   3. `src/data/sourceRegistry.ts`  una fila de procedencia por marca
- *   4. `dist/`                   el HTML construido no nombra a ninguna retirada
+ *   4. `src/data/brandModels.ts` ningún modelo de una marca no aprobada
+ *   5. `src/data/applications.ts` ninguna aplicación cuelga de una marca ajena
+ *   6. `dist/`                   HTML, sitemap, datos estructurados, navegación,
+ *                                pie, logotipos y destinos externos
  *
  * La comprobación sobre `dist/` es la que importa de verdad: las otras tres
  * miran código, y el código puede tener una marca retirada en un dato muerto
@@ -49,6 +52,8 @@ function walk(dir, ext, acc = []) {
 
 const brandsSrc = read('src/data/brands.ts');
 const registrySrc = read('src/data/sourceRegistry.ts');
+const modelsSrc = read('src/data/brandModels.ts');
+const applicationsSrc = read('src/data/applications.ts');
 
 /* -- 0. La lista aprobada ------------------------------------------------- */
 
@@ -177,6 +182,36 @@ for (const block of registryBlocks) {
   }
 }
 
+/* -- 4b. Registro de modelos y aplicaciones ------------------------------- */
+
+/**
+ * La séptima marca no entra por `brands.ts`: entra por un modelo suelto en
+ * `brandModels.ts` o por una aplicación que nombra a un fabricante que nadie
+ * aprobó. Las dos puertas se cierran aquí.
+ */
+const modelBrandIds = [...modelsSrc.matchAll(/brandId: '([^']+)'/g)].map((m) => m[1]);
+assert(modelBrandIds.length > 0, 'brandModels.ts: no se encontró ninguna entrada');
+for (const id of new Set(modelBrandIds)) {
+  assert(approved.includes(id), `brandModels.ts: modelo de una marca no aprobada: ${id}`);
+}
+// Cada marca aprobada aparece en el registro de modelos o en products.ts: una
+// marca publicada sin un solo equipo nombrado no tendría página que sostener.
+const productsSrcForBrands = read('src/data/products.ts');
+for (const id of approved) {
+  assert(
+    modelBrandIds.includes(id) || productsSrcForBrands.includes(`brandId: '${id}'`),
+    `${id}: marca aprobada sin modelos en brandModels.ts ni en products.ts`,
+  );
+}
+// Las aplicaciones cuelgan de familias, y cada familia de una marca aprobada.
+// Si `applications.ts` nombrara una marca directamente habría dos listas.
+for (const name of Object.values(EXPECTED_NAMES)) {
+  assert(
+    !applicationsSrc.includes(name),
+    `applications.ts: nombra la marca "${name}"; la correspondencia vive en brands.ts (familyId)`,
+  );
+}
+
 /* -- 5. El sitio construido no nombra a ninguna marca retirada ------------ */
 
 /**
@@ -218,6 +253,94 @@ if (!existsSync(dist)) {
         html.includes(EXPECTED_NAMES[id]),
         `dist/marcas/index.html: no nombra a "${EXPECTED_NAMES[id]}"`,
       );
+    }
+  }
+
+  /* -- 6. Una página de marca por marca aprobada, y ninguna más ---------- */
+
+  const slugs = brandBlocks
+    .map((block) => block.match(/slug: '([^']+)'/)?.[1])
+    .filter(Boolean);
+  assert(slugs.length === approved.length, 'brands.ts: falta algún slug');
+  const brandPageDir = join(dist, 'marcas');
+  const builtBrandPages = readdirSync(brandPageDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+  for (const slug of slugs) {
+    assert(
+      builtBrandPages.includes(slug),
+      `dist/marcas/${slug}/: falta la página de una marca aprobada`,
+    );
+  }
+  for (const built of builtBrandPages) {
+    assert(built === '_astro' || slugs.includes(built), `dist/marcas/${built}/: página de una marca que no está en la lista cerrada`);
+  }
+
+  /* -- 7. Sitemap: exactamente seis rutas de marca ----------------------- */
+
+  const sitemapFiles = walk(dist, '.xml').filter((file) => /sitemap-\d+\.xml$/.test(file));
+  const sitemapUrls = sitemapFiles.flatMap((file) =>
+    [...readFileSync(file, 'utf8').matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]),
+  );
+  if (sitemapUrls.length > 0) {
+    const brandRoutes = sitemapUrls.filter((url) => /\/marcas\/[^/]+\//.test(url));
+    assert(
+      brandRoutes.length === approved.length,
+      `sitemap: ${brandRoutes.length} rutas de marca frente a ${approved.length} marcas aprobadas`,
+    );
+    for (const slug of slugs) {
+      assert(
+        brandRoutes.some((url) => url.endsWith(`/marcas/${slug}/`)),
+        `sitemap: falta /marcas/${slug}/`,
+      );
+    }
+  }
+
+  /* -- 8. Destinos externos: sólo los seis fabricantes ------------------- */
+
+  /**
+   * `qa:interaction` ya lo comprueba en navegador, pero depende de Playwright.
+   * Aquí se comprueba sobre el HTML, sin navegador, para que la puerta de la
+   * lista cerrada no dependa de que el arnés visual esté disponible.
+   */
+  const ALLOWED_HOSTS = new Set([
+    'www.hielscher.com',
+    'ortoalresa.com',
+    'www.ika.com',
+    'adamequipment.com',
+    // Löser no ofrece HTTPS: su servidor de 2005 rechaza el saludo TLS.
+    'www.loeser-osmometer.de',
+    'www.serva.de',
+    'wa.me',
+    'origenlab.cl',
+    'www.w3.org',
+  ]);
+  const seenHosts = new Set();
+  for (const file of pages) {
+    const html = readFileSync(file, 'utf8');
+    for (const match of html.matchAll(/(?:href|src)="(https?:\/\/[^"]+)"/g)) {
+      try {
+        seenHosts.add(new URL(match[1]).host);
+      } catch {
+        assert(false, `${relative(dist, file)}: URL externa mal formada ${match[1]}`);
+      }
+    }
+  }
+  for (const host of seenHosts) {
+    assert(ALLOWED_HOSTS.has(host), `dist: destino externo fuera de la lista cerrada: ${host}`);
+  }
+
+  /* -- 9. Datos estructurados: ninguna marca ajena ----------------------- */
+
+  for (const file of pages) {
+    const rel = relative(dist, file);
+    const html = readFileSync(file, 'utf8');
+    for (const match of html.matchAll(
+      /<script type="application\/ld\+json">([\s\S]*?)<\/script>/g,
+    )) {
+      for (const retired of RETIRED) {
+        assert(!match[1].includes(retired), `dist/${rel}: datos estructurados nombran a "${retired}"`);
+      }
     }
   }
 }

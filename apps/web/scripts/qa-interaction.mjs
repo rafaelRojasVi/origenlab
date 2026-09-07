@@ -204,8 +204,27 @@ console.log('\nEnlaces');
           continue;
         }
         if (!url.startsWith('/')) continue;
-        const target = url.endsWith('/') ? join(dist, url, 'index.html') : join(dist, url);
-        if (!existsSync(target)) broken.add(`${relative(dist, file)} -> ${url}`);
+        /*
+         * Un enlace interno puede llevar ancla: /aplicaciones/#osmolalidad. La
+         * ruta y el ancla se comprueban por separado, porque fallan por motivos
+         * distintos: la ruta puede no existir, o existir y no tener ese id.
+         */
+        const [pathPart, fragment] = url.split('#');
+        const cleanPath = pathPart.split('?')[0];
+        if (!cleanPath) continue;
+        const target = cleanPath.endsWith('/')
+          ? join(dist, cleanPath, 'index.html')
+          : join(dist, cleanPath);
+        if (!existsSync(target)) {
+          broken.add(`${relative(dist, file)} -> ${url}`);
+          continue;
+        }
+        if (fragment) {
+          const targetHtml = readFileSync(target, 'utf8');
+          if (!targetHtml.includes(`id="${fragment}"`)) {
+            broken.add(`${relative(dist, file)} -> ${url} (la página existe, el ancla no)`);
+          }
+        }
       }
     }
   }

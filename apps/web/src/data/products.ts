@@ -56,42 +56,45 @@ const ortoalresaCommercialNote =
  */
 export const products: Product[] = [
   {
+    /**
+     * Única referencia SERVA con ficha publicada. Las otras dos que había
+     * (TEMED de 25 ml y REPEL-SILANE GE17-1332-01) se retiraron en la revisión
+     * del 2026-09-07: no fue posible verificar su identidad exacta ni su
+     * alcance en el catálogo del fabricante, y una referencia de reactivo mal
+     * identificada es peor que ninguna. Quedan en REMOVED_SLUGS de
+     * validate-catalog para que no vuelvan sin la verificación.
+     */
     id: 'serva-blueslick-42500',
     brandId: 'serva',
-    name: 'BlueSlick™',
+    name: 'BlueSlick',
     slug: 'blueslick-42500',
-    sku: '42500',
-    summary: 'Reactivo para tratamiento de placas en procesos de electroforesis.',
-    application: 'Laboratorio de electroforesis y preparación de muestras.',
+    sku: '42500.01',
+    equipmentType: 'Reactivo de tratamiento de vidrio',
+    summary:
+      'Reactivo listo para usar que trata la placa de vidrio para que el gel no se adhiera al desmoldar.',
+    description:
+      'Se aplica sobre la placa de vidrio antes de colar el gel y evita que el gel se pegue al desmoldarlo. El fabricante lo declara alternativa no tóxica a los productos con silano y no irritante para los ojos, de modo que puede manipularse fuera de campana. El envase es un pulverizador de polietileno sin propelente y cada pulsación dispensa 0,7 ml.',
+    application: 'Preparación de placas de vidrio en electroforesis en gel.',
+    applications: [
+      'SDS-PAGE',
+      'Enfoque isoeléctrico en gel',
+      'Secuenciación de ADN',
+      'Colado de geles propios',
+    ],
+    keySpecs: [
+      { label: 'Presentación', value: 'Pulverizador de 250 ml, sin propelente' },
+      { label: 'Dosis', value: '0,7 ml por pulsación' },
+      { label: 'Duración del tratamiento', value: '3 a 4 corridas de electroforesis' },
+      { label: 'Temperatura de almacenamiento', value: 'De 15 a 30 °C' },
+    ],
+    specsAttribution: 'Datos según la ficha pública del fabricante SERVA Electrophoresis.',
+    manufacturerUrl:
+      'https://www.serva.de/enDE/ProductDetails/158_42500_BlueSlick_TM_0_214.html',
     showOnProductsPage: true,
     showOnBrandPage: true,
+    catalogSortOrder: 10,
     commercialNote:
       'Disponibilidad, condiciones comerciales y documentación técnica se confirman durante la cotización.',
-  },
-  {
-    id: 'serva-temed-25ml',
-    brandId: 'serva',
-    name: "TEMED (N,N,N',N'-Tetramethylethylenediamine), 25 ml",
-    slug: 'temed-25ml',
-    summary: 'Reactivo de uso frecuente en formulaciones y protocolos de laboratorio.',
-    application: 'Preparación de soluciones y trabajo técnico en laboratorio.',
-    showOnProductsPage: true,
-    showOnBrandPage: true,
-    commercialNote:
-      'La oferta final se emite por cotización, con revisión de disponibilidad y condiciones comerciales.',
-  },
-  {
-    id: 'serva-repel-silane-ge17133201',
-    brandId: 'serva',
-    name: 'REPEL-SILANE',
-    slug: 'repel-silane-ge17-1332-01',
-    sku: 'GE17-1332-01',
-    summary: 'Insumo para preparación y tratamiento de superficies en laboratorio.',
-    application: 'Procesos de preparación técnica en líneas de electroforesis.',
-    showOnProductsPage: true,
-    showOnBrandPage: true,
-    commercialNote:
-      'Consulta por disponibilidad y condiciones al cotizar; documentación según confirmación de línea.',
   },
   {
     id: 'ortoalresa-biocen-22',

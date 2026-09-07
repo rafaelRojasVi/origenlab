@@ -44,6 +44,8 @@ const claimsSrc = read('src/data/claims.ts');
 const scopeSrc = read('src/data/equipmentScope.ts');
 const consultationSrc = read('src/data/consultation.ts');
 const legalSrc = read('src/data/legal.ts');
+const modelsSrc = read('src/data/brandModels.ts');
+const applicationsSrc = read('src/data/applications.ts');
 
 const CANONICAL_ORTO_ORDER = [
   'biocen-22',
@@ -52,7 +54,13 @@ const CANONICAL_ORTO_ORDER = [
   'digicen-22-r',
   'consul-22',
 ];
-const REMOVED_SLUGS = ['bioprocen-22-r'];
+/**
+ * Productos retirados que no pueden volver sin la verificación que les falta.
+ * `bioprocen-22-r` salió en 2026-05; `temed-25ml` y `repel-silane-ge17-1332-01`
+ * el 2026-09-07, porque no fue posible verificar su identidad exacta ni su
+ * alcance en el catálogo de SERVA.
+ */
+const REMOVED_SLUGS = ['bioprocen-22-r', 'temed-25ml', 'repel-silane-ge17-1332-01'];
 const IMAGE_WIDTHS = [480, 960];
 
 /* -- 1. Copy comercial: nada que no se pueda sostener -------------------- */
@@ -94,8 +102,18 @@ for (const block of brandBlocks) {
   assert(id, 'brands.ts: bloque de marca sin id');
   if (!id) continue;
 
-  assert(/catalogPublished: (true|false)/.test(block), `${id}: falta catalogPublished`);
-  const published = block.includes('catalogPublished: true');
+  // Dos ejes, no uno: página propia y alcance comercial confirmado.
+  assert(
+    /editorialPublished: (true|false)/.test(block),
+    `${id}: falta editorialPublished (habilita /marcas/{slug}/)`,
+  );
+  assert(
+    /commercialScopeConfirmed: (true|false)/.test(block),
+    `${id}: falta commercialScopeConfirmed (habilita commercialNote)`,
+  );
+  assert(/layout: '[a-z]+'/.test(block), `${id}: falta layout (una disposición por marca)`);
+  const editorial = block.includes('editorialPublished: true');
+  const scopeConfirmed = block.includes('commercialScopeConfirmed: true');
 
   const logoPath = block.match(/logoPath: '([^']+)'/)?.[1];
   assert(logoPath, `${id}: falta logoPath`);
@@ -123,19 +141,34 @@ for (const block of brandBlocks) {
   assert(/familyId: '[^']+'/.test(block), `${id}: falta familyId`);
   assert(/listSummary:/.test(block), `${id}: falta listSummary (qué fabrica, en una línea)`);
 
-  if (published) {
-    assert(/summary:/.test(block), `${id}: una marca con catálogo publicado necesita summary`);
-    assert(/commercialNote:/.test(block), `${id}: falta commercialNote`);
+  // Una página de marca necesita material editorial completo. Las seis lo
+  // tienen, y el estándar es el mismo para todas: no hay página de segunda.
+  if (editorial) {
+    for (const field of [
+      'summary:',
+      'pageSubtitle:',
+      'metaDescription:',
+      'applicationAreas:',
+      'manufacturerAttribution:',
+    ]) {
+      assert(block.includes(field), `${id}: marca con página propia necesita ${field}`);
+    }
+    // Modelos verificados: o ficha propia en products.ts, o entrada en
+    // brandModels.ts con la fuente del fabricante. Una página de marca sin
+    // ningún equipo nombrado sería un callejón sin salida.
     assert(
-      productsSrc.includes(`brandId: '${id}'`),
-      `${id}: catalogPublished sin productos en products.ts`,
+      productsSrc.includes(`brandId: '${id}'`) || modelsSrc.includes(`brandId: '${id}'`),
+      `${id}: página de marca sin modelos en products.ts ni en brandModels.ts`,
     );
+  }
+
+  // El alcance comercial sólo se describe donde el negocio lo confirmó.
+  if (scopeConfirmed) {
+    assert(/commercialNote:/.test(block), `${id}: alcance confirmado y sin commercialNote`);
   } else {
-    // El alcance comercial por marca sigue sin confirmar: se puede decir qué
-    // fabrica, no en qué condiciones la vende OrigenLab.
     assert(
-      !/\n    summary:|commercialNote:/.test(block),
-      `${id}: marca sin catálogo publicado no puede declarar summary ni commercialNote (ver docs/design/CONTENT_NEEDED.md)`,
+      !/commercialNote:/.test(block),
+      `${id}: sin commercialScopeConfirmed no puede declarar commercialNote (ver docs/design/CONTENT_NEEDED.md)`,
     );
   }
   assert(name, `${id}: falta name`);
@@ -314,15 +347,126 @@ for (const file of walk(join(root, 'src'), '.astro')) {
 
 /* -- 5c. Alcance, asesoría y estado legal -------------------------------- */
 
-// Las familias sin ficha no pueden llevar modelo, marca ni cifra asociada.
-const consultaEntries = scopeSrc.split(/\n  \{\n/).slice(1).filter((block) => block.includes("tier: 'consulta'"));
-assert(consultaEntries.length >= 3, 'equipmentScope.ts: se esperan al menos 3 familias por consulta');
-for (const block of consultaEntries) {
+/**
+ * Las seis familias tienen destino. Las cuatro sin ficha propia
+ * (`tier: 'documentada'`) publican modelos con la documentación del fabricante,
+ * pero siguen sin poder declarar fotografía ni cifra aprobada: eso es lo que no
+ * está verificado, y es lo que se comprueba aquí.
+ */
+const scopeEntries = scopeSrc.split(/\n  \{\n/).slice(1).filter((block) => block.includes('tier:'));
+assert(scopeEntries.length === 6, `equipmentScope.ts: se esperan 6 familias, hay ${scopeEntries.length}`);
+const documentedEntries = scopeEntries.filter((block) => block.includes("tier: 'documentada'"));
+assert(
+  documentedEntries.length >= 4,
+  'equipmentScope.ts: se esperan al menos 4 familias en el nivel documentada',
+);
+for (const block of scopeEntries) {
   const id = block.match(/id: '([^']+)'/)?.[1] ?? '(sin id)';
-  for (const field of ['href:', 'countClaimId:', 'imageProductSlug:', 'brandSlug:']) {
-    assert(!block.includes(field), `equipmentScope.ts ${id}: una familia por consulta no puede declarar ${field}`);
-  }
   assert(block.includes('question:'), `equipmentScope.ts ${id}: falta la pregunta que abre la consulta`);
+  assert(/href: '\/[^']*\/'/.test(block), `equipmentScope.ts ${id}: falta href con barra final`);
+  assert(!block.includes('brandSlug:'), `equipmentScope.ts ${id}: la marca se declara en brands.ts, no aquí`);
+}
+for (const block of documentedEntries) {
+  const id = block.match(/id: '([^']+)'/)?.[1] ?? '(sin id)';
+  for (const field of ['countClaimId:', 'imageProductSlug:']) {
+    assert(
+      !block.includes(field),
+      `equipmentScope.ts ${id}: una familia documentada no puede declarar ${field} (sin fotografía y sin cifra aprobada)`,
+    );
+  }
+  // El destino de una familia sin ficha propia es la página de marca.
+  const href = block.match(/href: '([^']+)'/)?.[1] ?? '';
+  assert(
+    href.startsWith('/marcas/'),
+    `equipmentScope.ts ${id}: el destino de una familia documentada es /marcas/{slug}/, no ${href}`,
+  );
+}
+
+/* -- 5d. Registro de modelos del fabricante ------------------------------ */
+
+/**
+ * Cada modelo que el sitio describe sin alojar tiene que decir de dónde salió y
+ * cuándo se leyó. Sin fuente y sin fecha no es un dato: es una afirmación.
+ */
+const modelBlocks = modelsSrc.split(/\n  \{\n/).slice(1).filter((block) => block.includes('brandId:'));
+assert(modelBlocks.length >= 14, `brandModels.ts: se esperaban al menos 14 entradas, hay ${modelBlocks.length}`);
+
+const modelIds = new Set();
+for (const block of modelBlocks) {
+  const id = block.match(/id: '([^']+)'/)?.[1] ?? '(sin id)';
+  assert(!modelIds.has(id), `brandModels.ts: id duplicado ${id}`);
+  modelIds.add(id);
+
+  const brandId = block.match(/brandId: '([^']+)'/)?.[1];
+  assert(brandIds.includes(brandId), `brandModels.ts ${id}: brandId fuera de la lista cerrada (${brandId})`);
+  const familyId = block.match(/familyId: '([^']+)'/)?.[1];
+  assert(
+    scopeSrc.includes(`id: '${familyId}'`),
+    `brandModels.ts ${id}: familyId desconocido (${familyId})`,
+  );
+
+  for (const field of ['does:', 'uses:', 'criteria:', 'officialUrl:', 'officialUrlScope:', 'verifiedOn:']) {
+    assert(block.includes(field), `brandModels.ts ${id}: falta ${field}`);
+  }
+  assert(/scope: '(modelo|familia)'/.test(block), `brandModels.ts ${id}: scope desconocido`);
+
+  // El enlace va por https salvo la excepción declarada de Löser.
+  const official = block.match(/officialUrl:\s*\n?\s*'([^']+)'/)?.[1] ?? '';
+  if (!official.startsWith('https:')) {
+    assert(
+      /officialUrlInsecure: true/.test(block),
+      `brandModels.ts ${id}: officialUrl no es https y no declara officialUrlInsecure`,
+    );
+  }
+  // Sólo dominios del fabricante: ni revendedores ni catálogos raspados.
+  assert(
+    !/scribd|slideshare|docplayer|medicalexpo|directindustry|amazon|ebay|alibaba|mercadolibre/i.test(block),
+    `brandModels.ts ${id}: fuente que no es del fabricante`,
+  );
+  // Nada de comercial en este registro: no está confirmado para estas marcas.
+  for (const forbidden of ['price', 'precio:', 'stock', 'leadTime', 'plazo:', 'imagePath', 'warranty', 'garantia']) {
+    assert(!block.includes(forbidden), `brandModels.ts ${id}: no puede declarar ${forbidden}`);
+  }
+  // Un enlace de familia tiene que explicar por qué no es del modelo.
+  if (/officialUrlScope: 'familia'/.test(block) && /scope: 'modelo'/.test(block)) {
+    assert(
+      block.includes('sourceNote:'),
+      `brandModels.ts ${id}: enlace de familia para un modelo concreto y sin sourceNote que lo explique`,
+    );
+  }
+}
+
+/* -- 5e. Aplicaciones: ninguna sin equipo -------------------------------- */
+
+const applicationBlocks = applicationsSrc.split(/\n  \{\n/).slice(1).filter((block) => block.includes('familyIds:'));
+assert(applicationBlocks.length === 6, `applications.ts: se esperan 6 aplicaciones, hay ${applicationBlocks.length}`);
+const applicationSlugs = new Set();
+for (const block of applicationBlocks) {
+  const id = block.match(/id: '([^']+)'/)?.[1] ?? '(sin id)';
+  for (const field of ['name:', 'slug:', 'task:', 'detail:', 'bring:', 'familyIds:']) {
+    assert(block.includes(field), `applications.ts ${id}: falta ${field}`);
+  }
+  const slug = block.match(/slug: '([^']+)'/)?.[1] ?? '';
+  assert(!applicationSlugs.has(slug), `applications.ts: slug duplicado ${slug}`);
+  applicationSlugs.add(slug);
+
+  const families = [...(block.match(/familyIds: \[([\s\S]*?)\]/)?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  assert(families.length > 0, `applications.ts ${id}: sin familia asociada seria un callejon sin salida`);
+  for (const familyId of families) {
+    assert(
+      scopeSrc.includes(`id: '${familyId}'`),
+      `applications.ts ${id}: familyId desconocido (${familyId})`,
+    );
+  }
+}
+// Toda familia publicada tiene que aparecer en al menos una aplicación: si no,
+// hay equipo que ninguna tarea del sitio lleva a consultar.
+for (const block of scopeEntries) {
+  const familyId = block.match(/id: '([^']+)'/)?.[1] ?? '';
+  assert(
+    applicationsSrc.includes(`'${familyId}'`),
+    `applications.ts: la familia ${familyId} no la reclama ninguna aplicación`,
+  );
 }
 
 // Sobre la especialista sólo viven los tres hechos confirmados.

@@ -133,14 +133,28 @@ export function keyFactsFor(product: Product): ProductSpec[] {
   return found.slice(0, 4);
 }
 
-/** Marcas con catálogo publicado (tienen página propia). */
-export function getCatalogBrands(): Brand[] {
-  return brands.filter((brand) => brand.catalogPublished);
+/**
+ * Marcas con página de marca propia. Las seis: `editorialPublished` es true en
+ * todas desde la revisión del 2026-09-07, y la función existe igualmente para
+ * que retirar una página sea cambiar un dato y no borrar una ruta.
+ */
+export function getEditorialBrands(): Brand[] {
+  return brands.filter((brand) => brand.editorialPublished);
 }
 
-/** Marcas sin catálogo publicado: logotipo, familia y enlace al fabricante. */
-export function getWorkingBrands(): Brand[] {
-  return brands.filter((brand) => !brand.catalogPublished);
+/** Marcas cuyo alcance comercial confirmó el negocio por escrito. */
+export function getConfirmedScopeBrands(): Brand[] {
+  return brands.filter((brand) => brand.commercialScopeConfirmed);
+}
+
+/** Marcas con ficha de producto propia en el sitio (fotografía y specs). */
+export function getBrandsWithProductPages(): Brand[] {
+  return brands.filter((brand) => products.some((product) => product.brandId === brand.id));
+}
+
+/** Cuántas fichas propias publica una marca. Se cuenta, no se afirma. */
+export function productCountForBrand(brandId: string): number {
+  return products.filter((product) => product.brandId === brandId).length;
 }
 
 /**

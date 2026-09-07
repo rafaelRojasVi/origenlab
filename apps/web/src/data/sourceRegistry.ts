@@ -25,6 +25,11 @@
  * `lastVerified` es la fecha en que se comprobó, con petición real, que cada
  * URL de la fila responde. Lo reproduce `npm run verify:sources`, que es un
  * script de red y por eso no forma parte de `npm run validate`.
+ *
+ * Este registro es por marca: la fuente oficial de la familia, el permiso de
+ * imagen y el estado. La fuente **por modelo** vive en `src/data/brandModels.ts`,
+ * con su propia URL y su propia fecha de lectura, porque un modelo puede tener
+ * ficha PDF propia mientras la familia no la tiene, y al revés.
  */
 
 export type SourceStatus =
@@ -61,7 +66,7 @@ export interface BrandSource {
   note?: string;
 }
 
-const VERIFIED_ON = '2026-09-06';
+const VERIFIED_ON = '2026-09-07';
 
 /**
  * Nota común a los logotipos. El sitio reproduce los seis a una tinta para
@@ -118,19 +123,19 @@ export const brandSources: readonly BrandSource[] = [
     brandId: 'adam-equipment',
     familyId: 'pesaje-humedad',
     model: null,
-    officialUrl: 'https://adamequipment.com/products/moisture-analyser-balances.html',
+    officialUrl: 'https://adamequipment.com/products.html',
     officialPdfUrl: 'https://adamequipment.com/media/docs/data_sheets/PMB-DS-A4-EN.pdf',
     imageSourceUrl: 'https://adamequipment.com/media/logo/default/Adam_Logo_2.png',
     localAssetPath: '/brands/adam-equipment-logo.png',
     permissionBasis: LOGO_PERMISSION_PENDING,
     lastVerified: VERIFIED_ON,
     status: 'ASSET_PERMISSION_NEEDED',
-    note: 'Página de analizadores de humedad y ficha PDF de la serie PMB comprobadas. Sin fotografía de equipo con permiso documentado.',
+    note: 'Índice de productos del fabricante y ficha PDF de la serie PMB comprobados. El enlace de familia pasó de la página de analizadores de humedad al índice de productos, porque la familia publicada incluye ahora balanzas analíticas y de precisión. Sin fotografía de equipo con permiso documentado.',
   },
   {
     brandId: 'loeser',
     familyId: 'osmometria',
-    model: 'i Osmometer, i Osmometer basic, i Cryometer',
+    model: 'Osmometer basic, i Osmometer basic, i Osmometer, i Cryometer',
     officialUrl: 'http://www.loeser-osmometer.de/produkte-eng.html',
     officialPdfUrl: null,
     imageSourceUrl: 'http://www.loeser-osmometer.de/LoeLogo.jpg',
