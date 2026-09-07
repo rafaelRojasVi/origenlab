@@ -138,10 +138,7 @@ for (const file of pages) {
   }
 
   /* -- Tipografía de la copia ------------------------------------------- */
-  const visible = html
-    .replace(/<script[\s\S]*?<\/script>/g, '')
-    .replace(/<style[\s\S]*?<\/style>/g, '')
-    .replace(/<[^>]+>/g, ' ');
+  const visible = stripElements(stripElements(html, 'script'), 'style').replace(/<[^>]+>/g, ' ');
   assert(!visible.includes('—'), at('raya (em dash) en la copia visible'));
   assert(!/\s–\s/.test(visible), at('semirraya usada como separador en la copia visible'));
   assert(!visible.includes('...'), at('tres puntos en vez de puntos suspensivos'));
@@ -161,6 +158,23 @@ for (const file of pages) {
   } else {
     assert(!/<meta name="robots" content="noindex/.test(html), at('página pública marcada como noindex'));
   }
+}
+
+
+/**
+ * Elimina todos los elementos `<name>…</name>` sin distinguir mayúsculas y
+ * repite hasta que no quede ninguno, de modo que un cierre anidado o partido
+ * no deje un fragmento de etiqueta en el texto que se inspecciona después.
+ */
+function stripElements(html, name) {
+  const pattern = new RegExp(`<${name}\\b[\\s\\S]*?<\\/${name}\\s*>`, 'gi');
+  let previous;
+  let current = html;
+  do {
+    previous = current;
+    current = current.replace(pattern, '');
+  } while (current !== previous);
+  return current;
 }
 
 /* -- Sitemap y robots ----------------------------------------------------- */
