@@ -36,7 +36,7 @@ import {
  *
  * Ahora la página son las seis familias, en el orden de `productsFamilyOrder`,
  * que no es el alfabético ni el del archivo de datos: abre con preparación de
- * muestra, deja centrifugación en el centro (es la única con fotografía y
+ * muestra, deja centrifugación en el centro (es la única con ficha propia y
  * puesta primero se come la página) y cierra con electroforesis.
  *
  * Cada familia publica lo que de verdad tiene, y se ve la diferencia sin que
@@ -45,18 +45,18 @@ import {
  *   con ficha propia   fila con fotografía, cifras y enlace a la ficha interna
  *   documentada        fila con nombre, qué hace y enlace al fabricante
  *
- * Ninguna familia sin fotografía autorizada lleva imagen de relleno: lleva el
- * diagrama de `familyMotif.ts`, que dibuja qué le hace el equipo a la muestra.
- * El diagrama se queda aunque llegue fotografía: es la capa conceptual de la
+ * Ninguna familia lleva imagen de relleno: cada una abre con el diagrama de
+ * `familyMotif.ts`, que dibuja qué le hace el equipo a la muestra, y ese
+ * diagrama se queda aunque haya fotografía: es la capa conceptual de la
  * familia, y la fotografía es la de cada modelo.
  *
  * Cada modelo documentado se compone con lo que el visitante necesita para
- * reconocer el equipo sin abrir otra página: la fotografía del modelo exacto
- * cuando `productImages.ts` la tiene `VERIFIED`, el nombre tal como lo escribe
- * el fabricante, qué hace y su uso principal, y tres salidas: la página de
- * marca, la fuente oficial y la consulta de cotización. Sin fotografía
- * autorizada la fila no reserva hueco: se compone a texto, y el diagrama de la
- * familia sigue arriba.
+ * reconocer el equipo sin abrir otra página: la fotografía oficial del modelo
+ * (o de la familia, rotulada como representativa) que `productImages.ts` tiene
+ * `VERIFIED`, a su lado el nombre tal como lo escribe el fabricante, qué hace
+ * y su uso principal, y tres salidas: la página de marca, la fuente oficial y
+ * la consulta de cotización. Si una fila perdiera la fotografía no reservaría
+ * hueco: se compondría a texto, y el diagrama de la familia seguiría arriba.
  */
 const families = familiesInProductOrder().map((scope) => {
   const brand = getBrandByFamilyId(scope.id);
@@ -82,7 +82,7 @@ const families = familiesInProductOrder().map((scope) => {
   <div class="shell">
     <PageIntro
       title="Productos"
-      lead="Seis familias de equipo, cada una de un fabricante. Una tiene ficha completa en este sitio, con fotografía y especificaciones; las otras cinco se publican con la documentación del propio fabricante y se cotizan a partir de su aplicación."
+      lead="Seis familias de equipo, cada una de un fabricante, con la fotografía oficial de cada modelo. Una tiene ficha completa en este sitio, con especificaciones; las otras cinco se publican con la documentación del propio fabricante y se cotizan a partir de su aplicación."
       crumbs={[{ label: 'Productos' }]}
     />
   </div>
@@ -346,8 +346,9 @@ const families = familiesInProductOrder().map((scope) => {
     margin-top: 3rem;
   }
 
-  /* Referencias documentadas: fila de índice, no ficha. La fotografía sólo
-     ocupa columna cuando existe con permiso; sin ella no se reserva hueco. */
+  /* Referencias documentadas: fila de índice, no ficha. La fotografía abre la
+     fila y sólo ocupa columna cuando existe con permiso; sin ella no se
+     reserva hueco. */
   .refs {
     list-style: none;
     margin: 2.5rem 0 0;
@@ -396,7 +397,7 @@ const families = familiesInProductOrder().map((scope) => {
     color: var(--color-ink-500);
   }
   .ref--photo {
-    grid-template-columns: 5.5rem minmax(0, 1fr);
+    grid-template-columns: 6.5rem minmax(0, 1fr);
   }
   .ref--photo .ref__links {
     grid-column: 1 / -1;
@@ -433,7 +434,7 @@ const families = familiesInProductOrder().map((scope) => {
       padding-block: 1.625rem;
     }
     .ref--photo {
-      grid-template-columns: 9rem minmax(0, 1fr) minmax(0, 13rem);
+      grid-template-columns: 11rem minmax(0, 1fr) minmax(0, 13rem);
     }
     .ref--photo .ref__links {
       grid-column: 3;

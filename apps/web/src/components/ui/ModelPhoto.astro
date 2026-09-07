@@ -17,7 +17,10 @@ import { imageSourcesFor } from '../../lib/productImage';
  * `validate:images` comprueba que ese rótulo esté en el HTML.
  *
  * `size` decide el `sizes` del `<picture>` y por tanto qué derivado descarga
- * el navegador; el ancho real lo pone el contenedor.
+ * el navegador; el ancho real lo pone el contenedor. La imagen nunca se
+ * muestra por encima de su tamaño real: varios fabricantes sólo publican
+ * originales de 100 a 400 px, y ampliarlos daría una fotografía borrosa. Si el
+ * original es más pequeño que la caja, queda centrado dentro de ella.
  */
 interface Props {
   image: ProductImageRecord | undefined;
@@ -85,6 +88,7 @@ const captionText = sources
             loading={priority ? 'eager' : 'lazy'}
             fetchpriority={priority ? 'high' : 'auto'}
             decoding={priority ? 'sync' : 'async'}
+            style={`max-width: ${sources.width}px; max-height: ${sources.height}px`}
           />
         </picture>
       </div>
@@ -102,20 +106,27 @@ const captionText = sources
   .model-photo {
     margin: 0;
   }
+  /* La caja manda: su alto sale de `aspect-ratio` y del ancho del contenedor,
+     y la imagen se coloca dentro en absoluto, de modo que un original muy alto
+     y estrecho (los dispersores IKA) no puede estirar la fila. */
   .model-photo__frame {
-    display: grid;
-    place-items: center;
+    position: relative;
     background-color: var(--color-paper);
   }
   .model-photo__frame picture {
     display: contents;
   }
   .model-photo__frame img {
+    position: absolute;
+    inset: 0;
+    margin: auto;
     width: 100%;
     height: 100%;
     object-fit: contain;
     /* Los recortes del fabricante traen aire propio; se compensa aquí para que
-       todos los equipos ocupen la misma superficie óptica. */
+       todos los equipos ocupen la misma superficie óptica. El `max-width` y el
+       `max-height` en línea son el tamaño real del derivado mayor: por encima
+       de él la imagen no crece, y `margin: auto` la deja centrada. */
     padding: 4%;
   }
   .model-photo__caption {

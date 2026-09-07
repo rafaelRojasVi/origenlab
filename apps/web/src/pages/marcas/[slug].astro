@@ -296,7 +296,7 @@ const equipmentSectionLabel =
       )
     }
 
-    <!-- Modelos con ficha propia: sólo Ortoalresa tiene fotografía aprobada. -->
+    <!-- Modelos con ficha propia (Ortoalresa), con su fotografía del registro. -->
     {
       withPages.length > 0 && (
         <ModelList class="mt-6">
@@ -305,8 +305,9 @@ const equipmentSectionLabel =
       )
     }
 
-    <!-- Modelos documentados desde la fuente oficial, sin ficha interna. La
-         fotografía entra sólo si productImages.ts la respalda. -->
+    <!-- Modelos documentados desde la fuente oficial, sin ficha interna. Cada
+         ficha abre con la fotografía oficial que productImages.ts respalda,
+         rotulada como modelo exacto o como imagen representativa de la familia. -->
     {
       models.length > 0 && (
         <ul class:list={['sheets', withPages.length > 0 && 'sheets--after']}>
@@ -379,7 +380,7 @@ const equipmentSectionLabel =
       {publishedPhotos.length === 0 &&
         ' No se publica fotografía de equipo de esta marca: falta el permiso de reproducción documentado, y la familia se ilustra con un diagrama propio.'}
       {publishedPhotos.length > 0 &&
-        ' Las fotografías de equipo son del fabricante y se publican con la procedencia registrada por modelo.'}
+        ' Las fotografías de equipo son del fabricante y se publican con su autorización y con la procedencia registrada por imagen; una imagen rotulada como representativa muestra la familia, no un modelo concreto.'}
     </Notice>
   </section>
 

@@ -1,10 +1,16 @@
 ---
 import type { Product } from '../../data/products';
+import { imageForProduct } from '../../data/productImages';
+import { getBrandById } from '../../lib/catalog';
+import ModelPhoto from './ModelPhoto.astro';
 
 /**
  * Referencias sin ficha propia: nombre, número de ítem y una línea. Se usa para
  * la línea SERVA en /productos/ y en su página de marca. No se enlaza a ningún
  * detalle porque no existe: inventar una ruta vacía sería peor que la fila.
+ *
+ * Si `productImages.ts` tiene la fotografía `VERIFIED` de la referencia, la
+ * fila abre con ella a tamaño de miniatura; sin ella no reserva hueco.
  */
 interface Props {
   products: readonly Product[];
@@ -15,12 +21,22 @@ interface Props {
 }
 
 const { products, withApplication = false, class: className = '', ...rest } = Astro.props;
+const rows = products.map((product) => ({
+  product,
+  image: imageForProduct(product.id),
+  brandName: getBrandById(product.brandId)?.name,
+}));
 ---
 
 <dl class:list={['sku-list', className]} {...rest}>
   {
-    products.map((product) => (
-      <div class="sku">
+    rows.map(({ product, image, brandName }) => (
+      <div class:list={['sku', image && 'sku--photo']}>
+        {image && (
+          <div class="sku__media">
+            <ModelPhoto image={image} brandName={brandName} size="thumb" />
+          </div>
+        )}
         <dt>
           <span class="sku__name" translate="no">{product.name}</span>
           {product.sku && <span class="sku__code t-data">Ítem {product.sku}</span>}
@@ -42,6 +58,19 @@ const { products, withApplication = false, class: className = '', ...rest } = As
   .sku {
     padding-block: 1.5rem;
     border-bottom: 1px solid var(--color-hairline);
+  }
+  .sku--photo {
+    display: grid;
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+    column-gap: 1.25rem;
+    align-items: start;
+  }
+  .sku__media {
+    grid-row: 1 / span 2;
+  }
+  .sku--photo dt,
+  .sku--photo dd {
+    grid-column: 2;
   }
   .sku dt {
     display: flex;

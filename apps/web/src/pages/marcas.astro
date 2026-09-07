@@ -297,12 +297,31 @@ const rows = brands.map((brand) => ({
     color: var(--color-ink-600);
   }
 
+  .notable__text {
+    min-width: 0;
+  }
+
   @media (min-width: 768px) {
     .notable {
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 1.5rem 2rem;
       margin: -0.5rem 0 2.5rem 16rem;
     }
+    /* Tres columnas junto al margen del logotipo dejan unos 130 px por equipo:
+       la fotografía va encima del nombre, no al lado, hasta que hay ancho. */
+    .notable__item--photo {
+      grid-template-columns: minmax(0, 1fr);
+      align-items: start;
+    }
+  }
+  @media (min-width: 1024px) {
+    .notable__item--photo {
+      grid-template-columns: 4.5rem minmax(0, 1fr);
+      align-items: center;
+    }
+  }
+
+  @media (min-width: 768px) {
     .brand-row__link {
       grid-template-columns: 13rem minmax(0, 1fr) 11rem 2rem;
       align-items: center;
