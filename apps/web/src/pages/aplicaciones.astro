@@ -4,50 +4,291 @@ import PageIntro from '../components/ui/PageIntro.astro';
 import SectionIndex from '../components/ui/SectionIndex.astro';
 import ApplicationList from '../components/ui/ApplicationList.astro';
 import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
+import Notice from '../components/ui/Notice.astro';
 import Icon from '../components/ui/Icon.astro';
-import { categories } from '../data/categories';
+import { applications } from '../data/applications';
+import { scopeById } from '../data/equipmentScope';
+import { getBrandByFamilyId } from '../lib/catalog';
+import { modelsForFamily } from '../data/brandModels';
 import { company } from '../data/company';
+import { ctaLabels } from '../lib/ctaLabels';
+import { site } from '../config/site';
+
+/**
+ * Aplicaciones, por tarea.
+ *
+ * La versión anterior de esta página repetía las tres líneas comerciales
+ * («alimentos, control de calidad, laboratorio clínico»), que son segmentos de
+ * mercado y no tareas: quien llegaba buscando cómo romper una célula o cómo
+ * medir osmolalidad no encontraba nada, y las tres filas llevaban a
+ * `/categorias/*`, que vuelve a preguntar por el tipo de laboratorio.
+ *
+ * Ahora la página abre por la pregunta con la que llega un laboratorio, «qué
+ * necesita hacer con la muestra», y los mercados quedan debajo, en su propia
+ * sección, como lo que son: una segunda forma de entrar.
+ *
+ * Ninguna tarea es un callejón sin salida. Cada una nombra la familia de equipo
+ * que la resuelve, con su fabricante y su destino, y `validate:catalog`
+ * comprueba que ninguna aplicación se quede sin familia y que ninguna familia
+ * publicada se quede sin aplicación que la reclame.
+ *
+ * La composición alterna de lado en las tareas pares: seis bloques idénticos
+ * apilados se leen como un formulario, y el contenido de los seis es el mismo
+ * tipo de contenido.
+ */
+const tasks = applications.map((application) => ({
+  application,
+  families: application.familyIds
+    .map((familyId) => {
+      const scope = scopeById(familyId);
+      if (!scope) return undefined;
+      return {
+        scope,
+        brand: getBrandByFamilyId(familyId),
+        documented: modelsForFamily(familyId).length,
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined),
+}));
 ---
 
 <Layout
   title="Aplicaciones"
-  description="Las tres líneas de trabajo de OrigenLab: alimentos, control de calidad y laboratorio clínico, y los tipos de laboratorio que atendemos en todo Chile."
+  description="Seis tareas de laboratorio y el equipo que las resuelve: ruptura celular, dispersión, centrifugación, pesaje, osmolalidad y electroforesis."
 >
   <div class="shell">
     <PageIntro
       title="Aplicaciones"
-      lead="Si sabe qué necesita hacer en el laboratorio pero no qué equipo pedir, empiece por aquí. Cada línea reúne lo que conviene traer a la conversación antes de cotizar."
+      lead="Si sabe qué necesita hacer con la muestra pero no qué equipo pedir, empiece por aquí. Cada tarea nombra la familia de equipo que la resuelve y lo que conviene traer a la conversación antes de cotizar."
       crumbs={[{ label: 'Aplicaciones' }]}
     />
   </div>
 
-  <section class="shell section rule-top" aria-labelledby="lineas-title">
-    <SectionIndex index={1} label="Líneas de trabajo" />
-    <h2 id="lineas-title" class="t-h2">Tres entornos, un mismo proceso de cotización</h2>
-    <ApplicationList size="lg" class="mt-12" />
+  <section class="shell section rule-top" aria-labelledby="tareas-title">
+    <SectionIndex index={1} label="Por tarea" />
+    <div class="tasks-head">
+      <h2 id="tareas-title" class="t-h2">Qué necesita hacer con la muestra</h2>
+      <p class="t-body tasks-head__body">
+        No es una secuencia. Son seis trabajos independientes: un laboratorio puede necesitar sólo
+        uno, o combinarlos en el orden que pida su método. Dos tareas pueden resolverse con la misma
+        familia de equipo, y una familia sirve a más de una tarea.
+      </p>
+    </div>
+
+    <div class="tasks">
+      {
+        tasks.map(({ application, families }, index) => (
+          <article
+            id={application.slug}
+            class:list={['task', index % 2 === 1 && 'task--flip']}
+            aria-labelledby={`${application.slug}-title`}
+          >
+            <div class="task__lead">
+              <p class="t-data task__num" aria-hidden="true">
+                {String(index + 1).padStart(2, '0')}
+              </p>
+              <h3 id={`${application.slug}-title`} class="task__name">{application.name}</h3>
+              <p class="task__task">{application.task}</p>
+              <p class="t-small task__detail">{application.detail}</p>
+            </div>
+
+            <div class="task__body">
+              <div class="task__block">
+                <p class="t-label task__block-title">Equipo que la resuelve</p>
+                <ul class="task__equipment">
+                  {families.map(({ scope, brand, documented }) => (
+                    <li>
+                      <a href={scope.href} class="task__equipment-link">
+                        <span class="task__equipment-name">{scope.name}</span>
+                        <Icon name="arrow-right" size={16} class="arrow" />
+                      </a>
+                      <span class="t-data task__equipment-meta">
+                        {brand?.name}
+                        {documented > 0 && (
+                          <span class="task__equipment-count">
+                            {documented === 1
+                              ? '1 modelo documentado'
+                              : `${documented} modelos documentados`}
+                          </span>
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div class="task__block">
+                <p class="t-label task__block-title">Qué traer a la conversación</p>
+                <ul class="task__bring">
+                  {application.bring.map((item) => <li>{item}</li>)}
+                </ul>
+                <a href={site.quoteHref} class="link-arrow task__cta">
+                  {ctaLabels.contarAplicacion}
+                  <Icon name="arrow-right" size={18} class="arrow" />
+                </a>
+              </div>
+            </div>
+          </article>
+        ))
+      }
+    </div>
   </section>
 
-  <section class="shell section rule-top" aria-labelledby="sectores-title">
-    <SectionIndex index={2} label="A quién atendemos" />
+  <section class="shell section rule-top" aria-labelledby="tipos-title">
+    <SectionIndex index={2} label="Por tipo de laboratorio" />
     <div class="sectors">
       <div>
-        <h2 id="sectores-title" class="t-h2">Tipos de laboratorio</h2>
+        <h2 id="tipos-title" class="t-h2">Por tipo de laboratorio</h2>
         <p class="t-body sectors__intro">{company.homeIntro}</p>
+        <p class="t-small sectors__note">
+          Es la otra forma de entrar: si prefiere partir del entorno de su laboratorio y no de la
+          tarea, estas tres líneas reúnen lo que conviene traer en cada caso.
+        </p>
       </div>
       <ul class="sectors__list">
         {company.audience.map((item) => <li>{item}</li>)}
       </ul>
     </div>
+    <ApplicationList size="lg" class="mt-12" />
+    <Notice class="mt-10">
+      Las seis tareas de arriba y estas tres líneas describen lo mismo desde dos lados. Ninguna
+      lista es un catálogo cerrado de lo que podemos cotizar: si su ensayo no encaja en ninguna,
+      descríbalo y le decimos qué podemos gestionar.
+    </Notice>
   </section>
 
   <ClosingQuoteBand
     index={3}
-    title="Describa el ensayo, no el modelo."
-    body="Con el tipo de análisis, el volumen de trabajo y la norma que maneja (si aplica) podemos acotar alternativas antes de emitir una cotización."
+    title="Describa la tarea, no el modelo."
+    body="Con el tipo de muestra, el volumen de trabajo y la resolución o la fuerza que pide su método podemos acotar alternativas antes de emitir una cotización."
   />
 </Layout>
 
 <style>
+  .tasks-head {
+    display: grid;
+    gap: 1.25rem;
+  }
+  .tasks-head__body {
+    color: var(--color-ink-600);
+  }
+
+  .tasks {
+    margin-top: 3rem;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .task {
+    display: grid;
+    gap: 2rem;
+    padding-block: 2.5rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .task__num {
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+  }
+  .task__name {
+    margin-top: 0.5rem;
+    font-size: clamp(1.375rem, 1.2rem + 0.8vw, 1.75rem);
+    line-height: 1.1;
+    letter-spacing: -0.018em;
+    color: var(--color-ink-950);
+  }
+  .task__task {
+    margin-top: 1rem;
+    font-size: 1.0625rem;
+    line-height: 1.55;
+    color: var(--color-ink-800);
+    max-width: 48ch;
+  }
+  .task__detail {
+    margin-top: 1rem;
+    color: var(--color-ink-600);
+    max-width: 56ch;
+  }
+
+  .task__body {
+    display: grid;
+    gap: 2rem;
+  }
+  .task__block-title {
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+
+  .task__equipment {
+    list-style: none;
+    margin: 1rem 0 0;
+    padding: 0;
+  }
+  .task__equipment li + li {
+    margin-top: 1rem;
+  }
+  .task__equipment-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 1.75rem;
+    color: var(--color-teal-800);
+    transition: color 150ms;
+  }
+  .task__equipment-link:hover {
+    color: var(--color-ink-950);
+  }
+  .task__equipment-name {
+    font-size: 1rem;
+    font-weight: 600;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .task__equipment-link:hover > .arrow {
+      transform: translateX(2px);
+    }
+    .task__equipment-link > .arrow {
+      transition: transform 150ms;
+    }
+  }
+  .task__equipment-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.125rem 1rem;
+    /* 13 px es el suelo del sitio. */
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+  }
+  .task__equipment-count {
+    color: var(--color-ink-500);
+  }
+
+  .task__bring {
+    list-style: none;
+    margin: 1rem 0 0;
+    padding: 0;
+    max-width: 52ch;
+  }
+  .task__bring li {
+    position: relative;
+    padding-left: 1rem;
+    font-size: 0.9375rem;
+    line-height: 1.55;
+    color: var(--color-ink-600);
+  }
+  .task__bring li + li {
+    margin-top: 0.4375rem;
+  }
+  /* Guion dibujado, no un carácter: un signo suelto en la copia lo marcaría
+     `validate:dist` como semirraya. */
+  .task__bring li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.7em;
+    width: 0.4375rem;
+    height: 1px;
+    background-color: var(--color-teal-700);
+  }
+  .task__cta {
+    margin-top: 1.5rem;
+  }
 
   .sectors {
     display: grid;
@@ -55,6 +296,11 @@ import { company } from '../data/company';
   }
   .sectors__intro {
     margin-top: 1.25rem;
+  }
+  .sectors__note {
+    margin-top: 1rem;
+    color: var(--color-ink-500);
+    max-width: 56ch;
   }
   .sectors__list {
     list-style: none;
@@ -68,11 +314,38 @@ import { company } from '../data/company';
     color: var(--color-ink-800);
     border-bottom: 1px solid var(--color-hairline);
   }
+
   @media (min-width: 768px) {
+    .tasks-head {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+      gap: 3rem;
+      align-items: baseline;
+    }
+    .task__body {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 3rem;
+    }
     .sectors {
       grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
       gap: 4rem;
       align-items: start;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .task {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+      gap: 4rem;
+      padding-block: 3.5rem;
+      align-items: start;
+    }
+    /* Las tareas pares invierten el orden de las columnas. El orden del
+       documento no cambia: sólo la colocación en la rejilla. */
+    .task--flip .task__lead {
+      order: 2;
+    }
+    .task--flip .task__body {
+      order: 1;
     }
   }
 </style>

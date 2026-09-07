@@ -5,168 +5,369 @@ import SectionIndex from '../components/ui/SectionIndex.astro';
 import ModelList from '../components/ui/ModelList.astro';
 import ModelRow from '../components/ui/ModelRow.astro';
 import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
-import ProductFigure from '../components/ui/ProductFigure.astro';
 import BrandLogo from '../components/ui/BrandLogo.astro';
 import SkuList from '../components/ui/SkuList.astro';
+import ExternalLink from '../components/ui/ExternalLink.astro';
 import Notice from '../components/ui/Notice.astro';
 import Icon from '../components/ui/Icon.astro';
-import { productFamilies } from '../data/productFamilies';
-import { categories } from '../data/categories';
+import FamilyMotif from '../components/home/FamilyMotif.astro';
+import ApplicationList from '../components/ui/ApplicationList.astro';
+import { familiesInProductOrder } from '../data/equipmentScope';
 import { company } from '../data/company';
+import { modelsForFamily } from '../data/brandModels';
+import { applicationsForFamily } from '../data/applications';
 import {
-  getBrandById,
-  getBrandBySlug,
-  getOrtoalresaCentrifuges,
-  getProductBySlug,
+  getBrandByFamilyId,
   getProductsByBrandId,
+  productPageHref,
 } from '../lib/catalog';
 
-const family = productFamilies[0];
-const centrifuges = getOrtoalresaCentrifuges();
-const ortoalresa = getBrandById('ortoalresa');
-const serva = getBrandBySlug('serva-electrophoresis');
-const servaProducts = serva ? getProductsByBrandId(serva.id) : [];
-const familyCover = getProductBySlug('digicen-22-r');
+/**
+ * Productos, por familia de equipo.
+ *
+ * La versión anterior publicaba dos cosas: una familia de centrífugas con
+ * fotografía a gran escala y una lista de referencias SERVA. Con eso, cuatro de
+ * las seis familias que la portada anuncia no aparecían en la página de
+ * productos, y el visitante que llegaba buscando un sonicador o una balanza
+ * concluía, razonablemente, que aquí se venden centrífugas.
+ *
+ * Ahora la página son las seis familias, en el orden de `productsFamilyOrder`,
+ * que no es el alfabético ni el del archivo de datos: abre con preparación de
+ * muestra, deja centrifugación en el centro (es la única con fotografía y
+ * puesta primero se come la página) y cierra con electroforesis.
+ *
+ * Cada familia publica lo que de verdad tiene, y se ve la diferencia sin que
+ * haya que explicarla:
+ *
+ *   con ficha propia   fila con fotografía, cifras y enlace a la ficha interna
+ *   documentada        fila con nombre, qué hace y enlace al fabricante
+ *
+ * Ninguna familia sin fotografía autorizada lleva imagen de relleno: lleva el
+ * diagrama de `familyMotif.ts`, que dibuja qué le hace el equipo a la muestra.
+ */
+const families = familiesInProductOrder().map((scope) => {
+  const brand = getBrandByFamilyId(scope.id);
+  const products = brand ? getProductsByBrandId(brand.id) : [];
+  return {
+    scope,
+    brand,
+    withPages: products.filter((product) => productPageHref(product) !== undefined),
+    skuOnly: products.filter((product) => productPageHref(product) === undefined),
+    documented: modelsForFamily(scope.id),
+    tasks: applicationsForFamily(scope.id),
+  };
+});
 ---
 
 <Layout
   title="Productos"
-  description="Centrífugas Ortoalresa y reactivos SERVA disponibles para cotización a través de OrigenLab, con asesoría técnica y atención en todo Chile."
+  description="Seis familias de equipo de laboratorio: sonicación, dispersión, centrifugación, pesaje y humedad, osmometría y electroforesis. Cotización por aplicación."
 >
   <div class="shell">
     <PageIntro
       title="Productos"
-      lead="Catálogo publicado: una familia de equipos y una línea de reactivos. Fuera de catálogo cotizamos según la aplicación de su laboratorio."
+      lead="Seis familias de equipo, cada una de un fabricante. Una tiene ficha completa en este sitio, con fotografía y especificaciones; las otras cinco se publican con la documentación del propio fabricante y se cotizan a partir de su aplicación."
       crumbs={[{ label: 'Productos' }]}
     />
   </div>
 
   <section class="shell section rule-top" aria-labelledby="familias-title">
-    <SectionIndex index={1} label="Familias de equipos" />
-
-    <div class="family">
-      <div class="family__media">
-        {familyCover && <ProductFigure product={familyCover} sizes="(min-width: 1024px) 400px, 60vw" />}
-      </div>
-      <div class="family__body">
-        {ortoalresa && <BrandLogo brand={ortoalresa} scale={1.1} class="family__logo" />}
-        <h2 id="familias-title" class="t-h2 family__title">{family.name}</h2>
-        <p class="t-body family__desc">{family.description}</p>
-        <p class="t-small family__meta">
-          {centrifuges.length} modelos de catálogo, marca {ortoalresa?.name}.
-        </p>
-        <a href={`/productos/${family.slug}/`} class="btn btn-secondary family__cta">
-          Ver la familia
-        </a>
-      </div>
+    <SectionIndex index={1} label="Familias de equipo" />
+    <div class="scope-head">
+      <h2 id="familias-title" class="t-h2">Las seis familias, y qué publica cada una</h2>
+      <p class="t-body scope-head__body">
+        No es una secuencia de trabajo: son capacidades independientes. El índice dice de una vez
+        qué fabricante está detrás de cada familia y cuántas referencias puede consultar aquí, para
+        que no haya que recorrer la página entera para averiguarlo.
+      </p>
     </div>
 
-    <ModelList>
-      {centrifuges.map((product) => <ModelRow product={product} size="compact" />)}
-    </ModelList>
-  </section>
-
-  {
-    serva && servaProducts.length > 0 && (
-      <section class="shell section rule-top" aria-labelledby="reactivos-title">
-        <SectionIndex index={2} label="Reactivos e insumos" />
-        <div class="sku-head">
-          <div>
-            <h2 id="reactivos-title" class="t-h2">SERVA Electrophoresis</h2>
-            <p class="t-body sku-head__desc">{serva.summary}</p>
-          </div>
-          <BrandLogo brand={serva} scale={1.2} />
-        </div>
-
-        <SkuList products={servaProducts} class="mt-10" />
-
-        <a href={`/marcas/${serva.slug}/`} class="link-arrow mt-8">
-          Condiciones y áreas de aplicación SERVA
-          <Icon name="arrow-right" size={18} class="arrow" />
-        </a>
-      </section>
-    )
-  }
-
-  <section class="shell section rule-top" aria-labelledby="por-aplicacion-title">
-    <SectionIndex index={3} label="Por aplicación" />
-    <h2 id="por-aplicacion-title" class="t-h2">Si no sabe qué equipo pedir</h2>
-    <p class="t-lead mt-5">
-      Describa el ensayo, el volumen de trabajo o la norma que maneja. Cotizamos equipamiento
-      alineado a ese entorno aunque no esté publicado en el catálogo.
-    </p>
-    <ul class="link-row mt-10">
+    <ul class="scope-index" aria-label="Índice de las seis familias de equipo">
       {
-        categories.map((category) => (
-          <li>
-            <a href={`/categorias/${category.slug}/`} class="link-arrow">
-              {category.name}
-              <Icon name="arrow-right" size={18} class="arrow" />
+        families.map(({ scope, brand, withPages, documented }) => (
+          <li class="scope-index__row">
+            <a href={`#${scope.id}`} class="scope-index__link">
+              <span class="scope-index__name">{scope.name}</span>
+              <span class="scope-index__brand t-data">{brand?.name}</span>
+              <span class="scope-index__count t-data">
+                {withPages.length > 0
+                  ? `${withPages.length} con ficha`
+                  : `${documented.length} documentados`}
+              </span>
+              <Icon name="arrow-right" size={16} class="scope-index__go" />
             </a>
           </li>
         ))
       }
     </ul>
+  </section>
+
+  {
+    families.map(({ scope, brand, withPages, skuOnly, documented, tasks }, index) => (
+      <section
+        id={scope.id}
+        class:list={['shell', 'section', 'rule-top', 'family']}
+        aria-labelledby={`${scope.id}-title`}
+      >
+        <SectionIndex index={index + 2} label={scope.workType} />
+
+        <div class="family__head">
+          <div class="family__lead">
+            {brand && <BrandLogo brand={brand} scale={1.1} class="family__logo" />}
+            <h2 id={`${scope.id}-title`} class="t-h2 family__name">{scope.name}</h2>
+            <p class="t-body family__purpose">{scope.purpose}</p>
+            <p class="family__question">{scope.question}</p>
+            <div class="family__actions">
+              <a href={scope.href} class="link-arrow">
+                {scope.tier === 'catalogo' ? 'Ver la familia' : `Ver ${brand?.name}`}
+                <Icon name="arrow-right" size={18} class="arrow" />
+              </a>
+              {tasks.length > 0 && (
+                <a href={`/aplicaciones/#${tasks[0].slug}`} class="link-arrow">
+                  {tasks[0].name}
+                  <Icon name="arrow-right" size={18} class="arrow" />
+                </a>
+              )}
+            </div>
+          </div>
+
+          {/* Las cinco familias sin fotografía autorizada llevan diagrama, no
+              una imagen de archivo ni el equipo de otro fabricante. */}
+          {withPages.length === 0 && (
+            <div class="family__motif">
+              <FamilyMotif familyId={scope.id} />
+            </div>
+          )}
+        </div>
+
+        {withPages.length > 0 && (
+          <ModelList class="family__models">
+            {withPages.map((product) => (
+              <ModelRow product={product} size="compact" />
+            ))}
+          </ModelList>
+        )}
+
+        {documented.length > 0 && (
+          <ul class="refs">
+            {documented.map((model) => (
+              <li class="ref">
+                <div class="ref__body">
+                  <h3 class="ref__name" translate="no">{model.name}</h3>
+                  <p class="t-small ref__does">{model.does}</p>
+                </div>
+                <div class="ref__links">
+                  <ExternalLink
+                    href={model.officialUrl}
+                    context={`documentación de ${model.name}`}
+                  >
+                    {model.officialUrlScope === 'modelo' ? 'Página oficial' : 'Página del fabricante'}
+                  </ExternalLink>
+                  {model.officialPdfUrl && (
+                    <ExternalLink href={model.officialPdfUrl} context={`PDF de ${model.name}`}>
+                      PDF
+                    </ExternalLink>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {skuOnly.length > 0 && (
+          <div class="family__skus">
+            <h3 class="t-h3">Consumibles</h3>
+            <SkuList products={skuOnly} class="mt-5" />
+          </div>
+        )}
+      </section>
+    ))
+  }
+
+  <section class="shell section rule-top" aria-labelledby="tipos-title">
+    <SectionIndex index={families.length + 2} label="Por tipo de laboratorio" />
+    <h2 id="tipos-title" class="t-h2">Si prefiere partir del tipo de laboratorio</h2>
+    <p class="t-lead mt-5">
+      Las seis familias describen el equipo. Estas tres líneas describen el entorno, y reúnen lo que
+      conviene traer a la conversación en cada caso.
+    </p>
+    <ApplicationList class="mt-10" />
     <Notice class="mt-10">
-      {company.catalogNote} Cotización y disponibilidad sujetas a confirmación comercial.
+      {company.catalogNote} Cotización y disponibilidad sujetas a confirmación comercial. Los datos
+      de producto de esta página se redactaron desde la documentación pública de cada fabricante y
+      la fuente se enlaza en cada modelo.
     </Notice>
   </section>
 
   <ClosingQuoteBand
-    index={4}
+    index={families.length + 3}
     title="¿Busca un equipo que no está en el catálogo?"
     body="Cotizamos según aplicación, capacidad y requisitos técnicos. Indique qué necesita hacer en el laboratorio y desde dónde escribe."
   />
 </Layout>
 
 <style>
-  .family {
+  .scope-head {
+    display: grid;
+    gap: 1.25rem;
+  }
+  .scope-head__body {
+    color: var(--color-ink-600);
+  }
+
+  .scope-index {
+    list-style: none;
+    margin: 2.5rem 0 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .scope-index__row {
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .scope-index__link {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 1.25rem;
+    align-items: baseline;
+    gap: 0.25rem 1.25rem;
+    padding-block: 0.9375rem;
+    transition: background-color 150ms;
+  }
+  .scope-index__link:hover {
+    background-color: var(--color-surface);
+  }
+  .scope-index__name {
+    font-size: 1.0625rem;
+    font-weight: 500;
+    color: var(--color-ink-950);
+  }
+  .scope-index__brand {
+    font-size: 0.8125rem;
+    color: var(--color-teal-800);
+  }
+  .scope-index__count {
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+  }
+  .scope-index__go {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+    align-self: center;
+    justify-self: end;
+    color: var(--color-ink-500);
+  }
+  .scope-index__link:hover .scope-index__go {
+    color: var(--color-teal-800);
+  }
+
+  /* --- Bloque de familia -------------------------------------------------- */
+  .family__head {
     display: grid;
     gap: 2rem;
-    padding-bottom: 3rem;
-  }
-  .family__media {
-    max-width: 17rem;
+    align-items: start;
   }
   .family__logo {
-    margin-bottom: 1.5rem;
+    margin-bottom: 1.25rem;
   }
-  .family__desc {
+  .family__name {
+    max-width: 24ch;
+  }
+  .family__purpose {
     margin-top: 1rem;
+    color: var(--color-ink-600);
   }
-  .family__meta {
-    margin-top: 1rem;
-    color: var(--color-ink-500);
-    font-family: var(--font-mono);
+  /* La pregunta del cliente ocupa el lugar de la especificación que estas
+     familias no siempre pueden publicar. Va en tinta plena: es contenido. */
+  .family__question {
+    margin-top: 1.25rem;
+    padding-left: 1rem;
+    border-left: 1px solid var(--color-teal-700);
+    font-size: 1rem;
+    color: var(--color-ink-950);
+    max-width: 40ch;
   }
-  .family__cta {
-    margin-top: 2rem;
+  .family__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.875rem 2rem;
+    margin-top: 1.75rem;
+  }
+  .family__motif {
+    max-width: 15rem;
+    color: var(--color-ink-800);
+  }
+  .family__models {
+    margin-top: 2.5rem;
+  }
+  .family__skus {
+    margin-top: 3rem;
   }
 
-  .sku-head {
+  /* Referencias documentadas: fila de índice, no ficha. Sin hueco de imagen,
+     porque no hay imagen y reservarlo dejaría un vacío en cada fila. */
+  .refs {
+    list-style: none;
+    margin: 2.5rem 0 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .ref {
     display: grid;
-    gap: 1.75rem;
-    align-items: start;
-    margin-bottom: 2.5rem;
+    gap: 0.875rem;
+    padding-block: 1.375rem;
+    border-bottom: 1px solid var(--color-hairline);
   }
-  .sku-head__desc {
-    margin-top: 1rem;
+  .ref__name {
+    font-size: 1.0625rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
   }
-
+  .ref__does {
+    margin-top: 0.375rem;
+    color: var(--color-ink-600);
+    max-width: 66ch;
+  }
+  .ref__links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1.75rem;
+  }
 
   @media (min-width: 768px) {
-    .family {
-      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-      align-items: center;
-      gap: 3.5rem;
-      padding-bottom: 4rem;
-    }
-    .family__media {
-      max-width: none;
-    }
-    .sku-head {
-      grid-template-columns: minmax(0, 1fr) auto;
+    .scope-head {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
       gap: 3rem;
+      align-items: baseline;
+    }
+    .scope-index__link {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 13rem) 9rem 1.5rem;
+      gap: 1.5rem;
+      padding-block: 1.0625rem;
+    }
+    .scope-index__go {
+      grid-column: 4;
+      grid-row: auto;
+    }
+    .scope-index__count {
+      text-align: right;
+    }
+    .ref {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 15rem);
+      align-items: start;
+      gap: 2.5rem;
+      padding-block: 1.625rem;
+    }
+    .ref__links {
+      justify-content: flex-end;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .family__head {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 15rem);
+      gap: 4rem;
+      align-items: center;
     }
   }
 </style>
