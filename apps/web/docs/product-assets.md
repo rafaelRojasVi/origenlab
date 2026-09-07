@@ -73,6 +73,31 @@ de los logotipos de las seis marcas y de las imágenes de producto de Ortoalresa
 en origenlab.cl. Registrado en `src/data/sourceRegistry.ts`
 (`ASSET_PERMISSION_NEEDED`) y en [`design/CONTENT_NEEDED.md`](design/CONTENT_NEEDED.md).
 
+### Color: qué original sirve y cuál no (medido el 2026-09-07)
+
+El riel de marcas de la portada podría revelar el color del fabricante al pasar
+el cursor. No lo hace, porque el conjunto no está completo:
+
+| Marca | Original | Color aprovechable |
+|---|---|---|
+| Hielscher Ultrasonics | `hielscher-source.svg`, 146 × 67 | sí, azul marino |
+| Ortoalresa | `ortoalresa-source.svg`, 132 × 44 | sí, rojo |
+| IKA | `ika-source.png`, 400 × 161 | sí, azul marino |
+| Adam Equipment | `adam-equipment-source.png`, 300 × 125 | **no**: el original ya es monocromo, media RGB 90,90,90 |
+| Löser Messtechnik | `loeser-source.jpg`, 70 × 70 | **no utilizable**: tiene color, no resolución |
+| SERVA Electrophoresis | `serva-source.png`, 267 × 80 | sí, azul |
+
+Cuatro de seis. Con eso, el revelado dejaría cuatro marcas en color y dos en
+gris, que es una jerarquía involuntaria justo entre las cinco familias de
+maquinaria que la revisión igualó. **El riel se queda gris entero** y lo que
+revela el cursor o el foco es tinta plena, igual para las seis. Los dos activos
+que faltan están en
+[`design/CONTENT_NEEDED.md`](design/CONTENT_NEEDED.md) como CONTENIDO.
+
+Los seis logotipos web salen además a la misma tinta (`#2b2e30`), lo que permite
+igualarlos en el riel con una sola opacidad de reposo: ninguna marca queda más
+clara que otra por su propio color.
+
 ## Open Graph e iconos (sitio)
 
 | Asset | Notes |

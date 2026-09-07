@@ -3,11 +3,13 @@
  * Capturas de revisión del rediseño, a los anchos pedidos en el encargo.
  *
  * Distinto de `qa:screens`, que es la puerta de accesibilidad y recorre 16
- * rutas en tres viewports fijos. Esto produce el material que se mira: página
- * completa a 1440, 1024 y 390, más los recortes concretos que hay que juzgar de
- * cerca (cabecera clara y oscura, familias de equipo, hero móvil, pie).
+ * rutas en tres viewports fijos. Esto produce el material que se mira: cada
+ * ruta rehecha a 1440, 768 y 390, más los recortes y estados concretos que hay
+ * que juzgar de cerca (hero en reposo y con una familia encendida, riel de
+ * marcas, y las dos superficies con movimiento reducido).
  *
- * Salida en `design/review-2026-09-06/`.
+ * Salida en `design/review-2026-09-07/`, que está en `.gitignore`: se
+ * regeneran, no se versionan.
  *
  * Ejecutar: npm run design:review-shots
  */
@@ -20,7 +22,7 @@ import sharp from 'sharp';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = join(root, 'dist');
-const out = join(root, 'design', 'review-2026-09-06');
+const out = join(root, 'design', 'review-2026-09-07');
 mkdirSync(out, { recursive: true });
 
 if (!existsSync(dist)) {
@@ -77,49 +79,93 @@ async function settle(page) {
   await page.waitForLoadState('networkidle');
 }
 
-async function shot(route, name, width, height, { fullPage = true, clip, scrollTo } = {}) {
-  const page = await browser.newPage({
+async function shot(
+  route,
+  name,
+  width,
+  height,
+  { fullPage = true, clip, scrollTo, reduced = false, selector, hover, pause } = {},
+) {
+  const context = await browser.newContext({
     viewport: { width, height: height ?? 900 },
     deviceScaleFactor: 2,
+    reducedMotion: reduced ? 'reduce' : 'no-preference',
   });
+  const page = await context.newPage();
   await page.goto(`${base}${route}`, { waitUntil: 'networkidle' });
   await settle(page);
   if (scrollTo !== undefined) {
     await page.evaluate((y) => window.scrollTo(0, y), scrollTo);
     await page.waitForTimeout(500);
   }
+  /* Estados que sólo existen al interactuar: una familia encendida, el riel
+     detenido. Sin capturarlos, la mitad del trabajo no se ve. */
+  if (pause) {
+    await page.locator(pause).click();
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(400);
+  }
+  if (hover) {
+    await page.locator(hover).hover();
+    await page.waitForTimeout(500);
+  }
   const file = join(out, `${name}.png`);
-  await page.screenshot({ path: file, fullPage: clip ? false : fullPage, clip });
-  await page.close();
+  const target = selector ? page.locator(selector) : page;
+  if (selector) {
+    await target.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(300);
+    await target.screenshot({ path: file });
+  } else {
+    await page.screenshot({ path: file, fullPage: clip ? false : fullPage, clip });
+  }
+  await context.close();
   const meta = await sharp(file).metadata();
   console.log(`${name}.png`.padEnd(42) + `${meta.width}x${meta.height}`);
 }
 
-/* -- Página completa a los tres anchos del encargo ------------------------ */
-await shot('/', 'home-desktop-1440', 1440, 1000);
-await shot('/', 'home-tablet-1024', 1024, 900);
-await shot('/', 'home-mobile-390', 390, 844);
+/* -- Cada ruta rehecha, a los tres anchos del encargo --------------------- */
+const ROUTES = [
+  ['/', 'home'],
+  ['/productos/', 'productos'],
+  ['/aplicaciones/', 'aplicaciones'],
+  ['/marcas/', 'marcas'],
+  ['/marcas/hielscher/', 'marca-hielscher'],
+  ['/marcas/ika/', 'marca-ika'],
+  ['/marcas/adam-equipment/', 'marca-adam'],
+  ['/marcas/loeser-messtechnik/', 'marca-loeser'],
+  ['/marcas/serva-electrophoresis/', 'marca-serva'],
+  ['/marcas/ortoalresa/', 'marca-ortoalresa'],
+];
+for (const [route, name] of ROUTES) {
+  await shot(route, `${name}-desktop-1440`, 1440, 1000);
+  await shot(route, `${name}-tablet-768`, 768, 1024);
+  await shot(route, `${name}-mobile-390`, 390, 844);
+}
 
-/* -- Recortes que hay que juzgar de cerca --------------------------------- */
-// Cabecera sobre papel: la marca en su contexto real.
+/* -- Hero: reposo, una familia encendida y movimiento reducido ------------ */
+await shot('/', 'hero-1440', 1440, 1000, { selector: '.hero' });
+await shot('/', 'hero-1440-activo', 1440, 1000, {
+  selector: '.hero',
+  hover: '[data-family-row="osmometria"]',
+});
+await shot('/', 'hero-390', 390, 844, { selector: '.hero' });
+await shot('/', 'hero-1440-reducido', 1440, 1000, { selector: '.hero', reduced: true });
+
+/* -- Riel de marcas: en movimiento, detenido y estático ------------------- */
+await shot('/', 'riel-1440', 1440, 1000, { selector: '[data-rail]' });
+await shot('/', 'riel-1440-pausado', 1440, 1000, {
+  selector: '[data-rail]',
+  pause: '[data-rail-toggle]',
+});
+await shot('/', 'riel-390', 390, 844, { selector: '[data-rail]' });
+await shot('/', 'riel-1440-reducido', 1440, 1000, { selector: '[data-rail]', reduced: true });
+
+/* -- Cabecera sobre papel y superficie invertida -------------------------- */
 await shot('/', 'header-light-1440', 1440, 300, {
   clip: { x: 0, y: 0, width: 1440, height: 130 },
 });
-// Cabecera sobre fondo oscuro: la banda de cierre y el pie son las superficies
-// invertidas del sitio, y ahí vive el lockup en `tone="paper"`.
 await shot('/contacto/', 'footer-dark-1440', 1440, 1000, { fullPage: true });
-
-// Hero móvil y primera banda de marcas.
-await shot('/', 'hero-mobile-390', 390, 844, {
-  clip: { x: 0, y: 0, width: 390, height: 844 },
-});
-
-// Marcas: las seis, con su familia.
-await shot('/marcas/', 'marcas-desktop-1440', 1440, 1000);
-
-// Página interna del sistema de marca.
-await shot('/logo-lab/', 'logo-lab-1440', 1440, 1000);
 
 await browser.close();
 server.close();
-console.log(`\nCapturas en design/review-2026-09-06/`);
+console.log(`\nCapturas en design/review-2026-09-07/`);

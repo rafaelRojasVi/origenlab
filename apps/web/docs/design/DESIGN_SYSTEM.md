@@ -62,10 +62,34 @@ Contraste verificado (WCAG 2.x): `ink-950` sobre `paper` 17,4:1; `ink-800` 13,1:
 
 `npm run qa:contrast` recalcula el contraste de cada texto visible del sitio
 construido sobre su fondo efectivo. El par más ajustado hoy es `ink-500` sobre
-`surface` con 4,67:1, en las etiquetas mono de la banda de marcas.
+`surface` con 4,67:1, en las etiquetas mono del riel de marcas.
 
 Reglas: un solo acento en todo el sitio; sin degradados; el color nunca es el
 único portador de significado; los filetes no transportan información.
+
+#### Las seis tintas de familia
+
+Añadidas en la revisión del 2026-09-07 y **sólo** para la constelación del hero
+y la fila del índice que le corresponde. No aparecen en ningún otro sitio.
+
+| Token | Valor | Familia | Sobre `paper` |
+|---|---|---|---|
+| `family-sonicacion` | `#1D4F7C` | Sonicación y procesamiento ultrasónico | 8,16:1 |
+| `family-dispersion` | `#6B3F96` | Dispersión y homogeneización | 7,23:1 |
+| `family-centrifugacion` | `#115E59` | Centrifugación y separación | 7,25:1 |
+| `family-pesaje` | `#7D5310` | Pesaje y análisis de humedad | 6,44:1 |
+| `family-osmometria` | `#15697F` | Osmometría | 5,90:1 |
+| `family-electroforesis` | `#8F2F4F` | Electroforesis | 7,47:1 |
+
+No son un segundo acento: son una escala de identificación. El sistema sigue
+teniendo un acento, el teal, y centrifugación lo reutiliza en vez de inventar un
+séptimo verde. Existen porque el hero tiene que decir de un vistazo que hay seis
+capacidades distintas, y seis puntos del mismo color dicen lo contrario.
+
+Las seis pasan AA sobre papel y sobre superficie, de modo que pueden teñir texto
+(el numeral de la fila activa) y no sólo un punto. Y no son el único portador de
+significado: el numeral que las acompaña es el mismo en el diagrama y en la
+tabla, y funciona sin color.
 
 **No existe el verde WhatsApp.** El canal se identifica por el glifo, no por un
 segundo verde que compita con la marca (el `emerald-600` anterior fallaba AA a
@@ -98,9 +122,32 @@ en el rol `.t-label`; medidas de 60 a 66 caracteres en texto corrido; sin rayas
 - **Un solo radio: 2 px** (`--radius-edge`), en botones, imágenes y campos.
 - **Sin sombras.** La cabecera fija se separa con un filete, no con desenfoque.
 - Movimiento: respuesta a hover y foco, el desplazamiento de 2 px de la flecha
-  en los enlaces y el revelado al desplazarse de la portada. Nada en bucle, nada
-  de parallax, ninguna librería de animación. Todo lo que se mueve está bajo
-  `prefers-reduced-motion`.
+  en los enlaces, el revelado al desplazarse de la portada y los dos bucles
+  acotados de más abajo. Nada de parallax, ninguna librería de animación. Todo
+  lo que se mueve está bajo `prefers-reduced-motion`.
+
+**Los dos únicos bucles del sitio, los dos en la portada.** No hay más, y añadir
+un tercero exige la misma justificación que estos dos:
+
+1. **La órbita de la marca del hero.** Tres cuerpos recorriendo la lemniscata
+   por `offset-path`, 34 s, sin JavaScript. No se anima la marca de la cabecera
+   ni la del pie: un bucle permanente en el shell del sitio, en toda página, no
+   tendría cómo pararse.
+2. **El riel de marcas.** `transform` sobre una pista duplicada, 52 s. Es el
+   único bucle con control de pausa visible, y lo tiene porque WCAG 2.2.2 lo
+   exige para contenido en movimiento de más de 5 s. El control lo instala el
+   script, y el movimiento no existe hasta que el script marca el riel: sin
+   script no hay control y por tanto tampoco movimiento.
+
+**La constelación del hero no es un bucle.** Todo su movimiento es respuesta a
+una acción: `transform: scale` y `opacity` sobre el nodo y su conector. Con
+`prefers-reduced-motion: reduce` desaparecen las transiciones, el estado cambia
+de golpe y la relación entre el diagrama y el índice sigue funcionando.
+
+Medido en la revisión del 2026-09-07: CLS 0,0000 en las seis rutas principales a
+390, 768 y 1440 px, y ni un píxel de desplazamiento horizontal. Todo lo que se
+mueve compone (`transform` y `opacity`) y la caja de la constelación reserva su
+alto con `aspect-ratio`.
 
 **Revelado al desplazarse** (`[data-reveal]`, definido en `global.css`): una
 transición de opacidad y 12 px de desplazamiento vertical cuando el elemento
@@ -169,16 +216,19 @@ estas resuelve el problema.
 | `ui/KeyFacts` | Tres o cuatro cifras de cabecera en mono |
 | `ui/SpecGroups` | Ficha técnica agrupada en listas de definición |
 | `ui/CompareTable` | Comparativa: tabla con región desplazable en escritorio, listas apiladas bajo 768 px |
-| `ui/BrandLogo` | Logotipo a tinta única con altura óptica por marca |
+| `ui/BrandLogo` | Logotipo a tinta única con altura óptica por marca. `loading="eager"` sólo en el riel |
+| `ui/ModelSheet` | Ficha de un modelo que el sitio describe y enlaza pero no aloja: qué hace, usos, criterios y fuente |
 | `ui/ClosingQuoteBand` | Banda de cierre invertida, única por página |
 | `ui/Notice` | Aviso comercial, uno por página |
 | `ui/ExternalLink` | Enlace externo, anunciado y marcado |
 | `ui/Icon` | Trazos de Tabler Icons (MIT), 24x24, stroke 1,5 |
 | `ui/LegalDraftNotice` | Estado de borrador de las rutas legales |
 | `ui/PendingFactsTable` | Datos legales que faltan, nombrados uno a uno |
-| `home/Hero` | Portada: titular a escala propia e índice de alcance |
-| `home/BrandWall` | Marcas en dos niveles, por catálogo publicado |
-| `home/ScopeSection` | Las cinco familias, en tres composiciones distintas |
+| `home/Hero` | Portada: titular a escala propia, constelación e índice de alcance enlazado |
+| `home/SampleConstellation` | La marca como ancla y seis nodos de capacidad, unidos al índice del hero |
+| `home/BrandRail` | Riel horizontal de las seis marcas, una sola altura, gris, con control de pausa |
+| `home/EquipmentFamilies` | Las seis familias, en cuatro composiciones distintas |
+| `home/FamilyMotif` | Diagrama de qué le hace el equipo a la muestra, para las familias sin fotografía |
 | `home/ConsultationSection` | Asesoría técnica y la especialista |
 | `home/ProcessSection` | De la consulta a la cotización, en cinco pasos |
 | `home/AudienceSection` | Sectores atendidos y las tres líneas comerciales |
@@ -220,22 +270,28 @@ uno vive en `brands.ts`, porque depende del lockup del fabricante y no del
 contexto de uso. Es el mismo criterio ya aplicado en la firma de correo
 corporativa.
 
-Toda `<img>` declara `width` y `height`. La imagen del hero y la de la ficha de
-producto cargan con prioridad; el resto es diferido.
+Toda `<img>` declara `width` y `height`. La ficha de producto y los seis
+logotipos del riel cargan con prioridad; el resto es diferido. El riel es la
+excepción por una razón concreta: sus logotipos entran en cuadro por el propio
+movimiento, sin que el visitante desplace la página, y uno diferido aparecería
+en blanco al llegar.
 
 ---
 
 ## 6. Lo que el sistema no admite
 
 - Fichas dentro de fichas, o una rejilla de tres fichas iguales.
-- Un segundo verde, un degradado, una sombra o un segundo radio.
+- Un segundo verde, un degradado, una sombra o un segundo radio. Las seis tintas
+  de familia no son un segundo acento: viven sólo en la constelación del hero y
+  en su índice, y centrifugación reutiliza el teal del sistema.
 - Versalitas con tracking fuera del rol `.t-label`.
 - Repetir el aviso de disponibilidad en cada fila.
 - Cualquier script, tipografía o imagen servida desde un tercero.
 - Analítica, píxeles, gestores de etiquetas o chat externo.
-- Movimiento en bucle, parallax o secuestro del desplazamiento. El revelado de
-  `[data-reveal]` es la única excepción y sólo con las seis condiciones de la
-  sección 2.
+- Parallax y secuestro del desplazamiento, sin excepción.
+- Un tercer bucle. Los dos que hay están en la sección 2 con su justificación, y
+  el del riel con su control de pausa. El revelado de `[data-reveal]` es una
+  transición, no un bucle, y sólo con las seis condiciones de la sección 2.
 - Afirmar representación oficial, distribución exclusiva o certificación.
 
 ---

@@ -2,7 +2,7 @@
 
 Status: canonical
 Owner: web-maintainers
-Last reviewed: 2026-09-06
+Last reviewed: 2026-09-07
 
 Lo que el sitio **no** publica porque nadie lo ha confirmado. Ningún elemento de
 esta lista puede redactarse desde el repositorio: o lo aporta el negocio
@@ -76,16 +76,37 @@ logotipo. **Ollital y CRTOP salieron del sitio público.**
 `src/data/sourceRegistry.ts` y el HTML de `dist/`. Una marca retirada que
 reaparezca en cualquiera de ellas hace fallar la validación.
 
+**Desde el 2026-09-07 las seis tienen página propia.** Lo que antes lo impedía
+era una sola bandera, `catalogPublished`, que decidía a la vez si había página y
+si se podía describir el alcance comercial. Ahora son dos ejes en `brands.ts`,
+`editorialPublished` y `commercialScopeConfirmed`, y sólo el segundo sigue
+esperando al negocio. El material editorial de las seis es investigación
+verificada: 18 modelos y familias en `src/data/brandModels.ts`, leídos de la
+página o del PDF del propio fabricante el 2026-09-07 y con la URL comprobada por
+petición real (`npm run verify:sources`, 47 destinos, 0 fallos).
+
 | Pendiente | Tipo | Bloquea |
 |---|---|---|
-| Alcance comercial formal por marca (distribuidor, revendedor, pedidos gestionados) | CONTENIDO | `commercialNote` en las cuatro marcas sin catálogo; `validate:catalog` impide declararlo sin este dato. Hoy se dice qué fabrica cada una, no en qué condiciones la vende OrigenLab |
+| Alcance comercial formal por marca (distribuidor, revendedor, pedidos gestionados) | CONTENIDO | `commercialNote` en Hielscher, IKA, Adam Equipment y Löser; `validate:catalog` impide declararlo sin `commercialScopeConfirmed`. Sus páginas dicen qué fabrica el fabricante y que OrigenLab cotiza la línea, nunca en qué calidad |
 | Permiso escrito de reproducción de los seis logotipos y de las imágenes de producto de Ortoalresa | CONTENIDO | TODO abierto desde 2026-05. Registrado por marca en `src/data/sourceRegistry.ts` como `ASSET_PERMISSION_NEEDED` |
-| Fotografía de equipo de Hielscher, IKA, Adam Equipment, Löser y SERVA | CONTENIDO | Las cinco familias se componen con un diagrama propio (`src/lib/familyMotif.ts`), no con fotografía. Nunca se ilustra una marca con el equipo de otra |
-| Catálogo publicable de las cuatro marcas sin ficha | CONTENIDO | Páginas `/marcas/{slug}/` propias para ellas |
-| Logotipo vectorial de Löser Messtechnik | CONTENIDO | El único original disponible es un JPEG de 70 × 70 calado sobre un azulejo naranja. Se normaliza a una tinta y se lee, pero no escala |
-| HTTPS en el sitio de Löser Messtechnik | TERCERO | `loeser-osmometer.de` rechaza el saludo TLS: el sitio de 2005 sólo responde por http. El enlace oficial es http y la excepción está declarada en `brands.ts` (`websiteInsecure`). No depende de OrigenLab |
+| Fotografía de equipo de Hielscher, IKA, Adam Equipment, Löser y SERVA | CONTENIDO | Las cinco familias se componen con un diagrama propio (`src/lib/familyMotif.ts`), no con fotografía. Nunca se ilustra una marca con el equipo de otra. Las fichas de `brandModels.ts` no reservan hueco de imagen: una caja vacía en cada fila sería peor que ninguna |
+| **Logotipo en color de Adam Equipment** | CONTENIDO | Revelado de color en el riel de marcas. El único original en el repositorio (`public/email/brands/adam-equipment-source.png`, 300 × 125) ya es monocromo: media RGB 90,90,90. No existe versión en color |
+| Logotipo vectorial (y en color utilizable) de Löser Messtechnik | CONTENIDO | El único original disponible es un JPEG de 70 × 70 calado sobre un azulejo naranja. Se normaliza a una tinta y se lee, pero no escala y no da un color fiable |
+| HTTPS en el sitio de Löser Messtechnik | TERCERO | `loeser-osmometer.de` rechaza el saludo TLS: el sitio de 2005 sólo responde por http. El enlace oficial es http y la excepción está declarada en `brands.ts` (`websiteInsecure`) y en `brandModels.ts` (`officialUrlInsecure`). No depende de OrigenLab |
+| PDF descargable de Löser Messtechnik | TERCERO | El fabricante no publica ninguno: los folletos se piden por formulario (`anfrage-eng.html`). Las cuatro fichas de osmometría enlazan página oficial y lo dicen |
 | Regenerar la firma de correo corporativa | CONTENIDO | `public/email/origenlab-contacto-signature.html` sigue mostrando Ollital y CRTOP, y no incluye a Adam Equipment ni a Löser. Dejó de respaldar la cifra «6 marcas con las que trabajamos», que ahora se apoya en `brands.ts` y en `validate:brands` |
-| Verificar en navegador la página de dispersores de IKA | CONTENIDO | `ika.com` devuelve el interstitial de Cloudflare (403) a todo cliente automatizado, incluido un navegador headless. El PDF oficial sí responde. La URL de la página no está comprobada por máquina |
+| Verificar en navegador la página de dispersores de IKA, y la URL de cada modelo | CONTENIDO | `ika.com` devuelve el interstitial de Cloudflare (403) a todo cliente automatizado, incluido un navegador headless. El PDF oficial sí responde y es de donde salen las cifras de T 10 basic, T 18 digital y T 25 digital. Las tres fichas declaran `officialUrlScope: 'familia'` y enlazan la página de dispersores, no la del modelo, porque no hay forma de comprobar por máquina la URL de cada uno |
+
+### Por qué el riel de marcas es gris entero
+
+Cuatro de los seis originales tienen color de fabricante utilizable (Hielscher,
+Ortoalresa, IKA y SERVA). Adam Equipment no tiene ninguno y el de Löser es un
+JPEG de 70 × 70. Revelar color al pasar el cursor dejaría cuatro marcas en color
+y dos en gris: una jerarquía involuntaria, y justo entre las cinco familias de
+maquinaria que la revisión acaba de igualar. El riel se queda gris entero, y lo
+que revela el cursor o el foco es tinta plena y la familia en acento, igual para
+las seis. **Con los dos activos que faltan se puede reconsiderar; con uno solo,
+no.**
 
 ---
 
@@ -93,9 +114,11 @@ reaparezca en cualquiera de ellas hace fallar la validación.
 
 | Pendiente | Tipo | Bloquea |
 |---|---|---|
-| PDF de catálogos y fichas con permiso de publicación | CONTENIDO | `documents.ts` está vacío; las páginas de aplicación muestran el texto genérico de `company.catalogNote` |
-| Familias de equipo más allá de centrífugas | CONTENIDO | `/productos/` publica hoy una familia y una línea de reactivos; la portada nombra las seis |
-| Modelos, especificaciones e imágenes de las cuatro familias por consulta | CONTENIDO | La portada las nombra con su fabricante (`equipmentScope.ts`, nivel `consulta`), pero no puede publicar un solo modelo. `validate:catalog` impide asociarles cifra o fotografía |
+| PDF de catálogos y fichas con permiso de publicación | CONTENIDO | `documents.ts` está vacío; las páginas de aplicación muestran el texto genérico de `company.catalogNote`. Los PDF del fabricante se enlazan, nunca se rehospedan |
+| ~~Familias de equipo más allá de centrífugas~~ | **Resuelto 2026-09-07** | `/productos/` publica las seis familias en un orden que deja centrifugación en el centro |
+| ~~Modelos y especificaciones de las cuatro familias por consulta~~ | **Resuelto 2026-09-07** | 18 modelos y familias en `brandModels.ts`, leídos de la fuente oficial. El nivel `consulta` pasó a `documentada`: puede nombrar modelos, y sigue sin poder declarar fotografía ni cifra sin aprobar |
+| Identidad exacta y alcance de las referencias TEMED y REPEL-SILANE de SERVA | CONTENIDO | Se retiraron del catálogo el 2026-09-07: no fue posible verificarlas en el catálogo del fabricante, y una referencia de reactivo mal identificada es peor que ninguna. Están en `REMOVED_SLUGS` de `validate-catalog.mjs` para que no vuelvan sin la verificación |
+| Rangos de las fuentes BluePower 300 BLOT, 3000 HPE y 6000 IPG | CONTENIDO | De las tres se publica el código de catálogo y para qué está pensada cada una. Sólo la 600 PRIME tiene rangos en su ficha del fabricante |
 | ~~Qué familia fabrica cada marca sin catálogo~~ | **Resuelto 2026-09-06** | Confirmado por el negocio; vive en `brands.ts` (`familyId`) |
 | Fotografía de producto de familias distintas de centrifugación | CONTENIDO | Toda la fotografía aprobada del repositorio es de centrífugas Ortoalresa. Las otras cinco familias usan un diagrama propio y la portada no abre con fotografía |
 | Equipos asociados a alimentos | CONTENIDO | `/categorias/alimentos/` declara con franqueza que aún no hay familia publicada |
@@ -211,3 +234,50 @@ los laboratorios, no con testimonios inventados.
 17. **El número de teléfono aparece una sola vez por bloque y en un solo
     formato.** Antes se repetía dentro de la etiqueta de WhatsApp y como enlace
     `tel:` en la misma sección.
+
+### Revisión de arquitectura de información, 2026-09-07
+
+18. **La página de marca se separó del alcance comercial.** Dos ejes en
+    `brands.ts` en vez de una bandera: `editorialPublished` habilita
+    `/marcas/{slug}/` y lo tienen las seis; `commercialScopeConfirmed` habilita
+    `commercialNote` y lo tienen dos. Antes cuatro familias de equipo enteras no
+    tenían ninguna página, y lo único que faltaba de ellas era la confirmación
+    comercial.
+19. **Las seis páginas de marca comparten el estándar y ninguna la
+    disposición.** `brand.layout` da a cada una la suya: escalera de potencia en
+    Hielscher, fotografía en Ortoalresa, diagrama del mecanismo en IKA, rejilla
+    de legibilidad en Adam, cuadro común en Löser, sistema en SERVA. Seis
+    páginas idénticas con el nombre cambiado se leen como un formulario.
+20. **Se creó `src/data/brandModels.ts`.** 18 modelos y familias con qué hace el
+    equipo, usos típicos, criterios de elección y la fuente oficial. Ninguna
+    entrada puede declarar precio, plazo, stock, garantía ni imagen, y
+    `validate:catalog` lo comprueba.
+21. **`/aplicaciones/` pasó a ser por tarea.** Seis tareas de laboratorio, cada
+    una con ancla propia, el equipo que la resuelve y lo que conviene traer a la
+    conversación. Los tres mercados quedan debajo con su nombre real, «Por tipo
+    de laboratorio». **No se migró ninguna ruta:** siguen siendo
+    `/categorias/*`.
+22. **`/productos/` se rehizo sobre las seis familias**, en un orden que deja
+    centrifugación en el centro porque es la única con fotografía y puesta
+    primero se come la página.
+23. **El muro de marcas pasó a riel.** Una sola altura óptica, orden de la lista
+    cerrada, gris entero por la razón de la sección 2, y con control de pausa
+    visible. La copia del bucle lleva `aria-hidden` y no contiene nada
+    enfocable.
+24. **El hero es interactivo.** La marca es el ancla y seis nodos de capacidad
+    la rodean, unidos al índice por el numeral: al pasar cursor o foco por una
+    fila se enciende su nodo, y al apuntar un nodo se enciende su fila. Las
+    filas del índice son ahora enlaces; antes nombraban seis familias y no
+    llevaban a ninguna. Se añadieron seis tintas de familia, medidas y usadas
+    sólo ahí.
+25. **La puerta de la lista cerrada pasó de cuatro capas a seis.**
+    `validate:brands` comprueba además `brandModels.ts`, `applications.ts`, que
+    haya una página por marca aprobada y ninguna más, las seis rutas del
+    sitemap, que todo destino externo del HTML esté en la lista de los seis
+    fabricantes, y que los datos estructurados no nombren a una marca retirada.
+26. **Tres fallos del arnés, los tres encontrados por este cambio.** El
+    comprobador de enlaces resolvía `/aplicaciones/#osmolalidad` como un archivo
+    llamado `#osmolalidad`; `qa:screens` daba por desborde horizontal cualquier
+    elemento fuera del ancho del documento aunque un ancestro lo recortara; y
+    los logotipos del riel iban diferidos, de modo que uno sin cargar aparecía
+    en blanco al entrar en cuadro por el propio movimiento.

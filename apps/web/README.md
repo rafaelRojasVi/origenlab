@@ -51,14 +51,18 @@ Checklist completo y pasos: [docs/deployment.md](docs/deployment.md). Estado act
 
 - `src/config/site.ts` — Configuración central (nombre, dominio, navegación, destino del CTA).
 - `src/layouts/Layout.astro` — Documento base; la cabecera del documento vive en `components/Seo.astro`.
-- `src/pages/` — Inicio, productos, familia y ficha de centrífugas, aplicaciones,
-  categorías (`categorias/[slug].astro`), marcas (`marcas/[slug].astro`),
-  servicios, nosotros, contacto, 404 y la página interna `logo-lab`.
+- `src/pages/` — Inicio, productos (las seis familias), familia y ficha de
+  centrífugas, aplicaciones (las seis tareas), categorías
+  (`categorias/[slug].astro`, «por tipo de laboratorio»), marcas
+  (`marcas/[slug].astro`, una por cada una de las seis), servicios, nosotros,
+  contacto, 404 y la página interna `logo-lab`.
 - `src/components/ui/` — Primitivas del sistema de diseño (ver
   [docs/design/DESIGN_SYSTEM.md](docs/design/DESIGN_SYSTEM.md)).
-- `src/components/home/` — Hero y muro de marcas de la portada.
+- `src/components/home/` — Hero con la constelación de la muestra, riel de
+  marcas, familias de equipo, asesoría, proceso y audiencia.
 - `src/data/` — Verdad de negocio: empresa, contacto, servicios, categorías,
-  marcas, productos, familias, agrupación de especificaciones, FAQ, documentos.
+  marcas, modelos del fabricante (`brandModels.ts`), aplicaciones, productos,
+  familias, agrupación de especificaciones, FAQ, documentos.
 - `src/styles/global.css` — Tokens del sistema (`@theme`) y primitivas de CSS.
 - `public/.htaccess` — Se copia a `dist/`: HTTPS, redirección de `www`, 404, CSP y cabeceras.
 

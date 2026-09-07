@@ -10,6 +10,8 @@
 | Cifras públicas: redacción, fuente, aprobación | `src/data/claims.ts` (usar `publicClaim(id)`, nunca el arreglo) |
 | Alcance de equipamiento por familia | `src/data/equipmentScope.ts` |
 | Marcas publicadas (lista cerrada de seis) | `src/data/brands.ts` (`APPROVED_BRAND_IDS`) |
+| Modelos del fabricante que el sitio describe y enlaza pero no aloja | `src/data/brandModels.ts` |
+| Las seis tareas de laboratorio de `/aplicaciones/` | `src/data/applications.ts` |
 | Fuente oficial, PDF, procedencia y permiso de imagen | `src/data/sourceRegistry.ts` |
 | Sistema de marca: construcción, colores, animación | `docs/logo-system.md` |
 | Asesoría técnica y hechos de la especialista | `src/data/consultation.ts` |
@@ -39,9 +41,24 @@ Two hard constraints beyond the content rules:
 
 **Las marcas son una lista cerrada de seis.** `APPROVED_BRAND_IDS` en
 `src/data/brands.ts` es la única lista que el sitio público puede mostrar, y
-`validate:brands` la comprueba en `brands.ts`, en `public/brands/`, en
-`src/data/sourceRegistry.ts` y en el HTML de `dist/`. Añadir o quitar una marca
-exige confirmación escrita del negocio.
+`validate:brands` la comprueba en seis capas: `brands.ts`, `public/brands/`,
+`src/data/sourceRegistry.ts`, `src/data/brandModels.ts`,
+`src/data/applications.ts` y el sitio construido (HTML, sitemap, datos
+estructurados, logotipos y destinos externos). Añadir o quitar una marca exige
+confirmación escrita del negocio.
+
+**Página de marca y alcance comercial son dos ejes, no uno.**
+`editorialPublished` habilita `/marcas/{slug}/` y lo tienen las seis;
+`commercialScopeConfirmed` habilita `commercialNote` y sólo lo tienen Ortoalresa
+y SERVA. Una marca sin alcance confirmado puede decir qué fabrica el fabricante
+y que OrigenLab cotiza la línea, nunca en qué calidad. `validate:catalog` lo
+comprueba.
+
+**Un modelo se publica con su fuente o no se publica.** Cada entrada de
+`brandModels.ts` declara `officialUrl` y `verifiedOn`, y no lleva ninguna cifra
+que no esté en ese destino. Nada de precio, plazo, stock, garantía ni imagen:
+`validate:catalog` los bloquea. `npm run verify:sources` comprueba con
+peticiones reales que los destinos siguen respondiendo.
 
 **Ninguna imagen de fabricante se publica sin procedencia y permiso en
 `src/data/sourceRegistry.ts`.** Que una imagen sea visible en público no implica
