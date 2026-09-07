@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * QA de interacción sobre `dist/`: teclado, menú móvil, movimiento reducido y
- * enlaces internos. Complementa `qa-screenshots.mjs`, que cubre la parte visual.
+ * QA de interacción sobre `dist/`: teclado, menú móvil, riel de marcas,
+ * movimiento reducido y enlaces internos. Complementa `qa-screenshots.mjs`,
+ * que cubre la parte visual.
  *
  * Ejecutar: node scripts/qa-interaction.mjs
  */
@@ -152,6 +153,109 @@ console.log('\nTeclado (1440 px)');
   await context.close();
 }
 
+/* -- 2b. Riel de marcas: bucle con control, y sin enlace duplicado -------- */
+
+/**
+ * Un bucle permanente sólo es admisible si se puede parar (WCAG 2.2.2), y una
+ * marquesina sólo es admisible si su copia no duplica el contenido para quien
+ * navega con lector de pantalla o con el tabulador. Las dos cosas se comprueban
+ * aquí porque las dos se rompen en silencio: el riel seguiría moviéndose igual.
+ */
+console.log('\nRiel de marcas (1440 px)');
+{
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const page = await context.newPage();
+  await page.goto(`${base}/`, { waitUntil: 'load' });
+
+  const rail = page.locator('[data-rail]');
+  check(await rail.count() === 1, 'hay exactamente un riel en la portada');
+  check(
+    await rail.evaluate((el) => el.hasAttribute('data-rail-ready')),
+    'el script habilita el movimiento (data-rail-ready)',
+  );
+
+  const track = page.locator('[data-rail-track]');
+  const playing = await track.evaluate((el) => {
+    const style = getComputedStyle(el);
+    return { name: style.animationName, state: style.animationPlayState };
+  });
+  check(playing.name !== 'none', `la pista tiene animación (${playing.name})`);
+  check(playing.state === 'running', 'la pista se mueve al cargar');
+
+  // Las seis, en el orden de la lista cerrada y sin repetir enlaces.
+  const ORDER = [
+    'Hielscher Ultrasonics',
+    'Ortoalresa',
+    'IKA',
+    'Adam Equipment',
+    'Löser Messtechnik',
+    'SERVA Electrophoresis',
+  ];
+  const names = await page.locator('[data-rail] .rail__set:not([aria-hidden]) .rail__name').allTextContents();
+  check(
+    JSON.stringify(names.map((name) => name.trim())) === JSON.stringify(ORDER),
+    `el orden del riel es el de la lista cerrada (${names.join(', ')})`,
+  );
+
+  // Sólo la pista: el enlace de la entradilla («Ver las marcas en detalle») no
+  // es una marca y contarlo escondería un duplicado real.
+  const links = await page.locator('[data-rail-track] a').count();
+  check(links === 6, `seis enlaces de marca en la pista, no doce (${links})`);
+  const clone = page.locator('[data-rail] .rail__set--clone');
+  check(
+    await clone.evaluate((el) => el.getAttribute('aria-hidden') === 'true'),
+    'la copia del bucle está oculta a tecnologías de asistencia',
+  );
+  check(
+    await clone.locator('a, button, [tabindex]').count() === 0,
+    'la copia del bucle no contiene nada enfocable',
+  );
+
+  // Igualdad óptica: los seis logotipos comparten opacidad de reposo.
+  const opacities = await page
+    .locator('[data-rail] .rail__set:not([aria-hidden]) .rail__logo')
+    .evaluateAll((els) => [...new Set(els.map((el) => getComputedStyle(el).opacity))]);
+  check(
+    opacities.length === 1,
+    `los seis logotipos comparten el mismo tratamiento de reposo (${opacities.join(', ')})`,
+  );
+
+  // Pausa: el cursor, el foco y el control explícito.
+  await page.locator('[data-rail] .rail__viewport').hover();
+  check(
+    (await track.evaluate((el) => getComputedStyle(el).animationPlayState)) === 'paused',
+    'el cursor sobre el riel lo detiene',
+  );
+  await page.mouse.move(0, 0);
+
+  await page.locator('[data-rail-track] a').first().focus();
+  check(
+    (await track.evaluate((el) => getComputedStyle(el).animationPlayState)) === 'paused',
+    'el foco de teclado en un enlace del riel lo detiene',
+  );
+  await page.locator('h1').first().evaluate((el) => el.focus());
+
+  const toggle = page.locator('[data-rail-toggle]');
+  check(await toggle.isVisible(), 'el control de pausa es visible');
+  await toggle.click();
+  check(
+    await toggle.evaluate((el) => el.getAttribute('aria-pressed') === 'true'),
+    'el control anuncia el estado de pausa',
+  );
+  await page.mouse.move(0, 0);
+  check(
+    (await track.evaluate((el) => getComputedStyle(el).animationPlayState)) === 'paused',
+    'con el control pulsado el riel sigue detenido fuera del cursor',
+  );
+  await toggle.click();
+  check(
+    (await track.evaluate((el) => getComputedStyle(el).animationPlayState)) === 'running',
+    'el mismo control lo reanuda',
+  );
+
+  await context.close();
+}
+
 /* -- 3. Movimiento reducido ------------------------------------------------ */
 console.log('\nMovimiento reducido');
 {
@@ -174,6 +278,28 @@ console.log('\nMovimiento reducido');
   check(animated.length === 0, `sin animaciones activas (${animated.join(', ') || 'ninguna'})`);
   const smooth = await page.evaluate(() => getComputedStyle(document.documentElement).scrollBehavior);
   check(smooth !== 'smooth', `scroll-behavior es "${smooth}"`);
+
+  // El riel tiene que ser una fila estática legible, no una marquesina parada:
+  // sin copia del bucle, sin control que no controla nada, y con las seis
+  // marcas visibles a la vez.
+  const rail = page.locator('[data-rail]');
+  check(
+    !(await rail.evaluate((el) => el.hasAttribute('data-rail-ready'))),
+    'el riel no se marca como animado con movimiento reducido',
+  );
+  check(
+    !(await page.locator('[data-rail] .rail__set--clone').isVisible()),
+    'la copia del bucle no se muestra',
+  );
+  check(
+    !(await page.locator('[data-rail-toggle]').isVisible()),
+    'el control de pausa se retira: no hay movimiento que parar',
+  );
+  const visibleLogos = await page
+    .locator('[data-rail] .rail__set:not([aria-hidden]) .rail__logo')
+    .evaluateAll((els) => els.filter((el) => el.getBoundingClientRect().width > 0).length);
+  check(visibleLogos === 6, `las seis marcas se leen a la vez (${visibleLogos})`);
+
   await context.close();
 }
 
