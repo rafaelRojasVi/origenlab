@@ -24,7 +24,7 @@ ErrorDocument 404 /404.html
 
   # El sitio no carga ningún recurso de terceros: tipografías, imágenes y estilos
   # son propios. Por eso la CSP puede ser estricta sin romper nada.
-  Header set Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'self'; base-uri 'self'; object-src 'none'"
+  Header set Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'self'; base-uri 'self'; object-src 'none'"
 
   # Superficies internas y borradores legales: no indexar aunque alguien las
   # enlace. Las rutas legales salen de aquí cuando el texto esté revisado.
