@@ -2,7 +2,7 @@
 
 Status: canonical
 Owner: project-maintainers
-Last reviewed: 2026-09-03
+Last reviewed: 2026-09-08
 Part of: [`docs/refoundation/REFOUNDATION_PLAN.md`](../refoundation/REFOUNDATION_PLAN.md)
 
 Read-only forensic inventory of every SQLite file found at the repo-configured
@@ -14,6 +14,11 @@ repo-configured path, its containing directory, and one other path already on
 record. If a broader disk-wide duplicate search is ever wanted, that needs a
 separate, explicitly operator-run procedure — not something this pass
 performs itself.
+
+One repository-defined, run-scoped SQLite output is also registered below. It
+is not an operational database and was not discovered as a persistent file in
+the static inventory; documenting it prevents a derived report artifact from
+being mistaken for a new authority or a dual-write bridge.
 
 **Method:** `stat` (size/mtime) plus SQLite header-only PRAGMAs
 (`page_size`, `page_count`, `freelist_count`, `schema_version`,
@@ -56,6 +61,12 @@ inspected machine to `/home/rafael/data/origenlab-email/sqlite/emails.sqlite`
 | `sqlite/emails.before_email_mart_features_20260609_215126.sqlite` | 137 GB | 2026-06-09 21:57 | pages 33,421,815 (identical page count to the July 22 pre-cutover file), freelist 17,477,339, schema_version 645 | 70 | emails, contact_master, supplier_master, lead_research_prospect — missing `commercial_opportunity`/`outbound_campaign` | **BACKUP** (undocumented provenance) | Ordinary read-write permissions (not barrier-protected like the cutover files), predates the commercial-opportunity/outbound-campaign schema era, 3 months old relative to the pinned research SHA. No doc found describing a retention policy for this specific ad hoc snapshot. Largest single disk consumer among the non-cutover-protected files (137 GB) with the least-recent apparent relevance — a reasonable first candidate for an **operator-led** (not automatic) disposition review once its "mart features" migration has been confirmed stable for this long, but no caller/reference search was performed to support a stronger recommendation than that. |
 | `sqlite/backups/emails_before_gmail_refresh_20260522_170343.sqlite` | 0 bytes | 2026-05-22 17:37 | `PRAGMA page_count` returns `0`; `file(1)` reports "empty" | n/a — not a valid SQLite database | n/a | **OBSOLETE_CANDIDATE** (evidence-backed, not size/age-backed) | A 0-byte file cannot be a valid SQLite database — this is conclusive, not inferred from size or age. Most likely a failed/interrupted backup write from 2026-05-22. Distinct from every other row in this table: the classification here rests on the file being provably non-functional as a database, not on staleness. Still not deleted in this pass per Phase 0 safety rules — flagged for operator confirmation. |
 | `/home/rafael/data/arch2a-p1-scratch/emails_scratch.sqlite` | 66 GB | 2026-08-20 17:32 | pages 16,011,782, freelist 0, schema_version 1 | 88 | emails, contact_master, supplier_master, lead_research_prospect, commercial_opportunity — missing `outbound_campaign` | **EXPERIMENTAL** | Outside the `origenlab-email/sqlite` tree entirely, in a directory named for "ARCH2A" — matches the "ARCH-2A" Postgres-mirror-parity work referenced in `docs/architecture/COMMERCIAL_OPERATING_SYSTEM_AUDIT.md` and in prior session memory (ARCH-2B mirror-parity tests are still skipped pending `ORIGENLAB_TEST_SQLITE_PATH` as of early September 2026). `schema_version=1` again suggests a rebuilt/reloaded copy rather than a physical clone — consistent with a purpose-built test fixture. **Likely still in active use for ongoing ARCH-2A/2B testing — do not treat as disposable without confirming that work is complete.** |
+
+## Generated, run-scoped SQLite artifact
+
+| Path | Size | Modified | Header fingerprint | Tables | Landmark tables present | Classification | Notes |
+|---|---|---|---|---|---|---|---|
+| `apps/email-pipeline/reports/out/active/current/historical_customer_quotes_<UTC>/enrichment_sidecar.sqlite` (or an explicit `--out-dir`) | Run-scoped | Created per exporter run | Not sampled; derived output | 1 | `sidecar_attachment_extracts` | **REBUILDABLE_PROJECTION** | Created by `build_historical_customer_quote_register.py` for attachment enrichment. It is the only SQLite write target for this feature; the canonical archive is opened read-only throughout. Its contents are derived from existing attachment evidence and can be regenerated. Treat the containing run directory, CSVs and manifest as report output/evidence, never as a new authority or a dual-write bridge. |
 
 ## Summary for the disposition matrix / decision register
 

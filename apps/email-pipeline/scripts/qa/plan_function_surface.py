@@ -288,7 +288,11 @@ def classify_likely_bucket(rel_posix: str) -> str:
     ):
         return "read_modules"
 
-    if p.startswith("scripts/reports/") or "client_report" in p:
+    if (
+        p.startswith("scripts/reports/")
+        or p.startswith("src/origenlab_email_pipeline/historical_quote_register/")
+        or "client_report" in p
+    ):
         return "client_reports"
 
     if (

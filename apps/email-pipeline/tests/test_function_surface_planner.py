@@ -398,3 +398,24 @@ def test_unknown_review_count_dropped_on_full_repo_scan() -> None:
     unknown = sum(1 for mod in result.modules if mod.likely_bucket == "unknown_review")
     assert unknown < 118
     assert unknown <= 15
+
+
+def test_historical_quote_register_classification_preserves_sidecar_risk() -> None:
+    m = _load()
+    package = REPO / "src" / "origenlab_email_pipeline" / "historical_quote_register"
+    paths = sorted(package.glob("*.py"))
+    assert paths
+    for path in paths:
+        rel = path.relative_to(REPO).as_posix()
+        assert m.classify_likely_bucket(rel) == "client_reports", rel
+
+    rel = "scripts/reports/build_historical_customer_quote_register.py"
+    assert m.classify_likely_bucket(rel) == "client_reports"
+    assert m.classify_likely_bucket(
+        "src/origenlab_email_pipeline/historical_quote_register_extra/sample.py"
+    ) == "unknown_review"
+
+    sidecar = package / "sidecar_db.py"
+    mod, _ = m.scan_file(sidecar, sidecar.relative_to(REPO).as_posix(), "src")
+    assert mod.has_sqlite_write_markers
+    assert mod.risk_bucket == "writes_sqlite"
