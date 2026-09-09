@@ -4,9 +4,11 @@
 seven documents are canonical, and in what order to read them.
 
 **This document owns:** the canonical-document map, the reading order, the
-current phase, the business-separation rule, and the documentation
-source-of-truth rule. It owns no domain, data, workflow, architecture,
-migration or operational rule — each of those has exactly one owner below.
+current phase, the business-separation rule, the documentation
+source-of-truth rule, and the status of the non-canonical build-state index
+and its maintenance requirement. It owns no domain, data, workflow,
+architecture, migration or operational rule — each of those has exactly one
+owner below.
 
 ## What OrigenLab is
 
@@ -27,6 +29,12 @@ worker, and one operator dashboard. SQLite and the PST archives become cold
 evidence. See [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Current phase
+
+**For build state, the live answer is [`STATUS.md`](STATUS.md)** — which is
+not canonical and owns no rule; see [Non-canonical build-state
+index](#non-canonical-build-state-index). The table below records the phase
+this documentation set was written in; where the two differ **about what is
+built**, `STATUS.md` is the current measurement.
 
 | Item | State |
 |---|---|
@@ -52,7 +60,43 @@ to the owner instead of restating the rule.
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Topology; FastAPI command boundary; dashboard / web / worker responsibilities; the seven schemas; one-writer rules; Supabase Auth and JWKS; database roles, grants, RLS, the closed `SECURITY DEFINER` list and the `service_role` boundary; private Storage; Queues and Cron; worker deployment; observability; backups of Storage; the ERD; the external CRM benchmark conclusions |
 | [`MIGRATION.md`](MIGRATION.md) | Verified V1 baseline; mirror containment; the Wave 1A bundle; retain / migrate / archive / rebuild / discard classes; the eight implementation slices and their gates; V1→V2 writer and sender handoff; rollback; final dump; deletion gates; proposed legacy disposition |
 | [`OPERATIONS.md`](OPERATIONS.md) | Environments; operator roles; deployment; migrations; send control; campaign and quotation checklists; ambiguous-attempt procedure; Gmail sync recovery; backup and restore drills; monitoring; emergency shutdown; rollback execution; credential handling |
-| This file | The map above, reading order, phase, separation rule, documentation authority |
+| This file | The map above, reading order, phase, separation rule, documentation authority, and the standing of the non-canonical build-state index below |
+
+### Non-canonical build-state index
+
+[`STATUS.md`](STATUS.md) is deliberately **absent from the table above**. It is
+not canonical, it is not an eighth owning document, and it is not a candidate to
+become one. Precisely:
+
+- It **reports verified current build state only** — which era, slice, app,
+  schema and environment is actually built, applied or deployed, and the date
+  and commit that state was last verified against.
+- It **owns no rule, no decision, no target, no workflow, no architecture and
+  no migration policy.** Every one of those has an owner in the table above,
+  and `STATUS.md` may only link to that owner, never restate or extend it.
+- It **cannot override the seven canonical documents.** If it appears to, the
+  disagreement is one of two things and neither is `STATUS.md` winning. A
+  disagreement about *what the system should be* means `STATUS.md` has drifted
+  outside its scope: the canonical document stands and the offending line is
+  deleted. A disagreement about *what is built today* means the canonical
+  document is carrying a build-state claim it should not carry: the canonical
+  document is corrected, in its own PR, under its own owner.
+- It **must be updated in the same PR** that changes a measured build-state
+  fact — a migration applied, a slice gate passed, a service deployed, an
+  environment variable confirmed, a count re-measured. A PR that changes only
+  design does not touch it.
+
+**Why [`CLAUDE.md`](../CLAUDE.md) reads it for orientation while the reading
+order below excludes it.** The two lists answer different questions.
+`CLAUDE.md` routes an agent to `STATUS.md` early because the first operational
+question in any session is *which era am I in, and does the thing I am about to
+change exist yet* — getting that wrong wastes the whole session and produces
+work against a system that is not there. The reading order below is the
+**design** reading order: it teaches what the system is and which statements
+are binding. A build-state snapshot teaches neither, so it does not belong in
+it. Orientation is not authority: reading `STATUS.md` first never substitutes
+for reading the seven, it only says which of them describes something that
+exists today.
 
 ## Reading order
 
@@ -92,6 +136,17 @@ valid reason to relax a rule in these documents.
 ## Documentation source of truth
 
 - These seven files are the **sole canonical V2 documentation**.
+- [`STATUS.md`](STATUS.md) is **not one of them and is not canonical**. It is
+  the non-canonical build-state index defined above, and it exists because build
+  state is a *fact that changes*: keeping it inside the design documents is what
+  let `ARCHITECTURE.md` §1 claim "No Supabase project, schema, role, bucket or
+  table exists yet" for two days after 32 tables shipped and went green in CI.
+  If it ever starts stating rules, delete it and fold the facts back here.
+- **Maintenance requirement (binding).** Any PR that changes what is built,
+  applied or deployed updates [`STATUS.md`](STATUS.md) **in that same PR**,
+  including the `Last verified` line. Leaving it for a follow-up PR is the
+  failure mode this index was created to end. A PR that changes only design,
+  rules or targets must **not** touch it.
 - Every other Markdown file in this repository — including
   `docs/architecture/`, `docs/data/`, `docs/refoundation/`, `docs/workflows/`,
   `docs/business/`, `docs/commercial/`, `docs/catalog/` and everything under
@@ -101,6 +156,7 @@ valid reason to relax a rule in these documents.
 - A superseded document can never override these seven. If a legacy document
   contradicts one of them, the canonical document wins and the legacy document
   is listed for removal in [`MIGRATION.md`](MIGRATION.md).
-- Do not add an eighth canonical document, a dated variant, a parallel plan, an
+- Do not add another canonical document, a dated variant, a parallel plan, an
   ADR collection or another blueprint. Extend the owning document instead.
+  The `STATUS.md` carve-out above is closed and is not a precedent.
 - Validate relative links from the monorepo root with `python3 docs/check_doc_links.py`.

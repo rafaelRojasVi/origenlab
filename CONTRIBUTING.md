@@ -17,7 +17,7 @@ Start with the map: [`docs/DOCUMENTATION_MAP.md`](docs/DOCUMENTATION_MAP.md) and
 | **`apps/dashboard`** | **5173** | Active UI; no write/send from the browser. |
 | **SQLite** | `ORIGENLAB_SQLITE_PATH` | Default backend for API + pipeline; **send/outreach truth**. |
 | **Postgres mirror** | optional | Read-only reporting mirror; sync via email-pipeline scripts only when explicitly approved. |
-| **Supabase** | — | **Not implemented.** If added later, treat as hosted Postgres mirror unless a formal source-of-truth migration is approved. |
+| **Supabase** | `supabase/` | **V2 durable system of record** (accepted 2026-09-05) — not a mirror. Local schema foundation only; no hosted project exists. See [`docs/README.md`](docs/README.md); build state in [`docs/STATUS.md`](docs/STATUS.md). |
 
 Agent pointers: root [`AGENTS.md`](AGENTS.md), [`apps/api/AGENTS.md`](apps/api/AGENTS.md), [`apps/dashboard/AGENTS.md`](apps/dashboard/AGENTS.md).
 

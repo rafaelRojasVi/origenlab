@@ -51,6 +51,23 @@ Wave 1A bundle. The V1 `outbound.*` PostgreSQL sidecar mirror — whose only
 writer is a parked break-glass script — is likewise never revived; it is
 discarded ([`DATA.md`](DATA.md) §11).
 
+**[V1 FACT] The two databases share three schema names, with entirely disjoint
+tables.** `evidence`, `outbound` and `catalog` each exist in **both** the V1
+Alembic PostgreSQL and the V2 Supabase PostgreSQL:
+
+| Schema | V1 tables (Alembic) | V2 tables (Supabase) |
+|---|---|---|
+| `outbound` | `contact_email_suppression`, `contact_domain_suppression`, `outreach_contact_state`, `outbound_batch`, `outbound_batch_recipient` | `send_control`, `campaign`, `campaign_recipient`, `send_attempt`, `contact_control` |
+| `evidence` | V1 evidence columns/views on the mart side | `source_record`, `assertion` |
+| `catalog` | `product`, `product_alias`, `product_category`, `product_category_map`, `product_spec`, `supplier_offer`, `price_snapshot`, `product_commercial_link`, `product_commercial_history` | `product`, `supplier_product` |
+
+**A `grep` for `outbound.` or `catalog.` returns both systems.** Always qualify
+which era you mean. The two are also governed by **two independent migration
+systems that do not communicate** — Alembic under
+`apps/email-pipeline/alembic/versions/` and the Supabase CLI under
+`supabase/migrations/`. The names are not renamed: V1's are deleted at slice 8,
+and renaming V2's would invalidate the shipped pgTAP suite for no benefit.
+
 ## 3. The Wave 1A bundle
 
 | Item | Value |
@@ -73,7 +90,7 @@ file** stored beside the bundle. The archive is never edited to include them.
 | Class | Meaning | Contents |
 |---|---|---|
 | **MIGRATE** | becomes a row in the 32 tables | durable `commercial.*` CRM rows (~11 rows across organization, contact, sales_opportunity, task, activity) — each V1 `sales_opportunity.primary_crm_contact_id` becomes one current primary `opportunity_participant` (`role = other`, the migrated person and its `primary_email` contact point) and V1 stores no organization addresses, so `crm.address` starts empty; V1 customer quotes as `adopted`; the compact Wave 1A safety set — historical contacts as `prior_contact` / `marketing`, blocks classified by recorded reason ([`DATA.md`](DATA.md) §7.1); the archived V1 campaign, its 1,161 recipients and 1,127 attempts; one migration-manifest source record |
-| **EVIDENCE** | enters as pending `evidence.*`, never as CRM truth | 172 V1 supplier candidates with their evidence and channels; ~159 historical quote candidates; the one orphan supplier-review row, **quarantined** |
+| **EVIDENCE** | enters as pending `evidence.*`, never as CRM truth | 172 V1 supplier candidates with their evidence and channels; the historical quote candidates ([`DATA.md`](DATA.md) §8 — a **2026-09-09 census supersedes the earlier ~159 estimate**); the one orphan supplier-review row, **quarantined** |
 | **RECONCILE** | read from the archive as input, never imported | the 6,091 Gmail ingest checkpoint rows and the operator watermarks |
 | **ARCHIVE** | cold storage, two verified copies | the V1 SQLite databases and their cutover snapshots; the Outlook/PST corpus; the Wave 1A bundle; the final V1 `pg_dump` |
 | **REBUILD** | recreated from source in V2, not copied | Gmail messages and attachments (re-synced); ChileCompra notices (re-fetched); the product catalog; every dashboard, funnel and pipeline view |

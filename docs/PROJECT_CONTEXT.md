@@ -23,7 +23,7 @@ OrigenLab monorepo with these active applications:
 
 **Operator automation (read-only health):** debounced Gmail → SQLite (`auto-refresh-mail`) and SQLite → Postgres/dashboard (`auto-mirror-dashboard`) loops with tracked cron wrappers — see [`OPERATOR_CRON.md`](../apps/email-pipeline/docs/pipeline/OPERATOR_CRON.md). Status: `uv run origenlab operator-automation-status`; also `GET /operator/automation-status` and the dashboard Today automation card (API skips live crontab inspection). Public-repo guardrails: [`SECURITY_PUBLIC_REPO.md`](./SECURITY_PUBLIC_REPO.md).
 
-**Supabase:** not currently implemented. If introduced later, treat it as a **hosted Postgres read mirror** for dashboard/reporting unless a formal source-of-truth migration is explicitly approved. It does not replace SQLite for send/outreach safety.
+**Supabase:** ~~not currently implemented … treat it as a hosted Postgres read mirror~~ — **superseded.** The "formal source-of-truth migration" this line made a condition **was explicitly approved on 2026-09-05**: Supabase is the **durable system of record** for V2, not a mirror. See [`README.md`](README.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md); current build state is in [`STATUS.md`](STATUS.md). V1 SQLite remains authoritative for send/outreach safety until slice 5 passes ([`MIGRATION.md`](MIGRATION.md) §5).
 
 <a id="m-proj-business"></a>
 ## Business goal
@@ -63,6 +63,12 @@ Support OrigenLab's commercial operation by:
 
 <a id="m-proj-precedence"></a>
 ## Precedence
+
+> **Scope of this precedence stack: V1 only.** This file is **V1 reference**.
+> For V2 — anything under `supabase/`, or a new commercial slice —
+> [`docs/README.md`](README.md) and the six canonical documents it indexes win
+> over everything below, and what is actually built is in
+> [`docs/STATUS.md`](STATUS.md).
 
 **Factual project truth** (what the repo is, how it runs, where data lives):
 
