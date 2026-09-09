@@ -4,7 +4,7 @@
 -- probes as each runtime role.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(41);
+select plan(44);
 
 grant origenlab_api    to session_user with set true, inherit false;
 grant origenlab_worker to session_user with set true, inherit false;
@@ -76,6 +76,8 @@ insert into expected values
     ('outbound', 'send_attempt', 'origenlab_worker', 'S', null, 'S'),
     ('outbound', 'contact_control', 'origenlab_api', 'S', null, 'S'),
     ('outbound', 'contact_control', 'origenlab_worker', 'S', null, 'S'),
+    ('outbound', 'campaign_reply', 'origenlab_api', 'SI', array['operator_class', 'classified_by_operator_id', 'classified_at'], 'SIU'),
+    ('outbound', 'campaign_reply', 'origenlab_worker', 'SI', null, 'SI'),
     ('evidence', 'source_record', 'origenlab_api', 'S', array['review_status', 'is_quarantined', 'quarantine_reason', 'quarantined_at', 'updated_at'], 'SU'),
     ('evidence', 'source_record', 'origenlab_worker', 'SIU', null, 'SIU'),
     ('evidence', 'assertion', 'origenlab_api', 'S', array['resolution', 'resolved_kind', 'resolved_id', 'resolved_at', 'resolved_by_operator_id', 'ambiguity_note', 'updated_at'], 'SU'),
@@ -91,7 +93,7 @@ insert into expected values
     ('platform', 'command_receipt', 'origenlab_api', 'SIU', null, 'SIU'),
     ('platform', 'command_receipt', 'origenlab_worker', 'S', null, 'S');
 
-select is((select count(*)::int from expected), 64, 'the matrix covers all 32 tables for both runtime roles');
+select is((select count(*)::int from expected), 66, 'the matrix covers all 33 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(
@@ -187,6 +189,8 @@ select is(left(pg_temp.run_as('origenlab_api', 'update outbound.send_control set
 select is(left(pg_temp.run_as('origenlab_api', 'insert into outbound.send_attempt (purpose, mailbox_id, address_norm) select ''marketing'', gen_random_uuid(), ''a@example.test'' where false'), 5), '42501', 'api may not write outbound.send_attempt');
 select is(left(pg_temp.run_as('origenlab_api', 'insert into outbound.contact_control (scope, value_norm, kind, purpose, reason, source) select ''address'', ''a@example.test'', ''block'', ''all'', ''r'', ''operator_command'' where false'), 5), '42501', 'api may not write outbound.contact_control directly');
 select is(left(pg_temp.run_as('origenlab_api', 'insert into outbound.campaign (name, mailbox_id, max_sends, recontact_interval_days) select ''c'', gen_random_uuid(), 1, 1 where false'), 2), 'ok', 'api may write the campaign lifecycle');
+select is(left(pg_temp.run_as('origenlab_api', 'update outbound.campaign_reply set proposed_class = ''auto_reply'' where false'), 5), '42501', 'api may not rewrite the classifier''s proposal on outbound.campaign_reply');
+select is(left(pg_temp.run_as('origenlab_api', 'update outbound.campaign_reply set operator_class = ''not_a_reply'' where false'), 2), 'ok', 'api may record the operator verdict on outbound.campaign_reply');
 -- api: comms and evidence narrow writes.
 select is(left(pg_temp.run_as('origenlab_api', 'insert into comms.mailbox (address_norm) select ''m@example.test'' where false'), 5), '42501', 'api may not write comms.mailbox');
 select is(left(pg_temp.run_as('origenlab_api', 'update comms.message_participant set resolved_contact_point_id = null where false'), 2), 'ok', 'api may resolve a message participant');
@@ -201,6 +205,7 @@ select is(left(pg_temp.run_as('origenlab_worker', 'insert into crm.organization 
 select is(left(pg_temp.run_as('origenlab_worker', 'insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, actor_kind) select ''task'', gen_random_uuid(), 1, ''task.created'', 1, ''{}''::jsonb, ''worker'' where false'), 5), '42501', 'worker may not write crm.domain_event directly');
 select is(left(pg_temp.run_as('origenlab_worker', 'update crm.quote_revision set pdf_sha256 = null where false'), 5), '42501', 'worker may not write quote_revision.pdf_sha256 directly (only through crm.record_quote_pdf, Slice 3)');
 select is(left(pg_temp.run_as('origenlab_worker', 'insert into outbound.send_attempt (purpose, mailbox_id, address_norm) select ''marketing'', gen_random_uuid(), ''a@example.test'' where false'), 5), '42501', 'worker may not write outbound.send_attempt directly');
+select is(left(pg_temp.run_as('origenlab_worker', 'insert into outbound.campaign_reply (campaign_id, campaign_recipient_id, message_id, received_at, proposed_class, proposed_by) select gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), now(), ''human_reply'', ''ingest_classifier'' where false'), 2), 'ok', 'worker may propose an outbound.campaign_reply (evidence-shaped: propose, never decide)');
 select is(left(pg_temp.run_as('origenlab_worker', 'insert into platform.operator (auth_user_id, email_norm, display_name, role, status) select gen_random_uuid(), ''o@example.test'', ''o'', ''admin'', ''active'' where false'), 5), '42501', 'worker may not write platform.operator');
 
 select * from finish();

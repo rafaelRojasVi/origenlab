@@ -8,9 +8,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-import os
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+
+from origenlab_email_pipeline.postgres_url import (  # noqa: F401  (re-exported)
+    POSTGRES_URL_ENV_KEYS,
+    PostgresUrlError,
+    normalize_postgres_url,
+    redact_postgres_url,
+)
+from origenlab_email_pipeline.postgres_url import (
+    resolve_postgres_url as _resolve_postgres_url,
+)
 
 try:
     import psycopg
@@ -21,34 +29,8 @@ else:
     _PSYCOPG_IMPORT_ERROR = None
 
 
-class OutboundAuditError(RuntimeError):
+class OutboundAuditError(PostgresUrlError):
     """Raised when explicit audit writing fails."""
-
-
-def normalize_postgres_url(url: str) -> str:
-    u = url.strip()
-    for prefix in ("postgresql+psycopg://", "postgresql+psycopg2://"):
-        if u.startswith(prefix):
-            return "postgresql://" + u[len(prefix) :]
-    return u
-
-
-def redact_postgres_url(url: str | None) -> str:
-    if not url:
-        return "<empty>"
-    try:
-        p = urlsplit(url)
-        if not p.netloc:
-            return "<invalid-postgres-url>"
-        hostpart = p.hostname or "unknown-host"
-        if p.port:
-            hostpart = f"{hostpart}:{p.port}"
-        userpart = ""
-        if p.username:
-            userpart = f"{p.username}:***@"
-        return urlunsplit((p.scheme, f"{userpart}{hostpart}", p.path, p.query, p.fragment))
-    except Exception:  # noqa: BLE001
-        return "<unredactable-postgres-url>"
 
 
 def resolve_postgres_url(
@@ -57,18 +39,20 @@ def resolve_postgres_url(
     require_when_requested: bool,
     audit_requested: bool,
 ) -> str | None:
-    if explicit_url and explicit_url.strip():
-        return normalize_postgres_url(explicit_url)
-    for key in ("ORIGENLAB_POSTGRES_URL", "ALEMBIC_DATABASE_URL"):
-        v = (os.environ.get(key) or "").strip()
-        if v:
-            return normalize_postgres_url(v)
-    if require_when_requested and audit_requested:
+    """``postgres_url.resolve_postgres_url`` with this module's error type.
+
+    The export lanes catch ``OutboundAuditError`` around the audit write, so a resolution
+    failure here must stay inside that family. ``normalize_postgres_url`` and
+    ``redact_postgres_url`` are re-exported unchanged from
+    ``origenlab_email_pipeline.postgres_url``.
+    """
+    url = _resolve_postgres_url(explicit_url)
+    if url is None and require_when_requested and audit_requested:
         raise OutboundAuditError(
             "Postgres audit requested but no Postgres URL resolved. "
-            "Pass --postgres-url or set ORIGENLAB_POSTGRES_URL / ALEMBIC_DATABASE_URL."
+            "Pass --postgres-url or set " + " / ".join(POSTGRES_URL_ENV_KEYS) + "."
         )
-    return None
+    return url
 
 
 def _require_psycopg() -> None:

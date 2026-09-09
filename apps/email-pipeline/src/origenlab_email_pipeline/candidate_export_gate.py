@@ -1,5 +1,9 @@
 """Shared pre-export eligibility for cold outreach (lead path + contact_master path).
 
+Evaluation is complete, not short-circuiting: ``ExportGateResult.reasons`` carries every
+rule the candidate failed, in a fixed order. ``reasons[0]`` remains the first-triggered
+rule, so callers that report a single reason keep their current behaviour.
+
 Single policy implementation: operator CLIs and read modules must not duplicate these rules.
 Reuses email suppression, optional domain suppression (``contact_domain_suppression``),
 Sent parse, outreach state, supplier_master, and noise heuristics.
@@ -56,7 +60,15 @@ class GateContext:
 @dataclass(frozen=True)
 class ExportGateResult:
     eligible: bool
-    """If not eligible, a single-element tuple with the first triggered rule (evaluation order fixed)."""
+    """Every rule this candidate failed, in the fixed evaluation order.
+
+    Evaluation is **complete**: it does not stop at the first failure, so an operator who
+    fixes one reason does not then discover a second. ``reasons[0]`` is still the
+    first-triggered rule, which is the field every current caller reads.
+
+    ``REASON_INVALID_EMAIL`` is the one terminal reason: with no usable mailbox there is
+    nothing left to evaluate, so it is returned alone.
+    """
 
     reasons: tuple[str, ...]
 
@@ -88,42 +100,43 @@ def evaluate_export_eligibility(
     institution_name: str | None,
     ctx: GateContext,
 ) -> ExportGateResult:
+    """Evaluate every rule and report every failure, in the fixed evaluation order."""
     em = normalize_export_email(contact_email)
-    if not em:
+    if not em or "@" not in em:
+        # Terminal: no mailbox, so no domain, suppression or noise rule can be evaluated.
         return ExportGateResult(eligible=False, reasons=(REASON_INVALID_EMAIL,))
 
-    if "@" not in em:
-        return ExportGateResult(eligible=False, reasons=(REASON_INVALID_EMAIL,))
-
+    reasons: list[str] = []
     dom = em.rsplit("@", 1)[-1].lower()
+
     if dom in ctx.blocked_domains:
-        return ExportGateResult(eligible=False, reasons=(REASON_INTERNAL_DOMAIN,))
+        reasons.append(REASON_INTERNAL_DOMAIN)
 
     if em in ctx.suppressed_norms:
-        return ExportGateResult(eligible=False, reasons=(REASON_SUPPRESSION,))
+        reasons.append(REASON_SUPPRESSION)
 
     if email_domain_under_operator_domain_suppression(dom, ctx.suppressed_contact_domains):
-        return ExportGateResult(eligible=False, reasons=(REASON_DOMAIN_SUPPRESSION,))
+        reasons.append(REASON_DOMAIN_SUPPRESSION)
 
     if em in ctx.sent_recipient_norms:
-        return ExportGateResult(eligible=False, reasons=(REASON_SENT_HISTORY,))
+        reasons.append(REASON_SENT_HISTORY)
 
     st = (ctx.outreach_state_by_email or {}).get(em)
     if st:
-        reason = _OUTREACH_REASON.get(st)
-        if reason:
-            return ExportGateResult(eligible=False, reasons=(reason,))
+        outreach_reason = _OUTREACH_REASON.get(st)
+        if outreach_reason:
+            reasons.append(outreach_reason)
 
     if not ctx.skip_supplier_domain_filter and ctx.supplier_domains:
         if is_supplier_email_domain(em, ctx.supplier_domains):
-            return ExportGateResult(eligible=False, reasons=(REASON_SUPPLIER_DOMAIN,))
+            reasons.append(REASON_SUPPLIER_DOMAIN)
 
     if not ctx.skip_noise_filter:
         if marketing_outreach_noise_email(
             em, strict_contact_graph=ctx.strict_contact_graph_noise
         ):
-            return ExportGateResult(eligible=False, reasons=(REASON_NOISE_EMAIL,))
+            reasons.append(REASON_NOISE_EMAIL)
         if marketing_outreach_noise_organization_guess(institution_name or ""):
-            return ExportGateResult(eligible=False, reasons=(REASON_NOISE_ORGANIZATION,))
+            reasons.append(REASON_NOISE_ORGANIZATION)
 
-    return ExportGateResult(eligible=True, reasons=())
+    return ExportGateResult(eligible=not reasons, reasons=tuple(reasons))

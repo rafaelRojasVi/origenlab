@@ -154,7 +154,7 @@ attribute; it does **not** bypass an ordinary object grant, so the revocations
 and their default privileges are the boundary that actually holds it out
 ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.4).
 
-Checks 1–9 are proven **locally** by `supabase/tests/` (348 pgTAP assertions across
+Checks 1–9 are proven **locally** by `supabase/tests/` (369 pgTAP assertions across
 ten files — catalogue facts and rolled-back fixtures, run with `supabase test db`)
 and by `supabase/scripts/verify_direct_logins.sh` (45 proofs over real LOGIN
 connections for checks 6–9); the same checks must be re-run against the hosted

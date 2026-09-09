@@ -46,7 +46,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from origenlab_email_pipeline.config import load_settings  # noqa: E402
-from origenlab_email_pipeline.postgres_outbound_audit import redact_postgres_url  # noqa: E402
+from origenlab_email_pipeline.postgres_url import redact_postgres_url  # noqa: E402
 
 _VALIDATE_PATH = REPO / "scripts" / "qa" / "validate_sqlite_archive_for_postgres.py"
 _spec = importlib.util.spec_from_file_location("validate_sqlite_archive_for_postgres", _VALIDATE_PATH)

@@ -14,8 +14,8 @@ from origenlab_email_pipeline.postgres_dashboard_api.db import (
     PostgresUnavailableError,
     postgres_connection,
 )
-from origenlab_email_pipeline.postgres_outbound_audit import (
-    OutboundAuditError,
+from origenlab_email_pipeline.postgres_url import (
+    PostgresUrlError,
     redact_postgres_url,
     resolve_postgres_url,
 )
@@ -30,12 +30,8 @@ def resolve_mirror_postgres_url(settings: Settings) -> str:
     if direct:
         return normalize_postgres_url(direct)
     try:
-        url = resolve_postgres_url(
-            None,
-            require_when_requested=True,
-            audit_requested=True,
-        )
-    except OutboundAuditError as exc:
+        url = resolve_postgres_url(None, required=True)
+    except PostgresUrlError as exc:
         raise MirrorConfigError(str(exc)) from exc
     if not url:
         raise MirrorConfigError(
