@@ -3,8 +3,17 @@
 Status: canonical (direction)
 Last reviewed: 2026-08-28
 
-Where the commercial platform is going, and the rules every new slice must
-follow. The current state is in `CURRENT_SYSTEM_TRUTH.md`.
+> **Superseded for V2.** This document described the direction *before* the
+> **V2 architecture was accepted on 2026-09-05**. Its "no second database"
+> rule and its `commercial.supplier_offer` next slice are **V1-era statements**
+> and no longer describe where the platform is going:
+> [`../ARCHITECTURE.md`](../ARCHITECTURE.md) and [`../README.md`](../README.md)
+> own the direction now. Retained as V1 reference until slice 8
+> ([`../MIGRATION.md`](../MIGRATION.md) §10.1). Build state:
+> [`../STATUS.md`](../STATUS.md).
+
+Where the commercial platform was going under V1, and the rules every V1 slice
+had to follow. The current V1 state is in `CURRENT_SYSTEM_TRUTH.md`.
 
 ## Shape
 

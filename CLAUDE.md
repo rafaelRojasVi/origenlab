@@ -3,12 +3,55 @@
 Entry point for Claude Code sessions in this monorepo. Read this file, then
 follow the router below — do not read broadly before it.
 
+## Two architectures live here — know which one you are in
+
+**V1 is running. V2 is the accepted replacement.** Both are in this repository
+at once, and they disagree about where durable truth lives. Read the right
+one for your task:
+
+| | **V1 — running** | **V2 — accepted 2026-09-05** |
+|---|---|---|
+| Durable truth | PostgreSQL `commercial.*` | Supabase PostgreSQL 17, seven private schemas |
+| Code | `apps/{api,dashboard,dashboard-proxy,email-pipeline}`, `apps/email-pipeline/alembic/` | `supabase/` (schema foundation only — no app code yet) |
+| Canonical docs | `docs/architecture/**` and the other legacy trees | [`docs/README.md`](docs/README.md) and the six documents it indexes |
+
+**For V2 work — any change under `supabase/`, or any new commercial slice —
+[`docs/README.md`](docs/README.md) is canonical and wins.** The `docs/architecture/**`,
+`docs/refoundation/**`, `docs/data/**` and `docs/workflows/**` trees are **V1
+reference**: accurate about the running system, no authority over V2. They are
+retained until slice 8 ([`docs/MIGRATION.md`](docs/MIGRATION.md) §10.1) because
+the migration itself reads them — do not delete them.
+
+**What is actually built, applied and deployed is in
+[`docs/STATUS.md`](docs/STATUS.md)** — not in the architecture documents, which
+describe intent and drift out of date.
+
+`docs/STATUS.md` is **not canonical**. It is a build-state index: it reports
+verified current state and owns no rule, decision, target, workflow,
+architecture or migration policy, and it cannot override the seven canonical
+V2 documents ([`docs/README.md`](docs/README.md) → *Non-canonical build-state
+index*). Read it second here for **orientation** — which era you are in, and
+whether the thing you are about to change exists yet — because getting that
+wrong wastes the session. Design authority is read afterwards, from the
+documents in step 3 or 4. That is why it leads this router but is absent from
+the canonical reading order in [`docs/README.md`](docs/README.md).
+
+If your change alters what is built, applied or deployed, update
+[`docs/STATUS.md`](docs/STATUS.md) **in the same PR**.
+
 ## Reading order (don't skip ahead)
 
 1. This file
-2. [`README.md`](README.md) — what each app is, quick start
-3. [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](docs/architecture/CURRENT_SYSTEM_TRUTH.md) — what's deployed, where truth lives, write paths
-4. [`docs/architecture/TARGET_COMMERCIAL_ARCHITECTURE.md`](docs/architecture/TARGET_COMMERCIAL_ARCHITECTURE.md) — direction, invariants for new work
+2. [`docs/STATUS.md`](docs/STATUS.md) — orientation only: what is really built
+   and deployed right now. Non-canonical, owns no rule (see above)
+3. Then, **for V2 work** (anything under `supabase/`, or a new commercial slice):
+   1. [`docs/README.md`](docs/README.md) — the V2 map and reading order
+   2. [`docs/DOMAIN.md`](docs/DOMAIN.md) — vocabulary and the table inventory
+   3. the other canonical V2 documents as your task needs them
+4. Or, **for V1 work** (maintaining the running apps):
+   1. [`README.md`](README.md) — what each app is, quick start
+   2. [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](docs/architecture/CURRENT_SYSTEM_TRUTH.md) — what's deployed, where truth lives, write paths
+   3. [`docs/architecture/TARGET_COMMERCIAL_ARCHITECTURE.md`](docs/architecture/TARGET_COMMERCIAL_ARCHITECTURE.md) — V1 direction (superseded for V2 by [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md))
 5. The README of the app you're touching (below)
 6. Code and tests
 
@@ -24,6 +67,11 @@ operations: a public website, an email/tender intelligence pipeline, a
 durable commercial CRM, and an operator dashboard. One monorepo, one API
 app, one operator dashboard, one durable Postgres boundary. No
 microservices.
+
+That boundary is **moving, not multiplying**: V2 replaces the V1 Postgres
+durable core with one Supabase project, and V1 is decommissioned at the end of
+the migration ([`docs/MIGRATION.md`](docs/MIGRATION.md) §5). There is still
+exactly one durable database per era.
 
 ## Canonical responsibility boundaries
 
@@ -42,6 +90,11 @@ apps/dashboard-proxy  authenticated browser/API security boundary
 apps/dashboard        operator UI — presentation only, never truth
 
 apps/web              public marketing site — no operator/CRM code
+
+supabase/             V2 durable core (PostgreSQL 17, seven private
+                      schemas) — schema, roles, grants, RLS and pgTAP
+                      evidence only. No application code reads or writes
+                      it yet. See docs/README.md, not this section.
 ```
 
 ## Core rule
@@ -104,16 +157,24 @@ are not required reading for routine code changes.
 - Human CRM mutations follow one path: dashboard → proxy → API route →
   service → repository → Postgres transaction → append-only event. No
   hidden second writers, no ad-hoc SQL against durable tables.
-- Do not create microservices, a second database, an event bus, or a
-  generic workflow engine. This product does not need them.
+- Do not create microservices, an event bus, or a generic workflow engine.
+  This product does not need them. **On databases: exactly one durable
+  database per era.** V1's `commercial.*` Postgres is being *replaced* by the
+  V2 Supabase project, not joined by it — `supabase/` is that replacement, not
+  a second store. Do not add a third.
 - Prefer extending the existing architecture over a parallel
   implementation. Search callers (imports, scripts, CI, docs) before
   deleting code — see `docs/architecture/COMMERCIAL_RESET_LEDGER.md` for
   the evidence standard used in the last cleanup pass.
 - Run the affected app's test suite for anything you touch:
   `apps/email-pipeline/scripts/validate.sh` (via `./scripts/sync_test_env.sh`
-  first), `apps/api/scripts/validate.sh`, `apps/dashboard`'s
-  `npm run validate`, `apps/dashboard-proxy`'s `npm run validate`.
+  first — **note this runs a narrow subset, not the full pytest suite; use
+  `scripts/check-all.sh` for anything touching pipeline logic**),
+  `apps/api/scripts/validate.sh`, `apps/dashboard`'s
+  `npm run validate`, `apps/dashboard-proxy`'s `npm run validate`. For any
+  change under `supabase/`, run the Slice 0 evidence suite
+  ([`docs/OPERATIONS.md`](docs/OPERATIONS.md) §4.1); CI enforces it via
+  `.github/workflows/supabase.yml`.
 
 ## Documentation rules
 

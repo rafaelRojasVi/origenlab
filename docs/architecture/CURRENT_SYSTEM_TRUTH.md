@@ -9,8 +9,17 @@ pass ([`docs/refoundation/REFOUNDATION_PLAN.md`](../refoundation/REFOUNDATION_PL
 other sections (deployment, non-quote dashboard sections) were not
 independently re-checked in this pass.
 
-One page of what the system actually is today — the current authoritative source of truth
-for this repository. If another doc contradicts this one (including
+> **Scope: V1 only.** A **V2 architecture was accepted on 2026-09-05**
+> ([`../README.md`](../README.md)) in which one Supabase project replaces the
+> `commercial.*` durable core described below. **This document has no authority
+> over V2**; for any change under `supabase/`, or any new commercial slice,
+> [`../README.md`](../README.md) and the six documents it indexes win. This file
+> is retained until slice 8 ([`../MIGRATION.md`](../MIGRATION.md) §10.1) because
+> the migration reads it as the V1 inventory. What is actually built and
+> deployed is in [`../STATUS.md`](../STATUS.md).
+
+One page of what the system actually is today — the authoritative source of truth
+**for the running V1 system**. If another **V1** doc contradicts this one (including
 `COMMERCIAL_OPERATING_SYSTEM_AUDIT.md`, which is a historical/point-in-time audit and
 evidence record, not current truth), this one wins; fix the other doc.
 

@@ -8,11 +8,22 @@ AGENTS.md-aware tooling. **Claude Code sessions start at
 boundaries, and the durable-vs-rebuildable rule; this file does not repeat
 that and stays focused on workflow rules below.
 
+**Before anything else, know which architecture you are in.** V1 is running;
+a **V2 architecture was accepted 2026-09-05** in which one Supabase project
+([`supabase/`](supabase/)) replaces the V1 Postgres durable core. For V2 work,
+[`docs/README.md`](docs/README.md) is canonical and the `docs/architecture/**`,
+`docs/refoundation/**`, `docs/data/**` and `docs/workflows/**` trees are V1
+reference with no authority over V2. **What is actually built and deployed is
+in [`docs/STATUS.md`](docs/STATUS.md)** — read it first, and update it in the
+same PR whenever you change what is built.
+
 For **email-pipeline** work, read **[`apps/email-pipeline/AGENTS.md`](apps/email-pipeline/AGENTS.md)** first — it has stricter safety rules and the operator reading list.
 
 For **public website** work, read **[`apps/web/AGENTS.md`](apps/web/AGENTS.md)**.
 
 For **operator API** or **dashboard** work, read **[`apps/api/AGENTS.md`](apps/api/AGENTS.md)** and **[`apps/dashboard/AGENTS.md`](apps/dashboard/AGENTS.md)** (pointers only — full freeze rules in dashboard handoff).
+
+For **`supabase/` (V2 schema) work**, read **[`docs/README.md`](docs/README.md)**, then **[`docs/DOMAIN.md`](docs/DOMAIN.md)** and **[`docs/OPERATIONS.md`](docs/OPERATIONS.md) §4** — migrations there follow the Supabase CLI, not Alembic, and every new table needs its grants, its named RLS policies and matching pgTAP assertions **in the same change**.
 
 ## Hard rules (all apps)
 

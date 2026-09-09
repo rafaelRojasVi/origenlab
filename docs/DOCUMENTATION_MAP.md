@@ -4,16 +4,47 @@ Status: canonical
 Owner: project-maintainers  
 Last reviewed: 2026-09-03 (added re-foundation docs; see changelog below)
 
-This file is the source of truth for documentation placement, intent, and lifecycle.
+This file is the source of truth for documentation placement, intent, and lifecycle
+**for V1**. V2 has its own closed, self-describing set — see below.
+
+<a id="m-docmap-v2"></a>
+## V2 canonical documentation (accepted 2026-09-05)
+
+**These seven files are the sole canonical documentation for V2**, and they win
+over every V1 document listed further down whenever the two disagree. Do not add
+an eighth; extend the owning document instead.
+
+- V2 map and reading order: [README.md](./README.md)
+- Domain vocabulary and the table inventory: [DOMAIN.md](./DOMAIN.md)
+- Data authority, evidence, retention: [DATA.md](./DATA.md)
+- State machines and operator workflows: [WORKFLOWS.md](./WORKFLOWS.md)
+- Topology, roles, grants, RLS, storage: [ARCHITECTURE.md](./ARCHITECTURE.md)
+- Migration and cutover: [MIGRATION.md](./MIGRATION.md)
+- Environments and runbooks: [OPERATIONS.md](./OPERATIONS.md)
+
+Implementation lives in [`supabase/`](../supabase/) — `config.toml`, `roles.sql`,
+`migrations/`, `tests/` (pgTAP) and `scripts/` — gated by
+[`.github/workflows/supabase.yml`](../.github/workflows/supabase.yml).
+
+<a id="m-docmap-status"></a>
+## Build and deployment state
+
+- **What is actually built, applied and deployed: [STATUS.md](./STATUS.md)** —
+  the single authority **for build state**, deliberately separate from every
+  architecture document. It is **non-canonical**: it owns no rule, decision,
+  target, workflow, architecture or migration policy, and cannot override the
+  seven canonical V2 documents ([README.md](./README.md) → *Non-canonical
+  build-state index*). Any PR that changes what is built updates it in the same
+  PR.
 
 <a id="m-docmap-entry"></a>
-## Canonical Entry Points
+## Canonical Entry Points (V1)
 
 - Claude Code entrypoint: [CLAUDE.md](../CLAUDE.md)
 - Monorepo: [README.md](../README.md)
-- Canonical system truth: [architecture/CURRENT_SYSTEM_TRUTH.md](./architecture/CURRENT_SYSTEM_TRUTH.md)
-- Target commercial architecture: [architecture/TARGET_COMMERCIAL_ARCHITECTURE.md](./architecture/TARGET_COMMERCIAL_ARCHITECTURE.md)
-- Monorepo agent context: [PROJECT_CONTEXT.md](./PROJECT_CONTEXT.md)
+- Canonical V1 system truth: [architecture/CURRENT_SYSTEM_TRUTH.md](./architecture/CURRENT_SYSTEM_TRUTH.md)
+- V1 target commercial architecture (superseded for V2): [architecture/TARGET_COMMERCIAL_ARCHITECTURE.md](./architecture/TARGET_COMMERCIAL_ARCHITECTURE.md)
+- Monorepo agent context (V1 reference): [PROJECT_CONTEXT.md](./PROJECT_CONTEXT.md)
 - Release process: [RELEASE_PROCESS.md](./RELEASE_PROCESS.md)
 - Web app: [apps/web/README.md](../apps/web/README.md)
 - Web app agent context: [apps/web/docs/APP_CONTEXT.md](../apps/web/docs/APP_CONTEXT.md)

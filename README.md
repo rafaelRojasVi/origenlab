@@ -9,6 +9,7 @@
   <a href="https://github.com/rafaelRojasVi/origenlab/actions/workflows/api.yml"><img alt="api CI" src="https://github.com/rafaelRojasVi/origenlab/actions/workflows/api.yml/badge.svg" /></a>
   <a href="https://github.com/rafaelRojasVi/origenlab/actions/workflows/dashboard.yml"><img alt="dashboard CI" src="https://github.com/rafaelRojasVi/origenlab/actions/workflows/dashboard.yml/badge.svg" /></a>
   <a href="https://github.com/rafaelRojasVi/origenlab/actions/workflows/web.yml"><img alt="web CI" src="https://github.com/rafaelRojasVi/origenlab/actions/workflows/web.yml/badge.svg" /></a>
+  <a href="https://github.com/rafaelRojasVi/origenlab/actions/workflows/supabase.yml"><img alt="supabase Slice 0" src="https://github.com/rafaelRojasVi/origenlab/actions/workflows/supabase.yml/badge.svg" /></a>
   <a href="https://github.com/rafaelRojasVi/origenlab/actions/workflows/secret-scan.yml"><img alt="secret scan" src="https://github.com/rafaelRojasVi/origenlab/actions/workflows/secret-scan.yml/badge.svg" /></a>
   <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white" />
   <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg" />
@@ -18,7 +19,9 @@
 
 ## What this is
 
-OrigenLab combines a **public marketing site** with **operator tooling** for commercial email intelligence, outbound safety, and commercial triage. Gmail and archive signals land in **SQLite** on the operator machine; **Postgres** holds rebuildable machine mirrors **plus the durable human CRM** (`commercial.sales_opportunity`, tasks, activities, organizations, contacts). Machine systems propose; the durable CRM records human commercial truth. The API/dashboard never send mail or mutate outreach state; durable CRM writes flow only through the allowlisted `/operations/*` commands. Canonical architecture: [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](docs/architecture/CURRENT_SYSTEM_TRUTH.md).
+OrigenLab combines a **public marketing site** with **operator tooling** for commercial email intelligence, outbound safety, and commercial triage. Gmail and archive signals land in **SQLite** on the operator machine; **Postgres** holds rebuildable machine mirrors **plus the durable human CRM** (`commercial.sales_opportunity`, tasks, activities, organizations, contacts). Machine systems propose; the durable CRM records human commercial truth. The API/dashboard never send mail or mutate outreach state; durable CRM writes flow only through the allowlisted `/operations/*` commands. Canonical V1 architecture: [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](docs/architecture/CURRENT_SYSTEM_TRUTH.md).
+
+> **This describes V1, which is running today.** A **V2 architecture was accepted on 2026-09-05**: one Supabase PostgreSQL 17 project with seven private schemas replaces the V1 Postgres durable core, and SQLite and the PST archives become cold evidence. Its schema foundation lives in [`supabase/`](supabase/) and its canonical documentation is [`docs/README.md`](docs/README.md). **What is actually built and deployed is in [`docs/STATUS.md`](docs/STATUS.md)** — as of 2026-09-09 that is the local schema foundation only, with no hosted project.
 
 This public repository holds **code, tests, and documentation only**. Mail exports, SQLite files, generated reports, and client collateral stay outside Git by design.
 
@@ -143,9 +146,11 @@ This repository is **public**. Do not commit `.env`, SQLite databases, mail arch
 
 | Topic | Doc |
 |-------|-----|
-| Canonical system truth | [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](docs/architecture/CURRENT_SYSTEM_TRUTH.md) |
-| Target commercial architecture | [`docs/architecture/TARGET_COMMERCIAL_ARCHITECTURE.md`](docs/architecture/TARGET_COMMERCIAL_ARCHITECTURE.md) |
-| Monorepo architecture | [`docs/PROJECT_CONTEXT.md`](docs/PROJECT_CONTEXT.md) |
+| **What is actually built and deployed** | [`docs/STATUS.md`](docs/STATUS.md) |
+| **V2 — canonical documentation (accepted 2026-09-05)** | [`docs/README.md`](docs/README.md) → `DOMAIN` · `DATA` · `WORKFLOWS` · `ARCHITECTURE` · `MIGRATION` · `OPERATIONS` |
+| Canonical V1 system truth | [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](docs/architecture/CURRENT_SYSTEM_TRUTH.md) |
+| V1 target commercial architecture | [`docs/architecture/TARGET_COMMERCIAL_ARCHITECTURE.md`](docs/architecture/TARGET_COMMERCIAL_ARCHITECTURE.md) |
+| Monorepo architecture (V1 reference) | [`docs/PROJECT_CONTEXT.md`](docs/PROJECT_CONTEXT.md) |
 | Documentation map | [`docs/DOCUMENTATION_MAP.md`](docs/DOCUMENTATION_MAP.md) |
 | Release process | [`docs/RELEASE_PROCESS.md`](docs/RELEASE_PROCESS.md) |
 | Email pipeline | [`apps/email-pipeline/docs/README.md`](apps/email-pipeline/docs/README.md) |

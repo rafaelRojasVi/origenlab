@@ -229,11 +229,36 @@ on any mismatch.
   every count and every read model, and visible only in a review queue.
 - The V1 orphan supplier-review row is quarantined evidence. It never becomes
   an organization.
-- The 172 V1 supplier candidates and the ~159 historical quote candidates
-  enter as **pending** source records with assertions. **Zero automatic
-  promotion**: none of the 171 V1 review rows carries a reviewer or a review
-  date, so no promotion rule is satisfied. `is_exclusion` on a V1 supplier row
-  is an assertion, not a block.
+- The 172 V1 supplier candidates and the historical quote candidates enter as
+  **pending** source records with assertions. **Zero automatic promotion**:
+  none of the 171 V1 review rows carries a reviewer or a review date, so no
+  promotion rule is satisfied. `is_exclusion` on a V1 supplier row is an
+  assertion, not a block.
+- **[V1 FACT] Historical quote candidates — measured census, 2026-09-09.** A
+  read-only census over all Sent candidates **supersedes the earlier "~159"
+  estimate**, which was never measured:
+
+  | Population | Count |
+  |---|---|
+  | Total Sent candidates | 9,831 |
+  | Explicit customer-quote candidates | **207** |
+  | Ambiguous | 4,351 |
+  | Supplier RFQ | 442 |
+  | Classified `internal_only` | 4,831 |
+
+  **The `internal_only` figure is not what it appears to be.** Of it, **4,668
+  rows are legacy-mbox messages whose recipient headers contain no `@`-shaped
+  token at all** — the PST→mbox conversion emitted display names with the SMTP
+  address stripped, for the era 2017-04-24 → 2020-03-13. Only ~98 are genuinely
+  internal. The V1 exporter conflates "internal" with "unparseable" in one
+  silent skip and counts neither, so **no count derived from it is a count of
+  internal mail**. Those addresses are likely recoverable from the message body
+  or the on-disk mbox original.
+
+  **Consequence for this migration: the number of historical quote candidates
+  entering as evidence is not yet settled**, and no export should be run until
+  the exporter separates and counts those two populations. `207` is the floor,
+  not the answer.
 - Gmail message rows are never quarantined — they are provider facts. A
   message that cannot be parsed keeps its raw `.eml` and records a parse
   failure on the row.

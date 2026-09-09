@@ -16,8 +16,15 @@ which fact ([`DATA.md`](DATA.md)), the transitions
 ([`WORKFLOWS.md`](WORKFLOWS.md)), the cutover ([`MIGRATION.md`](MIGRATION.md)),
 the runbooks ([`OPERATIONS.md`](OPERATIONS.md)).
 
-Everything here is **[V2 DECISION]** and **[PLANNED]**. No Supabase project,
-schema, role, bucket or table exists yet.
+Everything here is **[V2 DECISION]**, and **[PLANNED]** except where marked
+**(impl)**. **The local schema foundation exists**: `supabase/roles.sql` and the
+migrations under `supabase/migrations/` create the four roles, the seven schemas
+and the 32 tables with their grants and RLS against a local PostgreSQL 17
+container, proven by `supabase/tests/` and enforced in CI
+([`OPERATIONS.md`](OPERATIONS.md) §4.1). **No hosted Supabase project, bucket,
+backup or advisor run exists**, and no application code reads or writes these
+schemas. Current build state is owned by [`STATUS.md`](STATUS.md), not by this
+document.
 
 ## 1. Topology
 
