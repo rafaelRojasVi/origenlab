@@ -80,6 +80,12 @@ jobs:
       - name: Run pgTAP database tests
         run: supabase test db --local
 
+      # Static analysis cannot prove the hosted bootstrap SQL executes. This applies it to the
+      # disposable local database inside one always-rolled-back transaction, under hosted-like
+      # conditions, and proves the catalogue is unchanged afterwards.
+      - name: Rehearse the hosted role bootstrap against the local database
+        run: supabase/scripts/hosted_bootstrap_rehearsal.sh
+
       - name: Prove runtime-role behavior with direct logins
         run: supabase/scripts/verify_direct_logins.sh
 

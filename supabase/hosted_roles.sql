@@ -101,13 +101,23 @@ revoke origenlab_worker from origenlab_api;
 revoke origenlab_api    from origenlab_migrator;
 revoke origenlab_worker from origenlab_migrator;
 
--- Fail closed on the platform-role boundary (docs/ARCHITECTURE.md §6.4, §6.5). Two directions,
--- both of which this file must leave empty on a hosted project:
---   1. no role outside the closed OrigenLab set holds a membership in an OrigenLab role;
---   2. no OrigenLab role holds a membership in any other role at all.
--- Direction 1 is what would happen if this file — or an operator repairing it by hand — granted
--- the owner to `postgres`, `service_role` or a dashboard identity. Direction 2 is what would
--- happen if an OrigenLab role were quietly folded into a platform group such as pg_read_all_data.
+-- Fail closed on the platform-role boundary (docs/ARCHITECTURE.md §6.4, §6.5). Two directions.
+--
+-- Direction 1: no identity outside the closed OrigenLab set may INHERIT or SET ROLE to an
+-- OrigenLab role. That is the boundary that matters, and it is stated in terms of the two options
+-- that confer privilege rather than as "holds no membership row" — because the latter is false on
+-- any real project and would make this file fail the first time it is applied.
+--
+-- PostgreSQL 16 and later record the role creator's implicit ADMIN OPTION as an ordinary
+-- pg_auth_members row. The project's `postgres` login applies this file and creates these four
+-- roles, so it necessarily holds one such row per role, with admin_option true and both
+-- set_option and inherit_option false. It is administrative only: it confers no SET ROLE and
+-- inherits nothing. This file does not grant it, could not suppress it, and does not pretend it is
+-- absent — it asserts that no such row ever carries INHERIT or SET instead.
+--
+-- Direction 2: no OrigenLab role holds a membership in any other role, except the migrator in the
+-- owner. That is what would happen if a role were quietly folded into a platform group such as
+-- pg_read_all_data.
 do $$
 declare
   v_bad text;
@@ -118,9 +128,10 @@ begin
     join pg_catalog.pg_roles m on m.oid = am.roleid
     join pg_catalog.pg_roles r on r.oid = am.member
    where m.rolname in ('origenlab_owner', 'origenlab_migrator', 'origenlab_api', 'origenlab_worker')
-     and r.rolname <> 'origenlab_migrator';
+     and r.rolname not in ('origenlab_owner', 'origenlab_migrator', 'origenlab_api', 'origenlab_worker')
+     and (am.inherit_option or am.set_option);
   if v_bad is not null then
-    raise exception 'no role outside the OrigenLab set may hold membership in an OrigenLab role; offending: %', v_bad;
+    raise exception 'no identity outside the OrigenLab set may inherit or assume an OrigenLab role; offending: %', v_bad;
   end if;
 
   select string_agg(format('%s in %s', r.rolname, m.rolname), ', ' order by r.rolname, m.rolname)
