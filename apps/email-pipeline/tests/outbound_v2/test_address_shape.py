@@ -1,4 +1,10 @@
-"""The application address shape and the database address shape are the same pattern."""
+"""The application address shape and the database address shape are the same pattern.
+
+Every address below is synthetic, on a reserved documentation domain (`.example` /
+`.invalid`, RFC 2606 / RFC 6761). None is copied from the archive or from any real
+correspondent: what is under test is the *shape* of a header fragment, which synthetic
+values reproduce exactly.
+"""
 
 from __future__ import annotations
 
@@ -45,12 +51,12 @@ def test_the_database_constraint_carries_the_application_pattern(constraint) -> 
 @pytest.mark.parametrize(
     "raw",
     [
-        "<sales@steinlite.com>",
-        "Ariel<asalvatierra@ceaf.cl>",
-        "<k.montenegro@soviquim.cl>",
-        '"camilo.alfaro"@indisa.cl',
-        "ventas@uni.cl,",
-        "ventas@uni.cl;",
+        "<sales@example.invalid>",
+        "Nombre Apellido<contacto@proveedor.example>",
+        "<k.apellido@laboratorio.example>",
+        '"nombre.apellido"@universidad.example',
+        "ventas@universidad.example,",
+        "ventas@universidad.example;",
     ],
 )
 def test_a_delimiter_is_not_part_of_an_address(raw) -> None:
@@ -61,14 +67,14 @@ def test_a_delimiter_is_not_part_of_an_address(raw) -> None:
 @pytest.mark.parametrize(
     "raw",
     [
-        "compras@universidad.cl",
-        "s4system-prod3+camanchaca.doc1426598569@ansmtp.ariba.com",
-        "info+canned.response@megadepot.com",
-        "no-reply11698+179810@epmas.cl",
-        "j.perez@uchile.cl",
-        "lab_central@uc.cl",
-        "compras@sub.dominio.co.uk",
-        "contacto@ñandu.cl",
+        "compras@universidad.example",
+        "s4system-prod3+cliente.doc1426598569@relay.proveedor.example",
+        "info+canned.response@tienda.example",
+        "no-reply11698+179810@boletin.example",
+        "j.perez@universidad.example",
+        "lab_central@universidad.example",
+        "compras@sub.dominio.example",
+        "contacto@ñandu.example",
     ],
 )
 def test_a_legitimate_address_is_still_accepted(raw) -> None:

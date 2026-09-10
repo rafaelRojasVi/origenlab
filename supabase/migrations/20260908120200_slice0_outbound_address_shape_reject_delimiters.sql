@@ -4,12 +4,12 @@
 -- re-adds the two address CHECK constraints with a tightened pattern.
 --
 -- The original pattern, '^[^@\s]+@[^@\s]+\.[^@\s]+$', excludes only '@' and whitespace, so a
--- raw RFC 822 fragment an adapter forgot to extract passes it whole: '<sales@steinlite.com>'
+-- raw RFC 822 fragment an adapter forgot to extract passes it whole: '<sales@example.invalid>'
 -- has no space and one '@', matches, and would be frozen — and later sent — with the angle
--- brackets still attached. Measured against real archive header strings, 78 of 2,192 distinct
--- values had this shape. Excluding '<', '>', ',', ';' and '"' from both the local and the
+-- brackets still attached. Excluding '<', '>', ',', ';' and '"' from both the local and the
 -- domain part closes it: those characters only ever appear in a display-name or a
--- comma/semicolon-joined recipient list, never inside one mailbox.
+-- comma/semicolon-joined recipient list, never inside one mailbox. Every address in this
+-- comment and in the accompanying tests is synthetic, on a reserved documentation domain.
 --
 -- The same pattern is the application's ADDRESS_SHAPE_PATTERN
 -- (apps/email-pipeline/src/origenlab_email_pipeline/outbound_v2/eligibility.py); the two are

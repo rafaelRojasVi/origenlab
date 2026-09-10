@@ -1,4 +1,12 @@
-"""evaluate_recipient_eligibility: pure, complete, closed-vocabulary, fail-closed."""
+"""evaluate_recipient_eligibility: pure, complete, closed-vocabulary, fail-closed.
+
+Every address and domain below is synthetic, on a reserved documentation domain
+(`.example`, RFC 2606). The one real-world token is the organization name "DHL": it is a
+member of the closed noise vocabulary in
+``origenlab_email_pipeline.marketing_contact_noise`` and is the only way to exercise
+``marketing_outreach_noise_organization_guess``. It is read from checked-in source, not
+from the archive.
+"""
 
 from __future__ import annotations
 
@@ -41,13 +49,13 @@ def _policy(**kwargs) -> CampaignPolicy:
     base = dict(
         max_sends=100,
         recontact_interval_days=180,
-        internal_domains=frozenset({"origenlab.cl"}),
+        internal_domains=frozenset({"interna.example"}),
     )
     base.update(kwargs)
     return CampaignPolicy(**base)
 
 
-def _candidate(address: str = "compras@universidad.cl", **kwargs) -> RecipientCandidate:
+def _candidate(address: str = "compras@universidad.example", **kwargs) -> RecipientCandidate:
     return RecipientCandidate(address_norm=address, **kwargs)
 
 
@@ -67,10 +75,10 @@ def _evaluate(candidate=None, controls=None, policy=None, **kwargs):
 @pytest.mark.parametrize(
     "raw,expected",
     [
-        ("Compras@Universidad.CL", "compras@universidad.cl"),
+        ("Compras@Universidad.Example", "compras@universidad.example"),
         ("  lab@uni.example  ", "lab@uni.example"),
         ("not-an-email", None),
-        ("two@addresses.cl, other@x.cl", None),
+        ("dos@direcciones.example, otra@x.example", None),
         ("", None),
         (None, None),
     ],
@@ -88,19 +96,19 @@ def test_clean_candidate_is_eligible_with_no_reasons() -> None:
 
 def test_every_reason_is_in_the_database_vocabulary() -> None:
     controls = ContactControlIndex(
-        blocked_addresses=frozenset({"noreply@ohaus.com"}),
-        blocked_domains=frozenset({"ohaus.com"}),
-        prior_contact_addresses=frozenset({"noreply@ohaus.com"}),
-        replied_addresses=frozenset({"noreply@ohaus.com"}),
-        cooldown_until={"noreply@ohaus.com": NOW + timedelta(days=30)},
-        manual_status={"noreply@ohaus.com": "hold"},
+        blocked_addresses=frozenset({"noreply@proveedor.example"}),
+        blocked_domains=frozenset({"proveedor.example"}),
+        prior_contact_addresses=frozenset({"noreply@proveedor.example"}),
+        replied_addresses=frozenset({"noreply@proveedor.example"}),
+        cooldown_until={"noreply@proveedor.example": NOW + timedelta(days=30)},
+        manual_status={"noreply@proveedor.example": "hold"},
     )
     verdict = _evaluate(
         candidate=_candidate(
-            "noreply@ohaus.com", organization_name="DHL Express", precheck_verdict="block"
+            "noreply@proveedor.example", organization_name="DHL", precheck_verdict="block"
         ),
         controls=controls,
-        policy=_policy(supplier_domains=frozenset({"ohaus.com"}), require_contact_point=True),
+        policy=_policy(supplier_domains=frozenset({"proveedor.example"}), require_contact_point=True),
     )
     assert set(verdict.reasons) <= EXCLUSION_VOCABULARY
 
@@ -138,18 +146,18 @@ def test_now_is_an_argument_not_a_clock_read() -> None:
 def test_evaluation_is_complete_and_ordered() -> None:
     """Clearing one reason must never reveal a surprise second one."""
     controls = ContactControlIndex(
-        blocked_addresses=frozenset({"noreply@ohaus.com"}),
-        blocked_domains=frozenset({"ohaus.com"}),
-        prior_contact_addresses=frozenset({"noreply@ohaus.com"}),
-        replied_addresses=frozenset({"noreply@ohaus.com"}),
-        manual_status={"noreply@ohaus.com": "inactive"},
+        blocked_addresses=frozenset({"noreply@proveedor.example"}),
+        blocked_domains=frozenset({"proveedor.example"}),
+        prior_contact_addresses=frozenset({"noreply@proveedor.example"}),
+        replied_addresses=frozenset({"noreply@proveedor.example"}),
+        manual_status={"noreply@proveedor.example": "inactive"},
     )
     verdict = _evaluate(
         candidate=_candidate(
-            "noreply@ohaus.com", organization_name="DHL Express", precheck_verdict="switch"
+            "noreply@proveedor.example", organization_name="DHL", precheck_verdict="switch"
         ),
         controls=controls,
-        policy=_policy(supplier_domains=frozenset({"ohaus.com"}), require_contact_point=True),
+        policy=_policy(supplier_domains=frozenset({"proveedor.example"}), require_contact_point=True),
     )
     assert verdict.reasons == (
         REASON_MANUAL_INACTIVE,
@@ -167,7 +175,7 @@ def test_evaluation_is_complete_and_ordered() -> None:
 
 def test_invalid_address_is_the_one_terminal_reason() -> None:
     verdict = _evaluate(
-        candidate=_candidate("not-an-email", organization_name="DHL Express"),
+        candidate=_candidate("not-an-email", organization_name="DHL"),
         controls=ContactControlIndex(manual_status={"not-an-email": "hold"}),
     )
     assert verdict.reasons == (REASON_INVALID_ADDRESS,)
@@ -177,7 +185,7 @@ def test_invalid_address_is_the_one_terminal_reason() -> None:
 
 
 def test_internal_domain_is_excluded() -> None:
-    assert _evaluate(candidate=_candidate("ventas@origenlab.cl")).reasons == (
+    assert _evaluate(candidate=_candidate("ventas@interna.example")).reasons == (
         REASON_POLICY_INTERNAL_DOMAIN,
     )
 
@@ -204,20 +212,20 @@ def test_manual_active_is_not_consent_and_does_not_relax_any_rule() -> None:
 
 
 def test_a_blocked_registrable_domain_covers_its_subdomains() -> None:
-    controls = ContactControlIndex(blocked_domains=frozenset({"competidor.cl"}))
-    verdict = _evaluate(candidate=_candidate("x@lab.competidor.cl"), controls=controls)
+    controls = ContactControlIndex(blocked_domains=frozenset({"competidor.example"}))
+    verdict = _evaluate(candidate=_candidate("x@lab.competidor.example"), controls=controls)
     assert verdict.reasons == (REASON_BLOCK_DOMAIN,)
 
 
 def test_supplier_domain_excluded_unless_the_campaign_includes_suppliers() -> None:
-    policy = _policy(supplier_domains=frozenset({"ohaus.com"}))
-    assert _evaluate(candidate=_candidate("ventas@ohaus.com"), policy=policy).reasons == (
+    policy = _policy(supplier_domains=frozenset({"proveedor.example"}))
+    assert _evaluate(candidate=_candidate("ventas@proveedor.example"), policy=policy).reasons == (
         REASON_POLICY_SUPPLIER,
     )
     including = _policy(
-        supplier_domains=frozenset({"ohaus.com"}), policy_include_suppliers=True
+        supplier_domains=frozenset({"proveedor.example"}), policy_include_suppliers=True
     )
-    assert _evaluate(candidate=_candidate("ventas@ohaus.com"), policy=including).eligible is True
+    assert _evaluate(candidate=_candidate("ventas@proveedor.example"), policy=including).eligible is True
 
 
 def test_missing_contact_point_is_fail_closed_when_the_campaign_requires_one() -> None:
@@ -235,7 +243,7 @@ def test_commercial_precheck_verdicts_carry_through(verdict_value: str, expected
 
 
 def test_noise_rules_can_be_skipped_wholesale() -> None:
-    noisy = _candidate("noreply@uni.example", organization_name="DHL Express")
+    noisy = _candidate("noreply@uni.example", organization_name="DHL")
     assert set(_evaluate(candidate=noisy).reasons) == {
         REASON_POLICY_NOISE_ADDRESS,
         REASON_POLICY_NOISE_ORGANIZATION,

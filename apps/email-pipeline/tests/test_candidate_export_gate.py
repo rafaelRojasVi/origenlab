@@ -136,16 +136,21 @@ def test_evaluation_order_suppression_before_sent() -> None:
 
 
 def test_every_failing_rule_is_reported_in_evaluation_order() -> None:
-    """Fixing one reason must not reveal a surprise second one."""
+    """Fixing one reason must not reveal a surprise second one.
+
+    Synthetic address and domain. ``"DHL"`` is a token of the closed noise vocabulary in
+    ``marketing_contact_noise`` — checked-in source, not archive data — and is the only way
+    to make ``REASON_NOISE_ORGANIZATION`` fire.
+    """
     ctx = _ctx(
-        suppressed_norms=frozenset({"noreply@ohaus.com"}),
-        suppressed_contact_domains=frozenset({"ohaus.com"}),
-        sent_recipient_norms=frozenset({"noreply@ohaus.com"}),
-        outreach_state_by_email={"noreply@ohaus.com": "contacted"},
-        supplier_domains=frozenset({"ohaus.com"}),
+        suppressed_norms=frozenset({"noreply@proveedor.example"}),
+        suppressed_contact_domains=frozenset({"proveedor.example"}),
+        sent_recipient_norms=frozenset({"noreply@proveedor.example"}),
+        outreach_state_by_email={"noreply@proveedor.example": "contacted"},
+        supplier_domains=frozenset({"proveedor.example"}),
     )
     r = evaluate_export_eligibility(
-        contact_email="noreply@ohaus.com", institution_name="DHL Express", ctx=ctx
+        contact_email="noreply@proveedor.example", institution_name="DHL", ctx=ctx
     )
     assert r.eligible is False
     assert r.reasons == (
@@ -172,17 +177,17 @@ def test_invalid_email_is_the_one_terminal_reason() -> None:
     """With no usable mailbox no other rule can be evaluated, so none is reported."""
     ctx = _ctx(
         suppressed_norms=frozenset({"not-an-email"}),
-        supplier_domains=frozenset({"ohaus.com"}),
+        supplier_domains=frozenset({"proveedor.example"}),
     )
     r = evaluate_export_eligibility(
-        contact_email="not-an-email", institution_name="DHL Express", ctx=ctx
+        contact_email="not-an-email", institution_name="DHL", ctx=ctx
     )
     assert r == ExportGateResult(eligible=False, reasons=(REASON_INVALID_EMAIL,))
 
 
 def test_eligible_result_carries_no_reasons() -> None:
     r = evaluate_export_eligibility(
-        contact_email="compras@universidad.cl", institution_name="Universidad de Chile", ctx=_ctx()
+        contact_email="compras@universidad.example", institution_name="Universidad Example", ctx=_ctx()
     )
     assert r == ExportGateResult(eligible=True, reasons=())
 
