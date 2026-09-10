@@ -75,8 +75,20 @@ archived`; any non-terminal → `cancelled`.
 `needs_review → {sent, snapshotted, failed}`;
 `sent → {bounced, replied, unsubscribed}`.
 
-`excluded` carries `exclusion_reason ∈ {block, prior_contact, cooldown,
-policy_supplier, policy_no_channel, precheck_block, precheck_switch}`.
+`excluded` carries **every** reason it was excluded for, not the first that fired:
+`exclusion_reasons text[]`, non-empty exactly when the state is `excluded`, never
+holding NULL, and drawn from the closed vocabulary
+
+`{block, block_domain, prior_contact, prior_reply, cooldown, policy_supplier,
+policy_no_channel, policy_internal_domain, policy_noise_address,
+policy_noise_organization, precheck_block, precheck_switch, manual_inactive,
+manual_hold, invalid_address, already_in_audience}`.
+
+The first seven are the original Slice 0 codes; the rest reconcile the two V1 export
+gates onto one vocabulary. Evaluation is **complete** — an operator who clears one
+reason must not then discover a second — and the application sorts and de-duplicates
+the array, which a CHECK cannot express without a subquery. `invalid_address` is the
+one terminal reason: with no mailbox, no other rule can be evaluated.
 
 ### 1.5 Send attempt — two independent vocabularies
 
@@ -373,7 +385,7 @@ is ([`DATA.md`](DATA.md) §1.1); a new key or a changed meaning is a new
 | 8 | worker · `begin_dispatch` | attempt `reserved` | `dispatching`, lease, minted id | event | predicate false → `skipped`, recipient released |
 | 9 | worker · `send_one` | attempt `dispatching`, < 5 s old, full predicate re-check | provider call | — | see W9 |
 | 10 | worker · `finish_attempt(accepted)` | provider returned ids | `accepted`; `prior_contact` (`marketing`) upserted; `cooldown` (`marketing`) set to `accepted_at + recontact_interval_days`; recipient `sent` | attempt, contact controls, event | — |
-| 11 | worker · Gmail sync | reply arrives | recipient `replied`; message stored | `comms.message` | — |
+| 11 | worker · Gmail sync | reply arrives | recipient `replied`; message stored; the reply attributed | `comms.message`, `outbound.campaign_reply` | — |
 | 12 | operator · `link_activity` / `create_opportunity` | operator judgement | activity and/or opportunity created | event | — |
 
 **A reply never creates or advances an opportunity on its own.** Step 12 is
@@ -401,12 +413,22 @@ address is never cold-contacted later without an override.
 | Step | Actor · command | Preconditions | State change | Durable evidence | Failure |
 |---|---|---|---|---|---|
 | 1 | worker · sync | mailbox cursor valid | `comms.message` inserted on `(mailbox, provider_message_id)`; participants; attachments to Storage | message rows | duplicate → `DO NOTHING`; **no domain event** |
-| 2 | worker · match | message is a reply to a minted id in the sender mailbox | `send_attempt` / recipient linked | event | inbound message carrying a minted id but not outbound in the sender mailbox → **flagged, never linked** |
+| 2 | worker · match | message is a reply to a minted id in the sender mailbox | `send_attempt` / recipient linked; one `outbound.campaign_reply` row per message carrying the classifier's **proposed** class | event, `outbound.campaign_reply` | inbound message carrying a minted id but not outbound in the sender mailbox → **flagged, never linked** |
 | 3 | operator · `resolve_participant` | a `comms.message_participant` address not yet a contact point (not an opportunity participant) | contact point created and linked | event | ambiguous person → refused |
 | 4 | operator · `link_activity` | message and CRM object chosen | `crm.activity` created | event | duplicate `(message, opportunity)` → refused |
 
 A message nobody linked is evidence, not an activity
 ([`DATA.md`](DATA.md) §1.1).
+
+**The classifier proposes; the operator records.** `outbound.campaign_reply` is
+evidence-shaped exactly like `evidence.source_record`: the worker may insert a
+`proposed_class`, and only an operator writes `operator_class` (which may overturn the
+proposal entirely with `not_a_reply`). It is **never** the writer of
+`campaign_recipient.state` — moving a recipient to `replied` is a command, not a side
+effect of ingestion — and an ambiguous reply stays in the table with its proposal
+unconfirmed rather than being resolved or dropped. The `unsubscribe_request` and
+`complaint` classes are *proposals only*: the contact control they imply is written by
+§W10 step 3, whose unsubscribe mechanism remains **[OPEN]**.
 
 ### W7 — ChileCompra notice → review → opportunity
 

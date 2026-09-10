@@ -4,7 +4,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 grant usage on schema extensions to origenlab_owner;
 set role origenlab_owner;
-select plan(77);
+select plan(98);
 
 insert into platform.operator (id, auth_user_id, email_norm, display_name, role, status)
 values ('00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000f1', 'admin@example.test', 'Admin', 'admin', 'active');
@@ -49,14 +49,28 @@ insert into outbound.campaign (id, name, mailbox_id, max_sends, recontact_interv
 select throws_ok($$ insert into outbound.campaign (name, mailbox_id, max_sends, recontact_interval_days) values ('x', '00000000-0000-4000-8000-000000000100', 0, 180) $$, '23514', null, 'campaign: max_sends ≥ 1');
 select throws_ok($$ update outbound.campaign set status = 'approved' where id = '00000000-0000-4000-8000-000000000200' $$, '23514', null, 'campaign: approved carries approver, time and override count');
 select throws_ok($$ update outbound.campaign set status = 'sending' where id = '00000000-0000-4000-8000-000000000200' $$, '23514', null, 'campaign: status is closed');
+-- campaign content (M10b/A) and audience criteria (M10b/B) freeze together with the audience.
+select throws_ok($$ update outbound.campaign set status = 'audience_frozen' where id = '00000000-0000-4000-8000-000000000201' $$, '23514', null, 'campaign: audience_frozen carries its content');
+select throws_ok($$ update outbound.campaign set content_sha256 = 'not-a-hash', content_frozen_at = now() where id = '00000000-0000-4000-8000-000000000201' $$, '23514', null, 'campaign: content_sha256 is a sha256');
+select throws_ok($$ update outbound.campaign set content_sha256 = repeat('a', 64) where id = '00000000-0000-4000-8000-000000000201' $$, '23514', null, 'campaign: the content fingerprint and its freeze time are set together');
+select throws_ok($$ update outbound.campaign set audience_criteria = '[]'::jsonb, audience_criteria_version = 1, audience_frozen_at = now() where id = '00000000-0000-4000-8000-000000000201' $$, '23514', null, 'campaign: audience_criteria is an object');
+select throws_ok($$ update outbound.campaign set audience_criteria = '{}'::jsonb where id = '00000000-0000-4000-8000-000000000201' $$, '23514', null, 'campaign: criteria, version and freeze time are set together');
+select throws_ok($$ update outbound.campaign set audience_criteria = '{}'::jsonb, audience_criteria_version = 2, audience_frozen_at = now() where id = '00000000-0000-4000-8000-000000000201' $$, '23514', null, 'campaign: the criteria version is pinned to 1');
+select lives_ok($$ update outbound.campaign set status = 'audience_frozen', subject = 'Equipamiento de laboratorio', body_text = 'Hola', content_sha256 = repeat('a', 64), content_frozen_at = now(), audience_criteria = '{"version": 1, "source_lane": "lead_master"}'::jsonb, audience_criteria_version = 1, audience_frozen_at = now() where id = '00000000-0000-4000-8000-000000000201' $$, 'campaign: content and audience criteria freeze together');
 insert into outbound.campaign_recipient (id, campaign_id, address_norm) values ('00000000-0000-4000-8000-000000000210', '00000000-0000-4000-8000-000000000200', 'lab@uni.example');
 select throws_ok($$ insert into outbound.campaign_recipient (campaign_id, address_norm) values ('00000000-0000-4000-8000-000000000200', 'lab@uni.example') $$, '23505', null, 'campaign_recipient: (campaign_id, address_norm) unique');
 select lives_ok($$ insert into outbound.campaign_recipient (campaign_id, address_norm) values ('00000000-0000-4000-8000-000000000201', 'lab@uni.example') $$, 'campaign_recipient: the same address may be frozen into another campaign');
-select throws_ok($$ update outbound.campaign_recipient set state = 'excluded' where id = '00000000-0000-4000-8000-000000000210' $$, '23514', null, 'campaign_recipient: excluded carries an exclusion_reason');
-select throws_ok($$ update outbound.campaign_recipient set exclusion_reason = 'block' where id = '00000000-0000-4000-8000-000000000210' $$, '23514', null, 'campaign_recipient: an exclusion_reason implies excluded');
+select throws_ok($$ update outbound.campaign_recipient set state = 'excluded' where id = '00000000-0000-4000-8000-000000000210' $$, '23514', null, 'campaign_recipient: excluded carries at least one exclusion reason');
+select throws_ok($$ update outbound.campaign_recipient set exclusion_reasons = array['block'] where id = '00000000-0000-4000-8000-000000000210' $$, '23514', null, 'campaign_recipient: an exclusion reason implies excluded');
+select throws_ok($$ update outbound.campaign_recipient set state = 'excluded', exclusion_reasons = array['not_a_reason_code'] where id = '00000000-0000-4000-8000-000000000210' $$, '23514', null, 'campaign_recipient: the exclusion vocabulary is closed');
+select throws_ok($$ update outbound.campaign_recipient set state = 'excluded', exclusion_reasons = array['block', null] where id = '00000000-0000-4000-8000-000000000210' $$, '23514', null, 'campaign_recipient: an exclusion reason is never NULL');
+select lives_ok($$ insert into outbound.campaign_recipient (campaign_id, address_norm, state, exclusion_reasons) values ('00000000-0000-4000-8000-000000000201', 'excluida@uni.example', 'excluded', array['block', 'policy_supplier']) $$, 'campaign_recipient: every reason is recorded, not only the first that fired');
 select throws_ok($$ update outbound.campaign_recipient set recontact_override_reason = 'approved by manager' where id = '00000000-0000-4000-8000-000000000210' $$, '23514', null, 'campaign_recipient: the override triple is all-or-none');
 select lives_ok($$ update outbound.campaign_recipient set recontact_override_by_operator_id = '00000000-0000-4000-8000-0000000000a1', recontact_override_reason = 'approved by manager', recontact_override_at = now() where id = '00000000-0000-4000-8000-000000000210' $$, 'campaign_recipient: the override triple set together');
 select throws_ok($$ insert into outbound.campaign_recipient (campaign_id, address_norm) values ('00000000-0000-4000-8000-000000000200', 'Upper@uni.example') $$, '23514', null, 'campaign_recipient: address_norm is lower-cased');
+-- A header fragment is not an address: '<', '>', ',', ';' and '"' never appear inside one mailbox.
+select throws_ok($$ insert into outbound.campaign_recipient (campaign_id, address_norm) values ('00000000-0000-4000-8000-000000000200', '<lab@uni.example>') $$, '23514', null, 'campaign_recipient: an unextracted header fragment is not an address');
+select lives_ok($$ insert into outbound.campaign_recipient (campaign_id, address_norm) values ('00000000-0000-4000-8000-000000000200', 'info+canned.response@uni.example') $$, 'campaign_recipient: plus-addressing is a legitimate mailbox');
 
 -- outbound.send_attempt (#22)
 select throws_ok($$ insert into outbound.send_attempt (purpose, mailbox_id, address_norm) values ('marketing', '00000000-0000-4000-8000-000000000100', 'lab@uni.example') $$, '23514', null, 'send_attempt: a marketing attempt names its campaign and recipient');
@@ -79,6 +93,7 @@ select throws_ok($$ insert into outbound.send_attempt (purpose, campaign_id, cam
 select throws_ok($$ update outbound.send_attempt set submission_state = 'rejected', delivery_state = 'n/a', bounce_class = null where id = '00000000-0000-4000-8000-000000000220' $$, '23514', null, 'send_attempt: rejected carries an error_class');
 select throws_ok($$ update outbound.send_attempt set resolution_verdict = 'accepted' where id = '00000000-0000-4000-8000-000000000220' $$, '23514', null, 'send_attempt: the resolution fields are all-or-none');
 select throws_ok($$ update outbound.send_attempt set retry_reason = 'x' where id = '00000000-0000-4000-8000-000000000220' $$, '23514', null, 'send_attempt: retry_reason only with retry_of_attempt_id');
+select throws_ok($$ insert into outbound.send_attempt (purpose, campaign_id, campaign_recipient_id, mailbox_id, address_norm) values ('marketing', '00000000-0000-4000-8000-000000000200', '00000000-0000-4000-8000-000000000210', '00000000-0000-4000-8000-000000000100', '<lab@uni.example>') $$, '23514', null, 'send_attempt: an unextracted header fragment is never sent to');
 
 -- outbound.contact_control (#23)
 insert into outbound.contact_control (id, scope, value_norm, kind, purpose, reason, source) values ('00000000-0000-4000-8000-000000000230', 'address', 'lab@uni.example', 'prior_contact', 'marketing', 'accepted send', 'send_accepted');
@@ -95,6 +110,32 @@ select throws_ok($$ insert into outbound.contact_control (scope, value_norm, kin
 select throws_ok($$ delete from outbound.contact_control where id = '00000000-0000-4000-8000-000000000230' $$, 'P0001', null, 'contact_control: prior_contact is never deleted (trigger guard, even for the owner)');
 select throws_ok($$ update outbound.contact_control set reason = 'edited' where id = '00000000-0000-4000-8000-000000000230' $$, 'P0001', null, 'contact_control: prior_contact is never rewritten');
 select lives_ok($$ delete from outbound.contact_control where scope = 'domain' and value_norm = 'competitor.example' $$, 'contact_control: a block may be revoked (by the privileged command in Slice 5)');
+
+-- outbound.campaign_reply (#33)
+insert into comms.message (id, mailbox_id, provider_message_id, direction, internal_date)
+values ('00000000-0000-4000-8000-000000000111', '00000000-0000-4000-8000-000000000100', 'gm-reply-2', 'inbound', now());
+insert into outbound.campaign_reply (id, campaign_id, campaign_recipient_id, message_id, received_at, proposed_class, proposed_by)
+values ('00000000-0000-4000-8000-000000000240', '00000000-0000-4000-8000-000000000200', '00000000-0000-4000-8000-000000000210', '00000000-0000-4000-8000-000000000110', now(), 'human_reply', 'ingest_classifier');
+select throws_ok($$ insert into outbound.campaign_reply (campaign_id, campaign_recipient_id, message_id, received_at, proposed_class, proposed_by) values ('00000000-0000-4000-8000-000000000200', '00000000-0000-4000-8000-000000000210', '00000000-0000-4000-8000-000000000110', now(), 'auto_reply', 'ingest_classifier') $$, '23505', null, 'campaign_reply: one reply row per provider message');
+select throws_ok($$ insert into outbound.campaign_reply (campaign_id, campaign_recipient_id, message_id, received_at, proposed_class, proposed_by) values ('00000000-0000-4000-8000-000000000201', '00000000-0000-4000-8000-000000000210', '00000000-0000-4000-8000-000000000111', now(), 'human_reply', 'ingest_classifier') $$, '23503', null, 'campaign_reply: a reply never crosses campaigns');
+select throws_ok($$ update outbound.campaign_reply set proposed_class = 'quizas' where id = '00000000-0000-4000-8000-000000000240' $$, '23514', null, 'campaign_reply: the proposed class is closed');
+select throws_ok($$ update outbound.campaign_reply set operator_class = 'not_a_reply' where id = '00000000-0000-4000-8000-000000000240' $$, '23514', null, 'campaign_reply: the operator verdict triple is all-or-none');
+select lives_ok($$ update outbound.campaign_reply set operator_class = 'not_a_reply', classified_by_operator_id = '00000000-0000-4000-8000-0000000000a1', classified_at = now() where id = '00000000-0000-4000-8000-000000000240' $$, 'campaign_reply: the operator records a verdict over the machine proposal');
+-- An ambiguous reply is *kept* for review, not resolved and not dropped: the classifier may
+-- propose 'unclassified' and leave the operator triple NULL, and that row is valid.
+insert into comms.message (id, mailbox_id, provider_message_id, direction, internal_date)
+values ('00000000-0000-4000-8000-000000000112', '00000000-0000-4000-8000-000000000100', 'gm-reply-3', 'inbound', now());
+select lives_ok($$ insert into outbound.campaign_reply (campaign_id, campaign_recipient_id, message_id, received_at, proposed_class, proposed_by) values ('00000000-0000-4000-8000-000000000200', '00000000-0000-4000-8000-000000000210', '00000000-0000-4000-8000-000000000112', now(), 'unclassified', 'ingest_classifier') $$, 'campaign_reply: an ambiguous reply is preserved unclassified for operator review');
+select is(
+  (select count(*)::int from outbound.campaign_reply
+    where campaign_recipient_id = '00000000-0000-4000-8000-000000000210'),
+  2, 'campaign_reply: one recipient may reply more than once — uniqueness is per message, not per recipient');
+-- Idempotent re-ingestion is the message key's job alone; nothing else silently de-duplicates.
+select is(
+  (select count(*)::int from pg_constraint k join pg_class c on c.oid = k.conrelid
+     join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'outbound' and c.relname = 'campaign_reply' and k.contype = 'u'),
+  1, 'campaign_reply: exactly one unique constraint — the provider message key');
 
 -- evidence.source_record (#24), evidence.assertion (#25)
 insert into evidence.source_record (id, kind, dedupe_key, payload) values ('00000000-0000-4000-8000-000000000300', 'workbook_import', 'wb:1', '{"row": 1}');

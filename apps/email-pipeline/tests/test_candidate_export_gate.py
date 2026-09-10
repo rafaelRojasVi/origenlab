@@ -125,12 +125,71 @@ def test_not_contacted_outreach_does_not_block() -> None:
 
 
 def test_evaluation_order_suppression_before_sent() -> None:
+    """Evaluation is complete, and suppression still leads: callers read ``reasons[0]``."""
     ctx = _ctx(
         suppressed_norms=frozenset({"a@b.cl"}),
         sent_recipient_norms=frozenset({"a@b.cl"}),
     )
     r = evaluate_export_eligibility(contact_email="a@b.cl", institution_name=None, ctx=ctx)
-    assert r.reasons == (REASON_SUPPRESSION,)
+    assert r.reasons == (REASON_SUPPRESSION, REASON_SENT_HISTORY)
+    assert r.reasons[0] == REASON_SUPPRESSION
+
+
+def test_every_failing_rule_is_reported_in_evaluation_order() -> None:
+    """Fixing one reason must not reveal a surprise second one.
+
+    Synthetic address and domain. ``"DHL"`` is a token of the closed noise vocabulary in
+    ``marketing_contact_noise`` — checked-in source, not archive data — and is the only way
+    to make ``REASON_NOISE_ORGANIZATION`` fire.
+    """
+    ctx = _ctx(
+        suppressed_norms=frozenset({"noreply@proveedor.example"}),
+        suppressed_contact_domains=frozenset({"proveedor.example"}),
+        sent_recipient_norms=frozenset({"noreply@proveedor.example"}),
+        outreach_state_by_email={"noreply@proveedor.example": "contacted"},
+        supplier_domains=frozenset({"proveedor.example"}),
+    )
+    r = evaluate_export_eligibility(
+        contact_email="noreply@proveedor.example", institution_name="DHL", ctx=ctx
+    )
+    assert r.eligible is False
+    assert r.reasons == (
+        REASON_SUPPRESSION,
+        REASON_DOMAIN_SUPPRESSION,
+        REASON_SENT_HISTORY,
+        REASON_OUTREACH_CONTACTED,
+        REASON_SUPPLIER_DOMAIN,
+        REASON_NOISE_EMAIL,
+        REASON_NOISE_ORGANIZATION,
+    )
+
+
+def test_internal_domain_leads_and_does_not_hide_later_rules() -> None:
+    ctx = _ctx(sent_recipient_norms=frozenset({"ventas@origenlab.cl"}))
+    r = evaluate_export_eligibility(
+        contact_email="ventas@origenlab.cl", institution_name=None, ctx=ctx
+    )
+    assert r.reasons[0] == REASON_INTERNAL_DOMAIN
+    assert REASON_SENT_HISTORY in r.reasons
+
+
+def test_invalid_email_is_the_one_terminal_reason() -> None:
+    """With no usable mailbox no other rule can be evaluated, so none is reported."""
+    ctx = _ctx(
+        suppressed_norms=frozenset({"not-an-email"}),
+        supplier_domains=frozenset({"proveedor.example"}),
+    )
+    r = evaluate_export_eligibility(
+        contact_email="not-an-email", institution_name="DHL", ctx=ctx
+    )
+    assert r == ExportGateResult(eligible=False, reasons=(REASON_INVALID_EMAIL,))
+
+
+def test_eligible_result_carries_no_reasons() -> None:
+    r = evaluate_export_eligibility(
+        contact_email="compras@universidad.example", institution_name="Universidad Example", ctx=_ctx()
+    )
+    assert r == ExportGateResult(eligible=True, reasons=())
 
 
 def test_parity_same_email_and_org_same_result() -> None:

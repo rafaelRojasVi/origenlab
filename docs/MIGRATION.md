@@ -154,9 +154,9 @@ attribute; it does **not** bypass an ordinary object grant, so the revocations
 and their default privileges are the boundary that actually holds it out
 ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.4).
 
-Checks 1–9 are proven **locally** by `supabase/tests/` (348 pgTAP assertions across
+Checks 1–9 are proven **locally** by `supabase/tests/` (372 pgTAP assertions across
 ten files — catalogue facts and rolled-back fixtures, run with `supabase test db`)
-and by `supabase/scripts/verify_direct_logins.sh` (45 proofs over real LOGIN
+and by `supabase/scripts/verify_direct_logins.sh` (51 proofs over real LOGIN
 connections for checks 6–9); the same checks must be re-run against the hosted
 project before slice 1. `supabase/scripts/replay_evidence.sh` proves the whole
 foundation replays deterministically, and
@@ -176,9 +176,9 @@ equivalents of check 11 do pass: `supabase db lint --local` over the seven schem
 with `--fail-on warning` reports no schema error, and `supabase db advisors --local`
 reports zero SECURITY findings and nothing above INFO.
 
-**(impl)** every one of the 97 foreign keys in the seven application schemas is
+**(impl)** every one of the 102 foreign keys in the seven application schemas is
 index-covered, so the performance advisors report **zero** `unindexed_foreign_keys`.
-79 are covered by an unconditional B-tree index and 18 by a Slice 0 partial index
+81 are covered by an unconditional B-tree index and 21 by a Slice 0 partial index
 `... where <referencing column> is not null`, a predicate the referential-action
 lookup itself implies. `supabase/tests/090_foreign_key_indexes.sql` proves the
 invariant from `pg_constraint` rather than from a list, so a foreign key added later

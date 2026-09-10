@@ -137,10 +137,12 @@ ol audit definers --env production     # fails on any SECURITY DEFINER function
 
 The reproducible local foundation lives under `supabase/`: `config.toml` (PostgreSQL 17,
 database only, Data API off), `roles.sql` (the idempotent cluster-role bootstrap the CLI runs
-before migrations), `migrations/` (fifteen ordered migrations: schemas and default
-privileges, then the 32 tables schema by schema, then grants, then RLS policies, then the
+before migrations), `migrations/` (eighteen ordered migrations: schemas and default
+privileges, then the original 32 tables schema by schema, then grants, then RLS policies, then the
 revocation of the owner's database-level `CREATE`, then the covering indexes for every
-foreign key), `tests/` (pgTAP, 348 assertions across ten files) and `scripts/`. Requirements:
+foreign key, then the outbound corrections — frozen campaign content and audience criteria,
+the reply table, the tightened recipient address shape), `tests/` (pgTAP, 372 assertions
+across ten files) and `scripts/`. Requirements:
 Docker, the Supabase CLI and `psql`. No hosted project is involved and nothing here holds a
 credential: the three `LOGIN` roles are created without a password.
 
@@ -165,13 +167,25 @@ supabase stop                             # keeps the data volume; never `--no-b
 ```
 
 **Every script that opens a `psql` connection resolves its target through
-`supabase/scripts/lib/local_target.sh` and nothing else.** The guard takes the URL only from
-`supabase status`, requires a loopback host on this project's configured port, refuses an
-unparseable URL, and unsets the inherited `PG*` libpq environment so `PGHOST`, `PGPORT`,
-`PGUSER` or `PGDATABASE` can never redirect a command or serve as a fallback. If any of that
-fails it exits non-zero **before** a connection is attempted. `evidence_tool_failure_tests.sh`
-proves that: with `supabase status` made to fail and hostile `PG*` variables set, both scripts
-refuse and `psql` is never invoked.
+`supabase/scripts/lib/local_target.sh` and nothing else.** Four independent facts must agree
+before a connection is opened:
+
+1. `supabase/config.toml` names this project (`origenlab`) and this database port (54322);
+2. **`linked_project` is null** — no `supabase/.temp/project-ref` exists and `config.toml`
+   declares no hosted `project_ref`. Absence of the link is the proof; the guard never reaches
+   the network to ask;
+3. the running `supabase_db_origenlab` container carries `com.supabase.cli.workdir` equal to
+   **this working tree**. Two checkouts of this monorepo share the project id, so the id alone
+   cannot tell them apart — a stack started from another worktree is refused, not reused;
+4. the URL `supabase status` reports parses, is a **loopback** host, and is on that same port.
+
+The guard also unsets the inherited `PG*` libpq environment and the `SUPABASE_*` family
+(`SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_URL`, `SUPABASE_PROJECT_REF`, …), so neither `PGHOST`
+nor a hosted access token can redirect a command or serve as a fallback; the names that were
+set are reported, never their values. If any of the four fails it exits non-zero **before** a
+connection is attempted. `evidence_tool_failure_tests.sh` proves it: with `supabase status`
+made to fail and hostile `PG*` variables set (D), with a planted `project-ref` (F), and with
+`docker` reporting a foreign working tree (G), the scripts refuse and `psql` is never invoked.
 
 **Stop the stack when the evidence run is finished.** `supabase stop` keeps the data volume
 and releases the published ports (54322 for PostgreSQL, 54321 for Kong), which are bound on
@@ -343,7 +357,7 @@ Drill procedure:
 
 1. Restore the database to a scratch project at a chosen point in time.
 2. Restore the bucket backup into that project's Storage.
-3. Verify: the 32 tables exist; row counts are plausible; a sample quotation
+3. Verify: the 33 tables exist; row counts are plausible; a sample quotation
    revision's `pdf_sha256` matches the restored object byte-for-byte and its
    party snapshot is intact; the domain event stream is contiguous.
 4. Confirm **both send flags are false** in the restored copy.

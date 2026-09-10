@@ -10,7 +10,11 @@
 # Nothing here contacts a hosted project or a remote host: the only addresses used are the loopback
 # target the local stack already publishes and 192.0.2.10, the RFC 5737 documentation address, which
 # is never a real host and is never actually dialled — scenario D proves the guard refuses before
-# any connection is attempted.
+# any connection is attempted. Scenarios F and G prove the same for the two target facts the guard
+# cannot take from `supabase status`: F plants a `supabase/.temp/project-ref` so the project looks
+# linked, and G shims `docker` so the running container reports a different working tree. Both must
+# refuse without invoking psql. F creates and removes only that one file and never reads a token,
+# so no hosted project is contacted at any point.
 #
 # Preconditions: the local stack is running and fully migrated (`supabase start`,
 # `supabase db reset --local`), because scenarios that get past the dump take a real catalogue
@@ -51,12 +55,12 @@ check() { # description  condition-already-evaluated-as-rc  detail
 # Fixtures the shims serve.
 # ---------------------------------------------------------------------------------------------
 
-# A dump that satisfies every completeness assertion: 7 CREATE SCHEMA, 32 CREATE TABLE,
-# 122 CREATE POLICY. Its content is irrelevant; only the shape the assertions count is.
+# A dump that satisfies every completeness assertion: 7 CREATE SCHEMA, 33 CREATE TABLE,
+# 127 CREATE POLICY. Its content is irrelevant; only the shape the assertions count is.
 {
   for i in $(seq 1 7);   do echo "CREATE SCHEMA s$i;"; done
-  for i in $(seq 1 32);  do echo "CREATE TABLE s1.t$i (id integer);"; done
-  for i in $(seq 1 122); do echo "CREATE POLICY p$i ON s1.t1 FOR SELECT TO r USING (true);"; done
+  for i in $(seq 1 33);  do echo "CREATE TABLE s1.t$i (id integer);"; done
+  for i in $(seq 1 127); do echo "CREATE POLICY p$i ON s1.t1 FOR SELECT TO r USING (true);"; done
 } >"$STATE/schema_good.sql"
 
 # Two applied-migration listings. Both name every local migration, so both pass the completeness
@@ -213,7 +217,7 @@ for target in "$REPLAY" "$ROOT/supabase/scripts/verify_direct_logins.sh"; do
   check "D ($name): psql is never invoked — no connection is attempted after validation fails" \
     "$([[ ! -s "$STATE/psql_calls" ]] && echo 0 || echo 1)" "psql was invoked $(cat "$STATE/psql_calls" 2>/dev/null | wc -l) time(s)"
   check "D ($name): the inherited libpq environment is reported as ignored, never used as a fallback" \
-    "$(grep -q 'ignoring inherited libpq environment' "$log" && echo 0 || echo 1)" "no scrub notice"
+    "$(grep -q 'ignoring inherited libpq/Supabase environment' "$log" && echo 0 || echo 1)" "no scrub notice"
   check "D ($name): no PASS line is printed" "$(no_pass_line "$log" && echo 0 || echo 1)" "PASS found"
 done
 
@@ -225,6 +229,64 @@ check "E: two runs whose applied-migration lists differ make the replay procedur
 check "E: the failure names the applied-migration list" \
   "$(grep -q 'applied-migration list differs' "$log" && echo 0 || echo 1)" "wrong diagnostic"
 check "E: no PASS line is printed" "$(no_pass_line "$log" && echo 0 || echo 1)" "PASS found"
+
+# --- F: the project looks linked to a hosted project ----------------------------------------------
+# linked_project must be null. A planted project-ref is the CLI's own record of a link, so the guard
+# must refuse on its presence alone, before `supabase status` and before any connection.
+REF_DIR="$ROOT/supabase/.temp"
+REF_FILE="$REF_DIR/project-ref"
+if [[ -e "$REF_FILE" ]]; then
+  bad "F: precondition — $REF_FILE already exists, so this repository is linked" "refusing to overwrite it"
+else
+  planted_dir=0
+  [[ -d "$REF_DIR" ]] || { mkdir -p "$REF_DIR"; planted_dir=1; }
+  printf 'abcdefghijklmnopqrst\n' >"$REF_FILE"
+  log="$WORK/log_F"
+  rm -f "$STATE/psql_calls"
+  rc=0
+  env PATH="$SHIM:$PATH" OL_INJECT=none "$REPLAY" "$WORK/out_F" >"$log" 2>&1 || rc=$?
+  rm -f "$REF_FILE"
+  (( planted_dir == 1 )) && rmdir "$REF_DIR" 2>/dev/null || true
+  check "F: a planted supabase/.temp/project-ref makes the replay procedure exit non-zero" \
+    "$([[ $rc -ne 0 ]] && echo 0 || echo 1)" "rc=$rc"
+  check "F: the failure says the project is linked and that linked_project must be null" \
+    "$(grep -q 'linked to a hosted project' "$log" && echo 0 || echo 1)" "wrong diagnostic"
+  check "F: psql is never invoked — the link is refused before any connection" \
+    "$([[ ! -s "$STATE/psql_calls" ]] && echo 0 || echo 1)" "psql was invoked"
+  check "F: no PASS line is printed" "$(no_pass_line "$log" && echo 0 || echo 1)" "PASS found"
+fi
+
+# --- G: the running container belongs to another working tree -------------------------------------
+# Two checkouts of this monorepo share the project id, so only the CLI's workdir label separates
+# them. The shim answers `docker inspect` with a foreign path; the guard must refuse.
+cat >"$SHIM/docker" <<'SHIM_EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+if [[ "${1:-}" == inspect ]]; then
+  for a in "$@"; do
+    case "$a" in
+      *com.supabase.cli.workdir*) printf '%s\n' "/home/nobody/some-other-worktree"; exit 0 ;;
+    esac
+  done
+fi
+exec "${OL_REAL_DOCKER:?}" "$@"
+SHIM_EOF
+chmod +x "$SHIM/docker"
+OL_REAL_DOCKER="$(command -v docker)" || { echo "FAIL: docker not found" >&2; exit 2; }
+export OL_REAL_DOCKER
+
+log="$WORK/log_G"
+rm -f "$STATE/psql_calls"
+rc=0
+env PATH="$SHIM:$PATH" OL_INJECT=none "$REPLAY" "$WORK/out_G" >"$log" 2>&1 || rc=$?
+rm -f "$SHIM/docker"
+check "G: a container started from another working tree makes the replay procedure exit non-zero" \
+  "$([[ $rc -ne 0 ]] && echo 0 || echo 1)" "rc=$rc"
+check "G: the failure names the foreign working tree, not a generic connection error" \
+  "$(grep -q 'not from this working tree' "$log" && echo 0 || echo 1)" "wrong diagnostic"
+check "G: psql is never invoked — the wrong target is refused before any connection" \
+  "$([[ ! -s "$STATE/psql_calls" ]] && echo 0 || echo 1)" "psql was invoked"
+check "G: no PASS line is printed" "$(no_pass_line "$log" && echo 0 || echo 1)" "PASS found"
 
 echo
 echo "evidence-tool failure injection: $PASS passed, $FAIL failed"

@@ -96,7 +96,7 @@ unresolved rather than decided.
 | # | Question | Evidence | Status |
 |---|---|---|---|
 | 1 | Should `supplier_master` bridge to `commercial.organization` (the direction `docs/business/BUSINESS_RULES_QUOTES_AND_SUPPLIERS.md` already states)? | No bridge exists; `SuppliersPage` doesn't read either table today — it reads warm-case domain grouping gated by a frozen ~90-domain literal (`SUPPLIER_VENDOR_DOMAINS`), which is the documented root cause of a "new supplier invisible" gap | Open — direction stated, not built |
-| 2 | Is the Postgres `outbound.*` suppression/outreach-state mirror (migration `0004`) meant to be kept fresh, or retired? | Route (`/mirror/outbound`) is real and correctly wired; its only writer is the `EXPERIMENTAL_PARKED` break-glass script, not daily runtime | Open — "half-wired," an ownership question, not a bug |
+| 2 | Is the Postgres `outbound.*` suppression/outreach-state mirror (migration `0004`) meant to be kept fresh, or retired? | Route (`/mirror/outbound`) is real and correctly wired; its only writer is the `EXPERIMENTAL_PARKED` break-glass script, not daily runtime | **Decided 2026-09-08 — deferred, not abandoned.** See "D1 — mirror repointing is deferred" below |
 | 3 | Should `commercial.warm_case*` be scheduled, repurposed, or retired? | Postgres read path is live under the Postgres API backend; production runs the SQLite backend by default; writer is opt-in CLI, never scheduled | Open — same "half-wired" shape as #2, independently |
 | 4 | Should a tender-opportunity link be first-class (FK + change notification), given promoted opportunities silently drift from live tender state today? | Confirmed gap, documented in `docs/architecture/COMMERCIAL_OPERATING_SYSTEM_AUDIT.md`, not fixed since | Open |
 | 5 | What is the smallest correct shape for a campaign-reply → CRM signal? | Two real existing precedents of different weight (see `../workflows/CAMPAIGN_TO_REPLY.md`); brief's fixed constraint: a reply must never silently create/advance an opportunity | Open — explicitly deferred design work |
@@ -105,6 +105,48 @@ unresolved rather than decided.
 | 8 | Does `EXPERIMENTAL_PARKED.md`'s "Postgres/API is parked" framing need a scope correction, given it predates every durable-CRM migration and root `AGENTS.md` cites it without that scope distinction? | Doc dated 2026-05-19; `sales_opportunity` (0035) through intake-resolution (0046) all postdate it; the doc does not mention `apps/api`'s command layer at all | Open — a maintainer decision on whether to narrow the doc's scope language, not something this pass should silently fix |
 | 9 | What should happen to the four undocumented-provenance SQLite backup files and the one 0-byte failed backup found in this pass? | See [`../data/SQLITE_REGISTER.md`](../data/SQLITE_REGISTER.md) — none recommended for deletion; several need operator confirmation of intent/retention window | Open — operator judgment call, not a technical one |
 | 10 | Is `commercial.equipment_opportunity*` (DB-1 era) safe to retire? | Route and read model still wired end to end (limited count/signal consumer); a full-repo caller grep was not exhaustive as of the last audit | Open — needs a caller search before any deletion recommendation, per the repo's own evidence standard (`docs/architecture/COMMERCIAL_RESET_LEDGER.md`) |
+| 11 | Does Slice 0 grow a reporting schema, or does reporting stay on a separate store permanently? | Raised by D1 below: `mart.*`, `lead_intel.*` and `commercial.*` have no home in Slice 0's 33 tables, and every current mirror reader depends on at least one of them | Open — not decided 2026-09-08; answering it is the precondition for reopening #2 |
+
+## Decisions taken
+
+### D1 — mirror repointing is deferred, not abandoned (2026-09-08)
+
+**Decision.** The Postgres `outbound.*` mirror stays as it is, indefinitely.
+`RUN_OUTBOUND_SIDECAR_MIRROR` keeps its default of `1`. No code changes to any
+of the five consumer groups inventoried on this date:
+`apps/api`'s `/mirror/outbound/*` routes; `repositories/postgres/contact.py`;
+the `postgres_dashboard_api` read modules (`outbound_lists`,
+`outbound_readiness`, `summary`, `lead_intel`); the
+`refresh_render_dashboard_once.sh` / `_refresh_outbound_sidecar_mirror.sh`
+pair; and the operator docs that name them.
+
+**Why.**
+
+- `mart.*`, `lead_intel.*` and `commercial.*` have no home in Slice 0's
+  current schema. `supabase/tests/010_inventory.sql` pins the schema to
+  exactly 33 tables with a `set_eq` proof, and separately proves that no view
+  exists — so `api.v_contact_profile` cannot exist there either. This is not
+  "not yet backfilled"; it is forbidden by a passing test. Repointing is
+  therefore blocked on a schema decision (register #11), not on a data load.
+- Two consumers would fail **open** — permissive, not broken — if repointed
+  before both a real backfill and that schema extension:
+  - `repositories/postgres/contact.py` derives `do_not_repeat` from four
+    inputs that are all absent or empty in Slice 0. Every contact would read
+    as safe to contact, and the dashboard's suppression banner would not
+    render.
+  - `postgres_dashboard_api/lead_intel.py` gates its "already contacted"
+    exclusion on `table_exists(...outreach_contact_state)`. Against Slice 0
+    that is false, which silently **drops the exclusion** from prospect
+    selection rather than erroring.
+  Neither may be repointed without a deliberate follow-up design phase.
+- The failure mode throughout is silence: `table_exists()` and `safe_count()`
+  turn "the table is gone" into "the answer is zero" or "the filter is off."
+  `outbound_readiness.py` is the one reader that fails closed.
+
+**What this decision does not do.** It does not retire the mirror, does not
+bless it as permanent truth, and does not answer register #11. It records that
+the near-term answer to #2 is "leave it alone," and why moving sooner would be
+unsafe.
 
 ## Reversible vs. expensive-later decisions
 
@@ -112,10 +154,11 @@ unresolved rather than decided.
   design) — nothing currently depends on an answer; the workflow docs
   already record the open questions precisely enough to pick this up later
   without re-deriving context.
-- **Reversible, but visible to operators if left too long:** #1, #2, #3, #8 —
+- **Reversible, but visible to operators if left too long:** #1, #3, #8 —
   each is a "half-wired" surface that already confuses anyone reading the
   code cold; documenting them (done, this pass) buys time, but doesn't fix
-  the confusion for a new contributor who doesn't read docs first.
+  the confusion for a new contributor who doesn't read docs first. #2 was in
+  this group until D1 deferred it deliberately; it now waits on #11.
 - **Gets more expensive the longer it waits:** #10 (`equipment_opportunity*`)
   and the SQLite backup disposition in #9 — not because they're urgent, but
   because the evidence needed to decide them safely (caller graphs, operator

@@ -26,7 +26,7 @@ from origenlab_email_pipeline.contacto_gmail_source import (
 )
 from origenlab_email_pipeline.email_business_filters import EMAIL_RE
 from origenlab_email_pipeline.operational_scope import is_operational_noise_entity
-from origenlab_email_pipeline.postgres_outbound_audit import redact_postgres_url
+from origenlab_email_pipeline.postgres_url import redact_postgres_url
 from origenlab_email_pipeline.progress import tqdm_stderr
 
 try:

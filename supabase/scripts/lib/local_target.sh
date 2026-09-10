@@ -3,9 +3,21 @@
 #
 # Every script that opens a psql connection resolves its target through `ol_require_local_target`
 # and nothing else. The guard is fail-closed: it refuses an empty or unparseable URL, a non-loopback
-# host, a port or project that is not this worktree's local Supabase project, and a failed
-# `supabase status`. It returns non-zero *before* any connection is attempted, so a validation
-# failure can never be followed by a psql call.
+# host, a port or project that is not this worktree's local Supabase project, a stack whose
+# container does not belong to *this* working tree, any sign that the project is linked to a hosted
+# project, and a failed `supabase status`. It returns non-zero *before* any connection is attempted,
+# so a validation failure can never be followed by a psql call.
+#
+# Four independent facts must agree before a connection is opened:
+#
+#   1. `supabase/config.toml` names this project and this database port;
+#   2. the project is **not linked** — no `supabase/.temp/project-ref`, no hosted project
+#      identifier, and no inherited `SUPABASE_*` variable that could redirect a command at a
+#      hosted project or authenticate against one;
+#   3. the running `supabase_db_<project>` container carries
+#      `com.supabase.cli.workdir` equal to *this* working tree, so a stack started from another
+#      checkout of this monorepo is refused rather than silently reused;
+#   4. the URL `supabase status` reports is loopback, on that same port, and parses.
 #
 # It also scrubs the inherited libpq environment. PGHOST/PGPORT/PGUSER/PGDATABASE (and the rest of
 # the PG* family) would otherwise silently redirect a psql invocation that omits a parameter, so
@@ -23,6 +35,13 @@
 # source: a URL is accepted only when both agree and the URL matches them.
 OL_EXPECTED_PROJECT_ID="origenlab"
 OL_EXPECTED_DB_PORT="54322"
+
+# The Supabase environment variables that could point a command at a hosted project or
+# authenticate against one. Like the libpq family they are unset rather than trusted.
+OL_HOSTED_ENV_VARS=(
+  SUPABASE_ACCESS_TOKEN SUPABASE_PROJECT_REF SUPABASE_PROJECT_ID SUPABASE_DB_URL
+  SUPABASE_DB_PASSWORD SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY
+)
 
 # The libpq environment variables that can redirect or re-authenticate a connection.
 OL_PG_ENV_VARS=(
@@ -43,14 +62,14 @@ ol_sanitize() {
 ol_scrub_pg_env() {
   local v
   local -a present=()
-  for v in "${OL_PG_ENV_VARS[@]}"; do
+  for v in "${OL_PG_ENV_VARS[@]}" "${OL_HOSTED_ENV_VARS[@]}"; do
     if [[ -v "$v" ]]; then
       present+=("$v")
       unset "$v"
     fi
   done
   if (( ${#present[@]} > 0 )); then
-    printf 'note: ignoring inherited libpq environment (%s); the target comes only from `supabase status`\n' \
+    printf 'note: ignoring inherited libpq/Supabase environment (%s); the target comes only from `supabase status`\n' \
       "${present[*]}" >&2
   fi
 }
@@ -103,6 +122,47 @@ ol_require_local_target() {
     return 1
   fi
 
+  # linked_project must be null. The CLI records a link as supabase/.temp/project-ref; a hosted
+  # project reference anywhere in config.toml is refused for the same reason. Nothing here reaches
+  # the network to ask — absence of the link is the proof, and a present link is fatal.
+  local ref_file="$root/supabase/.temp/project-ref"
+  if [[ -e "$ref_file" ]]; then
+    echo "FAIL: target guard: $ref_file exists — this project is linked to a hosted project; refusing to connect." >&2
+    echo "FAIL: linked_project must be null for every command in this repository (\`supabase unlink\`)." >&2
+    return 1
+  fi
+  local cfg_ref
+  cfg_ref="$(ol_config_value '' project_ref <"$cfg")"
+  if [[ -n "$cfg_ref" ]]; then
+    echo "FAIL: target guard: config.toml declares a hosted project_ref; refusing to connect." >&2
+    return 1
+  fi
+
+  # The running container must belong to *this* working tree. Two checkouts of this monorepo
+  # share the project id, so the id alone cannot distinguish them — the CLI's workdir label can.
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "FAIL: target guard: docker not found, so the container's working tree cannot be proven; refusing to connect." >&2
+    return 1
+  fi
+  local want_root container labels_rc=0 label_workdir label_project
+  want_root="$(cd "$root" && pwd -P)"
+  container="supabase_db_${OL_EXPECTED_PROJECT_ID}"
+  label_workdir="$(docker inspect "$container" --format '{{index .Config.Labels "com.supabase.cli.workdir"}}' 2>&1)" || labels_rc=$?
+  if (( labels_rc != 0 )); then
+    echo "FAIL: target guard: cannot inspect container '$container' — the local stack is not running from this working tree; refusing to connect." >&2
+    printf '%s\n' "$label_workdir" | ol_sanitize | tail -n 3 >&2
+    return 1
+  fi
+  if [[ "$label_workdir" != "$want_root" ]]; then
+    echo "FAIL: target guard: container '$container' was started from '${label_workdir:-<unset>}', not from this working tree ('$want_root'); refusing to connect." >&2
+    return 1
+  fi
+  label_project="$(docker inspect "$container" --format '{{index .Config.Labels "com.supabase.cli.project"}}' 2>/dev/null || true)"
+  if [[ "$label_project" != "$OL_EXPECTED_PROJECT_ID" ]]; then
+    echo "FAIL: target guard: container '$container' carries project label '${label_project:-<unset>}', expected '$OL_EXPECTED_PROJECT_ID'; refusing to connect." >&2
+    return 1
+  fi
+
   local status_out status_rc=0
   status_out="$( cd "$root" && supabase status -o env 2>&1 )" || status_rc=$?
   if (( status_rc != 0 )); then
@@ -144,6 +204,8 @@ ol_require_local_target() {
   OL_HOSTPORT="$host:$port"
   export OL_DB_URL OL_DB_USER OL_DB_HOST OL_DB_PORT OL_DB_NAME OL_HOSTPORT
   printf 'local target: project %s, role %s at %s/%s\n' "$OL_EXPECTED_PROJECT_ID" "$user" "$OL_HOSTPORT" "$dbname"
+  printf 'local target: linked_project null, container workdir %s, loopback host, port %s\n' \
+    "$want_root" "$OL_DB_PORT"
   return 0
 }
 
