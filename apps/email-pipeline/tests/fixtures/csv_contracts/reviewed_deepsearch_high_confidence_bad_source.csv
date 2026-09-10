@@ -1,2 +1,2 @@
 lead_id,org_name,resolved_domain,resolved_contact_email,resolved_contact_name,contact_source_url,source_type,confidence,notes
-101,Instituto Bueno,ispch.cl,oficinadepartes@ispch.cl,,https://linkedin.com/company/example,website,high,
+101,Instituto Bueno,instituto.example.invalid,oficina.partes@instituto.example.invalid,,https://linkedin.com/company/example,website,high,

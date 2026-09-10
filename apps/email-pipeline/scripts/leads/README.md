@@ -51,7 +51,7 @@ Or run the full pipeline.
 | Archivo | Rol |
 |---------|-----|
 | [`campaigns/data/dr50_manifest_v1.json`](campaigns/data/dr50_manifest_v1.json) | Apunta al fichero payload, `row_count`, y `expected_sha256` sobre **bytes** del JSON |
-| [`campaigns/data/dr50_payload_v1.json`](campaigns/data/dr50_payload_v1.json) | Array de objetos fila (p. ej. `id_lead`, contactos DR) |
+| [`campaigns/data/dr50_payload_v1.json`](campaigns/data/dr50_payload_v1.json) | Array de objetos fila (p. ej. `id_lead`, contactos DR). **Contactos sintéticos** (`*.example.invalid`): este repositorio es público y no almacena datos de contacto reales. Los `id_lead`/`id_licitacion` sí son los originales. |
 
 Carga verificada: [`origenlab_email_pipeline/dr50_payload_loader.py`](../../src/origenlab_email_pipeline/dr50_payload_loader.py) — rechaza checksum incorrecto, conteo distinto o `id_lead` duplicado. **Por qué:** reproducibilidad y trazabilidad cuando el CSV de DR cambia (actualizar payload + manifest; recalcular SHA256 del fichero tal cual en disco).
 

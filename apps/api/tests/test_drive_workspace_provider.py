@@ -859,7 +859,7 @@ def test_verify_template_reports_false_without_raising_when_owned_elsewhere() ->
     transport.queue(
         DriveTransportResponse(
             status_code=200,
-            body=_template_info_body(owners=_owners("rafarojasv6@gmail.com")),
+            body=_template_info_body(owners=_owners("wrong-account@example.invalid")),
         )
     )
 

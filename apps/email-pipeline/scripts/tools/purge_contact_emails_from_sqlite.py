@@ -25,8 +25,8 @@ Dry-run by default; pass ``--apply`` to execute.
 Example::
 
   uv run python scripts/tools/purge_contact_emails_from_sqlite.py \\
-    --email servicios.cromatografia@gmail.com \\
-    --email certlabchile@gmail.com
+    --email contacto.ejemplo1@example.invalid \\
+    --email contacto.ejemplo2@example.invalid
 
 Apply::
 

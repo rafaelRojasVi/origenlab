@@ -15,8 +15,8 @@ Does **not** delete from Gmail.
 
 Example::
 
-  uv run python scripts/tools/purge_mailbox_from_sqlite.py --email j.ojeda.ro@gmail.com
-  uv run python scripts/tools/purge_mailbox_from_sqlite.py --email j.ojeda.ro@gmail.com --apply
+  uv run python scripts/tools/purge_mailbox_from_sqlite.py --email persona.ejemplo@example.invalid
+  uv run python scripts/tools/purge_mailbox_from_sqlite.py --email persona.ejemplo@example.invalid --apply
 
 Then rebuild mart if you rely on contact_master::
 
@@ -56,7 +56,7 @@ def _normalize_email(raw: str) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Purge one email address from SQLite archive + sidecars.")
     ap.add_argument("--db", type=Path, default=None, help="SQLite path (default: from config)")
-    ap.add_argument("--email", required=True, help="Full address, e.g. j.ojeda.ro@gmail.com")
+    ap.add_argument("--email", required=True, help="Full address, e.g. persona.ejemplo@example.invalid")
     ap.add_argument("--apply", action="store_true", help="Execute deletes (default: counts only).")
     args = ap.parse_args()
 

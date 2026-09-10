@@ -49,8 +49,9 @@ The dashboard **read-only Worker proxy** is live at `dashboard.origenlab.cl/api*
 | Policy name | **Allow OrigenLab admins** |
 | Action | Allow |
 | Include | Email |
-| Allowed emails | `rafarojasv6@gmail.com` |
-| | `tvivancob@gmail.com` |
+| Allowed emails | *(two operator accounts — not listed here)* |
+| | See the live allowlist in the Cloudflare Zero Trust dashboard: |
+| | **Access → Applications → OrigenLab Dashboard → Policies**. |
 
 ### Application configuration (verified)
 

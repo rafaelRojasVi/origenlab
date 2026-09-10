@@ -430,7 +430,7 @@ def test_rejects_identity_mismatch_and_does_not_write_file(
             expected_email="contacto@origenlab.cl",
             replace_existing=False,
             run_flow=_fake_run_flow(),
-            fetch_identity=_fake_fetch_identity("rafarojasv6@gmail.com"),
+            fetch_identity=_fake_fetch_identity("wrong-account@example.invalid"),
         )
 
     assert not output_file.exists()

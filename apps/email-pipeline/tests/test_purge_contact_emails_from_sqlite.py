@@ -36,11 +36,11 @@ def _init_minimal_db(path: Path) -> None:
         );
         INSERT INTO emails (sender, recipients) VALUES
             ('Other <other@x.cl>', 'Target <keep@y.cl>'),
-            ('From <servicios.cromatografia@gmail.com>', 'Us <internal@origenlab.cl>');
+            ('From <contacto.ejemplo1@example.invalid>', 'Us <internal@origenlab.cl>');
         INSERT INTO attachments (email_id) VALUES (2);
-        INSERT INTO contact_master (email) VALUES ('servicios.cromatografia@gmail.com');
+        INSERT INTO contact_master (email) VALUES ('contacto.ejemplo1@example.invalid');
         INSERT INTO opportunity_signals (email_id, entity_key) VALUES (2, 'x');
-        INSERT INTO opportunity_signals (email_id, entity_key) VALUES (NULL, 'servicios.cromatografia@gmail.com');
+        INSERT INTO opportunity_signals (email_id, entity_key) VALUES (NULL, 'contacto.ejemplo1@example.invalid');
         """
     )
     conn.commit()
@@ -57,7 +57,7 @@ def test_purge_contact_emails_dry_run_counts(tmp_path: Path) -> None:
             "--db",
             str(db),
             "--email",
-            "servicios.cromatografia@gmail.com",
+            "contacto.ejemplo1@example.invalid",
         ],
         cwd=str(_ROOT),
         capture_output=True,
@@ -84,7 +84,7 @@ def test_purge_contact_emails_apply_removes_rows(tmp_path: Path) -> None:
             str(db),
             "--apply",
             "--email",
-            "servicios.cromatografia@gmail.com",
+            "contacto.ejemplo1@example.invalid",
             "--no-commercial-candidates",
         ],
         cwd=str(_ROOT),

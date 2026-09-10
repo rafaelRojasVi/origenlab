@@ -6,5 +6,5 @@
 # Copy to: config/tatiana_senders.local.txt (gitignored), or use ORIGENLAB_TATIANA_SENDERS.
 # One address per line, lowercase recommended.
 #
-# tatiana.vivanco@origenlab.cl
-# tvivancob@gmail.com
+# operador.ejemplo@origenlab.cl
+# operador.ejemplo@example.invalid
