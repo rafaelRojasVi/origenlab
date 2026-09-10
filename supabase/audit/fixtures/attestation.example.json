@@ -1,0 +1,42 @@
+{
+  "_comment": [
+    "A template and test fixture, not an attestation. A real one lives at the approved path",
+    "supabase/.audit/attestation.json, is git-ignored, is never uploaded, and names the project",
+    "reference the audit is pointed at so it cannot be applied to a different project.",
+    "Every item must be attested true with a sentence of evidence naming where it was seen;",
+    "an item attested with no evidence is not accepted, and an absent item is reported unproven."
+  ],
+  "attested_by": "example operator (template -- replace)",
+  "attested_at_utc": "2026-09-09T12:00:00Z",
+  "project_ref": "exampleprojectrefxx",
+  "items": {
+    "data_api_disabled": {
+      "value": true,
+      "evidence": "Dashboard, Project Settings, API: Exposed schemas is empty and the Data API is off."
+    },
+    "storage_buckets_all_private": {
+      "value": true,
+      "evidence": "Dashboard, Storage: every bucket lists as Private; there are zero storage policies."
+    },
+    "no_privileged_key_in_deployments": {
+      "value": true,
+      "evidence": "Render, Cloudflare and GitHub secret stores reviewed; no service_role or sb_secret key is configured, and no browser bundle carries one."
+    },
+    "backups_configured": {
+      "value": true,
+      "evidence": "Dashboard, Database, Backups: daily backups enabled; the independent bucket-backup job is scheduled."
+    },
+    "database_restore_drill_passed": {
+      "value": true,
+      "evidence": "Restore drill run into a scratch project; the seven schemas and 33 tables came back."
+    },
+    "bucket_restore_drill_passed": {
+      "value": true,
+      "evidence": "Bucket restore drill run from the independent backup; object hashes matched."
+    },
+    "security_advisors_clean": {
+      "value": true,
+      "evidence": "Dashboard, Advisors: zero Security findings and nothing above INFO on Performance."
+    }
+  }
+}

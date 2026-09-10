@@ -1,0 +1,2021 @@
+{
+  "a01": {
+    "owner_members": [
+      {
+        "inherit_option": false,
+        "member": "origenlab_migrator",
+        "set_option": true
+      },
+      {
+        "inherit_option": false,
+        "member": "postgres",
+        "set_option": true
+      }
+    ],
+    "roles": [
+      {
+        "rolbypassrls": false,
+        "rolcanlogin": true,
+        "rolcreatedb": false,
+        "rolcreaterole": false,
+        "rolinherit": true,
+        "rolname": "origenlab_api",
+        "rolreplication": false,
+        "rolsuper": false
+      },
+      {
+        "rolbypassrls": false,
+        "rolcanlogin": true,
+        "rolcreatedb": false,
+        "rolcreaterole": false,
+        "rolinherit": false,
+        "rolname": "origenlab_migrator",
+        "rolreplication": false,
+        "rolsuper": false
+      },
+      {
+        "rolbypassrls": false,
+        "rolcanlogin": false,
+        "rolcreatedb": false,
+        "rolcreaterole": false,
+        "rolinherit": true,
+        "rolname": "origenlab_owner",
+        "rolreplication": false,
+        "rolsuper": false
+      },
+      {
+        "rolbypassrls": false,
+        "rolcanlogin": true,
+        "rolcreatedb": false,
+        "rolcreaterole": false,
+        "rolinherit": true,
+        "rolname": "origenlab_worker",
+        "rolreplication": false,
+        "rolsuper": false
+      }
+    ],
+    "runtime_role_memberships": [
+      {
+        "member": "postgres",
+        "roleid": "origenlab_api"
+      },
+      {
+        "member": "postgres",
+        "roleid": "origenlab_worker"
+      }
+    ]
+  },
+  "a02": {
+    "bypassrls_roles": [
+      "postgres",
+      "service_role",
+      "supabase_admin",
+      "supabase_etl_admin",
+      "supabase_read_only_user"
+    ],
+    "observed_members": [
+      {
+        "member": "postgres",
+        "predefined": "pg_read_all_data"
+      },
+      {
+        "member": "supabase_etl_admin",
+        "predefined": "pg_read_all_data"
+      },
+      {
+        "member": "supabase_read_only_user",
+        "predefined": "pg_read_all_data"
+      }
+    ],
+    "superuser_roles": [
+      "supabase_admin"
+    ]
+  },
+  "a03": {
+    "schema_acl": [
+      {
+        "grantable": false,
+        "grantee": "origenlab_api",
+        "privilege": "USAGE",
+        "schema": "catalog"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_owner",
+        "privilege": "CREATE",
+        "schema": "catalog"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_owner",
+        "privilege": "USAGE",
+        "schema": "catalog"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_worker",
+        "privilege": "USAGE",
+        "schema": "catalog"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_api",
+        "privilege": "USAGE",
+        "schema": "comms"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_owner",
+        "privilege": "CREATE",
+        "schema": "comms"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_owner",
+        "privilege": "USAGE",
+        "schema": "comms"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_worker",
+        "privilege": "USAGE",
+        "schema": "comms"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_api",
+        "privilege": "USAGE",
+        "schema": "crm"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_owner",
+        "privilege": "CREATE",
+        "schema": "crm"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_owner",
+        "privilege": "USAGE",
+        "schema": "crm"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_worker",
+        "privilege": "USAGE",
+        "schema": "crm"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_api",
+        "privilege": "USAGE",
+        "schema": "evidence"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_owner",
+        "privilege": "CREATE",
+        "schema": "evidence"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_owner",
+        "privilege": "USAGE",
+        "schema": "evidence"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_worker",
+        "privilege": "USAGE",
+        "schema": "evidence"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_api",
+        "privilege": "USAGE",
+        "schema": "outbound"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_owner",
+        "privilege": "CREATE",
+        "schema": "outbound"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_owner",
+        "privilege": "USAGE",
+        "schema": "outbound"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_worker",
+        "privilege": "USAGE",
+        "schema": "outbound"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_api",
+        "privilege": "USAGE",
+        "schema": "platform"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_owner",
+        "privilege": "CREATE",
+        "schema": "platform"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_owner",
+        "privilege": "USAGE",
+        "schema": "platform"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_worker",
+        "privilege": "USAGE",
+        "schema": "platform"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_api",
+        "privilege": "USAGE",
+        "schema": "procurement"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_owner",
+        "privilege": "CREATE",
+        "schema": "procurement"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_owner",
+        "privilege": "USAGE",
+        "schema": "procurement"
+      },
+      {
+        "grantable": false,
+        "grantee": "origenlab_worker",
+        "privilege": "USAGE",
+        "schema": "procurement"
+      }
+    ],
+    "schemas": [
+      {
+        "owner": "origenlab_owner",
+        "schema": "catalog"
+      },
+      {
+        "owner": "origenlab_owner",
+        "schema": "comms"
+      },
+      {
+        "owner": "origenlab_owner",
+        "schema": "crm"
+      },
+      {
+        "owner": "origenlab_owner",
+        "schema": "evidence"
+      },
+      {
+        "owner": "origenlab_owner",
+        "schema": "outbound"
+      },
+      {
+        "owner": "origenlab_owner",
+        "schema": "platform"
+      },
+      {
+        "owner": "origenlab_owner",
+        "schema": "procurement"
+      }
+    ]
+  },
+  "a04": {
+    "relation_count": 34
+  },
+  "a05": {
+    "function_count": 3,
+    "security_definer_functions": []
+  },
+  "a06": {
+    "default_acl": [
+      {
+        "grantee": "origenlab_owner",
+        "objtype": "T",
+        "owner_role": "origenlab_owner",
+        "privilege": "USAGE",
+        "schema": ""
+      },
+      {
+        "grantee": "origenlab_owner",
+        "objtype": "f",
+        "owner_role": "origenlab_owner",
+        "privilege": "EXECUTE",
+        "schema": ""
+      }
+    ]
+  },
+  "a07": {
+    "database_privilege": [
+      {
+        "held": true,
+        "privilege": "CONNECT",
+        "role": "anon"
+      },
+      {
+        "held": false,
+        "privilege": "CREATE",
+        "role": "anon"
+      },
+      {
+        "held": true,
+        "privilege": "TEMPORARY",
+        "role": "anon"
+      },
+      {
+        "held": true,
+        "privilege": "CONNECT",
+        "role": "authenticated"
+      },
+      {
+        "held": false,
+        "privilege": "CREATE",
+        "role": "authenticated"
+      },
+      {
+        "held": true,
+        "privilege": "TEMPORARY",
+        "role": "authenticated"
+      },
+      {
+        "held": true,
+        "privilege": "CONNECT",
+        "role": "authenticator"
+      },
+      {
+        "held": false,
+        "privilege": "CREATE",
+        "role": "authenticator"
+      },
+      {
+        "held": true,
+        "privilege": "TEMPORARY",
+        "role": "authenticator"
+      },
+      {
+        "held": true,
+        "privilege": "CONNECT",
+        "role": "origenlab_api"
+      },
+      {
+        "held": false,
+        "privilege": "CREATE",
+        "role": "origenlab_api"
+      },
+      {
+        "held": true,
+        "privilege": "TEMPORARY",
+        "role": "origenlab_api"
+      },
+      {
+        "held": true,
+        "privilege": "CONNECT",
+        "role": "origenlab_migrator"
+      },
+      {
+        "held": false,
+        "privilege": "CREATE",
+        "role": "origenlab_migrator"
+      },
+      {
+        "held": true,
+        "privilege": "TEMPORARY",
+        "role": "origenlab_migrator"
+      },
+      {
+        "held": true,
+        "privilege": "CONNECT",
+        "role": "origenlab_owner"
+      },
+      {
+        "held": false,
+        "privilege": "CREATE",
+        "role": "origenlab_owner"
+      },
+      {
+        "held": true,
+        "privilege": "TEMPORARY",
+        "role": "origenlab_owner"
+      },
+      {
+        "held": true,
+        "privilege": "CONNECT",
+        "role": "origenlab_worker"
+      },
+      {
+        "held": false,
+        "privilege": "CREATE",
+        "role": "origenlab_worker"
+      },
+      {
+        "held": true,
+        "privilege": "TEMPORARY",
+        "role": "origenlab_worker"
+      },
+      {
+        "held": true,
+        "privilege": "CONNECT",
+        "role": "service_role"
+      },
+      {
+        "held": false,
+        "privilege": "CREATE",
+        "role": "service_role"
+      },
+      {
+        "held": true,
+        "privilege": "TEMPORARY",
+        "role": "service_role"
+      }
+    ]
+  },
+  "a08": {
+    "schemas": [
+      {
+        "owner": "origenlab_owner",
+        "schema": "catalog"
+      },
+      {
+        "owner": "origenlab_owner",
+        "schema": "comms"
+      },
+      {
+        "owner": "origenlab_owner",
+        "schema": "crm"
+      },
+      {
+        "owner": "origenlab_owner",
+        "schema": "evidence"
+      },
+      {
+        "owner": "origenlab_owner",
+        "schema": "outbound"
+      },
+      {
+        "owner": "origenlab_owner",
+        "schema": "platform"
+      },
+      {
+        "owner": "origenlab_owner",
+        "schema": "procurement"
+      }
+    ],
+    "table_count": 33,
+    "tables": [
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "catalog",
+        "table": "product"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "catalog",
+        "table": "supplier_product"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "comms",
+        "table": "attachment"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "comms",
+        "table": "mailbox"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "comms",
+        "table": "message"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "comms",
+        "table": "message_participant"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "crm",
+        "table": "activity"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "crm",
+        "table": "address"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "crm",
+        "table": "affiliation"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "crm",
+        "table": "contact_point"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "crm",
+        "table": "domain_event"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "crm",
+        "table": "external_identifier"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "crm",
+        "table": "opportunity"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "crm",
+        "table": "opportunity_participant"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "crm",
+        "table": "organization"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "crm",
+        "table": "organization_domain"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "crm",
+        "table": "organization_relationship"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "crm",
+        "table": "person"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "crm",
+        "table": "quote"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "crm",
+        "table": "quote_line"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "crm",
+        "table": "quote_revision"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "crm",
+        "table": "task"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "evidence",
+        "table": "assertion"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "evidence",
+        "table": "source_record"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "outbound",
+        "table": "campaign"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "outbound",
+        "table": "campaign_recipient"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "outbound",
+        "table": "campaign_reply"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "outbound",
+        "table": "contact_control"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "outbound",
+        "table": "send_attempt"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "outbound",
+        "table": "send_control"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "platform",
+        "table": "command_receipt"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "platform",
+        "table": "operator"
+      },
+      {
+        "owner": "origenlab_owner",
+        "rls_enabled": true,
+        "rls_forced": false,
+        "schema": "procurement",
+        "table": "notice"
+      }
+    ]
+  },
+  "a09": {
+    "policies": [
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "catalog",
+        "table": "product",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "catalog",
+        "table": "product",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "catalog",
+        "table": "product",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "catalog",
+        "table": "product",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "catalog",
+        "table": "supplier_product",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "catalog",
+        "table": "supplier_product",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_insert",
+        "roles": "{origenlab_worker}",
+        "schema": "catalog",
+        "table": "supplier_product",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "catalog",
+        "table": "supplier_product",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "comms",
+        "table": "attachment",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_insert",
+        "roles": "{origenlab_worker}",
+        "schema": "comms",
+        "table": "attachment",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "comms",
+        "table": "attachment",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_update",
+        "roles": "{origenlab_worker}",
+        "schema": "comms",
+        "table": "attachment",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "comms",
+        "table": "mailbox",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_insert",
+        "roles": "{origenlab_worker}",
+        "schema": "comms",
+        "table": "mailbox",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "comms",
+        "table": "mailbox",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_update",
+        "roles": "{origenlab_worker}",
+        "schema": "comms",
+        "table": "mailbox",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "comms",
+        "table": "message",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_insert",
+        "roles": "{origenlab_worker}",
+        "schema": "comms",
+        "table": "message",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "comms",
+        "table": "message",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_update",
+        "roles": "{origenlab_worker}",
+        "schema": "comms",
+        "table": "message",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "comms",
+        "table": "message_participant",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "comms",
+        "table": "message_participant",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_insert",
+        "roles": "{origenlab_worker}",
+        "schema": "comms",
+        "table": "message_participant",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "comms",
+        "table": "message_participant",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "activity",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "activity",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "crm",
+        "table": "activity",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "address",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "address",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "address",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "crm",
+        "table": "address",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "affiliation",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "affiliation",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "affiliation",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "crm",
+        "table": "affiliation",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "contact_point",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "contact_point",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "contact_point",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "crm",
+        "table": "contact_point",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "domain_event",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "domain_event",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "crm",
+        "table": "domain_event",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "external_identifier",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "external_identifier",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "external_identifier",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "crm",
+        "table": "external_identifier",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "opportunity",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "opportunity",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "opportunity",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "crm",
+        "table": "opportunity",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "opportunity_participant",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "opportunity_participant",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "opportunity_participant",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "crm",
+        "table": "opportunity_participant",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "organization",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "organization",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "organization",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "crm",
+        "table": "organization",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "organization_domain",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "organization_domain",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "organization_domain",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "crm",
+        "table": "organization_domain",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "organization_relationship",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "organization_relationship",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "organization_relationship",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "crm",
+        "table": "organization_relationship",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "person",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "person",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "person",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "crm",
+        "table": "person",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "quote",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "quote",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "quote",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "crm",
+        "table": "quote",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "quote_line",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "quote_line",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "quote_line",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "crm",
+        "table": "quote_line",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "quote_revision",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "quote_revision",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "quote_revision",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "crm",
+        "table": "quote_revision",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "task",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "task",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "crm",
+        "table": "task",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "crm",
+        "table": "task",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "evidence",
+        "table": "assertion",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "evidence",
+        "table": "assertion",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_insert",
+        "roles": "{origenlab_worker}",
+        "schema": "evidence",
+        "table": "assertion",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "evidence",
+        "table": "assertion",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "evidence",
+        "table": "source_record",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "evidence",
+        "table": "source_record",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_insert",
+        "roles": "{origenlab_worker}",
+        "schema": "evidence",
+        "table": "source_record",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "evidence",
+        "table": "source_record",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_update",
+        "roles": "{origenlab_worker}",
+        "schema": "evidence",
+        "table": "source_record",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "outbound",
+        "table": "campaign",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "outbound",
+        "table": "campaign",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "outbound",
+        "table": "campaign",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "outbound",
+        "table": "campaign",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "outbound",
+        "table": "campaign_recipient",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "outbound",
+        "table": "campaign_recipient",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "outbound",
+        "table": "campaign_recipient",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "outbound",
+        "table": "campaign_recipient",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "outbound",
+        "table": "campaign_reply",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "outbound",
+        "table": "campaign_reply",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "outbound",
+        "table": "campaign_reply",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_insert",
+        "roles": "{origenlab_worker}",
+        "schema": "outbound",
+        "table": "campaign_reply",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "outbound",
+        "table": "campaign_reply",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "outbound",
+        "table": "contact_control",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "outbound",
+        "table": "contact_control",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "outbound",
+        "table": "send_attempt",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "outbound",
+        "table": "send_attempt",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "outbound",
+        "table": "send_control",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "outbound",
+        "table": "send_control",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "platform",
+        "table": "command_receipt",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "platform",
+        "table": "command_receipt",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "platform",
+        "table": "command_receipt",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "platform",
+        "table": "command_receipt",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_insert",
+        "roles": "{origenlab_api}",
+        "schema": "platform",
+        "table": "operator",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "platform",
+        "table": "operator",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "platform",
+        "table": "operator",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "platform",
+        "table": "operator",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_select",
+        "roles": "{origenlab_api}",
+        "schema": "procurement",
+        "table": "notice",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_api_update",
+        "roles": "{origenlab_api}",
+        "schema": "procurement",
+        "table": "notice",
+        "using": "true",
+        "with_check": "true"
+      },
+      {
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_insert",
+        "roles": "{origenlab_worker}",
+        "schema": "procurement",
+        "table": "notice",
+        "using": "",
+        "with_check": "true"
+      },
+      {
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_select",
+        "roles": "{origenlab_worker}",
+        "schema": "procurement",
+        "table": "notice",
+        "using": "true",
+        "with_check": ""
+      },
+      {
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "policy": "origenlab_worker_update",
+        "roles": "{origenlab_worker}",
+        "schema": "procurement",
+        "table": "notice",
+        "using": "true",
+        "with_check": "true"
+      }
+    ],
+    "policy_count": 127
+  },
+  "a10": {
+    "foreign_key_count": 102
+  },
+  "a11": {
+    "row_count": 1,
+    "rows": [
+      {
+        "id": 1,
+        "marketing_enabled": false,
+        "transactional_enabled": false
+      }
+    ]
+  },
+  "a12": {
+    "allowed_non_empty": [
+      {
+        "rows": 1,
+        "schema": "outbound",
+        "table": "send_control"
+      }
+    ],
+    "counted_tables": 33
+  },
+  "application_schemas": [
+    "crm",
+    "comms",
+    "outbound",
+    "evidence",
+    "catalog",
+    "procurement",
+    "platform"
+  ],
+  "audit_identity": "origenlab_migrator",
+  "baseline_version": 1,
+  "description": "Slice 0 foundation catalogue, captured from a clean `supabase db reset --local` of supabase/roles.sql plus the migrations under supabase/migrations/. Reviewed as part of the change that introduced the audit. The audit has no mode that rewrites this file."
+}

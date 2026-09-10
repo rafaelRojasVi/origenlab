@@ -158,7 +158,14 @@ Checks 1–9 are proven **locally** by `supabase/tests/` (372 pgTAP assertions a
 ten files — catalogue facts and rolled-back fixtures, run with `supabase test db`)
 and by `supabase/scripts/verify_direct_logins.sh` (51 proofs over real LOGIN
 connections for checks 6–9); the same checks must be re-run against the hosted
-project before slice 1. `supabase/scripts/replay_evidence.sh` proves the whole
+project before slice 1. **(impl)** `supabase/scripts/slice0_audit.sh`
+([`OPERATIONS.md`](OPERATIONS.md) §4.2) is the read-only tool that re-runs the
+**catalogue** half of checks 1–5 and the definer half of check 9 against a hosted
+project, and corroborates the Data API. It has never been pointed at one: no hosted
+project exists. Checks 6–8 and the behavioural half of check 9 stay with
+`verify_direct_logins.sh` and the local database — they need real `LOGIN` connections
+with passwords set for the run, and the audit will not set a password on a hosted
+role. `supabase/scripts/replay_evidence.sh` proves the whole
 foundation replays deterministically, and
 `supabase/scripts/evidence_tool_failure_tests.sh` proves *those two scripts*
 themselves fail closed — a failed reset, a failed dump, a successful but empty
@@ -175,6 +182,18 @@ Checks 10 and 11 are hosted gates and have not been run. **(impl)** the local
 equivalents of check 11 do pass: `supabase db lint --local` over the seven schemas
 with `--fail-on warning` reports no schema error, and `supabase db advisors --local`
 reports zero SECURITY findings and nothing above INFO.
+
+Neither check can be discharged by a database session, and the audit does not pretend
+otherwise. Check 10 turns on the contents of the Render, Cloudflare and GitHub secret
+stores and the browser bundles; check 11 on the hosted advisors, which need a
+connection string on the command line or a linked project and so cannot be reached by
+a tool that refuses link state. Both are carried as **operator attestations** recorded
+with their evidence and reported as `ATTESTED`, a status the audit never treats as
+interchangeable with a proof ([`OPERATIONS.md`](OPERATIONS.md) §4.2). What the audit
+does record for check 10 is which API-key **types** exist on the project, never a key
+value: the presence of a legacy `service_role` key is reported and does not by itself
+fail the gate, because the obligation is that no privileged key is *configured or
+exposed* in a runtime, which is exactly the part a database connection cannot see.
 
 **(impl)** every one of the 102 foreign keys in the seven application schemas is
 index-covered, so the performance advisors report **zero** `unindexed_foreign_keys`.
