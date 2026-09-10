@@ -16,8 +16,9 @@ plan ([`MIGRATION.md`](MIGRATION.md)).
 > **Every command block below marked `EXAMPLE — NOT YET IMPLEMENTED` describes
 > a procedure that does not exist yet.** The commands show the intended shape of
 > each procedure so it can be built and reviewed; none of them can be run today,
-> and none should be presented to an operator as available. The single exception
-> is §4.1, the local schema foundation, whose commands exist and run locally.
+> and none should be presented to an operator as available. The exceptions are
+> §4.1, the local schema foundation, and §4.2, the Slice 0 audit — both exist and
+> run today.
 
 ## 1. Environments
 
@@ -133,6 +134,12 @@ ol audit definers --env production     # fails on any SECURITY DEFINER function
                                        # authenticated/service_role
 ```
 
+**(impl)** The four `ol audit` subcommands above are still the intended shape of the
+per-migration audit and are not built. What *is* built is the slice 0 audit,
+[§4.2](#m-ops-slice0-audit) — one read-only tool that discharges the catalogue half of
+those four (roles, grants, exposure and definers) against a live local or hosted database,
+and reports what it cannot answer. `ol migrate` remains unimplemented.
+
 ### 4.1 Local foundation (implemented — Migration Slice 0, local portion)
 
 The reproducible local foundation lives under `supabase/`: `config.toml` (PostgreSQL 17,
@@ -217,6 +224,211 @@ Rules that hold for every later migration:
   role ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.5). Their memberships are asserted, not
   managed; a new one appearing in the catalogue fails `supabase/tests/020_roles.sql` and is a
   question for the provider, not something to repair by migration.
+
+<a id="m-ops-slice0-audit"></a>
+### 4.2 The Slice 0 audit (implemented — read-only, local and hosted)
+
+`supabase/scripts/slice0_audit.sh` re-runs the catalogue half of the
+[`MIGRATION.md`](MIGRATION.md) §5.2 obligations against a live database and writes a
+sanitised report. It is the tool the **hosted provisioning gate** needs: §4.1 proves the
+foundation locally, and §5.2 requires the same checks against the hosted project before
+slice 1.
+
+```bash
+supabase/scripts/slice0_audit.sh --mode local
+supabase/scripts/slice0_audit.sh --mode hosted --simulate
+supabase/scripts/slice0_audit.sh --mode hosted --authorize-hosted-connection
+supabase/scripts/slice0_audit.sh --verify-report supabase/.audit/reports/slice0-audit-local.json
+```
+
+**The audit has no write mode.** It issues no `INSERT`, `UPDATE`, `DELETE`, DDL,
+sequence change or any other intentional mutation against any database, in either mode.
+It cannot regenerate its own baselines, and it has no flag that disables redaction. Its
+read-only boundary rests on five things that hold together, not on any one of them:
+
+1. `default_transaction_read_only`, `statement_timeout`,
+   `idle_in_transaction_session_timeout` and `lock_timeout` are set through the libpq
+   connection options, so they are in force when the first statement is parsed;
+2. every check runs inside **one explicit `begin read only` transaction**, which refuses
+   writes at the transaction level whatever privileges the session holds;
+3. every statement comes from a **fixed, reviewed query file** under `supabase/audit/sql/`
+   — there is no operator SQL, no template and no dynamic SQL built at run time;
+4. each of those files is **statically rejected** before a connection is opened unless it
+   parses to exactly one `select`, `with` or `show` with no forbidden token, no dollar
+   quoting and no psql meta-command;
+5. `s01` reads `transaction_read_only` and `default_transaction_read_only` **back from the
+   server** rather than assuming them.
+
+The negative test — a write attempted inside that transaction and refused with SQLSTATE
+`25006` — lives in `supabase/scripts/audit_failure_tests.sh` and runs **only against the
+disposable local database, inside a rollback-only harness**. A hosted audit never attempts
+a mutation to see what happens.
+
+#### The two target boundaries
+
+**Local mode** resolves its target through
+`supabase/scripts/lib/local_target.sh` and nothing else, exactly as every other script in
+§4.1 does; `supabase/scripts/lib/resolve_local_target.sh` is a one-way bridge that runs
+that guard and forwards the URL it produced. The engine then refuses a non-loopback host
+a second time in the process that builds the connection. **Local mode cannot reach a
+remote host.**
+
+**Hosted mode** shares no code path with it. It refuses to start unless *all* of these
+hold, and it refuses **before** a connection is attempted in every case:
+
+- `--authorize-hosted-connection` was passed. A hosted connection is never a default.
+- **The project is not linked.** No `supabase/.temp/project-ref`, no `project_ref` in
+  `config.toml`. Hosted mode takes its target only from the reviewed target file, so link
+  state is not a shortcut it may take — it is a reason to stop.
+- **The entire tracked working tree is clean.** A hosted report names a commit; a dirty
+  tree would make that name wrong. Untracked ignored files are permitted only at the three
+  approved paths below.
+- The target file exists at `supabase/.audit/hosted_target.env`, is a regular file (not a
+  symlink) with mode `600`, and declares the supported route: a direct
+  `db.<project-ref>.supabase.co` connection on 5432. The Supavisor pooler is out of scope
+  — it requires the login name to carry the project reference, which conflicts with the
+  pinned audit identity.
+- The login role is **`origenlab_migrator`**, the configured hosted audit identity for this
+  initial audit. It is not a fifth role and no migration creates one. The credential stays
+  outside this repository: the target file names an **environment variable**, and there is
+  no key that accepts a password inline.
+- `sslmode` is exactly `verify-full` with a CA file that exists. **There is no downgrade
+  path**: a missing CA file refuses the run rather than falling back to `require`.
+- The host resolves, immediately before the connection, to addresses that are **all**
+  globally routable. Loopback, private, link-local, CGNAT, multicast, documentation and
+  reserved answers are refused, and one bad answer among good ones refuses the whole
+  target. The resolved address is then **pinned**: libpq is given `PGHOSTADDR` alongside
+  `PGHOST`, so it does not resolve the name a second time and `verify-full` still checks
+  the certificate against the name. That is what closes the time-of-check/time-of-use
+  window.
+
+The child environment is **built, not inherited** — `PATH`, `HOME`, `LANG` and the libpq
+variables the target needs, and nothing else. An inherited `PGHOST`, `PGSERVICE`,
+`SUPABASE_DB_URL` or `SUPABASE_ACCESS_TOKEN` cannot redirect or re-authenticate the
+connection because it is not in the child's environment at all. The password is passed as
+`PGPASSWORD` in that environment and never appears in an argument vector; the process
+table shows no target.
+
+#### Three approved local paths, all git-ignored
+
+| Path | What |
+|---|---|
+| `supabase/.audit/hosted_target.env` | the hosted target, mode `600`. Names the project and the credential's environment variable; **never a credential** |
+| `supabase/.audit/attestation.json` | the operator attestation. Template: `supabase/audit/fixtures/attestation.example.json` |
+| `supabase/.audit/reports/` | the generated reports |
+
+Nothing else may exist under `supabase/.audit/`; a hosted run refuses if anything does.
+`scripts/security/check-public-repo-hygiene.sh` fails if any of them is ever tracked, and
+if a hosted project reference appears in tracked content.
+
+#### What the audit proves, corroborates, attests and records
+
+Fifteen SQL checks and nine engine checks, each naming the obligation it discharges. The
+four kinds are not interchangeable:
+
+| Kind | Meaning |
+|---|---|
+| **proof** | the catalogue answers the question completely; a violation is a finding |
+| **corroborate** | the catalogue supports an answer it cannot settle; never a pass on its own |
+| **attest** | only an operator can answer it; recorded with its evidence, never called proven |
+| **record** | reported, never failed on — the provider's own catalogue, which this design neither confers nor may revoke ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.5) |
+
+| Check | Obligation | Kind |
+|---|---|---|
+| `s01` | the audit's own session is read-only, PostgreSQL 17, the expected identity pair | proof |
+| `a01` | §5.2 check 1 — every OrigenLab-created role is `NOBYPASSRLS`; the owner's membership graph | proof |
+| `a02` | §5.2 check 2 and §6.5 — no OrigenLab or Data-API-facing role is inside `pg_read_all_data`/`pg_write_all_data`; `service_role`'s platform `BYPASSRLS` and the hosted platform catalogue are **recorded** | proof + record |
+| `a03` | §5.2 check 3 — no schema `USAGE`/`CREATE` for `PUBLIC`, `anon`, `authenticated`, `service_role`, `authenticator`, read both from the ACL and through `has_schema_privilege` | proof |
+| `a04` | §5.2 check 3 — no table, sequence or **column** privilege for those roles | proof |
+| `a05` | §5.2 checks 4 and 9 — no `EXECUTE` for those roles; the `SECURITY DEFINER` inventory against the closed list | proof |
+| `a06` | §5.2 check 5 — the owner's default privileges, compared as an exact set | proof |
+| `a07` | §6.4 point 6 — `origenlab_owner` holds no `CREATE` on the database | proof |
+| `a08` | seven schemas, thirty-three tables, owned by the owner, RLS enabled — compared name by name | proof |
+| `a09` | the 127 RLS policies, including their predicates | proof |
+| `a10` | all 102 foreign keys index-covered | proof |
+| `a11` | both send flags false | proof |
+| `a12` | zero rows of business data | proof |
+| `a13` | the Data API — SQL corroboration only | corroborate |
+| `a14` | installed extensions | record |
+| `c01` | §5.2 check 10 (partial) — API-key **types**, `--cli-metadata` only | record |
+| `t01`–`t07` | Data API toggle, private buckets, no privileged key in any deployment, backups, both restore drills, security advisors | attest |
+| `d01` | the Data API is off — `a13` **and** `t01`, never either alone | attest |
+
+Reading `a05` and `a06` correctly matters: a NULL `proacl` grants `EXECUTE` to `PUBLIC`,
+and an *absent* default-privilege row is a finding rather than a neutral fact. Both are
+expanded through `acldefault()` and compared as exact sets, so a hosted project that never
+revoked the owner's function default fails `a06` even though nothing was added.
+
+**A legacy `service_role` key does not fail the audit.** `c01` records which key types
+exist and never requests, displays or persists a value — no `--reveal`, no raw output kept.
+The gate that matters is that no privileged key is *configured or exposed* in the
+applications, Render, Cloudflare, GitHub or a public client, and this audit cannot inspect
+those secret stores. That is `t03`, an operator-attested deployment check.
+
+#### The verdict, and what it is worth
+
+| Verdict | Means |
+|---|---|
+| `PASS` | a **real hosted run that connected**, every required check satisfied. The only verdict with `gate_eligible: true` |
+| `INCOMPLETE` / `FAIL` | a real hosted run that was not complete, or found something |
+| `LOCAL_PASS`, `LOCAL_FAIL`, `LOCAL_INCOMPLETE` | a local run. §5.2 requires these checks against the **hosted** project; a local verdict is not that |
+| `SIMULATED_PASS`, `SIMULATED_FAIL`, `SIMULATED_INCOMPLETE` | a replay of a committed fixture, with `simulated: true` and `hosted_contacted: false`. It contacted nothing and proves nothing about any database |
+
+**A simulated or canned run never emits a bare `PASS`, even when every check holds**, and
+neither does a local run. A missing or unevaluable required check makes a run
+`INCOMPLETE`; incompleteness is never absorbed into a pass, and the report names what was
+missing. `gate_eligible` states the conclusion outright rather than leaving it to be
+inferred.
+
+#### Reports
+
+Two artefacts per run under `supabase/.audit/reports/`, JSON and Markdown, built from one
+structure so they cannot disagree, with sorted keys and checks in registry order: the same
+inputs and the same clock produce identical bytes. Both are redacted and then **re-read by
+the leak assertions before anything is written** — a report that cannot be proven free of
+credentials, keys, JWTs, connection strings, Supabase host names, project references and
+non-loopback addresses is not written at all. A real report carries only the *fingerprint*
+of a project reference, never the reference.
+
+`--verify-report` runs those assertions again against a file on disk. CI runs the local
+audit, verifies both artefacts that way, and uploads **only** those two sanitised files —
+never raw child output, a temporary working directory or a failure capture. If the
+verification fails, nothing is uploaded.
+
+#### What this audit does not answer
+
+Named in every report, so silence is never mistaken for coverage:
+
+- **the applied-migration list.** `supabase_migrations.schema_migrations` is
+  platform-owned and unreadable by the pinned audit identity, which holds no privilege of
+  its own. What the migrations *produced* is compared object by object instead (`a08`,
+  `a09`, `a10`) — stronger evidence than a version list;
+- **`supabase db lint` and `supabase db advisors` against the hosted project**, which need
+  a connection string on the command line or a linked project, and hosted mode permits
+  neither. Carried as `t07` until a route exists that needs no link state;
+- **buckets, backups and both restore drills** (`t02`, `t04`, `t05`, `t06`);
+- **the secret stores of Render, Cloudflare, GitHub and the browser bundles**, which decide
+  §5.2 check 10 (`t03`);
+- **the behavioural direct-login proofs of §5.2 checks 6–9.** They need real `LOGIN`
+  connections as `origenlab_api` and `origenlab_worker` with passwords set for the run;
+  `verify_direct_logins.sh` does that against the disposable local database, and this audit
+  will not set a password on a hosted role.
+
+#### Tests
+
+```bash
+python3 -m unittest discover -s supabase/audit/tests -t supabase/audit
+supabase/scripts/audit_failure_tests.sh
+```
+
+The failure-injection suite proves the audit fails closed: a check file containing a
+mutation is refused with `psql` never invoked; catalogue drift is `LOCAL_FAIL`; a run
+missing observations is `INCOMPLETE` and names them; a fully satisfied simulated run is
+`SIMULATED_PASS` and never `PASS`; a hostile inherited libpq and Supabase environment does
+not move a local run off loopback; hosted mode refuses without authorisation and refuses
+link state; every reserved address class is refused; no `sslmode` below `verify-full` is
+accepted; a poisoned report fails `--verify-report`; and the read-only transaction really
+refuses a write.
 
 ## 5. Send control
 

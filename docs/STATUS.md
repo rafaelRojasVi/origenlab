@@ -27,8 +27,8 @@ of truth*). Any PR that changes what is built, applied or deployed updates this
 file — including the `Last verified` line — **in the same PR**. A PR that only
 changes design, rules or targets does not touch it.
 
-Last verified: **2026-09-09**, against `origin/main` @ `e9d34e3e` plus the Slice 0 / M10b-M10d
-outbound migrations on this branch, measured from a clean local `supabase db reset`.
+Last verified: **2026-09-10**, against `origin/main` @ `c9f8e87b` plus the Slice 0 audit on
+this branch, measured from a clean local `supabase db reset`.
 
 ## 1. Eras
 
@@ -44,7 +44,7 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 | Slice | State | Note |
 |---|---|---|
 | 0 — local foundation | **DONE** | `supabase/roles.sql` + 18 migrations → 4 roles, 7 schemas, 33 tables, grants, RLS. Proven by `supabase/tests/` and `supabase/scripts/`, enforced by `.github/workflows/supabase.yml` on every push touching `supabase/**` |
-| 0 — hosted gates | **NOT STARTED** | **No hosted Supabase project, bucket, backup or advisor run exists.** All 11 checks in [`MIGRATION.md`](MIGRATION.md) §5.2 are unproven against a hosted project; checks 1–9 are proven **locally only**, checks 10–11 have never run |
+| 0 — hosted gates | **NOT STARTED — the tooling now exists and has never been used** | **No hosted Supabase project, bucket, backup or advisor run exists, and nothing in this repository has ever contacted one.** All 11 checks in [`MIGRATION.md`](MIGRATION.md) §5.2 remain unproven against a hosted project; checks 1–9 are proven **locally only**, checks 10–11 have never run. What changed is that `supabase/scripts/slice0_audit.sh` ([`OPERATIONS.md`](OPERATIONS.md) §4.2) can now run the catalogue half of them read-only against a hosted project once one exists — §2.3 |
 | 1 — Auth / `platform.*` | NOT STARTED | |
 | 2 — CRM identity + V1 row migration | NOT STARTED | |
 | 3 — Quotes, lines, FX, snapshot, PDF | NOT STARTED | |
@@ -81,10 +81,36 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 - **The Wave 1A loader.** The bundle itself exists on disk with its `.sha256`
   sidecar; no code loads it.
 - **The `ol migrate` / `ol audit` CLI** documented in [`OPERATIONS.md`](OPERATIONS.md) §4
-  — marked there as `EXAMPLE — NOT YET IMPLEMENTED`, and it is not implemented.
-- **Any tool that can target a hosted project.** `supabase/scripts/lib/local_target.sh`
-  refuses a non-loopback host by design, so the hosted gate is currently
-  unreachable with the tooling in this repository.
+  — marked there as `EXAMPLE — NOT YET IMPLEMENTED`, and it is not implemented. The
+  catalogue half of what its four `ol audit` subcommands would check is built, under a
+  different name and as a single read-only tool: see §2.3. `ol migrate` is not.
+- **A hosted Supabase project.** The tooling to audit one now exists (§2.3) and has
+  never been used, because there is nothing to point it at.
+  `supabase/scripts/lib/local_target.sh` still refuses a non-loopback host by design and
+  every §4.1 script still resolves its target through it; the hosted path is a separate
+  boundary in `supabase/audit/olaudit/target_hosted.py` that shares no code with it and
+  refuses to start without an explicit authorisation flag, a reviewed target file at an
+  approved path, a clean tracked working tree and an unlinked project.
+
+### 2.3 Slice 0 audit — measured
+
+| Item | Value |
+|---|---|
+| Entry point | `supabase/scripts/slice0_audit.sh` → `supabase/audit/run_audit.py` (Python standard library only) |
+| Modes | `--mode local`; `--mode hosted --simulate`; `--mode hosted --authorize-hosted-connection`; `--verify-report` |
+| SQL check files | 15, under `supabase/audit/sql/`, each statically proven to be a single read before any connection is opened |
+| Engine checks | 9 — one API-key-type record, seven operator attestations, one derived Data API conclusion |
+| Committed baseline | `supabase/audit/baselines/slice0.json`, captured from a clean local `supabase db reset` and reviewed in the change that added it |
+| Unit tests | **155** — `python3 -m unittest discover -s supabase/audit/tests -t supabase/audit` |
+| Failure-injection checks | **53** — `supabase/scripts/audit_failure_tests.sh` |
+| Local verdict | `LOCAL_PASS` — 13 required proofs satisfied, `a13` corroborated, `a14` recorded |
+| Hosted runs performed | **zero.** No hosted target file has ever existed and no hosted endpoint has been contacted |
+| Write capability | **none.** No write mode, no baseline-writing mode, no redaction-disabling flag, and no mutation statement in either mode |
+
+The one place a write is attempted anywhere in this tooling is
+`audit_failure_tests.sh` scenario L, the negative test proving the audit's read-only
+transaction refuses a mutation with SQLSTATE `25006`. It runs only against the
+disposable local database, inside a rollback-only harness.
 
 ## 3. V1 — running state
 
