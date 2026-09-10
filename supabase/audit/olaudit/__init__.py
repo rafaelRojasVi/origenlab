@@ -10,10 +10,18 @@ allowed to touch the hosted project.
 The engine has no write mode. It issues no INSERT, UPDATE, DELETE, DDL, sequence change or any
 other intentional mutation, in either mode; see olaudit.sqlbank for the static guarantee and
 olaudit.psqlrun for the session boundary.
+
+`olaudit.bootstrap` and `olaudit.bootstrap_cli` are the hosted role bootstrap. They are the one
+part of this package concerned with a file that *writes* -- and they too open no connection in any
+mode: the bootstrap tool statically proves supabase/hosted_roles.sql is nothing but role management
+over four names and prints it, and an operator applies it separately. Its static analyser shares no
+code with olaudit.sqlbank, so a relaxation in either cannot widen the other.
 """
 
 __all__ = [
     "attestation",
+    "bootstrap",
+    "bootstrap_cli",
     "checks",
     "cli",
     "psqlrun",
