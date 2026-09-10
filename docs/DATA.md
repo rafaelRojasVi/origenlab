@@ -97,7 +97,7 @@ resolved by picking a candidate.
 
 | Class | Contents | Where | Retention |
 |---|---|---|---|
-| **Durable commercial truth** | all 32 tables' committed rows | active PostgreSQL | forever; deletion only by an explicit, evented command |
+| **Durable commercial truth** | all 33 tables' committed rows | active PostgreSQL | forever; deletion only by an explicit, evented command |
 | **Immutable proof** | sent quotation PDFs, their SHA-256, sending evidence | private Storage + `crm.quote_revision` | forever; never overwritten |
 | **Communication evidence** | `.eml` bodies, attachments | private Storage, referenced from `comms.*` | forever unless an operator deletes with a reason **[OPEN]** |
 | **Machine evidence** | source records, assertions, notices, catalog observations | active PostgreSQL | retained; superseded rows kept |
@@ -266,7 +266,7 @@ on any mismatch.
 ## 9. Rebuildable views
 
 Every dashboard, funnel, pipeline board and count is an **ordinary SQL view**
-over the 32 tables. **[V2 DECISION]**
+over the 33 tables. **[V2 DECISION]**
 
 - No projection table, mart, mirror or denormalized copy exists.
 - A materialized view requires a measured query-time justification, is a
@@ -277,7 +277,7 @@ over the 32 tables. **[V2 DECISION]**
 
 **[V2 DECISION]**, **[PLANNED]**
 
-1. Database backups with point-in-time recovery cover the 32 tables.
+1. Database backups with point-in-time recovery cover the 33 tables.
 2. **Database backups do not include Storage objects.** Storage buckets are
    therefore backed up **independently**, on their own schedule, to separate
    storage, with a manifest and hashes.

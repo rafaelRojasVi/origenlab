@@ -19,7 +19,7 @@ the runbooks ([`OPERATIONS.md`](OPERATIONS.md)).
 Everything here is **[V2 DECISION]**, and **[PLANNED]** except where marked
 **(impl)**. **The local schema foundation exists**: `supabase/roles.sql` and the
 migrations under `supabase/migrations/` create the four roles, the seven schemas
-and the 32 tables with their grants and RLS against a local PostgreSQL 17
+and the 33 tables with their grants and RLS against a local PostgreSQL 17
 container, proven by `supabase/tests/` and enforced in CI
 ([`OPERATIONS.md`](OPERATIONS.md) §4.1). **No hosted Supabase project, bucket,
 backup or advisor run exists**, and no application code reads or writes these
@@ -34,7 +34,7 @@ flowchart TB
   WEB["apps/web — Astro<br/>public marketing site"]
   API["apps/api — FastAPI<br/>the only business command boundary"]
   WORKER["apps/worker — Python<br/>Gmail · MIME · PDF · ChileCompra · LLM"]
-  PG[("Supabase PostgreSQL 17<br/>7 private schemas · 32 tables")]
+  PG[("Supabase PostgreSQL 17<br/>7 private schemas · 33 tables")]
   ST[("Private Storage<br/>eml · attachments · PDFs")]
   AUTH["Supabase Auth<br/>ES256 JWT + JWKS"]
   GMAIL["Gmail API<br/>one production mailbox"]
@@ -69,13 +69,13 @@ with the operator's JWT.
 ## 3. Schemas and tables
 
 Seven **private** schemas — `crm`, `comms`, `outbound`, `evidence`, `catalog`,
-`procurement`, `platform` — holding **32 application tables** (`crm` 16,
-`comms` 4, `outbound` 5, `evidence` 2, `catalog` 2, `procurement` 1,
+`procurement`, `platform` — holding **33 application tables** (`crm` 16,
+`comms` 4, `outbound` 6, `evidence` 2, `catalog` 2, `procurement` 1,
 `platform` 2), the current reviewed foundation. The inventory, with each
 table's unique responsibility, is owned by [`DOMAIN.md`](DOMAIN.md) §7.
 
 `public` holds nothing. Supabase-managed `auth`, `storage`, `pgmq` and
-migration-metadata objects are outside the 32 and are not application tables.
+migration-metadata objects are outside the 33 and are not application tables.
 
 ### 3.1 One-writer rules
 
@@ -189,7 +189,7 @@ as ordinary arguments.
 
 How the database-side mechanisms interact — precisely:
 
-1. **RLS is `ENABLE`d on all 32 tables** and is **not** `FORCE`d. Because the
+1. **RLS is `ENABLE`d on all 33 tables** and is **not** `FORCE`d. Because the
    application tables are deliberately not `FORCE ROW LEVEL SECURITY`, the
    object owner (`origenlab_owner`) crosses RLS by virtue of owning them. That
    ownership exemption is what makes migrations workable and what gives layer

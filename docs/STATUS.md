@@ -27,7 +27,8 @@ of truth*). Any PR that changes what is built, applied or deployed updates this
 file — including the `Last verified` line — **in the same PR**. A PR that only
 changes design, rules or targets does not touch it.
 
-Last verified: **2026-09-09**, against `origin/main` @ `3e9492b1`.
+Last verified: **2026-09-09**, against `origin/main` @ `e9d34e3e` plus the Slice 0 / M10b-M10d
+outbound migrations on this branch, measured from a clean local `supabase db reset`.
 
 ## 1. Eras
 
@@ -42,7 +43,7 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 
 | Slice | State | Note |
 |---|---|---|
-| 0 — local foundation | **DONE** | `supabase/roles.sql` + 15 migrations → 4 roles, 7 schemas, 32 tables, grants, RLS. Proven by `supabase/tests/` and `supabase/scripts/`, enforced by `.github/workflows/supabase.yml` on every push touching `supabase/**` |
+| 0 — local foundation | **DONE** | `supabase/roles.sql` + 18 migrations → 4 roles, 7 schemas, 33 tables, grants, RLS. Proven by `supabase/tests/` and `supabase/scripts/`, enforced by `.github/workflows/supabase.yml` on every push touching `supabase/**` |
 | 0 — hosted gates | **NOT STARTED** | **No hosted Supabase project, bucket, backup or advisor run exists.** All 11 checks in [`MIGRATION.md`](MIGRATION.md) §5.2 are unproven against a hosted project; checks 1–9 are proven **locally only**, checks 10–11 have never run |
 | 1 — Auth / `platform.*` | NOT STARTED | |
 | 2 — CRM identity + V1 row migration | NOT STARTED | |
@@ -57,12 +58,13 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 
 | Item | Value |
 |---|---|
-| Migrations | 15, under `supabase/migrations/` |
+| Migrations | 18, under `supabase/migrations/` |
 | Schemas | 7 — `crm`, `comms`, `outbound`, `evidence`, `catalog`, `procurement`, `platform` |
-| Tables | **32** — `crm` 16, `comms` 4, `outbound` 5, `evidence` 2, `catalog` 2, `procurement` 1, `platform` 2 |
+| Tables | **33** — `crm` 16, `comms` 4, `outbound` 6, `evidence` 2, `catalog` 2, `procurement` 1, `platform` 2 |
 | Roles | 4 — `origenlab_owner` (NOLOGIN), `origenlab_migrator`, `origenlab_api`, `origenlab_worker`; all `NOBYPASSRLS` |
-| RLS policies | 122 |
-| pgTAP assertions | 348 across 10 files |
+| RLS policies | 127 |
+| pgTAP assertions | 372 across 10 files |
+| Foreign keys | 102, **all** index-covered — 81 unconditional, 21 implied-partial |
 | `SECURITY DEFINER` functions | **zero** — the closed list of eight arrives in slices 3 and 5 |
 | Data API (PostgREST) | **off**; the seven schemas are not exposed |
 | Send flags | `outbound.send_control` single row, **both `false`** |

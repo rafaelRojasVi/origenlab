@@ -7,7 +7,7 @@ data that carries it.
 affiliation and contact-point semantics; the prospect / lead / signal /
 opportunity / quote distinctions; product, manufacturer and supplier
 relationships; address and opportunity-participant semantics; identity,
-merge and evidence-promotion principles; and the complete **32-table
+merge and evidence-promotion principles; and the complete **33-table
 inventory**.
 
 **It does not own:** authority and retention ([`DATA.md`](DATA.md)), state
@@ -368,15 +368,16 @@ every other rule in this document serves.
 | 9 | One person is technical contact and quotation recipient; purchasing is a shared mailbox | three participant rows on one opportunity: `(P, role=technical, is_primary)`, `(P, role=quote_recipient, is_primary)`, `(person=NULL, contact_point=compras@universidad.example, role=purchasing, is_primary)`. Concurrent roles for one person are allowed; primaries are per role. |
 | 10 | A faculty laboratory receives equipment on campus and is billed through the university's central office | two `address` rows: `(organization=laboratory unit, site_label=laboratory)` and `(organization=root, site_label=central office)`. The revision names the first as `delivery_address_id` and the second as `billing_address_id` and freezes both into its party snapshot at approval. A later move of the laboratory supersedes the first row; the sent PDF does not change. |
 
-## 7. Table inventory — the reviewed 32-table foundation
+## 7. Table inventory — the reviewed 33-table foundation
 
-Seven private schemas. **32 application tables** — the current reviewed
+Seven private schemas. **33 application tables** — the current reviewed
 foundation after the external CRM benchmark
 ([`ARCHITECTURE.md`](ARCHITECTURE.md) §13), not a permanent budget: a table
 is added only when a relational invariant proves it necessary, removed when
 nothing needs it, and every change is recorded here. Numbers are stable
-identifiers, so the two D0.3 additions are appended as 31 and 32 rather than
-renumbered into the `crm` block.
+identifiers, so the two D0.3 additions are appended as 31 and 32, and the
+Slice 0 / M10c reply table as 33, rather than renumbered into their schema
+blocks.
 Supabase-managed `auth`, `storage`, `pgmq` and migration-metadata tables are
 outside this count and outside this inventory.
 
@@ -401,8 +402,8 @@ outside this count and outside this inventory.
 | 17 | `comms.message_participant` | from/to/cc addresses with optional resolution | `(message_id, role, address_norm)` |
 | 18 | `comms.attachment` | MIME part metadata and Storage reference | `(message_id, part_index)`; `sha256` present when stored |
 | 19 | `outbound.send_control` | global kill switches | single row `id = 1`; both flags default false; every change carries a reason |
-| 20 | `outbound.campaign` | lifecycle, budget, policy, approval | status machine; budget serialized by a row lock |
-| 21 | `outbound.campaign_recipient` | frozen audience, state, immutable recontact override | `(campaign_id, address_norm)` unique; inserts only while `draft` |
+| 20 | `outbound.campaign` | lifecycle, budget, policy, approval, frozen content and frozen audience criteria | status machine; budget serialized by a row lock; from `audience_frozen` onward `subject`, `body_text`, `content_sha256`, `content_frozen_at` and a versioned `audience_criteria` object are all present and never rewritten |
+| 21 | `outbound.campaign_recipient` | frozen audience, state, every exclusion reason, immutable recontact override | `(campaign_id, address_norm)` unique; inserts only while `draft`; `excluded ⇔ cardinality(exclusion_reasons) > 0`, drawn from the closed vocabulary of [`WORKFLOWS.md`](WORKFLOWS.md) §1.4, never NULL |
 | 22 | `outbound.send_attempt` | the only send ledger, marketing and transactional | minted RFC 822 id unique; at most one open attempt per address |
 | 23 | `outbound.contact_control` | purpose-scoped `block` / `prior_contact` / `cooldown` | `(scope, value_norm, kind, purpose)` unique; `block.purpose ∈ {all, marketing}`; `prior_contact` and `cooldown` ⇒ `marketing` only; `prior_contact` never deleted, never expires; truth table in [`WORKFLOWS.md`](WORKFLOWS.md) §1.6 |
 | 24 | `evidence.source_record` | acquired external record and migration manifests | `dedupe_key` unique; supersession chain; quarantine flag |
@@ -414,9 +415,10 @@ outside this count and outside this inventory.
 | 30 | `platform.command_receipt` | command idempotency | `(operator_id, idempotency_key)`; digest mismatch → 409 |
 | 31 | `crm.address` | one structured postal location of one organization | typed `organization_id` NOT NULL; structured fields canonical; supersession chain; never edited or deleted; no billing / delivery / default flag |
 | 32 | `crm.opportunity_participant` | human roles on one opportunity | person and/or contact point; closed `role`; one current primary per role; no overlap for the same subject and role; person ↔ contact point validated |
+| 33 | `outbound.campaign_reply` | reply attribution for one frozen audience — the classifier's proposed class and the operator's recorded verdict | one row per `comms.message`; the reply never crosses campaigns (`(recipient, campaign)` FK); closed `proposed_class` and `operator_class`; the operator verdict triple is all-or-none; **never a writer of `campaign_recipient.state`** |
 
-Counts by schema: `crm` 16, `comms` 4, `outbound` 5, `evidence` 2,
-`catalog` 2, `procurement` 1, `platform` 2 — **32**.
+Counts by schema: `crm` 16, `comms` 4, `outbound` 6, `evidence` 2,
+`catalog` 2, `procurement` 1, `platform` 2 — **33**.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns

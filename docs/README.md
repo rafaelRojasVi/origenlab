@@ -23,7 +23,7 @@ Cloudflare Worker proxy, and a React operator dashboard. It works, and it is
 the authority for outbound safety today.
 
 **V2** (accepted; only the local schema foundation exists) is one Supabase PostgreSQL 17 project with seven
-private schemas and **32 application tables** — the current reviewed
+private schemas and **33 application tables** — the current reviewed
 foundation, not a permanent budget — one FastAPI command boundary, one Python
 worker, and one operator dashboard. SQLite and the PST archives become cold
 evidence. See [`ARCHITECTURE.md`](ARCHITECTURE.md).
@@ -40,7 +40,7 @@ built**, `STATUS.md` is the current measurement.
 |---|---|
 | V2 architecture decision | **Accepted** (2026-09-05), with binding amendments folded into these seven documents |
 | These seven documents | **Written** — Documentation Slice D0; amended by D0.2 (privileged-role semantics) and D0.3 (external CRM benchmark, [`ARCHITECTURE.md`](ARCHITECTURE.md) §13) |
-| V2 database, code, Supabase project | **Local foundation only** (Migration Slice 0, local portion, 2026-09-05): `supabase/roles.sql` and the migrations under `supabase/migrations/` create the four roles, the seven schemas and the 32 tables with constraints, grants, RLS and pgTAP proofs against a local PostgreSQL 17 container ([`OPERATIONS.md`](OPERATIONS.md) §4.1). **No hosted Supabase project, bucket, backup or advisor run exists**; no V2 code is deployed |
+| V2 database, code, Supabase project | **Local foundation only** (Migration Slice 0, local portion, 2026-09-05): `supabase/roles.sql` and the migrations under `supabase/migrations/` create the four roles, the seven schemas and the 33 tables with constraints, grants, RLS and pgTAP proofs against a local PostgreSQL 17 container ([`OPERATIONS.md`](OPERATIONS.md) §4.1). **No hosted Supabase project, bucket, backup or advisor run exists**; no V2 code is deployed |
 | V1 | **Running and authoritative** for every fact it owns today |
 | Legacy documentation tree | Present, **superseded but not deleted** — see [`MIGRATION.md`](MIGRATION.md) |
 
@@ -54,7 +54,7 @@ to the owner instead of restating the rule.
 
 | Owning document | Owns |
 |---|---|
-| [`DOMAIN.md`](DOMAIN.md) | Glossary; organization / unit / domain / person / affiliation / contact-point semantics; prospect vs lead vs signal vs opportunity vs quote; product / manufacturer / supplier; address and opportunity-participant semantics; identity, merge and evidence-promotion principles; **the 32-table inventory** |
+| [`DOMAIN.md`](DOMAIN.md) | Glossary; organization / unit / domain / person / affiliation / contact-point semantics; prospect vs lead vs signal vs opportunity vs quote; product / manufacturer / supplier; address and opportunity-participant semantics; identity, merge and evidence-promotion principles; **the 33-table inventory** |
 | [`DATA.md`](DATA.md) | Authority and trust matrix; evidence vs accepted truth; provenance and external identifiers; retention classes; active Postgres vs private Storage vs cold archive; Gmail message identity and ingestion checkpoints; Wave 1A counts and hashes; quarantine; rebuildable views; backup principles; **what will never be migrated** |
 | [`WORKFLOWS.md`](WORKFLOWS.md) | Every state machine and operator workflow: actor, command, preconditions, state change, durable evidence, failure behaviour; the purpose-scoped send predicate; the quotation party snapshot; the dispatch linearization limit |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Topology; FastAPI command boundary; dashboard / web / worker responsibilities; the seven schemas; one-writer rules; Supabase Auth and JWKS; database roles, grants, RLS, the closed `SECURITY DEFINER` list and the `service_role` boundary; private Storage; Queues and Cron; worker deployment; observability; backups of Storage; the ERD; the external CRM benchmark conclusions |
