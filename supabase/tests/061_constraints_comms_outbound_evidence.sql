@@ -4,7 +4,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 grant usage on schema extensions to origenlab_owner;
 set role origenlab_owner;
-select plan(95);
+select plan(98);
 
 insert into platform.operator (id, auth_user_id, email_norm, display_name, role, status)
 values ('00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000f1', 'admin@example.test', 'Admin', 'admin', 'active');
@@ -121,6 +121,21 @@ select throws_ok($$ insert into outbound.campaign_reply (campaign_id, campaign_r
 select throws_ok($$ update outbound.campaign_reply set proposed_class = 'quizas' where id = '00000000-0000-4000-8000-000000000240' $$, '23514', null, 'campaign_reply: the proposed class is closed');
 select throws_ok($$ update outbound.campaign_reply set operator_class = 'not_a_reply' where id = '00000000-0000-4000-8000-000000000240' $$, '23514', null, 'campaign_reply: the operator verdict triple is all-or-none');
 select lives_ok($$ update outbound.campaign_reply set operator_class = 'not_a_reply', classified_by_operator_id = '00000000-0000-4000-8000-0000000000a1', classified_at = now() where id = '00000000-0000-4000-8000-000000000240' $$, 'campaign_reply: the operator records a verdict over the machine proposal');
+-- An ambiguous reply is *kept* for review, not resolved and not dropped: the classifier may
+-- propose 'unclassified' and leave the operator triple NULL, and that row is valid.
+insert into comms.message (id, mailbox_id, provider_message_id, direction, internal_date)
+values ('00000000-0000-4000-8000-000000000112', '00000000-0000-4000-8000-000000000100', 'gm-reply-3', 'inbound', now());
+select lives_ok($$ insert into outbound.campaign_reply (campaign_id, campaign_recipient_id, message_id, received_at, proposed_class, proposed_by) values ('00000000-0000-4000-8000-000000000200', '00000000-0000-4000-8000-000000000210', '00000000-0000-4000-8000-000000000112', now(), 'unclassified', 'ingest_classifier') $$, 'campaign_reply: an ambiguous reply is preserved unclassified for operator review');
+select is(
+  (select count(*)::int from outbound.campaign_reply
+    where campaign_recipient_id = '00000000-0000-4000-8000-000000000210'),
+  2, 'campaign_reply: one recipient may reply more than once — uniqueness is per message, not per recipient');
+-- Idempotent re-ingestion is the message key's job alone; nothing else silently de-duplicates.
+select is(
+  (select count(*)::int from pg_constraint k join pg_class c on c.oid = k.conrelid
+     join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'outbound' and c.relname = 'campaign_reply' and k.contype = 'u'),
+  1, 'campaign_reply: exactly one unique constraint — the provider message key');
 
 -- evidence.source_record (#24), evidence.assertion (#25)
 insert into evidence.source_record (id, kind, dedupe_key, payload) values ('00000000-0000-4000-8000-000000000300', 'workbook_import', 'wb:1', '{"row": 1}');

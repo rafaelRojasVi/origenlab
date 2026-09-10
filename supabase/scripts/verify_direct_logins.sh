@@ -149,6 +149,11 @@ expect origenlab_api "$PW_API" "api: cannot write outbound.send_attempt (real-ro
 expect origenlab_api "$PW_API" "api: cannot write outbound.contact_control ($PROBE)" 42501 "insert into outbound.contact_control (scope, value_norm, kind, purpose, reason, source) select 'address', 'a@example.test', 'block', 'all', 'r', 'operator_command' where false"
 expect origenlab_api "$PW_API" "api: cannot write comms.mailbox (real-row INSERT)" 42501 "insert into comms.mailbox (address_norm) values ('m@example.test')"
 expect origenlab_api "$PW_API" "api: cannot DELETE crm.domain_event" 42501 "delete from crm.domain_event where false"
+# outbound.campaign_reply (#33): the API records the operator verdict and may never rewrite the
+# machine's proposal. The column grant is the boundary, so both halves are probed.
+expect origenlab_api "$PW_API" "api: records the operator verdict on outbound.campaign_reply ($PROBE)" ok "update outbound.campaign_reply set operator_class = 'not_a_reply' where false"
+expect origenlab_api "$PW_API" "api: cannot rewrite the classifier proposal on outbound.campaign_reply ($PROBE)" 42501 "update outbound.campaign_reply set proposed_class = 'auto_reply' where false"
+expect origenlab_api "$PW_API" "api: cannot DELETE outbound.campaign_reply" 42501 "delete from outbound.campaign_reply where false"
 
 echo "== direct logins: origenlab_worker =="
 expect origenlab_worker "$PW_WORKER" "worker: connects as itself" "ok:origenlab_worker|origenlab_worker" "select session_user || '|' || current_user"
@@ -160,6 +165,10 @@ expect origenlab_worker "$PW_WORKER" "worker: cannot write crm.organization (rea
 expect origenlab_worker "$PW_WORKER" "worker: cannot write crm.domain_event ($PROBE)" 42501 "insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, actor_kind) select 'task', gen_random_uuid(), 1, 'task.created', 1, '{}'::jsonb, 'worker' where false"
 expect origenlab_worker "$PW_WORKER" "worker: cannot write outbound.send_attempt (real-row INSERT)" 42501 "insert into outbound.send_attempt (purpose, mailbox_id, address_norm) values ('marketing', gen_random_uuid(), 'a@example.test')"
 expect origenlab_worker "$PW_WORKER" "worker: cannot write quote_revision.pdf_sha256 directly" 42501 "update crm.quote_revision set pdf_sha256 = null where false"
+# The worker proposes a reply class and may never decide one, nor delete its own proposal.
+expect origenlab_worker "$PW_WORKER" "worker: proposes an outbound.campaign_reply ($PROBE)" ok "insert into outbound.campaign_reply (campaign_id, campaign_recipient_id, message_id, received_at, proposed_class, proposed_by) select gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), now(), 'human_reply', 'ingest_classifier' where false"
+expect origenlab_worker "$PW_WORKER" "worker: cannot record an operator verdict on outbound.campaign_reply ($PROBE)" 42501 "update outbound.campaign_reply set operator_class = 'human_reply' where false"
+expect origenlab_worker "$PW_WORKER" "worker: cannot DELETE outbound.campaign_reply" 42501 "delete from outbound.campaign_reply where false"
 
 echo "== real rows: grant + policy admit a genuine write, and the row is rolled back =="
 expect origenlab_api "$PW_API" "api: really inserts a crm.organization row inside a transaction, then rolls it back" \
