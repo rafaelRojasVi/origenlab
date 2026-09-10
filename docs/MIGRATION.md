@@ -173,6 +173,31 @@ dump, a failed local-target discovery and unequal applied-migration lists each
 terminate the procedure non-zero with no PASS conclusion
 ([`OPERATIONS.md`](OPERATIONS.md) §4.1).
 
+**(impl)** checks 1-2 and 6-9 presuppose that the four roles exist on the hosted
+project in the first place, and nothing created them until now. `supabase/hosted_roles.sql`
+is the reviewed statement of that bootstrap and
+`supabase/scripts/hosted_role_bootstrap.sh` ([`OPERATIONS.md`](OPERATIONS.md) §4.3) is the
+dry-run tool that proves it may touch only `origenlab_owner`, `origenlab_migrator`,
+`origenlab_api` and `origenlab_worker`, assigns no password, and grants nothing to any
+Supabase-managed role. Like the audit, it **opens no database connection in any mode**: it
+statically analyses one committed file and prints it, and an operator applies it separately.
+It has not been applied to any project. The hosted file differs from the local
+`supabase/roles.sql` in exactly one respect — the local file grants the CLI's `postgres`
+login a SET-only membership in the owner so migrations can run in the container, and the
+hosted file grants no platform role anything, because hosted migrations connect as
+`origenlab_migrator`. `supabase/tests/100_hosted_role_bootstrap.sql` proves that membership
+closure holds in both directions.
+
+**Check 11 is decided per environment, and production is blocked.** Staging's durability
+posture is Pro daily backups at seven-day retention with point-in-time recovery deliberately
+**declined** — staging carries no durable human commercial truth and is rebuildable from
+migrations, so the decision is made rather than deferred. **Production has no recorded RPO or
+PITR decision, so production cutover remains blocked** ([`OPERATIONS.md`](OPERATIONS.md) §4.3).
+Staging's posture is not a precedent for production, which does hold durable human commercial
+truth; a production requirement is never weakened to obtain a passing staging audit, and the
+bootstrap tool refuses `--environment production` outright rather than emitting SQL under an
+undecided posture.
+
 Two things are **recorded rather than proven safe** and must be re-derived against
 the hosted role catalogue: the platform identities that hold `pg_read_all_data` or
 `BYPASSRLS` ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.5), and the fact that RLS

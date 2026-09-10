@@ -165,7 +165,18 @@ on every role it creates. `roles.sql` therefore grants `postgres` the same
 SET-only, non-inheriting membership in `origenlab_owner` that the migrator
 holds, so `set role origenlab_owner` inside a migration succeeds. `postgres`
 remains a control-plane identity: never a runtime role, never a login for any
-OrigenLab process. Because a non-superuser may not mention `SUPERUSER`,
+OrigenLab process. **On a hosted project that SET-only membership does
+not exist**: `supabase/hosted_roles.sql` grants nothing to any Supabase-managed
+role, because hosted migrations connect as `origenlab_migrator`, which holds
+the SET-only membership itself. What does remain on both is the creator's
+implicit `ADMIN OPTION`, which PostgreSQL 16+ records as an ordinary membership
+row for whichever login created the roles — administrative only, conferring no
+`SET ROLE` and inheriting nothing. Neither file grants it and neither could
+suppress it, so the boundary is stated as *no outside identity may `INHERIT` or
+`SET ROLE` to an OrigenLab role*. The platform-role boundary of
+[§6.4](#m-arch-service-role) is therefore tighter hosted than local, and the
+local exception is confined to the disposable container that needs it
+([`OPERATIONS.md`](OPERATIONS.md) §4.3). Because a non-superuser may not mention `SUPERUSER`,
 `BYPASSRLS` or `REPLICATION` in `ALTER ROLE`, `roles.sql` sets those attributes
 only at `CREATE ROLE` and asserts them fail-closed on every run.
 

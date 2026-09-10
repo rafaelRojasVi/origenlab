@@ -117,6 +117,7 @@ section "tracked hosted project identifiers"
 HOSTED_HOST_MATCHES="$(
   git grep -InE 'db\.[a-z]{20}\.supabase\.co' -- \
     ':!supabase/audit/tests/*' ':!supabase/audit/fixtures/*' ':!supabase/scripts/audit_failure_tests.sh' \
+    ':!supabase/scripts/hosted_bootstrap_failure_tests.sh' \
     ':!supabase/audit/olaudit/*' ':!docs/OPERATIONS.md' 2>/dev/null || true
 )"
 if [[ -n "$HOSTED_HOST_MATCHES" ]]; then
@@ -125,6 +126,29 @@ if [[ -n "$HOSTED_HOST_MATCHES" ]]; then
 else
   pass "no tracked hosted Supabase host name"
 fi
+
+section "no credential in a role bootstrap"
+# supabase/roles.sql and supabase/hosted_roles.sql create LOGIN roles. Neither may ever carry a
+# password: local credentials are throw-away ones set by verify_direct_logins.sh and cleared
+# fail-closed, and the hosted migrator credential is assigned out of band with a hidden secret
+# input (docs/OPERATIONS.md §4.3). supabase/audit/olaudit/bootstrap.py enforces this statically for
+# the hosted file; this is the independent check over tracked bytes, and it covers both files.
+BOOTSTRAP_CREDENTIALS=""
+for bootstrap_file in supabase/roles.sql supabase/hosted_roles.sql; do
+  [[ -f "$bootstrap_file" ]] || continue
+  # Comments are stripped first: both files legitimately explain in prose why no password appears.
+  match="$(sed 's/--.*$//' "$bootstrap_file" | grep -InEi 'password|encrypted[[:space:]]+|valid[[:space:]]+until' || true)"
+  if [[ -n "$match" ]]; then
+    BOOTSTRAP_CREDENTIALS+="$bootstrap_file: $match"$'\n'
+  fi
+done
+if [[ -n "$BOOTSTRAP_CREDENTIALS" ]]; then
+  fail "a role bootstrap file assigns or mentions a credential outside a comment"
+  printf '%s\n' "$BOOTSTRAP_CREDENTIALS" >&2
+else
+  pass "no credential in supabase/roles.sql or supabase/hosted_roles.sql"
+fi
+
 
 section "tracked client collateral"
 while IFS= read -r path; do

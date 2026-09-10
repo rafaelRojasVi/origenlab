@@ -55,8 +55,21 @@ jobs:
           bash -n supabase/scripts/*.sh supabase/scripts/lib/*.sh
           scripts/security/check-public-repo-hygiene.sh
 
-      - name: Run Slice 0 audit unit tests
+      - name: Run Slice 0 audit and hosted-bootstrap unit tests
         run: python3 -m unittest discover -s supabase/audit/tests -t supabase/audit
+
+      # Neither step needs Docker or a running stack: the bootstrap tool opens no database
+      # connection in any mode, so both run before the database is started. The dry run's stdout is
+      # compared with the committed file here as well as in the failure suite, because a CI job that
+      # emitted anything but those bytes would be the first sign the tool had grown a generator.
+      - name: Prove the hosted role bootstrap dry run emits exactly the committed file
+        run: |
+          set -euo pipefail
+          supabase/scripts/hosted_role_bootstrap.sh --environment staging --dry-run > "$RUNNER_TEMP/plan.sql"
+          cmp supabase/hosted_roles.sql "$RUNNER_TEMP/plan.sql"
+
+      - name: Prove the hosted role bootstrap fails closed
+        run: supabase/scripts/hosted_bootstrap_failure_tests.sh
 
       - name: Start local database
         run: supabase start
@@ -66,6 +79,12 @@ jobs:
 
       - name: Run pgTAP database tests
         run: supabase test db --local
+
+      # Static analysis cannot prove the hosted bootstrap SQL executes. This applies it to the
+      # disposable local database inside one always-rolled-back transaction, under hosted-like
+      # conditions, and proves the catalogue is unchanged afterwards.
+      - name: Rehearse the hosted role bootstrap against the local database
+        run: supabase/scripts/hosted_bootstrap_rehearsal.sh
 
       - name: Prove runtime-role behavior with direct logins
         run: supabase/scripts/verify_direct_logins.sh
