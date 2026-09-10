@@ -539,6 +539,30 @@ never connects.
 | `staging` | **Pro plan daily backups, seven-day retention. PITR deliberately declined** — staging carries no durable human commercial truth and is rebuildable from migrations, so the decision is *declined*, not *unmade* | **approved** |
 | `production` | **No RPO or PITR decision has been recorded** | **blocked** |
 
+#### The staging provisioning posture
+
+The decided shape of the staging project for this phase, recorded here so the bootstrap is
+reviewed against a known environment rather than an assumed one. **None of it has been
+provisioned**: no project has been created, adopted or billed from this repository, and
+nothing here initiates a plan, compute size, address or backup setting — see
+[`STATUS.md`](STATUS.md) §2.5.
+
+| Item | Decision for this phase |
+|---|---|
+| Plan | **Pro** |
+| Compute | **Micro** |
+| Address | **Dedicated IPv4** |
+| Region | **`sa-east-1`** |
+| Spend | **Spend cap on** |
+| Backups | **Daily, seven-day retention** |
+| PITR | **Declined** — see the table above |
+| Credential storage | **The operator's password manager**, and nowhere else; the `origenlab_migrator` password reaches the audit only through the environment variable its git-ignored target file names |
+
+The region, compute size, address type and spend cap are provisioning choices with no
+representation in this repository's code: nothing reads them, no check enforces them, and
+changing one changes nothing here. They are recorded as the decision, and the project's own
+settings remain the only authority on what was actually provisioned.
+
 **Production is blocked until its recovery-point objective and its PITR requirement are
 decided explicitly and recorded here in a reviewed change.** Staging's posture is not a
 precedent for it: production holds durable human commercial truth. A production requirement
@@ -591,8 +615,14 @@ which is what makes the local/hosted divergence real rather than stylistic. The 
 not interchangeable.
 
 The failure-injection suite plants a malformed bootstrap file over
-`supabase/hosted_roles.sql`, runs the real entry point, restores the file from git, and
-proves the tracked file is byte-identical to `HEAD` afterwards. Every scenario asserts the
+`supabase/hosted_roles.sql`, runs the real entry point, and restores the file **from a
+pristine byte copy taken before the first plant — never with `git checkout`**. That
+distinction is deliberate: a git restore silently does nothing when the file is untracked,
+which would leave a planted credential in the working tree for someone to commit by
+accident. Every restore is verified with `cmp`, an unconditional trap repeats it on any exit
+path including an interrupt, and the suite ends by proving the file is byte-identical to its
+own pre-suite bytes — not to `HEAD`, so the proof holds on a tree that already carries
+unrelated modifications. Every scenario asserts the
 same three things: a non-zero exit, **an empty stdout** — a refusal emits no SQL at all — and
 a diagnostic naming the reason. It needs no running stack and no Docker; `psql`, `supabase`
 and `pg_dump` are shimmed onto `PATH` only so the suite can prove none of them was ever

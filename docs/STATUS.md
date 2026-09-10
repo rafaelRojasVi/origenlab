@@ -128,6 +128,7 @@ disposable local database, inside a rollback-only harness.
 | pgTAP | 19 assertions in `supabase/tests/100_hosted_role_bootstrap.sql` |
 | Applications performed | **zero.** The bootstrap has never been applied to any project, hosted or otherwise, outside the rolled-back local rehearsal |
 | Passwords assigned | **zero.** The file cannot express one; the migrator credential is a separate operator action with a hidden secret input |
+| Staging provisioning posture | **decided, not provisioned** — Pro plan, Micro compute, dedicated IPv4, `sa-east-1`, spend cap on, daily backups at seven-day retention, PITR declined, credential in the operator's password manager ([`OPERATIONS.md`](OPERATIONS.md) §4.3). No project has been created, adopted or billed from this repository — §2.5 |
 
 ### 2.5 The `origenlab-v2` hosted project — known, not adopted
 
