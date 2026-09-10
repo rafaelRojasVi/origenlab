@@ -430,6 +430,175 @@ link state; every reserved address class is refused; no `sslmode` below `verify-
 accepted; a poisoned report fails `--verify-report`; and the read-only transaction really
 refuses a write.
 
+<a id="m-ops-hosted-bootstrap"></a>
+### 4.3 The hosted role bootstrap (implemented — dry run only, no connection)
+
+`supabase/hosted_roles.sql` is the hosted counterpart of the local `roles.sql` of
+[§4.1](#4-migrations): the reviewed statement of the four OrigenLab roles on a hosted
+Supabase project. `supabase/scripts/hosted_role_bootstrap.sh` is the tool that proves the
+file is what it claims to be and prints it.
+
+```bash
+supabase/scripts/hosted_role_bootstrap.sh --environment staging --dry-run
+```
+
+**The tool opens no database connection, in any mode.** There is no apply mode, no host
+argument, no connection string, no target file and no credential input — and that is not a
+gap to be closed later by adding a flag. The reason the bootstrap is safe to review is that
+the artefact reviewed and the artefact applied are the same committed bytes; a tool that
+could also apply them would need a target, a credential and a connection, and this slice
+deliberately holds none of the three. `stdout` is the committed file byte for byte, with no
+banner, timestamp or generated comment, so `--dry-run > plan.sql` and a review of
+`supabase/hosted_roles.sql` cannot disagree. The plan summary goes to `stderr`.
+
+#### What the bootstrap may touch, and what proves it
+
+The file may create and converge exactly four roles — `origenlab_owner`,
+`origenlab_migrator`, `origenlab_api`, `origenlab_worker` — and nothing else.
+`supabase/audit/olaudit/bootstrap.py` proves that statically, before the file is printed,
+piped or shown, and without any database. It is the write-side counterpart of
+`olaudit.sqlbank` and shares no code with it, so a relaxation in either cannot widen the
+other. It refuses the whole file on any of:
+
+- **a password.** The token `password` — and `encrypted`, and `valid until` — may not appear
+  in the file's code. Assigning a credential is not expressible here at all;
+- **a Supabase-managed or PostgreSQL predefined role named by any statement.** `postgres`,
+  `service_role`, `anon`, `authenticated`, `supabase_admin`, `pg_read_all_data` and the rest
+  can never be created, altered, granted a membership, or granted anything;
+- **a fifth role**, or a missing one;
+- **a second membership**, or the owner membership carrying anything but
+  `INHERIT FALSE, SET TRUE, ADMIN FALSE`;
+- **a positive `SUPERUSER`, `BYPASSRLS`, `REPLICATION`, `CREATEDB` or `CREATEROLE`
+  attribute**, or a role declared both a way and its negation, which would make the applied
+  result depend on statement order;
+- **any DDL noun but `role`**, any DML verb, `DROP`, dynamic execution, a psql meta-command
+  or named dollar quoting;
+- **a statement shape the analyser does not recognise.** Every occurrence of `create`,
+  `alter`, `grant` and `revoke` in the file's code must be accounted for by a matched
+  statement. This is what makes the analysis complete rather than merely suggestive: a
+  statement the parser does not understand refuses the file instead of being skipped.
+
+#### The role and membership matrix
+
+| Role | Login | Inherit | Superuser | BypassRLS | Replication | Membership |
+|---|---|---|---|---|---|---|
+| `origenlab_owner` | **NOLOGIN** | INHERIT | NO | NO | NO | member of nothing; owns every application object |
+| `origenlab_migrator` | LOGIN | **NOINHERIT** | NO | NO | NO | `origenlab_owner`, `SET` only — `INHERIT FALSE, SET TRUE, ADMIN FALSE` |
+| `origenlab_api` | LOGIN | INHERIT | NO | NO | NO | **member of no role** |
+| `origenlab_worker` | LOGIN | INHERIT | NO | NO | NO | **member of no role** |
+
+No password is assigned to any of them by the bootstrap. `origenlab_api` and
+`origenlab_worker` get no direct-login credential in this slice at all.
+
+#### The one deliberate local/hosted divergence
+
+`supabase/roles.sql` additionally grants the CLI's `postgres` login the same SET-only,
+non-inheriting membership in `origenlab_owner`, because the Supabase CLI applies local
+migrations as `postgres` against a disposable container. **`supabase/hosted_roles.sql`
+grants nothing to any platform role.** On a hosted project, migrations connect as
+`origenlab_migrator`, which holds that membership itself, so the bootstrap does not depend
+on altering the platform `postgres` role and never makes it an owner of anything.
+
+**A creator-admin row is a platform fact, not a grant.** PostgreSQL 16 and later record the
+role creator's implicit `ADMIN OPTION` as an ordinary `pg_auth_members` row, so the login that
+applies either bootstrap file holds one such row on **all four** roles — `admin_option` true,
+`set_option` and `inherit_option` both false. It is administrative only: it confers no
+`SET ROLE` and inherits nothing. Neither file grants it and neither could suppress it, so the
+hosted file's fail-closed assertion is stated in terms of the two options that actually confer
+privilege — **no identity outside the OrigenLab set may `INHERIT` or `SET ROLE` to an OrigenLab
+role** — rather than as the false claim that no membership row exists. An assertion written the
+other way would have refused itself the first time an operator applied it.
+
+`supabase/tests/100_hosted_role_bootstrap.sql` proves membership closure in both directions
+against that reality: no OrigenLab role is a member of any platform or predefined role, no
+outside identity inherits or may assume the migrator or either runtime role, the four
+creator-admin rows carry exactly `ADMIN`/no `SET`/no `INHERIT`, and the local `postgres`
+`SET`-on-owner row — the one row `supabase/hosted_roles.sql` does not create — is pinned to
+exactly its permitted options.
+
+#### The environment classification
+
+The run requires `--environment`, and the argument is a **classification, never an address**.
+Requiring an explicit target and forbidding target disclosure are not in tension once the
+required argument identifies which environment's rules apply and identifies no endpoint: a
+short, non-secret, closed-set word, validated against the allowlist below. Anything that is
+not one — a host name, a project reference, a connection string — is refused, and **is not
+echoed back in the refusal**.
+
+The classification never reaches the emitted SQL, which is byte-identical whichever
+environment it is reviewed for; `bootstrap.assert_environment_absent` proves that after the
+fact rather than assuming it. **The plan summary on `stderr` does record it**, and this
+sentence is the documentation requirement that permits it: an operator reviewing a plan must
+be able to see which environment's rules were applied, and the classification is not a
+secret. Nothing else about the target appears anywhere — this repository stores no project
+reference, organisation identifier or host name, and the tool never learns one because it
+never connects.
+
+| Classification | Durability posture | State |
+|---|---|---|
+| `staging` | **Pro plan daily backups, seven-day retention. PITR deliberately declined** — staging carries no durable human commercial truth and is rebuildable from migrations, so the decision is *declined*, not *unmade* | **approved** |
+| `production` | **No RPO or PITR decision has been recorded** | **blocked** |
+
+**Production is blocked until its recovery-point objective and its PITR requirement are
+decided explicitly and recorded here in a reviewed change.** Staging's posture is not a
+precedent for it: production holds durable human commercial truth. A production requirement
+is never weakened to obtain a passing staging audit, and the tool refuses `--environment
+production` outright rather than emitting SQL under an undecided posture.
+
+#### Applying it, and the credential
+
+Applying the bootstrap and assigning the migrator's password are **two separate operator
+actions**, neither performed by this repository:
+
+1. review the dry-run output, then apply the reviewed file to the project with `psql` as the
+   project's `postgres` login. That login is not a superuser on Supabase; it holds
+   `CREATEROLE` and receives `ADMIN OPTION` on every role it creates, which is why the file
+   sets `NOSUPERUSER` / `NOBYPASSRLS` / `NOREPLICATION` only at `CREATE ROLE` and asserts
+   them fail-closed on every run;
+2. **assign the `origenlab_migrator` password separately, with a hidden secret input** —
+   never on a command line, never in a file in this repository, never in the bootstrap. The
+   credential then lives only in the operator's secret store, and is supplied to the Slice 0
+   audit ([§4.2](#m-ops-slice0-audit)) through the environment variable its target file names.
+
+`origenlab_api` and `origenlab_worker` receive no direct-login password during this slice.
+
+#### Tests
+
+```bash
+python3 -m unittest discover -s supabase/audit/tests -t supabase/audit
+supabase/scripts/hosted_bootstrap_failure_tests.sh
+supabase/scripts/hosted_bootstrap_rehearsal.sh   # needs the local stack; see below
+supabase test db --local        # includes supabase/tests/100_hosted_role_bootstrap.sql
+```
+
+**The rehearsal is the one thing that proves the file runs.** Static analysis proves what
+`supabase/hosted_roles.sql` may touch; it cannot prove the SQL is valid, that the `DO` blocks
+execute, or that the fail-closed assertions are right about the catalogue — and a wrong
+assertion there is a file that refuses itself on the hosted project, which is the worst place
+to find out. `supabase/scripts/hosted_bootstrap_rehearsal.sh` applies it to the **disposable
+local database only**, inside one explicit transaction that is **always rolled back**, resolving
+its target through `supabase/scripts/lib/local_target.sh` like every other script in
+[§4.1](#4-migrations) so it cannot be pointed at a hosted project. It takes no arguments.
+
+The transaction first revokes the local-only `postgres` `SET`-on-owner grant to put the session
+in hosted-like shape — `postgres` may revoke only what it granted, so the creator-admin row
+survives, which is exactly a fresh hosted project's shape. It then proves the file executes,
+that a second application in the same transaction still succeeds, and that the role and
+membership catalogue is byte-identical afterwards. Two negative halves follow: a platform
+identity given `SET ROLE` on a runtime role makes the bootstrap refuse, and the hosted file
+applied to the local database **as-is** refuses on the very grant `supabase/roles.sql` adds —
+which is what makes the local/hosted divergence real rather than stylistic. The two files are
+not interchangeable.
+
+The failure-injection suite plants a malformed bootstrap file over
+`supabase/hosted_roles.sql`, runs the real entry point, restores the file from git, and
+proves the tracked file is byte-identical to `HEAD` afterwards. Every scenario asserts the
+same three things: a non-zero exit, **an empty stdout** — a refusal emits no SQL at all — and
+a diagnostic naming the reason. It needs no running stack and no Docker; `psql`, `supabase`
+and `pg_dump` are shimmed onto `PATH` only so the suite can prove none of them was ever
+invoked.
+
+
 ## 5. Send control
 
 `outbound.send_control` is one row with two independent flags:

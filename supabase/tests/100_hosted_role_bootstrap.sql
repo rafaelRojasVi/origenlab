@@ -32,15 +32,15 @@
 -- as origenlab_migrator, which holds that SET-only membership itself.
 -- ---------------------------------------------------------------------------------------------
 --
--- Not proven here: that no OrigenLab role carries a password. `pg_authid.rolpassword` is readable
--- only by a superuser and the CLI's login is not one, so the catalogue cannot answer it. The
--- obligation is discharged statically instead — supabase/audit/olaudit/bootstrap.py refuses the
--- token `password` anywhere in the bootstrap file's code, scripts/security/check-public-repo-hygiene.sh
--- refuses it in either bootstrap file's tracked bytes, and supabase/scripts/verify_direct_logins.sh
--- owns the local throw-away credentials and clears them fail-closed.
+-- The credential obligation is proven here too, from pg_authid: neither bootstrap file assigns a
+-- password, so no OrigenLab role may carry one at rest. Three independent boundaries back it up —
+-- supabase/audit/olaudit/bootstrap.py refuses the token `password` anywhere in the hosted file's
+-- code, scripts/security/check-public-repo-hygiene.sh refuses it in either file's tracked bytes,
+-- and supabase/scripts/verify_direct_logins.sh owns the local throw-away credentials and clears
+-- them fail-closed. This assertion is the catalogue's own answer, independent of all three.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(18);
+select plan(19);
 
 -- ------------------------------------------------------------------------------------------------
 -- The four roles, and only the four.
@@ -177,6 +177,14 @@ select is(
     or pg_has_role('origenlab_worker', 'origenlab_owner', 'MEMBER'),
   false,
   'neither runtime role can assume or inherit origenlab_owner');
+
+-- No OrigenLab role carries a password. Neither bootstrap file can assign one; assigning the
+-- migrator's credential on a hosted project is a separate operator action with a hidden secret
+-- input, and the two runtime roles get none at all in this slice (docs/OPERATIONS.md §4.3).
+select is(
+  (select count(*)::int from pg_authid where rolname like 'origenlab\_%' and rolpassword is not null),
+  0,
+  'no OrigenLab role carries a password: neither supabase/roles.sql nor supabase/hosted_roles.sql assigns one');
 
 select * from finish();
 rollback;
