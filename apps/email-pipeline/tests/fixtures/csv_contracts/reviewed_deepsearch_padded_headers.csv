@@ -1,2 +1,2 @@
  lead id , ORG NAME , resolved domain , resolved contact email , resolved contact name , contact source url , source type , confidence , notes
-101,Instituto Bueno,ispch.cl,oficinadepartes@ispch.cl,,https://www.ispch.gob.cl/oficina-de-partes/,website,high,
+101,Instituto Bueno,instituto.example.invalid,oficina.partes@instituto.example.invalid,,https://www.instituto.example.invalid/oficina-de-partes/,website,high,

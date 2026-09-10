@@ -77,9 +77,10 @@ _ISP_BUYER_RE = re.compile(
 )
 
 ISP_GMAIL_CAUTION_NOTE = (
-    "ISP: high-fit equipment but NOT clean for cold outreach. Prior Gmail — "
-    "scalfin@ispch.cl (presentation sent); infomedicamentos@ispch.cl (bounced); "
-    "oficinadepartes@ispch.cl (presentation sent). Award/adjudication watch only; not send-ready."
+    "ISP: high-fit equipment but NOT clean for cold outreach. Prior Gmail contact "
+    "with 3 institutional inboxes (2 presentations sent, 1 bounced); see the contact "
+    "history in the CRM rather than here — this repository is public and does not "
+    "store third-party contact addresses. Award/adjudication watch only; not send-ready."
 )
 
 

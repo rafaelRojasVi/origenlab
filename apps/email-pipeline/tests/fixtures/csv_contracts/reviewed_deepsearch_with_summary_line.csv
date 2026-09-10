@@ -1,3 +1,3 @@
 lead_id,org_name,resolved_domain,resolved_contact_email,resolved_contact_name,contact_source_url,source_type,confidence,notes
-101,Instituto Bueno,ispch.cl,oficinadepartes@ispch.cl,,https://www.ispch.gob.cl/oficina-de-partes/,website,high,
+101,Instituto Bueno,instituto.example.invalid,oficina.partes@instituto.example.invalid,,https://www.instituto.example.invalid/oficina-de-partes/,website,high,
 rows_found=1

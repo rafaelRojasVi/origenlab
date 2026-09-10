@@ -1,6 +1,8 @@
 {
   "schema_version": 1,
   "payload_file": "dr50_payload_v1.json",
-  "expected_sha256": "62666d962b966587f240d92344e804ffd6202b8e720ef5820838a99bf0bbf3e4",
-  "row_count": 23
+  "expected_sha256": "59b10ae843f72fad8aa76ce8c5c8e82371b33f21ba3036ae746b6d3d634afa36",
+  "row_count": 23,
+  "content": "synthetic",
+  "content_note": "Contact fields (names, emails, phones) are synthetic placeholders on reserved example.invalid domains. id_lead / id_licitacion / roles / dr_* are the original public tender identifiers. Real contact data was removed for public-repo privacy."
 }

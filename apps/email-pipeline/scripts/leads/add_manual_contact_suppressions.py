@@ -8,7 +8,7 @@ Example::
 
   uv run scripts/leads/add_manual_contact_suppressions.py \\
     --db ~/data/origenlab-email/sqlite/emails.sqlite \\
-    j.ojeda.ro@gmail.com \\
+    persona.ejemplo@example.invalid \\
     --note "Never contact (family)"
 """
 
