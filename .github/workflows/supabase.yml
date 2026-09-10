@@ -13,6 +13,7 @@ on:
       - "docs/MIGRATION.md"
       - "docs/OPERATIONS.md"
       - "docs/README.md"
+      - "scripts/security/check-public-repo-hygiene.sh"
       - ".github/workflows/supabase.yml"
   pull_request:
     paths:
@@ -22,6 +23,7 @@ on:
       - "docs/MIGRATION.md"
       - "docs/OPERATIONS.md"
       - "docs/README.md"
+      - "scripts/security/check-public-repo-hygiene.sh"
       - ".github/workflows/supabase.yml"
   workflow_dispatch:
 
@@ -49,8 +51,12 @@ jobs:
           supabase --version
           docker --version
           psql --version
+          python3 --version
           bash -n supabase/scripts/*.sh supabase/scripts/lib/*.sh
           scripts/security/check-public-repo-hygiene.sh
+
+      - name: Run Slice 0 audit unit tests
+        run: python3 -m unittest discover -s supabase/audit/tests -t supabase/audit
 
       - name: Start local database
         run: supabase start
@@ -66,6 +72,32 @@ jobs:
 
       - name: Prove evidence tooling fails closed
         run: supabase/scripts/evidence_tool_failure_tests.sh
+
+      - name: Prove the Slice 0 audit fails closed
+        run: supabase/scripts/audit_failure_tests.sh
+
+      - name: Run the Slice 0 audit against the local stack
+        run: supabase/scripts/slice0_audit.sh --mode local
+
+      # The report is re-read from the bytes that would be published, in a separate process, and
+      # the upload step below runs only if this one succeeds. A report that fails the credential
+      # and project-reference leak assertions is never uploaded, and neither is any raw child
+      # output, temporary working directory or failure capture -- only these two sanitised files.
+      - name: Prove the audit report carries no credential or project reference
+        run: |
+          set -euo pipefail
+          supabase/scripts/slice0_audit.sh --verify-report supabase/.audit/reports/slice0-audit-local.json
+          supabase/scripts/slice0_audit.sh --verify-report supabase/.audit/reports/slice0-audit-local.md
+
+      - name: Upload the sanitised Slice 0 audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: slice0-audit-local-report
+          path: |
+            supabase/.audit/reports/slice0-audit-local.json
+            supabase/.audit/reports/slice0-audit-local.md
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Run database linter and advisors
         run: |
