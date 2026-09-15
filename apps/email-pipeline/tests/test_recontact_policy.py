@@ -9,6 +9,7 @@ from pathlib import Path
 
 from origenlab_email_pipeline.candidate_export_gate import (
     REASON_ACTIVE_COMMERCIAL_ENGAGEMENT,
+    REASON_COMMERCIAL_HOLD_UNAVAILABLE,
     REASON_OUTREACH_SNOOZED,
     REASON_SENT_HISTORY,
     REASON_SUPPRESSION,
@@ -16,6 +17,7 @@ from origenlab_email_pipeline.candidate_export_gate import (
     evaluate_export_eligibility,
 )
 from origenlab_email_pipeline.marketing_export_context import (
+    active_commercial_hold_projection_ready,
     load_active_commercial_hold_norms,
 )
 
@@ -45,6 +47,20 @@ def test_default_gate_still_blocks_sent_history() -> None:
     assert result.reasons == (REASON_SENT_HISTORY,)
 
 
+def test_repeat_mode_fails_closed_without_commercial_snapshot() -> None:
+    result = evaluate_export_eligibility(
+        contact_email="old@lab.cl",
+        institution_name="Lab",
+        ctx=_ctx(
+            sent_recipient_norms=frozenset({"old@lab.cl"}),
+            allow_prior_outreach_history=True,
+            commercial_hold_ready=False,
+        ),
+    )
+    assert result.eligible is False
+    assert result.reasons == (REASON_COMMERCIAL_HOLD_UNAVAILABLE,)
+
+
 def test_repeat_mode_allows_sent_contacted_and_replied_history() -> None:
     for outreach_state in (None, "contacted", "replied"):
         states = {} if outreach_state is None else {"old@lab.cl": outreach_state}
@@ -55,6 +71,7 @@ def test_repeat_mode_allows_sent_contacted_and_replied_history() -> None:
                 sent_recipient_norms=frozenset({"old@lab.cl"}),
                 outreach_state_by_email=states,
                 allow_prior_outreach_history=True,
+                commercial_hold_ready=True,
             ),
         )
         assert result.eligible is True
@@ -69,6 +86,7 @@ def test_repeat_mode_keeps_hard_blocks() -> None:
             sent_recipient_norms=frozenset({"bad@lab.cl"}),
             suppressed_norms=frozenset({"bad@lab.cl"}),
             allow_prior_outreach_history=True,
+            commercial_hold_ready=True,
         ),
     )
     assert suppressed.eligible is False
@@ -80,6 +98,7 @@ def test_repeat_mode_keeps_hard_blocks() -> None:
         ctx=_ctx(
             outreach_state_by_email={"later@lab.cl": "snoozed"},
             allow_prior_outreach_history=True,
+            commercial_hold_ready=True,
         ),
     )
     assert snoozed.eligible is False
@@ -91,30 +110,43 @@ def test_repeat_mode_keeps_hard_blocks() -> None:
         ctx=_ctx(
             commercial_hold_norms=frozenset({"quote@lab.cl"}),
             allow_prior_outreach_history=True,
+            commercial_hold_ready=True,
         ),
     )
     assert commercial.eligible is False
     assert commercial.reasons == (REASON_ACTIVE_COMMERCIAL_ENGAGEMENT,)
 
 
-def test_load_active_commercial_hold_norms_from_sqlite() -> None:
+def test_load_active_commercial_hold_norms_and_ready_marker() -> None:
     conn = sqlite3.connect(":memory:")
-    conn.execute(
+    conn.executescript(
         """
         CREATE TABLE outbound_commercial_hold (
           email_norm TEXT PRIMARY KEY,
           reasons_json TEXT NOT NULL,
           source_count INTEGER NOT NULL,
           refreshed_at TEXT NOT NULL
-        )
+        );
+        CREATE TABLE outbound_commercial_hold_meta (
+          singleton_id INTEGER PRIMARY KEY,
+          refreshed_at TEXT NOT NULL,
+          active_source_rows INTEGER NOT NULL,
+          held_unique_emails INTEGER NOT NULL,
+          unresolved_active_rows_without_email INTEGER NOT NULL
+        );
         """
     )
     conn.execute(
         "INSERT INTO outbound_commercial_hold VALUES (?,?,?,?)",
         ("Buyer@Lab.CL", "[]", 1, "2026-09-15T00:00:00Z"),
     )
+    conn.execute(
+        "INSERT INTO outbound_commercial_hold_meta VALUES (?,?,?,?,?)",
+        (1, "2026-09-15T00:00:00Z", 1, 1, 0),
+    )
     try:
         assert load_active_commercial_hold_norms(conn) == frozenset({"buyer@lab.cl"})
+        assert active_commercial_hold_projection_ready(conn) is True
     finally:
         conn.close()
 
@@ -166,6 +198,19 @@ def _seed_processor_db(path: Path) -> None:
           category_context TEXT,
           PRIMARY KEY (supplier_id, batch_id)
         );
+        CREATE TABLE outbound_commercial_hold (
+          email_norm TEXT PRIMARY KEY,
+          reasons_json TEXT NOT NULL,
+          source_count INTEGER NOT NULL,
+          refreshed_at TEXT NOT NULL
+        );
+        CREATE TABLE outbound_commercial_hold_meta (
+          singleton_id INTEGER PRIMARY KEY,
+          refreshed_at TEXT NOT NULL,
+          active_source_rows INTEGER NOT NULL,
+          held_unique_emails INTEGER NOT NULL,
+          unresolved_active_rows_without_email INTEGER NOT NULL
+        );
         """
     )
     conn.execute(
@@ -191,6 +236,10 @@ def _seed_processor_db(path: Path) -> None:
             "pytest",
             None,
         ),
+    )
+    conn.execute(
+        "INSERT INTO outbound_commercial_hold_meta VALUES (?,?,?,?,?)",
+        (1, "2026-09-15T00:00:00Z", 0, 0, 0),
     )
     conn.commit()
     conn.close()
