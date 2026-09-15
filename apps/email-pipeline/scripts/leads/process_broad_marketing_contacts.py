@@ -2,7 +2,11 @@
 """Process reviewed broad marketing contacts (DeepSearch volume lane).
 
 Validates ``reviewed_marketing_contacts.csv``, dedupes, and splits against SQLite gate context
-and ``do_not_repeat_master.csv``. Does not send mail or import into lead_contact_research.
+and, by default, ``do_not_repeat_master.csv``. ``--allow-prior-outreach`` is the explicit
+repeat-campaign mode: prior Sent/contacted/replied history is informational, while hard
+suppression, snoozed state, internal/supplier/noise checks still apply.
+
+Does not send mail or import into lead_contact_research.
 """
 
 from __future__ import annotations
@@ -72,6 +76,15 @@ def main(argv: list[str] | None = None) -> int:
         default="broad_marketing",
         help="Written to send_ready_marketing.variant_type",
     )
+    ap.add_argument(
+        "--allow-prior-outreach",
+        action="store_true",
+        help=(
+            "Repeat-campaign mode: do not hard-block solely because an address appears in "
+            "Gmail Sent, historical contacted/replied state, or the legacy do-not-repeat master. "
+            "Suppression, snoozed, internal/supplier/noise and quality checks still apply."
+        ),
+    )
     args = ap.parse_args(argv)
 
     workspace = Path(args.workspace)
@@ -101,7 +114,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Missing required columns: {', '.join(missing)}", file=sys.stderr)
         return 2
 
-    master_set = load_master_norms_from_csv(master_path)
+    # The legacy master intentionally merges all historical sends. That is useful
+    # audit memory, but in an explicitly-declared repeat campaign it must not turn
+    # "emailed once" into a permanent unsubscribe. Hard blockers are still loaded
+    # directly from SQLite into GateContext below.
+    master_set = set() if args.allow_prior_outreach else load_master_norms_from_csv(master_path)
 
     gmail_user = resolve_outbound_gmail_user(settings, explicit=args.gmail_user)
     sent_folders = resolve_outbound_sent_folders(args.sent_folder)
@@ -109,7 +126,10 @@ def main(argv: list[str] | None = None) -> int:
     conn = _connect_readonly(db_path)
     try:
         ctx = gate_context_for_lead_master_export(
-            conn, gmail_user=gmail_user, sent_folders=sent_folders
+            conn,
+            gmail_user=gmail_user,
+            sent_folders=sent_folders,
+            allow_prior_outreach_history=bool(args.allow_prior_outreach),
         )
     finally:
         conn.close()
@@ -148,11 +168,19 @@ def main(argv: list[str] | None = None) -> int:
         out_send=out_send,
         out_summary=out_summary,
     )
+    summary["policy"] = {
+        "allow_prior_outreach_history": bool(args.allow_prior_outreach),
+        "do_not_repeat_master_enforced": not bool(args.allow_prior_outreach),
+        "hard_suppression_still_enforced": True,
+        "snoozed_still_enforced": True,
+    }
 
     out_summary.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     print("Broad marketing contacts")
     print(json.dumps(summary["counts"], indent=2))
+    print("Policy:")
+    print(json.dumps(summary["policy"], indent=2))
     print(f"Wrote: {out_safe}")
     print(f"Wrote: {out_blocked}")
     print(f"Wrote: {out_review}")
