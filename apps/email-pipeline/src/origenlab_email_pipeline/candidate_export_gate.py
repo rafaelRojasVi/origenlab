@@ -1,8 +1,8 @@
 """Shared pre-export eligibility for cold outreach (lead path + contact_master path).
 
 Single policy implementation: operator CLIs and read modules must not duplicate these rules.
-Reuses email suppression, optional domain suppression (``contact_domain_suppression``),
-Sent parse, outreach state, supplier_master, and noise heuristics.
+Reuses email/domain suppression, active-commercial holds, optional prior-outreach history,
+supplier_master, and noise heuristics.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ REASON_INVALID_EMAIL = "invalid_email"
 REASON_INTERNAL_DOMAIN = "internal_domain"
 REASON_SUPPRESSION = "suppression"
 REASON_DOMAIN_SUPPRESSION = "domain_suppression"
+REASON_ACTIVE_COMMERCIAL_ENGAGEMENT = "active_commercial_engagement"
 REASON_SENT_HISTORY = "sent_history"
 REASON_OUTREACH_CONTACTED = "outreach_contacted"
 REASON_OUTREACH_REPLIED = "outreach_replied"
@@ -43,8 +44,8 @@ class GateContext:
     ``allow_prior_outreach_history`` is deliberately narrow: when true, a
     previous marketing send (Gmail Sent) and historical ``contacted``/``replied``
     outreach state are informational rather than permanent blockers. Explicit
-    suppression, domain suppression, ``snoozed`` state, internal/supplier/noise
-    checks, and any campaign-layer manual hold/inactive status still block.
+    suppression, domain suppression, active-commercial holds, ``snoozed`` state,
+    internal/supplier/noise checks, and campaign-layer manual hold/inactive still block.
     """
 
     sent_recipient_norms: frozenset[str]
@@ -54,6 +55,8 @@ class GateContext:
     blocked_domains: frozenset[str]
     #: Registrable domains (and subdomains) blocked via ``contact_domain_suppression``.
     suppressed_contact_domains: frozenset[str] = frozenset()
+    #: Derived from durable CRM active opportunities / active quotations.
+    commercial_hold_norms: frozenset[str] = frozenset()
     skip_noise_filter: bool = False
     skip_supplier_domain_filter: bool = False
     #: Tighter ``marketing_contact_noise`` rules for ``contact_master`` mail-graph exports.
@@ -113,6 +116,15 @@ def evaluate_export_eligibility(
 
     if email_domain_under_operator_domain_suppression(dom, ctx.suppressed_contact_domains):
         return ExportGateResult(eligible=False, reasons=(REASON_DOMAIN_SUPPRESSION,))
+
+    # A current consultation / opportunity / quotation is a temporary marketing
+    # hold. This is distinct from historical Sent memory and remains blocking in
+    # repeat-campaign mode.
+    if em in ctx.commercial_hold_norms:
+        return ExportGateResult(
+            eligible=False,
+            reasons=(REASON_ACTIVE_COMMERCIAL_ENGAGEMENT,),
+        )
 
     # Historical campaign delivery is not an unsubscribe. Keep the legacy
     # fail-closed behaviour by default, but let an explicitly-declared repeat
