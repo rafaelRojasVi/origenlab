@@ -96,3 +96,8 @@ def test_second_pass_audit_ecosystem_marketplace_and_research_media() -> None:
 def test_ecapital_non_mercadopublico_local_still_allowed() -> None:
     """Do not block whole ecapital.cl—only mercadopublico@ and similar locals."""
     assert not marketing_outreach_noise_email("contacto@ecapital.cl")
+
+def test_cccampaigns_esp_relay_is_noise() -> None:
+    assert marketing_outreach_noise_email("email@sstocks.cccampaigns.net")
+    assert marketing_outreach_noise_email("reply@foo.cccampaigns.net")
+

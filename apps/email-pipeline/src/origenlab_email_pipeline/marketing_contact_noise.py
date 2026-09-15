@@ -46,6 +46,8 @@ _NOISE_DOMAINS: frozenset[str] = frozenset(
         "rsgsv.net",
         "createsend.com",
         "campaign-archive.com",
+        # Observed Campaign/ESP relay false-positive in Sept 2026 campaign.
+        "cccampaigns.net",
         "list-manage.com",
         # B2B / vendor media and newsletter platforms (archive junk, not prospect mailboxes).
         "labx.com",
