@@ -85,7 +85,7 @@ def load_suppressed_contact_domains(conn: sqlite3.Connection) -> frozenset[str]:
 
 
 def load_outreach_state_map(conn: sqlite3.Connection) -> dict[str, str]:
-    """email_norm -> state for rows that block cold export (contacted, replied, snoozed)."""
+    """email_norm -> state for rows that can affect cold-export eligibility."""
     if not _table_exists(conn, "outreach_contact_state"):
         return {}
     rows = conn.execute(
@@ -104,7 +104,7 @@ def load_outreach_state_map(conn: sqlite3.Connection) -> dict[str, str]:
 
 
 def load_outreach_contacted_norms(conn: sqlite3.Connection) -> frozenset[str]:
-    """Set of emails blocked by outreach state (contacted, replied, snoozed)."""
+    """Set of emails present in outreach state (contacted, replied, snoozed)."""
     return frozenset(load_outreach_state_map(conn).keys())
 
 
@@ -117,10 +117,13 @@ def build_marketing_export_gate_context(
     skip_noise_filter: bool = False,
     skip_supplier_domain_filter: bool = False,
     strict_contact_graph_noise: bool = False,
+    allow_prior_outreach_history: bool = False,
 ) -> GateContext:
     """Load DB-backed sets once per export.
 
     Use ``strict_contact_graph_noise=True`` for ``contact_master`` exports (noisier pool).
+    ``allow_prior_outreach_history=True`` keeps Sent/contacted/replied as history rather
+    than permanent campaign blockers; suppression and snoozed state still block.
     """
     from origenlab_email_pipeline.marketing_supplier_domains import supplier_email_domains
 
@@ -142,4 +145,5 @@ def build_marketing_export_gate_context(
         skip_noise_filter=skip_noise_filter,
         skip_supplier_domain_filter=skip_supplier_domain_filter,
         strict_contact_graph_noise=strict_contact_graph_noise,
+        allow_prior_outreach_history=bool(allow_prior_outreach_history),
     )
