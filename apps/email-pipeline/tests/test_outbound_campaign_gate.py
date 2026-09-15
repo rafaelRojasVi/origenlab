@@ -1,10 +1,10 @@
-"""Tests for the campaign eligibility wrapper: canonical gate + manual hard block."""
+"""Tests for campaign eligibility: repeat history + canonical hard blockers."""
 
 from __future__ import annotations
 
 from origenlab_email_pipeline.candidate_export_gate import (
     REASON_DOMAIN_SUPPRESSION,
-    REASON_SENT_HISTORY,
+    REASON_OUTREACH_SNOOZED,
     REASON_SUPPLIER_DOMAIN,
     REASON_SUPPRESSION,
     GateContext,
@@ -56,15 +56,43 @@ def test_manual_hold_blocks() -> None:
     assert result.reasons == (REASON_MANUAL_HOLD,)
 
 
-def test_active_manual_status_does_not_imply_consent_or_bypass_other_gates() -> None:
-    """cristianrios@pharmaisa.cl is 'active' but was already Sent-history contacted — still blocked."""
+def test_campaign_allows_prior_sent_history() -> None:
+    """A previous campaign is history, not a permanent unsubscribe."""
     ctx = _permissive_ctx(sent_recipient_norms=frozenset({"cristianrios@pharmaisa.cl"}))
     result = evaluate_campaign_eligibility(
         contact_email="cristianrios@pharmaisa.cl", institution_name="Pharma Isa",
         gate_ctx=ctx, manual_status_by_email={"cristianrios@pharmaisa.cl": "active"},
     )
+    assert result.eligible is True
+    assert result.reasons == ()
+
+
+def test_campaign_allows_historical_contacted_state() -> None:
+    ctx = _permissive_ctx(outreach_state_by_email={"a@lab.cl": "contacted"})
+    result = evaluate_campaign_eligibility(
+        contact_email="a@lab.cl", institution_name="Lab",
+        gate_ctx=ctx, manual_status_by_email={},
+    )
+    assert result.eligible is True
+
+
+def test_campaign_allows_historical_replied_state() -> None:
+    ctx = _permissive_ctx(outreach_state_by_email={"a@lab.cl": "replied"})
+    result = evaluate_campaign_eligibility(
+        contact_email="a@lab.cl", institution_name="Lab",
+        gate_ctx=ctx, manual_status_by_email={},
+    )
+    assert result.eligible is True
+
+
+def test_campaign_snoozed_still_blocks() -> None:
+    ctx = _permissive_ctx(outreach_state_by_email={"a@lab.cl": "snoozed"})
+    result = evaluate_campaign_eligibility(
+        contact_email="a@lab.cl", institution_name="Lab",
+        gate_ctx=ctx, manual_status_by_email={},
+    )
     assert result.eligible is False
-    assert result.reasons == (REASON_SENT_HISTORY,)
+    assert result.reasons == (REASON_OUTREACH_SNOOZED,)
 
 
 def test_active_manual_status_with_permissive_gate_is_eligible() -> None:
