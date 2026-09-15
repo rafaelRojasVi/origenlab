@@ -6,8 +6,9 @@ sales opportunities and active customer-quote revisions, resolves the best
 known contact email, and optionally replaces the derived SQLite
 ``outbound_commercial_hold`` projection used by outbound gates.
 
-Dry-run is the default. Pass ``--apply`` to replace the SQLite projection.
-No Gmail call is made and no Postgres row is mutated.
+Dry-run is the default. Pass ``--apply`` to replace the SQLite projection and
+write its successful-refresh marker. No Gmail call is made and no Postgres row
+is mutated.
 """
 
 from __future__ import annotations
@@ -50,6 +51,14 @@ CREATE TABLE IF NOT EXISTS outbound_commercial_hold (
   reasons_json TEXT NOT NULL,
   source_count INTEGER NOT NULL CHECK (source_count >= 1),
   refreshed_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS outbound_commercial_hold_meta (
+  singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+  refreshed_at TEXT NOT NULL,
+  active_source_rows INTEGER NOT NULL CHECK (active_source_rows >= 0),
+  held_unique_emails INTEGER NOT NULL CHECK (held_unique_emails >= 0),
+  unresolved_active_rows_without_email INTEGER NOT NULL CHECK (unresolved_active_rows_without_email >= 0)
 );
 """
 
@@ -183,7 +192,13 @@ def _replace_sqlite_projection(
     *,
     by_email: dict[str, list[dict[str, str]]],
     refreshed_at: str,
+    active_source_rows: int | None = None,
+    unresolved_active_rows_without_email: int = 0,
 ) -> None:
+    if active_source_rows is None:
+        active_source_rows = sum(len(v) for v in by_email.values()) + int(
+            unresolved_active_rows_without_email
+        )
     conn = sqlite3.connect(str(db_path))
     try:
         conn.executescript(_SCHEMA_SQL)
@@ -204,6 +219,21 @@ def _replace_sqlite_projection(
                     refreshed_at,
                 ),
             )
+        conn.execute("DELETE FROM outbound_commercial_hold_meta")
+        conn.execute(
+            """
+            INSERT INTO outbound_commercial_hold_meta(
+              singleton_id, refreshed_at, active_source_rows,
+              held_unique_emails, unresolved_active_rows_without_email
+            ) VALUES (1, ?, ?, ?, ?)
+            """,
+            (
+                refreshed_at,
+                int(active_source_rows),
+                len(by_email),
+                int(unresolved_active_rows_without_email),
+            ),
+        )
         conn.commit()
     except Exception:
         conn.rollback()
@@ -266,6 +296,8 @@ def main(argv: list[str] | None = None) -> int:
                 db_path,
                 by_email=by_email,
                 refreshed_at=refreshed_at,
+                active_source_rows=len(rows),
+                unresolved_active_rows_without_email=len(unresolved),
             )
         except Exception as exc:
             print(f"Failed to replace SQLite commercial hold projection: {exc}", file=sys.stderr)
