@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from origenlab_email_pipeline.candidate_export_gate import (
+    REASON_ACTIVE_COMMERCIAL_ENGAGEMENT,
     REASON_DOMAIN_SUPPRESSION,
     REASON_OUTREACH_SNOOZED,
     REASON_SUPPLIER_DOMAIN,
@@ -93,6 +94,20 @@ def test_campaign_snoozed_still_blocks() -> None:
     )
     assert result.eligible is False
     assert result.reasons == (REASON_OUTREACH_SNOOZED,)
+
+
+def test_active_commercial_engagement_still_blocks_repeat_campaign() -> None:
+    ctx = _permissive_ctx(
+        sent_recipient_norms=frozenset({"buyer@lab.cl"}),
+        outreach_state_by_email={"buyer@lab.cl": "replied"},
+        commercial_hold_norms=frozenset({"buyer@lab.cl"}),
+    )
+    result = evaluate_campaign_eligibility(
+        contact_email="buyer@lab.cl", institution_name="Lab",
+        gate_ctx=ctx, manual_status_by_email={},
+    )
+    assert result.eligible is False
+    assert result.reasons == (REASON_ACTIVE_COMMERCIAL_ENGAGEMENT,)
 
 
 def test_active_manual_status_with_permissive_gate_is_eligible() -> None:
