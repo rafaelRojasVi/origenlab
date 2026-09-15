@@ -21,6 +21,7 @@ REASON_INVALID_EMAIL = "invalid_email"
 REASON_INTERNAL_DOMAIN = "internal_domain"
 REASON_SUPPRESSION = "suppression"
 REASON_DOMAIN_SUPPRESSION = "domain_suppression"
+REASON_COMMERCIAL_HOLD_UNAVAILABLE = "commercial_hold_unavailable"
 REASON_ACTIVE_COMMERCIAL_ENGAGEMENT = "active_commercial_engagement"
 REASON_SENT_HISTORY = "sent_history"
 REASON_OUTREACH_CONTACTED = "outreach_contacted"
@@ -46,6 +47,10 @@ class GateContext:
     outreach state are informational rather than permanent blockers. Explicit
     suppression, domain suppression, active-commercial holds, ``snoozed`` state,
     internal/supplier/noise checks, and campaign-layer manual hold/inactive still block.
+
+    Repeat-campaign mode also requires a successfully refreshed CRM commercial-hold
+    projection. This prevents relaxing Sent-history blocking before current quotes /
+    consultations have been checked.
     """
 
     sent_recipient_norms: frozenset[str]
@@ -57,6 +62,8 @@ class GateContext:
     suppressed_contact_domains: frozenset[str] = frozenset()
     #: Derived from durable CRM active opportunities / active quotations.
     commercial_hold_norms: frozenset[str] = frozenset()
+    #: True only after the derived CRM hold snapshot has been successfully refreshed.
+    commercial_hold_ready: bool = False
     skip_noise_filter: bool = False
     skip_supplier_domain_filter: bool = False
     #: Tighter ``marketing_contact_noise`` rules for ``contact_master`` mail-graph exports.
@@ -116,6 +123,14 @@ def evaluate_export_eligibility(
 
     if email_domain_under_operator_domain_suppression(dom, ctx.suppressed_contact_domains):
         return ExportGateResult(eligible=False, reasons=(REASON_DOMAIN_SUPPRESSION,))
+
+    # Relaxing prior-outreach history is only safe once the current durable CRM
+    # state has been projected into SQLite. Fail closed if that refresh has not run.
+    if ctx.allow_prior_outreach_history and not ctx.commercial_hold_ready:
+        return ExportGateResult(
+            eligible=False,
+            reasons=(REASON_COMMERCIAL_HOLD_UNAVAILABLE,),
+        )
 
     # A current consultation / opportunity / quotation is a temporary marketing
     # hold. This is distinct from historical Sent memory and remains blocking in
