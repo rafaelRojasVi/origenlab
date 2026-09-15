@@ -110,12 +110,7 @@ def load_outreach_contacted_norms(conn: sqlite3.Connection) -> frozenset[str]:
 
 
 def load_active_commercial_hold_norms(conn: sqlite3.Connection) -> frozenset[str]:
-    """Current CRM engagement holds mirrored into SQLite by the refresh command.
-
-    The table is a derived projection, not CRM authority. Absence of the table means
-    no mirrored holds are available; explicit manual hold/inactive and suppressions
-    remain independently enforced by their existing paths.
-    """
+    """Current CRM engagement holds mirrored into SQLite by the refresh command."""
     if not _table_exists(conn, "outbound_commercial_hold"):
         return frozenset()
     rows = conn.execute(
@@ -126,6 +121,22 @@ def load_active_commercial_hold_norms(conn: sqlite3.Connection) -> frozenset[str
         """
     ).fetchall()
     return frozenset(str(r[0]) for r in rows if r[0])
+
+
+def active_commercial_hold_projection_ready(conn: sqlite3.Connection) -> bool:
+    """True only after a successful CRM→SQLite hold refresh, including zero-hold runs."""
+    if not _table_exists(conn, "outbound_commercial_hold_meta"):
+        return False
+    row = conn.execute(
+        """
+        SELECT refreshed_at
+        FROM outbound_commercial_hold_meta
+        WHERE singleton_id = 1
+          AND length(trim(refreshed_at)) > 0
+        LIMIT 1
+        """
+    ).fetchone()
+    return bool(row and row[0])
 
 
 def build_marketing_export_gate_context(
@@ -144,7 +155,8 @@ def build_marketing_export_gate_context(
     Use ``strict_contact_graph_noise=True`` for ``contact_master`` exports (noisier pool).
     ``allow_prior_outreach_history=True`` keeps Sent/contacted/replied as history rather
     than permanent campaign blockers; suppression, active-commercial holds and snoozed
-    state still block.
+    state still block. Repeat mode fails closed until the commercial-hold projection has
+    a successful refresh marker.
     """
     from origenlab_email_pipeline.marketing_supplier_domains import supplier_email_domains
 
@@ -164,6 +176,7 @@ def build_marketing_export_gate_context(
         blocked_domains=blocked,
         suppressed_contact_domains=load_suppressed_contact_domains(conn),
         commercial_hold_norms=load_active_commercial_hold_norms(conn),
+        commercial_hold_ready=active_commercial_hold_projection_ready(conn),
         skip_noise_filter=skip_noise_filter,
         skip_supplier_domain_filter=skip_supplier_domain_filter,
         strict_contact_graph_noise=strict_contact_graph_noise,
