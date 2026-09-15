@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from origenlab_email_pipeline.candidate_export_gate import (
     REASON_ACTIVE_COMMERCIAL_ENGAGEMENT,
+    REASON_COMMERCIAL_HOLD_UNAVAILABLE,
     REASON_DOMAIN_SUPPRESSION,
     REASON_OUTREACH_SNOOZED,
     REASON_SUPPLIER_DOMAIN,
@@ -24,6 +25,7 @@ def _permissive_ctx(**overrides) -> GateContext:
         outreach_state_by_email={},
         supplier_domains=frozenset(),
         blocked_domains=frozenset(),
+        commercial_hold_ready=True,
     )
     base.update(overrides)
     return GateContext(**base)
@@ -55,6 +57,15 @@ def test_manual_hold_blocks() -> None:
     )
     assert result.eligible is False
     assert result.reasons == (REASON_MANUAL_HOLD,)
+
+
+def test_campaign_fails_closed_without_commercial_hold_refresh() -> None:
+    result = evaluate_campaign_eligibility(
+        contact_email="a@lab.cl", institution_name="Lab",
+        gate_ctx=_permissive_ctx(commercial_hold_ready=False), manual_status_by_email={},
+    )
+    assert result.eligible is False
+    assert result.reasons == (REASON_COMMERCIAL_HOLD_UNAVAILABLE,)
 
 
 def test_campaign_allows_prior_sent_history() -> None:
