@@ -74,6 +74,7 @@ def gate_context_for_archive_batch(
     sent_folders: tuple[str, ...],
     extra_exclude_domains: tuple[str, ...] = (),
     strict_contact_graph_noise: bool = True,
+    allow_prior_outreach_history: bool = False,
 ) -> GateContext:
     """GateContext for ``contact_master`` / archive audit (stricter graph noise)."""
     return build_marketing_export_gate_context(
@@ -82,6 +83,7 @@ def gate_context_for_archive_batch(
         sent_folders=sent_folders,
         extra_exclude_domains=extra_exclude_domains,
         strict_contact_graph_noise=bool(strict_contact_graph_noise),
+        allow_prior_outreach_history=bool(allow_prior_outreach_history),
     )
 
 
@@ -91,6 +93,7 @@ def gate_context_for_lead_master_export(
     gmail_user: str,
     sent_folders: tuple[str, ...],
     extra_exclude_domains: tuple[str, ...] = (),
+    allow_prior_outreach_history: bool = False,
 ) -> GateContext:
     """GateContext for ``lead_master`` exports (default noise strictness off)."""
     return build_marketing_export_gate_context(
@@ -99,6 +102,7 @@ def gate_context_for_lead_master_export(
         sent_folders=sent_folders,
         extra_exclude_domains=extra_exclude_domains,
         strict_contact_graph_noise=False,
+        allow_prior_outreach_history=bool(allow_prior_outreach_history),
     )
 
 
