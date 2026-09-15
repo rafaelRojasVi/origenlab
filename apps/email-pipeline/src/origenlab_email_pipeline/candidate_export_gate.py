@@ -38,7 +38,14 @@ _OUTREACH_REASON = {
 
 @dataclass(frozen=True)
 class GateContext:
-    """Inputs for eligibility. Build once per export run."""
+    """Inputs for eligibility. Build once per export run.
+
+    ``allow_prior_outreach_history`` is deliberately narrow: when true, a
+    previous marketing send (Gmail Sent) and historical ``contacted``/``replied``
+    outreach state are informational rather than permanent blockers. Explicit
+    suppression, domain suppression, ``snoozed`` state, internal/supplier/noise
+    checks, and any campaign-layer manual hold/inactive status still block.
+    """
 
     sent_recipient_norms: frozenset[str]
     suppressed_norms: frozenset[str]
@@ -51,6 +58,8 @@ class GateContext:
     skip_supplier_domain_filter: bool = False
     #: Tighter ``marketing_contact_noise`` rules for ``contact_master`` mail-graph exports.
     strict_contact_graph_noise: bool = False
+    #: Allow repeat marketing to previously-sent/contacted/replied recipients.
+    allow_prior_outreach_history: bool = False
 
 
 @dataclass(frozen=True)
@@ -105,14 +114,23 @@ def evaluate_export_eligibility(
     if email_domain_under_operator_domain_suppression(dom, ctx.suppressed_contact_domains):
         return ExportGateResult(eligible=False, reasons=(REASON_DOMAIN_SUPPRESSION,))
 
-    if em in ctx.sent_recipient_norms:
+    # Historical campaign delivery is not an unsubscribe. Keep the legacy
+    # fail-closed behaviour by default, but let an explicitly-declared repeat
+    # campaign treat prior Sent history as informational.
+    if not ctx.allow_prior_outreach_history and em in ctx.sent_recipient_norms:
         return ExportGateResult(eligible=False, reasons=(REASON_SENT_HISTORY,))
 
     st = (ctx.outreach_state_by_email or {}).get(em)
     if st:
-        reason = _OUTREACH_REASON.get(st)
-        if reason:
-            return ExportGateResult(eligible=False, reasons=(reason,))
+        # ``snoozed`` remains a deliberate temporary operator block even for a
+        # repeat campaign. ``contacted``/``replied`` only describe historical
+        # outreach when repeat-campaign mode is explicitly enabled.
+        if st == "snoozed":
+            return ExportGateResult(eligible=False, reasons=(REASON_OUTREACH_SNOOZED,))
+        if not ctx.allow_prior_outreach_history:
+            reason = _OUTREACH_REASON.get(st)
+            if reason:
+                return ExportGateResult(eligible=False, reasons=(reason,))
 
     if not ctx.skip_supplier_domain_filter and ctx.supplier_domains:
         if is_supplier_email_domain(em, ctx.supplier_domains):
