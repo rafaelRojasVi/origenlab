@@ -109,7 +109,7 @@ jobs:
           supabase/scripts/slice0_audit.sh --verify-report supabase/.audit/reports/slice0-audit-local.md
 
       - name: Upload the sanitised Slice 0 audit report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: slice0-audit-local-report
           path: |
