@@ -1,7 +1,8 @@
 """DB-backed inputs for cold marketing export eligibility (shared ``GateContext``).
 
 **Responsibility:** load Sent recipients, suppression list, outreach sidecar state,
-supplier domains, and assemble :class:`~origenlab_email_pipeline.candidate_export_gate.GateContext`.
+active-commercial hold projection, supplier domains, and assemble
+:class:`~origenlab_email_pipeline.candidate_export_gate.GateContext`.
 
 **Not here:** ranked ``lead_master`` selection — that lives in ``next_marketing_queue``.
 
@@ -108,6 +109,25 @@ def load_outreach_contacted_norms(conn: sqlite3.Connection) -> frozenset[str]:
     return frozenset(load_outreach_state_map(conn).keys())
 
 
+def load_active_commercial_hold_norms(conn: sqlite3.Connection) -> frozenset[str]:
+    """Current CRM engagement holds mirrored into SQLite by the refresh command.
+
+    The table is a derived projection, not CRM authority. Absence of the table means
+    no mirrored holds are available; explicit manual hold/inactive and suppressions
+    remain independently enforced by their existing paths.
+    """
+    if not _table_exists(conn, "outbound_commercial_hold"):
+        return frozenset()
+    rows = conn.execute(
+        """
+        SELECT lower(trim(email_norm)) AS e
+        FROM outbound_commercial_hold
+        WHERE length(trim(email_norm)) > 0
+        """
+    ).fetchall()
+    return frozenset(str(r[0]) for r in rows if r[0])
+
+
 def build_marketing_export_gate_context(
     conn: sqlite3.Connection,
     *,
@@ -123,7 +143,8 @@ def build_marketing_export_gate_context(
 
     Use ``strict_contact_graph_noise=True`` for ``contact_master`` exports (noisier pool).
     ``allow_prior_outreach_history=True`` keeps Sent/contacted/replied as history rather
-    than permanent campaign blockers; suppression and snoozed state still block.
+    than permanent campaign blockers; suppression, active-commercial holds and snoozed
+    state still block.
     """
     from origenlab_email_pipeline.marketing_supplier_domains import supplier_email_domains
 
@@ -142,6 +163,7 @@ def build_marketing_export_gate_context(
         supplier_domains=supplier_dom,
         blocked_domains=blocked,
         suppressed_contact_domains=load_suppressed_contact_domains(conn),
+        commercial_hold_norms=load_active_commercial_hold_norms(conn),
         skip_noise_filter=skip_noise_filter,
         skip_supplier_domain_filter=skip_supplier_domain_filter,
         strict_contact_graph_noise=strict_contact_graph_noise,
