@@ -72,8 +72,16 @@ def compute_next_marketing_recipients(
     min_priority: float | None = None,
     extra_exclude_domains: tuple[str, ...] = (),
     variant_type: str = MARKETING_VARIANT_GENERAL,
+    allow_prior_outreach_history: bool = False,
 ) -> tuple[list[dict[str, object]], NextMarketingQueueStats]:
-    """Return outreach-ready rows and exclusion stats. Read-only on ``conn``."""
+    """Return outreach-ready rows and exclusion stats. Read-only on ``conn``.
+
+    The default preserves the legacy one-shot lead-export semantics. Durable
+    repeat campaigns may set ``allow_prior_outreach_history=True`` so previous
+    Sent/contacted/replied history is informational while hard suppression,
+    snoozed state, active-commercial holds, supplier/internal/noise rules still
+    apply through the shared gate.
+    """
     sent_norms = load_sent_recipient_norms(conn, gmail_user=gmail_user, sent_folders=sent_folders)
     suppressed = load_suppressed_norms(conn)
     outreach_map = load_outreach_state_map(conn)
@@ -82,6 +90,7 @@ def compute_next_marketing_recipients(
         gmail_user=gmail_user,
         sent_folders=sent_folders,
         extra_exclude_domains=extra_exclude_domains,
+        allow_prior_outreach_history=bool(allow_prior_outreach_history),
     )
 
     variant = str(variant_type).strip()
