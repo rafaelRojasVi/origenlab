@@ -1,13 +1,19 @@
-"""Campaign eligibility = manual hard-block sidecar + canonical candidate_export_gate.
+"""Campaign eligibility = manual hard-block sidecar + canonical candidate export gate.
 
-Do not duplicate gate logic here. Manual inactive/hold is checked first and
-blocks regardless of any other signal (hard exact-email block). An "active"
-manual fact is informational only: on any other status the function falls
-straight through to ``candidate_export_gate.evaluate_export_eligibility`` and
-does not skip or relax any of its checks.
+Campaigns deliberately differ from one-shot cold-export lanes in one respect:
+prior marketing delivery is historical evidence, not a permanent unsubscribe.
+Therefore campaign evaluation enables ``allow_prior_outreach_history`` before
+delegating to the canonical gate. Gmail Sent plus historical ``contacted`` or
+``replied`` state do not block a later campaign by themselves.
+
+Hard blockers remain hard: manual ``inactive``/``hold`` is checked first;
+canonical email/domain suppression, ``snoozed`` outreach state, internal
+addresses, supplier domains and marketing-noise checks still apply.
 """
 
 from __future__ import annotations
+
+from dataclasses import replace
 
 from origenlab_email_pipeline.candidate_export_gate import (
     ExportGateResult,
@@ -33,6 +39,14 @@ def evaluate_campaign_eligibility(
     if em and manual_status_by_email.get(em) in ("inactive", "hold"):
         reason = _MANUAL_REASON[manual_status_by_email[em]]
         return ExportGateResult(eligible=False, reasons=(reason,))
+
+    # Durable campaigns may re-contact recipients of older campaigns. This is
+    # intentionally applied here (not in the shared builder) so archive/lead
+    # one-shot exports retain their legacy no-repeat semantics unless an
+    # operator explicitly opts into repeat-campaign mode.
+    campaign_ctx = replace(gate_ctx, allow_prior_outreach_history=True)
     return evaluate_export_eligibility(
-        contact_email=contact_email, institution_name=institution_name, ctx=gate_ctx,
+        contact_email=contact_email,
+        institution_name=institution_name,
+        ctx=campaign_ctx,
     )
