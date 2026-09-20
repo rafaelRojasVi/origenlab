@@ -392,6 +392,32 @@ def test_manual_html_outreach_outbound_bucket_and_non_read_only_risk() -> None:
     assert mod.risk_bucket != "read_only"
 
 
+def test_v2_migration_extractors_are_classified_and_read_only() -> None:
+    """The read-only V2 migration-evidence extractors get their own bucket.
+
+    They are not the parked ``scripts/migrate/`` PostgreSQL loader family, and
+    leaving them in ``unknown_review`` would hide a whole owner from the
+    operator index.
+    """
+    m = _load()
+    for rel in (
+        "src/origenlab_email_pipeline/migration/wave1b_extract.py",
+        "src/origenlab_email_pipeline/migration/readonly_source.py",
+        "src/origenlab_email_pipeline/migration/bundle.py",
+        "src/origenlab_email_pipeline/migration/rfc2047_addendum.py",
+        "scripts/migration/extract_wave1b_v1_safety_bundle.py",
+        "scripts/migration/derive_wave1a_rfc2047_addendum.py",
+    ):
+        mod, _ = m.scan_file(REPO / rel, rel, rel.split("/")[0])
+        assert mod.likely_bucket == "v2_migration_extract", rel
+        assert mod.risk_bucket not in (
+            "send_or_purge",
+            "gmail_ingest",
+            "postgres_mirror_or_migration",
+            "outbound_apply",
+        ), rel
+
+
 def test_unknown_review_count_dropped_on_full_repo_scan() -> None:
     m = _load()
     result = m.scan_roots(REPO / "src" / "origenlab_email_pipeline", REPO / "scripts")

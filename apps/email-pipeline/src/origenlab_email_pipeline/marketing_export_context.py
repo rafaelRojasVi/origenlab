@@ -39,6 +39,32 @@ def norm_lead_email(email_norm: str | None, email: str | None) -> str | None:
     return found[0]
 
 
+def sent_history_source_file_like(gmail_user: str) -> str:
+    """The canonical ``emails.source_file`` LIKE pattern for one mailbox."""
+    return f"gmail:{gmail_user.strip()}/%".lower()
+
+
+def sent_history_where(
+    *, gmail_user: str, sent_folders: tuple[str, ...]
+) -> tuple[str, tuple[object, ...]]:
+    """The canonical ``emails`` WHERE fragment selecting one mailbox's Sent rows.
+
+    Single definition of "a Gmail Sent row for this mailbox". The cold-export
+    gate, the outbound Sent preflight and the V2 migration evidence extractor
+    all build their SQL from this one fragment, so none of them can drift away
+    from the others.
+
+    Callers are responsible for ``_table_exists(conn, "emails")`` and for
+    rejecting an empty user or folder tuple — this helper only builds SQL.
+    """
+    folders = tuple(f.strip() for f in sent_folders if f and str(f).strip())
+    ph = ",".join("?" * len(folders))
+    return (
+        f"lower(source_file) LIKE ? AND folder IN ({ph})",
+        (sent_history_source_file_like(gmail_user), *folders),
+    )
+
+
 def load_sent_recipient_norms(
     conn: sqlite3.Connection,
     *,
@@ -51,17 +77,9 @@ def load_sent_recipient_norms(
     folders = tuple(f.strip() for f in sent_folders if f.strip())
     if not user or not folders:
         return set()
-    like_pat = f"gmail:{user}/%".lower()
+    where, params = sent_history_where(gmail_user=user, sent_folders=folders)
     out: set[str] = set()
-    ph = ",".join("?" * len(folders))
-    cur = conn.execute(
-        f"""
-        SELECT recipients FROM emails
-        WHERE lower(source_file) LIKE ?
-          AND folder IN ({ph})
-        """,
-        (like_pat, *folders),
-    )
+    cur = conn.execute(f"SELECT recipients FROM emails WHERE {where}", params)
     for (recipients,) in cur:
         if not recipients:
             continue

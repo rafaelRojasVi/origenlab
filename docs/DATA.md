@@ -6,9 +6,10 @@ where bytes live, how long they live, and what is never migrated.
 **This document owns:** the authority and trust matrix; the evidence-vs-truth
 boundary; provenance and external identifiers; retention classes; the split
 between active PostgreSQL, private Storage and the cold archive; Gmail message
-identity and ingestion checkpoints; the Wave 1A safety counts and archive
-hashes; data-quality and quarantine rules; rebuildable views; backup
-principles; and the exhaustive list of what will never enter active Postgres.
+identity and ingestion checkpoints; the Wave 1A and Wave 1B safety counts,
+archive hashes and the measured cross-wave safety baseline; data-quality and
+quarantine rules; rebuildable views; backup principles; and the exhaustive
+list of what will never enter active Postgres.
 
 **It does not own:** entity definitions ([`DOMAIN.md`](DOMAIN.md)),
 transitions ([`WORKFLOWS.md`](WORKFLOWS.md)), roles, grants and storage
@@ -221,6 +222,436 @@ and **zero** cooldown rows from V1 input. The loader records the per-purpose
 and flagged-for-review counts, every input SHA-256 and every count in the
 manifest source record and one domain event, is idempotent, and fails closed
 on any mismatch.
+
+### 7.4 The RFC 2047 addendum — recorded evidence gap
+
+**[V1 FACT]** §7.1 says the three RFC 2047 decoded addresses are "a separate
+loader input file, kept alongside the bundle and hashed independently". **That
+file was never created.** Only the archive, its `.sha256` sidecar and the
+extracted bundle directory exist.
+
+The addresses were not lost. The Wave 1A bundle preserves them at
+`reports/parse_failure_summary.json` →
+`rfc2047_diagnostic.recovered_addresses_not_in_contacted_union`, the
+diagnostic-only decode of the zero-address Sent rows that the bundle README
+documents. The addendum is therefore **deterministically re-derivable from the
+immutable bundle alone** — no production read is needed, and the bundle is
+never edited.
+
+`apps/email-pipeline/scripts/migration/derive_wave1a_rfc2047_addendum.py`
+performs that derivation: it verifies every file it reads against the bundle's
+own `SHA256SUMS`, re-checks each address as absent from
+`derived/recipient_ledger.jsonl.gz`, writes
+`<bundle name>_rfc2047_addendum.jsonl` plus an independent `.sha256` sidecar
+outside the repository, and prints no address. The derived count is the fact;
+an operator expectation can only produce a warning.
+
+The correction this records is documentation-only: §7.1's "kept alongside the
+bundle" is the *intent*; the file is produced on demand from the bundle, and
+its SHA-256 is recorded in the load run rather than pinned here.
+
+### 7.5 Wave 1B — the September 2026 campaign extract
+
+**[V1 FACT]** — verified from the bundle manifest and its own reconciliation
+report on 2026-09-20. The authorized production extraction ran once, and every
+value below is measured, not estimated. The bundle is private, owner-only and
+outside Git; **nothing has been loaded into V2**.
+
+**Wave 1A is immutable.** Its bundle, hashes and every count in §7, §7.1 and
+§7.2 stand exactly as recorded on 2026-09-05 and are never revised, replaced,
+regenerated or relabelled. Wave 1B is a **separate, additive** bundle with its
+own timestamp, hashes, counts and provenance.
+
+| Item | Value |
+|---|---|
+| Tool | `apps/email-pipeline/scripts/migration/extract_wave1b_v1_safety_bundle.py` |
+| Campaigns | `septiembre18-2026-final`, `septiembre18-2026-wave2` |
+| Delta baseline | the Wave 1A snapshot instant, `2026-09-05T04:24:25Z` |
+| Bundle | `20260920T171109Z_wave1b_v1_safety_bundle.tar.gz` under `~/data/origenlab-v2-migration/` |
+| Archive SHA-256 | `823ec73671809115751c0b354857a667b19382f7ce26db2beb40b02c76304a93` |
+| `manifest.json` SHA-256 | `496d832bb01cc81ef93c25a742df0e15e69124b7ec21bdab6f6bfc96c21c0eb1` |
+| `content_digest_sha256` | `32080fa414b096c62b913b9b14b42e80ce6ec6b7e53fbc56b7a982320fd74eae` |
+| Source database fingerprint | `sqlite_master` `c5d3c2faa0439fb32698d3c8fc3cecf964cdce4727f1c434214a446849d5fcad`, WAL journal mode |
+| Extraction (UTC) | `2026-09-20T17:11:09Z`, one deferred read transaction; `PRAGMA data_version` unchanged across the window, no external commit observed, zero changes on the connection |
+| Per-file integrity | `SHA256SUMS` covers every data file; `manifest.json` is covered by `content_digest_sha256` and the archive sidecar |
+| Free-text policy | no unrestricted operator free text exported (presence flag + one-way digest only) |
+| `complete` | `true` — the Sent-history baseline is complete, with no incomplete reasons |
+
+Contents: the campaign identity and lifecycle rows (the subject never leaves
+the source database — only its SHA-256 travels), every campaign recipient and
+its state, every send attempt and its state, the unresolved `in_flight`
+attempts, the remaining candidates, and the post-snapshot **deltas** for
+address suppression, domain suppression, outreach contact state, manual
+contact status, the three prior-contact sources and their deduplicated union
+(§7.5.1). Same exclusions as Wave 1A: no bodies, subjects, attachment bytes,
+credentials or database copy — plus two Wave 1B additions.
+
+**No Gmail network call.** The Sent evidence is the already-ingested `emails`
+rows in the V1 SQLite database, read through the live outbound gate's own
+functions (§7.5.1). The extractor opens no mailbox and no hosted service.
+
+**[V1 FACT] Unrestricted operator free text is not exported.** V1 mixes
+structured safety fields with columns nobody constrained — an operator note, a
+justification, an evidence paragraph, a raw Gmail API error string — which may
+carry third-party names, addresses or quoted message content. Wave 1B exports
+only the structured fields a V2 loader needs to reproduce V1 behaviour. Each
+free-text column travels as two derived fields instead:
+
+| Column | Table |
+|---|---|
+| `notes` | `outreach_contact_state` |
+| `reason`, `evidence` | `manual_contact_status` |
+| `suppression_reason_text` | `contact_email_suppression`, `contact_domain_suppression` |
+| `error_detail` | `outbound_send_attempt` (it is `str(exc)` from the Gmail call) |
+
+`<column>_present` records that a value existed; `<column>_sha256` is SHA-256
+over the original normalized to Unicode NFC, trimmed, with internal whitespace
+collapsed. **The digest proves two values were equal; it cannot reconstruct the
+content** — SHA-256 is one-way and the bundle carries no candidate dictionary.
+It is provenance, never a recoverable copy, and the original is never written,
+logged or printed.
+
+Closed reason codes with defined operational semantics —
+`suppression_reason_code`, `block_reason`, `selection_reason`, `error_code` —
+travel verbatim, because §7.1's `purpose` truth table reads them. They travel
+**only** while the observed value is inside its declared vocabulary; any other
+value is unconstrained text and is digested like a note. The full policy is
+bundled at `reports/reconciliation.json` → `free_text_policy`.
+
+**Private by construction.** The bundle carries real contact addresses, so the
+output root and bundle directory are `0700` and every file, tar member, the
+archive and its checksum sidecar are `0600`. Content is written to an
+owner-only `O_EXCL` temporary file in the destination directory and then
+atomically renamed, so no artifact ever exists at a wider mode and no partial
+file appears under a final name. An operator-supplied output root is refused if
+it is a symlink, is not owned by the running user, or is group- or
+world-writable; otherwise the root **itself** is tightened to `0700` and
+nothing inside it is touched. The same rules cover the §7.4 RFC 2047 addendum
+and its sidecar.
+
+| Wave 1B measured fact | Count |
+|---|---|
+| `outbound_campaign` | **2** — `septiembre18-2026-final`, `septiembre18-2026-wave2` |
+| `outbound_campaign_recipient` | **2,320** |
+| `outbound_send_attempt` | **2,014** |
+| Unresolved `in_flight` attempts | **0** |
+| Remaining candidates | **279** |
+| Δ `contact_email_suppression` | **332** |
+| Δ `contact_domain_suppression` | **0** |
+| Δ `outreach_contact_state` | **0** |
+| Δ `manual_contact_status` | **1** |
+| Δ `campaign_accepted` prior-contact addresses | **2,000** |
+| Δ `sent_history` prior-contact addresses | **1,538** |
+| Δ `outreach_state` prior-contact addresses | **0** |
+| Δ combined prior-contact addresses (deduplicated) | **2,075** |
+
+Per campaign:
+
+| Campaign | Recipients | `sent` | `candidate` | `inactive` | Attempts | `accepted` | `failed` | `in_flight` |
+|---|---|---|---|---|---|---|---|---|
+| `septiembre18-2026-final` | 1,020 | 1,000 | 0 | 20 | 1,011 | 1,000 | 11 | 0 |
+| `septiembre18-2026-wave2` | 1,300 | 1,000 | 279 | 21 | 1,003 | 1,000 | 3 | 0 |
+
+No recipient is in `blocked`, `bounced`, `replied`, `reserved` or `selected` in
+either campaign. The **279 remaining candidates** are the `candidate`-state
+recipients of `septiembre18-2026-wave2`: selected, never attempted, and still
+paused. **Zero unresolved `in_flight` attempts** — every attempt reached a
+terminal result, so no send is in an unknown state.
+
+**Sent preflight and freshness.** The Sent-history baseline is `complete: true`
+with no incomplete reasons and **zero Gmail network calls**: 5,097 canonical
+Gmail Sent rows were scanned in the already-ingested `emails` table, 1,518 of
+them dated after the Wave 1A snapshot, yielding 1,538 post-snapshot recipients
+against a whole-history universe of 8,574 parsed recipients. The newest
+ingested Sent row is `2026-09-17T18:24:48Z`, later than the newest campaign
+send attempt, so the ingest is not stale. The source database and the operator
+manifest were fingerprinted before and after the read: the database inode,
+size and mtime and the manifest's SHA-256 are identical on both sides. The
+ingest cron was observed, never paused, stopped or modified.
+
+**The suppression and manual-control deltas are a different control class** and
+are never folded into the prior-contact union. All **332** new address
+suppressions carry a structured bounce reason code — **187** `bounce_other` and
+**145** `bounce_no_such_user` — so this delta is bounce-driven by its own
+recorded codes, not by inference. There are **no** new domain suppressions and
+**no** new outreach-state rows. The single new `manual_contact_status` row is a
+`hold`, not a bounce.
+
+**What the 2,075 are, and are not.** They are **post-snapshot prior-contact
+evidence**: addresses that V1 records as already written to after
+`2026-09-05T04:24:25Z`, by the campaign machinery, by ordinary mail from the
+operator's mailbox, or both. They are **not** "new prospects", not leads, not
+CRM identities and not blocks. They load as `prior_contact` / `marketing` and
+never stop a transactional delivery. 880 of them are new relative to the Wave
+1A safety baseline and 1,195 were already in it; §7.5.3 measures which evidence
+route each figure came from.
+
+Every count is measured from the database inside the read transaction and
+re-measured independently in `reports/reconciliation.json`; each of the ten
+recorded checks has `extracted == measured`. No expected value — 2,000, 279 or
+any other — is treated as truth anywhere in the tool; an operator expectation
+can only raise a warning, and the run recorded no warnings.
+
+#### 7.5.1 The combined outbound-safety baseline
+
+**[V1 FACT] The prior-contact delta has three sources, not one.** An earlier
+draft of this section defined it as accepted campaign attempts plus recipients
+in `sent` / `bounced` / `replied`. That definition is **insufficient**: it sees
+only addresses the campaign machinery touched and omits the ordinary mail an
+operator sends by hand from `contacto@origenlab.cl` after the Wave 1A snapshot.
+Those recipients are prior contacts too — the live cold-export gate already
+blocks them under `candidate_export_gate.REASON_SENT_HISTORY`.
+
+Wave 1B therefore reports five things separately, and derives the fifth from
+the three that are prior-contact sources:
+
+| # | Quantity | Bundle file |
+|---|---|---|
+| 1 | campaign execution facts for the two September campaigns | `exact/*.jsonl` |
+| 2 | `campaign_accepted` — accepted attempts and recipients in `sent`/`bounced`/`replied` after the snapshot | `delta/campaign_prior_contact.jsonl` |
+| 3 | `sent_history` — recipients of canonical Gmail **Sent** rows dated after the snapshot | `delta/sent_history_prior_contact.jsonl` |
+| 4 | `outreach_state` — post-snapshot `outreach_contact_state` rows in `contacted`/`replied`/`snoozed` | `delta/outreach_prior_contact.jsonl` |
+| 5 | suppressions and manual holds | `delta/contact_*_suppression.jsonl`, `delta/manual_contact_status.jsonl` |
+| — | the deduplicated combined prior-contact delta | `delta/combined_prior_contact.jsonl` |
+
+**combined prior-contact delta = deduplicate( `campaign_accepted` ∪
+`sent_history` ∪ `outreach_state` )** over the normalized migration address.
+Every entry records its `source_categories`, so an address reached by more than
+one route stays traceable after the load; suppressions and manual holds are a
+different control class and are never folded into this union.
+
+**The Sent evidence is read through the live outbound gate, not re-implemented.**
+The extractor imports the gate's own functions, so it cannot drift away from
+what the gate blocks on — a change to either moves both:
+
+| Reused | What it fixes |
+|---|---|
+| `marketing_export_context.sent_history_where` | the one definition of "a Sent row of this mailbox": the `source_file` LIKE pattern and the `folder IN` set |
+| `marketing_export_context.load_sent_recipient_norms` | the canonical full Sent-recipient universe |
+| `business_mart.emails_in` | address extraction and lowercasing |
+| `outbound_sent_preflight.probe_sent_history` / `evaluate_sent_history_preflight` | the fail-closed rule |
+| `outbound_core.resolve_outbound_gmail_user` / `resolve_outbound_sent_folders`, `DEFAULT_GMAIL_USER_FALLBACK`, `DEFAULT_SENT_FOLDERS` | mailbox identity and folder selection |
+| `candidate_export_gate.normalize_export_email` | the one normalized migration address form |
+
+**It fails closed, with no override.** Unlike the export CLIs there is no
+`--allow-empty-sent-history` equivalent, because a migration baseline that
+silently omits prior contacts is worse than no baseline. The run is refused
+when the `emails` table is absent, the mailbox resolves to nothing, no ingested
+row matches the Sent folder labels, zero recipients parse, a Sent row carrying
+recipients has a missing or unparsable `date_iso` (it cannot be placed on
+either side of the snapshot), or the dated read and the canonical read
+disagree about which addresses exist. `date_iso` is compared as an instant in
+UTC, never as a string; a naive value is read as UTC, the standard reading of
+RFC 5322 `-0000`.
+
+The bundle records the mailbox identity and the folder labels that were read —
+no credential and no private path — at `reports/sent_history.json`, together
+with the list of canonical functions reused and `gmail_network_calls: 0`. When
+the newest ingested Sent row predates the newest campaign send attempt the
+ingest is stale, and the tool says so: `complete: false` with the reason, plus
+a run warning. **The tool never claims the combined baseline is complete when
+canonical Sent evidence is missing or stale.**
+
+`reports/reconciliation.json` → `combined_prior_contact` carries the raw
+per-source totals, every pairwise and three-way overlap, the count of addresses
+with more than one source, and the deduplicated total. The union is
+re-verified independently: a duplicated address in it, or a source address
+missing from it, refuses the run.
+
+**[V1 FACT] The measured within-Wave-1B arithmetic.** The three raw sources
+total **3,538** addresses before deduplication — 2,000 `campaign_accepted`,
+1,538 `sent_history`, 0 `outreach_state`. Their only non-empty overlap is
+`campaign_accepted ∩ sent_history` = **1,463**; `campaign_accepted ∩
+outreach_state`, `sent_history ∩ outreach_state` and the three-way intersection
+are all **0**. The deduplicated combined delta is therefore **2,075**, and
+1,463 of its entries carry more than one `source_category`. The 75 addresses by
+which `sent_history` exceeds that overlap are the ordinary hand-sent mail an
+earlier draft of this section would have missed.
+
+The combined baseline is **derived**, never asserted, and it never overwrites
+either wave's raw facts. It is stated as four distinct quantities per control
+class, so a reader can always tell a raw fact from a deduplicated total:
+
+| Quantity | Meaning | Value |
+|---|---|---|
+| Raw Wave 1A | the §7.1 count, unchanged | 8,580 prior contact · 704 address blocks · 91 domain blocks |
+| Raw Wave 1B | the Wave 1B delta count for the same class | 2,075 prior contact · 332 address suppressions · 0 domain suppressions |
+| Overlap | addresses/domains present in **both** waves | **1,195** prior contact (§7.5.2) · **0** address suppressions · **0** domain suppressions (§7.5.4) |
+| Combined (deduplicated) | raw 1A + raw 1B − overlap | **9,460** prior contact (§7.5.2) · **1,032** address suppressions · **91** domain suppressions (§7.5.4) |
+
+The Wave 1A *address block* count of 704 in §7.1 is the loader's figure — the
+700 suppression rows plus the 5 manual hard blocks it folds in. §7.5.4 measures
+the suppression **tables** and leaves manual status separate, so its Wave 1A
+address figure is 700, not 704. Both are correct about different things.
+
+Wave 1B rows load with their own `source` labels
+(`wave1b_prior_contact`, `wave1b_block`), so provenance stays separable after
+the load; the per-row `source_categories` keep the three prior-contact routes
+distinguishable inside that label. The §7.3 Wave 1A load gate is unchanged: it governs the Wave 1A load
+and is not restated in terms of the combined totals.
+
+#### 7.5.2 The measured cross-wave safety baseline
+
+**[V1 FACT]** — measured on 2026-09-20 by
+`apps/email-pipeline/scripts/migration/reconcile_wave1a_wave1b_safety.py` from
+the immutable artifacts alone. No database, mailbox or hosted service was
+opened, neither bundle was modified, and no address appears in the report.
+
+`8,580 + 2,075 = 10,655` is an **upper bound, not a total**: the two waves
+share addresses, and the only honest way to learn how many is to reconstruct
+both sets and intersect them. The reconciliation does exactly that — it rebuilds
+Wave 1A's safety set from `derived/recipient_ledger.jsonl.gz` plus the §7.4
+addendum, rebuilds Wave 1B's delta from `delta/combined_prior_contact.jsonl`,
+and compares each reconstructed size against the count its own manifest and
+reconciliation report record before measuring anything.
+
+```text
+wave1a_safety     = deduplicate( wave1a_contacted_union U wave1a_rfc2047_addendum )
+cross_wave_safety = deduplicate( wave1a_safety U wave1b_combined_prior_contact )
+```
+
+| Quantity | Count |
+|---|---|
+| Wave 1A contacted union (§7.1) | **8,577** |
+| Wave 1A RFC 2047 addendum (§7.4) | **3** |
+| **Wave 1A safety, combined** | **8,580** |
+| Wave 1B combined prior-contact delta (§7.5.1) | **2,075** |
+| **Cross-wave intersection (measured)** | **1,195** |
+| Wave 1A only | **7,385** |
+| Wave 1B only | **880** |
+| **Final deduplicated cross-wave safety union** | **9,460** |
+
+The three parts partition the union (7,385 + 1,195 + 880 = 9,460), and
+inclusion-exclusion holds (8,580 + 2,075 - 1,195 = 9,460). The measured overlap
+is 1,195 addresses — **1,195 fewer** than the naive sum would have loaded as
+distinct rows.
+
+**1,195 is not a campaign recontact count.** It is the overlap of a
+*deduplicated union of three evidence routes* with the Wave 1A safety set. An
+address reached only by ordinary hand-sent mail lands in it exactly like one a
+September campaign sent to. The per-route measurement is §7.5.3, and the
+campaign figure there is **1,158**, not 1,195.
+
+| Item | Value |
+|---|---|
+| Reconciliation report | `<wave 1A bundle>__<wave 1B bundle>_cross_wave_safety_reconciliation_v2.json` under `~/data/origenlab-v2-migration/`, `0600` beside both bundles |
+| Report SHA-256 | `ed23ff6f33a175f4e51b2fc8cf10a5f03971469bc857240e18f9791ccd182c46` |
+| Superseded report | the `v1` report, SHA-256 `45c961034a4677064cffcb91617c0167036cb34dd8d25d82bb1d1790b0c3184b`, is **retained unchanged** beside it — it carried the same eight combined counts and none of the source-specific ones |
+| Address normalization | `candidate_export_gate.normalize_export_email` — the same one form Wave 1B used |
+| Inputs verified | Wave 1A: 26 files against its own `SHA256SUMS`, plus the §7 `manifest.json` and archive hashes; Wave 1B: 18 files, plus its recomputed `content_digest_sha256` and archive sidecar; the addendum against its own sidecar |
+| Invariants | 12, all holding; a failure refuses the run |
+
+**This is the migration safety baseline, not CRM identity truth.** The 9,460
+addresses are prior-contact **evidence** for the outbound send gate: what V1
+can prove was already written to. They are not people, not organizations, not
+`crm` identities and not a suppression list, and nothing here promotes any of
+them to CRM truth — that remains an operator promotion command (§2). Blocks and
+manual holds are a separate control class and are excluded from this union by
+construction. The number is derived and re-derivable; it never overwrites
+either wave's raw facts, and §7's Wave 1A counts stand exactly as recorded.
+
+**Not yet loaded.** The baseline is measured and available; no row from either
+wave has been written to V2.
+
+#### 7.5.3 Which evidence route produced the overlap
+
+**[V1 FACT]** — measured 2026-09-20, same run and same artifact as §7.5.2.
+
+§7.5.2's 1,195 is a single number about a deduplicated union of three routes.
+Read alone it invites one wrong conclusion — that 1,195 addresses the September
+campaigns sent to had already been contacted before the snapshot. Each route is
+therefore intersected with the Wave 1A safety set in its own right:
+
+| Wave 1B route | Addresses | Already in Wave 1A safety | New relative to Wave 1A |
+|---|---|---|---|
+| `campaign_accepted` | 2,000 | **1,158** | 842 |
+| `sent_history` | 1,538 | **973** | 565 |
+| `outreach_state` | 0 | 0 | 0 |
+| **combined (deduplicated)** | **2,075** | **1,195** | **880** |
+
+**The exact figure is 1,158**: that many of the 2,000 September accepted
+campaign recipients were already in the pre-September Wave 1A safety baseline.
+The remaining 842 were not.
+
+**These rows do not add up, and must not be added.** 1,158 + 973 = 2,131, which
+exceeds both the combined 1,195 and the 2,075 delta, because 1,463 addresses
+carry *both* a campaign and a Sent-history source. Each per-route figure is a
+separate measurement of the same union, never a share of it.
+
+An exact partition of the 2,075 by which routes hold each address, so evidence
+reached twice is never counted twice:
+
+| Source membership | Addresses | Already in Wave 1A safety | New relative to Wave 1A |
+|---|---|---|---|
+| campaign evidence only | 537 | 222 | 315 |
+| Sent-history evidence only | 75 | 37 | 38 |
+| both campaign and Sent-history | 1,463 | 936 | 527 |
+| any cell involving `outreach_state` | 0 | 0 | 0 |
+| **total** | **2,075** | **1,195** | **880** |
+
+Per campaign, from the `campaign_ids` each `delta/campaign_prior_contact.jsonl`
+row carries:
+
+| Campaign | Accepted addresses | Already in Wave 1A safety | New relative to Wave 1A |
+|---|---|---|---|
+| `septiembre18-2026-final` | 1,000 | 696 | 304 |
+| `septiembre18-2026-wave2` | 1,000 | 462 | 538 |
+
+**The two campaigns are disjoint**: zero addresses appear in both, so here the
+two rows do sum — 696 + 462 = 1,158 and 1,000 + 1,000 = 2,000. That is a
+measured property of these two campaigns, not a rule.
+
+#### 7.5.4 The cross-wave suppression baseline
+
+**[V1 FACT]** — measured 2026-09-20, same run and same artifact as §7.5.2.
+
+Suppressions and manual holds are a **different control class** from prior
+contact and are never folded into the §7.5.2 union. They are reconciled the
+same way, from the `contact_email_suppression` and `contact_domain_suppression`
+rows of each bundle.
+
+| Address suppressions | Count |
+|---|---|
+| Wave 1A (`exact/contact_email_suppression`) | **700** |
+| Wave 1B delta (`delta/contact_email_suppression`) | **332** |
+| Intersection | **0** |
+| Wave 1A only | 700 |
+| Wave 1B only | 332 |
+| **Final deduplicated address-suppression union** | **1,032** |
+
+**The intersection is zero.** Every one of the 332 new suppressions is an
+address V1 had not suppressed before the snapshot, so here — and only here —
+the naive sum is the total.
+
+Aggregate reason-code matrix, counted from the code each row actually records.
+No code is mapped to a purpose, a scope or a cause by this measurement; the
+§7.1 truth table does that for the loader.
+
+| `suppression_reason_code` | Wave 1A | Wave 1B delta |
+|---|---|---|
+| `bounce_no_such_user` | 374 | 145 |
+| `bounce_other` | 238 | 187 |
+| `bounce_access_denied` | 2 | 0 |
+| `manual_do_not_contact` | 86 | 0 |
+| **total** | **700** | **332** |
+
+| Domain suppressions | Count |
+|---|---|
+| Wave 1A | **91** |
+| Wave 1B delta | **0** |
+| Intersection | **0** |
+| **Final deduplicated domain-suppression union** | **91** |
+
+V1 domain suppressions carry only free reason text and never a reason code, so
+this class has no reason matrix.
+
+**Manual contact status is kept separate and mapped by nobody here.** Wave 1A
+holds 9 rows — 5 `inactive`, 4 `active`; the Wave 1B delta holds 1, a `hold`.
+§7.1 records that `inactive` and `hold` are the V1 *manual hard-block* statuses
+the Wave 1A loader folds into its 704 address blocks, but that is a **loader**
+mapping applied with an explicit source vocabulary. The reconciliation counts
+these rows by recorded status and stops: it does not reinterpret a manual hold
+as a suppression, and the 1,032 above is the suppression-table union alone.
 
 ## 8. Data quality and quarantine
 
