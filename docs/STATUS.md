@@ -80,6 +80,9 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 - **The eight privileged send/quote functions** of [`ARCHITECTURE.md`](ARCHITECTURE.md) §6.2.
 - **The Wave 1A loader.** The bundle itself exists on disk with its `.sha256`
   sidecar; no code loads it.
+- **The Wave 1B loader.** The Wave 1B bundle, the Wave 1A RFC 2047 addendum and
+  the cross-wave reconciliation report all exist on disk (§2.6); no code loads
+  any of them, and no row from either wave has reached V2.
 - **The `ol migrate` / `ol audit` CLI** documented in [`OPERATIONS.md`](OPERATIONS.md) §4
   — marked there as `EXAMPLE — NOT YET IMPLEMENTED`, and it is not implemented. The
   catalogue half of what its four `ol audit` subcommands would check is built, under a
@@ -153,6 +156,56 @@ name above is the only hosted identifier this repository records.
 Adopting it is a separate decision that has not been taken. Slice 0's hosted gates
 ([`MIGRATION.md`](MIGRATION.md) §5.2 checks 1–11) are unproven against it or any other
 project.
+
+### 2.6 V1 migration evidence — measured
+
+The four V1 → V2 migration-evidence artifacts exist, are private and are
+**outside Git**: they live under the operator's `~/data/origenlab-v2-migration/`
+root, which no repository path references and no `.gitignore` exemption covers.
+
+| Artifact | State |
+|---|---|
+| Wave 1A safety bundle + `.sha256` | present since 2026-09-05; **content unchanged**, permissions hardened 2026-09-20 (below); hashes still those [`DATA.md`](DATA.md) §7 records |
+| Wave 1A RFC 2047 addendum + `.sha256` | derived from the Wave 1A bundle; 3 addresses ([`DATA.md`](DATA.md) §7.4) |
+| Wave 1B September bundle + `.sha256` | extracted once, 2026-09-20 ([`DATA.md`](DATA.md) §7.5) |
+| Cross-wave reconciliation report `v2` + `.sha256` | measured 2026-09-20, SHA-256 `ed23ff6f…` ([`DATA.md`](DATA.md) §7.5.2–§7.5.4) |
+| Cross-wave reconciliation report `v1` + `.sha256` | superseded, **retained unchanged**, SHA-256 `45c96103…` |
+
+- **The Wave 1B extractor has now run once, successfully.**
+  `apps/email-pipeline/scripts/migration/extract_wave1b_v1_safety_bundle.py`
+  completed a single deferred read transaction against the live V1 SQLite
+  database with no warnings, and every field that was `pending` in
+  [`DATA.md`](DATA.md) §7.5 is now measured.
+- **Nothing has been loaded into V2.** `crm.*`, `outbound.*` and every other V2
+  schema still hold **zero** rows of business data (§2.1). There is no loader.
+- **No hosted project was contacted.** The extraction and the reconciliation
+  opened no Supabase, PostgreSQL, Render or Cloudflare endpoint, and made
+  **zero** Gmail network calls — the Sent evidence is already-ingested SQLite
+  rows read through the live outbound gate's own functions.
+- **No sender or campaign state changed.** Both September campaigns, their
+  recipients and their send attempts were read, never written; the 279
+  remaining candidates stay paused; the V1 ingest cron was observed, never
+  paused, stopped or modified.
+- **Both V2 send flags remain `false`** — the `outbound.send_control` single row
+  is unchanged (§2.1).
+- **The measured cross-wave safety baseline is available but not imported.**
+  9,460 deduplicated prior-contact addresses and 1,032 deduplicated address
+  suppressions, measured rather than summed ([`DATA.md`](DATA.md) §7.5.2,
+  §7.5.4). Of the 2,000 September accepted campaign recipients, **1,158** were
+  already in the pre-September Wave 1A baseline (§7.5.3). It is migration
+  safety evidence, not CRM identity truth, and nothing reads it yet.
+- **No outbound policy changed.** No eligibility rule, gate, suppression row or
+  campaign state was written by any of this; the reconciliation is read-only
+  and the hardening changes only filesystem modes.
+- **Wave 1A permissions are hardened.** On 2026-09-20 the Wave 1A bundle, its
+  `.tar.gz` and that archive's `.sha256` were tightened from `0755`/`0644` to
+  `0700`/`0600` by
+  `apps/email-pipeline/scripts/migration/harden_wave1a_artifact_permissions.py`
+  — 5 directories and 29 files. Every checksum was verified before and after and
+  **no digest moved**; `mtime` is unchanged on every path; the enclosing
+  migration root and the Wave 1B bundle were not touched. Zero paths inside the
+  boundary remain readable or writable by group or other. **Wave 1A's content,
+  hashes and §7 counts are unchanged — only the mode moved.**
 
 ## 3. V1 — running state
 
