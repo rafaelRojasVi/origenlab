@@ -264,6 +264,16 @@ def classify_likely_bucket(rel_posix: str) -> str:
     ):
         return "outbound_safety"
 
+    # Read-only V2 migration-evidence extractors. Deliberately distinct from
+    # scripts/migrate/, the parked V1 -> PostgreSQL loader family: these open no
+    # second database and write only into an operator-named directory outside
+    # the repository.
+    if (
+        p.startswith("src/origenlab_email_pipeline/migration/")
+        or p.startswith("scripts/migration/")
+    ):
+        return "v2_migration_extract"
+
     if "ndr_" in p or "reported_non_delivery" in p:
         return "ndr"
 
@@ -633,6 +643,7 @@ BUCKET_NEXT_ACTIONS: dict[str, str] = {
     "operator_reports": "keep_with_origenlab_status",
     "core_infrastructure": "no_move_without_tests",
     "ndr": "keep_with_ndr_review",
+    "v2_migration_extract": "keep_as_read_only_migration_evidence",
     "unknown_review": "classify_owner_first",
 }
 

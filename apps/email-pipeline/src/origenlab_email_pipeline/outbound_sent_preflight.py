@@ -11,7 +11,10 @@ import sys
 from dataclasses import dataclass
 from typing import TextIO
 
-from origenlab_email_pipeline.marketing_export_context import load_sent_recipient_norms
+from origenlab_email_pipeline.marketing_export_context import (
+    load_sent_recipient_norms,
+    sent_history_where,
+)
 
 _DISTINCT_FOLDER_SAMPLE_LIMIT = 20
 
@@ -116,16 +119,8 @@ def probe_sent_history(
             distinct_folders_sample=sample,
         )
 
-    like_pat = f"gmail:{user}/%".lower()
-    ph = ",".join("?" * len(folders))
-    row = conn.execute(
-        f"""
-        SELECT COUNT(*) FROM emails
-        WHERE lower(source_file) LIKE ?
-          AND folder IN ({ph})
-        """,
-        (like_pat, *folders),
-    ).fetchone()
+    where, params = sent_history_where(gmail_user=user, sent_folders=folders)
+    row = conn.execute(f"SELECT COUNT(*) FROM emails WHERE {where}", params).fetchone()
     sent_row_count = int(row[0] or 0) if row else 0
 
     norms = load_sent_recipient_norms(conn, gmail_user=user, sent_folders=folders)
