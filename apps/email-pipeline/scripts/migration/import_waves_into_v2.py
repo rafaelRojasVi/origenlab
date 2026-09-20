@@ -6,9 +6,18 @@ every artifact, computes the complete deterministic plan, reconciles it against 
 measured cross-wave report and prints PII-safe aggregate counts.
 
 With `--apply` it writes — and only ever to a disposable loopback PostgreSQL carrying the
-Slice 0 V2 schema. A hosted, managed or non-loopback target is refused by
-`migration.v2_import.target`, which has no override flag. No hosted Supabase project has
-been adopted (`docs/STATUS.md` §2.5) and nothing here changes that.
+Slice 0 V2 schema. `migration.v2_import.target` accepts a **literal loopback address** and
+nothing else: a URI query string, a fragment, a multi-host list, a Unix socket, a host
+*name* (including `localhost`), a hosted-provider marker and a host-less DSN all refuse,
+the DSN is rebuilt from the parts that were checked, and the libpq `PG*` environment is
+removed for the connection. There is no override flag. No hosted Supabase project has been
+adopted (`docs/STATUS.md` §2.5) and nothing here changes that.
+
+The seven V2 tables are owned by `origenlab_owner` and grant nothing to the Supabase CLI's
+`postgres` login, so the apply path takes `set local role origenlab_owner` inside its one
+transaction — the same step every migration takes. Connect as a login holding a SET
+membership of that role (`supabase/roles.sql` grants one to `postgres` and to
+`origenlab_migrator`).
 
 What it never does, in any mode: create a `crm.person`, `crm.organization`,
 `crm.contact_point` or prospect relationship; open Gmail, Drive, Supabase, Render or

@@ -79,13 +79,17 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 - **Any application code touching the seven schemas.** Slice 0 has **zero
   consumers**; nothing in `apps/` references it.
 - **The eight privileged send/quote functions** of [`ARCHITECTURE.md`](ARCHITECTURE.md) §6.2.
-- **A loader for the *blocked* classes.** §2.7 now implements the Wave 1A safety
-  load and the evidence trail. What is still missing is the Wave 1B safety rows
-  and all campaign history, both blocked on a schema decision
-  ([`DATA.md`](DATA.md) §7.6.4) — not on missing code.
-- **Any load into a real V2 database.** No hosted project exists (§2.5) and no
-  row from either wave has reached one. The only writes performed are into a
-  disposable local database that is destroyed after the run.
+- **A consumer for the imported rows.** §2.7's importer now maps the *full* Wave
+  1A/Wave 1B safety baseline and all three historical campaigns; both schema
+  blockers its first dry run measured were decided and closed on 2026-09-20
+  ([`DATA.md`](DATA.md) §7.6.4), so no input class is blocked any more. What does
+  not exist is anything that **reads** what it writes: promotion from
+  `evidence.assertion` into `crm.*` is slice 2, the send predicate over
+  `outbound.contact_control` is slice 5, and no dashboard surface shows either.
+- **Any load into a real V2 database.** No hosted project exists (§2.5), no
+  staging database exists, and no row from either wave has reached either. The
+  only writes performed are into a disposable local database that is destroyed
+  after the run.
 - **The `ol migrate` / `ol audit` CLI** documented in [`OPERATIONS.md`](OPERATIONS.md) §4
   — marked there as `EXAMPLE — NOT YET IMPLEMENTED`, and it is not implemented. The
   catalogue half of what its four `ol audit` subcommands would check is built, under a
@@ -219,21 +223,27 @@ mapping: [`DATA.md`](DATA.md) §7.6.
 |---|---|
 | Entry point | `apps/email-pipeline/scripts/migration/import_waves_into_v2.py` → `origenlab_email_pipeline.migration.v2_import` |
 | Default mode | **dry-run.** Without `--apply` **no database connection is opened at all** |
-| Target boundary | loopback only, via `migration/v2_import/target.py`. Any hosted-provider marker, non-loopback host or host-less DSN refuses. **No override flag exists**, and a test asserts none does |
+| Target boundary | **literal loopback address only**, via `migration/v2_import/target.py`: a URI query string, a fragment, a multi-host list, a Unix socket, a host *name* (including `localhost`), a hosted-provider marker or a host-less DSN all refuse, the DSN handed to the driver is rebuilt from the validated parts, and the libpq `PG*` routing environment is removed for the connection. **No override flag exists**, and a test asserts none does |
+| Write role | `set local role origenlab_owner`, the same step every migration takes. The seven tables are owned by that role and grant nothing to the Supabase CLI's `postgres` login, so a login holding a SET membership of it is required (`supabase/roles.sql`) |
+| Idempotency identity | **provenance-scoped.** A campaign is identified by `origin_source_record_id` plus `(mailbox_id, name)`, the send ledger is reconciled as a multiset scoped to that origin, and every reused row is read back and compared field by field. An existing row that differs from the plan refuses the run instead of being adopted |
 | Tables written | 7 — `evidence.source_record`, `evidence.assertion`, `outbound.contact_control`, `comms.mailbox`, `outbound.campaign`, `outbound.campaign_recipient`, `outbound.send_attempt`. **`crm.*` is never written**, and the row count is asserted unchanged across an apply |
 | Applied to a real database | **zero times.** The only writes were into a disposable local PostgreSQL 17 carrying the Slice 0 migrations |
 | Rows loaded | **28,666** on that disposable database — the full cross-wave safety baseline, the evidence trail and all three campaigns' audience and ledger ([`DATA.md`](DATA.md) §7.6.5) |
 | Wave 1A load gate ([`DATA.md`](DATA.md) §7.3) | **green** inside that total — 8,580 `prior_contact` all `marketing`, 704 address blocks, 91 domain blocks, zero `purpose=all` outreach facts, zero cooldown rows |
-| Idempotency | proven on the real artifacts — a second apply inserted **0** rows |
+| Idempotency | proven on the real artifacts — a second apply inserted **0** rows, with `crm.*` still 0 |
 | Blocked by schema decisions | **none.** Both gaps the first dry run found were decided and closed on 2026-09-20 — [`DATA.md`](DATA.md) §7.6.4 |
 | Rejects | **0** over the real artifacts; every input row mapped |
-| Tests | **107** — `uv run pytest tests/test_v2_import.py`. 7 are database-backed and skip unless `ORIGENLAB_V2_TEST_DSN` names a disposable local Slice 0 database |
+| Tests | **135** — `uv run pytest tests/test_v2_import.py`. 15 are database-backed and skip unless `ORIGENLAB_V2_TEST_DSN` names a disposable local Slice 0 database |
 | Network calls | **zero.** No Gmail, Supabase, Render or Cloudflare client is imported; both send flags are untouched |
 
 **Nothing reads these rows yet.** The importer has no consumer, no dashboard
 surface and no operator command; promotion from `evidence.assertion` to `crm.*`
 remains slice 2, and the send predicate that would read
 `outbound.contact_control` remains slice 5.
+
+**No real, staging or hosted V2 database has been loaded** — the only target
+ever opened is the disposable local PostgreSQL 17 above (§2.5 for why no hosted
+project is adopted).
 
 ## 3. V1 — running state
 

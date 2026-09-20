@@ -193,6 +193,15 @@ def render_console(report: dict[str, Any]) -> str:
         for gap in report["structural_gaps"]:
             lines.append(f"  - {gap['key']} → {gap['table']}")
             lines.append(f"    blocks: {gap['blocked_rows']}")
+    applied = report.get("applied")
+    if applied is not None:
+        lines += ["", f"applied: {applied['total_inserted']} rows inserted"]
+        for name, count in applied["inserted"].items():
+            lines.append(f"  {name:34s} {count:>7}  (already present: "
+                         f"{applied['skipped_existing'].get(name, 0)})")
+        lines.append(f"  crm.* rows after the apply: {applied['crm_rows_after']}")
+        for note, count in applied.get("provenance_notes", {}).items():
+            lines.append(f"  note: {note} = {count}")
     lines += ["", f"rejects: {report['rejects']['total']}"]
     return "\n".join(lines)
 

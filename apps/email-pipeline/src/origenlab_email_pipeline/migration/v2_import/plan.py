@@ -685,7 +685,16 @@ def build_plan(inputs: ImportInputs) -> ImportPlan:
     # -- campaign execution facts -------------------------------------------- #
     _plan_campaigns(inputs, tables, rejects)
 
-    counts = _reconcile(inputs, tables, wave1a_prior, wave1b_prior, overlap, rejects)
+    counts = _reconcile(
+        inputs,
+        tables,
+        wave1a_prior,
+        wave1b_prior,
+        overlap,
+        rejects,
+        wave1a_blocks=wave1a_blocks,
+        wave1b_blocks=wave1b_blocks,
+    )
 
     plan = ImportPlan(
         tables=tables,
@@ -960,6 +969,9 @@ def _reconcile(
     wave1b_prior: Mapping[str, tuple[str, ...]],
     overlap: set[str],
     rejects: list[Reject],
+    *,
+    wave1a_blocks: Mapping[str, Mapping[str, Any]],
+    wave1b_blocks: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, int]:
     """Count every output class and check it against the measured source totals.
 
@@ -990,12 +1002,24 @@ def _reconcile(
         r for r in address_blocks if r.columns["_origin_class"] == "manual_status"
     ]
 
+    # Per-wave address-block *inputs*, before the cross-wave union. A suppression row and
+    # a manual hard-block status are two different V1 control classes (§7.5.4); they are
+    # counted apart here so no figure downstream can silently call one the other.
+    def by_class(blocks: Mapping[str, Mapping[str, Any]], origin_class: str) -> int:
+        return len([a for a, spec in blocks.items() if spec["origin_class"] == origin_class])
+
     counts = {
         "input_prior_contact_union": len(prior),
         "input_suppression_union": len(suppression_table_blocks),
         "input_domain_suppression_union": len(domain_blocks),
         "address_blocks_total": len(address_blocks),
         "manual_hard_blocks_folded_in": len(manual_hard_blocks),
+        "wave1a_suppression_rows": by_class(wave1a_blocks, "suppression_table"),
+        "wave1a_manual_hard_block_statuses": by_class(wave1a_blocks, "manual_status"),
+        "wave1a_address_block_inputs": len(wave1a_blocks),
+        "wave1b_suppression_rows": by_class(wave1b_blocks, "suppression_table"),
+        "wave1b_manual_hard_block_statuses": by_class(wave1b_blocks, "manual_status"),
+        "wave1b_address_block_inputs": len(wave1b_blocks),
         "wave1a_prior_contact": len(wave1a_prior),
         "wave1b_prior_contact": len(wave1b_prior),
         "cross_wave_overlap": len(overlap),

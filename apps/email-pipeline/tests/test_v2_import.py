@@ -84,6 +84,8 @@ DOMAINS_1A = ["blocked.invalid"]
 
 CAMPAIGN_1A = "hielscher-2026"
 CAMPAIGN_1B = "septiembre-final"
+#: The single historical sender both campaigns were sent from.
+SENDER = "contacto@origenlab.invalid"
 
 
 def _identity(name: str) -> ArtifactIdentity:
@@ -516,6 +518,31 @@ def test_a_manual_hard_block_is_folded_in_and_counted_separately() -> None:
     assert plan.counts["address_blocks_total"] == plan.counts["input_suppression_union"] + 1
 
 
+def test_a_manual_status_is_counted_apart_from_a_suppression_in_every_wave() -> None:
+    """A suppression row and a manual hard-block status are different V1 control classes.
+
+    Calling the manual status a suppression would make the Wave 1B input read as 333
+    suppressions when the suppression table holds 332 (docs/DATA.md §7.5.4, §7.6.5). Each
+    wave's two classes are therefore counted apart, and the per-wave input total is their
+    union, not their sum.
+    """
+    plan = build_plan(make_inputs())
+    counts = plan.counts
+    for wave in ("wave1a", "wave1b"):
+        suppressions = counts[f"{wave}_suppression_rows"]
+        manual = counts[f"{wave}_manual_hard_block_statuses"]
+        inputs_total = counts[f"{wave}_address_block_inputs"]
+        assert suppressions + manual >= inputs_total, "the union never exceeds the sum"
+        assert inputs_total >= suppressions, "a suppression is always an address-block input"
+
+    # The suppression union reconciles to the suppression *tables* alone; the manual
+    # statuses are additional address-block inputs on top of it.
+    assert counts["input_suppression_union"] == len({*SUPPRESSED_1A, *SUPPRESSED_1B})
+    assert counts["address_blocks_total"] == (
+        counts["input_suppression_union"] + counts["manual_hard_blocks_folded_in"]
+    )
+
+
 def test_an_active_manual_status_is_not_consent_and_creates_no_row() -> None:
     inputs = make_inputs(manual_1a=[{"email_norm": "active@example.invalid", "status": "active"}])
     plan = build_plan(inputs)
@@ -798,11 +825,35 @@ def test_the_importer_vocabulary_matches_the_migration() -> None:
 @pytest.mark.parametrize(
     "dsn",
     [
+        # Hosted providers, and a plainly remote address.
         "postgresql://u:p@db.abcdefghij.supabase.co:5432/postgres",
         "postgresql://u:p@10.0.0.5:5432/postgres",
         "postgresql://u:p@origenlab-api.render.com:5432/postgres",
         "postgresql://u:p@example.com:5432/postgres",
+        # libpq reads URI query parameters as connection keywords, so each of these has a
+        # loopback authority and a remote effective target.
+        "postgresql://u:p@127.0.0.1/db?host=203.0.113.10",
+        "postgresql://u:p@127.0.0.1/db?hostaddr=203.0.113.10",
+        "postgresql://u:p@127.0.0.1/db?service=remote",
+        "postgresql://u:p@127.0.0.1/db?host=db.abcdefghij.supabase.co",
+        "postgresql://u:p@127.0.0.1/db?target_session_attrs=any",
+        "postgresql://u:p@127.0.0.1/db?",
+        # A fragment: a connection URI has none, so its presence means the string is not
+        # what it appears to be.
+        "postgresql://u:p@127.0.0.1/db#host=203.0.113.10",
+        "postgresql://u:p@127.0.0.1/db#",
+        # Multi-host: libpq tries each in turn, so only the first could be validated.
+        "postgresql://u:p@127.0.0.1,203.0.113.10/db",
+        # Unix sockets, in both spellings. Either connects to an unknown cluster.
         "postgresql:///postgres",
+        "postgresql://%2Fvar%2Frun%2Fpostgresql/db",
+        "postgresql://u:p@%2Ftmp/db",
+        # A name, including the loopback name: what this module validates (text) and what
+        # libpq resolves (an address, later) are two different things.
+        "postgresql://postgres@localhost:5432/v2test",
+        "postgresql://postgres@localhost.localdomain:5432/v2test",
+        # A key/value conninfo string is not a URI at all.
+        "host=203.0.113.10 dbname=postgres",
         "mysql://u:p@127.0.0.1:3306/db",
         "postgresql://u:p@127.0.0.1:5432/",
         "",
@@ -817,13 +868,70 @@ def test_a_non_local_or_malformed_target_is_refused(dsn: str) -> None:
     "dsn",
     [
         "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
-        "postgresql://postgres@localhost:5432/v2test",
+        "postgresql://postgres@127.0.0.1/v2test",
+        "postgresql://postgres@127.1.2.3:5432/v2test",
         "postgres://postgres@[::1]:5432/v2test",
     ],
 )
-def test_a_loopback_target_is_accepted(dsn: str) -> None:
+def test_a_literal_loopback_target_is_accepted(dsn: str) -> None:
     target = assert_local_target(dsn)
     assert target.database
+
+
+def test_the_dsn_handed_to_the_driver_is_rebuilt_from_what_was_validated() -> None:
+    """The original string is never passed through, so it can carry no unchecked keyword."""
+    target = assert_local_target("POSTGRESQL://postgres:pw@127.0.0.1:54322/postgres")
+    assert target.dsn == "postgresql://postgres:pw@127.0.0.1:54322/postgres"
+    assert "?" not in target.dsn and "#" not in target.dsn
+
+
+def test_an_ipv6_loopback_target_keeps_its_bracketed_literal() -> None:
+    target = assert_local_target("postgres://postgres@[::1]:5432/v2test")
+    assert target.dsn == "postgres://postgres@[::1]:5432/v2test"
+    assert target.host == "::1"
+
+
+def test_the_refusal_names_the_routing_mechanism_it_refused() -> None:
+    """A refusal has to be actionable: it says *why*, not only *no*."""
+    with pytest.raises(TargetRefused, match="query string"):
+        assert_local_target("postgresql://u:p@127.0.0.1/db?host=203.0.113.10")
+    with pytest.raises(TargetRefused, match="fragment"):
+        assert_local_target("postgresql://u:p@127.0.0.1/db#x")
+    with pytest.raises(TargetRefused, match="more than one host"):
+        assert_local_target("postgresql://u:p@127.0.0.1,203.0.113.10/db")
+    with pytest.raises(TargetRefused, match="name, not an IP address"):
+        assert_local_target("postgresql://u:p@localhost/db")
+
+
+def test_the_libpq_routing_environment_is_removed_for_the_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`PGHOSTADDR` redirects a connection whose URI names a loopback host.
+
+    Validating the DSN is therefore only half the boundary; the other half is that no `PG*`
+    variable survives into the connection.
+    """
+    from origenlab_email_pipeline.migration.v2_import.target import (
+        LIBPQ_ROUTING_ENVIRONMENT,
+        neutralized_libpq_environment,
+    )
+
+    assert {"PGHOSTADDR", "PGHOST", "PGSERVICE"} <= set(LIBPQ_ROUTING_ENVIRONMENT)
+    monkeypatch.setenv("PGHOSTADDR", "203.0.113.10")
+    monkeypatch.setenv("PGSERVICE", "remote")
+    with neutralized_libpq_environment() as removed:
+        assert "PGHOSTADDR" not in os.environ
+        assert "PGSERVICE" not in os.environ
+        assert "PGHOSTADDR" in removed and "203.0.113.10" not in " ".join(removed)
+    assert os.environ["PGHOSTADDR"] == "203.0.113.10"
+
+
+def test_the_apply_path_neutralizes_the_environment_before_it_connects() -> None:
+    """The guard is wired in, not merely available."""
+    from origenlab_email_pipeline.migration.v2_import import apply as apply_module
+
+    source = Path(apply_module.__file__).read_text(encoding="utf-8")
+    assert "neutralized_libpq_environment()" in source
 
 
 def test_a_redacted_target_carries_no_credential() -> None:
@@ -1226,6 +1334,9 @@ def clean_db() -> Any:
     psycopg = pytest.importorskip("psycopg")
     conn = psycopg.connect(_DSN, autocommit=True)
     with conn.cursor() as cur:
+        # The seven tables are owned by origenlab_owner and grant nothing to the CLI's
+        # postgres login; a fixture clears them the same way the importer writes them.
+        cur.execute("set role origenlab_owner")
         # Child-first, so no foreign key into evidence.source_record survives the clear.
         cur.execute("delete from outbound.send_attempt")
         cur.execute("delete from outbound.campaign_recipient")
@@ -1303,6 +1414,7 @@ def test_a_schema_without_the_v2_tables_is_refused(clean_db: Any) -> None:
     with psycopg.connect(_DSN) as conn:
         assert_schema_matches(conn)
         with conn.cursor() as cur:
+            cur.execute("set local role origenlab_owner")
             cur.execute(
                 "alter table outbound.contact_control rename constraint "
                 "contact_control_source_check to contact_control_source_check_tmp"
@@ -1404,3 +1516,329 @@ def test_a_repeat_attempt_for_one_recipient_is_preserved_not_collapsed(clean_db:
         assert cur.fetchone()[0] == 2
 
     assert apply_plan(plan, target).total_inserted == 0
+
+
+# --------------------------------------------------------------------------- #
+# Provenance-scoped idempotency: an existing row is verified, never assumed
+# --------------------------------------------------------------------------- #
+
+
+def _seed_unrelated_campaign(conn: Any, name: str) -> tuple[str, str]:
+    """Create a campaign an operator could plausibly have made, outside the import.
+
+    It shares the mailbox address and the name with an imported campaign and carries **no**
+    `origin_source_record_id`, which is exactly the collision the reuse rule must survive.
+
+    Returns:
+        ``(campaign_id, mailbox_id)``.
+    """
+    with conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            """
+            insert into comms.mailbox (address_norm, display_name, provider,
+                                       is_production_sender, authorization_state)
+            values (%s, %s, 'gmail', false, 'unauthorized')
+            on conflict (address_norm) do nothing
+            """,
+            (SENDER, "Wave sender"),
+        )
+        cur.execute("select id from comms.mailbox where address_norm = %s", (SENDER,))
+        mailbox_id = cur.fetchone()[0]
+        cur.execute(
+            """
+            insert into outbound.campaign (name, status, mailbox_id, max_sends,
+                                           recontact_interval_days, policy_include_suppliers)
+            values (%s, 'draft', %s, 7, 90, true)
+            returning id
+            """,
+            (name, mailbox_id),
+        )
+        return cur.fetchone()[0], mailbox_id
+
+
+@requires_db
+def test_an_unrelated_campaign_with_the_same_name_is_neither_reused_nor_changed(
+    clean_db: Any,
+) -> None:
+    """Regression: reuse on `(mailbox_id, name)` adopted a campaign the import never made.
+
+    `name` is a business label. An operator may reuse one, and if the import adopts that
+    campaign it attaches a whole historical audience and ledger to live operator work. The
+    import identity is the migration provenance instead, so the unrelated campaign is
+    invisible to it.
+    """
+    from origenlab_email_pipeline.migration.v2_import.apply import apply_plan
+
+    intruder_id, mailbox_id = _seed_unrelated_campaign(clean_db, "Wave 1A campaign")
+
+    result = apply_plan(build_plan(make_inputs()), assert_local_target(_DSN))
+    assert result.inserted["outbound.campaign"] == 2, "the import made its own campaigns"
+
+    with clean_db.cursor() as cur:
+        # The unrelated campaign is untouched, field for field.
+        cur.execute(
+            """
+            select name, status, mailbox_id, max_sends, recontact_interval_days,
+                   policy_include_suppliers, origin_source_record_id, version
+              from outbound.campaign where id = %s
+            """,
+            (intruder_id,),
+        )
+        assert cur.fetchone() == (
+            "Wave 1A campaign", "draft", mailbox_id, 7, 90, True, None, 1
+        )
+        # …and it received nothing.
+        cur.execute(
+            "select count(*) from outbound.campaign_recipient where campaign_id = %s",
+            (intruder_id,),
+        )
+        assert cur.fetchone()[0] == 0
+        cur.execute(
+            "select count(*) from outbound.send_attempt where campaign_id = %s", (intruder_id,)
+        )
+        assert cur.fetchone()[0] == 0
+
+    # And the second apply still reconciles to zero with the intruder in place.
+    assert apply_plan(build_plan(make_inputs()), assert_local_target(_DSN)).total_inserted == 0
+
+
+@requires_db
+def test_a_campaign_whose_stored_fields_drifted_is_refused_not_reused(clean_db: Any) -> None:
+    """An imported campaign that no longer matches the plan is not this plan's campaign."""
+    from origenlab_email_pipeline.migration.v2_import.apply import ApplyRefused, apply_plan
+
+    plan = build_plan(make_inputs())
+    target = assert_local_target(_DSN)
+    apply_plan(plan, target)
+
+    with clean_db.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            "update outbound.campaign set max_sends = max_sends + 1 "  # noqa: S608 - fixture
+            "where name = 'Wave 1A campaign' and origin_source_record_id is not null"
+        )
+        assert cur.rowcount == 1
+
+    with pytest.raises(ApplyRefused, match="max_sends"):
+        apply_plan(plan, target)
+
+
+@requires_db
+def test_an_unrelated_attempt_on_the_recipient_does_not_hide_imported_history(
+    clean_db: Any,
+) -> None:
+    """Regression: counting every attempt under a recipient silently dropped history.
+
+    With one unrelated attempt already present, a count-based reconciliation writes one
+    fewer imported attempt than V1 recorded — and reports success. Scoping the multiset to
+    `origin_source_record_id` makes the unrelated row invisible instead.
+    """
+    from origenlab_email_pipeline.migration.v2_import.apply import apply_plan
+
+    twice = [
+        {
+            "campaign_id": CAMPAIGN_1A,
+            "email_norm": UNION[0],
+            "id": "r1",
+            "result": "accepted",
+            "attempted_at": "2026-01-01T00:00:00Z",
+        },
+        {"campaign_id": CAMPAIGN_1A, "email_norm": UNION[0], "id": "r2", "result": "failed"},
+    ]
+    plan = build_plan(make_inputs(attempts_1a=twice))
+    target = assert_local_target(_DSN)
+
+    # Seed the campaign, its audience and one unrelated attempt — no migration origin.
+    apply_plan(plan, target)
+    with clean_db.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            """
+            select r.id, r.campaign_id, c.mailbox_id
+              from outbound.campaign_recipient r
+              join outbound.campaign c on c.id = r.campaign_id
+             where r.address_norm = %s and c.name = 'Wave 1A campaign'
+            """,
+            (UNION[0],),
+        )
+        recipient_id, campaign_id, mailbox_id = cur.fetchone()
+        cur.execute("delete from outbound.send_attempt where campaign_recipient_id = %s",
+                    (recipient_id,))
+        cur.execute(
+            """
+            insert into outbound.send_attempt (purpose, campaign_id, campaign_recipient_id,
+                                               mailbox_id, address_norm, submission_state,
+                                               delivery_state, accepted_at)
+            values ('marketing', %s, %s, %s, %s, 'accepted', 'sent_copy_confirmed',
+                    '2030-06-01T00:00:00Z')
+            """,
+            (campaign_id, recipient_id, mailbox_id, UNION[0]),
+        )
+
+    result = apply_plan(plan, target)
+    assert result.inserted["outbound.send_attempt"] == 2, "both V1 attempts were rewritten"
+    assert result.provenance_notes["send_attempts_with_another_origin_left_untouched"] >= 1
+
+    with clean_db.cursor() as cur:
+        cur.execute(
+            "select count(*) from outbound.send_attempt "
+            "where campaign_recipient_id = %s and origin_source_record_id is null",
+            (recipient_id,),
+        )
+        assert cur.fetchone()[0] == 1, "the unrelated attempt is still there, unchanged"
+        cur.execute(
+            "select count(*) from outbound.send_attempt "
+            "where campaign_recipient_id = %s and origin_source_record_id is not null",
+            (recipient_id,),
+        )
+        assert cur.fetchone()[0] == 2
+
+    assert apply_plan(plan, target).total_inserted == 0
+
+
+@requires_db
+def test_a_partly_present_imported_ledger_is_completed_not_doubled(clean_db: Any) -> None:
+    """A run interrupted after one of two attempts must write the missing one only."""
+    from origenlab_email_pipeline.migration.v2_import.apply import apply_plan
+
+    twice = [
+        {
+            "campaign_id": CAMPAIGN_1A,
+            "email_norm": UNION[0],
+            "id": "r1",
+            "result": "accepted",
+            "attempted_at": "2026-01-01T00:00:00Z",
+        },
+        {"campaign_id": CAMPAIGN_1A, "email_norm": UNION[0], "id": "r2", "result": "failed"},
+    ]
+    plan = build_plan(make_inputs(attempts_1a=twice))
+    target = assert_local_target(_DSN)
+    apply_plan(plan, target)
+
+    with clean_db.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            """
+            delete from outbound.send_attempt
+             where id in (
+               select a.id from outbound.send_attempt a
+                 join outbound.campaign c on c.id = a.campaign_id
+                where a.address_norm = %s and c.name = 'Wave 1A campaign'
+                  and a.submission_state = 'rejected'
+             )
+            """,
+            (UNION[0],),
+        )
+        assert cur.rowcount == 1
+
+    result = apply_plan(plan, target)
+    assert result.inserted["outbound.send_attempt"] == 1, "only the missing attempt"
+    assert apply_plan(plan, target).total_inserted == 0
+
+
+@requires_db
+def test_an_imported_attempt_that_does_not_match_the_plan_is_refused(clean_db: Any) -> None:
+    """An attempt under this origin that the plan does not contain stops the run.
+
+    The import completes a ledger; it never reconciles one by removing a row. So a stored
+    imported multiset that is not a subset of the plan is a refusal, and nothing is written.
+    """
+    from origenlab_email_pipeline.migration.v2_import.apply import ApplyRefused, apply_plan
+
+    plan = build_plan(make_inputs())
+    target = assert_local_target(_DSN)
+    apply_plan(plan, target)
+
+    with clean_db.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            """
+            update outbound.send_attempt set accepted_at = accepted_at + interval '1 day'
+             where id in (
+               select a.id from outbound.send_attempt a
+                where a.origin_source_record_id is not null
+                  and a.submission_state = 'accepted'
+                limit 1
+             )
+            """
+        )
+        assert cur.rowcount == 1
+        cur.execute("select count(*) from outbound.send_attempt")
+        before = cur.fetchone()[0]
+
+    with pytest.raises(ApplyRefused, match="send-ledger drift"):
+        apply_plan(plan, target)
+
+    with clean_db.cursor() as cur:
+        cur.execute("select count(*) from outbound.send_attempt")
+        assert cur.fetchone()[0] == before, "a refused run writes nothing"
+
+
+@requires_db
+def test_a_recipient_whose_state_drifted_never_receives_an_attempt(clean_db: Any) -> None:
+    """An audience row that disagrees with the plan is refused before any child row."""
+    from origenlab_email_pipeline.migration.v2_import.apply import ApplyRefused, apply_plan
+
+    plan = build_plan(make_inputs())
+    target = assert_local_target(_DSN)
+    apply_plan(plan, target)
+
+    with clean_db.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            "update outbound.campaign_recipient set state = 'replied' "
+            "where address_norm = %s and state = 'sent'",
+            (UNION[0],),
+        )
+        assert cur.rowcount >= 1
+
+    with pytest.raises(ApplyRefused, match="state"):
+        apply_plan(plan, target)
+
+
+@requires_db
+def test_a_source_record_whose_payload_drifted_is_refused(clean_db: Any) -> None:
+    """A `dedupe_key` that is present but describes another artifact is not idempotency."""
+    from origenlab_email_pipeline.migration.v2_import.apply import ApplyRefused, apply_plan
+
+    plan = build_plan(make_inputs())
+    target = assert_local_target(_DSN)
+    apply_plan(plan, target)
+
+    with clean_db.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            "update evidence.source_record set payload_sha256 = repeat('a', 64) "
+            "where dedupe_key = %s",
+            (plan.anchor_dedupe_key,),
+        )
+        assert cur.rowcount == 1
+
+    with pytest.raises(ApplyRefused, match="payload_sha256"):
+        apply_plan(plan, target)
+
+
+@requires_db
+def test_a_target_without_the_owning_role_refuses_with_a_reason(clean_db: Any) -> None:
+    """The seven tables grant nothing to the CLI login; say so once, not per statement."""
+    from origenlab_email_pipeline.migration.v2_import.apply import (
+        ApplyRefused,
+        assume_import_role,
+    )
+
+    psycopg = pytest.importorskip("psycopg")
+    with psycopg.connect(_DSN, autocommit=False) as conn:
+        assume_import_role(conn)
+        conn.rollback()
+
+    class _Refusing:
+        """A connection whose `set local role` fails, as a non-member's would."""
+
+        def cursor(self) -> Any:
+            raise psycopg.errors.InsufficientPrivilege(
+                'permission denied to set role "origenlab_owner"'
+            )
+
+    with pytest.raises(ApplyRefused, match="origenlab_owner"):
+        assume_import_role(_Refusing())
