@@ -915,12 +915,13 @@ suppression.
 representations of one fact, never two contacts** — the classes are equal at
 9,460 by construction, and the reconciliation asserts it.
 
-**Applied to the disposable local database**, the Wave 1A subset loads and the
-the §7.3 load gate is green: 8,580 `prior_contact` rows all `purpose=marketing`
-(8,577 `wave1a_union` + 3 `wave1a_rfc2047_addendum`), 704 Wave 1A address blocks
-(700 suppression rows ∪ 5 manual hard-block statuses), 91
-domain blocks, zero `prior_contact` or `cooldown` with `purpose = all`, and zero
-cooldown rows. A second apply inserted **0** rows.
+**Applied to the disposable local database**, within the full Wave 1A/Wave 1B
+rehearsal the Wave 1A partition passes its §7.3 gate: 8,580 `prior_contact`
+rows all `purpose=marketing` (8,577 `wave1a_union` + 3
+`wave1a_rfc2047_addendum`), 704 Wave 1A address blocks (700 suppression rows
+∪ 5 manual hard-block statuses), 91 domain blocks, zero `prior_contact` or
+`cooldown` with `purpose = all`, and zero cooldown rows. A second apply
+inserted **0** rows.
 
 #### 7.6.6 The supplier failure mode, handled generically
 
@@ -941,13 +942,14 @@ Supplier evidence loads as `evidence.assertion` of kind `supplier_candidate`,
 
 #### 7.6.7 What has to happen before any real V2 data load
 
-1. **Review this import against a local Supabase stack** — the Slice 0 evidence suite
-   ([`OPERATIONS.md`](OPERATIONS.md) §4.1) is the gate that exercises roles, RLS
-   and grants, and CI runs it on every change under `supabase/**`.
-2. Then a **reviewed staging load** — still not production, which remains blocked
-   on the undecided RPO/PITR posture ([`OPERATIONS.md`](OPERATIONS.md) §4.3).
-   Adopting a hosted project is itself a separate, untaken decision
-   ([`STATUS.md`](STATUS.md) §2.5).
+1. **Review against a local Supabase stack — DONE.** The full Slice 0 evidence
+   suite ([`OPERATIONS.md`](OPERATIONS.md) §4.1) — the gate that exercises roles,
+   RLS and grants — has been run locally over this import, and CI runs it on
+   every change under `supabase/**`.
+2. **The single remaining step is a separately reviewed staging load**, which
+   is still not production; production remains blocked on the undecided
+   RPO/PITR posture ([`OPERATIONS.md`](OPERATIONS.md) §4.3). Adopting a hosted
+   project is itself a separate, untaken decision ([`STATUS.md`](STATUS.md) §2.5).
 3. **Nothing reads these rows yet.** The evidence and safety rows have no
    consumer: promotion from `evidence.assertion` to `crm.*` is the slice 2
    operator command ([`MIGRATION.md`](MIGRATION.md) §5), and the send predicate

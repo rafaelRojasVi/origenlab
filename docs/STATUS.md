@@ -69,7 +69,7 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 | `SECURITY DEFINER` functions | **zero** — the closed list of eight arrives in slices 3 and 5 |
 | Data API (PostgREST) | **off**; the seven schemas are not exposed |
 | Send flags | `outbound.send_control` single row, **both `false`** |
-| Rows of business data | **zero** — in every real database. The §2.7 importer has loaded the Wave 1A subset into a *disposable local* database only, which is destroyed after the run |
+| Rows of business data | **zero** — in every real database. The §2.7 importer has loaded the full Wave 1A/Wave 1B safety baseline and all three historical campaigns (**28,666** rows, §2.7) into a *disposable local* database only, which is destroyed after the run |
 
 ### 2.2 What does not exist yet in V2
 
@@ -86,10 +86,10 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
   not exist is anything that **reads** what it writes: promotion from
   `evidence.assertion` into `crm.*` is slice 2, the send predicate over
   `outbound.contact_control` is slice 5, and no dashboard surface shows either.
-- **Any load into a real V2 database.** No hosted project exists (§2.5), no
-  staging database exists, and no row from either wave has reached either. The
-  only writes performed are into a disposable local database that is destroyed
-  after the run.
+- **Any load into a real V2 database.** No hosted project has been adopted
+  (§2.5), no staging database exists, and no row from either wave has reached
+  either. The only writes performed are into a disposable local database that
+  is destroyed after the run.
 - **The `ol migrate` / `ol audit` CLI** documented in [`OPERATIONS.md`](OPERATIONS.md) §4
   — marked there as `EXAMPLE — NOT YET IMPLEMENTED`, and it is not implemented. The
   catalogue half of what its four `ol audit` subcommands would check is built, under a
@@ -233,7 +233,7 @@ mapping: [`DATA.md`](DATA.md) §7.6.
 | Idempotency | proven on the real artifacts — a second apply inserted **0** rows, with `crm.*` still 0 |
 | Blocked by schema decisions | **none.** Both gaps the first dry run found were decided and closed on 2026-09-20 — [`DATA.md`](DATA.md) §7.6.4 |
 | Rejects | **0** over the real artifacts; every input row mapped |
-| Tests | **135** — `uv run pytest tests/test_v2_import.py`. 15 are database-backed and skip unless `ORIGENLAB_V2_TEST_DSN` names a disposable local Slice 0 database |
+| Tests | **136** — `uv run pytest tests/test_v2_import.py`. 15 are database-backed and skip unless `ORIGENLAB_V2_TEST_DSN` names a disposable local Slice 0 database |
 | Network calls | **zero.** No Gmail, Supabase, Render or Cloudflare client is imported; both send flags are untouched |
 
 **Nothing reads these rows yet.** The importer has no consumer, no dashboard
