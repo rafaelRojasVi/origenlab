@@ -693,19 +693,19 @@ enforces, so a re-run conflicts instead of duplicating.
 |---|---|---|---|---|---|---|---|
 | 1A `derived/recipient_ledger` (`in_contacted_union`) | `email_norm` | `outbound.contact_control` `kind=prior_contact, scope=address, purpose=marketing, source=wave1a_union` | `candidate_export_gate.normalize_export_email` | `(scope, value_norm, kind, purpose)` | unnormalizable → reject, never repaired | union label wins over addendum | **implemented** |
 | 1A RFC 2047 addendum (§7.4) | `address` | same, `source=wave1a_rfc2047_addendum` | same | same | same | keeps its own label, so provenance stays separable | **implemented** |
-| 1B `delta/combined_prior_contact` | `address`, `source_categories` | same, `source=wave1b_prior_contact` | same; the union is read as measured, never recomputed | same | same | an address in both waves yields **one** row; both waves recorded on the assertion | **blocked** — §7.6.4 gap 1 |
+| 1B `delta/combined_prior_contact` | `address`, `source_categories` | same, `source=wave1b_prior_contact` | same; the union is read as measured, never recomputed | same | same | an address in both waves yields **one** row; both waves recorded on the assertion | **implemented** (§7.6.4 gap 1 closed) |
 | 1A `exact/contact_email_suppression` | `email`, `suppression_reason_code` | `outbound.contact_control` `kind=block, scope=address, source=wave1a_suppression` | `purpose` from the §7.1 truth table | same | missing/unknown code → `purpose=all` **and** `needs_review` | never silently `marketing` | **implemented** |
 | 1A `exact/manual_contact_status` (`inactive`/`hold`) | `email_norm`, `status` | same | folded in as a hard block | same | — | a suppression row already present wins; the manual status never widens or narrows it | **implemented** |
-| 1B `delta/contact_email_suppression`, `delta/manual_contact_status` | same | same, `source=wave1b_block` | same | same | same | Wave 1A wins the label on the measured-zero intersection (§7.5.4) | **blocked** — §7.6.4 gap 1 |
+| 1B `delta/contact_email_suppression`, `delta/manual_contact_status` | same | same, `source=wave1b_block` | same | same | same | Wave 1A wins the label on the measured-zero intersection (§7.5.4) | **implemented** (§7.6.4 gap 1 closed) |
 | 1A `exact/contact_domain_suppression` | `domain_norm` | `outbound.contact_control` `kind=block, scope=domain, purpose=marketing` | lower-cased, shape-checked | same | unnormalizable → reject | — | **implemented** |
 | every verified artifact | name + SHA-256 | `evidence.source_record` `kind=migration_manifest` | canonical JSON payload | `dedupe_key` | — | — | **implemented** |
 | the cross-wave union | address | `evidence.assertion` `kind=contacted_address` | records waves, `source_categories`, supplier classification | `(source_record_id, kind, value_norm)` | `resolution='unresolved'` always | both waves recorded on one row | **implemented** |
 | 1A/1B `outbound_campaign_recipient` | `institution_name` | `evidence.assertion` `kind=organization_name` | trimmed, whitespace-collapsed, lower-cased | same | absent → no row; **never** an invented name | distinct names only | **implemented** |
 | 1A `exact/supplier_master` | `trade_name`, `domain_norm` | `evidence.assertion` `kind=supplier_candidate` | — | same | — | pending evidence, never automatic CRM truth (§7.2, §8) | **implemented** |
-| 1A/1B `exact/outbound_campaign` | `sender_email`, `sender_name` | `comms.mailbox` | normalized; `is_production_sender=false`, `authorization_state='unauthorized'` | `address_norm` | — | — | **blocked** — §7.6.4 gap 2 |
-| 1A/1B `exact/outbound_campaign` | `campaign_id`, `name`, `target_attempt_count` | `outbound.campaign`, `status='archived'` | `max_sends ← target_attempt_count` | `campaign_id` | `recontact_interval_days` has **no V1 source** | — | **blocked** — §7.6.4 gap 2 |
-| 1A/1B `exact/outbound_campaign_recipient` | `email_norm`, `state` | `outbound.campaign_recipient` | `sent→sent`, `bounced→bounced`, `replied→replied`, `candidate`/`selected`→`snapshotted`, `inactive`/`blocked`→`excluded` | `(campaign_id, address_norm)` | identity columns stay `NULL` | an unmapped state is a **reject**, never a guess | **blocked** — §7.6.4 gap 2 |
-| 1A/1B `exact/outbound_send_attempt` | `email_norm`, `result`, `attempted_at` | `outbound.send_attempt` | `accepted→(accepted, pending)`, `failed`/`rejected`→`(rejected, n/a)`; minted id `NULL` (§7.1) | `(campaign_id, address_norm, v1 attempt id)` | missing `attempted_at` → `accepted_at` NULL, state preserved | an unmapped result is a **reject** | **blocked** — §7.6.4 gap 2 |
+| 1A/1B `exact/outbound_campaign` | `sender_email`, `sender_name` | `comms.mailbox` | normalized; `is_production_sender=false`, `authorization_state='unauthorized'` | `address_norm` | — | — | **implemented** (§7.6.4 gap 2 closed) |
+| 1A/1B `exact/outbound_campaign` | `campaign_id`, `name`, `target_attempt_count` | `outbound.campaign`, `status='archived'` | `max_sends ← target_attempt_count` | `campaign_id` | `recontact_interval_days` has **no V1 source** | — | **implemented** (§7.6.4 gap 2 closed) |
+| 1A/1B `exact/outbound_campaign_recipient` | `email_norm`, `state` | `outbound.campaign_recipient` | `sent→sent`, `bounced→bounced`, `replied→replied`, `candidate`/`selected`→`snapshotted`, `inactive`/`blocked`→`excluded` | `(campaign_id, address_norm)` | identity columns stay `NULL` | an unmapped state is a **reject**, never a guess | **implemented** (§7.6.4 gap 2 closed) |
+| 1A/1B `exact/outbound_send_attempt` | `email_norm`, `result`, `attempted_at` | `outbound.send_attempt` | `accepted→(accepted, pending)`, `failed`/`rejected`→`(rejected, n/a)`; minted id `NULL` (§7.1) | `(campaign_id, address_norm, v1 attempt id)` | missing `attempted_at` → `accepted_at` NULL, state preserved | an unmapped result is a **reject** | **implemented** (§7.6.4 gap 2 closed) |
 
 **Never mapped:** message bodies, subjects (only a SHA-256 travels for Wave 1B),
 attachment bytes, operator free text (§7.5 exports a presence flag and a one-way
@@ -727,27 +727,52 @@ digest instead), and the archive-only populations of §7.2.
 | PII-safe output | the aggregate report is re-checked for address-shaped values before it is returned; recipient-level rejects go to a `0600` artifact outside Git and are never printed |
 | No network | the package imports no HTTP, Gmail, Supabase or cloud client, and touches no send flag (both proven by test) |
 
-#### 7.6.4 Structural gaps — two decisions the database has not taken
+#### 7.6.4 Two structural gaps, found and closed
 
-Both gaps are additive, both sit in a frozen Slice 0 migration, and **the
-importer implements neither**. It computes the full plan for the affected rows
-so the decision can be priced, and refuses to apply them.
+The importer's first dry run measured two blockers. Both were additive, both sat
+in a frozen Slice 0 migration, and both were decided by the owner on 2026-09-20
+and closed by
+`supabase/migrations/20260920190000_slice0_wave1b_source_labels_and_archived_recontact_interval.sql`.
+The reasoning is recorded here because the argument outlives the blocker.
 
-**Gap 1 — `outbound.contact_control.source` has no Wave 1B labels.**
+**Gap 1 — `outbound.contact_control.source` had no Wave 1B labels.**
 §7.5.1 requires that "Wave 1B rows load with their own `source` labels
-(`wave1b_prior_contact`, `wave1b_block`)". `contact_control_source_check` is a
-closed CHECK listing only the four `wave1a_*` labels plus the runtime handlers.
-Loading Wave 1B rows under a `wave1a_*` label would misattribute their
-provenance — the one thing that sentence exists to prevent. **Blocks 1,213 rows**
-(880 Wave 1B-only prior contacts, 333 Wave 1B blocks).
+(`wave1b_prior_contact`, `wave1b_block`)". `contact_control_source_check` was a
+closed CHECK listing only the four `wave1a_*` labels plus the runtime handlers,
+so the loader had no correct label: a Wave 1B row under a `wave1a_*` label would
+misattribute its provenance, which is the one thing that sentence exists to
+prevent. It blocked 1,213 rows. **Closed** by adding both labels. The vocabulary
+stays closed — a further wave is still a migration.
 
-**Gap 2 — `outbound.campaign.recontact_interval_days` has no V1 source.**
-It is `NOT NULL CHECK (>= 1)`, and V1 has no recontact-interval concept at all —
+**Gap 2 — `outbound.campaign.recontact_interval_days` had no V1 source.**
+It was `NOT NULL CHECK (>= 1)`, and V1 has no recontact-interval concept at all:
 §7.1 records zero cooldown rows carried from V1 for exactly this reason. Any
-value written would be invented, which rule 3 forbids. The table already carves
-`archived` out of the approval, content and audience-criteria shapes for these
-same historical campaigns; a fourth carve-out would be consistent. **Blocks all
-3 campaigns, 3,481 recipients and 3,141 attempts.**
+value would have been invented and would read as recorded V1 policy in every
+later query. It blocked all 3 campaigns and therefore 3,481 recipients and 3,141
+attempts. **Closed** by a fourth `archived`/`cancelled` carve-out, beside the
+approval, content and audience-criteria shapes the table already makes for these
+same historical campaigns. A campaign that can still send is unaffected: the
+value remains mandatory for it.
+
+**Two things the model turned out to lack a key for**, handled in the loader
+rather than by a third migration:
+
+- `outbound.campaign` has no natural-key unique constraint, so `ON CONFLICT` is
+  a no-op there. The apply path looks a campaign up on `(mailbox_id, name)`
+  before writing; without that a second run created a second campaign and a
+  second copy of its whole audience and ledger.
+- `outbound.send_attempt` has no natural key either — a migrated V1 row mints no
+  RFC 822 id (§7.1), and one recipient may legitimately have several attempts.
+  The ledger is reconciled **per recipient by count**: if V1 records M attempts
+  and the table holds N, only the missing M − N are written. That is idempotent
+  without inventing a key and without collapsing genuine repeat attempts.
+
+**One mapping fails closed rather than inventing an instant.**
+`send_attempt_accepted_shape` requires `accepted_at`, so an accepted V1 attempt
+carrying no `attempted_at` cannot be represented without fabricating a date. It
+is **rejected** and kept in the private reject artifact — the same rule the Wave
+1B extractor applies to an undateable Sent row (§7.5.1). Over the real artifacts
+this rejects **0** rows; every recorded attempt is dated.
 
 #### 7.6.5 Measured dry-run reconciliation
 
@@ -778,6 +803,7 @@ reconciled class is checked against the independently measured §7.5.2 report.
 | Candidate-only memberships | **279** | §7.5 — still paused, never converted |
 | Manual-review records | 0 | every observed reason code is classifiable |
 | Rejects | **0** | every input row mapped |
+| Rows written by an apply | **28,666** | the sum of the applicable tables below |
 | `crm.*` rows | **0** | asserted before and after |
 
 **A prior-contact row and its `contacted_address` assertion are two relational
@@ -809,12 +835,19 @@ Supplier evidence loads as `evidence.assertion` of kind `supplier_candidate`,
 
 #### 7.6.7 What has to happen before any real V2 data load
 
-1. **Take the two §7.6.4 decisions.** Without gap 1 the Wave 1B safety rows
-   cannot load at all; without gap 2 no campaign history can.
-2. Then, and only then, a **reviewed local or staging load** — still not
-   production, which remains blocked on the undecided RPO/PITR posture
-   ([`OPERATIONS.md`](OPERATIONS.md) §4.3).
-3. Dashboard contact cards and the campaign/activity timeline are a **later**
+1. **Review this import against a local Supabase stack**, not only the plain
+   PostgreSQL container the counts above came from — the Slice 0 evidence suite
+   ([`OPERATIONS.md`](OPERATIONS.md) §4.1) is the gate that exercises roles, RLS
+   and grants, and CI runs it on every change under `supabase/**`.
+2. Then a **reviewed staging load** — still not production, which remains blocked
+   on the undecided RPO/PITR posture ([`OPERATIONS.md`](OPERATIONS.md) §4.3).
+   Adopting a hosted project is itself a separate, untaken decision
+   ([`STATUS.md`](STATUS.md) §2.5).
+3. **Nothing reads these rows yet.** The evidence and safety rows have no
+   consumer: promotion from `evidence.assertion` to `crm.*` is the slice 2
+   operator command ([`MIGRATION.md`](MIGRATION.md) §5), and the send predicate
+   that would read `outbound.contact_control` is slice 5.
+4. Dashboard contact cards and the campaign/activity timeline are a **later**
    step. **This slice does not make the dashboard CRM complete**, and nothing
    here reads or writes an operator-facing surface.
 
