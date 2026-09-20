@@ -27,8 +27,9 @@ of truth*). Any PR that changes what is built, applied or deployed updates this
 file — including the `Last verified` line — **in the same PR**. A PR that only
 changes design, rules or targets does not touch it.
 
-Last verified: **2026-09-10**, against `origin/main` @ `12f65e6d` plus the hosted role bootstrap
-on this branch, measured from a clean local `supabase db reset`.
+Last verified: **2026-09-20**, against `origin/main` @ `56812a0b` plus the Wave 1A/1B → V2
+importer on this branch, measured from a clean local PostgreSQL 17 carrying the Slice 0
+migrations.
 
 ## 1. Eras
 
@@ -68,7 +69,7 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 | `SECURITY DEFINER` functions | **zero** — the closed list of eight arrives in slices 3 and 5 |
 | Data API (PostgREST) | **off**; the seven schemas are not exposed |
 | Send flags | `outbound.send_control` single row, **both `false`** |
-| Rows of business data | **zero** |
+| Rows of business data | **zero** — in every real database. The §2.7 importer has loaded the Wave 1A subset into a *disposable local* database only, which is destroyed after the run |
 
 ### 2.2 What does not exist yet in V2
 
@@ -78,11 +79,13 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 - **Any application code touching the seven schemas.** Slice 0 has **zero
   consumers**; nothing in `apps/` references it.
 - **The eight privileged send/quote functions** of [`ARCHITECTURE.md`](ARCHITECTURE.md) §6.2.
-- **The Wave 1A loader.** The bundle itself exists on disk with its `.sha256`
-  sidecar; no code loads it.
-- **The Wave 1B loader.** The Wave 1B bundle, the Wave 1A RFC 2047 addendum and
-  the cross-wave reconciliation report all exist on disk (§2.6); no code loads
-  any of them, and no row from either wave has reached V2.
+- **A loader for the *blocked* classes.** §2.7 now implements the Wave 1A safety
+  load and the evidence trail. What is still missing is the Wave 1B safety rows
+  and all campaign history, both blocked on a schema decision
+  ([`DATA.md`](DATA.md) §7.6.4) — not on missing code.
+- **Any load into a real V2 database.** No hosted project exists (§2.5) and no
+  row from either wave has reached one. The only writes performed are into a
+  disposable local database that is destroyed after the run.
 - **The `ol migrate` / `ol audit` CLI** documented in [`OPERATIONS.md`](OPERATIONS.md) §4
   — marked there as `EXAMPLE — NOT YET IMPLEMENTED`, and it is not implemented. The
   catalogue half of what its four `ol audit` subcommands would check is built, under a
@@ -206,6 +209,29 @@ root, which no repository path references and no `.gitignore` exemption covers.
   migration root and the Wave 1B bundle were not touched. Zero paths inside the
   boundary remain readable or writable by group or other. **Wave 1A's content,
   hashes and §7 counts are unchanged — only the mode moved.**
+
+### 2.7 Wave 1A/1B → V2 importer — measured
+
+The first code in this repository that writes to a V2 schema. Full contract and
+mapping: [`DATA.md`](DATA.md) §7.6.
+
+| Item | Value |
+|---|---|
+| Entry point | `apps/email-pipeline/scripts/migration/import_waves_into_v2.py` → `origenlab_email_pipeline.migration.v2_import` |
+| Default mode | **dry-run.** Without `--apply` **no database connection is opened at all** |
+| Target boundary | loopback only, via `migration/v2_import/target.py`. Any hosted-provider marker, non-loopback host or host-less DSN refuses. **No override flag exists**, and a test asserts none does |
+| Tables written | 3 — `evidence.source_record`, `evidence.assertion`, `outbound.contact_control`. **`crm.*` is never written**, and the row count is asserted unchanged across an apply |
+| Applied to a real database | **zero times.** The only writes were into a disposable local PostgreSQL 17 carrying the Slice 0 migrations |
+| Wave 1A load gate ([`DATA.md`](DATA.md) §7.3) | **green** on that disposable database — 8,580 `prior_contact` all `marketing`, 704 address blocks, 91 domain blocks, zero `purpose=all` outreach facts, zero cooldown rows |
+| Idempotency | proven on the real artifacts — a second apply inserted **0** rows |
+| Blocked by schema decisions | 1,213 Wave 1B safety rows and all campaign history (3 campaigns, 3,481 recipients, 3,141 attempts) — [`DATA.md`](DATA.md) §7.6.4 |
+| Rejects | **0** over the real artifacts; every input row mapped |
+| Tests | **101** — `uv run pytest tests/test_v2_import.py`. 5 are database-backed and skip unless `ORIGENLAB_V2_TEST_DSN` names a disposable local Slice 0 database |
+| Network calls | **zero.** No Gmail, Supabase, Render or Cloudflare client is imported; both send flags are untouched |
+
+**Nothing reads these rows yet.** The importer has no consumer, no dashboard
+surface and no operator command; promotion from evidence to `crm.*` remains
+slice 2.
 
 ## 3. V1 — running state
 

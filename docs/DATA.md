@@ -653,6 +653,171 @@ mapping applied with an explicit source vocabulary. The reconciliation counts
 these rows by recorded status and stops: it does not reinterpret a manual hold
 as a suppression, and the 1,032 above is the suppression-table union alone.
 
+### 7.6 The Wave 1A/1B → V2 import
+
+**[V1 FACT]** — measured 2026-09-20 against `main` @ `56812a0b` by
+`apps/email-pipeline/scripts/migration/import_waves_into_v2.py`, from the
+verified artifacts of §7, §7.4 and §7.5 alone. **V2 PostgreSQL has not been
+populated outside a disposable local test database**, and no hosted project was
+contacted (§7.5.2, [`STATUS.md`](STATUS.md) §2.5).
+
+This is the first code that writes to a V2 schema. It writes to exactly three
+tables, and **never to `crm.*`**.
+
+#### 7.6.1 Where the historical data lands, and why not in `crm.*`
+
+The artifacts are an outbound **safety** baseline — what V1 can prove it already
+wrote to — not CRM identity truth (§7.5.2). The mapping therefore honours five
+rules that are already canonical, rather than inventing a sixth:
+
+| Rule | Where it comes from | How the import obeys it |
+|---|---|---|
+| An email address is a contact point, not a person | [`DOMAIN.md`](DOMAIN.md) §2.5 | no `crm.person` row is ever planned |
+| A recipient is not a prospect or a lead | §7.5.2 | no `crm.organization_relationship` row is ever planned |
+| An address with no known owner stays unresolved | [`DOMAIN.md`](DOMAIN.md) §7 #25 | it becomes an `evidence.assertion` of kind `contacted_address`, `resolution = 'unresolved'` |
+| An accepted delivery is an outbound event, not consent | [`WORKFLOWS.md`](WORKFLOWS.md) §1.6 | every prior-contact row is `purpose = marketing`; `crm.contact_point` has no consent column and the import adds none |
+| Promotion to CRM truth is an operator command | [`MIGRATION.md`](MIGRATION.md) §5 slice 2 | the importer asserts `crm.*` row count is unchanged by an apply, and refuses if it moved |
+
+`evidence.assertion` with `resolution = 'unresolved'` is the canonical state for
+"an address was contacted and we do not know whose it is". Creating 9,460
+`crm.contact_point` rows instead would assert an identity nobody confirmed, and
+would have to be undone by hand before slice 2 could run.
+
+#### 7.6.2 Field-level mapping
+
+Every mapping is deterministic and idempotent: the same artifacts always produce
+the same plan, and the idempotency key is the natural key the database already
+enforces, so a re-run conflicts instead of duplicating.
+
+| Source artifact | Source field | Destination | Transformation | Idempotency key | Unresolved / null | Conflict behaviour | Status |
+|---|---|---|---|---|---|---|---|
+| 1A `derived/recipient_ledger` (`in_contacted_union`) | `email_norm` | `outbound.contact_control` `kind=prior_contact, scope=address, purpose=marketing, source=wave1a_union` | `candidate_export_gate.normalize_export_email` | `(scope, value_norm, kind, purpose)` | unnormalizable → reject, never repaired | union label wins over addendum | **implemented** |
+| 1A RFC 2047 addendum (§7.4) | `address` | same, `source=wave1a_rfc2047_addendum` | same | same | same | keeps its own label, so provenance stays separable | **implemented** |
+| 1B `delta/combined_prior_contact` | `address`, `source_categories` | same, `source=wave1b_prior_contact` | same; the union is read as measured, never recomputed | same | same | an address in both waves yields **one** row; both waves recorded on the assertion | **blocked** — §7.6.4 gap 1 |
+| 1A `exact/contact_email_suppression` | `email`, `suppression_reason_code` | `outbound.contact_control` `kind=block, scope=address, source=wave1a_suppression` | `purpose` from the §7.1 truth table | same | missing/unknown code → `purpose=all` **and** `needs_review` | never silently `marketing` | **implemented** |
+| 1A `exact/manual_contact_status` (`inactive`/`hold`) | `email_norm`, `status` | same | folded in as a hard block | same | — | a suppression row already present wins; the manual status never widens or narrows it | **implemented** |
+| 1B `delta/contact_email_suppression`, `delta/manual_contact_status` | same | same, `source=wave1b_block` | same | same | same | Wave 1A wins the label on the measured-zero intersection (§7.5.4) | **blocked** — §7.6.4 gap 1 |
+| 1A `exact/contact_domain_suppression` | `domain_norm` | `outbound.contact_control` `kind=block, scope=domain, purpose=marketing` | lower-cased, shape-checked | same | unnormalizable → reject | — | **implemented** |
+| every verified artifact | name + SHA-256 | `evidence.source_record` `kind=migration_manifest` | canonical JSON payload | `dedupe_key` | — | — | **implemented** |
+| the cross-wave union | address | `evidence.assertion` `kind=contacted_address` | records waves, `source_categories`, supplier classification | `(source_record_id, kind, value_norm)` | `resolution='unresolved'` always | both waves recorded on one row | **implemented** |
+| 1A/1B `outbound_campaign_recipient` | `institution_name` | `evidence.assertion` `kind=organization_name` | trimmed, whitespace-collapsed, lower-cased | same | absent → no row; **never** an invented name | distinct names only | **implemented** |
+| 1A `exact/supplier_master` | `trade_name`, `domain_norm` | `evidence.assertion` `kind=supplier_candidate` | — | same | — | pending evidence, never automatic CRM truth (§7.2, §8) | **implemented** |
+| 1A/1B `exact/outbound_campaign` | `sender_email`, `sender_name` | `comms.mailbox` | normalized; `is_production_sender=false`, `authorization_state='unauthorized'` | `address_norm` | — | — | **blocked** — §7.6.4 gap 2 |
+| 1A/1B `exact/outbound_campaign` | `campaign_id`, `name`, `target_attempt_count` | `outbound.campaign`, `status='archived'` | `max_sends ← target_attempt_count` | `campaign_id` | `recontact_interval_days` has **no V1 source** | — | **blocked** — §7.6.4 gap 2 |
+| 1A/1B `exact/outbound_campaign_recipient` | `email_norm`, `state` | `outbound.campaign_recipient` | `sent→sent`, `bounced→bounced`, `replied→replied`, `candidate`/`selected`→`snapshotted`, `inactive`/`blocked`→`excluded` | `(campaign_id, address_norm)` | identity columns stay `NULL` | an unmapped state is a **reject**, never a guess | **blocked** — §7.6.4 gap 2 |
+| 1A/1B `exact/outbound_send_attempt` | `email_norm`, `result`, `attempted_at` | `outbound.send_attempt` | `accepted→(accepted, pending)`, `failed`/`rejected`→`(rejected, n/a)`; minted id `NULL` (§7.1) | `(campaign_id, address_norm, v1 attempt id)` | missing `attempted_at` → `accepted_at` NULL, state preserved | an unmapped result is a **reject** | **blocked** — §7.6.4 gap 2 |
+
+**Never mapped:** message bodies, subjects (only a SHA-256 travels for Wave 1B),
+attachment bytes, operator free text (§7.5 exports a presence flag and a one-way
+digest instead), and the archive-only populations of §7.2.
+
+#### 7.6.3 The import safety contract
+
+| Guarantee | How it is enforced |
+|---|---|
+| Dry-run by default | without `--apply` **no database connection is opened at all** |
+| Local only | `migration/v2_import/target.py` refuses any non-loopback host, any hosted-provider marker and any host-less DSN. **There is no override flag**, and a test asserts none exists |
+| Verified input | every bundle is checked against its own `SHA256SUMS`, every sidecar against its `.sha256`, and every archive and manifest against the hash this document pins. A symlinked, foreign-owned or group/world-writable artifact refuses |
+| Fails closed on count drift | the planned union is reconciled against the independently measured §7.5.2 report; a mismatch refuses rather than loading a safety set of the wrong size |
+| Fails closed on schema drift | the apply path refuses unless the target carries the Slice 0 tables **and** the `contact_control_source_check` vocabulary it compiled against |
+| Transactional | one transaction; an injected mid-batch failure leaves zero rows (proven by test) |
+| Idempotent | `ON CONFLICT DO NOTHING` on the natural key; a second run inserts **0** |
+| Non-destructive | no `TRUNCATE`, `DROP`, `DELETE` or `UPDATE` exists in the apply path (proven by an AST test over its SQL) |
+| `crm.*` untouched | the row count is measured before and after; a change refuses the transaction |
+| PII-safe output | the aggregate report is re-checked for address-shaped values before it is returned; recipient-level rejects go to a `0600` artifact outside Git and are never printed |
+| No network | the package imports no HTTP, Gmail, Supabase or cloud client, and touches no send flag (both proven by test) |
+
+#### 7.6.4 Structural gaps — two decisions the database has not taken
+
+Both gaps are additive, both sit in a frozen Slice 0 migration, and **the
+importer implements neither**. It computes the full plan for the affected rows
+so the decision can be priced, and refuses to apply them.
+
+**Gap 1 — `outbound.contact_control.source` has no Wave 1B labels.**
+§7.5.1 requires that "Wave 1B rows load with their own `source` labels
+(`wave1b_prior_contact`, `wave1b_block`)". `contact_control_source_check` is a
+closed CHECK listing only the four `wave1a_*` labels plus the runtime handlers.
+Loading Wave 1B rows under a `wave1a_*` label would misattribute their
+provenance — the one thing that sentence exists to prevent. **Blocks 1,213 rows**
+(880 Wave 1B-only prior contacts, 333 Wave 1B blocks).
+
+**Gap 2 — `outbound.campaign.recontact_interval_days` has no V1 source.**
+It is `NOT NULL CHECK (>= 1)`, and V1 has no recontact-interval concept at all —
+§7.1 records zero cooldown rows carried from V1 for exactly this reason. Any
+value written would be invented, which rule 3 forbids. The table already carves
+`archived` out of the approval, content and audience-criteria shapes for these
+same historical campaigns; a fourth carve-out would be consistent. **Blocks all
+3 campaigns, 3,481 recipients and 3,141 attempts.**
+
+#### 7.6.5 Measured dry-run reconciliation
+
+Every figure below is the importer's own count over the real artifacts, and each
+reconciled class is checked against the independently measured §7.5.2 report.
+
+| Class | Count | Reconciles to |
+|---|---|---|
+| Input prior-contact union | **9,460** | §7.5.2 `cross_wave_safety_union` |
+| — Wave 1A sourced | 8,580 | §7.5.2 `wave1a_safety_combined` |
+| — Wave 1B only | 880 | §7.5.2 `wave1b_only` |
+| Cross-wave overlap (conflicts) | **1,195** | §7.5.2 `cross_wave_intersection` |
+| Input address-suppression union | **1,032** | §7.5.4 |
+| Manual hard blocks folded in | 5 | §7.1 / §7.5.4 |
+| Address blocks total | 1,037 | 1,032 ∪ 5 |
+| Domain-suppression union | **91** | §7.5.4 |
+| Existing matched contact points | **0** | `crm.*` is empty |
+| New unresolved contact points | **9,460** | — |
+| Existing matched organizations | **0** | `crm.*` is empty |
+| Unresolved organization identities | 1,816 | distinct `institution_name` |
+| Supplier/provider contacts | **289** | §7.6.6 |
+| Prospect/customer-classified contacts | **0** | nothing qualifies without an operator |
+| Unclassified contacts | 9,171 | 9,460 − 289 |
+| Campaigns | 3 | §7.1 (1) + §7.5 (2) |
+| Campaign memberships | 3,481 | 1,161 + 2,320 |
+| Accepted deliveries | 3,126 | 1,126 + 2,000 |
+| Failed attempts | 15 | 1 + 14 |
+| Candidate-only memberships | **279** | §7.5 — still paused, never converted |
+| Manual-review records | 0 | every observed reason code is classifiable |
+| Rejects | **0** | every input row mapped |
+| `crm.*` rows | **0** | asserted before and after |
+
+**A prior-contact row and its `contacted_address` assertion are two relational
+representations of one fact, never two contacts** — the classes are equal at
+9,460 by construction, and the reconciliation asserts it.
+
+**Applied to the disposable local database**, the Wave 1A subset loads and the
+the §7.3 load gate is green: 8,580 `prior_contact` rows all `purpose=marketing`
+(8,577 `wave1a_union` + 3 `wave1a_rfc2047_addendum`), 704 address blocks, 91
+domain blocks, zero `prior_contact` or `cooldown` with `purpose = all`, and zero
+cooldown rows. A second apply inserted **0** rows.
+
+#### 7.6.6 The supplier failure mode, handled generically
+
+A provider contact must not become a marketing prospect merely because campaign
+history exists. That is decided by **role and eligibility, never by an address
+literal**: the importer indexes `supplier_master.domain_norm` and
+`supplier_contact_channel.value_normalized` from the Wave 1A bundle and
+classifies every prior-contact address with
+`marketing_supplier_domains.is_supplier_email_domain` — the same function the
+live outbound gate uses. **289** of the 9,460 classify as supplier/provider, and
+`outbound_v2.eligibility` independently refuses them with `policy_supplier`; a
+test asserts both agree, and that any address under a recorded supplier domain
+classifies, not only the ones already seen.
+
+Supplier evidence loads as `evidence.assertion` of kind `supplier_candidate`,
+`resolution = 'unresolved'` — pending evidence, never automatic CRM truth
+(§7.2, §8).
+
+#### 7.6.7 What has to happen before any real V2 data load
+
+1. **Take the two §7.6.4 decisions.** Without gap 1 the Wave 1B safety rows
+   cannot load at all; without gap 2 no campaign history can.
+2. Then, and only then, a **reviewed local or staging load** — still not
+   production, which remains blocked on the undecided RPO/PITR posture
+   ([`OPERATIONS.md`](OPERATIONS.md) §4.3).
+3. Dashboard contact cards and the campaign/activity timeline are a **later**
+   step. **This slice does not make the dashboard CRM complete**, and nothing
+   here reads or writes an operator-facing surface.
+
 ## 8. Data quality and quarantine
 
 - A source record whose subject cannot be resolved, or which contradicts an
