@@ -144,12 +144,13 @@ and reports what it cannot answer. `ol migrate` remains unimplemented.
 
 The reproducible local foundation lives under `supabase/`: `config.toml` (PostgreSQL 17,
 database only, Data API off), `roles.sql` (the idempotent cluster-role bootstrap the CLI runs
-before migrations), `migrations/` (eighteen ordered migrations: schemas and default
+before migrations), `migrations/` (nineteen ordered migrations: schemas and default
 privileges, then the original 32 tables schema by schema, then grants, then RLS policies, then the
 revocation of the owner's database-level `CREATE`, then the covering indexes for every
 foreign key, then the outbound corrections — frozen campaign content and audience criteria,
-the reply table, the tightened recipient address shape), `tests/` (pgTAP, 372 assertions
-across ten files) and `scripts/`. Requirements:
+the reply table, the tightened recipient address shape, the Wave 1B `contact_control.source`
+labels and the archived-campaign `recontact_interval_days` carve-out), `tests/` (pgTAP, 399
+assertions across eleven files) and `scripts/`. Requirements:
 Docker, the Supabase CLI and `psql`. No hosted project is involved and nothing here holds a
 credential: the three `LOGIN` roles are created without a password.
 

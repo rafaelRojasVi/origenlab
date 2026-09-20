@@ -4,7 +4,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 grant usage on schema extensions to origenlab_owner;
 set role origenlab_owner;
-select plan(98);
+select plan(106);
 
 insert into platform.operator (id, auth_user_id, email_norm, display_name, role, status)
 values ('00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000f1', 'admin@example.test', 'Admin', 'admin', 'active');
@@ -47,6 +47,13 @@ select results_eq($$ select marketing_enabled, transactional_enabled from outbou
 insert into outbound.campaign (id, name, mailbox_id, max_sends, recontact_interval_days) values ('00000000-0000-4000-8000-000000000200', 'Campaign A', '00000000-0000-4000-8000-000000000100', 100, 180);
 insert into outbound.campaign (id, name, mailbox_id, max_sends, recontact_interval_days) values ('00000000-0000-4000-8000-000000000201', 'Campaign B', '00000000-0000-4000-8000-000000000100', 100, 180);
 select throws_ok($$ insert into outbound.campaign (name, mailbox_id, max_sends, recontact_interval_days) values ('x', '00000000-0000-4000-8000-000000000100', 0, 180) $$, '23514', null, 'campaign: max_sends ≥ 1');
+-- recontact_interval_days is a live-campaign knob; an archived V1 campaign has no V1 value
+-- to carry (docs/DATA.md §7.6.4). The fourth 'archived' carve-out, beside approval, content
+-- and audience criteria.
+select lives_ok($$ insert into outbound.campaign (name, mailbox_id, max_sends, status) values ('archived v1 campaign', '00000000-0000-4000-8000-000000000100', 100, 'archived') $$, 'campaign: an archived campaign may omit recontact_interval_days');
+select lives_ok($$ insert into outbound.campaign (name, mailbox_id, max_sends, status) values ('cancelled campaign', '00000000-0000-4000-8000-000000000100', 100, 'cancelled') $$, 'campaign: a cancelled campaign may omit recontact_interval_days');
+select throws_ok($$ insert into outbound.campaign (name, mailbox_id, max_sends, status) values ('draft campaign', '00000000-0000-4000-8000-000000000100', 100, 'draft') $$, '23514', null, 'campaign: a campaign that can still send must carry recontact_interval_days');
+select throws_ok($$ insert into outbound.campaign (name, mailbox_id, max_sends, status, recontact_interval_days) values ('archived zero', '00000000-0000-4000-8000-000000000100', 100, 'archived', 0) $$, '23514', null, 'campaign: a present recontact_interval_days is still ≥ 1');
 select throws_ok($$ update outbound.campaign set status = 'approved' where id = '00000000-0000-4000-8000-000000000200' $$, '23514', null, 'campaign: approved carries approver, time and override count');
 select throws_ok($$ update outbound.campaign set status = 'sending' where id = '00000000-0000-4000-8000-000000000200' $$, '23514', null, 'campaign: status is closed');
 -- campaign content (M10b/A) and audience criteria (M10b/B) freeze together with the audience.
@@ -110,6 +117,13 @@ select throws_ok($$ insert into outbound.contact_control (scope, value_norm, kin
 select throws_ok($$ delete from outbound.contact_control where id = '00000000-0000-4000-8000-000000000230' $$, 'P0001', null, 'contact_control: prior_contact is never deleted (trigger guard, even for the owner)');
 select throws_ok($$ update outbound.contact_control set reason = 'edited' where id = '00000000-0000-4000-8000-000000000230' $$, 'P0001', null, 'contact_control: prior_contact is never rewritten');
 select lives_ok($$ delete from outbound.contact_control where scope = 'domain' and value_norm = 'competitor.example' $$, 'contact_control: a block may be revoked (by the privileged command in Slice 5)');
+
+-- The Wave 1B source labels (docs/DATA.md §7.5.1, §7.6.4). Provenance stays separable after
+-- the load: a Wave 1B row never borrows a wave1a_* label.
+select lives_ok($$ insert into outbound.contact_control (scope, value_norm, kind, purpose, reason, source) values ('address', 'sept@uni.example', 'prior_contact', 'marketing', 'wave 1B prior contact', 'wave1b_prior_contact') $$, 'contact_control: wave1b_prior_contact is a source label');
+select lives_ok($$ insert into outbound.contact_control (scope, value_norm, kind, purpose, reason, source) values ('address', 'sept@uni.example', 'block', 'all', 'wave 1B bounce', 'wave1b_block') $$, 'contact_control: wave1b_block is a source label');
+select throws_ok($$ insert into outbound.contact_control (scope, value_norm, kind, purpose, reason, source) values ('address', 'z@uni.example', 'block', 'all', 'r', 'wave1c_block') $$, '23514', null, 'contact_control: the source vocabulary is still closed — a new wave is a migration');
+select throws_ok($$ insert into outbound.contact_control (scope, value_norm, kind, purpose, reason, source) values ('address', 'z@uni.example', 'prior_contact', 'all', 'r', 'wave1b_prior_contact') $$, '23514', null, 'contact_control: a wave1b prior_contact is still marketing only');
 
 -- outbound.campaign_reply (#33)
 insert into comms.message (id, mailbox_id, provider_message_id, direction, internal_date)
