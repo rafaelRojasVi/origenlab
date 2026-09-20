@@ -36,6 +36,7 @@ from origenlab_email_pipeline.migration.v2_import.artifacts import (
     load_inputs,
 )
 from origenlab_email_pipeline.migration.v2_import.plan import (
+    CLOSED_STRUCTURAL_GAPS,
     IMPLEMENTED_CONTACT_CONTROL_SOURCES,
     STRUCTURAL_GAPS,
     MappingRefused,
@@ -590,16 +591,38 @@ def test_an_unmapped_recipient_state_is_rejected_not_guessed() -> None:
     assert any("unmapped V1 recipient state" in r.reason for r in plan.rejects)
 
 
-def test_a_missing_timestamp_does_not_stop_the_mapping() -> None:
+def test_an_accepted_attempt_with_no_timestamp_is_rejected_not_dated_by_guesswork() -> None:
+    """`send_attempt_accepted_shape` requires accepted_at, and V1 cannot always supply it.
+
+    Inventing an instant would put a fabricated date in the send ledger, so the row is
+    rejected and stays visible in the private reject artifact instead.
+    """
     inputs = make_inputs(
         attempts_1a=[
             {"campaign_id": CAMPAIGN_1A, "email_norm": UNION[0], "id": "n", "result": "accepted"}
         ]
     )
     plan = build_plan(inputs)
-    row = next(r for r in plan.table("outbound.send_attempt").rows if r.columns["v1_attempt_id"] == "n")
+    wave1a = [
+        r
+        for r in plan.table("outbound.send_attempt").rows
+        if r.columns["v1_campaign_id"] == CAMPAIGN_1A
+    ]
+    assert wave1a == [], "the undateable Wave 1A attempt is not planned"
+    assert any("cannot be dated" in r.reason for r in plan.rejects)
+
+
+def test_a_failed_attempt_needs_no_timestamp() -> None:
+    """Only the accepted shape requires an instant; a rejection may be undated."""
+    inputs = make_inputs(
+        attempts_1a=[
+            {"campaign_id": CAMPAIGN_1A, "email_norm": UNION[0], "id": "f", "result": "failed"}
+        ]
+    )
+    plan = build_plan(inputs)
+    row = next(r for r in plan.table("outbound.send_attempt").rows if r.columns["v1_attempt_id"] == "f")
+    assert row.columns["submission_state"] == "rejected"
     assert row.columns["accepted_at"] is None
-    assert row.columns["submission_state"] == "accepted"
 
 
 # --------------------------------------------------------------------------- #
@@ -683,51 +706,88 @@ def test_every_output_class_reconciles_to_a_source_total() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Structural gaps
+# Structural gaps — both closed by migration 20260920190000
 # --------------------------------------------------------------------------- #
 
 
-def test_wave1b_rows_are_blocked_because_the_source_vocabulary_lacks_their_labels() -> None:
+def test_no_structural_gap_remains_open() -> None:
+    assert STRUCTURAL_GAPS == ()
+
+
+def test_wave1b_rows_now_carry_their_own_source_labels() -> None:
+    """DATA.md §7.5.1: provenance stays separable after the load."""
     plan = build_plan(make_inputs())
-    blocked = [
+    wave1b = [
         r
         for r in plan.table("outbound.contact_control").rows
-        if r.columns["_blocked_by"] == "contact_control_wave1b_source"
+        if r.columns["source"] in {"wave1b_prior_contact", "wave1b_block"}
     ]
-    assert blocked
-    assert {r.columns["source"] for r in blocked} <= {"wave1b_prior_contact", "wave1b_block"}
-    assert all(s not in IMPLEMENTED_CONTACT_CONTROL_SOURCES for s in {r.columns["source"] for r in blocked})
+    assert wave1b, "the fixture has Wave 1B-only addresses"
+    assert all(r.columns["_blocked_by"] is None for r in wave1b)
+    assert {"wave1b_prior_contact", "wave1b_block"} <= IMPLEMENTED_CONTACT_CONTROL_SOURCES
 
 
-def test_wave1a_rows_are_applicable_because_their_labels_exist() -> None:
+def test_a_wave1a_row_never_borrows_a_wave1b_label_or_the_reverse() -> None:
     plan = build_plan(make_inputs())
-    applicable = [
-        r
-        for r in plan.table("outbound.contact_control").rows
-        if r.columns["_blocked_by"] is None
-    ]
-    assert applicable
-    assert {r.columns["source"] for r in applicable} <= IMPLEMENTED_CONTACT_CONTROL_SOURCES
+    for row in controls(plan, "prior_contact"):
+        source = row.columns["source"]
+        in_wave1a = row.columns["value_norm"] in {
+            a for v in [*UNION, *ADDENDUM] if (a := canonical_address(v, origin="t"))
+        }
+        assert source.startswith("wave1a_") == in_wave1a
 
 
-def test_campaign_tables_are_blocked_on_the_recontact_interval_gap() -> None:
+def test_every_planned_source_label_is_one_the_database_accepts() -> None:
     plan = build_plan(make_inputs())
-    for name in ("outbound.campaign", "outbound.campaign_recipient", "outbound.send_attempt"):
-        assert plan.table(name).blocked_by == "campaign_recontact_interval_days"
+    sources = {r.columns["source"] for r in plan.table("outbound.contact_control").rows}
+    assert sources <= IMPLEMENTED_CONTACT_CONTROL_SOURCES
 
 
-def test_no_campaign_row_invents_a_recontact_interval() -> None:
+def test_campaign_tables_are_no_longer_blocked() -> None:
     plan = build_plan(make_inputs())
-    assert {r.columns["recontact_interval_days"] for r in plan.table("outbound.campaign").rows} == {
-        None
-    }
+    for name in (
+        "comms.mailbox",
+        "outbound.campaign",
+        "outbound.campaign_recipient",
+        "outbound.send_attempt",
+    ):
+        assert plan.table(name).blocked_by is None
 
 
-def test_every_gap_states_why_the_existing_model_cannot_represent_the_data() -> None:
-    assert STRUCTURAL_GAPS
-    for gap in STRUCTURAL_GAPS:
+def test_an_archived_campaign_still_invents_no_recontact_interval() -> None:
+    """The carve-out makes the column optional; it does not license a made-up value."""
+    plan = build_plan(make_inputs())
+    campaigns = plan.table("outbound.campaign").rows
+    assert campaigns
+    assert {r.columns["recontact_interval_days"] for r in campaigns} == {None}
+    assert {r.columns["status"] for r in campaigns} == {"archived"}
+
+
+def test_the_closed_gaps_keep_their_reasoning() -> None:
+    """A gap that was closed keeps its argument, so the decision is not lost with it."""
+    assert CLOSED_STRUCTURAL_GAPS
+    for gap in CLOSED_STRUCTURAL_GAPS:
         assert gap.requirement and gap.blocked_rows and gap.why_not_representable
         assert len(gap.why_not_representable) > 80, "a gap must be argued, not asserted"
+
+
+def test_the_importer_vocabulary_matches_the_migration() -> None:
+    """A label the database would reject must never reach a plan.
+
+    The migration file is the source of truth; this reads it rather than restating it.
+    """
+    migration = (
+        Path(__file__).resolve().parents[3]
+        / "supabase/migrations"
+        / "20260920190000_slice0_wave1b_source_labels_and_archived_recontact_interval.sql"
+    )
+    import re as _re
+
+    text = migration.read_text(encoding="utf-8")
+    block = text[text.index("add constraint contact_control_source_check") :]
+    block = block[: block.index("));")]
+    in_migration = set(_re.findall(r"'([a-z0-9_]+)'", block))
+    assert in_migration == set(IMPLEMENTED_CONTACT_CONTROL_SOURCES)
 
 
 # --------------------------------------------------------------------------- #
@@ -813,7 +873,7 @@ def test_the_console_rendering_carries_no_address() -> None:
 def test_the_report_records_the_gaps_and_the_invariants() -> None:
     plan = build_plan(make_inputs())
     report = build_aggregate_report(plan, mode="dry-run", target=None)
-    assert {g["key"] for g in report["structural_gaps"]} == {g.key for g in STRUCTURAL_GAPS}
+    assert report["structural_gaps"] == [], "both gaps are closed"
     assert report["invariants"]["crm_rows_planned"] == 0
     assert report["invariants"]["no_person_created_from_an_address"] is True
 
@@ -1166,13 +1226,23 @@ def clean_db() -> Any:
     psycopg = pytest.importorskip("psycopg")
     conn = psycopg.connect(_DSN, autocommit=True)
     with conn.cursor() as cur:
+        # Child-first, so no foreign key into evidence.source_record survives the clear.
+        cur.execute("delete from outbound.send_attempt")
+        cur.execute("delete from outbound.campaign_recipient")
+        cur.execute("delete from outbound.campaign")
+        cur.execute("delete from comms.mailbox")
         cur.execute("delete from evidence.assertion")
-        cur.execute("delete from outbound.contact_control where kind <> 'prior_contact'")
-        # prior_contact is permanent by trigger; the disposable database is rebuilt for a
-        # clean run, so a leftover row is dropped by disabling the guard for this fixture.
-        cur.execute("alter table outbound.contact_control disable trigger contact_control_prior_contact_permanent")
+        # prior_contact is permanent by trigger — that guard is exactly what production
+        # needs and what a disposable fixture must step around to start from empty.
+        cur.execute(
+            "alter table outbound.contact_control "
+            "disable trigger contact_control_prior_contact_permanent"
+        )
         cur.execute("delete from outbound.contact_control")
-        cur.execute("alter table outbound.contact_control enable trigger contact_control_prior_contact_permanent")
+        cur.execute(
+            "alter table outbound.contact_control "
+            "enable trigger contact_control_prior_contact_permanent"
+        )
         cur.execute("delete from evidence.source_record")
     yield conn
     conn.close()
@@ -1212,7 +1282,7 @@ def test_only_applicable_rows_reach_the_database(clean_db: Any) -> None:
         cur.execute("select distinct source from outbound.contact_control order by 1")
         sources = {r[0] for r in cur.fetchall()}
     assert sources <= IMPLEMENTED_CONTACT_CONTROL_SOURCES
-    assert "wave1b_prior_contact" not in sources
+    assert "wave1b_prior_contact" in sources, "Wave 1B provenance now survives the load"
 
 
 @requires_db
@@ -1268,3 +1338,69 @@ def test_a_failed_batch_leaves_nothing_behind(clean_db: Any) -> None:
         assert cur.fetchone()[0] == 0, "the transaction must have rolled back"
         cur.execute("select count(*) from evidence.source_record")
         assert cur.fetchone()[0] == 0
+
+
+@requires_db
+def test_a_second_apply_creates_no_duplicate_campaign_audience_or_ledger(clean_db: Any) -> None:
+    """Regression: `outbound.campaign` has no natural-key unique constraint.
+
+    `ON CONFLICT DO NOTHING` is a no-op there, so a naive apply inserted a *second* campaign
+    on every run and, with it, a second copy of the whole audience and send ledger. The
+    apply path looks the campaign up on `(mailbox_id, name)` before writing instead.
+    """
+    from origenlab_email_pipeline.migration.v2_import.apply import apply_plan
+
+    plan = build_plan(make_inputs())
+    target = assert_local_target(_DSN)
+
+    first = apply_plan(plan, target)
+    assert first.inserted["outbound.campaign"] > 0
+
+    second = apply_plan(plan, target)
+    assert second.inserted["outbound.campaign"] == 0
+    assert second.inserted["outbound.campaign_recipient"] == 0
+    assert second.inserted["outbound.send_attempt"] == 0
+    assert second.total_inserted == 0
+
+    with clean_db.cursor() as cur:
+        for table, expected in (
+            ("outbound.campaign", first.inserted["outbound.campaign"]),
+            ("outbound.campaign_recipient", first.inserted["outbound.campaign_recipient"]),
+            ("outbound.send_attempt", first.inserted["outbound.send_attempt"]),
+        ):
+            cur.execute(f"select count(*) from {table}")  # noqa: S608 - literal table name
+            assert cur.fetchone()[0] == expected, f"{table} was duplicated by the second apply"
+
+
+@requires_db
+def test_a_repeat_attempt_for_one_recipient_is_preserved_not_collapsed(clean_db: Any) -> None:
+    """Counting per recipient must not merge two genuine V1 attempts into one."""
+    from origenlab_email_pipeline.migration.v2_import.apply import apply_plan
+
+    twice = [
+        {
+            "campaign_id": CAMPAIGN_1A,
+            "email_norm": UNION[0],
+            "id": "r1",
+            "result": "accepted",
+            "attempted_at": "2026-01-01T00:00:00Z",
+        },
+        {"campaign_id": CAMPAIGN_1A, "email_norm": UNION[0], "id": "r2", "result": "failed"},
+    ]
+    plan = build_plan(make_inputs(attempts_1a=twice))
+    target = assert_local_target(_DSN)
+    apply_plan(plan, target)
+
+    with clean_db.cursor() as cur:
+        # Scoped to the Wave 1A campaign: this address is also in the Wave 1B overlap.
+        cur.execute(
+            """
+            select count(*) from outbound.send_attempt a
+              join outbound.campaign c on c.id = a.campaign_id
+             where a.address_norm = %s and c.name = 'Wave 1A campaign'
+            """,
+            (UNION[0],),
+        )
+        assert cur.fetchone()[0] == 2
+
+    assert apply_plan(plan, target).total_inserted == 0

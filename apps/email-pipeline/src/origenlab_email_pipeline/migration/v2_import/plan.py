@@ -58,6 +58,9 @@ IMPLEMENTED_CONTACT_CONTROL_SOURCES: frozenset[str] = frozenset(
         "wave1a_rfc2047_addendum",
         "wave1a_suppression",
         "wave1a_investigation",
+        # Added by 20260920190000 so Wave 1B provenance stays separable (DATA.md §7.5.1).
+        "wave1b_prior_contact",
+        "wave1b_block",
         "send_accepted",
         "ndr_handler",
         "complaint_handler",
@@ -107,9 +110,18 @@ class StructuralGap:
     why_not_representable: str
 
 
-#: The two gaps measured on 2026-09-20 against `main` @ 56812a0b. Both are additive and
-#: both touch a frozen Slice 0 migration, so neither is taken unilaterally here.
-STRUCTURAL_GAPS: tuple[StructuralGap, ...] = (
+#: Structural gaps the database does not implement. **Empty.** The two gaps this importer
+#: measured on 2026-09-20 were both closed by migration
+#: `20260920190000_slice0_wave1b_source_labels_and_archived_recontact_interval.sql`, which
+#: added the Wave 1B source labels and made `recontact_interval_days` optional for an
+#: archived campaign. `docs/DATA.md` §7.6.4 records the argument for both.
+#:
+#: The mechanism is kept rather than deleted: a future wave or column will find one, and a
+#: gap must block an apply rather than produce a constraint violation at insert time.
+STRUCTURAL_GAPS: tuple[StructuralGap, ...] = ()
+
+#: Gaps that were found and closed, kept so the reasoning is not lost with the blocker.
+CLOSED_STRUCTURAL_GAPS: tuple[StructuralGap, ...] = (
     StructuralGap(
         key="contact_control_wave1b_source",
         table="outbound.contact_control",
@@ -120,11 +132,11 @@ STRUCTURAL_GAPS: tuple[StructuralGap, ...] = (
         ),
         blocked_rows="every Wave 1B prior-contact row and every Wave 1B address block",
         why_not_representable=(
-            "contact_control_source_check is a closed CHECK constraint listing only the "
-            "four wave1a_* labels plus the runtime handlers. Loading Wave 1B rows under a "
-            "wave1a_* label would misattribute their provenance, which is the one thing "
-            "the canonical sentence exists to prevent; loading them under a correct label "
-            "requires extending the constraint."
+            "contact_control_source_check was a closed CHECK listing only the four wave1a_* "
+            "labels plus the runtime handlers. Loading Wave 1B rows under a wave1a_* label "
+            "would have misattributed their provenance, which is the one thing the "
+            "canonical sentence exists to prevent. Closed 2026-09-20 by adding both labels; "
+            "the vocabulary stays closed, so a further wave is still a migration."
         ),
     ),
     StructuralGap(
@@ -136,12 +148,12 @@ STRUCTURAL_GAPS: tuple[StructuralGap, ...] = (
         ),
         blocked_rows="all three V1 campaigns, and therefore every recipient and attempt",
         why_not_representable=(
-            "outbound.campaign.recontact_interval_days is NOT NULL with CHECK (>= 1) and "
-            "V1 has no recontact-interval concept at all — docs/DATA.md §7.1 records zero "
-            "cooldown rows carried from V1 for exactly this reason. Any value written here "
-            "would be invented. The table already carves 'archived' out of the approval, "
-            "content and audience-criteria shapes for these same historical campaigns; a "
-            "fourth carve-out would be consistent, but it is a schema decision."
+            "recontact_interval_days was NOT NULL with CHECK (>= 1) and V1 has no "
+            "recontact-interval concept at all — docs/DATA.md §7.1 records zero cooldown "
+            "rows carried from V1 for exactly this reason, so any value would have been "
+            "invented. Closed 2026-09-20 by a fourth 'archived' carve-out, beside the "
+            "approval, content and audience-criteria shapes the table already makes for "
+            "these same historical campaigns. A campaign that can still send is unaffected."
         ),
     ),
 )
@@ -506,7 +518,6 @@ def build_plan(inputs: ImportInputs) -> ImportPlan:
         )
     }
 
-    gap_by_key = {gap.key: gap for gap in STRUCTURAL_GAPS}
     suppliers = build_supplier_index(inputs)
 
     # -- evidence.source_record: one per verified artifact ------------------- #
@@ -562,7 +573,7 @@ def build_plan(inputs: ImportInputs) -> ImportPlan:
                 ),
                 "source": source,
                 "needs_review": False,
-                "_blocked_by": gap_by_key["contact_control_wave1b_source"].key if blocked else None,
+                "_blocked_by": None if not blocked else "contact_control_wave1b_source",
                 "_classification": role or "unclassified",
             },
         )
@@ -628,9 +639,7 @@ def build_plan(inputs: ImportInputs) -> ImportPlan:
                     "reason": spec["reason"],
                     "source": spec["source"],
                     "needs_review": spec["needs_review"],
-                    "_blocked_by": gap_by_key["contact_control_wave1b_source"].key
-                    if blocked
-                    else None,
+                    "_blocked_by": None if not blocked else "contact_control_wave1b_source",
                     "_classification": "suppression",
                     "_origin_class": spec["origin_class"],
                 },
@@ -674,8 +683,7 @@ def build_plan(inputs: ImportInputs) -> ImportPlan:
     _plan_organization_evidence(inputs, tables, suppliers, rejects)
 
     # -- campaign execution facts -------------------------------------------- #
-    campaign_gap = gap_by_key["campaign_recontact_interval_days"]
-    _plan_campaigns(inputs, tables, rejects, blocked_by=campaign_gap.key)
+    _plan_campaigns(inputs, tables, rejects)
 
     counts = _reconcile(inputs, tables, wave1a_prior, wave1b_prior, overlap, rejects)
 
@@ -767,8 +775,6 @@ def _plan_campaigns(
     inputs: ImportInputs,
     tables: dict[str, TablePlan],
     rejects: list[Reject],
-    *,
-    blocked_by: str,
 ) -> None:
     """Plan campaigns, their frozen audience and their send attempts."""
     senders: dict[str, str | None] = {}
@@ -898,7 +904,22 @@ def _plan_campaigns(
                 )
                 continue
             result = (_text(row.get("result")) or "").lower()
+            attempted_at = _text(row.get("attempted_at"))
             if result == "accepted":
+                # send_attempt_accepted_shape requires accepted_at. An accepted attempt V1
+                # cannot date is evidence we cannot place in time, and inventing an instant
+                # would be worse than losing it — the Wave 1B extractor refuses an undateable
+                # Sent row for the same reason (docs/DATA.md §7.5.1). Reject, visibly.
+                if attempted_at is None:
+                    rejects.append(
+                        Reject(
+                            origin=f"{wave}/outbound_send_attempt",
+                            reason="accepted attempt carries no attempted_at and cannot be dated",
+                            address=address,
+                            detail=_text(row.get("id")),
+                        )
+                    )
+                    continue
                 submission, delivery = "accepted", "pending"
             elif result in {"failed", "rejected", "error"}:
                 submission, delivery = "rejected", "n/a"
@@ -925,13 +946,11 @@ def _plan_campaigns(
                         # V1 never minted an RFC 822 id (docs/DATA.md §7.1).
                         "rfc822_message_id": None,
                         "error_class": "permanent" if submission == "rejected" else None,
-                        "accepted_at": _text(row.get("attempted_at")) if submission == "accepted" else None,
+                        "accepted_at": attempted_at if submission == "accepted" else None,
                     },
                 )
             )
 
-    for name in ("comms.mailbox", "outbound.campaign", "outbound.campaign_recipient", "outbound.send_attempt"):
-        tables[name].blocked_by = blocked_by
 
 
 def _reconcile(
