@@ -92,6 +92,125 @@ reopens it, the cutover sequence is:
 Steps 1 and 2 are not reorderable and not skippable: **the backup gate is never weakened to
 obtain a passing audit.**
 
+### 1.2 The hosted cutover runbook
+
+**[V2 DECISION]**
+
+Nothing here runs while §1.1 is in force. The operator reopens the phase explicitly; this is
+what happens next, in order. It expands the seven steps above into the commands and checks
+that actually discharge them.
+
+#### Step 1 — backup entitlement
+
+Upgrade `origenlab-v2` to a plan carrying a backup entitlement. [`STATUS.md`](STATUS.md) §2.5
+records the project on the Free plan with **no backup retention and no platform backup
+taken**, so this is a change of plan, not of setting.
+
+#### Step 2 — verify backup availability
+
+Confirm from the platform that a backup exists and can be listed, **before any write**. A
+plan that grants the entitlement is not evidence that a backup was taken. If steps 1 and 2
+cannot both be completed, the cutover stops here.
+
+#### Step 3 — the two manual security controls
+
+Both still open (§1.1, [`STATUS.md`](STATUS.md) §2.8), both Supabase Dashboard actions:
+
+- disable the Data API — closes `t01` and `d01`;
+- disable the legacy JWT keys, and rotate the exposed JWT secret.
+
+#### Step 4 — rerun the hosted Slice 0 audit
+
+```bash
+supabase/scripts/slice0_audit.sh --mode hosted --authorize-hosted-connection
+supabase/scripts/slice0_audit.sh --verify-report supabase/.audit/reports/<report>.json
+```
+
+Read-only. The verdict moves off `INCOMPLETE` only once the attestations `t01`–`t07` and
+`d01` are recorded with evidence (§4.2).
+
+#### Step 5 — apply the proven migration chain
+
+The same 19 files proven locally, already recorded in the hosted ledger at 19 of 19
+([`STATUS.md`](STATUS.md) §2.5). Nothing in the chain is hosted-specific.
+
+**The local bootstrap is deliberately not part of it.** `dev_db.sh create` emulates the
+platform's `extensions` schema and its `btree_gist` install so M01 can run on a database we
+created ourselves. On a hosted project the platform has already done that, so the step is
+simply not run — which is exactly what keeps the chain replayable against hosted Supabase
+without modification.
+
+#### Step 6 — replay the deterministic promotion and import
+
+```bash
+uv run python scripts/migration/import_waves_into_v2.py \
+    --migration-root ~/data/origenlab-v2-migration --apply --database-url <hosted>
+
+uv run python scripts/migration/promote_evidence_into_crm.py \
+    --database-url <hosted> --apply --link-marketing
+```
+
+Both tools mint **deterministic identifiers** from the evidence, so hosted rows carry the
+same `crm` ids as the local ones and reconcile **row by row**, not merely by count.
+
+**Both refuse a non-loopback DSN today, by design and with no override flag.** Hosted replay
+therefore needs a reviewed change to their target boundary — deliberately a separate,
+reviewed change rather than a flag somebody can set under time pressure.
+
+#### Step 7 — reconcile against the local run
+
+The local figures to match, measured 2026-09-21 ([`STATUS.md`](STATUS.md) §2.7.1, §2.7.4):
+
+| Table | Rows |
+|---|---|
+| `evidence.source_record` | 4 |
+| `evidence.assertion` | 11,448 — 11,272 promoted, 4 ambiguous, 172 unresolved |
+| `outbound.campaign` | 3 |
+| `outbound.campaign_recipient` | 3,481 — 3,252 linked, 229 with no canonical channel |
+| `outbound.send_attempt` | 3,141 — 3,138 reachable from an identity |
+| `outbound.contact_control` | 10,588 |
+| `comms.mailbox` | 1 |
+| `crm.organization` | 1,812 — all `kind = 'unknown'`, all `machine_proposed` |
+| `crm.contact_point` | 9,460 — 695 `shared_mailbox`, 8,765 `unattributed` |
+| `crm.person` | **0** |
+| `crm.domain_event` | 22,544 — every one `actor_kind = 'migrator'` |
+
+And the invariants, each asserted inside the migration's own transaction so a violation rolls
+the whole thing back rather than being discovered afterwards:
+
+- `crm.person` is zero;
+- no contact point and no campaign recipient carries a person or an organization;
+- both `outbound.send_control` flags are `false`.
+
+#### Step 8 — deploy API and dashboard configuration
+
+| Variable | Value |
+|---|---|
+| `ORIGENLAB_V2_DATABASE_URL` | the hosted DSN, as `origenlab_api` |
+| `ORIGENLAB_V2_JWKS_URL` | the project's JWKS |
+
+**Setting `ORIGENLAB_V2_JWKS_URL` disables the local development identity adapter outright**
+— the adapter is only ever chosen when no JWKS URL exists, and it independently refuses any
+non-loopback database. That is the intended production posture, not a precaution.
+
+The dashboard needs no change: the proxy already lists the seven `/v2` GET paths by name and
+reconstructs the operator header from Cloudflare Access.
+
+`origenlab_api` needs a password on the hosted project. `supabase/roles.sql` and
+`supabase/hosted_roles.sql` both assign none by design; it is a separate operator action with
+a hidden secret input (§4.3, §13).
+
+#### What this runbook does not yet cover
+
+Recorded so it is not mistaken for completeness:
+
+- **V1 durable rows.** Opportunities, tasks, activities and quotes are still in V1's
+  PostgreSQL `commercial.*` and have never been migrated. Four `/v2` endpoints and three of
+  the four CRM cards read zero because of it ([`STATUS.md`](STATUS.md) §2.7.2, §2.7.3).
+- **Gmail capture.** V1 persists no Gmail message or thread id, so a V2 capture worker needs
+  real Gmail API credentials rather than a shadow of V1 ([`DATA.md`](DATA.md) §6).
+- **Quotes.** Blocked behind the V1 durable migration.
+
 ## 2. Operator roles
 
 | Role | May |
