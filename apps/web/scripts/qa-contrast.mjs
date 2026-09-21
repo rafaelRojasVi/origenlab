@@ -33,6 +33,7 @@ const ROUTES = [
   '/nosotros/',
   '/contacto/',
   '/privacidad/',
+  '/cookies/',
   '/aviso-legal/',
   '/404.html',
 ];

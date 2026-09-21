@@ -485,9 +485,14 @@ assert(
   'consultation.ts: no declarar años de experiencia sin dato confirmado',
 );
 
-// Ningún dato legal puede rellenarse desde el repositorio.
+// Ningún dato legal pendiente puede rellenarse desde el repositorio.
+//
+// El inventario encogió el 2026-09-21: razón social, RUT, representante y
+// domicilio salieron porque dejaron de ser un pendiente. El negocio decidió
+// presentarse con el nombre comercial OrigenLab y no publicarlos. Lo que queda
+// son los pendientes reales, y ninguno puede llevar valor.
 const legalFactBlocks = legalSrc.split(/\n  \{\n/).slice(1).filter((block) => block.includes('owner:'));
-assert(legalFactBlocks.length >= 8, 'legal.ts: inventario de datos legales incompleto');
+assert(legalFactBlocks.length >= 3, 'legal.ts: inventario de datos legales incompleto');
 for (const block of legalFactBlocks) {
   const id = block.match(/id: '([^']+)'/)?.[1] ?? '(sin id)';
   assert(/value: null/.test(block), `legal.ts ${id}: un dato legal no puede rellenarse desde el repositorio`);

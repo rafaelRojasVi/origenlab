@@ -41,8 +41,8 @@ const pages = walk(dist, '.html').filter((file) => !relative(dist, file).startsW
 assert(pages.length >= 20, `dist: se esperaban al menos 20 páginas, hay ${pages.length}`);
 
 /**
- * Superficies que no se indexan: la página de trabajo de marca, el 404 y los
- * dos borradores legales. Las rutas legales salen de esta lista el día que
+ * Superficies que no se indexan: la página de trabajo de marca, el 404 y las
+ * tres rutas legales. Las rutas legales salen de esta lista el día que
  * `legal.ts` registre una revisión profesional; hasta entonces se sirven con
  * noindex, fuera del sitemap y con Disallow en robots.txt.
  */
@@ -50,8 +50,26 @@ const INTERNAL = [
   'logo-lab/index.html',
   '404.html',
   'privacidad/index.html',
+  'cookies/index.html',
   'aviso-legal/index.html',
 ];
+
+/**
+ * Rutas cuyo `noindex` se sostiene en cuatro capas a la vez: la etiqueta meta,
+ * la ausencia del sitemap, el `Disallow` de robots.txt y el `X-Robots-Tag` de
+ * .htaccess. Comprobarlas juntas evita el fallo real de este sitio, que es
+ * abrir una capa y olvidar las otras tres.
+ */
+const SUPPRESSED_ROUTES = ['/privacidad/', '/cookies/', '/aviso-legal/'];
+
+/**
+ * Afirmaciones de privacidad cuya verdad depende del HTML construido. La
+ * redacción literal vive en `src/data/legal.ts` (`SITE_CLAIMS`), y aquí se
+ * comprueba que siga siendo cierta: un sitio con formulario que afirme no
+ * tener ninguno es una declaración falsa, no una errata.
+ */
+const NO_FORMS_CLAIM = 'El sitio no tiene formularios ni recibe envíos';
+const NO_APP_STORAGE_CLAIM = 'La aplicación de OrigenLab no fija cookies ni almacenamiento del navegador';
 
 /**
  * Afirmaciones sin aprobar: su redacción literal no puede aparecer en ninguna
@@ -177,6 +195,31 @@ function stripElements(html, name) {
   return current;
 }
 
+/* -- Coherencia entre lo que el sitio hace y lo que dice ------------------
+ *
+ * `/privacidad/` afirma dos cosas comprobables sobre el sitio construido: que
+ * no tiene formularios y que la aplicación no fija cookies ni almacenamiento.
+ * Las dos se comprueban aquí en las dos direcciones, porque el fallo que
+ * importa no es un error de programación sino una redacción que sobrevive a un
+ * cambio de código.
+ */
+const allHtml = pages.map((file) => readFileSync(file, 'utf8'));
+const formPages = pages.filter((_file, i) => /<form\b/.test(allHtml[i])).map((f) => relative(dist, f));
+const claimsNoForms = allHtml.some((html) => html.includes(NO_FORMS_CLAIM));
+
+assert(
+  formPages.length === 0 || !claimsNoForms,
+  `coherencia: el sitio tiene formulario en ${formPages.join(', ')} y sigue afirmando "${NO_FORMS_CLAIM}"`,
+);
+assert(
+  formPages.length > 0 || claimsNoForms,
+  `coherencia: el sitio no tiene formularios y la política ya no lo afirma. Redacción esperada: "${NO_FORMS_CLAIM}"`,
+);
+assert(
+  allHtml.some((html) => html.includes(NO_APP_STORAGE_CLAIM)),
+  `coherencia: falta la afirmación acotada sobre almacenamiento: "${NO_APP_STORAGE_CLAIM}"`,
+);
+
 /* -- Sitemap y robots ----------------------------------------------------- */
 
 const sitemapIndex = join(dist, 'sitemap-index.xml');
@@ -205,19 +248,24 @@ const robots = readFileSync(join(dist, 'robots.txt'), 'utf8');
 assert(robots.includes('Sitemap: https://origenlab.cl/sitemap-index.xml'), 'robots.txt: sitemap mal referenciado');
 assert(robots.includes('Disallow: /logo-lab/'), 'robots.txt: /logo-lab/ debe quedar fuera del índice');
 assert(robots.includes('Disallow: /email/'), 'robots.txt: /email/ debe quedar fuera del índice');
-for (const route of ['/privacidad/', '/aviso-legal/']) {
-  assert(robots.includes(`Disallow: ${route}`), `robots.txt: el borrador ${route} debe quedar fuera del índice`);
-  assert(!sitemapUrls.some((url) => url.includes(route)), `sitemap: contiene el borrador legal ${route}`);
+for (const route of SUPPRESSED_ROUTES) {
+  assert(robots.includes(`Disallow: ${route}`), `robots.txt: ${route} debe quedar fuera del índice`);
+  assert(!sitemapUrls.some((url) => url.includes(route)), `sitemap: contiene la ruta suprimida ${route}`);
 }
 
 const htaccess = readFileSync(join(dist, '.htaccess'), 'utf8');
 assert(htaccess.includes('ErrorDocument 404 /404.html'), '.htaccess: falta ErrorDocument');
 assert(/RewriteCond %\{HTTP_HOST\} \^www\\\./.test(htaccess), '.htaccess: falta la redirección de www al dominio raíz');
 assert(htaccess.includes('Content-Security-Policy'), '.htaccess: falta la CSP');
-assert(
-  /X-Robots-Tag[\s\S]{0,200}privacidad|privacidad[\s\S]{0,200}X-Robots-Tag/.test(htaccess),
-  '.htaccess: los borradores legales necesitan X-Robots-Tag noindex',
-);
+const robotsTagRule = htaccess.match(/<If "%\{REQUEST_URI\} =~ m#\^\/\(([^)]*)\)/)?.[1] ?? '';
+assert(robotsTagRule.length > 0, '.htaccess: no se encontró la regla de X-Robots-Tag');
+for (const route of SUPPRESSED_ROUTES) {
+  const segment = route.replace(/\//g, '');
+  assert(
+    robotsTagRule.split('|').includes(segment),
+    `.htaccess: ${route} necesita X-Robots-Tag noindex`,
+  );
+}
 
 /* -- Peso ----------------------------------------------------------------- */
 
