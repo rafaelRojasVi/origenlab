@@ -47,6 +47,17 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/operations\/opportunities\/o_[0-9a-f]{32}\/activities$/,
   /^\/operations\/opportunities\/o_[0-9a-f]{32}\/tasks$/,
   /^\/mirror\/.+/,
+  // V2 durable read boundary. Exact paths only -- deliberately NOT /^\/v2\/.+/, so a
+  // route added upstream is never reachable through this Worker until it is listed here
+  // by name. Every one of these is GET-only and read-only upstream; the V2 command
+  // boundary does not exist yet and must not become reachable by widening this list.
+  /^\/v2\/contacts$/,
+  /^\/v2\/organizations$/,
+  /^\/v2\/prospects$/,
+  /^\/v2\/opportunities\/active$/,
+  /^\/v2\/tasks\/due$/,
+  /^\/v2\/review\/summary$/,
+  /^\/v2\/quotes\/followup$/,
 ];
 
 /**

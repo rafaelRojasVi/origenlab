@@ -486,6 +486,31 @@ migration is the next step and needs a V1 dump the repository does not have.
 `~/data/origenlab-v2-local/api.env`, mode `0600`, outside Git. `supabase/roles.sql` still
 assigns no password to any role and no credential is in tracked content.
 
+### 2.7.3 Four CRM cards on the V2 durable core — measured 2026-09-21
+
+The first operator-facing surface fed by V2 rather than by a rebuildable mirror.
+
+| Item | Value |
+|---|---|
+| Surface | the four "Trabajo comercial" cards on `apps/dashboard` → *Qué revisar hoy* |
+| Previous source | `commercialWorkQueue`, a V1 read model |
+| New source | `/v2/tasks/due`, `/v2/quotes/followup`, `/v2/review/summary` (§2.7.2) |
+| Legacy mirror dependency in that grid | **removed**. The six-card "Colas prioritarias" grid below it still uses warm-case and lead-intel mirrors and is out of scope |
+| Proxy | seven exact `/v2/*` GET paths added to `apps/dashboard-proxy`; **not** a `/v2/.+` wildcard, and none is POST-writable |
+| Operator identity | the **same** `X-OriginLab-Operator-Email` the proxy rebuilds from Cloudflare Access — a V2-specific header name would have been forwarded straight from the browser |
+| Measured, live | *Seguimientos vencidos* 0 · *Para hoy* 0 · **Revisión humana 4** · *Cotizaciones por seguir* 0 |
+| Screenshots | `~/data/origenlab-v2-local/screenshots/`, outside Git |
+| Tests | 9 in `v2CardSummary.test.ts`, 3 rewritten in `TodaySummaryPage.test.tsx`, 4 in the proxy allowlist suite |
+
+**Three cards read zero, and say why.** `crm.task` and `crm.quote` are empty because V1's
+durable rows have not been migrated, so each of those cards renders *"Sin datos: falta migrar
+el histórico V1"* instead of a bare `0`. A zero that looks like a clear workload when the
+table is merely unread is the failure mode this avoids.
+
+**"Revisión humana" counts 4, not 11,276.** It reports the assertions the migration stopped
+and asked about — a number an operator can drive to zero — and carries the
+machine-proposed backlog in its hint rather than summing the two.
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work

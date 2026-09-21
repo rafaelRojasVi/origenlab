@@ -1,8 +1,42 @@
-import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardDataContext } from "../context/DashboardDataContext";
 import type { ProcurementStatus } from "../api/institutionIntel/types";
 import { TodaySummaryPage } from "./TodaySummaryPage";
+
+// The four "Trabajo comercial" cards read the V2 durable core, not the V1
+// `commercialWorkQueue` mirror, so the V2 client is what these tests control.
+vi.mock("../api/v2Client", () => ({
+  fetchV2TasksDue: vi.fn(),
+  fetchV2QuotesToFollowUp: vi.fn(),
+  fetchV2ReviewSummary: vi.fn(),
+}));
+
+import {
+  fetchV2QuotesToFollowUp,
+  fetchV2ReviewSummary,
+  fetchV2TasksDue,
+} from "../api/v2Client";
+
+function v2Page<T>(items: T[], total = items.length) {
+  return { items, total, limit: 200, offset: 0 };
+}
+
+const EMPTY_REVIEW = {
+  ambiguous_assertions: 0,
+  unresolved_assertions: 0,
+  machine_proposed_organizations: 0,
+  machine_proposed_contact_points: 0,
+  unattributed_contact_points: 0,
+};
+
+beforeEach(() => {
+  // Default every V2 card to empty, so a test that does not care about them is not
+  // accidentally asserting against a previous test's data.
+  vi.mocked(fetchV2TasksDue).mockResolvedValue(v2Page([]));
+  vi.mocked(fetchV2QuotesToFollowUp).mockResolvedValue(v2Page([]));
+  vi.mocked(fetchV2ReviewSummary).mockResolvedValue({ ...EMPTY_REVIEW });
+});
 
 function procurementStatus(
   overrides: Partial<ProcurementStatus["meta"]> = {},
@@ -229,129 +263,74 @@ describe("TodaySummaryPage actionable-opportunity summary (W1 procurement status
 
 
 describe("TodaySummaryPage commercial work queue", () => {
-  it("shows overdue, today, review, and quote follow-up counts", () => {
-    const now = new Date();
-
-    const overdue = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate() - 1,
-      12,
-      0,
-      0,
-    ).toISOString();
-
-    const dueToday = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-      18,
-      0,
-      0,
-    ).toISOString();
-
-    const opportunityId =
-      "o_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-
-    function workTask(
-      taskId: string,
-      dueAt: string | null,
-    ) {
-      return {
-        task: {
-          task_id: taskId,
-          opportunity_id: opportunityId,
-          account_id: null,
-          contact_id: null,
-          title: taskId,
-          status: "open" as const,
-          priority: "normal" as const,
-          due_at: dueAt,
-          owner_key: null,
-          version: 1,
-          created_by: "tatiana@origenlab.cl",
-          updated_by: "tatiana@origenlab.cl",
-          completed_at: null,
-          created_at: now.toISOString(),
-          updated_at: now.toISOString(),
-        },
-        contact_display_email:
-          "buyer@example.cl",
-        account_display_domain:
-          "example.cl",
-        canonical_stage: "quote_sent",
-        machine_review_status:
-          "needs_review",
-      };
-    }
-
-    const opportunity = {
-      opportunity_id: opportunityId,
-      contact_display_email:
-        "buyer@example.cl",
-      account_display_domain:
-        "example.cl",
-      canonical_stage: "quote_sent",
-      machine_review_status:
-        "needs_review",
-      confirmation_status: null,
-      manual_stage: null,
-      owner_key: null,
-      operator_state_version: null,
+  function v2Task(taskId: string, dueAt: string | null) {
+    return {
+      task_id: taskId,
+      title: taskId,
+      due_at: dueAt,
+      overdue: false,
+      opportunity_id: null,
+      opportunity_title: null,
+      organization_name: null,
     };
+  }
 
-    renderToday({
-      commercialWorkQueue: {
-        open_tasks: [
-          workTask(
-            "task_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            overdue,
-          ),
-          workTask(
-            "task_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-            dueToday,
-          ),
-          workTask(
-            "task_cccccccccccccccccccccccccccccccc",
-            null,
-          ),
-        ],
-        review_opportunities: [
-          opportunity,
-          {
-            ...opportunity,
-            opportunity_id:
-              "o_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          },
-        ],
-        quote_followups: [
-          opportunity,
-        ],
-      },
+  it("shows overdue, today, review, and quote follow-up counts from V2", async () => {
+    const now = new Date();
+    const overdue = new Date(
+      now.getFullYear(), now.getMonth(), now.getDate() - 1, 12, 0, 0,
+    ).toISOString();
+    const dueToday = new Date(
+      now.getFullYear(), now.getMonth(), now.getDate(), 18, 0, 0,
+    ).toISOString();
+
+    vi.mocked(fetchV2TasksDue).mockImplementation(async (params) =>
+      params?.horizonDays === 0
+        ? v2Page([v2Task("past", overdue)], 1)
+        : v2Page([
+            v2Task("past", overdue),
+            v2Task("today", dueToday),
+            v2Task("none", null),
+          ]),
+    );
+    vi.mocked(fetchV2QuotesToFollowUp).mockResolvedValue(v2Page([], 1));
+    vi.mocked(fetchV2ReviewSummary).mockResolvedValue({
+      ...EMPTY_REVIEW,
+      ambiguous_assertions: 2,
+      machine_proposed_organizations: 5,
+      machine_proposed_contact_points: 7,
     });
 
-    screen.getByTestId(
-      "today-commercial-work",
-    );
+    renderToday({});
 
-    screen.getByLabelText(
-      /Seguimientos vencidos: 1/,
-    );
+    screen.getByTestId("today-commercial-work");
 
-    screen.getByLabelText(
-      /Para hoy: 1/,
-    );
+    await waitFor(() => screen.getByLabelText(/Seguimientos vencidos: 1/));
+    screen.getByLabelText(/Para hoy: 1/);
+    screen.getByLabelText(/Revisión humana: 2/);
+    screen.getByLabelText(/Cotizaciones por seguir: 1/);
+    screen.getByText("0 próximos · 1 sin fecha");
+    // The machine-proposed backlog is context, never the card's own count.
+    screen.getByText(/12 propuestas por confirmar/);
+  });
 
-    screen.getByLabelText(
-      /Revisión humana: 2/,
-    );
+  it("says the V1 history is unmigrated rather than implying there is no work", async () => {
+    // Every durable total is zero. A bare "0" would read as a clear workload; it is an
+    // empty table, and the card has to say which.
+    renderToday({});
 
-    screen.getByLabelText(
-      /Cotizaciones por seguir: 1/,
-    );
+    await waitFor(() => screen.getByLabelText(/Seguimientos vencidos: 0/));
+    expect(
+      screen.getAllByText("Sin datos: falta migrar el histórico V1").length,
+    ).toBeGreaterThan(0);
+  });
 
-    screen.getByText(
-      "0 próximos · 1 sin fecha",
-    );
+  it("surfaces a V2 failure instead of rendering it as zero", async () => {
+    vi.mocked(fetchV2ReviewSummary).mockRejectedValue(new Error("boom"));
+
+    renderToday({});
+
+    await waitFor(() => screen.getByTestId("v2-cards-error"));
+    screen.getByText(/revisión humana: boom/);
   });
 });
