@@ -317,6 +317,335 @@ check "the rollback restored the local membership the hosted file removed" \
   "$(cmp -s "$WORK/before" "$WORK/after_local_shape" && echo 0 || echo 1)" \
   "$(diff "$WORK/before" "$WORK/after_local_shape" | head -4 | tr '\n' ' ')"
 
+# ==================================================================================================
+# The atomic application contract -- docs/OPERATIONS.md §4.3, "one transaction, or nothing".
+#
+# Everything above rehearses the file inside an explicit `begin; ... rollback;` this script writes.
+# That proves the SQL runs. It proves nothing about how an operator is required to APPLY it, and
+# the two are different claims: an operator who runs the same bytes without `--single-transaction`
+# gets a half-converged project on the first failure, and no assertion in the file can stop them.
+#
+# So the contract itself is the thing under test here. The documented invocation is EXTRACTED from
+# docs/OPERATIONS.md by its `ol:hosted-apply-contract` anchor and executed -- not paraphrased. A
+# paraphrase would prove only that this script agrees with itself; an extraction fails the moment
+# the document and the rehearsal drift apart. Exactly three localisations are applied to it, each
+# asserted to have applied exactly once, and every element the contract actually turns on --
+# `env -i`, `-X`, `--no-psqlrc`, command-line `ON_ERROR_STOP=1`, `--single-transaction` -- is
+# executed verbatim:
+#
+#   1. PGSSLMODE=verify-full -> disable, because the local container speaks no TLS at all;
+#   2. the PGSSLROOTCERT line is dropped, for the same reason;
+#   3. `-f supabase/hosted_roles.sql` -> `-f "$OL_APPLY_FILE"`, so a failure can be injected around
+#      the committed bytes. The committed bytes are still what is applied -- each injected file is
+#      the file itself with one statement placed before or after it.
+#
+# The environment this runs in is deliberately HOSTILE, so that neutralisation is observed rather
+# than assumed. Before each run: $HOME holds a `.psqlrc` that would turn ON_ERROR_STOP off and
+# create a role, and PGHOST, PGSERVICE, PGSERVICEFILE, PGOPTIONS, PGSSLMODE, PGPASSFILE and PSQLRC
+# are all exported pointing somewhere wrong. The contract's `env -i` and `-X` are the only things
+# standing between that environment and the connection, and the run is required to succeed in
+# reaching the local database anyway.
+#
+# NOTHING HERE IS ALLOWED TO COMMIT. Every injected file ends in, or triggers, a failure, so every
+# contract run rolls back by the contract's own mechanism -- there is no `rollback;` written by this
+# script in this section, because a written rollback would mask the absence of the flag being
+# tested. The one run that is permitted to commit is the negative control for the psqlrc detector,
+# which is cleaned up explicitly and then proven gone by the catalogue comparison at the end.
+# ==================================================================================================
+
+CONTRACT_DOC="docs/OPERATIONS.md"
+CONTRACT_ANCHOR="ol:hosted-apply-contract"
+
+PROBE_ROLES=(ol_rehearsal_probe ol_contract_probe ol_psqlrc_probe)
+
+ol_drop_probe_roles() {
+  local r
+  for r in "${PROBE_ROLES[@]}"; do
+    ol_psql -q -c "drop role if exists $r;" >/dev/null 2>&1 || true
+  done
+}
+# Unconditional: a probe role that survived an unexpected commit must not outlive this script.
+trap 'ol_drop_probe_roles; rm -rf "$WORK"' EXIT
+
+ol_probe_absent() { # $1 = role name; echoes 0 when the role does not exist
+  local present
+  present="$(ol_psql -q -A -t -c "select exists (select 1 from pg_roles where rolname = '$1');" 2>&1 |
+             tr -d '[:space:]')"
+  [[ "$present" == "f" ]] && echo 0 || echo 1
+}
+
+ol_postgres_option() { # $1 = OrigenLab role, $2 = set_option|inherit_option; echoes true/none
+  ol_psql -q -A -t -c "
+    select coalesce(max($2::text), 'none')
+      from pg_auth_members am
+      join pg_roles m on m.oid = am.roleid
+      join pg_roles mem on mem.oid = am.member
+     where m.rolname = '$1' and mem.rolname = 'postgres' and am.$2;" 2>&1 | tr -d '[:space:]'
+}
+
+python3 - "$CONTRACT_DOC" "$CONTRACT_ANCHOR" "$WORK" >"$WORK/contract.report" 2>&1 <<'PY' || true
+import pathlib, sys
+
+doc, anchor, work = sys.argv[1], sys.argv[2], pathlib.Path(sys.argv[3])
+lines = pathlib.Path(doc).read_text(encoding="utf-8").splitlines()
+
+start = next((i for i, l in enumerate(lines) if anchor in l), None)
+if start is None:
+    print("ERROR no anchor")
+    raise SystemExit(0)
+open_fence = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("```")), None)
+if open_fence is None or lines[open_fence].strip() != "```bash":
+    print("ERROR no bash fence after the anchor")
+    raise SystemExit(0)
+close_fence = next((i for i in range(open_fence + 1, len(lines)) if lines[i].startswith("```")), None)
+if close_fence is None:
+    print("ERROR unterminated fence")
+    raise SystemExit(0)
+
+block = "\n".join(lines[open_fence + 1:close_fence]) + "\n"
+(work / "contract.sh").write_text(block, encoding="utf-8")
+
+# The psql command line, logically: the backslash-continued line that invokes psql.
+joined = block.replace("\\\n", " ")
+# The continuation-joined text is one logical line; the argument vector starts at `psql `.
+cut = joined.find("psql ")
+psql_line = joined[cut:] if cut != -1 else ""
+
+required_in_argv = {
+    "--single-transaction": "--single-transaction",
+    "ON_ERROR_STOP-on-the-command-line": "-v ON_ERROR_STOP=1",
+    "-X": " -X ",
+    "--no-psqlrc": "--no-psqlrc",
+    "the-committed-file": "-f supabase/hosted_roles.sql",
+}
+required_in_block = {
+    "clean-child-environment": "env -i",
+    "verify-full": "PGSSLMODE=verify-full",
+    "validated-CA": "PGSSLROOTCERT=",
+    "password-via-environment": "PGPASSWORD=",
+}
+forbidden = {
+    "connection-string-in-argv": "postgres://",
+    "connection-string-in-argv-ql": "postgresql://",
+    "password-prompt-flag": "--password",
+    "inline-sql": " -c ",
+    "target-flag": " -d ",
+}
+
+for name, token in required_in_argv.items():
+    print("ARGV", "OK" if token in f" {psql_line} " else "MISSING", name)
+for name, token in required_in_block.items():
+    print("BLOCK", "OK" if token in block else "MISSING", name)
+for name, token in forbidden.items():
+    print("FORBIDDEN", "PRESENT" if token in block else "OK", name)
+
+# The three localisations, each required to apply exactly once.
+local_block, n = block, []
+local_block, c = local_block.replace("PGSSLMODE=verify-full", "PGSSLMODE=disable"), local_block.count("PGSSLMODE=verify-full"); n.append(("sslmode", c))
+stripped = [l for l in local_block.splitlines() if "PGSSLROOTCERT=" not in l]
+n.append(("sslrootcert", len(local_block.splitlines()) - len(stripped)))
+local_block = "\n".join(stripped) + "\n"
+c = local_block.count("-f supabase/hosted_roles.sql")
+local_block = local_block.replace("-f supabase/hosted_roles.sql", '-f "$OL_APPLY_FILE"')
+n.append(("apply-file", c))
+for name, count in n:
+    print("LOCALISE", "OK" if count == 1 else f"COUNT={count}", name)
+(work / "contract.local.sh").write_text(local_block, encoding="utf-8")
+
+# The localisation must not have touched anything else the contract turns on.
+untouched = all(t in local_block for t in
+                ("env -i", "-X", "--no-psqlrc", "-v ON_ERROR_STOP=1", "--single-transaction"))
+print("LOCALISE", "OK" if untouched else "LOST", "flags-survived-localisation")
+PY
+
+check "the apply contract is extractable from ${CONTRACT_DOC} by its anchor" \
+  "$([[ -s "$WORK/contract.sh" && -s "$WORK/contract.local.sh" ]] && echo 0 || echo 1)" \
+  "$(head -3 "$WORK/contract.report" | tr '\n' ' ')"
+
+check "the documented invocation carries --single-transaction and command-line ON_ERROR_STOP=1" \
+  "$(grep -q '^ARGV OK --single-transaction$' "$WORK/contract.report" &&
+     grep -q '^ARGV OK ON_ERROR_STOP-on-the-command-line$' "$WORK/contract.report" &&
+     echo 0 || echo 1)" \
+  "$(grep -E '^ARGV (MISSING|OK) (--single-transaction|ON_ERROR_STOP)' "$WORK/contract.report" | tr '\n' ' ')"
+
+check "the documented invocation carries -X, --no-psqlrc and the committed file itself" \
+  "$(grep -qc '^ARGV MISSING' "$WORK/contract.report" && echo 1 || echo 0)" \
+  "$(grep '^ARGV MISSING' "$WORK/contract.report" | tr '\n' ' ')"
+
+check "the documented invocation builds its own environment, pins verify-full and names a CA" \
+  "$(grep -qc '^BLOCK MISSING' "$WORK/contract.report" && echo 1 || echo 0)" \
+  "$(grep '^BLOCK MISSING' "$WORK/contract.report" | tr '\n' ' ')"
+
+check "the documented invocation puts no connection string, password or inline SQL in argv" \
+  "$(grep -qc '^FORBIDDEN PRESENT' "$WORK/contract.report" && echo 1 || echo 0)" \
+  "$(grep '^FORBIDDEN PRESENT' "$WORK/contract.report" | tr '\n' ' ')"
+
+check "exactly the three documented localisations were applied, and no flag was lost" \
+  "$(grep -qc '^LOCALISE \(COUNT\|LOST\)' "$WORK/contract.report" && echo 1 || echo 0)" \
+  "$(grep -E '^LOCALISE (COUNT|LOST)' "$WORK/contract.report" | tr '\n' ' ')"
+
+# A fourth localisation, applied only when this machine needs it and reported when it is: the
+# contract's PATH is the minimal one an operator has, and a runner that keeps psql somewhere else
+# would otherwise fail this section for a reason that has nothing to do with atomicity.
+CONTRACT_PATH_NOTE="documented PATH used as written"
+if ! env -i PATH=/usr/bin:/bin sh -c 'command -v psql' >/dev/null 2>&1; then
+  psql_dir="$(dirname "$(command -v psql)")"
+  sed -i "s#^  PATH=/usr/bin:/bin \\\\\$#  PATH=$psql_dir:/usr/bin:/bin \\\\#" "$WORK/contract.local.sh"
+  CONTRACT_PATH_NOTE="PATH localised to $psql_dir because the documented PATH does not resolve psql here"
+fi
+echo "contract: $CONTRACT_PATH_NOTE"
+
+# ---- the hostile environment the contract has to neutralise ---------------------------------------
+HOSTILE_HOME="$WORK/hostile_home"
+mkdir -p "$HOSTILE_HOME"
+cat >"$HOSTILE_HOME/.psqlrc" <<'PSQLRC'
+\set ON_ERROR_STOP off
+create role ol_psqlrc_probe nologin;
+PSQLRC
+cat >"$HOSTILE_HOME/pg_service.conf" <<'SVC'
+[ol-bogus]
+host=192.0.2.1
+port=1
+dbname=nonexistent
+SVC
+
+# The local target's own components, bound to the names the documented block reads. The password is
+# taken from the validated URL and never printed.
+CONTRACT_PW="$(python3 -c "
+import os, urllib.parse as u
+print(u.unquote(u.urlsplit(os.environ['OL_DB_URL']).password or ''))")"
+export OL_HOSTED_HOST="$OL_DB_HOST" OL_HOSTED_PORT="$OL_DB_PORT" OL_HOSTED_USER="$OL_DB_USER" \
+       OL_HOSTED_DATABASE="$OL_DB_NAME" OL_HOSTED_PASSWORD="$CONTRACT_PW"
+
+run_contract() { # $1 = SQL file to apply, $2 = stdout/stderr capture, $3 = "keep-x" to drop -X
+  local script="$WORK/contract.local.sh"
+  if [[ "${3:-}" == "no-x" ]]; then
+    script="$WORK/contract.nox.sh"
+    sed -e 's/ -X --no-psqlrc//' "$WORK/contract.local.sh" >"$script"
+  fi
+  local rc=0
+  env OL_APPLY_FILE="$1" \
+      HOME="$HOSTILE_HOME" \
+      PSQLRC="$HOSTILE_HOME/.psqlrc" \
+      PGHOST=192.0.2.1 PGPORT=1 PGUSER=nobody PGDATABASE=nonexistent \
+      PGSERVICE=ol-bogus PGSERVICEFILE="$HOSTILE_HOME/pg_service.conf" \
+      PGOPTIONS='-c default_transaction_read_only=on' PGSSLMODE=require PGPASSFILE=/dev/null \
+      OL_HOSTED_HOST="$OL_HOSTED_HOST" OL_HOSTED_PORT="$OL_HOSTED_PORT" \
+      OL_HOSTED_USER="$OL_HOSTED_USER" OL_HOSTED_DATABASE="$OL_HOSTED_DATABASE" \
+      OL_HOSTED_PASSWORD="$OL_HOSTED_PASSWORD" PATH="$PATH" \
+      bash "$script" >"$2" 2>&1 || rc=$?
+  echo "$rc"
+}
+
+# ---- C0: the contract reaches the local database through the hostile environment, and rolls back --
+cat >"$WORK/c_probe.sql" <<'SQL'
+select 'CONTRACT_DB ' || current_database();
+select 'CONTRACT_READONLY ' || current_setting('transaction_read_only');
+create role ol_contract_probe nologin;
+select 'CONTRACT_DDL ' || exists (select 1 from pg_roles where rolname = 'ol_contract_probe');
+do $ol$ begin raise exception 'REHEARSAL-INJECT: the contract probe always rolls back'; end $ol$;
+SQL
+
+rc="$(run_contract "$WORK/c_probe.sql" "$WORK/c_probe.out")"
+check "the contract's clean environment beats an inherited PGHOST/PGSERVICE/PGOPTIONS" \
+  "$(grep -q 'CONTRACT_DB *| *postgres\|CONTRACT_DB postgres' "$WORK/c_probe.out" && echo 0 || echo 1)" \
+  "$(tail -3 "$WORK/c_probe.out" | tr '\n' ' ')"
+check "an inherited PGOPTIONS did not make the session read-only" \
+  "$(grep -q 'CONTRACT_READONLY *| *off\|CONTRACT_READONLY off' "$WORK/c_probe.out" && echo 0 || echo 1)" \
+  "$(grep -i 'CONTRACT_READONLY' "$WORK/c_probe.out" | tr '\n' ' ')"
+check "the probe's role DDL executed inside the contract transaction" \
+  "$(grep -qi 'CONTRACT_DDL *| *t\|CONTRACT_DDL t' "$WORK/c_probe.out" && echo 0 || echo 1)" \
+  "$(grep -i 'CONTRACT_DDL' "$WORK/c_probe.out" | tr '\n' ' ')"
+check "a failure at the end of the file makes the contract run exit non-zero" \
+  "$([[ $rc -ne 0 ]] && echo 0 || echo 1)" "rc=$rc"
+check "the role created before that failure did not survive the run" \
+  "$(ol_probe_absent ol_contract_probe)" "ol_contract_probe survived a rolled-back contract run"
+
+# ---- C1: a failure AFTER an earlier successful role statement rolls that statement back -----------
+# The injected statement is a plain `create role`, placed BEFORE the committed bytes, so it has
+# certainly succeeded by the time the deliberate failure fires at the end. Its survival would be
+# the exact partial application the contract exists to prevent.
+{
+  echo "create role ol_rehearsal_probe nologin;"
+  cat "$BOOTSTRAP"
+  echo ";"
+  echo "do \$ol\$ begin raise exception 'REHEARSAL-INJECT: deliberate failure after a successful role statement'; end \$ol\$;"
+} >"$WORK/inject_after.sql"
+
+rc="$(run_contract "$WORK/inject_after.sql" "$WORK/inject_after.out")"
+check "a failure after an earlier successful role statement aborts the run" \
+  "$([[ $rc -ne 0 ]] && echo 0 || echo 1)" "rc=$rc"
+check "the run reached the injected failure, so the bootstrap itself had already applied" \
+  "$(grep -q 'REHEARSAL-INJECT: deliberate failure' "$WORK/inject_after.out" && echo 0 || echo 1)" \
+  "$(tail -3 "$WORK/inject_after.out" | tr '\n' ' ')"
+check "the earlier successful role statement was rolled back with it" \
+  "$(ol_probe_absent ol_rehearsal_probe)" \
+  "ol_rehearsal_probe survived; the application was NOT atomic"
+check "no partial convergence survived: postgres still holds SET on origenlab_owner" \
+  "$([[ "$(ol_postgres_option origenlab_owner set_option)" == "true" ]] && echo 0 || echo 1)" \
+  "the file's own revoke was committed even though the run failed"
+
+ol_psql -q -A -t -c "$CATALOGUE_QUERY" >"$WORK/after_inject_after" 2>&1
+check "the aborted contract run left the role catalogue byte-identical" \
+  "$(cmp -s "$WORK/before" "$WORK/after_inject_after" && echo 0 || echo 1)" \
+  "$(diff "$WORK/before" "$WORK/after_inject_after" | head -4 | tr '\n' ' ')"
+
+# ---- C2: the file's own assertions execute inside the same transaction ---------------------------
+# A SET-bearing membership is granted to a platform identity on a RUNTIME role first. Every
+# statement in the bootstrap then applies successfully -- the roles are created, the attributes and
+# the owner membership are converged, and the two option revocations on origenlab_owner land -- and
+# only the platform-boundary assertion at the very END of the file fails. If that assertion ran
+# outside the transaction, or after it, the convergence would already be committed.
+{
+  echo "grant origenlab_api to postgres with inherit false, set true;"
+  cat "$BOOTSTRAP"
+  echo ";"
+} >"$WORK/inject_assert.sql"
+
+rc="$(run_contract "$WORK/inject_assert.sql" "$WORK/inject_assert.out")"
+check "the file's final assertion fires under the contract invocation" \
+  "$([[ $rc -ne 0 ]] && echo 0 || echo 1)" "rc=$rc"
+check "the refusal is the platform-boundary assertion, not a syntax error" \
+  "$(grep -qi 'may inherit or assume an OrigenLab role' "$WORK/inject_assert.out" && echo 0 || echo 1)" \
+  "$(grep -i 'ERROR' "$WORK/inject_assert.out" | head -1)"
+check "the assertion ran in the same transaction: the grant it caught was rolled back" \
+  "$([[ "$(ol_postgres_option origenlab_api set_option)" == "none" ]] && echo 0 || echo 1)" \
+  "postgres kept SET on origenlab_api, so the assertion did not undo what preceded it"
+check "and the convergence the file had already performed was rolled back with it" \
+  "$([[ "$(ol_postgres_option origenlab_owner set_option)" == "true" ]] && echo 0 || echo 1)" \
+  "the option revocation survived an assertion failure; the application was NOT atomic"
+
+ol_psql -q -A -t -c "$CATALOGUE_QUERY" >"$WORK/after_inject_assert" 2>&1
+check "an assertion failure leaves no partial role or membership convergence behind" \
+  "$(cmp -s "$WORK/before" "$WORK/after_inject_assert" && echo 0 || echo 1)" \
+  "$(diff "$WORK/before" "$WORK/after_inject_assert" | head -4 | tr '\n' ' ')"
+
+# ---- C3: psqlrc is neutralised, and the detector that says so is not vacuous ----------------------
+check "the hostile ~/.psqlrc never ran under the documented invocation" \
+  "$(ol_probe_absent ol_psqlrc_probe)" \
+  "ol_psqlrc_probe exists; -X did not suppress the startup file"
+
+# The negative control. Without -X the same startup file DOES run, and it runs BEFORE
+# --single-transaction opens its transaction, so its role is committed even though the run fails.
+# That is the whole reason -X is in the contract, and proving it here is what stops the check above
+# from passing for the wrong reason.
+rc="$(run_contract "$WORK/c_probe.sql" "$WORK/c_probe_nox.out" no-x)"
+nox_created="$(ol_probe_absent ol_psqlrc_probe)"
+ol_psql -q -c "drop role if exists ol_psqlrc_probe;" >/dev/null 2>&1 || true
+check "without -X that same startup file does run and commits outside the transaction" \
+  "$([[ "$nox_created" == "1" ]] && echo 0 || echo 1)" \
+  "the psqlrc detector is vacuous: the startup file did nothing even without -X"
+
+check "every probe role this section created is gone" \
+  "$([[ "$(ol_probe_absent ol_rehearsal_probe)" == 0 && "$(ol_probe_absent ol_contract_probe)" == 0 &&
+        "$(ol_probe_absent ol_psqlrc_probe)" == 0 ]] && echo 0 || echo 1)" \
+  "a probe role outlived the section; the next gate would see it"
+
+ol_psql -q -A -t -c "$CATALOGUE_QUERY" >"$WORK/after_contract" 2>&1
+check "the whole contract section left the role catalogue byte-identical" \
+  "$(cmp -s "$WORK/before" "$WORK/after_contract" && echo 0 || echo 1)" \
+  "$(diff "$WORK/before" "$WORK/after_contract" | head -4 | tr '\n' ' ')"
+
 echo
 echo "hosted role bootstrap rehearsal: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

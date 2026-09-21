@@ -722,7 +722,8 @@ Applying the bootstrap and assigning the migrator's password are **two separate 
 actions**, neither performed by this repository:
 
 1. review the dry-run output, then apply the reviewed file to the project with `psql` as the
-   project's `postgres` login. That login is not a superuser on Supabase; it holds
+   project's `postgres` login, **under the application contract below and in no other way**.
+   That login is not a superuser on Supabase; it holds
    `CREATEROLE` and receives `ADMIN OPTION` on every role it creates, which is why the file
    sets `NOSUPERUSER` / `NOBYPASSRLS` / `NOREPLICATION` only at `CREATE ROLE` and asserts
    them fail-closed on every run;
@@ -732,6 +733,70 @@ actions**, neither performed by this repository:
    audit ([§4.2](#m-ops-slice0-audit)) through the environment variable its target file names.
 
 `origenlab_api` and `origenlab_worker` receive no direct-login password during this slice.
+
+#### The application contract: one transaction, or nothing
+
+The bootstrap is **all or nothing.** It creates four roles, converges their attributes,
+converges one membership, revokes two options from a platform identity, and only then asserts
+the platform boundary. A half-applied run of that sequence leaves the project in a state no
+reviewed file describes — roles that exist with unconverged attributes, or a convergence that
+landed while the assertion guarding it never ran — and there is neither a repair procedure for
+that state nor any evidence that would tell an operator which half happened. So the application
+is **required to be atomic**, and the requirement is stated as an invocation rather than as an
+intention.
+
+**Any hosted application of `supabase/hosted_roles.sql` MUST be exactly this, and nothing
+else:**
+
+<!-- ol:hosted-apply-contract -->
+```bash
+env -i \
+  PATH=/usr/bin:/bin \
+  HOME="$HOME" \
+  LANG=C \
+  PGHOST="$OL_HOSTED_HOST" \
+  PGPORT="$OL_HOSTED_PORT" \
+  PGUSER="$OL_HOSTED_USER" \
+  PGDATABASE="$OL_HOSTED_DATABASE" \
+  PGSSLMODE=verify-full \
+  PGSSLROOTCERT="$OL_HOSTED_SSLROOTCERT" \
+  PGPASSWORD="$OL_HOSTED_PASSWORD" \
+  psql -X --no-psqlrc -v ON_ERROR_STOP=1 --single-transaction \
+       -f supabase/hosted_roles.sql
+```
+
+**The operation must fail and roll back completely if any statement or any final assertion
+fails.** The file's two fail-closed assertion blocks — the attribute assertion after the
+`ALTER ROLE` convergence, and the platform-boundary assertion at the end — execute inside the
+same transaction as the statements they guard, and the boundary one is the *last* thing in the
+file — so a violation discovered at the end undoes the whole convergence rather than reporting
+on a change that has already landed.
+
+Element by element, with what a run without it actually risks:
+
+| Element | Why it is in the contract |
+|---|---|
+| `psql -X`, `--no-psqlrc` | The same switch, written both ways because the contract names both and a reader should not have to know they are one. No `~/.psqlrc` and no `PSQLRC` file is read, so no operator convenience setting — a `\set ON_ERROR_STOP off`, an `AUTOCOMMIT` change, an `\i` — can alter the meaning of the reviewed bytes. A startup file also runs *before* `--single-transaction` opens its transaction, so anything it did would not be rolled back with the rest |
+| `-v ON_ERROR_STOP=1`, **on the command line** | Set as a `psql` variable in the argument vector: not inside the SQL file, not in a startup file, not in an environment variable. The file **cannot** carry it — `\set` is a psql meta-command and `bootstrap.py` refuses meta-commands outright — so the command line is the only place it can come from. Without it `psql` continues past a failed statement and then reaches the end of the file and issues `COMMIT`, which under `--single-transaction` means committing a transaction that skipped statements or is already in the aborted state |
+| `--single-transaction` (`-1`) | `psql` wraps the whole `-f` file in one `BEGIN` … `COMMIT`. **The file contains no transaction control of its own, and may not:** the static analyser recognises no `begin`, `commit` or `rollback` statement shape, so an unguarded run would autocommit each statement separately. This flag is the only thing that makes the sequence atomic. With `ON_ERROR_STOP=1`, a failure aborts `psql` before the `COMMIT` and the server discards the open transaction |
+| `verify-full` with the validated Supabase CA | The same TLS rule as the Slice 0 audit ([§4.2](#m-ops-slice0-audit)): exactly `verify-full`, with a CA file that exists. **There is no downgrade path** — a missing or unvalidated CA file is a refused operation, never a fallback to `require`. Applying role DDL over a connection whose peer was not authenticated is not a lesser version of this procedure |
+| A clean, explicitly constructed child environment (`env -i`) | The environment is **built, not inherited.** An inherited `PGSERVICE`, `PGSERVICEFILE`, `PGOPTIONS`, `PGHOST`, `PGHOSTADDR`, `PGSSLMODE`, `PGPASSFILE`, `SUPABASE_DB_URL` or `SUPABASE_ACCESS_TOKEN` cannot redirect the connection, re-authenticate it, downgrade its TLS or inject session settings, because none of them is in the child's environment at all |
+| No connection string and no password in `argv` | The credential travels as `PGPASSWORD` inside that constructed environment. Never `-d 'postgres://…'`, never `--password`, never a `.pgpass` reached through `HOME`. The process table shows no target and no secret |
+| The reviewed committed SQL file, directly | `-f supabase/hosted_roles.sql` — the committed bytes. Not a here-document, not a generated plan, not `hosted_role_bootstrap.sh --dry-run` piped into `psql`, not a file edited to skip a statement. The artefact reviewed and the artefact applied must be the same bytes; that is the whole reason the review is worth anything |
+
+**`hosted_role_bootstrap.sh` does not gain an apply mode to enforce this, and will not.** An
+apply mode would need a target, a credential and a connection, and this slice deliberately
+holds none of the three — adding them to enforce atomicity would trade the property that makes
+the tool safe to review for one that `psql` already provides. The tool stays a static
+review/dry-run tool. The contract is an operator procedure, and it is proven by rehearsal
+rather than by a flag.
+
+**Proven, not asserted.** `supabase/scripts/hosted_bootstrap_rehearsal.sh` extracts the block
+above from this document by its `ol:hosted-apply-contract` anchor, checks that it still carries
+every element of the contract, and then runs **that invocation** — the documented one, not a
+paraphrase of it — against the disposable local database with failures injected, proving that a
+statement that fails after an earlier role statement succeeded takes the earlier one with it.
+If this documented block and the rehearsal ever disagree, the rehearsal fails.
 
 #### Tests
 
@@ -771,6 +836,25 @@ Two negative halves follow: a platform identity given `SET ROLE` on a *runtime* 
 bootstrap refuse — the boundary assertion is not one that cannot fail — and the rollback is
 shown to restore the local `postgres` `SET` membership the hosted file removed, so the two
 files remain distinguishable and the rehearsal leaves nothing behind.
+
+**The rehearsal then tests the application contract itself**, because "the SQL runs" and "the
+operator is required to apply it atomically" are different claims and only the first was ever
+proven. It extracts the invocation documented above by its `ol:hosted-apply-contract` anchor,
+asserts it still carries `--single-transaction`, command-line `-v ON_ERROR_STOP=1`, `-X`,
+`--no-psqlrc`, `verify-full`, a CA, a built environment and the committed file — and no
+connection string, password or inline SQL in `argv` — and then **runs that invocation** against
+the local disposable database. Three localisations, each asserted to apply exactly once, adapt
+it to a container that speaks no TLS; every flag the contract turns on is executed verbatim.
+The environment it runs in is deliberately hostile: `$HOME` holds a `.psqlrc` that would switch
+`ON_ERROR_STOP` off and create a role, and `PGHOST`, `PGSERVICE`, `PGSERVICEFILE`, `PGOPTIONS`,
+`PGSSLMODE`, `PGPASSFILE` and `PSQLRC` are all exported pointing somewhere wrong. Failures are
+then injected two ways — a statement that fails *after* a plain `create role` succeeded, and a
+membership planted so the file's own boundary assertion fires at the very end, after the
+convergence has already been performed — and each run must leave the role catalogue
+**byte-identical** to where it started. Removing `--single-transaction` from the documented
+block turns those checks red and names the damage, which is what makes them worth having; the
+psqlrc check carries its own negative control, since the same startup file *does* run, and
+commits outside the transaction, when `-X` is dropped.
 
 The failure-injection suite plants a malformed bootstrap file over
 `supabase/hosted_roles.sql`, runs the real entry point, and restores the file **from a
