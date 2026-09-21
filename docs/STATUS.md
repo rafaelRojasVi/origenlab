@@ -120,8 +120,10 @@ Every gate below was run on this date, at `origin/main` @ `3c8dbf78` plus this b
 - **`apps/worker`** — named in [`ARCHITECTURE.md`](ARCHITECTURE.md) §1–§2 as the owner of
   Gmail sync, MIME parsing, PDF rendering, ChileCompra fetching and the single
   send path. Not created.
-- **Any application code touching the seven schemas.** Slice 0 has **zero
-  consumers**; nothing in `apps/` references it.
+- ~~**Any application code touching the seven schemas.**~~ **No longer true as of
+  2026-09-21** — `apps/api` now carries a read-only `/v2/*` boundary over them (§2.7.2).
+  There is still **no write path**: every durable V2 write is a migration tool, never an
+  application.
 - **The eight privileged send/quote functions** of [`ARCHITECTURE.md`](ARCHITECTURE.md) §6.2.
 - **A consumer for the imported rows.** §2.7's importer now maps the *full* Wave
   1A/Wave 1B safety baseline and all three historical campaigns; both schema
@@ -451,6 +453,38 @@ not joined to an organization because it shares its mail domain.
 leaves the closed list of organization kinds **[OPEN]** and the evidence carries no kind.
 `unknown` is an explicit absence marker; the operator approved it on 2026-09-21 and every
 row stays `machine_proposed` until reclassified.
+
+### 2.7.2 V2 durable read boundary — measured 2026-09-21
+
+The first application code that *reads* the V2 durable core. `docs/STATUS.md` §2.2 said
+Slice 0 had "zero consumers"; it now has one.
+
+| Item | Value |
+|---|---|
+| Location | `apps/api/src/origenlab_api/v2/` — a separate surface inside the V1 operator API, not a new service |
+| Routes | 7 `GET` — `/v2/contacts`, `/v2/organizations`, `/v2/prospects`, `/v2/opportunities/active`, `/v2/tasks/due`, `/v2/review/summary`, `/v2/quotes/followup` |
+| Write routes | **zero**, asserted by a test over the router's own methods |
+| Mounted when | **only** if `ORIGENLAB_V2_DATABASE_URL` is set. Unset, the router is absent entirely and `/v2/*` is a 404 |
+| Connection role | `origenlab_api` — no membership in `origenlab_owner`, so RLS constrains these reads as it will in production |
+| Transaction | `set transaction read only` then `set local statement_timeout`, both inside the transaction. A write returns **SQLSTATE 25006**, proven against a real database |
+| Identity | one port, two adapters — a JWKS verifier (the target; **present and unconfigured**) and a local development adapter that **refuses to construct** unless the V2 DSN is a literal loopback address. JWKS wins whenever configured |
+| Authorization | every route requires a resolved, **active** `platform.operator` with role `viewer`, `sales` or `admin`; no identity is 401 |
+| Paging | every listing bounded — default 50, maximum 200 |
+| Tests | **25** — `apps/api/tests/test_v2_read_boundary.py`; 2 are database-backed and skip unless `ORIGENLAB_V2_TEST_DSN` is set |
+| Measured against the local database | `/v2/contacts` 9,460 · `/v2/organizations` 1,812 · `/v2/review/summary` 4 ambiguous, 172 unresolved, 1,812 + 9,460 machine-proposed |
+| Returning zero today | `/v2/prospects`, `/v2/opportunities/active`, `/v2/tasks/due`, `/v2/quotes/followup` — see below |
+
+**Why four endpoints return zero.** `crm.opportunity`, `crm.task` and `crm.quote` are empty.
+Those are V1's *durable* rows, which live in the V1 PostgreSQL `commercial.*` schema and have
+not been migrated. The `commercial_*` tables in the local SQLite are the **rebuildable**
+machine projections ([`CLAUDE.md`](../CLAUDE.md) → *Durable vs rebuildable*) and are not a
+substitute for them. The endpoints are correct and the data is genuinely absent; a V1 durable
+migration is the next step and needs a V1 dump the repository does not have.
+
+**Local credentials.** `supabase/scripts/dev_db.sh api-login` generates a password for
+`origenlab_api` **on the development container only** and writes the DSN to
+`~/data/origenlab-v2-local/api.env`, mode `0600`, outside Git. `supabase/roles.sql` still
+assigns no password to any role and no credential is in tracked content.
 
 ### 2.8 Hosted phase — frozen 2026-09-21
 

@@ -92,6 +92,16 @@ class Settings(BaseSettings):
     commercial_operations_writes_enabled: bool = False
     postgres_statement_timeout_ms: int = 30_000
     postgres_pool_size: int = 5
+
+    # --- V2 durable read boundary -------------------------------------------
+    # Both fail closed. With no DSN the `/v2/*` router is not mounted at all, so an
+    # unconfigured deployment gets no V2 surface rather than one that errors on every
+    # request. No hosted credential is added while the hosted phase is frozen.
+    """DSN of the V2 durable database; the /v2 router is not mounted without it."""
+    v2_database_url: str | None = None
+    """Supabase Auth JWKS URL. When set, JWKS verification is used and the local development identity adapter is never constructed."""
+    v2_jwks_url: str | None = None
+    v2_statement_timeout_ms: int = 15_000
     """Comma-separated browser origins for dashboard static site (no wildcards)."""
     api_cors_origins: str | None = None
     """Comma-separated Host header values allowed in production (e.g. api.origenlab.cl)."""
@@ -179,6 +189,17 @@ class Settings(BaseSettings):
 
     def postgres_configured(self) -> bool:
         return bool((self.postgres_url or "").strip())
+
+    def v2_configured(self) -> bool:
+        return bool((self.v2_database_url or "").strip())
+
+    def require_v2_database_url(self) -> str:
+        url = (self.v2_database_url or "").strip()
+        if not url:
+            raise ValueError(
+                "ORIGENLAB_V2_DATABASE_URL is required to mount the /v2 read boundary"
+            )
+        return url
 
     def require_postgres_url(self) -> str:
         url = (self.postgres_url or "").strip()
