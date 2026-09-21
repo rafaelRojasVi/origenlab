@@ -197,6 +197,58 @@ run --environment staging --dry-run
 refused "K (a table created by the role bootstrap)" "forbidden token"
 unplant
 
+# --- K1..K7: the closed platform-role option revocation ------------------------------------------
+# The bootstrap may name exactly one identity outside the OrigenLab set, in exactly one shape, to
+# remove exactly two grant options. Everything adjacent to that exception is planted here, because
+# an exception that is only *described* as narrow is not narrow -- it is narrow when widening it
+# refuses the file.
+
+# K1: revoking ADMIN. The creator's ADMIN OPTION is tolerated by docs/ARCHITECTURE.md §6.4 on
+# purpose, so converging past the policy is refused exactly like falling short of it.
+plant "original + '\nrevoke admin option for origenlab_owner from postgres;\n'"
+run --environment staging --dry-run
+refused "K1 (the creator ADMIN OPTION revoked)" "closed option revocations"
+unplant
+
+# K2: the same shape aimed at a different platform identity.
+plant "original + '\nrevoke set option for origenlab_owner from service_role;\n'"
+run --environment staging --dry-run
+refused "K2 (an option revoked from a second platform role)" "closed option revocations"
+unplant
+
+# K3: the same shape aimed at a different OrigenLab role.
+plant "original + '\nrevoke set option for origenlab_api from postgres;\n'"
+run --environment staging --dry-run
+refused "K3 (an option revoked on a runtime role)" "closed option revocations"
+unplant
+
+# K4: the convergence silently dropped. This is the regression that would matter most in practice:
+# the hosted bootstrap would go back to refusing itself on the real project.
+plant "original.replace('revoke set option for     origenlab_owner from postgres;\n', '')"
+run --environment staging --dry-run
+refused "K4 (the convergence removed)" "closed option revocations"
+unplant
+
+# K5: the convergence duplicated. Stated exactly, so the file stays one deterministic model.
+plant "original + '\nrevoke set option for origenlab_owner from postgres;\n'"
+run --environment staging --dry-run
+refused "K5 (the convergence stated twice)" "closed option revocations"
+unplant
+
+# K6: the blunt form the policy deliberately does not use. `revoke origenlab_owner from postgres`
+# would remove a whole grant including the ADMIN relationship the policy keeps.
+plant "original + '\nrevoke origenlab_owner from postgres;\n'"
+run --environment staging --dry-run
+refused "K6 (the whole membership revoked from postgres)" "supabase-managed"
+unplant
+
+# K7: a privilege the option grammar does not cover, so shape completeness refuses the file rather
+# than the allowlist -- the exception widens the grammar by two words, not by a category.
+plant "original + '\nrevoke connect option for origenlab_owner from postgres;\n'"
+run --environment staging --dry-run
+refused "K7 (an option outside the recognised grammar)" "analyser does not understand"
+unplant
+
 # --- L: production is blocked on its own durability decision --------------------------------------
 run --environment production --dry-run
 refused "L (production)" "blocked"

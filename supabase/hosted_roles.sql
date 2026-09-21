@@ -11,11 +11,19 @@
 --   role is never altered, never granted a membership in an OrigenLab role, and never made an
 --   owner of an application object. The bootstrap does not depend on altering it.
 --
--- What this file may touch is closed to four names — origenlab_owner, origenlab_migrator,
--- origenlab_api, origenlab_worker — and supabase/audit/olaudit/bootstrap.py proves that statically,
--- before the file is ever shown to an operator or piped to psql. Every `create role`, `alter role`,
--- `grant` and `revoke` in this file is matched against a recognised statement shape and its role
--- names checked against that closed set; an unrecognised shape refuses the whole file.
+-- What this file may CREATE, ALTER or GRANT is closed to four names — origenlab_owner,
+-- origenlab_migrator, origenlab_api, origenlab_worker — and supabase/audit/olaudit/bootstrap.py
+-- proves that statically, before the file is ever shown to an operator or piped to psql. Every
+-- `create role`, `alter role`, `grant` and `revoke` in this file is matched against a recognised
+-- statement shape and its role names checked against that closed set; an unrecognised shape
+-- refuses the whole file.
+--
+-- There is exactly one exception, and it is one-way. This file may REVOKE the SET and INHERIT
+-- options on origenlab_owner from `postgres`, and nothing else about a platform identity. That
+-- exception is itself a closed allowlist in bootstrap.py
+-- (`PERMITTED_OPTION_REVOCATIONS`): it can only remove privilege from a platform role, it can
+-- never confer any, it may not touch ADMIN, and it may not name a second platform role or a second
+-- OrigenLab role. See the convergence block below for why it exists.
 --
 -- NO PASSWORD APPEARS HERE, AND NONE MAY. The static analyser rejects the token `password`
 -- outright. The three LOGIN roles are created without one. Assigning the origenlab_migrator
@@ -100,6 +108,31 @@ revoke origenlab_api    from origenlab_worker;
 revoke origenlab_worker from origenlab_api;
 revoke origenlab_api    from origenlab_migrator;
 revoke origenlab_worker from origenlab_migrator;
+
+-- Converge the one relationship this bootstrap may have with a platform identity, and the only
+-- place this file names one. Both statements are a REVOKE of a grant OPTION: they can remove
+-- privilege from `postgres` and there is no shape here that could confer any.
+--
+-- Why this is needed rather than theoretical. The hosted `origenlab-v2` catalogue was measured on
+-- 2026-09-20 and already carries `postgres -> origenlab_owner` with SET — the shape the *local*
+-- supabase/roles.sql creates and this file deliberately does not. Without this convergence,
+-- Direction 1 below refuses this file on the very project it exists to bootstrap. Provenance is
+-- recorded in docs/STATUS.md §2.5.
+--
+-- Why SET and INHERIT, and not the whole membership. The boundary of docs/ARCHITECTURE.md §6.4 is
+-- stated in terms of the two options that confer privilege. ADMIN is administrative only —
+-- PostgreSQL 16 and later confer it on the creator of a role, and Direction 1 tolerates it by
+-- design. `revoke origenlab_owner from postgres` would remove a whole grant, including a
+-- relationship the policy permits, and would state an intent this policy does not hold. Revoking
+-- ADMIN is equally out of bounds: converging past the policy is as much a deviation as falling
+-- short of it.
+--
+-- Idempotent. Revoking an option that is not held raises a WARNING, never an error, so these are
+-- no-ops on a fresh project and on every application after the first. Requires PostgreSQL 16 or
+-- later for the `REVOKE ... OPTION FOR` grammar; the hosted project and the local container are
+-- both PostgreSQL 17 (`major_version = 17` in the Supabase CLI config).
+revoke set option for     origenlab_owner from postgres;
+revoke inherit option for origenlab_owner from postgres;
 
 -- Fail closed on the platform-role boundary (docs/ARCHITECTURE.md §6.4, §6.5). Two directions.
 --

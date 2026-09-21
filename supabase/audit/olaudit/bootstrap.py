@@ -32,7 +32,17 @@ What is statically proven, in order:
   ``origenlab_owner``, ``origenlab_migrator``, ``origenlab_api`` and ``origenlab_worker``. A
   Supabase-managed role -- ``postgres``, ``service_role``, ``anon``, ``authenticated``,
   ``supabase_admin`` and the rest -- can therefore never be created, altered, granted a membership
-  or granted anything, and the bootstrap cannot be made to depend on altering one.
+  or granted anything, and the bootstrap cannot be made to depend on altering one. That closure has
+  exactly one exception, stated in the next bullet; it removes privilege and can never confer any,
+  so this bullet must not be quoted on its own as "managed roles are never named".
+* **One closed, privilege-removing exception.** A fifth shape,
+  ``revoke <option> option for <role> from <member>``, is recognised so the bootstrap can converge
+  the SET option a platform identity must not hold on an OrigenLab role. It is the only place a
+  name outside the closed set may appear, and it is governed by its own allowlist,
+  `PERMITTED_OPTION_REVOCATIONS`, which the file must match exactly -- same options, same roles,
+  same members, no more and no fewer. The shape can only *remove* a grant option; there is no
+  counterpart that confers one. ``admin`` is refused by the allowlist even though the grammar
+  matches it, because docs/ARCHITECTURE.md §6.4 tolerates the creator's ADMIN OPTION on purpose.
 * **The intended membership graph, exactly.** One membership is granted and it is
   ``origenlab_owner`` to ``origenlab_migrator`` with ``inherit false, set true, admin false``. Any
   second grant, or that grant with different options, refuses the file.
@@ -81,6 +91,24 @@ PLATFORM_ROLES: frozenset[str] = frozenset(
 # §6: the migrator may assume the owner explicitly and never inherits it).
 REQUIRED_MEMBERSHIP = ("origenlab_owner", "origenlab_migrator")
 REQUIRED_GRANT_OPTIONS = ("inherit false", "set true", "admin false")
+
+# The single, closed exception to MANAGED_ROLES: the grant options this bootstrap may revoke from
+# an identity outside the OrigenLab set, as (option, role, member). The file must state exactly
+# these, exactly once each, in this order.
+#
+# Why the exception exists at all: the hosted catalogue already carries `postgres -> origenlab_owner`
+# with SET (docs/STATUS.md §2.5), and the bootstrap's own Direction-1 assertion forbids that shape,
+# so without a convergence the file refuses itself on the project it exists to bootstrap.
+#
+# Why it is safe: every entry removes a grant option and no shape here can confer one. `admin` is
+# deliberately absent -- docs/ARCHITECTURE.md §6.4 tolerates the role creator's implicit ADMIN
+# OPTION, so revoking it would converge *past* the policy, which is as much a deviation from it as
+# falling short. An `admin` revocation is matched by the grammar precisely so it can be refused by
+# name rather than fall through to a confusing shape-completeness error.
+PERMITTED_OPTION_REVOCATIONS: tuple[tuple[str, str, str], ...] = (
+    ("set", "origenlab_owner", "postgres"),
+    ("inherit", "origenlab_owner", "postgres"),
+)
 
 # Attributes every managed role must carry, and the per-role attributes of docs/ARCHITECTURE.md §6.
 REQUIRED_ATTRIBUTES_ALL = ("nosuperuser", "nobypassrls", "noreplication")
@@ -131,6 +159,13 @@ _CREATE_ROLE = re.compile(rf"\bcreate\s+role\s+{_IDENT}", re.IGNORECASE)
 _ALTER_ROLE = re.compile(rf"\balter\s+role\s+{_IDENT}", re.IGNORECASE)
 _GRANT = re.compile(rf"\bgrant\s+{_IDENT}\s+to\s+{_IDENT}", re.IGNORECASE)
 _REVOKE = re.compile(rf"\brevoke\s+{_IDENT}\s+from\s+{_IDENT}", re.IGNORECASE)
+# `admin` is matched here and refused by PERMITTED_OPTION_REVOCATIONS, not omitted from the
+# grammar: an unmatched shape would be reported as an unparseable file rather than as the policy
+# breach it actually is.
+_REVOKE_OPTION = re.compile(
+    rf"\brevoke\s+(set|inherit|admin)\s+option\s+for\s+{_IDENT}\s+from\s+{_IDENT}",
+    re.IGNORECASE,
+)
 
 
 class BootstrapError(ValueError):
@@ -152,6 +187,10 @@ class RoleModel(NamedTuple):
     memberships: tuple[tuple[str, str], ...]   # (role granted, member)
     revocations: tuple[tuple[str, str], ...]   # (role revoked, member)
     statements: tuple[RoleStatement, ...]
+    # (option, role, member) -- the closed, privilege-removing platform exception. Kept out of
+    # `memberships` and `revocations` so every existing invariant about those two keeps meaning
+    # exactly what it meant before this shape existed.
+    option_revocations: tuple[tuple[str, str, str], ...] = ()
 
 
 # ------------------------------------------------------------------------------------------------
@@ -240,6 +279,9 @@ def _attributes_after(code: str, start: int) -> tuple[str, ...]:
 def _check_shape_completeness(code: str, found: dict[str, int]) -> None:
     """Every `create`/`alter`/`grant`/`revoke` word must belong to a shape the analyser matched.
 
+    The `revoke` count covers both revoke shapes -- the membership revoke and the option revoke --
+    so adding the second shape did not create a hole here.
+
     Without this, an unrecognised statement would simply not be reported -- the analyser would be
     silent about exactly the thing it exists to catch. With it, anything the four regexes do not
     understand refuses the whole file.
@@ -302,13 +344,22 @@ def analyse(text: str, *, name: str = "hosted_roles.sql") -> RoleModel:
         revocations.append(pair)
         statements.append(RoleStatement("revoke", pair, ()))
 
+    option_revocations: list[tuple[str, str, str]] = []
+    for match in _REVOKE_OPTION.finditer(code):
+        entry = (match.group(1).lower(), match.group(2).lower(), match.group(3).lower())
+        option_revocations.append(entry)
+        # `roles` carries only the OrigenLab role, so every invariant that reads statement.roles --
+        # including "this file names only the four" -- stays literally true. The member is recorded
+        # in `attributes`, where it is visible to the plan summary and to review.
+        statements.append(RoleStatement("revoke option", (entry[1],), (entry[0], entry[2])))
+
     _check_shape_completeness(
         code,
         {
             "create": len(created),
             "alter": len(altered),
             "grant": len(memberships),
-            "revoke": len(revocations),
+            "revoke": len(revocations) + len(option_revocations),
         },
     )
 
@@ -322,6 +373,21 @@ def analyse(text: str, *, name: str = "hosted_roles.sql") -> RoleModel:
                 else "it is outside the closed OrigenLab role set"
             )
             raise BootstrapError(f"{name}: the bootstrap names role '{role}' -- {why}")
+
+    if tuple(option_revocations) != PERMITTED_OPTION_REVOCATIONS:
+        expected = ", ".join(
+            f"{option.upper()} OPTION on {role} from {member}"
+            for option, role, member in PERMITTED_OPTION_REVOCATIONS
+        )
+        actual = ", ".join(
+            f"{option.upper()} OPTION on {role} from {member}"
+            for option, role, member in option_revocations
+        ) or "none"
+        raise BootstrapError(
+            f"{name}: the bootstrap must state exactly the closed option revocations -- "
+            f"{expected} -- but states: {actual}. This is the only shape that may name an identity "
+            "outside the OrigenLab role set, so it is matched exactly rather than merely allowed"
+        )
 
     missing_created = [role for role in MANAGED_ROLES if role not in created]
     if missing_created:
@@ -370,6 +436,7 @@ def analyse(text: str, *, name: str = "hosted_roles.sql") -> RoleModel:
         memberships=tuple(memberships),
         revocations=tuple(revocations),
         statements=tuple(statements),
+        option_revocations=tuple(option_revocations),
     )
 
 
@@ -519,8 +586,19 @@ def role_matrix(model: RoleModel) -> list[str]:
     for granted, member in model.revocations:
         lines.append(f"  {member} -> {granted}  (revoked)")
     lines.append("")
-    lines.append("Supabase-managed roles touched: none. No platform role is created, altered,")
-    lines.append("granted a membership in an OrigenLab role, or made an owner of anything.")
+    lines.append("grant options revoked from a platform identity:")
+    if model.option_revocations:
+        for option, role, member in model.option_revocations:
+            lines.append(f"  {member} -> {role}  ({option.upper()} OPTION revoked)")
+    else:
+        lines.append("  none")
+    lines.append("")
+    lines.append("No Supabase-managed role is created, altered, granted a membership in an")
+    lines.append("OrigenLab role, given any privilege, or made an owner of anything. The only")
+    lines.append("statement this bootstrap may aim at a platform identity is an option REVOKE from")
+    lines.append("the closed list above: it can remove privilege and can never confer any. ADMIN is")
+    lines.append("not revocable here -- the creator's ADMIN OPTION is tolerated by design")
+    lines.append("(docs/ARCHITECTURE.md §6.4).")
     return lines
 
 
@@ -545,7 +623,8 @@ def dry_run(repo_root: Path, environment: Environment, *, path: Path | None = No
         *role_matrix(model),
         "",
         "This tool opens no database connection in any mode. It reads one committed file, proves",
-        "statically that the file is nothing but role management over four names, and prints it.",
+        "statically that the file is nothing but role management over a closed set of names, and",
+        "prints it.",
         "No password is assigned here; the origenlab_migrator credential is a separate operator",
         "action with a hidden secret input (docs/OPERATIONS.md §4.3).",
     ]

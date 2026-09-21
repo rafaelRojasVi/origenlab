@@ -40,7 +40,7 @@
 -- them fail-closed. This assertion is the catalogue's own answer, independent of all three.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(19);
+select plan(22);
 
 -- ------------------------------------------------------------------------------------------------
 -- The four roles, and only the four.
@@ -164,6 +164,40 @@ select results_eq(
       where am.roleid = 'origenlab_owner'::regrole and r.rolname = 'origenlab_migrator' $$,
   $$ values (false, true, false) $$,
   'origenlab_migrator holds the owner SET-only: no INHERIT, no ADMIN OPTION — the one membership the hosted bootstrap grants');
+
+-- ------------------------------------------------------------------------------------------------
+-- Why the hosted convergence can be surgical, proven from the catalogue rather than asserted in a
+-- comment.
+--
+-- supabase/hosted_roles.sql converges the hosted project with
+-- `revoke set option for origenlab_owner from postgres`, executed as `postgres`. A role may revoke
+-- only the grants it made itself, so that statement can reach the SET row and cannot reach the
+-- creator-ADMIN row — which is exactly the asymmetry docs/ARCHITECTURE.md §6.4 relies on when it
+-- forbids INHERIT and SET while tolerating ADMIN. These three assertions are that asymmetry stated
+-- as catalogue facts: two rows, different grantors, only one of them revocable by `postgres`.
+-- ------------------------------------------------------------------------------------------------
+select is(
+  (select count(*)::int from pg_auth_members am
+     join pg_roles r on r.oid = am.member
+    where am.roleid = 'origenlab_owner'::regrole and r.rolname = 'postgres'),
+  2,
+  'the CLI login holds two separate membership rows on the owner — one per grantor — not one merged row');
+
+select results_eq(
+  $$ select g.rolname::text collate "default" from pg_auth_members am
+       join pg_roles r on r.oid = am.member join pg_roles g on g.oid = am.grantor
+      where am.roleid = 'origenlab_owner'::regrole and r.rolname = 'postgres' and am.set_option $$,
+  $$ values ('postgres') $$,
+  'the SET row on the owner was granted by postgres itself, so postgres can revoke that option and the hosted convergence is a statement it is permitted to make');
+
+select results_eq(
+  $$ select distinct g.rolname::text collate "default" from pg_auth_members am
+       join pg_roles m on m.oid = am.roleid
+       join pg_roles r on r.oid = am.member
+       join pg_roles g on g.oid = am.grantor
+      where m.rolname like 'origenlab\_%' and r.rolname = 'postgres' and am.admin_option $$,
+  $$ values ('supabase_admin') $$,
+  'every creator-ADMIN row was granted by supabase_admin, not by postgres — so a REVOKE issued as postgres cannot reach the administrative relationship docs/ARCHITECTURE.md §6.4 keeps');
 
 -- ------------------------------------------------------------------------------------------------
 -- The behavioural consequence, at the catalogue level.

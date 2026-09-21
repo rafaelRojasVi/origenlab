@@ -48,6 +48,9 @@ alter role origenlab_worker   login   inherit   nocreatedb nocreaterole;
 grant origenlab_owner to origenlab_migrator with inherit false, set true, admin false;
 
 revoke origenlab_owner from origenlab_api;
+
+revoke set option for     origenlab_owner from postgres;
+revoke inherit option for origenlab_owner from postgres;
 """
 
 
@@ -109,6 +112,39 @@ class TestShippedBootstrap(unittest.TestCase):
         self.assertIn("nologin", self.model.attributes["origenlab_owner"])
         self.assertNotIn("login", self.model.attributes["origenlab_owner"])
         self.assertIn("noinherit", self.model.attributes["origenlab_migrator"])
+
+    def test_the_only_platform_statement_is_the_closed_option_revocation(self):
+        """`postgres` may appear in exactly one shape, and that shape only removes privilege."""
+        self.assertEqual(
+            self.model.option_revocations, bootstrap.PERMITTED_OPTION_REVOCATIONS
+        )
+        for option, role, member in self.model.option_revocations:
+            self.assertEqual(member, "postgres")
+            self.assertEqual(role, "origenlab_owner")
+            self.assertIn(option, ("set", "inherit"))
+
+    def test_the_bootstrap_never_revokes_the_creator_admin_option(self):
+        """docs/ARCHITECTURE.md §6.4 tolerates the creator's ADMIN OPTION on purpose, so removing
+        it would converge past the policy rather than to it."""
+        self.assertNotIn(
+            "admin", [option for option, _, _ in self.model.option_revocations]
+        )
+        self.assertNotIn("admin option for", bootstrap.to_code(self.text).lower())
+
+    def test_the_platform_exception_confers_nothing(self):
+        """Every statement naming a platform identity is a revoke, never a grant or an alter."""
+        code = bootstrap.to_code(self.text).lower()
+        for platform in bootstrap.PLATFORM_ROLES:
+            for conferring in (f"to {platform}", f"grant {platform}", f"alter role {platform}",
+                               f"create role {platform}"):
+                self.assertNotIn(conferring, code)
+
+    def test_the_option_revocation_is_not_counted_as_a_membership(self):
+        """The exception is kept out of `memberships` and `revocations`, so every invariant about
+        those two still means what it meant before the shape existed."""
+        flattened = {role for pair in self.model.memberships + self.model.revocations
+                     for role in pair}
+        self.assertEqual(flattened - set(bootstrap.MANAGED_ROLES), set())
 
     def test_it_differs_from_the_local_bootstrap_only_by_the_platform_grant(self):
         """The hosted file must not carry the local file's `grant origenlab_owner to postgres`."""
@@ -178,6 +214,67 @@ class TestRejection(unittest.TestCase):
         self.reject(
             GOOD.replace("with inherit false, set true, admin false", "with inherit false, set true, admin true"),
             contains="admin false",
+        )
+
+    def test_revoking_the_admin_option_is_refused(self):
+        """The grammar matches it so the allowlist can refuse it by name."""
+        self.reject(
+            GOOD + "\nrevoke admin option for origenlab_owner from postgres;\n",
+            contains="closed option revocations",
+        )
+
+    def test_an_option_revocation_from_another_platform_role_is_refused(self):
+        for platform in ("service_role", "supabase_admin", "authenticator", "anon"):
+            self.reject(
+                GOOD + f"\nrevoke set option for origenlab_owner from {platform};\n",
+                contains="closed option revocations",
+            )
+
+    def test_an_option_revocation_on_another_origenlab_role_is_refused(self):
+        for role in ("origenlab_migrator", "origenlab_api", "origenlab_worker"):
+            self.reject(
+                GOOD + f"\nrevoke set option for {role} from postgres;\n",
+                contains="closed option revocations",
+            )
+
+    def test_dropping_the_convergence_is_refused(self):
+        """A file that silently stops converging the platform boundary is refused, not accepted:
+        the hosted bootstrap would then refuse itself on the real project."""
+        self.reject(
+            GOOD.replace("revoke set option for     origenlab_owner from postgres;\n", ""),
+            contains="closed option revocations",
+        )
+
+    def test_reordering_the_convergence_is_refused(self):
+        """Stated exactly, so the file remains one deterministic statement of the model."""
+        self.reject(
+            GOOD.replace(
+                "revoke set option for     origenlab_owner from postgres;\n"
+                "revoke inherit option for origenlab_owner from postgres;",
+                "revoke inherit option for origenlab_owner from postgres;\n"
+                "revoke set option for     origenlab_owner from postgres;",
+            ),
+            contains="closed option revocations",
+        )
+
+    def test_a_duplicated_convergence_is_refused(self):
+        self.reject(
+            GOOD + "\nrevoke set option for origenlab_owner from postgres;\n",
+            contains="closed option revocations",
+        )
+
+    def test_a_membership_revoke_from_a_platform_role_is_still_refused(self):
+        """The blunt form this exception deliberately does not use stays refused."""
+        self.reject(
+            GOOD + "\nrevoke origenlab_owner from postgres;\n",
+            contains="supabase-managed",
+        )
+
+    def test_an_unrecognised_option_shape_is_refused(self):
+        """`grant ... option for` is not a shape at all, so shape completeness refuses the file."""
+        self.reject(
+            GOOD + "\nrevoke connect option for origenlab_owner from postgres;\n",
+            contains="does not understand",
         )
 
     def test_a_superuser_attribute_is_refused(self):
@@ -368,7 +465,10 @@ class TestDryRunOutput(unittest.TestCase):
         self.assertIn("NOLOGIN", err)
         self.assertIn("NOINHERIT", err)
         self.assertIn("seven-day", err)
-        self.assertIn("Supabase-managed roles touched: none", err)
+        self.assertIn("No Supabase-managed role is created, altered, granted a membership", err)
+        self.assertIn("grant options revoked from a platform identity:", err)
+        self.assertIn("postgres -> origenlab_owner  (SET OPTION revoked)", err)
+        self.assertIn("postgres -> origenlab_owner  (INHERIT OPTION revoked)", err)
 
     def test_production_refuses_with_a_non_zero_status_and_emits_no_sql(self):
         code, out, err = self.run_cli(["--environment", "production", "--dry-run"])
