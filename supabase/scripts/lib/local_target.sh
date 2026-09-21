@@ -217,3 +217,72 @@ ol_psql() {
   fi
   psql "$OL_DB_URL" -X -v ON_ERROR_STOP=1 "$@"
 }
+
+# ---------------------------------------------------------------------------
+# Named databases inside the validated local cluster.
+#
+# The cluster holds three classes of database, and every one of them is reached through the
+# same four-fact guard above:
+#
+#   * `postgres`             the Supabase CLI's project database. Disposable: `supabase db reset`
+#                            owns it, and the pgTAP suite and the evidence scripts run there.
+#   * `origenlab_dev`        the persistent development database. Never reset, checkpointed to a
+#                            private root outside Git.
+#   * `origenlab_test_<8hex>` disposable per-run databases for rollback, concurrency and replay
+#                            tests that must not disturb either of the above.
+#
+# Procedure: docs/OPERATIONS.md §4.1.
+
+# The closed set of database names this repository will connect to. A name that would need
+# quoting is a name we did not mint, so it is refused rather than escaped: this is what stops a
+# crafted name from smuggling a host, a query string or a second connection parameter into a DSN.
+ol_valid_local_dbname() {
+  local name="${1-}"
+  [[ "$name" == "postgres" ]] && return 0
+  [[ "$name" == "origenlab_dev" ]] && return 0
+  [[ "$name" =~ ^origenlab_test_[0-9a-f]{8}$ ]] && return 0
+  return 1
+}
+
+# ol_require_local_database <dbname> [repo root]
+# Re-proves every fact `ol_require_local_target` proves, then substitutes the database name.
+# On success exports OL_TARGET_DB_NAME and OL_TARGET_DB_URL (never printed).
+ol_require_local_database() {
+  local name="${1-}"
+  if ! ol_valid_local_dbname "$name"; then
+    echo "FAIL: local database guard: '${name:-<empty>}' is not a database this repository mints; refusing to connect." >&2
+    return 1
+  fi
+  ol_require_local_target "${2:-${OL_REPO_ROOT:-$PWD}}" || return 1
+
+  # Rebuild the DSN from the parts the guard validated rather than string-editing the URL. The
+  # only value carried over from `supabase status` is the password, and it is never printed.
+  local pw=''
+  if [[ "$OL_DB_URL" =~ ^postgres(ql)?://[^:@/]+:([^@/]*)@ ]]; then
+    pw="${BASH_REMATCH[2]}"
+  fi
+  OL_TARGET_DB_NAME="$name"
+  OL_TARGET_DB_URL="postgresql://${OL_DB_USER}:${pw}@${OL_DB_HOST}:${OL_DB_PORT}/${name}"
+  export OL_TARGET_DB_NAME OL_TARGET_DB_URL
+  printf 'local database: role %s at %s/%s\n' "$OL_DB_USER" "$OL_HOSTPORT" "$name"
+  return 0
+}
+
+# psql against the validated named database. Refuses if the guard has not run.
+ol_psql_db() {
+  if [[ -z "${OL_TARGET_DB_URL:-}" ]]; then
+    echo "FAIL: ol_psql_db called before ol_require_local_database succeeded; refusing to connect." >&2
+    return 1
+  fi
+  psql "$OL_TARGET_DB_URL" -X -v ON_ERROR_STOP=1 "$@"
+}
+
+# psql against the cluster's `postgres` database, for CREATE DATABASE / DROP DATABASE, which
+# cannot run inside the database being created or dropped. Refuses if the guard has not run.
+ol_psql_maintenance() {
+  if [[ -z "${OL_DB_URL:-}" ]]; then
+    echo "FAIL: ol_psql_maintenance called before the local target guard succeeded; refusing to connect." >&2
+    return 1
+  fi
+  psql "$OL_DB_URL" -X -v ON_ERROR_STOP=1 "$@"
+}
