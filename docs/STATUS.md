@@ -76,6 +76,45 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 | Send flags | `outbound.send_control` single row, **both `false`** |
 | Rows of business data | **zero** — in every real database. The §2.7 importer has loaded the full Wave 1A/Wave 1B safety baseline and all three historical campaigns (**28,666** rows, §2.7) into a *disposable local* database only, which is destroyed after the run |
 
+#### Local development database — measured 2026-09-21
+
+Built under the hosted freeze (§2.8) so V2 work has somewhere durable to run.
+
+| Item | Value |
+|---|---|
+| Container | `origenlab_dev_db`, pinned image `public.ecr.aws/supabase/postgres:17.6.1.165` |
+| Port | **54332, published on 127.0.0.1 only** — stricter than the CLI's stack, which binds on all interfaces |
+| Database | `origenlab_dev`; chain applied **19 of 19**, head `20260920190000` |
+| Structure | 7 schemas, 33 tables, 127 policies, 102 index-covered foreign keys, zero `SECURITY DEFINER` — identical to the CLI cluster's |
+| Rows of business data | **zero**; one `outbound.send_control` row, both flags `false` |
+| Checkpoints | `~/data/origenlab-v2-local/checkpoints/`, outside Git, `0700`/`0600`, each with `.sha256` and `.meta.json` |
+| Build template | `origenlab_template` in the **CLI** cluster; disposable `origenlab_test_<8 hex>` databases are cloned from it |
+
+**Why a second container rather than a second database.** `supabase db reset` drops every
+non-system database in the CLI's cluster, not only the project database. That was measured, not
+assumed: a reset on 2026-09-21 removed a persistent database placed there and its build template
+outright. The CLI's cluster stays disposable; the development database lives beside it.
+Procedure and rules: [`OPERATIONS.md`](OPERATIONS.md) §4.1.
+
+#### Local evidence suite — measured 2026-09-21
+
+Every gate below was run on this date, at `origin/main` @ `3c8dbf78` plus this branch.
+
+| Check | Result |
+|---|---|
+| `supabase db reset --local` | PASS |
+| `supabase test db --local` | **402 assertions, 11 files, all pass** |
+| `verify_direct_logins.sh` | **51 proofs, 0 failed** |
+| `replay_evidence.sh` | PASS — two resets reproduce identical schema, catalogue and migration list |
+| `evidence_tool_failure_tests.sh` | **30 passed, 0 failed** |
+| `audit_failure_tests.sh` | **80 passed, 0 failed** |
+| `hosted_bootstrap_failure_tests.sh` | **91 passed, 0 failed** |
+| `local_db_failure_tests.sh` | **22 passed, 0 failed** |
+| audit unit tests | **308 passed** |
+| `supabase db lint --local` | no schema errors |
+| `supabase db advisors --local` | **zero SECURITY findings**; 118 INFO, all `unused_index` on an empty database |
+| `verify_chain.sh` | 20 checks pass on `origenlab_dev` **and** on the CLI's `postgres` |
+
 ### 2.2 What does not exist yet in V2
 
 - **`apps/worker`** — named in [`ARCHITECTURE.md`](ARCHITECTURE.md) §1–§2 as the owner of
