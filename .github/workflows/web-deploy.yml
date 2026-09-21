@@ -1,0 +1,112 @@
+name: web-deploy
+
+# Despliegue del sitio público estático (apps/web) a la carpeta pública de
+# cPanel por SSH + rsync. No hay FTP, ni ZIP, ni contraseña de cPanel.
+#
+# El trabajo corre en el entorno `production`, que exige aprobación manual y
+# guarda los cinco secretos. Hasta que ese entorno exista con sus secretos, la
+# ejecución se detiene en la primera comprobación sin tocar el servidor.
+#
+# Primera prueba: lanzar a mano con workflow_dispatch dejando `apply` en false.
+# Eso ejecuta el ensayo de rsync (incluidas las eliminaciones que provocaría
+# --delete) y no escribe nada en el servidor.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - ".github/workflows/web-deploy.yml"
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Sincronizar de verdad. En false sólo se ejecuta el ensayo."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build, validate and sync to cPanel
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    defaults:
+      run:
+        working-directory: apps/web
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: apps/web/.nvmrc
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - run: npm ci
+
+      # `npm run validate` termina en qa:contrast y qa:interaction, que importan
+      # playwright-core. Hoy no está en devDependencies, así que una instalación
+      # limpia no puede correr la puerta completa; se añade sin tocar el
+      # manifiesto ni el lockfile para no chocar con los PR de web en curso.
+      # Cuando playwright-core entre en devDependencies, borrar este paso y
+      # dejar sólo la instalación del navegador.
+      - name: Install the QA browser
+        run: |
+          npm install --no-save playwright-core@1.63.0
+          npx playwright-core install --with-deps chromium
+
+      # La puerta completa: check, build, catálogo, marcas, imágenes,
+      # invariantes de dist/, contraste e interacción. Si algo falla aquí, no
+      # se abre ninguna conexión SSH.
+      - name: Validate
+        run: npm run validate
+
+      - name: Prepare SSH key
+        env:
+          CPANEL_SSH_KEY: ${{ secrets.CPANEL_SSH_KEY }}
+          CPANEL_SSH_KNOWN_HOSTS: ${{ secrets.CPANEL_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$CPANEL_SSH_KEY" || { echo "falta el secreto CPANEL_SSH_KEY"; exit 1; }
+          dir="$RUNNER_TEMP/cpanel-ssh"
+          mkdir -p "$dir" && chmod 700 "$dir"
+          umask 077
+          printf '%s\n' "$CPANEL_SSH_KEY" > "$dir/id"
+          chmod 600 "$dir/id"
+          echo "SSH_KEY_FILE=$dir/id" >> "$GITHUB_ENV"
+          if [ -n "${CPANEL_SSH_KNOWN_HOSTS:-}" ]; then
+            printf '%s\n' "$CPANEL_SSH_KNOWN_HOSTS" > "$dir/known_hosts"
+            chmod 600 "$dir/known_hosts"
+            echo "SSH_KNOWN_HOSTS=$dir/known_hosts" >> "$GITHUB_ENV"
+          fi
+
+      # Ensayo siempre, en toda ejecución. Deja en el registro exactamente qué
+      # subiría y qué borraría --delete antes de que nada se escriba.
+      - name: Dry run
+        env:
+          CPANEL_HOST: ${{ secrets.CPANEL_HOST }}
+          CPANEL_PORT: ${{ secrets.CPANEL_PORT }}
+          CPANEL_USER: ${{ secrets.CPANEL_USER }}
+          CPANEL_WEB_ROOT: ${{ secrets.CPANEL_WEB_ROOT }}
+        run: scripts/deploy-cpanel.sh --dry-run
+
+      - name: Sync
+        if: github.event_name == 'push' || inputs.apply
+        env:
+          CPANEL_HOST: ${{ secrets.CPANEL_HOST }}
+          CPANEL_PORT: ${{ secrets.CPANEL_PORT }}
+          CPANEL_USER: ${{ secrets.CPANEL_USER }}
+          CPANEL_WEB_ROOT: ${{ secrets.CPANEL_WEB_ROOT }}
+        run: scripts/deploy-cpanel.sh --apply
+
+      - name: Remove SSH key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/cpanel-ssh"

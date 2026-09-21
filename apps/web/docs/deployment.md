@@ -2,9 +2,152 @@
 
 Status: canonical  
 Owner: web-maintainers  
-Last reviewed: 2026-03-23
+Last reviewed: 2026-09-21
 
 Sitio estático generado con Astro. El resultado del build son HTML, CSS y assets en la carpeta `dist/`.
+
+## Despliegue automático (GitHub Actions → cPanel por SSH)
+
+El flujo de trabajo [`.github/workflows/web-deploy.yml`](../../../.github/workflows/web-deploy.yml)
+construye el sitio y sincroniza `apps/web/dist/` con la carpeta pública de
+cPanel. Es el camino previsto; la subida manual de más abajo queda como
+respaldo cuando Actions no está disponible.
+
+**Qué hace, en orden.** `npm ci` → instala Chromium para las puertas de QA →
+`npm run validate` (comprobación de tipos, build, catálogo, marcas, imágenes,
+invariantes de `dist/`, contraste e interacción) → **ensayo** de rsync →
+sincronización real. Si cualquier paso falla, no se toca el servidor: el ensayo
+y la sincronización van después de la validación, no antes.
+
+**Cuándo corre.** Al empujar a `main` algo bajo `apps/web/**`, y a mano con
+*Run workflow* (`workflow_dispatch`). El trabajo declara el entorno
+`production`, que exige **aprobación manual**: cada despliegue espera a que un
+revisor lo apruebe en la pestaña Actions.
+
+**Qué sube.** Sólo el contenido de `apps/web/dist/`, incluido `.htaccess`.
+Nunca el repositorio, nunca el directorio personal. `rsync --delete` convierte la carpeta pública en un espejo exacto de `dist/`:
+un archivo que esté en el servidor y no en el build **se borra**. Quedan
+excluidos —y por tanto protegidos— `cgi-bin/` y `.well-known/`, que crea el
+panel. Si hay algo más en la carpeta pública que no venga del build (una
+carpeta subida a mano, un archivo del alojamiento), sáquelo de ahí o añádalo a
+`--exclude` en el guion **antes** del primer despliegue real.
+
+**Qué no toca.** Cloudflare, Supabase, D1, el Worker del boletín y la
+configuración de correo quedan fuera: este flujo sólo escribe archivos en la
+carpeta pública.
+
+### Modo ensayo (dry-run)
+
+[`scripts/deploy-cpanel.sh`](../scripts/deploy-cpanel.sh) es **ensayo por
+defecto**: sin `--apply` calcula los cambios, imprime cuántos archivos
+eliminaría `--delete` y no escribe nada en el servidor. El flujo de trabajo
+ejecuta *siempre* el ensayo antes de sincronizar, de modo que el registro de
+cada despliegue contiene la lista exacta de altas, cambios y bajas.
+
+La primera prueba se hace a mano y sin escribir:
+
+1. Actions → **web-deploy** → *Run workflow*.
+2. Dejar **`apply`** en `false`.
+3. Aprobar el entorno `production` cuando lo pida.
+4. Leer el paso *Dry run*: debe listar el sitio entero como alta y una cifra de
+   eliminaciones que cuadre con lo que hay hoy en `public_html`.
+
+Si la cifra de eliminaciones supera 500, el guion se niega a continuar. Ese
+tope existe para que una ruta equivocada no vacíe una carpeta que no era;
+súbalo con `MAX_DELETIONS` sólo cuando el ensayo demuestre que la cifra es
+correcta.
+
+El mismo ensayo puede correrse desde una máquina local que tenga la llave:
+
+```bash
+cd apps/web
+npm run build
+CPANEL_HOST=... CPANEL_PORT=... CPANEL_USER=... \
+CPANEL_WEB_ROOT=/home/<usuario>/public_html \
+SSH_KEY_FILE=~/.ssh/origenlab_deploy \
+scripts/deploy-cpanel.sh            # ensayo; --apply para sincronizar
+```
+
+### Guardas de la ruta pública
+
+`CPANEL_WEB_ROOT` tiene que ser explícito. El guion rechaza, antes de abrir la
+conexión: una ruta relativa, una que termine en `/`, una que contenga `..`,
+`/`, `/home`, `/root`, cualquier ruta de menos de tres segmentos (es decir, el
+directorio personal) y cualquiera que no contenga `public_html`. También
+comprueba que la carpeta **ya exista** en el servidor: rsync no la crea, porque
+que hubiera que crearla significaría que la ruta está equivocada.
+
+### Antes del primer despliegue real
+
+`/privacidad/` y `/aviso-legal/` están hoy en `dist/` como borradores de
+revisión (`noindex` y fuera del sitemap), y `apps/web/CLAUDE.md` pide que no se
+desplieguen hasta que un profesional chileno revise el texto y
+`src/data/legal.ts` tenga la identidad legal. Un despliegue automático las
+publica igualmente, sin indexar. Resolver ese punto —o excluir esas rutas— es
+condición para pasar de ensayo a `--apply`.
+
+### Secretos (GitHub → Settings → Environments → production)
+
+| Secreto | Qué es | Ejemplo |
+|---|---|---|
+| `CPANEL_HOST` | anfitrión SSH de cPanel | `origenlab.cl` o el nombre que dé HostGator |
+| `CPANEL_PORT` | puerto SSH | HostGator suele usar `2222`, no `22` |
+| `CPANEL_USER` | usuario SSH de cPanel | el usuario de la cuenta |
+| `CPANEL_SSH_KEY` | llave **privada** OpenSSH, exclusiva del despliegue | contenido completo de `origenlab_deploy` |
+| `CPANEL_WEB_ROOT` | ruta absoluta de la carpeta pública | `/home/<usuario>/public_html` |
+| `CPANEL_SSH_KNOWN_HOSTS` | *(opcional, recomendado)* llave pública del servidor | salida de `ssh-keyscan -p 2222 <host>` |
+
+Sin `CPANEL_SSH_KNOWN_HOSTS` el primer contacto confía en la llave que presente
+el servidor y lo avisa en el registro. Con el secreto puesto, la verificación
+es estricta.
+
+Ningún secreto se escribe en el repositorio ni se imprime: la llave privada se
+vuelca a un archivo temporal del ejecutor con permisos 0600 y se borra al
+terminar, pase lo que pase.
+
+### Lo que hay que hacer una vez en cPanel
+
+1. **Crear una llave SSH exclusiva para el despliegue** (no reutilizar una
+   personal). En la máquina local:
+
+   ```bash
+   ssh-keygen -t ed25519 -f ~/.ssh/origenlab_deploy -C "github-actions-web-deploy" -N ""
+   ```
+
+   Deja `origenlab_deploy` (privada) y `origenlab_deploy.pub` (pública).
+
+2. **Autorizar la llave pública en cPanel**: cPanel → *SSH Access* → *Manage
+   SSH Keys* → *Import Key*, pegar el contenido de `origenlab_deploy.pub`, y
+   después **Manage → Authorize**. Una llave importada y no autorizada no
+   entra.
+
+3. **Confirmar el puerto SSH y el anfitrión** en la misma pantalla de cPanel.
+   En HostGator suele ser `2222`.
+
+4. **Confirmar la ruta exacta del sitio**. Conectando por SSH:
+
+   ```bash
+   ssh -p <puerto> <usuario>@<host> 'pwd; ls -d ~/public_html; ls ~/public_html | head'
+   ```
+
+   Si `origenlab.cl` es el dominio principal, la ruta es `/home/<usuario>/public_html`.
+   Si estuviera como *addon domain*, es la carpeta que cPanel → *Domains*
+   muestre como *Document Root* de `origenlab.cl`, y hay que usar esa.
+
+5. **Cargar la llave privada como `CPANEL_SSH_KEY`** en el entorno
+   `production` y borrar cualquier copia que quede fuera de `~/.ssh`.
+
+6. *(Opcional y recomendado)* fijar `CPANEL_SSH_KNOWN_HOSTS` con la salida de
+   `ssh-keyscan -p <puerto> <host>`.
+
+### Si hay que volver atrás
+
+El despliegue es un espejo de un commit. Para revertir: revertir el cambio en
+`main` (o lanzar *Run workflow* desde el commit bueno) y dejar que el flujo
+vuelva a sincronizar. No hay estado en el servidor que recuperar aparte de los
+archivos.
+
+---
 
 ## Checklist antes del lanzamiento
 
@@ -16,7 +159,10 @@ Sitio estático generado con Astro. El resultado del build son HTML, CSS y asset
 - [ ] Probar el enlace “Enviar correo” en Contacto (debe abrir el cliente de correo con contacto@origenlab.cl).
 - [ ] Verificar que **contacto@origenlab.cl** recibe y envía según **[docs/email-setup.md](email-setup.md)** (buzón principal en **Titan**; IMAP/SMTP y DNS/MX como allí se documentan). No asumir que el buzón se “crea solo” en cPanel: el sitio y el DNS pueden estar en HostGator mientras el correo operativo está en Titan.
 
-## Pasos
+## Pasos (subida manual — respaldo)
+
+Este es el camino de respaldo. El habitual es el despliegue automático de más arriba.
+
 
 1. **Build local**
    ```bash
@@ -51,7 +197,8 @@ Sitio estático generado con Astro. El resultado del build son HTML, CSS y asset
 | Acción        | Dónde / Cómo                          |
 |---------------|----------------------------------------|
 | Build         | `npm run build` → `dist/`             |
-| Subir archivos| FTP o cPanel → directorio público     |
+| Desplegar     | GitHub Actions `web-deploy` → SSH + rsync a la carpeta pública (entorno `production`, aprobación manual) |
+| Subir archivos (respaldo) | FTP o cPanel → directorio público     |
 | Dominio       | DNS → hosting (p. ej. HostGator) según estado actual |
 | Correo contacto@ | Ver [email-setup.md](email-setup.md) (Titan; no usar solo cPanel como referencia del buzón) |
 | Seguridad     | Subir `.htaccess`; HTTPS y cabeceras según archivo en raíz |
