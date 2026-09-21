@@ -1,32 +1,48 @@
 #!/usr/bin/env bash
 # OrigenLab V2 — the persistent local development database.
 #
-# `origenlab_dev` lives in the same PostgreSQL 17 cluster as the Supabase CLI's `postgres`
-# database and shares its cluster-wide roles from supabase/roles.sql. The difference is
-# lifecycle, and it is the whole point of this script:
+# All V2 work happens against local PostgreSQL 17 while the hosted phase is frozen
+# (docs/OPERATIONS.md §1.1), so the local cluster needs a database that survives: one that holds
+# the real imported evidence, is never reset, and is recoverable without a hosted backup
+# entitlement.
 #
-#   * `postgres`      is disposable. `supabase db reset` owns it. The pgTAP suite, the replay
-#                     evidence and the failure-injection scripts all run there and expect it to
-#                     be wiped.
-#   * `origenlab_dev` is persistent. Nothing resets it. It carries the full migration chain and,
-#                     from P2 onward, the real imported evidence. Its durability comes from
-#                     checkpoints written to a private root outside Git, not from the container
-#                     volume.
+# It runs in its OWN container, not in the Supabase CLI's.
 #
-# Two databases, one era. `origenlab_dev` is the local development instance of the V2 durable
-# core; `postgres` and the `origenlab_test_*` databases are test fixtures, not stores of truth.
+#   `supabase db reset` drops every non-system database in the CLI's cluster, not only the
+#   project database. A persistent database placed there would be destroyed by one routine run
+#   of the Slice 0 evidence suite. Measured, not assumed: a reset performed on 2026-09-21 removed
+#   `origenlab_dev` and `origenlab_template` from that cluster outright.
 #
-# Every path here resolves its target through supabase/scripts/lib/local_target.sh and nothing
-# else, so none of it can reach a hosted project. The hosted phase is frozen: docs/OPERATIONS.md
-# §1.1.
+# So there are two clusters, with one job each:
+#
+#   * the CLI's cluster        disposable. `supabase db reset` owns it. The pgTAP suite, the
+#                              replay evidence, the failure-injection scripts and the
+#                              `origenlab_test_*` databases all live there and expect to be wiped.
+#   * `origenlab_dev_db`       persistent. Same `supabase/postgres` image, so the same
+#                              PostgreSQL 17, the same platform roles and the same extensions —
+#                              its own volume, its own loopback-only port, untouched by the CLI.
+#
+# Two clusters, still one durable database per era: `origenlab_dev` is the local development
+# instance of the V2 durable core, and everything in the CLI's cluster is a test fixture.
+#
+# Durability comes from checkpoints written outside Git, not from the container volume. A
+# checkpoint carries DATA ONLY; structure always comes from replaying supabase/migrations/, so
+# every restore re-proves the chain and reproduces ownership, grants and RLS from the reviewed
+# migrations rather than from a dump.
+#
+# Every path resolves its target through supabase/scripts/lib/local_target.sh and nothing else,
+# so none of it can reach a hosted project.
 #
 # Usage:
+#   supabase/scripts/dev_db.sh up                      # start the container, apply roles.sql
+#   supabase/scripts/dev_db.sh down                    # stop it; the volume survives
 #   supabase/scripts/dev_db.sh create [--if-not-exists]
 #   supabase/scripts/dev_db.sh migrate
 #   supabase/scripts/dev_db.sh status
 #   supabase/scripts/dev_db.sh checkpoint [--label <text>]
 #   supabase/scripts/dev_db.sh restore <checkpoint.sql.gz> --force
 #   supabase/scripts/dev_db.sh list
+#   supabase/scripts/dev_db.sh destroy --force         # remove the container AND its volume
 #
 # Procedure: docs/OPERATIONS.md §4.1.
 
@@ -38,6 +54,12 @@ export OL_REPO_ROOT
 . "$OL_REPO_ROOT/supabase/scripts/lib/local_target.sh"
 
 OL_DEV_DB_NAME="origenlab_dev"
+
+# The image is pinned rather than discovered, so the development database is reproducible even
+# when the CLI's stack is not running. It is the image the Supabase CLI itself uses for this
+# project; bumping it is a deliberate, reviewed change.
+OL_DEV_IMAGE="public.ecr.aws/supabase/postgres:17.6.1.165"
+OL_DEV_VOLUME="origenlab_dev_data"
 
 # The private root. Outside Git, referenced by no repository path, covered by no .gitignore
 # exemption. Deliberately a sibling of ~/data/origenlab-v2-migration and never the same
@@ -79,12 +101,85 @@ ol_dump_schema_args() {
 # and needs no client package on the host.
 #
 # The connection is the container's own local socket as `postgres`, so no password is passed on
-# any command line and nothing appears in host or container process listings. The container name
-# is the one the target guard has already proven belongs to this working tree — this is not a
-# second, weaker path to the database, it is the same validated target reached with the right
-# binary.
-ol_container_db() {
-  printf 'supabase_db_%s' "$OL_EXPECTED_PROJECT_ID"
+# any command line and nothing appears in host or container process listings. The container is
+# the one the dev guard has already proven belongs to this working tree.
+
+# --- up / down / destroy ----------------------------------------------------------------------
+
+cmd_up() {
+  command -v docker >/dev/null 2>&1 || die "docker not found"
+  local want_root
+  want_root="$(cd "$OL_REPO_ROOT" && pwd -P)"
+
+  if docker inspect "$OL_DEV_CONTAINER" >/dev/null 2>&1; then
+    local running
+    running="$(docker inspect "$OL_DEV_CONTAINER" --format '{{.State.Running}}')"
+    if [[ "$running" == "true" ]]; then
+      note "note: $OL_DEV_CONTAINER is already running."
+    else
+      note "starting the existing $OL_DEV_CONTAINER…"
+      docker start "$OL_DEV_CONTAINER" >/dev/null || die "could not start $OL_DEV_CONTAINER"
+    fi
+  else
+    note "creating $OL_DEV_CONTAINER from $OL_DEV_IMAGE…"
+    # Published on 127.0.0.1 only — deliberately stricter than the CLI's stack, which binds on
+    # all interfaces. This database holds real contact data from P2 onward and must not be
+    # reachable from the network. The guard refuses the container if this ever changes.
+    docker run -d \
+      --name "$OL_DEV_CONTAINER" \
+      --label "com.origenlab.component=dev-database" \
+      --label "com.origenlab.workdir=$want_root" \
+      -e POSTGRES_PASSWORD=postgres \
+      -e POSTGRES_USER=supabase_admin \
+      -e POSTGRES_DB=postgres \
+      -e POSTGRES_INITDB_ARGS="--allow-group-access --locale-provider=icu --encoding=UTF-8 --icu-locale=en_US.UTF-8" \
+      -p "127.0.0.1:$OL_DEV_PORT:5432" \
+      -v "$OL_DEV_VOLUME:/var/lib/postgresql/data" \
+      "$OL_DEV_IMAGE" >/dev/null \
+      || die "could not create $OL_DEV_CONTAINER"
+  fi
+
+  # Readiness is a real query over the published TCP port, not `pg_isready` on the container's
+  # socket. This image runs its initdb, accepts socket connections, then restarts before it
+  # publishes the port for good — so the socket answers well before the port does, and a
+  # socket-only check hands back a database that drops the next connection.
+  note "waiting for PostgreSQL to accept TCP connections…"
+  local i ready=0
+  for i in $(seq 1 90); do
+    if PGCONNECT_TIMEOUT=2 psql "postgresql://${OL_DEV_SUPERUSER}:postgres@127.0.0.1:${OL_DEV_PORT}/postgres" \
+         -X -q -tAc 'select 1' >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    sleep 1
+  done
+  (( ready )) || die "$OL_DEV_CONTAINER did not accept a TCP connection within 90s"
+
+  ol_require_dev_database "$OL_REPO_ROOT" >/dev/null || die "dev guard refused the container it just started"
+
+  # roles.sql is idempotent and is what the CLI runs before migrations. Applying it here gives
+  # this cluster the same four roles, with the same attributes and the same SET-only membership.
+  note "applying supabase/roles.sql…"
+  ol_psql_dev_maintenance -q -f "$OL_REPO_ROOT/supabase/roles.sql" >/dev/null \
+    || die "roles.sql failed"
+  note "$OL_DEV_CONTAINER is up on 127.0.0.1:$OL_DEV_PORT."
+}
+
+cmd_down() {
+  if ! docker inspect "$OL_DEV_CONTAINER" >/dev/null 2>&1; then
+    note "note: $OL_DEV_CONTAINER does not exist."
+    return 0
+  fi
+  docker stop "$OL_DEV_CONTAINER" >/dev/null || die "could not stop $OL_DEV_CONTAINER"
+  note "$OL_DEV_CONTAINER stopped. Its volume ($OL_DEV_VOLUME) is untouched."
+}
+
+cmd_destroy() {
+  [[ "${1-}" == "--force" ]] \
+    || die "destroy removes $OL_DEV_CONTAINER AND its volume $OL_DEV_VOLUME, discarding every row the last checkpoint does not hold. Take a checkpoint first, then re-run with --force."
+  docker rm -f "$OL_DEV_CONTAINER" >/dev/null 2>&1 || true
+  docker volume rm "$OL_DEV_VOLUME" >/dev/null 2>&1 || true
+  note "removed $OL_DEV_CONTAINER and $OL_DEV_VOLUME. Checkpoints under $OL_CHECKPOINT_DIR are untouched."
 }
 
 # --- create ---------------------------------------------------------------------------------
@@ -93,10 +188,10 @@ cmd_create() {
   local if_not_exists=0
   [[ "${1-}" == "--if-not-exists" ]] && if_not_exists=1
 
-  ol_require_local_target "$OL_REPO_ROOT" >/dev/null || die "target guard refused"
+  ol_require_dev_database "$OL_REPO_ROOT" >/dev/null || die "dev guard refused"
 
   local exists
-  exists="$(ol_psql_maintenance -tAc \
+  exists="$(ol_psql_dev_maintenance -tAc \
     "select 1 from pg_database where datname = '$OL_DEV_DB_NAME'")" || die "could not query pg_database"
 
   if [[ -n "$exists" ]]; then
@@ -108,9 +203,9 @@ cmd_create() {
   fi
 
   note "creating database $OL_DEV_DB_NAME…"
-  ol_psql_maintenance -c "create database $OL_DEV_DB_NAME" >/dev/null
+  ol_psql_dev_maintenance -c "create database $OL_DEV_DB_NAME" >/dev/null
 
-  ol_require_local_database "$OL_DEV_DB_NAME" "$OL_REPO_ROOT" >/dev/null || die "database guard refused"
+  ol_require_dev_database "$OL_REPO_ROOT" >/dev/null || die "dev guard refused"
   ol_bootstrap_platform_objects --with-ledger
   note "created $OL_DEV_DB_NAME with the platform-emulating extensions schema and an empty ledger."
 }
@@ -133,7 +228,7 @@ ol_bootstrap_platform_objects() {
   local with_ledger=0
   [[ "${1-}" == "--with-ledger" ]] && with_ledger=1
 
-  ol_psql_db <<'SQL' >/dev/null
+  ol_psql_dev <<'SQL' >/dev/null
 create schema if not exists extensions authorization postgres;
 grant usage on schema extensions to anon, authenticated, service_role;
 grant usage, create on schema extensions to dashboard_user;
@@ -144,7 +239,7 @@ create extension if not exists btree_gist with schema extensions;
 SQL
 
   if (( with_ledger )); then
-    ol_psql_db <<'SQL' >/dev/null
+    ol_psql_dev <<'SQL' >/dev/null
 create schema if not exists supabase_migrations authorization postgres;
 create table if not exists supabase_migrations.schema_migrations (
   version text not null primary key,
@@ -158,7 +253,7 @@ SQL
 # --- migrate --------------------------------------------------------------------------------
 
 cmd_migrate() {
-  ol_require_local_database "$OL_DEV_DB_NAME" "$OL_REPO_ROOT" >/dev/null || die "database guard refused"
+  ol_require_dev_database "$OL_REPO_ROOT" >/dev/null || die "dev guard refused"
 
   local dir="$OL_REPO_ROOT/supabase/migrations"
   [[ -d "$dir" ]] || die "$dir not found"
@@ -173,7 +268,7 @@ cmd_migrate() {
     [[ "$version" =~ ^[0-9]{14}$ ]] || die "migration $base does not begin with a 14-digit version"
 
     local seen
-    seen="$(ol_psql_db -tAc \
+    seen="$(ol_psql_dev -tAc \
       "select 1 from supabase_migrations.schema_migrations where version = '$version'")" \
       || die "could not read the ledger"
     if [[ -n "$seen" ]]; then
@@ -184,9 +279,9 @@ cmd_migrate() {
     note "applying $base…"
     # One transaction per migration, aborting on the first error, exactly as the hosted apply
     # does. A migration that fails leaves no partial state and no ledger row.
-    ol_psql_db --single-transaction -f "$file" >/dev/null \
+    ol_psql_dev --single-transaction -f "$file" >/dev/null \
       || die "migration $base failed; nothing from it was committed and no ledger row was written"
-    ol_psql_db -tAc \
+    ol_psql_dev -tAc \
       "insert into supabase_migrations.schema_migrations (version, name) values ('$version', '$name')" \
       >/dev/null || die "migration $base applied but its ledger row could not be written"
     applied=$(( applied + 1 ))
@@ -198,8 +293,8 @@ cmd_migrate() {
 # --- status ---------------------------------------------------------------------------------
 
 cmd_status() {
-  ol_require_local_database "$OL_DEV_DB_NAME" "$OL_REPO_ROOT" >/dev/null || die "database guard refused"
-  ol_psql_db <<'SQL'
+  ol_require_dev_database "$OL_REPO_ROOT" >/dev/null || die "dev guard refused"
+  ol_psql_dev <<'SQL'
 \echo '== migration ledger =='
 select count(*) as recorded, min(version) as first, max(version) as head
 from supabase_migrations.schema_migrations;
@@ -231,7 +326,7 @@ cmd_checkpoint() {
     [[ "$label" =~ ^[A-Za-z0-9._-]{1,40}$ ]] || die "--label must be 1-40 characters of [A-Za-z0-9._-]"
   fi
 
-  ol_require_local_database "$OL_DEV_DB_NAME" "$OL_REPO_ROOT" >/dev/null || die "database guard refused"
+  ol_require_dev_database "$OL_REPO_ROOT" >/dev/null || die "dev guard refused"
 
   mkdir -p "$OL_CHECKPOINT_DIR"
   chmod 700 "$OL_PRIVATE_ROOT" "$OL_CHECKPOINT_DIR"
@@ -260,8 +355,8 @@ cmd_checkpoint() {
   # what a checkpoint is. `pg_restore --disable-triggers` is not an alternative — it needs
   # superuser, and the connection role is not one.
   ( umask 077
-    docker exec "$(ol_container_db)" \
-      pg_dump -U postgres -d "$OL_TARGET_DB_NAME" --data-only --format=plain \
+    docker exec "$OL_DEV_CONTAINER" \
+      pg_dump -U postgres -d "$OL_DEV_DB_NAME" --data-only --format=plain \
         "${schema_args[@]}" 2>/dev/null | gzip -9 > "$tmp" ) \
     || { rm -f "$tmp"; die "pg_dump failed; no checkpoint was written"; }
 
@@ -282,7 +377,7 @@ cmd_checkpoint() {
   # can say plainly whether it is replaying the data onto the same chain or a later one. It holds
   # counts and versions only — never a value from a row.
   ( umask 077
-    ol_psql_db -tAc "
+    ol_psql_dev -tAc "
       select json_build_object(
         'database', current_database(),
         'captured_at', to_char(now() at time zone 'utc', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
@@ -324,7 +419,7 @@ cmd_restore() {
   ( cd "$(dirname "$file")" && sha256sum --check --status "$(basename "$file").sha256" ) \
     || die "checkpoint $file does not match its .sha256 sidecar; refusing to restore"
 
-  ol_require_local_target "$OL_REPO_ROOT" >/dev/null || die "target guard refused"
+  ol_require_dev_database "$OL_REPO_ROOT" >/dev/null || die "dev guard refused"
 
   # A restore REPLACES the development database. It is not additive and it is not reversible,
   # so it is refused without --force.
@@ -345,15 +440,15 @@ cmd_restore() {
   fi
 
   note "rebuilding $OL_DEV_DB_NAME from the migration chain…"
-  ol_psql_maintenance -c \
+  ol_psql_dev_maintenance -c \
     "select pg_terminate_backend(pid) from pg_stat_activity where datname = '$OL_DEV_DB_NAME' and pid <> pg_backend_pid()" \
     >/dev/null || die "could not terminate existing sessions on $OL_DEV_DB_NAME"
-  ol_psql_maintenance -c "drop database if exists $OL_DEV_DB_NAME" >/dev/null \
+  ol_psql_dev_maintenance -c "drop database if exists $OL_DEV_DB_NAME" >/dev/null \
     || die "could not drop $OL_DEV_DB_NAME"
-  ol_psql_maintenance -c "create database $OL_DEV_DB_NAME" >/dev/null \
+  ol_psql_dev_maintenance -c "create database $OL_DEV_DB_NAME" >/dev/null \
     || die "could not recreate $OL_DEV_DB_NAME"
 
-  ol_require_local_database "$OL_DEV_DB_NAME" "$OL_REPO_ROOT" >/dev/null || die "database guard refused"
+  ol_require_dev_database "$OL_REPO_ROOT" >/dev/null || die "dev guard refused"
   ol_bootstrap_platform_objects --with-ledger
   cmd_migrate
 
@@ -361,7 +456,7 @@ cmd_restore() {
   # checkpoint's data is reinstated exactly as captured rather than colliding with it. Run as
   # `origenlab_owner`, which owns every one of these tables.
   note "clearing migration-seeded rows before replaying the checkpoint…"
-  ol_psql_db <<'SQL' >/dev/null || die "could not clear the seeded rows"
+  ol_psql_dev <<'SQL' >/dev/null || die "could not clear the seeded rows"
 set role origenlab_owner;
 do $$
 declare stmt text;
@@ -388,8 +483,8 @@ SQL
   # One transaction with ON_ERROR_STOP, so a failure commits nothing and leaves the bare chain.
   { printf 'set session_replication_role = replica;\nset role origenlab_owner;\n'
     gunzip -c "$file"; } \
-    | docker exec -i "$(ol_container_db)" \
-        psql -U postgres -d "$OL_TARGET_DB_NAME" -X -q -v ON_ERROR_STOP=1 --single-transaction -f - \
+    | docker exec -i "$OL_DEV_CONTAINER" \
+        psql -U postgres -d "$OL_DEV_DB_NAME" -X -q -v ON_ERROR_STOP=1 --single-transaction -f - \
     || die "the checkpoint replay failed; nothing was committed — $OL_DEV_DB_NAME holds the bare chain"
   note "restored."
 }
@@ -411,6 +506,9 @@ main() {
   local cmd="${1-}"
   shift || true
   case "$cmd" in
+    up)         cmd_up "$@" ;;
+    down)       cmd_down "$@" ;;
+    destroy)    cmd_destroy "$@" ;;
     create)     cmd_create "$@" ;;
     migrate)    cmd_migrate "$@" ;;
     status)     cmd_status "$@" ;;
@@ -418,7 +516,7 @@ main() {
     restore)    cmd_restore "$@" ;;
     list)       cmd_list "$@" ;;
     ''|-h|--help)
-      sed -n '2,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,48p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       ;;
     *) die "unknown subcommand '$cmd'. Run with --help." ;;
   esac

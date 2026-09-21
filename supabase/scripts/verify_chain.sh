@@ -15,10 +15,12 @@
 # Read-only. It opens one transaction, sets it read-only, and runs SELECTs.
 #
 # Usage:
-#   supabase/scripts/verify_chain.sh [--database <name>] [--json]
+#   supabase/scripts/verify_chain.sh [--dev | --database <name>] [--json]
 #
-# --database defaults to origenlab_dev. --json prints the measured report to stdout; without it
-# a human summary goes to stderr. Exit status is non-zero on any mismatch.
+# --dev (the default) measures the persistent development database in its own container.
+# --database <name> measures a database in the Supabase CLI's cluster: `postgres`, or a minted
+# `origenlab_test_<8 hex>`. --json prints the measured report to stdout; without it a human
+# summary goes to stderr. Exit status is non-zero on any mismatch.
 #
 # Expectations: docs/DOMAIN.md §7 (the 33-table inventory), docs/STATUS.md §2.1 (measured),
 # docs/MIGRATION.md §5.2 (the privilege proofs). Procedure: docs/OPERATIONS.md §4.1.
@@ -43,11 +45,14 @@ EXPECT_SECURITY_DEFINER=0
 
 OL_SCHEMAS_SQL="'crm','comms','outbound','evidence','catalog','procurement','platform'"
 
-DATABASE="origenlab_dev"
+# Default to the persistent development database, which lives in its own container.
+TARGET="dev"
+DATABASE=""
 AS_JSON=0
 while (( $# )); do
   case "$1" in
-    --database) DATABASE="${2-}"; shift 2 ;;
+    --dev)      TARGET="dev"; shift ;;
+    --database) TARGET="cli"; DATABASE="${2-}"; shift 2 ;;
     --json)     AS_JSON=1; shift ;;
     -h|--help)  sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "FAIL: unknown option '$1'" >&2; exit 2 ;;
@@ -68,13 +73,24 @@ check() {
   fi
 }
 
-ol_require_local_database "$DATABASE" "$OL_REPO_ROOT" >/dev/null || die "database guard refused"
+# Two clusters, two guards, one verifier. `--dev` measures the persistent development database
+# in its own container; `--database <name>` measures a database in the Supabase CLI's cluster —
+# its `postgres` project database, or a minted `origenlab_test_<8 hex>`.
+if [[ "$TARGET" == "dev" ]]; then
+  ol_require_dev_database "$OL_REPO_ROOT" >/dev/null || die "dev guard refused"
+  VERIFY_URL="$OL_DEV_DB_URL"
+  VERIFY_LABEL="$OL_DEV_DBNAME (dev container)"
+else
+  ol_require_local_database "$DATABASE" "$OL_REPO_ROOT" >/dev/null || die "database guard refused"
+  VERIFY_URL="$OL_TARGET_DB_URL"
+  VERIFY_LABEL="$DATABASE (CLI cluster)"
+fi
 
 # One read-only transaction for every measurement, so the verifier cannot mutate what it
 # inspects even by accident. `-q` keeps psql's BEGIN/COMMIT command tags out of the value.
-q() { psql "$OL_TARGET_DB_URL" -X -q -tA -v ON_ERROR_STOP=1 -c "begin read only; $1; commit;" | sed '/^$/d'; }
+q() { psql "$VERIFY_URL" -X -q -tA -v ON_ERROR_STOP=1 -c "begin read only; $1; commit;" | sed '/^$/d'; }
 
-note "verify_chain: $DATABASE"
+note "verify_chain: $VERIFY_LABEL"
 
 # --- migrations -------------------------------------------------------------------------------
 chain_files="$(find "$OL_REPO_ROOT/supabase/migrations" -maxdepth 1 -name '*.sql' -type f -printf '%f\n' | sort | cut -d_ -f1 | tr '\n' ',')"
@@ -179,7 +195,7 @@ if (( AS_JSON )); then
 fi
 
 if (( FAILURES )); then
-  note "verify_chain: $FAILURES check(s) FAILED on $DATABASE"
+  note "verify_chain: $FAILURES check(s) FAILED on $VERIFY_LABEL"
   exit 1
 fi
-note "verify_chain: all checks passed on $DATABASE"
+note "verify_chain: all checks passed on $VERIFY_LABEL"

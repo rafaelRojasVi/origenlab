@@ -290,3 +290,129 @@ ol_psql_maintenance() {
   fi
   psql "$OL_DB_URL" -X -v ON_ERROR_STOP=1 "$@"
 }
+
+# ---------------------------------------------------------------------------
+# The persistent development database — a separate container, deliberately.
+#
+# `supabase db reset` drops every non-system database in the CLI's cluster, not just the project
+# database. A persistent development database therefore cannot live there: one routine reset in
+# the middle of the Slice 0 evidence suite would destroy it. It runs instead in its own
+# container, from the same `supabase/postgres` image, on its own loopback-only port, with its own
+# volume. The CLI's cluster stays purely disposable, which is exactly what the evidence suite
+# expects of it.
+#
+# The guard below is the same shape as `ol_require_local_target` and just as fail-closed. Its
+# facts are:
+#
+#   1. `supabase/config.toml` names this project (so the guard is still anchored to this repo);
+#   2. the project is not linked, and no inherited SUPABASE_*/PG* variable can redirect anything;
+#   3. the container exists, carries this repository's labels, and names *this* working tree;
+#   4. the container publishes its port on a loopback address and nowhere else.
+#
+# Fact 4 is stricter than the CLI's own stack, which binds on all interfaces. This container is
+# ours, so it binds on 127.0.0.1 only and the guard refuses it if it does not.
+#
+# Procedure: docs/OPERATIONS.md §4.1.
+
+OL_DEV_CONTAINER="origenlab_dev_db"
+OL_DEV_PORT="54332"
+OL_DEV_DBNAME="origenlab_dev"
+OL_DEV_SUPERUSER="postgres"
+
+# ol_require_dev_database [repo root]
+# On success exports OL_DEV_DB_URL (never printed), OL_DEV_DB_HOST, OL_DEV_DB_PORT.
+ol_require_dev_database() {
+  local root="${1:-${OL_REPO_ROOT:-$PWD}}"
+  local cfg="$root/supabase/config.toml"
+
+  ol_scrub_pg_env
+
+  if [[ ! -f "$cfg" ]]; then
+    echo "FAIL: dev guard: $cfg not found; refusing to connect." >&2
+    return 1
+  fi
+  local cfg_project
+  cfg_project="$(ol_config_value '' project_id <"$cfg")"
+  if [[ "$cfg_project" != "$OL_EXPECTED_PROJECT_ID" ]]; then
+    echo "FAIL: dev guard: config.toml project_id is '${cfg_project:-<unset>}', expected '$OL_EXPECTED_PROJECT_ID'; refusing to connect." >&2
+    return 1
+  fi
+  if [[ -e "$root/supabase/.temp/project-ref" ]]; then
+    echo "FAIL: dev guard: supabase/.temp/project-ref exists — this project is linked to a hosted project; refusing to connect." >&2
+    return 1
+  fi
+  local cfg_ref
+  cfg_ref="$(ol_config_value '' project_ref <"$cfg")"
+  if [[ -n "$cfg_ref" ]]; then
+    echo "FAIL: dev guard: config.toml declares a hosted project_ref; refusing to connect." >&2
+    return 1
+  fi
+
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "FAIL: dev guard: docker not found; refusing to connect." >&2
+    return 1
+  fi
+
+  local want_root rc=0 label_workdir label_component
+  want_root="$(cd "$root" && pwd -P)"
+  label_workdir="$(docker inspect "$OL_DEV_CONTAINER" --format '{{index .Config.Labels "com.origenlab.workdir"}}' 2>&1)" || rc=$?
+  if (( rc != 0 )); then
+    echo "FAIL: dev guard: container '$OL_DEV_CONTAINER' is not running. Start it with supabase/scripts/dev_db.sh up." >&2
+    return 1
+  fi
+  if [[ "$label_workdir" != "$want_root" ]]; then
+    echo "FAIL: dev guard: container '$OL_DEV_CONTAINER' belongs to '${label_workdir:-<unset>}', not to this working tree ('$want_root'); refusing to connect." >&2
+    return 1
+  fi
+  label_component="$(docker inspect "$OL_DEV_CONTAINER" --format '{{index .Config.Labels "com.origenlab.component"}}' 2>/dev/null || true)"
+  if [[ "$label_component" != "dev-database" ]]; then
+    echo "FAIL: dev guard: container '$OL_DEV_CONTAINER' is not labelled as the development database; refusing to connect." >&2
+    return 1
+  fi
+
+  # The published binding must be loopback, and it must be the only one. A container that has
+  # been re-published on 0.0.0.0 is refused rather than used.
+  local bindings
+  bindings="$(docker inspect "$OL_DEV_CONTAINER" \
+    --format "{{range \$p, \$conf := .NetworkSettings.Ports}}{{range \$conf}}{{\$p}}={{.HostIp}}:{{.HostPort}} {{end}}{{end}}" 2>/dev/null || true)"
+  if [[ -z "$bindings" ]]; then
+    echo "FAIL: dev guard: container '$OL_DEV_CONTAINER' publishes no port; refusing to connect." >&2
+    return 1
+  fi
+  local b
+  for b in $bindings; do
+    case "${b#*=}" in
+      127.0.0.1:"$OL_DEV_PORT"|'[::1]':"$OL_DEV_PORT") ;;
+      *)
+        echo "FAIL: dev guard: container '$OL_DEV_CONTAINER' publishes '$b', which is not loopback on port $OL_DEV_PORT; refusing to connect." >&2
+        return 1
+        ;;
+    esac
+  done
+
+  OL_DEV_DB_HOST="127.0.0.1"
+  OL_DEV_DB_PORT="$OL_DEV_PORT"
+  OL_DEV_DB_URL="postgresql://${OL_DEV_SUPERUSER}:postgres@127.0.0.1:${OL_DEV_PORT}/${OL_DEV_DBNAME}"
+  export OL_DEV_DB_URL OL_DEV_DB_HOST OL_DEV_DB_PORT
+  printf 'dev database: role %s at 127.0.0.1:%s/%s (container %s, workdir %s)\n' \
+    "$OL_DEV_SUPERUSER" "$OL_DEV_PORT" "$OL_DEV_DBNAME" "$OL_DEV_CONTAINER" "$want_root"
+  return 0
+}
+
+# psql against the validated development database. Refuses if the guard has not run.
+ol_psql_dev() {
+  if [[ -z "${OL_DEV_DB_URL:-}" ]]; then
+    echo "FAIL: ol_psql_dev called before ol_require_dev_database succeeded; refusing to connect." >&2
+    return 1
+  fi
+  psql "$OL_DEV_DB_URL" -X -v ON_ERROR_STOP=1 "$@"
+}
+
+# psql against the development container's `postgres` database, for CREATE/DROP DATABASE.
+ol_psql_dev_maintenance() {
+  if [[ -z "${OL_DEV_DB_URL:-}" ]]; then
+    echo "FAIL: ol_psql_dev_maintenance called before ol_require_dev_database succeeded; refusing to connect." >&2
+    return 1
+  fi
+  psql "postgresql://${OL_DEV_SUPERUSER}:postgres@127.0.0.1:${OL_DEV_PORT}/postgres" -X -v ON_ERROR_STOP=1 "$@"
+}
