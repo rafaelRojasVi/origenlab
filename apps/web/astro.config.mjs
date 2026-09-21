@@ -19,6 +19,7 @@ export default defineConfig({
       filter: (page) =>
         !page.includes('/logo-lab/') &&
         !page.includes('/privacidad/') &&
+        !page.includes('/cookies/') &&
         !page.includes('/aviso-legal/'),
     }),
   ],
