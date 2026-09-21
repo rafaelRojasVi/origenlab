@@ -398,8 +398,8 @@ mapping: [`DATA.md`](DATA.md) §7.6.
 | Write role | `set local role origenlab_owner`, the same step every migration takes. The seven tables are owned by that role and grant nothing to the Supabase CLI's `postgres` login, so a login holding a SET membership of it is required (`supabase/roles.sql`) |
 | Idempotency identity | **provenance-scoped.** A campaign is identified by `origin_source_record_id` plus `(mailbox_id, name)`, the send ledger is reconciled as a multiset scoped to that origin, and every reused row is read back and compared field by field. An existing row that differs from the plan refuses the run instead of being adopted |
 | Tables written | 7 — `evidence.source_record`, `evidence.assertion`, `outbound.contact_control`, `comms.mailbox`, `outbound.campaign`, `outbound.campaign_recipient`, `outbound.send_attempt`. **`crm.*` is never written**, and the row count is asserted unchanged across an apply |
-| Applied to a real database | **zero times.** The only writes were into a disposable local PostgreSQL 17 carrying the Slice 0 migrations |
-| Rows loaded | **28,666** on that disposable database — the full cross-wave safety baseline, the evidence trail and all three campaigns' audience and ledger ([`DATA.md`](DATA.md) §7.6.5) |
+| Applied to a real database | **zero hosted times.** Since 2026-09-21 it is also applied to the **persistent local development database** (§2.1), which is a real database in the sense that it is not discarded after the run — and is still local, loopback-only and frozen out of the hosted project |
+| Rows loaded | **28,666** — the full cross-wave safety baseline, the evidence trail and all three campaigns' audience and ledger ([`DATA.md`](DATA.md) §7.6.5) |
 | Wave 1A load gate ([`DATA.md`](DATA.md) §7.3) | **green** inside that total — 8,580 `prior_contact` all `marketing`, 704 address blocks, 91 domain blocks, zero `purpose=all` outreach facts, zero cooldown rows |
 | Idempotency | proven on the real artifacts — a second apply inserted **0** rows, with `crm.*` still 0 |
 | Blocked by schema decisions | **none.** Both gaps the first dry run found were decided and closed on 2026-09-20 — [`DATA.md`](DATA.md) §7.6.4 |
@@ -407,14 +407,50 @@ mapping: [`DATA.md`](DATA.md) §7.6.
 | Tests | **136** — `uv run pytest tests/test_v2_import.py`. 15 are database-backed and skip unless `ORIGENLAB_V2_TEST_DSN` names a disposable local Slice 0 database |
 | Network calls | **zero.** No Gmail, Supabase, Render or Cloudflare client is imported; both send flags are untouched |
 
-**Nothing reads these rows yet.** The importer has no consumer, no dashboard
-surface and no operator command; promotion from `evidence.assertion` to `crm.*`
-remains slice 2, and the send predicate that would read
-`outbound.contact_control` remains slice 5.
+**Promotion from `evidence.assertion` to `crm.*` now exists** — §2.7.1. The send
+predicate that would read `outbound.contact_control` remains slice 5, and no
+dashboard surface reads any of it yet.
 
-**No real, staging or hosted V2 database has been loaded** — the only target
-ever opened is the disposable local PostgreSQL 17 above (§2.5 for why no hosted
-project is adopted).
+**No hosted V2 database has been loaded** — every target ever opened is a local,
+loopback-only PostgreSQL 17 (§2.5 and §2.8 for why no hosted project is used).
+
+### 2.7.1 Evidence → CRM promotion — measured 2026-09-21
+
+The first code that writes `crm.*`. It is the slice 2 identity pass, run under the
+conservative identity defaults the operator approved.
+
+| Item | Value |
+|---|---|
+| Entry point | `apps/email-pipeline/scripts/migration/promote_evidence_into_crm.py` → `origenlab_email_pipeline.migration.v2_promote` |
+| Default mode | **dry-run**; `--apply` is required to write |
+| Target boundary | the importer's own loopback guard, unchanged and unweakened |
+| Tables written | 4 — `crm.organization`, `crm.contact_point`, `crm.domain_event`, and the `resolution` of `evidence.assertion`. **`crm.person` is never written** |
+| Identifiers | deterministic UUIDv5 from the evidence, so the same input mints the same `crm` id in every environment and a hosted replay reconciles row by row rather than only by count |
+| Rows created | **1,812** organizations, **9,460** contact points, **22,544** `crm.domain_event` rows |
+| `crm.person` rows | **zero**, asserted inside the transaction — a non-zero count rolls the whole promotion back |
+| Contact points | 695 `shared_mailbox`, 8,765 `unattributed`; **none carries a person or an organization**, also asserted inside the transaction |
+| Organizations | all `kind = 'unknown'`, all `confirmation = 'machine_proposed'` |
+| Review queue | **4** assertions `ambiguous` (2 near-duplicate name clusters), **172** `supplier_candidate` left `unresolved`, and every created row `machine_proposed` |
+| Audit | every event `actor_kind = 'migrator'`; no operator is impersonated and no `actor_operator_id` is set |
+| Idempotency | proven — a second `--apply` wrote **0** rows and **0** events |
+| Tests | **40** — `uv run pytest tests/test_v2_promote.py`; the policy is pure functions and needs no database |
+| Network calls | **zero**; both send flags untouched |
+
+**Why no person was created.** The Wave 1A/1B recipient rows carry `email`,
+`email_norm` and `institution_name` and no human name at all. `crm.person.display_name`
+is NOT NULL, so creating a person would mean deriving a real person's name from an
+address local part — an identity inference, not evidence. 2,860 addresses have the shape
+of a personal name and are recorded as `unattributed` contact points with the reason
+stored on the assertion, so an operator can name them from other sources.
+
+**Why no contact point was attached to an organization.** [`DOMAIN.md`](DOMAIN.md) §2.2
+makes a domain a routing hint and never an identity key on its own, so a role address is
+not joined to an organization because it shares its mail domain.
+
+**`kind = 'unknown'` is a recorded decision, not a guess.** [`DOMAIN.md`](DOMAIN.md) §2.1
+leaves the closed list of organization kinds **[OPEN]** and the evidence carries no kind.
+`unknown` is an explicit absence marker; the operator approved it on 2026-09-21 and every
+row stays `machine_proposed` until reclassified.
 
 ### 2.8 Hosted phase — frozen 2026-09-21
 
