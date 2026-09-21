@@ -296,7 +296,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
     def attempt(sslmode):
         path.write_text(
-            f"OL_HOSTED_HOST=db.{REF}.supabase.co\nOL_HOSTED_PORT=5432\n"
+            f"OL_HOSTED_ROUTE=direct\nOL_HOSTED_HOST=db.{REF}.supabase.co\nOL_HOSTED_PORT=5432\n"
             f"OL_HOSTED_DATABASE=postgres\nOL_HOSTED_USER=origenlab_migrator\n"
             f"OL_HOSTED_PROJECT_REF={REF}\nOL_HOSTED_SSLMODE={sslmode}\n"
             f"OL_HOSTED_SSLROOTCERT={ca}\nOL_HOSTED_PASSWORD_ENV=OL_HOSTED_DB_PASSWORD\n",
@@ -320,7 +320,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # No credential may be written into the target file: the only key that mentions a password
     # names an environment variable, and an unknown key is refused outright.
     path.write_text(
-        f"OL_HOSTED_HOST=db.{REF}.supabase.co\nOL_HOSTED_PORT=5432\n"
+        f"OL_HOSTED_ROUTE=direct\nOL_HOSTED_HOST=db.{REF}.supabase.co\nOL_HOSTED_PORT=5432\n"
         f"OL_HOSTED_DATABASE=postgres\nOL_HOSTED_USER=origenlab_migrator\n"
         f"OL_HOSTED_PROJECT_REF={REF}\nOL_HOSTED_SSLMODE=verify-full\n"
         f"OL_HOSTED_SSLROOTCERT={ca}\nOL_HOSTED_PASSWORD_ENV=OL_HOSTED_DB_PASSWORD\n"
@@ -343,6 +343,161 @@ check "I: no sslmode below verify-full is accepted, and there is no downgrade pa
   "$([[ $rc -eq 0 ]] && echo 0 || echo 1)" "see $log"
 check "I: the credential cannot be written into the target file" \
   "$(grep -q 'refused: an inline password key' "$log" && echo 0 || echo 1)" "inline password accepted"
+# The rc above cannot fail -- the heredoc is guarded by `|| true` -- so the refusals are asserted
+# from the log as well: five downgrades named one by one, and the one mode that is accepted.
+check "I: every sslmode below verify-full was refused by name" \
+  "$([[ "$(grep -c '^refused: sslmode ' "$log")" == "5" ]] && echo 0 || echo 1)" \
+  "expected five named refusals"
+check "I: verify-full is accepted and the address is pinned before connect" \
+  "$(grep -q 'accepted: sslmode verify-full, address pinned as True' "$log" && echo 0 || echo 1)" \
+  "verify-full was not accepted with a pinned address"
+
+# --- M: the Supavisor session route is selected, never fallen back to ---------------------------
+# The pooler host names no project, so the login carries the reference and *is* this route's
+# target-identity binding. Every refusal below is a way of getting that binding wrong.
+log="$WORK/log_M"
+python3 - >"$log" 2>&1 <<'PYM' || true
+import sys, tempfile
+from pathlib import Path
+sys.path.insert(0, "supabase/audit")
+from olaudit import target_hosted
+from olaudit.target import ROUTE_DIRECT, ROUTE_SUPAVISOR_SESSION, TargetError
+
+REF = "abcdefghijklmnopqrst"
+BOTH = frozenset({ROUTE_DIRECT, ROUTE_SUPAVISOR_SESSION})
+POOLER = "aws-0-sa-east-1.pooler.supabase.com"
+failures = 0
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    ca = root / "ca.crt"
+    ca.write_text("x", encoding="utf-8")
+    path = root / "supabase" / ".audit" / "hosted_target.env"
+    path.parent.mkdir(parents=True)
+
+    def body(**over):
+        fields = {
+            "OL_HOSTED_ROUTE": "supavisor-session",
+            "OL_HOSTED_HOST": POOLER,
+            "OL_HOSTED_PORT": "5432",
+            "OL_HOSTED_DATABASE": "postgres",
+            "OL_HOSTED_USER": "origenlab_migrator." + REF,
+            "OL_HOSTED_PROJECT_REF": REF,
+            "OL_HOSTED_POOLER_CLUSTER": "0",
+            "OL_HOSTED_POOLER_REGION": "sa-east-1",
+            "OL_HOSTED_SSLMODE": "verify-full",
+            "OL_HOSTED_SSLROOTCERT": str(ca),
+            "OL_HOSTED_PASSWORD_ENV": "OL_HOSTED_DB_PASSWORD",
+        }
+        fields.update(over)
+        return "".join(f"{k}={v}\n" for k, v in fields.items() if v != "")
+
+    def resolve(text, routes=BOTH):
+        path.write_text(text, encoding="utf-8")
+        path.chmod(0o600)
+        return target_hosted.resolve(
+            root,
+            {"OL_HOSTED_DB_PASSWORD": "not-a-real-credential"},
+            resolver=lambda h, p: ["93.184.216.34"],
+            authorized_routes=routes,
+        )
+
+    target = resolve(body())
+    print("accepted: route %s on port %d" % (target.route, target.port))
+
+    try:
+        resolve(body(), routes=frozenset({ROUTE_DIRECT}))
+        print("NOT REFUSED: a declared route that this run did not authorise")
+        failures += 1
+    except TargetError:
+        print("refused: a declared route that this run did not authorise")
+
+    cases = [
+        ("transaction-mode port", body(OL_HOSTED_PORT="6543")),
+        ("wrong project-qualified login", body(OL_HOSTED_USER="postgres." + REF)),
+        ("another project's login", body(OL_HOSTED_USER="origenlab_migrator.tsrqponmlkjihgfedcba")),
+        ("bare login without the project ref", body(OL_HOSTED_USER="origenlab_migrator")),
+        ("wrong region", body(OL_HOSTED_POOLER_REGION="us-east-1")),
+        ("wrong cluster", body(OL_HOSTED_POOLER_CLUSTER="1")),
+        ("look-alike hostname", body(OL_HOSTED_HOST=POOLER + ".evil.example.com")),
+        ("direct host on the pooler route", body(OL_HOSTED_HOST="db." + REF + ".supabase.co")),
+        ("downgraded tls", body(OL_HOSTED_SSLMODE="require")),
+        ("pooler keys on the direct route", body(OL_HOSTED_ROUTE="direct")),
+    ]
+    for name, text in cases:
+        try:
+            resolve(text)
+            print("NOT REFUSED: " + name)
+            failures += 1
+        except TargetError:
+            print("refused: " + name)
+
+    described = str(target.describe())
+    if REF in described or "not-a-real-credential" in described or POOLER in described:
+        print("NOT REDACTED: the target description carries an identifier")
+        failures += 1
+    else:
+        print("redacted: no project reference, host or credential in the target description")
+sys.exit(1 if failures else 0)
+PYM
+while IFS= read -r scenario; do
+  [[ -z "$scenario" ]] && continue
+  check "M: refused - $scenario" \
+    "$(grep -qF "refused: $scenario" "$log" && echo 0 || echo 1)" "see $log"
+done <<'SCENARIOS'
+a declared route that this run did not authorise
+transaction-mode port
+wrong project-qualified login
+another project's login
+bare login without the project ref
+wrong region
+wrong cluster
+look-alike hostname
+direct host on the pooler route
+downgraded tls
+pooler keys on the direct route
+SCENARIOS
+check "M: the valid session-pooler route resolves on port 5432" \
+  "$(grep -qF 'accepted: route supavisor-session on port 5432' "$log" && echo 0 || echo 1)" "see $log"
+check "M: no project reference, host or credential reaches the target description" \
+  "$(grep -q '^redacted: ' "$log" && echo 0 || echo 1)" "see $log"
+# The shape of the script the pooler route would send, proven without sending it.
+log="$WORK/log_M_shape"
+python3 - >"$log" 2>&1 <<'PYS' || true
+import re, sys
+sys.path.insert(0, "supabase/audit")
+from olaudit import psqlrun, sqlbank
+from olaudit.target import ROUTE_SUPAVISOR_SESSION
+
+bank = sqlbank.load()
+script = psqlrun.build_script(bank, route=ROUTE_SUPAVISOR_SESSION)
+code = sqlbank.to_code(script).lower()
+
+if not re.search(r"\bcommit\b", code) and len(re.findall(r"\brollback\b", code)) == 1:
+    print("shape: no COMMIT on any path, exactly one ROLLBACK")
+else:
+    print("SHAPE FAIL: the pooler script can commit")
+
+guard_at = script.index("'" + psqlrun.GUARD_CHECK_ID + "'")
+first_check = min(script.index(check.sql.rstrip()) for check in bank)
+if script.startswith("begin read only;") and guard_at < first_check:
+    print("shape: begin read only, then the guard, then the bank")
+else:
+    print("SHAPE FAIL: the bank can run before the read-only state is read back")
+
+set_lines = [l for l in psqlrun.pooled_preamble(15000, 5000).splitlines()
+             if l.strip().lower().startswith("set ")]
+if set_lines and all(l.lower().startswith("set local ") for l in set_lines):
+    print("shape: every SET the pooler preamble issues is transaction-local")
+else:
+    print("SHAPE FAIL: the pooler preamble sets session state a pooled backend would keep")
+PYS
+check "M: no COMMIT exists on the pooler path, and the transaction ends in ROLLBACK" \
+  "$(grep -qF 'shape: no COMMIT on any path' "$log" && echo 0 || echo 1)" "see $log"
+check "M: the read-only state is read back before the first check file" \
+  "$(grep -qF 'shape: begin read only, then the guard' "$log" && echo 0 || echo 1)" "see $log"
+check "M: the pooler preamble leaves no session state on a pooled backend" \
+  "$(grep -qF 'shape: every SET the pooler preamble issues' "$log" && echo 0 || echo 1)" "see $log"
 
 # --- J: a report that fails the leak assertions is refused --------------------------------------------
 POISONED="$WORK/poisoned.json"

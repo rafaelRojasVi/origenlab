@@ -15,6 +15,11 @@ it again.
   permitted only at the three approved paths.
 * The target file, the credential environment variable and (for a complete verdict) the operator
   attestation are all present and valid.
+* The **route the target file declares was authorised on this command line**. `direct` always is.
+  The official Supavisor shared pooler in session mode is authorised only by
+  `--authorize-supavisor-session-route`, and the flag alone is not enough -- the reviewed target
+  file must declare `OL_HOSTED_ROUTE=supavisor-session` as well. The audit never falls back from
+  one route to the other: an unreachable direct endpoint is a failed run, not a silent reroute.
 
 `--mode hosted --simulate` replays a committed fixture through the whole engine and contacts
 nothing. Its verdict is prefixed `SIMULATED_` and can never satisfy a gate.
@@ -36,7 +41,13 @@ from pathlib import Path
 
 from . import attestation as attest_mod
 from . import checks, psqlrun, redact, report as report_mod, sqlbank, target_hosted, target_local
-from .target import Target, TargetError, inherited_scrubbed_names
+from .target import (
+    ROUTE_DIRECT,
+    ROUTE_SUPAVISOR_SESSION,
+    Target,
+    TargetError,
+    inherited_scrubbed_names,
+)
 from .verdict import decide
 
 DEFAULT_OUT_DIR = Path("supabase/.audit/reports")
@@ -224,6 +235,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="required for a real hosted run; a hosted connection is never a default",
     )
+    parser.add_argument(
+        "--authorize-supavisor-session-route",
+        action="store_true",
+        help="additionally authorise the official Supavisor shared pooler in session mode, for a "
+        "project whose direct IPv6 endpoint is unreachable. The target file must also declare "
+        "OL_HOSTED_ROUTE=supavisor-session; neither alone is enough, and the audit never falls "
+        "back from one route to the other.",
+    )
     parser.add_argument("--target-file", type=Path, default=None, help="hosted target file path")
     parser.add_argument("--attestation", type=Path, default=None, help="operator attestation path")
     parser.add_argument("--fixture", type=Path, default=None, help="simulated-run fixture path")
@@ -292,6 +311,23 @@ def run(argv: list[str], repo_root: Path, environ: dict[str, str], stream=sys.st
     if args.simulate and args.cli_metadata:
         print("FAIL: --cli-metadata needs a real hosted run; a simulated run contacts nothing", file=sys.stderr)
         return 2
+    if args.authorize_supavisor_session_route and args.mode != "hosted":
+        print("FAIL: --authorize-supavisor-session-route applies to hosted mode only", file=sys.stderr)
+        return 2
+    if args.authorize_supavisor_session_route and args.simulate:
+        print(
+            "FAIL: --authorize-supavisor-session-route needs a real hosted run; a simulated run "
+            "resolves no target and contacts nothing.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # The authorised route set. `direct` is always in it, so the existing route is unchanged; the
+    # pooler enters it only on an explicit flag, and `target_hosted.resolve` still refuses unless
+    # the reviewed target file declares the same route.
+    authorized_routes = frozenset(
+        {ROUTE_DIRECT} | ({ROUTE_SUPAVISOR_SESSION} if args.authorize_supavisor_session_route else set())
+    )
 
     now = _now(args)
     bank = sqlbank.load()
@@ -320,7 +356,11 @@ def run(argv: list[str], repo_root: Path, environ: dict[str, str], stream=sys.st
             "host_class": "none",
             "host_shown": "[no connection was made]",
             "port": 0,
+            "route": ROUTE_DIRECT,
             "user": target_hosted.AUDIT_IDENTITY,
+            "audit_identity": target_hosted.AUDIT_IDENTITY,
+            "pooler_cluster": None,
+            "pooler_region": None,
             "database": "[none]",
             "sslmode": "[none]",
             "tls_verified_against_hostname": False,
@@ -337,7 +377,12 @@ def run(argv: list[str], repo_root: Path, environ: dict[str, str], stream=sys.st
 
     elif args.mode == "hosted":
         hosted_preflight(repo_root, args)
-        target = target_hosted.resolve(repo_root, environ, target_file=args.target_file)
+        target = target_hosted.resolve(
+            repo_root,
+            environ,
+            target_file=args.target_file,
+            authorized_routes=authorized_routes,
+        )
         secrets = target.secrets
         attestation_path = repo_root / (args.attestation or target_hosted.ATTESTATION_FILE)
         try:
@@ -362,7 +407,10 @@ def run(argv: list[str], repo_root: Path, environ: dict[str, str], stream=sys.st
         if metadata:
             observations["c01"] = metadata
 
-    ctx = checks.Context(mode=args.mode, simulated=result.simulated, attestation=attestation)
+    route = target.route if target is not None else ROUTE_DIRECT
+    ctx = checks.Context(
+        mode=args.mode, simulated=result.simulated, attestation=attestation, route=route
+    )
     results = checks.evaluate(observations, baseline, ctx)
 
     if result.missing or result.unexpected:

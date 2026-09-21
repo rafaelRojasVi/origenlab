@@ -12,8 +12,8 @@ Two mechanisms, in this order:
    exact string match. This is the primary mechanism: it does not depend on a pattern being right.
 
 2. **Pattern redaction.** A safety net for material the process never knew it had: connection
-   strings, Supabase keys in every current and legacy format, JWTs, Supabase host names and
-   non-loopback IP addresses.
+   strings, Supabase keys in every current and legacy format, JWTs, Supabase host names, Supavisor
+   `<role>.<project-ref>` login names and non-loopback IP addresses.
 
 `assert_clean` then re-reads the finished text and fails closed if either mechanism still finds
 something. A report that cannot be proven clean is not written and is never uploaded.
@@ -81,6 +81,15 @@ PATTERNS: tuple[Pattern, ...] = (
         "supabase-host",
         re.compile(r"\b[A-Za-z0-9][A-Za-z0-9._-]*\.supabase\.(?:co|com|net|in|red)\b", re.IGNORECASE),
         "[hosted-host-redacted]",
+    ),
+    Pattern(
+        # Supavisor routes a connection by the project reference carried in the login name, so
+        # `<role>.<twenty lowercase letters>` is a project reference in the one shape that carries
+        # no `project_ref=` label and no `.supabase.co` host to be caught by. It is matched after
+        # the host pattern, so `db.<ref>.supabase.co` has already been replaced whole.
+        "supavisor-login",
+        re.compile(r"\b([a-z][a-z0-9_]*)\.([a-z]{20})\b"),
+        r"\1.[project-ref-redacted]",
     ),
     Pattern(
         "project-ref",
@@ -156,7 +165,7 @@ def find_leaks(text: str, secrets: Iterable[str] = ()) -> list[Leak]:
                 continue
             if pattern.kind == "password-assignment" and REDACTED in excerpt:
                 continue
-            if pattern.kind == "project-ref" and "[project-ref-redacted]" in excerpt:
+            if pattern.kind in {"project-ref", "supavisor-login"} and "[project-ref-redacted]" in excerpt:
                 continue
             leaks.append(Leak(pattern.kind, redact(excerpt, secrets)))
     for match in _IPV4.finditer(text):
