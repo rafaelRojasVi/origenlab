@@ -228,6 +228,9 @@ ol_psql() {
 #                            owns it, and the pgTAP suite and the evidence scripts run there.
 #   * `origenlab_dev`        the persistent development database. Never reset, checkpointed to a
 #                            private root outside Git.
+#   * `origenlab_template`  the build template the disposable databases are cloned from. Holds
+#                            the chain and nothing else; rebuilt whenever it drifts from
+#                            supabase/migrations/.
 #   * `origenlab_test_<8hex>` disposable per-run databases for rollback, concurrency and replay
 #                            tests that must not disturb either of the above.
 #
@@ -240,6 +243,7 @@ ol_valid_local_dbname() {
   local name="${1-}"
   [[ "$name" == "postgres" ]] && return 0
   [[ "$name" == "origenlab_dev" ]] && return 0
+  [[ "$name" == "origenlab_template" ]] && return 0
   [[ "$name" =~ ^origenlab_test_[0-9a-f]{8}$ ]] && return 0
   return 1
 }
