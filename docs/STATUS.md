@@ -27,12 +27,14 @@ of truth*). Any PR that changes what is built, applied or deployed updates this
 file — including the `Last verified` line — **in the same PR**. A PR that only
 changes design, rules or targets does not touch it.
 
-Last verified: **2026-09-20**, against `origin/main` @ `239c48d9`, measured from a clean local
-PostgreSQL 17 carrying the Slice 0 migrations. §2.5's hosted facts are from authenticated
-control-plane reads only — **no PostgreSQL session against the hosted project has succeeded from
-this repository's tooling**, so nothing below claims to have measured its database through the
-Slice 0 audit. §2.5 does now record a database connection made to it by `supabase db push` on
-2026-09-08, and withdraws the earlier claim that none had ever been made.
+Last verified: **2026-09-21**, against `origin/main` @ `3c8dbf78`, measured from the local
+PostgreSQL 17 carrying the Slice 0 migrations. §2.5's hosted facts are measurements taken by the
+Slice 0 audit itself on 2026-09-21, over the reviewed Supavisor session route inside a server-
+confirmed read-only transaction, together with authenticated control-plane reads; the earlier
+statement here that no PostgreSQL session against the hosted project had ever succeeded is
+superseded by that run and withdrawn. §2.5 also records the `supabase db push` connection of
+2026-09-08. **§2.8 records that the hosted phase has since been frozen**, and that every hosted
+number in §2.5 is therefore a frozen snapshot rather than a live reading.
 
 ## 1. Eras
 
@@ -73,6 +75,45 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 | Data API (PostgREST) | **off**; the seven schemas are not exposed |
 | Send flags | `outbound.send_control` single row, **both `false`** |
 | Rows of business data | **zero** — in every real database. The §2.7 importer has loaded the full Wave 1A/Wave 1B safety baseline and all three historical campaigns (**28,666** rows, §2.7) into a *disposable local* database only, which is destroyed after the run |
+
+#### Local development database — measured 2026-09-21
+
+Built under the hosted freeze (§2.8) so V2 work has somewhere durable to run.
+
+| Item | Value |
+|---|---|
+| Container | `origenlab_dev_db`, pinned image `public.ecr.aws/supabase/postgres:17.6.1.165` |
+| Port | **54332, published on 127.0.0.1 only** — stricter than the CLI's stack, which binds on all interfaces |
+| Database | `origenlab_dev`; chain applied **19 of 19**, head `20260920190000` |
+| Structure | 7 schemas, 33 tables, 127 policies, 102 index-covered foreign keys, zero `SECURITY DEFINER` — identical to the CLI cluster's |
+| Rows of business data | **zero**; one `outbound.send_control` row, both flags `false` |
+| Checkpoints | `~/data/origenlab-v2-local/checkpoints/`, outside Git, `0700`/`0600`, each with `.sha256` and `.meta.json` |
+| Build template | `origenlab_template` in the **CLI** cluster; disposable `origenlab_test_<8 hex>` databases are cloned from it |
+
+**Why a second container rather than a second database.** `supabase db reset` drops every
+non-system database in the CLI's cluster, not only the project database. That was measured, not
+assumed: a reset on 2026-09-21 removed a persistent database placed there and its build template
+outright. The CLI's cluster stays disposable; the development database lives beside it.
+Procedure and rules: [`OPERATIONS.md`](OPERATIONS.md) §4.1.
+
+#### Local evidence suite — measured 2026-09-21
+
+Every gate below was run on this date, at `origin/main` @ `3c8dbf78` plus this branch.
+
+| Check | Result |
+|---|---|
+| `supabase db reset --local` | PASS |
+| `supabase test db --local` | **402 assertions, 11 files, all pass** |
+| `verify_direct_logins.sh` | **51 proofs, 0 failed** |
+| `replay_evidence.sh` | PASS — two resets reproduce identical schema, catalogue and migration list |
+| `evidence_tool_failure_tests.sh` | **30 passed, 0 failed** |
+| `audit_failure_tests.sh` | **80 passed, 0 failed** |
+| `hosted_bootstrap_failure_tests.sh` | **91 passed, 0 failed** |
+| `local_db_failure_tests.sh` | **22 passed, 0 failed** |
+| audit unit tests | **308 passed** |
+| `supabase db lint --local` | no schema errors |
+| `supabase db advisors --local` | **zero SECURITY findings**; 118 INFO, all `unused_index` on an empty database |
+| `verify_chain.sh` | 20 checks pass on `origenlab_dev` **and** on the CLI's `postgres` |
 
 ### 2.2 What does not exist yet in V2
 
@@ -374,6 +415,36 @@ remains slice 2, and the send predicate that would read
 **No real, staging or hosted V2 database has been loaded** — the only target
 ever opened is the disposable local PostgreSQL 17 above (§2.5 for why no hosted
 project is adopted).
+
+### 2.8 Hosted phase — frozen 2026-09-21
+
+**State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work
+to local PostgreSQL 17. The decision, its scope and the conditions for reopening are owned by
+[`OPERATIONS.md`](OPERATIONS.md) §1.1 — this section only reports what is measured.
+
+| Item | Measured state |
+|---|---|
+| `origenlab-v2` | exists, `ACTIVE_HEALTHY`, **frozen**; neither adopted nor decommissioned |
+| Hosted connections since the freeze | **zero** |
+| Hosted migrations applied since the freeze | **zero**; the ledger stands at 19 of 19 (§2.5) |
+| Hosted rows of business data | **one** — the `outbound.send_control` singleton, unchanged (§2.5) |
+| Data API disablement | **NOT TAKEN — open gate item** (`t01`, `d01`) |
+| Legacy JWT key disablement | **NOT TAKEN — open gate item**; the exposed JWT secret is still unrotated |
+| Slice 0 hosted gate | **still closed**, verdict `INCOMPLETE`, unchanged by the freeze |
+| Backup entitlement | still absent — Free plan, no platform backup (§2.5) |
+
+**The two manual security controls were offered to the operator and declined for now.** They
+are recorded here as open, and they are not attested, not satisfied and not deferred out of
+the gate count. Both are Supabase Dashboard actions that this repository cannot take and,
+under the freeze, cannot verify.
+
+**The freeze weakens no gate.** Every item that was open against the hosted project before
+2026-09-21 is open after it, on the same terms.
+
+**Where V2 work happens now.** Local PostgreSQL 17 via the supported Supabase CLI stack,
+[`OPERATIONS.md`](OPERATIONS.md) §4.1 and §1.1. The local foundation measured in §2.1 is the
+working target; the migration chain, roles, grants, RLS and pgTAP suite are applied and
+proven there.
 
 ## 3. V1 — running state
 

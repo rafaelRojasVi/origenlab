@@ -71,6 +71,12 @@ jobs:
       - name: Prove the hosted role bootstrap fails closed
         run: supabase/scripts/hosted_bootstrap_failure_tests.sh
 
+      # Also needs no database: every scenario is a refusal that happens before a connection is
+      # attempted. The one case that needs a real checkpoint reports itself as skipped here,
+      # because CI has no persistent development database and is not supposed to.
+      - name: Prove the local database tooling fails closed
+        run: supabase/scripts/local_db_failure_tests.sh
+
       - name: Start local database
         run: supabase start
 

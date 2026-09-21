@@ -41,6 +41,57 @@ Rules:
 - OrigenLab shares no environment, credential or mailbox with any other
   business ([`README.md`](README.md)).
 
+### 1.1 Hosted freeze — `origenlab-v2` (in force from 2026-09-21)
+
+**[V2 DECISION]**
+
+**The hosted phase is closed. All V2 work happens against local PostgreSQL 17.**
+`origenlab-v2` is frozen: it is neither adopted nor decommissioned, and nothing in this
+repository may reach it.
+
+While the freeze is in force, none of the following may be performed against any hosted
+Supabase project, by an operator or by any tool in this repository:
+
+- opening a database connection of any kind, including the read-only Slice 0 audit route;
+- applying a migration, or writing to the migration ledger;
+- loading contact, organization, campaign, quote or message data;
+- rotating, setting or issuing any secret, key or role password;
+- deploying application or dashboard configuration.
+
+**The freeze is a posture, not a gate change.** No gate of [`MIGRATION.md`](MIGRATION.md)
+§5.2 is weakened, satisfied or deferred by it, and in particular **the backup gate stands
+unchanged**. The open items recorded against the hosted project stay open and stay counted.
+
+**The two manual security controls were offered and deliberately not taken.** Disabling the
+Data API and disabling the legacy JWT keys on `origenlab-v2` both remain **open gate items**
+(`t01`/`d01` and the exposed-JWT-secret blocker of [`STATUS.md`](STATUS.md) §2.5). They are
+Supabase Dashboard actions: this repository has no dashboard access, and under the freeze it
+may not open the connection that would verify either one. They are therefore recorded as
+open, not as attested, and not as satisfied.
+
+**Local work continues under the same rules as hosted work.** Local PostgreSQL 17 is still
+the Supabase-compatible schema: `supabase/roles.sql`, the migration chain, the grants, the
+RLS policies and the pgTAP suite are applied and proven there exactly as §4.1 describes. The
+point of the freeze is to avoid the hosted project, not to abandon the target architecture.
+Code and migrations written under the freeze **must remain replayable against hosted
+Supabase without modification**; a local-only shortcut that would need rewriting at cutover
+is a defect, not a convenience.
+
+**Reopening is an explicit operator decision.** Nothing reopens the hosted phase implicitly —
+not a green local suite, not a finished slice, not a passing audit. When the operator
+reopens it, the cutover sequence is:
+
+1. upgrade `origenlab-v2` to a plan carrying a backup entitlement;
+2. verify backup availability on the project;
+3. rerun the hosted Slice 0 audit (§4.2);
+4. apply the already-proven migration chain;
+5. replay the deterministic promotion and import;
+6. reconcile counts against the local run;
+7. deploy API and dashboard configuration.
+
+Steps 1 and 2 are not reorderable and not skippable: **the backup gate is never weakened to
+obtain a passing audit.**
+
 ## 2. Operator roles
 
 | Role | May |
@@ -149,7 +200,7 @@ privileges, then the original 32 tables schema by schema, then grants, then RLS 
 revocation of the owner's database-level `CREATE`, then the covering indexes for every
 foreign key, then the outbound corrections — frozen campaign content and audience criteria,
 the reply table, the tightened recipient address shape, the Wave 1B `contact_control.source`
-labels and the archived-campaign `recontact_interval_days` carve-out), `tests/` (pgTAP, 399
+labels and the archived-campaign `recontact_interval_days` carve-out), `tests/` (pgTAP, 402
 assertions across eleven files) and `scripts/`. Requirements:
 Docker, the Supabase CLI and `psql`. No hosted project is involved and nothing here holds a
 credential: the three `LOGIN` roles are created without a password.
@@ -194,6 +245,98 @@ set are reported, never their values. If any of the four fails it exits non-zero
 connection is attempted. `evidence_tool_failure_tests.sh` proves it: with `supabase status`
 made to fail and hostile `PG*` variables set (D), with a planted `project-ref` (F), and with
 `docker` reporting a foreign working tree (G), the scripts refuse and `psql` is never invoked.
+
+#### Two clusters: the disposable one and the persistent one
+
+Everything above runs against the Supabase CLI's cluster, and **that cluster is disposable by
+design**. `supabase db reset` drops *every* non-system database in it, not only the project
+database — measured on 2026-09-21, when a reset removed a second database placed there and its
+build template outright. Nothing that must survive may live in it.
+
+The persistent development database therefore runs in **its own container**:
+
+| | CLI cluster (`supabase_db_origenlab`) | Development container (`origenlab_dev_db`) |
+|---|---|---|
+| Lifecycle | disposable; `supabase db reset` owns it | persistent; nothing resets it |
+| Holds | the pgTAP suite's target, the replay evidence, `origenlab_test_*` databases | `origenlab_dev` — the local development instance of the V2 durable core |
+| Image | the CLI's `supabase/postgres` | the **same** pinned `supabase/postgres` image |
+| Port | 54322, bound on all interfaces by the CLI | **54332, bound on 127.0.0.1 only** |
+| Durability | none; rebuilt from the chain | checkpoints outside Git |
+
+Two clusters, still **exactly one durable database per era**: `origenlab_dev` is the local
+development instance of the V2 durable core, and everything in the CLI's cluster is a test
+fixture.
+
+```bash
+supabase/scripts/dev_db.sh up                 # start the container, apply roles.sql
+supabase/scripts/dev_db.sh create             # create origenlab_dev
+supabase/scripts/dev_db.sh migrate            # apply supabase/migrations/ in order; idempotent
+supabase/scripts/dev_db.sh status             # ledger, tables, rows, send flags
+supabase/scripts/dev_db.sh checkpoint --label <text>
+supabase/scripts/dev_db.sh list
+supabase/scripts/dev_db.sh restore <file.sql.gz> --force
+supabase/scripts/dev_db.sh down               # stop it; the volume survives
+```
+
+**Checkpoints are the durability boundary**, and they live at
+`~/data/origenlab-v2-local/checkpoints/` — directory `0700`, files `0600`, each with a
+`.sha256` sidecar and a `.meta.json` recording the migration head and per-table row counts.
+That root is outside Git, referenced by no repository path and covered by no `.gitignore`
+exemption. It is a **sibling of `~/data/origenlab-v2-migration/` and never the same
+directory**, so a checkpoint can never be confused with a migration bundle.
+
+**A checkpoint carries data only.** Structure always comes from replaying
+`supabase/migrations/`, so every restore re-proves that the chain replays, and ownership,
+grants, RLS and policies are produced by the reviewed migrations rather than reconstructed by
+`pg_restore` — which cannot reproduce them anyway, because every application object is owned by
+`origenlab_owner` and the connection role holds that membership `SET`-only. It is also the same
+shape as the eventual hosted cutover: apply the proven chain, then replay the data.
+
+Three consequences worth knowing before you use it:
+
+- A restore **replaces** `origenlab_dev` and is refused without `--force`. Take a checkpoint
+  first.
+- A checkpoint with no `.sha256` sidecar, or one that does not match it, is **refused**.
+- `pg_dump` and `pg_restore` run **inside** the container. The host's client tools are
+  whatever the distribution ships, and a PostgreSQL 16 `pg_dump` refuses a 17.6 server
+  outright.
+
+#### Disposable databases for tests
+
+Tests that need their own database — migration, integration, rollback, concurrency,
+deterministic replay — mint one rather than borrowing `postgres` or `origenlab_dev`:
+
+```bash
+db="$(supabase/scripts/disposable_db.sh mint)"     # prints origenlab_test_<8 hex>
+trap 'supabase/scripts/disposable_db.sh drop "$db"' EXIT
+supabase/scripts/disposable_db.sh sweep            # remove all of them
+```
+
+They are cloned from `origenlab_template`, which is rebuilt automatically whenever its ledger
+drifts from `supabase/migrations/` in either head or count, so it cannot serve a stale schema.
+`drop` and `sweep` check the `origenlab_test_<8 hex>` pattern **before anything else**, so
+neither can ever remove `postgres`, `origenlab_dev` or the template.
+
+#### Verifying an applied chain
+
+```bash
+supabase/scripts/verify_chain.sh --dev                    # the persistent database
+supabase/scripts/verify_chain.sh --database postgres      # the CLI's project database
+supabase/scripts/verify_chain.sh --database "$db" --json  # a minted test database
+```
+
+Read-only. It measures the ledger against the files on disk, then schemas, tables per schema,
+roles and their attributes, the `PUBLIC`/`anon`/`authenticated`/`service_role` grant boundary,
+default privileges, the M14 database-`CREATE` revocation, RLS coverage, the policy count,
+foreign-key index coverage, object ownership, the `SECURITY DEFINER` count, the user-trigger
+list and the send flags. It **complements pgTAP rather than repeating it**: pgTAP proves
+semantics against a freshly reset `postgres`, this proves inventory on databases pgTAP was not
+run against.
+
+`supabase/scripts/local_db_failure_tests.sh` proves this tooling fails closed — 22 scenarios
+covering rejected database names, the psql helpers refusing to run before their guard, a
+planted `project-ref`, every attempt to drop a protected database, both `--force` gates and
+three unverifiable checkpoints. It needs no database and runs in CI.
 
 **Stop the stack when the evidence run is finished.** `supabase stop` keeps the data volume
 and releases the published ports (54322 for PostgreSQL, 54321 for Kong), which are bound on
