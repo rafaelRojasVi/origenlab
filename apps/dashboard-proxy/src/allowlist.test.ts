@@ -888,3 +888,59 @@ describe("CRM-Q2 workflow/adoption allowlist", () => {
     ).toBe(false);
   });
 });
+
+describe("V2 durable read boundary allowlist", () => {
+  it("allows exactly the seven V2 read paths", async () => {
+    const { isAllowedUpstreamPath } = await import("./allowlist");
+    for (const path of [
+      "/v2/contacts",
+      "/v2/organizations",
+      "/v2/prospects",
+      "/v2/opportunities/active",
+      "/v2/tasks/due",
+      "/v2/review/summary",
+      "/v2/quotes/followup",
+    ]) {
+      expect(isAllowedUpstreamPath(path)).toBe(true);
+    }
+  });
+
+  it("allows the listed paths with a query string", async () => {
+    const { isAllowedUpstreamPath } = await import("./allowlist");
+    expect(isAllowedUpstreamPath("/v2/contacts?limit=50&offset=0")).toBe(true);
+    expect(isAllowedUpstreamPath("/v2/tasks/due?horizon_days=0")).toBe(true);
+  });
+
+  it("refuses any V2 path that is not listed by name", async () => {
+    const { isAllowedUpstreamPath } = await import("./allowlist");
+    // The list is exact on purpose. A future V2 command route must not become
+    // reachable through this Worker just because it lives under /v2.
+    for (const path of [
+      "/v2",
+      "/v2/",
+      "/v2/contacts/123",
+      "/v2/organizations/abc",
+      "/v2/commands/promote",
+      "/v2/review",
+      "/v2/review/summary/extra",
+      "/v2/tasks",
+      "/v2/quotes",
+      "/v2/opportunities",
+      "/v2/../operations/work-queue",
+    ]) {
+      expect(isAllowedUpstreamPath(path)).toBe(false);
+    }
+  });
+
+  it("does not make any V2 path POST-writable", async () => {
+    const { isAllowedPostPath } = await import("./allowlist");
+    for (const path of [
+      "/v2/contacts",
+      "/v2/organizations",
+      "/v2/review/summary",
+      "/v2/commands/promote",
+    ]) {
+      expect(isAllowedPostPath(path)).toBe(false);
+    }
+  });
+});

@@ -10,8 +10,13 @@ import {
   summarizeProcurementStatus,
 } from "../lib/procurementSummary";
 import { computeTodaySummaryCounts } from "../lib/todaySummaryCounts";
-import { summarizeCommercialWorkQueue } from "../lib/commercialWorkQueue";
 import { CommercialWorkQueuePanel } from "../components/commercial/CommercialWorkQueuePanel";
+import { useV2CardData } from "../lib/useV2CardData";
+
+// A zero here must not read as "nothing to do". V1's durable opportunities, tasks and
+// quotes have not been migrated into V2 yet, so these cards are counting an empty table
+// rather than a clear workload, and the card says which.
+const NOT_MIGRATED_HINT = "Sin datos: falta migrar el histórico V1";
 
 const OPERATOR_SAFETY =
   "Este panel no envía correos ni aprueba contactos; las acciones comerciales se realizan dentro del ciclo de cada oportunidad.";
@@ -71,7 +76,6 @@ export function TodaySummaryPage() {
     commercialDeals,
     leadResearchSummary,
     commercialWorkQueue,
-    commercialWorkQueueLoading,
     commercialWorkQueueError,
     loadCommercialWorkQueue,
     loadPanel,
@@ -98,15 +102,11 @@ export function TodaySummaryPage() {
     [warm?.items, opportunitySummary.value, commercialDeals?.items],
   );
 
-  const commercialWorkSummary = useMemo(
-    () =>
-      commercialWorkQueue
-        ? summarizeCommercialWorkQueue(
-            commercialWorkQueue,
-          )
-        : null,
-    [commercialWorkQueue],
-  );
+  // The four "Trabajo comercial" cards now read the V2 durable core rather than the V1
+  // `commercialWorkQueue` mirror. `commercialWorkQueue` is still loaded below for the
+  // detail panel, which has not been migrated yet — the cards are the part that moved.
+  const v2Cards = useV2CardData();
+  const v2 = v2Cards.summary;
 
   const showMainContent = !panelLoading || data != null;
 
@@ -144,6 +144,30 @@ export function TodaySummaryPage() {
               Prioriza clientes, proveedores, pagos/logística y licitaciones. {OPERATOR_SAFETY}
             </p>
           </header>
+
+          {v2Cards.errors.length > 0 ? (
+            <div
+              className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
+              role="alert"
+              data-testid="v2-cards-error"
+            >
+              <p className="font-medium">No se pudo cargar el trabajo comercial (V2)</p>
+              <ul className="mt-1 list-disc pl-5">
+                {v2Cards.errors.map((message) => (
+                  <li key={message} className="break-words">
+                    {message}
+                  </li>
+                ))}
+              </ul>
+              <button
+                type="button"
+                onClick={() => void v2Cards.reload()}
+                className="mt-3 rounded-md border border-amber-300 bg-white px-3 py-1.5 text-sm font-medium text-amber-900 hover:bg-amber-50"
+              >
+                Reintentar
+              </button>
+            </div>
+          ) : null}
 
           {commercialWorkQueueError ? (
             <div
@@ -185,8 +209,7 @@ export function TodaySummaryPage() {
               oportunidades comerciales.
             </p>
 
-            {commercialWorkQueueLoading &&
-            !commercialWorkSummary ? (
+            {v2Cards.loading && !v2 ? (
               <p
                 className="mt-4 text-sm text-[var(--color-muted)]"
                 role="status"
@@ -197,50 +220,48 @@ export function TodaySummaryPage() {
               <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <SummaryCard
                   label="Seguimientos vencidos"
-                  value={
-                    commercialWorkSummary
-                      ?.overdueTasks.length ?? 0
+                  value={v2?.overdueCount ?? 0}
+                  hint={
+                    v2?.durableWorkNotMigrated
+                      ? NOT_MIGRATED_HINT
+                      : "Tareas con fecha anterior a hoy"
                   }
-                  hint="Tareas con fecha anterior a hoy"
                   section="deals"
                   needsAttention
                 />
 
                 <SummaryCard
                   label="Para hoy"
-                  value={
-                    commercialWorkSummary
-                      ?.todayTasks.length ?? 0
+                  value={v2?.todayTasks.length ?? 0}
+                  hint={
+                    v2?.durableWorkNotMigrated
+                      ? NOT_MIGRATED_HINT
+                      : `${v2?.upcomingTasks.length ?? 0} próximos · ${
+                          v2?.unscheduledTasks.length ?? 0
+                        } sin fecha`
                   }
-                  hint={`${
-                    commercialWorkSummary
-                      ?.upcomingTasks.length ?? 0
-                  } próximos · ${
-                    commercialWorkSummary
-                      ?.unscheduledTasks.length ?? 0
-                  } sin fecha`}
                   section="deals"
                   needsAttention
                 />
 
                 <SummaryCard
                   label="Revisión humana"
-                  value={
-                    commercialWorkSummary
-                      ?.reviewCount ?? 0
-                  }
-                  hint="Oportunidades pendientes de decisión"
+                  value={v2?.ambiguousCount ?? 0}
+                  hint={`Identidades que la migración no pudo decidir · ${
+                    v2?.machineProposedCount ?? 0
+                  } propuestas por confirmar`}
                   section="deals"
                   needsAttention
                 />
 
                 <SummaryCard
                   label="Cotizaciones por seguir"
-                  value={
-                    commercialWorkSummary
-                      ?.quoteFollowupCount ?? 0
+                  value={v2?.quoteFollowupCount ?? 0}
+                  hint={
+                    v2?.durableWorkNotMigrated
+                      ? NOT_MIGRATED_HINT
+                      : "Cotizaciones enviadas aún no descartadas"
                   }
-                  hint="Cotizaciones enviadas aún no descartadas"
                   section="deals"
                   needsAttention
                 />
