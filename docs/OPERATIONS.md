@@ -41,6 +41,57 @@ Rules:
 - OrigenLab shares no environment, credential or mailbox with any other
   business ([`README.md`](README.md)).
 
+### 1.1 Hosted freeze — `origenlab-v2` (in force from 2026-09-21)
+
+**[V2 DECISION]**
+
+**The hosted phase is closed. All V2 work happens against local PostgreSQL 17.**
+`origenlab-v2` is frozen: it is neither adopted nor decommissioned, and nothing in this
+repository may reach it.
+
+While the freeze is in force, none of the following may be performed against any hosted
+Supabase project, by an operator or by any tool in this repository:
+
+- opening a database connection of any kind, including the read-only Slice 0 audit route;
+- applying a migration, or writing to the migration ledger;
+- loading contact, organization, campaign, quote or message data;
+- rotating, setting or issuing any secret, key or role password;
+- deploying application or dashboard configuration.
+
+**The freeze is a posture, not a gate change.** No gate of [`MIGRATION.md`](MIGRATION.md)
+§5.2 is weakened, satisfied or deferred by it, and in particular **the backup gate stands
+unchanged**. The open items recorded against the hosted project stay open and stay counted.
+
+**The two manual security controls were offered and deliberately not taken.** Disabling the
+Data API and disabling the legacy JWT keys on `origenlab-v2` both remain **open gate items**
+(`t01`/`d01` and the exposed-JWT-secret blocker of [`STATUS.md`](STATUS.md) §2.5). They are
+Supabase Dashboard actions: this repository has no dashboard access, and under the freeze it
+may not open the connection that would verify either one. They are therefore recorded as
+open, not as attested, and not as satisfied.
+
+**Local work continues under the same rules as hosted work.** Local PostgreSQL 17 is still
+the Supabase-compatible schema: `supabase/roles.sql`, the migration chain, the grants, the
+RLS policies and the pgTAP suite are applied and proven there exactly as §4.1 describes. The
+point of the freeze is to avoid the hosted project, not to abandon the target architecture.
+Code and migrations written under the freeze **must remain replayable against hosted
+Supabase without modification**; a local-only shortcut that would need rewriting at cutover
+is a defect, not a convenience.
+
+**Reopening is an explicit operator decision.** Nothing reopens the hosted phase implicitly —
+not a green local suite, not a finished slice, not a passing audit. When the operator
+reopens it, the cutover sequence is:
+
+1. upgrade `origenlab-v2` to a plan carrying a backup entitlement;
+2. verify backup availability on the project;
+3. rerun the hosted Slice 0 audit (§4.2);
+4. apply the already-proven migration chain;
+5. replay the deterministic promotion and import;
+6. reconcile counts against the local run;
+7. deploy API and dashboard configuration.
+
+Steps 1 and 2 are not reorderable and not skippable: **the backup gate is never weakened to
+obtain a passing audit.**
+
 ## 2. Operator roles
 
 | Role | May |
