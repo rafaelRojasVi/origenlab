@@ -24,11 +24,22 @@ de Cloudflare antes de dar por hecho el comportamiento de caché o de cabeceras.
 - **Site:** Static Astro + Tailwind site.
 - **Hosting:** HostGator shared hosting.
 - **Domain:** origenlab.cl (primary domain in cPanel).
-- **Deployment method:** Manual upload of Astro build output. No CI/CD; no automatic deploy.
+- **Deployment method:** GitHub Actions (`web-deploy`). A push to `main` only
+  builds and validates — **it never deploys and never opens SSH.** The real
+  deploy is a manual *Run workflow* with `apply = true`, which syncs
+  `apps/web/dist/` to the cPanel public folder over SSH + rsync behind the
+  `production` environment's manual approval; with `apply = false` it stops at
+  an rsync dry run. See
+  [deployment.md](deployment.md). **Not yet exercised against the real host:**
+  the environment, its five secrets and the confirmed document root are still
+  pending, and until they exist the workflow stops before opening any
+  connection. Manual upload remains the fallback.
 
 ---
 
 ## How deployment works
+
+The automated path is in [deployment.md](deployment.md). The manual fallback:
 
 1. **Local (WSL/Ubuntu):**
    - `npm run check`
@@ -63,7 +74,7 @@ Do not change DNS casually; the site and email are working with the current setu
 
 - **Git:** GitHub repo exists.
 - **Branches:** `main` and `dev`.
-- **Build output:** Deploy the contents of `dist/` after a local build; the repo does not store built files (dist is gitignored).
+- **Build output:** `dist/` is gitignored and never committed; it is built in CI (or locally for the manual fallback) and only its contents reach the public folder.
 
 ---
 

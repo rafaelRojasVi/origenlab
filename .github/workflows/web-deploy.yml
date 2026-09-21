@@ -1,0 +1,173 @@
+name: web-deploy
+
+# Despliegue del sitio público estático (apps/web) a la carpeta pública de
+# cPanel por SSH + rsync. No hay FTP, ni ZIP, ni contraseña de cPanel.
+#
+# Hay dos trabajos, y esa separación es la garantía principal de este archivo:
+#
+#   build    Construye y valida. No lleva `environment`, no lee ningún secreto
+#            y no abre ninguna conexión. Corre en cada push a main y en cada
+#            ejecución manual.
+#   deploy   Lo único que toca el servidor. Existe sólo para
+#            `workflow_dispatch`, corre en el entorno `production` —que exige
+#            aprobación manual y guarda los cinco secretos— y nunca se crea
+#            para un push.
+#
+# Por qué están separados: mientras fueron un solo trabajo, un push a main
+# llegaba a preparar la llave SSH y a sincronizar. Ahora un push no puede
+# desplegar ni aunque alguien afloje una condición por descuido, porque el
+# trabajo que tiene acceso a los secretos no se crea para ese evento.
+#
+# Cómo se usa:
+#
+#   push a main                        sólo `npm ci`, validación y build
+#   workflow_dispatch, apply = false   ensayo de rsync, incluidas las
+#                                      eliminaciones que provocaría --delete;
+#                                      no escribe nada en el servidor
+#   workflow_dispatch, apply = true    la única ruta que despliega de verdad,
+#                                      tras la aprobación de `production`
+#
+# El ensayo se ejecuta siempre antes de sincronizar, también con apply = true,
+# así que el registro muestra qué se va a borrar antes de borrarlo.
+#
+# Hasta que el entorno `production` exista con sus cinco secretos y la ruta
+# pública confirmada, `deploy` se detiene en la primera comprobación sin tocar
+# el servidor.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - ".github/workflows/web-deploy.yml"
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Sincronizar de verdad. En false sólo se ejecuta el ensayo."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-deploy-production
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Sin `environment` a propósito: este trabajo no debe poder leer los
+    # secretos de cPanel, ni pedir una aprobación para validar una rama.
+    defaults:
+      run:
+        working-directory: apps/web
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: apps/web/.nvmrc
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      # Reproducible: instala exactamente el lockfile y nada más.
+      # `playwright-core` está en devDependencies, así que `npm run validate`
+      # puede correr la puerta completa sin añadir paquetes a mano.
+      - run: npm ci
+
+      # Esto no instala un paquete de npm: descarga el binario de Chromium que
+      # necesitan qa:contrast y qa:interaction. La versión la fija el
+      # `playwright-core` del lockfile.
+      - name: Install the QA browser
+        run: npx playwright-core install --with-deps chromium
+
+      # La puerta completa: check, build, catálogo, marcas, imágenes,
+      # invariantes de dist/, privacidad, contraste e interacción.
+      - name: Validate
+        run: npm run validate
+
+      # Se publica el `dist/` ya validado para que `deploy` sincronice
+      # exactamente los bytes que pasaron la puerta, en vez de reconstruirlos.
+      #
+      # `include-hidden-files` es obligatorio: `.htaccess` es un archivo oculto
+      # y sin él el artefacto llegaría incompleto. El guion de despliegue lo
+      # rechazaría, pero es mejor no llegar a ese punto.
+      - name: Upload the validated site
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: apps/web/dist
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    name: Sync to cPanel
+    needs: build
+    # Sólo manual. Un push a main nunca crea este trabajo, así que en la ruta
+    # de integración continua no hay llave SSH ni conexión posible.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    defaults:
+      run:
+        working-directory: apps/web
+
+    steps:
+      # El guion de despliegue vive en el repositorio; el sitio construido
+      # llega del trabajo anterior.
+      - uses: actions/checkout@v7
+
+      - name: Download the validated site
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: apps/web/dist
+
+      - name: Prepare SSH key
+        env:
+          CPANEL_SSH_KEY: ${{ secrets.CPANEL_SSH_KEY }}
+          CPANEL_SSH_KNOWN_HOSTS: ${{ secrets.CPANEL_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$CPANEL_SSH_KEY" || { echo "falta el secreto CPANEL_SSH_KEY"; exit 1; }
+          dir="$RUNNER_TEMP/cpanel-ssh"
+          mkdir -p "$dir" && chmod 700 "$dir"
+          umask 077
+          printf '%s\n' "$CPANEL_SSH_KEY" > "$dir/id"
+          chmod 600 "$dir/id"
+          echo "SSH_KEY_FILE=$dir/id" >> "$GITHUB_ENV"
+          if [ -n "${CPANEL_SSH_KNOWN_HOSTS:-}" ]; then
+            printf '%s\n' "$CPANEL_SSH_KNOWN_HOSTS" > "$dir/known_hosts"
+            chmod 600 "$dir/known_hosts"
+            echo "SSH_KNOWN_HOSTS=$dir/known_hosts" >> "$GITHUB_ENV"
+          fi
+
+      # Ensayo siempre, en toda ejecución de este trabajo. Deja en el registro
+      # exactamente qué subiría y qué borraría --delete antes de que nada se
+      # escriba. Con apply = false, aquí termina.
+      - name: Dry run
+        env:
+          CPANEL_HOST: ${{ secrets.CPANEL_HOST }}
+          CPANEL_PORT: ${{ secrets.CPANEL_PORT }}
+          CPANEL_USER: ${{ secrets.CPANEL_USER }}
+          CPANEL_WEB_ROOT: ${{ secrets.CPANEL_WEB_ROOT }}
+        run: scripts/deploy-cpanel.sh --dry-run
+
+      - name: Sync
+        if: inputs.apply
+        env:
+          CPANEL_HOST: ${{ secrets.CPANEL_HOST }}
+          CPANEL_PORT: ${{ secrets.CPANEL_PORT }}
+          CPANEL_USER: ${{ secrets.CPANEL_USER }}
+          CPANEL_WEB_ROOT: ${{ secrets.CPANEL_WEB_ROOT }}
+        run: scripts/deploy-cpanel.sh --apply
+
+      - name: Remove SSH key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/cpanel-ssh"

@@ -186,6 +186,7 @@ WORKFLOW_FILES=(
   .github/workflows/dashboard.yml
   .github/workflows/secret-scan.yml
   .github/workflows/supabase.yml
+  .github/workflows/web-deploy.yml
 )
 for workflow in "${WORKFLOW_FILES[@]}"; do
   if [[ ! -f "$workflow" ]]; then
