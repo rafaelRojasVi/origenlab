@@ -227,6 +227,15 @@ identifiers -- they are never the same string:
 `ORIGENLAB_QUOTE_DOCUMENT_PREFIX` seeds only `document_number` -- it is
 never part of `quote_number`.
 
+**Revisions and reserved serials (D2b):** revision 1 is unsuffixed;
+revisions 2/3/4/... take `A`/`B`/`C`/... immediately after the serial, so
+serial 1235 renders `01235-26` / `CN01235`, then `01235A-26` / `CN01235A`,
+then `01235B-26` / `CN01235B`. Past `Z` the API fails closed rather than
+inventing `AA`. Serial **1500** is permanently reserved (the historical
+`01500-26`) and the allocator skips it atomically inside its row-locked
+transaction, issuing 1501 -- quote creation is never blocked by it, and the
+skip is recorded as `skipped_reserved_serials` on the `quote_created` event.
+
 **Drive hierarchy (CRM-Q1D, folder naming corrected in the CRM-Q2
 generated-quote automation slice):** the quotations root is a fixed
 container that is never written to directly. Every new quote workspace

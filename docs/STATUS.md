@@ -331,8 +331,14 @@ project is adopted).
   quote creation still fails closed as `quote_numbering_not_configured` (503).
   `commercial.customer_quote_number_series` has **never been seeded**; the
   first allocation on the deployed database will fix the series policy
-  permanently, so confirm the seed before setting it. No migration was
-  required by D2b and the Alembic head is unchanged.
+  permanently. The seed **1235 is the owner-approved value** (confirmed at
+  the D2b review, 2026-09-21) and is recorded in `apps/api/.env.example`;
+  it has deliberately **not** been applied to Render, to any production
+  variable or to hosted Supabase, and will be set only in an explicitly
+  approved deployment. Serial **1500 is permanently reserved** and is
+  skipped by the allocator (1499 → 1501), so the reservation does not need
+  an operator action at deploy time. No migration was required by D2b and
+  the Alembic head is unchanged.
 
 ## 4. Cross-era hazards
 

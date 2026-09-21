@@ -25,8 +25,10 @@ from typing import NoReturn
 from zoneinfo import ZoneInfo
 
 from origenlab_api.quote_numbering import (
+    RESERVED_SERIALS,
     QuoteNumberSpaceError,
     QuoteSerialReservedError,
+    is_reserved_serial,
     render_document_number,
     render_quote_number,
     require_adoptable_quote_number,
@@ -551,41 +553,72 @@ class PostgresCustomerQuoteRepository:
 
                 # Atomic allocation: the row lock serializes concurrent
                 # allocations; uq_customer_quote_number is the DB backstop.
-                cur.execute(
-                    """
-                    UPDATE commercial.customer_quote_number_series
-                    SET
-                      next_serial = next_serial + 1,
-                      updated_by = %(operator)s,
-                      updated_at = %(now)s
-                    WHERE series_key = %(series_key)s
-                    RETURNING
-                      document_prefix,
-                      pad_width,
-                      next_serial - 1 AS allocated_serial
-                    """,
-                    {
-                        "series_key": CUSTOMER_QUOTE_SERIES_KEY,
-                        "operator": operator,
-                        "now": now,
-                    },
-                )
+                #
+                # Reserved serials (D2b: 1500) are skipped rather than
+                # refused, so reaching one never stops quote creation. The
+                # skip is just this same advance run again: the series row
+                # was locked by the upsert above and stays locked until
+                # commit, so every repetition happens inside one row-locked
+                # transaction and no concurrent allocator can interleave.
+                # The counter therefore lands past the skipped serial
+                # (next_serial 1500 -> allocate 1501, leaving 1502), and a
+                # rollback undoes the whole advance rather than leaving a
+                # half-skipped series.
+                #
+                # The loop is bounded by the size of the reservation set:
+                # each iteration consumes a distinct reserved serial, so
+                # one extra iteration is always enough to reach a free one.
+                skipped_serials: list[int] = []
+                allocated = None
 
-                allocated = cur.fetchone()
-
-                if allocated is None:
-                    raise RuntimeError(
-                        "Quote number series row disappeared during allocation"
+                for _ in range(len(RESERVED_SERIALS) + 1):
+                    cur.execute(
+                        """
+                        UPDATE commercial.customer_quote_number_series
+                        SET
+                          next_serial = next_serial + 1,
+                          updated_by = %(operator)s,
+                          updated_at = %(now)s
+                        WHERE series_key = %(series_key)s
+                        RETURNING
+                          document_prefix,
+                          pad_width,
+                          next_serial - 1 AS allocated_serial
+                        """,
+                        {
+                            "series_key": CUSTOMER_QUOTE_SERIES_KEY,
+                            "operator": operator,
+                            "now": now,
+                        },
                     )
 
-                # The serial is already chosen, transactionally, above. The
-                # D2b guard only refuses one that the historical exception
-                # reserves -- it never picks or advances a serial itself.
-                # Raising here aborts the surrounding transaction, so the
-                # refused serial is rolled back rather than consumed.
-                allocated_serial = require_allocatable_serial(
-                    int(allocated["allocated_serial"])
-                )
+                    allocated = cur.fetchone()
+
+                    if allocated is None:
+                        raise RuntimeError(
+                            "Quote number series row disappeared during "
+                            "allocation"
+                        )
+
+                    candidate_serial = int(allocated["allocated_serial"])
+
+                    if not is_reserved_serial(candidate_serial):
+                        break
+
+                    # Never rendered, never inserted, never returned -- the
+                    # only trace it leaves is the audit field below.
+                    skipped_serials.append(candidate_serial)
+                else:
+                    raise RuntimeError(
+                        "Quote number allocation could not clear the "
+                        f"reserved serials after skipping {skipped_serials}"
+                    )
+
+                # Post-condition, not a business gate: the loop above has
+                # already skipped every reservation, so this can only fire
+                # if that logic is wrong -- and a reissued customer-facing
+                # number cannot be withdrawn once the document is sent.
+                allocated_serial = require_allocatable_serial(candidate_serial)
                 pad_width = int(allocated["pad_width"])
                 issue_year = chile_issue_year(now)
 
@@ -737,18 +770,30 @@ class PostgresCustomerQuoteRepository:
                         "Customer quote workspace insert returned no row"
                     )
 
+                created_payload: dict[str, object] = {
+                    "quote_number": quote.quote_number,
+                    "document_number": quote.document_number,
+                    "sales_opportunity_id": sales_opportunity_id,
+                    "revision_number": _INITIAL_REVISION_NUMBER,
+                    "template_reference": template_reference,
+                }
+
+                # The audit trail for a reservation skip. It rides the
+                # existing append-only commercial.customer_quote_event
+                # rather than a table of its own: the skip is only ever
+                # observable as part of an allocation, so it belongs on the
+                # event that records that allocation. Present only when a
+                # skip actually happened, so the ordinary payload shape is
+                # unchanged and the field's presence is itself the signal.
+                if skipped_serials:
+                    created_payload["skipped_reserved_serials"] = skipped_serials
+
                 _insert_event(
                     cur,
                     quote_id=quote_id,
                     event_type="quote_created",
                     actor_key=operator,
-                    payload={
-                        "quote_number": quote.quote_number,
-                        "document_number": quote.document_number,
-                        "sales_opportunity_id": sales_opportunity_id,
-                        "revision_number": _INITIAL_REVISION_NUMBER,
-                        "template_reference": template_reference,
-                    },
+                    payload=created_payload,
                     created_at=now,
                 )
 

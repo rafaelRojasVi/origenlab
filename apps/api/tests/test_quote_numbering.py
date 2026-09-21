@@ -3,9 +3,15 @@
 The owner-approved rules under test, recorded 2026-09-21:
   * one global sequence, seeded at 1235, never reset annually;
   * the year is display metadata only ("01235-26");
-  * revision 1 unsuffixed, revisions 2/3/4/... -> A/B/C/...;
+  * revision 1 unsuffixed, revisions 2/3/4/... -> A/B/C/..., with the letter
+    immediately after the serial ("01235A-26" / "CN01235A");
   * the legacy Labdelivery space stays separate;
-  * 01500-26 is a historical exception and its serial is reserved.
+  * serial 1500 is permanently reserved (the historical "01500-26") and is
+    skipped by the allocator, never issued.
+
+The allocator's own skip behaviour is transactional and is tested against a
+real database in test_customer_quote_workflow_repository_postgres.py; this
+file covers only the pure rules it is built from.
 """
 
 from __future__ import annotations
@@ -13,15 +19,17 @@ from __future__ import annotations
 import pytest
 
 from origenlab_api.quote_numbering import (
-    HISTORICAL_OUTLIER_SERIALS,
     MAX_REVISION_NUMBER,
+    RESERVED_SERIALS,
     ParsedQuoteNumber,
     QuoteRevisionLetterExhaustedError,
     QuoteSerialReservedError,
     is_legacy_labdelivery_quote_number,
+    is_reserved_serial,
     parse_origenlab_quote_number,
     render_document_number,
     render_quote_number,
+    require_adoptable_quote_number,
     require_allocatable_serial,
     revision_letter,
 )
@@ -72,19 +80,64 @@ def test_seeded_serial_renders_the_decided_display_form():
     )
 
 
-def test_revisions_suffix_the_human_number_after_a_space():
+def test_revisions_suffix_the_serial_not_the_year():
+    """The approved customer-facing format: "01235A-26", not "01235-26 A".
+
+    The letter attaches to the serial and stays in front of the year
+    separator, so the human number and the document stem carry the suffix
+    in the same place.
+    """
     assert (
         render_quote_number(
             serial=1235, pad_width=5, issue_year=2026, revision_number=2
         )
-        == "01235-26 A"
+        == "01235A-26"
     )
     assert (
         render_quote_number(
             serial=1235, pad_width=5, issue_year=2026, revision_number=3
         )
-        == "01235-26 B"
+        == "01235B-26"
     )
+
+
+def test_the_approved_worked_example_renders_both_identifiers():
+    """The exact examples recorded in the D2b decision, side by side."""
+    expected = {
+        1: ("01235-26", "CN01235"),
+        2: ("01235A-26", "CN01235A"),
+        3: ("01235B-26", "CN01235B"),
+    }
+
+    for revision_number, (quote_number, document_number) in expected.items():
+        assert (
+            render_quote_number(
+                serial=1235,
+                pad_width=5,
+                issue_year=2026,
+                revision_number=revision_number,
+            )
+            == quote_number
+        )
+        assert (
+            render_document_number(
+                document_prefix="CN",
+                serial=1235,
+                pad_width=5,
+                revision_number=revision_number,
+            )
+            == document_number
+        )
+
+
+def test_the_unapproved_trailing_space_form_is_never_rendered():
+    """"01235-26 A" contradicts the historical evidence and is not approved."""
+    rendered = render_quote_number(
+        serial=1235, pad_width=5, issue_year=2026, revision_number=2
+    )
+
+    assert " " not in rendered
+    assert not rendered.endswith("A")
 
 
 def test_year_is_display_metadata_not_sequence_identity():
@@ -175,11 +228,26 @@ def test_parse_round_trips_an_unsuffixed_number():
 
 
 def test_parse_round_trips_a_revision():
-    parsed = parse_origenlab_quote_number("01235-26 A")
+    parsed = parse_origenlab_quote_number("01235A-26")
 
     assert parsed == ParsedQuoteNumber(
         serial=1235, issue_year_2=26, revision_letter="A"
     )
+
+
+@pytest.mark.parametrize("revision_number", [1, 2, 3, MAX_REVISION_NUMBER])
+def test_every_approved_revision_parses_back_to_its_serial(revision_number):
+    rendered = render_quote_number(
+        serial=1235,
+        pad_width=5,
+        issue_year=2026,
+        revision_number=revision_number,
+    )
+    parsed = parse_origenlab_quote_number(rendered)
+
+    assert parsed is not None
+    assert parsed.serial == 1235
+    assert parsed.revision_letter == revision_letter(revision_number)
 
 
 def test_parse_recognises_the_historical_outlier():
@@ -196,8 +264,10 @@ def test_parse_recognises_the_historical_outlier():
         "COT-2026-014",     # legacy Labdelivery space
         "01235",            # no year
         "01235-2026",       # 4-digit year is not the rendering
-        "01235-26A",        # missing the approved separator
-        "01235-26 a",       # lowercase letter is not the approved rendering
+        "01235-26 A",       # the unapproved trailing-space form
+        "01235-26A",        # letter after the year, not after the serial
+        "01235a-26",        # lowercase letter is not the approved rendering
+        "01235AB-26",       # "AA"-style suffixes are not approved
         "",
     ],
 )
@@ -225,7 +295,7 @@ def test_origenlab_numbers_are_not_in_the_legacy_space(value):
 
 def test_the_two_number_spaces_do_not_overlap():
     """No string can be both a valid OrigenLab number and a legacy one."""
-    for value in ["01235-26", "01235-26 A", "COT-2026-014", "COT 2026 14"]:
+    for value in ["01235-26", "01235A-26", "COT-2026-014", "COT 2026 14"]:
         in_origenlab = parse_origenlab_quote_number(value) is not None
         in_legacy = is_legacy_labdelivery_quote_number(value)
 
@@ -233,35 +303,62 @@ def test_the_two_number_spaces_do_not_overlap():
 
 
 # ---------------------------------------------------------------------------
-# The 01500-26 exception
+# Reserved serials (today: the 01500-26 exception)
 # ---------------------------------------------------------------------------
 
 
-def test_the_outlier_serial_is_reserved():
-    assert 1500 in HISTORICAL_OUTLIER_SERIALS
+def test_serial_1500_is_reserved():
+    assert is_reserved_serial(1500) is True
+    assert RESERVED_SERIALS == frozenset({1500})
 
 
-def test_allocating_the_reserved_serial_fails_closed():
+def test_the_reservation_is_an_explicit_set_not_a_range():
+    """Only 1500 is reserved -- its neighbours stay ordinary serials.
+
+    A range-based rule would burn valid future OrigenLab serials on the
+    strength of a guess; the reservation is a denylist of named documents.
+    """
+    for serial in [1499, 1501, 1502, 1550, 1599]:
+        assert is_reserved_serial(serial) is False
+
+    assert len(RESERVED_SERIALS) == 1
+
+
+@pytest.mark.parametrize("serial", [1235, 1499, 1501, 9999])
+def test_ordinary_serials_pass_the_allocator_post_condition(serial):
+    assert require_allocatable_serial(serial) == serial
+
+
+def test_the_post_condition_still_refuses_a_reserved_serial():
+    """Defence in depth: reaching this with 1500 means the skip is broken."""
     with pytest.raises(QuoteSerialReservedError) as excinfo:
         require_allocatable_serial(1500)
 
     assert "quote_serial_reserved" in str(excinfo.value)
 
 
-def test_the_guard_never_silently_advances_to_the_next_serial():
-    """Failing closed, not skipping: the caller gets an error, not 1501."""
-    with pytest.raises(QuoteSerialReservedError):
-        require_allocatable_serial(1500)
-
-    assert require_allocatable_serial(1501) == 1501
-
-
-@pytest.mark.parametrize("serial", [1235, 1499, 1501, 9999])
-def test_ordinary_serials_pass_the_guard_unchanged(serial):
-    assert require_allocatable_serial(serial) == serial
-
-
-def test_the_seed_is_clear_of_the_reserved_serial():
+def test_the_seed_is_clear_of_every_reserved_serial():
     """1235 (the approved seed) is allocatable, and 1500 is ahead of it."""
     assert require_allocatable_serial(1235) == 1235
-    assert min(HISTORICAL_OUTLIER_SERIALS) > 1235
+    assert min(RESERVED_SERIALS) > 1235
+
+
+def test_adopting_a_reserved_serial_is_refused():
+    """Skipping is for allocation; adoption of 01500-26 is still importing
+    the historical numbering error, which D2b forbids."""
+    with pytest.raises(QuoteSerialReservedError) as excinfo:
+        require_adoptable_quote_number("01500-26")
+
+    assert "adopted_quote_number_reserved_serial" in str(excinfo.value)
+
+
+def test_adopting_a_reserved_serial_is_refused_in_every_revision_form():
+    with pytest.raises(QuoteSerialReservedError):
+        require_adoptable_quote_number("01500A-26")
+
+
+def test_adopting_a_neighbouring_serial_is_not_refused():
+    parsed = require_adoptable_quote_number("01499-26")
+
+    assert parsed is not None
+    assert parsed.serial == 1499

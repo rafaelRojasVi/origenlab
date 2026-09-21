@@ -1038,59 +1038,236 @@ def test_adopting_a_non_origenlab_format_number_is_still_allowed(
     assert bundle.quote.quote_number == "PRESUPUESTO 7"
 
 
-def test_the_allocator_refuses_the_reserved_serial_and_rolls_it_back(
-    admin_conn: object, repo: PostgresCustomerQuoteRepository
-) -> None:
-    """When the series reaches the reserved serial, creation fails closed
-    rather than skipping it -- and because the guard raises inside the
-    allocation transaction, the refused serial is rolled back rather than
-    consumed. The operator advances the series deliberately."""
+def _create_at(
+    repo: PostgresCustomerQuoteRepository,
+    *,
+    sales_id: str,
+    seed: int,
+):
+    """One generated-flow creation against the CN/pad-5 D2b policy.
 
-    sales_id = _uid("sales")
-    _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
-
-    numbering = QuoteNumberingConfig(
-        document_prefix="CN", serial_pad_width=5, seed_next_serial=1500
-    )
-
-    with pytest.raises(QuoteSerialReservedError) as excinfo:
-        repo.create_quote(
-            quote_id=_uid("quote"),
-            sales_opportunity_id=sales_id,
-            operator=OPERATOR,
-            idempotency_key=_uid("idem"),
-            request_fingerprint="f" * 64,
-            numbering=numbering,
-            template_reference=None,
-        )
-
-    assert "quote_serial_reserved" in str(excinfo.value)
-
-    with admin_conn.cursor() as cur:
-        cur.execute("SELECT count(*) AS n FROM commercial.customer_quote")
-        assert cur.fetchone()["n"] == 0
-
-        # Rolled back, not consumed: the series is untouched.
-        cur.execute(
-            "SELECT count(*) AS n FROM commercial.customer_quote_number_series"
-        )
-        assert cur.fetchone()["n"] == 0
-
-    # Advanced deliberately past the exception, creation succeeds.
-    bundle = repo.create_quote(
+    ``seed`` only matters on the very first call (it seeds the series row);
+    afterwards the durable counter is the truth and the value is ignored.
+    """
+    return repo.create_quote(
         quote_id=_uid("quote"),
         sales_opportunity_id=sales_id,
         operator=OPERATOR,
         idempotency_key=_uid("idem"),
         request_fingerprint="f" * 64,
         numbering=QuoteNumberingConfig(
-            document_prefix="CN", serial_pad_width=5, seed_next_serial=1501
+            document_prefix="CN", serial_pad_width=5, seed_next_serial=seed
         ),
         template_reference=None,
     )
 
-    assert bundle.quote.quote_number.startswith("01501-")
-    assert bundle.quote.document_number == "CN01501"
+
+def _series_next_serial(admin_conn: object) -> int | None:
+    with admin_conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT next_serial
+            FROM commercial.customer_quote_number_series
+            WHERE series_key = %(series_key)s
+            """,
+            {"series_key": CUSTOMER_QUOTE_SERIES_KEY},
+        )
+        row = cur.fetchone()
+
+    return None if row is None else int(row["next_serial"])
+
+
+def test_the_allocator_skips_the_reserved_serial_and_keeps_counting(
+    admin_conn: object, repo: PostgresCustomerQuoteRepository
+) -> None:
+    """1500 is permanently reserved: the historical customer-facing
+    document 01500-26 already exists, so that number must never be issued
+    again. Reaching it does not stop quotation creation -- the allocator
+    skips it inside the same row-locked transaction and issues 1501."""
+
+    sales_id = _uid("sales")
+    _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
+
+    before = _create_at(repo, sales_id=sales_id, seed=1499)
+    across = _create_at(repo, sales_id=sales_id, seed=1499)
+    after = _create_at(repo, sales_id=sales_id, seed=1499)
+
+    # Immediately before the boundary, then over it, then on as normal.
+    assert before.quote.serial == 1499
+    assert across.quote.serial == 1501
+    assert after.quote.serial == 1502
+
+    # The rendered identifiers follow, with no gap the customer can see
+    # other than the reserved number itself.
+    assert before.quote.document_number == "CN01499"
+    assert across.quote.document_number == "CN01501"
+    assert after.quote.document_number == "CN01502"
+    assert across.quote.quote_number == (
+        f"01501-{across.quote.issue_year % 100:02d}"
+    )
+
+    # The counter advanced correctly: 1502 issued leaves 1503 next.
+    assert _series_next_serial(admin_conn) == 1503
+
+
+def test_the_reserved_serial_is_never_returned_or_persisted(
+    admin_conn: object, repo: PostgresCustomerQuoteRepository
+) -> None:
+    """Nothing anywhere in the durable tables carries serial 1500 or the
+    identifiers it would have rendered."""
+
+    sales_id = _uid("sales")
+    _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
+
+    bundles = [_create_at(repo, sales_id=sales_id, seed=1499) for _ in range(3)]
+
+    assert 1500 not in [bundle.quote.serial for bundle in bundles]
+
+    with admin_conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) AS n FROM commercial.customer_quote "
+            "WHERE serial = 1500"
+        )
+        assert cur.fetchone()["n"] == 0
+
+        cur.execute(
+            """
+            SELECT count(*) AS n
+            FROM commercial.customer_quote
+            WHERE document_number = 'CN01500'
+               OR quote_number LIKE '01500%'
+            """
+        )
+        assert cur.fetchone()["n"] == 0
+
+
+def test_the_skip_is_recorded_on_the_append_only_event(
+    admin_conn: object, repo: PostgresCustomerQuoteRepository
+) -> None:
+    """The reservation is auditable without a table of its own: the skip
+    rides the quote_created event that records the allocation it happened
+    in, and is absent from every ordinary allocation."""
+
+    sales_id = _uid("sales")
+    _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
+
+    before = _create_at(repo, sales_id=sales_id, seed=1499)
+    across = _create_at(repo, sales_id=sales_id, seed=1499)
+
+    def _created_payload(quote_id: str) -> dict:
+        with admin_conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT payload
+                FROM commercial.customer_quote_event
+                WHERE quote_id = %(quote_id)s
+                  AND event_type = 'quote_created'
+                """,
+                {"quote_id": quote_id},
+            )
+            return dict(cur.fetchone()["payload"])
+
+    assert "skipped_reserved_serials" not in _created_payload(
+        before.quote.quote_id
+    )
+    assert _created_payload(across.quote.quote_id)[
+        "skipped_reserved_serials"
+    ] == [1500]
+
+
+def test_a_failed_creation_at_the_boundary_leaves_the_series_valid(
+    admin_conn: object, repo: PostgresCustomerQuoteRepository
+) -> None:
+    """A rollback across the reservation must not half-apply the skip: the
+    counter either advances past 1500 completely or not at all, and the
+    reserved serial is never left consumed or issuable."""
+
+    sales_id = _uid("sales")
+    _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
+
+    first = _create_at(repo, sales_id=sales_id, seed=1499)
+    assert first.quote.serial == 1499
+    assert _series_next_serial(admin_conn) == 1500
+
+    # Reuse a quote_id that already exists: the allocation (including the
+    # skip of 1500) happens, then the customer_quote insert violates its
+    # primary key and the whole transaction rolls back.
+    with pytest.raises(Exception):
+        repo.create_quote(
+            quote_id=first.quote.quote_id,
+            sales_opportunity_id=sales_id,
+            operator=OPERATOR,
+            idempotency_key=_uid("idem"),
+            request_fingerprint="f" * 64,
+            numbering=QuoteNumberingConfig(
+                document_prefix="CN", serial_pad_width=5, seed_next_serial=1499
+            ),
+            template_reference=None,
+        )
+
+    # Rolled back whole: the counter is exactly where it was.
+    assert _series_next_serial(admin_conn) == 1500
+
+    # And the series is still in a state that allocates correctly -- the
+    # skip is re-derived from the reservation set, not from anything the
+    # failed attempt left behind.
+    retry = _create_at(repo, sales_id=sales_id, seed=1499)
+
+    assert retry.quote.serial == 1501
+    assert _series_next_serial(admin_conn) == 1502
+
+
+def test_concurrent_allocation_across_the_boundary_stays_unique(
+    admin_conn: object, repo: PostgresCustomerQuoteRepository
+) -> None:
+    """Concurrency-safety of the skip. Eight creations race across the
+    reservation; the row lock serializes them, so every serial is distinct,
+    contiguous apart from the skipped 1500, and nobody gets 1500."""
+
+    import threading
+
+    sales_id = _uid("sales")
+    _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
+
+    # Seed the series first so all eight racing calls take the ON CONFLICT
+    # path and race on allocation rather than on creating the row.
+    seeded = _create_at(repo, sales_id=sales_id, seed=1497)
+    assert seeded.quote.serial == 1497
+
+    worker_count = 8
+    serials: list[int] = []
+    failures: list[BaseException] = []
+    lock = threading.Lock()
+    start = threading.Barrier(worker_count)
+
+    def _worker() -> None:
+        try:
+            start.wait(timeout=30)
+            bundle = _create_at(repo, sales_id=sales_id, seed=1497)
+        except BaseException as exc:  # noqa: BLE001 - reported below
+            with lock:
+                failures.append(exc)
+            return
+
+        with lock:
+            serials.append(bundle.quote.serial)
+
+    threads = [threading.Thread(target=_worker) for _ in range(worker_count)]
+
+    for thread in threads:
+        thread.start()
+
+    for thread in threads:
+        thread.join(timeout=60)
+
+    assert failures == []
+    assert len(serials) == worker_count
+    assert len(set(serials)) == worker_count
+    assert 1500 not in serials
+
+    # 1498..1506 minus the reserved 1500.
+    assert sorted(serials) == [1498, 1499, 1501, 1502, 1503, 1504, 1505, 1506]
+    assert _series_next_serial(admin_conn) == 1507
 
 
 def test_generated_quotes_render_the_decided_d2b_identifiers(
@@ -1136,7 +1313,9 @@ def test_generated_quotes_render_the_decided_d2b_identifiers(
     assert second.quote.serial == 1236
     assert second.quote.document_number == "CN01236"
 
-    # Revision 1 is unsuffixed on both identifiers.
+    # Revision 1 is unsuffixed on both identifiers. A revision letter would
+    # sit between the serial and the "-YY" ("01235A-26"), so the serial is
+    # followed immediately by the separator here.
     assert first.revision.revision_number == 1
-    assert " " not in first.quote.quote_number.removeprefix("01235-")
+    assert first.quote.quote_number.startswith("01235-")
     assert first.quote.document_number == "CN01235"

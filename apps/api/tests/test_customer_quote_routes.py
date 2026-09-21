@@ -19,7 +19,6 @@ from origenlab_api.repositories.postgres.customer_quotes import (
     CustomerQuoteDriveWorkspace,
     CustomerQuoteRevision,
     QuoteNumberingNotConfiguredError,
-    QuoteSerialReservedError,
     QuoteNumberingPolicyMismatchError,
 )
 from origenlab_api.routes import operations
@@ -340,28 +339,6 @@ def test_create_quote_respects_write_kill_switch() -> None:
 
     assert response.status_code == 503
     assert service.calls == []
-
-
-def test_create_quote_maps_a_reserved_serial_to_503_not_422() -> None:
-    """The create body is empty -- every field is server-controlled -- so a
-    series that has reached a reserved serial is never the caller's fault.
-    It joins the other "numbering needs an operator decision" 503s rather
-    than being reported as invalid input (D2b)."""
-
-    client, service, _ = _client()
-    service.errors["create_quote"] = QuoteSerialReservedError(
-        "quote_serial_reserved: serial 1500 is reserved by a historical "
-        "manual-numbering exception"
-    )
-
-    response = client.post(
-        f"/operations/sales-opportunities/{SALES_ID}/quotes",
-        json={},
-        headers=CREATE_HEADER,
-    )
-
-    assert response.status_code == 503
-    assert "quote_serial_reserved" in response.text
 
 
 def test_create_quote_maps_numbering_not_configured_to_503() -> None:

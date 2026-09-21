@@ -13,29 +13,37 @@ is documented for humans in
 
 1. **Historical evidence** -- what the real archive actually shows. Weak and
    incomplete: one confirmed Drive filename (``CN011728A``) proving that a
-   revision letter suffixes the *document* stem, plus one manual numbering
-   outlier (``01500-26``). Everything else about the historical series is
-   unproven; see the register notes in
+   revision letter suffixes the *document* stem with no separator, plus one
+   manual numbering outlier (``01500-26``). Everything else about the
+   historical series is unproven; see the register notes in
    ``apps/email-pipeline/src/origenlab_email_pipeline/historical_quote_register/quote_number.py``.
 
 2. **Owner-approved forward rules** -- the D2b decision, recorded 2026-09-21.
    These govern every number OrigenLab allocates from now on. They are not
    retroactive and they do not describe the archive.
 
-3. **The 01500-26 exception** -- one historical quotation that must not be
-   renamed, deleted or modified, and must not be allowed to collide with a
-   future allocation. Encoded as ``HISTORICAL_OUTLIER_SERIALS``.
+3. **Reserved serials** -- serials the OrigenLab series must never issue.
+   Exactly one is reserved today: 1500, because the customer-facing
+   document ``01500-26`` already exists (produced by manual error) and must
+   never be issued again. Encoded as ``RESERVED_SERIALS``, which is a set
+   rather than a single value so a second reservation is data, not code.
 
 Forward rules, verbatim from the decision:
 
 * One global sequence; never reset annually.
 * The year is display metadata only -- it is rendered into the human
   ``quote_number`` and is never part of the sequence's identity.
-* Revision 1 has no suffix. Revisions 2/3/4/... take A/B/C/...
+* Revision 1 has no suffix. Revisions 2/3/4/... take A/B/C/..., and the
+  letter sits immediately after the five-digit serial -- before the ``-YY``
+  in the human number (``01235A-26``) and at the end of the document stem
+  (``CN01235A``).
 * Legacy Labdelivery numbering lives in a separate number space and never
   enters the OrigenLab series.
 * The next number is never derived with ``MAX() + 1``; allocation is
   transactional and concurrency-safe.
+* A reserved serial is skipped atomically inside the allocating
+  transaction, so the series keeps moving (1499 -> 1501) and the reserved
+  serial is never returned or persisted.
 * Historical duplicate quotation numbers are never imported or "corrected".
 """
 
@@ -45,14 +53,15 @@ import re
 from dataclasses import dataclass
 
 __all__ = [
-    "HISTORICAL_OUTLIER_SERIALS",
     "MAX_REVISION_NUMBER",
     "ORIGENLAB_QUOTE_NUMBER_RE",
+    "RESERVED_SERIALS",
     "ParsedQuoteNumber",
     "QuoteNumberSpaceError",
     "QuoteRevisionLetterExhaustedError",
     "QuoteSerialReservedError",
     "is_legacy_labdelivery_quote_number",
+    "is_reserved_serial",
     "parse_origenlab_quote_number",
     "render_document_number",
     "render_quote_number",
@@ -73,11 +82,18 @@ class QuoteRevisionLetterExhaustedError(ValueError):
 
 
 class QuoteSerialReservedError(ValueError):
-    """The serial is reserved by a historical exception and must not be used.
+    """A reserved serial was offered where it must never appear.
 
-    Raised instead of silently skipping to the next serial: skipping would
-    be the system choosing a number, which D2b forbids. An operator advances
-    the series deliberately.
+    This is *not* how the allocator handles reaching a reserved serial --
+    that path skips it atomically and keeps going (see
+    ``is_reserved_serial``). This error covers the two places where a
+    reserved serial can only arrive by mistake:
+
+    * adoption, where an operator typed ``01500-26`` into "Incorporar al
+      CRM" -- adopting it is importing the historical numbering error the
+      D2b decision says to leave alone;
+    * ``require_allocatable_serial``, the allocator's post-condition, where
+      it would mean the skip logic itself is broken.
     """
 
 
@@ -87,21 +103,31 @@ class QuoteNumberSpaceError(ValueError):
 
 
 # --------------------------------------------------------------------------
-# 3. The 01500-26 exception (historical evidence, not a forward rule).
+# 3. Reserved serials.
 # --------------------------------------------------------------------------
-# 01500-26 is a historical *manual* numbering error: a quotation numbered far
-# ahead of the real sequence, which at the time of the D2b decision sat at
-# 1234 (next = 1235). The owner's decision is explicit that the document
-# itself is left exactly as it is -- not renamed, not deleted, not modified,
-# and not imported or "corrected".
+# Serials the OrigenLab series must never issue. This is an explicit, finite
+# denylist of individual numbers -- never a range, and never derived from a
+# pattern. A range would permanently burn valid future OrigenLab serials on
+# the strength of a guess; each entry here has to earn its place with a named
+# historical document.
 #
-# What that leaves is a collision hazard, and it is a real one rather than a
-# theoretical one. ``commercial.customer_quote.document_number`` is UNIQUE and
-# carries no year, so a future generated ``CN01500`` would collide with the
-# historical document's own stem the moment that document is ever adopted
-# into the CRM. Reserving the serial is how the exception is enforced without
-# touching the document.
-HISTORICAL_OUTLIER_SERIALS = frozenset({1500})
+# 1500 is reserved because the customer-facing quotation ``01500-26`` already
+# exists. It was produced by a manual numbering error -- numbered far ahead of
+# the real sequence, which at the time of the D2b decision sat at 1234
+# (next = 1235) -- but it is a real document that reached a real customer, so
+# the owner's decision is that it is left exactly as it is (not renamed, not
+# deleted, not modified, not imported) and that the number is never issued a
+# second time.
+#
+# The collision is concrete, not theoretical: ``commercial.customer_quote``
+# has UNIQUE constraints on ``quote_number`` and ``document_number``, and
+# ``document_number`` carries no year, so a generated ``CN01500`` would clash
+# with the historical document's own stem the moment it were ever adopted.
+#
+# Reaching a reserved serial does not stop the business: the allocator skips
+# it atomically inside its row-locked transaction and issues the next one
+# (1499 -> 1501), recording the skip on the quote's append-only event.
+RESERVED_SERIALS = frozenset({1500})
 
 
 # --------------------------------------------------------------------------
@@ -114,12 +140,14 @@ _FIRST_LETTERED_REVISION = 2
 _REVISION_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 MAX_REVISION_NUMBER = _FIRST_LETTERED_REVISION + len(_REVISION_ALPHABET) - 1
 
-# The human customer-facing number: <padded serial>-<2-digit issue year>,
-# optionally followed by a space and the revision letter. The year here is
-# display metadata (D2b) -- parsing it back out never tells you anything
-# about the sequence, only about when that quotation was issued.
+# The human customer-facing number: <padded serial><optional revision
+# letter>-<2-digit issue year>, e.g. "01235-26" and "01235A-26". The letter
+# sits immediately after the serial and before the year, matching the
+# approved customer-facing format and the document stem's own suffixing. The
+# year here is display metadata (D2b) -- parsing it back out never tells you
+# anything about the sequence, only about when that quotation was issued.
 ORIGENLAB_QUOTE_NUMBER_RE = re.compile(
-    r"^(?P<serial>\d{1,10})-(?P<issue_year_2>\d{2})(?: (?P<letter>[A-Z]))?$"
+    r"^(?P<serial>\d{1,10})(?P<letter>[A-Z])?-(?P<issue_year_2>\d{2})$"
 )
 
 # The legacy Labdelivery space. Shape mirrors the extraction regex in
@@ -188,7 +216,13 @@ def render_quote_number(
     issue_year: int,
     revision_number: int = 1,
 ) -> str:
-    """The human customer-facing number, e.g. "01235-26" / "01235-26 A".
+    """The human customer-facing number, e.g. "01235-26" / "01235A-26".
+
+    The revision letter attaches directly to the serial, *before* the year
+    separator -- the approved format is ``01235A-26``, not ``01235-26 A``.
+    The letter belongs to the quotation's identity, which the year does not;
+    keeping it next to the serial also makes the human number and the
+    document stem suffix the same way.
 
     ``issue_year`` is a full calendar year (the America/Santiago business
     year at allocation time); only its last two digits are rendered. The
@@ -197,10 +231,13 @@ def render_quote_number(
     if not 2000 <= issue_year <= 2999:
         raise ValueError(f"issue_year must be in 2000..2999, got {issue_year!r}")
 
-    base = f"{_padded_serial(serial, pad_width)}-{issue_year % 100:02d}"
+    stem = _padded_serial(serial, pad_width)
     letter = revision_letter(revision_number)
 
-    return base if letter is None else f"{base} {letter}"
+    if letter is not None:
+        stem = f"{stem}{letter}"
+
+    return f"{stem}-{issue_year % 100:02d}"
 
 
 def render_document_number(
@@ -212,9 +249,11 @@ def render_document_number(
 ) -> str:
     """The Drive document stem, e.g. "CN01235" / "CN01235A".
 
-    The revision letter attaches with no separator here, matching the one
-    piece of real historical evidence ("CN011728A"). Unlike the human
-    quote_number this carries no year at all.
+    The revision letter attaches with no separator, matching the one piece
+    of real historical evidence ("CN011728A"). Unlike the human
+    quote_number this carries no year at all, so the letter simply ends the
+    stem; in the human number the same letter sits before the "-YY"
+    ("01235A-26").
     """
     prefix = document_prefix.strip()
     if not prefix:
@@ -254,19 +293,32 @@ def parse_origenlab_quote_number(value: str) -> ParsedQuoteNumber | None:
     )
 
 
-def require_allocatable_serial(serial: int) -> int:
-    """Return ``serial`` unless a historical exception reserves it.
+def is_reserved_serial(serial: int) -> bool:
+    """True when ``serial`` must never be issued by the OrigenLab series.
 
-    Called by the allocator after it has already chosen the next serial
-    transactionally -- never as a way to pick one.
+    The allocator calls this on each serial its row-locked ``UPDATE`` hands
+    back; a reserved one is skipped and the next is allocated, all inside
+    the same transaction. Membership is an explicit set, so adding a second
+    reservation is a one-line data change that every skip test then covers.
     """
-    if serial in HISTORICAL_OUTLIER_SERIALS:
+    return serial in RESERVED_SERIALS
+
+
+def require_allocatable_serial(serial: int) -> int:
+    """Post-condition: the serial about to be rendered is not reserved.
+
+    The allocator has already skipped past reservations by the time this
+    runs, so raising here means the skip logic is broken rather than that
+    the business needs a decision. It exists because the cost of a silent
+    failure is a reissued customer-facing number, which cannot be taken
+    back once the document is sent.
+    """
+    if is_reserved_serial(serial):
         raise QuoteSerialReservedError(
-            f"quote_serial_reserved: serial {serial} is reserved by a "
-            "historical manual-numbering exception and must not be "
-            "allocated; advance commercial.customer_quote_number_series "
-            "past it deliberately (see docs/business/"
-            "BUSINESS_RULES_QUOTES_AND_SUPPLIERS.md section 2.3)"
+            f"quote_serial_reserved: serial {serial} is reserved and must "
+            "never be allocated; the allocator should have skipped it (see "
+            "docs/business/BUSINESS_RULES_QUOTES_AND_SUPPLIERS.md "
+            "section 2.3)"
         )
 
     return serial
@@ -285,8 +337,9 @@ def require_adoptable_quote_number(quote_number: str) -> ParsedQuoteNumber | Non
 
     * a number from the legacy Labdelivery space, because D2b keeps that
       space separate rather than folding it in;
-    * the 01500-26 outlier's serial, because adopting it *is* importing the
-      historical numbering error the decision says to leave alone.
+    * a reserved serial (today only 1500), because adopting ``01500-26``
+      *is* importing the historical numbering error the decision says to
+      leave alone.
 
     The remaining hazard -- adopting a serial the series has not issued yet
     -- needs the series' own counter and is checked by the repository inside
@@ -303,11 +356,11 @@ def require_adoptable_quote_number(quote_number: str) -> ParsedQuoteNumber | Non
 
     parsed = parse_origenlab_quote_number(value)
 
-    if parsed is not None and parsed.serial in HISTORICAL_OUTLIER_SERIALS:
+    if parsed is not None and is_reserved_serial(parsed.serial):
         raise QuoteSerialReservedError(
             f"adopted_quote_number_reserved_serial: serial {parsed.serial} "
-            "belongs to a historical manual-numbering exception that is "
-            "deliberately left outside the CRM and must not be imported "
+            "is permanently reserved; the historical quotation carrying it "
+            "is deliberately left outside the CRM and must not be imported "
             "(see docs/business/BUSINESS_RULES_QUOTES_AND_SUPPLIERS.md "
             "section 2.3)"
         )
