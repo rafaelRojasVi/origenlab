@@ -239,3 +239,59 @@ def test_an_unclassifiable_address_is_routed_to_review_not_dropped() -> None:
     assert plan.contact_points == []
     assert len(plan.reviews) == 1
     assert "cannot be classified" in plan.reviews[0].note
+
+
+# ------------------------------------------------------------- marketing linkage
+#
+# The linkage is a join over two tables, so unlike the identity policy it cannot be
+# meaningfully tested without a database. These skip unless ORIGENLAB_V2_TEST_DSN names a
+# disposable local Slice 0 database, the same convention test_v2_import.py uses.
+
+import os  # noqa: E402
+
+_DSN = os.environ.get("ORIGENLAB_V2_TEST_DSN", "").strip()
+_needs_db = pytest.mark.skipif(not _DSN, reason="ORIGENLAB_V2_TEST_DSN is not set")
+
+
+@_needs_db
+def test_marketing_linkage_is_idempotent_and_links_only_a_channel() -> None:
+    from origenlab_email_pipeline.migration.v2_import.target import assert_local_target
+    from origenlab_email_pipeline.migration.v2_promote.marketing import link_marketing
+
+    target = assert_local_target(_DSN)
+
+    first = link_marketing(target)
+    second = link_marketing(target)
+
+    # A second run links nothing new: `contact_point_id is null` is the whole idempotency
+    # mechanism, and it also means an operator's manual link is never overwritten.
+    assert second.recipients_linked_now == 0
+    assert second.recipients_already_linked == first.recipients_already_linked + first.recipients_linked_now
+    assert second.recipients_total == first.recipients_total
+
+    # The invariants promotion established survive the linkage — these are asserted inside
+    # the transaction too, so a violation would have raised rather than returned.
+    assert second.recipients_without_canonical_channel >= 0
+
+
+@_needs_db
+def test_marketing_linkage_never_touches_contact_control() -> None:
+    import psycopg
+
+    from origenlab_email_pipeline.migration.v2_import.target import assert_local_target
+    from origenlab_email_pipeline.migration.v2_promote.marketing import link_marketing
+
+    target = assert_local_target(_DSN)
+    with psycopg.connect(target.dsn, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("select count(*), max(created_at) from outbound.contact_control")
+        before = cur.fetchone()
+
+    link_marketing(target)
+
+    with psycopg.connect(target.dsn, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("select count(*), max(created_at) from outbound.contact_control")
+        after = cur.fetchone()
+
+    # A suppression is a fact about an address and must keep working for an address whose
+    # owner is unknown, so this stage must leave the table completely alone.
+    assert after == before

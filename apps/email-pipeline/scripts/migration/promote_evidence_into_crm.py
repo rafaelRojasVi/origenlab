@@ -68,6 +68,10 @@ from origenlab_email_pipeline.migration.v2_promote.apply import (  # noqa: E402
     apply_promotion,
     read_assertions,
 )
+from origenlab_email_pipeline.migration.v2_promote.marketing import (  # noqa: E402
+    link_marketing,
+    render_console as render_marketing,
+)
 from origenlab_email_pipeline.migration.v2_promote.plan import build_plan  # noqa: E402
 from origenlab_email_pipeline.migration.v2_promote.report import (  # noqa: E402
     build_report,
@@ -88,6 +92,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--apply",
         action="store_true",
         help="write the promotion. Without this flag the plan is computed and discarded.",
+    )
+    parser.add_argument(
+        "--link-marketing",
+        action="store_true",
+        help="also link the marketing history to the canonical channels promotion created. "
+        "Requires --apply. Idempotent: a recipient already linked is never re-linked.",
     )
     parser.add_argument(
         "--json", action="store_true", help="print the report as JSON instead of text."
@@ -112,13 +122,24 @@ def main(argv: list[str] | None = None) -> int:
 
     plan = build_plan(assertions)
 
+    if args.link_marketing and not args.apply:
+        print("refused: --link-marketing writes, so it requires --apply", file=sys.stderr)
+        return 2
+
     applied = None
+    linked = None
     if args.apply:
         try:
             applied = apply_promotion(plan, target)
         except ApplyRefused as exc:
             print(f"refused: {exc}", file=sys.stderr)
             return 5
+        if args.link_marketing:
+            try:
+                linked = link_marketing(target)
+            except ApplyRefused as exc:
+                print(f"refused: {exc}", file=sys.stderr)
+                return 6
 
     report = build_report(
         plan,
@@ -126,7 +147,13 @@ def main(argv: list[str] | None = None) -> int:
         target=target.redacted(),
         applied=applied,
     )
+    if linked is not None:
+        report["marketing_linkage"] = linked.to_report()
+
     print(json.dumps(report, indent=2, sort_keys=True) if args.json else render_console(report))
+    if linked is not None and not args.json:
+        print()
+        print(render_marketing(linked))
     return 0
 
 

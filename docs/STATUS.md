@@ -454,6 +454,34 @@ leaves the closed list of organization kinds **[OPEN]** and the evidence carries
 `unknown` is an explicit absence marker; the operator approved it on 2026-09-21 and every
 row stays `machine_proposed` until reclassified.
 
+### 2.7.4 Marketing linkage — measured 2026-09-21
+
+The marketing history arrives keyed by **address**; promotion creates the canonical channel
+rows. This stage joins the two, so a campaign, a delivery and an attribution can be read from
+a canonical identity instead of from a string.
+
+| Item | Value |
+|---|---|
+| Entry point | `promote_evidence_into_crm.py --apply --link-marketing` → `migration/v2_promote/marketing.py` |
+| Column written | `outbound.campaign_recipient.contact_point_id`, and nothing else |
+| Recipients linked | **3,252** of 3,481 |
+| Recipients with no canonical channel | **229** — snapshotted into a frozen audience but never contacted, so no `contacted_address` assertion and therefore no channel exists. Correct, not a gap |
+| Send attempts now reachable from identity | **3,138** of 3,141 |
+| Suppressions matching a canonical channel | 10,396 — **reported, never written** |
+| `person_id` / `organization_id` on recipients | **still zero**, asserted inside the transaction |
+| `outbound.contact_control` | **untouched**, and a test proves it |
+| Domain events written | **zero** — see below |
+| Idempotency | proven — a second run linked **0** |
+
+**`outbound.contact_control` is deliberately not given an identity column.** A suppression
+is a fact about an *address*: it must keep working for an address whose owner is unknown, was
+never promoted, or is later merged. The table has no identity column by design and this stage
+does not add one.
+
+**No `crm.domain_event` is written.** The event stream records human commercial truth. This
+linkage is a deterministic join over data that already exists, re-derivable from the address
+at any time, and carries no decision anybody made.
+
 ### 2.7.2 V2 durable read boundary — measured 2026-09-21
 
 The first application code that *reads* the V2 durable core. `docs/STATUS.md` §2.2 said
