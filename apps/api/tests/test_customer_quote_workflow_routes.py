@@ -10,6 +10,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from origenlab_api.errors import register_exception_handlers
+from origenlab_api.quote_numbering import (
+    QuoteNumberSpaceError,
+    QuoteSerialReservedError,
+)
 from origenlab_api.repositories.postgres.commercial_operations import (
     CommercialOperationConflictError,
     CommercialOperationNotFoundError,
@@ -386,6 +390,55 @@ def test_adopt_drive_folder_maps_conflict_to_409() -> None:
     )
 
     assert response.status_code == 409
+
+
+def test_adopt_drive_folder_maps_a_legacy_number_space_to_422() -> None:
+    """Unlike the create path, the adopted number IS operator input, so a
+    D2b number-space refusal is reported as invalid input (D2b)."""
+
+    service = FakeWorkflowService()
+    service.errors["adopt_drive_folder"] = QuoteNumberSpaceError(
+        "adopted_quote_number_legacy_space: legacy Labdelivery numbering "
+        "is a separate number space"
+    )
+    client, _, _ = _client(service=service)
+
+    response = client.post(
+        f"/operations/sales-opportunities/{SALES_ID}/quotes/adopt-drive-folder",
+        json={
+            "document_number": "CN01191",
+            "quote_number": "COT-2019-014",
+            "folder_id": "drive-folder-1191",
+            "folder_web_url": "https://drive.google.com/drive/folders/drive-folder-1191",
+        },
+        headers=ADOPT_HEADER,
+    )
+
+    assert response.status_code == 422
+    assert "adopted_quote_number_legacy_space" in response.text
+
+
+def test_adopt_drive_folder_maps_the_reserved_outlier_to_422() -> None:
+    service = FakeWorkflowService()
+    service.errors["adopt_drive_folder"] = QuoteSerialReservedError(
+        "adopted_quote_number_reserved_serial: serial 1500 belongs to a "
+        "historical manual-numbering exception"
+    )
+    client, _, _ = _client(service=service)
+
+    response = client.post(
+        f"/operations/sales-opportunities/{SALES_ID}/quotes/adopt-drive-folder",
+        json={
+            "document_number": "CN01500",
+            "quote_number": "01500-26",
+            "folder_id": "drive-folder-1500",
+            "folder_web_url": "https://drive.google.com/drive/folders/drive-folder-1500",
+        },
+        headers=ADOPT_HEADER,
+    )
+
+    assert response.status_code == 422
+    assert "adopted_quote_number_reserved_serial" in response.text
 
 
 def test_adopt_drive_folder_maps_missing_opportunity_to_404() -> None:

@@ -2,7 +2,7 @@
 
 Status: canonical  
 Owner: project-maintainers  
-Last reviewed: 2026-08-28
+Last reviewed: 2026-09-21
 
 Formal **business policy** for OrigenLab commercial work (quotes and supplier research). This doc is **source of truth for policy**; Word templates remain **presentation**. When code or DB schemas exist, they must not contradict this file without an explicit decision and doc update.
 
@@ -42,6 +42,95 @@ Until enforced in software, these are **manual policy**; implement validation in
 | Commercial terms | **Delivery**, **payment**, **validity**, **taxes (e.g. IVA)**, **warranty**, **installation/startup**: each is either a **confirmed value** or **explicit** "not confirmed" / "not applicable". |
 | Technical claims | **Model**, **brand**, **lead time**, **warranty** line items: **confirmed** or explicitly **not confirmed**.                                                                                    |
 | Taxes            | **Never inferred**; state inclusion/exclusion of IVA (or equivalent) explicitly.                                                                                                                |
+
+### 2.3 Quote numbering (decision D2b, 2026-09-21)
+
+This subsection is deliberately split three ways, because the three parts
+rest on different footing and carry different authority. **Do not read
+across the boundaries**: §2.3.1 is weak archive evidence, §2.3.2 is what the
+business has actually decided, and §2.3.3 is a single named exception.
+
+Enforced in code by `apps/api/src/origenlab_api/quote_numbering.py` (pure
+rendering + guards) and the transactional allocator in
+`apps/api/src/origenlab_api/repositories/postgres/customer_quotes.py`.
+
+#### 2.3.1 Historical evidence (what the archive actually shows)
+
+Weak and incomplete. Recorded so that later readers do not mistake the
+forward rules below for a description of history.
+
+| Observation | Strength | Source |
+| --- | --- | --- |
+| A revision letter suffixes the **Drive document stem** with no separator — the filename `CN011728A` | One real artifact | Drive, CRM-Q1A investigation |
+| One manual numbering outlier exists: a quotation numbered `01500-26`, far ahead of the real sequence | One real artifact | See §2.3.3 |
+| `COT-YYYY-NNN` was the *hypothesised* legacy Labdelivery shape | **Unconfirmed** — matched **zero** rows across 7,900 archived Sent emails | `apps/email-pipeline/src/origenlab_email_pipeline/historical_quote_register/quote_number.py` module docstring |
+| Whether historical duplicate quotation numbers exist, and how many | Unknown; not investigated | — |
+
+Nothing here is a rule. In particular, there is **no** historical evidence
+about whether the revision letter also belongs on the human-facing number —
+§2.3.2 decides that forward, it does not report it.
+
+#### 2.3.2 Owner-approved forward rules (authoritative)
+
+Approved by the owner on 2026-09-21. These govern every number OrigenLab
+allocates **from now on**. They are **not retroactive** and no historical
+quotation is renamed, renumbered or re-imported to satisfy them.
+
+| # | Rule |
+| --- | --- |
+| 1 | **One global sequence.** It is never reset annually and never partitioned by year, customer or document type. |
+| 2 | **Seed = 1235.** The first allocation seeds `commercial.customer_quote_number_series`; after that the durable row is the counter truth and the environment seed has no further effect. |
+| 3 | **The year is display metadata only.** The human number renders as `<padded serial>-<2-digit issue year>` — e.g. `01235-26`. The year never participates in sequence identity. The issue year is the **America/Santiago** business-local year at allocation time. |
+| 4 | **Revision 1 has no suffix.** Revisions 2/3/4/… take `A`/`B`/`C`/… |
+| 5 | **The suffix applies to both identifiers.** Human number: `01235-26 A` (space before the letter). Drive document stem: `CN01235A` (no separator, matching §2.3.1). |
+| 6 | **Legacy Labdelivery numbering stays in a separate number space.** It is never adopted as an OrigenLab `quote_number` and never enters the series. |
+| 7 | **Never `MAX() + 1`.** Allocation is a single row-locked `UPDATE … RETURNING` inside the quote-insert transaction — never a scan of existing rows, a browser-supplied number, a timestamp or a random value. |
+| 8 | **Never import or "correct" historical duplicate quotation numbers.** |
+
+Worked example (serial 1235, issued 2026):
+
+| Revision | Human `quote_number` | Drive `document_number` |
+| --- | --- | --- |
+| 1 | `01235-26` | `CN01235` |
+| 2 | `01235-26 A` | `CN01235A` |
+| 3 | `01235-26 B` | `CN01235B` |
+
+**Undecided, and deliberately left so:** what follows revision `Z` (the 27th
+revision). The code fails closed there rather than inventing `AA`. If a
+quotation ever reaches 27 revisions, that is a business decision to make
+then, not a rendering to guess now.
+
+#### 2.3.3 The `01500-26` exception
+
+`01500-26` is a **historical manual numbering error** — a quotation numbered
+far ahead of the real sequence, which at the time of this decision sat at
+1234 (next = 1235).
+
+The owner's decision on it is narrow and explicit:
+
+- The historical quotation is **not renamed, not deleted, not modified**.
+  The Drive and Gmail artifacts are left exactly as they are.
+- It is **not imported** into the CRM, and the sequence is **not** advanced
+  or reshaped to accommodate it.
+
+What remains is a genuine collision hazard rather than a theoretical one:
+`commercial.customer_quote.document_number` is `UNIQUE` and carries no year,
+so a future generated `CN01500` would collide with this document's own stem
+the moment it were ever adopted. Two guards encode the exception without
+touching the document:
+
+| Guard | Behaviour |
+| --- | --- |
+| Allocation reaches serial 1500 | Fails closed (`quote_serial_reserved`, HTTP 503). The serial is **rolled back, not consumed**; an operator advances the series past it deliberately. The system never silently skips to 1501 — skipping would be the system choosing a number, which rule 7 forbids. |
+| An operator tries to adopt `01500-26` | Refused (`adopted_quote_number_reserved_serial`, HTTP 422) — adopting it *is* importing it. |
+
+A third, related guard falls out of the same reasoning: **only a number the
+series has already issued may be adopted.** A serial at or beyond
+`next_serial` is refused (`adopted_quote_number_not_yet_issued`, HTTP 409),
+because adopting it would booby-trap a future allocation. Adopting genuinely
+older numbers (e.g. `01191-24` while the series sits at 1236) stays allowed,
+as does adopting a quotation whose number predates this rendering entirely —
+the guard is not a general format lock.
 
 ---
 
@@ -128,3 +217,4 @@ Store **structured facts** (tables above) in the DB; **generate** narrative from
 | 2026-03-24 | Initial canonical rules + proposed entities (from internal template / ficha / supplier report analysis). |
 | 2026-08-28 | Removed the pre-CRM proposed quote/supplier-offer schema (former §§3–5, 8); the durable schema design now lives in `TARGET_COMMERCIAL_ARCHITECTURE.md`. This file keeps policy only. |
 | 2026-08-31 | CRM-Q1: durable `commercial.customer_quote` + revision 1 + Drive workspace shipped (dashboard-first quote creation, transactional numbering, fail-closed activation). Policy unchanged: Sheets edits content in V1, no supplier-cost exposure, no bidirectional sync. |
+| 2026-09-21 | **D2b quote-numbering decision** recorded as §2.3: one global sequence seeded at 1235, year as display metadata, A/B/C revision suffixes on both identifiers, legacy Labdelivery kept in a separate number space, and the `01500-26` historical exception reserved rather than corrected. Enforced in `apps/api/src/origenlab_api/quote_numbering.py`. |

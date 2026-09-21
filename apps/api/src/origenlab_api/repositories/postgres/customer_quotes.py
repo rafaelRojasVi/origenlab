@@ -24,6 +24,14 @@ from datetime import datetime, timedelta, timezone
 from typing import NoReturn
 from zoneinfo import ZoneInfo
 
+from origenlab_api.quote_numbering import (
+    QuoteNumberSpaceError,
+    QuoteSerialReservedError,
+    render_document_number,
+    render_quote_number,
+    require_adoptable_quote_number,
+    require_allocatable_serial,
+)
 from origenlab_api.repositories.postgres.commercial_operations import (
     CommercialOperationConflictError,
     CommercialOperationNotFoundError,
@@ -45,9 +53,11 @@ __all__ = [
     "CustomerQuoteEvent",
     "CustomerQuoteRevision",
     "PostgresCustomerQuoteRepository",
+    "QuoteNumberSpaceError",
     "QuoteNumberingConfig",
     "QuoteNumberingNotConfiguredError",
     "QuoteNumberingPolicyMismatchError",
+    "QuoteSerialReservedError",
     "chile_issue_year",
 ]
 
@@ -112,6 +122,13 @@ class QuoteNumberingPolicyMismatchError(RuntimeError):
 # Redacted failure categories only: a safe slug, never provider payloads,
 # exception text, URLs, or credentials.
 _FAILURE_CATEGORY_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+# Every creation path (generate and adopt) inserts exactly one revision,
+# numbered 1 -- the unsuffixed initial quotation under D2b. There is no
+# command that creates a second revision yet; when one arrives it renders
+# its own identifiers through origenlab_api.quote_numbering rather than
+# reusing the values stored on commercial.customer_quote.
+_INITIAL_REVISION_NUMBER = 1
 
 _CREATE_COMMAND_KIND = "customer_quote_create"
 _ADOPT_COMMAND_KIND = "customer_quote_adopt_drive"
@@ -561,13 +578,33 @@ class PostgresCustomerQuoteRepository:
                         "Quote number series row disappeared during allocation"
                     )
 
-                allocated_serial = int(allocated["allocated_serial"])
-                padded_serial = str(allocated_serial).zfill(
-                    int(allocated["pad_width"])
+                # The serial is already chosen, transactionally, above. The
+                # D2b guard only refuses one that the historical exception
+                # reserves -- it never picks or advances a serial itself.
+                # Raising here aborts the surrounding transaction, so the
+                # refused serial is rolled back rather than consumed.
+                allocated_serial = require_allocatable_serial(
+                    int(allocated["allocated_serial"])
                 )
+                pad_width = int(allocated["pad_width"])
                 issue_year = chile_issue_year(now)
-                quote_number = f"{padded_serial}-{issue_year % 100:02d}"
-                document_number = f"{allocated['document_prefix']}{padded_serial}"
+
+                # Revision 1 at creation: both identifiers render unsuffixed
+                # (D2b). revision_number is passed explicitly rather than
+                # left to default, so the rule stays visible at the call
+                # site the day a second revision becomes creatable.
+                quote_number = render_quote_number(
+                    serial=allocated_serial,
+                    pad_width=pad_width,
+                    issue_year=issue_year,
+                    revision_number=_INITIAL_REVISION_NUMBER,
+                )
+                document_number = render_document_number(
+                    document_prefix=str(allocated["document_prefix"]),
+                    serial=allocated_serial,
+                    pad_width=pad_width,
+                    revision_number=_INITIAL_REVISION_NUMBER,
+                )
 
                 cur.execute(
                     """
@@ -646,7 +683,7 @@ class PostgresCustomerQuoteRepository:
                     """,
                     {
                         "quote_id": quote_id,
-                        "revision_number": 1,
+                        "revision_number": _INITIAL_REVISION_NUMBER,
                         "template_reference": template_reference,
                         "operator": operator,
                         "now": now,
@@ -709,7 +746,7 @@ class PostgresCustomerQuoteRepository:
                         "quote_number": quote.quote_number,
                         "document_number": quote.document_number,
                         "sales_opportunity_id": sales_opportunity_id,
-                        "revision_number": 1,
+                        "revision_number": _INITIAL_REVISION_NUMBER,
                         "template_reference": template_reference,
                     },
                     created_at=now,
@@ -1424,6 +1461,10 @@ class PostgresCustomerQuoteRepository:
             field="folder_web_url",
         )
 
+        # D2b number-space boundaries. Checked before any connection is
+        # opened: a refused adoption must not consume an idempotency key.
+        adopted = require_adoptable_quote_number(quote_number)
+
         pg = require_psycopg()
         now = _utcnow()
 
@@ -1468,6 +1509,47 @@ class PostgresCustomerQuoteRepository:
                     )
 
                 title = str(source["title"])
+
+                # The remaining D2b boundary, which needs the series' own
+                # counter: an adopted quote may only carry a number the
+                # series has ALREADY issued. A serial at or beyond
+                # next_serial has not been handed out yet, so adopting it
+                # would booby-trap a future allocation into a UNIQUE
+                # violation on quote_number/document_number.
+                #
+                # The read is intentionally SELECT-only and takes no lock:
+                # adoption must never touch the allocator (quote_origin
+                # 'adopted' means serial/issue_year stay NULL). A concurrent
+                # allocation can only move next_serial upward, which makes
+                # this check strictly more permissive, never less -- and the
+                # two UNIQUE constraints remain the real backstop.
+                if adopted is not None:
+                    cur.execute(
+                        """
+                        SELECT next_serial
+                        FROM commercial.customer_quote_number_series
+                        WHERE series_key = %(series_key)s
+                        """,
+                        {"series_key": CUSTOMER_QUOTE_SERIES_KEY},
+                    )
+
+                    series_row = cur.fetchone()
+
+                    # No series row means numbering was never activated, so
+                    # nothing has been issued to compare against. The
+                    # unconditional guards in require_adoptable_quote_number
+                    # have already run; this one simply has no opinion yet.
+                    if series_row is not None:
+                        next_serial = int(series_row["next_serial"])
+
+                        if adopted.serial >= next_serial:
+                            raise CommercialOperationConflictError(
+                                "adopted_quote_number_not_yet_issued: "
+                                f"serial {adopted.serial} is at or beyond "
+                                f"the series' next serial ({next_serial}); "
+                                "only a number the OrigenLab series has "
+                                "already issued can be adopted"
+                            )
 
                 try:
                     cur.execute(
@@ -1555,7 +1637,7 @@ class PostgresCustomerQuoteRepository:
                     """,
                     {
                         "quote_id": quote_id,
-                        "revision_number": 1,
+                        "revision_number": _INITIAL_REVISION_NUMBER,
                         "operator": operator,
                         "now": now,
                     },
@@ -1628,7 +1710,7 @@ class PostgresCustomerQuoteRepository:
                     event_type="quote_adopted_from_drive",
                     actor_key=operator,
                     payload={
-                        "revision_number": 1,
+                        "revision_number": _INITIAL_REVISION_NUMBER,
                         "document_number": document_number,
                         "folder_id": folder_id,
                         "sales_opportunity_id": sales_opportunity_id,

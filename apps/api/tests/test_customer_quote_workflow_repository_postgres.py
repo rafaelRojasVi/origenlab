@@ -32,6 +32,8 @@ from origenlab_api.repositories.postgres.customer_quotes import (
     CUSTOMER_QUOTE_SERIES_KEY,
     PostgresCustomerQuoteRepository,
     QuoteNumberingConfig,
+    QuoteNumberSpaceError,
+    QuoteSerialReservedError,
 )
 from origenlab_api.repositories.postgres.customer_quotes_read import (
     PostgresCustomerQuoteReadRepository,
@@ -821,3 +823,320 @@ def test_adopted_folder_disappears_from_known_drive_folder_ids_dedup_set(
     )
 
     assert "drive-folder-adopted-1" in read_repo.list_known_drive_folder_ids()
+
+
+# --- D2b number-space guards on adoption ------------------------------
+#
+# Adoption is the only way a number the series did not allocate reaches
+# commercial.customer_quote, so it is where the D2b boundaries are proven.
+
+
+def test_adopt_drive_folder_rejects_a_legacy_labdelivery_quote_number(
+    admin_conn: object, repo: PostgresCustomerQuoteRepository
+) -> None:
+    """Legacy Labdelivery numbering is a separate number space (D2b) and is
+    never folded into the OrigenLab quote_number space."""
+
+    sales_id = _uid("sales")
+    _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
+
+    with pytest.raises(QuoteNumberSpaceError) as excinfo:
+        repo.adopt_drive_folder(
+            quote_id=_uid("quote"),
+            sales_opportunity_id=sales_id,
+            document_number="CN01191",
+            quote_number="COT-2019-014",
+            folder_id="drive-folder-legacy",
+            folder_web_url="https://drive.google.com/drive/folders/legacy",
+            operator=OPERATOR,
+            idempotency_key=_uid("idem"),
+            request_fingerprint="f" * 64,
+        )
+
+    assert "adopted_quote_number_legacy_space" in str(excinfo.value)
+
+    with admin_conn.cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM commercial.customer_quote")
+        assert cur.fetchone()["n"] == 0
+
+
+def test_a_refused_adoption_does_not_consume_the_idempotency_key(
+    admin_conn: object, repo: PostgresCustomerQuoteRepository
+) -> None:
+    """The number-space guard runs before any connection is opened, so a
+    refused command leaves no claim behind and the same key is reusable
+    once the operator corrects the number."""
+
+    sales_id = _uid("sales")
+    _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
+    idempotency_key = _uid("idem")
+
+    with pytest.raises(QuoteNumberSpaceError):
+        repo.adopt_drive_folder(
+            quote_id=_uid("quote"),
+            sales_opportunity_id=sales_id,
+            document_number="CN01192",
+            quote_number="COT-2019-015",
+            folder_id="drive-folder-legacy-2",
+            folder_web_url="https://drive.google.com/drive/folders/legacy2",
+            operator=OPERATOR,
+            idempotency_key=idempotency_key,
+            request_fingerprint="f" * 64,
+        )
+
+    with admin_conn.cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM commercial.command_idempotency")
+        assert cur.fetchone()["n"] == 0
+
+    bundle = repo.adopt_drive_folder(
+        quote_id=_uid("quote"),
+        sales_opportunity_id=sales_id,
+        document_number="CN01192",
+        quote_number="01192-19",
+        folder_id="drive-folder-legacy-2",
+        folder_web_url="https://drive.google.com/drive/folders/legacy2",
+        operator=OPERATOR,
+        idempotency_key=idempotency_key,
+        request_fingerprint="f" * 64,
+    )
+
+    assert bundle.quote.quote_number == "01192-19"
+
+
+def test_adopt_drive_folder_rejects_the_01500_26_historical_outlier(
+    admin_conn: object, repo: PostgresCustomerQuoteRepository
+) -> None:
+    """01500-26 is a historical manual-numbering error the owner decided to
+    leave exactly as it is. Adopting it *is* importing it, so it is refused
+    -- and refused even with no series row, since the rule is about the
+    document, not about the counter's current position."""
+
+    sales_id = _uid("sales")
+    _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
+
+    with pytest.raises(QuoteSerialReservedError) as excinfo:
+        repo.adopt_drive_folder(
+            quote_id=_uid("quote"),
+            sales_opportunity_id=sales_id,
+            document_number="CN01500",
+            quote_number="01500-26",
+            folder_id="drive-folder-1500",
+            folder_web_url="https://drive.google.com/drive/folders/1500",
+            operator=OPERATOR,
+            idempotency_key=_uid("idem"),
+            request_fingerprint="f" * 64,
+        )
+
+    assert "adopted_quote_number_reserved_serial" in str(excinfo.value)
+
+    with admin_conn.cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM commercial.customer_quote")
+        assert cur.fetchone()["n"] == 0
+
+
+def test_adopting_a_serial_the_series_has_not_issued_yet_is_refused(
+    admin_conn: object, repo: PostgresCustomerQuoteRepository
+) -> None:
+    """A serial at or beyond next_serial has not been handed out, so
+    adopting it would booby-trap a future allocation into a UNIQUE
+    violation. Only an already-issued number can be adopted."""
+
+    sales_id = _uid("sales")
+    _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
+
+    # Activate the series and issue serial 1235; next_serial is now 1236.
+    first = repo.create_quote(
+        quote_id=_uid("quote"),
+        sales_opportunity_id=sales_id,
+        operator=OPERATOR,
+        idempotency_key=_uid("idem"),
+        request_fingerprint="f" * 64,
+        numbering=QuoteNumberingConfig(
+            document_prefix="CN", serial_pad_width=5, seed_next_serial=1235
+        ),
+        template_reference=None,
+    )
+
+    assert first.quote.quote_number.startswith("01235-")
+
+    with pytest.raises(CommercialOperationConflictError) as excinfo:
+        repo.adopt_drive_folder(
+            quote_id=_uid("quote"),
+            sales_opportunity_id=sales_id,
+            document_number="CN01300",
+            quote_number="01300-26",
+            folder_id="drive-folder-1300",
+            folder_web_url="https://drive.google.com/drive/folders/1300",
+            operator=OPERATOR,
+            idempotency_key=_uid("idem"),
+            request_fingerprint="f" * 64,
+        )
+
+    assert "adopted_quote_number_not_yet_issued" in str(excinfo.value)
+
+
+def test_adopting_an_already_issued_serial_is_allowed(
+    admin_conn: object, repo: PostgresCustomerQuoteRepository
+) -> None:
+    """The historical-adoption case the feature exists for: a real older
+    quotation whose serial the series has already passed."""
+
+    sales_id = _uid("sales")
+    _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
+
+    repo.create_quote(
+        quote_id=_uid("quote"),
+        sales_opportunity_id=sales_id,
+        operator=OPERATOR,
+        idempotency_key=_uid("idem"),
+        request_fingerprint="f" * 64,
+        numbering=QuoteNumberingConfig(
+            document_prefix="CN", serial_pad_width=5, seed_next_serial=1235
+        ),
+        template_reference=None,
+    )
+
+    bundle = repo.adopt_drive_folder(
+        quote_id=_uid("quote"),
+        sales_opportunity_id=sales_id,
+        document_number="CN01191",
+        quote_number="01191-24",
+        folder_id="drive-folder-1191-adopt",
+        folder_web_url="https://drive.google.com/drive/folders/1191",
+        operator=OPERATOR,
+        idempotency_key=_uid("idem"),
+        request_fingerprint="f" * 64,
+    )
+
+    assert bundle.quote.quote_number == "01191-24"
+    assert bundle.quote.quote_origin == "adopted"
+    assert bundle.quote.serial is None
+
+
+def test_adopting_a_non_origenlab_format_number_is_still_allowed(
+    admin_conn: object, repo: PostgresCustomerQuoteRepository
+) -> None:
+    """A quotation predating this rendering is legitimate history. Only the
+    legacy Labdelivery space and the reserved outlier are refused -- the
+    guard must not become a general format lock on adoption."""
+
+    sales_id = _uid("sales")
+    _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
+
+    bundle = repo.adopt_drive_folder(
+        quote_id=_uid("quote"),
+        sales_opportunity_id=sales_id,
+        document_number="LEGACY-DOC-7",
+        quote_number="PRESUPUESTO 7",
+        folder_id="drive-folder-legacy-free",
+        folder_web_url="https://drive.google.com/drive/folders/legacyfree",
+        operator=OPERATOR,
+        idempotency_key=_uid("idem"),
+        request_fingerprint="f" * 64,
+    )
+
+    assert bundle.quote.quote_number == "PRESUPUESTO 7"
+
+
+def test_the_allocator_refuses_the_reserved_serial_and_rolls_it_back(
+    admin_conn: object, repo: PostgresCustomerQuoteRepository
+) -> None:
+    """When the series reaches the reserved serial, creation fails closed
+    rather than skipping it -- and because the guard raises inside the
+    allocation transaction, the refused serial is rolled back rather than
+    consumed. The operator advances the series deliberately."""
+
+    sales_id = _uid("sales")
+    _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
+
+    numbering = QuoteNumberingConfig(
+        document_prefix="CN", serial_pad_width=5, seed_next_serial=1500
+    )
+
+    with pytest.raises(QuoteSerialReservedError) as excinfo:
+        repo.create_quote(
+            quote_id=_uid("quote"),
+            sales_opportunity_id=sales_id,
+            operator=OPERATOR,
+            idempotency_key=_uid("idem"),
+            request_fingerprint="f" * 64,
+            numbering=numbering,
+            template_reference=None,
+        )
+
+    assert "quote_serial_reserved" in str(excinfo.value)
+
+    with admin_conn.cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM commercial.customer_quote")
+        assert cur.fetchone()["n"] == 0
+
+        # Rolled back, not consumed: the series is untouched.
+        cur.execute(
+            "SELECT count(*) AS n FROM commercial.customer_quote_number_series"
+        )
+        assert cur.fetchone()["n"] == 0
+
+    # Advanced deliberately past the exception, creation succeeds.
+    bundle = repo.create_quote(
+        quote_id=_uid("quote"),
+        sales_opportunity_id=sales_id,
+        operator=OPERATOR,
+        idempotency_key=_uid("idem"),
+        request_fingerprint="f" * 64,
+        numbering=QuoteNumberingConfig(
+            document_prefix="CN", serial_pad_width=5, seed_next_serial=1501
+        ),
+        template_reference=None,
+    )
+
+    assert bundle.quote.quote_number.startswith("01501-")
+    assert bundle.quote.document_number == "CN01501"
+
+
+def test_generated_quotes_render_the_decided_d2b_identifiers(
+    admin_conn: object, repo: PostgresCustomerQuoteRepository
+) -> None:
+    """End-to-end proof of the seeded rendering against a real database:
+    serial 1235 -> quote_number "01235-YY", document_number "CN01235", and
+    a single global sequence that just keeps counting."""
+
+    sales_id = _uid("sales")
+    _seed_sales_opportunity(admin_conn, sales_opportunity_id=sales_id)
+
+    numbering = QuoteNumberingConfig(
+        document_prefix="CN", serial_pad_width=5, seed_next_serial=1235
+    )
+
+    first = repo.create_quote(
+        quote_id=_uid("quote"),
+        sales_opportunity_id=sales_id,
+        operator=OPERATOR,
+        idempotency_key=_uid("idem"),
+        request_fingerprint="f" * 64,
+        numbering=numbering,
+        template_reference=None,
+    )
+    second = repo.create_quote(
+        quote_id=_uid("quote"),
+        sales_opportunity_id=sales_id,
+        operator=OPERATOR,
+        idempotency_key=_uid("idem"),
+        request_fingerprint="f" * 64,
+        numbering=numbering,
+        template_reference=None,
+    )
+
+    assert first.quote.serial == 1235
+    assert first.quote.document_number == "CN01235"
+    assert first.quote.quote_number == (
+        f"01235-{first.quote.issue_year % 100:02d}"
+    )
+
+    # One global sequence: the next quote is 1236, never a reset.
+    assert second.quote.serial == 1236
+    assert second.quote.document_number == "CN01236"
+
+    # Revision 1 is unsuffixed on both identifiers.
+    assert first.revision.revision_number == 1
+    assert " " not in first.quote.quote_number.removeprefix("01235-")
+    assert first.quote.document_number == "CN01235"

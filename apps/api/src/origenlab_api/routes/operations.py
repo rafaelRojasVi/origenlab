@@ -25,6 +25,7 @@ from origenlab_api.repositories.postgres.commercial_operations import (
 from origenlab_api.repositories.postgres.customer_quotes import (
     QuoteNumberingNotConfiguredError,
     QuoteNumberingPolicyMismatchError,
+    QuoteSerialReservedError,
 )
 from origenlab_api.schemas.commercial_operations import (
     ActivityCreateCommand,
@@ -806,6 +807,16 @@ def create_customer_quote(
                 "numbering disagrees with the already-activated durable "
                 "series policy"
             ),
+        ) from exc
+    except QuoteSerialReservedError as exc:
+        # Not operator input (this body is empty): the series has reached a
+        # serial reserved by a historical numbering exception and an
+        # operator must advance it deliberately. Same 503 family as the
+        # other "numbering needs an operator decision" outcomes -- never a
+        # 422, which would blame the caller for a series-state problem.
+        raise HTTPException(
+            status_code=503,
+            detail=str(exc),
         ) from exc
     except (
         CommercialOperationNotFoundError,

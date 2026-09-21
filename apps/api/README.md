@@ -213,7 +213,7 @@ Postgres URL is **not** required.
 | `ORIGENLAB_DRIVE_CREDENTIALS_FILE` | Credentials JSON path for the configured auth mode |
 | `ORIGENLAB_DRIVE_EXPECTED_PRINCIPAL_EMAIL` | Expected Drive identity (e.g. `contacto@origenlab.cl`); the preflight check fails closed as `drive_principal_mismatch` if the credentials belong to any other account |
 | `ORIGENLAB_DRIVE_SHARED_DRIVE_ID` | Shared Drive ID; **required** in `service_account_shared_drive` mode, optional in `authorized_user_my_drive` mode |
-| `ORIGENLAB_QUOTE_DOCUMENT_PREFIX` / `_SERIAL_PAD_WIDTH` / `_SEED_NEXT_SERIAL` | The recorded quote-numbering business decision; quote creation returns `quote_numbering_not_configured` (503) until all three are set. The seed applies only on the first allocation; the durable `commercial.customer_quote_number_series` row is the counter truth afterwards. |
+| `ORIGENLAB_QUOTE_DOCUMENT_PREFIX` / `_SERIAL_PAD_WIDTH` / `_SEED_NEXT_SERIAL` | The recorded quote-numbering business decision (D2b, 2026-09-21: `CN` / `5` / `1235`); quote creation returns `quote_numbering_not_configured` (503) until all three are set. The seed applies only on the first allocation; the durable `commercial.customer_quote_number_series` row is the counter truth afterwards. Rules and rendering: [`docs/business/BUSINESS_RULES_QUOTES_AND_SUPPLIERS.md`](../../docs/business/BUSINESS_RULES_QUOTES_AND_SUPPLIERS.md) §2.3, enforced by `src/origenlab_api/quote_numbering.py`. |
 
 **Quote numbering (CRM-Q1D):** one allocated serial powers two distinct
 identifiers -- they are never the same string:

@@ -323,6 +323,16 @@ project is adopted).
   by hand in the Render dashboard, **every `POST /operations/*` durable write is
   returning 503 in production** and the Cotizaciones and Pipeline boards cannot
   write. Record the answer here once checked.
+- **Quote numbering is decided but not activated.** The D2b business decision
+  was recorded 2026-09-21 (`CN` / pad 5 / seed **1235** —
+  [`business/BUSINESS_RULES_QUOTES_AND_SUPPLIERS.md`](business/BUSINESS_RULES_QUOTES_AND_SUPPLIERS.md)
+  §2.3) and the rules are implemented and tested in `apps/api`. The three
+  `ORIGENLAB_QUOTE_*` variables are **not** set anywhere in the repository, so
+  quote creation still fails closed as `quote_numbering_not_configured` (503).
+  `commercial.customer_quote_number_series` has **never been seeded**; the
+  first allocation on the deployed database will fix the series policy
+  permanently, so confirm the seed before setting it. No migration was
+  required by D2b and the Alembic head is unchanged.
 
 ## 4. Cross-era hazards
 
