@@ -24,9 +24,12 @@ de Cloudflare antes de dar por hecho el comportamiento de caché o de cabeceras.
 - **Site:** Static Astro + Tailwind site.
 - **Hosting:** HostGator shared hosting.
 - **Domain:** origenlab.cl (primary domain in cPanel).
-- **Deployment method:** GitHub Actions (`web-deploy`) builds, validates and
-  syncs `apps/web/dist/` to the cPanel public folder over SSH + rsync, gated by
-  the `production` environment's manual approval. See
+- **Deployment method:** GitHub Actions (`web-deploy`). A push to `main` only
+  builds and validates — **it never deploys and never opens SSH.** The real
+  deploy is a manual *Run workflow* with `apply = true`, which syncs
+  `apps/web/dist/` to the cPanel public folder over SSH + rsync behind the
+  `production` environment's manual approval; with `apply = false` it stops at
+  an rsync dry run. See
   [deployment.md](deployment.md). **Not yet exercised against the real host:**
   the environment, its five secrets and the confirmed document root are still
   pending, and until they exist the workflow stops before opening any

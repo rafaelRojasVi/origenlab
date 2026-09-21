@@ -27,7 +27,7 @@ of truth*). Any PR that changes what is built, applied or deployed updates this
 file — including the `Last verified` line — **in the same PR**. A PR that only
 changes design, rules or targets does not touch it.
 
-Last verified: **2026-09-21**, against `origin/main` @ `57f3d3dd`, measured from the local
+Last verified: **2026-09-21**, against `origin/main` @ `bc8f4a82`, measured from the local
 PostgreSQL 17 carrying the Slice 0 migrations. §2.5's hosted facts are measurements taken by the
 Slice 0 audit itself on 2026-09-21, over the reviewed Supavisor session route inside a server-
 confirmed read-only transaction, together with authenticated control-plane reads; the earlier
@@ -637,7 +637,7 @@ proven there.
 | Operator machine | `auto-refresh-mail` every 3 min; `auto-mirror-dashboard` every 1 min; systemd user units for the local API |
 | HostGator (cPanel) | the public site `origenlab.cl`, served from the cPanel document root behind a Cloudflare proxy. Files still arrive by **manual upload** |
 | GitHub Actions | 8 workflows; **none is scheduled** — all are push/PR path-filtered or `workflow_dispatch` |
-| GitHub Actions → cPanel | `web-deploy` builds `apps/web`, runs `npm run validate` and mirrors `dist/` into the cPanel public folder over SSH + rsync. **Merged but never run against the real host:** the `production` environment, its five secrets (`CPANEL_HOST`, `CPANEL_PORT`, `CPANEL_USER`, `CPANEL_SSH_KEY`, `CPANEL_WEB_ROOT`) and the confirmed document root do not exist yet, so every run stops before opening a connection |
+| GitHub Actions → cPanel | `web-deploy`, two jobs. `build` runs `npm ci` and `npm run validate` and publishes the validated `dist/` as an artifact; it holds no secret and no environment. `deploy` mirrors that artifact into the cPanel public folder over SSH + rsync, and is **`workflow_dispatch` only, in the `production` environment** — a push to `main` never creates it, so no push can open an SSH connection. `apply=false` stops after the rsync dry run. **Never run against the real host:** the `production` environment, its five secrets (`CPANEL_HOST`, `CPANEL_PORT`, `CPANEL_USER`, `CPANEL_SSH_KEY`, `CPANEL_WEB_ROOT`) and the confirmed document root do not exist yet, so every run stops before opening a connection |
 
 ### 3.2 Known operational facts that surprise people
 

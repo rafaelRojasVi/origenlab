@@ -13,16 +13,31 @@ construye el sitio y sincroniza `apps/web/dist/` con la carpeta pública de
 cPanel. Es el camino previsto; la subida manual de más abajo queda como
 respaldo cuando Actions no está disponible.
 
-**Qué hace, en orden.** `npm ci` → instala Chromium para las puertas de QA →
-`npm run validate` (comprobación de tipos, build, catálogo, marcas, imágenes,
-invariantes de `dist/`, contraste e interacción) → **ensayo** de rsync →
-sincronización real. Si cualquier paso falla, no se toca el servidor: el ensayo
-y la sincronización van después de la validación, no antes.
+**Dos trabajos, y la separación es lo que da la garantía.**
 
-**Cuándo corre.** Al empujar a `main` algo bajo `apps/web/**`, y a mano con
-*Run workflow* (`workflow_dispatch`). El trabajo declara el entorno
-`production`, que exige **aprobación manual**: cada despliegue espera a que un
-revisor lo apruebe en la pestaña Actions.
+| Trabajo | Qué hace | Secretos | Entorno |
+|---|---|---|---|
+| `build` | `npm ci` → Chromium para las puertas de QA → `npm run validate` → publica el `dist/` validado como artefacto | ninguno | ninguno |
+| `deploy` | descarga ese `dist/` → prepara la llave SSH → **ensayo** de rsync → sincronización real | los cinco de cPanel | `production` |
+
+`deploy` sincroniza exactamente los bytes que `build` validó, porque recibe el
+artefacto en lugar de reconstruir el sitio.
+
+**Cuándo corre cada uno.**
+
+| Disparador | `build` | `deploy` |
+|---|---|---|
+| push a `main` bajo `apps/web/**` | sí | **no, nunca** |
+| *Run workflow* con `apply` = `false` | sí | sí, y termina en el ensayo |
+| *Run workflow* con `apply` = `true` | sí | sí, y sincroniza de verdad |
+
+**Un push a `main` no puede desplegar.** No es que una condición lo impida: el
+trabajo que tiene acceso a los secretos **no se crea** para un push, así que no
+hay llave SSH ni conexión posible en la ruta de integración continua.
+
+**`deploy` siempre pide aprobación**, con `apply` en `false` o en `true`, porque
+declara el entorno `production`. El ensayo ya abre una conexión SSH al servidor,
+y ninguna conexión al alojamiento debería ocurrir sin que alguien la apruebe.
 
 **Qué sube.** Sólo el contenido de `apps/web/dist/`, incluido `.htaccess`.
 Nunca el repositorio, nunca el directorio personal. `rsync --delete` convierte la carpeta pública en un espejo exacto de `dist/`:
@@ -85,6 +100,9 @@ desplieguen hasta que un profesional chileno revise el texto y
 `src/data/legal.ts` tenga la identidad legal. Un despliegue automático las
 publica igualmente, sin indexar. Resolver ese punto —o excluir esas rutas— es
 condición para pasar de ensayo a `--apply`.
+
+Nada de esto llega por un push: el único camino a `--apply` es lanzar el
+workflow a mano con `apply` en `true` y aprobar `production`.
 
 ### Secretos (GitHub → Settings → Environments → production)
 
