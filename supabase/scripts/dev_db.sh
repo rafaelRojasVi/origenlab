@@ -365,7 +365,13 @@ cmd_checkpoint() {
   [[ -s "$tmp" ]] || { rm -f "$tmp"; die "pg_dump produced an empty file; no checkpoint was written"; }
   gzip -t "$tmp" 2>/dev/null \
     || { rm -f "$tmp"; die "pg_dump produced a file gzip cannot read; no checkpoint was written"; }
-  gunzip -c "$tmp" | grep -q 'PostgreSQL database dump' \
+  # The header is captured, not piped into `grep -q`. Under `pipefail`, a `grep -q` that exits
+  # on the first match SIGPIPEs gunzip and the pipeline reports gunzip's failure — which looks
+  # exactly like a corrupt dump. A small dump hides it, because gunzip finishes first; a real one
+  # does not.
+  local header
+  header="$(gunzip -c "$tmp" 2>/dev/null | head -n 20 || true)"
+  [[ "$header" == *"PostgreSQL database dump"* ]] \
     || { rm -f "$tmp"; die "the compressed file is not a PostgreSQL dump; no checkpoint was written"; }
 
   mv "$tmp" "$out"
