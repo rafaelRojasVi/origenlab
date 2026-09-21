@@ -115,16 +115,18 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 | SQL check files | 15, under `supabase/audit/sql/`, each statically proven to be a single read before any connection is opened |
 | Engine checks | 9 — one API-key-type record, seven operator attestations, one derived Data API conclusion |
 | Committed baseline | `supabase/audit/baselines/slice0.json`, captured from a clean local `supabase db reset` and reviewed in the change that added it |
-| Unit tests | **273** — `python3 -m unittest discover -s supabase/audit/tests -t supabase/audit` (211 audit + 62 hosted bootstrap, §2.4); 56 of them were added with the Supavisor route |
-| Failure-injection checks | **71** — `supabase/scripts/audit_failure_tests.sh`, including scenario M: the Supavisor route's trust model, end to end, with no database |
+| Unit tests | **292** — `python3 -m unittest discover -s supabase/audit/tests -t supabase/audit` (230 audit + 62 hosted bootstrap, §2.4); 56 of them were added with the Supavisor route and 19 with the psql-invocation boundary (`tests/test_psql_invocation.py`) |
+| Failure-injection checks | **80** — `supabase/scripts/audit_failure_tests.sh`, including scenario M (the Supavisor route's trust model, end to end, with no database) and scenario N (a planted `~/.psqlrc` and a hostile libpq environment against the local database) |
 | Local verdict | `LOCAL_PASS` — 13 required proofs satisfied, `a13` corroborated, `a14` recorded |
 | Hosted runs performed | **zero.** No hosted run has ever completed, on either route, and no PostgreSQL audit of a hosted project has succeeded — §2.5 |
 | Write capability | **none.** No write mode, no baseline-writing mode, no redaction-disabling flag, and no mutation statement in either mode |
 
-The one place a write is attempted anywhere in this tooling is
-`audit_failure_tests.sh` scenario L, the negative test proving the audit's read-only
-transaction refuses a mutation with SQLSTATE `25006`. It runs only against the
-disposable local database, inside a rollback-only harness.
+The one place the tooling itself attempts a write is `audit_failure_tests.sh`
+scenario L, the negative test proving the audit's read-only transaction refuses a
+mutation with SQLSTATE `25006`. Scenario N plants a write in a malicious `~/.psqlrc`
+and proves the audit never executes it — its positive control first shows the same
+file does create the marker when `-X` is absent. Both run only against the disposable
+local database; L is rollback-only, and N drops its marker on both paths.
 
 ### 2.4 Hosted role bootstrap — measured
 
