@@ -68,6 +68,7 @@ flowchart LR
 | Postgres durable CRM | Human commercial truth — sales opportunities, tasks, activities, organizations, contacts |
 | API / proxy / dashboard | Reads + allowlisted `/operations/*` CRM commands; mirror data is **not** send approval |
 | `apps/web` | Public marketing site (separate from operator stack) |
+| `apps/newsletter-worker` | Newsletter subscription endpoint and consent ledger (not deployed) |
 
 Two debounced cron loops keep ingest and publish separate: Gmail → SQLite (~3 min) and SQLite → Postgres/dashboard (every minute; default 60s cooldown). Runbook: [`apps/email-pipeline/docs/pipeline/OPERATOR_CRON.md`](apps/email-pipeline/docs/pipeline/OPERATOR_CRON.md)
 
@@ -80,6 +81,7 @@ Two debounced cron loops keep ingest and publish separate: Gmail → SQLite (~3 
 | **Operator API** | [`apps/api/`](apps/api/) | FastAPI `:8001` | Durable CRM commands under `/operations/*` only (+ tender annex import) |
 | **Dashboard** | [`apps/dashboard/`](apps/dashboard/) | React, Vite `:5173` | Via allowlisted API commands only |
 | **Dashboard proxy** | [`apps/dashboard-proxy/`](apps/dashboard-proxy/) | Cloudflare Worker | Trust boundary — strict method+path allowlist |
+| **Newsletter worker** | [`apps/newsletter-worker/`](apps/newsletter-worker/) | Cloudflare Worker + D1 | Public subscription ingress and consent evidence. Not deployed; never the campaign authority |
 
 **Default ports:** API `:8001` · Dashboard `:5173` · Web `:4321`
 

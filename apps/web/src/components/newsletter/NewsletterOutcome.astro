@@ -1,0 +1,73 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import PageIntro from '../ui/PageIntro.astro';
+import NewsletterPreviewNotice from './NewsletterPreviewNotice.astro';
+import { isNewsletterPublished } from '../../data/newsletter';
+import { contact } from '../../data/contact';
+
+/**
+ * Página de resultado del boletín.
+ *
+ * Existe para que el camino sin JavaScript sea real: el Worker redirige aquí
+ * en vez de responder con una página propia, de modo que el resultado se lee
+ * con el mismo diseño que el resto del sitio y no hay una segunda plantilla
+ * que mantener.
+ *
+ * Ninguna de estas páginas lleva parámetros en la URL ni los interpreta: cada
+ * resultado es una ruta distinta. Un mensaje que dependa de una cadena de
+ * consulta se puede falsificar escribiéndola a mano, y aquí eso significaría
+ * enseñar un éxito que no ocurrió.
+ */
+interface Props {
+  title: string;
+  description: string;
+  heading: string;
+  lead: string;
+  tone?: 'neutral' | 'ok' | 'error';
+}
+
+const { title, description, heading, lead, tone = 'neutral' } = Astro.props;
+const published = isNewsletterPublished();
+---
+
+<Layout title={title} description={description} noindex={!published}>
+  <div class="shell">
+    <PageIntro
+      title={heading}
+      lead={lead}
+      crumbs={[{ label: 'Boletín', href: '/newsletter/' }, { label: title }]}
+    />
+    <NewsletterPreviewNotice />
+  </div>
+
+  <section class="shell section rule-top" aria-label="Detalle">
+    <div class:list={['outcome', `outcome--${tone}`]}>
+      <slot />
+    </div>
+    <p class="t-small outcome__foot">
+      Si algo no funciona como espera, escríbanos a
+      <a class="link-plain" href={`mailto:${contact.email}`}>{contact.email}</a>.
+    </p>
+  </section>
+</Layout>
+
+<style>
+  .outcome {
+    max-width: 60ch;
+    padding-left: 1.25rem;
+    border-left: 2px solid var(--color-ink-500);
+  }
+  .outcome--ok {
+    border-left-color: var(--color-teal-700);
+  }
+  .outcome--error {
+    border-left-color: var(--color-family-electroforesis);
+  }
+  .outcome :global(p + p) {
+    margin-top: 1rem;
+  }
+  .outcome__foot {
+    margin-top: 2.5rem;
+    color: var(--color-ink-500);
+  }
+</style>

@@ -12,7 +12,15 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const dist = join(root, 'dist');
+/**
+ * Carpeta a comprobar. Por defecto `dist/`, la compilación de producción. La
+ * compilación de vista previa del boletín se escribe en `dist-preview/` y se
+ * comprueba pasando esa carpeta como argumento, con las reglas invertidas: en
+ * `dist/` no puede haber formulario, y en la vista previa tiene que haberlo.
+ */
+const target = process.argv[2] ?? 'dist';
+const dist = join(root, target);
+const isPreview = target !== 'dist';
 let failed = false;
 
 function assert(condition, message) {
@@ -23,7 +31,7 @@ function assert(condition, message) {
 }
 
 if (!existsSync(dist)) {
-  console.error('dist/ no existe: ejecute npm run build primero');
+  console.error(`${target}/ no existe: ejecute npm run build primero`);
   process.exit(1);
 }
 
@@ -41,17 +49,45 @@ const pages = walk(dist, '.html').filter((file) => !relative(dist, file).startsW
 assert(pages.length >= 20, `dist: se esperaban al menos 20 páginas, hay ${pages.length}`);
 
 /**
- * Superficies que no se indexan: la página de trabajo de marca, el 404 y los
- * dos borradores legales. Las rutas legales salen de esta lista el día que
+ * Superficies que no se indexan: la página de trabajo de marca, el 404 y las
+ * tres rutas legales. Las rutas legales salen de esta lista el día que
  * `legal.ts` registre una revisión profesional; hasta entonces se sirven con
  * noindex, fuera del sitemap y con Disallow en robots.txt.
+ *
+ * Las rutas del boletín sólo aparecen en la compilación de vista previa: en
+ * `dist/` no existe ninguna mientras el servicio siga desactivado, porque
+ * `src/pages/newsletter/[...slug].astro` no emite ninguna página. Siguen aquí
+ * para que la vista previa también se compruebe.
  */
 const INTERNAL = [
   'logo-lab/index.html',
   '404.html',
   'privacidad/index.html',
+  'cookies/index.html',
   'aviso-legal/index.html',
+  'newsletter/index.html',
+  'newsletter/solicitud-recibida/index.html',
+  'newsletter/no-enviado/index.html',
+  'newsletter/confirmada/index.html',
+  'newsletter/enlace-no-valido/index.html',
+  'newsletter/baja-confirmada/index.html',
 ];
+
+/**
+ * Rutas cuyo `noindex` se sostiene en cuatro capas a la vez: la etiqueta meta,
+ * la ausencia del sitemap, el `Disallow` de robots.txt y el `X-Robots-Tag` de
+ * .htaccess. Comprobarlas juntas evita el fallo real de este sitio, que es
+ * abrir una capa y olvidar las otras tres.
+ */
+const SUPPRESSED_ROUTES = ['/privacidad/', '/cookies/', '/aviso-legal/', '/newsletter/'];
+
+/**
+ * Afirmaciones de privacidad cuya verdad depende del HTML construido. Si el
+ * sitio dice que no tiene formularios, no puede tener ninguno; si tiene uno, no
+ * puede seguir diciéndolo. La redacción literal vive en src/data/legal.ts.
+ */
+const NO_FORMS_CLAIM = 'El sitio no tiene formularios ni recibe envíos';
+const NO_APP_STORAGE_CLAIM = 'La aplicación de OrigenLab no fija cookies ni almacenamiento del navegador';
 
 /**
  * Afirmaciones sin aprobar: su redacción literal no puede aparecer en ninguna
@@ -152,6 +188,25 @@ for (const file of pages) {
     );
   }
 
+  /* -- Formularios -------------------------------------------------------
+   * El sitio tuvo cero formularios durante todo el rediseño y la política de
+   * privacidad lo afirmaba. Ahora puede tener uno, el del boletín, y la
+   * afirmación tiene que seguir al hecho en la misma compilación.
+   */
+  for (const tag of html.matchAll(/<form\b[^>]*>/g)) {
+    const attrs = tag[0];
+    assert(
+      /data-newsletter-form/.test(attrs),
+      at(`formulario no declarado: ${attrs.slice(0, 90)}`),
+    );
+    const action = attrs.match(/action="([^"]*)"/)?.[1] ?? '';
+    assert(
+      action.startsWith('/') && !action.startsWith('//'),
+      at(`el formulario envía fuera del propio dominio: ${action}`),
+    );
+    assert(/method="post"/i.test(attrs), at('el formulario del boletín tiene que enviar por POST'));
+  }
+
   /* -- Superficies internas --------------------------------------------- */
   if (INTERNAL.includes(rel)) {
     assert(/<meta name="robots" content="noindex/.test(html), at('superficie interna sin noindex'));
@@ -160,6 +215,48 @@ for (const file of pages) {
   }
 }
 
+
+/* -- Coherencia entre lo que el sitio hace y lo que dice ------------------
+ *
+ * Dos direcciones, y las dos importan:
+ *
+ *   1. En `dist/` no puede haber ningún formulario mientras el boletín no esté
+ *      activado. Es la red que atrapa una activación accidental: si alguien
+ *      compila con la variable de vista previa y despliega ese resultado, la
+ *      validación falla antes del despliegue en vez de publicar un formulario
+ *      que no registra nada.
+ *   2. Haya formulario o no, la política de privacidad tiene que decir lo que
+ *      corresponda. Un sitio con formulario que afirma no tenerlo es una
+ *      declaración falsa, no una errata.
+ */
+const allHtml = pages.map((file) => readFileSync(file, 'utf8'));
+const formPages = pages.filter((_file, i) => /<form\b/.test(allHtml[i])).map((f) => relative(dist, f));
+const claimsNoForms = allHtml.some((html) => html.includes(NO_FORMS_CLAIM));
+
+if (isPreview) {
+  assert(
+    formPages.length > 0,
+    'vista previa: se esperaba al menos un formulario del boletín y no hay ninguno',
+  );
+} else {
+  assert(
+    formPages.length === 0,
+    `dist: el boletín no está activado y hay formulario en ${formPages.join(', ')}. Una compilación de vista previa no se despliega`,
+  );
+}
+
+assert(
+  formPages.length === 0 || !claimsNoForms,
+  `coherencia: el sitio tiene formulario en ${formPages.join(', ')} y sigue afirmando "${NO_FORMS_CLAIM}"`,
+);
+assert(
+  formPages.length > 0 || claimsNoForms,
+  `coherencia: el sitio no tiene formularios y la política ya no lo afirma. Redacción esperada: "${NO_FORMS_CLAIM}"`,
+);
+assert(
+  allHtml.some((html) => html.includes(NO_APP_STORAGE_CLAIM)),
+  `coherencia: falta la afirmación acotada sobre almacenamiento: "${NO_APP_STORAGE_CLAIM}"`,
+);
 
 /**
  * Elimina todos los elementos `<name>…</name>` sin distinguir mayúsculas y
@@ -205,19 +302,24 @@ const robots = readFileSync(join(dist, 'robots.txt'), 'utf8');
 assert(robots.includes('Sitemap: https://origenlab.cl/sitemap-index.xml'), 'robots.txt: sitemap mal referenciado');
 assert(robots.includes('Disallow: /logo-lab/'), 'robots.txt: /logo-lab/ debe quedar fuera del índice');
 assert(robots.includes('Disallow: /email/'), 'robots.txt: /email/ debe quedar fuera del índice');
-for (const route of ['/privacidad/', '/aviso-legal/']) {
-  assert(robots.includes(`Disallow: ${route}`), `robots.txt: el borrador ${route} debe quedar fuera del índice`);
-  assert(!sitemapUrls.some((url) => url.includes(route)), `sitemap: contiene el borrador legal ${route}`);
+for (const route of SUPPRESSED_ROUTES) {
+  assert(robots.includes(`Disallow: ${route}`), `robots.txt: ${route} debe quedar fuera del índice`);
+  assert(!sitemapUrls.some((url) => url.includes(route)), `sitemap: contiene la ruta suprimida ${route}`);
 }
 
 const htaccess = readFileSync(join(dist, '.htaccess'), 'utf8');
 assert(htaccess.includes('ErrorDocument 404 /404.html'), '.htaccess: falta ErrorDocument');
 assert(/RewriteCond %\{HTTP_HOST\} \^www\\\./.test(htaccess), '.htaccess: falta la redirección de www al dominio raíz');
 assert(htaccess.includes('Content-Security-Policy'), '.htaccess: falta la CSP');
-assert(
-  /X-Robots-Tag[\s\S]{0,200}privacidad|privacidad[\s\S]{0,200}X-Robots-Tag/.test(htaccess),
-  '.htaccess: los borradores legales necesitan X-Robots-Tag noindex',
-);
+const robotsTagRule = htaccess.match(/<If "%\{REQUEST_URI\} =~ m#\^\/\(([^)]*)\)/)?.[1] ?? '';
+assert(robotsTagRule.length > 0, '.htaccess: no se encontró la regla de X-Robots-Tag');
+for (const route of SUPPRESSED_ROUTES) {
+  const segment = route.replace(/\//g, '');
+  assert(
+    robotsTagRule.split('|').includes(segment),
+    `.htaccess: ${route} necesita X-Robots-Tag noindex`,
+  );
+}
 
 /* -- Peso ----------------------------------------------------------------- */
 

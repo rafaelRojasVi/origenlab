@@ -2,7 +2,7 @@
 
 Status: canonical
 Owner: web-maintainers
-Last reviewed: 2026-09-07
+Last reviewed: 2026-09-21
 
 Lo que el sitio **no** publica porque nadie lo ha confirmado. Ningún elemento de
 esta lista puede redactarse desde el repositorio: o lo aporta el negocio
@@ -21,40 +21,100 @@ fecha, aprobación y estado público. Una cifra sin aprobar no se renderiza, y
 
 ## 1. Identidad legal y privacidad
 
+### Decidido el 2026-09-21 (no es un pendiente)
+
+El negocio fijó cómo se presenta el sitio y esas decisiones ya no vuelven a
+esta lista:
+
+- **Nombre comercial mostrado: OrigenLab.** El sitio no publica razón social,
+  RUT, representante legal ni domicilio legal, y no se inventan datos
+  societarios desde el repositorio.
+- **Canal de consultas de privacidad: `contacto@origenlab.cl`.** No hay alias
+  `datos@` ni proceso separado.
+- **Proveedores técnicos actuales, confirmados:** HostGator (hosting),
+  Cloudflare (proxy, DNS y seguridad) y Titan (correo empresarial). Viven en
+  `technicalProviders` de `src/data/legal.ts`; ninguno más se nombra en público.
+- **El boletín sigue desactivado por completo:** sin Worker desplegado, sin D1,
+  sin remitente, sin base de datos, sin formulario y sin correos. La compilación
+  pública no contiene ninguna ruta `/newsletter/`.
+- **Las tres páginas legales son breves y no son una maqueta.** `/privacidad/`,
+  `/cookies/` y `/aviso-legal/` dicen lo que OrigenLab hace de verdad y no
+  muestran al visitante badges de borrador, contadores de datos faltantes ni
+  listas de pendientes. Ese seguimiento es este documento.
+
+### Sigue pendiente (interno, no se publica)
+
 | Pendiente | Tipo | Bloquea |
 |---|---|---|
-| Razón social, RUT y comuna del domicilio legal | CONTENIDO | Fila legal del pie, `/aviso-legal/`, campo `legalName` en JSON-LD `Organization` |
-| Texto de la política de privacidad, bases de licitud, plazos de conservación y análisis de transferencias | LEGAL | `/privacidad/` |
-| Dirección de correo para derechos del titular (por ejemplo un alias `datos@`) y proceso interno de atención | CONTENIDO | Canal de solicitudes en `/privacidad/` y `/contacto/` |
-| Si hace falta aviso de cookies con el estado actual del sitio | LEGAL | Nada hoy: el sitio no fija cookies propias ni carga terceros |
-| Estado de los acuerdos con encargados de tratamiento (Cloudflare, HostGator, Titan) | CONTENIDO / LEGAL | Inventario de encargados |
+| Revisión del texto por un profesional habilitado en Chile | LEGAL | Que las tres rutas puedan indexarse. Se registra en `legalStatus.reviewedBy` / `reviewedOn` de `src/data/legal.ts` |
+| Bases de licitud de cada tratamiento | LEGAL | Una política de privacidad que se presente como definitiva |
+| Plazos de conservación | LEGAL | Una política de privacidad que se presente como definitiva |
+| Acuerdos con encargados de tratamiento (HostGator, Cloudflare, Titan) y análisis de transferencia internacional | CONTENIDO / LEGAL | Inventario formal de encargados |
+| Comprobación en producción de qué cookies emite Cloudflare | CONTENIDO | Cualquier afirmación sobre cookies que vaya más allá de la aplicación de OrigenLab |
 
-**Estado actual verificable del sitio** (base factual para esa futura política,
-comprobado por `npm run validate:dist` en cada build): no carga ningún script,
-tipografía, imagen ni hoja de estilo de terceros; no fija cookies propias; no
-tiene formularios; no usa analítica ni píxeles. Las consultas llegan por correo o
-WhatsApp del propio visitante. Cloudflare actúa como proxy del dominio y
-HostGator como hosting, de modo que ambos procesan direcciones IP como
-proveedores de infraestructura. Ese inventario vive ahora en código, en
-`src/data/legal.ts` (`siteBehaviour`), con la comprobación de cada punto al lado.
+**Por qué las tres rutas siguen sin indexarse.** Mientras
+`legalStatus.reviewedBy` sea `null` se sirven con `noindex`, fuera del sitemap,
+con `Disallow` en `robots.txt` y con `X-Robots-Tag` en `.htaccess`, y
+`validate:dist` comprueba que las cuatro capas coincidan. Es una decisión de
+publicación: **la página no se lo explica al visitante**, porque un lector no
+necesita leer el estado de revisión interno de un texto de cuatro párrafos.
 
-**Las dos rutas existen como borrador desde la revisión de portada del
-2026-09-06.** `/privacidad/` y `/aviso-legal/` se construyen desde
-`src/data/legal.ts`, muestran lo verificado y **nombran lo que falta** en vez de
-taparlo con lenguaje genérico. Mientras `legalStatus.reviewedBy` sea `null`:
-
-- se sirven con `noindex`, fuera del sitemap, con `Disallow` en `robots.txt` y
-  con `X-Robots-Tag` en `.htaccess`;
-- el pie las enlaza marcadas como borrador, para poder revisarlas en la vista
-  previa de la rama;
-- cada una abre con un aviso que dice que no es una política vigente.
-
-**No se despliegan.** El texto final tiene que revisarlo un profesional
-habilitado en Chile antes de publicarse, y el negocio tiene que aportar la
-identidad legal de la tabla anterior.
+**Estado actual verificable del sitio** (comprobado por `npm run validate:dist`
+y `npm run validate:privacy` en cada build): no carga ningún script, tipografía,
+imagen ni hoja de estilo de terceros; no fija cookies propias ni usa
+almacenamiento del navegador; no tiene formularios; no usa analítica ni píxeles.
+Las consultas llegan por correo, teléfono o WhatsApp del propio visitante.
 
 La Ley 21.719 entra en vigor el 1 de diciembre de 2026. Qué obligaciones aplican
 a OrigenLab como operador B2B pequeño es una pregunta legal, no de ingeniería.
+
+### Cookies: qué se afirma y qué no (2026-09-21)
+
+`/cookies/` afirma algo **acotado a propósito**: «la aplicación de OrigenLab no
+fija cookies ni almacenamiento del navegador». Eso es comprobable y lo comprueba
+`validate:privacy` sobre el JavaScript construido.
+
+Lo que **no** se afirma: que no exista ninguna cookie. La página dice que
+Cloudflare, como proxy del dominio, podría usar cookies técnicas o de seguridad
+cuando sean necesarias. Nadie lo ha comprobado contra la respuesta real de
+producción, y el texto no promete su ausencia.
+
+**No hay banner, y no por descuido.** Un aviso de cookies pide permiso para
+algo; aquí no hay nada que consentir. Además, para no repetirse en cada página
+tendría que recordar la respuesta, es decir, crear el primer almacenamiento del
+sitio para gestionar el consentimiento de un almacenamiento que no existe.
+
+---
+
+## 1.b Boletín y consentimiento de marketing
+
+El formulario de suscripción está implementado y **apagado**. La activación es
+una conjunción de ocho condiciones (`newsletterGates` en
+`src/data/newsletter.ts`), no una bandera: texto legal aprobado, plazo de
+conservación aprobado, Worker desplegado, esquema D1 aplicado, remitente real
+configurado, ruta de baja operativa, prueba de humo en producción y supresión
+integrada con el envío de campañas.
+
+Mientras alguna falte, `dist/` **no contiene ninguna ruta del boletín**: ni el
+formulario, ni `/newsletter/`, ni sus páginas de resultado. Lo consigue
+`src/pages/newsletter/[...slug].astro`, cuyo `getStaticPaths` devuelve la lista
+vacía y por tanto no emite ningún archivo; `validate:dist` comprueba además que
+no haya formulario. El pie y la portada tampoco enlazan el boletín. La vista
+previa de revisión se compila con `ORIGENLAB_NEWSLETTER_PREVIEW=1` en
+`dist-preview/`, que no se despliega nunca.
+
+| Pendiente | Tipo | Bloquea |
+|---|---|---|
+| Frecuencia de envío del boletín | CONTENIDO | Cualquier frase que prometa cada cuánto llega un mensaje. Hoy el formulario no promete ninguna |
+| Plazo de conservación de una suscripción, de una baja y de su evidencia | LEGAL | Activación. Una baja tiene que conservarse más que un alta: es la prueba de que alguien pidió no recibir nada |
+| Ubicación y transferencia internacional de Cloudflare Workers y D1 | LEGAL | Activación. Guardar suscriptores en D1 es una **finalidad nueva y un sistema de almacenamiento nuevo**, no una extensión del proxy que ya existe |
+| Remitente del correo de confirmación y su acuerdo de encargado | CONTENIDO | Doble opt-in operativo. Con el remitente nulo el alta falla de forma cerrada y el formulario no se publica |
+| Puente al CRM para crear el permiso de marketing tras la confirmación | INGENIERÍA / NEGOCIO | Que la supresión sea canónica. Copiar suscriptores a mano no es una garantía suficiente: la copia se queda quieta mientras el estado de baja cambia |
+
+**Ninguna dirección histórica del CRM entra en el boletín.** El esquema del CRM
+ya lo decidió el 2026-09-14: la ausencia de opt-in explícito significa marketing
+rechazado, y la correspondencia pública, la relevancia de un proyecto, el
+historial de cotizaciones y la coincidencia de dominio **no son consentimiento**.
 
 ---
 
@@ -182,8 +242,11 @@ los laboratorios, no con testimonios inventados.
    mostrar sólo las dos con catálogo, basta con quitarlas de `brands.ts`.
 3. **Los logotipos de marca se muestran a una sola tinta**, siguiendo el criterio
    ya usado en la firma de correo.
-4. **No se creó `/cotizar/` ni un formulario.** No existe endpoint aprobado, y
-   `/contacto/` cumple ese papel con los canales reales prellenados.
+4. **No se creó `/cotizar/` ni un formulario de cotización.** No existe endpoint
+   aprobado para cotizar, y `/contacto/` cumple ese papel con los canales reales
+   prellenados. El único formulario del sitio es el del boletín, que está
+   implementado y apagado (sección 1.b); una cotización sigue saliendo por el
+   correo o el WhatsApp del propio visitante.
 5. **No se migró ninguna URL.** La navegación dice «Aplicaciones» mientras las
    rutas siguen siendo `/categorias/*`.
 

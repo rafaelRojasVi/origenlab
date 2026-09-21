@@ -1,38 +1,60 @@
 /**
- * Fuente central del estado legal del sitio y de los datos de identidad que
- * todavía faltan.
+ * Estado legal del sitio y hechos públicos de privacidad.
  *
- * Las páginas `/privacidad/` y `/aviso-legal/` se construyen desde aquí. No
- * contienen texto legal redactado como si estuviera aprobado: son borradores de
- * revisión que muestran lo verificado y **declaran expresamente lo que falta**,
- * en vez de taparlo con lenguaje jurídico genérico.
+ * Las páginas `/privacidad/`, `/cookies/` y `/aviso-legal/` se construyen desde
+ * aquí. Son páginas breves: dicen lo que OrigenLab hace de verdad con los datos
+ * que alguien le entrega y nada más. No declaran cumplimiento legal completo,
+ * no inventan identidad societaria y no muestran al visitante la lista de lo
+ * que falta por confirmar. Ese seguimiento es interno y vive en
+ * `docs/design/CONTENT_NEEDED.md`.
  *
  * Reglas de este archivo:
  *
- * - Ningún `value` puede rellenarse desde el repositorio. Razón social, RUT,
- *   domicilio, representante, responsable del tratamiento, bases de licitud y
- *   plazos de conservación los aporta el negocio o los confirma un abogado.
- * - Mientras `legalStatus.reviewedBy` sea `null`, las dos rutas se sirven con
- *   `noindex`, fuera del sitemap y marcadas como borrador en el pie.
- * - `siteBehaviour` describe lo que el sitio hace de verdad, comprobado en el
- *   código y en el build, no lo que sería cómodo afirmar.
+ * - **Identidad societaria, decidida el 2026-09-21.** El sitio se presenta con
+ *   el nombre comercial OrigenLab. No publica RUT, representante legal, razón
+ *   social ni domicilio legal, y no se rellenan desde el repositorio.
+ * - **Mientras `legalStatus.reviewedBy` sea `null`**, las tres rutas se sirven
+ *   con `noindex`, fuera del sitemap, con `Disallow` en `robots.txt` y con
+ *   `X-Robots-Tag` en `.htaccess`: sin identidad legal publicada no pueden
+ *   presentarse como definitivas. Eso no se explica en la página.
+ * - **`SITE_CLAIMS` guarda la redacción literal** de las dos afirmaciones que
+ *   `validate:dist` y `validate:privacy` comprueban sobre el HTML construido.
+ *   Si el sitio cambia de comportamiento, la validación rompe antes de que el
+ *   texto envejezca.
  */
 
 export const legalStatus = {
   /** `draft` hasta que un profesional habilitado en Chile revise el texto. */
   state: 'draft' as const,
-  lastReviewed: '2026-09-06',
-  /** Profesional que revisó y aprobó el texto. Sin esto no se publica. */
+  lastReviewed: '2026-09-21',
+  /** Profesional que revisó y aprobó el texto. Sin esto no se indexa. */
   reviewedBy: null as string | null,
   /** Fecha de esa revisión. */
   reviewedOn: null as string | null,
-  /**
-   * Aviso visible en cabecera de ambas rutas. No se suaviza: quien lo lea tiene
-   * que entender que no está frente a una política vigente.
-   */
-  draftNotice:
-    'Borrador en revisión. Este texto no es una política vigente ni asesoría legal. Falta la identidad legal de la empresa y la revisión de un profesional habilitado en Chile. Hasta entonces la página se sirve sin indexar.',
 } as const;
+
+/* -- Afirmaciones comprobadas sobre el HTML construido --------------------- */
+
+/**
+ * Redacción literal de las dos afirmaciones que las validaciones buscan en
+ * `dist/`. Viven aquí para que la frase publicada y la frase comprobada sean
+ * la misma cadena y no dos copias que se separan con el tiempo.
+ */
+export const SITE_CLAIMS = {
+  /**
+   * Sólo puede publicarse mientras la compilación no dibuje ningún formulario.
+   * `validate:dist` comprueba las dos direcciones: sitio con formulario que lo
+   * niega, y sitio sin formulario que ya no lo dice.
+   */
+  noForms: 'El sitio no tiene formularios ni recibe envíos',
+  /**
+   * Acotada a propósito a la aplicación. Lo que emita la infraestructura por
+   * delante del origen es otra cosa y la página de cookies lo dice aparte.
+   */
+  noAppStorage: 'La aplicación de OrigenLab no fija cookies ni almacenamiento del navegador',
+} as const;
+
+/* -- Pendientes internos ---------------------------------------------------- */
 
 export type FactOwner = 'CONTENIDO' | 'LEGAL';
 
@@ -46,178 +68,112 @@ export interface RequiredLegalFact {
   blocks: string;
 }
 
+/**
+ * Seguimiento interno. **No se renderiza en el sitio público.** La única
+ * superficie que lo muestra es la página del boletín, que sólo existe en la
+ * compilación de vista previa. El resto del seguimiento vive en
+ * `docs/design/CONTENT_NEEDED.md`.
+ *
+ * Los datos societarios no están en esta lista porque no son un pendiente: el
+ * negocio decidió no publicarlos.
+ */
 export const requiredLegalFacts: readonly RequiredLegalFact[] = [
-  {
-    id: 'razon-social',
-    label: 'Razón social',
-    value: null,
-    owner: 'CONTENIDO',
-    blocks: 'Identificación del titular del sitio, campo legalName en los datos estructurados',
-  },
-  {
-    id: 'rut',
-    label: 'RUT',
-    value: null,
-    owner: 'CONTENIDO',
-    blocks: 'Identificación del titular del sitio',
-  },
-  {
-    id: 'domicilio-legal',
-    label: 'Domicilio legal y comuna',
-    value: null,
-    owner: 'CONTENIDO',
-    blocks: 'Identificación del titular y domicilio de notificaciones',
-  },
-  {
-    id: 'representante-legal',
-    label: 'Representante legal',
-    value: null,
-    owner: 'CONTENIDO',
-    blocks: 'Identificación del titular del sitio',
-  },
-  {
-    id: 'responsable-tratamiento',
-    label: 'Responsable del tratamiento de datos',
-    value: null,
-    owner: 'LEGAL',
-    blocks: 'Política de privacidad: quién responde por los datos y bajo qué figura',
-  },
-  {
-    id: 'canal-derechos',
-    label: 'Canal para ejercer derechos del titular de los datos',
-    value: null,
-    owner: 'CONTENIDO',
-    blocks: 'Vía de solicitud de acceso, rectificación, cancelación y oposición',
-  },
   {
     id: 'bases-licitud',
     label: 'Bases de licitud de cada tratamiento',
     value: null,
     owner: 'LEGAL',
-    blocks: 'Política de privacidad: por qué es lícito tratar cada dato',
+    blocks: 'Una política de privacidad que se presente como definitiva',
   },
   {
     id: 'plazos-conservacion',
     label: 'Plazos de conservación',
     value: null,
     owner: 'LEGAL',
-    blocks: 'Política de privacidad: cuánto tiempo se conserva cada dato',
+    blocks: 'Una política de privacidad que se presente como definitiva',
   },
   {
     id: 'encargados-tratamiento',
     label: 'Acuerdos con encargados de tratamiento',
     value: null,
     owner: 'CONTENIDO',
-    blocks: 'Inventario de encargados y análisis de transferencia internacional',
+    blocks: 'Inventario formal de encargados y análisis de transferencia internacional',
+  },
+
+  /* -- Boletín, hoy desactivado ------------------------------------------- */
+  {
+    id: 'frecuencia-envio',
+    label: 'Frecuencia de envío del boletín',
+    value: null,
+    owner: 'CONTENIDO',
+    blocks:
+      'Cualquier frase del formulario que prometa cada cuánto llega un mensaje. Hoy el formulario no promete ninguna',
   },
   {
-    id: 'necesidad-aviso-cookies',
-    label: 'Si el estado actual del sitio exige aviso de cookies',
+    id: 'plazo-conservacion-suscripcion',
+    label: 'Plazo de conservación de una suscripción, de una baja y de su evidencia',
     value: null,
     owner: 'LEGAL',
-    blocks: 'Decisión sobre el aviso de cookies, hoy ausente por no haber cookies que avisar',
+    blocks:
+      'Activación del boletín. Una baja tiene que conservarse más tiempo que un alta, porque es la prueba de que alguien pidió no recibir nada',
+  },
+  {
+    id: 'transferencia-cloudflare-d1',
+    label: 'Análisis de ubicación y transferencia internacional de Cloudflare Workers y D1',
+    value: null,
+    owner: 'LEGAL',
+    blocks:
+      'Activación del boletín. Guardar correo, nombre, organización e intereses en D1 es una finalidad y un sistema de almacenamiento nuevos, no una extensión del proxy ya existente',
+  },
+  {
+    id: 'remitente-confirmacion',
+    label: 'Remitente del correo de confirmación y su acuerdo de encargado',
+    value: null,
+    owner: 'CONTENIDO',
+    blocks:
+      'Doble opt-in operativo. Sin remitente real no se envía confirmación y el formulario queda cerrado',
   },
 ];
 
-export interface SiteBehaviourFact {
+/* -- Proveedores técnicos actuales ----------------------------------------- */
+
+export interface TechnicalProvider {
   id: string;
   label: string;
-  detail: string;
-  /** Cómo se comprueba, para que la afirmación no dependa de la memoria. */
-  evidence: string;
+  /** Para qué interviene. Una finalidad por fila. */
+  role: string;
 }
 
 /**
- * Comportamiento técnico realmente verificado del sitio construido. Es la base
- * factual de cualquier política futura; si algo de esto cambia, el texto legal
- * cambia con ello.
+ * Los tres proveedores que hoy intervienen, confirmados por el negocio el
+ * 2026-09-21. No se nombra ninguno más: un proveedor que no está en uso no se
+ * anuncia, y el boletín sigue desactivado, sin Worker, sin base de datos y sin
+ * remitente.
  */
-export const siteBehaviour: readonly SiteBehaviourFact[] = [
+export const technicalProviders: readonly TechnicalProvider[] = [
   {
-    id: 'sin-terceros',
-    label: 'Sin recursos de terceros',
-    detail:
-      'Ninguna página carga scripts, tipografías, hojas de estilo ni imágenes de otro dominio. Las tipografías están alojadas en el propio sitio.',
-    evidence: 'npm run validate:dist recorre el HTML construido y falla ante cualquier recurso externo',
+    id: 'hostgator',
+    label: 'HostGator',
+    role: 'aloja el sitio',
   },
   {
-    id: 'sin-cookies',
-    label: 'Sin cookies propias',
-    detail:
-      'El sitio no fija cookies ni usa almacenamiento local del navegador. Por eso no hay aviso de cookies: no habría nada que consentir.',
-    evidence: 'No existe código que escriba cookies, localStorage, sessionStorage ni IndexedDB en src/',
+    id: 'cloudflare',
+    label: 'Cloudflare',
+    role: 'actúa como proxy, DNS y capa de seguridad del dominio',
   },
   {
-    id: 'sin-analitica',
-    label: 'Sin analítica ni píxeles',
-    detail:
-      'No hay analítica, gestor de etiquetas, píxel publicitario ni chat externo. Se retiró Tidio y se retiraron las tipografías de Google.',
-    evidence: 'Bloqueado en validate:catalog y en validate:dist, y por la CSP de public/.htaccess',
-  },
-  {
-    id: 'sin-formularios',
-    label: 'Sin formularios',
-    detail:
-      'El sitio no tiene formularios ni recibe envíos. No hay ningún punto en el que el sitio recoja datos que el visitante escriba.',
-    evidence: 'No existe ningún elemento form en src/, y la CSP declara form-action self',
-  },
-  {
-    id: 'javascript',
-    label: 'JavaScript mínimo y propio',
-    detail:
-      'El único JavaScript del sitio abre el menú móvil y revela secciones al desplazarse. No observa al visitante ni envía nada a ningún servidor.',
-    evidence: 'Scripts inline en src/components/SiteHeader.astro y src/pages/index.astro',
-  },
-  {
-    id: 'hosting',
-    label: 'Alojamiento y proxy',
-    detail:
-      'El sitio se sirve desde HostGator con un proxy de Cloudflare por delante. Ambos procesan direcciones IP y registros de acceso como proveedores de infraestructura.',
-    evidence: 'docs/deployment-status.md, cabeceras server cloudflare y cf-ray verificadas el 2026-09-05',
-  },
-  {
-    id: 'registros',
-    label: 'Registros de acceso',
-    detail:
-      'Los registros de servidor los genera y conserva la infraestructura, no el sitio. OrigenLab no ha confirmado qué se conserva ni por cuánto tiempo.',
-    evidence: 'Pendiente: plazos-conservacion y encargados-tratamiento en este mismo archivo',
+    id: 'titan',
+    label: 'Titan',
+    role: 'entrega el correo empresarial que recibe sus mensajes',
   },
 ];
 
-export interface OutboundChannel {
-  id: string;
-  label: string;
-  detail: string;
-}
+/* -- Rutas ----------------------------------------------------------------- */
 
-/**
- * Distinción que la política tiene que dejar clara: una cosa es lo que trata el
- * sitio web y otra lo que el visitante decide enviar por sus propios medios.
- */
-export const outboundChannels: readonly OutboundChannel[] = [
-  {
-    id: 'sitio',
-    label: 'Lo que trata el sitio web',
-    detail:
-      'Nada que el visitante escriba. El sitio es estático: entrega páginas y no recoge, almacena ni transmite datos de quien las lee, más allá de los registros técnicos de la infraestructura que lo sirve.',
-  },
-  {
-    id: 'correo',
-    label: 'Lo que usted envía por correo',
-    detail:
-      'Al escribir a la dirección publicada, su mensaje llega al buzón corporativo de OrigenLab, alojado en Titan. Los datos que contenga los aporta usted y quedan en ese buzón.',
-  },
-  {
-    id: 'whatsapp',
-    label: 'Lo que usted envía por WhatsApp',
-    detail:
-      'Los enlaces de WhatsApp del sitio abren la aplicación en su dispositivo con un mensaje ya escrito, que usted puede editar o descartar. La conversación ocurre en WhatsApp y se rige por las condiciones de esa plataforma, ajenas a OrigenLab.',
-  },
-];
-
-/** Rutas legales en borrador. Fuera del sitemap y sin indexar mientras lo sean. */
+/** Rutas legales. Fuera del sitemap y sin indexar mientras no haya revisión. */
 export const legalRoutes = [
   { href: '/privacidad/', label: 'Privacidad' },
+  { href: '/cookies/', label: 'Cookies' },
   { href: '/aviso-legal/', label: 'Aviso legal' },
 ] as const;
 
@@ -225,7 +181,11 @@ export function pendingLegalFacts(): RequiredLegalFact[] {
   return requiredLegalFacts.filter((fact) => fact.value === null);
 }
 
-/** El texto legal sólo puede presentarse como vigente tras revisión profesional. */
+export function legalFact(id: string): RequiredLegalFact | undefined {
+  return requiredLegalFacts.find((fact) => fact.id === id);
+}
+
+/** El texto legal sólo se indexa tras revisión profesional. */
 export function isLegalTextApproved(): boolean {
   return legalStatus.reviewedBy !== null && legalStatus.reviewedOn !== null;
 }

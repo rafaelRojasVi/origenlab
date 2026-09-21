@@ -4,13 +4,19 @@ import { contact, telUrl } from '../data/contact';
 import { buildWhatsAppQuoteUrl } from '../lib/whatsapp';
 import { categories } from '../data/categories';
 import { productFamilies } from '../data/productFamilies';
-import { isLegalTextApproved, legalRoutes } from '../data/legal';
+import { legalRoutes } from '../data/legal';
+import { shouldRenderNewsletterForm } from '../data/newsletter';
 import SiteLogo from './SiteLogo.astro';
 import Icon from './ui/Icon.astro';
 
 const year = new Date().getFullYear();
 const whatsappHref = buildWhatsAppQuoteUrl();
-const legalApproved = isLegalTextApproved();
+/**
+ * Entrada discreta al boletín. Sólo aparece cuando el formulario se dibuja en
+ * esta compilación: un enlace permanente a una suscripción que no acepta a
+ * nadie sería una promesa sin respaldo.
+ */
+const showNewsletter = shouldRenderNewsletterForm();
 ---
 
 <footer class="site-footer on-ink">
@@ -52,6 +58,11 @@ const legalApproved = isLegalTextApproved();
           <li><a href="/servicios/">Servicios</a></li>
           <li><a href="/marcas/">Marcas</a></li>
           <li><a href="/contacto/">Contacto</a></li>
+          {showNewsletter && (
+            <li>
+              <a href="/newsletter/">Boletín</a>
+            </li>
+          )}
         </ul>
       </nav>
 
@@ -85,12 +96,11 @@ const legalApproved = isLegalTextApproved();
     </div>
 
     <!--
-      Fila legal. Las dos rutas se enlazan porque existen y hay que poder
-      revisarlas en la vista previa de la rama, pero se marcan como borrador y
-      se sirven sin indexar mientras `legal.ts` no registre una revisión
-      profesional. Un enlace honesto a un borrador es mejor que un enlace
-      ausente; lo que no puede haber es un borrador que parezca definitivo.
-      Pendientes en docs/design/CONTENT_NEEDED.md.
+      Fila legal. Las tres rutas se enlazan sin distintivo: son páginas breves
+      que dicen lo que OrigenLab hace de verdad. Se sirven sin indexar mientras
+      `legal.ts` no registre una revisión profesional, y eso es una decisión de
+      publicación, no un mensaje para el visitante. El seguimiento interno vive
+      en docs/design/CONTENT_NEEDED.md.
     -->
     <div class="site-footer__legal">
       <a href="/" class="site-footer__brand" aria-label="OrigenLab, ir al inicio">
@@ -101,10 +111,7 @@ const legalApproved = isLegalTextApproved();
           {
             legalRoutes.map((route) => (
               <li>
-                <a href={route.href}>
-                  {route.label}
-                  {!legalApproved && <span class="site-footer__draft">borrador</span>}
-                </a>
+                <a href={route.href}>{route.label}</a>
               </li>
             ))
           }
@@ -177,13 +184,6 @@ const legalApproved = isLegalTextApproved();
     display: flex;
     flex-wrap: wrap;
     gap: 0 1.75rem;
-  }
-  .site-footer__draft {
-    margin-left: 0.5rem;
-    font-family: var(--font-mono);
-    font-size: 0.8125rem;
-    letter-spacing: 0.03em;
-    color: var(--color-onink-500);
   }
   @media (min-width: 640px) {
     .site-footer__grid {

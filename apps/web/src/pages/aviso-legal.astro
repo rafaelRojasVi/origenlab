@@ -2,85 +2,60 @@
 import Layout from '../layouts/Layout.astro';
 import PageIntro from '../components/ui/PageIntro.astro';
 import SectionIndex from '../components/ui/SectionIndex.astro';
-import LegalDraftNotice from '../components/ui/LegalDraftNotice.astro';
-import PendingFactsTable from '../components/ui/PendingFactsTable.astro';
-import Notice from '../components/ui/Notice.astro';
 import { site } from '../config/site';
-import { contact } from '../data/contact';
-import { isLegalTextApproved, pendingLegalFacts } from '../data/legal';
+import { contact, telUrl, whatsappUrl } from '../data/contact';
+import { isLegalTextApproved } from '../data/legal';
 
 /**
- * Aviso legal y condiciones de uso del sitio, borrador de revisión.
+ * Aviso legal y condiciones de uso.
  *
  * El título es «Aviso legal» y no «Condiciones de venta» a propósito: este
- * sitio no tiene carrito, formulario, pasarela ni ningún punto en el que se
- * cierre una compra. Regula el uso de un sitio informativo, no una relación
- * comercial. Las condiciones de una venta viven en la cotización firmada, que
- * es otro documento.
+ * sitio no tiene carrito, pasarela ni ningún punto en el que se cierre una
+ * compra. Regula el uso de un sitio informativo. Lo acordado en una operación
+ * vive en la cotización escrita, que es otro documento.
  *
- * Mientras `isLegalTextApproved()` sea falso la ruta va con `noindex`, fuera
- * del sitemap y con `Disallow` en robots.txt.
+ * El negocio decidió el 2026-09-21 presentarse con el nombre comercial
+ * OrigenLab y no publicar RUT, representante legal, razón social ni domicilio.
+ * Esta página no inventa ninguno de esos datos. Mientras falten, la ruta va con
+ * `noindex` y fuera del sitemap; es una decisión de publicación y no se explica
+ * al lector.
  */
 const approved = isLegalTextApproved();
-const identityFacts = pendingLegalFacts().filter((fact) =>
-  ['razon-social', 'rut', 'domicilio-legal', 'representante-legal'].includes(fact.id),
-);
 ---
 
 <Layout
   title="Aviso legal"
-  description="Borrador del aviso legal y las condiciones de uso del sitio de OrigenLab, en revisión. El sitio es informativo y no vende en línea."
+  description="Condiciones de uso del sitio de OrigenLab. Es un sitio informativo: no vende en línea y toda operación se acuerda por cotización escrita."
   noindex={!approved}
 >
   <div class="shell">
     <PageIntro
-      title="Aviso legal y condiciones de uso"
+      title="Aviso legal"
       lead="Condiciones de uso de este sitio informativo. No son condiciones de venta: aquí no se compra nada, y lo acordado en una operación vive en la cotización correspondiente."
       crumbs={[{ label: 'Aviso legal' }]}
     />
-    {!approved && <LegalDraftNotice />}
   </div>
 
-  <section class="shell section rule-top" aria-labelledby="titular-title">
-    <SectionIndex index={1} label="Titular del sitio" />
-    <h2 id="titular-title" class="t-h2">Quién responde por este sitio</h2>
-    <p class="t-lead mt-5">
-      El sitio {site.domain} lo opera OrigenLab, con base en {contact.locationPublic} y atención
-      comercial en todo Chile. Los canales publicados son {contact.email} y el teléfono y WhatsApp
-      {' '}{contact.phoneDisplay}.
-    </p>
-    <p class="t-body mt-6">
-      La identificación legal completa todavía no puede publicarse. Mientras falte, este documento
-      no identifica formalmente al titular y por eso no puede presentarse como aviso legal vigente.
-    </p>
-
-    <div class="mt-10">
-      <PendingFactsTable
-        caption="Datos de identidad que el negocio tiene que aportar antes de publicar esta página."
-        facts={identityFacts}
-      />
-    </div>
-  </section>
-
-  <section class="shell section rule-top" aria-labelledby="uso-title">
-    <SectionIndex index={2} label="Uso del sitio" />
-    <h2 id="uso-title" class="t-h2">Qué es y qué no es este sitio</h2>
+  <section class="shell section rule-top" aria-labelledby="sitio-title">
+    <SectionIndex index={1} label="El sitio" />
+    <h2 id="sitio-title" class="t-h2">Qué es y qué no es este sitio</h2>
 
     <div class="terms">
       <div class="terms__row">
-        <h3 class="terms__title">Sitio informativo, sin venta en línea</h3>
+        <h3 class="terms__title">Sitio informativo</h3>
         <p class="t-body terms__body">
-          El sitio publica información sobre equipamiento de laboratorio y canales de contacto. No
-          tiene carrito, formulario de pedido ni medio de pago, y ninguna página constituye una
-          oferta contractual. Toda operación se cierra por cotización escrita.
+          {site.domain} lo opera OrigenLab, con base en {contact.locationPublic} y atención
+          comercial en todo Chile. El sitio publica información sobre equipamiento de laboratorio y
+          canales de contacto. Ninguna página constituye una oferta contractual: toda operación se
+          acuerda mediante cotización escrita.
         </p>
       </div>
       <div class="terms__row">
-        <h3 class="terms__title">Precios, disponibilidad y plazos</h3>
+        <h3 class="terms__title">Sin compra en línea</h3>
         <p class="t-body terms__body">
-          El sitio no publica precios ni stock. La configuración, los accesorios, la disponibilidad,
-          la garantía y los plazos se confirman en cada cotización y pueden depender del fabricante,
-          del flete y de la confirmación de entrega.
+          No hay pagos, ni carrito, ni medio de pago, ni compra en línea. El sitio tampoco publica
+          precios ni stock: la configuración, los accesorios, la disponibilidad, la garantía y los
+          plazos se confirman en cada cotización.
         </p>
       </div>
       <div class="terms__row">
@@ -106,20 +81,26 @@ const identityFacts = pendingLegalFacts().filter((fact) =>
           por sus propias condiciones. El sitio no carga ningún recurso de terceros al mostrarse.
         </p>
       </div>
-      <div class="terms__row">
-        <h3 class="terms__title">Legislación aplicable</h3>
-        <p class="t-body terms__body">
-          Pendiente de revisión profesional. La ley aplicable, la jurisdicción y el tratamiento de
-          reclamos no se declaran aquí hasta que un abogado habilitado en Chile los confirme.
-        </p>
-      </div>
     </div>
+  </section>
 
-    <Notice class="mt-12">
-      Este texto es un borrador de trabajo. No sustituye asesoría legal y no puede publicarse ni
-      invocarse hasta que un profesional habilitado en Chile lo revise y el negocio aporte la
-      identidad legal que falta.
-    </Notice>
+  <section class="shell section rule-top" aria-labelledby="contacto-title">
+    <SectionIndex index={2} label="Contacto" />
+    <h2 id="contacto-title" class="t-h2">Cómo contactarnos</h2>
+
+    <div class="prose mt-6">
+      <p class="t-body">
+        Por correo a <a class="link-plain" href={`mailto:${contact.email}`}>{contact.email}</a>, por
+        teléfono al <a class="link-plain" href={telUrl()}>{contact.phoneDisplay}</a> o por{' '}
+        <a class="link-plain" href={whatsappUrl()} target="_blank" rel="noopener noreferrer">
+          WhatsApp
+          <span class="sr-only">(abre WhatsApp en una pestaña nueva)</span>
+        </a>, de lunes a viernes entre las {contact.hours}.
+      </p>
+      <p class="t-body">
+        Para consultas sobre datos personales, vea <a class="link-plain" href="/privacidad/">privacidad</a>.
+      </p>
+    </div>
   </section>
 </Layout>
 
@@ -140,6 +121,15 @@ const identityFacts = pendingLegalFacts().filter((fact) =>
     color: var(--color-ink-950);
   }
   .terms__body {
+    color: var(--color-ink-600);
+  }
+  .prose {
+    max-width: 66ch;
+  }
+  .prose :global(p + p) {
+    margin-top: 1rem;
+  }
+  .prose :global(p) {
     color: var(--color-ink-600);
   }
   @media (min-width: 768px) {

@@ -1,0 +1,83 @@
+---
+import Layout from '../layouts/Layout.astro';
+import PageIntro from '../components/ui/PageIntro.astro';
+import SectionIndex from '../components/ui/SectionIndex.astro';
+import { contact } from '../data/contact';
+import { SITE_CLAIMS, isLegalTextApproved } from '../data/legal';
+
+/**
+ * Cookies y almacenamiento del navegador.
+ *
+ * Página corta. Lo que se afirma se acota a la aplicación de OrigenLab, que es
+ * lo único que este repositorio controla; lo que haga Cloudflare por delante
+ * del origen se nombra sin prometer que no exista. Por eso el texto no dice
+ * «cero cookies».
+ *
+ * No hay banner: un aviso de cookies pide permiso para algo, y además tendría
+ * que recordar la respuesta, creando el primer almacenamiento del sitio para
+ * gestionar el consentimiento de un almacenamiento que no existe.
+ *
+ * `validate:privacy` comprueba sobre el HTML construido que esta página sigue
+ * acotando su afirmación y que no aparece ningún banner.
+ */
+const approved = isLegalTextApproved();
+---
+
+<Layout
+  title="Cookies"
+  description="Qué guarda el sitio de OrigenLab en su navegador. La aplicación no guarda nada; el proxy del dominio puede usar cookies técnicas."
+  noindex={!approved}
+>
+  <div class="shell">
+    <PageIntro
+      title="Cookies"
+      lead="Qué guarda este sitio en su navegador, en pocas líneas."
+      crumbs={[{ label: 'Cookies' }]}
+    />
+  </div>
+
+  <section class="shell section rule-top" aria-labelledby="aplicacion-title">
+    <SectionIndex index={1} label="La aplicación" />
+    <h2 id="aplicacion-title" class="t-h2">La aplicación de OrigenLab no guarda nada</h2>
+
+    <div class="prose mt-6">
+      <p class="t-body">
+        {SITE_CLAIMS.noAppStorage}. No hay analítica, ni publicidad, ni gestor de etiquetas, ni
+        píxel de seguimiento, ni chat de terceros, ni sesión, ni preferencia recordada.
+      </p>
+      <p class="t-body">
+        Por eso no verá un aviso de cookies: no habría nada que consentir, y el propio aviso
+        tendría que guardar su respuesta en el navegador para no repetirse en cada página.
+      </p>
+    </div>
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="proxy-title">
+    <SectionIndex index={2} label="El proxy" />
+    <h2 id="proxy-title" class="t-h2">Lo que puede añadir la infraestructura</h2>
+
+    <div class="prose mt-6">
+      <p class="t-body">
+        El sitio se entrega a través de Cloudflare, que actúa como proxy del dominio. Cloudflare
+        podría usar cookies técnicas o de seguridad cuando sean necesarias para entregar el sitio o
+        para protegerlo, en su propia respuesta y sin intervención de la aplicación.
+      </p>
+      <p class="t-body">
+        Si tiene una consulta sobre este punto, escriba a{' '}
+        <a class="link-plain" href={`mailto:${contact.email}`}>{contact.email}</a>.
+      </p>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .prose {
+    max-width: 66ch;
+  }
+  .prose :global(p + p) {
+    margin-top: 1rem;
+  }
+  .prose :global(p) {
+    color: var(--color-ink-600);
+  }
+</style>

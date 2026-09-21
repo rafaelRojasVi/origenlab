@@ -1,6 +1,9 @@
 # build output
 dist/
 
+# compilación de vista previa del boletín (npm run build:preview)
+dist-preview/
+
 # salida de QA visual (npm run qa:screens)
 .qa/
 

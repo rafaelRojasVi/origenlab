@@ -1,0 +1,58 @@
+---
+import NewsletterForm from '../newsletter/NewsletterForm.astro';
+import NewsletterPreviewNotice from '../newsletter/NewsletterPreviewNotice.astro';
+import { shouldRenderNewsletterForm } from '../../data/newsletter';
+
+/**
+ * Boletín en la portada.
+ *
+ * Va baja en la página, sobre superficie y en una sola columna estrecha: no
+ * compite con la cotización, que sigue siendo la acción principal del sitio.
+ * Una suscripción es una intención distinta y más tibia, y ponerla arriba haría
+ * que la portada pidiera dos cosas a la vez.
+ *
+ * La sección entera desaparece cuando el boletín no está publicado. Un bloque
+ * que anuncie un boletín que no acepta a nadie es peor que su ausencia.
+ */
+const show = shouldRenderNewsletterForm();
+---
+
+{
+  show && (
+    <section class="nlband" aria-labelledby="home-newsletter-title" data-reveal>
+      <div class="shell nlband__inner">
+        <div class="nlband__lede">
+          <p class="t-label">Boletín</p>
+          <h2 id="home-newsletter-title" class="t-h2">
+            Novedades de equipamiento, sólo si usted lo pide
+          </h2>
+          <p class="t-lead mt-5">
+            Le escribimos cuando hay algo que contar sobre las familias que le interesan. Se
+            confirma desde su propio buzón y se cancela en un paso.
+          </p>
+        </div>
+        <NewsletterPreviewNotice />
+        <NewsletterForm headingId="home-newsletter-title" source="web_home" />
+      </div>
+    </section>
+  )
+}
+
+<style>
+  .nlband {
+    background-color: var(--color-surface);
+    border-top: 1px solid var(--color-hairline);
+    padding-block: 4rem;
+  }
+  .nlband__inner {
+    max-width: 60rem;
+  }
+  .nlband__lede {
+    max-width: 46rem;
+  }
+  @media (min-width: 768px) {
+    .nlband {
+      padding-block: 6rem;
+    }
+  }
+</style>

@@ -14,7 +14,7 @@
     "build:email-brands": "node scripts/build-email-brand-strip.mjs",
     "build:email-signature-embedded": "node scripts/build-gmail-signature-embedded.mjs",
     "astro": "astro",
-    "validate": "npm run check && npm run build && npm run validate:catalog && npm run validate:brands && npm run validate:images && npm run validate:dist && npm run qa:contrast && npm run qa:interaction",
+    "validate": "npm run check && npm run build && npm run validate:catalog && npm run validate:brands && npm run validate:images && npm run validate:dist && npm run validate:privacy && npm run qa:contrast && npm run qa:interaction",
     "validate:dist": "node scripts/validate-dist.mjs",
     "build:brand-logos": "node scripts/build-brand-logos.mjs",
     "build:product-images": "node scripts/build-product-images.mjs",
@@ -26,7 +26,11 @@
     "design:logo-explorations": "node scripts/generate-logo-explorations.mjs",
     "validate:brands": "node scripts/validate-brands.mjs",
     "verify:sources": "node scripts/verify-sources.mjs",
-    "design:review-shots": "node scripts/review-shots.mjs"
+    "design:review-shots": "node scripts/review-shots.mjs",
+    "validate:privacy": "node scripts/validate-privacy.mjs",
+    "build:preview": "ORIGENLAB_NEWSLETTER_PREVIEW=1 astro build",
+    "validate:preview": "npm run build:preview && node scripts/validate-dist.mjs dist-preview && node scripts/validate-privacy.mjs dist-preview && node scripts/qa-contrast.mjs dist-preview && node scripts/qa-newsletter.mjs",
+    "qa:newsletter": "node scripts/qa-newsletter.mjs"
   },
   "dependencies": {
     "@astrojs/sitemap": "^3.7.4",
@@ -38,6 +42,7 @@
     "@astrojs/check": "^0.9.10",
     "@fontsource-variable/plus-jakarta-sans": "^5.3.0",
     "@fontsource/ibm-plex-mono": "^5.3.0",
+    "playwright-core": "^1.63.0",
     "typescript": "^5.9.3"
   },
   "overrides": {

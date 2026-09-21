@@ -16,7 +16,12 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const dist = join(root, 'dist');
+/**
+ * Carpeta a comprobar. Por defecto `dist/`. La compilación de vista previa del
+ * boletín se pasa como argumento para medir también el contraste del
+ * formulario, que en producción todavía no existe.
+ */
+const dist = join(root, process.argv[2] ?? 'dist');
 
 const ROUTES = [
   '/',
@@ -33,9 +38,23 @@ const ROUTES = [
   '/nosotros/',
   '/contacto/',
   '/privacidad/',
+  '/cookies/',
   '/aviso-legal/',
+  '/newsletter/',
   '/404.html',
 ];
+
+/**
+ * El boletín sólo existe en la compilación de vista previa: en `dist/` no hay
+ * ninguna de sus rutas. Una ruta ausente se salta con una línea visible en el
+ * informe, en vez de medirse contra un 404 que no dice nada.
+ */
+const routes = ROUTES.filter((route) => {
+  const file = route.endsWith('.html') ? join(dist, route) : join(dist, route, 'index.html');
+  if (existsSync(file)) return true;
+  console.log(`  -- ${route} no existe en ${dist.split('/').pop()}/, se omite`);
+  return false;
+});
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -69,7 +88,7 @@ const failures = [];
 let checked = 0;
 let minimum = { ratio: 99, where: '' };
 
-for (const route of ROUTES) {
+for (const route of routes) {
   const page = await context.newPage();
   await page.goto(base + route, { waitUntil: 'load' });
 
