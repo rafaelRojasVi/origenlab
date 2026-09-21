@@ -38,6 +38,7 @@ class Context:
     mode: str
     simulated: bool
     attestation: dict = field(default_factory=dict)
+    route: str = "direct"
 
 
 @dataclass(frozen=True)
@@ -147,9 +148,23 @@ def eval_s01(data: dict, baseline: dict, ctx: Context):
     notes: list[str] = []
 
     findings += must_equal(data, "transaction_read_only", "on", "the transaction is read-only")
-    findings += must_equal(
-        data, "default_transaction_read_only", "on", "default_transaction_read_only on the connection"
-    )
+    if ctx.route == "supavisor-session" and data.get("default_transaction_read_only") != "on":
+        # The connection default is set through the libpq startup `options` string. A pooler sits
+        # between psql and Postgres and decides for itself what it forwards, so on this route the
+        # *connection* default is recorded rather than required -- what the audit needs is the
+        # transaction, which `begin read only` establishes and which the line above requires
+        # unconditionally, on every route, and which `psqlrun`'s g00 guard has already read back
+        # from the server and refused the run over.
+        notes.append(
+            "default_transaction_read_only is "
+            f"'{data.get('default_transaction_read_only')}' on this connection: the Supavisor "
+            "route did not carry the libpq startup option through. The transaction itself is "
+            "read-only, established by `begin read only` and read back from the server."
+        )
+    else:
+        findings += must_equal(
+            data, "default_transaction_read_only", "on", "default_transaction_read_only on the connection"
+        )
     if data.get("current_user") != "origenlab_owner":
         findings.append(
             f"the session assumed '{data.get('current_user')}', not origenlab_owner, "
@@ -164,10 +179,14 @@ def eval_s01(data: dict, baseline: dict, ctx: Context):
 
     expected_session_user = baseline.get("audit_identity")
     if ctx.mode == "hosted":
+        # Supavisor authenticates a tenant by `<role>.<project ref>` but the *database* session it
+        # opens belongs to the bare role, so the server answers `session_user` with the role alone
+        # on both routes. The check is therefore identical on both, and the finding never prints
+        # the login: on the pooler route that string carries the project reference.
         if data.get("session_user") != expected_session_user:
             findings.append(
-                f"the hosted login is '{data.get('session_user')}', not the configured audit "
-                f"identity '{expected_session_user}'"
+                "the hosted session does not run as the configured audit identity "
+                f"'{expected_session_user}'"
             )
     else:
         notes.append(
@@ -176,6 +195,7 @@ def eval_s01(data: dict, baseline: dict, ctx: Context):
         )
 
     summary = {
+        "route": ctx.route,
         "session_user": data.get("session_user"),
         "current_user": data.get("current_user"),
         "server_version": data.get("server_version"),

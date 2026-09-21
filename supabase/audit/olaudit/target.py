@@ -7,8 +7,10 @@ Two properties matter more than the fields:
 
 **The password never reaches an argument vector.** `describe()` is what the report is allowed to
 see, and it contains no password, no host name, no address and no project reference -- only their
-classification. The connection itself is passed to psql entirely through environment variables, so
-the process table shows `psql -X -q ... -f <script>` and no target at all.
+classification. That includes the *login name*: on the Supavisor route the login carries the
+project reference, so `describe()` reports `login_shown` and never `user`. The connection itself is
+passed to psql entirely through environment variables, so the process table shows
+`psql -X -q ... -f <script>` and no target at all.
 
 **The child environment is built, not inherited.** `child_env()` starts from nothing and adds
 exactly PATH, HOME, LANG and the libpq variables this target needs. An inherited `PGHOST`,
@@ -30,6 +32,13 @@ class TargetError(RuntimeError):
 
 
 LOOPBACK_NAMES = frozenset({"localhost"})
+
+# The two hosted routes. A route is *selected*, never fallen back to: there is no code path that
+# tries one and then the other, and `target_hosted.resolve` refuses any route the caller did not
+# explicitly authorise. See `target_hosted` for each route's identity contract.
+ROUTE_DIRECT = "direct"
+ROUTE_SUPAVISOR_SESSION = "supavisor-session"
+ROUTES = frozenset({ROUTE_DIRECT, ROUTE_SUPAVISOR_SESSION})
 
 
 def is_loopback(host: str) -> bool:
@@ -73,6 +82,9 @@ class Target:
     sslrootcert: str | None
     password: str
     project_ref: str | None
+    route: str = ROUTE_DIRECT
+    pooler_cluster: str | None = None
+    pooler_region: str | None = None
     guard_notes: list[str] = field(default_factory=list)
     statement_timeout_ms: int = 15_000
     connect_timeout_s: int = 15
@@ -96,7 +108,30 @@ class Target:
         if self.mode != "hosted":
             return ()
         values = [self.password, self.project_ref, self.host, self.hostaddr]
+        # On the Supavisor route the login name *is* an identifier: Supavisor routes a connection
+        # by the project reference carried in the user name, so `origenlab_migrator.<ref>` leaks
+        # the reference to anything that prints the login. The direct route's login is the bare
+        # role name -- a word this repository documents openly -- and redacting it would blank
+        # legitimate evidence, so it is contributed only when it actually embeds the reference.
+        if self.route == ROUTE_SUPAVISOR_SESSION:
+            values.append(self.user)
         return tuple(v for v in values if v)
+
+    @property
+    def audit_identity(self) -> str:
+        """The database role this target logs in as, with any Supavisor routing suffix removed."""
+        if self.route == ROUTE_SUPAVISOR_SESSION and self.project_ref:
+            suffix = f".{self.project_ref}"
+            if self.user.endswith(suffix):
+                return self.user[: -len(suffix)]
+        return self.user
+
+    @property
+    def login_shown(self) -> str:
+        """The login name as a report may print it. Never the raw Supavisor routing name."""
+        if self.route == ROUTE_SUPAVISOR_SESSION:
+            return f"{self.audit_identity}.[project-ref-redacted]"
+        return self.user
 
     def describe(self) -> dict[str, object]:
         """What the report may record about the target. No secret, no identifier, no address."""
@@ -105,7 +140,12 @@ class Target:
             "host_class": "loopback" if is_loopback(self.host) else "remote",
             "host_shown": self.host if is_loopback(self.host) else "[hosted-host-redacted]",
             "port": self.port,
-            "user": self.user,
+            "route": self.route,
+            # Never `self.user`: on the Supavisor route that string carries the project reference.
+            "user": self.login_shown,
+            "audit_identity": self.audit_identity,
+            "pooler_cluster": self.pooler_cluster,
+            "pooler_region": self.pooler_region,
             "database": self.database,
             "sslmode": self.sslmode,
             "tls_verified_against_hostname": self.sslmode == "verify-full",

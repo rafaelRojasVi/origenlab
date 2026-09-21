@@ -215,3 +215,23 @@ class TestModeCombinations(unittest.TestCase):
 
     def test_a_mode_is_required(self):
         self.assertEqual(2, self.run_cli([]))
+
+    def test_the_supavisor_route_authorisation_is_hosted_only(self):
+        self.assertEqual(
+            2, self.run_cli(["--mode", "local", "--authorize-supavisor-session-route"])
+        )
+
+    def test_the_supavisor_route_authorisation_is_refused_with_simulate(self):
+        """A simulated run resolves no target, so there is no route for it to authorise."""
+        self.assertEqual(
+            2,
+            self.run_cli(
+                ["--mode", "hosted", "--simulate", "--authorize-supavisor-session-route"]
+            ),
+        )
+
+    def test_the_direct_route_needs_no_route_flag(self):
+        """The existing command line is unchanged: nothing new is required of a direct run."""
+        parser = cli.build_parser()
+        args = parser.parse_args(["--mode", "hosted", "--authorize-hosted-connection"])
+        self.assertFalse(args.authorize_supavisor_session_route)

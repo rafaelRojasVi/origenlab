@@ -127,6 +127,25 @@ else
   pass "no tracked hosted Supabase host name"
 fi
 
+section "tracked Supavisor project-qualified logins"
+# The Supavisor pooler routes a connection by the project reference carried in the login name,
+# `<role>.<twenty lowercase letters>` (docs/OPERATIONS.md §4.2). That is the one shape a project
+# reference takes with no `db.<ref>.supabase.co` host and no `project_ref=` label to be caught by,
+# so it gets its own check. The same exclusions apply as above: the audit's own tests and fixtures
+# use a deliberately fake reference.
+POOLER_LOGIN_MATCHES="$(
+  git grep -InE '\b[a-z][a-z0-9_]*\.[a-z]{20}\b' -- \
+    ':!supabase/audit/tests/*' ':!supabase/audit/fixtures/*' ':!supabase/scripts/audit_failure_tests.sh' \
+    ':!supabase/scripts/hosted_bootstrap_failure_tests.sh' \
+    ':!supabase/audit/olaudit/*' ':!docs/OPERATIONS.md' 2>/dev/null || true
+)"
+if [[ -n "$POOLER_LOGIN_MATCHES" ]]; then
+  fail "tracked Supavisor project-qualified login outside the audit's own fixtures and documentation"
+  printf '%s\n' "$POOLER_LOGIN_MATCHES" >&2
+else
+  pass "no tracked Supavisor project-qualified login"
+fi
+
 section "no credential in a role bootstrap"
 # supabase/roles.sql and supabase/hosted_roles.sql create LOGIN roles. Neither may ever carry a
 # password: local credentials are throw-away ones set by verify_direct_logins.sh and cleared

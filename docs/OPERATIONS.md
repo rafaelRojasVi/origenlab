@@ -239,6 +239,8 @@ slice 1.
 supabase/scripts/slice0_audit.sh --mode local
 supabase/scripts/slice0_audit.sh --mode hosted --simulate
 supabase/scripts/slice0_audit.sh --mode hosted --authorize-hosted-connection
+supabase/scripts/slice0_audit.sh --mode hosted --authorize-hosted-connection \
+                                 --authorize-supavisor-session-route
 supabase/scripts/slice0_audit.sh --verify-report supabase/.audit/reports/slice0-audit-local.json
 ```
 
@@ -285,14 +287,81 @@ hold, and it refuses **before** a connection is attempted in every case:
   tree would make that name wrong. Untracked ignored files are permitted only at the three
   approved paths below.
 - The target file exists at `supabase/.audit/hosted_target.env`, is a regular file (not a
-  symlink) with mode `600`, and declares the supported route: a direct
-  `db.<project-ref>.supabase.co` connection on 5432. The Supavisor pooler is out of scope
-  — it requires the login name to carry the project reference, which conflicts with the
-  pinned audit identity.
-- The login role is **`origenlab_migrator`**, the configured hosted audit identity for this
-  initial audit. It is not a fifth role and no migration creates one. The credential stays
-  outside this repository: the target file names an **environment variable**, and there is
-  no key that accepts a password inline.
+  symlink) with mode `600`, and **declares its route** in `OL_HOSTED_ROUTE` — one of the two
+  below, and the file must carry that route's exact key set, no more and no fewer.
+- **The declared route was authorised on this command line.** `direct` always is. The
+  Supavisor session-mode route additionally requires
+  `--authorize-supavisor-session-route`, and the flag alone is not enough: the reviewed
+  target file must declare it too. **There is no fallback.** An unreachable direct endpoint
+  is a failed run, not a silent reroute; no code path tries one route and then the other.
+- The audit identity is **`origenlab_migrator`**, the configured hosted audit identity for
+  this initial audit. It is not a fifth role and no migration creates one. The credential
+  stays outside this repository: the target file names an **environment variable**, and
+  there is no key that accepts a password inline.
+
+#### The two hosted routes
+
+The direct endpoint is IPv6 unless the project holds the IPv4 add-on, so an IPv4-only
+operator network cannot reach it. The official shared Supavisor pooler is IPv4 on every
+plan, and the **dedicated** pooler is a paid-plan feature this project does not have. That
+is the whole reason the second route exists — not convenience.
+
+| | `direct` | `supavisor-session` |
+|---|---|---|
+| Host | `db.<project-ref>.supabase.co` | `aws-<cluster>-<region>.pooler.supabase.com` |
+| Port | 5432 | 5432 (session mode) |
+| Login | `origenlab_migrator` | `origenlab_migrator.<project-ref>` |
+| Where the project is named | the host name | **the login name only** |
+| Extra target-file keys | none | `OL_HOSTED_POOLER_CLUSTER`, `OL_HOSTED_POOLER_REGION` |
+| Authorisation | `--authorize-hosted-connection` | that, **and** `--authorize-supavisor-session-route` |
+
+**Port 6543 is refused by name.** It is Supavisor's *transaction* mode — since
+2025-02-28 it serves transaction mode only — and transaction mode does not keep session
+state between transactions, so it cannot carry this audit's `SET LOCAL ROLE` and its
+transaction-local timeouts across the check bank. A route that cannot establish the
+read-only contract is refused, never degraded to.
+
+**The pooler login is a stricter identity check, not a looser one.** Supavisor routes a
+connection to a tenant by the project reference in the user name, and the pooler host
+names no project — so the login *is* this route's target-identity binding. It is required
+to equal `origenlab_migrator.<the project reference the target file declares>` exactly.
+A login for another project, for `postgres`, for another role, or the bare role name is
+refused. The cluster index and the region are declared separately and proven against the
+host name, so a target that is right about one and wrong about the other is refused as
+ambiguous rather than resolved by precedence.
+
+**The project reference in that login is treated as a secret.** It is added to the
+target's secret set, `describe()` reports `origenlab_migrator.[project-ref-redacted]` and
+never the raw login, and `olaudit.redact` carries a `<role>.<project-ref>` pattern as the
+safety net for text the process never knew it held.
+`scripts/security/check-public-repo-hygiene.sh` fails if that shape ever enters tracked
+content.
+
+**How the read-only contract survives a pooler.** A pooler sits between `psql` and
+PostgreSQL and decides for itself what it forwards of the libpq startup `options` string.
+The audit still sends it — if Supavisor rejects it the connection fails and the route is
+refused, which is the correct fail-closed answer — but it does not *rely* on it. On this
+route the transaction re-establishes everything and then proves it:
+
+1. `begin read only`, before any audit query;
+2. `set local statement_timeout`, `lock_timeout` and
+   `idle_in_transaction_session_timeout` — **transaction-local**, because the backend
+   behind a pooler outlives this connection and must not inherit anything this audit set;
+3. `set local role origenlab_owner`, for the same reason;
+4. a guard statement reads `transaction_read_only` **back from the server** and raises in
+   the same statement if it is not `on`, so `ON_ERROR_STOP` aborts the run **before the
+   first check file is parsed**. `olaudit.psqlrun` then asserts the same fact in Python
+   from the guard's own output, and refuses the run if the guard produced nothing, an
+   unrecognised shape, or an unset timeout;
+5. the reviewed check bank — the same files, already statically proven single reads;
+6. `reset role; rollback;`. **The pooler script contains no `COMMIT` on any path**: it
+   rolls back explicitly on success, and on any error `ON_ERROR_STOP` aborts the script and
+   `psql` disconnects with the transaction still open, which the server rolls back.
+
+If the connection default `default_transaction_read_only` does not survive the pooler, that
+is **recorded as a note on `s01`, not required** — what the audit needs is the transaction,
+which `begin read only` establishes and which `s01` requires on every route unconditionally.
+On the direct route it stays a hard requirement, unchanged.
 - `sslmode` is exactly `verify-full` with a CA file that exists. **There is no downgrade
   path**: a missing CA file refuses the run rather than falling back to `require`.
 - The host resolves, immediately before the connection, to addresses that are **all**
@@ -314,7 +383,7 @@ table shows no target.
 
 | Path | What |
 |---|---|
-| `supabase/.audit/hosted_target.env` | the hosted target, mode `600`. Names the project and the credential's environment variable; **never a credential** |
+| `supabase/.audit/hosted_target.env` | the hosted target, mode `600`. Names the route, the project and the credential's environment variable; **never a credential** |
 | `supabase/.audit/attestation.json` | the operator attestation. Template: `supabase/audit/fixtures/attestation.example.json` |
 | `supabase/.audit/reports/` | the generated reports |
 

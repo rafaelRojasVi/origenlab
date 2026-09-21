@@ -27,9 +27,10 @@ of truth*). Any PR that changes what is built, applied or deployed updates this
 file — including the `Last verified` line — **in the same PR**. A PR that only
 changes design, rules or targets does not touch it.
 
-Last verified: **2026-09-20**, against `origin/main` @ `56812a0b` plus the Wave 1A/1B → V2
-importer on this branch, measured from a clean local PostgreSQL 17 carrying the Slice 0
-migrations.
+Last verified: **2026-09-20**, against `origin/main` @ `31a15bfa`, measured from a clean local
+PostgreSQL 17 carrying the Slice 0 migrations. §2.5's hosted facts are from an authenticated
+control-plane read only — **no PostgreSQL session against the hosted project has succeeded**, so
+nothing below claims to have measured its database.
 
 ## 1. Eras
 
@@ -45,7 +46,7 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 | Slice | State | Note |
 |---|---|---|
 | 0 — local foundation | **DONE** | `supabase/roles.sql` + 19 migrations → 4 roles, 7 schemas, 33 tables, grants, RLS. Proven by `supabase/tests/` and `supabase/scripts/`, enforced by `.github/workflows/supabase.yml` on every push touching `supabase/**` |
-| 0 — hosted gates | **NOT STARTED — the tooling now exists and has never been pointed at a project** | **No hosted Supabase project has been adopted, and no database connection has ever been made to one from this repository.** All 11 checks in [`MIGRATION.md`](MIGRATION.md) §5.2 remain unproven against a hosted project; checks 1–9 are proven **locally only**, checks 10–11 have never run. What changed is the tooling: `supabase/scripts/slice0_audit.sh` ([`OPERATIONS.md`](OPERATIONS.md) §4.2) can run the catalogue half read-only against a hosted project, and `supabase/scripts/hosted_role_bootstrap.sh` ([`OPERATIONS.md`](OPERATIONS.md) §4.3) can produce the reviewed role bootstrap such a project would need first — §2.3, §2.4. See §2.5 for the one hosted project that is known to exist |
+| 0 — hosted gates | **BLOCKED — no hosted PostgreSQL audit has yet succeeded** | **No hosted Supabase project has been adopted, and no PostgreSQL session against one has succeeded from this repository.** All 11 checks in [`MIGRATION.md`](MIGRATION.md) §5.2 remain unproven against a hosted project; checks 1–9 are proven **locally only**, checks 10–11 have never run. The tooling exists — `supabase/scripts/slice0_audit.sh` ([`OPERATIONS.md`](OPERATIONS.md) §4.2) now carries **two** reviewed hosted routes, the direct one and the Supavisor session-mode one for a project whose IPv6-only direct endpoint is unreachable, and `supabase/scripts/hosted_role_bootstrap.sh` ([`OPERATIONS.md`](OPERATIONS.md) §4.3) can produce the role bootstrap such a project would need first — §2.3, §2.4. Neither has been run against a project. See §2.5 for the one hosted project that exists |
 | 1 — Auth / `platform.*` | NOT STARTED | |
 | 2 — CRM identity + V1 row migration | NOT STARTED | |
 | 3 — Quotes, lines, FX, snapshot, PDF | NOT STARTED | |
@@ -95,8 +96,9 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
   catalogue half of what its four `ol audit` subcommands would check is built, under a
   different name and as a single read-only tool: see §2.3. `ol migrate` is not.
 - **An adopted hosted Supabase project.** The tooling to audit one (§2.3) and to bootstrap
-  its roles (§2.4) now exists; neither has been pointed at a project. One project is known to
-  exist and is *not* adopted — §2.5.
+  its roles (§2.4) now exists; neither has been run against a project. One project exists,
+  is restored and `ACTIVE_HEALTHY`, carries 15 applied migrations of unknown provenance, and
+  is *not* adopted and *not* audited — §2.5.
   `supabase/scripts/lib/local_target.sh` still refuses a non-loopback host by design and
   every §4.1 script still resolves its target through it; the hosted path is a separate
   boundary in `supabase/audit/olaudit/target_hosted.py` that shares no code with it and
@@ -108,20 +110,23 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 | Item | Value |
 |---|---|
 | Entry point | `supabase/scripts/slice0_audit.sh` → `supabase/audit/run_audit.py` (Python standard library only) |
-| Modes | `--mode local`; `--mode hosted --simulate`; `--mode hosted --authorize-hosted-connection`; `--verify-report` |
+| Modes | `--mode local`; `--mode hosted --simulate`; `--mode hosted --authorize-hosted-connection`; the same plus `--authorize-supavisor-session-route`; `--verify-report` |
+| Hosted routes | **2, explicitly selected, never fallen back to** — `direct` (`db.<ref>.supabase.co`:5432, login `origenlab_migrator`) and `supavisor-session` (`aws-<cluster>-<region>.pooler.supabase.com`:5432, login `origenlab_migrator.<ref>`). The pooler route needs both a declaration in the reviewed target file and its own authorisation flag. Supavisor transaction mode (6543) is refused by name: it cannot carry the audit's transaction-local role and timeouts. [`OPERATIONS.md`](OPERATIONS.md) §4.2 |
 | SQL check files | 15, under `supabase/audit/sql/`, each statically proven to be a single read before any connection is opened |
 | Engine checks | 9 — one API-key-type record, seven operator attestations, one derived Data API conclusion |
 | Committed baseline | `supabase/audit/baselines/slice0.json`, captured from a clean local `supabase db reset` and reviewed in the change that added it |
-| Unit tests | **217** — `python3 -m unittest discover -s supabase/audit/tests -t supabase/audit` (155 audit + 62 hosted bootstrap, §2.4) |
-| Failure-injection checks | **53** — `supabase/scripts/audit_failure_tests.sh` |
+| Unit tests | **292** — `python3 -m unittest discover -s supabase/audit/tests -t supabase/audit` (230 audit + 62 hosted bootstrap, §2.4); 56 of them were added with the Supavisor route and 19 with the psql-invocation boundary (`tests/test_psql_invocation.py`) |
+| Failure-injection checks | **80** — `supabase/scripts/audit_failure_tests.sh`, including scenario M (the Supavisor route's trust model, end to end, with no database) and scenario N (a planted `~/.psqlrc` and a hostile libpq environment against the local database) |
 | Local verdict | `LOCAL_PASS` — 13 required proofs satisfied, `a13` corroborated, `a14` recorded |
-| Hosted runs performed | **zero.** No hosted target file has ever existed, and no database connection has ever been made to a hosted project — §2.5 |
+| Hosted runs performed | **zero.** No hosted run has ever completed, on either route, and no PostgreSQL audit of a hosted project has succeeded — §2.5 |
 | Write capability | **none.** No write mode, no baseline-writing mode, no redaction-disabling flag, and no mutation statement in either mode |
 
-The one place a write is attempted anywhere in this tooling is
-`audit_failure_tests.sh` scenario L, the negative test proving the audit's read-only
-transaction refuses a mutation with SQLSTATE `25006`. It runs only against the
-disposable local database, inside a rollback-only harness.
+The one place the tooling itself attempts a write is `audit_failure_tests.sh`
+scenario L, the negative test proving the audit's read-only transaction refuses a
+mutation with SQLSTATE `25006`. Scenario N plants a write in a malicious `~/.psqlrc`
+and proves the audit never executes it — its positive control first shows the same
+file does create the marker when `-X` is absent. Both run only against the disposable
+local database; L is rollback-only, and N drops its marker on both paths.
 
 ### 2.4 Hosted role bootstrap — measured
 
@@ -132,7 +137,7 @@ disposable local database, inside a rollback-only harness.
 | Bootstrap file | `supabase/hosted_roles.sql`, 4 roles, 1 membership, 15 analysed statements |
 | Static analyser | `supabase/audit/olaudit/bootstrap.py` — closed role set, no password, no platform-role grant, no unrecognised statement shape |
 | Approved environments | `staging` (Pro daily backups, seven-day retention, PITR declined). **`production` blocked** — no recorded RPO/PITR decision |
-| Unit tests | **217** total — `python3 -m unittest discover -s supabase/audit/tests -t supabase/audit`; 62 of them cover the bootstrap |
+| Unit tests | **273** total — `python3 -m unittest discover -s supabase/audit/tests -t supabase/audit`; 62 of them cover the bootstrap |
 | Failure-injection checks | **70** — `supabase/scripts/hosted_bootstrap_failure_tests.sh`, no database required |
 | Execution rehearsal | **9 checks** — `supabase/scripts/hosted_bootstrap_rehearsal.sh`, local disposable database only, one always-rolled-back transaction |
 | pgTAP | 19 assertions in `supabase/tests/100_hosted_role_bootstrap.sql` |
@@ -140,29 +145,50 @@ disposable local database, inside a rollback-only harness.
 | Passwords assigned | **zero.** The file cannot express one; the migrator credential is a separate operator action with a hidden secret input |
 | Staging provisioning posture | **decided, not provisioned** — Pro plan, Micro compute, dedicated IPv4, `sa-east-1`, spend cap on, daily backups at seven-day retention, PITR declined, credential in the operator's password manager ([`OPERATIONS.md`](OPERATIONS.md) §4.3). No project has been created, adopted or billed from this repository — §2.5 |
 
-### 2.5 The `origenlab-v2` hosted project — known, not adopted
+### 2.5 The `origenlab-v2` hosted project — restored, not adopted, not audited
 
-One hosted Supabase project, **`origenlab-v2`**, is known to exist. Its state, stated
-precisely because the distinction matters:
+One hosted Supabase project, **`origenlab-v2`**, exists. Its state, stated precisely because
+every distinction below has been got wrong at least once:
 
-- it was **discovered through an authenticated control-plane listing** (organization and
-  project listing) — so it is not true that Supabase has never been contacted from this
-  work;
-- **no database or data-plane connection has been made to it**;
-- **no SQL, DDL, DML, storage, Auth, API, migration or project configuration operation has
-  been performed against it**;
-- it remains **unreconciled, unadopted and unapproved**.
+- it was **restored and has reached `ACTIVE_HEALTHY`**, observed through an authenticated
+  control-plane read. It is not paused and not missing;
+- **control-plane evidence shows 15 of this repository's migrations already applied to it.**
+  The three 2026-09-08 `outbound` migrations are **absent**. Which 15 is not established
+  beyond that; the repository currently carries 19 (§2.1), so at least four are not there;
+- **the provenance of those 15 is unknown.** Who applied them, from which checkout, at what
+  commit and in what order is not established by anything this repository holds. They are
+  *not* evidence that the hosted schema matches `supabase/migrations/` — only that something
+  applied migrations with those names;
+- **no PostgreSQL audit and no row-count inspection has yet succeeded against it.** The
+  Slice 0 audit has never completed a run on it, no check in
+  [`MIGRATION.md`](MIGRATION.md) §5.2 has been proven on it, and no table in it has been
+  counted. **It must not be described as empty.** Nothing has looked;
+- it is on the **Free plan**, with **no backup-retention entitlement**. The Pro-plan staging
+  posture in §2.4 is a *decision about a project that would be provisioned*
+  ([`OPERATIONS.md`](OPERATIONS.md) §4.3), not a description of this one;
+- **PostgREST is running**, exposing `public` and `graphql_public`. **None of the seven
+  OrigenLab private schemas is exposed through it** — `crm`, `comms`, `outbound`,
+  `evidence`, `catalog`, `procurement` and `platform` are all absent from the Data API's
+  exposed set. "PostgREST is running" and "the OrigenLab schemas are reachable over HTTP"
+  are different claims and only the first is true;
+- it remains **unreconciled, unadopted and unapproved**. Nothing in this repository is
+  pointed at it, and adopting it is a separate decision that has not been taken.
 
-Nothing in this repository is pointed at it. Its **project reference, organisation
-identifiers and host name are deliberately not recorded here or anywhere else in tracked
-content** — `scripts/security/check-public-repo-hygiene.sh` fails if a project reference or
-`db.<ref>.supabase.co` host name ever enters tracked content, and the Slice 0 audit takes a
-hosted target only from a git-ignored file at one approved path. The human-facing project
-name above is the only hosted identifier this repository records.
+**The complete Slice 0 hosted gate is blocked**, and what blocks it is now a specific,
+named thing: the audit has no reviewed route that reaches this project. Its direct
+`db.<project-ref>.supabase.co` endpoint is IPv6-only without the IPv4 add-on. The reviewed
+Supavisor session-mode route that answers this is implemented and tested in this repository
+(§2.3) and **has never been run against a project**. Until it is, the 11 checks of
+[`MIGRATION.md`](MIGRATION.md) §5.2 stay unproven here — checks 1–9 proven **locally only**,
+checks 10–11 never run.
 
-Adopting it is a separate decision that has not been taken. Slice 0's hosted gates
-([`MIGRATION.md`](MIGRATION.md) §5.2 checks 1–11) are unproven against it or any other
-project.
+Its **project reference, host name, organisation identifier and credentials are deliberately
+not recorded here or anywhere else in tracked content.**
+`scripts/security/check-public-repo-hygiene.sh` fails if a project reference enters tracked
+content in either of the two shapes it takes — a `db.<ref>.supabase.co` host name or a
+Supavisor `<role>.<ref>` login — and the Slice 0 audit takes a hosted target only from a
+git-ignored file at one approved path. The human-facing project name above is the only
+hosted identifier this repository records.
 
 ### 2.6 V1 migration evidence — measured
 

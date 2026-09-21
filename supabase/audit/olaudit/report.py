@@ -195,6 +195,10 @@ def render_markdown(report: dict) -> str:
     add(f"| Host class | {target['host_class']} |")
     add(f"| Host | `{target['host_shown']}` |")
     add(f"| Port | {target['port']} |")
+    add(f"| Route | `{target.get('route', 'direct')}` |")
+    if target.get("pooler_cluster") or target.get("pooler_region"):
+        add(f"| Pooler cluster | `aws-{target.get('pooler_cluster')}` |")
+        add(f"| Pooler region | `{target.get('pooler_region')}` |")
     add(f"| Login role | `{target['user']}` |")
     add(f"| TLS | `{target['sslmode']}` |")
     add(f"| Address pinned before connect | `{str(target['address_pinned_before_connect']).lower()}` |")
