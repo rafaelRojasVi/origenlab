@@ -353,6 +353,59 @@ every other rule in this document serves.
 - **Fail-closed ambiguity.** When evidence resolves to more than one candidate,
   the system records the ambiguity and stops. It never picks one.
 
+### 5.1 Migration promotion — the one bulk carve-out
+
+**[V2 DECISION]**, approved 2026-09-21.
+
+§5 says promotion is an operator command and that nothing promotes on a timer, a
+threshold or a similarity score. The **migration** promotion of historical evidence is
+the single carve-out, and it is narrow enough that the rule above still holds in
+substance: it never resolves an identity, so there is no judgement for an operator to
+be deprived of.
+
+It may create exactly two things, and only by **direct transcription** of a recorded
+observation:
+
+- a `crm.contact_point`, from a `contacted_address` assertion — the channel, and only
+  the channel (§2.5);
+- a `crm.organization`, from an `organization_name` assertion whose folded name is
+  unique in the evidence.
+
+It may never create a `person`, an `affiliation`, an `organization_relationship`, an
+`address`, an `opportunity` or any participant, and it may never merge anything.
+
+**The conservative identity defaults it applies.**
+
+| Evidence | Resolution |
+|---|---|
+| A recognised role local part — `ventas@`, `contacto@`, `compras@`, `info@` and their kin | `contact_point` with `usage = 'shared_mailbox'`. An organization or shared mailbox, **never a person** |
+| Anything else | `contact_point` with `usage = 'unattributed'`. **Unknown remains unknown** |
+| A named personal address on a public mail domain | still `unattributed`; the public domain implies **no organization** |
+| Two or more observed organization names that fold to the same key | **never merged, and never promoted separately.** All members go to review together |
+| Anything that cannot be classified at all | review |
+
+Four properties make the carve-out safe, and each is asserted by the migration rather
+than asserted about it:
+
+1. **No `crm.person` is ever created.** The migration evidence records no display name
+   for anybody, so a person could only be derived from an address local part — an
+   inference about a real human, not an observation. The count is checked inside the
+   transaction and a non-zero value rolls the promotion back.
+2. **No contact point is attached to an organization.** §2.2 makes a domain a routing
+   hint and never an identity key on its own, so a role address is not joined to an
+   organization because it shares its mail domain.
+3. **A similarity score never promotes anything.** Folding two names to one key is only
+   ever a reason to *stop* and ask, which is §5's fail-closed ambiguity rule applied
+   rather than bypassed.
+4. **Everything created is `machine_proposed`**, and carries `actor_kind = 'migrator'`
+   in its domain event. No operator is impersonated, and nothing is confirmed truth
+   until an operator confirms it.
+
+**Organization `kind` under this carve-out.** §2.1 leaves the closed list of kinds
+`[OPEN]` and the evidence records no kind, so a migrated organization takes
+`kind = 'unknown'` — an explicit absence marker, not a classification. When the closed
+list is decided, these rows are reclassified by the migration that introduces it.
+
 ## 6. Worked examples
 
 | # | Situation | Representation |
