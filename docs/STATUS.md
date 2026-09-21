@@ -454,34 +454,6 @@ leaves the closed list of organization kinds **[OPEN]** and the evidence carries
 `unknown` is an explicit absence marker; the operator approved it on 2026-09-21 and every
 row stays `machine_proposed` until reclassified.
 
-### 2.7.4 Marketing linkage — measured 2026-09-21
-
-The marketing history arrives keyed by **address**; promotion creates the canonical channel
-rows. This stage joins the two, so a campaign, a delivery and an attribution can be read from
-a canonical identity instead of from a string.
-
-| Item | Value |
-|---|---|
-| Entry point | `promote_evidence_into_crm.py --apply --link-marketing` → `migration/v2_promote/marketing.py` |
-| Column written | `outbound.campaign_recipient.contact_point_id`, and nothing else |
-| Recipients linked | **3,252** of 3,481 |
-| Recipients with no canonical channel | **229** — snapshotted into a frozen audience but never contacted, so no `contacted_address` assertion and therefore no channel exists. Correct, not a gap |
-| Send attempts now reachable from identity | **3,138** of 3,141 |
-| Suppressions matching a canonical channel | 10,396 — **reported, never written** |
-| `person_id` / `organization_id` on recipients | **still zero**, asserted inside the transaction |
-| `outbound.contact_control` | **untouched**, and a test proves it |
-| Domain events written | **zero** — see below |
-| Idempotency | proven — a second run linked **0** |
-
-**`outbound.contact_control` is deliberately not given an identity column.** A suppression
-is a fact about an *address*: it must keep working for an address whose owner is unknown, was
-never promoted, or is later merged. The table has no identity column by design and this stage
-does not add one.
-
-**No `crm.domain_event` is written.** The event stream records human commercial truth. This
-linkage is a deterministic join over data that already exists, re-derivable from the address
-at any time, and carries no decision anybody made.
-
 ### 2.7.2 V2 durable read boundary — measured 2026-09-21
 
 The first application code that *reads* the V2 durable core. `docs/STATUS.md` §2.2 said
@@ -538,6 +510,82 @@ table is merely unread is the failure mode this avoids.
 **"Revisión humana" counts 4, not 11,276.** It reports the assertions the migration stopped
 and asked about — a number an operator can drive to zero — and carries the
 machine-proposed backlog in its hint rather than summing the two.
+
+### 2.7.4 Marketing linkage — measured 2026-09-21
+
+The marketing history arrives keyed by **address**; promotion creates the canonical channel
+rows. This stage joins the two, so a campaign, a delivery and an attribution can be read from
+a canonical identity instead of from a string.
+
+| Item | Value |
+|---|---|
+| Entry point | `promote_evidence_into_crm.py --apply --link-marketing` → `migration/v2_promote/marketing.py` |
+| Column written | `outbound.campaign_recipient.contact_point_id`, and nothing else |
+| Recipients linked | **3,252** of 3,481 |
+| Recipients with no canonical channel | **229** — snapshotted into a frozen audience but never contacted, so no `contacted_address` assertion and therefore no channel exists. Correct, not a gap |
+| Send attempts now reachable from identity | **3,138** of 3,141 |
+| Suppressions matching a canonical channel | 10,396 — **reported, never written** |
+| `person_id` / `organization_id` on recipients | **still zero**, asserted inside the transaction |
+| `outbound.contact_control` | **untouched**, and a test proves it |
+| Domain events written | **zero** — see below |
+| Idempotency | proven — a second run linked **0** |
+
+**`outbound.contact_control` is deliberately not given an identity column.** A suppression
+is a fact about an *address*: it must keep working for an address whose owner is unknown, was
+never promoted, or is later merged. The table has no identity column by design and this stage
+does not add one.
+
+**No `crm.domain_event` is written.** The event stream records human commercial truth. This
+linkage is a deterministic join over data that already exists, re-derivable from the address
+at any time, and carries no decision anybody made.
+
+### 2.7.5 Local V2 — the reconciled picture, 2026-09-21
+
+One table for "what is actually in the local V2 database and does it add up". The per-stage
+detail is §2.7 through §2.7.4; this is the reconciliation across them.
+
+| Table | Rows | Reconciles as |
+|---|---|---|
+| `evidence.source_record` | 4 | the four migration manifests |
+| `evidence.assertion` | 11,448 | = 11,272 promoted + 4 ambiguous + 172 unresolved |
+| `crm.organization` | 1,812 | part of the 11,272 promoted |
+| `crm.contact_point` | 9,460 | the rest of the 11,272 promoted |
+| `crm.person` | **0** | no display name exists in the evidence |
+| `crm.domain_event` | 22,544 | 11,272 `assertion.promoted` + 9,460 `contact_point.created` + 1,812 `organization.created` |
+| `outbound.campaign` | 3 | the three archived V1 campaigns |
+| `outbound.campaign_recipient` | 3,481 | = 3,252 linked + 229 never contacted |
+| `outbound.send_attempt` | 3,141 | 3,138 reachable from a canonical identity |
+| `outbound.contact_control` | 10,588 | 10,396 overlap a canonical channel |
+| `comms.mailbox` | 1 | |
+| `outbound.send_control` | 1 | both flags `false` |
+
+**Review queue.** 4 ambiguous assertions (two near-duplicate organization-name pairs), 172
+`supplier_candidate` left unresolved, 1,812 + 9,460 `machine_proposed` rows awaiting
+confirmation, and 2,860 personal-shaped addresses recorded as `unattributed` with no person
+created. There are **no duplicates to resolve**: nothing was merged, so nothing needs
+un-merging.
+
+**Idempotency, measured.** Every stage was run twice against the real artifacts. Second runs:
+import **0 rows**, promotion **0 rows and 0 events**, marketing linkage **0 links**.
+
+**API contract, measured** (§2.7.2). All seven routes: **401** with no identity, **200** with
+an active operator. `limit > 200` → **422**; `offset < 0` → **422**; an unlisted `/v2` path →
+**404**. Totals served: contacts 9,460, organizations 1,812, review summary populated, and
+prospects / active opportunities / tasks due / quotes follow-up all **0** for the reason in
+§2.7.2.
+
+**Durability.** Checkpoints of each stage are held outside Git under
+`~/data/origenlab-v2-local/checkpoints/` (`0700`/`0600`, `.sha256` + `.meta.json`), and a
+checkpoint → restore round trip has been exercised at full volume: 19 migrations replayed and
+28,666 rows reinstated with exact counts.
+
+**Screenshots** of the four CRM cards are in `~/data/origenlab-v2-local/screenshots/`,
+outside Git.
+
+**What is still missing, and why.** Email-capture evidence and quote-linkage evidence do not
+exist yet: V1 persists no Gmail message or thread id ([`DATA.md`](DATA.md) §6), and V1's
+durable opportunities, tasks and quotes have never been migrated. Both are recorded in
+[`OPERATIONS.md`](OPERATIONS.md) §1.2 under *What this runbook does not yet cover*.
 
 ### 2.8 Hosted phase — frozen 2026-09-21
 
