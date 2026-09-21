@@ -17,6 +17,8 @@
 | Sistema de marca: construcción, colores, animación | `docs/logo-system.md` |
 | Asesoría técnica y hechos de la especialista | `src/data/consultation.ts` |
 | Estado legal y datos de identidad pendientes | `src/data/legal.ts` |
+| Boletín: puertas de activación, intereses y texto de consentimiento | `src/data/newsletter.ts` |
+| Endpoint de suscripción, esquema D1 y contrato de consentimiento | `../newsletter-worker/README.md` |
 | Deploy, `dist/`, HostGator | `docs/deployment.md` |
 | Security / prior claims decisions | `docs/security-audit-v1.md` |
 | Sistema visual, tokens, primitivas | `docs/design/DESIGN_SYSTEM.md` |
@@ -28,7 +30,9 @@
 Stack: Astro + Tailwind v4, static site, Spanish-first. Build: `npm run build` → `dist/`.
 Full gate before declaring work done: `npm run validate` (check + build + catalog +
 brands + images + dist + contrast + interaction), then `npm run qa:screens` for the visual
-and accessibility pass. `npm run verify:sources` comprueba los enlaces externos
+and accessibility pass. `npm run validate:preview` compila la vista previa del
+boletín en `dist-preview/` y la comprueba entera, incluido `qa:newsletter`.
+`npm run verify:sources` comprueba los enlaces externos
 contra la red y por eso queda fuera de `validate`.
 
 Two hard constraints beyond the content rules:
@@ -93,3 +97,16 @@ and historical email are never clients or sales.
 **`/privacidad/` and `/aviso-legal/` are review drafts.** They are `noindex`, out
 of the sitemap and must not be deployed until a qualified Chilean professional
 reviews the text and the business supplies the legal identity in `src/data/legal.ts`.
+
+**El boletín se activa por conjunción, no por bandera.** `newsletterGates` en
+`src/data/newsletter.ts` enumera ocho condiciones (texto legal aprobado, plazo de
+conservación aprobado, Worker desplegado, esquema D1 aplicado, remitente real
+configurado, baja operativa, prueba de humo en producción y supresión integrada con
+campañas) y `isNewsletterPublished()` las exige todas. Mientras alguna falte, `dist/`
+no contiene **ninguna ruta del boletín**: `src/pages/newsletter/[...slug].astro`
+devuelve una lista vacía desde `getStaticPaths` y no emite ningún archivo, y ni el
+pie ni la portada lo enlazan. `validate:dist` comprueba además que no haya
+formulario, de modo que una compilación de vista previa que se desplegara por error
+falla la validación antes del despliegue. La vista previa se pide con
+`ORIGENLAB_NEWSLETTER_PREVIEW=1` y escribe en `dist-preview/`, que **no se despliega
+nunca**.

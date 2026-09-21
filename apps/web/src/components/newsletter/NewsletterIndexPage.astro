@@ -1,0 +1,210 @@
+---
+/**
+ * Página del boletín, cuerpo completo.
+ *
+ * Vive como componente y no como página porque la ruta la emite
+ * `src/pages/newsletter/[...slug].astro`, que sólo genera páginas en la
+ * compilación de vista previa. Mientras el boletín siga desactivado, la
+ * compilación pública no contiene ninguna de estas rutas.
+ */
+import Layout from '../../layouts/Layout.astro';
+import PageIntro from '../ui/PageIntro.astro';
+import SectionIndex from '../ui/SectionIndex.astro';
+import Notice from '../ui/Notice.astro';
+import NewsletterForm from './NewsletterForm.astro';
+import NewsletterPreviewNotice from './NewsletterPreviewNotice.astro';
+import { contact } from '../../data/contact';
+import {
+  isNewsletterPublished,
+  pendingNewsletterGates,
+  shouldRenderNewsletterForm,
+} from '../../data/newsletter';
+
+/**
+ * Boletín de OrigenLab.
+ *
+ * La página existe en las dos situaciones y dice la verdad en ambas. Cuando el
+ * boletín está publicado muestra el formulario. Cuando no lo está muestra por
+ * qué no, con las puertas que faltan y quién las abre, y ofrece el correo como
+ * canal real mientras tanto. Lo que no hace nunca es dibujar un formulario que
+ * no puede registrar nada.
+ *
+ * Mientras no esté publicada, la ruta va con `noindex`, fuera del sitemap, con
+ * `Disallow` en robots.txt y con `X-Robots-Tag` en .htaccess, igual que las
+ * rutas legales en borrador.
+ */
+const published = isNewsletterPublished();
+const showForm = shouldRenderNewsletterForm();
+const gates = pendingNewsletterGates();
+---
+
+<Layout
+  title="Boletín"
+  description="Boletín de OrigenLab sobre equipamiento de laboratorio: qué se envía, qué datos se guardan al suscribirse y cómo darse de baja en un paso."
+  noindex={!published}
+>
+  <div class="shell">
+    <PageIntro
+      title="Boletín de OrigenLab"
+      lead="Novedades de equipamiento de laboratorio, por correo y sólo si usted lo pide. Una suscripción se confirma desde su propio buzón y se cancela en un paso."
+      crumbs={[{ label: 'Boletín' }]}
+    />
+    <NewsletterPreviewNotice />
+  </div>
+
+  <section class="shell section rule-top" aria-labelledby="alta-title">
+    <SectionIndex index={1} label="Suscripción" />
+    <h2 id="alta-title" class="t-h2">
+      {showForm ? 'Suscribirse al boletín' : 'El boletín todavía no está abierto'}
+    </h2>
+
+    {
+      showForm ? (
+        <>
+          <p class="t-lead mt-5">
+            Sólo el correo es obligatorio. El resto ayuda a que lo que reciba tenga que ver con su
+            laboratorio, y puede dejarlo en blanco.
+          </p>
+          <NewsletterForm headingId="alta-title" source="web_newsletter_page" />
+        </>
+      ) : (
+        <>
+          <p class="t-lead mt-5">
+            Preferimos no recoger direcciones antes de poder tratarlas bien. Faltan condiciones que
+            no dependen del diseño de esta página, y hasta que estén no hay formulario.
+          </p>
+          <ul class="gates">
+            {gates.map((gate) => (
+              <li class="gates__row">
+                <p class="gates__label">{gate.label}</p>
+                <p class="t-data gates__owner">{gate.owner}</p>
+                <p class="t-small gates__detail">{gate.detail}</p>
+              </li>
+            ))}
+          </ul>
+          <p class="t-body mt-10">
+            Mientras tanto, si quiere que le avisemos cuando abra, escríbanos a{' '}
+            <a class="link-plain" href={`mailto:${contact.email}`}>{contact.email}</a>. Su correo
+            queda en ese buzón, no en una lista de envío.
+          </p>
+        </>
+      )
+    }
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="datos-title">
+    <SectionIndex index={2} label="Sus datos" />
+    <h2 id="datos-title" class="t-h2">Qué se guarda y qué no</h2>
+    <dl class="facts">
+      <div class="facts__row">
+        <dt class="facts__label">Doble confirmación</dt>
+        <dd class="facts__detail t-body">
+          Suscribirse tiene dos pasos. Usted envía el formulario y recibe un correo con un enlace.
+          La suscripción no existe hasta que usted la confirma desde ese correo, de modo que nadie
+          puede suscribir a otra persona escribiendo su dirección.
+        </dd>
+      </div>
+      <div class="facts__row">
+        <dt class="facts__label">Qué se guarda</dt>
+        <dd class="facts__detail t-body">
+          Su correo, el nombre y la institución si los escribe, los temas que marcó, la constancia
+          de que aceptó recibir comunicaciones, la versión del texto que aceptó y las fechas de
+          solicitud, confirmación y baja.
+        </dd>
+      </div>
+      <div class="facts__row">
+        <dt class="facts__label">Baja en un paso</dt>
+        <dd class="facts__detail t-body">
+          Cada mensaje lleva un enlace de baja que no pide contraseña, ni motivo, ni confirmación
+          por correo. Al darse de baja queda registrada una supresión que las campañas tienen que
+          respetar, y que no se borra aunque usted vuelva a suscribirse más adelante.
+        </dd>
+      </div>
+      <div class="facts__row">
+        <dt class="facts__label">Qué no se hace</dt>
+        <dd class="facts__detail t-body">
+          No se añade a nadie por haber escrito antes, por aparecer en un directorio o por haber
+          pedido una cotización. No hay seguimiento de aperturas ni de clics, no se fijan cookies y
+          no se comparte la lista con terceros para su publicidad.
+        </dd>
+      </div>
+    </dl>
+    <Notice class="mt-12">
+      El detalle completo del tratamiento, incluida la infraestructura que participa, está en la
+      <a class="link-plain" href="/privacidad/">política de privacidad</a> y en la página de{' '}
+      <a class="link-plain" href="/cookies/">cookies</a>.
+    </Notice>
+  </section>
+
+</Layout>
+
+<style>
+  .gates {
+    list-style: none;
+    margin: 2.5rem 0 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .gates__row {
+    display: grid;
+    gap: 0.25rem;
+    padding-block: 1.125rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .gates__label {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+  .gates__owner {
+    font-size: 0.8125rem;
+    letter-spacing: 0.04em;
+    color: var(--color-teal-800);
+  }
+  .gates__detail {
+    color: var(--color-ink-600);
+    max-width: 62ch;
+  }
+
+  .facts {
+    margin: 3rem 0 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .facts__row {
+    display: grid;
+    gap: 0.5rem;
+    padding-block: 1.5rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .facts__label {
+    font-size: 1.0625rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+  .facts__detail {
+    margin: 0;
+    color: var(--color-ink-600);
+  }
+
+  @media (min-width: 768px) {
+    .gates__row {
+      grid-template-columns: minmax(0, 5fr) 11rem;
+      column-gap: 2rem;
+      align-items: baseline;
+    }
+    .gates__owner {
+      grid-column: 2;
+      grid-row: 1;
+      text-align: right;
+    }
+    .gates__detail {
+      grid-column: 1;
+      grid-row: 2;
+    }
+    .facts__row {
+      grid-template-columns: minmax(0, 4fr) minmax(0, 7fr);
+      column-gap: 3rem;
+      padding-block: 1.75rem;
+    }
+  }
+</style>

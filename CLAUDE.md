@@ -91,6 +91,11 @@ apps/dashboard        operator UI — presentation only, never truth
 
 apps/web              public marketing site — no operator/CRM code
 
+apps/newsletter-worker  public newsletter subscription ingress and consent
+                        evidence (Cloudflare Worker + D1). Not deployed.
+                        Never the campaign authority: durable marketing
+                        permission stays in commercial/outbound.*
+
 supabase/             V2 durable core (PostgreSQL 17, seven private
                       schemas) — schema, roles, grants, RLS and pgTAP
                       evidence only. No application code reads or writes
@@ -109,6 +114,11 @@ truth.** No rebuildable projection may own a durable operator decision.
   `commercial.activity`, their append-only event tables. Written only via
   `POST /operations/*` on `apps/api` (trusted operator identity,
   `Idempotency-Key`, optimistic concurrency).
+- **Ingress, neither of the two**: `apps/newsletter-worker`'s D1 tables hold a
+  public subscription request, its confirmation and its suppression. A pending
+  request is **not** a permission, because in `outbound.contact_permission`
+  absence of opt-in is refusal. Promotion into the durable permission ledger is
+  a human act through `POST /operations/*`; no machine may mint a permission.
 - **Rebuildable** (machine projections — may be dropped and rebuilt from
   source): PR2/PR3/PR4 read models (`commercial_identity`,
   `commercial_opportunity`, `commercial_procurement*`), warm cases, the
@@ -142,6 +152,7 @@ are not required reading for routine code changes.
 | `apps/dashboard` | [`apps/dashboard/README.md`](apps/dashboard/README.md) | React operator UI |
 | `apps/dashboard-proxy` | [`apps/dashboard-proxy/README.md`](apps/dashboard-proxy/README.md) | Trust boundary — never weaken for convenience |
 | `apps/web` | [`apps/web/README.md`](apps/web/README.md) | Astro public site, own `CLAUDE.md` |
+| `apps/newsletter-worker` | [`apps/newsletter-worker/README.md`](apps/newsletter-worker/README.md) | Newsletter endpoint + D1 consent ledger. **Not deployed**; activation is gated by eight conditions in `apps/web/src/data/newsletter.ts` |
 
 ## Engineering rules
 

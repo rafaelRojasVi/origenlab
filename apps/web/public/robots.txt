@@ -10,4 +10,9 @@ Disallow: /email/
 Disallow: /privacidad/
 Disallow: /aviso-legal/
 
+# Boletín: hoy la compilación pública no emite ninguna de estas rutas. La regla
+# se mantiene como red por si una vista previa se desplegara por error, y sale
+# de aquí cuando las ocho puertas de src/data/newsletter.ts estén abiertas.
+Disallow: /newsletter/
+
 Sitemap: https://origenlab.cl/sitemap-index.xml

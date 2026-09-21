@@ -1,0 +1,532 @@
+---
+import {
+  CONSENT_TEXT_VERSION,
+  FIELD_LIMITS,
+  NEWSLETTER_ENDPOINT,
+  consentText,
+  newsletterInterests,
+} from '../../data/newsletter';
+
+/**
+ * Formulario de suscripción al boletín.
+ *
+ * Mejora progresiva estricta. El elemento es un `form` real que envía por POST
+ * a una ruta del propio dominio, de modo que sin JavaScript funciona y el
+ * Worker responde con una redirección a una página estática de resultado. Con
+ * JavaScript, el script intercepta el envío y muestra los mismos estados sin
+ * recargar. Las dos rutas dan el mismo resultado y ninguna puede mostrar éxito
+ * si el servidor no lo ha confirmado.
+ *
+ * Decisiones que conviene no deshacer:
+ *
+ * - **La casilla de consentimiento no viene marcada y es obligatoria.** No hay
+ *   casilla de rechazo, ni letra pequeña que dé por aceptado nada, ni copia que
+ *   presione. Quien no la marca no se suscribe.
+ * - **La respuesta es neutra.** El servidor contesta lo mismo para una
+ *   dirección nueva que para una ya suscrita, porque distinguirlas convertiría
+ *   el formulario en un comprobador de direcciones ajenas.
+ * - **El control contra envíos automáticos no observa a nadie.** Un campo
+ *   señuelo y el tiempo que tardó el envío. Ni cookie, ni almacenamiento, ni
+ *   CAPTCHA, ni tercero.
+ * - **Los límites de tamaño son los mismos que aplica el Worker** (`FIELD_LIMITS`),
+ *   para que el navegador no acepte lo que el servidor va a rechazar.
+ */
+interface Props {
+  /** Encabezado del bloque. El nivel lo decide la página que lo incrusta. */
+  headingId: string;
+  /** Origen declarado del alta, para el registro de consentimiento. */
+  source: string;
+}
+
+const { headingId, source } = Astro.props;
+---
+
+<form
+  class="nl"
+  method="post"
+  action={NEWSLETTER_ENDPOINT}
+  aria-labelledby={headingId}
+  data-newsletter-form
+  data-endpoint={NEWSLETTER_ENDPOINT}
+>
+  <input type="hidden" name="consent_version" value={CONSENT_TEXT_VERSION} />
+  <input type="hidden" name="source" value={source} />
+  <input type="hidden" name="rendered_at" value="" data-newsletter-rendered />
+
+  {/*
+    Campo señuelo. No se oculta con display:none, que muchos envíos automáticos
+    detectan, sino fuera de la vista y fuera del orden de tabulación. Ningún
+    lector de pantalla lo anuncia y ninguna persona lo rellena.
+  */}
+  <div class="nl__decoy" aria-hidden="true">
+    <label for="nl-sitio">No rellene este campo</label>
+    <input id="nl-sitio" type="text" name="sitio_web" tabindex="-1" autocomplete="off" />
+  </div>
+
+  <div class="nl__grid">
+    <div class="nl__field nl__field--wide">
+      <label class="nl__label" for="nl-email">
+        Correo electrónico <span class="nl__req">obligatorio</span>
+      </label>
+      <input
+        class="nl__input"
+        id="nl-email"
+        name="email"
+        type="email"
+        required
+        maxlength={FIELD_LIMITS.email}
+        autocomplete="email"
+        inputmode="email"
+        spellcheck="false"
+        aria-describedby="nl-email-error"
+      />
+      <p class="nl__error" id="nl-email-error" data-error-for="email" hidden></p>
+    </div>
+
+    <div class="nl__field">
+      <label class="nl__label" for="nl-nombre">
+        Nombre <span class="nl__opt">opcional</span>
+      </label>
+      <input
+        class="nl__input"
+        id="nl-nombre"
+        name="nombre"
+        type="text"
+        maxlength={FIELD_LIMITS.name}
+        autocomplete="name"
+        aria-describedby="nl-nombre-error"
+      />
+      <p class="nl__error" id="nl-nombre-error" data-error-for="nombre" hidden></p>
+    </div>
+
+    <div class="nl__field">
+      <label class="nl__label" for="nl-organizacion">
+        Laboratorio o institución <span class="nl__opt">opcional</span>
+      </label>
+      <input
+        class="nl__input"
+        id="nl-organizacion"
+        name="organizacion"
+        type="text"
+        maxlength={FIELD_LIMITS.organization}
+        autocomplete="organization"
+        aria-describedby="nl-organizacion-error"
+      />
+      <p class="nl__error" id="nl-organizacion-error" data-error-for="organizacion" hidden></p>
+    </div>
+  </div>
+
+  <fieldset class="nl__interests">
+    <legend class="nl__label nl__legend">
+      Qué le interesa <span class="nl__opt">opcional</span>
+    </legend>
+    <p class="nl__hint" id="nl-intereses-hint">
+      Marque las familias sobre las que quiere recibir información. Si no marca ninguna, recibirá
+      el boletín completo.
+    </p>
+    <ul class="nl__checks" aria-describedby="nl-intereses-hint">
+      {
+        newsletterInterests.map((interest) => (
+          <li>
+            <label class="nl__check">
+              <input type="checkbox" name="intereses" value={interest.id} />
+              <span class="nl__check-body">
+                <span class="nl__check-label">{interest.label}</span>
+                <span class="nl__check-hint">{interest.hint}</span>
+              </span>
+            </label>
+          </li>
+        ))
+      }
+    </ul>
+  </fieldset>
+
+  <div class="nl__consent">
+    <label class="nl__check nl__check--consent">
+      <input
+        type="checkbox"
+        name="consentimiento"
+        value="si"
+        required
+        aria-describedby="nl-consent-error"
+      />
+      <span class="nl__consent-text">
+        {consentText}{' '}
+        <a class="link-plain" href="/privacidad/">Política de privacidad</a>.
+      </span>
+    </label>
+    <p class="nl__error" id="nl-consent-error" data-error-for="consentimiento" hidden></p>
+  </div>
+
+  <div class="nl__actions">
+    <button class="btn btn-primary nl__submit" type="submit" data-newsletter-submit>
+      Suscribirme
+    </button>
+    <p class="nl__legalese">
+      Le enviaremos un correo para confirmar. La suscripción no queda activa hasta que usted la
+      confirme desde ese correo.
+    </p>
+  </div>
+
+  {/*
+    Región de estado. `role="status"` con `aria-live="polite"` para que el
+    lector de pantalla anuncie el resultado sin robar el foco, y `aria-busy`
+    durante el envío. Vacía en reposo: una región viva con texto permanente se
+    reanuncia sola.
+  */}
+  <p class="nl__status" role="status" aria-live="polite" data-newsletter-status></p>
+</form>
+
+<style>
+  .nl {
+    margin-top: 2.5rem;
+    max-width: 46rem;
+  }
+
+  /* Señuelo: fuera de la vista sin display:none y sin ocupar espacio. */
+  .nl__decoy {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .nl__grid {
+    display: grid;
+    gap: 1.5rem;
+  }
+  .nl__field {
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  .nl__label {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-ink-600);
+  }
+  .nl__req,
+  .nl__opt {
+    margin-left: 0.5rem;
+    text-transform: none;
+    letter-spacing: 0.02em;
+    color: var(--color-ink-500);
+  }
+  .nl__req {
+    color: var(--color-teal-800);
+  }
+
+  .nl__input {
+    width: 100%;
+    min-height: 2.875rem;
+    padding: 0.6875rem 0.875rem;
+    background-color: var(--color-paper);
+    border: 1px solid var(--color-ink-500);
+    border-radius: var(--radius-edge);
+    font-family: inherit;
+    font-size: 1rem;
+    color: var(--color-ink-950);
+    transition: border-color 150ms;
+  }
+  .nl__input:hover {
+    border-color: var(--color-ink-800);
+  }
+  .nl__input[aria-invalid='true'] {
+    border-color: var(--color-family-electroforesis);
+    border-width: 2px;
+  }
+
+  .nl__error {
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--color-family-electroforesis);
+  }
+  .nl__error::before {
+    content: '';
+    display: inline-block;
+    width: 0.5rem;
+    height: 0.5rem;
+    margin-right: 0.5rem;
+    background-color: currentColor;
+    vertical-align: 0.05em;
+  }
+
+  .nl__hint {
+    font-size: 0.875rem;
+    line-height: 1.55;
+    color: var(--color-ink-600);
+    max-width: 58ch;
+  }
+
+  /* -- Intereses ----------------------------------------------------------- */
+  .nl__interests {
+    margin-top: 2.5rem;
+    padding: 0;
+    border: 0;
+    border-top: 1px solid var(--color-hairline);
+    padding-top: 2rem;
+  }
+  .nl__legend {
+    padding: 0;
+    margin-bottom: 0.625rem;
+  }
+  .nl__checks {
+    list-style: none;
+    margin: 1.25rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: 0.25rem;
+  }
+
+  .nl__check {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    min-height: 2.75rem;
+    padding: 0.5rem 0;
+    cursor: pointer;
+  }
+  .nl__check input {
+    flex: none;
+    width: 1.125rem;
+    height: 1.125rem;
+    margin-top: 0.28rem;
+    accent-color: var(--color-teal-700);
+  }
+  .nl__check-body {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 0.625rem;
+  }
+  .nl__check-label {
+    font-size: 0.9375rem;
+    color: var(--color-ink-900);
+  }
+  .nl__check-hint {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    letter-spacing: 0.03em;
+    color: var(--color-ink-500);
+  }
+
+  /* -- Consentimiento ------------------------------------------------------ */
+  .nl__consent {
+    margin-top: 2rem;
+    padding: 1.25rem;
+    background-color: var(--color-surface);
+    border-left: 2px solid var(--color-teal-700);
+  }
+  .nl__check--consent {
+    align-items: flex-start;
+    padding: 0;
+  }
+  .nl__consent-text {
+    font-size: 0.9375rem;
+    line-height: 1.6;
+    color: var(--color-ink-800);
+    max-width: 60ch;
+  }
+  .nl__consent .nl__error {
+    margin-top: 0.75rem;
+  }
+
+  /* -- Acciones ------------------------------------------------------------ */
+  .nl__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem 1.5rem;
+    margin-top: 2rem;
+  }
+  .nl__submit[aria-disabled='true'] {
+    background-color: var(--color-ink-500);
+    cursor: progress;
+  }
+  .nl__legalese {
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    color: var(--color-ink-500);
+    max-width: 42ch;
+  }
+
+  /* -- Estado -------------------------------------------------------------- */
+  .nl__status:empty {
+    display: none;
+  }
+  .nl__status {
+    margin-top: 1.75rem;
+    padding: 1rem 1.25rem;
+    border-left: 2px solid var(--color-ink-500);
+    font-size: 0.9375rem;
+    line-height: 1.6;
+    color: var(--color-ink-800);
+    max-width: 60ch;
+  }
+  .nl__status[data-state='ok'] {
+    border-left-color: var(--color-teal-700);
+    background-color: var(--color-teal-50);
+  }
+  .nl__status[data-state='error'] {
+    border-left-color: var(--color-family-electroforesis);
+    background-color: var(--color-surface);
+  }
+
+  @media (min-width: 640px) {
+    .nl__grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      column-gap: 1.5rem;
+    }
+    .nl__field--wide {
+      grid-column: 1 / -1;
+    }
+    .nl__checks {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      column-gap: 2rem;
+    }
+    .nl__consent {
+      padding: 1.5rem;
+    }
+  }
+</style>
+
+<script>
+  /**
+   * Mejora progresiva del formulario del boletín.
+   *
+   * Sin este script el formulario envía por POST y el Worker redirige a una
+   * página estática de resultado. Con él, el mismo envío ocurre por fetch y el
+   * resultado se muestra sin recargar.
+   *
+   * Invariante que no puede romperse: **sólo se muestra éxito cuando la
+   * respuesta es 2xx y su cuerpo declara el estado pendiente**. Un fallo de
+   * red, un 500, una respuesta que no es JSON o un endpoint ausente caen todos
+   * en el mismo camino de error, con la alternativa por correo a la vista.
+   */
+  const FALLBACK = 'contacto@origenlab.cl';
+
+  function setError(form: HTMLFormElement, field: string, message: string | null) {
+    const box = form.querySelector<HTMLElement>(`[data-error-for="${field}"]`);
+    const input = form.querySelector<HTMLInputElement>(`[name="${field}"]`);
+    if (box) {
+      box.textContent = message ?? '';
+      box.hidden = message === null;
+    }
+    if (input) {
+      if (message) input.setAttribute('aria-invalid', 'true');
+      else input.removeAttribute('aria-invalid');
+    }
+  }
+
+  function announce(form: HTMLFormElement, message: string, state: string) {
+    const status = form.querySelector<HTMLElement>('[data-newsletter-status]');
+    if (!status) return;
+    status.textContent = message;
+    status.dataset.state = state;
+  }
+
+  function validate(form: HTMLFormElement): string | null {
+    const data = new FormData(form);
+    const email = String(data.get('email') ?? '').trim();
+    const nombre = String(data.get('nombre') ?? '').trim();
+    const organizacion = String(data.get('organizacion') ?? '').trim();
+
+    for (const field of ['email', 'nombre', 'organizacion', 'consentimiento']) {
+      setError(form, field, null);
+    }
+
+    let firstInvalid: string | null = null;
+    const fail = (field: string, message: string) => {
+      setError(form, field, message);
+      if (!firstInvalid) firstInvalid = field;
+    };
+
+    if (!email) fail('email', 'Escriba su correo electrónico.');
+    else if (email.length > 254) fail('email', 'El correo es demasiado largo.');
+    else if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))
+      fail('email', 'Ese correo no tiene una forma válida. Revise que incluya arroba y dominio.');
+
+    if (nombre.length > 120) fail('nombre', 'El nombre es demasiado largo.');
+    if (organizacion.length > 160) fail('organizacion', 'El nombre de la institución es demasiado largo.');
+
+    if (!data.get('consentimiento'))
+      fail('consentimiento', 'Para suscribirse tiene que aceptar recibir estas comunicaciones.');
+
+    return firstInvalid;
+  }
+
+  function wire(form: HTMLFormElement) {
+    /* El navegador deja de mostrar sus propias burbujas: los errores se
+       escriben junto al campo y se anuncian en la región de estado. */
+    form.noValidate = true;
+
+    const rendered = form.querySelector<HTMLInputElement>('[data-newsletter-rendered]');
+    if (rendered) rendered.value = String(Date.now());
+
+    const submit = form.querySelector<HTMLButtonElement>('[data-newsletter-submit]');
+    let sending = false;
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (sending) return;
+
+      const invalid = validate(form);
+      if (invalid) {
+        announce(form, 'Revise los campos marcados y vuelva a intentarlo.', 'error');
+        form.querySelector<HTMLElement>(`[name="${invalid}"]`)?.focus();
+        return;
+      }
+
+      sending = true;
+      form.setAttribute('aria-busy', 'true');
+      submit?.setAttribute('aria-disabled', 'true');
+      announce(form, 'Enviando su solicitud.', 'busy');
+
+      let ok = false;
+      try {
+        const response = await fetch(form.action, {
+          method: 'POST',
+          body: new URLSearchParams(new FormData(form) as unknown as Record<string, string>),
+          headers: { Accept: 'application/json' },
+          credentials: 'omit',
+          mode: 'same-origin',
+        });
+        if (response.ok) {
+          const payload = await response.json();
+          ok = payload && payload.status === 'pending';
+        }
+      } catch {
+        ok = false;
+      }
+
+      sending = false;
+      form.removeAttribute('aria-busy');
+      submit?.removeAttribute('aria-disabled');
+
+      if (ok) {
+        announce(
+          form,
+          'Solicitud recibida. Si la dirección es válida, le enviamos un correo para confirmar la suscripción. La suscripción no queda activa hasta que usted la confirme.',
+          'ok',
+        );
+        form.reset();
+        if (rendered) rendered.value = String(Date.now());
+      } else {
+        announce(
+          form,
+          `No pudimos registrar su solicitud. No se ha guardado nada. Inténtelo de nuevo en unos minutos o escríbanos a ${FALLBACK}.`,
+          'error',
+        );
+      }
+    });
+  }
+
+  for (const form of document.querySelectorAll<HTMLFormElement>('[data-newsletter-form]')) {
+    wire(form);
+  }
+</script>

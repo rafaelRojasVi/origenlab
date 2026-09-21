@@ -1,0 +1,180 @@
+---
+import NewsletterIndexPage from '../../components/newsletter/NewsletterIndexPage.astro';
+import NewsletterOutcome from '../../components/newsletter/NewsletterOutcome.astro';
+import { contact } from '../../data/contact';
+import { shouldRenderNewsletterForm } from '../../data/newsletter';
+
+/**
+ * Todas las rutas del boletín, emitidas en un solo sitio.
+ *
+ * Es una ruta dinámica y no seis páginas estáticas por una razón concreta: un
+ * `getStaticPaths` que devuelve la lista vacía no emite ningún archivo. Mientras
+ * el boletín siga desactivado, la compilación pública no contiene `/newsletter/`
+ * ni ninguna de sus páginas de resultado. Antes existían con `noindex`, y una
+ * ruta que se sirve es una ruta que alguien encuentra.
+ *
+ * Las páginas vuelven a existir en la compilación de vista previa
+ * (`npm run build:preview`, salida en `dist-preview/`, que no se despliega
+ * nunca) y el día que las ocho puertas de `newsletter.ts` estén abiertas.
+ *
+ * Ninguna de estas rutas lleva parámetros en la URL ni los interpreta: cada
+ * resultado es una ruta distinta. Un mensaje que dependa de una cadena de
+ * consulta se puede falsificar escribiéndola a mano, y aquí eso significaría
+ * enseñar un éxito que no ocurrió.
+ */
+export function getStaticPaths() {
+  if (!shouldRenderNewsletterForm()) return [];
+  return [
+    { params: { slug: undefined } },
+    { params: { slug: 'solicitud-recibida' } },
+    { params: { slug: 'no-enviado' } },
+    { params: { slug: 'confirmada' } },
+    { params: { slug: 'enlace-no-valido' } },
+    { params: { slug: 'baja-confirmada' } },
+  ];
+}
+
+const { slug } = Astro.params;
+---
+
+{slug === undefined && <NewsletterIndexPage />}
+
+{
+  /**
+   * Destino del envío sin JavaScript. El Worker redirige aquí con 303 tanto si
+   * la dirección era nueva como si ya estaba suscrita: el mensaje es el mismo a
+   * propósito, porque distinguirlos convertiría el formulario en un comprobador
+   * de direcciones ajenas.
+   */
+  slug === 'solicitud-recibida' && (
+    <NewsletterOutcome
+      title="Solicitud recibida"
+      description="Su solicitud de suscripción al boletín de OrigenLab quedó registrada. Falta confirmarla desde el correo que le enviamos."
+      heading="Solicitud recibida"
+      lead="Queda un paso, y lo da usted desde su propio buzón."
+      tone="ok"
+    >
+      <p class="t-body">
+        Si la dirección que escribió es válida, le enviamos un correo con un enlace de
+        confirmación. Ábralo y confirme para completar la suscripción.
+      </p>
+      <p class="t-body">
+        Hasta que confirme, la suscripción no existe y no le enviaremos ninguna comunicación
+        comercial. Si no encuentra el correo, revise la carpeta de no deseados antes de volver a
+        intentarlo.
+      </p>
+      <p class="t-body">
+        Si usted no pidió esta suscripción, no haga nada. Sin confirmación no ocurre nada y la
+        solicitud caduca sola.
+      </p>
+    </NewsletterOutcome>
+  )
+}
+
+{
+  /**
+   * Envío fallido sin JavaScript. Existe para que el camino de error sea tan
+   * explícito como el de éxito: ninguna ruta puede terminar en una página que
+   * insinúe que algo se guardó.
+   */
+  slug === 'no-enviado' && (
+    <NewsletterOutcome
+      title="No pudimos registrar su solicitud"
+      description="La solicitud de suscripción al boletín de OrigenLab no se pudo registrar y no se guardó ningún dato. Puede intentarlo de nuevo o escribirnos."
+      heading="No pudimos registrar su solicitud"
+      lead="No se guardó nada. La suscripción no quedó hecha."
+      tone="error"
+    >
+      <p class="t-body">
+        Algo falló al registrar su solicitud. Puede volver a intentarlo desde la
+        <a class="link-plain" href="/newsletter/">página del boletín</a> en unos minutos.
+      </p>
+      <p class="t-body">
+        Si vuelve a fallar, escríbanos a{' '}
+        <a class="link-plain" href={`mailto:${contact.email}`}>{contact.email}</a> y lo resolvemos
+        por ese canal.
+      </p>
+    </NewsletterOutcome>
+  )
+}
+
+{
+  /**
+   * Suscripción confirmada. El Worker redirige aquí tanto si acaba de
+   * confirmarse como si ya lo estaba: confirmar dos veces es idempotente y el
+   * resultado que importa, «su suscripción está activa», es el mismo.
+   */
+  slug === 'confirmada' && (
+    <NewsletterOutcome
+      title="Suscripción confirmada"
+      description="Su suscripción al boletín de OrigenLab quedó confirmada. Puede darse de baja en un paso desde el enlace de cualquier mensaje."
+      heading="Suscripción confirmada"
+      lead="Su suscripción al boletín está activa."
+      tone="ok"
+    >
+      <p class="t-body">
+        Quedó registrado que usted autorizó estas comunicaciones, cuándo lo hizo y qué texto
+        aceptó. Esa constancia es lo que nos permite escribirle, y es también lo que usted puede
+        pedirnos que le mostremos.
+      </p>
+      <p class="t-body">
+        Cada mensaje lleva un enlace de baja. Funciona en un paso, sin contraseña y sin pedirle un
+        motivo.
+      </p>
+    </NewsletterOutcome>
+  )
+}
+
+{
+  /**
+   * Enlace inservible: caducado, ya usado o inexistente. Los tres casos
+   * comparten página a propósito. Decir cuál de los tres es informa a quien
+   * prueba enlaces al azar sobre qué direcciones existen.
+   */
+  slug === 'enlace-no-valido' && (
+    <NewsletterOutcome
+      title="El enlace ya no sirve"
+      description="El enlace de confirmación o de baja del boletín de OrigenLab caducó, ya fue usado o no es válido. Puede volver a empezar desde la página del boletín."
+      heading="El enlace ya no sirve"
+      lead="Puede haber caducado, puede haberse usado ya, o puede no ser válido."
+      tone="error"
+    >
+      <p class="t-body">
+        Los enlaces de confirmación caducan y sirven una sola vez. Si el suyo ya pasó por
+        cualquiera de esas dos cosas, empiece de nuevo desde la
+        <a class="link-plain" href="/newsletter/">página del boletín</a>.
+      </p>
+      <p class="t-body">
+        Si lo que quería era darse de baja y el enlace no funcionó, escríbanos y lo hacemos
+        nosotros. No necesita justificar nada.
+      </p>
+    </NewsletterOutcome>
+  )
+}
+
+{
+  /**
+   * Baja registrada. Se llega aquí tanto desde el botón de la página de baja
+   * como desde una segunda baja de una dirección ya dada de baja: la operación
+   * es idempotente y el mensaje no cambia.
+   */
+  slug === 'baja-confirmada' && (
+    <NewsletterOutcome
+      title="Baja registrada"
+      description="Su baja del boletín de OrigenLab quedó registrada. No recibirá más comunicaciones comerciales en esa dirección."
+      heading="Baja registrada"
+      lead="No recibirá más comunicaciones comerciales en esa dirección."
+      tone="ok"
+    >
+      <p class="t-body">
+        La baja quedó guardada como una supresión que las campañas tienen que respetar. No se borra
+        si alguien vuelve a importar una lista, y sigue ahí aunque usted decida suscribirse otra vez
+        más adelante.
+      </p>
+      <p class="t-body">
+        Esto no afecta a los correos de una cotización que usted haya pedido: son otra cosa y siguen
+        su propio camino.
+      </p>
+    </NewsletterOutcome>
+  )
+}

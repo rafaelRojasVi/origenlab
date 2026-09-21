@@ -5,12 +5,19 @@ import { buildWhatsAppQuoteUrl } from '../lib/whatsapp';
 import { categories } from '../data/categories';
 import { productFamilies } from '../data/productFamilies';
 import { isLegalTextApproved, legalRoutes } from '../data/legal';
+import { shouldRenderNewsletterForm } from '../data/newsletter';
 import SiteLogo from './SiteLogo.astro';
 import Icon from './ui/Icon.astro';
 
 const year = new Date().getFullYear();
 const whatsappHref = buildWhatsAppQuoteUrl();
 const legalApproved = isLegalTextApproved();
+/**
+ * Entrada discreta al boletín. Sólo aparece cuando el formulario se dibuja en
+ * esta compilación: un enlace permanente a una suscripción que no acepta a
+ * nadie sería una promesa sin respaldo.
+ */
+const showNewsletter = shouldRenderNewsletterForm();
 ---
 
 <footer class="site-footer on-ink">
@@ -52,6 +59,11 @@ const legalApproved = isLegalTextApproved();
           <li><a href="/servicios/">Servicios</a></li>
           <li><a href="/marcas/">Marcas</a></li>
           <li><a href="/contacto/">Contacto</a></li>
+          {showNewsletter && (
+            <li>
+              <a href="/newsletter/">Boletín</a>
+            </li>
+          )}
         </ul>
       </nav>
 

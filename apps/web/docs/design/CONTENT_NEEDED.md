@@ -58,6 +58,38 @@ a OrigenLab como operador B2B pequeño es una pregunta legal, no de ingeniería.
 
 ---
 
+## 1.b Boletín y consentimiento de marketing
+
+El formulario de suscripción está implementado y **apagado**. La activación es
+una conjunción de ocho condiciones (`newsletterGates` en
+`src/data/newsletter.ts`), no una bandera: texto legal aprobado, plazo de
+conservación aprobado, Worker desplegado, esquema D1 aplicado, remitente real
+configurado, ruta de baja operativa, prueba de humo en producción y supresión
+integrada con el envío de campañas.
+
+Mientras alguna falte, `dist/` **no contiene ninguna ruta del boletín**: ni el
+formulario, ni `/newsletter/`, ni sus páginas de resultado. Lo consigue
+`src/pages/newsletter/[...slug].astro`, cuyo `getStaticPaths` devuelve la lista
+vacía y por tanto no emite ningún archivo; `validate:dist` comprueba además que
+no haya formulario. El pie y la portada tampoco enlazan el boletín. La vista
+previa de revisión se compila con `ORIGENLAB_NEWSLETTER_PREVIEW=1` en
+`dist-preview/`, que no se despliega nunca.
+
+| Pendiente | Tipo | Bloquea |
+|---|---|---|
+| Frecuencia de envío del boletín | CONTENIDO | Cualquier frase que prometa cada cuánto llega un mensaje. Hoy el formulario no promete ninguna |
+| Plazo de conservación de una suscripción, de una baja y de su evidencia | LEGAL | Activación. Una baja tiene que conservarse más que un alta: es la prueba de que alguien pidió no recibir nada |
+| Ubicación y transferencia internacional de Cloudflare Workers y D1 | LEGAL | Activación. Guardar suscriptores en D1 es una **finalidad nueva y un sistema de almacenamiento nuevo**, no una extensión del proxy que ya existe |
+| Remitente del correo de confirmación y su acuerdo de encargado | CONTENIDO | Doble opt-in operativo. Con el remitente nulo el alta falla de forma cerrada y el formulario no se publica |
+| Puente al CRM para crear el permiso de marketing tras la confirmación | INGENIERÍA / NEGOCIO | Que la supresión sea canónica. Copiar suscriptores a mano no es una garantía suficiente: la copia se queda quieta mientras el estado de baja cambia |
+
+**Ninguna dirección histórica del CRM entra en el boletín.** El esquema del CRM
+ya lo decidió el 2026-09-14: la ausencia de opt-in explícito significa marketing
+rechazado, y la correspondencia pública, la relevancia de un proyecto, el
+historial de cotizaciones y la coincidencia de dominio **no son consentimiento**.
+
+---
+
 ## 2. Marcas
 
 **Lista cerrada de seis, fijada por el negocio en la revisión de marca del

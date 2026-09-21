@@ -12,7 +12,15 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const dist = join(root, 'dist');
+/**
+ * Carpeta a comprobar. Por defecto `dist/`, la compilación de producción. La
+ * compilación de vista previa del boletín se escribe en `dist-preview/` y se
+ * comprueba pasando esa carpeta como argumento, con las reglas invertidas: en
+ * `dist/` no puede haber formulario, y en la vista previa tiene que haberlo.
+ */
+const target = process.argv[2] ?? 'dist';
+const dist = join(root, target);
+const isPreview = target !== 'dist';
 let failed = false;
 
 function assert(condition, message) {
@@ -23,7 +31,7 @@ function assert(condition, message) {
 }
 
 if (!existsSync(dist)) {
-  console.error('dist/ no existe: ejecute npm run build primero');
+  console.error(`${target}/ no existe: ejecute npm run build primero`);
   process.exit(1);
 }
 
@@ -51,6 +59,16 @@ const INTERNAL = [
   '404.html',
   'privacidad/index.html',
   'aviso-legal/index.html',
+  // Las rutas del boletín sólo aparecen en la compilación de vista previa: en
+  // `dist/` no existe ninguna mientras el servicio siga desactivado, porque
+  // `src/pages/newsletter/[...slug].astro` no emite ninguna página. Siguen aquí
+  // para que la vista previa también se compruebe.
+  'newsletter/index.html',
+  'newsletter/solicitud-recibida/index.html',
+  'newsletter/no-enviado/index.html',
+  'newsletter/confirmada/index.html',
+  'newsletter/enlace-no-valido/index.html',
+  'newsletter/baja-confirmada/index.html',
 ];
 
 /**
@@ -152,6 +170,24 @@ for (const file of pages) {
     );
   }
 
+  /* -- Formularios -------------------------------------------------------
+   * El sitio tuvo cero formularios durante todo el rediseño. Ahora puede tener
+   * uno, el del boletín, y sólo ese: declarado, por POST y al propio dominio.
+   */
+  for (const tag of html.matchAll(/<form\b[^>]*>/g)) {
+    const attrs = tag[0];
+    assert(
+      /data-newsletter-form/.test(attrs),
+      at(`formulario no declarado: ${attrs.slice(0, 90)}`),
+    );
+    const action = attrs.match(/action="([^"]*)"/)?.[1] ?? '';
+    assert(
+      action.startsWith('/') && !action.startsWith('//'),
+      at(`el formulario envía fuera del propio dominio: ${action}`),
+    );
+    assert(/method="post"/i.test(attrs), at('el formulario del boletín tiene que enviar por POST'));
+  }
+
   /* -- Superficies internas --------------------------------------------- */
   if (INTERNAL.includes(rel)) {
     assert(/<meta name="robots" content="noindex/.test(html), at('superficie interna sin noindex'));
@@ -175,6 +211,31 @@ function stripElements(html, name) {
     current = current.replace(pattern, '');
   } while (current !== previous);
   return current;
+}
+
+/* -- El boletín no puede colarse en producción ----------------------------
+ *
+ * En `dist/` no puede haber ningún formulario mientras el boletín no esté
+ * activado. Es la red que atrapa una activación accidental: si alguien compila
+ * con la variable de vista previa y despliega ese resultado, la validación
+ * falla antes del despliegue en vez de publicar un formulario que no registra
+ * nada. En la vista previa la regla se invierte: si no hay formulario, la
+ * compilación de revisión no sirve para revisar nada.
+ */
+const formPages = pages
+  .filter((file) => /<form\b/.test(readFileSync(file, 'utf8')))
+  .map((file) => relative(dist, file));
+
+if (isPreview) {
+  assert(
+    formPages.length > 0,
+    'vista previa: se esperaba al menos un formulario del boletín y no hay ninguno',
+  );
+} else {
+  assert(
+    formPages.length === 0,
+    `dist: el boletín no está activado y hay formulario en ${formPages.join(', ')}. Una compilación de vista previa no se despliega`,
+  );
 }
 
 /* -- Sitemap y robots ----------------------------------------------------- */
@@ -205,7 +266,7 @@ const robots = readFileSync(join(dist, 'robots.txt'), 'utf8');
 assert(robots.includes('Sitemap: https://origenlab.cl/sitemap-index.xml'), 'robots.txt: sitemap mal referenciado');
 assert(robots.includes('Disallow: /logo-lab/'), 'robots.txt: /logo-lab/ debe quedar fuera del índice');
 assert(robots.includes('Disallow: /email/'), 'robots.txt: /email/ debe quedar fuera del índice');
-for (const route of ['/privacidad/', '/aviso-legal/']) {
+for (const route of ['/privacidad/', '/aviso-legal/', '/newsletter/']) {
   assert(robots.includes(`Disallow: ${route}`), `robots.txt: el borrador ${route} debe quedar fuera del índice`);
   assert(!sitemapUrls.some((url) => url.includes(route)), `sitemap: contiene el borrador legal ${route}`);
 }

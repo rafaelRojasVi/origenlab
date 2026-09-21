@@ -1,0 +1,40 @@
+# OrigenLab, endpoint de suscripción al boletín.
+#
+# Este archivo describe el despliegue; **no está desplegado**. Mientras las
+# ocho puertas de apps/web/src/data/newsletter.ts no estén abiertas, el sitio
+# no dibuja el formulario y este Worker no tiene que existir en producción.
+#
+# La ruta es del propio dominio a propósito. El sitio se sirve detrás de
+# Cloudflare, así que una ruta en origenlab.cl/api/* la atiende el Worker sin
+# que el navegador haga ninguna petición a otro origen: la CSP del sitio puede
+# seguir declarando `connect-src 'self'` y `form-action 'self'` sin tocar nada,
+# y no aparece ningún tercero en la pestaña de red del visitante.
+#
+# Eso no lo hace gratis desde el punto de vista de privacidad: guardar
+# suscriptores en D1 es una finalidad nueva y un sistema de almacenamiento
+# nuevo. Está declarado como tal en apps/web/src/data/legal.ts.
+
+name = "origenlab-newsletter"
+main = "src/index.ts"
+compatibility_date = "2025-04-01"
+
+[vars]
+# Origen único admitido para el envío del formulario.
+ORIGENLAB_SITE_ORIGIN = "https://origenlab.cl"
+# Remitente del correo de confirmación. `null` mientras no haya proveedor
+# decidido: con este valor el envío falla de forma cerrada y no se guarda nada.
+ORIGENLAB_EMAIL_SENDER = "null"
+
+# La base no existe todavía. El identificador se rellena al crearla.
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "origenlab-newsletter"
+# database_id = "PENDIENTE"
+
+[[routes]]
+pattern = "origenlab.cl/api/newsletter/*"
+zone_name = "origenlab.cl"
+
+# Secretos (wrangler secret put), nunca en este archivo ni en el navegador:
+#   ORIGENLAB_TOKEN_PEPPER    clave del HMAC que convierte un token en su huella
+#   ORIGENLAB_RATE_LIMIT_KEY  clave del HMAC que anonimiza la clave de caudal

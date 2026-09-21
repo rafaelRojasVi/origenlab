@@ -29,7 +29,7 @@ ErrorDocument 404 /404.html
   # Superficies internas y borradores legales: no indexar aunque alguien las
   # enlace. Las rutas legales salen de aquí cuando el texto esté revisado.
   <FilesMatch "\.(html)$">
-    <If "%{REQUEST_URI} =~ m#^/(email|logo-lab|privacidad|aviso-legal)/#">
+    <If "%{REQUEST_URI} =~ m#^/(email|logo-lab|privacidad|aviso-legal|newsletter)/#">
       Header set X-Robots-Tag "noindex, nofollow"
     </If>
   </FilesMatch>

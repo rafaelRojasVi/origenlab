@@ -2,13 +2,32 @@
 
 Status: canonical  
 Owner: web-maintainers  
-Last reviewed: 2026-03-23
+Last reviewed: 2026-09-21
 
 Sitio estático generado con Astro. El resultado del build son HTML, CSS y assets en la carpeta `dist/`.
 
+## Qué se despliega y qué no
+
+Se despliega **el contenido de `dist/`**, y sólo eso.
+
+`dist-preview/` es la compilación de revisión del boletín, la que dibuja el
+formulario de suscripción. **No se despliega nunca.** Se genera con
+`npm run build:preview` y existe para poder ver y probar el formulario mientras
+las ocho puertas de `src/data/newsletter.ts` siguen cerradas. Si alguna vez se
+subiera por error, el sitio ofrecería una suscripción que ningún endpoint
+atiende: `npm run validate` falla ante un `dist/` con formulario justamente para
+que eso no llegue a ocurrir.
+
+Las rutas `/privacidad/`, `/aviso-legal/` y `/newsletter/` se
+despliegan sin indexar (meta `noindex`, fuera del sitemap, `Disallow` en
+`robots.txt` y `X-Robots-Tag` en `.htaccess`). Salen de ese estado cuando el
+texto legal esté revisado y, en el caso del boletín, cuando el servicio esté
+activo.
+
 ## Checklist antes del lanzamiento
 
-- [ ] Ejecutar `npm run build` y revisar que no haya errores.
+- [ ] Ejecutar `npm run validate` (incluye `build` y `validate:dist`) y revisar que no haya errores.
+- [ ] Comprobar que **no se está subiendo `dist-preview/`**.
 - [ ] Subir **todo** el contenido de `dist/` al directorio público (p. ej. `public_html`), incluyendo **`.htaccess`** (en FTP/cPanel, activar “mostrar archivos ocultos” si no lo ve).
 - [ ] Comprobar que la raíz del sitio contiene `index.html` y `.htaccess`.
 - [ ] Abrir el sitio por **HTTP** (ej. `http://origenlab.cl`) y verificar que redirige a **HTTPS**.
