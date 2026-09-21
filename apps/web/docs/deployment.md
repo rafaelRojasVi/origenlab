@@ -92,14 +92,15 @@ directorio personal) y cualquiera que no contenga `public_html`. También
 comprueba que la carpeta **ya exista** en el servidor: rsync no la crea, porque
 que hubiera que crearla significaría que la ruta está equivocada.
 
-### Antes del primer despliegue real
+### Las tres rutas legales sí se despliegan
 
-`/privacidad/` y `/aviso-legal/` están hoy en `dist/` como borradores de
-revisión (`noindex` y fuera del sitemap), y `apps/web/CLAUDE.md` pide que no se
-desplieguen hasta que un profesional chileno revise el texto y
-`src/data/legal.ts` tenga la identidad legal. Un despliegue automático las
-publica igualmente, sin indexar. Resolver ese punto —o excluir esas rutas— es
-condición para pasar de ensayo a `--apply`.
+`/privacidad/`, `/cookies/` y `/aviso-legal/` **se publican** con el resto del
+sitio: el titular del negocio lo decidió el 2026-09-21 y el guion no las
+excluye. Lo que no cambia es su visibilidad: siguen `noindex`, fuera del
+sitemap y `Disallow` en `robots.txt` hasta que un profesional chileno revise el
+texto y `legalStatus.reviewedBy` lo registre. `validate:dist` comprueba que las
+cuatro capas sigan de acuerdo, así que un despliegue no puede indexarlas por
+descuido.
 
 Nada de esto llega por un push: el único camino a `--apply` es lanzar el
 workflow a mano con `apply` en `true` y aprobar `production`.
