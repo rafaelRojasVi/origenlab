@@ -25,6 +25,8 @@ from origenlab_api.v2.identity import (
 )
 from origenlab_api.v2.repository import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, clamp_limit
 
+from origenlab_api.commercial_operator_identity import OPERATOR_EMAIL_HEADER
+
 LOOPBACK = "postgresql://origenlab_api:pw@127.0.0.1:54332/origenlab_dev"
 
 
@@ -120,14 +122,21 @@ def test_a_missing_header_is_refused() -> None:
 def test_an_unknown_operator_is_refused() -> None:
     port = LocalDevIdentity(LOOPBACK, _Lookup(None))
     with pytest.raises(IdentityRefused):
-        port.resolve({"x-origenlab-operator-email": "nobody@example.cl"})
+        port.resolve({LocalDevIdentity.HEADER: "nobody@example.cl"})
 
 
 def test_a_disabled_operator_is_refused_even_with_a_valid_identity() -> None:
     port = LocalDevIdentity(LOOPBACK, _Lookup(_operator(status="disabled")))
     with pytest.raises(IdentityRefused) as excinfo:
-        port.resolve({"x-origenlab-operator-email": "operator@example.cl"})
+        port.resolve({LocalDevIdentity.HEADER: "operator@example.cl"})
     assert "disabled" in str(excinfo.value)
+
+
+def test_the_dev_adapter_reads_the_same_header_the_proxy_reconstructs() -> None:
+    # The proxy deletes exactly this header and rebuilds it from Cloudflare Access. A V2
+    # boundary reading any other name would receive a browser-supplied value the proxy has
+    # no reason to strip, and any signed-in user could impersonate any operator.
+    assert LocalDevIdentity.HEADER == OPERATOR_EMAIL_HEADER.lower()
 
 
 def test_role_gating() -> None:

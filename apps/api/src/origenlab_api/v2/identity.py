@@ -28,6 +28,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from origenlab_api.commercial_operator_identity import OPERATOR_EMAIL_HEADER
+
 
 class IdentityRefused(Exception):
     """The request carries no identity this boundary will accept."""
@@ -99,13 +101,20 @@ def is_loopback_dsn(dsn: str) -> bool:
 
 
 class LocalDevIdentity(IdentityPort):
-    """Resolve an operator from a header, for local development only.
+    """Resolve an operator from the trusted operator header, for local development only.
 
     Refuses to be constructed unless the V2 database it would read is on a literal loopback
     address. There is no override.
+
+    **It reads the same header the V1 command path reads, and that is not a convenience.**
+    `apps/dashboard-proxy` deletes exactly one inbound operator header and reconstructs it
+    from the Cloudflare Access authenticated identity — that header, by name. A V2 boundary
+    that invented its own header name would be handed a **browser-supplied** value the proxy
+    has no reason to strip, and any signed-in user could then impersonate any operator. The
+    constant is imported rather than repeated so the two can never drift apart.
     """
 
-    HEADER = "x-origenlab-operator-email"
+    HEADER = OPERATOR_EMAIL_HEADER.lower()
 
     def __init__(self, database_url: str, lookup: "OperatorLookup") -> None:
         if not is_loopback_dsn(database_url):
