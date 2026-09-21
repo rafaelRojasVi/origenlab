@@ -83,8 +83,22 @@ def is_facade_wrapper(content: str) -> bool:
 # root implementation with subpackage implementations. Reviewed 2026-08-28
 # (commercial platform reset): root db.py is the SQLite connection layer;
 # postgres_dashboard_api/db.py is the Postgres mirror connection helper.
+#
+# Reviewed 2026-09-21 (V2 migration): the two V2 migration stages share a top-level
+# directory, so the "two distinct top-level domains" rule cannot separate them, but they
+# are distinct domains in every sense that matters. `v2_import` lands historical evidence
+# in `evidence.*` and `outbound.*` and is forbidden from writing `crm.*` at all;
+# `v2_promote` reads those assertions and writes `crm.*` and nothing else. Neither file
+# imports the other's plan or apply, and the two have different contracts, different
+# idempotency identities and different invariants.
 _REVIEWED_DISTINCT_GROUPS: dict[str, frozenset[str]] = {
     "db.py": frozenset({"db.py", "postgres_dashboard_api/db.py"}),
+    "migration_plan.py": frozenset(
+        {"migration/v2_import/plan.py", "migration/v2_promote/plan.py"}
+    ),
+    "migration_apply.py": frozenset(
+        {"migration/v2_import/apply.py", "migration/v2_promote/apply.py"}
+    ),
 }
 
 
