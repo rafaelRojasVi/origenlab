@@ -12,6 +12,18 @@
         "set_option": true
       }
     ],
+    "owner_members_hosted": [
+      {
+        "inherit_option": false,
+        "member": "origenlab_migrator",
+        "set_option": true
+      },
+      {
+        "inherit_option": false,
+        "member": "postgres",
+        "set_option": false
+      }
+    ],
     "roles": [
       {
         "rolbypassrls": false,

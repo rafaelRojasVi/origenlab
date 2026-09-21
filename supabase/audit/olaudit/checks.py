@@ -211,8 +211,25 @@ def eval_a01(data: dict, baseline: dict, ctx: Context):
     expected = baseline["a01"]
     findings: list[str] = []
     findings += diff_collection(data.get("roles"), expected["roles"], "OrigenLab role attributes")
+    # The membership graph of origenlab_owner is the one place the local and hosted foundations
+    # diverge by design, so a single expectation cannot describe both. `supabase/roles.sql`
+    # grants the CLI's `postgres` login SET on the owner, because local migrations run as that
+    # login; `supabase/hosted_roles.sql` revokes that option instead (docs/OPERATIONS.md §4.3),
+    # which leaves a vestigial pg_auth_members row carrying every option false rather than no
+    # row at all. Each mode therefore carries its own expectation, and the hosted one is
+    # *required* rather than defaulted: silently falling back to the local shape would make a
+    # hosted project that still lets `postgres` SET ROLE to the owner pass this very check.
+    if ctx.mode == "hosted":
+        if "owner_members_hosted" not in expected:
+            raise KeyError(
+                "baseline a01 carries no 'owner_members_hosted': a hosted run must not be "
+                "judged against the local owner-membership shape"
+            )
+        expected_owner_members = expected["owner_members_hosted"]
+    else:
+        expected_owner_members = expected["owner_members"]
     findings += diff_collection(
-        data.get("owner_members"), expected["owner_members"], "members of origenlab_owner"
+        data.get("owner_members"), expected_owner_members, "members of origenlab_owner"
     )
     findings += diff_collection(
         data.get("runtime_role_memberships"),

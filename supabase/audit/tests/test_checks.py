@@ -36,6 +36,20 @@ class TestBaseline(unittest.TestCase):
         self.assertEqual(4, len(baseline["a01"]["roles"]))
         self.assertEqual([], baseline["a05"]["security_definer_functions"])
 
+    def test_the_two_owner_membership_shapes_differ_only_in_the_postgres_set_option(self):
+        a01 = checks.load_baseline()["a01"]
+        local = {m["member"]: m for m in a01["owner_members"]}
+        hosted = {m["member"]: m for m in a01["owner_members_hosted"]}
+        self.assertEqual(set(local), set(hosted))
+        # The hosted shape keeps the row and drops the option -- REVOKE ... OPTION FOR leaves a
+        # vestigial pg_auth_members row on PostgreSQL 17 (docs/OPERATIONS.md §4.3), so an
+        # expectation that dropped the member entirely would fail against a converged project.
+        self.assertTrue(local["postgres"]["set_option"])
+        self.assertFalse(hosted["postgres"]["set_option"])
+        self.assertEqual(local["origenlab_migrator"], hosted["origenlab_migrator"])
+        for member in hosted.values():
+            self.assertFalse(member["inherit_option"], member["member"])
+
     def test_no_baseline_role_carries_bypassrls(self):
         for role in checks.load_baseline()["a01"]["roles"]:
             self.assertFalse(role["rolbypassrls"], role["rolname"])
@@ -61,6 +75,33 @@ class TestEvaluation(unittest.TestCase):
         result = self.evaluate()["a01"]
         self.assertEqual(FAIL, result.status)
         self.assertTrue(any("BYPASSRLS" in f for f in result.findings))
+
+    def test_a_hosted_project_where_postgres_can_still_set_role_to_the_owner_fails(self):
+        # The whole point of the hosted expectation. Before supabase/hosted_roles.sql converges
+        # it, `postgres` holds SET on origenlab_owner; a hosted run must call that a failure
+        # rather than accept it because the *local* foundation legitimately has that shape.
+        for member in self.obs["a01"]["owner_members"]:
+            if member["member"] == "postgres":
+                member["set_option"] = True
+        result = self.evaluate(mode="hosted")["a01"]
+        self.assertEqual(FAIL, result.status)
+        self.assertTrue(any("members of origenlab_owner" in f for f in result.findings))
+
+    def test_local_mode_still_expects_the_postgres_set_option_the_cli_needs(self):
+        # The mirror image: locally that same grant is required, not a finding.
+        for member in self.obs["a01"]["owner_members"]:
+            if member["member"] == "postgres":
+                member["set_option"] = True
+        result = self.evaluate(mode="local")["a01"]
+        self.assertEqual(PASS, result.status)
+
+    def test_a_hosted_run_refuses_to_fall_back_to_the_local_owner_membership_shape(self):
+        baseline = checks.load_baseline()
+        del baseline["a01"]["owner_members_hosted"]
+        ctx = checks.Context(mode="hosted", simulated=True, attestation={})
+        with self.assertRaises(KeyError) as caught:
+            checks.eval_a01(self.obs["a01"], baseline, ctx)
+        self.assertIn("owner_members_hosted", str(caught.exception))
 
     def test_service_role_bypassrls_is_recorded_and_does_not_fail(self):
         result = self.evaluate()["a02"]

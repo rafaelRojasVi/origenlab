@@ -39,7 +39,7 @@ Slice 0 audit. §2.5 does now record a database connection made to it by `supaba
 | Era | State |
 |---|---|
 | **V1** | **Running and authoritative** for every fact it owns today, including all outbound safety |
-| **V2** | Architecture **accepted 2026-09-05**. **Schema foundation only.** One hosted project exists and carries 15 of this repository's migrations from the 2026-09-08 push recorded in §2.5; it is unadopted, unaudited and unread. No application code, nothing deployed |
+| **V2** | Architecture **accepted 2026-09-05**. **Schema foundation only.** One hosted project exists, `origenlab-v2`; as of 2026-09-21 it is **audited, role-converged and reconciled to all 19 migrations**, and proven to hold no business data (§2.5). The remaining Slice 0 gate items are plan-and-configuration attestations, not unknowns. No application code, nothing deployed |
 
 ## 2. V2 — slice status
 
@@ -48,7 +48,7 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 | Slice | State | Note |
 |---|---|---|
 | 0 — local foundation | **DONE** | `supabase/roles.sql` + 19 migrations → 4 roles, 7 schemas, 33 tables, grants, RLS. Proven by `supabase/tests/` and `supabase/scripts/`, enforced by `.github/workflows/supabase.yml` on every push touching `supabase/**` |
-| 0 — hosted gates | **BLOCKED — no hosted PostgreSQL audit has yet succeeded** | **No hosted Supabase project has been adopted, and no PostgreSQL session against one has succeeded from this repository's audit tooling.** A database connection *was* made to one — `supabase db push` on 2026-09-08, §2.5 — so any stronger reading of this row is withdrawn. All 11 checks in [`MIGRATION.md`](MIGRATION.md) §5.2 remain unproven against a hosted project; checks 1–9 are proven **locally only**, checks 10–11 have never run. The tooling exists — `supabase/scripts/slice0_audit.sh` ([`OPERATIONS.md`](OPERATIONS.md) §4.2) now carries **two** reviewed hosted routes, the direct one and the Supavisor session-mode one for a project whose IPv6-only direct endpoint is unreachable, and `supabase/scripts/hosted_role_bootstrap.sh` ([`OPERATIONS.md`](OPERATIONS.md) §4.3) can produce the role bootstrap such a project would need first — §2.3, §2.4. Neither has been run against a project. See §2.5 for the one hosted project that exists |
+| 0 — hosted gates | **BLOCKED — on attestation items only; the audit itself has now succeeded** | **The hosted Slice 0 audit completed against `origenlab-v2` on 2026-09-21** over the Supavisor session-mode route, and every SQL proof passed. `supabase/hosted_roles.sql` was applied under its atomic contract the same day and the four absent migrations were reconciled, so the project now carries all 19 (§2.5). Checks 1–9 of [`MIGRATION.md`](MIGRATION.md) §5.2 are therefore proven **against the hosted project**, not merely locally. **Checks 10–11 remain unproven**, and with them the eight attestation items `t01`–`t07` and `d01`: the project is on the Free plan with no backup entitlement, so no restore drill can be evidenced, and its Data API is running rather than off. Those are plan-and-configuration decisions for the owner. The project is **reconciled but still not adopted** — no committed file names it and no application code reads it. See §2.5 |
 | 1 — Auth / `platform.*` | NOT STARTED | |
 | 2 — CRM identity + V1 row migration | NOT STARTED | |
 | 3 — Quotes, lines, FX, snapshot, PDF | NOT STARTED | |
@@ -118,10 +118,10 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 | SQL check files | 15, under `supabase/audit/sql/`, each statically proven to be a single read before any connection is opened |
 | Engine checks | 9 — one API-key-type record, seven operator attestations, one derived Data API conclusion |
 | Committed baseline | `supabase/audit/baselines/slice0.json`, captured from a clean local `supabase db reset` and reviewed in the change that added it |
-| Unit tests | **304** — `python3 -m unittest discover -s supabase/audit/tests -t supabase/audit` (230 audit + 74 hosted bootstrap, §2.4); 56 of them were added with the Supavisor route and 19 with the psql-invocation boundary (`tests/test_psql_invocation.py`) |
+| Unit tests | **308** — `python3 -m unittest discover -s supabase/audit/tests -t supabase/audit` (234 audit + 74 hosted bootstrap, §2.4); 56 of them were added with the Supavisor route and 19 with the psql-invocation boundary (`tests/test_psql_invocation.py`) |
 | Failure-injection checks | **80** — `supabase/scripts/audit_failure_tests.sh`, including scenario M (the Supavisor route's trust model, end to end, with no database) and scenario N (a planted `~/.psqlrc` and a hostile libpq environment against the local database) |
 | Local verdict | `LOCAL_PASS` — 13 required proofs satisfied, `a13` corroborated, `a14` recorded |
-| Hosted runs performed | **zero.** No hosted run has ever completed, on either route, and no PostgreSQL audit of a hosted project has succeeded. This is a statement about the audit tool only — a database connection to the hosted project was made on 2026-09-08 by `supabase db push`, §2.5 |
+| Hosted runs performed | **one, completed 2026-09-21**, on the `supavisor-session` route against `origenlab-v2`. Every SQL proof passed — `s01`, `a01`–`a12`, `a13` corroborated, `a14` recorded. The verdict is `INCOMPLETE`, not `PASS`, because the eight attestation-backed items (`t01`–`t07`, `d01`) have no `supabase/.audit/attestation.json` and are therefore `NOT_RUN`. §2.5 |
 | Write capability | **none.** No write mode, no baseline-writing mode, no redaction-disabling flag, and no mutation statement in either mode |
 
 The one place the tooling itself attempts a write is `audit_failure_tests.sh`
@@ -140,13 +140,13 @@ local database; L is rollback-only, and N drops its marker on both paths.
 | Bootstrap file | `supabase/hosted_roles.sql`, 4 roles, 1 membership, 2 platform-role option revocations, **17** analysed statements |
 | Static analyser | `supabase/audit/olaudit/bootstrap.py` — closed role set, no password, no platform-role grant, no unrecognised statement shape; one closed, privilege-removing exception (`PERMITTED_OPTION_REVOCATIONS`, matched exactly) |
 | Approved environments | `staging` (Pro daily backups, seven-day retention, PITR declined). **`production` blocked** — no recorded RPO/PITR decision |
-| Unit tests | **304** total — `python3 -m unittest discover -s supabase/audit/tests -t supabase/audit`; **74** of them cover the bootstrap |
+| Unit tests | **308** total — `python3 -m unittest discover -s supabase/audit/tests -t supabase/audit`; **74** of them cover the bootstrap |
 | Failure-injection checks | **91** — `supabase/scripts/hosted_bootstrap_failure_tests.sh`, no database required |
 | Execution rehearsal | **37 checks** — `supabase/scripts/hosted_bootstrap_rehearsal.sh`, local disposable database only, always-rolled-back transactions |
 | Application contract | **atomic, documented and rehearsed** — `psql -X --no-psqlrc -v ON_ERROR_STOP=1 --single-transaction` over `verify-full` TLS in a clean child environment ([`OPERATIONS.md`](OPERATIONS.md) §4.3). **25 of the 37 rehearsal checks** extract that exact invocation from the document and run it against the local disposable database with failures injected, proving a failure after a successful role statement rolls that statement back and that the file's own assertions abort inside the same transaction. Still **no apply mode** in any tool |
 | pgTAP | **22** assertions in `supabase/tests/100_hosted_role_bootstrap.sql` |
-| Applications performed | **`supabase/hosted_roles.sql` itself: zero.** It has never been applied to any project, hosted or otherwise, outside the rolled-back local rehearsal. A prior "no hosted role DDL has ever run" reading of this row is **wrong** — the *local* `supabase/roles.sql` reached the hosted project on 2026-09-08 and the hosted catalogue carries its shape. See the correction below and §2.5 |
-| Passwords assigned | **zero.** The file cannot express one; the migrator credential is a separate operator action with a hidden secret input, **not taken** — `origenlab_migrator` still has no password verifier |
+| Applications performed | **one, 2026-09-21** — `supabase/hosted_roles.sql` applied to `origenlab-v2` under the documented atomic contract, as the project's `postgres` login over the Supavisor session route. It converged `postgres -> origenlab_owner` from `set_option` true to false and left the `supabase_admin`-granted creator-ADMIN row intact, verified from the catalogue afterwards (§2.5). Before that it had never been applied anywhere outside the rolled-back local rehearsal; the *local* `supabase/roles.sql` had reached the project on 2026-09-08 and its shape is what this application converged |
+| Passwords assigned | **by this file, zero — it still cannot express one.** The separate operator action was taken on 2026-09-21: `origenlab_migrator` now carries a SCRAM-SHA-256 verifier, computed on the operator's machine and sent as a pre-computed verifier so no plaintext crossed the wire or could reach a server log. The secret itself lives outside this repository. `origenlab_owner`, `origenlab_api` and `origenlab_worker` still have no verifier |
 | Staging provisioning posture | **decided, not provisioned** — Pro plan, Micro compute, dedicated IPv4, `sa-east-1`, spend cap on, daily backups at seven-day retention, PITR declined, credential in the operator's password manager ([`OPERATIONS.md`](OPERATIONS.md) §4.3). No project has been created, adopted or billed from this repository — §2.5 |
 
 **The convergence this file now carries.** `supabase/hosted_roles.sql` revokes the `SET` and
@@ -178,7 +178,7 @@ behaviour, never the presence of a row. `pg_has_role(…, 'MEMBER')` is specific
 evidence here: it reads `true` for `postgres` both before and after, because the retained
 creator-ADMIN row satisfies it.
 
-### 2.5 The `origenlab-v2` hosted project — reached once, provenance established
+### 2.5 The `origenlab-v2` hosted project — audited and reconciled
 
 One hosted Supabase project, **`origenlab-v2`**, exists. Its state, stated precisely because
 every distinction below has been got wrong at least once — and **corrected on 2026-09-20**:
@@ -208,8 +208,9 @@ omits and now converges away, §2.4). The same push carried the 15 migrations of
 which is consistent with the 15 since observed on the project and with the three 2026-09-08
 `outbound` migrations being absent from it.
 
-**This document does not claim `supabase/hosted_roles.sql` was ever applied.** It was not: the
-catalogue shape is the *local* file's, not the hosted file's.
+**Nothing above claims `supabase/hosted_roles.sql` was applied on 2026-09-08.** It was not —
+the catalogue shape that day was the *local* file's. It was first applied on **2026-09-21**,
+and what it did to that shape is recorded in the measured state below.
 
 #### What is fact, and what is inference
 
@@ -234,47 +235,56 @@ authorised and guarded at the time.
 
 #### The project's measured state
 
-- it is **restored and has reached `ACTIVE_HEALTHY`**, observed through an authenticated
-  control-plane read. It is not paused and not missing;
-- **control-plane evidence shows 15 of this repository's migrations already applied to it.**
-  The three 2026-09-08 `outbound` migrations are **absent**. The repository currently carries
-  19 (§2.1), so at least four are not there. Their **provenance is the 2026-09-08 push above**,
-  which supersedes the earlier "provenance unknown" reading of this bullet. They remain *not*
-  evidence that the hosted schema matches today's `supabase/migrations/`;
-- **the four OrigenLab roles are present**, with login flags matching the intended matrix, and
-  **none of them carries a password verifier** — so `origenlab_migrator` cannot log in and the
-  hosted audit identity still has no credential. That has deliberately not been changed;
-- `origenlab_migrator` holds `origenlab_owner` SET-only; the two runtime roles hold no
-  membership; `postgres` holds the creator-ADMIN row on all four, which is expected
-  ([`ARCHITECTURE.md`](ARCHITECTURE.md) §6.4). **`postgres` additionally holds an explicit SET
-  relationship on `origenlab_owner`** — the local file's shape. Until the §2.4 convergence
-  ships, `supabase/hosted_roles.sql` would raise its own platform-boundary assertion and refuse
-  itself on this project;
-- **no PostgreSQL audit and no row-count inspection has succeeded against it.** The Slice 0
-  audit has never completed a run on it, no check in [`MIGRATION.md`](MIGRATION.md) §5.2 has
-  been proven on it, and no table in it has been counted. **It must not be described as
-  empty** — 15 repository migrations were applied to it, so its seven schemas and their tables
-  exist there. **Nothing has read them**, and no row of V1 data has ever been loaded (§2.6);
-- it is on the **Free plan**, with **no backup-retention entitlement**. The Pro-plan staging
-  posture in §2.4 is a *decision about a project that would be provisioned*
-  ([`OPERATIONS.md`](OPERATIONS.md) §4.3), not a description of this one;
-- **PostgREST is running**, exposing `public` and `graphql_public`. **None of the seven
-  OrigenLab private schemas is exposed through it** — `crm`, `comms`, `outbound`,
-  `evidence`, `catalog`, `procurement` and `platform` are all absent from the Data API's
-  exposed set. "PostgREST is running" and "the OrigenLab schemas are reachable over HTTP"
-  are different claims and only the first is true;
-- it remains **unreconciled, unadopted and unapproved**. **Nothing in this repository is
-  pointed at it** — no `supabase/.temp/project-ref` exists in any worktree today, and no
-  committed file names it. Adopting it is a separate decision that has not been taken, and it
-  is now a *reconciliation* rather than an adoption.
+**Read on 2026-09-21 by the Slice 0 audit itself**, over the reviewed Supavisor
+session-mode route as `origenlab_migrator`, TLS `verify-full` against the validated
+Supabase CA, inside one `begin read only` transaction the server confirmed. The bullets
+below are measurements, not inferences.
 
-**The complete Slice 0 hosted gate is blocked**, and what blocks it is now a specific,
-named thing: the audit has no reviewed route that reaches this project with a credential. Its
-direct `db.<project-ref>.supabase.co` endpoint is IPv6-only without the IPv4 add-on. The
-reviewed Supavisor session-mode route that answers this is implemented and tested in this
-repository (§2.3) and **has never completed a run against a project**. Until it does, the 11
-checks of [`MIGRATION.md`](MIGRATION.md) §5.2 stay unproven here — checks 1–9 proven **locally
-only**, checks 10–11 never run.
+- it is **`ACTIVE_HEALTHY`**, PostgreSQL **17.6**, `sa-east-1`, and it is the only project
+  in the organisation carrying the name `origenlab-v2`. Name, organisation, region and
+  status were re-resolved from the control plane immediately before each connection;
+- **the migration ledger is reconciled: 19 of 19.** It held 15 — this repository's first
+  fifteen, in order, with **no unknown version and no drift**. The four absent ones
+  (`20260908120000`, `20260908120100`, `20260908120200`, `20260920190000`) were applied on
+  2026-09-21 in canonical order and recorded. Each ran as `origenlab_migrator` under
+  `--single-transaction` with command-line `ON_ERROR_STOP=1`; the ledger row was written
+  separately as `postgres`, because `supabase_migrations` is owned by `postgres` and the
+  migrator holds no privilege on it;
+- **the role graph matches the intended matrix**, verified from the catalogue after the
+  bootstrap: four roles, none `SUPERUSER`, `BYPASSRLS`, `CREATEROLE`, `CREATEDB` or
+  `REPLICATION`; `origenlab_owner` `NOLOGIN`; `origenlab_migrator` `NOINHERIT` holding
+  `origenlab_owner` `SET`-only; the two runtime roles holding no membership;
+- **`postgres` can no longer `SET ROLE` to `origenlab_owner`.** Its `postgres`-granted row
+  survives with every option false — the vestigial shape `REVOKE ... OPTION FOR` leaves on
+  PostgreSQL 17 — and its `supabase_admin`-granted creator-ADMIN row is untouched, which
+  §6.4 of [`ARCHITECTURE.md`](ARCHITECTURE.md) tolerates by design;
+- **it holds no business data, and that is now proven rather than assumed.** Every table in
+  the seven schemas was counted: **one row in total**, the `outbound.send_control`
+  kill-switch singleton seeded by `20260905230814`. No contact, organisation, opportunity,
+  campaign, quote or message exists there. Both send flags are `false`;
+- **the schema matches this repository's head**: 33 tables, 127 RLS policies, **no table
+  without RLS**, **zero `SECURITY DEFINER` functions**, and every foreign key index-covered;
+- **no OrigenLab private schema is exposed through the Data API.** PostgREST serves
+  `public` and `graphql_public` only; `crm`, `comms`, `outbound`, `evidence`, `catalog`,
+  `procurement` and `platform` are all absent from its exposed set;
+- it is on the **Free plan**, with **no backup-retention entitlement** and no backup taken by
+  the platform. The Pro-plan staging posture in §2.4 remains a *decision about a project that
+  would be provisioned*, not a description of this one. A private logical `pg_dump` of the
+  seven schemas plus the ledger was taken before the migration writes and is held outside Git
+  under the operator's `~/data/origenlab-v2-migration/backups/`, mode `600`.
+
+**What the audit does not yet prove.** The verdict is `INCOMPLETE`, not `PASS`. Every SQL
+check passed, but eight items — `t01`–`t07` and `d01` — are operator attestations with no
+`supabase/.audit/attestation.json` behind them, so they are `NOT_RUN` rather than satisfied.
+Three of them are known today to be *unsatisfiable on this project as it stands*: there is no
+backup entitlement (`t04`), so no restore drill can be evidenced (`t05`, `t06`), and the Data
+API is running rather than off (`t01`, `d01`). **The Slice 0 hosted gate is therefore still
+closed**, but what closes it is now a short list of plan-and-configuration decisions rather
+than an inability to reach or read the project.
+
+**The exposed JWT secret remains an open production blocker** and has deliberately **not**
+been rotated. Rotation waits on evidence about Auth consumers that this audit does not
+collect.
 
 Its **project reference, host name, organisation identifier and credentials are deliberately
 not recorded here or anywhere else in tracked content.**
