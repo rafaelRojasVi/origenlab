@@ -11,7 +11,7 @@
         {
           "inherit_option": false,
           "member": "postgres",
-          "set_option": true
+          "set_option": false
         }
       ],
       "roles": [
