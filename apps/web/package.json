@@ -9,7 +9,7 @@
     "check": "astro check",
     "lint": "astro check",
     "validate:catalog": "node scripts/validate-catalog.mjs",
-    "validate:images": "node scripts/validate-images.mjs",
+    "validate:images": "node --experimental-strip-types scripts/validate-images.mjs",
     "export:email-signature": "node scripts/export-email-signature-assets.mjs",
     "build:email-brands": "node scripts/build-email-brand-strip.mjs",
     "build:email-signature-embedded": "node scripts/build-gmail-signature-embedded.mjs",
