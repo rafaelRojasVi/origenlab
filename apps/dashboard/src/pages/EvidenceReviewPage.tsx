@@ -439,9 +439,24 @@ function CommandPanel({
 }) {
   const [note, setNote] = useState("");
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
+  // Which *asserted name* the operator says is the sender's. Null until they say, and it
+  // stays null for a single-name message too: "there is only one" is a reason to pick it
+  // quickly, not a reason for the surface to pick it for them.
+  const [senderAssertionId, setSenderAssertionId] = useState<string | null>(null);
+  const namedInstitutions = record.assertions.filter(
+    (assertion) =>
+      assertion.kind === "organization_name" && assertion.resolution === "unresolved",
+  );
   const previews = useMemo(
-    () => commandPreviews({ record, domainShareCount, selectedOrganizationId, note }),
-    [record, domainShareCount, selectedOrganizationId, note],
+    () =>
+      commandPreviews({
+        record,
+        domainShareCount,
+        selectedOrganizationId,
+        selectedOrganizationAssertionId: senderAssertionId,
+        note,
+      }),
+    [record, domainShareCount, selectedOrganizationId, senderAssertionId, note],
   );
 
   return (
@@ -488,6 +503,55 @@ function CommandPanel({
         </label>
       ) : null}
 
+      {namedInstitutions.length > 0 ? (
+        <fieldset className="space-y-1 rounded-md border border-slate-200 p-2 text-xs">
+          <legend className="px-1 text-[var(--color-muted)]">
+            ¿Cuál de estas instituciones es la del remitente?
+          </legend>
+          <p className="text-[11px] text-[var(--color-muted)]">
+            Un correo puede nombrar al proveedor y al cliente final. Sólo una es la del
+            remitente; las demás quedan sin resolver y el registro sigue pendiente.
+          </p>
+          {namedInstitutions.map((assertion) => {
+            const match = record.organization_matches.find(
+              (row) => row.value_norm === assertion.value_norm,
+            );
+            return (
+              <label
+                key={assertion.assertion_id}
+                className="flex items-start gap-2"
+                data-testid="sender-institution-choice"
+              >
+                <input
+                  type="radio"
+                  name={`sender-institution-${record.source_record_id}`}
+                  checked={senderAssertionId === assertion.assertion_id}
+                  onChange={() => setSenderAssertionId(assertion.assertion_id)}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-medium text-slate-900">«{assertion.value_norm}»</span>{" "}
+                  {match ? (
+                    <Chip tone="neutral">Ya existe: {match.name} — se confirmaría</Chip>
+                  ) : (
+                    <Chip tone="neutral">No existe — se crearía con ese texto exacto</Chip>
+                  )}
+                </span>
+              </label>
+            );
+          })}
+          {senderAssertionId ? (
+            <button
+              type="button"
+              onClick={() => setSenderAssertionId(null)}
+              className="text-[11px] underline decoration-dotted"
+            >
+              Deshacer la elección
+            </button>
+          ) : null}
+        </fieldset>
+      ) : null}
+
       <ul className="space-y-3">
         {previews.map((preview) => (
           <li
@@ -515,6 +579,31 @@ function CommandPanel({
                 {caution}
               </p>
             ))}
+            {preview.leavesUnresolved.length > 0 ? (
+              <ul
+                className="mt-1 list-disc pl-4 text-xs text-sky-800"
+                data-testid="command-leaves-unresolved"
+              >
+                {preview.leavesUnresolved.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            ) : null}
+            {preview.request ? (
+              <details className="mt-1" data-testid="command-request">
+                <summary className="cursor-pointer text-xs text-[var(--color-muted)]">
+                  La petición exacta que se enviaría
+                </summary>
+                {/*
+                  The request itself, not a description of it. A prose preview can agree with
+                  what the operator meant while the body disagrees with both, and the only
+                  place that shows up is the durable row afterwards.
+                */}
+                <pre className="mt-1 overflow-x-auto rounded bg-slate-900 p-2 text-[11px] text-slate-100">
+                  {JSON.stringify(preview.request, null, 2)}
+                </pre>
+              </details>
+            ) : null}
             <details className="mt-1">
               <summary className="cursor-pointer text-xs text-[var(--color-muted)]">
                 Qué registraría

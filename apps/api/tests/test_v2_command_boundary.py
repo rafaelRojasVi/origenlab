@@ -31,13 +31,16 @@ from origenlab_api.main import create_app
 from origenlab_api.settings import Settings
 from origenlab_api.v2.commands import (
     ATTACH_CONTACT_ADDRESS,
+    ATTRIBUTE_SENDER_ORGANIZATION,
     CONFIRM_ORGANIZATION,
     CREATE_ORGANIZATION,
     KEEP_EVIDENCE_PENDING,
     AttachContactAddressBody,
+    AttributeSenderOrganizationBody,
     CommandRefused,
     ConfirmOrganizationBody,
     KeepEvidencePendingBody,
+    validated,
     normalize_organization_name,
     request_digest,
     require_idempotency_key,
@@ -202,6 +205,7 @@ def test_an_idempotency_key_longer_than_the_column_is_refused_here() -> None:
         "/v2/commands/confirm-organization",
         "/v2/commands/create-organization",
         "/v2/commands/attach-contact-address",
+        "/v2/commands/attribute-sender-organization",
     ],
 )
 def test_every_command_requires_a_reason(path: str) -> None:
@@ -213,6 +217,9 @@ def test_every_command_requires_a_reason(path: str) -> None:
         organization_id=ORGANIZATION_ID,
         organization_version=1,
         usage="shared_mailbox",
+        organization_assertion_id=ASSERTION_ID,
+        address_assertion_id=ADDRESS_ASSERTION_ID,
+        target="existing",
     )
     # Each route forbids the fields it does not take, so send only what it accepts.
     allowed = {
@@ -223,6 +230,10 @@ def test_every_command_requires_a_reason(path: str) -> None:
         "/v2/commands/create-organization": {"source_record_id", "note", "assertion_id"},
         "/v2/commands/attach-contact-address": {
             "source_record_id", "note", "assertion_id", "organization_id", "usage",
+        },
+        "/v2/commands/attribute-sender-organization": {
+            "source_record_id", "note", "organization_assertion_id", "address_assertion_id",
+            "target", "organization_id", "organization_version", "usage",
         },
     }[path]
     response = _client(repo).post(
@@ -239,6 +250,7 @@ def test_every_command_requires_a_reason(path: str) -> None:
         "/v2/commands/confirm-organization",
         "/v2/commands/create-organization",
         "/v2/commands/attach-contact-address",
+        "/v2/commands/attribute-sender-organization",
     ],
 )
 def test_every_command_requires_the_evidence_record(path: str) -> None:
@@ -461,7 +473,7 @@ def test_the_command_router_exposes_nothing_but_post() -> None:
         assert set(getattr(route, "methods", set())) == {"POST"}, route.path
 
 
-def test_the_command_router_exposes_exactly_the_four_commands() -> None:
+def test_the_command_router_exposes_exactly_the_five_commands() -> None:
     from origenlab_api.v2.command_routes import command_router
 
     assert {route.path for route in command_router.routes} == {
@@ -469,6 +481,7 @@ def test_the_command_router_exposes_exactly_the_four_commands() -> None:
         "/v2/commands/confirm-organization",
         "/v2/commands/create-organization",
         "/v2/commands/attach-contact-address",
+        "/v2/commands/attribute-sender-organization",
     }
 
 
@@ -481,17 +494,33 @@ def test_the_read_router_still_has_no_write_method() -> None:
 
 
 def test_there_is_no_command_for_anything_out_of_scope() -> None:
-    """Merges, persons, prospects, marketing, campaigns, quotes and sending have no route."""
+    """Merges, persons, prospects, marketing, campaigns, quotes and sending have no route.
+
+    The comparison is over the **words** of a path, not its characters. A substring test
+    called `attribute-sender-organization` a send route because `sender` contains `send`,
+    which is the false positive that makes a guard get relaxed. Word-wise it is stricter
+    where it matters: a real `/v2/commands/send-campaign` still fails, and so would
+    `create-person`, while a word that merely contains a forbidden one does not.
+    """
     from origenlab_api.v2.command_routes import command_router
     from origenlab_api.v2.commands import COMMAND_NAMES
 
+    words = {
+        word
+        for route in command_router.routes
+        for segment in route.path.split("/")
+        for word in segment.split("-")
+    }
     paths = " ".join(route.path for route in command_router.routes)
     for forbidden in (
-        "merge", "person", "prospect", "marketing", "permission", "campaign",
-        "quote", "send", "promote-all", "domain",
+        "merge", "person", "persons", "prospect", "marketing", "permission", "campaign",
+        "quote", "send", "sends", "domain", "task",
     ):
+        assert forbidden not in words, f"{forbidden!r} is a word in {paths}"
+    # Multi-word shapes stay substring checks: there is no single word to look for.
+    for forbidden in ("promote-all", "bulk", "auto"):
         assert forbidden not in paths
-    assert len(COMMAND_NAMES) == 4
+    assert len(COMMAND_NAMES) == 5
 
 
 # ------------------------------------------------------------------ mounting
@@ -541,6 +570,108 @@ def test_a_repository_refusal_becomes_its_own_status_and_code() -> None:
     }
 
 
+
+
+# ------------------------------------------------- attributing a sender: the rules in process
+#
+# The composed command exists because a message that names a supplier *and* the end customer
+# has exactly one sender, and the four single commands made the operator say so in two
+# transactions. These tests are about the half of that which needs no database: a request
+# that says two things at once is refused rather than reinterpreted.
+
+ADDRESS_ASSERTION_ID = "dddddddd-4444-4444-8444-444444444444"
+
+
+def _attribution(**overrides) -> AttributeSenderOrganizationBody:
+    body = {
+        "source_record_id": RECORD_ID,
+        "note": "el remitente es de esta institución",
+        "organization_assertion_id": ASSERTION_ID,
+        "address_assertion_id": ADDRESS_ASSERTION_ID,
+        "target": "existing",
+        "organization_id": ORGANIZATION_ID,
+        "organization_version": 1,
+        "usage": "shared_mailbox",
+    }
+    body.update(overrides)
+    return AttributeSenderOrganizationBody(**body)
+
+
+def test_attributing_an_existing_institution_validates() -> None:
+    fields = validated(ATTRIBUTE_SENDER_ORGANIZATION, _attribution())
+    assert fields["target"] == "existing"
+    assert fields["organization_id"] == ORGANIZATION_ID
+    assert fields["organization_version"] == 1
+    assert fields["organization_assertion_id"] == ASSERTION_ID
+    assert fields["address_assertion_id"] == ADDRESS_ASSERTION_ID
+    assert "kind" not in fields and "name_display" not in fields
+
+
+def test_attributing_a_new_institution_validates_and_carries_no_organization_id() -> None:
+    fields = validated(
+        ATTRIBUTE_SENDER_ORGANIZATION,
+        _attribution(target="new", organization_id=None, organization_version=None),
+    )
+    assert fields["target"] == "new"
+    assert fields["kind"] == "unknown"
+    assert fields["name_display"] is None
+    assert "organization_id" not in fields
+
+
+def test_an_existing_target_without_a_version_is_refused() -> None:
+    with pytest.raises(CommandRefused) as exc:
+        validated(ATTRIBUTE_SENDER_ORGANIZATION, _attribution(organization_version=None))
+    assert exc.value.code == "existing_organization_requires_id_and_version"
+    assert exc.value.status_code == 422
+
+
+def test_an_existing_target_may_not_also_name_the_organization() -> None:
+    """Choosing a row and typing a name are two different claims; both is neither."""
+    with pytest.raises(CommandRefused) as exc:
+        validated(ATTRIBUTE_SENDER_ORGANIZATION, _attribution(name_display="Otra Cosa"))
+    assert exc.value.code == "name_display_is_only_for_a_new_organization"
+
+
+def test_a_new_target_may_not_also_point_at_an_existing_organization() -> None:
+    with pytest.raises(CommandRefused) as exc:
+        validated(ATTRIBUTE_SENDER_ORGANIZATION, _attribution(target="new"))
+    assert exc.value.code == "new_organization_takes_no_organization_id"
+
+
+def test_the_institution_and_the_address_must_be_two_different_assertions() -> None:
+    with pytest.raises(CommandRefused) as exc:
+        validated(
+            ATTRIBUTE_SENDER_ORGANIZATION,
+            _attribution(address_assertion_id=ASSERTION_ID),
+        )
+    assert exc.value.code == "one_assertion_cannot_be_both"
+
+
+def test_an_attribution_still_needs_a_reason() -> None:
+    with pytest.raises(Exception):
+        _attribution(note="   ")
+
+
+def test_an_attribution_cannot_ask_for_a_personal_mailbox() -> None:
+    """`work` implies a person, and no command here creates one."""
+    with pytest.raises(Exception):
+        _attribution(usage="work")
+
+
+def test_an_attribution_digests_differently_from_its_two_halves() -> None:
+    """A composed decision is not the same request as either command it replaces."""
+    attribution = request_digest(ATTRIBUTE_SENDER_ORGANIZATION, _attribution())
+    confirm = request_digest(
+        CONFIRM_ORGANIZATION,
+        ConfirmOrganizationBody(
+            source_record_id=RECORD_ID,
+            note="el remitente es de esta institución",
+            assertion_id=ASSERTION_ID,
+            organization_id=ORGANIZATION_ID,
+            organization_version=1,
+        ),
+    )
+    assert attribution != confirm
 
 
 # --------------------------------------------------------- database-backed proofs (opt-in)
@@ -1402,3 +1533,684 @@ def test_the_unprivileged_role_cannot_rewrite_what_a_message_said(disposable_dat
             with pytest.raises(psycopg.Error):
                 cur.execute(statement)
             conn.rollback()
+
+
+# ------------------------------------- attributing a sender, against a real Postgres
+#
+# **Why the fixtures below are fictitious.** These are modelled on two real records in the
+# clean room -- a message naming a manufacturer *and* the university that will use the
+# equipment, and a message naming one company that does not exist in the CRM yet -- but this
+# repository is public and the real senders are real people. So the *shape* is committed and
+# the *values* are reserved (`.example`, RFC 2606). The same code is rehearsed against the
+# real rows by `supabase/scripts/rehearse_attribution.py`, which reads them from the clean
+# room at run time and commits nothing.
+
+
+@pytest.fixture
+def two_named_institutions(disposable_database):
+    """Two messages of one thread, each naming the same two institutions.
+
+    One institution already exists in the CRM under exactly the asserted name and is
+    `machine_proposed`; the other exists nowhere. Each message has a different sender, and
+    the sender of each belongs to a *different* one of the two. That is the whole difficulty
+    the composed command was built for, and it cannot be reproduced with one record.
+    """
+    import psycopg
+
+    tag = uuid.uuid4().hex[:12]
+    state = {
+        "tag": tag,
+        "existing_name": f"Universidad Ejemplo {tag}",
+        "new_name": f"Ultrasonics Ejemplo {tag}",
+        "supplier_address": f"ventas-{tag}@proveedor.example",
+        "university_address": f"compras-{tag}@universidad.example",
+    }
+    with psycopg.connect(disposable_database, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            """
+            insert into platform.operator
+                (auth_user_id, email_norm, display_name, role, status)
+            values (gen_random_uuid(), %s, 'Pytest Operator', 'sales', 'active')
+            returning id::text
+            """,
+            (f"pytest-attr-{tag}@example.cl",),
+        )
+        state["operator_id"] = cur.fetchone()[0]
+
+        # The institution the CRM already proposed, exactly as the clean room holds it:
+        # machine_proposed, version 1, never confirmed by anyone.
+        cur.execute(
+            "insert into crm.organization (kind, name, confirmation) "
+            "values ('unknown', %s, 'machine_proposed') returning id::text, version",
+            (state["existing_name"],),
+        )
+        state["existing_organization_id"], state["existing_version"] = cur.fetchone()
+
+        for side, address in (
+            ("supplier", state["supplier_address"]),
+            ("university", state["university_address"]),
+        ):
+            cur.execute(
+                """
+                insert into evidence.source_record (kind, dedupe_key, payload, source_uri)
+                values ('gmail_message', %s, %s::jsonb, %s)
+                returning id::text
+                """,
+                (
+                    f"pytest-attr:{tag}:{side}",
+                    '{"subject": "pytest", "from_domain": "proveedor.example"}',
+                    f"gmail://msg/{tag}-{side}",
+                ),
+            )
+            record_id = cur.fetchone()[0]
+            state[f"{side}_record_id"] = record_id
+            for kind, value_norm, observed in (
+                ("organization_name", state["new_name"].lower(), state["new_name"]),
+                ("organization_name", state["existing_name"].lower(), state["existing_name"]),
+                ("contact_address", address, address),
+            ):
+                cur.execute(
+                    """
+                    insert into evidence.assertion
+                        (source_record_id, kind, value_norm, value, resolution)
+                    values (%s, %s, %s, %s::jsonb, 'unresolved')
+                    returning id::text
+                    """,
+                    (record_id, kind, value_norm, f'{{"observed_value": "{observed}"}}'),
+                )
+                label = "address" if kind == "contact_address" else (
+                    "new_org" if value_norm == state["new_name"].lower() else "existing_org"
+                )
+                state[f"{side}_{label}_assertion_id"] = cur.fetchone()[0]
+    return state
+
+
+@pytest.fixture
+def one_unknown_institution(disposable_database):
+    """One message naming one institution the CRM has never recorded, plus its sender."""
+    import psycopg
+
+    tag = uuid.uuid4().hex[:12]
+    state = {
+        "tag": tag,
+        "org_name": f"Agriscience Ejemplo {tag}",
+        "address": f"ventas-{tag}@agro.example",
+    }
+    with psycopg.connect(disposable_database, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            """
+            insert into platform.operator
+                (auth_user_id, email_norm, display_name, role, status)
+            values (gen_random_uuid(), %s, 'Pytest Operator', 'sales', 'active')
+            returning id::text
+            """,
+            (f"pytest-one-{tag}@example.cl",),
+        )
+        state["operator_id"] = cur.fetchone()[0]
+        cur.execute(
+            """
+            insert into evidence.source_record (kind, dedupe_key, payload, source_uri)
+            values ('gmail_message', %s, %s::jsonb, %s)
+            returning id::text
+            """,
+            (
+                f"pytest-one:{tag}",
+                '{"subject": "pytest", "from_domain": "agro.example"}',
+                f"gmail://msg/{tag}",
+            ),
+        )
+        state["source_record_id"] = cur.fetchone()[0]
+        for kind, value_norm, observed, label in (
+            ("organization_name", state["org_name"].lower(), state["org_name"], "org"),
+            ("contact_address", state["address"], state["address"], "address"),
+        ):
+            cur.execute(
+                """
+                insert into evidence.assertion
+                    (source_record_id, kind, value_norm, value, resolution)
+                values (%s, %s, %s, %s::jsonb, 'unresolved')
+                returning id::text
+                """,
+                (state["source_record_id"], kind, value_norm, f'{{"observed_value": "{observed}"}}'),
+            )
+            state[f"{label}_assertion_id"] = cur.fetchone()[0]
+    return state
+
+
+def _attribute(repo, state, record_key, fields, key, digest):
+    return repo.execute(
+        command_name=ATTRIBUTE_SENDER_ORGANIZATION,
+        operator=_identity(state),
+        fields={"source_record_id": state[record_key], "note": "pytest", **fields},
+        idempotency_key=key,
+        digest=digest,
+    )
+
+
+@_needs_db
+def test_creating_and_attaching_happen_in_one_transaction(
+    disposable_database, one_unknown_institution
+) -> None:
+    """The Corteva shape: an institution the CRM never had, and the sender's mailbox on it.
+
+    One call, one receipt. Before this command the same outcome took `create-organization`
+    and then `attach-contact-address`, and an operator who stopped between them was left
+    holding an institution no address pointed at.
+    """
+    import psycopg
+
+    state = one_unknown_institution
+    result = _attribute(
+        _repo(disposable_database),
+        state,
+        "source_record_id",
+        {
+            "organization_assertion_id": state["org_assertion_id"],
+            "address_assertion_id": state["address_assertion_id"],
+            "target": "new",
+            "kind": "unknown",
+            "name_display": None,
+            "usage": "shared_mailbox",
+        },
+        key=f"attr-new-{state['tag']}",
+        digest="1" * 64,
+    )
+    assert result["created"] == ["organization", "contact_point"]
+    assert result["assertions_left_unresolved"] == 0
+    assert result["review_status"] == "reviewed"
+
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute(
+            "select name, confirmation, origin_source_record_id::text from crm.organization "
+            "where id = %s",
+            (result["organization_id"],),
+        )
+        name, confirmation, origin = cur.fetchone()
+        # The name is the assertion's, letter for letter. Nothing here read a domain.
+        assert name == state["org_name"]
+        assert confirmation == "confirmed"
+        assert origin == state["source_record_id"]
+
+        cur.execute(
+            "select value_norm, organization_id::text, person_id, usage, confirmation "
+            "from crm.contact_point where id = %s",
+            (result["contact_point_id"],),
+        )
+        value_norm, organization_id, person_id, usage, cp_confirmation = cur.fetchone()
+        assert value_norm == state["address"]
+        assert organization_id == result["organization_id"]
+        assert person_id is None
+        assert usage == "shared_mailbox"
+        assert cp_confirmation == "confirmed"
+
+        # One receipt for the whole decision, not two.
+        cur.execute("select count(*) from platform.command_receipt where idempotency_key = %s",
+                    (f"attr-new-{state['tag']}",))
+        assert cur.fetchone()[0] == 1
+
+
+@_needs_db
+def test_an_attribution_creates_no_person_and_registers_no_domain(
+    disposable_database, one_unknown_institution
+) -> None:
+    """The two things a domain-shaped guess would produce, counted before and after."""
+    import psycopg
+
+    state = one_unknown_institution
+
+    def counts():
+        with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+            cur.execute(
+                "select (select count(*) from crm.person), "
+                "(select count(*) from crm.organization_domain), "
+                "(select count(*) from crm.affiliation), "
+                "(select count(*) from crm.opportunity), "
+                "(select count(*) from crm.quote), "
+                "(select count(*) from outbound.campaign_recipient)"
+            )
+            return cur.fetchone()
+
+    before = counts()
+    _attribute(
+        _repo(disposable_database),
+        state,
+        "source_record_id",
+        {
+            "organization_assertion_id": state["org_assertion_id"],
+            "address_assertion_id": state["address_assertion_id"],
+            "target": "new",
+            "kind": "unknown",
+            "name_display": None,
+            "usage": "shared_mailbox",
+        },
+        key=f"attr-nothing-{state['tag']}",
+        digest="2" * 64,
+    )
+    assert counts() == before
+
+
+@_needs_db
+def test_only_the_chosen_institution_resolves_and_the_other_stays_open(
+    disposable_database, two_named_institutions
+) -> None:
+    """The UACh/Hielscher shape, from the supplier's side.
+
+    The message names two institutions. The operator picks the one the *sender* belongs to.
+    The other assertion is untouched, and because it is still unresolved the record stays in
+    the queue — which is the state the operator chose, not a leftover.
+    """
+    import psycopg
+
+    state = two_named_institutions
+    result = _attribute(
+        _repo(disposable_database),
+        state,
+        "supplier_record_id",
+        {
+            "organization_assertion_id": state["supplier_new_org_assertion_id"],
+            "address_assertion_id": state["supplier_address_assertion_id"],
+            "target": "new",
+            "kind": "unknown",
+            "name_display": None,
+            "usage": "shared_mailbox",
+        },
+        key=f"attr-supplier-{state['tag']}",
+        digest="3" * 64,
+    )
+    assert result["assertions_left_unresolved"] == 1
+    assert result["review_status"] == "pending"
+
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute(
+            "select resolution, resolved_kind, resolved_id::text from evidence.assertion "
+            "where id = %s",
+            (state["supplier_new_org_assertion_id"],),
+        )
+        assert cur.fetchone() == ("promoted", "organization", result["organization_id"])
+
+        # The other institution this message names: untouched, in every column.
+        cur.execute(
+            "select resolution, resolved_kind, resolved_id, resolved_by_operator_id "
+            "from evidence.assertion where id = %s",
+            (state["supplier_existing_org_assertion_id"],),
+        )
+        assert cur.fetchone() == ("unresolved", None, None, None)
+
+        # And it was not confirmed as a side effect either.
+        cur.execute(
+            "select confirmation, version from crm.organization where id = %s",
+            (state["existing_organization_id"],),
+        )
+        assert cur.fetchone() == ("machine_proposed", 1)
+
+        cur.execute(
+            "select review_status from evidence.source_record where id = %s",
+            (state["supplier_record_id"],),
+        )
+        assert cur.fetchone()[0] == "pending"
+
+
+@_needs_db
+def test_each_sender_takes_its_own_institution(
+    disposable_database, two_named_institutions
+) -> None:
+    """Two senders, two institutions, from the same pair of asserted names.
+
+    The supplier's address goes to the institution that did not exist; the university's goes
+    to the one that did, confirming it. Nothing about the first decision reached the second.
+    """
+    import psycopg
+
+    state = two_named_institutions
+    repo = _repo(disposable_database)
+
+    supplier = _attribute(
+        repo, state, "supplier_record_id",
+        {
+            "organization_assertion_id": state["supplier_new_org_assertion_id"],
+            "address_assertion_id": state["supplier_address_assertion_id"],
+            "target": "new", "kind": "unknown", "name_display": None,
+            "usage": "shared_mailbox",
+        },
+        key=f"pair-supplier-{state['tag']}", digest="4" * 64,
+    )
+    university = _attribute(
+        repo, state, "university_record_id",
+        {
+            "organization_assertion_id": state["university_existing_org_assertion_id"],
+            "address_assertion_id": state["university_address_assertion_id"],
+            "target": "existing",
+            "organization_id": state["existing_organization_id"],
+            "organization_version": state["existing_version"],
+            "usage": "shared_mailbox",
+        },
+        key=f"pair-university-{state['tag']}", digest="5" * 64,
+    )
+    assert supplier["organization_id"] != university["organization_id"]
+    assert university["organization_id"] == state["existing_organization_id"]
+    assert university["created"] == ["contact_point"]
+    # Confirming a machine proposal moves it forward, and the response says where to.
+    assert university["organization_version"] == state["existing_version"] + 1
+
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute(
+            "select value_norm, organization_id::text from crm.contact_point "
+            "where value_norm in (%s, %s) order by value_norm",
+            (state["supplier_address"], state["university_address"]),
+        )
+        rows = dict(cur.fetchall())
+        assert rows[state["supplier_address"]] == supplier["organization_id"]
+        assert rows[state["university_address"]] == university["organization_id"]
+
+        cur.execute(
+            "select confirmation, version from crm.organization where id = %s",
+            (state["existing_organization_id"],),
+        )
+        assert cur.fetchone() == ("confirmed", state["existing_version"] + 1)
+
+
+@_needs_db
+def test_one_address_can_never_be_claimed_by_both_named_institutions(
+    disposable_database, two_named_institutions
+) -> None:
+    """The refusal the whole case turns on.
+
+    Once the supplier's mailbox belongs to the supplier, the *other* institution the same
+    message names cannot take it. An address that meant two institutions at once would make
+    every later read of the CRM ambiguous, so the second attribution is refused rather than
+    merged, overwritten or silently ignored.
+    """
+    import psycopg
+
+    from origenlab_api.v2.commands import CommandRefused
+
+    state = two_named_institutions
+    repo = _repo(disposable_database)
+    _attribute(
+        repo, state, "supplier_record_id",
+        {
+            "organization_assertion_id": state["supplier_new_org_assertion_id"],
+            "address_assertion_id": state["supplier_address_assertion_id"],
+            "target": "new", "kind": "unknown", "name_display": None,
+            "usage": "shared_mailbox",
+        },
+        key=f"claim-first-{state['tag']}", digest="6" * 64,
+    )
+
+    # The same address, on the same message, to the other institution it names.
+    with pytest.raises(CommandRefused) as exc:
+        _attribute(
+            repo, state, "supplier_record_id",
+            {
+                "organization_assertion_id": state["supplier_existing_org_assertion_id"],
+                "address_assertion_id": state["supplier_address_assertion_id"],
+                "target": "existing",
+                "organization_id": state["existing_organization_id"],
+                "organization_version": state["existing_version"],
+                "usage": "shared_mailbox",
+            },
+            key=f"claim-second-{state['tag']}", digest="7" * 64,
+        )
+    # It is refused for the address, having already passed every check about the assertion.
+    assert exc.value.code == "assertion_already_resolved"
+    assert exc.value.status_code == 409
+
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute(
+            "select confirmation from crm.organization where id = %s",
+            (state["existing_organization_id"],),
+        )
+        assert cur.fetchone()[0] == "machine_proposed"
+
+
+@_needs_db
+def test_a_second_message_cannot_move_an_address_to_another_institution(
+    disposable_database, two_named_institutions
+) -> None:
+    """The same refusal, reached the only way that gets past the resolved-assertion check.
+
+    The university's message asserts the supplier's address is *not* in it, so this uses the
+    university's own address and tries to hand it to the supplier's institution after the
+    university already has it. `contact_point_attached_elsewhere` is the guard that makes one
+    mailbox belong to one institution across messages, not just within one.
+    """
+    from origenlab_api.v2.commands import CommandRefused
+
+    state = two_named_institutions
+    repo = _repo(disposable_database)
+    supplier = _attribute(
+        repo, state, "supplier_record_id",
+        {
+            "organization_assertion_id": state["supplier_new_org_assertion_id"],
+            "address_assertion_id": state["supplier_address_assertion_id"],
+            "target": "new", "kind": "unknown", "name_display": None,
+            "usage": "shared_mailbox",
+        },
+        key=f"move-first-{state['tag']}", digest="8" * 64,
+    )
+    _attribute(
+        repo, state, "university_record_id",
+        {
+            "organization_assertion_id": state["university_existing_org_assertion_id"],
+            "address_assertion_id": state["university_address_assertion_id"],
+            "target": "existing",
+            "organization_id": state["existing_organization_id"],
+            "organization_version": state["existing_version"],
+            "usage": "shared_mailbox",
+        },
+        key=f"move-second-{state['tag']}", digest="9" * 64,
+    )
+
+    # A third, fictional message asserting the university's address belongs to the supplier.
+    import psycopg
+
+    with psycopg.connect(disposable_database, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            "insert into evidence.source_record (kind, dedupe_key, payload) "
+            "values ('gmail_message', %s, '{}'::jsonb) returning id::text",
+            (f"pytest-attr:{state['tag']}:third",),
+        )
+        third_record = cur.fetchone()[0]
+        cur.execute(
+            "insert into evidence.assertion (source_record_id, kind, value_norm, value, resolution) "
+            "values (%s, 'organization_name', %s, %s::jsonb, 'unresolved') returning id::text",
+            (third_record, state["new_name"].lower(),
+             f'{{"observed_value": "{state["new_name"]}"}}'),
+        )
+        third_org_assertion = cur.fetchone()[0]
+        cur.execute(
+            "insert into evidence.assertion (source_record_id, kind, value_norm, value, resolution) "
+            "values (%s, 'contact_address', %s, %s::jsonb, 'unresolved') returning id::text",
+            (third_record, state["university_address"],
+             f'{{"observed_value": "{state["university_address"]}"}}'),
+        )
+        third_address_assertion = cur.fetchone()[0]
+
+    state["third_record_id"] = third_record
+    with pytest.raises(CommandRefused) as exc:
+        _attribute(
+            repo, state, "third_record_id",
+            {
+                "organization_assertion_id": third_org_assertion,
+                "address_assertion_id": third_address_assertion,
+                "target": "existing",
+                "organization_id": supplier["organization_id"],
+                "organization_version": 1,
+                "usage": "shared_mailbox",
+            },
+            key=f"move-third-{state['tag']}", digest="a" * 64,
+        )
+    assert exc.value.code == "contact_point_attached_elsewhere"
+
+
+@_needs_db
+def test_a_refused_attribution_leaves_no_half_decision_behind(
+    disposable_database, two_named_institutions
+) -> None:
+    """The atomicity claim, proven by making the second half fail.
+
+    The address is attached to somebody else first, so the attach refuses. The organization
+    the same command would have created must not exist afterwards — and neither must the
+    receipt, so the key stays free for the corrected request.
+    """
+    import psycopg
+
+    from origenlab_api.v2.commands import CommandRefused
+
+    state = two_named_institutions
+    repo = _repo(disposable_database)
+
+    # The university takes its own mailbox first.
+    _attribute(
+        repo, state, "university_record_id",
+        {
+            "organization_assertion_id": state["university_existing_org_assertion_id"],
+            "address_assertion_id": state["university_address_assertion_id"],
+            "target": "existing",
+            "organization_id": state["existing_organization_id"],
+            "organization_version": state["existing_version"],
+            "usage": "shared_mailbox",
+        },
+        key=f"half-first-{state['tag']}", digest="b" * 64,
+    )
+
+    # A new message asserting the new institution AND that same, already-taken address.
+    with psycopg.connect(disposable_database, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            "insert into evidence.source_record (kind, dedupe_key, payload) "
+            "values ('gmail_message', %s, '{}'::jsonb) returning id::text",
+            (f"pytest-attr:{state['tag']}:half",),
+        )
+        half_record = cur.fetchone()[0]
+        cur.execute(
+            "insert into evidence.assertion (source_record_id, kind, value_norm, value, resolution) "
+            "values (%s, 'organization_name', %s, %s::jsonb, 'unresolved') returning id::text",
+            (half_record, state["new_name"].lower(),
+             f'{{"observed_value": "{state["new_name"]}"}}'),
+        )
+        half_org_assertion = cur.fetchone()[0]
+        cur.execute(
+            "insert into evidence.assertion (source_record_id, kind, value_norm, value, resolution) "
+            "values (%s, 'contact_address', %s, %s::jsonb, 'unresolved') returning id::text",
+            (half_record, state["university_address"],
+             f'{{"observed_value": "{state["university_address"]}"}}'),
+        )
+        half_address_assertion = cur.fetchone()[0]
+
+    state["half_record_id"] = half_record
+    key = f"half-second-{state['tag']}"
+    with pytest.raises(CommandRefused) as exc:
+        _attribute(
+            repo, state, "half_record_id",
+            {
+                "organization_assertion_id": half_org_assertion,
+                "address_assertion_id": half_address_assertion,
+                "target": "new", "kind": "unknown", "name_display": None,
+                "usage": "shared_mailbox",
+            },
+            key=key, digest="c" * 64,
+        )
+    assert exc.value.code == "contact_point_attached_elsewhere"
+
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        # The organization the refused command would have created does not exist.
+        cur.execute(
+            "select count(*) from crm.organization where lower(name) = %s",
+            (state["new_name"].lower(),),
+        )
+        assert cur.fetchone()[0] == 0
+        # Neither assertion of that message moved.
+        cur.execute(
+            "select count(*) from evidence.assertion where source_record_id = %s "
+            "and resolution <> 'unresolved'",
+            (half_record,),
+        )
+        assert cur.fetchone()[0] == 0
+        # And the key is free: the receipt rolled back with everything else.
+        cur.execute(
+            "select count(*) from platform.command_receipt where idempotency_key = %s", (key,)
+        )
+        assert cur.fetchone()[0] == 0
+
+
+@_needs_db
+def test_an_attribution_replays_instead_of_deciding_twice(
+    disposable_database, one_unknown_institution
+) -> None:
+    """One key, one decision — the second call answers from the receipt."""
+    import psycopg
+
+    state = one_unknown_institution
+    repo = _repo(disposable_database)
+    fields = {
+        "organization_assertion_id": state["org_assertion_id"],
+        "address_assertion_id": state["address_assertion_id"],
+        "target": "new", "kind": "unknown", "name_display": None,
+        "usage": "shared_mailbox",
+    }
+    key = f"replay-{state['tag']}"
+    first = _attribute(repo, state, "source_record_id", fields, key=key, digest="d" * 64)
+    second = _attribute(repo, state, "source_record_id", fields, key=key, digest="d" * 64)
+
+    assert first["replayed"] is False
+    assert second["replayed"] is True
+    assert second["organization_id"] == first["organization_id"]
+    assert second["contact_point_id"] == first["contact_point_id"]
+
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute(
+            "select count(*) from crm.organization where lower(name) = %s",
+            (state["org_name"].lower(),),
+        )
+        assert cur.fetchone()[0] == 1
+
+
+@_needs_db
+def test_an_attribution_will_not_take_an_institution_the_message_does_not_name(
+    disposable_database, two_named_institutions, one_unknown_institution
+) -> None:
+    """Exact name or nothing, in the composed command exactly as in the single one."""
+    from origenlab_api.v2.commands import CommandRefused
+
+    state = two_named_institutions
+    with pytest.raises(CommandRefused) as exc:
+        _attribute(
+            _repo(disposable_database), state, "supplier_record_id",
+            {
+                # The assertion names the *new* institution; the id points at the existing one.
+                "organization_assertion_id": state["supplier_new_org_assertion_id"],
+                "address_assertion_id": state["supplier_address_assertion_id"],
+                "target": "existing",
+                "organization_id": state["existing_organization_id"],
+                "organization_version": state["existing_version"],
+                "usage": "shared_mailbox",
+            },
+            key=f"mismatch-{state['tag']}", digest="e" * 64,
+        )
+    assert exc.value.code == "organization_name_is_not_an_exact_match"
+
+
+@_needs_db
+def test_an_attribution_refuses_an_assertion_from_another_message(
+    disposable_database, two_named_institutions, one_unknown_institution
+) -> None:
+    """Pairing two unrelated ids would record a decision about a message nobody read."""
+    from origenlab_api.v2.commands import CommandRefused
+
+    state = two_named_institutions
+    with pytest.raises(CommandRefused) as exc:
+        _attribute(
+            _repo(disposable_database), state, "supplier_record_id",
+            {
+                "organization_assertion_id": state["supplier_new_org_assertion_id"],
+                "address_assertion_id": one_unknown_institution["address_assertion_id"],
+                "target": "new", "kind": "unknown", "name_display": None,
+                "usage": "shared_mailbox",
+            },
+            key=f"foreign-{state['tag']}", digest="f" * 64,
+        )
+    assert exc.value.code == "assertion_belongs_to_another_record"

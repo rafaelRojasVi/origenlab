@@ -17,6 +17,7 @@ that lets an operator finish a Gmail record honestly:
 | `confirm_organization` | an asserted name *is* this one existing organization |
 | `create_organization` | an asserted name is an organization nobody has recorded yet |
 | `attach_contact_address` | an asserted address is a mailbox this organization operates |
+| `attribute_sender_organization` | *one* asserted name is the sender's institution, and this address is its mailbox |
 
 **What is absent is the point.** There is no merge, no person creation, no affiliation, no
 prospect, no marketing permission, no campaign, no quote and no send. There is no command
@@ -46,13 +47,20 @@ KEEP_EVIDENCE_PENDING = "keep_evidence_pending"
 CONFIRM_ORGANIZATION = "confirm_organization"
 CREATE_ORGANIZATION = "create_organization"
 ATTACH_CONTACT_ADDRESS = "attach_contact_address"
+ATTRIBUTE_SENDER_ORGANIZATION = "attribute_sender_organization"
 
 COMMAND_NAMES: tuple[str, ...] = (
     KEEP_EVIDENCE_PENDING,
     CONFIRM_ORGANIZATION,
     CREATE_ORGANIZATION,
     ATTACH_CONTACT_ADDRESS,
+    ATTRIBUTE_SENDER_ORGANIZATION,
 )
+
+#: How `attribute_sender_organization` gets its organization. Spelled out by the operator
+#: rather than inferred from which fields happen to be present: a request that forgot
+#: `organization_id` must be refused, never silently reinterpreted as "create a new one".
+ORGANIZATION_TARGETS: tuple[str, ...] = ("existing", "new")
 
 #: Roles that may record a durable commercial decision. `viewer` may read the queue and may
 #: not decide it — `docs/OPERATIONS.md` §2. This is layer C of the three-layer authorization
@@ -172,11 +180,50 @@ class AttachContactAddressBody(_CommandBody):
     usage: Literal["shared_mailbox"]
 
 
+class AttributeSenderOrganizationBody(_CommandBody):
+    """One institution named in this message is the sender's, and this address is its mailbox.
+
+    **Why this exists as its own command rather than as two.** Attributing a sender took
+    `create_organization` (or `confirm_organization`) and then `attach_contact_address`: two
+    transactions, two receipts, two chances to stop halfway. The half-done state is not
+    hypothetical — it is an organization nobody can reach and an address nobody has placed,
+    and the operator who created it has no single thing to undo. Here the institution and the
+    address move together or neither moves.
+
+    **Why it names two assertions and not a record.** A message that names a supplier and an
+    end customer asserts two institutions, and exactly one of them is the sender's. The
+    operator says which — `organization_assertion_id` — and the other assertion is left
+    `unresolved`, so the record stays in the queue with its remaining question intact. This
+    is the whole point: choosing is not the same as discarding.
+
+    **Why the address is an assertion too.** `address_assertion_id` is the sender address the
+    message itself asserted, not a string in this request. An operator cannot attribute an
+    address the evidence never contained, and cannot attribute the *other* party's address by
+    pairing it with this record.
+
+    `target` is explicit. `"existing"` needs the organization's id and the version the
+    operator was shown; `"new"` needs neither and takes its name from the assertion, exactly
+    as `create_organization` does. Sending the fields of one target under the other is
+    refused rather than ignored, because a request that says two things is a request nobody
+    read carefully.
+    """
+
+    organization_assertion_id: str
+    address_assertion_id: str
+    target: Literal["existing", "new"]
+    organization_id: str | None = None
+    organization_version: Annotated[int, Field(ge=1)] | None = None
+    kind: Literal["unknown", "institution"] = "unknown"
+    name_display: Annotated[str, Field(min_length=1, max_length=400)] | None = None
+    usage: Literal["shared_mailbox"]
+
+
 BODY_BY_COMMAND: dict[str, type[_CommandBody]] = {
     KEEP_EVIDENCE_PENDING: KeepEvidencePendingBody,
     CONFIRM_ORGANIZATION: ConfirmOrganizationBody,
     CREATE_ORGANIZATION: CreateOrganizationBody,
     ATTACH_CONTACT_ADDRESS: AttachContactAddressBody,
+    ATTRIBUTE_SENDER_ORGANIZATION: AttributeSenderOrganizationBody,
 }
 
 
@@ -263,6 +310,9 @@ def validated(command_name: str, body: _CommandBody) -> dict[str, Any]:
     about rows, they can change between the check and the write, and checking them anywhere
     but inside the command's own transaction would be a race dressed up as validation.
     """
+    if isinstance(body, AttributeSenderOrganizationBody):
+        return validated_attribution(body)
+
     fields: dict[str, Any] = {
         "source_record_id": _uuid(body.source_record_id, "source_record_id"),
         "note": body.note.strip(),
@@ -281,4 +331,70 @@ def validated(command_name: str, body: _CommandBody) -> dict[str, Any]:
     elif isinstance(body, AttachContactAddressBody):
         fields["organization_id"] = _uuid(body.organization_id, "organization_id")
         fields["usage"] = body.usage
+    return fields
+
+
+def _refuse_fields_of_the_other_target(body: AttributeSenderOrganizationBody) -> None:
+    """A request may carry the fields of one target, and only of the one it named.
+
+    Ignoring the surplus would be worse than refusing it: an operator who filled in an
+    organization and then chose `"new"` gets a new organization and never learns that the one
+    they picked was discarded. A request that contradicts itself is answered, not tidied.
+    """
+    if body.target == "existing":
+        if body.organization_id is None or body.organization_version is None:
+            raise CommandRefused(
+                422,
+                "existing_organization_requires_id_and_version",
+                "target 'existing' needs organization_id and the organization_version you "
+                "were shown",
+            )
+        if body.name_display is not None:
+            raise CommandRefused(
+                422,
+                "name_display_is_only_for_a_new_organization",
+                "target 'existing' does not name an organization; it identifies one by id",
+            )
+    else:
+        if body.organization_id is not None or body.organization_version is not None:
+            raise CommandRefused(
+                422,
+                "new_organization_takes_no_organization_id",
+                "target 'new' creates an organization from the assertion; it cannot also "
+                "point at an existing one",
+            )
+
+
+def validated_attribution(body: AttributeSenderOrganizationBody) -> dict[str, Any]:
+    """Everything about an attribution that can be decided without the database.
+
+    The one check worth naming: the two assertion ids must differ. They are read as different
+    kinds a moment later, so an identical pair would be refused anyway — but it would be
+    refused by `assertion_wrong_kind`, which says nothing about what the operator actually
+    got wrong.
+    """
+    _refuse_fields_of_the_other_target(body)
+
+    fields: dict[str, Any] = {
+        "source_record_id": _uuid(body.source_record_id, "source_record_id"),
+        "note": body.note.strip(),
+        "organization_assertion_id": _uuid(
+            body.organization_assertion_id, "organization_assertion_id"
+        ),
+        "address_assertion_id": _uuid(body.address_assertion_id, "address_assertion_id"),
+        "target": body.target,
+        "usage": body.usage,
+    }
+    if fields["organization_assertion_id"] == fields["address_assertion_id"]:
+        raise CommandRefused(
+            422,
+            "one_assertion_cannot_be_both",
+            "the institution and the address must be two different assertions of this message",
+        )
+    if body.target == "existing":
+        fields["organization_id"] = _uuid(body.organization_id or "", "organization_id")
+        fields["organization_version"] = int(body.organization_version or 0)
+    else:
+        fields["kind"] = body.kind
+        fields["name_display"] = body.name_display.strip() if body.name_display else None
     return fields

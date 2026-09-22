@@ -736,7 +736,7 @@ gained the surface an operator works that queue from. Both are local.
 | Default batch | *Correspondencia comercial*. Measured against the real clean-room queue on 2026-09-22: **20 commercial · 4 counterparty auto-replies · 7 vendor/security notices · 0 unclassified**, of 31 |
 | The triage does not | rank, score, promote, recommend an action, or enable any affordance. A test asserts every preview action is still `disabled` with the triage on screen |
 | What the surface will not say (2026-09-22) | it never presents **settling who uses an address** as something that exists or can be done. `crm.person` is empty and no command writes it, so the queue headline reads *Dirección conocida, sin titular registrado*, the chip reads *Sin titular registrado*, and step 2 of the flow strip is *Dirección / institución revisadas*. **Dirección, institución and evidencia stay three separate readings**: a known address is a channel, an institution is attributed only by exact name or registered domain, and the message is provenance. Two tests in `EvidenceReviewPage.test.tsx` assert the rendered page matches none of `/confirmar (la )?persona/i`, `/persona confirmada/i`, `/identificar (a )?(la )?persona/i` |
-| Tests | **30** in `EvidenceReviewPage.test.tsx`, 19 in `evidenceReview.test.ts`, **32 in `evidenceTriage.test.ts`**, 9 in `test_v2_read_boundary.py`, 1 in the nav suite, and the proxy allowlist suite extended |
+| Tests | **37** in `EvidenceReviewPage.test.tsx`, 19 in `evidenceReview.test.ts`, **32 in `evidenceTriage.test.ts`**, **37 in `evidenceCommands.test.ts`**, 9 in `test_v2_read_boundary.py`, 1 in the nav suite, and the proxy allowlist suite extended |
 
 **What is still unconfirmed after all of this.** All 20 records are `pending` and all 26
 assertions `unresolved`. No person name was staged at all — the manifest format has no kind
@@ -751,7 +751,7 @@ has the command boundary that records it. **No real review decision has been exe
 the twenty staged Gmail records are untouched: all twenty are still `pending` and all
 twenty-six assertions still `unresolved`, verified by checksum before and after the work.
 
-#### The four commands
+#### The five commands
 
 | Command | Durable fact it records |
 |---|---|
@@ -759,6 +759,7 @@ twenty-six assertions still `unresolved`, verified by checksum before and after 
 | `POST /v2/commands/confirm-organization` | an asserted name **is** one existing organization, matched on exact folded name |
 | `POST /v2/commands/create-organization` | an asserted name is an organization nobody had recorded |
 | `POST /v2/commands/attach-contact-address` | an asserted address is a mailbox an organization operates |
+| `POST /v2/commands/attribute-sender-organization` | **one** asserted name is the sender's institution **and** this address is its mailbox — in one transaction (§2.7.13) |
 
 | Item | Value |
 |---|---|
@@ -774,7 +775,7 @@ twenty-six assertions still `unresolved`, verified by checksum before and after 
 | An organization cannot be born from a domain | `create-organization` takes **no name**; it reads one from the assertion. `name_display` may only restore letter case, checked by folding |
 | Out of scope, with no route at all | merges, person creation, affiliations, prospects, marketing permission, campaigns, quotes, sending, and any hosted Supabase endpoint. A test asserts none of those words appears in a path |
 | Migration | `20260922090000_slice2_evidence_review_decision_event.sql` — one new event type, `source_record.review_noted`. Additive: no grant widens, no policy relaxes, no send flag moves |
-| Tests | **64** — `apps/api/tests/test_v2_command_boundary.py`; 45 in process, 19 database-backed |
+| Tests | **83** — `apps/api/tests/test_v2_command_boundary.py`; 53 in process, 30 database-backed. Was 64 before §2.7.13 |
 
 #### Why the dashboard still cannot execute anything
 
@@ -975,6 +976,46 @@ third address — the clean room's seeded operator — which no entry had ever c
 **Consequence to know.** The two exact-value rules do not fire until the identity file
 exists. That is inherent to taking the addresses out of Git, not a regression: the rule is
 intact and is waiting for its input.
+
+### 2.7.13 Attributing a sender, atomically — built 2026-09-22, unwired
+
+The six-case review of 2026-09-22 found a product gap, not a bug. A message that names a
+manufacturer **and** the university the equipment is for names two institutions and has one
+sender. `confirm-organization` and `create-organization` both refuse such a record — *one
+assertion at a time* — which is a correct rule and a useless outcome: the operator can see
+which name belongs to the sender and had no way to say so. Two of the queue's records are in
+exactly that state.
+
+Attributing a sender was also **two commands**: create-or-confirm, then attach. Two
+transactions, two receipts, and a state to stop in — an institution nobody can reach.
+
+| Item | Value |
+|---|---|
+| Command | `attribute_sender_organization`, `POST /v2/commands/attribute-sender-organization` |
+| What the operator names | the evidence record, **one** `organization_name` assertion, the `contact_address` assertion of the sender, and `target` — `existing` (with the id and the version they were shown) or `new` |
+| In one transaction | create **or** confirm the institution · attach the address as `shared_mailbox`/`confirmed` · resolve **exactly those two** assertions · one receipt · one `crm.domain_event` per change |
+| What it leaves alone | every other assertion of the same message stays `unresolved`, and the record therefore stays `pending`. The response returns `assertions_left_unresolved`, so that is a number the operator reads rather than a property they trust |
+| Refusals it inherits | it runs the **same three steps** the single commands run, extracted rather than copied, so exact-name matching, the version compare-and-set, `organization_already_exists`, `contact_point_belongs_to_a_person` and `contact_point_attached_elsewhere` all behave identically |
+| The refusal the case turns on | `contact_point_attached_elsewhere` — once the sender's mailbox belongs to one institution, the *other* institution the same message names cannot take it |
+| Atomicity, proven | a test makes the second half fail and asserts the organization the first half would have created **does not exist**, no assertion moved, and the idempotency key is still free |
+| A request that says two things | refused, not tidied: `target: existing` without a version, `target: existing` carrying a `name_display`, `target: new` carrying an `organization_id`, and the two assertion ids being the same, each have their own code |
+| Still out of scope | no person, no `crm.organization_domain`, no prospect, permission, campaign, quote, task or send. A database-backed test counts all six tables before and after and asserts they did not move |
+| Rehearsed against the clean room | `supabase/scripts/rehearse_attribution.py` — reads the **real** records read-only, replays each into its own disposable `origenlab_test_<hex>`, runs the real command as `origenlab_api`, drops the room, and fingerprints the clean room before and after. **4 records, 6 decisions, all accepted, 2026-09-22; fingerprint unchanged** |
+| Why the committed fixtures are fictitious | the repository is public and the senders are real people. The *shape* is committed under reserved `.example` values; the *real values* are read at run time by the rehearsal and never written down |
+
+**The dashboard shows the exact request and still sends nothing.** `evidenceCommands.ts`
+gained a fifth preview and two fields on every preview: `request`, the request body itself
+rendered as JSON — not a description of it, because prose can agree with what the operator
+meant while the body disagrees with both — and `leavesUnresolved`, which names the
+institutions this decision deliberately does not settle. The workspace gained a radio group
+for *which institution is the sender's*; it does not preselect one even when the message
+names only one. **Every button is still `disabled`**, `apps/dashboard-proxy` still allows no
+POST under `/v2`, and a test now names all five command paths and asserts the Worker forwards
+none of them.
+
+**What is still not decided.** No command has been run against real evidence. All 31 staged
+records are `pending`, all their assertions `unresolved`, and `platform.command_receipt` is
+empty — `cleanroom_db.sh verify` passes at 38 probes after this work, exactly as before it.
 
 ### 2.7.5 Local V2 — the reconciled picture, 2026-09-21
 

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EvidenceReviewPage } from "./EvidenceReviewPage";
@@ -441,5 +441,159 @@ describe("what the workspace refuses to offer about a person", () => {
     expect(screen.getByText("Dirección conocida, sin titular registrado")).toBeTruthy();
     expect(screen.getByText("Sin institución atribuida")).toBeTruthy();
     expect(screen.getByTestId("review-organization-rule")).toBeTruthy();
+  });
+});
+
+// ------------------------------------------- choosing which institution the sender belongs to
+//
+// The shape of the real pair in the queue, with reserved values: one message naming a
+// manufacturer *and* the university the equipment is for, with one sender. The four single
+// commands refuse such a record by rule; this is the surface for saying which name is the
+// sender's without discarding the other.
+
+const TWO_INSTITUTIONS = {
+  ...KNOWN_ADDRESS,
+  source_record_id: "eeeeeeee-5555-4555-8555-555555555555",
+  dedupe_key: "gmail_message:m5",
+  source_uri: "gmail://msg/m5",
+  subject: "[Universidad Ejemplo] Ultrasonics Ejemplo: su solicitud de cotización",
+  from_address: "ventas@proveedor.example",
+  from_domain: "proveedor.example",
+  assertion_total: 3,
+  assertions: [
+    {
+      assertion_id: "as-addr",
+      kind: "contact_address",
+      value_norm: "ventas@proveedor.example",
+      resolution: "unresolved",
+      resolved_kind: null,
+      resolved_id: null,
+      ambiguity_note: null,
+    },
+    {
+      assertion_id: "as-new",
+      kind: "organization_name",
+      value_norm: "ultrasonics ejemplo",
+      resolution: "unresolved",
+      resolved_kind: null,
+      resolved_id: null,
+      ambiguity_note: null,
+    },
+    {
+      assertion_id: "as-existing",
+      kind: "organization_name",
+      value_norm: "universidad ejemplo",
+      resolution: "unresolved",
+      resolved_kind: null,
+      resolved_id: null,
+      ambiguity_note: null,
+    },
+  ],
+  contact_matches: [],
+  organization_matches: [
+    {
+      value_norm: "universidad ejemplo",
+      organization_id: "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      name: "Universidad Ejemplo",
+      confirmation: "machine_proposed" as const,
+    },
+  ],
+};
+
+describe("a message that names two institutions and has one sender", () => {
+  beforeEach(() => {
+    vi.mocked(fetchV2EvidenceRecords).mockResolvedValue(page([TWO_INSTITUTIONS], 1) as never);
+  });
+
+  /** The attribution preview's own card. Other previews render requests of their own. */
+  function attributionCard() {
+    return screen.getByTestId("command-preview-attribute_sender_organization");
+  }
+
+  async function openTheRecord() {
+    render(<EvidenceReviewPage />);
+    await screen.findByTestId("review-queue-table");
+    fireEvent.click(screen.getByText("ventas@proveedor.example"));
+    fireEvent.change(screen.getByTestId("command-note"), {
+      target: { value: "el remitente es el fabricante" },
+    });
+  }
+
+  it("offers both names, and says what each one would do", async () => {
+    await openTheRecord();
+    const choices = screen.getAllByTestId("sender-institution-choice");
+    expect(choices).toHaveLength(2);
+    const text = choices.map((choice) => choice.textContent).join(" ");
+    expect(text).toContain("«ultrasonics ejemplo»");
+    expect(text).toContain("se crearía");
+    expect(text).toContain("«universidad ejemplo»");
+    expect(text).toContain("se confirmaría");
+  });
+
+  it("will not attribute anything until the operator picks one", async () => {
+    await openTheRecord();
+    const attribution = screen.getByTestId("command-preview-attribute_sender_organization");
+    expect(attribution.dataset.availability).toBe("blocked");
+    expect(attribution.textContent).toContain("2 instituciones");
+    expect(within(attribution).queryByTestId("command-request")).toBeNull();
+  });
+
+  it("shows the exact request once the operator picks the sender's institution", async () => {
+    await openTheRecord();
+    fireEvent.click(screen.getAllByRole("radio")[0]);
+    const attribution = screen.getByTestId("command-preview-attribute_sender_organization");
+    expect(attribution.dataset.availability).toBe("available");
+
+    const request = JSON.parse(
+      within(attributionCard()).getByTestId("command-request").querySelector("pre")!.textContent!,
+    );
+    expect(request).toEqual({
+      source_record_id: TWO_INSTITUTIONS.source_record_id,
+      note: "el remitente es el fabricante",
+      organization_assertion_id: "as-new",
+      address_assertion_id: "as-addr",
+      usage: "shared_mailbox",
+      target: "new",
+      kind: "unknown",
+    });
+  });
+
+  it("says out loud which institution it is leaving unresolved", async () => {
+    await openTheRecord();
+    fireEvent.click(screen.getAllByRole("radio")[0]);
+    expect(within(attributionCard()).getByTestId("command-leaves-unresolved").textContent).toContain(
+      "«universidad ejemplo» queda sin resolver",
+    );
+  });
+
+  it("switches to confirming when the chosen name already exists", async () => {
+    await openTheRecord();
+    fireEvent.click(screen.getAllByRole("radio")[1]);
+    const request = JSON.parse(
+      within(attributionCard()).getByTestId("command-request").querySelector("pre")!.textContent!,
+    );
+    expect(request.target).toBe("existing");
+    expect(request.organization_id).toBe("11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    expect(request.organization_assertion_id).toBe("as-existing");
+    expect(within(attributionCard()).getByTestId("command-leaves-unresolved").textContent).toContain(
+      "«ultrasonics ejemplo» queda sin resolver",
+    );
+  });
+
+  it("still sends nothing: every button stays disabled with a complete request on screen", async () => {
+    await openTheRecord();
+    fireEvent.click(screen.getAllByRole("radio")[0]);
+    expect(within(attributionCard()).getByTestId("command-request")).toBeTruthy();
+    for (const action of screen.getAllByTestId("review-preview-action")) {
+      expect((action as HTMLButtonElement).disabled).toBe(true);
+    }
+  });
+
+  it("never offers to settle who uses the address, whichever institution is chosen", async () => {
+    await openTheRecord();
+    fireEvent.click(screen.getAllByRole("radio")[0]);
+    const text = document.body.textContent ?? "";
+    expect(text).not.toMatch(/confirmar\s+(la\s+)?persona/i);
+    expect(text).toContain("No crea persona ni afiliación");
   });
 });

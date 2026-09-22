@@ -64,9 +64,10 @@ function preview(id: string, ctx: CommandContext) {
 }
 
 describe("the shape of the preview", () => {
-  it("always offers the same four commands in the same order", () => {
+  it("always offers the same five commands in the same order", () => {
     expect(commandPreviews(context()).map((p) => p.id)).toEqual([
       "keep_evidence_pending",
+      "attribute_sender_organization",
       "confirm_organization",
       "create_organization",
       "attach_contact_address",
@@ -358,5 +359,180 @@ describe("folding", () => {
   it("ignores case and spacing and nothing else", () => {
     expect(fold("  Instituto   del Sur ")).toBe("instituto del sur");
     expect(fold("Instituto del Sur")).not.toBe(fold("Instituto del Norte"));
+  });
+});
+
+// ---------------------------------------------- attributing the sender to one institution
+//
+// Modelled on the real pair in the queue: a manufacturer writes about an order for a
+// university, and each of the two messages names both institutions while having exactly one
+// sender. The values are reserved; the shape is the one that exists.
+
+const SUPPLIER = "ventas@proveedor.example";
+const UNIVERSITY = "compras@universidad.example";
+
+function twoNamedInstitutions(sender: string): V2EvidenceRecord {
+  return record({
+    from_address: sender,
+    from_domain: sender.split("@")[1],
+    assertion_total: 3,
+    assertions: [
+      assertion({ assertion_id: "org-new", kind: "organization_name", value_norm: "ultrasonics ejemplo" }),
+      assertion({
+        assertion_id: "org-existing",
+        kind: "organization_name",
+        value_norm: "universidad ejemplo",
+      }),
+      assertion({ assertion_id: "addr", kind: "contact_address", value_norm: sender }),
+    ],
+    organization_matches: [
+      {
+        value_norm: "universidad ejemplo",
+        organization_id: "org-uuid-existing",
+        name: "Universidad Ejemplo",
+        confirmation: "machine_proposed",
+      },
+    ],
+  });
+}
+
+function attribution(sender: string, chosen: string | null, extra: Partial<CommandContext> = {}) {
+  return preview("attribute_sender_organization", {
+    record: twoNamedInstitutions(sender),
+    domainShareCount: 1,
+    selectedOrganizationId: null,
+    selectedOrganizationAssertionId: chosen,
+    note: "el remitente es de esta institución",
+    ...extra,
+  });
+}
+
+describe("attributing the sender to one of the institutions a message names", () => {
+  it("refuses to proceed until the operator says which institution is the sender's", () => {
+    const blocked = attribution(SUPPLIER, null);
+    expect(blocked.availability).toBe("blocked");
+    expect(blocked.blockers.join(" ")).toContain("2 instituciones");
+    expect(blocked.request).toBeNull();
+  });
+
+  it("does not choose for the operator even when a message names only one", () => {
+    const single = preview("attribute_sender_organization", {
+      record: record({
+        assertion_total: 2,
+        assertions: [
+          assertion({ assertion_id: "org", kind: "organization_name", value_norm: "agro ejemplo" }),
+          assertion({ assertion_id: "addr", kind: "contact_address" }),
+        ],
+      }),
+      domainShareCount: 1,
+      selectedOrganizationId: null,
+      selectedOrganizationAssertionId: null,
+      note: "revisado",
+    });
+    expect(single.availability).toBe("blocked");
+    expect(single.blockers.join(" ")).toContain("Elige la institución");
+  });
+
+  it("creates the institution the CRM does not have, with the asserted text", () => {
+    const chosen = attribution(SUPPLIER, "org-new");
+    expect(chosen.availability).toBe("available");
+    expect(chosen.request).toEqual({
+      source_record_id: "r1",
+      note: "el remitente es de esta institución",
+      organization_assertion_id: "org-new",
+      address_assertion_id: "addr",
+      usage: "shared_mailbox",
+      target: "new",
+      kind: "unknown",
+    });
+    expect(chosen.cautions.join(" ")).toContain("texto exacto");
+  });
+
+  it("confirms the institution the CRM already has, by exact name", () => {
+    const chosen = attribution(UNIVERSITY, "org-existing");
+    expect(chosen.availability).toBe("available");
+    expect(chosen.request).toEqual({
+      source_record_id: "r1",
+      note: "el remitente es de esta institución",
+      organization_assertion_id: "org-existing",
+      address_assertion_id: "addr",
+      usage: "shared_mailbox",
+      target: "existing",
+      organization_id: "org-uuid-existing",
+    });
+    expect(chosen.cautions.join(" ")).toContain("propuesta por la máquina");
+  });
+
+  it("names the institution it is leaving unresolved, before the decision is taken", () => {
+    expect(attribution(SUPPLIER, "org-new").leavesUnresolved).toEqual([
+      "«universidad ejemplo» queda sin resolver, y el registro pendiente.",
+    ]);
+    expect(attribution(UNIVERSITY, "org-existing").leavesUnresolved).toEqual([
+      "«ultrasonics ejemplo» queda sin resolver, y el registro pendiente.",
+    ]);
+  });
+
+  it("never writes a person, a domain, a prospect, a permission or a quote", () => {
+    const said = attribution(SUPPLIER, "org-new");
+    const words = [...said.writes, ...said.doesNot].join(" ").toLowerCase();
+    expect(said.writes.join(" ")).not.toMatch(/persona|dominio|prospecto|permiso|cotizaci/i);
+    expect(words).toContain("no crea persona");
+    expect(words).toContain("no infiere nada del dominio");
+    expect(words).toContain("una sola transacción");
+  });
+
+  it("refuses when the address already belongs to a different institution", () => {
+    const taken = attribution(UNIVERSITY, "org-existing", {
+      record: {
+        ...twoNamedInstitutions(UNIVERSITY),
+        contact_matches: [
+          {
+            value_norm: UNIVERSITY,
+            contact_point_id: "cp1",
+            usage: "shared_mailbox",
+            confirmation: "confirmed",
+            person_id: null,
+            person_display_name: null,
+            organization_id: "someone-else",
+            organization_name: "Otra Institución",
+          },
+        ],
+      } as V2EvidenceRecord,
+    });
+    expect(taken.availability).toBe("blocked");
+    expect(taken.blockers.join(" ")).toContain("ya pertenece a otra institución");
+  });
+
+  it("refuses when the address is already attributed to a person", () => {
+    const owned = attribution(UNIVERSITY, "org-existing", {
+      record: {
+        ...twoNamedInstitutions(UNIVERSITY),
+        contact_matches: [
+          {
+            value_norm: UNIVERSITY,
+            contact_point_id: "cp1",
+            usage: "work",
+            confirmation: "confirmed",
+            person_id: "p1",
+            person_display_name: "Alguien",
+            organization_id: null,
+            organization_name: null,
+          },
+        ],
+      } as V2EvidenceRecord,
+    });
+    expect(owned.availability).toBe("blocked");
+    expect(owned.blockers.join(" ")).toContain("atribuida a una persona");
+  });
+
+  it("still needs a reason, like every other decision", () => {
+    expect(attribution(SUPPLIER, "org-new", { note: "  " }).availability).toBe("blocked");
+  });
+
+  it("is blocked on a record that is not pending", () => {
+    const reviewed = attribution(SUPPLIER, "org-new", {
+      record: { ...twoNamedInstitutions(SUPPLIER), review_status: "reviewed" } as V2EvidenceRecord,
+    });
+    expect(reviewed.availability).toBe("blocked");
   });
 });

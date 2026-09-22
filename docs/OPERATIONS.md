@@ -527,6 +527,22 @@ file:
 OL_CLEAN_OPERATOR_EMAIL=you@yourdomain.cl supabase/scripts/cleanroom_db.sh build --force
 ```
 
+**Rehearsing a review decision against the real records.** `attribute_sender_organization`
+(docs/STATUS.md §2.7.13) is the one command whose inputs are hard to reproduce by hand: two
+institutions named in one message, one of which already exists under exactly that name. To
+check it against the rows that actually exist, without deciding anything:
+
+```bash
+apps/api/.venv/bin/python supabase/scripts/rehearse_attribution.py
+```
+
+It opens `origenlab_clean` **read only**, replays each eligible record into its own
+disposable `origenlab_test_<hex>` database, runs the real command there as `origenlab_api`,
+drops the room, and fingerprints the clean room before and after — a rehearsal that changed
+it fails rather than being discovered later by `verify`. It needs
+`cleanroom_db.sh api-login` to have been run, because it deliberately does not run as
+`postgres`. It records nothing: after it, `verify` still passes at 38 probes.
+
 **The database name is a literal.** `build --force` drops a database, so the name comes from
 the `OL_CLEAN_DBNAME` constant in `supabase/scripts/lib/local_target.sh` and from nowhere else
 — not an argument, not an environment variable, not a config file. The guard refuses to

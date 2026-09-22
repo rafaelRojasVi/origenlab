@@ -6,11 +6,16 @@
 | `POST /v2/commands/confirm-organization` | an asserted name is one existing organization |
 | `POST /v2/commands/create-organization` | an asserted name is an organization nobody had |
 | `POST /v2/commands/attach-contact-address` | an asserted address is an organization's mailbox |
+| `POST /v2/commands/attribute-sender-organization` | one asserted name is the sender's institution, and this address is its mailbox — in one transaction |
 
 **Why this is a second router.** `routes.py` is the read boundary, and a test over that
 router's own methods asserts it has no POST, PATCH or DELETE. That assertion is worth
 keeping true, so the write path lives here instead of being appended there: the read surface
 stays provably read-only, and "does `/v2` write?" has a one-file answer.
+
+**Five routes, four of them one durable move each.** The fifth composes two of those moves
+in a single transaction, because attributing a sender is one decision an operator makes and
+was two commands they could stop between. See `attribute_sender_organization`.
 
 **Four requirements, on every route, before anything runs.** An active operator whose role is
 `sales` or `admin`; an `Idempotency-Key` header; a `source_record_id` naming the evidence the
@@ -33,10 +38,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from origenlab_api.v2.command_repository import V2CommandRepository
 from origenlab_api.v2.commands import (
     ATTACH_CONTACT_ADDRESS,
+    ATTRIBUTE_SENDER_ORGANIZATION,
     CONFIRM_ORGANIZATION,
     CREATE_ORGANIZATION,
     KEEP_EVIDENCE_PENDING,
     AttachContactAddressBody,
+    AttributeSenderOrganizationBody,
     CommandRefused,
     ConfirmOrganizationBody,
     CreateOrganizationBody,
@@ -202,6 +209,38 @@ def attach_contact_address(
     """
     return _run(
         command_name=ATTACH_CONTACT_ADDRESS,
+        body=body,
+        repo=repo,
+        operator=operator,
+        idempotency_key=idempotency_key,
+    )
+
+
+@command_router.post("/attribute-sender-organization")
+def attribute_sender_organization(
+    body: AttributeSenderOrganizationBody,
+    operator: Deciding,
+    repo: CommandRepo,
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """Settle one institution and the sender's address together, or settle neither.
+
+    This is the route for the case the other four handle badly: a message that names two
+    institutions — a supplier and the end customer — of which exactly one is the sender's.
+    The operator names the assertion they mean and the address it belongs to; the other
+    assertion is left `unresolved` and the record stays in the queue carrying it.
+
+    Everything it refuses, it refuses for the same reasons the single commands do, because it
+    runs the same steps: an existing organization must match the asserted name exactly and
+    carry the version the operator was shown; a new one takes its name from the assertion and
+    nowhere else; an address already attached to a different organization is refused, which
+    is what stops both named institutions from claiming one mailbox.
+
+    It creates no person, registers no domain, and opens no prospect, permission, campaign or
+    quote — there is no route here that could.
+    """
+    return _run(
+        command_name=ATTRIBUTE_SENDER_ORGANIZATION,
         body=body,
         repo=repo,
         operator=operator,

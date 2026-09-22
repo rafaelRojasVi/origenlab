@@ -22,12 +22,13 @@
 import type { V2EvidenceRecord, V2RecordAssertion } from "../api/v2Types";
 import { isConsumerDomain, isRoleMailbox, organizationNamesOf } from "./evidenceReview";
 
-/** The four commands, named exactly as the API names them. */
+/** The five commands, named exactly as the API names them. */
 export type EvidenceCommandId =
   | "keep_evidence_pending"
   | "confirm_organization"
   | "create_organization"
-  | "attach_contact_address";
+  | "attach_contact_address"
+  | "attribute_sender_organization";
 
 export type CommandAvailability = "available" | "blocked";
 
@@ -52,6 +53,23 @@ export interface CommandPreview {
   writes: string[];
   /** What it explicitly does not do — the boundary of the command, stated to the operator. */
   doesNot: string[];
+  /**
+   * The request body this decision would send, field for field.
+   *
+   * Not a summary of it — the object itself, rendered as JSON on screen. A prose preview can
+   * agree with the operator\'s intention while the request disagrees with both, and the
+   * mismatch only shows up in the durable row afterwards. `null` when the decision is not
+   * fully specified yet, because there is then no request to show.
+   */
+  request: Record<string, unknown> | null;
+  /**
+   * What this decision deliberately leaves open, named one by one.
+   *
+   * Only `attribute_sender_organization` has anything to say here: choosing one of the
+   * institutions a message names is only safe if the operator can see that the others stay
+   * unresolved and that the record stays in the queue carrying them.
+   */
+  leavesUnresolved: string[];
 }
 
 /** Everything the preview needs. `selectedOrganizationId` is null until an operator picks one. */
@@ -61,6 +79,14 @@ export interface CommandContext {
   domainShareCount: number;
   /** The organization an operator has explicitly selected, if any. */
   selectedOrganizationId: string | null;
+  /**
+   * The *asserted institution name* an operator picked, when the message names more than one.
+   *
+   * This is the choice the four single commands had no way to express. It is an assertion
+   * id and not a name: two assertions may carry the same words, and the decision is about
+   * the one the operator was looking at.
+   */
+  selectedOrganizationAssertionId?: string | null;
   /** The operator's reason. Blank until they type one. */
   note: string;
 }
@@ -131,6 +157,10 @@ function keepPending(context: CommandContext): CommandPreview {
       "No crea ni modifica ninguna fila de crm.*.",
       "No es una cuarentena: la evidencia está intacta, sólo es insuficiente.",
     ],
+    request: blockers.length === 0
+      ? { source_record_id: context.record.source_record_id, note: context.note.trim() }
+      : null,
+    leavesUnresolved: [],
   };
 }
 
@@ -176,6 +206,16 @@ function confirmOrganization(context: CommandContext): CommandPreview {
       "No crea personas ni afiliaciones.",
       "No atribuye el dominio del remitente a la institución.",
     ],
+    request:
+      blockers.length === 0 && match
+        ? {
+            source_record_id: context.record.source_record_id,
+            note: context.note.trim(),
+            assertion_id: named[0].assertion_id,
+            organization_id: match.organization_id,
+          }
+        : null,
+    leavesUnresolved: [],
   };
 }
 
@@ -214,6 +254,16 @@ function createOrganization(context: CommandContext): CommandPreview {
       "No crea persona, afiliación, prospecto ni permiso de marketing.",
       "No registra el dominio del remitente como dominio de la institución.",
     ],
+    request:
+      blockers.length === 0 && named.length === 1
+        ? {
+            source_record_id: context.record.source_record_id,
+            note: context.note.trim(),
+            assertion_id: named[0].assertion_id,
+            kind: "unknown",
+          }
+        : null,
+    leavesUnresolved: [],
   };
 }
 
@@ -279,11 +329,171 @@ function attachContactAddress(context: CommandContext): CommandPreview {
       "No otorga permiso de marketing: recibir un correo no es autorización para enviar.",
       "No abre prospecto, oportunidad ni cotización.",
     ],
+    request:
+      blockers.length === 0 && address
+        ? {
+            source_record_id: context.record.source_record_id,
+            note: context.note.trim(),
+            assertion_id: addresses[0].assertion_id,
+            organization_id: context.selectedOrganizationId,
+            usage: "shared_mailbox",
+          }
+        : null,
+    leavesUnresolved: [],
   };
 }
 
 /**
- * The four previews for one record, always in the same order and always all four.
+ * The decision the four single commands could not express: *this* institution is the
+ * sender\'s, and this address is its mailbox.
+ *
+ * A message that names a supplier and the end customer names two institutions and has one
+ * sender. `confirm_organization` and `create_organization` both refuse such a record — "one
+ * assertion at a time" — which is correct as a rule and unhelpful as an outcome: the
+ * operator can see perfectly well which name belongs to the sender and has no way to say so.
+ *
+ * Here they say so by picking the assertion. Three consequences the preview makes visible:
+ *
+ * 1. **The route is not a choice.** Whether the institution is confirmed or created follows
+ *    from whether an organization already carries that exact name. Offering it as an option
+ *    would only offer a way to be refused.
+ * 2. **The other names stay open.** `leavesUnresolved` lists them, and the record stays
+ *    `pending`. Choosing is not discarding, and the operator should be able to see that
+ *    before they choose rather than infer it afterwards.
+ * 3. **The address moves with the institution or not at all.** One transaction; a refusal on
+ *    either half leaves neither behind.
+ */
+function attributeSenderOrganization(context: CommandContext): CommandPreview {
+  const blockers = recordBlockers(context);
+  const named = assertionsOfKind(context.record, "organization_name");
+  const addresses = assertionsOfKind(context.record, "contact_address");
+  const chosen =
+    named.find(
+      (assertion) => assertion.assertion_id === context.selectedOrganizationAssertionId,
+    ) ?? null;
+
+  if (named.length === 0) {
+    blockers.push(
+      "El correo no afirma ningún nombre de institución. Una pista de dominio no basta.",
+    );
+  } else if (!chosen) {
+    blockers.push(
+      named.length === 1
+        ? "Elige la institución afirmada que corresponde al remitente."
+        : `El correo nombra ${named.length} instituciones: elige cuál es la del remitente.`,
+    );
+  }
+  if (addresses.length === 0) {
+    blockers.push("Este correo no afirma ninguna dirección sin resolver.");
+  }
+  if (addresses.length > 1) {
+    blockers.push(
+      "Hay más de una dirección sin resolver: esta decisión atribuye una sola, la del remitente.",
+    );
+  }
+
+  const match = chosen
+    ? (context.record.organization_matches.find(
+        (candidate) => fold(candidate.name) === fold(chosen.value_norm),
+      ) ?? null)
+    : null;
+  const route = match ? "confirm" : "create";
+
+  const cautions: string[] = [];
+  if (match && match.confirmation === "machine_proposed") {
+    cautions.push(
+      `«${match.name}» fue propuesta por la máquina; esta decisión la convierte en verdad humana.`,
+    );
+  }
+  if (chosen && !match) {
+    cautions.push(`Se creará «${chosen.value_norm}», con el texto exacto que afirma el correo.`);
+  }
+  const address = addresses.length === 1 ? addresses[0] : null;
+  if (address && !isRoleMailbox(address.value_norm)) {
+    cautions.push(
+      "Esta dirección no parece un buzón de mesa. Se adjunta como 'shared_mailbox', que " +
+        "afirma que lo es; si pertenece a una persona, todavía no hay comando para eso.",
+    );
+  }
+  if (isConsumerDomain(context.record.from_domain)) {
+    cautions.push("El dominio es de correo personal: no dice nada sobre el empleador.");
+  }
+  if (context.domainShareCount > 1) {
+    cautions.push(
+      `Otros ${context.domainShareCount - 1} registros pendientes comparten este dominio.`,
+    );
+  }
+  const existing = address
+    ? context.record.contact_matches.find((row) => row.value_norm === address.value_norm)
+    : undefined;
+  if (existing?.person_id) {
+    blockers.push("Esa dirección ya está atribuida a una persona; el comando la rechazaría.");
+  } else if (
+    existing?.organization_id &&
+    match &&
+    existing.organization_id !== match.organization_id
+  ) {
+    blockers.push("Esa dirección ya pertenece a otra institución.");
+  }
+
+  const leavesUnresolved = named
+    .filter((assertion) => assertion.assertion_id !== context.selectedOrganizationAssertionId)
+    .map((assertion) => `«${assertion.value_norm}» queda sin resolver, y el registro pendiente.`);
+
+  const ready = blockers.length === 0 && chosen !== null && address !== null;
+  return {
+    id: "attribute_sender_organization",
+    label: "Atribuir el remitente a una institución",
+    intent:
+      route === "confirm"
+        ? "Afirma que el remitente es de esta institución ya registrada, y que esta dirección es su buzón."
+        : "Registra la institución que el correo nombra y le adjunta la dirección del remitente, en una sola transacción.",
+    availability: ready ? "available" : "blocked",
+    blockers,
+    cautions,
+    writes:
+      route === "confirm"
+        ? [
+            "La institución elegida pasa a 'confirmed' y sube de versión, si estaba propuesta.",
+            "La dirección del remitente queda atribuida a ella como 'shared_mailbox'/'confirmed'.",
+            "Se resuelven exactamente dos afirmaciones: la institución elegida y la dirección.",
+            "Un recibo de comando y un evento por cada cambio, con tu nombre y tu motivo.",
+          ]
+        : [
+            "Una fila crm.organization con el nombre afirmado, 'confirmed' y tu identidad.",
+            "La dirección del remitente queda atribuida a ella como 'shared_mailbox'/'confirmed'.",
+            "Se resuelven exactamente dos afirmaciones: la institución elegida y la dirección.",
+            "Un recibo de comando y un evento por cada cambio, con tu nombre y tu motivo.",
+          ],
+    doesNot: [
+      "No resuelve las demás instituciones que el correo nombra: quedan sin resolver.",
+      "No infiere nada del dominio del remitente ni lo registra como dominio de la institución.",
+      "No crea persona ni afiliación: un buzón de mesa no tiene dueño conocido.",
+      "No abre prospecto, permiso de marketing, campaña, cotización ni tarea.",
+      "Si falla cualquier mitad, no queda ninguna: es una sola transacción.",
+    ],
+    request:
+      ready && chosen && address
+        ? {
+            source_record_id: context.record.source_record_id,
+            note: context.note.trim(),
+            organization_assertion_id: chosen.assertion_id,
+            address_assertion_id: address.assertion_id,
+            usage: "shared_mailbox",
+            ...(match
+              ? {
+                  target: "existing",
+                  organization_id: match.organization_id,
+                }
+              : { target: "new", kind: "unknown" }),
+          }
+        : null,
+    leavesUnresolved,
+  };
+}
+
+/**
+ * The five previews for one record, always in the same order and always all five.
  *
  * A blocked command is shown, not hidden. An operator who cannot see why an action is
  * unavailable has to guess, and guessing is what this queue exists to replace.
@@ -291,6 +501,7 @@ function attachContactAddress(context: CommandContext): CommandPreview {
 export function commandPreviews(context: CommandContext): CommandPreview[] {
   return [
     keepPending(context),
+    attributeSenderOrganization(context),
     confirmOrganization(context),
     createOrganization(context),
     attachContactAddress(context),

@@ -969,7 +969,7 @@ describe("V2 durable read boundary allowlist", () => {
     }
   });
 
-  it("keeps the four real V2 command routes unreachable through this Worker", async () => {
+  it("keeps the five real V2 command routes unreachable through this Worker", async () => {
     // The command boundary now EXISTS in apps/api: POST /v2/commands/* records durable human
     // decisions about staged evidence. Building it and letting a browser reach it are two
     // separate decisions, and only the first has been taken. Until the second is taken
@@ -981,6 +981,7 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/confirm-organization",
       "/v2/commands/create-organization",
       "/v2/commands/attach-contact-address",
+      "/v2/commands/attribute-sender-organization",
     ]) {
       expect(isAllowedPostPath(path)).toBe(false);
       expect(isAllowedUpstreamPath(path)).toBe(false);

@@ -36,6 +36,7 @@ from typing import Any
 
 from origenlab_api.v2.commands import (
     ATTACH_CONTACT_ADDRESS,
+    ATTRIBUTE_SENDER_ORGANIZATION,
     CONFIRM_ORGANIZATION,
     CREATE_ORGANIZATION,
     KEEP_EVIDENCE_PENDING,
@@ -420,6 +421,288 @@ class V2CommandRepository:
         )
         return True
 
+    # --------------------------------------------------- the three durable moves, reusable
+    #
+    # `confirm_organization`, `create_organization` and `attach_contact_address` are one
+    # durable move each. `attribute_sender_organization` is two of them in one transaction.
+    # The moves therefore live here, as steps that take a locked record and a locked
+    # assertion and return what they changed — so the composed command and the single ones
+    # cannot drift apart. There is exactly one implementation of "confirm this organization",
+    # and the difference between the commands is which steps they run, never how.
+
+    def _confirm_existing_organization(
+        self,
+        cur: Any,
+        *,
+        record: dict[str, Any],
+        assertion: dict[str, Any],
+        organization_id: str,
+        organization_version: int,
+        operator: OperatorIdentity,
+        receipt_id: str,
+        note: str,
+    ) -> tuple[dict[str, Any], list[str]]:
+        """The asserted name *is* this organization. Returns the organization and its events."""
+        organization = self._live_organization(cur, organization_id)
+
+        # The only comparison in the whole boundary, and it is equality. A name that merely
+        # resembles the asserted one is a different organization until a human says otherwise
+        # somewhere that is not this command.
+        if normalize_organization_name(organization["name"]) != normalize_organization_name(
+            assertion["value_norm"]
+        ):
+            raise CommandRefused(
+                422,
+                "organization_name_is_not_an_exact_match",
+                "that organization's name is not the name this message asserts; "
+                "confirming it would be a guess, so it is refused",
+            )
+        if int(organization["version"]) != int(organization_version):
+            raise CommandRefused(
+                409,
+                "organization_version_conflict",
+                "that organization changed since it was shown to you; re-read it and decide again",
+            )
+
+        events: list[str] = []
+        if organization["confirmation"] != "confirmed":
+            cur.execute(
+                """
+                update crm.organization
+                   set confirmation = 'confirmed', confirmed_by_operator_id = %s,
+                       version = version + 1, updated_at = now()
+                 where id = %s and version = %s
+                """,
+                (operator.operator_id, organization["id"], int(organization_version)),
+            )
+            if cur.rowcount != 1:
+                raise CommandRefused(
+                    409,
+                    "organization_version_conflict",
+                    "that organization changed while this command ran",
+                )
+            events.append(
+                self._append_event(
+                    cur,
+                    aggregate_kind="organization",
+                    aggregate_id=organization["id"],
+                    event_type="organization.confirmed",
+                    payload={
+                        "confirmed_from": "evidence_review",
+                        "source_record_id": record["id"],
+                        "assertion_id": assertion["id"],
+                        "note": note,
+                    },
+                    operator=operator,
+                    receipt_id=receipt_id,
+                )
+            )
+            # The row the caller now holds is one version behind the row in the database.
+            # `attribute_sender_organization` reports a version an operator may use as the
+            # compare-and-set of their *next* decision, so handing back the stale one would
+            # hand them a conflict they did nothing to cause.
+            organization["version"] = int(organization_version) + 1
+        return organization, events
+
+    def _create_organization_from_assertion(
+        self,
+        cur: Any,
+        *,
+        record: dict[str, Any],
+        assertion: dict[str, Any],
+        kind: str,
+        name_display: str | None,
+        operator: OperatorIdentity,
+        receipt_id: str,
+        note: str,
+    ) -> tuple[dict[str, Any], list[str]]:
+        """An organization nobody had recorded, named by the evidence and nothing else."""
+        name_norm = normalize_organization_name(assertion["value_norm"])
+
+        # The name comes from the evidence. `name_display` may restore the capitalisation a
+        # lower-cased `value_norm` lost and nothing else, which is why it is compared folded.
+        display = name_display or assertion["observed_value"] or assertion["value_norm"]
+        if normalize_organization_name(display) != name_norm:
+            raise CommandRefused(
+                422,
+                "name_display_does_not_match_the_assertion",
+                "the display name must be the asserted name in different letter case; "
+                "an organization may not be created under a name the message never stated",
+            )
+
+        cur.execute(
+            "select id::text as id from crm.organization "
+            "where lower(name) = %s and merged_into_organization_id is null",
+            (name_norm,),
+        )
+        clash = self._row(cur)
+        if clash is not None:
+            raise CommandRefused(
+                409,
+                "organization_already_exists",
+                "an organization with exactly this name already exists; confirm that one "
+                "instead of creating a second row for the same name",
+            )
+
+        cur.execute(
+            """
+            insert into crm.organization
+                (kind, name, confirmation, confirmed_by_operator_id, origin_source_record_id, note)
+            values (%s, %s, 'confirmed', %s, %s, %s)
+            returning id::text as id, version
+            """,
+            (kind, display, operator.operator_id, record["id"], note),
+        )
+        created = self._row(cur)
+        assert created is not None  # noqa: S101 - `returning` on a successful insert
+
+        events = [
+            self._append_event(
+                cur,
+                aggregate_kind="organization",
+                aggregate_id=created["id"],
+                event_type="organization.created",
+                payload={
+                    "name": display,
+                    "kind": kind,
+                    "created_from": "evidence_review",
+                    "source_record_id": record["id"],
+                    "assertion_id": assertion["id"],
+                    "note": note,
+                },
+                operator=operator,
+                receipt_id=receipt_id,
+            )
+        ]
+        return created, events
+
+    def _attach_address_to_organization(
+        self,
+        cur: Any,
+        *,
+        record: dict[str, Any],
+        assertion: dict[str, Any],
+        organization_id: str,
+        usage: str,
+        operator: OperatorIdentity,
+        receipt_id: str,
+        note: str,
+    ) -> tuple[str, str, list[str], list[str]]:
+        """Place one asserted address on one organization as a desk it operates.
+
+        Returns the contact point, how the assertion should resolve, the events and what was
+        created. The two refusals are the ones that keep an address from meaning two things
+        at once: an address already attributed to a person, and an address already attached
+        to a *different* organization. The second is what stops one mailbox from being
+        claimed by both institutions a message names.
+        """
+        value_norm = validate_email_shape(normalize_email(assertion["value_norm"]))
+        display = assertion["observed_value"] or value_norm
+
+        cur.execute(
+            """
+            select id::text as id, person_id::text as person_id,
+                   organization_id::text as organization_id, usage, confirmation
+              from crm.contact_point
+             where kind = 'email' and value_norm = %s
+               for update
+            """,
+            (value_norm,),
+        )
+        existing = self._row(cur)
+
+        events: list[str] = []
+        created: list[str] = []
+        if existing is None:
+            cur.execute(
+                """
+                insert into crm.contact_point
+                    (kind, value_norm, value_display, organization_id, usage, confirmation,
+                     origin_source_record_id)
+                values ('email', %s, %s, %s, %s, 'confirmed', %s)
+                returning id::text as id
+                """,
+                (value_norm, display, organization_id, usage, record["id"]),
+            )
+            row = self._row(cur)
+            assert row is not None  # noqa: S101 - `returning` on a successful insert
+            contact_point_id = row["id"]
+            created.append("contact_point")
+            resolution = "promoted"
+            events.append(
+                self._append_event(
+                    cur,
+                    aggregate_kind="contact_point",
+                    aggregate_id=contact_point_id,
+                    event_type="contact_point.created",
+                    payload={
+                        "usage": usage,
+                        "organization_id": organization_id,
+                        "created_from": "evidence_review",
+                        "source_record_id": record["id"],
+                        "assertion_id": assertion["id"],
+                        "note": note,
+                    },
+                    operator=operator,
+                    receipt_id=receipt_id,
+                )
+            )
+        else:
+            contact_point_id = existing["id"]
+            resolution = "linked"
+            if existing["person_id"] is not None:
+                raise CommandRefused(
+                    409,
+                    "contact_point_belongs_to_a_person",
+                    "that address is already attributed to a person; attaching it to an "
+                    "organization as a shared mailbox would contradict a recorded identity",
+                )
+            if (
+                existing["organization_id"] is not None
+                and existing["organization_id"] != organization_id
+            ):
+                raise CommandRefused(
+                    409,
+                    "contact_point_attached_elsewhere",
+                    "that address already belongs to a different organization",
+                )
+            if existing["organization_id"] is None:
+                cur.execute(
+                    """
+                    update crm.contact_point
+                       set organization_id = %s, usage = %s, confirmation = 'confirmed',
+                           updated_at = now()
+                     where id = %s and person_id is null and organization_id is null
+                       and usage = 'unattributed'
+                    """,
+                    (organization_id, usage, contact_point_id),
+                )
+                if cur.rowcount != 1:
+                    raise CommandRefused(
+                        409,
+                        "contact_point_changed_concurrently",
+                        "that address was attributed by someone else while this command ran",
+                    )
+                events.append(
+                    self._append_event(
+                        cur,
+                        aggregate_kind="contact_point",
+                        aggregate_id=contact_point_id,
+                        event_type="contact_point.confirmed",
+                        payload={
+                            "usage": usage,
+                            "organization_id": organization_id,
+                            "attached_from": "evidence_review",
+                            "source_record_id": record["id"],
+                            "assertion_id": assertion["id"],
+                            "note": note,
+                        },
+                        operator=operator,
+                        receipt_id=receipt_id,
+                    )
+                )
+        return contact_point_id, resolution, events, created
+
     # ------------------------------------------------------------------ the commands
 
     def _keep_evidence_pending(
@@ -455,61 +738,16 @@ class V2CommandRepository:
         assertion = self._unresolved_assertion(
             cur, fields["assertion_id"], record["id"], "organization_name"
         )
-        organization = self._live_organization(cur, fields["organization_id"])
-
-        # The only comparison in the whole boundary, and it is equality. A name that merely
-        # resembles the asserted one is a different organization until a human says otherwise
-        # somewhere that is not this command.
-        if normalize_organization_name(organization["name"]) != normalize_organization_name(
-            assertion["value_norm"]
-        ):
-            raise CommandRefused(
-                422,
-                "organization_name_is_not_an_exact_match",
-                "that organization's name is not the name this message asserts; "
-                "confirming it would be a guess, so it is refused",
-            )
-        if int(organization["version"]) != int(fields["organization_version"]):
-            raise CommandRefused(
-                409,
-                "organization_version_conflict",
-                "that organization changed since it was shown to you; re-read it and decide again",
-            )
-
-        events: list[str] = []
-        if organization["confirmation"] != "confirmed":
-            cur.execute(
-                """
-                update crm.organization
-                   set confirmation = 'confirmed', confirmed_by_operator_id = %s,
-                       version = version + 1, updated_at = now()
-                 where id = %s and version = %s
-                """,
-                (operator.operator_id, organization["id"], int(fields["organization_version"])),
-            )
-            if cur.rowcount != 1:
-                raise CommandRefused(
-                    409,
-                    "organization_version_conflict",
-                    "that organization changed while this command ran",
-                )
-            events.append(
-                self._append_event(
-                    cur,
-                    aggregate_kind="organization",
-                    aggregate_id=organization["id"],
-                    event_type="organization.confirmed",
-                    payload={
-                        "confirmed_from": "evidence_review",
-                        "source_record_id": record["id"],
-                        "assertion_id": assertion["id"],
-                        "note": fields["note"],
-                    },
-                    operator=operator,
-                    receipt_id=receipt_id,
-                )
-            )
-
+        organization, events = self._confirm_existing_organization(
+            cur,
+            record=record,
+            assertion=assertion,
+            organization_id=fields["organization_id"],
+            organization_version=int(fields["organization_version"]),
+            operator=operator,
+            receipt_id=receipt_id,
+            note=fields["note"],
+        )
         self._resolve_assertion(
             cur,
             assertion_id=assertion["id"],
@@ -541,63 +779,16 @@ class V2CommandRepository:
         assertion = self._unresolved_assertion(
             cur, fields["assertion_id"], record["id"], "organization_name"
         )
-        name_norm = normalize_organization_name(assertion["value_norm"])
-
-        # The name comes from the evidence. `name_display` may restore the capitalisation a
-        # lower-cased `value_norm` lost and nothing else, which is why it is compared folded.
-        display = fields["name_display"] or assertion["observed_value"] or assertion["value_norm"]
-        if normalize_organization_name(display) != name_norm:
-            raise CommandRefused(
-                422,
-                "name_display_does_not_match_the_assertion",
-                "the display name must be the asserted name in different letter case; "
-                "an organization may not be created under a name the message never stated",
-            )
-
-        cur.execute(
-            "select id::text as id from crm.organization "
-            "where lower(name) = %s and merged_into_organization_id is null",
-            (name_norm,),
+        created, events = self._create_organization_from_assertion(
+            cur,
+            record=record,
+            assertion=assertion,
+            kind=fields["kind"],
+            name_display=fields["name_display"],
+            operator=operator,
+            receipt_id=receipt_id,
+            note=fields["note"],
         )
-        clash = self._row(cur)
-        if clash is not None:
-            raise CommandRefused(
-                409,
-                "organization_already_exists",
-                "an organization with exactly this name already exists; confirm that one "
-                "instead of creating a second row for the same name",
-            )
-
-        cur.execute(
-            """
-            insert into crm.organization
-                (kind, name, confirmation, confirmed_by_operator_id, origin_source_record_id, note)
-            values (%s, %s, 'confirmed', %s, %s, %s)
-            returning id::text as id, version
-            """,
-            (fields["kind"], display, operator.operator_id, record["id"], fields["note"]),
-        )
-        created = self._row(cur)
-        assert created is not None  # noqa: S101 - `returning` on a successful insert
-
-        events = [
-            self._append_event(
-                cur,
-                aggregate_kind="organization",
-                aggregate_id=created["id"],
-                event_type="organization.created",
-                payload={
-                    "name": display,
-                    "kind": fields["kind"],
-                    "created_from": "evidence_review",
-                    "source_record_id": record["id"],
-                    "assertion_id": assertion["id"],
-                    "note": fields["note"],
-                },
-                operator=operator,
-                receipt_id=receipt_id,
-            )
-        ]
         self._resolve_assertion(
             cur,
             assertion_id=assertion["id"],
@@ -631,112 +822,16 @@ class V2CommandRepository:
             cur, fields["assertion_id"], record["id"], "contact_address"
         )
         organization = self._live_organization(cur, fields["organization_id"])
-        value_norm = validate_email_shape(normalize_email(assertion["value_norm"]))
-        display = assertion["observed_value"] or value_norm
-
-        cur.execute(
-            """
-            select id::text as id, person_id::text as person_id,
-                   organization_id::text as organization_id, usage, confirmation
-              from crm.contact_point
-             where kind = 'email' and value_norm = %s
-               for update
-            """,
-            (value_norm,),
+        contact_point_id, resolution, events, created = self._attach_address_to_organization(
+            cur,
+            record=record,
+            assertion=assertion,
+            organization_id=organization["id"],
+            usage=fields["usage"],
+            operator=operator,
+            receipt_id=receipt_id,
+            note=fields["note"],
         )
-        existing = self._row(cur)
-
-        events: list[str] = []
-        created: list[str] = []
-        if existing is None:
-            cur.execute(
-                """
-                insert into crm.contact_point
-                    (kind, value_norm, value_display, organization_id, usage, confirmation,
-                     origin_source_record_id)
-                values ('email', %s, %s, %s, %s, 'confirmed', %s)
-                returning id::text as id
-                """,
-                (value_norm, display, organization["id"], fields["usage"], record["id"]),
-            )
-            row = self._row(cur)
-            assert row is not None  # noqa: S101 - `returning` on a successful insert
-            contact_point_id = row["id"]
-            created.append("contact_point")
-            resolution = "promoted"
-            events.append(
-                self._append_event(
-                    cur,
-                    aggregate_kind="contact_point",
-                    aggregate_id=contact_point_id,
-                    event_type="contact_point.created",
-                    payload={
-                        "usage": fields["usage"],
-                        "organization_id": organization["id"],
-                        "created_from": "evidence_review",
-                        "source_record_id": record["id"],
-                        "assertion_id": assertion["id"],
-                        "note": fields["note"],
-                    },
-                    operator=operator,
-                    receipt_id=receipt_id,
-                )
-            )
-        else:
-            contact_point_id = existing["id"]
-            resolution = "linked"
-            if existing["person_id"] is not None:
-                raise CommandRefused(
-                    409,
-                    "contact_point_belongs_to_a_person",
-                    "that address is already attributed to a person; attaching it to an "
-                    "organization as a shared mailbox would contradict a recorded identity",
-                )
-            if (
-                existing["organization_id"] is not None
-                and existing["organization_id"] != organization["id"]
-            ):
-                raise CommandRefused(
-                    409,
-                    "contact_point_attached_elsewhere",
-                    "that address already belongs to a different organization",
-                )
-            if existing["organization_id"] is None:
-                cur.execute(
-                    """
-                    update crm.contact_point
-                       set organization_id = %s, usage = %s, confirmation = 'confirmed',
-                           updated_at = now()
-                     where id = %s and person_id is null and organization_id is null
-                       and usage = 'unattributed'
-                    """,
-                    (organization["id"], fields["usage"], contact_point_id),
-                )
-                if cur.rowcount != 1:
-                    raise CommandRefused(
-                        409,
-                        "contact_point_changed_concurrently",
-                        "that address was attributed by someone else while this command ran",
-                    )
-                events.append(
-                    self._append_event(
-                        cur,
-                        aggregate_kind="contact_point",
-                        aggregate_id=contact_point_id,
-                        event_type="contact_point.confirmed",
-                        payload={
-                            "usage": fields["usage"],
-                            "organization_id": organization["id"],
-                            "attached_from": "evidence_review",
-                            "source_record_id": record["id"],
-                            "assertion_id": assertion["id"],
-                            "note": fields["note"],
-                        },
-                        operator=operator,
-                        receipt_id=receipt_id,
-                    )
-                )
-
         self._resolve_assertion(
             cur,
             assertion_id=assertion["id"],
@@ -762,11 +857,134 @@ class V2CommandRepository:
             "event_ids": events,
         }
 
+    def _attribute_sender_organization(
+        self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any], receipt_id: str
+    ) -> dict[str, Any]:
+        """One institution and one address, or neither. The composed command.
+
+        The order is the safe one. The organization is settled first, because attaching an
+        address needs an organization to attach it to; both steps are in this transaction, so
+        a refusal in the second undoes the first — the organization that an operator would
+        otherwise be left holding never exists.
+
+        Two assertions resolve and **no others**. The record closes only if that leaves
+        nothing unresolved, which for a message naming two institutions it does not: the
+        other name stays open and the record stays in the queue, which is the state the
+        operator actually chose.
+        """
+        record = self._actionable_source_record(cur, fields["source_record_id"])
+        organization_assertion = self._unresolved_assertion(
+            cur, fields["organization_assertion_id"], record["id"], "organization_name"
+        )
+        address_assertion = self._unresolved_assertion(
+            cur, fields["address_assertion_id"], record["id"], "contact_address"
+        )
+
+        events: list[str] = []
+        created: list[str] = []
+        if fields["target"] == "existing":
+            organization, organization_events = self._confirm_existing_organization(
+                cur,
+                record=record,
+                assertion=organization_assertion,
+                organization_id=fields["organization_id"],
+                organization_version=int(fields["organization_version"]),
+                operator=operator,
+                receipt_id=receipt_id,
+                note=fields["note"],
+            )
+            organization_id = organization["id"]
+            organization_resolution = "linked"
+        else:
+            organization, organization_events = self._create_organization_from_assertion(
+                cur,
+                record=record,
+                assertion=organization_assertion,
+                kind=fields["kind"],
+                name_display=fields["name_display"],
+                operator=operator,
+                receipt_id=receipt_id,
+                note=fields["note"],
+            )
+            organization_id = organization["id"]
+            organization_resolution = "promoted"
+            created.append("organization")
+        events.extend(organization_events)
+
+        contact_point_id, address_resolution, address_events, address_created = (
+            self._attach_address_to_organization(
+                cur,
+                record=record,
+                assertion=address_assertion,
+                organization_id=organization_id,
+                usage=fields["usage"],
+                operator=operator,
+                receipt_id=receipt_id,
+                note=fields["note"],
+            )
+        )
+        events.extend(address_events)
+        created.extend(address_created)
+
+        self._resolve_assertion(
+            cur,
+            assertion_id=organization_assertion["id"],
+            resolution=organization_resolution,
+            resolved_kind="organization",
+            resolved_id=organization_id,
+            operator=operator,
+            receipt_id=receipt_id,
+            note=fields["note"],
+            source_record_id=record["id"],
+        )
+        self._resolve_assertion(
+            cur,
+            assertion_id=address_assertion["id"],
+            resolution=address_resolution,
+            resolved_kind="contact_point",
+            resolved_id=contact_point_id,
+            operator=operator,
+            receipt_id=receipt_id,
+            note=fields["note"],
+            source_record_id=record["id"],
+        )
+
+        # What the operator deliberately did not decide, counted and reported back. The
+        # dashboard shows this number before the command runs and the response repeats it,
+        # so "the other name is still open" is a fact the operator can check rather than a
+        # property of this code they have to trust.
+        cur.execute(
+            "select count(*) as remaining from evidence.assertion "
+            "where source_record_id = %s and resolution = 'unresolved'",
+            (record["id"],),
+        )
+        row = self._row(cur)
+        assert row is not None  # noqa: S101 - count() always returns a row
+        left_unresolved = int(row["remaining"])
+
+        reviewed = self._close_record_if_settled(
+            cur, source_record_id=record["id"], operator=operator, receipt_id=receipt_id
+        )
+        return {
+            "command": ATTRIBUTE_SENDER_ORGANIZATION,
+            "source_record_id": record["id"],
+            "organization_assertion_id": organization_assertion["id"],
+            "address_assertion_id": address_assertion["id"],
+            "organization_id": organization_id,
+            "organization_version": int(organization["version"]),
+            "contact_point_id": contact_point_id,
+            "assertions_left_unresolved": left_unresolved,
+            "review_status": "reviewed" if reviewed else "pending",
+            "created": created,
+            "event_ids": events,
+        }
+
     _HANDLERS = {
         KEEP_EVIDENCE_PENDING: _keep_evidence_pending,
         CONFIRM_ORGANIZATION: _confirm_organization,
         CREATE_ORGANIZATION: _create_organization,
         ATTACH_CONTACT_ADDRESS: _attach_contact_address,
+        ATTRIBUTE_SENDER_ORGANIZATION: _attribute_sender_organization,
     }
 
     # ------------------------------------------------------------------ the entry point
