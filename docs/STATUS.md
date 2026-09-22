@@ -49,11 +49,11 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 
 | Slice | State | Note |
 |---|---|---|
-| 0 — local foundation | **DONE** | `supabase/roles.sql` + 19 migrations → 4 roles, 7 schemas, 33 tables, grants, RLS. Proven by `supabase/tests/` and `supabase/scripts/`, enforced by `.github/workflows/supabase.yml` on every push touching `supabase/**` |
+| 0 — local foundation | **DONE** | `supabase/roles.sql` + 19 migrations → 4 roles, 7 schemas, 33 tables, grants, RLS. Head has since moved past slice 0: 23 migrations, 36 tables, 139 policies (§2.1). Proven by `supabase/tests/` and `supabase/scripts/`, enforced by `.github/workflows/supabase.yml` on every push touching `supabase/**` |
 | 0 — hosted gates | **BLOCKED — on attestation items only; the audit itself has now succeeded** | **The hosted Slice 0 audit completed against `origenlab-v2` on 2026-09-21** over the Supavisor session-mode route, and every SQL proof passed. `supabase/hosted_roles.sql` was applied under its atomic contract the same day and the four absent migrations were reconciled, so the project now carries all 19 (§2.5). Checks 1–9 of [`MIGRATION.md`](MIGRATION.md) §5.2 are therefore proven **against the hosted project**, not merely locally. **Checks 10–11 remain unproven**, and with them the eight attestation items `t01`–`t07` and `d01`: the project is on the Free plan with no backup entitlement, so no restore drill can be evidenced, and its Data API is running rather than off. Those are plan-and-configuration decisions for the owner. The project is **reconciled but still not adopted** — no committed file names it and no application code reads it. See §2.5 |
 | 1 — Auth / `platform.*` | NOT STARTED | |
 | 2 — CRM identity + V1 row migration | NOT STARTED | |
-| 3 — Quotes, lines, FX, snapshot, PDF | NOT STARTED | |
+| 3 — Quotes, lines, FX, snapshot, PDF | **SCHEMA ONLY** | The three commercial-case tables — `crm.opportunity_organization`, `crm.opportunity_interest`, `crm.opportunity_evidence` — were built locally on 2026-09-22 and are **empty** (§2.7.16). No command, no quote work, nothing wired |
 | 4 — Evidence, comms, shadow Gmail, catalog, notices | NOT STARTED | |
 | 5 — Wave 1A load, send functions, reconciler | NOT STARTED | |
 | 6 — Sender handoff | NOT STARTED | |
@@ -64,13 +64,13 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 
 | Item | Value |
 |---|---|
-| Migrations | **20**, under `supabase/migrations/` — the 18 Slice 0 files, the 2026-09-20 corrective that added the Wave 1B `contact_control.source` labels and made `campaign.recontact_interval_days` optional for an archived campaign ([`DATA.md`](DATA.md) §7.6.4), and the 2026-09-21 slice 2 additive that opened the `gmail_message` / `drive_file` provenance kinds and the `document_reference` assertion kind (§2.7.6) |
+| Migrations | **23**, under `supabase/migrations/` — the 18 Slice 0 files, the 2026-09-20 corrective that added the Wave 1B `contact_control.source` labels and made `campaign.recontact_interval_days` optional for an archived campaign ([`DATA.md`](DATA.md) §7.6.4), the three 2026-09-21/22 slice 2 additives (the `gmail_message` / `drive_file` provenance kinds and the `document_reference` assertion kind (§2.7.6), the `source_record.review_noted` event, and the `contact_point.usage` value `individual_owner_unknown` (§2.7.14)), and the 2026-09-22 slice 3 migration that created the three commercial-case tables (§2.7.16) |
 | Schemas | 7 — `crm`, `comms`, `outbound`, `evidence`, `catalog`, `procurement`, `platform` |
-| Tables | **33** — `crm` 16, `comms` 4, `outbound` 6, `evidence` 2, `catalog` 2, `procurement` 1, `platform` 2 |
+| Tables | **36** — `crm` 19, `comms` 4, `outbound` 6, `evidence` 2, `catalog` 2, `procurement` 1, `platform` 2 |
 | Roles | 4 — `origenlab_owner` (NOLOGIN), `origenlab_migrator`, `origenlab_api`, `origenlab_worker`; all `NOBYPASSRLS` |
-| RLS policies | 127 |
-| pgTAP assertions | **408 across 11 files** — 402 as before, plus 6 in `061_constraints_comms_outbound_evidence.sql` pinning the staged Gmail/Drive vocabulary and its `pending` / `unresolved` defaults (§2.7.6) |
-| Foreign keys | 102, **all** index-covered — 81 unconditional, 21 implied-partial |
+| RLS policies | 139 |
+| pgTAP assertions | **475 across 12 files** — 412 as before, plus the 63 of `062_constraints_crm_commercial_case.sql` (§2.7.16) |
+| Foreign keys | 118, **all** index-covered — 86 unconditional, 32 implied-partial |
 | `SECURITY DEFINER` functions | **zero** — the closed list of eight arrives in slices 3 and 5 |
 | Data API (PostgREST) | **off**; the seven schemas are not exposed |
 | Send flags | `outbound.send_control` single row, **both `false`** |
@@ -85,7 +85,7 @@ Built under the hosted freeze (§2.8) so V2 work has somewhere durable to run.
 | Container | `origenlab_dev_db`, pinned image `public.ecr.aws/supabase/postgres:17.6.1.165` |
 | Port | **54332, published on 127.0.0.1 only** — stricter than the CLI's stack, which binds on all interfaces |
 | Database | `origenlab_dev`; **quarantined 2026-09-22** (§2.7.9). Ledger records **20** migrations, head `20260921120000`, while the schema already carries migration `20260922090000`'s DDL — the constraint `domain_event_type_check` includes `source_record.review_noted`. The earlier claim here of "21 of 21, head `20260922090000`" was measured against the schema, not the ledger, and is withdrawn: this database does not describe itself |
-| Structure | 7 schemas, 33 tables, 127 policies, 102 index-covered foreign keys, zero `SECURITY DEFINER` — identical to the CLI cluster's |
+| Structure | 7 schemas, 33 tables, 127 policies, 102 index-covered foreign keys, zero `SECURITY DEFINER`. **No longer identical to the CLI cluster's**: this database is quarantined, so the three migrations since 2026-09-22 — including the commercial case (§2.7.16) — were never applied to it. The clean room, not this, is what the chain is measured against |
 | Rows of business data | **not zero — local only, and 2026-09-21's numbers no longer describe it**: a test run added fixture residue on 2026-09-22 (§2.7.9), so `crm.organization` is 1,815 not 1,812, `crm.contact_point` 9,462 not 9,460, `crm.domain_event` 22,560 not 22,544, `evidence.source_record` 31 not 24, `evidence.assertion` 11,488 not 11,474, `platform.operator` 8 not 1 and `platform.command_receipt` 9 not 0. The reproducible figures below are what the clean-room database carries. Measured 2026-09-21: `crm.*` **33,816** (`contact_point` 9,460 · `organization` 1,812 · `domain_event` 22,544; `person`, `opportunity`, `quote`, `task`, `affiliation` all **zero**), `outbound.*` **17,214** (`contact_control` 10,588 · `campaign_recipient` 3,481 · `send_attempt` 3,141 · `campaign` 3 · `send_control` 1), `evidence.*` **11,498** (`assertion` 11,474 · `source_record` 24), `comms.mailbox` 1, `platform.operator` 1, `catalog.*` and `procurement.*` zero |
 | Of which staged from Gmail | **20 `evidence.source_record`** of kind `gmail_message`, all `review_status = 'pending'`, and their **26 `evidence.assertion`**, all `resolution = 'unresolved'` (20 `contact_address`, 6 `organization_name`). Staged 2026-09-21 from a local manifest by `stage_gmail_drive_evidence.py`; `crm.*` was counted before and after inside the staging transaction and did not change (§2.7.7) |
 | Where these rows came from | the §2.7 historical importer and the §2.7.7 staging pass, both run against **this loopback database only**. No hosted project holds any of it |
@@ -111,10 +111,10 @@ matters here.
 | Staged from Gmail | **31 records and 37 assertions** — the 20 records / 26 assertions of the September manifest plus the 11 records / 11 assertions of R1 (§2.7.11) — each reapplied **exactly once** from local manifests in `~/data/origenlab-v2-local/evidence/`. All `pending` / `unresolved`; nothing has been reviewed. **No Gmail connection was made**; the manifests are files, and the staging tool imports no Google client |
 | Fixture residue | **zero.** Four probes assert it by name: `dedupe_key like 'pytest-%'` 0, `email_norm like 'pytest-%'` 0, `platform.command_receipt` 0, `crm.domain_event` with a non-null `command_receipt_id` 0 |
 | Send flags | one `outbound.send_control` row, **both `false`** |
-| Verification | **38 probes, all exact**, `supabase/cleanroom/verify.sql` compared against `supabase/cleanroom/expected_counts.json` by `compare.py`. Exact in both directions: an undeclared probe and an unmeasured probe both fail. `verify` is read-only — the whole file runs inside `begin read only`. **Passing as of 2026-09-22 against the post-R1 baseline** |
+| Verification | **41 probes, all exact**, `supabase/cleanroom/verify.sql` compared against `supabase/cleanroom/expected_counts.json` by `compare.py`. Exact in both directions: an undeclared probe and an unmeasured probe both fail. `verify` is read-only — the whole file runs inside `begin read only`. **Passing as of 2026-09-22 against the post-R1 baseline** |
 | Seeded operator | one `platform.operator` row so the command boundary can resolve an identity. Its address is **fictitious and undeliverable** (`operador.local@example.invalid`) as of 2026-09-22; it used to be the developer's own mailbox, hard-coded in a public repository. Override it per build with `OL_CLEAN_OPERATOR_EMAIL=…`, which is environment, not tracked. `verify` counts the row and never reads its address, so the change moves no probe |
 | Checkpoints | **none, deliberately.** It is rebuilt, not restored |
-| Rebuildable right now | **Yes, and proven.** Rebuilt twice in immediate succession on 2026-09-22 from the same inputs; both runs ended at **38 probes, all exact**, with identical counts |
+| Rebuildable right now | **Yes, and proven.** Rebuilt twice in immediate succession on 2026-09-22 from the same inputs; both runs ended at **38 probes, all exact**, with identical counts; rebuilt twice again on the same day after the commercial-case migration, both runs at **41 probes** (§2.7.16) |
 | Preflight | every input is validated **before** the `DROP`, by the same tool that will replay it, in that tool's dry-run mode (no connection is opened): both Wave bundles' manifests and file hashes, and every staging manifest under the full version 2 rules. A refusal leaves the existing database untouched — `cleanroom_failure_tests.sh` M1–M4 prove the DROP announcement is never printed |
 
 **`build --force` was blocked on 2026-09-22, and is not any more.** Three things were found
@@ -373,8 +373,10 @@ below are measurements, not inferences.
   the seven schemas was counted: **one row in total**, the `outbound.send_control`
   kill-switch singleton seeded by `20260905230814`. No contact, organisation, opportunity,
   campaign, quote or message exists there. Both send flags are `false`;
-- **the schema matches this repository's head**: 33 tables, 127 RLS policies, **no table
-  without RLS**, **zero `SECURITY DEFINER` functions**, and every foreign key index-covered;
+- **the schema matched this repository's head on the day of the audit**: 33 tables, 127 RLS
+  policies, **no table without RLS**, **zero `SECURITY DEFINER` functions**, and every foreign
+  key index-covered. Head has since moved to 36 tables and 139 policies (§2.1); the hosted
+  project is frozen (§2.8) and carries none of it, which is a deliberate gap, not drift;
 - **no OrigenLab private schema is exposed through the Data API.** PostgREST serves
   `public` and `graphql_public` only; `crm`, `comms`, `outbound`, `evidence`, `catalog`,
   `procurement` and `platform` are all absent from its exposed set;
@@ -1015,7 +1017,8 @@ none of them.
 
 **What is still not decided.** No command has been run against real evidence. All 31 staged
 records are `pending`, all their assertions `unresolved`, and `platform.command_receipt` is
-empty — `cleanroom_db.sh verify` passes at 38 probes after this work, exactly as before it.
+empty — `cleanroom_db.sh verify` passed at 38 probes after this work, exactly as before it
+(41 since §2.7.16 added a probe per commercial-case table).
 
 ### 2.7.14 What an address is to an institution — built 2026-09-22, unwired
 
@@ -1090,6 +1093,39 @@ reads as "this is a prospect".
 **Evidence:** `apps/dashboard` 1,250 passed across 127 files; `apps/web` `npm run validate`
 exits 0 with the new gate included. Every button is still `disabled` and the proxy still
 allows no POST under `/v2`.
+
+### 2.7.16 The commercial case — schema built 2026-09-22, no command, empty
+
+**What a case could not say.** The commercial case *is* `crm.opportunity`
+([`DOMAIN.md`](DOMAIN.md) §3.6) — no second table and no second lifecycle were created. What
+the opportunity row could not hold was three facts: every institution named on the case and
+what each is *to this case* (`organization_id` is one nullable pointer, and
+`organization_relationship` records what an institution is to OrigenLab over all time), what
+the case is seeking (nothing below `quote_line` held it, and most cases end before a quote),
+and which evidence is the reason to believe any of it (`origin_source_record_id` holds exactly
+one record; `crm.activity` records that an interaction happened, not that a belief is
+justified).
+
+| Item | Value |
+|---|---|
+| Migration | `supabase/migrations/20260922170000_slice3_crm_commercial_case.sql` — three tables, five guard functions, nine triggers, grants and RLS. Additive: no existing table, column, constraint, grant or policy changed |
+| Inventory | **33 → 36**, `crm` 16 → 19. `tests/010_inventory.sql`, `scripts/verify_chain.sh` and `scripts/replay_evidence.sh` moved in the same change; policies 127 → 139; foreign keys 102 → 118, all still index-covered |
+| Where the machine stops | a machine may only ever propose `mentioned`. Every other role, `manufacturer` included, needs a named operator. **(impl)** `confirmation <> 'machine_proposed' OR role = 'mentioned'` — a CHECK, so a machine-decided part is unrepresentable rather than merely discouraged |
+| The requesting institution | at most one current per case (partial unique index), always `confirmed` with the operator named (CHECK), and it must equal `crm.opportunity.organization_id` in **both directions** — a DEFERRABLE INITIALLY DEFERRED constraint trigger on both tables, so one command may write the pair in either order. `qualified` therefore now means *an operator decided who is asking*, enforced by the database rather than by the code |
+| The supplier exception | a registered supplier or manufacturer is **refused** as requesting institution by a trigger, overridable only by the all-or-none triple (operator, non-blank motive, timestamp), which is confined to that role and **can never be rewritten or erased**. It opens no `prospect` or `customer` relationship and touches no marketing permission |
+| Marketing separation | no foreign key runs between the three tables and `outbound.*` in either direction, and none of them carries a consent, opt-in, subscription, audience or campaign column. Both are asserted, not assumed |
+| Commands | **none.** No boundary writes these tables, and no `crm.domain_event` type was added: an event nothing can emit would be a promise, not a contract |
+| Rows | **zero in all three, and zero anywhere.** No case, institution, interest, evidence link or exception was inserted — the clean room's three new probes assert it on every build |
+
+| Evidence | Result |
+|---|---|
+| pgTAP | **475 across 12 files, all pass** on a fresh `supabase db reset --local` — including the new `062_constraints_crm_commercial_case.sql` at **63 assertions** |
+| Guards are load-bearing | each of the eight new rules was re-checked by dropping it in a rolled-back transaction and watching the previously-refused statement succeed. A guard nobody has made fail is a guard nobody has tested |
+| `verify_chain.sh --database postgres` | all checks pass: 36 tables, `crm=19`, 139 policies, 0 foreign keys without a covering index, 0 `SECURITY DEFINER` |
+| `supabase db lint` / `db advisors` | lint clean; advisors report 122 findings, **all `INFO`** (unused index on an empty database), `--fail-on warn` exits 0 |
+| Clean room | **rebuilt from nothing, twice in succession**, both runs ending at **41 probes, all exact** — migrations 23, head `20260922170000`, the three new tables `0`, and every historical count unchanged (`crm.organization` 1,812, `crm.contact_point` 9,460, `crm.domain_event` 22,544, `assertion` 11,485, `contact_control` 10,588) |
+| `cleanroom_failure_tests.sh` | 29 passed, 0 failed |
+| Untouched | `origenlab_dev` (quarantined, never opened) and the hosted project (frozen, §2.8). The Slice 0 audit baseline `supabase/audit/baselines/slice0.json` deliberately stays at 33 tables: it describes the frozen hosted foundation, not this branch's head |
 
 ### 2.7.5 Local V2 — the reconciled picture, 2026-09-21
 

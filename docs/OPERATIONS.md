@@ -314,15 +314,16 @@ and reports what it cannot answer. `ol migrate` remains unimplemented.
 
 The reproducible local foundation lives under `supabase/`: `config.toml` (PostgreSQL 17,
 database only, Data API off), `roles.sql` (the idempotent cluster-role bootstrap the CLI runs
-before migrations), `migrations/` (twenty-two ordered migrations: schemas and default
+before migrations), `migrations/` (twenty-three ordered migrations: schemas and default
 privileges, then the original 32 tables schema by schema, then grants, then RLS policies, then the
 revocation of the owner's database-level `CREATE`, then the covering indexes for every
 foreign key, then the outbound corrections — frozen campaign content and audience criteria,
 the reply table, the tightened recipient address shape, the Wave 1B `contact_control.source`
 labels and the archived-campaign `recontact_interval_days` carve-out — then the Slice 2
 additions: the Gmail/Drive evidence kinds, the `source_record.review_noted` event, and the
-`contact_point.usage` value `individual_owner_unknown`), `tests/` (pgTAP, 412
-assertions across eleven files) and `scripts/`. Requirements:
+`contact_point.usage` value `individual_owner_unknown`, then the three commercial-case tables
+of Slice 3), `tests/` (pgTAP, 475
+assertions across twelve files) and `scripts/`. Requirements:
 Docker, the Supabase CLI and `psql`. No hosted project is involved and nothing here holds a
 credential: the three `LOGIN` roles are created without a password.
 
@@ -543,7 +544,7 @@ disposable `origenlab_test_<hex>` database, runs the real command there as `orig
 drops the room, and fingerprints the clean room before and after — a rehearsal that changed
 it fails rather than being discovered later by `verify`. It needs
 `cleanroom_db.sh api-login` to have been run, because it deliberately does not run as
-`postgres`. It records nothing: after it, `verify` still passes at 38 probes.
+`postgres`. It records nothing: after it, `verify` still passes at 41 probes.
 
 **The database name is a literal.** `build --force` drops a database, so the name comes from
 the `OL_CLEAN_DBNAME` constant in `supabase/scripts/lib/local_target.sh` and from nowhere else
@@ -563,7 +564,7 @@ supabase/scripts/cleanroom_db.sh status
 `verify` emits one probe per line and compares it against `supabase/cleanroom/expected_counts.json`,
 which carries a reason for every number. The comparison is **exact in both directions**: a
 probe declared and not measured fails, and a probe measured and not declared fails, so the SQL
-and the baseline cannot drift apart in silence. 38 probes, including the breakdown that a
+and the baseline cannot drift apart in silence. 41 probes, including the breakdown that a
 total alone would hide — 31 `gmail_message` + 4 `migration_manifest` = 35 source records, all
 three asserted — and the four residue probes that name what went wrong on 2026-09-22.
 
@@ -1441,7 +1442,7 @@ Drill procedure:
 
 1. Restore the database to a scratch project at a chosen point in time.
 2. Restore the bucket backup into that project's Storage.
-3. Verify: the 33 tables exist; row counts are plausible; a sample quotation
+3. Verify: the 36 tables exist; row counts are plausible; a sample quotation
    revision's `pdf_sha256` matches the restored object byte-for-byte and its
    party snapshot is intact; the domain event stream is contiguous.
 4. Confirm **both send flags are false** in the restored copy.

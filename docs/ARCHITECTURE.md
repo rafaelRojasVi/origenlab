@@ -19,7 +19,7 @@ the runbooks ([`OPERATIONS.md`](OPERATIONS.md)).
 Everything here is **[V2 DECISION]**, and **[PLANNED]** except where marked
 **(impl)**. **The local schema foundation exists**: `supabase/roles.sql` and the
 migrations under `supabase/migrations/` create the four roles, the seven schemas
-and the 33 tables with their grants and RLS against a local PostgreSQL 17
+and the 36 tables with their grants and RLS against a local PostgreSQL 17
 container, proven by `supabase/tests/` and enforced in CI
 ([`OPERATIONS.md`](OPERATIONS.md) §4.1). **No hosted Supabase project, bucket,
 backup or advisor run exists**, and no application code reads or writes these
@@ -34,7 +34,7 @@ flowchart TB
   WEB["apps/web — Astro<br/>public marketing site"]
   API["apps/api — FastAPI<br/>the only business command boundary"]
   WORKER["apps/worker — Python<br/>Gmail · MIME · PDF · ChileCompra · LLM"]
-  PG[("Supabase PostgreSQL 17<br/>7 private schemas · 33 tables")]
+  PG[("Supabase PostgreSQL 17<br/>7 private schemas · 36 tables")]
   ST[("Private Storage<br/>eml · attachments · PDFs")]
   AUTH["Supabase Auth<br/>ES256 JWT + JWKS"]
   GMAIL["Gmail API<br/>one production mailbox"]
@@ -75,13 +75,21 @@ Seven **private** schemas — `crm`, `comms`, `outbound`, `evidence`, `catalog`,
 table's unique responsibility, is owned by [`DOMAIN.md`](DOMAIN.md) §7.
 
 `public` holds nothing. Supabase-managed `auth`, `storage`, `pgmq` and
-migration-metadata objects are outside the 33 and are not application tables.
+migration-metadata objects are outside the 36 and are not application tables.
+
+Three of those `crm` tables carry the commercial case —
+`opportunity_organization`, `opportunity_interest` and `opportunity_evidence`
+([`DOMAIN.md`](DOMAIN.md) §3.6, inventory §7.1), taking `crm` to 19 and the
+total to 36. Built 2026-09-22 and **empty**: no command writes them yet. The
+case is `crm.opportunity` itself — there is no `commercial_case` table and no
+second lifecycle.
 
 ### 3.1 One-writer rules
 
 | Table group | Sole writer |
 |---|---|
 | `crm.*` (except the two quote columns below) | FastAPI commands as `origenlab_api` |
+| `crm.opportunity.stage` | FastAPI commands **only** — no timer, cron job, queue worker, classifier or import may close a case ([`DOMAIN.md`](DOMAIN.md) §3.4) |
 | `crm.quote_revision.pdf_sha256`, sent-evidence ids | the worker, through `crm.record_quote_pdf` — one privileged function, those columns only ([§6.2](#m-arch-definer)) |
 | `comms.*` | the worker's Gmail sync; FastAPI only for participant resolution |
 | `outbound.send_attempt`, `outbound.contact_control` | the send/reconcile functions, the NDR handlers, the Wave 1A loader, admin commands — **never direct DML from a runtime role** |
@@ -200,7 +208,7 @@ as ordinary arguments.
 
 How the database-side mechanisms interact — precisely:
 
-1. **RLS is `ENABLE`d on all 33 tables** and is **not** `FORCE`d. Because the
+1. **RLS is `ENABLE`d on all 36 tables** and is **not** `FORCE`d. Because the
    application tables are deliberately not `FORCE ROW LEVEL SECURITY`, the
    object owner (`origenlab_owner`) crosses RLS by virtue of owning them. That
    ownership exemption is what makes migrations workable and what gives layer
@@ -532,6 +540,16 @@ erDiagram
   ORGANIZATION ||--o{ ADDRESS : sited_at
   ADDRESS o|--o| ADDRESS : superseded_by
   ORGANIZATION o|--o{ OPPORTUNITY : customer
+  OPPORTUNITY ||--o{ OPPORTUNITY_ORGANIZATION : names
+  ORGANIZATION ||--o{ OPPORTUNITY_ORGANIZATION : role_on_case
+  OPPORTUNITY ||--o{ OPPORTUNITY_INTEREST : seeks
+  PRODUCT o|--o{ OPPORTUNITY_INTEREST : identified_as
+  ORGANIZATION o|--o{ OPPORTUNITY_INTEREST : made_by
+  OPPORTUNITY ||--o{ OPPORTUNITY_EVIDENCE : justified_by
+  SOURCE_RECORD o|--o{ OPPORTUNITY_EVIDENCE : cited_as
+  ASSERTION o|--o{ OPPORTUNITY_EVIDENCE : cited_as
+  MESSAGE o|--o{ OPPORTUNITY_EVIDENCE : cited_as
+  NOTICE o|--o{ OPPORTUNITY_EVIDENCE : cited_as
   OPPORTUNITY ||--o{ OPPORTUNITY_PARTICIPANT : involves
   PERSON o|--o{ OPPORTUNITY_PARTICIPANT : acts_as
   CONTACT_POINT o|--o{ OPPORTUNITY_PARTICIPANT : reached_at
@@ -560,6 +578,14 @@ erDiagram
   PRODUCT ||--o{ SUPPLIER_PRODUCT : priced_by
   NOTICE o|--o{ OPPORTUNITY : promoted_to
 ```
+
+`OPPORTUNITY_ORGANIZATION`, `OPPORTUNITY_INTEREST` and `OPPORTUNITY_EVIDENCE`
+([`DOMAIN.md`](DOMAIN.md) §3.6, §7.1) change how the rest of the diagram reads: the
+`ORGANIZATION o|--o{ OPPORTUNITY : customer` edge is the **confirmed requesting
+institution** and nothing else, and every other institution on a case reaches
+it through `OPPORTUNITY_ORGANIZATION`. **No edge runs between the case tables
+and `outbound.*` in either direction** — that separation is a decision
+([`DOMAIN.md`](DOMAIN.md) §3.6.4), not an omission.
 
 `outbound.send_control` and `outbound.contact_control` are deliberately absent
 from the diagram: `send_control` is a single global row, and `contact_control`
@@ -619,6 +645,10 @@ race window are owned by [`WORKFLOWS.md`](WORKFLOWS.md) §2.
 | A break-glass sender or any second send path | one sender path ([`WORKFLOWS.md`](WORKFLOWS.md) §2) |
 | A browser-held database or secret key | the dashboard holds only the publishable key |
 | A shared package | none until two consumers actually exist |
+| A `commercial_case` table or a second case lifecycle | the case **is** `crm.opportunity`; a parallel model would split `won`/`lost` ([`DOMAIN.md`](DOMAIN.md) §3.6) |
+| An inactivity, dormancy or auto-close state, and any job that closes a case | silence is not a decision; `abandoned` needs an operator and a motive, and inactivity is computed at read time ([`DOMAIN.md`](DOMAIN.md) §3.4) |
+| A marketing audience, subscription or permission reachable from a case | marketing and the case model are separate in both directions; the only safety authority is `outbound.contact_control` ([`DOMAIN.md`](DOMAIN.md) §3.6.4) |
+| A supplier-exception or case-override table | the all-or-none, never-rewritten triple on `crm.opportunity_organization` is the record, as on the recontact override ([`DOMAIN.md`](DOMAIN.md) §3.6.1) |
 
 <a id="m-arch-benchmark"></a>
 ## 13. External CRM benchmark — conclusions

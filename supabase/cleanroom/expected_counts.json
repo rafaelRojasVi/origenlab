@@ -19,12 +19,12 @@
   ],
   "probes": {
     "migrations.count": {
-      "expect": 21,
-      "why": "every file in supabase/migrations/, applied and recorded in the ledger. origenlab_dev carries 20 recorded with the 21st's DDL already present, which is exactly the drift a clean room exists to avoid."
+      "expect": 23,
+      "why": "every file in supabase/migrations/, applied and recorded in the ledger. This baseline was left at 21 when the 22nd migration landed, so the first rebuild after it would have failed here rather than silently: that is the check working. origenlab_dev carries 20 recorded with the 21st's DDL already present, which is exactly the drift a clean room exists to avoid."
     },
     "migrations.head": {
-      "expect": "20260922090000",
-      "why": "slice2_evidence_review_decision_event, the newest migration on this branch."
+      "expect": "20260922170000",
+      "why": "slice3_crm_commercial_case, the newest migration on this branch — the three commercial-case tables."
     },
 
     "source_record.total": {
@@ -84,6 +84,9 @@
     "crm.affiliation": { "expect": 0, "why": "an affiliation is a relationship no message header records." },
     "crm.organization_domain": { "expect": 0, "why": "no domain has been evidenced as belonging to an institution." },
     "crm.opportunity": { "expect": 0, "why": "slice 3." },
+    "crm.opportunity_organization": { "expect": 0, "why": "the commercial-case tables ship empty and stay empty until a command writes one. A requesting institution can only be created by an operator, so a non-zero count here in a fresh build means a decision nobody took." },
+    "crm.opportunity_interest": { "expect": 0, "why": "no interest is inferred by the build; the historical load carries none." },
+    "crm.opportunity_evidence": { "expect": 0, "why": "every evidence link names the operator who made it, and the build makes none." },
     "crm.quote": { "expect": 0, "why": "slice 3." },
     "crm.task": { "expect": 0, "why": "slice 3." },
 

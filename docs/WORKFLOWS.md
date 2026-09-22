@@ -49,6 +49,13 @@ change · durable evidence · failure behaviour**. Three rules apply everywhere:
 `closed_at` set. Reopening is a **new** opportunity that references the old
 one; a terminal stage is never revived. Only the API role may update `stage`.
 
+**`abandoned` requires an operator and a motive** ([`DOMAIN.md`](DOMAIN.md)
+§3.4, 2026-09-22). `abandon_opportunity(opportunity, reason)` is an operator
+command; `close_reason` must be non-blank, and **no timer, cron job, queue
+worker, classifier or import may write `stage`**. Inactivity produces no
+transition: it is read at query time from `crm.activity` and displayed as a
+warning, never stored as a state.
+
 ### 1.2 Quote revision status
 
 `draft → in_review → approved → sent`; `in_review → draft`;
@@ -267,6 +274,15 @@ An opportunity may live at `lead` with participants only — even a single
 unresolved contact point. It may not reach `qualified`, and no quote may
 exist, without an organization. Participants are the only record of who is
 involved; the opportunity row names no person and no channel.
+
+The commercial-case tables ([`DOMAIN.md`](DOMAIN.md) §3.6) exist as of
+2026-09-22, and **their commands do not**. When written,
+`set_requesting_institution` replaces step 6: it writes `organization_id` and a
+confirmed `crm.opportunity_organization` row in one transaction, and further
+commands cover the other case organizations, interests and evidence links.
+Until then the steps above are the whole workflow, and the three tables stay
+empty — the schema refuses a machine-written requesting institution, so nothing
+can fill them behind an operator's back.
 
 ### W3 — Opportunity → quotation → approval → send → outcome
 

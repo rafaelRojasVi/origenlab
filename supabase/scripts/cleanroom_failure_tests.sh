@@ -221,7 +221,7 @@ emit() { python3 supabase/cleanroom/emit_expected_for_tests.py "$@"; }
 check() { emit "$@" | python3 supabase/cleanroom/compare.py; }
 
 expect_success "P: the declared baseline passes against itself" \
-  "38 probes, all exact" \
+  "41 probes, all exact" \
   check
 
 expect_refusal "Q: a probe declared but never measured fails" \

@@ -55,6 +55,9 @@ union all select 'crm.domain_event.with_command_receipt', count(*)::text
 union all select 'crm.affiliation', count(*)::text from crm.affiliation
 union all select 'crm.organization_domain', count(*)::text from crm.organization_domain
 union all select 'crm.opportunity', count(*)::text from crm.opportunity
+union all select 'crm.opportunity_organization', count(*)::text from crm.opportunity_organization
+union all select 'crm.opportunity_interest', count(*)::text from crm.opportunity_interest
+union all select 'crm.opportunity_evidence', count(*)::text from crm.opportunity_evidence
 union all select 'crm.quote', count(*)::text from crm.quote
 union all select 'crm.task', count(*)::text from crm.task
 
