@@ -95,6 +95,30 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
         jwks_url=settings.v2_jwks_url, database_url=dsn, lookup=repository
     )
     app.include_router(v2_router)
+    _mount_v2_command_boundary(app, settings, dsn)
+
+
+def _mount_v2_command_boundary(app: FastAPI, settings: Settings, dsn: str) -> None:
+    """Mount `POST /v2/commands/*` only when it has been switched on deliberately.
+
+    Configuring a V2 database says "read this". It does not say "record durable human
+    decisions into it", and those are different permissions to grant — so the command router
+    needs `ORIGENLAB_V2_COMMANDS_ENABLED` as well as the DSN. Off, the router is absent and
+    every command path is a 404, which is the right answer for a surface that does not exist
+    rather than a 503 for one that does but will not talk.
+    """
+    if not settings.v2_commands_configured():
+        return
+
+    import psycopg
+
+    from origenlab_api.v2.command_repository import V2CommandRepository
+    from origenlab_api.v2.command_routes import command_router
+
+    app.state.v2_command_repository = V2CommandRepository(
+        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.include_router(command_router)
 
 
 app = create_app()

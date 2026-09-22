@@ -968,4 +968,22 @@ describe("V2 durable read boundary allowlist", () => {
       expect(isAllowedPostPath(path)).toBe(false);
     }
   });
+
+  it("keeps the four real V2 command routes unreachable through this Worker", async () => {
+    // The command boundary now EXISTS in apps/api: POST /v2/commands/* records durable human
+    // decisions about staged evidence. Building it and letting a browser reach it are two
+    // separate decisions, and only the first has been taken. Until the second is taken
+    // deliberately, the Worker forwards neither the method nor the path -- so the dashboard's
+    // review workspace stays a preview by construction rather than by discipline.
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    for (const path of [
+      "/v2/commands/keep-evidence-pending",
+      "/v2/commands/confirm-organization",
+      "/v2/commands/create-organization",
+      "/v2/commands/attach-contact-address",
+    ]) {
+      expect(isAllowedPostPath(path)).toBe(false);
+      expect(isAllowedUpstreamPath(path)).toBe(false);
+    }
+  });
 });

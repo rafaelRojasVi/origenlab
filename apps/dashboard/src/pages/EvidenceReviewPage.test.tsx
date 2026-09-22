@@ -194,6 +194,65 @@ describe("EvidenceReviewPage", () => {
     }
   });
 
+  it("shows all four review commands for the open record", async () => {
+    render(<EvidenceReviewPage />);
+    await screen.findByTestId("review-queue-table");
+    fireEvent.click(screen.getByText("diego.soto@farmadelta.example.cl"));
+    for (const id of [
+      "keep_evidence_pending",
+      "confirm_organization",
+      "create_organization",
+      "attach_contact_address",
+    ]) {
+      expect(screen.getByTestId(`command-preview-${id}`)).toBeTruthy();
+    }
+  });
+
+  it("blocks every command until a reason is written", async () => {
+    render(<EvidenceReviewPage />);
+    await screen.findByTestId("review-queue-table");
+    fireEvent.click(screen.getByText("diego.soto@farmadelta.example.cl"));
+    for (const id of ["keep_evidence_pending", "create_organization"]) {
+      expect(screen.getByTestId(`command-preview-${id}`).dataset.availability).toBe("blocked");
+    }
+    fireEvent.change(screen.getByTestId("command-note"), {
+      target: { value: "revisado a mano" },
+    });
+    // The simplest decision becomes possible; promoting an organization this message never
+    // names does not, because no reason can supply a name the evidence lacks.
+    expect(screen.getByTestId("command-preview-keep_evidence_pending").dataset.availability).toBe(
+      "available",
+    );
+    expect(screen.getByTestId("command-preview-create_organization").dataset.availability).toBe(
+      "blocked",
+    );
+  });
+
+  it("will not create an organization from a domain hint even with a reason", async () => {
+    render(<EvidenceReviewPage />);
+    await screen.findByTestId("review-queue-table");
+    fireEvent.click(screen.getByText("diego.soto@farmadelta.example.cl"));
+    fireEvent.change(screen.getByTestId("command-note"), { target: { value: "porque si" } });
+    const panel = screen.getByTestId("command-preview-create_organization");
+    expect(panel.dataset.availability).toBe("blocked");
+    expect(panel.textContent).toContain("pista de dominio");
+  });
+
+  it("keeps every command button disabled even when the data would allow it", async () => {
+    render(<EvidenceReviewPage />);
+    await screen.findByTestId("review-queue-table");
+    fireEvent.click(screen.getByText("diego.soto@farmadelta.example.cl"));
+    fireEvent.change(screen.getByTestId("command-note"), { target: { value: "revisado" } });
+    // "Available" describes the data, never the wire. Nothing on this page may send.
+    expect(screen.getByTestId("command-preview-keep_evidence_pending").dataset.availability).toBe(
+      "available",
+    );
+    for (const action of screen.getAllByTestId("review-preview-action")) {
+      expect((action as HTMLButtonElement).disabled).toBe(true);
+    }
+    expect(screen.getAllByTestId("preview-only-reason")[0].textContent).toContain("proxy");
+  });
+
   it("marks marketing unavailable and says permission is what is missing", async () => {
     render(<EvidenceReviewPage />);
     const marketing = await screen.findByTestId("review-marketing-section");

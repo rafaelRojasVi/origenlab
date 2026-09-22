@@ -102,6 +102,14 @@ class Settings(BaseSettings):
     """Supabase Auth JWKS URL. When set, JWKS verification is used and the local development identity adapter is never constructed."""
     v2_jwks_url: str | None = None
     v2_statement_timeout_ms: int = 15_000
+    """When true, mount POST /v2/commands/* — the human-review command boundary.
+
+    Default **false**, like `commercial_operations_writes_enabled` above and for the same
+    reason: a durable write path should be switched on deliberately, by whoever is ready to
+    have real decisions recorded, and not by the act of pointing the API at a database. With
+    it off the command router is absent entirely and every /v2/commands/* path is a 404.
+    """
+    v2_commands_enabled: bool = False
     """Comma-separated browser origins for dashboard static site (no wildcards)."""
     api_cors_origins: str | None = None
     """Comma-separated Host header values allowed in production (e.g. api.origenlab.cl)."""
@@ -192,6 +200,14 @@ class Settings(BaseSettings):
 
     def v2_configured(self) -> bool:
         return bool((self.v2_database_url or "").strip())
+
+    def v2_commands_configured(self) -> bool:
+        """The command boundary needs both a database and a deliberate switch.
+
+        Two conditions, not one: pointing the API at the V2 core is a read decision, and
+        letting it record durable human decisions is a separate one.
+        """
+        return self.v2_configured() and bool(self.v2_commands_enabled)
 
     def require_v2_database_url(self) -> str:
         url = (self.v2_database_url or "").strip()

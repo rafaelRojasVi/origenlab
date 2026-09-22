@@ -18,6 +18,11 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 import {
+  PREVIEW_ONLY_REASON,
+  commandPreviews,
+} from "../lib/evidenceCommands";
+
+import {
   fetchV2Contacts,
   fetchV2EvidenceRecords,
   fetchV2Organizations,
@@ -273,21 +278,122 @@ function RecordDetail({
         ) : null}
       </section>
 
-      <section className="flex flex-wrap gap-4">
-        <PreviewAction
-          label="Confirmar persona"
-          reason="Sin ruta de escritura: el límite de comandos V2 aún no existe."
-        />
-        <PreviewAction
-          label="Atribuir institución"
-          reason="Sin ruta de escritura: atribuir es una decisión durable."
-        />
-        <PreviewAction
-          label="Descartar registro"
-          reason="Sin ruta de escritura: rechazar evidencia también se audita."
-        />
-      </section>
+      <CommandPanel record={record} domainShareCount={counts.get(record.from_domain ?? "") ?? 1} />
     </div>
+  );
+}
+
+/**
+ * The four review commands, each showing what it would record and why it can or cannot run.
+ *
+ * The note and the organization are local state and go nowhere. That is the point of a
+ * preview: the operator can compose a real decision, read back exactly what it would write,
+ * and discover a mismatch before anything durable happens.
+ */
+function CommandPanel({
+  record,
+  domainShareCount,
+}: {
+  record: V2EvidenceRecord;
+  domainShareCount: number;
+}) {
+  const [note, setNote] = useState("");
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
+  const previews = useMemo(
+    () => commandPreviews({ record, domainShareCount, selectedOrganizationId, note }),
+    [record, domainShareCount, selectedOrganizationId, note],
+  );
+
+  return (
+    <section className="space-y-3 border-t border-slate-200 pt-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h4 className="text-xs font-semibold uppercase text-[var(--color-muted)]">
+          Decisiones posibles
+        </h4>
+        <span className="text-[11px] text-[var(--color-muted)]" data-testid="preview-only-reason">
+          {PREVIEW_ONLY_REASON}
+        </span>
+      </div>
+
+      <label className="block text-xs">
+        <span className="text-[var(--color-muted)]">Motivo (obligatorio, queda auditado)</span>
+        <input
+          type="text"
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          data-testid="command-note"
+          placeholder="Por qué decides esto"
+          className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1 text-xs"
+        />
+      </label>
+
+      {record.organization_matches.length > 0 || record.domain_organization ? (
+        <label className="block text-xs">
+          <span className="text-[var(--color-muted)]">
+            Institución seleccionada (ninguna por omisión)
+          </span>
+          <select
+            value={selectedOrganizationId ?? ""}
+            onChange={(event) => setSelectedOrganizationId(event.target.value || null)}
+            data-testid="command-organization"
+            className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1 text-xs"
+          >
+            <option value="">— sin seleccionar —</option>
+            {record.organization_matches.map((match) => (
+              <option key={match.organization_id} value={match.organization_id}>
+                {match.name} (nombre idéntico)
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+
+      <ul className="space-y-3">
+        {previews.map((preview) => (
+          <li
+            key={preview.id}
+            data-testid={`command-preview-${preview.id}`}
+            data-availability={preview.availability}
+            className="rounded-md border border-slate-200 p-2"
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <PreviewAction label={preview.label} reason={PREVIEW_ONLY_REASON} />
+              <Chip tone={preview.availability === "available" ? "ok" : "neutral"}>
+                {preview.availability === "available" ? "Datos suficientes" : "Bloqueado"}
+              </Chip>
+            </div>
+            <p className="mt-1 text-xs text-[var(--color-muted)]">{preview.intent}</p>
+            {preview.blockers.length > 0 ? (
+              <ul className="mt-1 list-disc pl-4 text-xs text-amber-800">
+                {preview.blockers.map((blocker) => (
+                  <li key={blocker}>{blocker}</li>
+                ))}
+              </ul>
+            ) : null}
+            {preview.cautions.map((caution) => (
+              <p key={caution} className="mt-1 text-xs text-amber-700">
+                {caution}
+              </p>
+            ))}
+            <details className="mt-1">
+              <summary className="cursor-pointer text-xs text-[var(--color-muted)]">
+                Qué registraría
+              </summary>
+              <ul className="mt-1 list-disc pl-4 text-xs text-[var(--color-muted)]">
+                {preview.writes.map((write) => (
+                  <li key={write}>{write}</li>
+                ))}
+              </ul>
+              <ul className="mt-1 list-disc pl-4 text-xs text-[var(--color-muted)]">
+                {preview.doesNot.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </details>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

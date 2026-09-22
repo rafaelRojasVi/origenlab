@@ -84,7 +84,7 @@ Built under the hosted freeze (§2.8) so V2 work has somewhere durable to run.
 |---|---|
 | Container | `origenlab_dev_db`, pinned image `public.ecr.aws/supabase/postgres:17.6.1.165` |
 | Port | **54332, published on 127.0.0.1 only** — stricter than the CLI's stack, which binds on all interfaces |
-| Database | `origenlab_dev`; chain applied **20 of 20**, head `20260921120000` |
+| Database | `origenlab_dev`; chain applied **21 of 21**, head `20260922090000` (§2.7.8 adds the one new audit event type) |
 | Structure | 7 schemas, 33 tables, 127 policies, 102 index-covered foreign keys, zero `SECURITY DEFINER` — identical to the CLI cluster's |
 | Rows of business data | **not zero — local only.** Measured 2026-09-21: `crm.*` **33,816** (`contact_point` 9,460 · `organization` 1,812 · `domain_event` 22,544; `person`, `opportunity`, `quote`, `task`, `affiliation` all **zero**), `outbound.*` **17,214** (`contact_control` 10,588 · `campaign_recipient` 3,481 · `send_attempt` 3,141 · `campaign` 3 · `send_control` 1), `evidence.*` **11,498** (`assertion` 11,474 · `source_record` 24), `comms.mailbox` 1, `platform.operator` 1, `catalog.*` and `procurement.*` zero |
 | Of which staged from Gmail | **20 `evidence.source_record`** of kind `gmail_message`, all `review_status = 'pending'`, and their **26 `evidence.assertion`**, all `resolution = 'unresolved'` (20 `contact_address`, 6 `organization_name`). Staged 2026-09-21 from a local manifest by `stage_gmail_drive_evidence.py`; `crm.*` was counted before and after inside the staging transaction and did not change (§2.7.7) |
@@ -469,14 +469,14 @@ Slice 0 had "zero consumers"; it now has one.
 |---|---|
 | Location | `apps/api/src/origenlab_api/v2/` — a separate surface inside the V1 operator API, not a new service |
 | Routes | **11** `GET` — the seven listings (`/v2/contacts`, `/v2/organizations`, `/v2/prospects`, `/v2/opportunities/active`, `/v2/tasks/due`, `/v2/review/summary`, `/v2/quotes/followup`), `/v2/evidence`, the two card reads `/v2/contacts/{id}` and `/v2/organizations/{id}` (§2.7.6), and `/v2/evidence/records` (§2.7.7) |
-| Write routes | **zero**, asserted by a test over the router's own methods |
+| Write routes | **zero on the read router**, asserted by a test over its own methods. The four commands of §2.7.8 live on a separate router and are not mounted unless switched on |
 | Mounted when | **only** if `ORIGENLAB_V2_DATABASE_URL` is set. Unset, the router is absent entirely and `/v2/*` is a 404 |
 | Connection role | `origenlab_api` — no membership in `origenlab_owner`, so RLS constrains these reads as it will in production |
 | Transaction | `set transaction read only` then `set local statement_timeout`, both inside the transaction. A write returns **SQLSTATE 25006**, proven against a real database |
 | Identity | one port, two adapters — a JWKS verifier (the target; **present and unconfigured**) and a local development adapter that **refuses to construct** unless the V2 DSN is a literal loopback address. JWKS wins whenever configured |
 | Authorization | every route requires a resolved, **active** `platform.operator` with role `viewer`, `sales` or `admin`; no identity is 401 |
 | Paging | every listing bounded — default 50, maximum 200. Every child list on a card is bounded too, at 100, and the card reports the true count beside each capped list |
-| Tests | **51** — `apps/api/tests/test_v2_read_boundary.py`; 12 are database-backed and skip unless `ORIGENLAB_V2_TEST_DSN` is set |
+| Tests | **51** — `apps/api/tests/test_v2_read_boundary.py`; 12 are database-backed and skip unless `ORIGENLAB_V2_TEST_DSN` is set. The command boundary has its own 64 (§2.7.8) |
 | Measured against the local database | `/v2/contacts` 9,460 · `/v2/organizations` 1,812 · `/v2/review/summary` 4 ambiguous, 172 unresolved, 1,812 + 9,460 machine-proposed |
 | Returning zero today | `/v2/prospects`, `/v2/opportunities/active`, `/v2/tasks/due`, `/v2/quotes/followup` — see below |
 
@@ -660,6 +660,63 @@ assertions `unresolved`. No person name was staged at all — the manifest forma
 for one. 16 of 20 records carry no organization claim. `crm.organization_domain` is empty, so
 every domain-to-institution guess in the queue is unevidenced. Promotion remains the job of
 `promote_evidence_into_crm.py` and, eventually, of a V2 command boundary that does not exist.
+
+### 2.7.8 The V2 human-review command boundary — built 2026-09-22, unwired
+
+The review workspace of §2.7.7 could describe a decision and not record one. `apps/api` now
+has the command boundary that records it. **No real review decision has been executed**, and
+the twenty staged Gmail records are untouched: all twenty are still `pending` and all
+twenty-six assertions still `unresolved`, verified by checksum before and after the work.
+
+#### The four commands
+
+| Command | Durable fact it records |
+|---|---|
+| `POST /v2/commands/keep-evidence-pending` | a named operator read this record and judged the evidence insufficient |
+| `POST /v2/commands/confirm-organization` | an asserted name **is** one existing organization, matched on exact folded name |
+| `POST /v2/commands/create-organization` | an asserted name is an organization nobody had recorded |
+| `POST /v2/commands/attach-contact-address` | an asserted address is a mailbox an organization operates |
+
+| Item | Value |
+|---|---|
+| Location | `apps/api/src/origenlab_api/v2/{commands,command_repository,command_routes}.py` — a **second router**, so the read boundary's "no POST, PATCH or DELETE" test stays true |
+| Mounted when | `ORIGENLAB_V2_DATABASE_URL` **and** `ORIGENLAB_V2_COMMANDS_ENABLED` (default **false**). Off, every command path is a 404 |
+| Every write carries | the evidence record id, the operator from the **verified identity** (never the body), a non-blank `note`, an `Idempotency-Key`, and one `crm.domain_event` per change |
+| Authorization | `sales` or `admin`. A resolved `viewer` is **403**, an unresolved caller **401** — reading the queue is not deciding it |
+| Idempotency | `platform.command_receipt`, claimed with `insert … on conflict do nothing`. Same key + same digest replays the stored response; same key + different digest is **409** |
+| Concurrency | compare-and-set throughout: an assertion resolves only `where resolution = 'unresolved'`, a contact point attaches only `where person_id is null and organization_id is null`, an organization confirms only `where version = %s` (the version the operator was shown) |
+| Rollback | one transaction per command. A refusal rolls back **everything including the receipt**, so the key stays free — proven against a real database |
+| Evidence | never destroyed. `origenlab_api` holds no INSERT or DELETE on `evidence.*` and UPDATE only on the resolution and review columns, so a command **cannot** rewrite a `value_norm` or a `payload` even if it tried. A test asserts Postgres refuses all five statements |
+| No fuzzy matching | the only comparison in the boundary is equality between an asserted name and an organization's name. A near miss is `organization_name_is_not_an_exact_match`, refused |
+| An organization cannot be born from a domain | `create-organization` takes **no name**; it reads one from the assertion. `name_display` may only restore letter case, checked by folding |
+| Out of scope, with no route at all | merges, person creation, affiliations, prospects, marketing permission, campaigns, quotes, sending, and any hosted Supabase endpoint. A test asserts none of those words appears in a path |
+| Migration | `20260922090000_slice2_evidence_review_decision_event.sql` — one new event type, `source_record.review_noted`. Additive: no grant widens, no policy relaxes, no send flag moves |
+| Tests | **64** — `apps/api/tests/test_v2_command_boundary.py`; 45 in process, 19 database-backed |
+
+#### Why the dashboard still cannot execute anything
+
+`apps/dashboard-proxy` allows **no POST under `/v2`**, and this work does not open it. Building
+the boundary and letting a browser through it are separate decisions and only the first has
+been taken; a test names the four command paths and asserts the Worker forwards neither the
+method nor the path. The workspace gained `evidenceCommands.ts` instead — a **preview** that
+computes what each decision would record, which preconditions hold and which do not, and
+renders every button `disabled`. It imports no client and knows no URL.
+
+#### How the database-backed tests avoid the real evidence
+
+They create a **disposable database** (`origenlab_test_<hex>`), apply the whole migration
+chain into it, run as the unprivileged `origenlab_api` login, and drop it afterwards. They
+cannot reach the staged records because the database they run in did not exist a moment
+earlier. This needs `ORIGENLAB_V2_TEST_DSN` (a maintenance login) **and**
+`ORIGENLAB_V2_API_TEST_DSN` (the runtime role); without both they skip.
+
+#### What is still not decided
+
+No command has been run against real evidence. `crm.organization_domain` is still empty, so
+no record in the queue has an evidenced institution. There is still no command for creating a
+person, which is what a named personal address in the queue would actually need — attaching
+one as a `shared_mailbox` is the only shape the schema allows without a person, and the
+preview cautions rather than refuses, because a local part is a spelling and not evidence.
 
 ### 2.7.5 Local V2 — the reconciled picture, 2026-09-21
 
