@@ -58,8 +58,16 @@ describe("dashboardNav", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("still resolves the full 12-id registry (nothing deleted, only reordered/relabeled)", () => {
-    expect(DASHBOARD_NAV_ITEMS).toHaveLength(12);
+  it("still resolves the full 13-id registry (nothing deleted, only reordered/relabeled)", () => {
+    expect(DASHBOARD_NAV_ITEMS).toHaveLength(13);
+  });
+
+  it("keeps the V2 CRM browser out of the primary sidebar while still resolving its title", () => {
+    // A deep link to a deep-link-only section must still get a correct page title rather
+    // than rendering its raw id.
+    expect(DASHBOARD_NAV_ITEMS.some((item) => item.id === "crm-v2")).toBe(true);
+    expect(DASHBOARD_TOP_NAV_IDS).not.toContain("crm-v2");
+    expect(dashboardSectionLabel("crm-v2")).toBe("CRM V2");
   });
 
   it("the removed dev-only 'intel-preview' section stays out of the nav", () => {

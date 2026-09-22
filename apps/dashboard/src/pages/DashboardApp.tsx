@@ -6,6 +6,7 @@ import type { DashboardSection } from "../lib/dashboardNav";
 import { CatalogPage } from "./CatalogPage";
 import { ProspectosPage } from "./ProspectosPage";
 import { ContactsPage } from "./ContactsPage";
+import { CrmV2Page } from "./CrmV2Page";
 import { DealsPage } from "./DealsPage";
 import { InboxTriagePage } from "./InboxTriagePage";
 import { PaymentsLogisticsPage } from "./PaymentsLogisticsPage";
@@ -58,6 +59,8 @@ function DashboardSectionView({
       return <PaymentsLogisticsPage />;
     case "contacts":
       return <ContactsPage />;
+    case "crm-v2":
+      return <CrmV2Page />;
     case "system":
       return <SystemPage />;
     default:

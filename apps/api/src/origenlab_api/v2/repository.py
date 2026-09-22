@@ -311,3 +311,475 @@ class V2Repository(OperatorLookup):
         """
         with self._read() as cur:
             return self._page(cur, sql, count_sql, params, limit, offset)
+
+    # ---------------------------------------------------------------- the cards
+
+    #: Every child list on a card is bounded. A card is a summary an operator reads, not an
+    #: export: an organization with ten thousand channels must render, and the count beside
+    #: the list is what tells the truth about how many there are.
+    CARD_CHILD_LIMIT = 100
+
+    def _rows(self, cur: Any, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+        cur.execute(sql, params)
+        columns = [d[0] for d in cur.description]
+        return [dict(zip(columns, row, strict=True)) for row in cur.fetchall()]
+
+    def _scalar(self, cur: Any, sql: str, params: tuple[Any, ...]) -> int:
+        cur.execute(sql, params)
+        return int(cur.fetchone()[0])
+
+    def contact_card(self, contact_point_id: str) -> dict[str, Any] | None:
+        """One channel, everything known about it, and where each fact came from.
+
+        The card is deliberately assembled from separate bounded queries rather than one
+        wide join: a channel with no person, no organization, no evidence and no marketing
+        history is the *common* case in the migrated data, and a join would render that as a
+        row of nulls instead of four empty lists that each say what is missing.
+
+        `evidence` is the provenance the operator needs to act. Every fact on this card
+        traces to an `evidence.source_record`, and the card reports that record's kind, URI
+        and review status rather than asserting the fact on its own authority.
+        """
+        with self._read() as cur:
+            head = self._rows(
+                cur,
+                """
+                select cp.id::text          as contact_point_id,
+                       cp.kind              as channel_kind,
+                       cp.value_display     as address,
+                       cp.value_norm        as address_norm,
+                       cp.usage             as usage,
+                       cp.confirmation      as confirmation,
+                       cp.created_at        as created_at,
+                       cp.updated_at        as updated_at,
+                       p.id::text           as person_id,
+                       p.display_name       as person_display_name,
+                       o.id::text           as organization_id,
+                       o.name               as organization_name,
+                       o.kind               as organization_kind,
+                       sr.kind              as origin_source_kind,
+                       sr.source_uri        as origin_source_uri,
+                       sr.review_status     as origin_review_status
+                  from crm.contact_point cp
+                  left join crm.person p          on p.id = cp.person_id
+                  left join crm.organization o    on o.id = cp.organization_id
+                  left join evidence.source_record sr on sr.id = cp.origin_source_record_id
+                 where cp.id = %s::uuid
+                """,
+                (contact_point_id,),
+            )
+            if not head:
+                return None
+            row = head[0]
+            address_norm = row.pop("address_norm")
+            person_id = row["person_id"]
+
+            siblings = (
+                self._rows(
+                    cur,
+                    """
+                    select cp.id::text      as contact_point_id,
+                           cp.value_display as address,
+                           cp.kind          as channel_kind,
+                           cp.usage         as usage,
+                           cp.confirmation  as confirmation
+                      from crm.contact_point cp
+                     where cp.person_id = %s::uuid and cp.id <> %s::uuid
+                     order by cp.value_norm
+                     limit %s
+                    """,
+                    (person_id, contact_point_id, self.CARD_CHILD_LIMIT),
+                )
+                if person_id
+                else []
+            )
+
+            affiliations = (
+                self._rows(
+                    cur,
+                    """
+                    select a.id::text        as affiliation_id,
+                           o.id::text        as organization_id,
+                           o.name            as organization_name,
+                           a.role_title      as role_title,
+                           a.unit_label      as unit_label,
+                           a.confirmation    as confirmation,
+                           a.valid_from      as valid_from,
+                           a.valid_to        as valid_to
+                      from crm.affiliation a
+                      join crm.organization o on o.id = a.organization_id
+                     where a.person_id = %s::uuid
+                     order by a.valid_from desc nulls last
+                     limit %s
+                    """,
+                    (person_id, self.CARD_CHILD_LIMIT),
+                )
+                if person_id
+                else []
+            )
+
+            evidence = self._rows(
+                cur,
+                """
+                select a.id::text        as assertion_id,
+                       a.kind            as kind,
+                       a.value_norm      as value_norm,
+                       a.resolution      as resolution,
+                       a.resolved_kind   as resolved_kind,
+                       a.ambiguity_note  as ambiguity_note,
+                       a.created_at      as observed_at,
+                       sr.kind           as source_kind,
+                       sr.source_uri     as source_uri,
+                       sr.review_status  as source_review_status,
+                       sr.is_quarantined as source_is_quarantined
+                  from evidence.assertion a
+                  join evidence.source_record sr on sr.id = a.source_record_id
+                 where (a.resolved_kind = 'contact_point' and a.resolved_id = %s::uuid)
+                    or a.value_norm = %s
+                 order by a.created_at desc
+                 limit %s
+                """,
+                (contact_point_id, address_norm, self.CARD_CHILD_LIMIT),
+            )
+
+            marketing = self._rows(
+                cur,
+                """
+                select c.name        as campaign_name,
+                       c.status      as campaign_status,
+                       r.state       as recipient_state,
+                       r.attempt_count as attempt_count,
+                       r.created_at  as created_at
+                  from outbound.campaign_recipient r
+                  join outbound.campaign c on c.id = r.campaign_id
+                 where r.contact_point_id = %s::uuid
+                 order by r.created_at desc
+                 limit %s
+                """,
+                (contact_point_id, self.CARD_CHILD_LIMIT),
+            )
+
+            #: A suppression is a fact about an *address*, never about an identity
+            #: (`docs/STATUS.md` §2.7.4), so it is matched by `value_norm` and reported
+            #: beside the card rather than attached to it.
+            suppressions = self._rows(
+                cur,
+                """
+                select cc.kind       as control_kind,
+                       cc.purpose    as purpose,
+                       cc.scope      as scope,
+                       cc.reason     as reason,
+                       cc.source     as source,
+                       cc.until_at   as until_at,
+                       cc.needs_review as needs_review,
+                       cc.created_at as created_at
+                  from outbound.contact_control cc
+                 where cc.scope = 'address' and cc.value_norm = %s
+                 order by cc.created_at desc
+                 limit %s
+                """,
+                (address_norm, self.CARD_CHILD_LIMIT),
+            )
+
+            return {
+                **row,
+                "sibling_contact_points": siblings,
+                "affiliations": affiliations,
+                "evidence": evidence,
+                "marketing": marketing,
+                "address_controls": suppressions,
+                "counts": {
+                    "sibling_contact_points": self._scalar(
+                        cur,
+                        "select count(*) from crm.contact_point where person_id = %s::uuid and id <> %s::uuid",
+                        (person_id, contact_point_id),
+                    )
+                    if person_id
+                    else 0,
+                    "affiliations": self._scalar(
+                        cur,
+                        "select count(*) from crm.affiliation where person_id = %s::uuid",
+                        (person_id,),
+                    )
+                    if person_id
+                    else 0,
+                    "evidence": self._scalar(
+                        cur,
+                        "select count(*) from evidence.assertion a "
+                        "where (a.resolved_kind = 'contact_point' and a.resolved_id = %s::uuid) "
+                        "or a.value_norm = %s",
+                        (contact_point_id, address_norm),
+                    ),
+                    "marketing": self._scalar(
+                        cur,
+                        "select count(*) from outbound.campaign_recipient where contact_point_id = %s::uuid",
+                        (contact_point_id,),
+                    ),
+                    "address_controls": self._scalar(
+                        cur,
+                        "select count(*) from outbound.contact_control "
+                        "where scope = 'address' and value_norm = %s",
+                        (address_norm,),
+                    ),
+                },
+            }
+
+    def organization_card(self, organization_id: str) -> dict[str, Any] | None:
+        """One organization, its channels, its people, its domains and its provenance.
+
+        A domain is a routing hint and never an identity key (`docs/DOMAIN.md` §2.2), so the
+        domains listed here are the ones somebody recorded against this organization — not
+        every address that happens to share a mail domain with it.
+        """
+        with self._read() as cur:
+            head = self._rows(
+                cur,
+                """
+                select o.id::text        as organization_id,
+                       o.name            as name,
+                       o.legal_name      as legal_name,
+                       o.kind            as kind,
+                       o.confirmation    as confirmation,
+                       o.note            as note,
+                       o.version         as version,
+                       o.created_at      as created_at,
+                       o.updated_at      as updated_at,
+                       parent.id::text   as parent_organization_id,
+                       parent.name       as parent_organization_name,
+                       merged.id::text   as merged_into_organization_id,
+                       merged.name       as merged_into_organization_name,
+                       sr.kind           as origin_source_kind,
+                       sr.source_uri     as origin_source_uri,
+                       sr.review_status  as origin_review_status
+                  from crm.organization o
+                  left join crm.organization parent on parent.id = o.parent_organization_id
+                  left join crm.organization merged on merged.id = o.merged_into_organization_id
+                  left join evidence.source_record sr on sr.id = o.origin_source_record_id
+                 where o.id = %s::uuid
+                """,
+                (organization_id,),
+            )
+            if not head:
+                return None
+            row = head[0]
+
+            contact_points = self._rows(
+                cur,
+                """
+                select cp.id::text      as contact_point_id,
+                       cp.value_display as address,
+                       cp.kind          as channel_kind,
+                       cp.usage         as usage,
+                       cp.confirmation  as confirmation,
+                       p.display_name   as person_display_name
+                  from crm.contact_point cp
+                  left join crm.person p on p.id = cp.person_id
+                 where cp.organization_id = %s::uuid
+                 order by cp.value_norm
+                 limit %s
+                """,
+                (organization_id, self.CARD_CHILD_LIMIT),
+            )
+
+            people = self._rows(
+                cur,
+                """
+                select p.id::text     as person_id,
+                       p.display_name as display_name,
+                       a.role_title   as role_title,
+                       a.unit_label   as unit_label,
+                       a.confirmation as confirmation,
+                       a.valid_from   as valid_from,
+                       a.valid_to     as valid_to
+                  from crm.affiliation a
+                  join crm.person p on p.id = a.person_id
+                 where a.organization_id = %s::uuid
+                 order by p.display_name
+                 limit %s
+                """,
+                (organization_id, self.CARD_CHILD_LIMIT),
+            )
+
+            domains = self._rows(
+                cur,
+                """
+                select d.id::text    as organization_domain_id,
+                       d.domain_norm as domain,
+                       d.scope       as scope,
+                       d.created_at  as created_at
+                  from crm.organization_domain d
+                 where d.organization_id = %s::uuid
+                 order by d.domain_norm
+                 limit %s
+                """,
+                (organization_id, self.CARD_CHILD_LIMIT),
+            )
+
+            relationships = self._rows(
+                cur,
+                """
+                select r.id::text   as organization_relationship_id,
+                       r.role       as role,
+                       r.valid_from as valid_from,
+                       r.valid_to   as valid_to,
+                       r.note       as note
+                  from crm.organization_relationship r
+                 where r.organization_id = %s::uuid
+                 order by r.valid_from desc nulls last
+                 limit %s
+                """,
+                (organization_id, self.CARD_CHILD_LIMIT),
+            )
+
+            children = self._rows(
+                cur,
+                """
+                select c.id::text     as organization_id,
+                       c.name         as name,
+                       c.kind         as kind,
+                       c.confirmation as confirmation
+                  from crm.organization c
+                 where c.parent_organization_id = %s::uuid
+                   and c.merged_into_organization_id is null
+                 order by lower(c.name)
+                 limit %s
+                """,
+                (organization_id, self.CARD_CHILD_LIMIT),
+            )
+
+            evidence = self._rows(
+                cur,
+                """
+                select a.id::text        as assertion_id,
+                       a.kind            as kind,
+                       a.value_norm      as value_norm,
+                       a.resolution      as resolution,
+                       a.resolved_kind   as resolved_kind,
+                       a.ambiguity_note  as ambiguity_note,
+                       a.created_at      as observed_at,
+                       sr.kind           as source_kind,
+                       sr.source_uri     as source_uri,
+                       sr.review_status  as source_review_status,
+                       sr.is_quarantined as source_is_quarantined
+                  from evidence.assertion a
+                  join evidence.source_record sr on sr.id = a.source_record_id
+                 where a.resolved_kind = 'organization' and a.resolved_id = %s::uuid
+                 order by a.created_at desc
+                 limit %s
+                """,
+                (organization_id, self.CARD_CHILD_LIMIT),
+            )
+
+            return {
+                **row,
+                "contact_points": contact_points,
+                "people": people,
+                "domains": domains,
+                "relationships": relationships,
+                "child_organizations": children,
+                "evidence": evidence,
+                "counts": {
+                    "contact_points": self._scalar(
+                        cur,
+                        "select count(*) from crm.contact_point where organization_id = %s::uuid",
+                        (organization_id,),
+                    ),
+                    "people": self._scalar(
+                        cur,
+                        "select count(*) from crm.affiliation where organization_id = %s::uuid",
+                        (organization_id,),
+                    ),
+                    "domains": self._scalar(
+                        cur,
+                        "select count(*) from crm.organization_domain where organization_id = %s::uuid",
+                        (organization_id,),
+                    ),
+                    "relationships": self._scalar(
+                        cur,
+                        "select count(*) from crm.organization_relationship where organization_id = %s::uuid",
+                        (organization_id,),
+                    ),
+                    "child_organizations": self._scalar(
+                        cur,
+                        "select count(*) from crm.organization where parent_organization_id = %s::uuid "
+                        "and merged_into_organization_id is null",
+                        (organization_id,),
+                    ),
+                    "evidence": self._scalar(
+                        cur,
+                        "select count(*) from evidence.assertion "
+                        "where resolved_kind = 'organization' and resolved_id = %s::uuid",
+                        (organization_id,),
+                    ),
+                },
+            }
+
+    # ------------------------------------------------------------------ evidence
+
+    #: The vocabularies are closed in the database (`evidence.assertion.kind`,
+    #: `evidence.source_record.kind`, `evidence.assertion.resolution`). Repeating them here
+    #: is what lets a bad filter be a 422 instead of a query that silently matches nothing.
+    EVIDENCE_RESOLUTIONS: tuple[str, ...] = (
+        "unresolved", "promoted", "linked", "rejected", "ambiguous",
+    )
+    EVIDENCE_SOURCE_KINDS: tuple[str, ...] = (
+        "workbook_import", "chilecompra_notice", "migration_manifest",
+        "v1_parse_failure", "v1_evidence_edge", "v1_supplier_candidate",
+        "v1_historical_quote_candidate", "gmail_message", "drive_file",
+    )
+
+    def evidence(
+        self,
+        *,
+        q: str | None,
+        resolution: str | None,
+        source_kind: str | None,
+        limit: int,
+        offset: int,
+    ) -> Page:
+        """The evidence trail, newest first, each row carrying its own provenance.
+
+        This is the review queue in list form: `/v2/review/summary` says how many decisions
+        are waiting and this says which. Unresolved and ambiguous rows are the actionable
+        ones; promoted rows are kept visible because "where did this contact come from" is
+        the question the whole evidence schema exists to answer.
+        """
+        where = "where true"
+        params: tuple[Any, ...] = ()
+        if q:
+            where += " and a.value_norm like %s"
+            params = (*params, f"%{q.strip().lower()}%")
+        if resolution:
+            where += " and a.resolution = %s"
+            params = (*params, resolution)
+        if source_kind:
+            where += " and sr.kind = %s"
+            params = (*params, source_kind)
+        sql = f"""
+            select a.id::text        as assertion_id,
+                   a.kind            as kind,
+                   a.value_norm      as value_norm,
+                   a.resolution      as resolution,
+                   a.resolved_kind   as resolved_kind,
+                   a.resolved_id::text as resolved_id,
+                   a.ambiguity_note  as ambiguity_note,
+                   a.created_at      as observed_at,
+                   sr.id::text       as source_record_id,
+                   sr.kind           as source_kind,
+                   sr.source_uri     as source_uri,
+                   sr.review_status  as source_review_status,
+                   sr.is_quarantined as source_is_quarantined,
+                   sr.acquired_at    as acquired_at
+              from evidence.assertion a
+              join evidence.source_record sr on sr.id = a.source_record_id
+              {where}
+             order by a.created_at desc, a.id
+             limit %s offset %s
+        """
+        count_sql = f"""
+            select count(*) from evidence.assertion a
+              join evidence.source_record sr on sr.id = a.source_record_id
+              {where}
+        """
+        with self._read() as cur:
+            return self._page(cur, sql, count_sql, params, limit, offset)

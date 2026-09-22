@@ -7,7 +7,10 @@
  */
 
 import {
+  parseV2ContactCard,
   parseV2ContactsPage,
+  parseV2EvidencePage,
+  parseV2OrganizationCard,
   parseV2OpportunitiesPage,
   parseV2OrganizationsPage,
   parseV2QuotesPage,
@@ -16,6 +19,9 @@ import {
 } from "./v2Parse";
 import type {
   V2Contact,
+  V2ContactCard,
+  V2EvidenceItem,
+  V2OrganizationCard,
   V2Opportunity,
   V2Organization,
   V2Page,
@@ -32,6 +38,22 @@ export const V2_ACTIVE_OPPORTUNITIES_PATH = "/v2/opportunities/active";
 export const V2_TASKS_DUE_PATH = "/v2/tasks/due";
 export const V2_REVIEW_SUMMARY_PATH = "/v2/review/summary";
 export const V2_QUOTES_FOLLOWUP_PATH = "/v2/quotes/followup";
+export const V2_EVIDENCE_PATH = "/v2/evidence";
+
+/**
+ * The card paths are built from an identifier, so they are built in one place.
+ *
+ * The proxy allows a UUID-shaped segment and nothing else. Building the path anywhere but
+ * here risks a caller interpolating a search string into a URL the Worker then refuses
+ * with a 403 that reads like an outage.
+ */
+export function v2ContactCardPath(contactPointId: string): string {
+  return `${V2_CONTACTS_PATH}/${encodeURIComponent(contactPointId)}`;
+}
+
+export function v2OrganizationCardPath(organizationId: string): string {
+  return `${V2_ORGANIZATIONS_PATH}/${encodeURIComponent(organizationId)}`;
+}
 
 const DEFAULT_LIMIT = 50;
 
@@ -115,4 +137,46 @@ export function fetchV2QuotesToFollowUp(
       offset: params.offset ?? 0,
     }),
   ).then(parseV2QuotesPage);
+}
+
+
+export function fetchV2ContactCard(contactPointId: string): Promise<V2ContactCard> {
+  return fetchJsonGet<unknown>(operatorApiUrl(v2ContactCardPath(contactPointId))).then(
+    parseV2ContactCard,
+  );
+}
+
+export function fetchV2OrganizationCard(
+  organizationId: string,
+): Promise<V2OrganizationCard> {
+  return fetchJsonGet<unknown>(
+    operatorApiUrl(v2OrganizationCardPath(organizationId)),
+  ).then(parseV2OrganizationCard);
+}
+
+/**
+ * The evidence trail.
+ *
+ * `resolution` and `source_kind` are the database's own closed vocabularies; the API
+ * answers 422 for anything else rather than an empty page, so a typo here surfaces as an
+ * error instead of as "there is nothing to review".
+ */
+export function fetchV2Evidence(
+  params: {
+    q?: string;
+    resolution?: string;
+    sourceKind?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
+): Promise<V2Page<V2EvidenceItem>> {
+  return fetchJsonGet<unknown>(
+    operatorApiUrl(V2_EVIDENCE_PATH, {
+      q: params.q,
+      resolution: params.resolution,
+      source_kind: params.sourceKind,
+      limit: params.limit ?? DEFAULT_LIMIT,
+      offset: params.offset ?? 0,
+    }),
+  ).then(parseV2EvidencePage);
 }

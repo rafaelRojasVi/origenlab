@@ -251,3 +251,271 @@ def test_the_statement_timeout_is_applied_inside_the_transaction() -> None:
     with repo._read() as cur:
         cur.execute("show statement_timeout")
         assert cur.fetchone()[0] == "4321ms"
+
+
+# ------------------------------------------------------- cards and evidence, in process
+#
+# These mount the router over a stub repository. The point is the boundary's behaviour —
+# what a malformed identifier does, what a value the schema cannot hold does, and that a
+# missing row is a 404 rather than an empty card — none of which needs a database.
+
+
+class _StubRepo:
+    EVIDENCE_RESOLUTIONS = ("unresolved", "promoted", "linked", "rejected", "ambiguous")
+    EVIDENCE_SOURCE_KINDS = (
+        "workbook_import", "chilecompra_notice", "migration_manifest",
+        "v1_parse_failure", "v1_evidence_edge", "v1_supplier_candidate",
+        "v1_historical_quote_candidate", "gmail_message", "drive_file",
+    )
+
+    def __init__(self, *, contact=None, organization=None) -> None:
+        self.contact = contact
+        self.organization = organization
+        self.evidence_calls: list[dict] = []
+
+    def contact_card(self, contact_point_id: str):
+        return self.contact
+
+    def organization_card(self, organization_id: str):
+        return self.organization
+
+    def evidence(self, **kwargs):
+        from origenlab_api.v2.repository import Page
+
+        self.evidence_calls.append(kwargs)
+        return Page(items=[], total=0, limit=kwargs["limit"], offset=kwargs["offset"])
+
+
+def _client(repo: _StubRepo) -> TestClient:
+    from fastapi import FastAPI
+
+    from origenlab_api.v2.routes import router
+
+    app = FastAPI()
+    app.include_router(router)
+    app.state.v2_repository = repo
+    app.state.v2_identity = LocalDevIdentity(LOOPBACK, _Lookup(_operator()))
+    client = TestClient(app)
+    client.headers.update({OPERATOR_EMAIL_HEADER: "operator@example.cl"})
+    return client
+
+
+def test_a_contact_card_identifier_that_is_not_a_uuid_is_a_404_not_a_500() -> None:
+    # Without the boundary guard this reaches the driver as invalid input and surfaces as a
+    # 500. A path segment that is not a UUID names nothing.
+    response = _client(_StubRepo()).get("/v2/contacts/not-a-uuid")
+    assert response.status_code == 404
+
+
+def test_a_contact_that_does_not_exist_is_a_404_not_an_empty_card() -> None:
+    response = _client(_StubRepo(contact=None)).get(
+        "/v2/contacts/00000000-0000-4000-8000-000000000001"
+    )
+    assert response.status_code == 404
+
+
+def test_a_contact_card_is_returned_whole() -> None:
+    card = {
+        "contact_point_id": "00000000-0000-4000-8000-000000000001",
+        "address": "compras@uni.example",
+        "usage": "shared_mailbox",
+        "person_id": None,
+        "organization_id": None,
+        "sibling_contact_points": [],
+        "affiliations": [],
+        "evidence": [{"assertion_id": "a", "source_kind": "migration_manifest"}],
+        "marketing": [],
+        "address_controls": [],
+        "counts": {"evidence": 1},
+    }
+    response = _client(_StubRepo(contact=card)).get(
+        "/v2/contacts/00000000-0000-4000-8000-000000000001"
+    )
+    assert response.status_code == 200
+    assert response.json() == card
+
+
+def test_an_organization_card_that_does_not_exist_is_a_404() -> None:
+    response = _client(_StubRepo(organization=None)).get(
+        "/v2/organizations/00000000-0000-4000-8000-000000000002"
+    )
+    assert response.status_code == 404
+
+
+def test_an_organization_identifier_that_is_not_a_uuid_is_a_404() -> None:
+    assert _client(_StubRepo()).get("/v2/organizations/12345").status_code == 404
+
+
+def test_the_card_routes_require_an_operator() -> None:
+    from fastapi import FastAPI
+
+    from origenlab_api.v2.routes import router
+
+    app = FastAPI()
+    app.include_router(router)
+    app.state.v2_repository = _StubRepo(contact={"contact_point_id": "x"})
+    app.state.v2_identity = LocalDevIdentity(LOOPBACK, _Lookup(_operator()))
+    client = TestClient(app)  # no operator header
+    assert client.get("/v2/contacts/00000000-0000-4000-8000-000000000001").status_code == 401
+    assert client.get("/v2/organizations/00000000-0000-4000-8000-000000000001").status_code == 401
+    assert client.get("/v2/evidence").status_code == 401
+
+
+def test_an_evidence_resolution_the_schema_cannot_hold_is_a_422() -> None:
+    # An unchecked filter would return an empty page, which reads as "there is nothing" —
+    # the one answer a review queue must never give wrongly.
+    response = _client(_StubRepo()).get("/v2/evidence", params={"resolution": "maybe"})
+    assert response.status_code == 422
+
+
+def test_an_evidence_source_kind_the_schema_cannot_hold_is_a_422() -> None:
+    response = _client(_StubRepo()).get("/v2/evidence", params={"source_kind": "scraped"})
+    assert response.status_code == 422
+
+
+def test_the_staged_gmail_and_drive_kinds_are_accepted_filters() -> None:
+    repo = _StubRepo()
+    client = _client(repo)
+    for kind in ("gmail_message", "drive_file"):
+        assert client.get("/v2/evidence", params={"source_kind": kind}).status_code == 200
+    assert [call["source_kind"] for call in repo.evidence_calls] == [
+        "gmail_message",
+        "drive_file",
+    ]
+
+
+def test_the_evidence_listing_is_bounded_like_every_other_listing() -> None:
+    repo = _StubRepo()
+    assert _client(repo).get("/v2/evidence", params={"limit": 500}).status_code == 422
+    body = _client(repo).get("/v2/evidence", params={"limit": 200}).json()
+    assert body["limit"] == 200
+
+
+# ------------------------------------------- database-backed proofs of the new reads
+
+
+@_needs_db
+def test_a_contact_card_reads_the_real_channel_and_its_provenance() -> None:
+    import psycopg
+
+    from origenlab_api.v2.repository import V2Repository
+
+    repo = V2Repository(psycopg.connect, _TEST_DSN)
+    first = repo.contacts(q=None, limit=1, offset=0)
+    if first.total == 0:
+        pytest.skip("the target database holds no contact points")
+    card = repo.contact_card(first.items[0]["contact_point_id"])
+    assert card is not None
+    assert card["contact_point_id"] == first.items[0]["contact_point_id"]
+    # Every list on the card is present even when empty: an absent key and an empty list
+    # mean different things to the UI, and only one of them is honest here.
+    for key in (
+        "sibling_contact_points",
+        "affiliations",
+        "evidence",
+        "marketing",
+        "address_controls",
+    ):
+        assert isinstance(card[key], list)
+        assert len(card[key]) <= V2Repository.CARD_CHILD_LIMIT
+        assert card["counts"][key] >= len(card[key])
+
+
+@_needs_db
+def test_an_organization_card_reads_its_channels_and_counts_them_truthfully() -> None:
+    import psycopg
+
+    from origenlab_api.v2.repository import V2Repository
+
+    repo = V2Repository(psycopg.connect, _TEST_DSN)
+    first = repo.organizations(q=None, limit=1, offset=0)
+    if first.total == 0:
+        pytest.skip("the target database holds no organizations")
+    card = repo.organization_card(first.items[0]["organization_id"])
+    assert card is not None
+    assert card["organization_id"] == first.items[0]["organization_id"]
+    for key in (
+        "contact_points",
+        "people",
+        "domains",
+        "relationships",
+        "child_organizations",
+        "evidence",
+    ):
+        assert isinstance(card[key], list)
+        assert len(card[key]) <= V2Repository.CARD_CHILD_LIMIT
+        assert card["counts"][key] >= len(card[key])
+
+
+@_needs_db
+def test_a_card_for_an_identifier_that_exists_nowhere_is_none() -> None:
+    import psycopg
+
+    from origenlab_api.v2.repository import V2Repository
+
+    repo = V2Repository(psycopg.connect, _TEST_DSN)
+    absent = "00000000-0000-4000-8000-0000deadbeef"
+    assert repo.contact_card(absent) is None
+    assert repo.organization_card(absent) is None
+
+
+@_needs_db
+def test_the_evidence_listing_agrees_with_the_review_summary() -> None:
+    """The list and the counter must not disagree about the same population.
+
+    `/v2/review/summary` is what the dashboard card shows; `/v2/evidence` is what an
+    operator opens to act on it. A discrepancy between them is the failure that makes a
+    review queue untrustworthy.
+    """
+    import psycopg
+
+    from origenlab_api.v2.repository import V2Repository
+
+    repo = V2Repository(psycopg.connect, _TEST_DSN)
+    summary = repo.review_summary()
+    for resolution, key in (
+        ("ambiguous", "ambiguous_assertions"),
+        ("unresolved", "unresolved_assertions"),
+    ):
+        page = repo.evidence(
+            q=None, resolution=resolution, source_kind=None, limit=1, offset=0
+        )
+        assert page.total == summary[key], resolution
+
+
+@_needs_db
+def test_every_evidence_row_carries_the_record_it_came_from() -> None:
+    import psycopg
+
+    from origenlab_api.v2.repository import V2Repository
+
+    repo = V2Repository(psycopg.connect, _TEST_DSN)
+    page = repo.evidence(q=None, resolution=None, source_kind=None, limit=50, offset=0)
+    if page.total == 0:
+        pytest.skip("the target database holds no assertions")
+    for row in page.items:
+        assert row["source_record_id"]
+        assert row["source_kind"] in V2Repository.EVIDENCE_SOURCE_KINDS
+        assert row["resolution"] in V2Repository.EVIDENCE_RESOLUTIONS
+
+
+@_needs_db
+def test_the_closed_source_kind_list_matches_the_database() -> None:
+    """The filter vocabulary and the CHECK constraint must not drift apart.
+
+    If a migration adds a kind and this list is not updated, that kind becomes unfilterable
+    and silently invisible in the review queue.
+    """
+    import psycopg
+    import re
+
+    from origenlab_api.v2.repository import V2Repository
+
+    with psycopg.connect(_TEST_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "select pg_get_constraintdef(oid) from pg_constraint "
+            "where conname = 'source_record_kind_check'"
+        )
+        definition = cur.fetchone()[0]
+    in_database = set(re.findall(r"'([a-z0-9_]+)'::text", definition))
+    assert in_database == set(V2Repository.EVIDENCE_SOURCE_KINDS)

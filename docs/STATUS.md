@@ -27,8 +27,8 @@ of truth*). Any PR that changes what is built, applied or deployed updates this
 file — including the `Last verified` line — **in the same PR**. A PR that only
 changes design, rules or targets does not touch it.
 
-Last verified: **2026-09-21**, against `origin/main` @ `bc8f4a82`, measured from the local
-PostgreSQL 17 carrying the Slice 0 migrations. §2.5's hosted facts are measurements taken by the
+Last verified: **2026-09-21**, against `origin/main` @ `a3961aa4` plus this branch, measured from the
+local PostgreSQL 17 carrying the Slice 0 migrations. §2.5's hosted facts are measurements taken by the
 Slice 0 audit itself on 2026-09-21, over the reviewed Supavisor session route inside a server-
 confirmed read-only transaction, together with authenticated control-plane reads; the earlier
 statement here that no PostgreSQL session against the hosted project had ever succeeded is
@@ -64,12 +64,12 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 
 | Item | Value |
 |---|---|
-| Migrations | 19, under `supabase/migrations/` — the 18 Slice 0 files plus the 2026-09-20 corrective that added the Wave 1B `contact_control.source` labels and made `campaign.recontact_interval_days` optional for an archived campaign ([`DATA.md`](DATA.md) §7.6.4) |
+| Migrations | **20**, under `supabase/migrations/` — the 18 Slice 0 files, the 2026-09-20 corrective that added the Wave 1B `contact_control.source` labels and made `campaign.recontact_interval_days` optional for an archived campaign ([`DATA.md`](DATA.md) §7.6.4), and the 2026-09-21 slice 2 additive that opened the `gmail_message` / `drive_file` provenance kinds and the `document_reference` assertion kind (§2.7.6) |
 | Schemas | 7 — `crm`, `comms`, `outbound`, `evidence`, `catalog`, `procurement`, `platform` |
 | Tables | **33** — `crm` 16, `comms` 4, `outbound` 6, `evidence` 2, `catalog` 2, `procurement` 1, `platform` 2 |
 | Roles | 4 — `origenlab_owner` (NOLOGIN), `origenlab_migrator`, `origenlab_api`, `origenlab_worker`; all `NOBYPASSRLS` |
 | RLS policies | 127 |
-| pgTAP assertions | **402 across 11 files** — 399 as before, plus 3 in `100_hosted_role_bootstrap.sql` pinning the grantor asymmetry the hosted convergence depends on (§2.4) |
+| pgTAP assertions | **408 across 11 files** — 402 as before, plus 6 in `061_constraints_comms_outbound_evidence.sql` pinning the staged Gmail/Drive vocabulary and its `pending` / `unresolved` defaults (§2.7.6) |
 | Foreign keys | 102, **all** index-covered — 81 unconditional, 21 implied-partial |
 | `SECURITY DEFINER` functions | **zero** — the closed list of eight arrives in slices 3 and 5 |
 | Data API (PostgREST) | **off**; the seven schemas are not exposed |
@@ -84,7 +84,7 @@ Built under the hosted freeze (§2.8) so V2 work has somewhere durable to run.
 |---|---|
 | Container | `origenlab_dev_db`, pinned image `public.ecr.aws/supabase/postgres:17.6.1.165` |
 | Port | **54332, published on 127.0.0.1 only** — stricter than the CLI's stack, which binds on all interfaces |
-| Database | `origenlab_dev`; chain applied **19 of 19**, head `20260920190000` |
+| Database | `origenlab_dev`; chain applied **20 of 20**, head `20260921120000` |
 | Structure | 7 schemas, 33 tables, 127 policies, 102 index-covered foreign keys, zero `SECURITY DEFINER` — identical to the CLI cluster's |
 | Rows of business data | **zero**; one `outbound.send_control` row, both flags `false` |
 | Checkpoints | `~/data/origenlab-v2-local/checkpoints/`, outside Git, `0700`/`0600`, each with `.sha256` and `.meta.json` |
@@ -103,7 +103,7 @@ Every gate below was run on this date, at `origin/main` @ `3c8dbf78` plus this b
 | Check | Result |
 |---|---|
 | `supabase db reset --local` | PASS |
-| `supabase test db --local` | **402 assertions, 11 files, all pass** |
+| `supabase test db --local` | **408 assertions, 11 files, all pass** |
 | `verify_direct_logins.sh` | **51 proofs, 0 failed** |
 | `replay_evidence.sh` | PASS — two resets reproduce identical schema, catalogue and migration list |
 | `evidence_tool_failure_tests.sh` | **30 passed, 0 failed** |
@@ -462,15 +462,15 @@ Slice 0 had "zero consumers"; it now has one.
 | Item | Value |
 |---|---|
 | Location | `apps/api/src/origenlab_api/v2/` — a separate surface inside the V1 operator API, not a new service |
-| Routes | 7 `GET` — `/v2/contacts`, `/v2/organizations`, `/v2/prospects`, `/v2/opportunities/active`, `/v2/tasks/due`, `/v2/review/summary`, `/v2/quotes/followup` |
+| Routes | **10** `GET` — the seven listings (`/v2/contacts`, `/v2/organizations`, `/v2/prospects`, `/v2/opportunities/active`, `/v2/tasks/due`, `/v2/review/summary`, `/v2/quotes/followup`) plus, since 2026-09-21, `/v2/evidence` and the two card reads `/v2/contacts/{id}` and `/v2/organizations/{id}` (§2.7.6) |
 | Write routes | **zero**, asserted by a test over the router's own methods |
 | Mounted when | **only** if `ORIGENLAB_V2_DATABASE_URL` is set. Unset, the router is absent entirely and `/v2/*` is a 404 |
 | Connection role | `origenlab_api` — no membership in `origenlab_owner`, so RLS constrains these reads as it will in production |
 | Transaction | `set transaction read only` then `set local statement_timeout`, both inside the transaction. A write returns **SQLSTATE 25006**, proven against a real database |
 | Identity | one port, two adapters — a JWKS verifier (the target; **present and unconfigured**) and a local development adapter that **refuses to construct** unless the V2 DSN is a literal loopback address. JWKS wins whenever configured |
 | Authorization | every route requires a resolved, **active** `platform.operator` with role `viewer`, `sales` or `admin`; no identity is 401 |
-| Paging | every listing bounded — default 50, maximum 200 |
-| Tests | **25** — `apps/api/tests/test_v2_read_boundary.py`; 2 are database-backed and skip unless `ORIGENLAB_V2_TEST_DSN` is set |
+| Paging | every listing bounded — default 50, maximum 200. Every child list on a card is bounded too, at 100, and the card reports the true count beside each capped list |
+| Tests | **42** — `apps/api/tests/test_v2_read_boundary.py`; 8 are database-backed and skip unless `ORIGENLAB_V2_TEST_DSN` is set |
 | Measured against the local database | `/v2/contacts` 9,460 · `/v2/organizations` 1,812 · `/v2/review/summary` 4 ambiguous, 172 unresolved, 1,812 + 9,460 machine-proposed |
 | Returning zero today | `/v2/prospects`, `/v2/opportunities/active`, `/v2/tasks/due`, `/v2/quotes/followup` — see below |
 
@@ -539,6 +539,71 @@ does not add one.
 linkage is a deterministic join over data that already exists, re-derivable from the address
 at any time, and carries no decision anybody made.
 
+### 2.7.6 Contacts + Organizations slice — measured 2026-09-21
+
+The first **searchable** operator surface over the durable core, and the first evidence
+path that is not a V1 migration. Three parts, all local.
+
+#### The schema addition
+
+| Item | Value |
+|---|---|
+| Migration | `20260921120000_slice2_gmail_drive_evidence_kinds.sql` — additive only |
+| `evidence.source_record.kind` | 7 → **9**; adds `gmail_message`, `drive_file` |
+| `evidence.assertion.kind` | 7 → **8**; adds `document_reference` |
+| Tables, columns, grants, RLS policies | **unchanged** — 33 tables, 127 policies, no column added, no grant widened |
+| pgTAP | **6** new assertions in `061_constraints_comms_outbound_evidence.sql`; the suite is 408 across 11 files, all pass on a clean `supabase db reset --local` |
+
+A Gmail message needs no new assertion kind: the facts a message yields are addresses and
+names, which `contact_address` and `organization_name` already describe. Only the
+provenance differed, and that is what the two `source_record` kinds record.
+
+#### The staging tool
+
+| Item | Value |
+|---|---|
+| Entry point | `apps/email-pipeline/scripts/migration/stage_gmail_drive_evidence.py` → `origenlab_email_pipeline.migration.v2_evidence_stage` |
+| Default mode | **dry-run.** Without `--apply` no database connection is opened at all, and `--database-url` is not even required |
+| Input | a local JSON manifest (`manifest_version: 1`) an operator produced out-of-band. **No Google client is imported anywhere in the package** and a test asserts it, so everything that can reach the database is a file a human can read, diff and refuse first |
+| Network calls | **zero.** No Gmail, Drive, Supabase, Render or Cloudflare client; both send flags untouched |
+| Target boundary | the Wave 1A/1B importer's own loopback guard, unchanged and unweakened. No override flag exists and a test asserts none does |
+| Tables written | 2 — `evidence.source_record` (`review_status = 'pending'`) and `evidence.assertion` (`resolution = 'unresolved'`). **Nothing else** |
+| `crm.*` and `outbound.*` | **never written.** The `crm` row count is taken before and after inside the staging transaction and any change rolls the whole pass back |
+| What a manifest may assert | a `gmail` record: `contact_address`, `organization_name`. A `drive` record: `document_reference`, `organization_name`. `contacted_address` and `affiliation` are refused from both — the first is a claim about our own outbound history that only the send ledger may make, the second a relationship no message header records |
+| Resolution vocabulary | **absent from the manifest by design.** There is no way to express "confirmed", "this is person X" or "merge these". Staging proposes; `promote_evidence_into_crm.py` decides |
+| Reporting | counts and kinds only — a test asserts no address, document name or organization name reaches the report, which is what gets pasted into commits and CI logs |
+| Idempotency | proven against a real database — a second apply created **0** records and **0** assertions; a record re-staged with a different `source_uri` is refused rather than overwritten |
+| Rows staged into any database | **zero.** The tool has been exercised only by its own tests, which remove their fixtures afterwards; §2.7.5's reconciled counts are unchanged |
+| Tests | **34** — `uv run pytest tests/test_v2_evidence_stage.py`; 2 are database-backed and skip unless `ORIGENLAB_V2_TEST_DSN` is set |
+
+**No real Gmail or Drive import has happened.** No credential exists in this repository, no
+manifest has been produced from a real mailbox or drive, and the acquisition step — whatever
+eventually produces a manifest — is deliberately outside this tool.
+
+#### The operator surface
+
+| Item | Value |
+|---|---|
+| Page | `apps/dashboard/src/pages/CrmV2Page.tsx`, section id `crm-v2` |
+| Cards | 4, searchable and paged — Contactos, Organizaciones, Prospectos, Evidencia |
+| Detail | a drawer card for a contact and for an organization, each showing identity, relationships, the evidence trail with its provenance, and — for a contact — the campaign history and the controls on its address |
+| New API routes behind it | `/v2/evidence`, `/v2/contacts/{id}`, `/v2/organizations/{id}` (§2.7.2) |
+| Proxy | 3 exact paths added to `apps/dashboard-proxy`; the two card paths match a **UUID-shaped** segment, never `.+`, and none is POST-writable |
+| Sidebar | **not in it.** The eight-item Cotizaciones-first primary IA is unchanged; `crm-v2` is a registry + hash-route section like `today` and `deals`, reached from the *Revisión humana* card on Inicio |
+| `contacts` section | **untouched.** It reads the V1 lead-intel mirror and is what operators use today; the two hold different rows and replacing one with the other before the V1 durable migration would drop data |
+| Writes | **zero.** No command client is imported and the proxy allows no POST under `/v2`. Confirming an organization, naming a person or merging two identities are durable commands the V2 command boundary does not carry yet |
+| Measured, live | Contactos **9.460** · Organizaciones **1.812** · Prospectos **0** (renders *"falta migrar el histórico V1"*, not a bare zero) · Evidencia **11.448** |
+| Tests | 8 in `CrmV2Page.test.tsx`, 15 in `crmV2Browser.test.ts`, 2 added to the proxy allowlist suite |
+
+**Counts come from the response `total`, never from `items.length`.** Every listing is
+capped at 200 and every card child list at 100, so counting the array would silently
+understate 9,460 contacts as 50 and a large institution's channels as 100.
+
+**Every absence on a card is explained rather than left blank.** No person, no organization,
+no affiliation and no domain are each the *common* case in the migrated data, and each is
+the result of a recorded decision ([`DOMAIN.md`](DOMAIN.md) §2.2, §2.7.1) rather than
+missing data. A blank field would read as a gap to fill in.
+
 ### 2.7.5 Local V2 — the reconciled picture, 2026-09-21
 
 One table for "what is actually in the local V2 database and does it add up". The per-stage
@@ -585,7 +650,10 @@ outside Git.
 **What is still missing, and why.** Email-capture evidence and quote-linkage evidence do not
 exist yet: V1 persists no Gmail message or thread id ([`DATA.md`](DATA.md) §6), and V1's
 durable opportunities, tasks and quotes have never been migrated. Both are recorded in
-[`OPERATIONS.md`](OPERATIONS.md) §1.2 under *What this runbook does not yet cover*.
+[`OPERATIONS.md`](OPERATIONS.md) §1.2 under *What this runbook does not yet cover*. Since
+2026-09-21 there is a *path* for the first of those — the offline staging tool of §2.7.6 —
+but it has been run against no real mailbox and has staged zero rows, so every count in the
+table above is unchanged by it.
 
 ### 2.8 Hosted phase — frozen 2026-09-21
 

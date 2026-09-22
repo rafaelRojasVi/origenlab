@@ -4,7 +4,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 grant usage on schema extensions to origenlab_owner;
 set role origenlab_owner;
-select plan(106);
+select plan(112);
 
 insert into platform.operator (id, auth_user_id, email_norm, display_name, role, status)
 values ('00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000f1', 'admin@example.test', 'Admin', 'admin', 'active');
@@ -158,6 +158,16 @@ select throws_ok($$ insert into evidence.source_record (kind, dedupe_key, payloa
 select throws_ok($$ update evidence.source_record set is_quarantined = true where id = '00000000-0000-4000-8000-000000000300' $$, '23514', null, 'source_record: quarantine carries a reason and a time');
 select lives_ok($$ update evidence.source_record set is_quarantined = true, quarantine_reason = 'contradicts accepted fact', quarantined_at = now() where id = '00000000-0000-4000-8000-000000000300' $$, 'source_record: quarantined with reason');
 select throws_ok($$ insert into evidence.source_record (kind, dedupe_key, payload) values ('workbook_import', 'wb:2', '[]') $$, '23514', null, 'source_record: payload is an object');
+
+-- Slice 2 — the Gmail/Drive staging vocabulary (migration 20260921120000). Staged evidence is
+-- an observation, never a belief: it lands 'pending' and 'unresolved' and stays there until an
+-- operator decides.
+select lives_ok($$ insert into evidence.source_record (id, kind, dedupe_key, payload, source_uri) values ('00000000-0000-4000-8000-000000000301', 'gmail_message', 'gmail:msg:18f0c1', '{"subject": "x"}', 'gmail://msg/18f0c1') $$, 'source_record: a Gmail message is an acquirable record');
+select lives_ok($$ insert into evidence.source_record (id, kind, dedupe_key, payload, source_uri) values ('00000000-0000-4000-8000-000000000302', 'drive_file', 'drive:file:1AbC', '{"name": "cotizacion.pdf"}', 'https://drive.google.com/file/d/1AbC') $$, 'source_record: a Drive file is an acquirable record');
+select is((select review_status from evidence.source_record where id = '00000000-0000-4000-8000-000000000301'), 'pending', 'source_record: a staged Gmail record defaults to pending review');
+select is((select is_quarantined from evidence.source_record where id = '00000000-0000-4000-8000-000000000302'), false, 'source_record: a staged Drive record is not quarantined by default');
+select lives_ok($$ insert into evidence.assertion (id, source_record_id, kind, value_norm, value) values ('00000000-0000-4000-8000-000000000311', '00000000-0000-4000-8000-000000000302', 'document_reference', 'cotizacion-2024-018.pdf', '{"drive_file_id": "1AbC"}') $$, 'assertion: a Drive document may name a commercial subject');
+select is((select resolution from evidence.assertion where id = '00000000-0000-4000-8000-000000000311'), 'unresolved', 'assertion: a staged document reference resolves to nothing until an operator says so');
 insert into evidence.assertion (id, source_record_id, kind, value_norm) values ('00000000-0000-4000-8000-000000000310', '00000000-0000-4000-8000-000000000300', 'contact_address', 'a@uni.example');
 select throws_ok($$ insert into evidence.assertion (source_record_id, kind, value_norm) values ('00000000-0000-4000-8000-000000000300', 'contact_address', 'a@uni.example') $$, '23505', null, 'assertion: (source_record_id, kind, value_norm) unique');
 select throws_ok($$ insert into evidence.assertion (source_record_id, kind, value_norm) values ('00000000-0000-4000-8000-000000000300', 'guess', 'x') $$, '23514', null, 'assertion: kind is closed');

@@ -11,6 +11,9 @@ Five endpoints the operator asked for, plus the two the four CRM cards need:
 | `GET /v2/tasks/due` | `crm.task` open and due |
 | `GET /v2/review/summary` | the operator review queue |
 | `GET /v2/quotes/followup` | sent quote revisions not yet superseded |
+| `GET /v2/contacts/{id}` | one channel, its identity, its evidence and its marketing history |
+| `GET /v2/organizations/{id}` | one organization, its channels, people, domains and evidence |
+| `GET /v2/evidence` | the evidence trail, each row carrying its own provenance |
 
 **Read-only, and structurally so.** Every query runs in `begin read only` as `origenlab_api`,
 a role with no membership in `origenlab_owner`. There is no POST, PATCH or DELETE here and
@@ -24,6 +27,7 @@ about the running V1 API changes until the V2 database is deliberately configure
 
 from __future__ import annotations
 
+import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -74,6 +78,18 @@ Operator = Annotated[OperatorIdentity, Depends(current_operator)]
 Repo = Annotated[V2Repository, Depends(get_repository)]
 
 
+def _uuid_path_param(raw: str, what: str) -> str:
+    """Refuse a malformed identifier at the boundary, before it reaches a query.
+
+    Without this a typo in a URL becomes an invalid-input SQLSTATE from the driver and a
+    500. A path segment that is not a UUID names nothing, so 404 is the honest answer.
+    """
+    try:
+        return str(uuid.UUID(raw))
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"no such {what}") from None
+
+
 def _page_response(page: Any) -> dict[str, Any]:
     return {
         "items": page.items,
@@ -94,6 +110,24 @@ def list_contacts(
     return _page_response(repo.contacts(q=q, limit=clamp_limit(limit), offset=offset))
 
 
+@router.get("/contacts/{contact_point_id}")
+def contact_card(
+    _: Operator,
+    repo: Repo,
+    contact_point_id: str,
+) -> dict[str, Any]:
+    """One contact card.
+
+    A channel whose owner is unknown is the common case in the migrated data, so the card
+    reports `person`, `organization`, `affiliations` and `evidence` as separately-empty
+    facts rather than flattening them into a row of nulls.
+    """
+    card = repo.contact_card(_uuid_path_param(contact_point_id, "contact"))
+    if card is None:
+        raise HTTPException(status_code=404, detail="no such contact")
+    return card
+
+
 @router.get("/organizations")
 def list_organizations(
     _: Operator,
@@ -103,6 +137,19 @@ def list_organizations(
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
     return _page_response(repo.organizations(q=q, limit=clamp_limit(limit), offset=offset))
+
+
+@router.get("/organizations/{organization_id}")
+def organization_card(
+    _: Operator,
+    repo: Repo,
+    organization_id: str,
+) -> dict[str, Any]:
+    """One organization card, with its relationships and its provenance."""
+    card = repo.organization_card(_uuid_path_param(organization_id, "organization"))
+    if card is None:
+        raise HTTPException(status_code=404, detail="no such organization")
+    return card
 
 
 @router.get("/prospects")
@@ -164,3 +211,40 @@ def list_quotes_to_follow_up(
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
     return _page_response(repo.quotes_to_follow_up(limit=clamp_limit(limit), offset=offset))
+
+
+@router.get("/evidence")
+def list_evidence(
+    _: Operator,
+    repo: Repo,
+    q: str | None = Query(default=None, max_length=200),
+    resolution: str | None = Query(default=None),
+    source_kind: str | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    """The evidence trail — the review queue in list form.
+
+    `/v2/review/summary` counts what is waiting; this says which rows they are. Both
+    filters are validated against the database's own closed vocabularies, so a value the
+    schema cannot hold is a 422 rather than an empty page that looks like an answer.
+    """
+    if resolution is not None and resolution not in repo.EVIDENCE_RESOLUTIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"resolution must be one of {', '.join(repo.EVIDENCE_RESOLUTIONS)}",
+        )
+    if source_kind is not None and source_kind not in repo.EVIDENCE_SOURCE_KINDS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"source_kind must be one of {', '.join(repo.EVIDENCE_SOURCE_KINDS)}",
+        )
+    return _page_response(
+        repo.evidence(
+            q=q,
+            resolution=resolution,
+            source_kind=source_kind,
+            limit=clamp_limit(limit),
+            offset=offset,
+        )
+    )

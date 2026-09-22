@@ -20,6 +20,7 @@ const VALID_SECTIONS = new Set<string>([
   "tenders",
   "payments-logistics",
   "contacts",
+  "crm-v2",
   "system",
 ]);
 

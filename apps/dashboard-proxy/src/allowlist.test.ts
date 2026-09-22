@@ -890,7 +890,7 @@ describe("CRM-Q2 workflow/adoption allowlist", () => {
 });
 
 describe("V2 durable read boundary allowlist", () => {
-  it("allows exactly the seven V2 read paths", async () => {
+  it("allows exactly the eight V2 listing paths", async () => {
     const { isAllowedUpstreamPath } = await import("./allowlist");
     for (const path of [
       "/v2/contacts",
@@ -900,9 +900,23 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/tasks/due",
       "/v2/review/summary",
       "/v2/quotes/followup",
+      "/v2/evidence",
     ]) {
       expect(isAllowedUpstreamPath(path)).toBe(true);
     }
+  });
+
+  it("allows a card path only when the identifier is UUID-shaped", async () => {
+    const { isAllowedUpstreamPath } = await import("./allowlist");
+    const id = "96301691-af05-51ea-82e3-05f5fae40837";
+    expect(isAllowedUpstreamPath(`/v2/contacts/${id}`)).toBe(true);
+    expect(isAllowedUpstreamPath(`/v2/organizations/${id}`)).toBe(true);
+    // Uppercase, a wrong length and a trailing sub-resource are all refused: the shape is
+    // the allowlist, not a `.+` that would forward whatever the browser asked for.
+    expect(isAllowedUpstreamPath(`/v2/contacts/${id.toUpperCase()}`)).toBe(false);
+    expect(isAllowedUpstreamPath(`/v2/contacts/${id}/evidence`)).toBe(false);
+    expect(isAllowedUpstreamPath(`/v2/prospects/${id}`)).toBe(false);
+    expect(isAllowedUpstreamPath(`/v2/evidence/${id}`)).toBe(false);
   });
 
   it("allows the listed paths with a query string", async () => {
@@ -921,6 +935,7 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/contacts/123",
       "/v2/organizations/abc",
       "/v2/commands/promote",
+      "/v2/contacts/96301691-af05-51ea-82e3-05f5fae40837/merge",
       "/v2/review",
       "/v2/review/summary/extra",
       "/v2/tasks",
@@ -938,6 +953,9 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/contacts",
       "/v2/organizations",
       "/v2/review/summary",
+      "/v2/evidence",
+      "/v2/contacts/96301691-af05-51ea-82e3-05f5fae40837",
+      "/v2/organizations/96301691-af05-51ea-82e3-05f5fae40837",
       "/v2/commands/promote",
     ]) {
       expect(isAllowedPostPath(path)).toBe(false);

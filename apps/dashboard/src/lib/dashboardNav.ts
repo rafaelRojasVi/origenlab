@@ -1,5 +1,18 @@
 /** Secciones principales del panel operador (Dashboard V2 — IA Cotizaciones-first). */
 
+/*
+ * `crm-v2` sits beside `contacts`, not in place of it. `contacts` reads the V1 lead-intel
+ * mirror — a rebuildable projection — and is what operators use today; `crm-v2` reads the
+ * durable V2 core, which holds different rows. Replacing one with the other before the V1
+ * durable migration lands would silently drop data an operator is relying on.
+ *
+ * It is deliberately **not** in `DASHBOARD_TOP_NAV_IDS`. The eight-item Cotizaciones-first
+ * sidebar is an accepted IA decision, and a surface whose four cards are still read-only
+ * has not earned a slot in it. Like `today`, `deals`, `suppliers` and
+ * `payments-logistics`, it lives in the registry — so a deep link renders with a correct
+ * page title — and is reached from the review card on Inicio.
+ */
+
 export type DashboardSection =
   | "today"
   | "inbox"
@@ -12,6 +25,7 @@ export type DashboardSection =
   | "tenders"
   | "payments-logistics"
   | "contacts"
+  | "crm-v2"
   | "system";
 
 export type DashboardNavIconName =
@@ -26,6 +40,7 @@ export type DashboardNavIconName =
   | "payments"
   | "suppliers"
   | "catalog"
+  | "crm"
   | "system";
 
 export interface DashboardNavItem {
@@ -98,6 +113,13 @@ export const DASHBOARD_NAV_ITEMS: DashboardNavItem[] = [
     shortLabel: "Catálogo",
     description: "Productos, reactivos, equipos y repuestos cotizables",
     iconName: "catalog",
+  },
+  {
+    id: "crm-v2",
+    label: "CRM V2",
+    shortLabel: "CRM V2",
+    description: "Contactos, organizaciones, prospectos y evidencia del núcleo durable V2",
+    iconName: "crm",
   },
   {
     id: "system",

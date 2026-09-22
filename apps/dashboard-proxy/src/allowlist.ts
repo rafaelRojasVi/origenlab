@@ -58,6 +58,11 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/v2\/tasks\/due$/,
   /^\/v2\/review\/summary$/,
   /^\/v2\/quotes\/followup$/,
+  /^\/v2\/evidence$/,
+  // The two card routes. A UUID-shaped segment, not `.+`: the Worker still refuses any
+  // path it cannot name, and no sub-resource under a card is reachable.
+  /^\/v2\/contacts\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  /^\/v2\/organizations\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
 ];
 
 /**
