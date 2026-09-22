@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from operator_identity_fixture import configured_operator_identity  # noqa: F401
 from origenlab_email_pipeline.warm_case_classification import infer_warm_case_role
 from origenlab_email_pipeline.warm_case_role_classification import infer_warm_case_role_category
 from origenlab_email_pipeline.warm_case_sender_rules import CYBERDAY_CAMPAIGN_SUBJECT
@@ -27,11 +28,19 @@ def _row(
     }
 
 
-def test_sebastian_re_serva_is_internal_admin_not_client_response() -> None:
+def test_payments_operator_re_serva_is_internal_admin_not_client_response(
+    configured_operator_identity,
+) -> None:
+    """A SERVA/Wise note from the payments operator is an internal admin thread.
+
+    The rule keys on *which* operator wrote, so it needs a configured identity to fire at
+    all. The address below is fictitious; the real one lives outside Git.
+    """
+    operator = configured_operator_identity.address_for("payments_operator")
     row = _row(
-        sender="Sebastian Rojas <sebastian.rojas.vivanco@gmail.com>",
+        sender=f"Operador de pagos <{operator}>",
         subject="Re: serva",
-        contact_email="sebastian.rojas.vivanco@gmail.com",
+        contact_email=operator,
         snippet="Wise transfer note for SERVA invoice",
     )
     role = infer_warm_case_role_category(row, enrichment_available=False, include_noise=False)

@@ -516,6 +516,17 @@ loader before it is written. The superseded version 1 file moves **out** of
 `~/data/origenlab-v2-local/evidence/`, because that directory *is* the baseline. Done for the
 September sweep on 2026-09-22 (docs/STATUS.md §2.1).
 
+**The seeded operator is fictitious.** `build` inserts one `platform.operator` row so the
+command boundary can resolve an identity at all. Its address defaults to
+`operador.local@example.invalid` — undeliverable, and safe to have in a public repository,
+which the previous hard-coded personal address was not. Nothing reads the value; `verify`
+counts the row. To build with your own instead, put it in the environment rather than in a
+file:
+
+```bash
+OL_CLEAN_OPERATOR_EMAIL=you@yourdomain.cl supabase/scripts/cleanroom_db.sh build --force
+```
+
 **The database name is a literal.** `build --force` drops a database, so the name comes from
 the `OL_CLEAN_DBNAME` constant in `supabase/scripts/lib/local_target.sh` and from nowhere else
 — not an argument, not an environment variable, not a config file. The guard refuses to

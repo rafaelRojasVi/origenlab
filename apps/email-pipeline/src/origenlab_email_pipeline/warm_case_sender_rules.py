@@ -6,18 +6,28 @@ import re
 from email.utils import parseaddr
 
 from origenlab_email_pipeline.business_mart import emails_in
+from origenlab_email_pipeline.operator_identity import load_operator_identity
 
 INTERNAL_OPERATOR_DOMAINS: frozenset[str] = frozenset(
     {"origenlab.cl", "labdelivery.cl"}
 )
 
-INTERNAL_OPERATOR_EMAILS: frozenset[str] = frozenset(
+#: The operator's published business mailboxes. These are printed on the website and stay in
+#: the tree: a company's own contact address is a published business fact, not personal data.
+PUBLISHED_OPERATOR_MAILBOXES: frozenset[str] = frozenset(
     {
-        "tvivancob@gmail.com",
-        "sebastian.rojas.vivanco@gmail.com",
         "contacto@labdelivery.cl",
         "contacto@origenlab.cl",
     }
+)
+
+#: The operator's personal mailboxes, by role, resolved from configuration outside this public
+#: repository -- see :mod:`origenlab_email_pipeline.operator_identity` for why they cannot be
+#: literals here and why an unconfigured checkout matches nothing instead of guessing.
+OPERATOR_IDENTITY = load_operator_identity()
+
+INTERNAL_OPERATOR_EMAILS: frozenset[str] = (
+    PUBLISHED_OPERATOR_MAILBOXES | OPERATOR_IDENTITY.personal_addresses
 )
 
 _PAYMENT_ADMIN_DOMAINS: frozenset[str] = frozenset({"bancochile.cl"})
@@ -588,9 +598,17 @@ def _internal_thread_haystack(
 
 
 def _personal_operator_admin_email_match(email: str, hay: str) -> bool:
-    if email == "sebastian.rojas.vivanco@gmail.com" and "serva" in hay:
+    """Two rules that key on *which operator* wrote, not merely that one did.
+
+    Both used to compare a personal address literally. They now ask the identity module which
+    address currently holds the role, so the rule keeps its exact shape while the address
+    itself lives outside this public repository. On an unconfigured checkout the roles hold
+    undeliverable ``@example.invalid`` addresses, so neither branch can fire -- which is the
+    intended, visible failure rather than a silent mismatch.
+    """
+    if email == OPERATOR_IDENTITY.address_for("payments_operator") and "serva" in hay:
         return True
-    if email == "tvivancob@gmail.com" and any(
+    if email == OPERATOR_IDENTITY.address_for("commercial_operator") and any(
         m in hay for m in _INTERNAL_ADMIN_SUBJECT_MARKERS
     ):
         return True

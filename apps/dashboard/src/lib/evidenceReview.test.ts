@@ -139,13 +139,13 @@ describe("reading a record", () => {
 });
 
 describe("what is unresolved", () => {
-  it("says an existing address is not a confirmed person", () => {
+  it("says an existing address has no registered holder", () => {
     const row = record({ contact_matches: [match()] });
     const flags = kinds(row);
     expect(flags).toContain("address_exists_without_person");
     expect(flags).toContain("address_exists_without_organization");
     expect(flags).not.toContain("address_is_new");
-    expect(identityHeadline(row)).toBe("Dirección conocida, sin persona");
+    expect(identityHeadline(row)).toBe("Dirección conocida, sin titular registrado");
   });
 
   it("says a new address is new", () => {
@@ -154,12 +154,12 @@ describe("what is unresolved", () => {
     expect(identityHeadline(row)).toBe("Dirección nueva");
   });
 
-  it("reports a person only when one is actually recorded", () => {
+  it("names a person only when the durable CRM already records one", () => {
     const row = record({
       contact_matches: [match({ person_id: "p1", person_display_name: "Paula Morales" })],
     });
     expect(kinds(row)).not.toContain("address_exists_without_person");
-    expect(identityHeadline(row)).toBe("Persona confirmada");
+    expect(identityHeadline(row)).toBe("Dirección con persona registrada");
   });
 
   it("treats an unregistered domain as a hint, not as evidence", () => {

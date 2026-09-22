@@ -112,6 +112,7 @@ matters here.
 | Fixture residue | **zero.** Four probes assert it by name: `dedupe_key like 'pytest-%'` 0, `email_norm like 'pytest-%'` 0, `platform.command_receipt` 0, `crm.domain_event` with a non-null `command_receipt_id` 0 |
 | Send flags | one `outbound.send_control` row, **both `false`** |
 | Verification | **38 probes, all exact**, `supabase/cleanroom/verify.sql` compared against `supabase/cleanroom/expected_counts.json` by `compare.py`. Exact in both directions: an undeclared probe and an unmeasured probe both fail. `verify` is read-only — the whole file runs inside `begin read only`. **Passing as of 2026-09-22 against the post-R1 baseline** |
+| Seeded operator | one `platform.operator` row so the command boundary can resolve an identity. Its address is **fictitious and undeliverable** (`operador.local@example.invalid`) as of 2026-09-22; it used to be the developer's own mailbox, hard-coded in a public repository. Override it per build with `OL_CLEAN_OPERATOR_EMAIL=…`, which is environment, not tracked. `verify` counts the row and never reads its address, so the change moves no probe |
 | Checkpoints | **none, deliberately.** It is rebuilt, not restored |
 | Rebuildable right now | **Yes, and proven.** Rebuilt twice in immediate succession on 2026-09-22 from the same inputs; both runs ended at **38 probes, all exact**, with identical counts |
 | Preflight | every input is validated **before** the `DROP`, by the same tool that will replay it, in that tool's dry-run mode (no connection is opened): both Wave bundles' manifests and file hashes, and every staging manifest under the full version 2 rules. A refusal leaves the existing database untouched — `cleanroom_failure_tests.sh` M1–M4 prove the DROP announcement is never printed |
@@ -729,7 +730,13 @@ gained the surface an operator works that queue from. Both are local.
 | Marketing section | marked unavailable: an inbound email is not permission to send, permission is explicit and per address, and nothing in this queue grants it |
 | Quotes section | marked unavailable: a quote attaches to an already-reviewed contact and organization, and none exists |
 | Sidebar | **not in it**, same rule as `crm-v2`. It is a registry + hash-route section, reached from the *Revisión humana* card on Inicio, which now points here |
-| Tests | 13 in `EvidenceReviewPage.test.tsx`, 19 in `evidenceReview.test.ts`, 9 added to `test_v2_read_boundary.py`, 1 added to the nav suite, and the proxy allowlist suite extended |
+| First triage (added 2026-09-22) | `apps/dashboard/src/lib/evidenceTriage.ts` sorts the queue into four batches — *Correspondencia comercial*, *Respuesta automática de contraparte*, *Aviso de proveedor o seguridad*, *Sin clasificar* — from the sender, the sender's domain and the subject, all fields the boundary already returned. **No API change, no column, no migration** |
+| What the triage is | a **view**, proven to be a partition: every record lands in exactly one batch, every batch's count is on screen at all times including the ones being hidden, and `Todo` shows the page unfiltered. Nothing is removed, quarantined or marked. It is recomputed on render and **written nowhere** |
+| What the triage shows | every verdict carries the observed fact that produced it — the subject marker matched, the mailbox that refuses replies, the platform domain — rendered under *Por qué se sugirió* on the open record, so a reviewer can disagree with something specific |
+| Default batch | *Correspondencia comercial*. Measured against the real clean-room queue on 2026-09-22: **20 commercial · 4 counterparty auto-replies · 7 vendor/security notices · 0 unclassified**, of 31 |
+| The triage does not | rank, score, promote, recommend an action, or enable any affordance. A test asserts every preview action is still `disabled` with the triage on screen |
+| What the surface will not say (2026-09-22) | it never presents **settling who uses an address** as something that exists or can be done. `crm.person` is empty and no command writes it, so the queue headline reads *Dirección conocida, sin titular registrado*, the chip reads *Sin titular registrado*, and step 2 of the flow strip is *Dirección / institución revisadas*. **Dirección, institución and evidencia stay three separate readings**: a known address is a channel, an institution is attributed only by exact name or registered domain, and the message is provenance. Two tests in `EvidenceReviewPage.test.tsx` assert the rendered page matches none of `/confirmar (la )?persona/i`, `/persona confirmada/i`, `/identificar (a )?(la )?persona/i` |
+| Tests | **30** in `EvidenceReviewPage.test.tsx`, 19 in `evidenceReview.test.ts`, **32 in `evidenceTriage.test.ts`**, 9 in `test_v2_read_boundary.py`, 1 in the nav suite, and the proxy allowlist suite extended |
 
 **What is still unconfirmed after all of this.** All 20 records are `pending` and all 26
 assertions `unresolved`. No person name was staged at all — the manifest format has no kind
@@ -939,6 +946,35 @@ manifest at version 2").
 | Tests | **52** in `apps/email-pipeline/tests/test_v2_evidence_stage.py` (was 32), including every refusal above and a test that the stageable classes are §2.7.10's vocabulary rather than a second copy of it |
 | Proven against real data | yes — the same batch with the bounce put back was refused by name before any connection was opened |
 | Drive replay (R2) | **not started.** Unchanged from §2.7.10: the duplicated quote numbers, the undeclared revision suffixes and the unmeasured Gmail-to-Drive attachment overlap all still block it |
+
+### 2.7.12 Operator identity is configuration — closed 2026-09-22
+
+Three real personal mailboxes were constants in this **public** repository: two in
+`warm_case_sender_rules.py` and one in `supabase/scripts/cleanroom_db.sh`.
+
+The two in the classifier could not simply be deleted. They are **business-rule keys** —
+`looks_like_internal_admin_thread` decides "internal admin note" versus "client thread" by
+comparing a sender against them exactly — so removing them would have changed what the
+pipeline classifies. They now reach the rule by **role**:
+
+| Item | Value |
+|---|---|
+| Module | `apps/email-pipeline/src/origenlab_email_pipeline/operator_identity.py` |
+| Roles | `payments_operator`, `commercial_operator` — a closed set; an unknown key is refused, not ignored |
+| Source | a JSON file outside Git, `~/data/origenlab-v2-local/operator_identity.json`, or wherever `ORIGENLAB_OPERATOR_IDENTITY_FILE` points |
+| Default | **fictitious**, `@example.invalid`. An unconfigured checkout matches neither rule, which is visible through `OperatorIdentity.is_configured` rather than silent |
+| Absence vs. malformation | no file at all is the documented default and is accepted; a file that was *named* and is missing, unreadable or malformed is **refused**, so a typo cannot look like a working configuration |
+| Example | `apps/email-pipeline/config/operator_identity.example.json`, versioned, every address reserved |
+| Tests | 12 in `test_operator_identity.py`, plus 2 added to `test_public_repo_privacy_hygiene.py` |
+
+**The guard's exemption list is now empty.** `_DEFERRED_ALLOWLIST` in
+`test_public_repo_privacy_hygiene.py` held those two files; it holds nothing, and
+`test_privacy_allowlist_is_empty` fails if it grows back. Emptying it is what surfaced the
+third address — the clean room's seeded operator — which no entry had ever covered.
+
+**Consequence to know.** The two exact-value rules do not fire until the identity file
+exists. That is inherent to taking the addresses out of Git, not a regression: the rule is
+intact and is waiting for its input.
 
 ### 2.7.5 Local V2 — the reconciled picture, 2026-09-21
 

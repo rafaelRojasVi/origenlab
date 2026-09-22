@@ -63,8 +63,22 @@ OL_CLEANROOM_DIR="$OL_REPO_ROOT/supabase/cleanroom"
 
 # The operator seeded into a fresh build. One row, so the API command boundary can resolve an
 # identity at all; `auth_user_id` belongs to no auth system, because Supabase Auth is slice 1.
-OL_CLEAN_OPERATOR_EMAIL="rafarojasv6@gmail.com"
-OL_CLEAN_OPERATOR_NAME="Operador Local"
+#
+# The address is **fictitious by default** and undeliverable (RFC 2606 `.invalid`). This
+# repository is public, and a developer's own mailbox is personal data that has no business
+# being a constant in it -- it used to be one, and the privacy guard
+# (apps/email-pipeline/tests/test_public_repo_privacy_hygiene.py) now fails if it becomes one
+# again. Nothing depends on the value: the seed exists so that one identity resolves, and
+# `verify` counts the row rather than reading its address.
+#
+# Override it for a local build with the environment, which is not committed:
+#
+#   OL_CLEAN_OPERATOR_EMAIL=you@yourdomain.cl supabase/scripts/cleanroom_db.sh build --force
+#
+# Unlike the database name, this one is deliberately overridable: it names nothing that can be
+# dropped, so an environment variable here cannot cause the loss the name constant prevents.
+OL_CLEAN_OPERATOR_EMAIL="${OL_CLEAN_OPERATOR_EMAIL:-operador.local@example.invalid}"
+OL_CLEAN_OPERATOR_NAME="${OL_CLEAN_OPERATOR_NAME:-Operador Local}"
 OL_CLEAN_OPERATOR_ROLE="admin"
 
 die() { echo "FAIL: $*" >&2; exit 1; }

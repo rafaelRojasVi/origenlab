@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from operator_identity_fixture import configured_operator_identity  # noqa: F401
 from origenlab_email_pipeline.commercial.commercial_intel_rules import (
     derive_email_signal_facts,
     pick_external_contact,
@@ -36,9 +37,17 @@ def test_pick_external_contact_recognizes_canonical_origenlab_sender() -> None:
     )
 
 
-def test_pick_external_contact_handles_exact_operator_gmail_only() -> None:
+def test_pick_external_contact_handles_exact_operator_gmail_only(
+    configured_operator_identity,
+) -> None:
+    """The operator's own personal mailbox is internal even on a consumer domain.
+
+    The address is the one the identity module currently holds for the commercial role --
+    fictitious here, real only in a configured deployment. Pinning it by role rather than by
+    literal is what keeps it out of this public repository.
+    """
     outbound = pick_external_contact(
-        sender_raw="Tatiana <tvivancob@gmail.com>",
+        sender_raw=f"Operadora <{configured_operator_identity.address_for('commercial_operator')}>",
         recipients_raw="compras@hospital.cl",
         internal_domains={
             "origenlab.cl",

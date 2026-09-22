@@ -5,7 +5,8 @@
  * to decide?* — without answering it for the operator. So everything here is a **reading of
  * facts the API returned**, never a proposal:
  *
- * * a matched `crm.contact_point` means the **address exists**, and nothing about a person;
+ * * a matched `crm.contact_point` means the **address exists**, and nothing about a person —
+ *   and the workspace never offers to settle who uses it, because no command does;
  * * a sender domain is a **hint**, and only `crm.organization_domain` makes it evidence;
  * * an identically named organization is a **coincidence of spelling** until a human says
  *   otherwise.
@@ -183,7 +184,7 @@ export function reviewFlags(
       if (match.person_id === null) {
         flags.push({
           kind: "address_exists_without_person",
-          text: `La dirección ${address} ya existe como canal, pero nadie está registrado como su dueño. Dirección conocida no es persona confirmada.`,
+          text: `La dirección ${address} ya existe como canal, pero ninguna persona registrada figura como su titular. Quién la usa no se deduce de aquí, y establecerlo no es una decisión que este sistema ofrezca.`,
         });
       }
       if (match.organization_id === null) {
@@ -252,21 +253,39 @@ export function reviewFlags(
   return flags;
 }
 
-/** The one-line verdict shown in the queue row, derived from the same facts. */
+/**
+ * Whether the durable CRM already links this record's address to a `crm.person` row.
+ *
+ * It is a **reading of an existing row**, never an act: no surface in this product
+ * establishes who uses an address, and `crm.person` is empty, so today this is false for
+ * every record. It exists so the headline and the row's tone agree on one fact instead of
+ * comparing display strings.
+ */
+export function hasRegisteredPerson(record: V2EvidenceRecord): boolean {
+  return addressesOf(record).some(
+    (address) => matchForAddress(record, address)?.person_id != null,
+  );
+}
+
+/**
+ * The one-line verdict shown in the queue row, derived from the same facts.
+ *
+ * Every wording here is about the **address**. A known address is a known channel and
+ * nothing more: it does not name its user, and naming its user is not something this
+ * workspace can record — so no headline may read as if a person had been, or could be,
+ * settled here.
+ */
 export function identityHeadline(record: V2EvidenceRecord): string {
   const addresses = addressesOf(record);
   if (addresses.length === 0) {
     return "Sin dirección observada";
   }
   const matched = addresses.filter((address) => matchForAddress(record, address) !== null);
-  const withPerson = addresses.filter(
-    (address) => matchForAddress(record, address)?.person_id != null,
-  );
-  if (withPerson.length > 0) {
-    return "Persona confirmada";
+  if (hasRegisteredPerson(record)) {
+    return "Dirección con persona registrada";
   }
   if (matched.length === addresses.length) {
-    return "Dirección conocida, sin persona";
+    return "Dirección conocida, sin titular registrado";
   }
   if (matched.length === 0) {
     return "Dirección nueva";
@@ -309,8 +328,9 @@ export const REVIEW_FLOW: readonly FlowStep[] = [
   },
   {
     id: "review",
-    label: "2 · Contacto / institución revisados",
-    detail: "Una persona decide quién es el remitente y a qué institución pertenece.",
+    label: "2 · Dirección / institución revisadas",
+    detail:
+      "Un operador decide a qué institución corresponde la dirección del remitente. Quién usa esa dirección no se establece aquí: no hay decisión ni ruta que lo registre.",
   },
   {
     id: "prospect",

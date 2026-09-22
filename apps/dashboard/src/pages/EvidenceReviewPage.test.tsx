@@ -98,9 +98,39 @@ const NAMED_ORGANIZATION = {
   organization_matches: [],
 };
 
+/** A Google Workspace drip: our own tooling talking to us, not a laboratory. */
+const VENDOR_NOTICE = {
+  ...KNOWN_ADDRESS,
+  source_record_id: "cccccccc-3333-4333-8333-333333333333",
+  dedupe_key: "gmail_message:m3",
+  source_uri: "gmail://msg/m3",
+  subject: "Alerta de seguridad",
+  from_address: "no-reply@accounts.google.com",
+  from_domain: "accounts.google.com",
+  assertion_total: 0,
+  assertions: [],
+  contact_matches: [],
+  organization_matches: [],
+};
+
+/** A real counterparty, answered by their mail server. */
+const AUTO_REPLY = {
+  ...KNOWN_ADDRESS,
+  source_record_id: "dddddddd-4444-4444-8444-444444444444",
+  dedupe_key: "gmail_message:m4",
+  source_uri: "gmail://msg/m4",
+  subject: "Feriado Legal Re: Cotización insumos",
+  from_address: "compras@institutoaustral.example.cl",
+  from_domain: "institutoaustral.example.cl",
+  assertion_total: 0,
+  assertions: [],
+  contact_matches: [],
+  organization_matches: [],
+};
+
 beforeEach(() => {
   vi.mocked(fetchV2EvidenceRecords).mockResolvedValue(
-    page([KNOWN_ADDRESS, NAMED_ORGANIZATION], 20) as never,
+    page([KNOWN_ADDRESS, NAMED_ORGANIZATION, VENDOR_NOTICE, AUTO_REPLY], 20) as never,
   );
   vi.mocked(fetchV2Contacts).mockResolvedValue(page([], 9460) as never);
   vi.mocked(fetchV2Organizations).mockResolvedValue(page([], 1812) as never);
@@ -148,12 +178,12 @@ describe("EvidenceReviewPage", () => {
     expect(screen.getByText("Cotización insumos osmómetro")).toBeTruthy();
   });
 
-  it("says an existing address is a known address, not a confirmed person", async () => {
+  it("says an existing address is a known address, and never a settled person", async () => {
     render(<EvidenceReviewPage />);
     await screen.findByTestId("review-queue-table");
-    expect(screen.getByText("Dirección conocida, sin persona")).toBeTruthy();
+    expect(screen.getByText("Dirección conocida, sin titular registrado")).toBeTruthy();
     fireEvent.click(screen.getByText("diego.soto@farmadelta.example.cl"));
-    expect(screen.getByText("Sin persona confirmada")).toBeTruthy();
+    expect(screen.getByText("Sin titular registrado")).toBeTruthy();
     expect(screen.getByText("Sin institución atribuida")).toBeTruthy();
   });
 
@@ -290,5 +320,126 @@ describe("EvidenceReviewPage", () => {
     render(<EvidenceReviewPage />);
     expect(await screen.findByText(/Revisión de evidencia/)).toBeTruthy();
     await waitFor(() => expect(screen.queryByTestId("review-queue-table")).toBeNull());
+  });
+});
+
+describe("the first triage of the queue", () => {
+  it("opens on the commercially useful batch, not on the whole queue", async () => {
+    render(<EvidenceReviewPage />);
+    await screen.findByTestId("review-queue-table");
+    const rows = screen.getAllByTestId("review-queue-row");
+    expect(rows).toHaveLength(2);
+    const text = rows.map((row) => row.textContent ?? "").join(" ");
+    expect(text).toContain("diego.soto@farmadelta.example.cl");
+    expect(text).not.toContain("no-reply@accounts.google.com");
+  });
+
+  it("shows the size of every batch, including the ones it is not showing", async () => {
+    render(<EvidenceReviewPage />);
+    const strip = await screen.findByTestId("review-triage-filter");
+    // Hiding the count of what is filtered out would make the filter look like a deletion.
+    expect(strip.textContent).toContain("Correspondencia comercial");
+    expect(strip.textContent).toContain("Respuesta automática de contraparte");
+    expect(strip.textContent).toContain("Aviso de proveedor o seguridad");
+    expect(strip.textContent).toContain("Sin clasificar");
+  });
+
+  it("reaches the filtered-out records rather than dropping them", async () => {
+    render(<EvidenceReviewPage />);
+    await screen.findByTestId("review-queue-table");
+    fireEvent.click(screen.getByTestId("review-triage-tab-vendor_notice"));
+    const rows = screen.getAllByTestId("review-queue-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].textContent).toContain("no-reply@accounts.google.com");
+  });
+
+  it("can show the whole queue unfiltered", async () => {
+    render(<EvidenceReviewPage />);
+    await screen.findByTestId("review-queue-table");
+    fireEvent.click(screen.getByTestId("review-triage-tab-all"));
+    expect(screen.getAllByTestId("review-queue-row")).toHaveLength(4);
+  });
+
+  it("puts the suggested category on the row", async () => {
+    render(<EvidenceReviewPage />);
+    await screen.findByTestId("review-queue-table");
+    const chips = screen.getAllByTestId("review-triage-chip");
+    expect(chips).toHaveLength(2);
+    expect(chips[0].textContent).toContain("Correspondencia comercial");
+  });
+
+  it("shows why the category was suggested, for the open record", async () => {
+    render(<EvidenceReviewPage />);
+    await screen.findByTestId("review-queue-table");
+    fireEvent.click(screen.getByText("diego.soto@farmadelta.example.cl"));
+    const reasons = await screen.findAllByTestId("review-triage-reason");
+    expect(reasons.length).toBeGreaterThan(0);
+    expect(reasons.map((row) => row.textContent ?? "").join(" ")).toContain("cotiz");
+  });
+
+  it("says the suggestion is a reading aid and records nothing", async () => {
+    render(<EvidenceReviewPage />);
+    const note = await screen.findByTestId("review-triage-disclaimer");
+    expect(note.textContent).toMatch(/no (se guarda|cambia|registra)/i);
+  });
+
+  it("keeps an empty batch explained rather than blank", async () => {
+    render(<EvidenceReviewPage />);
+    await screen.findByTestId("review-queue-table");
+    fireEvent.click(screen.getByTestId("review-triage-tab-unclassified"));
+    expect(screen.queryAllByTestId("review-queue-row")).toHaveLength(0);
+    expect(screen.getByTestId("review-triage-empty")).toBeTruthy();
+  });
+
+  it("still enables nothing: the triage does not unlock a command", async () => {
+    render(<EvidenceReviewPage />);
+    await screen.findByTestId("review-queue-table");
+    fireEvent.click(screen.getByText("diego.soto@farmadelta.example.cl"));
+    await screen.findAllByTestId("review-triage-reason");
+    const actions = screen.getAllByTestId("review-preview-action");
+    expect(actions.length).toBeGreaterThan(0);
+    for (const action of actions) {
+      expect(action.hasAttribute("disabled")).toBe(true);
+    }
+  });
+});
+
+describe("what the workspace refuses to infer about an institution", () => {
+  it("says in words that a domain never names an institution by itself", async () => {
+    render(<EvidenceReviewPage />);
+    await screen.findByTestId("review-queue-table");
+    fireEvent.click(screen.getByText("diego.soto@farmadelta.example.cl"));
+    const rule = await screen.findByTestId("review-organization-rule");
+    expect(rule.textContent).toMatch(/dominio/i);
+    expect(rule.textContent).toMatch(/exacta|registrado/i);
+  });
+});
+
+describe("what the workspace refuses to offer about a person", () => {
+  /**
+   * The failure this guards against is a wording one, and it is the expensive kind: a
+   * reviewer who reads "confirmar persona" on a screen concludes the product can settle
+   * who uses an address. It cannot -- no command writes `crm.person`, and the table is
+   * empty -- so the words must not exist, anywhere, in any conjugation.
+   */
+  it("never names confirming a person as something that can be done", async () => {
+    render(<EvidenceReviewPage />);
+    await screen.findByTestId("review-queue-table");
+    fireEvent.click(screen.getByText("diego.soto@farmadelta.example.cl"));
+    const text = document.body.textContent ?? "";
+    expect(text).not.toMatch(/confirmar\s+(la\s+)?persona/i);
+    expect(text).not.toMatch(/persona\s+confirmada/i);
+    expect(text).not.toMatch(/identificar\s+(a\s+)?(la\s+)?persona/i);
+  });
+
+  it("keeps the address, the institution and the evidence as three separate readings", async () => {
+    render(<EvidenceReviewPage />);
+    await screen.findByTestId("review-queue-table");
+    fireEvent.click(screen.getByText("diego.soto@farmadelta.example.cl"));
+    // The address is read as a channel, the institution as an attribution of its own, and
+    // the message as provenance. None of the three stands in for another.
+    expect(screen.getByText("Dirección conocida, sin titular registrado")).toBeTruthy();
+    expect(screen.getByText("Sin institución atribuida")).toBeTruthy();
+    expect(screen.getByTestId("review-organization-rule")).toBeTruthy();
   });
 });

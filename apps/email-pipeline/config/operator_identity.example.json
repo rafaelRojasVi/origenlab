@@ -1,0 +1,7 @@
+{
+  "_comment": "Copy to ~/data/origenlab-v2-local/operator_identity.json and replace the addresses with the operator's real mailboxes. That file is never committed; this example is, and every address in it is fictitious and undeliverable (RFC 2606 .invalid).",
+  "roles": {
+    "payments_operator": "operador.pagos@example.invalid",
+    "commercial_operator": "operadora.comercial@example.invalid"
+  }
+}

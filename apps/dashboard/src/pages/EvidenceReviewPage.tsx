@@ -42,11 +42,34 @@ import {
   reviewDate,
   reviewFlags,
   reviewStatusLabel,
+  hasRegisteredPerson,
   REVIEW_FLOW,
 } from "../lib/evidenceReview";
+import type { TriageCategory } from "../lib/evidenceTriage";
+import {
+  recordsInCategory,
+  triageCategoryCaption,
+  triageCategoryLabel,
+  triageCounts,
+  triageOf,
+  TRIAGE_CATEGORIES,
+} from "../lib/evidenceTriage";
 import { formatMirrorLoadError } from "../lib/humanizeApiError";
 
 const PAGE_SIZE = 50;
+
+/** The batch the workspace opens on, plus the escape hatch that shows everything. */
+type TriageFilter = TriageCategory | "all";
+
+/**
+ * Said once, at the top, and never softened further down.
+ *
+ * The triage is the only thing on this page that offers an opinion, so it is also the only
+ * thing that has to disclaim one. The wording matters: not "provisional", not "draft" --
+ * *nothing is written*. A reviewer who believes the category was saved will stop checking it.
+ */
+const TRIAGE_DISCLAIMER =
+  "La categoría es una sugerencia de lectura calculada en el momento a partir del remitente y el asunto. No se guarda en ninguna parte, no cambia el estado del registro y no decide nada: si te parece mal, ignórala.";
 
 interface Totals {
   contacts: number;
@@ -159,6 +182,112 @@ function Chip({ tone, children }: { tone: "neutral" | "warn" | "ok"; children: R
   );
 }
 
+/**
+ * The batch selector, with every batch's size on it — including the batches it is hiding.
+ *
+ * This is the one place where the workspace could quietly become a filter that loses
+ * evidence, so it is built not to be: the counts of all four categories are always visible,
+ * `Todo` is always one click away, and nothing is ever removed from the underlying page.
+ */
+function TriageFilterStrip({
+  counts,
+  total,
+  selected,
+  onSelect,
+}: {
+  counts: Record<TriageCategory, number>;
+  total: number;
+  selected: TriageFilter;
+  onSelect: (filter: TriageFilter) => void;
+}) {
+  const tabs: { id: TriageFilter; label: string; count: number; caption: string }[] = [
+    ...TRIAGE_CATEGORIES.map((category) => ({
+      id: category as TriageFilter,
+      label: triageCategoryLabel(category),
+      count: counts[category],
+      caption: triageCategoryCaption(category),
+    })),
+    {
+      id: "all" as TriageFilter,
+      label: "Todo",
+      count: total,
+      caption: "La cola completa, sin ordenar por categoría. Nada se oculta nunca.",
+    },
+  ];
+  return (
+    <div className="space-y-2" data-testid="review-triage-filter">
+      <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+        {tabs.map((tab) => {
+          const active = tab.id === selected;
+          return (
+            <li key={tab.id}>
+              <button
+                type="button"
+                aria-pressed={active}
+                data-testid={`review-triage-tab-${tab.id}`}
+                onClick={() => onSelect(tab.id)}
+                className={`h-full w-full rounded-lg border px-3 py-2 text-left text-xs transition ${
+                  active
+                    ? "border-slate-900 bg-slate-900 text-white"
+                    : "border-slate-200 bg-[var(--color-card)] text-slate-800 hover:border-slate-400"
+                }`}
+              >
+                <span className="block text-lg font-semibold">{number(tab.count)}</span>
+                <span className="block font-medium">{tab.label}</span>
+                <span
+                  className={`mt-1 block ${active ? "text-slate-200" : "text-[var(--color-muted)]"}`}
+                >
+                  {tab.caption}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+      <p className="text-xs text-[var(--color-muted)]" data-testid="review-triage-disclaimer">
+        {TRIAGE_DISCLAIMER}
+      </p>
+    </div>
+  );
+}
+
+function TriageChip({ record }: { record: V2EvidenceRecord }) {
+  const verdict = triageOf(record);
+  const tone: Record<TriageCategory, string> = {
+    commercial: "bg-emerald-100 text-emerald-800",
+    counterparty_auto_reply: "bg-sky-100 text-sky-800",
+    vendor_notice: "bg-slate-200 text-slate-700",
+    unclassified: "bg-amber-100 text-amber-800",
+  };
+  return (
+    <span
+      data-testid="review-triage-chip"
+      className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${tone[verdict.category]}`}
+    >
+      {triageCategoryLabel(verdict.category)}
+    </span>
+  );
+}
+
+/** The reasons behind the chip, so the reviewer can disagree with something specific. */
+function TriageReasons({ record }: { record: V2EvidenceRecord }) {
+  const verdict = triageOf(record);
+  return (
+    <section className="space-y-1">
+      <h4 className="text-xs font-semibold uppercase text-[var(--color-muted)]">
+        Por qué se sugirió «{triageCategoryLabel(verdict.category)}»
+      </h4>
+      <ul className="list-disc space-y-1 pl-5 text-[var(--color-muted)]">
+        {verdict.reasons.map((reason) => (
+          <li key={`${reason.kind}-${reason.text}`} data-testid="review-triage-reason">
+            {reason.text}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function RecordDetail({
   record,
   counts,
@@ -170,6 +299,7 @@ function RecordDetail({
   const names = organizationNamesOf(record);
   return (
     <div className="space-y-4 border-t border-slate-200 bg-slate-50 px-3 py-3 text-sm">
+      <TriageReasons record={record} />
       <div className="grid gap-3 md:grid-cols-2">
         <section className="space-y-1">
           <h4 className="text-xs font-semibold uppercase text-[var(--color-muted)]">
@@ -187,9 +317,9 @@ function RecordDetail({
                     </p>
                     <p>
                       {hit.person_display_name ? (
-                        <Chip tone="ok">Persona confirmada: {hit.person_display_name}</Chip>
+                        <Chip tone="ok">Persona registrada: {hit.person_display_name}</Chip>
                       ) : (
-                        <Chip tone="warn">Sin persona confirmada</Chip>
+                        <Chip tone="warn">Sin titular registrado</Chip>
                       )}{" "}
                       {hit.organization_name ? (
                         <Chip tone="ok">Institución: {hit.organization_name}</Chip>
@@ -212,6 +342,16 @@ function RecordDetail({
           <h4 className="text-xs font-semibold uppercase text-[var(--color-muted)]">
             Institución
           </h4>
+          <p
+            className="rounded-md bg-white px-2 py-1 text-[11px] text-[var(--color-muted)]"
+            data-testid="review-organization-rule"
+          >
+            Una institución aparece aquí de dos maneras y de ninguna otra: porque el mensaje
+            nombra <strong>exactamente</strong> el nombre de una institución ya registrada, o
+            porque el dominio del remitente está <strong>registrado</strong> como dominio de
+            una institución. Un dominio que se parece al nombre de una institución no la
+            nombra: ese parecido es interpretación, y la interpretación la haces tú.
+          </p>
           <p className="text-[var(--color-muted)]">
             Pista de dominio:{" "}
             <span className="font-medium text-slate-800">{record.from_domain ?? "—"}</span>{" "}
@@ -402,6 +542,9 @@ export function EvidenceReviewPage() {
   const [totals, setTotals] = useState<Totals | null>(null);
   const [offset, setOffset] = useState(0);
   const [open, setOpen] = useState<string | null>(null);
+  // The workspace opens on the work. Twenty commercial messages sitting between a Google
+  // drip campaign and a Tidio signup is the reason nobody reads this queue.
+  const [filter, setFilter] = useState<TriageFilter>("commercial");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -442,7 +585,14 @@ export function EvidenceReviewPage() {
   }, [load]);
 
   const records = useMemo(() => page?.items ?? [], [page]);
+  // Domain sharing is counted across the **whole** page, not the filtered view: two
+  // messages from one institution matter even when the triage put them in different batches.
   const counts = useMemo(() => domainCounts(records), [records]);
+  const triage = useMemo(() => triageCounts(records), [records]);
+  const visible = useMemo(
+    () => (filter === "all" ? records : recordsInCategory(records, filter)),
+    [records, filter],
+  );
 
   return (
     <div className="space-y-5">
@@ -457,7 +607,7 @@ export function EvidenceReviewPage() {
         <TopCard
           label="Contactos"
           value={totals?.contacts ?? 0}
-          caption="Canales de correo. Existir como dirección no es ser una persona confirmada."
+          caption="Son direcciones, no personas. Que una dirección exista no dice quién la usa, y esta superficie no lo establece."
         />
         <TopCard
           label="Organizaciones"
@@ -499,10 +649,30 @@ export function EvidenceReviewPage() {
               {number(page?.total ?? 0)} correos pendientes de Gmail
             </span>
           </h3>
+
+          <TriageFilterStrip
+            counts={triage}
+            total={records.length}
+            selected={filter}
+            onSelect={setFilter}
+          />
+
+          {visible.length === 0 ? (
+            <p
+              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-[var(--color-muted)]"
+              data-testid="review-triage-empty"
+            >
+              Ningún correo de esta página cayó en «{filter === "all" ? "Todo" : triageCategoryLabel(filter)}».
+              Los {number(records.length)} registros de la página siguen ahí — elige otra
+              categoría o «Todo» para verlos.
+            </p>
+          ) : null}
+
           <table className="w-full table-auto text-left text-sm" data-testid="review-queue-table">
             <thead className="text-xs uppercase text-[var(--color-muted)]">
               <tr>
                 <th className="py-2">Remitente</th>
+                <th>Categoría sugerida</th>
                 <th>Asunto</th>
                 <th>Fecha</th>
                 <th>Identidad</th>
@@ -510,7 +680,7 @@ export function EvidenceReviewPage() {
               </tr>
             </thead>
             <tbody>
-              {records.map((record) => {
+              {visible.map((record) => {
                 const expanded = open === record.source_record_id;
                 return (
                   <Fragment key={record.source_record_id}>
@@ -530,15 +700,16 @@ export function EvidenceReviewPage() {
                           {record.from_address ?? record.dedupe_key}
                         </button>
                       </td>
+                      <td>
+                        <TriageChip record={record} />
+                      </td>
                       <td className="text-slate-800">{record.subject ?? "—"}</td>
                       <td className="whitespace-nowrap text-[var(--color-muted)]">
                         {reviewDate(record.message_date ?? record.acquired_at)}
                       </td>
                       <td>
                         <Chip
-                          tone={
-                            identityHeadline(record) === "Persona confirmada" ? "ok" : "warn"
-                          }
+                          tone={hasRegisteredPerson(record) ? "ok" : "warn"}
                         >
                           {identityHeadline(record)}
                         </Chip>
@@ -549,7 +720,7 @@ export function EvidenceReviewPage() {
                     </tr>
                     {expanded ? (
                       <tr>
-                        <td colSpan={5} className="p-0">
+                        <td colSpan={6} className="p-0">
                           <RecordDetail record={record} counts={counts} />
                         </td>
                       </tr>
@@ -565,6 +736,7 @@ export function EvidenceReviewPage() {
               <span>
                 {number(page.offset + 1)}–{number(page.offset + records.length)} de{" "}
                 {number(page.total)}
+                {filter === "all" ? null : ` · mostrando ${number(visible.length)} de esta página`}
               </span>
               <span className="flex gap-2">
                 <button
@@ -623,7 +795,7 @@ export function EvidenceReviewPage() {
         <div className="mt-3">
           <PreviewAction
             label="Crear cotización"
-            reason="Requiere un contacto e institución revisados por una persona."
+            reason="Requiere una dirección y una institución ya revisadas por un operador."
           />
         </div>
       </section>
