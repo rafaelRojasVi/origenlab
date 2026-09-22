@@ -1068,6 +1068,29 @@ operator now has a truthful value to choose instead.
 | pgTAP `060_constraints_crm.sql` | 105/105 on a freshly migrated disposable database |
 | Clean-room rehearsal | 12 rehearsals over the 4 real records; fingerprint unchanged |
 
+### 2.7.15 Identity, commercial role and person — separated in the surface, 2026-09-22
+
+**The confusion this prevents.** An operator choosing which of two named institutions the
+sender belongs to is settling **identity**. They are not settling what that institution is to
+OrigenLab commercially, and they are not settling who the person is. The three used to be
+invisible to each other in the workspace, which is how "this is the institution" quietly
+reads as "this is a prospect".
+
+| Item | Value |
+|---|---|
+| Module | `apps/dashboard/src/lib/commercialRole.ts` — annotation only. No client, no URL, no write |
+| `supplier` | an exact match against the six approved brands. A **lookup**, sourced to the business's brand review of 2026-09-06 |
+| `requesting` | **inferred** — this message names a supplier brand and this name is not it. Labelled as a reading of the message, never as a recorded fact |
+| `unknown` | no supplier brand is named, so nothing is shown. Silence rather than a guess |
+| Where the list comes from | `apps/web/src/data/brands.ts` (`APPROVED_BRAND_IDS`), the closed list the public site already validates |
+| Why a copy, and how it cannot rot | the operator dashboard does not build against the marketing site. `apps/web/scripts/validate-brands.mjs` reads the dashboard's copy and **exits 1** if the two lists disagree — proven by injecting a wrong name |
+| What it never writes | `crm.organization_relationship` has no command, so the role cannot be written from this workspace at all. The preview says so, and a test asserts the request body carries no role field |
+| What it never implies | no prospect, no opportunity, no marketing permission. A supplier is never shown as prospect or customer |
+
+**Evidence:** `apps/dashboard` 1,250 passed across 127 files; `apps/web` `npm run validate`
+exits 0 with the new gate included. Every button is still `disabled` and the proxy still
+allows no POST under `/v2`.
+
 ### 2.7.5 Local V2 — the reconciled picture, 2026-09-21
 
 One table for "what is actually in the local V2 database and does it add up". The per-stage

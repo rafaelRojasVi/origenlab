@@ -33,6 +33,11 @@ import { V2EmptyState } from "../components/v2/V2EmptyState";
 import { V2PageHeader } from "../components/v2/V2PageHeader";
 import { sourceKindLabel } from "../lib/crmV2Browser";
 import {
+  COMMERCIAL_ROLE_LABELS,
+  commercialRoleOf,
+  commercialRoleProvenance,
+} from "../lib/commercialRole";
+import {
   addressesOf,
   domainCounts,
   identityHeadline,
@@ -483,6 +488,7 @@ function CommandPanel({
     (assertion) =>
       assertion.kind === "organization_name" && assertion.resolution === "unresolved",
   );
+  const assertedInstitutionNames = namedInstitutions.map((assertion) => assertion.value_norm);
   const previews = useMemo(
     () =>
       commandPreviews({
@@ -623,10 +629,19 @@ function CommandPanel({
             Un correo puede nombrar al proveedor y al cliente final. Sólo una es la del
             remitente; las demás quedan sin resolver y el registro sigue pendiente.
           </p>
+          <p className="text-[11px] text-[var(--color-muted)]">
+            El rol comercial se muestra para que lo tengas a la vista y <strong>no se
+            escribe</strong>: identidad de institución, rol comercial y persona son tres
+            hechos distintos, y esta decisión sólo registra el primero.
+          </p>
           {namedInstitutions.map((assertion) => {
             const match = record.organization_matches.find(
               (row) => row.value_norm === assertion.value_norm,
             );
+            // Identity and commercial role are shown on the same line and never merged:
+            // the chip on the left is what the CRM has, the chip on the right is what the
+            // business is to OrigenLab, and this decision only settles the first.
+            const role = commercialRoleOf(assertion.value_norm, assertedInstitutionNames);
             return (
               <label
                 key={assertion.assertion_id}
@@ -646,7 +661,18 @@ function CommandPanel({
                     <Chip tone="neutral">Ya existe: {match.name} — se confirmaría</Chip>
                   ) : (
                     <Chip tone="neutral">No existe — se crearía con ese texto exacto</Chip>
-                  )}
+                  )}{" "}
+                  {role !== "unknown" ? (
+                    <Chip tone="neutral">{COMMERCIAL_ROLE_LABELS[role]}</Chip>
+                  ) : null}
+                  {role !== "unknown" ? (
+                    <span
+                      className="block text-[11px] text-[var(--color-muted)]"
+                      data-testid="commercial-role-provenance"
+                    >
+                      {commercialRoleProvenance(role)}
+                    </span>
+                  ) : null}
                 </span>
               </label>
             );

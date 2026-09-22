@@ -627,3 +627,84 @@ describe("what the operator says an address is to the institution", () => {
     expect(item.request).toMatchObject({ usage: "individual_owner_unknown" });
   });
 });
+
+// ------------------------------------------------------------------------------------------
+// The commercial role, shown beside the decision and never folded into it.
+//
+// Identity («Hielscher Ultrasonics» is an organization), commercial role (it is a supplier)
+// and person (who wrote) are three facts. This command records the first. These tests are
+// about the surface saying the other two out loud so nobody reads them into it.
+
+describe("the commercial role of the institution being chosen", () => {
+  const SUPPLIER_NAME = "hielscher ultrasonics";
+  const CUSTOMER_NAME = "universidad austral de chile";
+
+  function twoSidedRecord() {
+    return record({
+      assertion_total: 3,
+      assertions: [
+        assertion({ assertion_id: "org-sup", kind: "organization_name", value_norm: SUPPLIER_NAME }),
+        assertion({ assertion_id: "org-cli", kind: "organization_name", value_norm: CUSTOMER_NAME }),
+        assertion({ assertion_id: "addr", kind: "contact_address", value_norm: SUPPLIER }),
+      ],
+      organization_matches: [],
+    });
+  }
+
+  function chose(assertionId: string) {
+    return preview("attribute_sender_organization", {
+      record: twoSidedRecord(),
+      domainShareCount: 1,
+      selectedOrganizationId: null,
+      selectedOrganizationAssertionId: assertionId,
+      addressRelationship: "shared_mailbox",
+      note: "el remitente es el fabricante",
+    });
+  }
+
+  it("names an approved brand a supplier, and sources the fact to the business", () => {
+    const said = chose("org-sup").cautions.join(" ");
+    expect(said).toContain("Proveedor / fabricante");
+    expect(said).toContain("Marca aprobada");
+    expect(said).toContain("no una inferencia");
+  });
+
+  it("reads the other institution as the one asking, and marks it an inference", () => {
+    const said = chose("org-cli").cautions.join(" ");
+    expect(said).toContain("Solicita / cotiza");
+    expect(said).toContain("Inferido");
+    expect(said).toContain("no un dato registrado");
+  });
+
+  it("says the decision records identity and not the role, on either side", () => {
+    for (const id of ["org-sup", "org-cli"]) {
+      expect(chose(id).cautions.join(" ")).toContain("registra su identidad, no su rol");
+    }
+  });
+
+  it("never calls a supplier the one asking", () => {
+    expect(chose("org-sup").cautions.join(" ")).not.toContain("Solicita / cotiza");
+  });
+
+  it("says nothing about a role when no supplier brand is named", () => {
+    const neutral = attribution(SUPPLIER, "org-new");
+    const said = neutral.cautions.join(" ");
+    expect(said).not.toContain("Proveedor / fabricante");
+    expect(said).not.toContain("Solicita / cotiza");
+  });
+
+  it("refuses the things a role annotation must not be read as doing", () => {
+    const said = chose("org-cli").doesNot.join(" ").toLowerCase();
+    expect(said).toContain("crm.organization_relationship no tiene comando");
+    expect(said).toContain("no abre prospecto ni oportunidad");
+    expect(said).toContain("no otorga permiso de marketing");
+    // Said once, by the preview's own precise line rather than by the shared list.
+    expect(said.match(/no crea persona/g)).toHaveLength(1);
+  });
+
+  it("puts no commercial role in the request it would send", () => {
+    // The strongest form of "it does not write it": the body itself.
+    const request = chose("org-cli").request ?? {};
+    expect(Object.keys(request).join(" ")).not.toMatch(/role|rol|relationship|prospect/i);
+  });
+});

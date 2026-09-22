@@ -21,6 +21,12 @@
 
 import type { V2AttachableUsage, V2EvidenceRecord, V2RecordAssertion } from "../api/v2Types";
 import { isConsumerDomain, isRoleMailbox, organizationNamesOf } from "./evidenceReview";
+import {
+  COMMERCIAL_ROLE_LABELS,
+  COMMERCIAL_ROLE_WRITES_NOTHING,
+  commercialRoleOf,
+  commercialRoleProvenance,
+} from "./commercialRole";
 
 /** The five commands, named exactly as the API names them. */
 export type EvidenceCommandId =
@@ -476,6 +482,19 @@ function attributeSenderOrganization(context: CommandContext): CommandPreview {
   if (chosen && !match) {
     cautions.push(`Se creará «${chosen.value_norm}», con el texto exacto que afirma el correo.`);
   }
+  // The commercial role of the institution being chosen, and of the ones being left behind.
+  // Identity is what this command records; the role is a different fact with no command, so
+  // it is shown next to the decision and never folded into it.
+  const assertedNames = named.map((assertion) => assertion.value_norm);
+  if (chosen) {
+    const role = commercialRoleOf(chosen.value_norm, assertedNames);
+    if (role !== "unknown") {
+      cautions.push(
+        `«${chosen.value_norm}» — ${COMMERCIAL_ROLE_LABELS[role]}. ` +
+          `${commercialRoleProvenance(role)} Esta decisión registra su identidad, no su rol.`,
+      );
+    }
+  }
   const address = addresses.length === 1 ? addresses[0] : null;
   const { blockers: relationshipIssues, relationship, override } = relationshipBlockers(
     context,
@@ -549,7 +568,8 @@ function attributeSenderOrganization(context: CommandContext): CommandPreview {
       relationship === "individual_owner_unknown"
         ? "No crea persona ni afiliación, y no afirma de quién es la dirección: sólo qué institución la opera."
         : "No crea persona ni afiliación: un buzón de mesa no tiene dueño conocido.",
-      "No abre prospecto, permiso de marketing, campaña, cotización ni tarea.",
+      ...COMMERCIAL_ROLE_WRITES_NOTHING,
+      "No abre campaña, cotización ni tarea.",
       "Si falla cualquier mitad, no queda ninguna: es una sola transacción.",
     ],
     request:

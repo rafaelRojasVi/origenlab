@@ -751,3 +751,109 @@ describe("a message whose sender address looks like a person's", () => {
     }
   });
 });
+
+// ------------------------------------------------------------------------------------------
+// The commercial role in the workspace.
+//
+// The brand name here is real and the address is not: a supplier brand is public (it is on
+// OrigenLab's own site) while a sender is a real person, so the fixture names the first and
+// invents the second.
+
+describe("a message between a supplier brand and the institution asking for a quote", () => {
+  const SUPPLIER_AND_CUSTOMER = {
+    ...TWO_INSTITUTIONS,
+    source_record_id: "44444444-dddd-4ddd-8ddd-dddddddddddd",
+    from_address: "ventas@proveedor.example",
+    assertions: [
+      {
+        assertion_id: "as-addr",
+        kind: "contact_address",
+        value_norm: "ventas@proveedor.example",
+        resolution: "unresolved",
+        resolved_kind: null,
+        resolved_id: null,
+        ambiguity_note: null,
+      },
+      {
+        assertion_id: "as-supplier",
+        kind: "organization_name",
+        value_norm: "hielscher ultrasonics",
+        resolution: "unresolved",
+        resolved_kind: null,
+        resolved_id: null,
+        ambiguity_note: null,
+      },
+      {
+        assertion_id: "as-customer",
+        kind: "organization_name",
+        value_norm: "universidad austral de chile",
+        resolution: "unresolved",
+        resolved_kind: null,
+        resolved_id: null,
+        ambiguity_note: null,
+      },
+    ],
+    organization_matches: [],
+  };
+
+  beforeEach(() => {
+    vi.mocked(fetchV2EvidenceRecords).mockResolvedValue(
+      page([SUPPLIER_AND_CUSTOMER], 1) as never,
+    );
+  });
+
+  async function open() {
+    render(<EvidenceReviewPage />);
+    await screen.findByTestId("review-queue-table");
+    fireEvent.click(screen.getByText("ventas@proveedor.example"));
+  }
+
+  function choiceFor(fragment: string) {
+    return screen
+      .getAllByTestId("sender-institution-choice")
+      .find((choice) => (choice.textContent ?? "").includes(fragment))!;
+  }
+
+  it("shows the supplier as supplier and the university as the one asking", async () => {
+    await open();
+    expect(choiceFor("hielscher").textContent).toContain("Proveedor / fabricante");
+    expect(choiceFor("universidad austral").textContent).toContain("Solicita / cotiza");
+  });
+
+  it("never shows the supplier as a prospect or a customer", async () => {
+    await open();
+    const supplier = choiceFor("hielscher").textContent ?? "";
+    expect(supplier).not.toMatch(/prospecto|cliente|solicita/i);
+  });
+
+  it("says where each reading comes from, so neither is taken as recorded", async () => {
+    await open();
+    expect(choiceFor("hielscher").textContent).toContain("Marca aprobada");
+    expect(choiceFor("universidad austral").textContent).toContain("Inferido");
+  });
+
+  it("states that identity, commercial role and person are three separate facts", async () => {
+    await open();
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("no se escribe");
+    expect(text).toContain("identidad de institución, rol comercial y persona son tres");
+  });
+
+  it("assigns the university no prospect, opportunity or marketing permission", async () => {
+    await open();
+    fireEvent.change(screen.getByTestId("command-note"), { target: { value: "revisado" } });
+    fireEvent.click(within(choiceFor("universidad austral")).getByRole("radio"));
+    const card = screen.getByTestId("command-preview-attribute_sender_organization");
+    const said = (card.textContent ?? "").toLowerCase();
+    expect(said).toContain("no abre prospecto ni oportunidad");
+    expect(said).toContain("no otorga permiso de marketing");
+    expect(said).toContain("crm.organization_relationship no tiene comando");
+  });
+
+  it("still sends nothing", async () => {
+    await open();
+    for (const action of screen.getAllByTestId("review-preview-action")) {
+      expect((action as HTMLButtonElement).disabled).toBe(true);
+    }
+  });
+});
