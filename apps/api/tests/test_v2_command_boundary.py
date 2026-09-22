@@ -31,6 +31,7 @@ from origenlab_api.main import create_app
 from origenlab_api.settings import Settings
 from origenlab_api.v2.commands import (
     ATTACH_CONTACT_ADDRESS,
+    ATTACHABLE_USAGE,
     ATTRIBUTE_SENDER_ORGANIZATION,
     CONFIRM_ORGANIZATION,
     CREATE_ORGANIZATION,
@@ -40,6 +41,8 @@ from origenlab_api.v2.commands import (
     CommandRefused,
     ConfirmOrganizationBody,
     KeepEvidencePendingBody,
+    address_names_a_desk,
+    require_override_for_a_named_address,
     validated,
     normalize_organization_name,
     request_digest,
@@ -2214,3 +2217,390 @@ def test_an_attribution_refuses_an_assertion_from_another_message(
             key=f"foreign-{state['tag']}", digest="f" * 64,
         )
     assert exc.value.code == "assertion_belongs_to_another_record"
+
+
+# ------------------------------------------- the relationship an address has to an institution
+#
+# `shared_mailbox` was once the only `usage` the schema could hold for an address attached to
+# an organization with no person, so it was what every attribution wrote — including on
+# `jperez@`, where it asserts that a named individual's mailbox is a desk several people read.
+# Nobody decided that. These tests are about the two things that replace it: a truthful
+# neutral value, and a refusal to make the shared-mailbox claim by accident.
+
+
+def _attach(**overrides) -> AttachContactAddressBody:
+    body = {
+        "source_record_id": RECORD_ID,
+        "note": "es el buzón de esta institución",
+        "assertion_id": ASSERTION_ID,
+        "organization_id": ORGANIZATION_ID,
+        "usage": "individual_owner_unknown",
+    }
+    body.update(overrides)
+    return AttachContactAddressBody(**body)
+
+
+def test_the_two_reachable_relationships_are_the_vocabulary() -> None:
+    """One says a desk is shared; the other says an individual owns it and nobody knows who."""
+    assert set(ATTACHABLE_USAGE) == {"shared_mailbox", "individual_owner_unknown"}
+
+
+@pytest.mark.parametrize(
+    "path, body",
+    [
+        (
+            "/v2/commands/attach-contact-address",
+            {"assertion_id": ASSERTION_ID, "organization_id": ORGANIZATION_ID},
+        ),
+        (
+            "/v2/commands/attribute-sender-organization",
+            {
+                "organization_assertion_id": ASSERTION_ID,
+                "address_assertion_id": ADDRESS_ASSERTION_ID,
+                "target": "new",
+            },
+        ),
+    ],
+)
+def test_neither_command_has_a_default_relationship(path: str, body: dict) -> None:
+    """A request that does not say what the address is to the institution is not a decision."""
+    repo = _FakeCommandRepo()
+    response = _client(repo).post(path, json=_body(**body), headers=_headers())
+    assert response.status_code == 422
+    assert repo.calls == []
+
+
+@pytest.mark.parametrize(
+    "address, is_a_desk",
+    [
+        ("ventas@proveedor.example", True),
+        ("secretaria@universidad.example", True),
+        ("produccion@planta.example", True),
+        ("contacto+equipos@proveedor.example", True),
+        ("ventas.sur@proveedor.example", True),
+        ("jperez@universidad.example", False),
+        ("p.morales@universidad.example", False),
+        ("pmorales@universidad.example", False),
+        ("j.perez-soto@universidad.example", False),
+        ("maria.gonzalez@corteva.com", False),
+    ],
+)
+def test_only_a_recognised_role_local_part_reads_as_a_desk(address: str, is_a_desk: bool) -> None:
+    """Unknown stays unknown: an unrecognised local part is not evidence of a desk."""
+    assert address_names_a_desk(address) is is_a_desk
+
+
+def test_a_named_address_may_not_be_called_a_shared_mailbox() -> None:
+    with pytest.raises(CommandRefused) as exc:
+        require_override_for_a_named_address(
+            value_norm="jperez@universidad.example",
+            usage="shared_mailbox",
+            override_note=None,
+        )
+    assert exc.value.code == "named_address_is_not_a_shared_mailbox_by_default"
+    assert exc.value.status_code == 422
+    # The refusal names the alternative, because an operator who is refused and not told what
+    # to do instead will reach for whatever the form still accepts.
+    assert "individual_owner_unknown" in exc.value.message
+
+
+def test_a_named_address_may_be_called_a_shared_mailbox_with_an_explicit_override() -> None:
+    """The claim stays available; it stops being free."""
+    require_override_for_a_named_address(
+        value_norm="jperez@universidad.example",
+        usage="shared_mailbox",
+        override_note="la secretaria y el jefe de laboratorio responden desde esta casilla",
+    )
+
+
+def test_a_blank_override_is_not_an_override() -> None:
+    with pytest.raises(CommandRefused) as exc:
+        require_override_for_a_named_address(
+            value_norm="jperez@universidad.example", usage="shared_mailbox", override_note="   "
+        )
+    assert exc.value.code == "named_address_is_not_a_shared_mailbox_by_default"
+
+
+def test_a_role_address_needs_no_override_and_a_neutral_one_never_does() -> None:
+    require_override_for_a_named_address(
+        value_norm="ventas@proveedor.example", usage="shared_mailbox", override_note=None
+    )
+    require_override_for_a_named_address(
+        value_norm="jperez@universidad.example",
+        usage="individual_owner_unknown",
+        override_note=None,
+    )
+
+
+def test_an_override_note_belongs_only_to_the_claim_it_justifies() -> None:
+    """A justification for a claim the request does not make is refused, not dropped."""
+    with pytest.raises(CommandRefused) as exc:
+        validated(
+            ATTACH_CONTACT_ADDRESS,
+            _attach(
+                usage="individual_owner_unknown",
+                shared_mailbox_override_note="lo leen varias personas",
+            ),
+        )
+    assert exc.value.code == "override_note_is_only_for_shared_mailbox"
+
+    with pytest.raises(CommandRefused) as exc:
+        validated(
+            ATTRIBUTE_SENDER_ORGANIZATION,
+            _attribution(
+                usage="individual_owner_unknown",
+                shared_mailbox_override_note="lo leen varias personas",
+            ),
+        )
+    assert exc.value.code == "override_note_is_only_for_shared_mailbox"
+
+
+def test_the_neutral_relationship_validates_on_both_commands() -> None:
+    attach = validated(ATTACH_CONTACT_ADDRESS, _attach())
+    assert attach["usage"] == "individual_owner_unknown"
+    assert attach["shared_mailbox_override_note"] is None
+
+    attribute = validated(
+        ATTRIBUTE_SENDER_ORGANIZATION, _attribution(usage="individual_owner_unknown")
+    )
+    assert attribute["usage"] == "individual_owner_unknown"
+    assert attribute["shared_mailbox_override_note"] is None
+
+
+def test_a_space_is_not_a_justification() -> None:
+    """So the transaction's refusal cannot be dodged by sending a blank note."""
+    repo = _FakeCommandRepo()
+    response = _client(repo).post(
+        "/v2/commands/attach-contact-address",
+        json=_body(
+            assertion_id=ASSERTION_ID,
+            organization_id=ORGANIZATION_ID,
+            usage="shared_mailbox",
+            shared_mailbox_override_note="   ",
+        ),
+        headers=_headers(),
+    )
+    assert response.status_code == 422
+    assert repo.calls == []
+
+
+def test_the_relationship_changes_the_digest() -> None:
+    """Two different claims about a person are two different requests under one key."""
+    assert request_digest(ATTACH_CONTACT_ADDRESS, _attach(usage="shared_mailbox")) != (
+        request_digest(ATTACH_CONTACT_ADDRESS, _attach(usage="individual_owner_unknown"))
+    )
+
+
+@pytest.mark.parametrize("usage", ["work", "personal", "unattributed", "owner_unknown"])
+def test_a_relationship_outside_the_vocabulary_is_refused(usage: str) -> None:
+    repo = _FakeCommandRepo()
+    response = _client(repo).post(
+        "/v2/commands/attach-contact-address",
+        json=_body(assertion_id=ASSERTION_ID, organization_id=ORGANIZATION_ID, usage=usage),
+        headers=_headers(),
+    )
+    assert response.status_code == 422, usage
+    assert repo.calls == []
+
+
+# ------------------------------- the relationship, proved against the schema that stores it
+#
+# The unit tests above prove the refusal. These prove the two things only a database can: that
+# `individual_owner_unknown` is a shape `crm.contact_point` actually accepts, and that a row
+# written under it records the institution and no person at all.
+
+
+@pytest.fixture
+def named_sender(disposable_database, seeded):
+    """The same record, plus a second address assertion that looks like a person's."""
+    import psycopg
+
+    address = f"jperez-{seeded['tag']}@universidad.example"
+    with psycopg.connect(disposable_database, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            """
+            insert into evidence.assertion
+                (source_record_id, kind, value_norm, value, resolution)
+            values (%s, 'contact_address', %s, %s::jsonb, 'unresolved')
+            returning id::text
+            """,
+            (
+                seeded["source_record_id"],
+                address,
+                f'{{"observed_value": "{address}"}}',
+            ),
+        )
+        return {**seeded, "named_address": address, "named_assertion_id": cur.fetchone()[0]}
+
+
+def _attach_named(repo, state, organization_id, fields, key, digest):
+    return _run(
+        repo,
+        ATTACH_CONTACT_ADDRESS,
+        state,
+        {
+            "assertion_id": state["named_assertion_id"],
+            "organization_id": organization_id,
+            **fields,
+        },
+        key=key,
+        digest=digest,
+    )
+
+
+def _an_organization(repo, state):
+    return _run(
+        repo,
+        CREATE_ORGANIZATION,
+        state,
+        {
+            "assertion_id": state["organization_name_assertion_id"],
+            "kind": "unknown",
+            "name_display": None,
+        },
+        key=f"org-{state['tag']}",
+        digest="1" * 64,
+    )["organization_id"]
+
+
+@_needs_db
+def test_a_named_address_is_refused_as_a_shared_mailbox_and_writes_nothing(
+    disposable_database, named_sender
+) -> None:
+    """The refusal this whole change exists for, at the boundary that owns the write."""
+    import psycopg
+
+    from origenlab_api.v2.commands import CommandRefused
+
+    repo = _repo(disposable_database)
+    organization_id = _an_organization(repo, named_sender)
+
+    with pytest.raises(CommandRefused) as exc:
+        _attach_named(
+            repo,
+            named_sender,
+            organization_id,
+            {"usage": "shared_mailbox", "shared_mailbox_override_note": None},
+            key=f"refused-{named_sender['tag']}",
+            digest="2" * 64,
+        )
+    assert exc.value.code == "named_address_is_not_a_shared_mailbox_by_default"
+
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute(
+            "select count(*) from crm.contact_point where value_norm = %s",
+            (named_sender["named_address"],),
+        )
+        assert cur.fetchone()[0] == 0
+        cur.execute(
+            "select resolution from evidence.assertion where id = %s",
+            (named_sender["named_assertion_id"],),
+        )
+        assert cur.fetchone()[0] == "unresolved"
+        # A refused command leaves its key free: the operator fixes the request and retries.
+        cur.execute(
+            "select count(*) from platform.command_receipt where idempotency_key = %s",
+            (f"refused-{named_sender['tag']}",),
+        )
+        assert cur.fetchone()[0] == 0
+
+
+@_needs_db
+def test_the_neutral_relationship_records_the_institution_and_no_person(
+    disposable_database, named_sender
+) -> None:
+    import psycopg
+
+    repo = _repo(disposable_database)
+    organization_id = _an_organization(repo, named_sender)
+    result = _attach_named(
+        repo,
+        named_sender,
+        organization_id,
+        {"usage": "individual_owner_unknown", "shared_mailbox_override_note": None},
+        key=f"neutral-{named_sender['tag']}",
+        digest="3" * 64,
+    )
+    assert result["created"] == ["contact_point"]
+
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute(
+            "select usage, person_id, organization_id::text, confirmation "
+            "from crm.contact_point where value_norm = %s",
+            (named_sender["named_address"],),
+        )
+        assert cur.fetchone() == (
+            "individual_owner_unknown", None, organization_id, "confirmed",
+        )
+        # It named nobody. That is the claim it declines to make, so it is worth checking
+        # rather than trusting the absence of an INSERT in the code.
+        cur.execute(
+            "select count(*) from crm.person where origin_source_record_id = %s",
+            (named_sender["source_record_id"],),
+        )
+        assert cur.fetchone()[0] == 0
+        cur.execute("select count(*) from crm.affiliation")
+        assert cur.fetchone()[0] == 0
+        cur.execute(
+            "select payload->>'usage', payload->>'shared_mailbox_override_note' "
+            "from crm.domain_event where event_type = 'contact_point.created' "
+            "and aggregate_id = %s",
+            (result["contact_point_id"],),
+        )
+        assert cur.fetchone() == ("individual_owner_unknown", None)
+
+
+@_needs_db
+def test_the_shared_mailbox_claim_survives_with_a_note_and_the_note_is_kept(
+    disposable_database, named_sender
+) -> None:
+    """The operator who knows better is not blocked — they are recorded."""
+    import psycopg
+
+    repo = _repo(disposable_database)
+    organization_id = _an_organization(repo, named_sender)
+    justification = "la secretaria y el jefe de laboratorio responden desde esta casilla"
+    result = _attach_named(
+        repo,
+        named_sender,
+        organization_id,
+        {"usage": "shared_mailbox", "shared_mailbox_override_note": justification},
+        key=f"override-{named_sender['tag']}",
+        digest="4" * 64,
+    )
+    assert result["created"] == ["contact_point"]
+
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute(
+            "select usage, person_id from crm.contact_point where value_norm = %s",
+            (named_sender["named_address"],),
+        )
+        assert cur.fetchone() == ("shared_mailbox", None)
+        cur.execute(
+            "select payload->>'shared_mailbox_override_note' from crm.domain_event "
+            "where event_type = 'contact_point.created' and aggregate_id = %s",
+            (result["contact_point_id"],),
+        )
+        assert cur.fetchone()[0] == justification
+
+
+@_needs_db
+def test_a_role_address_still_needs_no_override(disposable_database, seeded) -> None:
+    """`contacto-<tag>@` is a desk under a suffix, and the rule has nothing to say about it."""
+    repo = _repo(disposable_database)
+    organization_id = _an_organization(repo, seeded)
+    result = _run(
+        repo,
+        ATTACH_CONTACT_ADDRESS,
+        seeded,
+        {
+            "assertion_id": seeded["contact_address_assertion_id"],
+            "organization_id": organization_id,
+            "usage": "shared_mailbox",
+            "shared_mailbox_override_note": None,
+        },
+        key=f"role-{seeded['tag']}",
+        digest="5" * 64,
+    )
+    assert result["created"] == ["contact_point"]

@@ -43,6 +43,7 @@ describe("labels never overstate what is known", () => {
   it("names an unattributed channel as such", () => {
     expect(usageLabel("unattributed")).toBe("Sin atribuir");
     expect(usageLabel("shared_mailbox")).toBe("Buzón compartido");
+    expect(usageLabel("individual_owner_unknown")).toBe("De una persona, sin identificar");
   });
 
   it("passes an unknown vocabulary value through rather than inventing one", () => {
@@ -99,6 +100,12 @@ describe("counting", () => {
 describe("absences are explained, not left blank", () => {
   it("says why a role mailbox has no person", () => {
     expect(noPersonExplanation("shared_mailbox")).toContain("buzón de rol");
+    // The two lines must not read the same: one says the address has no owner, the other
+    // says it has one and the CRM has not recorded who.
+    expect(noPersonExplanation("individual_owner_unknown")).toContain(
+      "todavía no se ha registrado cuál",
+    );
+    expect(noPersonExplanation("individual_owner_unknown")).not.toContain("buzón de rol");
   });
 
   it("says why a personal-looking address still has no person", () => {

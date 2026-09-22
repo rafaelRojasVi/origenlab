@@ -55,6 +55,7 @@ const USAGE_LABELS: Record<V2ContactUsage, string> = {
   personal: "Personal",
   work: "Laboral",
   shared_mailbox: "Buzón compartido",
+  individual_owner_unknown: "De una persona, sin identificar",
   unattributed: "Sin atribuir",
 };
 
@@ -159,6 +160,11 @@ export function cardCount(counts: V2CardCounts, key: string, shown: number): num
 export function noPersonExplanation(usage: V2ContactUsage): string {
   if (usage === "shared_mailbox") {
     return "Es un buzón de rol, no una persona. No se le asigna un titular.";
+  }
+  if (usage === "individual_owner_unknown") {
+    // The difference from the line above is the whole point of the value: one says the
+    // address has no owner, the other says it has one and the CRM does not know who.
+    return "La dirección es de una persona y todavía no se ha registrado cuál. No se le atribuye titular: sólo la institución que la opera.";
   }
   return "La evidencia no trae ningún nombre: derivarlo de la dirección sería una inferencia de identidad, no un dato.";
 }

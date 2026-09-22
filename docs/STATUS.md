@@ -798,9 +798,9 @@ earlier. This needs `ORIGENLAB_V2_TEST_DSN` (a maintenance login) **and**
 
 No command has been run against real evidence. `crm.organization_domain` is still empty, so
 no record in the queue has an evidenced institution. There is still no command for creating a
-person, which is what a named personal address in the queue would actually need — attaching
-one as a `shared_mailbox` is the only shape the schema allows without a person, and the
-preview cautions rather than refuses, because a local part is a spelling and not evidence.
+person, which is what a named personal address in the queue would eventually need — but
+attaching one no longer requires claiming it is a shared desk: `individual_owner_unknown`
+(§2.7.14) records the institution and says nothing about the owner.
 
 ### 2.7.9 Fixture residue in `origenlab_dev`, and the clean room — 2026-09-22
 
@@ -993,14 +993,14 @@ transactions, two receipts, and a state to stop in — an institution nobody can
 |---|---|
 | Command | `attribute_sender_organization`, `POST /v2/commands/attribute-sender-organization` |
 | What the operator names | the evidence record, **one** `organization_name` assertion, the `contact_address` assertion of the sender, and `target` — `existing` (with the id and the version they were shown) or `new` |
-| In one transaction | create **or** confirm the institution · attach the address as `shared_mailbox`/`confirmed` · resolve **exactly those two** assertions · one receipt · one `crm.domain_event` per change |
+| In one transaction | create **or** confirm the institution · attach the address under the `usage` the operator chose (§2.7.14), `confirmed` · resolve **exactly those two** assertions · one receipt · one `crm.domain_event` per change |
 | What it leaves alone | every other assertion of the same message stays `unresolved`, and the record therefore stays `pending`. The response returns `assertions_left_unresolved`, so that is a number the operator reads rather than a property they trust |
 | Refusals it inherits | it runs the **same three steps** the single commands run, extracted rather than copied, so exact-name matching, the version compare-and-set, `organization_already_exists`, `contact_point_belongs_to_a_person` and `contact_point_attached_elsewhere` all behave identically |
 | The refusal the case turns on | `contact_point_attached_elsewhere` — once the sender's mailbox belongs to one institution, the *other* institution the same message names cannot take it |
 | Atomicity, proven | a test makes the second half fail and asserts the organization the first half would have created **does not exist**, no assertion moved, and the idempotency key is still free |
 | A request that says two things | refused, not tidied: `target: existing` without a version, `target: existing` carrying a `name_display`, `target: new` carrying an `organization_id`, and the two assertion ids being the same, each have their own code |
 | Still out of scope | no person, no `crm.organization_domain`, no prospect, permission, campaign, quote, task or send. A database-backed test counts all six tables before and after and asserts they did not move |
-| Rehearsed against the clean room | `supabase/scripts/rehearse_attribution.py` — reads the **real** records read-only, replays each into its own disposable `origenlab_test_<hex>`, runs the real command as `origenlab_api`, drops the room, and fingerprints the clean room before and after. **4 records, 6 decisions, all accepted, 2026-09-22; fingerprint unchanged** |
+| Rehearsed against the clean room | `supabase/scripts/rehearse_attribution.py` — reads the **real** records read-only, replays each into its own disposable `origenlab_test_<hex>`, runs the real command as `origenlab_api`, drops the room, and fingerprints the clean room before and after. It now runs **each decision under both relationships**, because `usage` has no default. **4 records, 6 decisions × 2 relationships = 12 rehearsals, 2026-09-22: the 6 `individual_owner_unknown` accepted, the 6 `shared_mailbox` refused because every one of these senders writes from a named address; fingerprint unchanged** |
 | Why the committed fixtures are fictitious | the repository is public and the senders are real people. The *shape* is committed under reserved `.example` values; the *real values* are read at run time by the rehearsal and never written down |
 
 **The dashboard shows the exact request and still sends nothing.** `evidenceCommands.ts`
@@ -1016,6 +1016,57 @@ none of them.
 **What is still not decided.** No command has been run against real evidence. All 31 staged
 records are `pending`, all their assertions `unresolved`, and `platform.command_receipt` is
 empty — `cleanroom_db.sh verify` passes at 38 probes after this work, exactly as before it.
+
+### 2.7.14 What an address is to an institution — built 2026-09-22, unwired
+
+**The defect.** `crm.contact_point` had four `usage` shapes and only one of them could hold
+"this institution operates this address and there is no person": `shared_mailbox`. So that is
+what the command boundary wrote, on every address — including the four in the queue, each of
+which is one named individual's mailbox at their employer. On those it asserts that several
+people read that person's mailbox. Nobody decided that; the vocabulary decided it, and the
+CRM would then have read it back as its own belief about a real person. Every one of the
+four eligible records writes from a named address, so the defect applied to all of them.
+
+(The real addresses are deliberately not written here. They are read at run time by the
+rehearsal, for the reason `rehearse_attribution.py` states at its own selection query: this
+repository is public and the senders are real people.)
+
+**The value that was missing.**
+
+| Item | Value |
+|---|---|
+| Migration | `supabase/migrations/20260922140000_slice2_contact_point_individual_owner_unknown.sql` — additive: one `usage` value and its shape rule. No row changes, no grant widens, no policy relaxes |
+| The claim it makes | this institution operates this address, and one individual owns it whom nobody has recorded. Shape: `person_id IS NULL AND organization_id IS NOT NULL` |
+| The claim it refuses to make | it creates no person and names nobody. It is not `shared_mailbox` (which asserts a shared desk) and not `unattributed` (which cannot hold the institution) |
+| Where it goes next | to `work` when a person is recorded — a promotion of knowledge, not a correction of a false claim |
+| pgTAP | 4 new assertions in `supabase/tests/060_constraints_crm.sql` (105 in that file, 412 across the suite): the shape lives, both halves of it refuse, and the vocabulary stays closed |
+
+**The rule at the boundary.** `usage` now has **no default** on
+`attach_contact_address` and `attribute_sender_organization`: a request that does not say
+what the address is to the institution is refused, because the two reachable values make
+opposite claims about a human being. And `shared_mailbox` on an address whose local part is
+not a recognised role is refused unless the request carries
+`shared_mailbox_override_note` — a sentence, not a checkbox, saying how the operator knows it
+is a desk. The check runs **inside the command's transaction**, against the address in the
+assertion, not against a string the caller supplied. The note is written into the
+`contact_point.created` / `.confirmed` event payload.
+
+**What the workspace shows.** A second radio group — *what is this address to the
+institution?* — with neither option preselected and the neutral one's consequences written
+next to it ("No crea ninguna persona, no dice de quién es la casilla y no afirma que sea
+compartida"). The justification field appears only for the combination that needs it. The
+preview's earlier caution ("no parece un buzón de mesa") stays a caution, because the
+operator now has a truthful value to choose instead.
+
+**Every button is still `disabled`** and `apps/dashboard-proxy` still allows no POST under
+`/v2`. Nothing was decided; `crm.*` is unchanged.
+
+| Evidence | Result |
+|---|---|
+| `apps/api` pytest | 1,272 passed, 152 skipped (`validate.sh` mode); 158 passed with a migrated disposable database, including 4 new database-backed proofs of the refusal, the neutral row and the override |
+| `apps/dashboard` vitest | 1,229 passed across 126 files |
+| pgTAP `060_constraints_crm.sql` | 105/105 on a freshly migrated disposable database |
+| Clean-room rehearsal | 12 rehearsals over the 4 real records; fingerprint unchanged |
 
 ### 2.7.5 Local V2 — the reconciled picture, 2026-09-21
 

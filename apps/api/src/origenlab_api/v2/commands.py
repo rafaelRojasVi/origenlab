@@ -75,11 +75,72 @@ WRITER_ROLES: tuple[str, ...] = ("sales", "admin")
 #: inference this whole path exists to avoid.
 ORGANIZATION_KINDS: tuple[str, ...] = ("unknown", "institution")
 
-#: The only `usage` an address can take when it is attached to an organization and no person
-#: exists. `docs/DOMAIN.md` §2.5: `shared_mailbox ⇒ person NULL`, `work ⇒ person NOT NULL`.
-#: Since no command here creates a person, `work` is unreachable and saying so in the type is
-#: more honest than accepting it and failing on a CHECK constraint.
-ATTACHABLE_USAGE: tuple[str, ...] = ("shared_mailbox",)
+#: The `usage` values an address can take when it is attached to an organization and no
+#: person exists. `docs/DOMAIN.md` §2.5: `work` needs a person and no command here creates
+#: one, `personal` forbids the organization, and `unattributed` forbids it too — so those
+#: three are unreachable, and saying so in the type is more honest than accepting them and
+#: failing on a CHECK constraint.
+#:
+#: The two that remain say opposite things about who is on the other end, and the operator
+#: chooses between them:
+#:
+#: * `shared_mailbox` — a desk two or more people read. `ventas@`, `secretaria@`,
+#:   `produccion@`.
+#: * `individual_owner_unknown` — one individual owns this address and nobody has recorded
+#:   who. The institution is recorded because it is known; the person is absent because they
+#:   are not.
+#:
+#: There is deliberately **no default**. A default here would be a claim about a real human
+#: made by this module, and the one it used to make — `shared_mailbox` for everything — was
+#: false for every named address that ever went through it.
+ATTACHABLE_USAGE: tuple[str, ...] = ("shared_mailbox", "individual_owner_unknown")
+
+#: Mailbox names that name a desk rather than a person.
+#:
+#: A closed, reviewed list rather than a pattern, for the reason
+#: `apps/email-pipeline/.../v2_promote/rules.py` states at its own copy: a heuristic like
+#: "contains no dot, so it is a role address" misclassifies `jrojas@` and `ventas.equipos@`
+#: in opposite directions. This list is a **superset** of the dashboard's
+#: (`apps/dashboard/src/lib/evidenceReview.ts`) on purpose. The dashboard asks for an
+#: override wherever it does not recognise a local part; this boundary refuses wherever it
+#: does not. A superset here means the boundary never refuses a request the surface said was
+#: ready — the drift, when the two lists drift, costs an operator one unnecessary sentence
+#: rather than a decision they cannot record.
+ROLE_LOCAL_PARTS: frozenset[str] = frozenset(
+    {
+        # commercial
+        "ventas", "contacto", "compras", "info", "informacion", "comercial", "sales",
+        "contact", "cotizaciones", "cotizacion", "presupuestos", "licitaciones",
+        "adquisiciones", "abastecimiento", "proveedores", "postventa", "repuestos",
+        # administrative
+        "administracion", "admin", "gerencia", "secretaria", "recepcion", "oficina",
+        "office", "contabilidad", "finanzas", "facturacion", "pagos", "tesoreria",
+        "cobranzas", "cobranza", "direcciontecnica",
+        # operational
+        "logistica", "bodega", "despacho", "distribucion", "importaciones", "operaciones",
+        "produccion", "mantencion", "mantenimiento", "servicio", "servicioalcliente",
+        "atencionclientes", "soporte", "support", "calidad", "proyectos", "ingenieria",
+        "laboratorio", "molecular",
+        # generic
+        "hello", "hola", "consultas", "reclamos", "webmaster", "postmaster", "noreply",
+        "no-reply", "donotreply", "mailer", "mail", "correo",
+    }
+)
+
+
+def address_names_a_desk(value_norm: str) -> bool:
+    """Whether this address's local part is a recognised role mailbox.
+
+    `contacto+equipos@` and `ventas.sur@` are the same desk under a suffix, so the base
+    before an explicit separator decides — and only when the separator is explicit, because
+    `pmorales@` must not read as a role. Anything unrecognised is **not** a desk: unknown
+    stays unknown, which is the direction that refuses rather than the one that asserts.
+    """
+    local = value_norm.partition("@")[0]
+    if local in ROLE_LOCAL_PARTS:
+        return True
+    base = re.split(r"[+._-]", local, maxsplit=1)[0]
+    return base != local and base in ROLE_LOCAL_PARTS
 
 _EMAIL_SHAPE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -165,19 +226,35 @@ class CreateOrganizationBody(_CommandBody):
     name_display: Annotated[str, Field(min_length=1, max_length=400)] | None = None
 
 
-class AttachContactAddressBody(_CommandBody):
-    """This asserted address is a mailbox that organization operates.
+#: Why the override is a *note* and not a boolean.
+#:
+#: `shared_mailbox` on `jperez@` is a claim this boundary cannot check and the evidence
+#: argues against. An operator may still be right — they may know three people read that
+#: address — and refusing them outright would make the queue unusable for a real case. So the
+#: claim is allowed and made expensive: it costs a second sentence, written at the moment of
+#: the decision, that says how they know. A checkbox would cost nothing and would therefore
+#: be clicked; a sentence ends up in the event payload where a later reader can weigh it.
+_OVERRIDE = Annotated[str, Field(min_length=1, max_length=2000)]
 
-    `usage` must be spelled out. The value is forced — no person exists, so `shared_mailbox`
-    is the only shape the schema allows — but making the operator write it means they are
-    asserting "this is a desk", which is a claim about the world and not a default the
-    boundary picked for them. The dashboard warns when an address does not look like one; it
-    does not decide, because a local part is a spelling, not evidence.
+
+class AttachContactAddressBody(_CommandBody):
+    """This asserted address is a channel that organization operates.
+
+    `usage` must be spelled out, with **no default**, because the two reachable values make
+    opposite claims about a human being: `shared_mailbox` says two or more people read this
+    desk, `individual_owner_unknown` says one person owns it and nobody has recorded who.
+    The boundary cannot tell which is true from an address, and a default would have it guess
+    on every record — which is exactly how a named sender's mailbox became "a desk".
+
+    `shared_mailbox_override_note` is required when `usage` is `shared_mailbox` and the
+    address does not carry a recognised role local part. That check needs the address, which
+    lives in the assertion, so it runs in the transaction that reads it.
     """
 
     assertion_id: str
     organization_id: str
-    usage: Literal["shared_mailbox"]
+    usage: Literal["shared_mailbox", "individual_owner_unknown"]
+    shared_mailbox_override_note: _OVERRIDE | None = None
 
 
 class AttributeSenderOrganizationBody(_CommandBody):
@@ -215,7 +292,8 @@ class AttributeSenderOrganizationBody(_CommandBody):
     organization_version: Annotated[int, Field(ge=1)] | None = None
     kind: Literal["unknown", "institution"] = "unknown"
     name_display: Annotated[str, Field(min_length=1, max_length=400)] | None = None
-    usage: Literal["shared_mailbox"]
+    usage: Literal["shared_mailbox", "individual_owner_unknown"]
+    shared_mailbox_override_note: _OVERRIDE | None = None
 
 
 BODY_BY_COMMAND: dict[str, type[_CommandBody]] = {
@@ -302,6 +380,59 @@ def validate_email_shape(value_norm: str) -> str:
     return value_norm
 
 
+def validated_usage(usage: str, override_note: str | None) -> dict[str, Any]:
+    """The half of the usage rule that needs no database: the note belongs to one claim only.
+
+    An override attached to `individual_owner_unknown` is refused rather than dropped. It
+    means the operator wrote a justification for a claim they did not make — most likely they
+    changed the relationship after writing it — and a request that says two things is a
+    request nobody read carefully.
+
+    The other half — whether *this address* needed the override at all — is deliberately not
+    here. It depends on the assertion's value, which is a row, and checking a row anywhere
+    but inside the command's own transaction is a race dressed up as validation.
+    """
+    note = (override_note or "").strip() or None
+    if note is not None and usage != "shared_mailbox":
+        raise CommandRefused(
+            422,
+            "override_note_is_only_for_shared_mailbox",
+            "shared_mailbox_override_note justifies calling a named address a shared "
+            f"mailbox; usage '{usage}' makes no such claim, so there is nothing to justify",
+        )
+    return {"usage": usage, "shared_mailbox_override_note": note}
+
+
+def require_override_for_a_named_address(
+    *, value_norm: str, usage: str, override_note: str | None
+) -> None:
+    """Refuse `shared_mailbox` on an address that does not look like a desk, unless told why.
+
+    This is the rule the whole change exists for. `shared_mailbox` was the only value the
+    schema allowed, so it was what every attribution wrote — including on `jperez@`, where it
+    asserts that a named individual's mailbox is a desk shared by several people. Nobody
+    decided that; the vocabulary decided it for them, and the CRM then read it back as its own
+    belief about a real person.
+
+    So the claim now has to be made on purpose. An unrecognised local part is not evidence
+    that the address belongs to a person — it is only the absence of evidence that it does
+    not — which is why this refuses rather than rewrites: `individual_owner_unknown` is
+    right here and the operator is the one who says so.
+    """
+    if usage != "shared_mailbox" or address_names_a_desk(value_norm):
+        return
+    if (override_note or "").strip():
+        return
+    raise CommandRefused(
+        422,
+        "named_address_is_not_a_shared_mailbox_by_default",
+        f"'{value_norm}' does not carry a recognised role local part, so calling it a "
+        "shared mailbox asserts that several people read it. Choose "
+        "'individual_owner_unknown', which records the institution without claiming who "
+        "owns the address, or say in shared_mailbox_override_note how you know it is a desk",
+    )
+
+
 def validated(command_name: str, body: _CommandBody) -> dict[str, Any]:
     """Everything that can be checked without the database, checked in one place.
 
@@ -330,7 +461,7 @@ def validated(command_name: str, body: _CommandBody) -> dict[str, Any]:
         fields["name_display"] = body.name_display.strip() if body.name_display else None
     elif isinstance(body, AttachContactAddressBody):
         fields["organization_id"] = _uuid(body.organization_id, "organization_id")
-        fields["usage"] = body.usage
+        fields.update(validated_usage(body.usage, body.shared_mailbox_override_note))
     return fields
 
 
@@ -383,7 +514,7 @@ def validated_attribution(body: AttributeSenderOrganizationBody) -> dict[str, An
         ),
         "address_assertion_id": _uuid(body.address_assertion_id, "address_assertion_id"),
         "target": body.target,
-        "usage": body.usage,
+        **validated_usage(body.usage, body.shared_mailbox_override_note),
     }
     if fields["organization_assertion_id"] == fields["address_assertion_id"]:
         raise CommandRefused(

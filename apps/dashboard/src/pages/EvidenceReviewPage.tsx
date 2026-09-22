@@ -28,7 +28,7 @@ import {
   fetchV2Organizations,
   fetchV2Prospects,
 } from "../api/v2Client";
-import type { V2EvidenceRecord, V2Page } from "../api/v2Types";
+import type { V2AttachableUsage, V2EvidenceRecord, V2Page } from "../api/v2Types";
 import { V2EmptyState } from "../components/v2/V2EmptyState";
 import { V2PageHeader } from "../components/v2/V2PageHeader";
 import { sourceKindLabel } from "../lib/crmV2Browser";
@@ -36,6 +36,7 @@ import {
   addressesOf,
   domainCounts,
   identityHeadline,
+  isRoleMailbox,
   matchForAddress,
   organizationHeadline,
   organizationNamesOf,
@@ -424,6 +425,33 @@ function RecordDetail({
 }
 
 /**
+ * The two relationships an operator may assert, with the claim each one makes spelled out.
+ *
+ * The second exists because it had to be added: until this change the schema had no shape
+ * for "this institution operates this address and we do not know whose it is", so every
+ * attribution wrote `shared_mailbox` — which says a named person's mailbox is a desk several
+ * people read. The wording here is the point of the control, not decoration around it.
+ */
+const RELATIONSHIP_CHOICES: ReadonlyArray<{
+  value: V2AttachableUsage;
+  label: string;
+  explanation: string;
+}> = [
+  {
+    value: "shared_mailbox",
+    label: "Buzón compartido de la institución",
+    explanation:
+      "Afirma que varias personas leen esta casilla: ventas@, secretaria@, produccion@. Es una afirmación sobre el mundo, no una etiqueta.",
+  },
+  {
+    value: "individual_owner_unknown",
+    label: "De una persona, sin identificar",
+    explanation:
+      "Registra que la institución opera la dirección y nada más. No crea ninguna persona, no dice de quién es la casilla y no afirma que sea compartida. Es el estado honesto mientras no haya un nombre.",
+  },
+];
+
+/**
  * The four review commands, each showing what it would record and why it can or cannot run.
  *
  * The note and the organization are local state and go nowhere. That is the point of a
@@ -443,6 +471,14 @@ function CommandPanel({
   // stays null for a single-name message too: "there is only one" is a reason to pick it
   // quickly, not a reason for the surface to pick it for them.
   const [senderAssertionId, setSenderAssertionId] = useState<string | null>(null);
+  // What the address *is* to the institution. Null until the operator says, and it stays
+  // null: the two values claim opposite things about a person, so neither may be preselected.
+  const [relationship, setRelationship] = useState<V2AttachableUsage | null>(null);
+  const [overrideNote, setOverrideNote] = useState("");
+  const unresolvedAddresses = record.assertions.filter(
+    (assertion) =>
+      assertion.kind === "contact_address" && assertion.resolution === "unresolved",
+  );
   const namedInstitutions = record.assertions.filter(
     (assertion) =>
       assertion.kind === "organization_name" && assertion.resolution === "unresolved",
@@ -454,9 +490,19 @@ function CommandPanel({
         domainShareCount,
         selectedOrganizationId,
         selectedOrganizationAssertionId: senderAssertionId,
+        addressRelationship: relationship,
+        sharedMailboxOverrideNote: overrideNote,
         note,
       }),
-    [record, domainShareCount, selectedOrganizationId, senderAssertionId, note],
+    [
+      record,
+      domainShareCount,
+      selectedOrganizationId,
+      senderAssertionId,
+      relationship,
+      overrideNote,
+      note,
+    ],
   );
 
   return (
@@ -501,6 +547,71 @@ function CommandPanel({
             ))}
           </select>
         </label>
+      ) : null}
+
+      {unresolvedAddresses.length > 0 ? (
+        <fieldset
+          className="space-y-1 rounded-md border border-slate-200 p-2 text-xs"
+          data-testid="address-relationship"
+        >
+          <legend className="px-1 text-[var(--color-muted)]">
+            ¿Qué es esta dirección para la institución? (sin opción por omisión)
+          </legend>
+          <p className="text-[11px] text-[var(--color-muted)]">
+            Las dos opciones afirman cosas opuestas sobre una persona real. Ninguna viene
+            marcada: elegir es parte de la decisión, no un trámite previo.
+          </p>
+          {RELATIONSHIP_CHOICES.map((choice) => (
+            <label
+              key={choice.value}
+              className="flex items-start gap-2"
+              data-testid="address-relationship-choice"
+            >
+              <input
+                type="radio"
+                name={`address-relationship-${record.source_record_id}`}
+                checked={relationship === choice.value}
+                onChange={() => setRelationship(choice.value)}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="font-medium text-slate-900">{choice.label}</span>
+                <span className="block text-[11px] text-[var(--color-muted)]">
+                  {choice.explanation}
+                </span>
+              </span>
+            </label>
+          ))}
+          {relationship ? (
+            <button
+              type="button"
+              onClick={() => {
+                setRelationship(null);
+                setOverrideNote("");
+              }}
+              className="text-[11px] underline decoration-dotted"
+            >
+              Deshacer la elección
+            </button>
+          ) : null}
+          {relationship === "shared_mailbox" &&
+          unresolvedAddresses.some((assertion) => !isRoleMailbox(assertion.value_norm)) ? (
+            <label className="mt-1 block">
+              <span className="text-[var(--color-muted)]">
+                Esta dirección no tiene un nombre de función reconocido. Escribe cómo sabes
+                que varias personas la leen: queda en el evento.
+              </span>
+              <input
+                type="text"
+                value={overrideNote}
+                onChange={(event) => setOverrideNote(event.target.value)}
+                data-testid="shared-mailbox-override"
+                placeholder="Cómo sabes que es una mesa y no una persona"
+                className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1 text-xs"
+              />
+            </label>
+          ) : null}
+        </fieldset>
       ) : null}
 
       {namedInstitutions.length > 0 ? (

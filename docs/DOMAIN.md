@@ -112,7 +112,8 @@ Rules:
 `crm.contact_point` holds `kind ∈ {email, phone}`, `value_norm`
 (email lowercased with the domain in punycode, no tag stripping; phone in
 E.164), `value_display`, nullable `person_id`, nullable `organization_id`,
-`usage ∈ {personal, work, shared_mailbox, unattributed}`, and `confirmation`.
+`usage ∈ {personal, work, shared_mailbox, individual_owner_unknown, unattributed}`, and
+`confirmation`.
 
 - **`UNIQUE (kind, value_norm)` globally.** One row per reachable channel, so
   blocks, prior-contact facts and message resolution can never split across
@@ -122,7 +123,16 @@ E.164), `value_display`, nullable `person_id`, nullable `organization_id`,
   `outbound.contact_control` ([`DATA.md`](DATA.md), [`WORKFLOWS.md`](WORKFLOWS.md)).
 - Shape checks: `personal ⇒ person NOT NULL ∧ organization NULL`;
   `work ⇒ person NOT NULL ∧ organization NOT NULL`;
-  `shared_mailbox ⇒ person NULL`; `unattributed ⇒ both NULL`.
+  `shared_mailbox ⇒ person NULL`;
+  `individual_owner_unknown ⇒ person NULL ∧ organization NOT NULL`;
+  `unattributed ⇒ both NULL`.
+- **`shared_mailbox` and `individual_owner_unknown` are opposite claims, and neither is a
+  default.** The first says two or more people read this desk. The second says one
+  individual owns the address and nobody has recorded who — the institution because it is
+  known, the person absent because they are not. A named-looking address is
+  `individual_owner_unknown`; calling it a shared mailbox is a claim an operator makes
+  deliberately and justifies, never a value a boundary picks because the row shape allowed
+  it. Neither value creates a `person`.
 - **A contact point is never a substitute for an affiliation.** On a `work`
   row, `organization_id` means "this organization operates this mailbox", never
   "this person works at this organization".
@@ -134,6 +144,7 @@ E.164), `value_display`, nullable `person_id`, nullable `organization_id`,
 | Personal address | `(person=P, organization=NULL, usage=personal)`; the employer is in `affiliation` |
 | Person's work address | `(person=P, organization=O, usage=work)` |
 | Shared mailbox of one organization | `(person=NULL, organization=O, usage=shared_mailbox)` |
+| A named address at a known organization, owner not recorded | `(person=NULL, organization=O, usage=individual_owner_unknown)`. It becomes `work` when a person is recorded — a promotion of knowledge, not a correction |
 | Address shared across units of one organization | one row, `organization` = the common ancestor; units are organizations, so no polymorphism is needed |
 | Address shared by unrelated organizations, or owner unknown | `(NULL, NULL, unattributed)` |
 

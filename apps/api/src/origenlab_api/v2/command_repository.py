@@ -42,6 +42,7 @@ from origenlab_api.v2.commands import (
     KEEP_EVIDENCE_PENDING,
     CommandRefused,
     normalize_email,
+    require_override_for_a_named_address,
     normalize_organization_name,
     validate_email_shape,
 )
@@ -584,20 +585,30 @@ class V2CommandRepository:
         assertion: dict[str, Any],
         organization_id: str,
         usage: str,
+        override_note: str | None,
         operator: OperatorIdentity,
         receipt_id: str,
         note: str,
     ) -> tuple[str, str, list[str], list[str]]:
-        """Place one asserted address on one organization as a desk it operates.
+        """Place one asserted address on one organization, as the relationship the operator chose.
 
         Returns the contact point, how the assertion should resolve, the events and what was
-        created. The two refusals are the ones that keep an address from meaning two things
-        at once: an address already attributed to a person, and an address already attached
-        to a *different* organization. The second is what stops one mailbox from being
-        claimed by both institutions a message names.
+        created. Three refusals. Two keep an address from meaning two things at once: an
+        address already attributed to a person, and an address already attached to a
+        *different* organization — the second is what stops one mailbox from being claimed by
+        both institutions a message names.
+
+        The third is about a person rather than a row: `shared_mailbox` on an address that
+        does not look like a desk is refused unless the operator says how they know. It lives
+        here, and not in the request validator, because the address is in the assertion — the
+        evidence's own value, not a string the caller supplied — so the only place it can be
+        checked against what will actually be written is the transaction that writes it.
         """
         value_norm = validate_email_shape(normalize_email(assertion["value_norm"]))
         display = assertion["observed_value"] or value_norm
+        require_override_for_a_named_address(
+            value_norm=value_norm, usage=usage, override_note=override_note
+        )
 
         cur.execute(
             """
@@ -637,6 +648,7 @@ class V2CommandRepository:
                     event_type="contact_point.created",
                     payload={
                         "usage": usage,
+                        "shared_mailbox_override_note": override_note,
                         "organization_id": organization_id,
                         "created_from": "evidence_review",
                         "source_record_id": record["id"],
@@ -655,7 +667,7 @@ class V2CommandRepository:
                     409,
                     "contact_point_belongs_to_a_person",
                     "that address is already attributed to a person; attaching it to an "
-                    "organization as a shared mailbox would contradict a recorded identity",
+                    "organization without them would contradict a recorded identity",
                 )
             if (
                 existing["organization_id"] is not None
@@ -691,6 +703,7 @@ class V2CommandRepository:
                         event_type="contact_point.confirmed",
                         payload={
                             "usage": usage,
+                            "shared_mailbox_override_note": override_note,
                             "organization_id": organization_id,
                             "attached_from": "evidence_review",
                             "source_record_id": record["id"],
@@ -828,6 +841,7 @@ class V2CommandRepository:
             assertion=assertion,
             organization_id=organization["id"],
             usage=fields["usage"],
+            override_note=fields.get("shared_mailbox_override_note"),
             operator=operator,
             receipt_id=receipt_id,
             note=fields["note"],
@@ -918,6 +932,7 @@ class V2CommandRepository:
                 assertion=address_assertion,
                 organization_id=organization_id,
                 usage=fields["usage"],
+                override_note=fields.get("shared_mailbox_override_note"),
                 operator=operator,
                 receipt_id=receipt_id,
                 note=fields["note"],

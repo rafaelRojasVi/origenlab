@@ -519,6 +519,25 @@ describe("a message that names two institutions and has one sender", () => {
     });
   }
 
+  /** Pick the nth asserted institution as the sender's — by its own control, not by index. */
+  function chooseInstitution(nth: number) {
+    const choice = screen.getAllByTestId("sender-institution-choice")[nth];
+    fireEvent.click(within(choice).getByRole("radio"));
+  }
+
+  /** Say what the address is to that institution. There is no default, so it must be said. */
+  function chooseRelationship(label: string | RegExp) {
+    const choice = screen
+      .getAllByTestId("address-relationship-choice")
+      .find((candidate) =>
+        typeof label === "string"
+          ? (candidate.textContent ?? "").includes(label)
+          : label.test(candidate.textContent ?? ""),
+      );
+    if (!choice) throw new Error(`no relationship choice matching ${label}`);
+    fireEvent.click(within(choice).getByRole("radio"));
+  }
+
   it("offers both names, and says what each one would do", async () => {
     await openTheRecord();
     const choices = screen.getAllByTestId("sender-institution-choice");
@@ -540,7 +559,8 @@ describe("a message that names two institutions and has one sender", () => {
 
   it("shows the exact request once the operator picks the sender's institution", async () => {
     await openTheRecord();
-    fireEvent.click(screen.getAllByRole("radio")[0]);
+    chooseInstitution(0);
+    chooseRelationship("Buzón compartido");
     const attribution = screen.getByTestId("command-preview-attribute_sender_organization");
     expect(attribution.dataset.availability).toBe("available");
 
@@ -560,7 +580,8 @@ describe("a message that names two institutions and has one sender", () => {
 
   it("says out loud which institution it is leaving unresolved", async () => {
     await openTheRecord();
-    fireEvent.click(screen.getAllByRole("radio")[0]);
+    chooseInstitution(0);
+    chooseRelationship("Buzón compartido");
     expect(within(attributionCard()).getByTestId("command-leaves-unresolved").textContent).toContain(
       "«universidad ejemplo» queda sin resolver",
     );
@@ -568,7 +589,8 @@ describe("a message that names two institutions and has one sender", () => {
 
   it("switches to confirming when the chosen name already exists", async () => {
     await openTheRecord();
-    fireEvent.click(screen.getAllByRole("radio")[1]);
+    chooseInstitution(1);
+    chooseRelationship("Buzón compartido");
     const request = JSON.parse(
       within(attributionCard()).getByTestId("command-request").querySelector("pre")!.textContent!,
     );
@@ -582,7 +604,8 @@ describe("a message that names two institutions and has one sender", () => {
 
   it("still sends nothing: every button stays disabled with a complete request on screen", async () => {
     await openTheRecord();
-    fireEvent.click(screen.getAllByRole("radio")[0]);
+    chooseInstitution(0);
+    chooseRelationship("Buzón compartido");
     expect(within(attributionCard()).getByTestId("command-request")).toBeTruthy();
     for (const action of screen.getAllByTestId("review-preview-action")) {
       expect((action as HTMLButtonElement).disabled).toBe(true);
@@ -591,9 +614,140 @@ describe("a message that names two institutions and has one sender", () => {
 
   it("never offers to settle who uses the address, whichever institution is chosen", async () => {
     await openTheRecord();
-    fireEvent.click(screen.getAllByRole("radio")[0]);
+    chooseInstitution(0);
+    chooseRelationship("Buzón compartido");
     const text = document.body.textContent ?? "";
     expect(text).not.toMatch(/confirmar\s+(la\s+)?persona/i);
     expect(text).toContain("No crea persona ni afiliación");
+  });
+
+  // ----------------------------------------------------------------------------------------
+  // The relationship control itself: it preselects nothing, and it says in the surface what
+  // the neutral option does and does not claim.
+
+  it("offers both relationships and marks neither", async () => {
+    await openTheRecord();
+    const choices = screen.getAllByTestId("address-relationship-choice");
+    expect(choices).toHaveLength(2);
+    for (const choice of choices) {
+      expect((within(choice).getByRole("radio") as HTMLInputElement).checked).toBe(false);
+    }
+  });
+
+  it("explains that the neutral option creates no person and names no owner", async () => {
+    await openTheRecord();
+    const neutral = screen
+      .getAllByTestId("address-relationship-choice")
+      .find((choice) => (choice.textContent ?? "").includes("sin identificar"))!;
+    expect(neutral.textContent).toContain("No crea ninguna persona");
+    expect(neutral.textContent).toContain("no dice de quién es la casilla");
+    expect(neutral.textContent).toContain("no afirma que sea compartida");
+  });
+
+  it("blocks the attribution while no relationship is chosen, even with an institution", async () => {
+    await openTheRecord();
+    chooseInstitution(0);
+    expect(attributionCard().dataset.availability).toBe("blocked");
+    expect(attributionCard().textContent).toContain("no hay opción por omisión");
+  });
+
+  it("asks for no justification when the sender's address is a recognised desk", async () => {
+    // This record's sender is `ventas@proveedor.example`.
+    await openTheRecord();
+    chooseInstitution(0);
+    chooseRelationship("Buzón compartido");
+    expect(screen.queryByTestId("shared-mailbox-override")).toBeNull();
+    expect(attributionCard().dataset.availability).toBe("available");
+  });
+
+  it("keeps every button disabled whatever the operator chooses", async () => {
+    await openTheRecord();
+    chooseInstitution(0);
+    chooseRelationship("sin identificar");
+    expect(attributionCard().dataset.availability).toBe("available");
+    for (const action of screen.getAllByTestId("review-preview-action")) {
+      expect((action as HTMLButtonElement).disabled).toBe(true);
+    }
+  });
+
+  it("sends the neutral relationship in the request when it is the one chosen", async () => {
+    await openTheRecord();
+    chooseInstitution(0);
+    chooseRelationship("sin identificar");
+    const request = JSON.parse(
+      within(attributionCard()).getByTestId("command-request").querySelector("pre")!.textContent!,
+    );
+    expect(request.usage).toBe("individual_owner_unknown");
+    expect(request).not.toHaveProperty("shared_mailbox_override_note");
+  });
+});
+
+describe("a message whose sender address looks like a person's", () => {
+  const NAMED_SENDER = {
+    ...TWO_INSTITUTIONS,
+    source_record_id: "33333333-cccc-4ccc-8ccc-cccccccccccc",
+    from_address: "p.morales@proveedor.example",
+    assertions: TWO_INSTITUTIONS.assertions.map((assertion) =>
+      assertion.kind === "contact_address"
+        ? { ...assertion, value_norm: "p.morales@proveedor.example" }
+        : assertion,
+    ),
+  };
+
+  beforeEach(() => {
+    vi.mocked(fetchV2EvidenceRecords).mockResolvedValue(page([NAMED_SENDER], 1) as never);
+  });
+
+  async function openAndChoose(relationship: string) {
+    render(<EvidenceReviewPage />);
+    await screen.findByTestId("review-queue-table");
+    fireEvent.click(screen.getByText("p.morales@proveedor.example"));
+    fireEvent.change(screen.getByTestId("command-note"), {
+      target: { value: "el remitente es el fabricante" },
+    });
+    fireEvent.click(within(screen.getAllByTestId("sender-institution-choice")[0]).getByRole("radio"));
+    const choice = screen
+      .getAllByTestId("address-relationship-choice")
+      .find((candidate) => (candidate.textContent ?? "").includes(relationship))!;
+    fireEvent.click(within(choice).getByRole("radio"));
+  }
+
+  function attributionCard() {
+    return screen.getByTestId("command-preview-attribute_sender_organization");
+  }
+
+  it("refuses to call it a shared mailbox, and says what to choose instead", async () => {
+    await openAndChoose("Buzón compartido");
+    expect(attributionCard().dataset.availability).toBe("blocked");
+    expect(attributionCard().textContent).toContain("varias personas la leen");
+    expect(within(attributionCard()).queryByTestId("command-request")).toBeNull();
+  });
+
+  it("asks how the operator knows, and accepts the claim once they say", async () => {
+    await openAndChoose("Buzón compartido");
+    fireEvent.change(screen.getByTestId("shared-mailbox-override"), {
+      target: { value: "la secretaria y el jefe de laboratorio la responden" },
+    });
+    expect(attributionCard().dataset.availability).toBe("available");
+    const request = JSON.parse(
+      within(attributionCard()).getByTestId("command-request").querySelector("pre")!.textContent!,
+    );
+    expect(request.usage).toBe("shared_mailbox");
+    expect(request.shared_mailbox_override_note).toBe(
+      "la secretaria y el jefe de laboratorio la responden",
+    );
+  });
+
+  it("needs nothing extra for the neutral relationship", async () => {
+    await openAndChoose("sin identificar");
+    expect(screen.queryByTestId("shared-mailbox-override")).toBeNull();
+    expect(attributionCard().dataset.availability).toBe("available");
+  });
+
+  it("still sends nothing, whichever way the operator resolves it", async () => {
+    await openAndChoose("sin identificar");
+    for (const action of screen.getAllByTestId("review-preview-action")) {
+      expect((action as HTMLButtonElement).disabled).toBe(true);
+    }
   });
 });

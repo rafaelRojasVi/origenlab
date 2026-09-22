@@ -200,12 +200,20 @@ def attach_contact_address(
     repo: CommandRepo,
     idempotency_key: IdempotencyKey = None,
 ) -> dict[str, Any]:
-    """Attach an asserted address to an organization as a mailbox that organization operates.
+    """Attach an asserted address to an organization as a channel that organization operates.
 
-    `usage` must be `shared_mailbox` and the operator must write it, because it is the claim
-    being made: this is a desk, not a person. An address already attributed to a person, or
-    to a different organization, is refused — no command here reassigns an identity somebody
-    already recorded.
+    `usage` has no default and the operator must write one of two values, because they are
+    opposite claims about a human being: `shared_mailbox` says several people read this desk,
+    `individual_owner_unknown` says one person owns the address and nobody has recorded who.
+    The second creates no person and names nobody — it records the institution, which is
+    known, and leaves the owner absent, which is the truth.
+
+    `shared_mailbox` on an address without a recognised role local part needs
+    `shared_mailbox_override_note`: the operator may well know it is a desk, and then they
+    say how, in a sentence that ends up in the event.
+
+    An address already attributed to a person, or to a different organization, is refused —
+    no command here reassigns an identity somebody already recorded.
     """
     return _run(
         command_name=ATTACH_CONTACT_ADDRESS,

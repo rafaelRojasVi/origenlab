@@ -51,6 +51,7 @@ from protected_databases import (  # noqa: E402
 
 from origenlab_api.v2.command_repository import V2CommandRepository  # noqa: E402
 from origenlab_api.v2.commands import (  # noqa: E402
+    ATTACHABLE_USAGE,
     ATTRIBUTE_SENDER_ORGANIZATION,
     CommandRefused,
 )
@@ -69,6 +70,10 @@ MAINTENANCE_DSN = "postgresql://postgres:postgres@127.0.0.1:54332/postgres"
 API_ENV = pathlib.Path(
     os.environ.get("OL_LOCAL_PRIVATE_ROOT", str(pathlib.Path.home() / "data/origenlab-v2-local"))
 ) / "api.cleanroom.env"
+
+#: The one refusal a rehearsal expects to see: `shared_mailbox` on an address whose local
+#: part is not a recognised desk. It is the rule under test, not a defect in the rows.
+EXPECTED_REFUSAL = "named_address_is_not_a_shared_mailbox_by_default"
 
 BOOTSTRAP = """
 create schema if not exists extensions authorization postgres;
@@ -314,7 +319,7 @@ def _json_string(value: str) -> str:
 
 
 def rehearse(psycopg: Any, case: dict[str, Any], verbose: bool) -> list[str]:
-    """Run the real command once per institution the message names.
+    """Run the real command once per institution the message names, **and per relationship**.
 
     **Each rehearsal gets its own database.** The sender belongs to exactly one of the named
     institutions, so rehearsing the second name after the first has already been applied
@@ -322,67 +327,82 @@ def rehearse(psycopg: Any, case: dict[str, Any], verbose: bool) -> list[str]:
     the command's own refusals for reasons that say nothing about the real decision. A fresh
     room per decision is the only way each one is measured against the state it will really
     meet: the clean room's, as it is now.
+
+    **Why both relationships, and why the script picks neither.** `usage` has no default any
+    more, because `shared_mailbox` and `individual_owner_unknown` make opposite claims about
+    a human being and only an operator can say which is true. A rehearsal that hard-coded one
+    would be rehearsing this script's opinion. So it runs both and reports what the boundary
+    answers to each — which is the useful thing anyway: it shows the operator, before they
+    decide anything, that a named sender address is refused as a shared mailbox and accepted
+    as one whose owner is not recorded.
     """
     lines: list[str] = []
     for index, source_name in enumerate(case["names"]):
-        database = build_disposable(psycopg)
-        dsn = f"{MAINTENANCE_DSN.rpartition('/')[0]}/{database}"
-        try:
-            state = replay_case(psycopg, dsn, case)
-            target = state["names"][index]
-            repo = V2CommandRepository(psycopg.connect, api_dsn(database))
-            operator = OperatorIdentity(
-                operator_id=state["operator_id"],
-                email_norm="rehearsal@example.invalid",
-                display_name="Rehearsal Operator",
-                role="sales",
-                status="active",
-            )
-            fields: dict[str, Any] = {
-                "source_record_id": state["source_record_id"],
-                "note": "ensayo: el remitente pertenece a esta institución",
-                "organization_assertion_id": target["assertion_id"],
-                "address_assertion_id": state["address_assertion_id"],
-                "usage": "shared_mailbox",
-            }
-            if target["existing"]:
-                fields |= {
-                    "target": "existing",
-                    "organization_id": target["existing"]["id"],
-                    "organization_version": target["existing"]["version"],
-                }
-                route = f"confirmar la existente «{target['existing']['name']}»"
-            else:
-                fields |= {"target": "new", "kind": "unknown", "name_display": None}
-                route = f"crear nueva «{target['observed'] or target['value_norm']}»"
-
+        for relationship in ATTACHABLE_USAGE:
+            database = build_disposable(psycopg)
+            dsn = f"{MAINTENANCE_DSN.rpartition('/')[0]}/{database}"
             try:
-                result = repo.execute(
-                    command_name=ATTRIBUTE_SENDER_ORGANIZATION,
-                    operator=operator,
-                    fields=fields,
-                    idempotency_key=f"rehearsal-{uuid.uuid4().hex}",
-                    digest="0" * 64,
+                state = replay_case(psycopg, dsn, case)
+                target = state["names"][index]
+                repo = V2CommandRepository(psycopg.connect, api_dsn(database))
+                operator = OperatorIdentity(
+                    operator_id=state["operator_id"],
+                    email_norm="rehearsal@example.invalid",
+                    display_name="Rehearsal Operator",
+                    role="sales",
+                    status="active",
                 )
-            except CommandRefused as exc:
-                lines.append(f"    REFUSED  {route}: {exc.code} — {exc.message}")
-                continue
+                fields: dict[str, Any] = {
+                    "source_record_id": state["source_record_id"],
+                    "note": "ensayo: el remitente pertenece a esta institución",
+                    "organization_assertion_id": target["assertion_id"],
+                    "address_assertion_id": state["address_assertion_id"],
+                    "usage": relationship,
+                    # No override. An override is an operator saying how they know a named
+                    # address is a desk, and this script knows nothing of the sort.
+                    "shared_mailbox_override_note": None,
+                }
+                if target["existing"]:
+                    fields |= {
+                        "target": "existing",
+                        "organization_id": target["existing"]["id"],
+                        "organization_version": target["existing"]["version"],
+                    }
+                    route = f"confirmar la existente «{target['existing']['name']}»"
+                else:
+                    fields |= {"target": "new", "kind": "unknown", "name_display": None}
+                    route = f"crear nueva «{target['observed'] or target['value_norm']}»"
 
-            lines.append(
-                f"    OK       {route}\n"
-                f"             creó {result['created'] or '[]'}; "
-                f"aserciones que quedan sin resolver: "
-                f"{result['assertions_left_unresolved']}; "
-                f"registro queda '{result['review_status']}'"
-            )
-            if verbose:
+                try:
+                    result = repo.execute(
+                        command_name=ATTRIBUTE_SENDER_ORGANIZATION,
+                        operator=operator,
+                        fields=fields,
+                        idempotency_key=f"rehearsal-{uuid.uuid4().hex}",
+                        digest="0" * 64,
+                    )
+                except CommandRefused as exc:
+                    lines.append(
+                        f"    RECHAZADO  {route} · {relationship}\n"
+                        f"               {exc.code} — {exc.message}"
+                    )
+                    continue
+
                 lines.append(
-                    f"             organization_id={result['organization_id']} "
-                    f"contact_point_id={result['contact_point_id']}"
+                    f"    OK         {route} · {relationship}\n"
+                    f"               creó {result['created'] or '[]'}; "
+                    f"aserciones que quedan sin resolver: "
+                    f"{result['assertions_left_unresolved']}; "
+                    f"registro queda '{result['review_status']}'"
                 )
-            _assert_nothing_extra(psycopg, dsn, lines)
-        finally:
-            drop_disposable(psycopg, database)
+                if verbose:
+                    lines.append(
+                        f"               organization_id={result['organization_id']} "
+                        f"contact_point_id={result['contact_point_id']}"
+                    )
+                _assert_nothing_extra(psycopg, dsn, lines)
+            finally:
+                drop_disposable(psycopg, database)
         del source_name
     return lines
 
@@ -446,7 +466,11 @@ def main() -> int:
         print(f"    remitente: {channel}")
         for line in rehearse(psycopg, case, args.verbose):
             print(line)
-            if line.strip().startswith("REFUSED"):
+            # `named_address_...` is the refusal the boundary is *supposed* to produce here,
+            # and a rehearsal that exited non-zero for it would be reporting the rule working
+            # as a failure. Every other refusal still is one: it means the real rows do not
+            # have the shape the command expects.
+            if line.strip().startswith("RECHAZADO") and EXPECTED_REFUSAL not in line:
                 failures += 1
         print("")
 

@@ -19,7 +19,7 @@
  * instead of it.
  */
 
-import type { V2EvidenceRecord, V2RecordAssertion } from "../api/v2Types";
+import type { V2AttachableUsage, V2EvidenceRecord, V2RecordAssertion } from "../api/v2Types";
 import { isConsumerDomain, isRoleMailbox, organizationNamesOf } from "./evidenceReview";
 
 /** The five commands, named exactly as the API names them. */
@@ -87,6 +87,24 @@ export interface CommandContext {
    * the one the operator was looking at.
    */
   selectedOrganizationAssertionId?: string | null;
+  /**
+   * What the operator says this address *is* to the institution. **Null until they say.**
+   *
+   * There is no default and there must not be one. The two values make opposite claims
+   * about a human being — `shared_mailbox` says several people read this desk,
+   * `individual_owner_unknown` says one person owns it and nobody has recorded who — and
+   * until this change the surface asserted the first on every address because it was the
+   * only shape the schema could hold. A default would put that back.
+   */
+  addressRelationship?: V2AttachableUsage | null;
+  /**
+   * How the operator knows a named address really is a shared desk. Blank until they say.
+   *
+   * Required only for the combination the evidence argues against: `shared_mailbox` on an
+   * address without a recognised role local part. It is a sentence and not a checkbox
+   * because it is read later by somebody weighing the claim.
+   */
+  sharedMailboxOverrideNote?: string;
   /** The operator's reason. Blank until they type one. */
   note: string;
 }
@@ -114,6 +132,45 @@ function recordBlockers(context: CommandContext): string[] {
     blockers.push(NOTE_REQUIRED);
   }
   return blockers;
+}
+
+const RELATIONSHIP_REQUIRED =
+  "Elige qué es esta dirección para la institución: no hay opción por omisión.";
+
+/**
+ * The blockers that govern calling an address one thing or the other.
+ *
+ * Mirrors the API's rule and is deliberately the *stricter* half of it: the boundary asks
+ * for an override wherever its own role-mailbox list does not recognise a local part, and
+ * that list is a superset of this one. So a preview that says "available" is never refused
+ * for this reason, and a preview that asks for a sentence may occasionally ask for one the
+ * boundary would not have needed. That is the right direction to be wrong in.
+ */
+function relationshipBlockers(
+  context: CommandContext,
+  address: string | null,
+): { blockers: string[]; relationship: V2AttachableUsage | null; override: string } {
+  const relationship = context.addressRelationship ?? null;
+  const override = (context.sharedMailboxOverrideNote ?? "").trim();
+  const blockers: string[] = [];
+
+  if (!relationship) {
+    blockers.push(RELATIONSHIP_REQUIRED);
+  } else if (relationship === "shared_mailbox" && address && !isRoleMailbox(address)) {
+    if (!override) {
+      blockers.push(
+        `«${address}» no tiene un nombre de función reconocido, así que llamarla buzón ` +
+          "compartido afirma que varias personas la leen. Elige «de una persona, sin " +
+          "identificar» o escribe cómo sabes que es una mesa.",
+      );
+    }
+  } else if (relationship !== "shared_mailbox" && override) {
+    blockers.push(
+      "Escribiste una justificación de buzón compartido para una relación que no lo afirma: " +
+        "bórrala o cambia la relación.",
+    );
+  }
+  return { blockers, relationship, override };
 }
 
 /**
@@ -283,12 +340,18 @@ function attachContactAddress(context: CommandContext): CommandPreview {
 
   const cautions: string[] = [];
   const address = addresses.length === 1 ? addresses[0].value_norm : null;
+  const { blockers: relationshipIssues, relationship, override } = relationshipBlockers(
+    context,
+    address,
+  );
+  blockers.push(...relationshipIssues);
   if (address && !isRoleMailbox(address)) {
-    // A heuristic with an opinion, stated as a caution and never as a refusal. The operator
-    // may know perfectly well that this is a desk; a local part is a spelling, not evidence.
+    // A heuristic with an opinion. It no longer has to carry the whole weight of the
+    // decision: the operator now has a truthful value to choose, so this only says what the
+    // spelling suggests and leaves the claim to them.
     cautions.push(
-      "Esta dirección no parece un buzón de mesa. Adjuntarla como 'shared_mailbox' afirma " +
-        "que lo es; si pertenece a una persona, todavía no hay comando para eso.",
+      `«${address}» no tiene un nombre de función reconocido, así que parece de una persona ` +
+        "y no de una mesa. Un nombre local es una escritura, no evidencia: decídelo tú.",
     );
   }
   if (isConsumerDomain(context.record.from_domain)) {
@@ -317,26 +380,31 @@ function attachContactAddress(context: CommandContext): CommandPreview {
     cautions,
     writes: existing
       ? [
-          "El canal ya existe: se le asigna la institución y pasa a 'shared_mailbox'/'confirmed'.",
+          `El canal ya existe: se le asigna la institución y pasa a '${relationship ?? "?"}'/'confirmed'.`,
           "La afirmación queda resuelta como 'linked' y se registra el evento.",
         ]
       : [
-          "Una fila crm.contact_point nueva, 'shared_mailbox' y 'confirmed'.",
+          `Una fila crm.contact_point nueva, '${relationship ?? "?"}' y 'confirmed'.`,
           "La afirmación queda resuelta como 'promoted' y se registra el evento.",
         ],
     doesNot: [
-      "No crea persona: un buzón de mesa no tiene dueño conocido.",
+      relationship === "individual_owner_unknown"
+        ? "No crea persona ni afirma de quién es la dirección: sólo registra qué institución la opera."
+        : "No crea persona: un buzón de mesa no tiene dueño conocido.",
       "No otorga permiso de marketing: recibir un correo no es autorización para enviar.",
       "No abre prospecto, oportunidad ni cotización.",
     ],
     request:
-      blockers.length === 0 && address
+      blockers.length === 0 && address && relationship
         ? {
             source_record_id: context.record.source_record_id,
             note: context.note.trim(),
             assertion_id: addresses[0].assertion_id,
             organization_id: context.selectedOrganizationId,
-            usage: "shared_mailbox",
+            usage: relationship,
+            ...(relationship === "shared_mailbox" && override
+              ? { shared_mailbox_override_note: override }
+              : {}),
           }
         : null,
     leavesUnresolved: [],
@@ -409,10 +477,16 @@ function attributeSenderOrganization(context: CommandContext): CommandPreview {
     cautions.push(`Se creará «${chosen.value_norm}», con el texto exacto que afirma el correo.`);
   }
   const address = addresses.length === 1 ? addresses[0] : null;
+  const { blockers: relationshipIssues, relationship, override } = relationshipBlockers(
+    context,
+    address?.value_norm ?? null,
+  );
+  blockers.push(...relationshipIssues);
   if (address && !isRoleMailbox(address.value_norm)) {
     cautions.push(
-      "Esta dirección no parece un buzón de mesa. Se adjunta como 'shared_mailbox', que " +
-        "afirma que lo es; si pertenece a una persona, todavía no hay comando para eso.",
+      `«${address.value_norm}» no tiene un nombre de función reconocido, así que parece de ` +
+        "una persona y no de una mesa. Un nombre local es una escritura, no evidencia: " +
+        "decídelo tú.",
     );
   }
   if (isConsumerDomain(context.record.from_domain)) {
@@ -440,7 +514,11 @@ function attributeSenderOrganization(context: CommandContext): CommandPreview {
     .filter((assertion) => assertion.assertion_id !== context.selectedOrganizationAssertionId)
     .map((assertion) => `«${assertion.value_norm}» queda sin resolver, y el registro pendiente.`);
 
-  const ready = blockers.length === 0 && chosen !== null && address !== null;
+  const ready =
+    blockers.length === 0 && chosen !== null && address !== null && relationship !== null;
+  const attached = `La dirección del remitente queda atribuida a ella como '${
+    relationship ?? "?"
+  }'/'confirmed'.`;
   return {
     id: "attribute_sender_organization",
     label: "Atribuir el remitente a una institución",
@@ -455,31 +533,36 @@ function attributeSenderOrganization(context: CommandContext): CommandPreview {
       route === "confirm"
         ? [
             "La institución elegida pasa a 'confirmed' y sube de versión, si estaba propuesta.",
-            "La dirección del remitente queda atribuida a ella como 'shared_mailbox'/'confirmed'.",
+            attached,
             "Se resuelven exactamente dos afirmaciones: la institución elegida y la dirección.",
             "Un recibo de comando y un evento por cada cambio, con tu nombre y tu motivo.",
           ]
         : [
             "Una fila crm.organization con el nombre afirmado, 'confirmed' y tu identidad.",
-            "La dirección del remitente queda atribuida a ella como 'shared_mailbox'/'confirmed'.",
+            attached,
             "Se resuelven exactamente dos afirmaciones: la institución elegida y la dirección.",
             "Un recibo de comando y un evento por cada cambio, con tu nombre y tu motivo.",
           ],
     doesNot: [
       "No resuelve las demás instituciones que el correo nombra: quedan sin resolver.",
       "No infiere nada del dominio del remitente ni lo registra como dominio de la institución.",
-      "No crea persona ni afiliación: un buzón de mesa no tiene dueño conocido.",
+      relationship === "individual_owner_unknown"
+        ? "No crea persona ni afiliación, y no afirma de quién es la dirección: sólo qué institución la opera."
+        : "No crea persona ni afiliación: un buzón de mesa no tiene dueño conocido.",
       "No abre prospecto, permiso de marketing, campaña, cotización ni tarea.",
       "Si falla cualquier mitad, no queda ninguna: es una sola transacción.",
     ],
     request:
-      ready && chosen && address
+      ready && chosen && address && relationship
         ? {
             source_record_id: context.record.source_record_id,
             note: context.note.trim(),
             organization_assertion_id: chosen.assertion_id,
             address_assertion_id: address.assertion_id,
-            usage: "shared_mailbox",
+            usage: relationship,
+            ...(relationship === "shared_mailbox" && override
+              ? { shared_mailbox_override_note: override }
+              : {}),
             ...(match
               ? {
                   target: "existing",

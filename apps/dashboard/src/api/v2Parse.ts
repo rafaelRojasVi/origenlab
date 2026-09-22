@@ -63,6 +63,7 @@ const USAGES: ReadonlySet<string> = new Set([
   "personal",
   "work",
   "shared_mailbox",
+  "individual_owner_unknown",
   "unattributed",
 ]);
 

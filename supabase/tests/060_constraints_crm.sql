@@ -7,7 +7,7 @@ create extension if not exists pgtap with schema extensions;
 -- Fixture (rolled back): the owner may call pgTAP for the duration of this transaction.
 grant usage on schema extensions to origenlab_owner;
 set role origenlab_owner;
-select plan(101);
+select plan(105);
 
 -- platform.operator / platform.command_receipt (#29, #30)
 insert into platform.operator (id, auth_user_id, email_norm, display_name, role, status)
@@ -83,6 +83,10 @@ select throws_ok($$ insert into crm.contact_point (kind, value_norm, value_displ
 select throws_ok($$ insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation) values ('phone', '56912345678', 'x', 'unattributed', 'confirmed') $$, '23514', null, 'contact_point: phone value_norm is E.164');
 select lives_ok($$ insert into crm.contact_point (kind, value_norm, value_display, organization_id, usage, confirmation) values ('email', 'compras@uni.example', 'compras@uni.example', '00000000-0000-4000-8000-000000000001', 'shared_mailbox', 'confirmed') $$, 'contact_point: a shared mailbox operated by the root organization');
 select throws_ok($$ insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation) values ('fax', '+56912345678', 'x', 'unattributed', 'confirmed') $$, '23514', null, 'contact_point: kind ∈ {email, phone}');
+select lives_ok($$ insert into crm.contact_point (kind, value_norm, value_display, organization_id, usage, confirmation) values ('email', 'jperez@uni.example', 'jperez@uni.example', '00000000-0000-4000-8000-000000000001', 'individual_owner_unknown', 'confirmed') $$, 'contact_point: a named address the institution operates, owner not recorded');
+select throws_ok($$ insert into crm.contact_point (kind, value_norm, value_display, person_id, organization_id, usage, confirmation) values ('email', 'iou1@example.test', 'x', '00000000-0000-4000-8000-000000000010', '00000000-0000-4000-8000-000000000001', 'individual_owner_unknown', 'confirmed') $$, '23514', null, 'contact_point: individual_owner_unknown ⇒ person NULL (it names nobody)');
+select throws_ok($$ insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation) values ('email', 'iou2@example.test', 'x', 'individual_owner_unknown', 'confirmed') $$, '23514', null, 'contact_point: individual_owner_unknown ⇒ organization NOT NULL (otherwise it is unattributed)');
+select throws_ok($$ insert into crm.contact_point (kind, value_norm, value_display, organization_id, usage, confirmation) values ('email', 'iou3@example.test', 'x', '00000000-0000-4000-8000-000000000001', 'owner_unknown', 'confirmed') $$, '23514', null, 'contact_point: usage vocabulary stays closed');
 
 -- crm.address (#31)
 insert into crm.address (id, organization_id, street_line_1, locality, administrative_area, country_code, valid_from, confirmation)

@@ -15,7 +15,22 @@ export interface V2Page<T> {
 }
 
 /** A channel, and only a channel. `usage` says what is actually known about its owner. */
-export type V2ContactUsage = "personal" | "work" | "shared_mailbox" | "unattributed";
+export type V2ContactUsage =
+  | "personal"
+  | "work"
+  | "shared_mailbox"
+  | "individual_owner_unknown"
+  | "unattributed";
+
+/**
+ * The relationship an operator may assert between an address and an institution.
+ *
+ * The other three usages need something the review queue does not have: `personal` and
+ * `work` need a recorded person, and `unattributed` forbids the institution. These two are
+ * what is left, and they say opposite things about who is on the other end — which is why
+ * nothing in this app picks one for the operator.
+ */
+export type V2AttachableUsage = "shared_mailbox" | "individual_owner_unknown";
 
 /** `machine_proposed` is the review queue by another name. */
 export type V2Confirmation = "machine_proposed" | "confirmed";

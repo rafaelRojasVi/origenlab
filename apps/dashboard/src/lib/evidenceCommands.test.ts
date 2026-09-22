@@ -245,7 +245,10 @@ describe("confirming an existing organization", () => {
 });
 
 describe("attaching an address", () => {
-  const withOrg = () => context({ selectedOrganizationId: "o1" });
+  // The relationship is spelled out in every one of these, because the preview will not
+  // supply one. The tests that are *about* that omission are in their own block below.
+  const withOrg = () =>
+    context({ selectedOrganizationId: "o1", addressRelationship: "shared_mailbox" });
 
   it("needs an organization chosen first", () => {
     expect(preview("attach_contact_address", context()).blockers).toContain(
@@ -253,23 +256,10 @@ describe("attaching an address", () => {
     );
   });
 
-  it("is available for a role mailbox once an organization is chosen", () => {
+  it("is available for a role mailbox once an organization and a relationship are chosen", () => {
     const item = preview("attach_contact_address", withOrg());
     expect(item.availability).toBe("available");
-    expect(item.cautions.some((c) => c.includes("no parece un buzón de mesa"))).toBe(false);
-  });
-
-  it("cautions rather than refuses when the address looks personal", () => {
-    // The distinction this module is built around: a local part is a spelling, not evidence.
-    const ctx = context({
-      record: record({
-        assertions: [assertion({ value_norm: "p.morales@instituto.example.cl" })],
-      }),
-      selectedOrganizationId: "o1",
-    });
-    const item = preview("attach_contact_address", ctx);
-    expect(item.availability).toBe("available");
-    expect(item.cautions.some((c) => c.includes("no parece un buzón de mesa"))).toBe(true);
+    expect(item.cautions.some((c) => c.includes("nombre de función reconocido"))).toBe(false);
   });
 
   it("refuses an address already attributed to a person", () => {
@@ -333,6 +323,7 @@ describe("attaching an address", () => {
         ],
       }),
       selectedOrganizationId: "o1",
+      addressRelationship: "shared_mailbox",
     });
     const item = preview("attach_contact_address", ctx);
     expect(item.availability).toBe("available");
@@ -402,6 +393,7 @@ function attribution(sender: string, chosen: string | null, extra: Partial<Comma
     domainShareCount: 1,
     selectedOrganizationId: null,
     selectedOrganizationAssertionId: chosen,
+    addressRelationship: "shared_mailbox",
     note: "el remitente es de esta institución",
     ...extra,
   });
@@ -534,5 +526,104 @@ describe("attributing the sender to one of the institutions a message names", ()
       record: { ...twoNamedInstitutions(SUPPLIER), review_status: "reviewed" } as V2EvidenceRecord,
     });
     expect(reviewed.availability).toBe("blocked");
+  });
+});
+
+// ------------------------------------------------------------------------------------------
+// The relationship an address has to an institution.
+//
+// `shared_mailbox` used to be the only value the schema could hold for an address attached to
+// an institution with no person, so the preview wrote it into every request — including on a
+// named sender's address, where it asserts that several people read that person's mailbox.
+// These tests are about the two things that replaced it: a value that claims only what is
+// known, and a refusal to make the shared-mailbox claim without saying it out loud.
+
+describe("what the operator says an address is to the institution", () => {
+  const NAMED = "p.morales@instituto.example.cl";
+
+  function attach(extra: Partial<CommandContext> = {}) {
+    return preview(
+      "attach_contact_address",
+      context({ selectedOrganizationId: "o1", ...extra }),
+    );
+  }
+
+  function named(extra: Partial<CommandContext> = {}) {
+    return attach({
+      record: record({ assertions: [assertion({ value_norm: NAMED })] }),
+      ...extra,
+    });
+  }
+
+  it("has no default: nothing is chosen until the operator chooses", () => {
+    const item = attach();
+    expect(item.availability).toBe("blocked");
+    expect(item.blockers).toContain(
+      "Elige qué es esta dirección para la institución: no hay opción por omisión.",
+    );
+    expect(item.request).toBeNull();
+  });
+
+  it("blocks the attribution command too, for the same reason", () => {
+    const item = attribution(SUPPLIER, "org-new", { addressRelationship: null });
+    expect(item.availability).toBe("blocked");
+    expect(item.blockers.join(" ")).toContain("no hay opción por omisión");
+    expect(item.request).toBeNull();
+  });
+
+  it("refuses to call a named address a shared mailbox", () => {
+    const item = named({ addressRelationship: "shared_mailbox" });
+    expect(item.availability).toBe("blocked");
+    expect(item.blockers.join(" ")).toContain("varias personas la leen");
+    expect(item.request).toBeNull();
+  });
+
+  it("lets the operator make that claim anyway, once they say how they know", () => {
+    const item = named({
+      addressRelationship: "shared_mailbox",
+      sharedMailboxOverrideNote: "la secretaria y el jefe de laboratorio la responden",
+    });
+    expect(item.availability).toBe("available");
+    expect(item.request).toMatchObject({
+      usage: "shared_mailbox",
+      shared_mailbox_override_note: "la secretaria y el jefe de laboratorio la responden",
+    });
+  });
+
+  it("needs no justification for the neutral relationship, and sends none", () => {
+    const item = named({ addressRelationship: "individual_owner_unknown" });
+    expect(item.availability).toBe("available");
+    expect(item.request).toMatchObject({ usage: "individual_owner_unknown" });
+    expect(item.request).not.toHaveProperty("shared_mailbox_override_note");
+  });
+
+  it("refuses a justification written for a claim the request does not make", () => {
+    const item = named({
+      addressRelationship: "individual_owner_unknown",
+      sharedMailboxOverrideNote: "la leen varias personas",
+    });
+    expect(item.availability).toBe("blocked");
+    expect(item.blockers.join(" ")).toContain("bórrala o cambia la relación");
+  });
+
+  it("says that the neutral relationship creates nobody and claims nothing about the owner", () => {
+    const item = named({ addressRelationship: "individual_owner_unknown" });
+    const said = item.doesNot.join(" ").toLowerCase();
+    expect(said).toContain("no crea persona");
+    expect(said).toContain("ni afirma de quién es la dirección");
+    expect(item.writes.join(" ")).toContain("individual_owner_unknown");
+  });
+
+  it("asks for no justification when the local part is a recognised desk", () => {
+    const item = attach({ addressRelationship: "shared_mailbox" });
+    expect(item.availability).toBe("available");
+    expect(item.request).toMatchObject({ usage: "shared_mailbox" });
+  });
+
+  it("carries the chosen relationship into the attribution request", () => {
+    const item = attribution(SUPPLIER, "org-new", {
+      addressRelationship: "individual_owner_unknown",
+    });
+    expect(item.request).toMatchObject({ usage: "individual_owner_unknown" });
   });
 });
