@@ -556,7 +556,15 @@ def test_a_repository_refusal_becomes_its_own_status_and_code() -> None:
 # — and it is also why `crm.domain_event` being append-only, which refuses even the owner a
 # DELETE, costs nothing here.
 
-_TEST_DSN = os.environ.get("ORIGENLAB_V2_TEST_DSN", "").strip()
+from protected_databases import (  # noqa: E402
+    assert_connection_is_disposable,
+    assert_not_protected,
+)
+
+_TEST_DSN = assert_not_protected(
+    os.environ.get("ORIGENLAB_V2_TEST_DSN", "").strip(),
+    variable="ORIGENLAB_V2_TEST_DSN",
+)
 _needs_db = pytest.mark.skipif(
     not (_TEST_DSN and os.environ.get("ORIGENLAB_V2_API_TEST_DSN", "").strip()),
     reason="ORIGENLAB_V2_TEST_DSN and ORIGENLAB_V2_API_TEST_DSN are both required",
@@ -572,7 +580,10 @@ _needs_db = pytest.mark.skipif(
 #: Locally that DSN is the one `supabase/scripts/dev_db.sh api-login` writes, outside Git.
 #: Only its database name is replaced; the host, role and password are used as given.
 RUNTIME_ROLE = "origenlab_api"
-_API_DSN = os.environ.get("ORIGENLAB_V2_API_TEST_DSN", "").strip()
+_API_DSN = assert_not_protected(
+    os.environ.get("ORIGENLAB_V2_API_TEST_DSN", "").strip(),
+    variable="ORIGENLAB_V2_API_TEST_DSN",
+)
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 MIGRATIONS = REPO_ROOT / "supabase" / "migrations"
@@ -610,10 +621,20 @@ def disposable_database():
 
     dsn = _swap_database(_TEST_DSN, name)
     try:
-        with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
-            cur.execute(BOOTSTRAP)
-            for path in sorted(MIGRATIONS.glob("*.sql")):
-                cur.execute(path.read_text(encoding="utf-8"))
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            # Ask the server, before any statement runs, which database this actually is.
+            # The migration chain is applied below WITHOUT writing ledger rows, which is
+            # correct for a throwaway database and corrupting for a real one — on 2026-09-22
+            # `origenlab_dev` ended up carrying a migration's DDL with no ledger row to
+            # match. A name computed by string surgery is not evidence; this is.
+            reached = assert_connection_is_disposable(conn)
+            assert reached == name, (
+                f"expected to reach the disposable database {name!r}, reached {reached!r}"
+            )
+            with conn.cursor() as cur:
+                cur.execute(BOOTSTRAP)
+                for path in sorted(MIGRATIONS.glob("*.sql")):
+                    cur.execute(path.read_text(encoding="utf-8"))
         yield dsn
     finally:
         with psycopg.connect(_TEST_DSN, autocommit=True) as conn, conn.cursor() as cur:

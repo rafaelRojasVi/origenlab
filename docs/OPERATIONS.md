@@ -436,6 +436,113 @@ drifts from `supabase/migrations/` in either head or count, so it cannot serve a
 `drop` and `sweep` check the `origenlab_test_<8 hex>` pattern **before anything else**, so
 neither can ever remove `postgres`, `origenlab_dev` or the template.
 
+<a id="m-ops-cleanroom"></a>
+#### The clean-room database — `origenlab_clean`
+
+**Why it exists.** On 2026-09-22 a database-backed test run wrote into `origenlab_dev`: seven
+fixture `evidence.source_record` rows (`dedupe_key like 'pytest-%'`), seven fixture
+`platform.operator` rows (`email_norm like 'pytest-%'`), nine `platform.command_receipt` rows,
+and the three organizations, two contact points and sixteen `crm.domain_event` rows their
+commands produced. The same run applied migration `20260922090000`'s DDL **without** recording
+its ledger row, so `origenlab_dev` carries 21 migrations' worth of schema and a ledger that
+names 20.
+
+`origenlab_dev` also holds twenty real staged Gmail records ([`STATUS.md`](STATUS.md) §2.7.7),
+so it is neither trustworthy nor disposable. It is therefore **quarantined**: left exactly as
+it is, read-only, until an operator decides what to do with it. Nothing in this procedure
+writes to it, drops it or restores over it.
+
+The clean room is where V2 work happens instead. `origenlab_clean` is a second database in the
+same development container, rebuilt from nothing but `supabase/migrations/` and the
+reproducible historical load — so everything in it traces to an input a human can read and
+refuse, and the ledger always describes the schema.
+
+**Build it.**
+
+```bash
+supabase/scripts/dev_db.sh up                      # the container, if it is not running
+supabase/scripts/cleanroom_db.sh build             # refuses if origenlab_clean already exists
+supabase/scripts/cleanroom_db.sh build --force     # replace it
+```
+
+`build` runs, in order: create → platform-emulating `extensions` schema and an empty ledger →
+the full migration chain, one transaction and one ledger row per file → one seeded
+`platform.operator` → `import_waves_into_v2.py --apply` → `promote_evidence_into_crm.py
+--apply` → `stage_gmail_drive_evidence.py --apply` against the local September manifest →
+`verify`. Any step that refuses stops the build; nothing half-loaded is left behind a
+successful exit.
+
+**Two inputs live outside Git**, by design, and `build` refuses at the door if either is
+absent rather than producing a partial database:
+
+| Input | Path | What it is |
+|---|---|---|
+| Wave 1A/1B safety bundles | `~/data/origenlab-v2-migration/` | the historical load's artifacts |
+| Gmail staging manifest | `~/data/origenlab-v2-local/evidence/gmail-2026-09-21-commercial.json` | 20 messages from a read-only sweep, produced by hand |
+
+The manifest is **replayed, never re-fetched**. `stage_gmail_drive_evidence.py` imports no
+Google client and holds no credential; its only input is that file.
+
+**The database name is a literal.** `build --force` drops a database, so the name comes from
+the `OL_CLEAN_DBNAME` constant in `supabase/scripts/lib/local_target.sh` and from nowhere else
+— not an argument, not an environment variable, not a config file. The guard refuses to
+resolve to anything but `origenlab_clean`, it refuses `origenlab_dev` by name before doing
+anything else, and it **discards the development database's DSN**, so inside a clean-room
+script `ol_psql_dev` cannot connect at all. `build --force` prints the exact name on its own
+line immediately before the `DROP`.
+
+**Verify it.** Read-only, safe at any time — `verify.sql` runs inside `begin read only`.
+
+```bash
+supabase/scripts/cleanroom_db.sh verify
+supabase/scripts/cleanroom_db.sh status
+```
+
+`verify` emits one probe per line and compares it against `supabase/cleanroom/expected_counts.json`,
+which carries a reason for every number. The comparison is **exact in both directions**: a
+probe declared and not measured fails, and a probe measured and not declared fails, so the SQL
+and the baseline cannot drift apart in silence. 38 probes, including the breakdown that a
+total alone would hide — 20 `gmail_message` + 4 `migration_manifest` = 24 source records, all
+three asserted — and the four residue probes that name what went wrong on 2026-09-22.
+
+**Point the API at it.**
+
+```bash
+supabase/scripts/cleanroom_db.sh api-login          # writes ~/data/origenlab-v2-local/api.cleanroom.env
+set -a; . ~/data/origenlab-v2-local/api.cleanroom.env; set +a
+```
+
+That is the whole switch. `ORIGENLAB_V2_DATABASE_URL` is the only thing that selects a V2
+database, and `apps/dashboard` reaches it solely through `apps/api`, so there is no second
+knob and no dashboard setting to keep in step. **The default is unchanged**: `dev_db.sh
+api-login` still writes `api.env` for `origenlab_dev`, nothing sources either file by itself,
+and selecting the clean room is an explicit act.
+
+`ORIGENLAB_V2_DATABASE_URL` is now **validated, not trusted**. `apps/api` refuses to start on
+a value that is not a literal-loopback DSN, carries a query string or fragment, or names a
+hosted provider — the same rule `migration/v2_import/target.py` applies, so the two boundaries
+agree exactly rather than approximately.
+
+**A test may never open it.** `origenlab_clean` and `origenlab_dev` are both in
+`PROTECTED_DATABASES`; a `ORIGENLAB_V2_TEST_DSN` or `ORIGENLAB_V2_API_TEST_DSN` naming either
+is refused at import time, and the disposable-database fixture asks the *server* which database
+it reached before running a statement. The second check is the one that holds when a DSN is
+rewritten or a name-swap goes wrong, which is what this is for.
+
+**Tests.**
+
+```bash
+supabase/scripts/cleanroom_failure_tests.sh        # 25 refusal scenarios, connects to nothing
+cd apps/api && uv run pytest tests/test_v2_target_boundary.py tests/test_protected_databases.py
+```
+
+**Throwing it away** is routine, because rebuilding is the recovery procedure — there is no
+checkpoint, no restore and nothing to lose:
+
+```bash
+supabase/scripts/cleanroom_db.sh drop --force
+```
+
 #### Verifying an applied chain
 
 ```bash

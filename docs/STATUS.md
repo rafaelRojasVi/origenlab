@@ -27,7 +27,7 @@ of truth*). Any PR that changes what is built, applied or deployed updates this
 file — including the `Last verified` line — **in the same PR**. A PR that only
 changes design, rules or targets does not touch it.
 
-Last verified: **2026-09-21**, against `origin/main` @ `a3961aa4` plus this branch, measured from the
+Last verified: **2026-09-22**, against `origin/main` @ `a3961aa4` plus this branch, measured from the
 local PostgreSQL 17 carrying the Slice 0 migrations. §2.5's hosted facts are measurements taken by the
 Slice 0 audit itself on 2026-09-21, over the reviewed Supavisor session route inside a server-
 confirmed read-only transaction, together with authenticated control-plane reads; the earlier
@@ -84,14 +84,45 @@ Built under the hosted freeze (§2.8) so V2 work has somewhere durable to run.
 |---|---|
 | Container | `origenlab_dev_db`, pinned image `public.ecr.aws/supabase/postgres:17.6.1.165` |
 | Port | **54332, published on 127.0.0.1 only** — stricter than the CLI's stack, which binds on all interfaces |
-| Database | `origenlab_dev`; chain applied **21 of 21**, head `20260922090000` (§2.7.8 adds the one new audit event type) |
+| Database | `origenlab_dev`; **quarantined 2026-09-22** (§2.7.9). Ledger records **20** migrations, head `20260921120000`, while the schema already carries migration `20260922090000`'s DDL — the constraint `domain_event_type_check` includes `source_record.review_noted`. The earlier claim here of "21 of 21, head `20260922090000`" was measured against the schema, not the ledger, and is withdrawn: this database does not describe itself |
 | Structure | 7 schemas, 33 tables, 127 policies, 102 index-covered foreign keys, zero `SECURITY DEFINER` — identical to the CLI cluster's |
-| Rows of business data | **not zero — local only.** Measured 2026-09-21: `crm.*` **33,816** (`contact_point` 9,460 · `organization` 1,812 · `domain_event` 22,544; `person`, `opportunity`, `quote`, `task`, `affiliation` all **zero**), `outbound.*` **17,214** (`contact_control` 10,588 · `campaign_recipient` 3,481 · `send_attempt` 3,141 · `campaign` 3 · `send_control` 1), `evidence.*` **11,498** (`assertion` 11,474 · `source_record` 24), `comms.mailbox` 1, `platform.operator` 1, `catalog.*` and `procurement.*` zero |
+| Rows of business data | **not zero — local only, and 2026-09-21's numbers no longer describe it**: a test run added fixture residue on 2026-09-22 (§2.7.9), so `crm.organization` is 1,815 not 1,812, `crm.contact_point` 9,462 not 9,460, `crm.domain_event` 22,560 not 22,544, `evidence.source_record` 31 not 24, `evidence.assertion` 11,488 not 11,474, `platform.operator` 8 not 1 and `platform.command_receipt` 9 not 0. The reproducible figures below are what the clean-room database carries. Measured 2026-09-21: `crm.*` **33,816** (`contact_point` 9,460 · `organization` 1,812 · `domain_event` 22,544; `person`, `opportunity`, `quote`, `task`, `affiliation` all **zero**), `outbound.*` **17,214** (`contact_control` 10,588 · `campaign_recipient` 3,481 · `send_attempt` 3,141 · `campaign` 3 · `send_control` 1), `evidence.*` **11,498** (`assertion` 11,474 · `source_record` 24), `comms.mailbox` 1, `platform.operator` 1, `catalog.*` and `procurement.*` zero |
 | Of which staged from Gmail | **20 `evidence.source_record`** of kind `gmail_message`, all `review_status = 'pending'`, and their **26 `evidence.assertion`**, all `resolution = 'unresolved'` (20 `contact_address`, 6 `organization_name`). Staged 2026-09-21 from a local manifest by `stage_gmail_drive_evidence.py`; `crm.*` was counted before and after inside the staging transaction and did not change (§2.7.7) |
 | Where these rows came from | the §2.7 historical importer and the §2.7.7 staging pass, both run against **this loopback database only**. No hosted project holds any of it |
 | Send flags | one `outbound.send_control` row, **both `false`** — unchanged by every load above |
 | Checkpoints | `~/data/origenlab-v2-local/checkpoints/`, outside Git, `0700`/`0600`, each with `.sha256` and `.meta.json` |
 | Build template | `origenlab_template` in the **CLI** cluster; disposable `origenlab_test_<8 hex>` databases are cloned from it |
+
+#### Clean-room database — measured 2026-09-22
+
+Built because `origenlab_dev` is quarantined (§2.7.9). It lives in the **same container**, as a
+second database: the container is already proven loopback-only and labelled to this working
+tree, and a second cluster would be a second thing to keep alive for no added isolation that
+matters here.
+
+| Item | Value |
+|---|---|
+| Database | `origenlab_clean`, in container `origenlab_dev_db` on 127.0.0.1:54332 |
+| Entry point | `supabase/scripts/cleanroom_db.sh` — `build`, `verify`, `status`, `api-login`, `drop`. **No `restore` and no checkpoint reading**: rebuilding *is* the recovery procedure |
+| Built from | `supabase/migrations/` (21 of 21, head `20260922090000`, one ledger row per file) → one seeded operator → `import_waves_into_v2.py --apply` → `promote_evidence_into_crm.py --apply` → `stage_gmail_drive_evidence.py --apply`. Nothing else has ever written to it |
+| Name safety | the database name is the constant `OL_CLEAN_DBNAME` in `supabase/scripts/lib/local_target.sh` and is never taken from an argument or the environment. The guard refuses to resolve to anything but `origenlab_clean`, refuses `origenlab_dev` by name first, and **discards the development DSN**, so `ol_psql_dev` cannot connect inside a clean-room script. `build --force` prints the literal name immediately before the `DROP` |
+| Rows of business data | `crm.*` **33,816** (`contact_point` 9,460 · `organization` 1,812 · `domain_event` 22,544; `person`, `opportunity`, `quote`, `task`, `affiliation`, `organization_domain` all **zero**), `outbound.*` **17,214** (`contact_control` 10,588 · `campaign_recipient` 3,481 · `send_attempt` 3,141 · `campaign` 3 · `send_control` 1), `evidence.*` **11,498** (`assertion` 11,474 · `source_record` 24), `comms.mailbox` 1, `platform.operator` **1**, `platform.command_receipt` **0**, `catalog.*` and `procurement.*` zero |
+| Source records | **24 = 20 `gmail_message` + 4 `migration_manifest`.** All three numbers are asserted; the total alone would not distinguish 24 real records from 17 real ones and 7 fixtures |
+| Staged from Gmail | the **same 20 records and 26 assertions**, reapplied **exactly once** from the same local manifest at `~/data/origenlab-v2-local/evidence/`. All `pending` / `unresolved`. **No Gmail connection was made**; the manifest is a file, and the staging tool imports no Google client |
+| Fixture residue | **zero.** Four probes assert it by name: `dedupe_key like 'pytest-%'` 0, `email_norm like 'pytest-%'` 0, `platform.command_receipt` 0, `crm.domain_event` with a non-null `command_receipt_id` 0 |
+| Send flags | one `outbound.send_control` row, **both `false`** |
+| Verification | **38 probes, all exact**, `supabase/cleanroom/verify.sql` compared against `supabase/cleanroom/expected_counts.json` by `compare.py`. Exact in both directions: an undeclared probe and an unmeasured probe both fail. `verify` is read-only — the whole file runs inside `begin read only` |
+| Checkpoints | **none, deliberately.** It is rebuilt, not restored |
+
+**Selecting it.** `supabase/scripts/cleanroom_db.sh api-login` writes
+`~/data/origenlab-v2-local/api.cleanroom.env`. Sourcing it points `apps/api` at
+`origenlab_clean`; `apps/dashboard` reaches the database only through the API, so that one
+variable is the whole switch. **The default is unchanged** — `dev_db.sh api-login` still writes
+`api.env` for `origenlab_dev`, and nothing sources either file by itself.
+
+`ORIGENLAB_V2_DATABASE_URL` is now validated rather than trusted: `apps/api` refuses to start
+on a value that is not a literal-loopback DSN, carries a query string or fragment, or names a
+hosted provider — the same rule `migration/v2_import/target.py` applies.
 
 **Why a second container rather than a second database.** `supabase db reset` drops every
 non-system database in the CLI's cluster, not only the project database. That was measured, not
@@ -717,6 +748,60 @@ no record in the queue has an evidenced institution. There is still no command f
 person, which is what a named personal address in the queue would actually need — attaching
 one as a `shared_mailbox` is the only shape the schema allows without a person, and the
 preview cautions rather than refuses, because a local part is a spelling and not evidence.
+
+### 2.7.9 Fixture residue in `origenlab_dev`, and the clean room — 2026-09-22
+
+**What happened.** A database-backed test run wrote into the persistent development database.
+Measured read-only on 2026-09-22 before anything was changed, inside `begin read only`:
+
+| Residue | Count | How it is identified |
+|---|---|---|
+| `evidence.source_record` | **7** | `dedupe_key like 'pytest-v2-command:%'`, kind `gmail_message`, 5 `pending` + 2 `reviewed` |
+| `evidence.assertion` | **14** | belonging to those 7 records; 5 `promoted`, 9 `unresolved` |
+| `platform.operator` | **7** | `pytest-v2-command-<hex>@example.cl`, all "Pytest Operator" / `sales` / `active` |
+| `platform.command_receipt` | **9** | every row in the table; 5 `keep_evidence_pending`, 2 `create_organization`, 2 `attach_contact_address` |
+| `crm.organization` | **3** | `Instituto pytest-v2-command <hex>`, all `confirmed` by a fixture operator |
+| `crm.contact_point` | **2** | `contacto-<hex>@pytest-v2-command.example`, `shared_mailbox`, attached to those organizations |
+| `crm.domain_event` | **16** | stream positions 22553–22568 — exactly the rows carrying a non-null `command_receipt_id` |
+
+All of it was written between **12:58:22 and 12:58:23 UTC**.
+
+**The schema drifted from its own ledger too.** The same run applied migration
+`20260922090000`'s DDL without writing its ledger row: `crm.domain_event`'s
+`domain_event_type_check` includes `source_record.review_noted`, while
+`supabase_migrations.schema_migrations` records 20 migrations with head `20260921120000`. A
+database that does not describe itself cannot be reproduced from its own ledger, which is why
+§2.1's "21 of 21" claim is withdrawn above.
+
+**What was not touched.** The twenty real staged Gmail records are intact: 20
+`gmail_message` source records with non-fixture dedupe keys, all still `pending`, with 26
+assertions all `unresolved`. Both send flags are still `false`. The append-only audit trigger
+is untouched.
+
+**The response is a rebuild, not a repair.** `origenlab_dev` is **quarantined** — left exactly
+as measured, and written to by nothing. `origenlab_clean` (§2.1) is built beside it from the
+migration chain and the reproducible historical load, and the twenty Gmail records are
+reapplied from the same local manifest, exactly once, with no Gmail connection. A repair would
+have meant deleting rows from an append-only audit stream and trusting that the list of rows to
+delete was complete; a rebuild has to prove nothing about what was removed, only what the
+reviewed inputs produce.
+
+**How the same thing is prevented.** `origenlab_dev` and `origenlab_clean` are both in
+`PROTECTED_DATABASES` (`apps/api/tests/protected_databases.py`,
+`apps/email-pipeline/tests/protected_databases.py`). A `ORIGENLAB_V2_TEST_DSN` or
+`ORIGENLAB_V2_API_TEST_DSN` naming either is refused at import time, before any test runs — the
+common case is sourcing `api.env`, which points at `origenlab_dev`, and running pytest. The
+disposable-database fixture additionally asks the **server** which database it reached and
+asserts it is the one it just created, which does not depend on parsing a DSN and is the check
+that holds when a name-swap goes wrong.
+
+| Item | Value |
+|---|---|
+| Clean-room tooling | `supabase/scripts/cleanroom_db.sh`, `supabase/scripts/lib/local_target.sh` (guard), `supabase/cleanroom/` (baseline, probes, comparison) |
+| Refusal tests | **25** — `supabase/scripts/cleanroom_failure_tests.sh`. Connects to nothing |
+| Guard tests | **33** — `apps/api/tests/test_v2_target_boundary.py` (20) and `tests/test_protected_databases.py` (13) |
+| Shared build steps | `ol_bootstrap_platform_objects_into` and `ol_apply_migrations_into` now live in `lib/local_target.sh`; `dev_db.sh` delegates to them, so the development and clean-room databases replay the chain through one implementation |
+| Network calls | **zero.** No Gmail, Drive or hosted Supabase connection was made at any point |
 
 ### 2.7.5 Local V2 — the reconciled picture, 2026-09-21
 

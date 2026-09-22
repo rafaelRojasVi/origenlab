@@ -1322,7 +1322,12 @@ def test_a_malformed_jsonl_line_is_refused_not_skipped(synthetic_root: dict[str,
 # Database-backed behaviour
 # --------------------------------------------------------------------------- #
 
-_DSN = os.environ.get("ORIGENLAB_V2_TEST_DSN", "")
+from protected_databases import assert_not_protected  # noqa: E402
+
+_DSN = assert_not_protected(
+    os.environ.get("ORIGENLAB_V2_TEST_DSN", ""),
+    variable="ORIGENLAB_V2_TEST_DSN",
+)
 requires_db = pytest.mark.skipif(
     not _DSN, reason="set ORIGENLAB_V2_TEST_DSN to a disposable local Slice 0 database"
 )

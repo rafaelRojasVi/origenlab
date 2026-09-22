@@ -342,7 +342,12 @@ def test_apply_against_anything_but_a_literal_loopback_is_refused(
 
 # ------------------------------------------------------- database-backed proofs (opt-in)
 
-_TEST_DSN = os.environ.get("ORIGENLAB_V2_TEST_DSN", "").strip()
+from protected_databases import assert_not_protected  # noqa: E402
+
+_TEST_DSN = assert_not_protected(
+    os.environ.get("ORIGENLAB_V2_TEST_DSN", "").strip(),
+    variable="ORIGENLAB_V2_TEST_DSN",
+)
 _needs_db = pytest.mark.skipif(not _TEST_DSN, reason="ORIGENLAB_V2_TEST_DSN is not set")
 
 
