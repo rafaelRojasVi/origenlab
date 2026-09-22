@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from origenlab_email_pipeline.migration.v2_evidence_stage.manifest import (
+from origenlab_email_pipeline.migration.v2_evidence_stage.manifest import (  # noqa: I001
     MANIFEST_VERSION,
     PROVIDER_ASSERTION_KINDS,
     PROVIDER_SOURCE_KIND,
@@ -26,6 +26,9 @@ from origenlab_email_pipeline.migration.v2_evidence_stage.manifest import (
 from origenlab_email_pipeline.migration.v2_evidence_stage.report import (
     build_report,
     render_console,
+)
+from origenlab_email_pipeline.migration.v2_evidence_stage.manifest import (
+    GMAIL_STAGEABLE_INTAKE_CLASSES,
 )
 
 
@@ -39,7 +42,11 @@ def _manifest(**overrides) -> dict:
                 "external_id": "18f0c1a2b3",
                 "source_uri": "gmail://msg/18f0c1a2b3",
                 "acquired_at": "2026-09-21T10:00:00Z",
-                "payload": {"subject": "Consulta de precios"},
+                "payload": {
+                    "subject": "Consulta de precios",
+                    "intake_class": "primary_evidence",
+                    "gmail_labels": ["INBOX", "IMPORTANT"],
+                },
                 "observations": [
                     {"kind": "contact_address", "value": "Compras@Uni.Example"},
                     {"kind": "organization_name", "value": "  Universidad   Ejemplo "},
@@ -124,7 +131,7 @@ def test_an_unknown_provider_is_refused() -> None:
 
 def test_a_manifest_of_another_version_is_refused_rather_than_read_leniently() -> None:
     with pytest.raises(ManifestRefused, match="manifest_version"):
-        parse_manifest(_manifest(manifest_version=2))
+        parse_manifest(_manifest(manifest_version=MANIFEST_VERSION + 1))
 
 
 def test_a_record_with_no_observation_stages_nothing_and_is_refused() -> None:
@@ -370,7 +377,11 @@ def test_staging_is_idempotent_and_never_touches_crm() -> None:
                 {
                     "external_id": "pytest-stage-18f0c1",
                     "source_uri": "gmail://msg/pytest-stage-18f0c1",
-                    "payload": {"subject": "pytest"},
+                    "payload": {
+                        "subject": "pytest",
+                        "intake_class": "primary_evidence",
+                        "gmail_labels": ["INBOX"],
+                    },
                     "observations": [
                         {"kind": "contact_address", "value": "pytest-stage@uni.example"},
                         {"kind": "organization_name", "value": "Pytest Stage Institute"},
@@ -441,7 +452,10 @@ def test_a_record_restaged_with_a_different_uri_is_refused_not_overwritten() -> 
                     {
                         "external_id": "pytest-stage-drift",
                         "source_uri": uri,
-                        "payload": {},
+                        "payload": {
+                            "intake_class": "archived",
+                            "gmail_labels": ["IMPORTANT"],
+                        },
                         "observations": [
                             {"kind": "contact_address", "value": "drift@uni.example"}
                         ],
@@ -466,3 +480,106 @@ def test_a_record_restaged_with_a_different_uri_is_refused_not_overwritten() -> 
                 "delete from evidence.source_record where dedupe_key = %s",
                 ("gmail_message:pytest-stage-drift",),
             )
+
+
+# ------------------------------------------- what intake excludes by rule, the loader refuses
+
+
+def _gmail_record(*, intake_class="archived", labels=None, address="alguien@uni.example"):
+    return {
+        "external_id": "18f0c1a2b3",
+        "source_uri": "gmail://msg/18f0c1a2b3",
+        "payload": {
+            "subject": "asunto",
+            "intake_class": intake_class,
+            "gmail_labels": ["IMPORTANT"] if labels is None else labels,
+        },
+        "observations": [{"kind": "contact_address", "value": address}],
+    }
+
+
+@pytest.mark.parametrize(
+    ("label", "why"),
+    [
+        ("DRAFT", "metadata_only"),
+        ("[Gmail]/Borradores", "metadata_only"),
+        ("SPAM", "excluded_spam"),
+        ("[Gmail]/Spam", "excluded_spam"),
+        ("TRASH", "excluded_trash"),
+        ("[Gmail]/Papelera", "excluded_trash"),
+    ],
+)
+def test_a_draft_spam_or_trash_label_is_refused_however_the_manifest_labels_it(
+    label: str, why: str
+) -> None:
+    """The labels win over the declaration — a hopeful intake_class cannot smuggle one in."""
+    raw = _manifest(records=[_gmail_record(intake_class="archived", labels=[label])])
+    with pytest.raises(ManifestRefused, match=why):
+        parse_manifest(raw)
+
+
+def test_an_excluded_label_beside_a_permitted_one_is_still_refused() -> None:
+    raw = _manifest(records=[_gmail_record(labels=["IMPORTANT", "UNREAD", "TRASH"])])
+    with pytest.raises(ManifestRefused, match="excluded_trash"):
+        parse_manifest(raw)
+
+
+@pytest.mark.parametrize("declared", ["excluded_spam", "excluded_trash", "metadata_only", None, ""])
+def test_only_a_stageable_intake_class_may_be_declared(declared) -> None:
+    raw = _manifest(records=[_gmail_record(intake_class=declared)])
+    with pytest.raises(ManifestRefused, match="intake_class"):
+        parse_manifest(raw)
+
+
+def test_gmail_labels_are_required_evidence_not_an_optional_field() -> None:
+    record = _gmail_record()
+    del record["payload"]["gmail_labels"]
+    with pytest.raises(ManifestRefused, match="gmail_labels"):
+        parse_manifest(_manifest(records=[record]))
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "mailer-daemon@googlemail.com",
+        "MAILER-DAEMON@mx0a-0033e401.pphosted.example",
+        "Postmaster@uni.example",
+        "mail-daemon@host.example",
+    ],
+)
+def test_a_bounce_is_refused_because_a_postmaster_is_not_a_correspondent(address: str) -> None:
+    raw = _manifest(records=[_gmail_record(address=address)])
+    with pytest.raises(ManifestRefused, match="mail-delivery subsystem"):
+        parse_manifest(raw)
+
+
+def test_both_stageable_classes_are_accepted() -> None:
+    for intake_class in ("primary_evidence", "archived"):
+        manifest = parse_manifest(_manifest(records=[_gmail_record(intake_class=intake_class)]))
+        assert manifest.records[0].payload["intake_class"] == intake_class
+
+
+def test_the_stageable_classes_are_the_inventory_vocabulary_not_a_second_copy() -> None:
+    """If the inventory ever stops calling `archived` a replay candidate, so does staging."""
+    from origenlab_email_pipeline.qa.mailbox_intake_inventory import REPLAY_CANDIDATE_CLASSES
+
+    assert REPLAY_CANDIDATE_CLASSES <= GMAIL_STAGEABLE_INTAKE_CLASSES
+
+
+def test_a_drive_record_is_unaffected_by_the_gmail_intake_rules() -> None:
+    manifest = parse_manifest(
+        {
+            "manifest_version": MANIFEST_VERSION,
+            "provider": "drive",
+            "records": [
+                {
+                    "external_id": "1AbC",
+                    "payload": {},
+                    "observations": [
+                        {"kind": "document_reference", "value": "drive://file/1AbC"}
+                    ],
+                }
+            ],
+        }
+    )
+    assert manifest.source_kind == "drive_file"

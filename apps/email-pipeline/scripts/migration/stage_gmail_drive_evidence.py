@@ -16,10 +16,10 @@ staged observation can become a person, an organization, an opportunity or a per
 send. Deciding what staged evidence actually establishes is
 `promote_evidence_into_crm.py`, a separate tool, run by a human who looked at the queue.
 
-Manifest shape (`manifest_version: 1`):
+Manifest shape (`manifest_version: 2`):
 
     {
-      "manifest_version": 1,
+      "manifest_version": 2,
       "provider": "gmail",                       // or "drive"
       "note": "September inbox sweep, read-only export",
       "records": [
@@ -27,7 +27,12 @@ Manifest shape (`manifest_version: 1`):
           "external_id": "18f0c1a2b3",           // Gmail message id / Drive file id
           "source_uri": "gmail://msg/18f0c1a2b3",
           "acquired_at": "2026-09-21T10:00:00Z",
-          "payload": {"subject": "...", "from": "..."},
+          "payload": {
+            "subject": "...",
+            "from": "...",
+            "intake_class": "primary_evidence",  // or "archived" — gmail only, required
+            "gmail_labels": ["INBOX", "IMPORTANT"]        // gmail only, required
+          },
           "observations": [
             {"kind": "contact_address",   "value": "compras@uni.example"},
             {"kind": "organization_name", "value": "Universidad Ejemplo"}
@@ -40,6 +45,14 @@ A `gmail` record may assert `contact_address` and `organization_name`. A `drive`
 assert `document_reference` and `organization_name`. Nothing else is accepted: an
 affiliation is a relationship no message header records, and `contacted_address` is a claim
 about our own outbound history that only the send ledger may make.
+
+**What a Gmail record may not be.** Intake excludes drafts, Spam and Trash by rule, and the
+manifest is refused if any record's `gmail_labels` say it is one — the labels win over the
+declared `intake_class`, so an optimistic declaration cannot smuggle one through. A record
+whose `contact_address` is a mail-delivery subsystem (`mailer-daemon`, `postmaster`, …) is
+refused for a different reason: a bounce is not correspondence, and the fact it really
+carries — which of our own sends failed — is the send ledger's to record, not a review
+queue's. Both refusals abort the whole pass; nothing partial is ever staged.
 
 Examples:
     # Dry run — reads the file, opens no database.
@@ -88,7 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--manifest",
         required=True,
-        help="path to a local JSON staging manifest (manifest_version 1)",
+        help="path to a local JSON staging manifest (manifest_version 2)",
     )
     parser.add_argument(
         "--database-url",

@@ -19,10 +19,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from origenlab_email_pipeline.qa.mailbox_intake_inventory import (
+    REPLAY_CANDIDATE_CLASSES,
+    classify_intake_folder,
+)
+
 #: The manifest schema this module understands. A file declaring anything else is refused
 #: rather than read leniently: a silently-misread provenance manifest is the one input that
 #: could attribute a fact to the wrong source.
-MANIFEST_VERSION = 1
+#:
+#: Version 2 added two required fields to every Gmail record — `payload.intake_class` and
+#: `payload.gmail_labels` — so that a draft, a Spam or a Trash message is refused on the
+#: evidence it carries rather than on the operator's say-so. A version 1 file is refused
+#: rather than upgraded in place: the two fields are facts about the message that only the
+#: acquisition step can supply, and guessing them is exactly what the rule exists to stop.
+MANIFEST_VERSION = 2
 
 #: provider → the `evidence.source_record.kind` it lands as. Both were added by
 #: `supabase/migrations/20260921120000_slice2_gmail_drive_evidence_kinds.sql`.
@@ -42,6 +53,25 @@ PROVIDER_ASSERTION_KINDS: dict[str, frozenset[str]] = {
     "gmail": frozenset({"contact_address", "organization_name"}),
     "drive": frozenset({"document_reference", "organization_name"}),
 }
+
+
+#: Intake classes a Gmail record may declare. Anything else is inventory, not evidence:
+#: `primary_evidence` is Inbox/Sent, `archived` is an operator-approved replay batch.
+GMAIL_STAGEABLE_INTAKE_CLASSES: frozenset[str] = frozenset(
+    {"primary_evidence"} | set(REPLAY_CANDIDATE_CLASSES)
+)
+
+#: Local parts that identify a mail-delivery subsystem rather than a correspondent.
+#:
+#: A bounce is not correspondence. Its sender is a postmaster, so staging it would assert a
+#: postmaster as a `contact_address` — a true statement about the header and a useless one
+#: about the business. The datum a bounce actually carries is *which of our own sends
+#: failed*, which is a claim about our outbound history, and this module already reserves
+#: that to the send ledger (see `PROVIDER_ASSERTION_KINDS`). So a bounce is refused here
+#: rather than staged into a review queue a human then has to empty by hand.
+POSTMASTER_LOCAL_PARTS: frozenset[str] = frozenset(
+    {"mailer-daemon", "mail-daemon", "maildaemon", "postmaster"}
+)
 
 
 class ManifestRefused(Exception):
@@ -109,6 +139,35 @@ def _normalize(kind: str, value: str) -> str:
     return folded
 
 
+def _require_stageable_gmail_payload(payload: dict[str, Any], where: str) -> None:
+    """Refuse a Gmail record that intake rules exclude — whatever the manifest claims.
+
+    Two independent facts must agree: the class the operator declared, and the Gmail labels
+    the message actually carries. A draft, a Spam message or a Trash message is refused on
+    the labels alone, so a mistyped or optimistic `intake_class` cannot let one through.
+    """
+    declared = payload.get("intake_class")
+    _require(
+        declared in GMAIL_STAGEABLE_INTAKE_CLASSES,
+        f"{where}: payload.intake_class must be one of "
+        f"{', '.join(sorted(GMAIL_STAGEABLE_INTAKE_CLASSES))} — got {declared!r}",
+    )
+
+    labels = payload.get("gmail_labels")
+    _require(
+        isinstance(labels, list) and all(isinstance(x, str) for x in labels),
+        f"{where}: payload.gmail_labels must be a list of strings — it is the evidence "
+        "that the declared intake_class is true, so it is required, not optional",
+    )
+    for label in labels:
+        label_class = classify_intake_folder(label)
+        _require(
+            label_class not in ("metadata_only", "excluded_spam", "excluded_trash"),
+            f"{where}: the label {label!r} classifies as {label_class}, which intake "
+            f"excludes by rule. Declared intake_class was {declared!r}; the labels win",
+        )
+
+
 def _parse_timestamp(raw: Any, where: str) -> datetime | None:
     if raw is None:
         return None
@@ -174,6 +233,8 @@ def parse_manifest(raw: Any, *, source_path: str = "<memory>") -> Manifest:
 
         payload = entry.get("payload", {})
         _require(isinstance(payload, dict), f"{where}: payload must be an object")
+        if provider == "gmail":
+            _require_stageable_gmail_payload(payload, where)
 
         source_uri = entry.get("source_uri")
         _require(
@@ -202,6 +263,14 @@ def parse_manifest(raw: Any, *, source_path: str = "<memory>") -> Manifest:
             value = obs.get("value")
             _require(isinstance(value, str), f"{obs_where}: value must be a string")
             value_norm = _normalize(kind, value)
+            if provider == "gmail" and kind == "contact_address":
+                local_part = value_norm.split("@", 1)[0]
+                _require(
+                    local_part not in POSTMASTER_LOCAL_PARTS,
+                    f"{obs_where}: {local_part!r} is a mail-delivery subsystem, not a "
+                    "correspondent. A bounce is refused: what it really reports is one of "
+                    "our own failed sends, and that is the send ledger's claim to make",
+                )
             _require(
                 (kind, value_norm) not in seen_observations,
                 f"{obs_where}: ({kind}, {value_norm!r}) is asserted twice by the same record",
@@ -243,7 +312,9 @@ def parse_manifest(raw: Any, *, source_path: str = "<memory>") -> Manifest:
 
 
 __all__ = [
+    "GMAIL_STAGEABLE_INTAKE_CLASSES",
     "MANIFEST_VERSION",
+    "POSTMASTER_LOCAL_PARTS",
     "PROVIDER_ASSERTION_KINDS",
     "PROVIDER_SOURCE_KIND",
     "Manifest",
