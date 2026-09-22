@@ -6,7 +6,10 @@
  * durable V2 core, which holds different rows. Replacing one with the other before the V1
  * durable migration lands would silently drop data an operator is relying on.
  *
- * It is deliberately **not** in `DASHBOARD_TOP_NAV_IDS`. The eight-item Cotizaciones-first
+ * `revision` sits beside it for the same reason and under the same rule: it is the human
+ * review queue over `crm-v2`'s evidence card, still read-only, and reached from Inicio.
+ *
+ * Neither is in `DASHBOARD_TOP_NAV_IDS`. The eight-item Cotizaciones-first
  * sidebar is an accepted IA decision, and a surface whose four cards are still read-only
  * has not earned a slot in it. Like `today`, `deals`, `suppliers` and
  * `payments-logistics`, it lives in the registry — so a deep link renders with a correct
@@ -26,6 +29,7 @@ export type DashboardSection =
   | "payments-logistics"
   | "contacts"
   | "crm-v2"
+  | "revision"
   | "system";
 
 export type DashboardNavIconName =
@@ -52,9 +56,9 @@ export interface DashboardNavItem {
 }
 
 /**
- * Full section registry (12 ids), used for id -> label lookups so deep-linked
- * hidden sections (today/deals/suppliers/payments-logistics) still get a
- * correct page title. Sidebar rendering uses `DASHBOARD_TOP_NAV_ITEMS`
+ * Full section registry, used for id -> label lookups so deep-linked hidden
+ * sections (today/deals/suppliers/payments-logistics/crm-v2/revision) still get
+ * a correct page title. Sidebar rendering uses `DASHBOARD_TOP_NAV_ITEMS`
  * below, not this list.
  */
 export const DASHBOARD_NAV_ITEMS: DashboardNavItem[] = [
@@ -119,6 +123,14 @@ export const DASHBOARD_NAV_ITEMS: DashboardNavItem[] = [
     label: "CRM V2",
     shortLabel: "CRM V2",
     description: "Contactos, organizaciones, prospectos y evidencia del núcleo durable V2",
+    iconName: "crm",
+  },
+  {
+    id: "revision",
+    label: "Revisión de evidencia",
+    shortLabel: "Revisión",
+    description:
+      "Cola humana sobre la evidencia pendiente: qué afirma cada correo y qué falta decidir",
     iconName: "crm",
   },
   {

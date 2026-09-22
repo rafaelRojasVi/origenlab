@@ -10,6 +10,7 @@ import {
   parseV2ContactCard,
   parseV2ContactsPage,
   parseV2EvidencePage,
+  parseV2EvidenceRecordsPage,
   parseV2OrganizationCard,
   parseV2OpportunitiesPage,
   parseV2OrganizationsPage,
@@ -21,6 +22,7 @@ import type {
   V2Contact,
   V2ContactCard,
   V2EvidenceItem,
+  V2EvidenceRecord,
   V2OrganizationCard,
   V2Opportunity,
   V2Organization,
@@ -39,6 +41,7 @@ export const V2_TASKS_DUE_PATH = "/v2/tasks/due";
 export const V2_REVIEW_SUMMARY_PATH = "/v2/review/summary";
 export const V2_QUOTES_FOLLOWUP_PATH = "/v2/quotes/followup";
 export const V2_EVIDENCE_PATH = "/v2/evidence";
+export const V2_EVIDENCE_RECORDS_PATH = "/v2/evidence/records";
 
 /**
  * The card paths are built from an identifier, so they are built in one place.
@@ -179,4 +182,28 @@ export function fetchV2Evidence(
       offset: params.offset ?? 0,
     }),
   ).then(parseV2EvidencePage);
+}
+
+/**
+ * The review queue, one row per source record.
+ *
+ * `review_status` and `source_kind` are the database's closed vocabularies; the API answers
+ * 422 for anything else, so a typo surfaces as an error rather than as "nothing to review".
+ */
+export function fetchV2EvidenceRecords(
+  params: {
+    sourceKind?: string;
+    reviewStatus?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
+): Promise<V2Page<V2EvidenceRecord>> {
+  return fetchJsonGet<unknown>(
+    operatorApiUrl(V2_EVIDENCE_RECORDS_PATH, {
+      source_kind: params.sourceKind,
+      review_status: params.reviewStatus,
+      limit: params.limit ?? DEFAULT_LIMIT,
+      offset: params.offset ?? 0,
+    }),
+  ).then(parseV2EvidenceRecordsPage);
 }

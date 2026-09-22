@@ -14,6 +14,7 @@ Five endpoints the operator asked for, plus the two the four CRM cards need:
 | `GET /v2/contacts/{id}` | one channel, its identity, its evidence and its marketing history |
 | `GET /v2/organizations/{id}` | one organization, its channels, people, domains and evidence |
 | `GET /v2/evidence` | the evidence trail, each row carrying its own provenance |
+| `GET /v2/evidence/records` | the same trail grouped by source record, with its `crm.*` matches |
 
 **Read-only, and structurally so.** Every query runs in `begin read only` as `origenlab_api`,
 a role with no membership in `origenlab_owner`. There is no POST, PATCH or DELETE here and
@@ -211,6 +212,47 @@ def list_quotes_to_follow_up(
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
     return _page_response(repo.quotes_to_follow_up(limit=clamp_limit(limit), offset=offset))
+
+
+@router.get("/evidence/records")
+def list_evidence_records(
+    _: Operator,
+    repo: Repo,
+    source_kind: str | None = Query(default=None),
+    review_status: str | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    """The review queue as a human reads it — one row per source record.
+
+    `/v2/evidence` is assertion-shaped and answers "where did this fact come from".
+    A reviewer asks the other question: "what am I being asked to decide about this
+    message". That is this route. Each row carries the record, its assertions, and the
+    `crm.*` rows those assertions already match — an existing address, an identically named
+    organization, an organization reached through a registered domain.
+
+    It proposes nothing. A match here is a fact about what already exists, never a
+    recommendation to promote, and the route stays a GET for the same reason the rest of
+    `/v2` does.
+    """
+    if source_kind is not None and source_kind not in repo.EVIDENCE_SOURCE_KINDS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"source_kind must be one of {', '.join(repo.EVIDENCE_SOURCE_KINDS)}",
+        )
+    if review_status is not None and review_status not in repo.EVIDENCE_REVIEW_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"review_status must be one of {', '.join(repo.EVIDENCE_REVIEW_STATUSES)}",
+        )
+    return _page_response(
+        repo.evidence_records(
+            source_kind=source_kind,
+            review_status=review_status,
+            limit=clamp_limit(limit),
+            offset=offset,
+        )
+    )
 
 
 @router.get("/evidence")

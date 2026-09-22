@@ -890,7 +890,7 @@ describe("CRM-Q2 workflow/adoption allowlist", () => {
 });
 
 describe("V2 durable read boundary allowlist", () => {
-  it("allows exactly the eight V2 listing paths", async () => {
+  it("allows exactly the nine V2 listing paths", async () => {
     const { isAllowedUpstreamPath } = await import("./allowlist");
     for (const path of [
       "/v2/contacts",
@@ -901,6 +901,7 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/review/summary",
       "/v2/quotes/followup",
       "/v2/evidence",
+      "/v2/evidence/records",
     ]) {
       expect(isAllowedUpstreamPath(path)).toBe(true);
     }
@@ -941,6 +942,11 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/tasks",
       "/v2/quotes",
       "/v2/opportunities",
+      // The record queue is one literal path. Nothing else under it is reachable, so a
+      // per-record sub-resource -- the shape a promote command would take -- is refused.
+      "/v2/evidence/records/96301691-af05-51ea-82e3-05f5fae40837",
+      "/v2/evidence/records/promote",
+      "/v2/evidence/record",
       "/v2/../operations/work-queue",
     ]) {
       expect(isAllowedUpstreamPath(path)).toBe(false);
@@ -954,6 +960,7 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/organizations",
       "/v2/review/summary",
       "/v2/evidence",
+      "/v2/evidence/records",
       "/v2/contacts/96301691-af05-51ea-82e3-05f5fae40837",
       "/v2/organizations/96301691-af05-51ea-82e3-05f5fae40837",
       "/v2/commands/promote",

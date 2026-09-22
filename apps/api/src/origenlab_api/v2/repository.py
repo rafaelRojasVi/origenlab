@@ -783,3 +783,189 @@ class V2Repository(OperatorLookup):
         """
         with self._read() as cur:
             return self._page(cur, sql, count_sql, params, limit, offset)
+
+    # ----------------------------------------------- the review queue, record by record
+
+    #: `evidence.source_record.review_status` — closed in the database, repeated here so a
+    #: bad filter is a 422 rather than a page that silently matches nothing.
+    EVIDENCE_REVIEW_STATUSES: tuple[str, ...] = ("pending", "reviewed", "promoted", "rejected")
+
+    #: Payload keys the staging manifest writes for a Gmail record. They are read
+    #: defensively with `->>` so a record of any other kind simply returns nulls rather than
+    #: failing the query: the review queue is a queue of *records*, not of Gmail.
+    RECORD_PAYLOAD_KEYS: tuple[str, ...] = (
+        "subject", "from", "from_domain", "message_date", "thread_id",
+    )
+
+    def evidence_records(
+        self,
+        *,
+        source_kind: str | None,
+        review_status: str | None,
+        limit: int,
+        offset: int,
+    ) -> Page:
+        """The review queue grouped the way a human reviews it: one row per source record.
+
+        `/v2/evidence` lists assertions, which is the right shape for "where did this fact
+        come from" and the wrong shape for "what am I being asked to decide". A reviewer
+        decides about a *message*: its sender, its subject, what it asserts, and whether any
+        of that already exists in `crm.*`. So this returns the record with its assertions
+        attached, plus the three matches that decide the answer:
+
+        * the `crm.contact_point` whose folded address equals an asserted `contact_address`
+          — which proves only that **the address exists**, never that a person is confirmed;
+        * the `crm.organization` whose folded name equals an asserted `organization_name`;
+        * the `crm.organization` reached through `crm.organization_domain` for the sender's
+          domain — the only domain-to-organization link that is *evidence* rather than a
+          guess.
+
+        Everything here is a fact read from the database. It proposes no promotion, scores
+        no candidate and matches no organization by resemblance: a domain that merely looks
+        like an organization's name is an interpretation, and interpretation belongs to the
+        human at the other end of this queue.
+        """
+        where = "where true"
+        params: tuple[Any, ...] = ()
+        if source_kind:
+            where += " and sr.kind = %s"
+            params = (*params, source_kind)
+        if review_status:
+            where += " and sr.review_status = %s"
+            params = (*params, review_status)
+        sql = f"""
+            select sr.id::text        as source_record_id,
+                   sr.kind            as source_kind,
+                   sr.dedupe_key      as dedupe_key,
+                   sr.source_uri      as source_uri,
+                   sr.acquired_at     as acquired_at,
+                   sr.review_status   as review_status,
+                   sr.is_quarantined  as is_quarantined,
+                   sr.payload->>'subject'      as subject,
+                   sr.payload->>'from'         as from_address,
+                   sr.payload->>'from_domain'  as from_domain,
+                   sr.payload->>'message_date' as message_date,
+                   sr.payload->>'thread_id'    as thread_id
+              from evidence.source_record sr
+              {where}
+             order by sr.acquired_at desc, sr.id
+             limit %s offset %s
+        """
+        count_sql = f"select count(*) from evidence.source_record sr {where}"
+        with self._read() as cur:
+            page = self._page(cur, sql, count_sql, params, limit, offset)
+            ids = [row["source_record_id"] for row in page.items]
+            if not ids:
+                return page
+
+            # Bounded per record, like every child list on a card. One of these records is
+            # a bulk migration manifest carrying eleven thousand assertions; returning it
+            # whole would be a response nobody asked for and a page nobody can render. The
+            # true count travels beside the capped list so the surface can say so.
+            assertions = self._rows(
+                cur,
+                f"""
+                select source_record_id, assertion_id, kind, value_norm, resolution,
+                       resolved_kind, resolved_id, ambiguity_note, assertion_total
+                  from (
+                    select a.source_record_id::text as source_record_id,
+                           a.id::text               as assertion_id,
+                           a.kind                   as kind,
+                           a.value_norm             as value_norm,
+                           a.resolution             as resolution,
+                           a.resolved_kind          as resolved_kind,
+                           a.resolved_id::text      as resolved_id,
+                           a.ambiguity_note         as ambiguity_note,
+                           count(*) over (partition by a.source_record_id) as assertion_total,
+                           row_number() over (
+                             partition by a.source_record_id order by a.kind, a.value_norm, a.id
+                           ) as rn
+                      from evidence.assertion a
+                     where a.source_record_id = any(%s::uuid[])
+                  ) ranked
+                 where rn <= {self.CARD_CHILD_LIMIT}
+                 order by kind, value_norm
+                """,
+                (ids,),
+            )
+            contact_matches = self._rows(
+                cur,
+                """
+                select a.source_record_id::text as source_record_id,
+                       a.value_norm             as value_norm,
+                       cp.id::text              as contact_point_id,
+                       cp.usage                 as usage,
+                       cp.confirmation          as confirmation,
+                       p.id::text               as person_id,
+                       p.display_name           as person_display_name,
+                       o.id::text               as organization_id,
+                       o.name                   as organization_name
+                  from evidence.assertion a
+                  join crm.contact_point cp     on cp.value_norm = a.value_norm
+                  left join crm.person p        on p.id = cp.person_id
+                  left join crm.organization o  on o.id = cp.organization_id
+                 where a.source_record_id = any(%s::uuid[])
+                   and a.kind = 'contact_address'
+                 order by a.value_norm
+                 limit %s
+                """,
+                (ids, self.CARD_CHILD_LIMIT * len(ids)),
+            )
+            organization_matches = self._rows(
+                cur,
+                """
+                select a.source_record_id::text as source_record_id,
+                       a.value_norm             as value_norm,
+                       o.id::text               as organization_id,
+                       o.name                   as name,
+                       o.confirmation           as confirmation
+                  from evidence.assertion a
+                  join crm.organization o on lower(o.name) = a.value_norm
+                                         and o.merged_into_organization_id is null
+                 where a.source_record_id = any(%s::uuid[])
+                   and a.kind = 'organization_name'
+                 order by a.value_norm
+                 limit %s
+                """,
+                (ids, self.CARD_CHILD_LIMIT * len(ids)),
+            )
+            domain_matches = self._rows(
+                cur,
+                """
+                select sr.id::text  as source_record_id,
+                       o.id::text   as organization_id,
+                       o.name       as name,
+                       od.scope     as scope
+                  from evidence.source_record sr
+                  join crm.organization_domain od
+                    on od.domain_norm = lower(sr.payload->>'from_domain')
+                  join crm.organization o on o.id = od.organization_id
+                 where sr.id = any(%s::uuid[])
+                """,
+                (ids,),
+            )
+
+        by_record: dict[str, dict[str, list[dict[str, Any]]]] = {
+            record_id: {"assertions": [], "contact_matches": [], "organization_matches": []}
+            for record_id in ids
+        }
+        totals: dict[str, int] = {}
+        for bucket, rows in (
+            ("assertions", assertions),
+            ("contact_matches", contact_matches),
+            ("organization_matches", organization_matches),
+        ):
+            for row in rows:
+                record_id = row.pop("source_record_id")
+                if bucket == "assertions":
+                    totals[record_id] = int(row.pop("assertion_total"))
+                if record_id in by_record:
+                    by_record[record_id][bucket].append(row)
+        domain_by_record = {row.pop("source_record_id"): row for row in domain_matches}
+
+        for row in page.items:
+            record_id = row["source_record_id"]
+            row.update(by_record[record_id])
+            row["assertion_total"] = totals.get(record_id, 0)
+            row["domain_organization"] = domain_by_record.get(record_id)
+        return page

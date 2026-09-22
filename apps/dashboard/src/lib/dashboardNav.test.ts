@@ -58,8 +58,16 @@ describe("dashboardNav", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("still resolves the full 13-id registry (nothing deleted, only reordered/relabeled)", () => {
-    expect(DASHBOARD_NAV_ITEMS).toHaveLength(13);
+  it("still resolves the full 14-id registry (nothing deleted, only reordered/relabeled)", () => {
+    expect(DASHBOARD_NAV_ITEMS).toHaveLength(14);
+  });
+
+  it("keeps the evidence review workspace deep-linkable and out of the sidebar", () => {
+    // Same rule as `crm-v2`: a read-only surface does not take a slot in the eight-item
+    // Cotizaciones-first sidebar, but a deep link to it must still render a real title.
+    expect(DASHBOARD_NAV_ITEMS.some((item) => item.id === "revision")).toBe(true);
+    expect(DASHBOARD_TOP_NAV_IDS).not.toContain("revision");
+    expect(dashboardSectionLabel("revision")).toBe("Revisión de evidencia");
   });
 
   it("keeps the V2 CRM browser out of the primary sidebar while still resolving its title", () => {

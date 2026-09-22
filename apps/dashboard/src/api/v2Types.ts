@@ -110,6 +110,79 @@ export interface V2EvidenceItem {
   acquired_at: string | null;
 }
 
+
+// -------------------------------------------------------------- the review queue
+
+/**
+ * One observation a source record makes, as the record queue returns it.
+ *
+ * `resolution` is always `unresolved` for freshly staged evidence. Nothing in the dashboard
+ * may change it: resolving an assertion is a durable decision and the V2 command boundary
+ * that would record it does not exist yet.
+ */
+export interface V2RecordAssertion {
+  assertion_id: string;
+  kind: string;
+  value_norm: string;
+  resolution: string;
+  resolved_kind: string | null;
+  resolved_id: string | null;
+  ambiguity_note: string | null;
+}
+
+/**
+ * An asserted address that already exists as a `crm.contact_point`.
+ *
+ * It says the **address** exists. `person_id` is what says whether anyone is known to own
+ * it, and it is usually null — the two must never be rendered as the same fact.
+ */
+export interface V2RecordContactMatch {
+  value_norm: string;
+  contact_point_id: string;
+  usage: V2ContactUsage;
+  confirmation: V2Confirmation;
+  person_id: string | null;
+  person_display_name: string | null;
+  organization_id: string | null;
+  organization_name: string | null;
+}
+
+/** An asserted organization name that exactly equals an existing organization's name. */
+export interface V2RecordOrganizationMatch {
+  value_norm: string;
+  organization_id: string;
+  name: string;
+  confirmation: V2Confirmation;
+}
+
+/** An organization reached through a *registered* domain — evidence, not resemblance. */
+export interface V2RecordDomainOrganization {
+  organization_id: string;
+  name: string;
+  scope: string | null;
+}
+
+export interface V2EvidenceRecord {
+  source_record_id: string;
+  source_kind: string;
+  dedupe_key: string;
+  source_uri: string | null;
+  acquired_at: string | null;
+  review_status: string;
+  is_quarantined: boolean;
+  subject: string | null;
+  from_address: string | null;
+  from_domain: string | null;
+  message_date: string | null;
+  thread_id: string | null;
+  assertions: V2RecordAssertion[];
+  /** The true number of assertions, which may exceed the capped list beside it. */
+  assertion_total: number;
+  contact_matches: V2RecordContactMatch[];
+  organization_matches: V2RecordOrganizationMatch[];
+  domain_organization: V2RecordDomainOrganization | null;
+}
+
 // ------------------------------------------------------------------------- the cards
 
 /** An evidence row as it appears *on* a card — the same fact, without the paging keys. */

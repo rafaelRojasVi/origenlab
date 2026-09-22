@@ -267,11 +267,13 @@ class _StubRepo:
         "v1_parse_failure", "v1_evidence_edge", "v1_supplier_candidate",
         "v1_historical_quote_candidate", "gmail_message", "drive_file",
     )
+    EVIDENCE_REVIEW_STATUSES = ("pending", "reviewed", "promoted", "rejected")
 
     def __init__(self, *, contact=None, organization=None) -> None:
         self.contact = contact
         self.organization = organization
         self.evidence_calls: list[dict] = []
+        self.record_calls: list[dict] = []
 
     def contact_card(self, contact_point_id: str):
         return self.contact
@@ -283,6 +285,12 @@ class _StubRepo:
         from origenlab_api.v2.repository import Page
 
         self.evidence_calls.append(kwargs)
+        return Page(items=[], total=0, limit=kwargs["limit"], offset=kwargs["offset"])
+
+    def evidence_records(self, **kwargs):
+        from origenlab_api.v2.repository import Page
+
+        self.record_calls.append(kwargs)
         return Page(items=[], total=0, limit=kwargs["limit"], offset=kwargs["offset"])
 
 
@@ -519,3 +527,183 @@ def test_the_closed_source_kind_list_matches_the_database() -> None:
         definition = cur.fetchone()[0]
     in_database = set(re.findall(r"'([a-z0-9_]+)'::text", definition))
     assert in_database == set(V2Repository.EVIDENCE_SOURCE_KINDS)
+
+# ------------------------------------------- the record-shaped review queue (boundary)
+
+
+def test_a_review_status_the_schema_cannot_hold_is_a_422() -> None:
+    repo = _StubRepo()
+    response = _client(repo).get("/v2/evidence/records", params={"review_status": "maybe"})
+    assert response.status_code == 422
+    assert repo.record_calls == []
+
+
+def test_the_record_queue_rejects_an_unknown_source_kind() -> None:
+    repo = _StubRepo()
+    assert (
+        _client(repo).get("/v2/evidence/records", params={"source_kind": "imap"}).status_code
+        == 422
+    )
+    assert repo.record_calls == []
+
+
+def test_the_record_queue_passes_the_pending_gmail_filter_through() -> None:
+    repo = _StubRepo()
+    response = _client(repo).get(
+        "/v2/evidence/records", params={"source_kind": "gmail_message", "review_status": "pending"}
+    )
+    assert response.status_code == 200
+    assert repo.record_calls == [
+        {
+            "source_kind": "gmail_message",
+            "review_status": "pending",
+            "limit": DEFAULT_PAGE_SIZE,
+            "offset": 0,
+        }
+    ]
+
+
+def test_the_record_queue_is_bounded_like_every_other_listing() -> None:
+    repo = _StubRepo()
+    assert _client(repo).get("/v2/evidence/records", params={"limit": 500}).status_code == 422
+    body = _client(repo).get("/v2/evidence/records", params={"limit": 200}).json()
+    assert body["limit"] == 200
+
+
+def test_the_record_queue_requires_an_operator() -> None:
+    from fastapi import FastAPI
+
+    from origenlab_api.v2.routes import router
+
+    app = FastAPI()
+    app.include_router(router)
+    app.state.v2_repository = _StubRepo()
+    app.state.v2_identity = LocalDevIdentity(LOOPBACK, _Lookup(None))
+    assert TestClient(app).get("/v2/evidence/records").status_code == 401
+
+
+# ------------------------------------------- database-backed proofs of the record queue
+
+
+@_needs_db
+def test_the_record_queue_returns_one_row_per_record_with_its_assertions() -> None:
+    import psycopg
+
+    from origenlab_api.v2.repository import V2Repository
+
+    repo = V2Repository(psycopg.connect, _TEST_DSN)
+    page = repo.evidence_records(
+        source_kind="gmail_message", review_status="pending", limit=50, offset=0
+    )
+    if page.total == 0:
+        pytest.skip("the target database holds no pending Gmail records")
+    assert len(page.items) == min(page.total, 50)
+    assert len({row["source_record_id"] for row in page.items}) == len(page.items)
+    for row in page.items:
+        assert row["source_kind"] == "gmail_message"
+        assert row["review_status"] == "pending"
+        # A record with no observation cannot be staged, so an empty list here would mean
+        # the join lost rows rather than that the record is genuinely bare.
+        assert row["assertions"], row["source_record_id"]
+        for assertion in row["assertions"]:
+            assert assertion["resolution"] in V2Repository.EVIDENCE_RESOLUTIONS
+
+
+@_needs_db
+def test_a_bulk_manifest_cannot_return_its_whole_assertion_list() -> None:
+    """The child bound, proven on the record that would otherwise break the queue.
+
+    One migration manifest in this database carries over eleven thousand assertions.
+    Without the cap, opening the review queue would ship all of them; with it, the row
+    carries at most `CARD_CHILD_LIMIT` and the true count beside them.
+    """
+    import psycopg
+
+    from origenlab_api.v2.repository import V2Repository
+
+    repo = V2Repository(psycopg.connect, _TEST_DSN)
+    page = repo.evidence_records(
+        source_kind="migration_manifest", review_status=None, limit=10, offset=0
+    )
+    if page.total == 0:
+        pytest.skip("the target database holds no migration manifests")
+    biggest = max(page.items, key=lambda row: row["assertion_total"])
+    assert biggest["assertion_total"] > len(biggest["assertions"])
+    for row in page.items:
+        assert len(row["assertions"]) <= V2Repository.CARD_CHILD_LIMIT
+        assert row["assertion_total"] >= len(row["assertions"])
+
+
+@_needs_db
+def test_the_record_queue_agrees_with_the_assertion_listing() -> None:
+    """The two shapes of the same queue must not disagree about how much is waiting."""
+    import psycopg
+
+    from origenlab_api.v2.repository import V2Repository
+
+    repo = V2Repository(psycopg.connect, _TEST_DSN)
+    records = repo.evidence_records(
+        source_kind="gmail_message", review_status=None, limit=200, offset=0
+    )
+    if records.total == 0:
+        pytest.skip("the target database holds no Gmail records")
+    assertions = repo.evidence(
+        q=None, resolution=None, source_kind="gmail_message", limit=1, offset=0
+    )
+    assert sum(row["assertion_total"] for row in records.items) == assertions.total
+
+
+@_needs_db
+def test_an_address_that_exists_is_never_reported_as_a_confirmed_person() -> None:
+    """The distinction the whole review workspace rests on.
+
+    A matched `crm.contact_point` proves the address exists. Whether a person owns it is a
+    separate, human decision, and the match carries `person_id` so the surface can say which
+    of the two it is instead of implying the stronger one.
+    """
+    import psycopg
+
+    from origenlab_api.v2.repository import V2Repository
+
+    repo = V2Repository(psycopg.connect, _TEST_DSN)
+    page = repo.evidence_records(
+        source_kind="gmail_message", review_status="pending", limit=50, offset=0
+    )
+    if page.total == 0:
+        pytest.skip("the target database holds no pending Gmail records")
+    for row in page.items:
+        for match in row["contact_matches"]:
+            assert "contact_point_id" in match and match["contact_point_id"]
+            assert "person_id" in match
+            assert "organization_id" in match
+            if match["person_id"] is None:
+                assert match["person_display_name"] is None
+
+
+@_needs_db
+def test_a_domain_organization_is_only_ever_a_registered_domain() -> None:
+    """`domain_organization` must come from `crm.organization_domain` and nowhere else.
+
+    A sender domain that merely resembles an organization name is a guess. If this ever
+    starts returning a row for a record whose domain is not registered, the read boundary
+    has begun matching organizations by resemblance — which is the reviewer's job.
+    """
+    import psycopg
+
+    from origenlab_api.v2.repository import V2Repository
+
+    repo = V2Repository(psycopg.connect, _TEST_DSN)
+    page = repo.evidence_records(
+        source_kind="gmail_message", review_status=None, limit=200, offset=0
+    )
+    if page.total == 0:
+        pytest.skip("the target database holds no Gmail records")
+    with psycopg.connect(_TEST_DSN) as conn, conn.cursor() as cur:
+        cur.execute("select count(*) from crm.organization_domain")
+        registered = int(cur.fetchone()[0])
+    if registered == 0:
+        assert all(row["domain_organization"] is None for row in page.items)
+    else:
+        for row in page.items:
+            if row["domain_organization"] is not None:
+                assert row["domain_organization"]["organization_id"]

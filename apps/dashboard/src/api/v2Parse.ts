@@ -16,6 +16,11 @@ import type {
   V2ContactCard,
   V2ContactCardSibling,
   V2EvidenceItem,
+  V2EvidenceRecord,
+  V2RecordAssertion,
+  V2RecordContactMatch,
+  V2RecordDomainOrganization,
+  V2RecordOrganizationMatch,
   V2OrganizationCard,
   V2OrganizationCardChannel,
   V2OrganizationCardChild,
@@ -396,3 +401,87 @@ export function parseV2OrganizationCard(value: unknown): V2OrganizationCard {
 
 export const parseV2EvidencePage = (value: unknown): V2Page<V2EvidenceItem> =>
   parsePage(value, parseV2EvidenceItem);
+
+// -------------------------------------------------------------- the review queue
+
+function parseRecordAssertion(value: unknown): V2RecordAssertion {
+  const row = asRecord(value);
+  return {
+    assertion_id: str(row.assertion_id),
+    kind: str(row.kind),
+    value_norm: str(row.value_norm),
+    resolution: str(row.resolution),
+    resolved_kind: optionalStr(row.resolved_kind),
+    resolved_id: optionalStr(row.resolved_id),
+    ambiguity_note: optionalStr(row.ambiguity_note),
+  };
+}
+
+function parseRecordContactMatch(value: unknown): V2RecordContactMatch {
+  const row = asRecord(value);
+  return {
+    value_norm: str(row.value_norm),
+    contact_point_id: str(row.contact_point_id),
+    usage: usage(row.usage),
+    confirmation: confirmation(row.confirmation),
+    person_id: optionalStr(row.person_id),
+    person_display_name: optionalStr(row.person_display_name),
+    organization_id: optionalStr(row.organization_id),
+    organization_name: optionalStr(row.organization_name),
+  };
+}
+
+function parseRecordOrganizationMatch(value: unknown): V2RecordOrganizationMatch {
+  const row = asRecord(value);
+  return {
+    value_norm: str(row.value_norm),
+    organization_id: str(row.organization_id),
+    name: str(row.name),
+    confirmation: confirmation(row.confirmation),
+  };
+}
+
+function parseDomainOrganization(value: unknown): V2RecordDomainOrganization | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const row = asRecord(value);
+  const organizationId = str(row.organization_id);
+  // A domain match with no organization id is not a weaker match, it is a malformed one.
+  // Dropping it keeps "this domain is registered to an organization" an all-or-nothing
+  // claim rather than something the UI half-renders.
+  return organizationId
+    ? { organization_id: organizationId, name: str(row.name), scope: optionalStr(row.scope) }
+    : null;
+}
+
+export function parseV2EvidenceRecord(value: unknown): V2EvidenceRecord {
+  const row = asRecord(value);
+  return {
+    source_record_id: str(row.source_record_id),
+    source_kind: str(row.source_kind),
+    dedupe_key: str(row.dedupe_key),
+    source_uri: optionalStr(row.source_uri),
+    acquired_at: optionalStr(row.acquired_at),
+    review_status: str(row.review_status),
+    is_quarantined: bool(row.is_quarantined),
+    subject: optionalStr(row.subject),
+    from_address: optionalStr(row.from_address),
+    from_domain: optionalStr(row.from_domain),
+    message_date: optionalStr(row.message_date),
+    thread_id: optionalStr(row.thread_id),
+    assertions: (Array.isArray(row.assertions) ? row.assertions : []).map(parseRecordAssertion),
+    assertion_total: int(row.assertion_total),
+    contact_matches: (Array.isArray(row.contact_matches) ? row.contact_matches : []).map(
+      parseRecordContactMatch,
+    ),
+    organization_matches: (
+      Array.isArray(row.organization_matches) ? row.organization_matches : []
+    ).map(parseRecordOrganizationMatch),
+    domain_organization: parseDomainOrganization(row.domain_organization),
+  };
+}
+
+export function parseV2EvidenceRecordsPage(value: unknown): V2Page<V2EvidenceRecord> {
+  return parsePage(value, parseV2EvidenceRecord);
+}

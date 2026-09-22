@@ -250,7 +250,7 @@ export function TodaySummaryPage() {
                   hint={`Identidades que la migración no pudo decidir · ${
                     v2?.machineProposedCount ?? 0
                   } propuestas por confirmar`}
-                  section="crm-v2"
+                  section="revision"
                   needsAttention
                 />
 

@@ -59,6 +59,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/v2\/review\/summary$/,
   /^\/v2\/quotes\/followup$/,
   /^\/v2\/evidence$/,
+  // The review queue in record form. A distinct literal path, not `/v2/evidence/.+`:
+  // widening it here would reach every future sub-resource of a source record, including
+  // whatever the V2 command boundary eventually puts there.
+  /^\/v2\/evidence\/records$/,
   // The two card routes. A UUID-shaped segment, not `.+`: the Worker still refuses any
   // path it cannot name, and no sub-resource under a card is reachable.
   /^\/v2\/contacts\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
