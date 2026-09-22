@@ -803,6 +803,47 @@ that holds when a name-swap goes wrong.
 | Shared build steps | `ol_bootstrap_platform_objects_into` and `ol_apply_migrations_into` now live in `lib/local_target.sh`; `dev_db.sh` delegates to them, so the development and clean-room databases replay the chain through one implementation |
 | Network calls | **zero.** No Gmail, Drive or hosted Supabase connection was made at any point |
 
+### 2.7.10 Mailbox source inventory and intake classification — 2026-09-22
+
+**What is built.** A read-only inventory of the V1 SQLite email archive that reports, for every
+identity lane and every intake class, how large it is, how it splits between sent and received,
+and what that class is permitted to do in V2 intake. It opens SQLite `mode=ro` with
+`query_only=ON`, writes nothing, and **emits aggregate counts only — no address, subject,
+message-id or body reaches its output**, so the report is safe to paste into a ticket. It
+brackets its own read with a row count and reports `stable_snapshot=false` if the every-three-
+minutes ingest wrote while it ran.
+
+**The intake rules it encodes** (owner decision, 2026-09-22):
+
+| Class | Rule |
+|---|---|
+| `primary_evidence` | Inbox and Sent are the primary commercial evidence lane |
+| `archived` | Live archived non-draft mail is a candidate for the next evidence replay — never automatic |
+| `metadata_only` | Drafts are metadata only: never correspondence, a quote, consent, or an opportunity |
+| `excluded_spam` | Spam is inventoried separately and excluded from automatic intake |
+| `excluded_trash` | Trash is inventoried separately as historical/purged material and excluded from automatic promotion |
+
+The legacy commercial identity remains a **distinct** lane. Mail from it arriving in the current
+mailbox is classified `cross_identity` — evidence for an operator to review, never an automatic
+merge into the current identity.
+
+**What the first run established, at the level this file is allowed to state.** The current
+OrigenLab Gmail history is **near-complete locally**: everything that passed through the two
+folders the routine ingest covers is present, and the local archive additionally retains
+correspondence that has since been removed upstream. The gaps that remain fall entirely inside
+classes intake excludes by rule, plus archived mail held as a replay candidate. The historical
+lanes carry no material belonging to the current identity. **The measurement itself — mailbox
+addresses, folder-level counts and date spans — is deliberately not in this repository**; it is
+a private operator artifact outside the tree.
+
+| Item | Value |
+|---|---|
+| Module | `apps/email-pipeline/src/origenlab_email_pipeline/qa/mailbox_intake_inventory.py` |
+| Audit | `apps/email-pipeline/scripts/qa/audit_mailbox_intake_inventory.py` |
+| Tests | **36** — `apps/email-pipeline/tests/test_audit_mailbox_intake_inventory.py`, including a read-only-connection proof, a byte-for-byte no-mutation check, and an assertion that no address reaches the output |
+| Writes | **zero.** No database, no Postgres, no network |
+| Wired into intake | **No.** Classification only; nothing promotes, replays or imports on its result yet |
+
 ### 2.7.5 Local V2 — the reconciled picture, 2026-09-21
 
 One table for "what is actually in the local V2 database and does it add up". The per-stage
