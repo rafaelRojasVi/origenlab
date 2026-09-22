@@ -58,6 +58,30 @@ expect_success() {
   ok "$label"
 }
 
+# expect_refusal_before_drop <label> <needle> <command...>
+# Like expect_refusal, and additionally proves the run never reached the DROP announcement.
+# That announcement is printed immediately before `drop database`, so its absence is the
+# evidence that the existing clean room was still standing when the command gave up.
+expect_refusal_before_drop() {
+  local label="$1" needle="$2"; shift 2
+  local out rc=0
+  out="$("$@" 2>&1)" || rc=$?
+  if (( rc == 0 )); then
+    bad "$label: exited 0, expected a refusal"
+    return
+  fi
+  if [[ "$out" != *"$needle"* ]]; then
+    bad "$label: refused, but the diagnostic did not mention '$needle'"
+    printf '      got: %s\n' "$(printf '%s' "$out" | tail -n 3)"
+    return
+  fi
+  if [[ "$out" == *"DROPPING THE CLEAN-ROOM DATABASE"* ]]; then
+    bad "$label: refused only after announcing the drop"
+    return
+  fi
+  ok "$label"
+}
+
 # A shell that sources the guard library and runs one expression.
 guard() { bash -c '. supabase/scripts/lib/local_target.sh; '"$1"; }
 
@@ -134,6 +158,46 @@ expect_refusal "L: an absent migration root refuses before anything is created" 
 expect_refusal "M: an absent Gmail manifest refuses before anything is created" \
   "does not exist" \
   env OL_LOCAL_PRIVATE_ROOT=/nonexistent-private-root supabase/scripts/cleanroom_db.sh build --force
+
+echo ""
+echo "== M1-M4: preflight validates every input before anything is dropped =="
+#
+# Existence was never enough. On 2026-09-22 migration 20260922090000 raised the staging
+# manifest schema to version 2 while the September file on disk was still version 1: the old
+# preflight saw a file, the build dropped the database, and staging refused three steps later
+# against a half-loaded clean room. Each case below puts a real input in front of the build and
+# proves it gives up with the existing database untouched — the DROP announcement is never
+# printed, so `drop database` was never reached.
+
+bad_private_root() {
+  # A private root whose evidence/ directory holds exactly the file the case is about.
+  local tmp; tmp="$(mktemp -d)"
+  mkdir -p "$tmp/evidence"
+  printf '%s' "$2" > "$tmp/evidence/$1"
+  printf '%s' "$tmp"
+}
+
+_tmp_v1="$(bad_private_root manifest.json '{"manifest_version": 1, "provider": "gmail", "records": [{"external_id": "a", "payload": {}, "observations": [{"kind": "contact_address", "value": "a@b.example"}]}]}')"
+_tmp_junk="$(bad_private_root manifest.json 'not json at all')"
+_tmp_draft="$(bad_private_root manifest.json '{"manifest_version": 2, "provider": "gmail", "records": [{"external_id": "a", "payload": {"intake_class": "primary_evidence", "gmail_labels": ["DRAFT"]}, "observations": [{"kind": "contact_address", "value": "a@b.example"}]}]}')"
+_tmp_empty_root="$(mktemp -d)"
+trap 'rm -rf "$_tmp_v1" "$_tmp_junk" "$_tmp_draft" "$_tmp_empty_root"' EXIT
+
+expect_refusal_before_drop "M1: a manifest the loader no longer accepts refuses before the drop" \
+  "is not loadable" \
+  env OL_LOCAL_PRIVATE_ROOT="$_tmp_v1" supabase/scripts/cleanroom_db.sh build --force
+
+expect_refusal_before_drop "M2: an unreadable manifest refuses before the drop" \
+  "is not loadable" \
+  env OL_LOCAL_PRIVATE_ROOT="$_tmp_junk" supabase/scripts/cleanroom_db.sh build --force
+
+expect_refusal_before_drop "M3: a manifest intake excludes by rule refuses before the drop" \
+  "is not loadable" \
+  env OL_LOCAL_PRIVATE_ROOT="$_tmp_draft" supabase/scripts/cleanroom_db.sh build --force
+
+expect_refusal_before_drop "M4: unverifiable Wave 1A/1B artifacts refuse before the drop" \
+  "did not verify" \
+  env OL_MIGRATION_ROOT="$_tmp_empty_root" supabase/scripts/cleanroom_db.sh build --force
 
 echo ""
 echo "== N-O: destructive actions need to be asked for =="

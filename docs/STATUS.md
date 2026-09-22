@@ -113,27 +113,39 @@ matters here.
 | Send flags | one `outbound.send_control` row, **both `false`** |
 | Verification | **38 probes, all exact**, `supabase/cleanroom/verify.sql` compared against `supabase/cleanroom/expected_counts.json` by `compare.py`. Exact in both directions: an undeclared probe and an unmeasured probe both fail. `verify` is read-only — the whole file runs inside `begin read only`. **Passing as of 2026-09-22 against the post-R1 baseline** |
 | Checkpoints | **none, deliberately.** It is rebuilt, not restored |
-| Rebuildable right now | **No — see below.** The database is verified, but `build --force` cannot currently reproduce it |
+| Rebuildable right now | **Yes, and proven.** Rebuilt twice in immediate succession on 2026-09-22 from the same inputs; both runs ended at **38 probes, all exact**, with identical counts |
+| Preflight | every input is validated **before** the `DROP`, by the same tool that will replay it, in that tool's dry-run mode (no connection is opened): both Wave bundles' manifests and file hashes, and every staging manifest under the full version 2 rules. A refusal leaves the existing database untouched — `cleanroom_failure_tests.sh` M1–M4 prove the DROP announcement is never printed |
 
-**`build --force` is blocked, and the database is therefore not currently rebuildable.** Two
-things were found on 2026-09-22 while re-declaring the baseline:
+**`build --force` was blocked on 2026-09-22, and is not any more.** Three things were found
+while re-declaring the baseline, and all three are now closed:
 
 1. **The build never replayed R1.** It staged one hard-coded manifest path, so a rebuild would
-   have produced the September twenty and silently lost the eleven. Fixed: the build now stages
+   have produced the September twenty and silently lost the eleven. Fixed: the build stages
    every `*.json` in `~/data/origenlab-v2-local/evidence/` in sorted order, and the R1 manifest
    was placed there. Membership of that directory is what puts a batch in the baseline.
-2. **The September manifest is `manifest_version` 1, and R1 made version 1 a refusal**
-   (§2.7.11). `stage_gmail_drive_evidence.py` refuses it with `manifest_version must be 2`
-   before opening any connection, so a rebuild would drop the database and then fail on its
-   first manifest.
+2. **The September manifest was `manifest_version` 1, and R1 made version 1 a refusal**
+   (§2.7.11). Fixed by re-acquisition, not by editing the file: the labels were re-read from the
+   mailbox **read-only** — one `messages.get` per id at `METADATA_ONLY`, no body requested, and
+   no send, draft, label, archive, trash or modify call made — into a private acquisition file,
+   and `reacquire_gmail_manifest_v2.py` rewrote the manifest against it. All twenty ids, source
+   URIs, `acquired_at` values and 26 observations are unchanged; the senders and dates the old
+   manifest claimed were re-checked against the mailbox and **all twenty matched exactly**. All
+   twenty carry `INBOX`, so all twenty classify `primary_evidence`. The version 2 file is
+   `~/data/origenlab-v2-local/evidence/gmail-2026-09-21-commercial.v2.json`; the version 1 file
+   moved to `~/data/origenlab-v2-local/superseded/`, out of the directory that *is* the baseline.
+3. **Preflight checked existence, not validity** — which is why (2) was a live hazard rather
+   than an inconvenience: the drop happened first, and the refusal came three steps later
+   against a half-loaded database. Fixed: preflight now dry-runs the real tools over every
+   input before anything is dropped, and four failure tests (M1–M4) prove the DROP announcement
+   is never reached.
 
-The second is **not fixable from this repository**, and deliberately so. Version 2 requires each
-record's `intake_class` and its actual `gmail_labels` — facts only the acquisition step can
-supply, and supplying them from memory is exactly what the rule exists to prevent. The September
-manifest must be **re-acquired at version 2** by a read-only sweep before the clean room can be
-rebuilt. Until then `build --force` must not be run: the drop happens before the refusal, and
-the September twenty would be lost rather than reproduced. `verify`, `status` and `api-login`
-are unaffected.
+**Rebuilt twice, 2026-09-22.** Two consecutive `build --force` runs from the same inputs each
+ended at 38 probes, all exact: 31 `gmail_message` all `pending`, 37 Gmail assertions all
+`unresolved`, `crm.person` / `opportunity` / `quote` / `task` / `affiliation` /
+`organization_domain` all zero, `platform.command_receipt` 0, and both `send_control` flags
+false. The 1,812 organizations, 3 campaigns and 3,141 send attempts are the **historical** load
+replayed, not new work: no campaign was created, no quote written and nothing sent. The first
+ten R1 records remain `pending` — no review decision has been executed against this database.
 
 **Selecting it.** `supabase/scripts/cleanroom_db.sh api-login` writes
 `~/data/origenlab-v2-local/api.cleanroom.env`. Sourcing it points `apps/api` at
@@ -632,12 +644,24 @@ provenance differed, and that is what the two `source_record` kinds record.
 | Reporting | counts and kinds only — a test asserts no address, document name or organization name reaches the report, which is what gets pasted into commits and CI logs |
 | Idempotency | proven against a real database — a second apply created **0** records and **0** assertions; a record re-staged with a different `source_uri` is refused rather than overwritten |
 | Rows staged into any database | **20 source records and 26 assertions**, into the local `origenlab_dev` only, on 2026-09-21 (§2.7.7). Before that run the tool had been exercised only by its own tests |
-| Tests | **34** — `uv run pytest tests/test_v2_evidence_stage.py`; 2 are database-backed and skip unless `ORIGENLAB_V2_TEST_DSN` is set |
+| Tests | **54 collected** — `uv run pytest tests/test_v2_evidence_stage.py`; 2 are database-backed and skip unless `ORIGENLAB_V2_TEST_DSN` is set |
 
 **No Gmail credential exists in this repository**, and the acquisition step — whatever
 produces a manifest — is deliberately outside this tool. A first manifest has since been
 produced from a real mailbox by hand and staged; §2.7.7 records it. No Drive manifest
 exists.
+
+#### Re-acquiring a manifest at version 2
+
+| Item | Value |
+|---|---|
+| Entry point | `apps/email-pipeline/scripts/migration/reacquire_gmail_manifest_v2.py` → `…migration.v2_evidence_stage.reacquire` |
+| What it does | rewrites a `manifest_version` 1 Gmail manifest as version 2, taking `intake_class` and `gmail_labels` from a **separate acquisition file** rather than inventing them. Everything else — external ids, source URIs, `acquired_at`, observations, order — is carried through unchanged |
+| Network calls | **zero.** It reads two local files and writes a third; it imports no Google client, so it cannot send, draft, label, archive, trash or modify anything. Acquiring the labels stays a separate, read-only, out-of-band step |
+| What refuses the whole pass | a manifest id the acquisition never looked at; an acquisition message the manifest does not hold; a sender or `message_date` that no longer matches; a label classifying as `metadata_only`, `excluded_spam` or `excluded_trash`; a duplicated id; a version 1 payload that already declares the version 2 fields; an `--out` inside the working tree; an existing `--out` without `--force` |
+| Last check | the output is parsed by the **staging loader** before it is written, so a file this step blesses and staging then refuses cannot exist |
+| Tests | **30** — `uv run pytest tests/test_v2_evidence_reacquire.py`; no database, no network |
+| Used once | 2026-09-22, on the September sweep (§2.1). 20 records, 26 observations, all `primary_evidence`; all 20 senders and dates re-matched exactly |
 
 #### The operator surface
 
@@ -904,7 +928,10 @@ in the manifest validator, and it aborts the whole pass rather than dropping a r
 Spam or a Trash message is refused on the evidence rather than on the operator's
 declaration, so an optimistic or mistyped class cannot let one through. A version 1 file is
 refused rather than upgraded in place — the two fields are facts only the acquisition step
-can supply, and guessing them is what the rule exists to prevent.
+can supply, and guessing them is what the rule exists to prevent. That is exactly how the
+September manifest was brought forward on 2026-09-22: not edited, but **re-acquired**
+read-only and rewritten against what the mailbox actually reported (§2.1, and "Re-acquiring a
+manifest at version 2").
 
 | Item | Value |
 |---|---|

@@ -465,12 +465,21 @@ supabase/scripts/cleanroom_db.sh build             # refuses if origenlab_clean 
 supabase/scripts/cleanroom_db.sh build --force     # replace it
 ```
 
-`build` runs, in order: create → platform-emulating `extensions` schema and an empty ledger →
-the full migration chain, one transaction and one ledger row per file → one seeded
-`platform.operator` → `import_waves_into_v2.py --apply` → `promote_evidence_into_crm.py
---apply` → `stage_gmail_drive_evidence.py --apply` against the local September manifest →
-`verify`. Any step that refuses stops the build; nothing half-loaded is left behind a
-successful exit.
+`build` runs, in order: **preflight** → create → platform-emulating `extensions` schema and an
+empty ledger → the full migration chain, one transaction and one ledger row per file → one
+seeded `platform.operator` → `import_waves_into_v2.py --apply` → `promote_evidence_into_crm.py
+--apply` → `stage_gmail_drive_evidence.py --apply` once per manifest → `verify`. Any step that
+refuses stops the build; nothing half-loaded is left behind a successful exit.
+
+**Preflight comes before the `DROP`, and it validates rather than merely looks.** Every input
+is put through the same tool that will later replay it, in that tool's dry-run mode — which
+opens no database connection at all: `import_waves_into_v2.py` re-verifies both bundles'
+manifests and every file hash, and `stage_gmail_drive_evidence.py` parses each staging manifest
+under the full version 2 rules. A missing file, an edited artifact, an unreadable manifest or a
+message intake excludes by rule therefore refuses **with the existing database untouched**.
+This is not belt-and-braces: on 2026-09-22 the old preflight checked that a manifest file
+*existed*, the build dropped the database, and staging refused three steps later against a
+half-loaded clean room (docs/STATUS.md §2.1).
 
 **Two inputs live outside Git**, by design, and `build` refuses at the door if either is
 absent rather than producing a partial database:
@@ -483,12 +492,29 @@ absent rather than producing a partial database:
 The manifests are **replayed, never re-fetched**. `stage_gmail_drive_evidence.py` imports no
 Google client and holds no credential; its only input is those files.
 
-**`build --force` is blocked as of 2026-09-22 and must not be run.** The September manifest is
-`manifest_version` 1, and R1 made version 1 a refusal, so a rebuild would drop the database and
-then fail on its first manifest — losing twenty records it cannot re-load. The fields version 2
-adds (`intake_class`, `gmail_labels`) are facts only the acquisition step can supply, so the
-September manifest has to be re-acquired at version 2 before the clean room is rebuildable
-again. `verify`, `status` and `api-login` are unaffected. See docs/STATUS.md §2.1.
+**Re-acquiring a manifest at version 2.** Version 2 requires each Gmail record's
+`intake_class` and its real `gmail_labels`, and those are facts only a fresh look at the mailbox
+can supply — which is the whole point of the rule, so they are never filled in from memory. When
+a manifest predates the rule, the labels are re-acquired **read-only** (no send, no draft, no
+label, no archive, no trash, no modify; bodies are never requested) into a private acquisition
+file, and the manifest is rewritten against it:
+
+```bash
+cd apps/email-pipeline && uv run python scripts/migration/reacquire_gmail_manifest_v2.py \
+  --manifest    ~/data/origenlab-v2-local/superseded/<name>.manifest-v1.json \
+  --acquisition ~/data/origenlab-v2-local/acquisition/<name>-labels.json \
+  --out         ~/data/origenlab-v2-local/evidence/<name>.v2.json
+```
+
+The tool makes no network call of its own — it reads two local files and writes a third. It
+keeps every external id, source URI, `acquired_at` and observation exactly as they were, adds
+the two required fields and nothing else, re-checks the sender and date the old manifest claimed
+against what was re-acquired, and refuses the **whole** pass on any disagreement: a missing id,
+an extra id, a sender or date that moved, or a message that has since been drafted, spammed or
+trashed. It refuses to write inside the working tree, and the result is validated by the staging
+loader before it is written. The superseded version 1 file moves **out** of
+`~/data/origenlab-v2-local/evidence/`, because that directory *is* the baseline. Done for the
+September sweep on 2026-09-22 (docs/STATUS.md §2.1).
 
 **The database name is a literal.** `build --force` drops a database, so the name comes from
 the `OL_CLEAN_DBNAME` constant in `supabase/scripts/lib/local_target.sh` and from nowhere else
@@ -509,7 +535,7 @@ supabase/scripts/cleanroom_db.sh status
 which carries a reason for every number. The comparison is **exact in both directions**: a
 probe declared and not measured fails, and a probe measured and not declared fails, so the SQL
 and the baseline cannot drift apart in silence. 38 probes, including the breakdown that a
-total alone would hide — 20 `gmail_message` + 4 `migration_manifest` = 24 source records, all
+total alone would hide — 31 `gmail_message` + 4 `migration_manifest` = 35 source records, all
 three asserted — and the four residue probes that name what went wrong on 2026-09-22.
 
 **Point the API at it.**
@@ -539,7 +565,7 @@ rewritten or a name-swap goes wrong, which is what this is for.
 **Tests.**
 
 ```bash
-supabase/scripts/cleanroom_failure_tests.sh        # 25 refusal scenarios, connects to nothing
+supabase/scripts/cleanroom_failure_tests.sh        # 29 refusal scenarios, connects to nothing
 cd apps/api && uv run pytest tests/test_v2_target_boundary.py tests/test_protected_databases.py
 ```
 

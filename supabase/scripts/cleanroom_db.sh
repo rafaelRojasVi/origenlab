@@ -80,9 +80,18 @@ clean_dsn() {
 
 # --- preflight --------------------------------------------------------------------------------
 
-# Everything the build needs, checked before anything is created. A build that discovers a
-# missing artifact halfway through leaves a half-loaded database that looks real, which is worse
-# than a build that refuses at the door.
+# Everything the build needs, verified before anything is dropped or created.
+#
+# Existence is not enough. A build that drops the database, applies the chain and only then
+# discovers that a manifest no longer loads leaves a half-loaded database that looks real — and
+# on 2026-09-22 that is exactly what happened: migration 20260922090000 raised the manifest
+# schema to version 2, the September file was still version 1, and the clean room could not be
+# rebuilt from its own declared inputs. So every input is put through the same validation the
+# build will later apply to it, *first*, while a failure still costs nothing.
+#
+# Both checks below run the real tools in their dry-run mode, which opens no database
+# connection at all. Preflight therefore cannot reach $OL_CLEAN_DBNAME, let alone change it:
+# it runs before the guard, and a refusal here returns with the existing database untouched.
 cleanroom_preflight() {
   command -v docker >/dev/null 2>&1 || die "docker not found"
   command -v psql   >/dev/null 2>&1 || die "psql not found"
@@ -101,6 +110,50 @@ cleanroom_preflight() {
   cleanroom_read_manifests manifests
   (( ${#manifests[@]} )) \
     || die "no staging manifest found in $OL_EVIDENCE_MANIFEST_DIR. The clean room can only be built on a machine that holds them."
+
+  step "PREFLIGHT — every input validated before anything is dropped"
+
+  cleanroom_preflight_artifacts
+  local manifest
+  for manifest in "${manifests[@]}"; do
+    cleanroom_preflight_manifest "$manifest"
+  done
+
+  note "preflight passed: the Wave 1A/1B artifacts and all ${#manifests[@]} staging manifest(s)."
+  note "no database connection has been opened."
+}
+
+# The Wave 1A/1B artifacts, through the importer's own dry run: it re-verifies each bundle's
+# manifest and every file hash, so a truncated, edited or absent artifact refuses here rather
+# than half-way through a load.
+cleanroom_preflight_artifacts() {
+  local out rc=0
+  out="$( cd "$OL_PIPELINE_DIR" && uv run python scripts/migration/import_waves_into_v2.py \
+      --migration-root "$OL_MIGRATION_ROOT" --json 2>&1 )" || rc=$?
+  if (( rc != 0 )); then
+    printf '%s\n' "$out" | tail -n 20 >&2
+    die "the Wave 1A/1B artifacts under $OL_MIGRATION_ROOT did not verify. Nothing was dropped."
+  fi
+  note "  ok  Wave 1A/1B artifacts verified (import dry run, no connection opened)"
+}
+
+# One staging manifest, through the staging tool's own dry run. Same parser, same rules, same
+# refusals as the apply pass — a manifest that passes here is one the build can replay.
+cleanroom_preflight_manifest() {
+  local manifest="$1" out rc=0
+  out="$( cd "$OL_PIPELINE_DIR" && uv run python scripts/migration/stage_gmail_drive_evidence.py \
+      --manifest "$manifest" --json 2>&1 )" || rc=$?
+  if (( rc != 0 )); then
+    printf '%s\n' "$out" | tail -n 10 >&2
+    die "the staging manifest $(basename "$manifest") is not loadable. Nothing was dropped; fix or withdraw the file and run the build again."
+  fi
+  local counts
+  counts="$(printf '%s' "$out" | python3 -c '
+import json, sys
+m = json.load(sys.stdin)["manifest"]
+print("%d record(s), %d observation(s)" % (m["records"], m["observations"]))
+')" || die "could not read the dry-run report for $(basename "$manifest")"
+  note "  ok  $(basename "$manifest") — $counts"
 }
 
 # --- build ------------------------------------------------------------------------------------
