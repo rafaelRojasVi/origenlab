@@ -840,7 +840,7 @@ a private operator artifact outside the tree.
 |---|---|
 | Module | `apps/email-pipeline/src/origenlab_email_pipeline/qa/mailbox_intake_inventory.py` |
 | Audit | `apps/email-pipeline/scripts/qa/audit_mailbox_intake_inventory.py` |
-| Tests | **36** — `apps/email-pipeline/tests/test_audit_mailbox_intake_inventory.py`, including a read-only-connection proof, a byte-for-byte no-mutation check, and an assertion that no address reaches the output |
+| Tests | **41** — `apps/email-pipeline/tests/test_audit_mailbox_intake_inventory.py`, including a read-only-connection proof, a byte-for-byte no-mutation check, and an assertion that no address reaches the output. Every fixture identity is fictional (RFC 2606 `.test`/`.invalid`); the production vocabulary is derived from `business_filter_rules.INTERNAL_DOMAINS` and asserted to partition it |
 | Writes | **zero.** No database, no Postgres, no network |
 | Wired into intake | **No.** Classification only; nothing promotes, replays or imports on its result yet |
 

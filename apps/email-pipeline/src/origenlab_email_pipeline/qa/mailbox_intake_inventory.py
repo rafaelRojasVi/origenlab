@@ -15,9 +15,16 @@ each folder is allowed to do in V2 intake.
 - ``excluded_trash`` — Trash is inventoried separately as historical/purged
   material and excluded from automatic promotion.
 
-Identity rules: ``contacto@labdelivery.cl`` is a distinct historical identity.
-Mail *from* it arriving in the current OrigenLab mailbox is flagged
-``cross_identity`` — evidence to review by hand, never an automatic merge.
+Identity rules: the business's former commercial identity is a *distinct* lane.
+Mail *from* it arriving in the current mailbox is flagged ``cross_identity`` —
+evidence to review by hand, never an automatic merge.
+
+**No mailbox address is written in this file.** The identity vocabulary is derived
+at call time from the two modules that already own it —
+:mod:`~origenlab_email_pipeline.contacto_gmail_source` and
+:mod:`~origenlab_email_pipeline.business_filter_rules` — so there is one place to
+correct if an identity ever changes, and a caller (a test, another deployment) may
+pass its own :class:`IdentityRules` instead.
 
 This module never opens SQLite read-write and never emits an email address
 unless the caller explicitly asks for identity detail.
@@ -31,7 +38,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from origenlab_email_pipeline.contacto_gmail_source import classify_email_source
+from origenlab_email_pipeline.business_filter_rules import INTERNAL_DOMAINS
+from origenlab_email_pipeline.contacto_gmail_source import (
+    LEGACY_LABDELIVERY_SOURCE_LIKE,
+    classify_email_source,
+)
 
 IntakeClass = Literal[
     "primary_evidence",
@@ -55,9 +66,47 @@ AUTOMATIC_INTAKE_CLASSES: frozenset[str] = frozenset({"primary_evidence"})
 #: Intake classes eligible for an operator-approved evidence replay batch.
 REPLAY_CANDIDATE_CLASSES: frozenset[str] = frozenset({"archived"})
 
-#: Domains this business has sent mail from. Order matters only for reporting.
-CURRENT_IDENTITY_DOMAINS: tuple[str, ...] = ("origenlab.cl", "origenlab.com")
-LEGACY_IDENTITY_DOMAINS: tuple[str, ...] = ("labdelivery.cl",)
+@dataclass(frozen=True)
+class IdentityRules:
+    """Which sender domains count as this business, and which as its former identity.
+
+    Both tuples are lower-case bare domains. They must be disjoint: a domain that is
+    both identities at once would make ``cross_identity`` meaningless.
+    """
+
+    current_domains: tuple[str, ...]
+    legacy_domains: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        overlap = set(self.current_domains) & set(self.legacy_domains)
+        if overlap:
+            raise ValueError(
+                f"a domain cannot be both the current and the former identity: {sorted(overlap)}"
+            )
+
+
+def _legacy_domain_token() -> str:
+    """The former identity's domain label, taken from the canonical source-file marker.
+
+    ``contacto_gmail_source`` already owns the one string that recognises the legacy
+    mailbox in a ``source_file``; the domain label is the part of it after the ``@``.
+    Deriving it here means this module states no address of its own.
+    """
+    return LEGACY_LABDELIVERY_SOURCE_LIKE.strip("%").rsplit("@", 1)[-1].strip(". ")
+
+
+def default_identity_rules() -> IdentityRules:
+    """Partition the canonical internal-domain list into current and former identity.
+
+    ``business_filter_rules.INTERNAL_DOMAINS`` is the repository's existing list of the
+    domains this business owns. This function splits it — it adds nothing to it — so a
+    domain added there is picked up here without a second edit.
+    """
+    token = _legacy_domain_token()
+    domains = tuple(d.strip().lower() for d in INTERNAL_DOMAINS if d and d.strip())
+    legacy = tuple(d for d in domains if d.split(".", 1)[0] == token)
+    current = tuple(d for d in domains if d not in legacy)
+    return IdentityRules(current_domains=current, legacy_domains=legacy)
 
 # Folder-name markers, matched case-insensitively against the folder/source path.
 # Checked in this order: a spam or trash subfolder beats the inbox it hangs under.
@@ -114,13 +163,19 @@ def _domain_of(address: str | None) -> str:
     return a.rsplit("@", 1)[-1].strip(" \t\"'>;,")
 
 
-def sender_identity(sender_email: str | None) -> Literal["current", "legacy", "external", "unknown"]:
+def sender_identity(
+    sender_email: str | None,
+    *,
+    rules: IdentityRules | None = None,
+) -> Literal["current", "legacy", "external", "unknown"]:
+    """Whose identity sent this. ``rules`` defaults to :func:`default_identity_rules`."""
+    active = rules if rules is not None else default_identity_rules()
     domain = _domain_of(sender_email)
     if not domain:
         return "unknown"
-    if domain in CURRENT_IDENTITY_DOMAINS:
+    if domain in active.current_domains:
         return "current"
-    if domain in LEGACY_IDENTITY_DOMAINS:
+    if domain in active.legacy_domains:
         return "legacy"
     return "external"
 
@@ -213,12 +268,17 @@ def _has_table(conn: sqlite3.Connection, name: str) -> bool:
     return row is not None
 
 
-def build_inventory(conn: sqlite3.Connection) -> MailboxInventory:
+def build_inventory(
+    conn: sqlite3.Connection,
+    *,
+    rules: IdentityRules | None = None,
+) -> MailboxInventory:
     """Aggregate the mailbox into lane × intake-class groups.
 
     Prefers ``email_mart_features`` (a compact projection with a parsed sender and a
     sanitized date); falls back to ``emails`` when the mart has not been built.
     """
+    active = rules if rules is not None else default_identity_rules()
     sql = _MART_SQL if _has_table(conn, "email_mart_features") else _EMAILS_SQL
     groups: dict[tuple[str, str], GroupInventory] = {}
     lane_totals: Counter[str] = Counter()
@@ -239,7 +299,7 @@ def build_inventory(conn: sqlite3.Connection) -> MailboxInventory:
             groups[key] = group
         group.rows += 1
 
-        identity = sender_identity(row["sender_email"])
+        identity = sender_identity(row["sender_email"], rules=active)
         if identity == "current":
             group.sent_by_current_identity += 1
         elif identity == "legacy":
@@ -270,9 +330,13 @@ def build_inventory(conn: sqlite3.Connection) -> MailboxInventory:
     )
 
 
-def inventory_from_path(db_path: Path | str) -> MailboxInventory:
+def inventory_from_path(
+    db_path: Path | str,
+    *,
+    rules: IdentityRules | None = None,
+) -> MailboxInventory:
     conn = connect_read_only(db_path)
     try:
-        return build_inventory(conn)
+        return build_inventory(conn, rules=rules)
     finally:
         conn.close()
