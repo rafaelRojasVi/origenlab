@@ -51,7 +51,13 @@ export OL_REPO_ROOT
 
 OL_PRIVATE_ROOT="${OL_LOCAL_PRIVATE_ROOT:-$HOME/data/origenlab-v2-local}"
 OL_MIGRATION_ROOT="${OL_MIGRATION_ROOT:-$HOME/data/origenlab-v2-migration}"
-OL_EVIDENCE_MANIFEST="$OL_PRIVATE_ROOT/evidence/gmail-2026-09-21-commercial.json"
+# Every staging manifest the build replays, and the only place it looks for them. The build
+# stages *the whole directory*, in sorted order, rather than one named file: R1 (docs/STATUS.md
+# §2.7.11) proved that naming a single manifest silently makes every later batch unreproducible —
+# the clean room rebuilt without it and nobody could see what had gone. A manifest is in the
+# baseline when it is in this directory, and `verify` fails loudly if that changes the counts,
+# so a stray file cannot slip in unnoticed either. The files themselves stay outside Git.
+OL_EVIDENCE_MANIFEST_DIR="$OL_PRIVATE_ROOT/evidence"
 OL_PIPELINE_DIR="$OL_REPO_ROOT/apps/email-pipeline"
 OL_CLEANROOM_DIR="$OL_REPO_ROOT/supabase/cleanroom"
 
@@ -89,8 +95,12 @@ cleanroom_preflight() {
 
   [[ -d "$OL_MIGRATION_ROOT" ]] \
     || die "the Wave 1A/1B migration root $OL_MIGRATION_ROOT does not exist. It is outside Git by design; the clean room can only be built on a machine that holds it."
-  [[ -f "$OL_EVIDENCE_MANIFEST" ]] \
-    || die "the Gmail staging manifest $OL_EVIDENCE_MANIFEST does not exist. It is outside Git by design and is never re-fetched: this tooling makes no Gmail connection."
+  [[ -d "$OL_EVIDENCE_MANIFEST_DIR" ]] \
+    || die "the staging manifest directory $OL_EVIDENCE_MANIFEST_DIR does not exist. It is outside Git by design and is never re-fetched: this tooling makes no Gmail connection."
+  local -a manifests=()
+  cleanroom_read_manifests manifests
+  (( ${#manifests[@]} )) \
+    || die "no staging manifest found in $OL_EVIDENCE_MANIFEST_DIR. The clean room can only be built on a machine that holds them."
 }
 
 # --- build ------------------------------------------------------------------------------------
@@ -155,15 +165,30 @@ cmd_build() {
       --database-url "$(clean_dsn)" --apply ) \
     || die "the promotion refused or failed"
 
-  step "GMAIL MANIFEST — staged exactly once, from the local file, with no network call"
-  note "manifest: $OL_EVIDENCE_MANIFEST"
-  ( cd "$OL_PIPELINE_DIR" && uv run python scripts/migration/stage_gmail_drive_evidence.py \
-      --manifest "$OL_EVIDENCE_MANIFEST" \
-      --database-url "$(clean_dsn)" --apply ) \
-    || die "the Gmail staging refused or failed"
+  step "STAGING MANIFESTS — each replayed exactly once, from local files, with no network call"
+  local -a manifests=() manifest
+  cleanroom_read_manifests manifests
+  note "${#manifests[@]} manifest(s) in $OL_EVIDENCE_MANIFEST_DIR, staged in this order:"
+  for manifest in "${manifests[@]}"; do note "  $(basename "$manifest")"; done
+  for manifest in "${manifests[@]}"; do
+    ( cd "$OL_PIPELINE_DIR" && uv run python scripts/migration/stage_gmail_drive_evidence.py \
+        --manifest "$manifest" \
+        --database-url "$(clean_dsn)" --apply ) \
+      || die "staging refused or failed on $(basename "$manifest"); $OL_CLEAN_DBNAME is partially loaded and must be rebuilt, not patched"
+  done
 
   step "VERIFYING"
   cleanroom_verify
+}
+
+# The manifests to replay, sorted by name, into the caller's array. Sorted rather than
+# directory order so two machines holding the same files replay them in the same sequence.
+cleanroom_read_manifests() {
+  local -n _out="$1"
+  _out=()
+  local f
+  while IFS= read -r -d '' f; do _out+=("$f"); done \
+    < <(find "$OL_EVIDENCE_MANIFEST_DIR" -maxdepth 1 -type f -name '*.json' -print0 | sort -z)
 }
 
 # One `platform.operator` row, as `origenlab_owner` — the role that owns the table. `on conflict

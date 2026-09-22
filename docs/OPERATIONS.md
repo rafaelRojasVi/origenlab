@@ -478,10 +478,17 @@ absent rather than producing a partial database:
 | Input | Path | What it is |
 |---|---|---|
 | Wave 1A/1B safety bundles | `~/data/origenlab-v2-migration/` | the historical load's artifacts |
-| Gmail staging manifest | `~/data/origenlab-v2-local/evidence/gmail-2026-09-21-commercial.json` | 20 messages from a read-only sweep, produced by hand |
+| Gmail staging manifests | `~/data/origenlab-v2-local/evidence/` | every `*.json` in the directory, staged in sorted order: the September sweep (20 messages) and the R1 archived replay batch (11). A batch is in the baseline when its manifest is in this directory |
 
-The manifest is **replayed, never re-fetched**. `stage_gmail_drive_evidence.py` imports no
-Google client and holds no credential; its only input is that file.
+The manifests are **replayed, never re-fetched**. `stage_gmail_drive_evidence.py` imports no
+Google client and holds no credential; its only input is those files.
+
+**`build --force` is blocked as of 2026-09-22 and must not be run.** The September manifest is
+`manifest_version` 1, and R1 made version 1 a refusal, so a rebuild would drop the database and
+then fail on its first manifest — losing twenty records it cannot re-load. The fields version 2
+adds (`intake_class`, `gmail_labels`) are facts only the acquisition step can supply, so the
+September manifest has to be re-acquired at version 2 before the clean room is rebuildable
+again. `verify`, `status` and `api-login` are unaffected. See docs/STATUS.md §2.1.
 
 **The database name is a literal.** `build --force` drops a database, so the name comes from
 the `OL_CLEAN_DBNAME` constant in `supabase/scripts/lib/local_target.sh` and from nowhere else

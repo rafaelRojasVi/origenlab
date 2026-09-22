@@ -8,10 +8,14 @@
     "declared here and not emitted is a failure, and a probe emitted and not declared here is also",
     "a failure. Neither file can drift from the other in silence.",
     "",
-    "The numbers are not aspirations. They were measured on 2026-09-21 from the historical load",
-    "before any fixture residue existed (docs/STATUS.md §2.1, §2.7, §2.7.1, §2.7.7). If a build",
-    "produces different numbers, either an input changed or the load is not reproducible, and",
-    "both are things an operator must see rather than have rounded away."
+    "The numbers are not aspirations. The historical load was measured on 2026-09-21, before any",
+    "fixture residue existed (docs/STATUS.md §2.1, §2.7, §2.7.1, §2.7.7). The Gmail figures were",
+    "re-measured on 2026-09-22, after the R1 archived replay batch (§2.7.11) was staged. This file",
+    "declares the post-R1 state, because R1 is part of the intended baseline and not a deviation",
+    "from it: a build that reproduces only the September twenty is a build that lost a batch.",
+    "",
+    "If a build produces different numbers, either an input changed or the load is not",
+    "reproducible, and both are things an operator must see rather than have rounded away."
   ],
   "probes": {
     "migrations.count": {
@@ -24,19 +28,19 @@
     },
 
     "source_record.total": {
-      "expect": 24,
-      "why": "the whole evidence intake: 20 staged Gmail messages plus the 4 migration manifests the historical importer records. Asserted alongside its two parts, never instead of them."
+      "expect": 35,
+      "why": "the whole evidence intake: 31 staged Gmail messages plus the 4 migration manifests the historical importer records. Asserted alongside its two parts, never instead of them."
     },
     "source_record.gmail_message": {
-      "expect": 20,
-      "why": "the September manifest, reapplied exactly once from ~/data/origenlab-v2-local/evidence/."
+      "expect": 31,
+      "why": "20 from the September manifest plus 11 from the R1 archived replay batch, each reapplied exactly once from ~/data/origenlab-v2-local/evidence/. The 12th R1 candidate was a bounce, which the loader refuses by rule, so 31 is the number the rules produce rather than the number the mailbox holds."
     },
     "source_record.migration_manifest": {
       "expect": 4,
       "why": "written by import_waves_into_v2.py — one per Wave 1A/1B artifact it read."
     },
     "source_record.gmail_message.pending": {
-      "expect": 20,
+      "expect": 31,
       "why": "nothing has been reviewed. A reviewed or promoted Gmail record in a fresh build means a decision was executed that nobody took."
     },
     "source_record.pytest_residue": {
@@ -45,19 +49,19 @@
     },
 
     "assertion.total": {
-      "expect": 11474,
-      "why": "the historical evidence trail plus the 26 from the Gmail manifest."
+      "expect": 11485,
+      "why": "the 11,448 of the historical evidence trail plus the 37 from the two Gmail manifests."
     },
     "assertion.from_gmail.total": {
-      "expect": 26,
-      "why": "20 contact_address + 6 organization_name, from the 20 staged messages."
+      "expect": 37,
+      "why": "31 contact_address + 6 organization_name, from the 31 staged messages."
     },
     "assertion.from_gmail.unresolved": {
-      "expect": 26,
+      "expect": 37,
       "why": "staging never resolves anything; resolving is a human decision the command boundary records."
     },
-    "assertion.from_gmail.contact_address": { "expect": 20, "why": "one asserted sender address per message." },
-    "assertion.from_gmail.organization_name": { "expect": 6, "why": "asserted only where the message text names an institution — 4 of 20 records, 6 names." },
+    "assertion.from_gmail.contact_address": { "expect": 31, "why": "one asserted sender address per message." },
+    "assertion.from_gmail.organization_name": { "expect": 6, "why": "asserted only where the message text names an institution — 4 of the 20 September records, 6 names. R1 added none: no archived message names an institution in its own words, and the sender's domain is a routing hint held in the payload, never a claim." },
 
     "crm.organization": {
       "expect": 1812,

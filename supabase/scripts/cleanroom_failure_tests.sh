@@ -169,12 +169,12 @@ expect_refusal "R: a probe measured but not declared fails" \
   check --add something.undeclared=1
 
 expect_refusal "S: a single drifted count fails, and names it" \
-  "source_record.gmail_message: expected 20, measured 27" \
+  "source_record.gmail_message: expected 31, measured 27" \
   check source_record.gmail_message=27
 
 expect_refusal "T: a correct total cannot hide a wrong breakdown" \
   "source_record.migration_manifest: expected 4, measured 0" \
-  check source_record.gmail_message=24 source_record.migration_manifest=0
+  check source_record.gmail_message=35 source_record.migration_manifest=0
 
 echo ""
 echo "== U-X: the residue that started all this is caught by name =="

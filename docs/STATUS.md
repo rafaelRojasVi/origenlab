@@ -93,7 +93,7 @@ Built under the hosted freeze (§2.8) so V2 work has somewhere durable to run.
 | Checkpoints | `~/data/origenlab-v2-local/checkpoints/`, outside Git, `0700`/`0600`, each with `.sha256` and `.meta.json` |
 | Build template | `origenlab_template` in the **CLI** cluster; disposable `origenlab_test_<8 hex>` databases are cloned from it |
 
-#### Clean-room database — measured 2026-09-22
+#### Clean-room database — measured 2026-09-22, post-R1
 
 Built because `origenlab_dev` is quarantined (§2.7.9). It lives in the **same container**, as a
 second database: the container is already proven loopback-only and labelled to this working
@@ -104,15 +104,36 @@ matters here.
 |---|---|
 | Database | `origenlab_clean`, in container `origenlab_dev_db` on 127.0.0.1:54332 |
 | Entry point | `supabase/scripts/cleanroom_db.sh` — `build`, `verify`, `status`, `api-login`, `drop`. **No `restore` and no checkpoint reading**: rebuilding *is* the recovery procedure |
-| Built from | `supabase/migrations/` (21 of 21, head `20260922090000`, one ledger row per file) → one seeded operator → `import_waves_into_v2.py --apply` → `promote_evidence_into_crm.py --apply` → `stage_gmail_drive_evidence.py --apply`. Nothing else has ever written to it |
+| Built from | `supabase/migrations/` (21 of 21, head `20260922090000`, one ledger row per file) → one seeded operator → `import_waves_into_v2.py --apply` → `promote_evidence_into_crm.py --apply` → `stage_gmail_drive_evidence.py --apply` once **per manifest** in `~/data/origenlab-v2-local/evidence/`, in sorted order. Nothing else has ever written to it |
 | Name safety | the database name is the constant `OL_CLEAN_DBNAME` in `supabase/scripts/lib/local_target.sh` and is never taken from an argument or the environment. The guard refuses to resolve to anything but `origenlab_clean`, refuses `origenlab_dev` by name first, and **discards the development DSN**, so `ol_psql_dev` cannot connect inside a clean-room script. `build --force` prints the literal name immediately before the `DROP` |
-| Rows of business data | `crm.*` **33,816** (`contact_point` 9,460 · `organization` 1,812 · `domain_event` 22,544; `person`, `opportunity`, `quote`, `task`, `affiliation`, `organization_domain` all **zero**), `outbound.*` **17,214** (`contact_control` 10,588 · `campaign_recipient` 3,481 · `send_attempt` 3,141 · `campaign` 3 · `send_control` 1), `evidence.*` **11,498** (`assertion` 11,474 · `source_record` 24), `comms.mailbox` 1, `platform.operator` **1**, `platform.command_receipt` **0**, `catalog.*` and `procurement.*` zero |
-| Source records | **24 = 20 `gmail_message` + 4 `migration_manifest`.** All three numbers are asserted; the total alone would not distinguish 24 real records from 17 real ones and 7 fixtures |
-| Staged from Gmail | the **same 20 records and 26 assertions**, reapplied **exactly once** from the same local manifest at `~/data/origenlab-v2-local/evidence/`. All `pending` / `unresolved`. **No Gmail connection was made**; the manifest is a file, and the staging tool imports no Google client |
+| Rows of business data | `crm.*` **33,816** (`contact_point` 9,460 · `organization` 1,812 · `domain_event` 22,544; `person`, `opportunity`, `quote`, `task`, `affiliation`, `organization_domain` all **zero**), `outbound.*` **17,214** (`contact_control` 10,588 · `campaign_recipient` 3,481 · `send_attempt` 3,141 · `campaign` 3 · `send_control` 1), `evidence.*` **11,520** (`assertion` 11,485 · `source_record` 35), `comms.mailbox` 1, `platform.operator` **1**, `platform.command_receipt` **0**, `catalog.*` and `procurement.*` zero. **R1 (§2.7.11) added evidence only**: `crm.*` is the same 33,816 it was before the batch |
+| Source records | **35 = 31 `gmail_message` + 4 `migration_manifest`.** All three numbers are asserted; the total alone would not distinguish 35 real records from 28 real ones and 7 fixtures |
+| Staged from Gmail | **31 records and 37 assertions** — the 20 records / 26 assertions of the September manifest plus the 11 records / 11 assertions of R1 (§2.7.11) — each reapplied **exactly once** from local manifests in `~/data/origenlab-v2-local/evidence/`. All `pending` / `unresolved`; nothing has been reviewed. **No Gmail connection was made**; the manifests are files, and the staging tool imports no Google client |
 | Fixture residue | **zero.** Four probes assert it by name: `dedupe_key like 'pytest-%'` 0, `email_norm like 'pytest-%'` 0, `platform.command_receipt` 0, `crm.domain_event` with a non-null `command_receipt_id` 0 |
 | Send flags | one `outbound.send_control` row, **both `false`** |
-| Verification | **38 probes, all exact**, `supabase/cleanroom/verify.sql` compared against `supabase/cleanroom/expected_counts.json` by `compare.py`. Exact in both directions: an undeclared probe and an unmeasured probe both fail. `verify` is read-only — the whole file runs inside `begin read only` |
+| Verification | **38 probes, all exact**, `supabase/cleanroom/verify.sql` compared against `supabase/cleanroom/expected_counts.json` by `compare.py`. Exact in both directions: an undeclared probe and an unmeasured probe both fail. `verify` is read-only — the whole file runs inside `begin read only`. **Passing as of 2026-09-22 against the post-R1 baseline** |
 | Checkpoints | **none, deliberately.** It is rebuilt, not restored |
+| Rebuildable right now | **No — see below.** The database is verified, but `build --force` cannot currently reproduce it |
+
+**`build --force` is blocked, and the database is therefore not currently rebuildable.** Two
+things were found on 2026-09-22 while re-declaring the baseline:
+
+1. **The build never replayed R1.** It staged one hard-coded manifest path, so a rebuild would
+   have produced the September twenty and silently lost the eleven. Fixed: the build now stages
+   every `*.json` in `~/data/origenlab-v2-local/evidence/` in sorted order, and the R1 manifest
+   was placed there. Membership of that directory is what puts a batch in the baseline.
+2. **The September manifest is `manifest_version` 1, and R1 made version 1 a refusal**
+   (§2.7.11). `stage_gmail_drive_evidence.py` refuses it with `manifest_version must be 2`
+   before opening any connection, so a rebuild would drop the database and then fail on its
+   first manifest.
+
+The second is **not fixable from this repository**, and deliberately so. Version 2 requires each
+record's `intake_class` and its actual `gmail_labels` — facts only the acquisition step can
+supply, and supplying them from memory is exactly what the rule exists to prevent. The September
+manifest must be **re-acquired at version 2** by a read-only sweep before the clean room can be
+rebuilt. Until then `build --force` must not be run: the drop happens before the refusal, and
+the September twenty would be lost rather than reproduced. `verify`, `status` and `api-login`
+are unaffected.
 
 **Selecting it.** `supabase/scripts/cleanroom_db.sh api-login` writes
 `~/data/origenlab-v2-local/api.cleanroom.env`. Sourcing it points `apps/api` at
@@ -866,7 +887,7 @@ in the manifest validator, and it aborts the whole pass rather than dropping a r
 
 | Item | Value |
 |---|---|
-| Manifest | outside Git, `0600`, referenced by no repository path. Built from a **read-only** session-connector sweep: nothing was sent, labelled, archived, trashed, drafted, deleted or downloaded |
+| Manifest | outside Git, `0600`, now held in `~/data/origenlab-v2-local/evidence/` so the clean-room build replays it with the rest (§2.1). Built from a **read-only** session-connector sweep: nothing was sent, labelled, archived, trashed, drafted, deleted or downloaded |
 | Candidates -> staged | **12 -> 11**, with **1** rejected at manifest-build time as postmaster traffic |
 | Written | **11** `evidence.source_record` (`gmail_message`, all `pending`) and **11** `evidence.assertion` (`contact_address`, all `unresolved`) |
 | Organization names | **none asserted.** Not one message names an institution in its own words; the sender's domain is a hint and is recorded in the payload as such, never as a claim |
