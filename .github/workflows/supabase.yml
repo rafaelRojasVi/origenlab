@@ -45,6 +45,12 @@ jobs:
         with:
           version: 2.116.0
 
+      # setup-cli pins CLI >=1.28 to GHCR. Clear that override so the CLI can
+      # use its native registry fallback chain: public ECR -> GHCR -> Docker Hub.
+      - name: Restore Supabase multi-registry fallback
+        shell: bash
+        run: echo 'SUPABASE_INTERNAL_IMAGE_REGISTRY=' >> "$GITHUB_ENV"
+
       - name: Verify toolchain and guardrails
         run: |
           set -euo pipefail
