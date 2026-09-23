@@ -227,69 +227,14 @@ cmd_create() {
 # `--with-ledger` also creates the empty migration ledger. A restore omits it, because the
 # checkpoint carries the ledger it must be consistent with.
 ol_bootstrap_platform_objects() {
-  local with_ledger=0
-  [[ "${1-}" == "--with-ledger" ]] && with_ledger=1
-
-  ol_psql_dev <<'SQL' >/dev/null
-create schema if not exists extensions authorization postgres;
-grant usage on schema extensions to anon, authenticated, service_role;
-grant usage, create on schema extensions to dashboard_user;
--- btree_gist backs the exclusion constraints on crm.affiliation,
--- crm.organization_relationship and crm.opportunity_participant. A restore of those tables
--- needs the operator class to exist before their constraints are created.
-create extension if not exists btree_gist with schema extensions;
-SQL
-
-  if (( with_ledger )); then
-    ol_psql_dev <<'SQL' >/dev/null
-create schema if not exists supabase_migrations authorization postgres;
-create table if not exists supabase_migrations.schema_migrations (
-  version text not null primary key,
-  statements text[],
-  name text
-);
-SQL
-  fi
+  ol_bootstrap_platform_objects_into ol_psql_dev "$@"
 }
 
 # --- migrate --------------------------------------------------------------------------------
 
 cmd_migrate() {
   ol_require_dev_database "$OL_REPO_ROOT" >/dev/null || die "dev guard refused"
-
-  local dir="$OL_REPO_ROOT/supabase/migrations"
-  [[ -d "$dir" ]] || die "$dir not found"
-
-  local applied=0 skipped=0 file base version name
-  # Lexical order is canonical order: every file name begins with its UTC timestamp, and the CLI
-  # applies them the same way. `sort` is explicit rather than relying on the glob's locale.
-  while IFS= read -r file; do
-    base="$(basename "$file")"
-    version="${base%%_*}"
-    name="${base#*_}"; name="${name%.sql}"
-    [[ "$version" =~ ^[0-9]{14}$ ]] || die "migration $base does not begin with a 14-digit version"
-
-    local seen
-    seen="$(ol_psql_dev -tAc \
-      "select 1 from supabase_migrations.schema_migrations where version = '$version'")" \
-      || die "could not read the ledger"
-    if [[ -n "$seen" ]]; then
-      skipped=$(( skipped + 1 ))
-      continue
-    fi
-
-    note "applying $base…"
-    # One transaction per migration, aborting on the first error, exactly as the hosted apply
-    # does. A migration that fails leaves no partial state and no ledger row.
-    ol_psql_dev --single-transaction -f "$file" >/dev/null \
-      || die "migration $base failed; nothing from it was committed and no ledger row was written"
-    ol_psql_dev -tAc \
-      "insert into supabase_migrations.schema_migrations (version, name) values ('$version', '$name')" \
-      >/dev/null || die "migration $base applied but its ledger row could not be written"
-    applied=$(( applied + 1 ))
-  done < <(find "$dir" -maxdepth 1 -name '*.sql' -type f | sort)
-
-  note "migrate: $applied applied, $skipped already recorded."
+  ol_apply_migrations_into ol_psql_dev || die "the migration chain could not be applied"
 }
 
 # --- api-login ------------------------------------------------------------------------------

@@ -7,7 +7,7 @@ create extension if not exists pgtap with schema extensions;
 -- Fixture (rolled back): the owner may call pgTAP for the duration of this transaction.
 grant usage on schema extensions to origenlab_owner;
 set role origenlab_owner;
-select plan(101);
+select plan(107);
 
 -- platform.operator / platform.command_receipt (#29, #30)
 insert into platform.operator (id, auth_user_id, email_norm, display_name, role, status)
@@ -83,6 +83,10 @@ select throws_ok($$ insert into crm.contact_point (kind, value_norm, value_displ
 select throws_ok($$ insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation) values ('phone', '56912345678', 'x', 'unattributed', 'confirmed') $$, '23514', null, 'contact_point: phone value_norm is E.164');
 select lives_ok($$ insert into crm.contact_point (kind, value_norm, value_display, organization_id, usage, confirmation) values ('email', 'compras@uni.example', 'compras@uni.example', '00000000-0000-4000-8000-000000000001', 'shared_mailbox', 'confirmed') $$, 'contact_point: a shared mailbox operated by the root organization');
 select throws_ok($$ insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation) values ('fax', '+56912345678', 'x', 'unattributed', 'confirmed') $$, '23514', null, 'contact_point: kind ∈ {email, phone}');
+select lives_ok($$ insert into crm.contact_point (kind, value_norm, value_display, organization_id, usage, confirmation) values ('email', 'jperez@uni.example', 'jperez@uni.example', '00000000-0000-4000-8000-000000000001', 'individual_owner_unknown', 'confirmed') $$, 'contact_point: a named address the institution operates, owner not recorded');
+select throws_ok($$ insert into crm.contact_point (kind, value_norm, value_display, person_id, organization_id, usage, confirmation) values ('email', 'iou1@example.test', 'x', '00000000-0000-4000-8000-000000000010', '00000000-0000-4000-8000-000000000001', 'individual_owner_unknown', 'confirmed') $$, '23514', null, 'contact_point: individual_owner_unknown ⇒ person NULL (it names nobody)');
+select throws_ok($$ insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation) values ('email', 'iou2@example.test', 'x', 'individual_owner_unknown', 'confirmed') $$, '23514', null, 'contact_point: individual_owner_unknown ⇒ organization NOT NULL (otherwise it is unattributed)');
+select throws_ok($$ insert into crm.contact_point (kind, value_norm, value_display, organization_id, usage, confirmation) values ('email', 'iou3@example.test', 'x', '00000000-0000-4000-8000-000000000001', 'owner_unknown', 'confirmed') $$, '23514', null, 'contact_point: usage vocabulary stays closed');
 
 -- crm.address (#31)
 insert into crm.address (id, organization_id, street_line_1, locality, administrative_area, country_code, valid_from, confirmation)
@@ -106,11 +110,25 @@ select lives_ok($$ insert into crm.address (organization_id, street_line_1, loca
 
 -- crm.opportunity (#8) and crm.opportunity_participant (#32)
 insert into crm.opportunity (id, title, stage, owner_operator_id) values ('00000000-0000-4000-8000-000000000050', 'Lead without organization', 'lead', '00000000-0000-4000-8000-0000000000a1');
-select throws_ok($$ insert into crm.opportunity (title, stage, owner_operator_id) values ('x', 'qualified', '00000000-0000-4000-8000-0000000000a1') $$, '23514', null, 'opportunity: organization is mandatory from qualified onward');
-select throws_ok($$ insert into crm.opportunity (title, stage, owner_operator_id, organization_id) values ('x', 'won', '00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-000000000001') $$, '23514', null, 'opportunity: won ⇔ (won_quote_id, won_revision_no) set');
-select throws_ok($$ insert into crm.opportunity (title, stage, owner_operator_id, organization_id) values ('x', 'lost', '00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-000000000001') $$, '23514', null, 'opportunity: a terminal stage ⇔ closed_at set');
+-- Since 20260922200000 a case is opened at `lead` and at no other stage, so the shape rules of
+-- the later stages are exercised by *moving* the lead above — which is the only way a real case
+-- reaches them. The opening rule itself is asserted first, and the three CHECKs below are the
+-- same three CHECKs as before: `stage`, the won shape, and the closed shape.
+select throws_ok($$ insert into crm.opportunity (title, stage, owner_operator_id) values ('x', 'qualified', '00000000-0000-4000-8000-0000000000a1') $$, 'P0001', null, 'opportunity: a case is opened at lead and never at a later stage');
+select throws_ok($$ update crm.opportunity set stage = 'qualifying' where id = '00000000-0000-4000-8000-000000000050'; update crm.opportunity set stage = 'qualified' where id = '00000000-0000-4000-8000-000000000050' $$, '23514', null, 'opportunity: organization is mandatory from qualified onward');
+select throws_ok($$ update crm.opportunity set stage = 'qualifying', organization_id = '00000000-0000-4000-8000-000000000001' where id = '00000000-0000-4000-8000-000000000050'; update crm.opportunity set stage = 'qualified' where id = '00000000-0000-4000-8000-000000000050'; update crm.opportunity set stage = 'quoting' where id = '00000000-0000-4000-8000-000000000050'; update crm.opportunity set stage = 'negotiating' where id = '00000000-0000-4000-8000-000000000050'; update crm.opportunity set stage = 'won', closed_at = now() where id = '00000000-0000-4000-8000-000000000050' $$, '23514', null, 'opportunity: won ⇔ (won_quote_id, won_revision_no) set');
+select throws_ok($$ update crm.opportunity set stage = 'lost' where id = '00000000-0000-4000-8000-000000000050' $$, '23514', null, 'opportunity: a terminal stage ⇔ closed_at set');
 select throws_ok($$ insert into crm.opportunity (title, stage, owner_operator_id, closed_at) values ('x', 'lead', '00000000-0000-4000-8000-0000000000a1', now()) $$, '23514', null, 'opportunity: an open stage has no closed_at');
-select throws_ok($$ insert into crm.opportunity (title, stage, owner_operator_id) values ('x', 'converted', '00000000-0000-4000-8000-0000000000a1') $$, '23514', null, 'opportunity: stage is closed');
+-- `stage` is still a closed CHECK, and since 20260922200000 no statement can reach it: the
+-- stage guard refuses an unknown value first, on INSERT because a case opens at `lead` and on
+-- UPDATE because an unknown target is in no row of the transition table. Both refusals are
+-- asserted above; the CHECK itself is read from the catalogue, because a rule that cannot be
+-- violated cannot be proven by violating it.
+select matches(
+  (select pg_get_constraintdef(oid) from pg_constraint where conname = 'opportunity_stage_check'),
+  'lead.*qualifying.*qualified.*quoting.*negotiating.*won.*lost.*abandoned',
+  'opportunity: stage is closed to exactly the eight stages of WORKFLOWS.md §1.1');
+select throws_ok($$ update crm.opportunity set stage = 'converted' where id = '00000000-0000-4000-8000-000000000050' $$, 'P0001', null, 'opportunity: a stage outside the machine is refused before the CHECK is reached');
 insert into crm.opportunity_participant (id, opportunity_id, contact_point_id, role, is_primary, valid_from, confirmation)
 values ('00000000-0000-4000-8000-000000000060', '00000000-0000-4000-8000-000000000050', '00000000-0000-4000-8000-000000000030', 'purchasing', true, '2024-01-01', 'confirmed');
 select throws_ok($$ insert into crm.opportunity_participant (opportunity_id, role, valid_from, confirmation) values ('00000000-0000-4000-8000-000000000050', 'other', '2024-01-01', 'confirmed') $$, '23514', null, 'participant: a person and/or a contact point is required');
@@ -146,8 +164,18 @@ select throws_ok($$ update crm.domain_event set payload = '{}' where aggregate_i
 select throws_ok($$ delete from crm.domain_event where aggregate_id = '00000000-0000-4000-8000-000000000050' $$, 'P0001', null, 'domain_event: no DELETE, even for the owner');
 
 -- crm.quote (#12), crm.quote_revision (#13), crm.quote_line (#14)
-insert into crm.opportunity (id, title, stage, owner_operator_id, organization_id) values ('00000000-0000-4000-8000-000000000051', 'Quoting opportunity', 'quoting', '00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-000000000001');
-insert into crm.opportunity (id, title, stage, owner_operator_id, organization_id) values ('00000000-0000-4000-8000-000000000052', 'Another opportunity', 'negotiating', '00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-000000000001');
+-- Since 20260922200000 a case is opened at `lead` and walks to its stage, so these two
+-- fixtures walk. The deferred agreement trigger never fires here, because this file rolls back
+-- rather than commits -- 062 exercises that pairing explicitly with `set constraints all immediate`.
+insert into crm.opportunity (id, title, stage, owner_operator_id, organization_id) values ('00000000-0000-4000-8000-000000000051', 'Quoting opportunity', 'lead', '00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-000000000001');
+update crm.opportunity set stage = 'qualifying' where id = '00000000-0000-4000-8000-000000000051';
+update crm.opportunity set stage = 'qualified' where id = '00000000-0000-4000-8000-000000000051';
+update crm.opportunity set stage = 'quoting' where id = '00000000-0000-4000-8000-000000000051';
+insert into crm.opportunity (id, title, stage, owner_operator_id, organization_id) values ('00000000-0000-4000-8000-000000000052', 'Another opportunity', 'lead', '00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-000000000001');
+update crm.opportunity set stage = 'qualifying' where id = '00000000-0000-4000-8000-000000000052';
+update crm.opportunity set stage = 'qualified' where id = '00000000-0000-4000-8000-000000000052';
+update crm.opportunity set stage = 'quoting' where id = '00000000-0000-4000-8000-000000000052';
+update crm.opportunity set stage = 'negotiating' where id = '00000000-0000-4000-8000-000000000052';
 insert into crm.quote (id, opportunity_id, quote_number) values ('00000000-0000-4000-8000-000000000070', '00000000-0000-4000-8000-000000000051', 'Q-2026-0001');
 select throws_ok($$ insert into crm.quote (opportunity_id, quote_number) values ('00000000-0000-4000-8000-000000000052', 'Q-2026-0001') $$, '23505', null, 'quote: number unique');
 insert into crm.quote_revision (id, quote_id, revision_no, status, quote_currency, price_decimals)
@@ -179,6 +207,10 @@ select throws_ok($$ insert into crm.quote_line (quote_revision_id, line_no, line
 select throws_ok($$ insert into crm.quote_line (quote_revision_id, line_no, line_kind, description, quantity, margin_mode) values ('00000000-0000-4000-8000-000000000080', 4, 'item', 'Qty', 0, 'none') $$, '23514', null, 'quote_line: quantity > 0');
 
 -- Won links: the won quote belongs to this opportunity and the revision exists.
+-- `won` is reachable only from `negotiating` (WORKFLOWS.md §1.1), so the quoting case steps
+-- there first: the three assertions below are about the won-link foreign keys, not about the
+-- stage machine, which 063 exercises on its own.
+update crm.opportunity set stage = 'negotiating' where id = '00000000-0000-4000-8000-000000000051';
 select throws_ok($$ update crm.opportunity set stage = 'won', won_quote_id = '00000000-0000-4000-8000-000000000070', won_revision_no = 1, closed_at = now() where id = '00000000-0000-4000-8000-000000000052' $$, '23503', null, 'opportunity: the won quote must belong to this opportunity');
 select throws_ok($$ update crm.opportunity set stage = 'won', won_quote_id = '00000000-0000-4000-8000-000000000070', won_revision_no = 9, closed_at = now() where id = '00000000-0000-4000-8000-000000000051' $$, '23503', null, 'opportunity: the won revision must exist on the won quote');
 select lives_ok($$ update crm.opportunity set stage = 'won', won_quote_id = '00000000-0000-4000-8000-000000000070', won_revision_no = 1, closed_at = now() where id = '00000000-0000-4000-8000-000000000051' $$, 'opportunity: won with its own quote and revision');

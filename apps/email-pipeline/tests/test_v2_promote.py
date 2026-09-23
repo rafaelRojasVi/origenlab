@@ -249,7 +249,12 @@ def test_an_unclassifiable_address_is_routed_to_review_not_dropped() -> None:
 
 import os  # noqa: E402
 
-_DSN = os.environ.get("ORIGENLAB_V2_TEST_DSN", "").strip()
+from protected_databases import assert_not_protected  # noqa: E402
+
+_DSN = assert_not_protected(
+    os.environ.get("ORIGENLAB_V2_TEST_DSN", "").strip(),
+    variable="ORIGENLAB_V2_TEST_DSN",
+)
 _needs_db = pytest.mark.skipif(not _DSN, reason="ORIGENLAB_V2_TEST_DSN is not set")
 
 

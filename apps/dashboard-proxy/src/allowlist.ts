@@ -58,6 +58,29 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/v2\/tasks\/due$/,
   /^\/v2\/review\/summary$/,
   /^\/v2\/quotes\/followup$/,
+  /^\/v2\/evidence$/,
+  // The review queue in record form. A distinct literal path, not `/v2/evidence/.+`:
+  // widening it here would reach every future sub-resource of a source record, including
+  // whatever the V2 command boundary eventually puts there.
+  /^\/v2\/evidence\/records$/,
+  // The two card routes. A UUID-shaped segment, not `.+`: the Worker still refuses any
+  // path it cannot name, and no sub-resource under a card is reachable.
+  /^\/v2\/contacts\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  /^\/v2\/organizations\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  // The one sub-resource under a card, named rather than matched: every case an
+  // institution is part of. `/v2/organizations/<uuid>/.+` would have reached whatever
+  // else is ever hung under an organization, so the literal `/cases` tail is spelled out.
+  /^\/v2\/organizations\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/cases$/,
+  // Commercial cases: the list and one case. Read-only, like everything above it.
+  //
+  // The V2 command boundary now *does* exist upstream -- six case commands under
+  // `POST /v2/commands/*` -- and none of it is added here. That is the whole point of a
+  // list of names: a boundary that ships in the API does not thereby ship in the browser,
+  // and the dashboard's case screen renders its actions disabled because this Worker
+  // permits no POST under `/v2` at all. Widening either list is a separate, deliberate
+  // decision with its own review.
+  /^\/v2\/cases$/,
+  /^\/v2\/cases\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
 ];
 
 /**

@@ -1,15 +1,25 @@
-"""The V2 durable read boundary.
+"""The V2 durable core — the read boundary and the human-review command boundary.
 
 `apps/api` is V1's operator API: SQLite-first, with a Postgres mirror for reporting and an
 allowlisted `/operations/*` command path. This package adds a *separate*, read-only surface
 over the **V2** durable core, so the operator dashboard can be moved off the rebuildable
 legacy mirrors one card at a time without disturbing anything V1 serves today.
 
-Three properties hold by construction:
+The package holds **three** surfaces, split so that each one's guarantee is checkable in one
+file. `routes.py` + `repository.py` are the read boundary; `command_routes.py` +
+`command_repository.py` are the human-review command boundary that records durable decisions
+about staged evidence; `case_command_routes.py` + `case_command_repository.py` are the
+commercial-case command boundary, which runs the case that follows one. The two write
+boundaries share `command_core.py` — one transaction, one receipt, one event stream, one
+dispatch — rather than a copy of it. Four properties hold by construction:
 
-* **Read-only.** Every query runs inside `begin read only` as `origenlab_api`, a role with
-  no membership in `origenlab_owner`. RLS constrains these reads exactly as it will in
-  production rather than being bypassed by a privileged local login.
+* **The read boundary cannot write.** Every query in `repository.py` runs inside `begin read
+  only` as `origenlab_api`, a role with no membership in `origenlab_owner`, and a test over
+  the read router's own methods asserts it exposes no POST, PATCH or DELETE.
+* **The command boundary writes only in one transaction, only with a receipt.** Every
+  durable change carries the evidence record it is about, the verified operator, a mandatory
+  reason, an idempotency key and an append-only `crm.domain_event`. A refusal rolls back
+  everything including the receipt.
 * **Not mounted unless configured.** With no `ORIGENLAB_V2_DATABASE_URL` the router is
   absent entirely, so an unconfigured deployment gets no `/v2` surface rather than one that
   errors.
@@ -21,6 +31,13 @@ Three properties hold by construction:
 
 from __future__ import annotations
 
+from origenlab_api.v2.case_command_repository import V2CaseCommandRepository
+from origenlab_api.v2.case_command_routes import case_command_router
+from origenlab_api.v2.case_commands import CASE_COMMAND_NAMES
+from origenlab_api.v2.command_core import CommandTransaction
+from origenlab_api.v2.command_repository import V2CommandRepository
+from origenlab_api.v2.command_routes import command_router
+from origenlab_api.v2.commands import COMMAND_NAMES, CommandRefused
 from origenlab_api.v2.identity import (
     IdentityMisconfigured,
     IdentityPort,
@@ -35,15 +52,23 @@ from origenlab_api.v2.repository import V2Repository, clamp_limit
 from origenlab_api.v2.routes import router
 
 __all__ = [
+    "CASE_COMMAND_NAMES",
+    "COMMAND_NAMES",
+    "CommandRefused",
+    "CommandTransaction",
     "IdentityMisconfigured",
     "IdentityPort",
     "IdentityRefused",
     "JwksVerifier",
     "LocalDevIdentity",
     "OperatorIdentity",
+    "V2CaseCommandRepository",
+    "V2CommandRepository",
     "V2Repository",
     "build_identity_port",
+    "case_command_router",
     "clamp_limit",
+    "command_router",
     "is_loopback_dsn",
     "router",
 ]

@@ -282,6 +282,8 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
       "Licitaciones",
       "Ventas",
       "Clientes",
+      "Contactos",
+      "Instituciones",
       "Prospectos",
       "Correos",
       "Catálogo",
@@ -426,6 +428,33 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
 
     const nav = screen.getByRole("navigation", { name: "Navegación del panel" });
     expect(within(nav).queryByRole("link", { name: "Pagos y logística" })).toBeNull();
+  });
+
+  it("drops the V1 status chrome on the V2 surfaces and says what is actually true", async () => {
+    // "Estado: BLOQUEADO" is the daily core run's verdict and "SQLite local" is the V1
+    // mirror's backend. Neither is a fact about a screen that reads the durable core over
+    // `/v2`, and an operator reading "BLOQUEADO" above a working page believes the wrong
+    // thing about their own system.
+    for (const hash of ["#/instituciones", "#/contactos", "#/casos"]) {
+      window.location.hash = hash;
+      const view = render(<DashboardApp />);
+      await waitFor(() => screen.getByTestId("v2-read-only-chip"));
+
+      expect(screen.getByTestId("v2-local-data-chip").textContent).toContain(
+        "Datos locales de revisión",
+      );
+      expect(screen.queryByTestId("operator-verdict-chip")).toBeNull();
+      expect(screen.queryByText("SQLite local")).toBeNull();
+      expect(screen.queryByText(/BLOQUEADO/)).toBeNull();
+      view.unmount();
+    }
+  });
+
+  it("keeps the V1 status chrome where it is a fact — on the V1 pages", async () => {
+    window.location.hash = "#/cotizaciones";
+    render(<DashboardApp />);
+    await waitFor(() => screen.getByTestId("operator-verdict-chip"));
+    expect(screen.queryByTestId("v2-read-only-chip")).toBeNull();
   });
 
   it("Negocios is still reachable by deep link even though it's hidden from nav", async () => {

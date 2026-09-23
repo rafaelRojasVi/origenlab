@@ -1,5 +1,5 @@
 -- Slice 0 — row level security (docs/ARCHITECTURE.md §6.1 points 1, 2, 5). RLS is enabled and
--- not forced on all 33 tables; the policy set is exactly one named role gate per granted
+-- not forced on all 36 tables; the policy set is exactly one named role gate per granted
 -- (table, role, verb); and RLS is demonstrably live: with its policy removed, a table becomes
 -- unreachable for the runtime role — deny-by-default — without any error.
 begin;
@@ -75,6 +75,18 @@ insert into expected_policies values
     ('crm', 'opportunity_participant', 'origenlab_api', 'INSERT'),
     ('crm', 'opportunity_participant', 'origenlab_api', 'UPDATE'),
     ('crm', 'opportunity_participant', 'origenlab_worker', 'SELECT'),
+    ('crm', 'opportunity_organization', 'origenlab_api', 'SELECT'),
+    ('crm', 'opportunity_organization', 'origenlab_api', 'INSERT'),
+    ('crm', 'opportunity_organization', 'origenlab_api', 'UPDATE'),
+    ('crm', 'opportunity_organization', 'origenlab_worker', 'SELECT'),
+    ('crm', 'opportunity_interest', 'origenlab_api', 'SELECT'),
+    ('crm', 'opportunity_interest', 'origenlab_api', 'INSERT'),
+    ('crm', 'opportunity_interest', 'origenlab_api', 'UPDATE'),
+    ('crm', 'opportunity_interest', 'origenlab_worker', 'SELECT'),
+    ('crm', 'opportunity_evidence', 'origenlab_api', 'SELECT'),
+    ('crm', 'opportunity_evidence', 'origenlab_api', 'INSERT'),
+    ('crm', 'opportunity_evidence', 'origenlab_api', 'UPDATE'),
+    ('crm', 'opportunity_evidence', 'origenlab_worker', 'SELECT'),
     ('crm', 'task', 'origenlab_api', 'SELECT'),
     ('crm', 'task', 'origenlab_api', 'INSERT'),
     ('crm', 'task', 'origenlab_api', 'UPDATE'),
@@ -163,7 +175,7 @@ insert into expected_policies values
     ('platform', 'command_receipt', 'origenlab_api', 'UPDATE'),
     ('platform', 'command_receipt', 'origenlab_worker', 'SELECT');
 
-select is((select count(*)::int from expected_policies), 127, 'the matrix implies 127 policies');
+select is((select count(*)::int from expected_policies), 139, 'the matrix implies 139 policies');
 
 -- Posture.
 select is(

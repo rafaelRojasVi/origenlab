@@ -416,3 +416,178 @@ ol_psql_dev_maintenance() {
   fi
   psql "postgresql://${OL_DEV_SUPERUSER}:postgres@127.0.0.1:${OL_DEV_PORT}/postgres" -X -v ON_ERROR_STOP=1 "$@"
 }
+
+# ---------------------------------------------------------------------------
+# Shared build steps: platform emulation and the migration chain.
+#
+# Both the development database and the clean-room database are built the same way — that is
+# the point of having a clean room at all. The two steps below are therefore written once and
+# parameterised by the psql function that reaches the target, rather than copied into each
+# script where they could quietly drift apart.
+#
+# Every caller passes a psql wrapper that has already been through a guard, so neither helper
+# resolves a target itself and neither can be pointed anywhere by an argument.
+
+# ol_bootstrap_platform_objects_into <psql_fn> [--with-ledger]
+#
+# Platform emulation, and only platform emulation.
+#
+# On a hosted Supabase project the `extensions` schema and its trusted extensions are provided
+# by the platform before any of our migrations run, and M01's `create extension btree_gist with
+# schema extensions` depends on that. A database we create ourselves has no such schema, so we
+# reproduce it here — same owner, same ACL as the CLI's own `postgres` database carries —
+# rather than editing M01 to tolerate its absence.
+#
+# This is a local bootstrap step, NOT part of the migration chain. At hosted cutover it is
+# simply not run, because the platform has already done it. Keeping it out of
+# supabase/migrations/ is what makes the chain replayable against hosted Supabase unmodified.
+ol_bootstrap_platform_objects_into() {
+  local psql_fn="${1-}" with_ledger=0
+  [[ -n "$psql_fn" ]] || { echo "FAIL: ol_bootstrap_platform_objects_into needs a psql function" >&2; return 1; }
+  [[ "${2-}" == "--with-ledger" ]] && with_ledger=1
+
+  "$psql_fn" <<'SQL' >/dev/null || return 1
+create schema if not exists extensions authorization postgres;
+grant usage on schema extensions to anon, authenticated, service_role;
+grant usage, create on schema extensions to dashboard_user;
+-- btree_gist backs the exclusion constraints on crm.affiliation,
+-- crm.organization_relationship and crm.opportunity_participant. A restore of those tables
+-- needs the operator class to exist before their constraints are created.
+create extension if not exists btree_gist with schema extensions;
+SQL
+
+  if (( with_ledger )); then
+    "$psql_fn" <<'SQL' >/dev/null || return 1
+create schema if not exists supabase_migrations authorization postgres;
+create table if not exists supabase_migrations.schema_migrations (
+  version text not null primary key,
+  statements text[],
+  name text
+);
+SQL
+  fi
+  return 0
+}
+
+# ol_apply_migrations_into <psql_fn>
+#
+# Replays supabase/migrations/ in lexical order — which is canonical order, because every file
+# name begins with its UTC timestamp and the CLI applies them the same way. One transaction per
+# migration, aborting on the first error, exactly as the hosted apply does: a migration that
+# fails leaves no partial state and no ledger row.
+ol_apply_migrations_into() {
+  local psql_fn="${1-}"
+  [[ -n "$psql_fn" ]] || { echo "FAIL: ol_apply_migrations_into needs a psql function" >&2; return 1; }
+
+  local dir="${OL_REPO_ROOT:?OL_REPO_ROOT must be set}/supabase/migrations"
+  [[ -d "$dir" ]] || { echo "FAIL: $dir not found" >&2; return 1; }
+
+  local applied=0 skipped=0 file base version name seen
+  while IFS= read -r file; do
+    base="$(basename "$file")"
+    version="${base%%_*}"
+    name="${base#*_}"; name="${name%.sql}"
+    if [[ ! "$version" =~ ^[0-9]{14}$ ]]; then
+      echo "FAIL: migration $base does not begin with a 14-digit version" >&2
+      return 1
+    fi
+
+    seen="$("$psql_fn" -tAc \
+      "select 1 from supabase_migrations.schema_migrations where version = '$version'")" \
+      || { echo "FAIL: could not read the ledger" >&2; return 1; }
+    if [[ -n "$seen" ]]; then
+      skipped=$(( skipped + 1 ))
+      continue
+    fi
+
+    echo "applying $base…" >&2
+    "$psql_fn" --single-transaction -f "$file" >/dev/null \
+      || { echo "FAIL: migration $base failed; nothing from it was committed and no ledger row was written" >&2; return 1; }
+    "$psql_fn" -tAc \
+      "insert into supabase_migrations.schema_migrations (version, name) values ('$version', '$name')" \
+      >/dev/null || { echo "FAIL: migration $base applied but its ledger row could not be written" >&2; return 1; }
+    applied=$(( applied + 1 ))
+  done < <(find "$dir" -maxdepth 1 -name '*.sql' -type f | sort)
+
+  echo "migrate: $applied applied, $skipped already recorded." >&2
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# The clean-room database — a rebuildable second database in the development container.
+#
+# `origenlab_dev` is persistent and, as of 2026-09-22, quarantined: a database-backed test run
+# wrote seven fixture source records, seven fixture operators, nine command receipts and the
+# rows they produced into it, and its migration ledger no longer describes its own schema. It
+# still holds twenty real staged Gmail records, so it is neither trustworthy nor disposable.
+#
+# The clean room is the answer to both halves of that. `origenlab_clean` is rebuilt from
+# nothing but supabase/migrations/ and the reproducible historical load, so what is in it is
+# exactly what the reviewed inputs produce — and because it is rebuilt rather than repaired,
+# `origenlab_dev` never has to be written to, dropped or restored over.
+#
+# THE NAME IS A LITERAL AND IS NEVER TAKEN FROM AN ARGUMENT OR THE ENVIRONMENT. That is the
+# whole safety property: the clean-room build drops a database, and a build that could be told
+# which one is a build that could be told to drop `origenlab_dev`. The guard below refuses
+# outright if the constant is anything other than `origenlab_clean`, and refuses the name
+# `origenlab_dev` by name before it does anything else.
+
+OL_CLEAN_DBNAME="origenlab_clean"
+
+# The name this repository will never let the clean-room tooling open. Listed explicitly rather
+# than inferred, so the refusal is greppable and testable.
+OL_CLEAN_FORBIDDEN_DBNAME="origenlab_dev"
+
+# ol_require_cleanroom_database [repo root]
+# Re-proves every fact `ol_require_dev_database` proves — this project, not linked, the
+# container belongs to this working tree and publishes on loopback only — and then pins the
+# database name to the literal `origenlab_clean`.
+#
+# On success exports OL_CLEAN_DB_URL (never printed) and OL_CLEAN_DB_PORT, and UNSETS
+# OL_DEV_DB_URL, so that inside a clean-room script `ol_psql_dev` cannot connect at all.
+ol_require_cleanroom_database() {
+  local root="${1:-${OL_REPO_ROOT:-$PWD}}"
+
+  # Fail before anything else if the constant has been tampered with. A clean-room build drops
+  # a database; the one thing that must never be in doubt is which one.
+  if [[ "$OL_CLEAN_DBNAME" != "origenlab_clean" ]]; then
+    echo "FAIL: clean-room guard: the database name constant is '${OL_CLEAN_DBNAME}', not 'origenlab_clean'; refusing to connect." >&2
+    return 1
+  fi
+  if [[ "$OL_CLEAN_DBNAME" == "$OL_CLEAN_FORBIDDEN_DBNAME" ]]; then
+    echo "FAIL: clean-room guard: the clean-room name resolved to '$OL_CLEAN_FORBIDDEN_DBNAME', which this tooling never opens; refusing to connect." >&2
+    return 1
+  fi
+
+  ol_require_dev_database "$root" >/dev/null || return 1
+
+  # The development database's DSN is deliberately discarded. Nothing downstream of this guard
+  # has a working handle on `origenlab_dev`.
+  unset OL_DEV_DB_URL
+
+  OL_CLEAN_DB_PORT="$OL_DEV_PORT"
+  OL_CLEAN_DB_URL="postgresql://${OL_DEV_SUPERUSER}:postgres@127.0.0.1:${OL_DEV_PORT}/${OL_CLEAN_DBNAME}"
+  export OL_CLEAN_DB_URL OL_CLEAN_DB_PORT
+  printf 'clean-room database: role %s at 127.0.0.1:%s/%s (container %s)\n' \
+    "$OL_DEV_SUPERUSER" "$OL_CLEAN_DB_PORT" "$OL_CLEAN_DBNAME" "$OL_DEV_CONTAINER"
+  return 0
+}
+
+# psql against the validated clean-room database. Refuses if the guard has not run.
+ol_psql_clean() {
+  if [[ -z "${OL_CLEAN_DB_URL:-}" ]]; then
+    echo "FAIL: ol_psql_clean called before ol_require_cleanroom_database succeeded; refusing to connect." >&2
+    return 1
+  fi
+  psql "$OL_CLEAN_DB_URL" -X -v ON_ERROR_STOP=1 "$@"
+}
+
+# psql against the container's `postgres` database, for CREATE/DROP DATABASE only.
+ol_psql_clean_maintenance() {
+  if [[ -z "${OL_CLEAN_DB_URL:-}" ]]; then
+    echo "FAIL: ol_psql_clean_maintenance called before ol_require_cleanroom_database succeeded; refusing to connect." >&2
+    return 1
+  fi
+  psql "postgresql://${OL_DEV_SUPERUSER}:postgres@127.0.0.1:${OL_CLEAN_DB_PORT}/postgres" \
+    -X -v ON_ERROR_STOP=1 "$@"
+}

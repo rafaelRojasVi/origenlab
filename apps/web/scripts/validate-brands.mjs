@@ -12,6 +12,8 @@
  *   5. `src/data/applications.ts` ninguna aplicación cuelga de una marca ajena
  *   6. `dist/`                   HTML, sitemap, datos estructurados, navegación,
  *                                pie, logotipos y destinos externos
+ *   7. el tablero de operación    su copia de la lista, usada para anotar el rol
+ *                                comercial en la cola de revisión
  *
  * La comprobación sobre `dist/` es la que importa de verdad: las otras tres
  * miran código, y el código puede tener una marca retirada en un dato muerto
@@ -115,6 +117,35 @@ for (const block of brandBlocks) {
       `brands.ts ${id}: declara websiteInsecure con una URL https`,
     );
   }
+}
+
+/* -- 1b. La copia del tablero de operación -------------------------------- */
+
+/**
+ * `apps/dashboard` anota el rol comercial de una institución en la cola de revisión, y para
+ * eso necesita saber cuáles de los nombres que un correo afirma son marcas proveedoras.
+ * Tiene su **propia copia** de los seis nombres: el tablero no se construye contra el sitio
+ * público, y acoplarlos haría que la UI de operación dependiera del build de marketing.
+ *
+ * Una copia que puede quedarse atrás en silencio es peor que ninguna: si el negocio retira
+ * una marca, el tablero seguiría llamándola proveedor delante de un operador. Así que la
+ * copia se comprueba aquí, que es donde vive la lista cerrada.
+ */
+const dashboardRoleSrc = readFileSync(
+  join(root, '..', 'dashboard', 'src', 'lib', 'commercialRole.ts'),
+  'utf8',
+);
+const dashboardListMatch = dashboardRoleSrc.match(
+  /SUPPLIER_BRAND_NAMES: readonly string\[\] = \[([\s\S]*?)\];/,
+);
+assert(dashboardListMatch, 'commercialRole.ts: no se encontró SUPPLIER_BRAND_NAMES');
+if (dashboardListMatch) {
+  const dashboardNames = [...dashboardListMatch[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  const expected = Object.values(EXPECTED_NAMES);
+  assert(
+    JSON.stringify([...dashboardNames].sort()) === JSON.stringify([...expected].sort()),
+    `commercialRole.ts: la copia del tablero (${dashboardNames.join(', ')}) no coincide con las seis marcas aprobadas (${expected.join(', ')})`,
+  );
 }
 
 /* -- 2. Una familia por marca, sin repetir -------------------------------- */

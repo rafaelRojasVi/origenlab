@@ -314,13 +314,16 @@ and reports what it cannot answer. `ol migrate` remains unimplemented.
 
 The reproducible local foundation lives under `supabase/`: `config.toml` (PostgreSQL 17,
 database only, Data API off), `roles.sql` (the idempotent cluster-role bootstrap the CLI runs
-before migrations), `migrations/` (nineteen ordered migrations: schemas and default
+before migrations), `migrations/` (twenty-three ordered migrations: schemas and default
 privileges, then the original 32 tables schema by schema, then grants, then RLS policies, then the
 revocation of the owner's database-level `CREATE`, then the covering indexes for every
 foreign key, then the outbound corrections — frozen campaign content and audience criteria,
 the reply table, the tightened recipient address shape, the Wave 1B `contact_control.source`
-labels and the archived-campaign `recontact_interval_days` carve-out), `tests/` (pgTAP, 402
-assertions across eleven files) and `scripts/`. Requirements:
+labels and the archived-campaign `recontact_interval_days` carve-out — then the Slice 2
+additions: the Gmail/Drive evidence kinds, the `source_record.review_noted` event, and the
+`contact_point.usage` value `individual_owner_unknown`, then the three commercial-case tables
+of Slice 3), `tests/` (pgTAP, 475
+assertions across twelve files) and `scripts/`. Requirements:
 Docker, the Supabase CLI and `psql`. No hosted project is involved and nothing here holds a
 credential: the three `LOGIN` roles are created without a password.
 
@@ -435,6 +438,192 @@ They are cloned from `origenlab_template`, which is rebuilt automatically whenev
 drifts from `supabase/migrations/` in either head or count, so it cannot serve a stale schema.
 `drop` and `sweep` check the `origenlab_test_<8 hex>` pattern **before anything else**, so
 neither can ever remove `postgres`, `origenlab_dev` or the template.
+
+<a id="m-ops-cleanroom"></a>
+#### The clean-room database — `origenlab_clean`
+
+**Why it exists.** On 2026-09-22 a database-backed test run wrote into `origenlab_dev`: seven
+fixture `evidence.source_record` rows (`dedupe_key like 'pytest-%'`), seven fixture
+`platform.operator` rows (`email_norm like 'pytest-%'`), nine `platform.command_receipt` rows,
+and the three organizations, two contact points and sixteen `crm.domain_event` rows their
+commands produced. The same run applied migration `20260922090000`'s DDL **without** recording
+its ledger row, so `origenlab_dev` carries 21 migrations' worth of schema and a ledger that
+names 20.
+
+`origenlab_dev` also holds twenty real staged Gmail records ([`STATUS.md`](STATUS.md) §2.7.7),
+so it is neither trustworthy nor disposable. It is therefore **quarantined**: left exactly as
+it is, read-only, until an operator decides what to do with it. Nothing in this procedure
+writes to it, drops it or restores over it.
+
+The clean room is where V2 work happens instead. `origenlab_clean` is a second database in the
+same development container, rebuilt from nothing but `supabase/migrations/` and the
+reproducible historical load — so everything in it traces to an input a human can read and
+refuse, and the ledger always describes the schema.
+
+**Build it.**
+
+```bash
+supabase/scripts/dev_db.sh up                      # the container, if it is not running
+supabase/scripts/cleanroom_db.sh build             # refuses if origenlab_clean already exists
+supabase/scripts/cleanroom_db.sh build --force     # replace it
+```
+
+`build` runs, in order: **preflight** → create → platform-emulating `extensions` schema and an
+empty ledger → the full migration chain, one transaction and one ledger row per file → one
+seeded `platform.operator` → `import_waves_into_v2.py --apply` → `promote_evidence_into_crm.py
+--apply` → `stage_gmail_drive_evidence.py --apply` once per manifest → `verify`. Any step that
+refuses stops the build; nothing half-loaded is left behind a successful exit.
+
+**Preflight comes before the `DROP`, and it validates rather than merely looks.** Every input
+is put through the same tool that will later replay it, in that tool's dry-run mode — which
+opens no database connection at all: `import_waves_into_v2.py` re-verifies both bundles'
+manifests and every file hash, and `stage_gmail_drive_evidence.py` parses each staging manifest
+under the full version 2 rules. A missing file, an edited artifact, an unreadable manifest or a
+message intake excludes by rule therefore refuses **with the existing database untouched**.
+This is not belt-and-braces: on 2026-09-22 the old preflight checked that a manifest file
+*existed*, the build dropped the database, and staging refused three steps later against a
+half-loaded clean room (docs/STATUS.md §2.1).
+
+**Two inputs live outside Git**, by design, and `build` refuses at the door if either is
+absent rather than producing a partial database:
+
+| Input | Path | What it is |
+|---|---|---|
+| Wave 1A/1B safety bundles | `~/data/origenlab-v2-migration/` | the historical load's artifacts |
+| Gmail staging manifests | `~/data/origenlab-v2-local/evidence/` | every `*.json` in the directory, staged in sorted order: the September sweep (20 messages) and the R1 archived replay batch (11). A batch is in the baseline when its manifest is in this directory |
+
+The manifests are **replayed, never re-fetched**. `stage_gmail_drive_evidence.py` imports no
+Google client and holds no credential; its only input is those files.
+
+**Re-acquiring a manifest at version 2.** Version 2 requires each Gmail record's
+`intake_class` and its real `gmail_labels`, and those are facts only a fresh look at the mailbox
+can supply — which is the whole point of the rule, so they are never filled in from memory. When
+a manifest predates the rule, the labels are re-acquired **read-only** (no send, no draft, no
+label, no archive, no trash, no modify; bodies are never requested) into a private acquisition
+file, and the manifest is rewritten against it:
+
+```bash
+cd apps/email-pipeline && uv run python scripts/migration/reacquire_gmail_manifest_v2.py \
+  --manifest    ~/data/origenlab-v2-local/superseded/<name>.manifest-v1.json \
+  --acquisition ~/data/origenlab-v2-local/acquisition/<name>-labels.json \
+  --out         ~/data/origenlab-v2-local/evidence/<name>.v2.json
+```
+
+The tool makes no network call of its own — it reads two local files and writes a third. It
+keeps every external id, source URI, `acquired_at` and observation exactly as they were, adds
+the two required fields and nothing else, re-checks the sender and date the old manifest claimed
+against what was re-acquired, and refuses the **whole** pass on any disagreement: a missing id,
+an extra id, a sender or date that moved, or a message that has since been drafted, spammed or
+trashed. It refuses to write inside the working tree, and the result is validated by the staging
+loader before it is written. The superseded version 1 file moves **out** of
+`~/data/origenlab-v2-local/evidence/`, because that directory *is* the baseline. Done for the
+September sweep on 2026-09-22 (docs/STATUS.md §2.1).
+
+**The seeded operator is fictitious.** `build` inserts one `platform.operator` row so the
+command boundary can resolve an identity at all. Its address defaults to
+`operador.local@example.invalid` — undeliverable, and safe to have in a public repository,
+which the previous hard-coded personal address was not. Nothing reads the value; `verify`
+counts the row. To build with your own instead, put it in the environment rather than in a
+file:
+
+```bash
+OL_CLEAN_OPERATOR_EMAIL=you@yourdomain.cl supabase/scripts/cleanroom_db.sh build --force
+```
+
+**Rehearsing a review decision against the real records.** `attribute_sender_organization`
+(docs/STATUS.md §2.7.13) is the one command whose inputs are hard to reproduce by hand: two
+institutions named in one message, one of which already exists under exactly that name. To
+check it against the rows that actually exist, without deciding anything:
+
+```bash
+apps/api/.venv/bin/python supabase/scripts/rehearse_attribution.py
+```
+
+It opens `origenlab_clean` **read only**, replays each eligible record into its own
+disposable `origenlab_test_<hex>` database, runs the real command there as `origenlab_api`,
+drops the room, and fingerprints the clean room before and after — a rehearsal that changed
+it fails rather than being discovered later by `verify`. It needs
+`cleanroom_db.sh api-login` to have been run, because it deliberately does not run as
+`postgres`. It records nothing: after it, `verify` still passes at 41 probes.
+
+**Simulating a whole commercial case.** The six case commands (docs/STATUS.md §2.7.17) are
+easier to argue about as a finished case than as six rule lists. This runs one end to end —
+a requesting institution, Hielscher as supplier *and* manufacturer on the same case, one
+evidence link and one equipment interest — and prints it:
+
+```bash
+apps/api/.venv/bin/python supabase/scripts/simulate_commercial_case.py
+```
+
+Every fixture in it is **invented** (reserved `.invalid` domains; the only real name is
+Hielscher, which is on the public approved-brand list and is there precisely to show that an
+approved supplier is never turned into a customer by appearing on a case). Every row it
+writes goes into a disposable `origenlab_test_<hex>` database it creates and drops, and the
+commands run there as `origenlab_api`. It reads nothing from any real database. It
+fingerprints `origenlab_clean` before and after, read only, and fails loudly if the two
+differ — so "this did not happen in the clean room" is measured rather than promised. Like
+the rehearsal, it needs `cleanroom_db.sh api-login`. `--keep` leaves the disposable database
+for inspection.
+
+**The database name is a literal.** `build --force` drops a database, so the name comes from
+the `OL_CLEAN_DBNAME` constant in `supabase/scripts/lib/local_target.sh` and from nowhere else
+— not an argument, not an environment variable, not a config file. The guard refuses to
+resolve to anything but `origenlab_clean`, it refuses `origenlab_dev` by name before doing
+anything else, and it **discards the development database's DSN**, so inside a clean-room
+script `ol_psql_dev` cannot connect at all. `build --force` prints the exact name on its own
+line immediately before the `DROP`.
+
+**Verify it.** Read-only, safe at any time — `verify.sql` runs inside `begin read only`.
+
+```bash
+supabase/scripts/cleanroom_db.sh verify
+supabase/scripts/cleanroom_db.sh status
+```
+
+`verify` emits one probe per line and compares it against `supabase/cleanroom/expected_counts.json`,
+which carries a reason for every number. The comparison is **exact in both directions**: a
+probe declared and not measured fails, and a probe measured and not declared fails, so the SQL
+and the baseline cannot drift apart in silence. 41 probes, including the breakdown that a
+total alone would hide — 31 `gmail_message` + 4 `migration_manifest` = 35 source records, all
+three asserted — and the four residue probes that name what went wrong on 2026-09-22.
+
+**Point the API at it.**
+
+```bash
+supabase/scripts/cleanroom_db.sh api-login          # writes ~/data/origenlab-v2-local/api.cleanroom.env
+set -a; . ~/data/origenlab-v2-local/api.cleanroom.env; set +a
+```
+
+That is the whole switch. `ORIGENLAB_V2_DATABASE_URL` is the only thing that selects a V2
+database, and `apps/dashboard` reaches it solely through `apps/api`, so there is no second
+knob and no dashboard setting to keep in step. **The default is unchanged**: `dev_db.sh
+api-login` still writes `api.env` for `origenlab_dev`, nothing sources either file by itself,
+and selecting the clean room is an explicit act.
+
+`ORIGENLAB_V2_DATABASE_URL` is now **validated, not trusted**. `apps/api` refuses to start on
+a value that is not a literal-loopback DSN, carries a query string or fragment, or names a
+hosted provider — the same rule `migration/v2_import/target.py` applies, so the two boundaries
+agree exactly rather than approximately.
+
+**A test may never open it.** `origenlab_clean` and `origenlab_dev` are both in
+`PROTECTED_DATABASES`; a `ORIGENLAB_V2_TEST_DSN` or `ORIGENLAB_V2_API_TEST_DSN` naming either
+is refused at import time, and the disposable-database fixture asks the *server* which database
+it reached before running a statement. The second check is the one that holds when a DSN is
+rewritten or a name-swap goes wrong, which is what this is for.
+
+**Tests.**
+
+```bash
+supabase/scripts/cleanroom_failure_tests.sh        # 29 refusal scenarios, connects to nothing
+cd apps/api && uv run pytest tests/test_v2_target_boundary.py tests/test_protected_databases.py
+```
+
+**Throwing it away** is routine, because rebuilding is the recovery procedure — there is no
+checkpoint, no restore and nothing to lose:
+
+```bash
+supabase/scripts/cleanroom_db.sh drop --force
+```
 
 #### Verifying an applied chain
 
@@ -1272,7 +1461,7 @@ Drill procedure:
 
 1. Restore the database to a scratch project at a chosen point in time.
 2. Restore the bucket backup into that project's Storage.
-3. Verify: the 33 tables exist; row counts are plausible; a sample quotation
+3. Verify: the 36 tables exist; row counts are plausible; a sample quotation
    revision's `pdf_sha256` matches the restored object byte-for-byte and its
    party snapshot is intact; the domain event stream is contiguous.
 4. Confirm **both send flags are false** in the restored copy.

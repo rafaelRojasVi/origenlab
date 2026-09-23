@@ -1,7 +1,11 @@
 import { useState, type ReactNode } from "react";
 import { getOperatorApiBaseUrl } from "../../api/operatorClient";
 import { useDashboardData } from "../../context/DashboardDataContext";
-import { dashboardSectionLabel, type DashboardSection } from "../../lib/dashboardNav";
+import {
+  dashboardSectionLabel,
+  isV2ReadOnlySection,
+  type DashboardSection,
+} from "../../lib/dashboardNav";
 import { backendChipClass, backendLabel, verdictTone } from "../../lib/verdictStyles";
 import { DevLegacyPortWarning } from "../operator/DevLegacyPortWarning";
 import { ContactProfilePanel } from "../commercial/ContactProfilePanel";
@@ -31,6 +35,14 @@ export function DashboardShell({
   const pageTitle = dashboardSectionLabel(section);
   const verdict = data?.operator.verdict;
   const apiBase = getOperatorApiBaseUrl() || "(proxy Vite)";
+  /*
+    The V2 surfaces get their own header. The verdict chip and the backend chip both
+    describe the V1 read path — the daily core run, and whether the operator mirror is
+    being served from SQLite or the Postgres mirror — and neither is a fact about a page
+    that reads the durable core over `/v2`. Leaving them there said "Estado: BLOQUEADO"
+    above a screen that was working exactly as intended.
+  */
+  const v2ReadOnly = isV2ReadOnlySection(section);
 
   return (
     <div className="flex min-h-screen bg-[var(--color-surface)]">
@@ -58,36 +70,61 @@ export function DashboardShell({
               </h1>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {verdict ? (
-                <span
-                  className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${verdictTone(verdict).badge}`}
-                  data-testid="operator-verdict-chip"
-                >
-                  Estado: {verdictTone(verdict).label}
-                </span>
-              ) : null}
-              {data ? (
-                <span
-                  className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${backendChipClass(data.health.backend)}`}
-                >
-                  {backendLabel(data.health.backend)}
-                </span>
-              ) : null}
-              <button
-                type="button"
-                onClick={loadAll}
-                disabled={refreshing}
-                className="rounded-lg bg-brand-600 px-3.5 py-1.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-700 active:scale-95 disabled:opacity-50 disabled:active:scale-100 motion-reduce:transition-none motion-reduce:active:scale-100"
-              >
-                {refreshing ? "Actualizando…" : "Actualizar"}
-              </button>
+              {v2ReadOnly ? (
+                <>
+                  <span
+                    className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700 ring-1 ring-inset ring-slate-200"
+                    data-testid="v2-local-data-chip"
+                  >
+                    Datos locales de revisión
+                  </span>
+                  <span
+                    className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700 ring-1 ring-inset ring-slate-200"
+                    data-testid="v2-read-only-chip"
+                  >
+                    Sólo lectura
+                  </span>
+                </>
+              ) : (
+                <>
+                  {verdict ? (
+                    <span
+                      className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${verdictTone(verdict).badge}`}
+                      data-testid="operator-verdict-chip"
+                    >
+                      Estado: {verdictTone(verdict).label}
+                    </span>
+                  ) : null}
+                  {data ? (
+                    <span
+                      className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${backendChipClass(data.health.backend)}`}
+                    >
+                      {backendLabel(data.health.backend)}
+                    </span>
+                  ) : null}
+                  {/*
+                    "Actualizar" reloads the V1 operator payload. On a V2 page nothing on
+                    screen comes from it, so the button would spin and change nothing.
+                  */}
+                  <button
+                    type="button"
+                    onClick={loadAll}
+                    disabled={refreshing}
+                    className="rounded-lg bg-brand-600 px-3.5 py-1.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-700 active:scale-95 disabled:opacity-50 disabled:active:scale-100 motion-reduce:transition-none motion-reduce:active:scale-100"
+                  >
+                    {refreshing ? "Actualizando…" : "Actualizar"}
+                  </button>
+                </>
+              )}
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[var(--color-border)]/70 px-4 py-1.5 text-[11px] text-[var(--color-muted)] sm:px-6">
-            <span>Centro de comando operador</span>
+            <span>{v2ReadOnly ? "Datos locales de revisión" : "Centro de comando operador"}</span>
             <span aria-hidden>·</span>
             <span>
-              {section === "tenders"
+              {v2ReadOnly
+                ? "Sólo lectura · ninguna acción de esta pantalla escribe en el núcleo durable"
+                : section === "tenders"
                 ? "No envía correos ni modifica datos comerciales"
                 : section === "pipeline"
                   ? "No envía correos · los cambios de etapa quedan registrados en el CRM"

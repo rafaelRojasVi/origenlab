@@ -95,18 +95,19 @@ _REMOVED_DIGESTS = frozenset(
 )
 
 
-# Deliberately deferred, tracked as an open remediation item: two real personal
-# addresses are load-bearing business-rule keys in ``warm_case_sender_rules`` (the
-# classifier branches on their exact value), and one test pins that behaviour.
-# Removing them changes runtime classification, so it is a behavioural change rather
-# than a privacy edit and is being decided separately. Do not extend this list
-# without an explicit decision -- it is an exception, not a general escape hatch.
-_DEFERRED_ALLOWLIST = frozenset(
-    {
-        "apps/email-pipeline/src/origenlab_email_pipeline/warm_case_sender_rules.py",
-        "apps/email-pipeline/tests/test_commercial_intel_rules.py",
-    }
-)
+# Closed on 2026-09-22 and deliberately left empty.
+#
+# It used to hold two files: the operator's own personal addresses were load-bearing
+# business-rule keys in ``warm_case_sender_rules`` -- the classifier branched on their exact
+# value -- so deleting them would have changed classification rather than merely scrubbed
+# data. They now reach the classifier by **role**, from a configuration file outside Git
+# (``origenlab_email_pipeline.operator_identity``), which keeps the rule and drops the
+# literal. Nothing is exempt from this guard any more.
+#
+# Do not add an entry here. An address that cannot be removed is an address that needs a
+# configuration seam, which is what the last entry got; ``test_privacy_allowlist_is_empty``
+# fails if this grows back.
+_DEFERRED_ALLOWLIST: frozenset[str] = frozenset()
 
 
 def _is_reserved(email: str) -> bool:
@@ -187,4 +188,34 @@ def test_removed_contact_data_has_not_reappeared() -> None:
         "Contact data removed by the public-repo privacy remediation has reappeared in: "
         + ", ".join(sorted(set(hits)))
         + " -- use a reserved domain (example.invalid) instead."
+    )
+
+
+def test_privacy_allowlist_is_empty() -> None:
+    """No file is exempt from the guard.
+
+    The exemption existed because two personal addresses were business-rule keys. They are
+    configuration now, so the reason is gone -- and an empty list is only worth anything if
+    something fails when it stops being empty.
+    """
+    assert _DEFERRED_ALLOWLIST == frozenset(), (
+        "The privacy guard has regained an exemption: "
+        + ", ".join(sorted(_DEFERRED_ALLOWLIST))
+        + " -- an address that cannot be deleted needs a configuration seam "
+        "(see origenlab_email_pipeline.operator_identity), not an allowlist entry."
+    )
+
+
+def test_operator_identity_ships_no_real_address() -> None:
+    """The identity module and its example must carry only reserved-domain addresses."""
+    root = REPO / "src" / "origenlab_email_pipeline" / "operator_identity.py"
+    example = REPO / "config" / "operator_identity.example.json"
+    offenders = [
+        f"{path.name}: {email}"
+        for path in (root, example)
+        for email in sorted(set(_EMAIL_RE.findall(path.read_text(encoding="utf-8"))))
+        if not _is_reserved(email)
+    ]
+    assert not offenders, (
+        "The operator identity default must be fictitious: " + "; ".join(offenders)
     )

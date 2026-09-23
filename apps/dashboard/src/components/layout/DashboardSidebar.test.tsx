@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DashboardSidebar } from "./DashboardSidebar";
 
 describe("DashboardSidebar", () => {
-  it("renders the 8 primary items in Cotizaciones-first order", () => {
+  it("renders the primary items in Cotizaciones-first order", () => {
     render(
       <DashboardSidebar active="cotizaciones" collapsed={false} onNavigate={vi.fn()} onToggleCollapsed={vi.fn()} />,
     );
@@ -14,6 +14,8 @@ describe("DashboardSidebar", () => {
       "Licitaciones",
       "Ventas",
       "Clientes",
+      "Contactos",
+      "Instituciones",
       "Prospectos",
       "Correos",
       "Catálogo",

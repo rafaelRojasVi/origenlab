@@ -890,7 +890,7 @@ describe("CRM-Q2 workflow/adoption allowlist", () => {
 });
 
 describe("V2 durable read boundary allowlist", () => {
-  it("allows exactly the seven V2 read paths", async () => {
+  it("allows exactly the ten V2 listing paths", async () => {
     const { isAllowedUpstreamPath } = await import("./allowlist");
     for (const path of [
       "/v2/contacts",
@@ -900,9 +900,37 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/tasks/due",
       "/v2/review/summary",
       "/v2/quotes/followup",
+      "/v2/evidence",
+      "/v2/evidence/records",
+      "/v2/cases",
     ]) {
       expect(isAllowedUpstreamPath(path)).toBe(true);
     }
+  });
+
+  it("allows a card path only when the identifier is UUID-shaped", async () => {
+    const { isAllowedUpstreamPath } = await import("./allowlist");
+    const id = "96301691-af05-51ea-82e3-05f5fae40837";
+    expect(isAllowedUpstreamPath(`/v2/contacts/${id}`)).toBe(true);
+    expect(isAllowedUpstreamPath(`/v2/organizations/${id}`)).toBe(true);
+    expect(isAllowedUpstreamPath(`/v2/cases/${id}`)).toBe(true);
+    // Uppercase, a wrong length and a trailing sub-resource are all refused: the shape is
+    // the allowlist, not a `.+` that would forward whatever the browser asked for.
+    expect(isAllowedUpstreamPath(`/v2/contacts/${id.toUpperCase()}`)).toBe(false);
+    expect(isAllowedUpstreamPath(`/v2/contacts/${id}/evidence`)).toBe(false);
+    expect(isAllowedUpstreamPath(`/v2/prospects/${id}`)).toBe(false);
+    expect(isAllowedUpstreamPath(`/v2/evidence/${id}`)).toBe(false);
+    // A case has sub-resources upstream in every direction a command could take. None of
+    // them is a path this Worker knows, and the card path does not widen into them.
+    expect(isAllowedUpstreamPath(`/v2/cases/${id}/organizations`)).toBe(false);
+    expect(isAllowedUpstreamPath(`/v2/cases/${id}/stage`)).toBe(false);
+    expect(isAllowedUpstreamPath(`/v2/cases/${id.toUpperCase()}`)).toBe(false);
+    // The one named sub-resource under an organization, and only that one.
+    expect(isAllowedUpstreamPath(`/v2/organizations/${id}/cases`)).toBe(true);
+    expect(isAllowedUpstreamPath(`/v2/organizations/${id}/cases?limit=50`)).toBe(true);
+    expect(isAllowedUpstreamPath(`/v2/organizations/${id}/quotes`)).toBe(false);
+    expect(isAllowedUpstreamPath(`/v2/organizations/${id}/cases/${id}`)).toBe(false);
+    expect(isAllowedUpstreamPath(`/v2/organizations/${id.toUpperCase()}/cases`)).toBe(false);
   });
 
   it("allows the listed paths with a query string", async () => {
@@ -921,11 +949,21 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/contacts/123",
       "/v2/organizations/abc",
       "/v2/commands/promote",
+      "/v2/contacts/96301691-af05-51ea-82e3-05f5fae40837/merge",
       "/v2/review",
       "/v2/review/summary/extra",
       "/v2/tasks",
       "/v2/quotes",
       "/v2/opportunities",
+      // The record queue is one literal path. Nothing else under it is reachable, so a
+      // per-record sub-resource -- the shape a promote command would take -- is refused.
+      "/v2/evidence/records/96301691-af05-51ea-82e3-05f5fae40837",
+      "/v2/evidence/records/promote",
+      "/v2/evidence/record",
+      "/v2/case",
+      "/v2/cases/",
+      "/v2/cases/123",
+      "/v2/cases/open",
       "/v2/../operations/work-queue",
     ]) {
       expect(isAllowedUpstreamPath(path)).toBe(false);
@@ -938,9 +976,48 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/contacts",
       "/v2/organizations",
       "/v2/review/summary",
+      "/v2/evidence",
+      "/v2/evidence/records",
+      "/v2/contacts/96301691-af05-51ea-82e3-05f5fae40837",
+      "/v2/organizations/96301691-af05-51ea-82e3-05f5fae40837",
+      "/v2/cases",
+      "/v2/cases/96301691-af05-51ea-82e3-05f5fae40837",
       "/v2/commands/promote",
     ]) {
       expect(isAllowedPostPath(path)).toBe(false);
+    }
+  });
+
+  it("keeps the eleven real V2 command routes unreachable through this Worker", async () => {
+    // The command boundary EXISTS in apps/api: POST /v2/commands/* records durable human
+    // decisions -- five about staged evidence, and six about a commercial case, which now
+    // include opening one, naming who is asking, and moving it through its stages. Building
+    // that boundary and letting a browser reach it are two separate decisions, and only the
+    // first has been taken. Until the second is taken deliberately, the Worker forwards
+    // neither the method nor the path -- so the operator workspace stays a preview by
+    // construction rather than by discipline.
+    //
+    // The list is written out in full on purpose. A route added to apps/api and forgotten
+    // here would be forgotten silently; a route added here that does not exist costs one
+    // redundant assertion, which is the cheaper mistake.
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    for (const path of [
+      // evidence review
+      "/v2/commands/keep-evidence-pending",
+      "/v2/commands/confirm-organization",
+      "/v2/commands/create-organization",
+      "/v2/commands/attach-contact-address",
+      "/v2/commands/attribute-sender-organization",
+      // the commercial case
+      "/v2/commands/open-commercial-case",
+      "/v2/commands/link-case-evidence",
+      "/v2/commands/add-case-organization",
+      "/v2/commands/set-case-organization-role",
+      "/v2/commands/record-case-interest",
+      "/v2/commands/advance-case-stage",
+    ]) {
+      expect(isAllowedPostPath(path)).toBe(false);
+      expect(isAllowedUpstreamPath(path)).toBe(false);
     }
   });
 });

@@ -55,12 +55,15 @@ check() { # description  condition-already-evaluated-as-rc  detail
 # Fixtures the shims serve.
 # ---------------------------------------------------------------------------------------------
 
-# A dump that satisfies every completeness assertion: 7 CREATE SCHEMA, 33 CREATE TABLE,
-# 127 CREATE POLICY. Its content is irrelevant; only the shape the assertions count is.
+# A dump that satisfies every completeness assertion: 7 CREATE SCHEMA, 36 CREATE TABLE,
+# 139 CREATE POLICY. Its content is irrelevant; only the shape the assertions count is. The
+# numbers are the ones replay_evidence.sh declares, so a migration that moves the inventory
+# moves this fixture in the same change — otherwise the control case fails and every injected
+# case fails for the wrong reason.
 {
   for i in $(seq 1 7);   do echo "CREATE SCHEMA s$i;"; done
-  for i in $(seq 1 33);  do echo "CREATE TABLE s1.t$i (id integer);"; done
-  for i in $(seq 1 127); do echo "CREATE POLICY p$i ON s1.t1 FOR SELECT TO r USING (true);"; done
+  for i in $(seq 1 36);  do echo "CREATE TABLE s1.t$i (id integer);"; done
+  for i in $(seq 1 139); do echo "CREATE POLICY p$i ON s1.t1 FOR SELECT TO r USING (true);"; done
 } >"$STATE/schema_good.sql"
 
 # Two applied-migration listings. Both name every local migration, so both pass the completeness

@@ -22,6 +22,9 @@ const ICON_PATHS: Record<DashboardNavIconName, string> = {
     "M4 20V8l8-4 8 4v12H4Zm4-2h8v-4H8v4Zm-4-6h3v3H4v-3Z",
   catalog:
     "M4 6h7v7H4V6Zm9 0h7v7h-7V6ZM4 15h7v7H4v-7Zm9 0h7v7h-7v-7Z",
+  // A card with a linked record behind it — the durable core read as fichas.
+  crm:
+    "M4 5h11a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Zm2 4h7M6 13h7M6 17h4M18 8h2a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-2",
   system:
     "M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8Zm8.5 4a8.4 8.4 0 0 1-.2 1.8l2 1.5-2 3.5-2.3-1a8.6 8.6 0 0 1-1.6.9l-.4 2.5H9l-.4-2.5a8.6 8.6 0 0 1-1.6-.9l-2.3 1-2-3.5 2-1.5a8.4 8.4 0 0 1-.2-1.8c0-.6.1-1.2.2-1.8L1.5 10.7l2-3.5 2.3 1c.5-.4 1-.7 1.6-.9l.4-2.5h6l.4 2.5c.6.2 1.1.5 1.6.9l2.3-1 2 3.5-2 1.5c.1.6.2 1.2.2 1.8Z",
 };

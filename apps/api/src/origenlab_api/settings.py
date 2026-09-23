@@ -6,8 +6,10 @@ import os
 import re
 from dataclasses import dataclass
 from functools import lru_cache
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -32,6 +34,98 @@ class QuoteNumberingConfig:
     document_prefix: str
     serial_pad_width: int
     seed_next_serial: int
+
+# --- The V2 database target boundary -----------------------------------------------------
+#
+# `ORIGENLAB_V2_DATABASE_URL` decides which database the /v2 read and command boundaries open.
+# While the hosted phase is frozen (docs/OPERATIONS.md §1.1) the only legitimate values are
+# loopback DSNs: the persistent development database, or the clean-room database
+# (supabase/scripts/cleanroom_db.sh). Pointing this variable at a hosted project would let the
+# API read and — with commands enabled — write a database no migration slice has adopted.
+#
+# So the variable is validated rather than trusted, and the API refuses to start on a value it
+# does not recognise instead of quietly using it. The rule is the importer's rule, deliberately:
+# `origenlab_email_pipeline.migration.v2_import.target` accepts a literal loopback address and
+# nothing else, and a second boundary that agreed with it only approximately would be the gap.
+#
+#   * only `postgres://` or `postgresql://`;
+#   * the host must be a literal loopback IP address. A *name* — including `localhost` — is
+#     refused, because what we validate (text) and what libpq resolves (an address, via whatever
+#     the host's name service says today) are two different things;
+#   * no query string and no fragment, so no libpq keyword (`host`, `hostaddr`, `service`) can
+#     be smuggled in to redirect a connection whose authority looks local;
+#   * no hosted-provider marker anywhere in the string, which catches a hosted DSN that has been
+#     edited by hand into looking loopback.
+
+#: Substrings that mark a managed/hosted provider, refused even on a loopback host.
+_V2_HOSTED_MARKERS: tuple[str, ...] = (
+    "supabase.co",
+    "supabase.com",
+    "supabase.in",
+    "pooler.supabase",
+    "render.com",
+    "neon.tech",
+    "rds.amazonaws.com",
+    "azure.com",
+    "cloudflare",
+)
+
+
+class V2TargetRefused(ValueError):
+    """`ORIGENLAB_V2_DATABASE_URL` names something this API will not open."""
+
+
+def assert_v2_target_is_local(url: str) -> str:
+    """Return ``url`` unchanged, or raise :class:`V2TargetRefused`.
+
+    Validation only. Nothing here connects, resolves a name or reads the environment.
+    """
+    raw = (url or "").strip()
+    if not raw:
+        raise V2TargetRefused("ORIGENLAB_V2_DATABASE_URL is empty")
+
+    lowered = raw.lower()
+    for marker in _V2_HOSTED_MARKERS:
+        if marker in lowered:
+            raise V2TargetRefused(
+                f"ORIGENLAB_V2_DATABASE_URL names a hosted provider ({marker!r}). "
+                "No hosted project has been adopted; see docs/STATUS.md §2.5 and §2.8."
+            )
+
+    parts = urlsplit(raw)
+    if parts.scheme not in ("postgres", "postgresql"):
+        raise V2TargetRefused(
+            f"ORIGENLAB_V2_DATABASE_URL must be a postgres:// or postgresql:// URI, not {parts.scheme!r}"
+        )
+    if parts.query:
+        raise V2TargetRefused(
+            "ORIGENLAB_V2_DATABASE_URL must carry no query string: libpq reads one as connection "
+            "keywords, so a loopback authority there can still reach a remote server"
+        )
+    if parts.fragment:
+        raise V2TargetRefused("ORIGENLAB_V2_DATABASE_URL must carry no fragment")
+
+    host = parts.hostname
+    if not host:
+        raise V2TargetRefused(
+            "ORIGENLAB_V2_DATABASE_URL names no host. A host-less DSN lets libpq fall back to "
+            "its own defaults, which is not a target this API validated"
+        )
+    try:
+        address = ip_address(host)
+    except ValueError:
+        raise V2TargetRefused(
+            f"ORIGENLAB_V2_DATABASE_URL host {host!r} is a name, not a literal IP address. "
+            "Only a loopback IP literal is accepted: a boundary that an /etc/hosts line can "
+            "move is not a boundary"
+        ) from None
+    if not address.is_loopback:
+        raise V2TargetRefused(
+            f"ORIGENLAB_V2_DATABASE_URL host {host!r} is not a loopback address"
+        )
+
+    return raw
+
 
 _API_ROOT = Path(__file__).resolve().parents[2]
 _EMAIL_PIPELINE_ROOT = _API_ROOT.parent / "email-pipeline"
@@ -102,6 +196,14 @@ class Settings(BaseSettings):
     """Supabase Auth JWKS URL. When set, JWKS verification is used and the local development identity adapter is never constructed."""
     v2_jwks_url: str | None = None
     v2_statement_timeout_ms: int = 15_000
+    """When true, mount POST /v2/commands/* — the human-review command boundary.
+
+    Default **false**, like `commercial_operations_writes_enabled` above and for the same
+    reason: a durable write path should be switched on deliberately, by whoever is ready to
+    have real decisions recorded, and not by the act of pointing the API at a database. With
+    it off the command router is absent entirely and every /v2/commands/* path is a 404.
+    """
+    v2_commands_enabled: bool = False
     """Comma-separated browser origins for dashboard static site (no wildcards)."""
     api_cors_origins: str | None = None
     """Comma-separated Host header values allowed in production (e.g. api.origenlab.cl)."""
@@ -193,13 +295,23 @@ class Settings(BaseSettings):
     def v2_configured(self) -> bool:
         return bool((self.v2_database_url or "").strip())
 
+    def v2_commands_configured(self) -> bool:
+        """The command boundary needs both a database and a deliberate switch.
+
+        Two conditions, not one: pointing the API at the V2 core is a read decision, and
+        letting it record durable human decisions is a separate one.
+        """
+        return self.v2_configured() and bool(self.v2_commands_enabled)
+
     def require_v2_database_url(self) -> str:
         url = (self.v2_database_url or "").strip()
         if not url:
             raise ValueError(
                 "ORIGENLAB_V2_DATABASE_URL is required to mount the /v2 read boundary"
             )
-        return url
+        # Fail closed on a target this API will not open. Raised here rather than at the
+        # connection, so a misconfigured process never starts serving /v2 at all.
+        return assert_v2_target_is_local(url)
 
     def require_postgres_url(self) -> str:
         url = (self.postgres_url or "").strip()

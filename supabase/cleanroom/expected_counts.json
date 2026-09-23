@@ -1,0 +1,121 @@
+{
+  "database": "origenlab_clean",
+  "what_this_is": [
+    "The declared expected state of a freshly built clean-room database.",
+    "",
+    "Every probe below is emitted by supabase/cleanroom/verify.sql as one `key|value` line, and",
+    "compared here by supabase/cleanroom/compare.py. The comparison is exact and two-way: a probe",
+    "declared here and not emitted is a failure, and a probe emitted and not declared here is also",
+    "a failure. Neither file can drift from the other in silence.",
+    "",
+    "The numbers are not aspirations. The historical load was measured on 2026-09-21, before any",
+    "fixture residue existed (docs/STATUS.md §2.1, §2.7, §2.7.1, §2.7.7). The Gmail figures were",
+    "re-measured on 2026-09-22, after the R1 archived replay batch (§2.7.11) was staged. This file",
+    "declares the post-R1 state, because R1 is part of the intended baseline and not a deviation",
+    "from it: a build that reproduces only the September twenty is a build that lost a batch.",
+    "",
+    "If a build produces different numbers, either an input changed or the load is not",
+    "reproducible, and both are things an operator must see rather than have rounded away."
+  ],
+  "probes": {
+    "migrations.count": {
+      "expect": 24,
+      "why": "every file in supabase/migrations/, applied and recorded in the ledger. This baseline was left at 21 when the 22nd migration landed, so the first rebuild after it would have failed here rather than silently: that is the check working. origenlab_dev carries 20 recorded with the 21st's DDL already present, which is exactly the drift a clean room exists to avoid."
+    },
+    "migrations.head": {
+      "expect": "20260922200000",
+      "why": "slice3_commercial_case_commands, the newest migration on this branch — the audit vocabulary the case commands write, the stage machine as a trigger, and the corrected organization rule that had made `lost` and `abandoned` unreachable for a case with no institution. It adds no table, so every count below is unchanged by it."
+    },
+
+    "source_record.total": {
+      "expect": 35,
+      "why": "the whole evidence intake: 31 staged Gmail messages plus the 4 migration manifests the historical importer records. Asserted alongside its two parts, never instead of them."
+    },
+    "source_record.gmail_message": {
+      "expect": 31,
+      "why": "20 from the September manifest plus 11 from the R1 archived replay batch, each reapplied exactly once from ~/data/origenlab-v2-local/evidence/. The 12th R1 candidate was a bounce, which the loader refuses by rule, so 31 is the number the rules produce rather than the number the mailbox holds."
+    },
+    "source_record.migration_manifest": {
+      "expect": 4,
+      "why": "written by import_waves_into_v2.py — one per Wave 1A/1B artifact it read."
+    },
+    "source_record.gmail_message.pending": {
+      "expect": 31,
+      "why": "nothing has been reviewed. A reviewed or promoted Gmail record in a fresh build means a decision was executed that nobody took."
+    },
+    "source_record.pytest_residue": {
+      "expect": 0,
+      "why": "dedupe_key like 'pytest-%'. The seven fixture records found in origenlab_dev on 2026-09-22."
+    },
+
+    "assertion.total": {
+      "expect": 11485,
+      "why": "the 11,448 of the historical evidence trail plus the 37 from the two Gmail manifests."
+    },
+    "assertion.from_gmail.total": {
+      "expect": 37,
+      "why": "31 contact_address + 6 organization_name, from the 31 staged messages."
+    },
+    "assertion.from_gmail.unresolved": {
+      "expect": 37,
+      "why": "staging never resolves anything; resolving is a human decision the command boundary records."
+    },
+    "assertion.from_gmail.contact_address": { "expect": 31, "why": "one asserted sender address per message." },
+    "assertion.from_gmail.organization_name": { "expect": 6, "why": "asserted only where the message text names an institution — 4 of the 20 September records, 6 names. R1 added none: no archived message names an institution in its own words, and the sender's domain is a routing hint held in the payload, never a claim." },
+
+    "crm.organization": {
+      "expect": 1812,
+      "why": "promote_evidence_into_crm.py, from uniquely-folded organization_name assertions. All kind='unknown', all machine_proposed."
+    },
+    "crm.person": {
+      "expect": 0,
+      "why": "no person is ever created from this evidence: it carries no human name, and deriving one from an address local part is an inference, not evidence."
+    },
+    "crm.contact_point": { "expect": 9460, "why": "695 shared_mailbox + 8,765 unattributed, from contacted_address assertions." },
+    "crm.contact_point.attached": {
+      "expect": 0,
+      "why": "no contact point carries a person or an organization. A domain is a routing hint, never an identity key (docs/DOMAIN.md §2.2)."
+    },
+    "crm.domain_event": { "expect": 22544, "why": "the promotion's audit trail, every row actor_kind='migrator'." },
+    "crm.domain_event.with_command_receipt": {
+      "expect": 0,
+      "why": "no human command has been executed against this database. The 16 residue events in origenlab_dev are exactly the rows this probe catches."
+    },
+    "crm.affiliation": { "expect": 0, "why": "an affiliation is a relationship no message header records." },
+    "crm.organization_domain": { "expect": 0, "why": "no domain has been evidenced as belonging to an institution." },
+    "crm.opportunity": { "expect": 0, "why": "slice 3." },
+    "crm.opportunity_organization": { "expect": 0, "why": "the commercial-case tables ship empty and stay empty until a command writes one. A requesting institution can only be created by an operator, so a non-zero count here in a fresh build means a decision nobody took." },
+    "crm.opportunity_interest": { "expect": 0, "why": "no interest is inferred by the build; the historical load carries none." },
+    "crm.opportunity_evidence": { "expect": 0, "why": "every evidence link names the operator who made it, and the build makes none." },
+    "crm.quote": { "expect": 0, "why": "slice 3." },
+    "crm.task": { "expect": 0, "why": "slice 3." },
+
+    "platform.operator": {
+      "expect": 1,
+      "why": "one seeded local admin, so the API command boundary can resolve an identity at all. Its auth_user_id belongs to no auth system — Supabase Auth is slice 1."
+    },
+    "platform.operator.pytest_residue": {
+      "expect": 0,
+      "why": "email_norm like 'pytest-%'. The seven fixture operators found in origenlab_dev on 2026-09-22."
+    },
+    "platform.command_receipt": {
+      "expect": 0,
+      "why": "no command has been executed. The nine receipts in origenlab_dev are fixture residue, and a clean room starts with none."
+    },
+
+    "comms.mailbox": { "expect": 1, "why": "the sending mailbox the historical campaigns belong to." },
+    "comms.message": { "expect": 0, "why": "no message body has been imported; slice 4." },
+
+    "outbound.campaign": { "expect": 3, "why": "Wave 1A, Wave 1B and the archived campaign." },
+    "outbound.campaign_recipient": { "expect": 3481, "why": "the three campaigns' audience." },
+    "outbound.send_attempt": { "expect": 3141, "why": "the historical send ledger." },
+    "outbound.contact_control": { "expect": 10588, "why": "the cross-wave safety baseline: prior contacts, address blocks and domain blocks." },
+    "outbound.send_control": { "expect": 1, "why": "the single bootstrap row." },
+    "outbound.send_control.marketing_enabled": { "expect": 0, "why": "false. A clean-room build must never be able to send." },
+    "outbound.send_control.transactional_enabled": { "expect": 0, "why": "false, for the same reason." },
+
+    "catalog.product": { "expect": 0, "why": "slice 3." },
+    "catalog.supplier_product": { "expect": 0, "why": "slice 3." },
+    "procurement.notice": { "expect": 0, "why": "not loaded." }
+  }
+}

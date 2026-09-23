@@ -46,6 +46,12 @@ insert into expected values
     ('crm', 'opportunity', 'origenlab_worker', 'S', null, 'S'),
     ('crm', 'opportunity_participant', 'origenlab_api', 'SI', array['person_id', 'is_primary', 'valid_to', 'confirmation', 'confirmed_by_operator_id', 'note', 'updated_at'], 'SIU'),
     ('crm', 'opportunity_participant', 'origenlab_worker', 'S', null, 'S'),
+    ('crm', 'opportunity_organization', 'origenlab_api', 'SI', array['valid_to', 'confirmation', 'confirmed_by_operator_id', 'note', 'updated_at'], 'SIU'),
+    ('crm', 'opportunity_organization', 'origenlab_worker', 'S', null, 'S'),
+    ('crm', 'opportunity_interest', 'origenlab_api', 'SI', array['product_id', 'confirmation', 'confirmed_by_operator_id', 'withdrawn_at', 'withdraw_reason', 'note', 'updated_at'], 'SIU'),
+    ('crm', 'opportunity_interest', 'origenlab_worker', 'S', null, 'S'),
+    ('crm', 'opportunity_evidence', 'origenlab_api', 'SI', array['unlinked_at', 'unlink_reason', 'note'], 'SIU'),
+    ('crm', 'opportunity_evidence', 'origenlab_worker', 'S', null, 'S'),
     ('crm', 'task', 'origenlab_api', 'SIU', null, 'SIU'),
     ('crm', 'task', 'origenlab_worker', 'S', null, 'S'),
     ('crm', 'activity', 'origenlab_api', 'SI', null, 'SI'),
@@ -93,7 +99,7 @@ insert into expected values
     ('platform', 'command_receipt', 'origenlab_api', 'SIU', null, 'SIU'),
     ('platform', 'command_receipt', 'origenlab_worker', 'S', null, 'S');
 
-select is((select count(*)::int from expected), 66, 'the matrix covers all 33 tables for both runtime roles');
+select is((select count(*)::int from expected), 72, 'the matrix covers all 36 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(
