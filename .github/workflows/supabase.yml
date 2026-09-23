@@ -101,8 +101,16 @@ jobs:
       - name: Prove the Slice 0 audit fails closed
         run: supabase/scripts/audit_failure_tests.sh
 
-      - name: Run the Slice 0 audit against the local stack
-        run: supabase/scripts/slice0_audit.sh --mode local
+      - name: Prove current head differs from frozen Slice 0 only as declared
+        run: |
+          set -euo pipefail
+
+          rc=0
+          supabase/scripts/slice0_audit.sh --mode local || rc=$?
+          test "$rc" -eq 1
+
+          python3 supabase/audit/assert_declared_local_head_gap.py \
+            supabase/.audit/reports/slice0-audit-local.json
 
       # The report is re-read from the bytes that would be published, in a separate process, and
       # the upload step below runs only if this one succeeds. A report that fails the credential
