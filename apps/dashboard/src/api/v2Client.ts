@@ -11,6 +11,8 @@ import {
   parseV2ContactsPage,
   parseV2EvidencePage,
   parseV2EvidenceRecordsPage,
+  parseV2CasesPage,
+  parseV2CommercialCaseCard,
   parseV2OrganizationCard,
   parseV2OpportunitiesPage,
   parseV2OrganizationsPage,
@@ -21,6 +23,8 @@ import {
 import type {
   V2Contact,
   V2ContactCard,
+  V2CommercialCase,
+  V2CommercialCaseCard,
   V2EvidenceItem,
   V2EvidenceRecord,
   V2OrganizationCard,
@@ -42,6 +46,7 @@ export const V2_REVIEW_SUMMARY_PATH = "/v2/review/summary";
 export const V2_QUOTES_FOLLOWUP_PATH = "/v2/quotes/followup";
 export const V2_EVIDENCE_PATH = "/v2/evidence";
 export const V2_EVIDENCE_RECORDS_PATH = "/v2/evidence/records";
+export const V2_CASES_PATH = "/v2/cases";
 
 /**
  * The card paths are built from an identifier, so they are built in one place.
@@ -56,6 +61,10 @@ export function v2ContactCardPath(contactPointId: string): string {
 
 export function v2OrganizationCardPath(organizationId: string): string {
   return `${V2_ORGANIZATIONS_PATH}/${encodeURIComponent(organizationId)}`;
+}
+
+export function v2CaseCardPath(opportunityId: string): string {
+  return `${V2_CASES_PATH}/${encodeURIComponent(opportunityId)}`;
 }
 
 const DEFAULT_LIMIT = 50;
@@ -206,4 +215,34 @@ export function fetchV2EvidenceRecords(
       offset: params.offset ?? 0,
     }),
   ).then(parseV2EvidenceRecordsPage);
+}
+
+/**
+ * Commercial cases.
+ *
+ * `stage` is the schema's own vocabulary and the API answers 422 for anything else, so a
+ * typo surfaces as an error rather than as "this operator has no cases".
+ *
+ * There is no companion writer in this module and there is not going to be one by
+ * accident: the six case commands exist as `POST /v2/commands/*` upstream, and the proxy
+ * allows no POST under `/v2` at all. `caseCommands.ts` describes what they would record;
+ * nothing here sends it.
+ */
+export function fetchV2Cases(
+  params: { stage?: string; openOnly?: boolean; limit?: number; offset?: number } = {},
+): Promise<V2Page<V2CommercialCase>> {
+  return fetchJsonGet<unknown>(
+    operatorApiUrl(V2_CASES_PATH, {
+      stage: params.stage,
+      open_only: params.openOnly ? "true" : undefined,
+      limit: params.limit ?? DEFAULT_LIMIT,
+      offset: params.offset ?? 0,
+    }),
+  ).then(parseV2CasesPage);
+}
+
+export function fetchV2CaseCard(opportunityId: string): Promise<V2CommercialCaseCard> {
+  return fetchJsonGet<unknown>(operatorApiUrl(v2CaseCardPath(opportunityId))).then(
+    parseV2CommercialCaseCard,
+  );
 }

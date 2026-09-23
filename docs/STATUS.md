@@ -1202,6 +1202,55 @@ records are `pending`. `apps/dashboard-proxy` allows no POST under `/v2`, every 
 touched `origenlab_dev` (quarantined, never opened), `origenlab_clean` (read only, fingerprint
 unchanged), the hosted project (frozen, §2.8), Gmail, Drive, any campaign or any send.
 
+### 2.7.18 The commercial case, as a screen — built 2026-09-22, read-only
+
+§2.7.17 left six commands in `apps/api` and no way to look at what they would write. This is
+the reading half: two GET routes, one section in the dashboard, and every one of the six
+actions rendered **disabled** with the reason attached.
+
+| Item | Value |
+|---|---|
+| Migration | **none**. No table, no column, no policy: the inventory stays at **36**, `crm` at 19, the ledger at **24** migrations with head `20260922200000` |
+| Read routes | `GET /v2/cases` and `GET /v2/cases/{id}` in `apps/api/src/origenlab_api/v2/routes.py`, served by `V2Repository.cases()` / `.case_card()` — inside `begin read only`, as `origenlab_api` |
+| Proxy | two literal paths added to the allowlist, GET-only. **No POST under `/v2` was added**, so none of the six commands is reachable from a browser |
+| Dashboard | section `casos` (`#/casos`), `pages/CommercialCasePage.tsx`, with `lib/commercialCase.ts` (the vocabulary) and `lib/caseCommands.ts` (the six previews) as pure, unit-tested modules |
+
+**The stage machine is served, not copied.** `GET /v2/cases/{id}` attaches
+`stage_machine` — `origenlab_api.v2.case_commands.STAGE_TRANSITIONS` verbatim, the same table
+`crm.opportunity_stage_guard` enforces. The dashboard reads it. A third statement of the rule
+in a browser would be the one nobody re-read, and this is the change that stops it existing.
+
+**What the card refuses to flatten.** `crm.opportunity_organization` never rewrites a part —
+changing one closes a row and opens another — so the card returns closed rows beside current
+ones, with `is_current` carrying the distinction, and counts the two separately. Withdrawn
+interests and unlinked evidence are returned on the same principle. A card showing only the
+current state would make the audit trail invisible exactly where it matters.
+
+**A case with no institution renders as a state, not a gap.** The list reports
+`requesting_organization_*` as null and the screen says *nobody has said who is asking*,
+naming it as legitimate until `qualified`. Nothing on the screen picks an institution, a
+role, a reading or a stage: every preview computes from what an operator has chosen, and on
+an untouched screen that is nothing — so all six are blocked, each stating what it still
+needs.
+
+| Evidence | Result |
+|---|---|
+| `apps/api` `validate.sh` | **1,346 passed, 193 skipped** |
+| New API suite | `tests/test_v2_case_read_boundary.py` — **23 passed** with a migrated disposable database (**13** of them run without one). The database-backed ones build the case by running the **real commands** and then read it back, so the two halves are proven to agree rather than a query being asserted against rows shaped to make it pass |
+| `apps/dashboard` `npm run validate` | **1,319 passed across 130 files**, build clean. 56 of them are new: `commercialCase.test.ts` (19), `caseCommands.test.ts` (37) |
+| Page tests | `CommercialCasePage.test.tsx` — **12 passed**, including that all seven action affordances on screen are `disabled`, that every preview is `blocked`, that no request body is ever rendered, and that a failed load is never drawn as "there is nothing" |
+| `apps/dashboard-proxy` `npm run validate` | **132 passed**. The allowlist now names ten listing paths and three card shapes; `/v2/cases/{id}/organizations`, `/v2/cases/{id}/stage`, `/v2/cases/open` and an uppercase UUID are each refused |
+| Clean room | rebuilt twice from scratch with this code and verified: **41 probes, all exact**, byte-identical across both builds and a third standalone `verify`. 24 migrations, head `20260922200000`; `crm.opportunity*` all **0**; both `outbound.send_control` flags false |
+| Fixtures | every case fixture is invented, in `apps/dashboard/src/lib/__fixtures__/commercialCase.ts` and the API test's own `world`. No real institution appears, and the API tests run in a database the harness created moments earlier and drops afterwards |
+
+**What is still not decided.** Nothing changed about what has been executed: `crm.opportunity`
+and its three tables are still **empty**, `platform.command_receipt` is still empty, all 31
+staged records are still `pending`. The screen has no form yet — no title field, no
+institution picker, no stage selector — because wiring inputs to previews that cannot be sent
+would be building the half that is cheap and leaving the decision that is expensive. Nothing
+touched `origenlab_dev` (quarantined, never opened), the hosted project (frozen, §2.8), Gmail,
+Drive, any campaign or any send.
+
 ### 2.7.5 Local V2 — the reconciled picture, 2026-09-21
 
 One table for "what is actually in the local V2 database and does it add up". The per-stage

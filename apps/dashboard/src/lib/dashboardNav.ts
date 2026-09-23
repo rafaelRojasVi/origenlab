@@ -9,8 +9,13 @@
  * `revision` sits beside it for the same reason and under the same rule: it is the human
  * review queue over `crm-v2`'s evidence card, still read-only, and reached from Inicio.
  *
- * Neither is in `DASHBOARD_TOP_NAV_IDS`. The eight-item Cotizaciones-first
- * sidebar is an accepted IA decision, and a surface whose four cards are still read-only
+ * `casos` is the third of them: the commercial case that follows a reviewed document. Its
+ * six commands exist in `apps/api` and none of them is reachable through the proxy, so it
+ * is a reading surface like the other two and belongs in the registry rather than the
+ * sidebar until that changes.
+ *
+ * None of the three is in `DASHBOARD_TOP_NAV_IDS`. The eight-item Cotizaciones-first
+ * sidebar is an accepted IA decision, and a surface whose cards are still read-only
  * has not earned a slot in it. Like `today`, `deals`, `suppliers` and
  * `payments-logistics`, it lives in the registry — so a deep link renders with a correct
  * page title — and is reached from the review card on Inicio.
@@ -30,6 +35,7 @@ export type DashboardSection =
   | "contacts"
   | "crm-v2"
   | "revision"
+  | "casos"
   | "system";
 
 export type DashboardNavIconName =
@@ -57,7 +63,7 @@ export interface DashboardNavItem {
 
 /**
  * Full section registry, used for id -> label lookups so deep-linked hidden
- * sections (today/deals/suppliers/payments-logistics/crm-v2/revision) still get
+ * sections (today/deals/suppliers/payments-logistics/crm-v2/revision/casos) still get
  * a correct page title. Sidebar rendering uses `DASHBOARD_TOP_NAV_ITEMS`
  * below, not this list.
  */
@@ -132,6 +138,14 @@ export const DASHBOARD_NAV_ITEMS: DashboardNavItem[] = [
     description:
       "Cola humana sobre la evidencia pendiente: qué afirma cada correo y qué falta decidir",
     iconName: "crm",
+  },
+  {
+    id: "casos",
+    label: "Casos comerciales",
+    shortLabel: "Casos",
+    description:
+      "Quién pide, qué busca y por qué lo cree: el caso comercial del núcleo durable V2",
+    iconName: "deals",
   },
   {
     id: "system",

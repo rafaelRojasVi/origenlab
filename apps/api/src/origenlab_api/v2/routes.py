@@ -15,6 +15,8 @@ Five endpoints the operator asked for, plus the two the four CRM cards need:
 | `GET /v2/organizations/{id}` | one organization, its channels, people, domains and evidence |
 | `GET /v2/evidence` | the evidence trail, each row carrying its own provenance |
 | `GET /v2/evidence/records` | the same trail grouped by source record, with its `crm.*` matches |
+| `GET /v2/cases` | commercial cases — `crm.opportunity` with its institutions, interests and evidence counted |
+| `GET /v2/cases/{id}` | one case: its parts, what it seeks, why it believes it, and the stage machine |
 
 **Read-only, and structurally so.** Every query runs in `begin read only` as `origenlab_api`,
 a role with no membership in `origenlab_owner`. There is no POST, PATCH or DELETE here and
@@ -33,6 +35,13 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from origenlab_api.v2.case_commands import (
+    CASE_STAGES,
+    STAGE_TRANSITIONS,
+    STAGES_REQUIRING_A_CLOSE_REASON,
+    STAGES_REQUIRING_A_REQUESTING_INSTITUTION,
+    TERMINAL_STAGES,
+)
 from origenlab_api.v2.identity import (
     IdentityPort,
     IdentityRefused,
@@ -290,3 +299,69 @@ def list_evidence(
             offset=offset,
         )
     )
+
+
+@router.get("/cases")
+def list_cases(
+    _: Operator,
+    repo: Repo,
+    stage: str | None = Query(default=None),
+    open_only: bool = Query(default=False),
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    """Commercial cases — `crm.opportunity` read as the case it is.
+
+    `/v2/opportunities/active` and `/v2/prospects` already page the same table by stage,
+    and they stay: they answer "what is in play" and this answers "what does this case
+    say". A case row here carries the institution that is asking, what the case is seeking
+    and how much evidence stands behind it — the three tables slice 3 added — which the
+    stage-filtered lists know nothing about.
+
+    `stage` is validated against the schema's own vocabulary, so a typo is a 422 rather
+    than an empty page that reads like "there are no cases".
+    """
+    if stage is not None and stage not in CASE_STAGES:
+        raise HTTPException(
+            status_code=422, detail=f"stage must be one of {', '.join(CASE_STAGES)}"
+        )
+    return _page_response(
+        repo.cases(
+            stage=stage, open_only=open_only, limit=clamp_limit(limit), offset=offset
+        )
+    )
+
+
+@router.get("/cases/{opportunity_id}")
+def case_card(
+    _: Operator,
+    repo: Repo,
+    opportunity_id: str,
+) -> dict[str, Any]:
+    """One commercial case, with the stage machine that governs it attached.
+
+    `stage_machine` is not a hint and not a recommendation: it is
+    `origenlab_api.v2.case_commands.STAGE_TRANSITIONS`, the same table the command boundary
+    refuses by and the same one `crm.opportunity_stage_transition_allowed` enforces in the
+    database. Serving it here means the dashboard can show which moves exist without
+    holding a third copy of the rule that could disagree with the other two in silence.
+
+    It says what is *reachable*, never what should happen. Whether a reachable move is
+    currently permitted also depends on rows — a requesting institution from `qualified`
+    on, a motive for `lost` and `abandoned` — so those conditions are named beside it
+    rather than folded into the list.
+    """
+    card = repo.case_card(_uuid_path_param(opportunity_id, "case"))
+    if card is None:
+        raise HTTPException(status_code=404, detail="no such case")
+    stage = str(card["stage"])
+    card["stage_machine"] = {
+        "stage": stage,
+        "allowed_next_stages": list(STAGE_TRANSITIONS.get(stage, ())),
+        "is_terminal": stage in TERMINAL_STAGES,
+        "stages_requiring_a_requesting_institution": list(
+            STAGES_REQUIRING_A_REQUESTING_INSTITUTION
+        ),
+        "stages_requiring_a_close_reason": list(STAGES_REQUIRING_A_CLOSE_REASON),
+    }
+    return card

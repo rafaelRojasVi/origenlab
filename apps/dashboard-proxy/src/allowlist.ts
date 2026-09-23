@@ -67,6 +67,16 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // path it cannot name, and no sub-resource under a card is reachable.
   /^\/v2\/contacts\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   /^\/v2\/organizations\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  // Commercial cases: the list and one case. Read-only, like everything above it.
+  //
+  // The V2 command boundary now *does* exist upstream -- six case commands under
+  // `POST /v2/commands/*` -- and none of it is added here. That is the whole point of a
+  // list of names: a boundary that ships in the API does not thereby ship in the browser,
+  // and the dashboard's case screen renders its actions disabled because this Worker
+  // permits no POST under `/v2` at all. Widening either list is a separate, deliberate
+  // decision with its own review.
+  /^\/v2\/cases$/,
+  /^\/v2\/cases\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
 ];
 
 /**

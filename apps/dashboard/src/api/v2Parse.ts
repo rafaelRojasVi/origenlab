@@ -11,6 +11,15 @@ import type {
   V2Affiliation,
   V2CardCounts,
   V2CardEvidence,
+  V2CaseEvidence,
+  V2CaseEvidenceRelation,
+  V2CaseInterest,
+  V2CaseOrganization,
+  V2CaseOrganizationRole,
+  V2CaseStage,
+  V2CaseStageMachine,
+  V2CommercialCase,
+  V2CommercialCaseCard,
   V2CardMarketing,
   V2Contact,
   V2ContactCard,
@@ -486,3 +495,254 @@ export function parseV2EvidenceRecord(value: unknown): V2EvidenceRecord {
 export function parseV2EvidenceRecordsPage(value: unknown): V2Page<V2EvidenceRecord> {
   return parsePage(value, parseV2EvidenceRecord);
 }
+
+// ------------------------------------------------------------------ commercial cases
+
+const CASE_STAGES: ReadonlySet<string> = new Set([
+  "lead",
+  "qualifying",
+  "qualified",
+  "quoting",
+  "negotiating",
+  "won",
+  "lost",
+  "abandoned",
+]);
+
+/**
+ * An unrecognised stage becomes `lead`, the opening stage, rather than being passed through.
+ *
+ * Every other choice is worse. Passing it through would let an unknown word reach a label
+ * lookup and render as itself, and picking a terminal stage would have the UI claim a case
+ * is closed on the strength of a string it did not understand. `lead` claims the least.
+ */
+function caseStage(value: unknown): V2CaseStage {
+  const raw = str(value);
+  return (CASE_STAGES.has(raw) ? raw : "lead") as V2CaseStage;
+}
+
+function caseStages(value: unknown): V2CaseStage[] {
+  return list(value)
+    .map((entry) => str(entry))
+    .filter((entry) => CASE_STAGES.has(entry)) as V2CaseStage[];
+}
+
+const CASE_ROLES: ReadonlySet<string> = new Set([
+  "requesting_institution",
+  "end_user_institution",
+  "purchasing_agent",
+  "funder",
+  "supplier",
+  "manufacturer",
+  "mentioned",
+]);
+
+/**
+ * An unrecognised part becomes `mentioned`.
+ *
+ * `mentioned` is the one part that asserts nothing commercial about an institution, so it
+ * is the only safe landing place for a value this build does not know. Falling back to
+ * `requesting_institution` would have the UI say who is buying on the strength of a typo.
+ */
+function caseRole(value: unknown): V2CaseOrganizationRole {
+  const raw = str(value);
+  return (CASE_ROLES.has(raw) ? raw : "mentioned") as V2CaseOrganizationRole;
+}
+
+const CASE_RELATIONS: ReadonlySet<string> = new Set([
+  "origin",
+  "supports_requesting_institution",
+  "supports_interest",
+  "supports_participant",
+  "mentions",
+  "contradicts",
+]);
+
+/** An unrecognised reading becomes `mentions`, which is the weakest claim in the list. */
+function caseRelation(value: unknown): V2CaseEvidenceRelation {
+  const raw = str(value);
+  return (CASE_RELATIONS.has(raw) ? raw : "mentions") as V2CaseEvidenceRelation;
+}
+
+const CASE_SUBJECT_KINDS: ReadonlySet<string> = new Set([
+  "source_record",
+  "assertion",
+  "message",
+  "notice",
+]);
+
+function caseSubjectKind(value: unknown): V2CaseEvidence["subject_kind"] {
+  const raw = str(value);
+  return (
+    CASE_SUBJECT_KINDS.has(raw) ? raw : "source_record"
+  ) as V2CaseEvidence["subject_kind"];
+}
+
+/** A nullable confirmation: `null` is the answer when there is no row to be confirmed. */
+function optionalConfirmation(value: unknown): V2Confirmation | null {
+  const raw = str(value);
+  if (!raw) {
+    return null;
+  }
+  return raw === "confirmed" ? "confirmed" : "machine_proposed";
+}
+
+/**
+ * `crm.opportunity_interest.quantity` is `numeric(18,3)`, which JSON carries as a number or
+ * a string depending on the driver. Both are accepted; anything unparseable is null, which
+ * renders as "no quantity" rather than as a confident zero.
+ */
+function optionalNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+export function parseV2CommercialCase(value: unknown): V2CommercialCase {
+  const row = asRecord(value);
+  return {
+    opportunity_id: str(row.opportunity_id),
+    title: str(row.title),
+    stage: caseStage(row.stage),
+    version: int(row.version),
+    closed_at: optionalStr(row.closed_at),
+    close_reason: optionalStr(row.close_reason),
+    created_at: optionalStr(row.created_at),
+    updated_at: optionalStr(row.updated_at),
+    owner_operator_id: str(row.owner_operator_id),
+    owner_display_name: str(row.owner_display_name),
+    origin_source_record_id: optionalStr(row.origin_source_record_id),
+    origin_source_kind: optionalStr(row.origin_source_kind),
+    origin_source_uri: optionalStr(row.origin_source_uri),
+    requesting_organization_id: optionalStr(row.requesting_organization_id),
+    requesting_organization_name: optionalStr(row.requesting_organization_name),
+    requesting_confirmation: optionalConfirmation(row.requesting_confirmation),
+    organization_count: int(row.organization_count),
+    interest_count: int(row.interest_count),
+    evidence_count: int(row.evidence_count),
+  };
+}
+
+function parseCaseOrganization(value: unknown): V2CaseOrganization {
+  const row = asRecord(value);
+  return {
+    opportunity_organization_id: str(row.opportunity_organization_id),
+    organization_id: str(row.organization_id),
+    name: str(row.name),
+    organization_kind: str(row.organization_kind) || "unknown",
+    role: caseRole(row.role),
+    confirmation: confirmation(row.confirmation),
+    valid_from: optionalStr(row.valid_from),
+    valid_to: optionalStr(row.valid_to),
+    is_current: bool(row.is_current),
+    confirmed_by_display_name: optionalStr(row.confirmed_by_display_name),
+    note: optionalStr(row.note),
+    origin_source_kind: optionalStr(row.origin_source_kind),
+    origin_source_uri: optionalStr(row.origin_source_uri),
+    supplier_exception_reason: optionalStr(row.supplier_exception_reason),
+    supplier_exception_at: optionalStr(row.supplier_exception_at),
+    supplier_exception_by_display_name: optionalStr(row.supplier_exception_by_display_name),
+  };
+}
+
+function parseCaseInterest(value: unknown): V2CaseInterest {
+  const row = asRecord(value);
+  return {
+    opportunity_interest_id: str(row.opportunity_interest_id),
+    product_id: optionalStr(row.product_id),
+    product_name: optionalStr(row.product_name),
+    manufacturer_organization_id: optionalStr(row.manufacturer_organization_id),
+    manufacturer_organization_name: optionalStr(row.manufacturer_organization_name),
+    model_text: optionalStr(row.model_text),
+    description: optionalStr(row.description),
+    quantity: optionalNumber(row.quantity),
+    quantity_unit: optionalStr(row.quantity_unit),
+    confirmation: confirmation(row.confirmation),
+    confirmed_by_display_name: optionalStr(row.confirmed_by_display_name),
+    withdrawn_at: optionalStr(row.withdrawn_at),
+    withdraw_reason: optionalStr(row.withdraw_reason),
+    note: optionalStr(row.note),
+    origin_source_kind: optionalStr(row.origin_source_kind),
+    origin_source_uri: optionalStr(row.origin_source_uri),
+    created_at: optionalStr(row.created_at),
+  };
+}
+
+function parseCaseEvidence(value: unknown): V2CaseEvidence {
+  const row = asRecord(value);
+  return {
+    opportunity_evidence_id: str(row.opportunity_evidence_id),
+    relation: caseRelation(row.relation),
+    subject_kind: caseSubjectKind(row.subject_kind),
+    subject_id: str(row.subject_id),
+    source_kind: optionalStr(row.source_kind),
+    source_uri: optionalStr(row.source_uri),
+    source_review_status: optionalStr(row.source_review_status),
+    assertion_kind: optionalStr(row.assertion_kind),
+    assertion_value: optionalStr(row.assertion_value),
+    linked_by_display_name: str(row.linked_by_display_name),
+    linked_at: optionalStr(row.linked_at),
+    unlinked_at: optionalStr(row.unlinked_at),
+    unlink_reason: optionalStr(row.unlink_reason),
+    note: optionalStr(row.note),
+  };
+}
+
+/**
+ * The stage machine as the API served it.
+ *
+ * `allowed_next_stages` is left exactly as it arrived, minus anything this build does not
+ * recognise. It is never computed here and never defaulted to a non-empty list: a response
+ * that carries no machine leaves a terminal-looking case with no moves, which is the safe
+ * reading when the surface offers no move anyway.
+ */
+function parseCaseStageMachine(value: unknown, stage: V2CaseStage): V2CaseStageMachine {
+  const row = asRecord(value);
+  return {
+    stage: row.stage === undefined ? stage : caseStage(row.stage),
+    allowed_next_stages: caseStages(row.allowed_next_stages),
+    is_terminal: bool(row.is_terminal),
+    stages_requiring_a_requesting_institution: caseStages(
+      row.stages_requiring_a_requesting_institution,
+    ),
+    stages_requiring_a_close_reason: caseStages(row.stages_requiring_a_close_reason),
+  };
+}
+
+export function parseV2CommercialCaseCard(value: unknown): V2CommercialCaseCard {
+  const row = asRecord(value);
+  const stage = caseStage(row.stage);
+  return {
+    opportunity_id: str(row.opportunity_id),
+    title: str(row.title),
+    stage,
+    version: int(row.version),
+    closed_at: optionalStr(row.closed_at),
+    close_reason: optionalStr(row.close_reason),
+    created_at: optionalStr(row.created_at),
+    updated_at: optionalStr(row.updated_at),
+    owner_operator_id: str(row.owner_operator_id),
+    owner_display_name: str(row.owner_display_name),
+    organization_id: optionalStr(row.organization_id),
+    organization_name: optionalStr(row.organization_name),
+    origin_source_record_id: optionalStr(row.origin_source_record_id),
+    origin_source_kind: optionalStr(row.origin_source_kind),
+    origin_source_uri: optionalStr(row.origin_source_uri),
+    origin_review_status: optionalStr(row.origin_review_status),
+    reopened_from_opportunity_id: optionalStr(row.reopened_from_opportunity_id),
+    reopened_from_title: optionalStr(row.reopened_from_title),
+    organizations: list(row.organizations).map(parseCaseOrganization),
+    interests: list(row.interests).map(parseCaseInterest),
+    evidence: list(row.evidence).map(parseCaseEvidence),
+    stage_machine: parseCaseStageMachine(row.stage_machine, stage),
+    counts: counts(row.counts),
+  };
+}
+
+export const parseV2CasesPage = (value: unknown): V2Page<V2CommercialCase> =>
+  parsePage(value, parseV2CommercialCase);

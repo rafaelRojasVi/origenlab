@@ -969,3 +969,288 @@ class V2Repository(OperatorLookup):
             row["assertion_total"] = totals.get(record_id, 0)
             row["domain_organization"] = domain_by_record.get(record_id)
         return page
+
+    # --------------------------------------------------------------- commercial cases
+
+    #: The parts an institution may hold on a case, in the order a card reads them:
+    #: who asks first, who ends up using it second, and the rest afterwards. Sorting by
+    #: this rather than alphabetically is what makes `mentioned` — the only part a machine
+    #: may propose — sit last instead of in the middle of the human decisions.
+    CASE_ROLE_ORDER: tuple[str, ...] = (
+        "requesting_institution",
+        "end_user_institution",
+        "purchasing_agent",
+        "funder",
+        "supplier",
+        "manufacturer",
+        "mentioned",
+    )
+
+    def cases(self, *, stage: str | None, open_only: bool, limit: int, offset: int) -> Page:
+        """Commercial cases, each with the institution that is asking and nothing inferred.
+
+        The requesting institution is read from the **current** `crm.opportunity_organization`
+        row — `valid_to is null` — and not from `crm.opportunity.organization_id`, even
+        though §3.6.1 keeps the two equal. They are equal because a command writes both in
+        one transaction, and a list that reads the denormalised column would be unable to
+        show that a case has parts at all. Where the row is absent the answer is null, which
+        for a case at `lead` is the honest state and not a gap.
+
+        `counts` are computed with the same predicates the card uses, so a case that reads
+        "1 institución" here does not open into two.
+        """
+        clauses = ["true"]
+        params: list[Any] = []
+        if stage is not None:
+            clauses.append("op.stage = %s")
+            params.append(stage)
+        if open_only:
+            clauses.append("op.closed_at is null")
+        where = "where " + " and ".join(clauses)
+
+        sql = f"""
+            select op.id::text        as opportunity_id,
+                   op.title           as title,
+                   op.stage           as stage,
+                   op.version         as version,
+                   op.closed_at       as closed_at,
+                   op.close_reason    as close_reason,
+                   op.created_at      as created_at,
+                   op.updated_at      as updated_at,
+                   owner.id::text     as owner_operator_id,
+                   owner.display_name as owner_display_name,
+                   sr.id::text        as origin_source_record_id,
+                   sr.kind            as origin_source_kind,
+                   sr.source_uri      as origin_source_uri,
+                   req_org.id::text   as requesting_organization_id,
+                   req_org.name       as requesting_organization_name,
+                   req.confirmation   as requesting_confirmation,
+                   (select count(*) from crm.opportunity_organization oo
+                     where oo.opportunity_id = op.id and oo.valid_to is null)
+                                      as organization_count,
+                   (select count(*) from crm.opportunity_interest oi
+                     where oi.opportunity_id = op.id and oi.withdrawn_at is null)
+                                      as interest_count,
+                   (select count(*) from crm.opportunity_evidence oe
+                     where oe.opportunity_id = op.id and oe.unlinked_at is null)
+                                      as evidence_count
+              from crm.opportunity op
+              join platform.operator owner on owner.id = op.owner_operator_id
+              left join evidence.source_record sr on sr.id = op.origin_source_record_id
+              left join crm.opportunity_organization req
+                     on req.opportunity_id = op.id
+                    and req.role = 'requesting_institution'
+                    and req.valid_to is null
+              left join crm.organization req_org on req_org.id = req.organization_id
+              {where}
+             order by op.updated_at desc, op.id
+             limit %s offset %s
+        """
+        count_sql = f"select count(*) from crm.opportunity op {where}"
+        with self._read() as cur:
+            return self._page(cur, sql, count_sql, tuple(params), limit, offset)
+
+    def case_card(self, opportunity_id: str) -> dict[str, Any] | None:
+        """One commercial case: who asks, what it seeks, and why it believes any of it.
+
+        Assembled from four bounded queries rather than one join, for the reason the other
+        cards are: a case at `lead` legitimately has no institution, no interest and one
+        evidence link, and a join renders that as a row of nulls instead of three lists that
+        each say what is missing.
+
+        **Closed rows are returned, not filtered.** `crm.opportunity_organization` never
+        rewrites a part — changing one closes a row and opens another (§3.6.1) — so a card
+        that showed only the current rows would show a reading with no history and make the
+        audit trail invisible exactly where it matters. `is_current` carries the
+        distinction; withdrawn interests and unlinked evidence are returned on the same
+        principle.
+        """
+        with self._read() as cur:
+            head = self._rows(
+                cur,
+                """
+                select op.id::text        as opportunity_id,
+                       op.title           as title,
+                       op.stage           as stage,
+                       op.version         as version,
+                       op.closed_at       as closed_at,
+                       op.close_reason    as close_reason,
+                       op.created_at      as created_at,
+                       op.updated_at      as updated_at,
+                       owner.id::text     as owner_operator_id,
+                       owner.display_name as owner_display_name,
+                       op.organization_id::text as organization_id,
+                       org.name           as organization_name,
+                       sr.id::text        as origin_source_record_id,
+                       sr.kind            as origin_source_kind,
+                       sr.source_uri      as origin_source_uri,
+                       sr.review_status   as origin_review_status,
+                       reopened.id::text  as reopened_from_opportunity_id,
+                       reopened.title     as reopened_from_title
+                  from crm.opportunity op
+                  join platform.operator owner on owner.id = op.owner_operator_id
+                  left join crm.organization org on org.id = op.organization_id
+                  left join evidence.source_record sr on sr.id = op.origin_source_record_id
+                  left join crm.opportunity reopened
+                         on reopened.id = op.reopened_from_opportunity_id
+                 where op.id = %s::uuid
+                """,
+                (opportunity_id,),
+            )
+            if not head:
+                return None
+            row = head[0]
+
+            organizations = self._rows(
+                cur,
+                """
+                select oo.id::text          as opportunity_organization_id,
+                       o.id::text           as organization_id,
+                       o.name               as name,
+                       o.kind               as organization_kind,
+                       oo.role              as role,
+                       oo.confirmation      as confirmation,
+                       oo.valid_from        as valid_from,
+                       oo.valid_to          as valid_to,
+                       (oo.valid_to is null) as is_current,
+                       confirmer.display_name as confirmed_by_display_name,
+                       oo.note              as note,
+                       sr.kind              as origin_source_kind,
+                       sr.source_uri        as origin_source_uri,
+                       oo.supplier_exception_reason as supplier_exception_reason,
+                       oo.supplier_exception_at     as supplier_exception_at,
+                       excepter.display_name        as supplier_exception_by_display_name
+                  from crm.opportunity_organization oo
+                  join crm.organization o on o.id = oo.organization_id
+                  left join platform.operator confirmer
+                         on confirmer.id = oo.confirmed_by_operator_id
+                  left join platform.operator excepter
+                         on excepter.id = oo.supplier_exception_by_operator_id
+                  left join evidence.source_record sr on sr.id = oo.origin_source_record_id
+                 where oo.opportunity_id = %s::uuid
+                 order by (oo.valid_to is null) desc,
+                          array_position(%s::text[], oo.role),
+                          oo.valid_from desc,
+                          o.name
+                 limit %s
+                """,
+                (opportunity_id, list(self.CASE_ROLE_ORDER), self.CARD_CHILD_LIMIT),
+            )
+
+            interests = self._rows(
+                cur,
+                """
+                select oi.id::text     as opportunity_interest_id,
+                       oi.product_id::text as product_id,
+                       -- `catalog.product.name` is nullable; the model number is what
+                       -- identifies a product and is never blank. Falling back to it means a
+                       -- catalogued interest always reads as something rather than as a gap.
+                       coalesce(p.name, p.model_number) as product_name,
+                       oi.manufacturer_organization_id::text as manufacturer_organization_id,
+                       m.name          as manufacturer_organization_name,
+                       oi.model_text   as model_text,
+                       oi.description  as description,
+                       oi.quantity     as quantity,
+                       oi.quantity_unit as quantity_unit,
+                       oi.confirmation as confirmation,
+                       confirmer.display_name as confirmed_by_display_name,
+                       oi.withdrawn_at as withdrawn_at,
+                       oi.withdraw_reason as withdraw_reason,
+                       oi.note         as note,
+                       sr.kind         as origin_source_kind,
+                       sr.source_uri   as origin_source_uri,
+                       oi.created_at   as created_at
+                  from crm.opportunity_interest oi
+                  left join catalog.product p on p.id = oi.product_id
+                  left join crm.organization m on m.id = oi.manufacturer_organization_id
+                  left join platform.operator confirmer
+                         on confirmer.id = oi.confirmed_by_operator_id
+                  left join evidence.source_record sr on sr.id = oi.origin_source_record_id
+                 where oi.opportunity_id = %s::uuid
+                 order by (oi.withdrawn_at is null) desc, oi.created_at
+                 limit %s
+                """,
+                (opportunity_id, self.CARD_CHILD_LIMIT),
+            )
+
+            # One link points at exactly one of four typed columns, so the subject is
+            # flattened here into the pair a card can render — `subject_kind` and the words
+            # of the thing itself — rather than four mostly-null columns the UI must
+            # re-derive. Which column was filled is a fact about the row, not a guess.
+            evidence = self._rows(
+                cur,
+                """
+                select oe.id::text        as opportunity_evidence_id,
+                       oe.relation        as relation,
+                       case
+                         when oe.source_record_id is not null then 'source_record'
+                         when oe.assertion_id     is not null then 'assertion'
+                         when oe.message_id       is not null then 'message'
+                         else 'notice'
+                       end                as subject_kind,
+                       coalesce(oe.source_record_id, oe.assertion_id,
+                                oe.message_id, oe.notice_id)::text as subject_id,
+                       coalesce(sr.kind, asr.kind)       as source_kind,
+                       coalesce(sr.source_uri, asr.source_uri) as source_uri,
+                       coalesce(sr.review_status, asr.review_status) as source_review_status,
+                       a.kind             as assertion_kind,
+                       a.value_norm       as assertion_value,
+                       linker.display_name as linked_by_display_name,
+                       oe.linked_at       as linked_at,
+                       oe.unlinked_at     as unlinked_at,
+                       oe.unlink_reason   as unlink_reason,
+                       oe.note            as note
+                  from crm.opportunity_evidence oe
+                  join platform.operator linker on linker.id = oe.linked_by_operator_id
+                  left join evidence.source_record sr on sr.id = oe.source_record_id
+                  left join evidence.assertion a on a.id = oe.assertion_id
+                  left join evidence.source_record asr on asr.id = a.source_record_id
+                 where oe.opportunity_id = %s::uuid
+                 order by (oe.unlinked_at is null) desc, oe.linked_at
+                 limit %s
+                """,
+                (opportunity_id, self.CARD_CHILD_LIMIT),
+            )
+
+            counts = {
+                "organizations_current": self._scalar(
+                    cur,
+                    "select count(*) from crm.opportunity_organization "
+                    "where opportunity_id = %s::uuid and valid_to is null",
+                    (opportunity_id,),
+                ),
+                "organizations_total": self._scalar(
+                    cur,
+                    "select count(*) from crm.opportunity_organization "
+                    "where opportunity_id = %s::uuid",
+                    (opportunity_id,),
+                ),
+                "interests_open": self._scalar(
+                    cur,
+                    "select count(*) from crm.opportunity_interest "
+                    "where opportunity_id = %s::uuid and withdrawn_at is null",
+                    (opportunity_id,),
+                ),
+                "interests_total": self._scalar(
+                    cur,
+                    "select count(*) from crm.opportunity_interest where opportunity_id = %s::uuid",
+                    (opportunity_id,),
+                ),
+                "evidence_linked": self._scalar(
+                    cur,
+                    "select count(*) from crm.opportunity_evidence "
+                    "where opportunity_id = %s::uuid and unlinked_at is null",
+                    (opportunity_id,),
+                ),
+                "evidence_total": self._scalar(
+                    cur,
+                    "select count(*) from crm.opportunity_evidence where opportunity_id = %s::uuid",
+                    (opportunity_id,),
+                ),
+            }
+
+        row["organizations"] = organizations
+        row["interests"] = interests
+        row["evidence"] = evidence
+        row["counts"] = counts
+        return row

@@ -353,3 +353,170 @@ export interface V2OrganizationCard {
   evidence: V2CardEvidence[];
   counts: V2CardCounts;
 }
+
+// ------------------------------------------------------------------ commercial cases
+
+/** `crm.opportunity.stage`. The stage machine lives on the card, not in this union. */
+export type V2CaseStage =
+  | "lead"
+  | "qualifying"
+  | "qualified"
+  | "quoting"
+  | "negotiating"
+  | "won"
+  | "lost"
+  | "abandoned";
+
+/**
+ * What an institution is *to a case*. Seven parts, and `mentioned` is a value rather than
+ * a shrug: it is the only one the machine may propose, and the only one it may hold.
+ */
+export type V2CaseOrganizationRole =
+  | "requesting_institution"
+  | "end_user_institution"
+  | "purchasing_agent"
+  | "funder"
+  | "supplier"
+  | "manufacturer"
+  | "mentioned";
+
+/** Why a case believes a document. `contradicts` is as legitimate as `origin`. */
+export type V2CaseEvidenceRelation =
+  | "origin"
+  | "supports_requesting_institution"
+  | "supports_interest"
+  | "supports_participant"
+  | "mentions"
+  | "contradicts";
+
+/** One case as the list returns it. Counts are current rows, never totals. */
+export interface V2CommercialCase {
+  opportunity_id: string;
+  title: string;
+  stage: V2CaseStage;
+  version: number;
+  closed_at: string | null;
+  close_reason: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  owner_operator_id: string;
+  owner_display_name: string;
+  origin_source_record_id: string | null;
+  origin_source_kind: string | null;
+  origin_source_uri: string | null;
+  /**
+   * The institution that is asking, read from the current part row — **null is a state**.
+   *
+   * A case at `lead` or `qualifying` may legitimately not know who is asking, and showing
+   * that as a blank rather than as a guess is the whole reason the field is nullable.
+   */
+  requesting_organization_id: string | null;
+  requesting_organization_name: string | null;
+  requesting_confirmation: V2Confirmation | null;
+  organization_count: number;
+  interest_count: number;
+  evidence_count: number;
+}
+
+export interface V2CaseOrganization {
+  opportunity_organization_id: string;
+  organization_id: string;
+  name: string;
+  organization_kind: string;
+  role: V2CaseOrganizationRole;
+  confirmation: V2Confirmation;
+  valid_from: string | null;
+  valid_to: string | null;
+  /** `valid_to is null`. A closed row is history, not a mistake, and is still shown. */
+  is_current: boolean;
+  confirmed_by_display_name: string | null;
+  note: string | null;
+  origin_source_kind: string | null;
+  origin_source_uri: string | null;
+  supplier_exception_reason: string | null;
+  supplier_exception_at: string | null;
+  supplier_exception_by_display_name: string | null;
+}
+
+/**
+ * What the case is seeking. There is no price and no amount here, and there must not be:
+ * money lives on `crm.quote_revision` and `crm.quote_line` alone.
+ */
+export interface V2CaseInterest {
+  opportunity_interest_id: string;
+  product_id: string | null;
+  product_name: string | null;
+  manufacturer_organization_id: string | null;
+  manufacturer_organization_name: string | null;
+  model_text: string | null;
+  description: string | null;
+  quantity: number | null;
+  quantity_unit: string | null;
+  confirmation: V2Confirmation;
+  confirmed_by_display_name: string | null;
+  withdrawn_at: string | null;
+  withdraw_reason: string | null;
+  note: string | null;
+  origin_source_kind: string | null;
+  origin_source_uri: string | null;
+  created_at: string | null;
+}
+
+/** One evidence link. `subject_kind` says which of the four typed columns was filled. */
+export interface V2CaseEvidence {
+  opportunity_evidence_id: string;
+  relation: V2CaseEvidenceRelation;
+  subject_kind: "source_record" | "assertion" | "message" | "notice";
+  subject_id: string;
+  source_kind: string | null;
+  source_uri: string | null;
+  source_review_status: string | null;
+  assertion_kind: string | null;
+  assertion_value: string | null;
+  linked_by_display_name: string;
+  linked_at: string | null;
+  unlinked_at: string | null;
+  unlink_reason: string | null;
+  note: string | null;
+}
+
+/**
+ * The stage machine, served by the API from the command boundary's own table.
+ *
+ * The dashboard holds no copy of it. Three statements of one rule — the database trigger,
+ * the command boundary and a browser — is one statement too many, and the one in the
+ * browser would be the one nobody re-read.
+ */
+export interface V2CaseStageMachine {
+  stage: V2CaseStage;
+  allowed_next_stages: V2CaseStage[];
+  is_terminal: boolean;
+  stages_requiring_a_requesting_institution: V2CaseStage[];
+  stages_requiring_a_close_reason: V2CaseStage[];
+}
+
+export interface V2CommercialCaseCard {
+  opportunity_id: string;
+  title: string;
+  stage: V2CaseStage;
+  version: number;
+  closed_at: string | null;
+  close_reason: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  owner_operator_id: string;
+  owner_display_name: string;
+  organization_id: string | null;
+  organization_name: string | null;
+  origin_source_record_id: string | null;
+  origin_source_kind: string | null;
+  origin_source_uri: string | null;
+  origin_review_status: string | null;
+  reopened_from_opportunity_id: string | null;
+  reopened_from_title: string | null;
+  organizations: V2CaseOrganization[];
+  interests: V2CaseInterest[];
+  evidence: V2CaseEvidence[];
+  stage_machine: V2CaseStageMachine;
+  counts: V2CardCounts;
+}

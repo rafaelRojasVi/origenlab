@@ -58,8 +58,17 @@ describe("dashboardNav", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("still resolves the full 14-id registry (nothing deleted, only reordered/relabeled)", () => {
-    expect(DASHBOARD_NAV_ITEMS).toHaveLength(14);
+  it("still resolves the full 15-id registry (nothing deleted, only reordered/relabeled)", () => {
+    expect(DASHBOARD_NAV_ITEMS).toHaveLength(15);
+  });
+
+  it("keeps the commercial-case workspace deep-linkable and out of the sidebar", () => {
+    // The third read-only V2 surface, under the same rule as `crm-v2` and `revision`: its
+    // six commands live in apps/api and none of them is reachable through the proxy, so it
+    // is a reading surface and does not take a sidebar slot.
+    expect(DASHBOARD_NAV_ITEMS.some((item) => item.id === "casos")).toBe(true);
+    expect(DASHBOARD_TOP_NAV_IDS).not.toContain("casos");
+    expect(dashboardSectionLabel("casos")).toBe("Casos comerciales");
   });
 
   it("keeps the evidence review workspace deep-linkable and out of the sidebar", () => {
