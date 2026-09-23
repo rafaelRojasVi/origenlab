@@ -47,6 +47,7 @@ KEEP_EVIDENCE_PENDING = "keep_evidence_pending"
 CONFIRM_ORGANIZATION = "confirm_organization"
 CREATE_ORGANIZATION = "create_organization"
 ATTACH_CONTACT_ADDRESS = "attach_contact_address"
+CONFIRM_PERSON_FROM_EVIDENCE = "confirm_person_from_evidence"
 ATTRIBUTE_SENDER_ORGANIZATION = "attribute_sender_organization"
 
 COMMAND_NAMES: tuple[str, ...] = (
@@ -54,6 +55,7 @@ COMMAND_NAMES: tuple[str, ...] = (
     CONFIRM_ORGANIZATION,
     CREATE_ORGANIZATION,
     ATTACH_CONTACT_ADDRESS,
+    CONFIRM_PERSON_FROM_EVIDENCE,
     ATTRIBUTE_SENDER_ORGANIZATION,
 )
 
@@ -275,6 +277,17 @@ class AttachContactAddressBody(_CommandBody):
     shared_mailbox_override_note: _OVERRIDE | None = None
 
 
+class ConfirmPersonFromEvidenceBody(_CommandBody):
+    """A human confirms who owns one address asserted by this evidence."""
+
+    assertion_id: str
+    display_name: Annotated[str, Field(min_length=1, max_length=400)]
+    given_name: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+    family_name: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+    organization_id: str | None = None
+
+
+
 class AttributeSenderOrganizationBody(_CommandBody):
     """One institution named in this message is the sender's, and this address is its mailbox.
 
@@ -319,6 +332,7 @@ BODY_BY_COMMAND: dict[str, type[_CommandBody]] = {
     CONFIRM_ORGANIZATION: ConfirmOrganizationBody,
     CREATE_ORGANIZATION: CreateOrganizationBody,
     ATTACH_CONTACT_ADDRESS: AttachContactAddressBody,
+    CONFIRM_PERSON_FROM_EVIDENCE: ConfirmPersonFromEvidenceBody,
     ATTRIBUTE_SENDER_ORGANIZATION: AttributeSenderOrganizationBody,
 }
 
@@ -480,6 +494,16 @@ def validated(command_name: str, body: _CommandBody) -> dict[str, Any]:
     elif isinstance(body, AttachContactAddressBody):
         fields["organization_id"] = _uuid(body.organization_id, "organization_id")
         fields.update(validated_usage(body.usage, body.shared_mailbox_override_note))
+    elif isinstance(body, ConfirmPersonFromEvidenceBody):
+        fields["assertion_id"] = _uuid(body.assertion_id, "assertion_id")
+        fields["display_name"] = body.display_name.strip()
+        fields["given_name"] = body.given_name.strip() if body.given_name else None
+        fields["family_name"] = body.family_name.strip() if body.family_name else None
+        fields["organization_id"] = (
+            _uuid(body.organization_id, "organization_id")
+            if body.organization_id is not None
+            else None
+        )
     return fields
 
 

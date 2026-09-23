@@ -41,12 +41,14 @@ from origenlab_api.v2.commands import (
     ATTRIBUTE_SENDER_ORGANIZATION,
     CONFIRM_ORGANIZATION,
     CREATE_ORGANIZATION,
+    CONFIRM_PERSON_FROM_EVIDENCE,
     KEEP_EVIDENCE_PENDING,
     AttachContactAddressBody,
     AttributeSenderOrganizationBody,
     CommandRefused,
     ConfirmOrganizationBody,
     CreateOrganizationBody,
+    ConfirmPersonFromEvidenceBody,
     KeepEvidencePendingBody,
     request_digest,
     require_idempotency_key,
@@ -249,6 +251,22 @@ def attribute_sender_organization(
     """
     return _run(
         command_name=ATTRIBUTE_SENDER_ORGANIZATION,
+        body=body,
+        repo=repo,
+        operator=operator,
+        idempotency_key=idempotency_key,
+    )
+
+@command_router.post("/confirm-person-from-evidence")
+def confirm_person_from_evidence(
+    body: ConfirmPersonFromEvidenceBody,
+    operator: Deciding,
+    repo: CommandRepo,
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """Confirm a named person owns the address asserted by one evidence record."""
+    return _run(
+        command_name=CONFIRM_PERSON_FROM_EVIDENCE,
         body=body,
         repo=repo,
         operator=operator,

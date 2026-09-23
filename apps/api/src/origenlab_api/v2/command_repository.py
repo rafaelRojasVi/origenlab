@@ -43,9 +43,11 @@ from origenlab_api.v2.commands import (
     ATTRIBUTE_SENDER_ORGANIZATION,
     CONFIRM_ORGANIZATION,
     CREATE_ORGANIZATION,
+    CONFIRM_PERSON_FROM_EVIDENCE,
     KEEP_EVIDENCE_PENDING,
     CommandRefused,
     normalize_email,
+    address_names_a_desk,
     require_override_for_a_named_address,
     normalize_organization_name,
     validate_email_shape,
@@ -806,10 +808,257 @@ class V2CommandRepository(CommandTransaction):
             "event_ids": events,
         }
 
+    def _confirm_person_from_evidence(
+        self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any], receipt_id: str
+    ) -> dict[str, Any]:
+        """Create one confirmed person and attach only the asserted email address.
+
+        A role mailbox is evidence about a desk, never evidence about one human. The command
+        refuses it before creating the person. Names are supplied by the operator because the
+        current intake asserted addresses, not person-name observations.
+        """
+        record = self._actionable_source_record(cur, fields["source_record_id"])
+        assertion = self._unresolved_assertion(
+            cur, fields["assertion_id"], record["id"], "contact_address"
+        )
+        value_norm = validate_email_shape(normalize_email(assertion["value_norm"]))
+        if address_names_a_desk(value_norm):
+            raise CommandRefused(
+                422,
+                "role_address_cannot_be_confirmed_as_person",
+                f"'{value_norm}' is a recognised role mailbox; it cannot confirm one person",
+            )
+
+        organization = (
+            self._live_organization(cur, fields["organization_id"])
+            if fields["organization_id"] is not None
+            else None
+        )
+        organization_id = organization["id"] if organization is not None else None
+
+        # Lock the one globally unique email before creating anything. A refusal below rolls
+        # back the person too, so there is never a half-created identity.
+        cur.execute(
+            """
+            select id::text as id, person_id::text as person_id,
+                   organization_id::text as organization_id, usage
+              from crm.contact_point
+             where kind = 'email' and value_norm = %s
+               for update
+            """,
+            (value_norm,),
+        )
+        existing = self._row(cur)
+        if existing is not None and existing["person_id"] is not None:
+            raise CommandRefused(
+                409,
+                "contact_point_already_has_a_person",
+                "that address already belongs to a recorded person; use the future identity "
+                "merge/link command rather than creating a second person",
+            )
+
+        if existing is not None and existing["usage"] == "shared_mailbox":
+            raise CommandRefused(
+                409,
+                "shared_mailbox_cannot_become_a_person",
+                "that address is recorded as a shared mailbox; revise that decision before "
+                "claiming it belongs to one person",
+            )
+
+        if organization_id is None and existing is not None and existing["organization_id"] is not None:
+            raise CommandRefused(
+                422,
+                "organization_required_for_attached_address",
+                "that address is already attached to an organization; name that organization "
+                "when confirming its person",
+            )
+
+        if existing is not None and existing["organization_id"] not in (None, organization_id):
+            raise CommandRefused(
+                409,
+                "contact_point_attached_elsewhere",
+                "that address already belongs to a different organization",
+            )
+
+        cur.execute(
+            """
+            insert into crm.person
+                (display_name, given_name, family_name, confirmation,
+                 confirmed_by_operator_id, origin_source_record_id, note)
+            values (%s, %s, %s, 'confirmed', %s, %s, %s)
+            returning id::text as id, version
+            """,
+            (
+                fields["display_name"],
+                fields["given_name"],
+                fields["family_name"],
+                operator.operator_id,
+                record["id"],
+                fields["note"],
+            ),
+        )
+        person = self._row(cur)
+        assert person is not None  # noqa: S101
+
+        events = [
+            self._append_event(
+                cur,
+                aggregate_kind="person",
+                aggregate_id=person["id"],
+                event_type="person.created",
+                payload={
+                    "display_name": fields["display_name"],
+                    "created_from": "evidence_review",
+                    "source_record_id": record["id"],
+                    "assertion_id": assertion["id"],
+                    "note": fields["note"],
+                },
+                operator=operator,
+                receipt_id=receipt_id,
+            )
+        ]
+        created = ["person"]
+        usage = "work" if organization_id is not None else "personal"
+        display = assertion["observed_value"] or value_norm
+
+        if existing is None:
+            cur.execute(
+                """
+                insert into crm.contact_point
+                    (kind, value_norm, value_display, person_id, organization_id, usage,
+                     confirmation, origin_source_record_id)
+                values ('email', %s, %s, %s, %s, %s, 'confirmed', %s)
+                returning id::text as id
+                """,
+                (value_norm, display, person["id"], organization_id, usage, record["id"]),
+            )
+            contact_point = self._row(cur)
+            assert contact_point is not None  # noqa: S101
+            contact_point_id = contact_point["id"]
+            created.append("contact_point")
+            event_type = "contact_point.created"
+        else:
+            contact_point_id = existing["id"]
+            if organization_id is None:
+                allowed = existing["organization_id"] is None and existing["usage"] == "unattributed"
+            else:
+                allowed = (
+                    existing["organization_id"] is None and existing["usage"] == "unattributed"
+                ) or (
+                    existing["organization_id"] == organization_id
+                    and existing["usage"] == "individual_owner_unknown"
+                )
+            if not allowed:
+                raise CommandRefused(
+                    409,
+                    "contact_point_cannot_be_confirmed_as_person",
+                    "the existing address has a state this command cannot safely rewrite",
+                )
+            cur.execute(
+                """
+                update crm.contact_point
+                   set person_id = %s, organization_id = %s, usage = %s,
+                       confirmation = 'confirmed', updated_at = now()
+                 where id = %s and person_id is null
+                """,
+                (person["id"], organization_id, usage, contact_point_id),
+            )
+            if cur.rowcount != 1:
+                raise CommandRefused(
+                    409,
+                    "contact_point_changed_concurrently",
+                    "that address changed while this decision was being recorded",
+                )
+            event_type = "contact_point.confirmed"
+
+        events.append(
+            self._append_event(
+                cur,
+                aggregate_kind="contact_point",
+                aggregate_id=contact_point_id,
+                event_type=event_type,
+                payload={
+                    "person_id": person["id"],
+                    "organization_id": organization_id,
+                    "usage": usage,
+                    "source_record_id": record["id"],
+                    "assertion_id": assertion["id"],
+                    "note": fields["note"],
+                },
+                operator=operator,
+                receipt_id=receipt_id,
+            )
+        )
+
+        affiliation_id = None
+        if organization_id is not None:
+            cur.execute(
+                """
+                insert into crm.affiliation
+                    (person_id, organization_id, valid_from, confirmation,
+                     confirmed_by_operator_id, origin_source_record_id, note)
+                values (%s, %s, current_date, 'confirmed', %s, %s, %s)
+                returning id::text as id
+                """,
+                (person["id"], organization_id, operator.operator_id, record["id"], fields["note"]),
+            )
+            affiliation = self._row(cur)
+            assert affiliation is not None  # noqa: S101
+            affiliation_id = affiliation["id"]
+            created.append("affiliation")
+            events.append(
+                self._append_event(
+                    cur,
+                    aggregate_kind="affiliation",
+                    aggregate_id=affiliation_id,
+                    event_type="affiliation.opened",
+                    payload={
+                        "person_id": person["id"],
+                        "organization_id": organization_id,
+                        "created_from": "evidence_review",
+                        "source_record_id": record["id"],
+                        "assertion_id": assertion["id"],
+                        "note": fields["note"],
+                    },
+                    operator=operator,
+                    receipt_id=receipt_id,
+                )
+            )
+
+        self._resolve_assertion(
+            cur,
+            assertion_id=assertion["id"],
+            resolution="promoted",
+            resolved_kind="person",
+            resolved_id=person["id"],
+            operator=operator,
+            receipt_id=receipt_id,
+            note=fields["note"],
+            source_record_id=record["id"],
+        )
+        reviewed = self._close_record_if_settled(
+            cur, source_record_id=record["id"], operator=operator, receipt_id=receipt_id
+        )
+        return {
+            "command": CONFIRM_PERSON_FROM_EVIDENCE,
+            "source_record_id": record["id"],
+            "assertion_id": assertion["id"],
+            "person_id": person["id"],
+            "person_version": int(person["version"]),
+            "contact_point_id": contact_point_id,
+            "organization_id": organization_id,
+            "affiliation_id": affiliation_id,
+            "review_status": "reviewed" if reviewed else "pending",
+            "created": created,
+            "event_ids": events,
+        }
+
+
     _HANDLERS = {
         KEEP_EVIDENCE_PENDING: _keep_evidence_pending,
         CONFIRM_ORGANIZATION: _confirm_organization,
         CREATE_ORGANIZATION: _create_organization,
         ATTACH_CONTACT_ADDRESS: _attach_contact_address,
+        CONFIRM_PERSON_FROM_EVIDENCE: _confirm_person_from_evidence,
         ATTRIBUTE_SENDER_ORGANIZATION: _attribute_sender_organization,
     }

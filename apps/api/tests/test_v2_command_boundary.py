@@ -32,6 +32,7 @@ from origenlab_api.v2.commands import (
     ATTACHABLE_USAGE,
     ATTRIBUTE_SENDER_ORGANIZATION,
     CONFIRM_ORGANIZATION,
+    CONFIRM_PERSON_FROM_EVIDENCE,
     CREATE_ORGANIZATION,
     KEEP_EVIDENCE_PENDING,
     AttachContactAddressBody,
@@ -206,6 +207,7 @@ def test_an_idempotency_key_longer_than_the_column_is_refused_here() -> None:
         "/v2/commands/confirm-organization",
         "/v2/commands/create-organization",
         "/v2/commands/attach-contact-address",
+        "/v2/commands/confirm-person-from-evidence",
         "/v2/commands/attribute-sender-organization",
     ],
 )
@@ -232,6 +234,9 @@ def test_every_command_requires_a_reason(path: str) -> None:
         "/v2/commands/attach-contact-address": {
             "source_record_id", "note", "assertion_id", "organization_id", "usage",
         },
+        "/v2/commands/confirm-person-from-evidence": {
+            "source_record_id", "note", "assertion_id", "display_name",
+        },
         "/v2/commands/attribute-sender-organization": {
             "source_record_id", "note", "organization_assertion_id", "address_assertion_id",
             "target", "organization_id", "organization_version", "usage",
@@ -251,6 +256,7 @@ def test_every_command_requires_a_reason(path: str) -> None:
         "/v2/commands/confirm-organization",
         "/v2/commands/create-organization",
         "/v2/commands/attach-contact-address",
+        "/v2/commands/confirm-person-from-evidence",
         "/v2/commands/attribute-sender-organization",
     ],
 )
@@ -482,6 +488,7 @@ def test_the_command_router_exposes_exactly_the_five_commands() -> None:
         "/v2/commands/confirm-organization",
         "/v2/commands/create-organization",
         "/v2/commands/attach-contact-address",
+        "/v2/commands/confirm-person-from-evidence",
         "/v2/commands/attribute-sender-organization",
     }
 
@@ -495,7 +502,7 @@ def test_the_read_router_still_has_no_write_method() -> None:
 
 
 def test_there_is_no_command_for_anything_out_of_scope() -> None:
-    """Merges, persons, prospects, marketing, campaigns, quotes and sending have no route.
+    """Merges, arbitrary person creation, prospects, marketing, campaigns, quotes and sending have no route.
 
     The comparison is over the **words** of a path, not its characters. A substring test
     called `attribute-sender-organization` a send route because `sender` contains `send`,
@@ -514,14 +521,16 @@ def test_there_is_no_command_for_anything_out_of_scope() -> None:
     }
     paths = " ".join(route.path for route in command_router.routes)
     for forbidden in (
-        "merge", "person", "persons", "prospect", "marketing", "permission", "campaign",
+        "merge", "persons", "prospect", "marketing", "permission", "campaign",
         "quote", "send", "sends", "domain", "task",
     ):
         assert forbidden not in words, f"{forbidden!r} is a word in {paths}"
     # Multi-word shapes stay substring checks: there is no single word to look for.
     for forbidden in ("promote-all", "bulk", "auto"):
         assert forbidden not in paths
-    assert len(COMMAND_NAMES) == 5
+    assert len(COMMAND_NAMES) == 6
+    assert "/v2/commands/create-person" not in paths
+    assert "/v2/commands/merge-persons" not in paths
 
 
 # ------------------------------------------------------------------ mounting
@@ -2526,3 +2535,624 @@ def test_a_role_address_still_needs_no_override(disposable_database, seeded) -> 
         digest="5" * 64,
     )
     assert result["created"] == ["contact_point"]
+
+
+def test_confirm_person_from_evidence_is_an_explicit_evidence_decision() -> None:
+    """It accepts a name from the operator, but only one asserted-address id."""
+    repo = _FakeCommandRepo()
+    response = _client(repo).post(
+        "/v2/commands/confirm-person-from-evidence",
+        json=_body(
+            assertion_id=ASSERTION_ID,
+            display_name="Ari Example",
+            given_name="Ari",
+            family_name="Example",
+            organization_id=ORGANIZATION_ID,
+        ),
+        headers=_headers("confirm-person-1"),
+    )
+
+    assert response.status_code == 200
+    assert len(repo.calls) == 1
+    call = repo.calls[0]
+    assert call["command_name"] == "confirm_person_from_evidence"
+    assert call["fields"] == {
+        "source_record_id": RECORD_ID,
+        "assertion_id": ASSERTION_ID,
+        "display_name": "Ari Example",
+        "given_name": "Ari",
+        "family_name": "Example",
+        "organization_id": ORGANIZATION_ID,
+        "note": "revisado a mano",
+    }
+    assert call["idempotency_key"] == "confirm-person-1"
+
+
+def test_confirm_person_from_evidence_does_not_accept_a_hidden_business_field() -> None:
+    repo = _FakeCommandRepo()
+    response = _client(repo).post(
+        "/v2/commands/confirm-person-from-evidence",
+        json=_body(
+            assertion_id=ASSERTION_ID,
+            display_name="Ari Example",
+            campaign_id="00000000-0000-4000-8000-000000000099",
+        ),
+        headers=_headers(),
+    )
+    assert response.status_code == 422
+    assert repo.calls == []
+
+
+@_needs_db
+def test_confirm_person_from_evidence_creates_person_email_and_affiliation(
+    disposable_database, seeded
+) -> None:
+    """A confirmed human decision creates one person, never guesses one."""
+
+    import psycopg
+
+    # The shared fixture uses contacto-… specifically to exercise desk-mailbox rules.
+    # This test needs evidence for one named individual instead.
+    named_address = f"ari-{seeded['tag']}@pytest.example"
+    with psycopg.connect(disposable_database, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            """
+            update evidence.assertion
+               set value_norm = %s,
+                   value = jsonb_build_object('observed_value', %s::text)
+             where id = %s
+            """,
+            (named_address, named_address, seeded["contact_address_assertion_id"]),
+        )
+    seeded["address"] = named_address
+
+    repo = _repo(disposable_database)
+
+    organization = _run(
+        repo,
+        CREATE_ORGANIZATION,
+        seeded,
+        {
+            "assertion_id": seeded["organization_name_assertion_id"],
+            "kind": "unknown",
+            "name_display": None,
+        },
+        key="person-org",
+        digest="1" * 64,
+    )
+
+    fields = {
+        "assertion_id": seeded["contact_address_assertion_id"],
+        "display_name": "Ari Example",
+        "given_name": "Ari",
+        "family_name": "Example",
+        "organization_id": organization["organization_id"],
+    }
+    result = _run(
+        repo,
+        CONFIRM_PERSON_FROM_EVIDENCE,
+        seeded,
+        fields,
+        key="confirm-person",
+        digest="2" * 64,
+    )
+
+    assert result["replayed"] is False
+    assert result["created"] == ["person", "contact_point", "affiliation"]
+    assert result["review_status"] == "reviewed"
+    assert result["organization_id"] == organization["organization_id"]
+
+    replay = _run(
+        repo,
+        CONFIRM_PERSON_FROM_EVIDENCE,
+        seeded,
+        fields,
+        key="confirm-person",
+        digest="2" * 64,
+    )
+    assert replay["replayed"] is True
+    assert replay["command_receipt_id"] == result["command_receipt_id"]
+
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select display_name, given_name, family_name, confirmation,
+                   origin_source_record_id::text, note
+              from crm.person
+             where id = %s
+            """,
+            (result["person_id"],),
+        )
+        assert cur.fetchone() == (
+            "Ari Example",
+            "Ari",
+            "Example",
+            "confirmed",
+            seeded["source_record_id"],
+            "pytest",
+        )
+
+        cur.execute(
+            """
+            select value_norm, usage, person_id::text, organization_id::text, confirmation
+              from crm.contact_point
+             where id = %s
+            """,
+            (result["contact_point_id"],),
+        )
+        assert cur.fetchone() == (
+            seeded["address"],
+            "work",
+            result["person_id"],
+            organization["organization_id"],
+            "confirmed",
+        )
+
+        cur.execute(
+            """
+            select person_id::text, organization_id::text, confirmation,
+                   origin_source_record_id::text, note
+              from crm.affiliation
+             where id = %s
+            """,
+            (result["affiliation_id"],),
+        )
+        assert cur.fetchone() == (
+            result["person_id"],
+            organization["organization_id"],
+            "confirmed",
+            seeded["source_record_id"],
+            "pytest",
+        )
+
+        cur.execute(
+            """
+            select resolution, resolved_kind, resolved_id::text
+              from evidence.assertion
+             where id = %s
+            """,
+            (seeded["contact_address_assertion_id"],),
+        )
+        assert cur.fetchone() == ("promoted", "person", result["person_id"])
+
+        cur.execute(
+            "select review_status from evidence.source_record where id = %s",
+            (seeded["source_record_id"],),
+        )
+        assert cur.fetchone()[0] == "reviewed"
+
+        cur.execute(
+            "select count(*) from platform.command_receipt where idempotency_key = %s",
+            ("confirm-person",),
+        )
+        assert cur.fetchone()[0] == 1
+
+
+@_needs_db
+def test_confirm_person_from_evidence_refuses_a_role_mailbox_without_writing(
+    disposable_database, seeded
+) -> None:
+    """A desk address cannot silently become a person, even with a supplied name."""
+
+    import psycopg
+
+    with pytest.raises(CommandRefused) as excinfo:
+        _run(
+            _repo(disposable_database),
+            CONFIRM_PERSON_FROM_EVIDENCE,
+            seeded,
+            {
+                "assertion_id": seeded["contact_address_assertion_id"],
+                "display_name": "Ari Example",
+                "given_name": "Ari",
+                "family_name": "Example",
+                "organization_id": None,
+            },
+            key="role-mailbox",
+            digest="3" * 64,
+        )
+
+    assert excinfo.value.code == "role_address_cannot_be_confirmed_as_person"
+
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute(
+            "select count(*) from crm.person where origin_source_record_id = %s",
+            (seeded["source_record_id"],),
+        )
+        assert cur.fetchone()[0] == 0
+
+        cur.execute(
+            "select count(*) from platform.command_receipt where idempotency_key = %s",
+            ("role-mailbox",),
+        )
+        assert cur.fetchone()[0] == 0
+
+        cur.execute(
+            "select resolution from evidence.assertion where id = %s",
+            (seeded["contact_address_assertion_id"],),
+        )
+        assert cur.fetchone()[0] == "unresolved"
+
+
+
+def _make_contact_assertion_named(disposable_database, seeded, localpart: str) -> str:
+    """Retarget this test's contact assertion to a non-role, fictitious address."""
+    import psycopg
+
+    address = f"{localpart}-{seeded['tag']}@pytest.example"
+    with psycopg.connect(disposable_database, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            """
+            update evidence.assertion
+               set value_norm = %s,
+                   value = jsonb_build_object('observed_value', %s::text)
+             where id = %s
+            """,
+            (address, address, seeded["contact_address_assertion_id"]),
+        )
+    seeded["address"] = address
+    return address
+
+
+def _assert_confirm_person_refusal_wrote_nothing(
+    disposable_database, seeded, *, idempotency_key: str
+) -> None:
+    """A refused identity decision leaves neither identity nor receipt nor resolution."""
+    import psycopg
+
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select count(*)
+              from crm.person
+             where origin_source_record_id = %s
+            """,
+            (seeded["source_record_id"],),
+        )
+        assert cur.fetchone()[0] == 0
+
+        cur.execute(
+            """
+            select count(*)
+              from platform.command_receipt
+             where idempotency_key = %s
+            """,
+            (idempotency_key,),
+        )
+        assert cur.fetchone()[0] == 0
+
+        cur.execute(
+            """
+            select resolution
+              from evidence.assertion
+             where id = %s
+            """,
+            (seeded["contact_address_assertion_id"],),
+        )
+        assert cur.fetchone()[0] == "unresolved"
+
+
+@_needs_db
+def test_confirm_person_refuses_an_email_that_already_belongs_to_a_person(
+    disposable_database, seeded
+) -> None:
+    import psycopg
+
+    address = _make_contact_assertion_named(
+        disposable_database, seeded, "already-person"
+    )
+
+    with psycopg.connect(disposable_database, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            """
+            insert into crm.person (display_name, confirmation)
+            values ('Existing Pytest Person', 'confirmed')
+            returning id
+            """
+        )
+        person_id = cur.fetchone()[0]
+        cur.execute(
+            """
+            insert into crm.contact_point
+                (kind, value_norm, value_display, person_id, usage, confirmation)
+            values ('email', %s, %s, %s, 'personal', 'confirmed')
+            """,
+            (address, address, person_id),
+        )
+
+    key = f"person-owned-{seeded['tag']}"
+    with pytest.raises(CommandRefused) as excinfo:
+        _run(
+            _repo(disposable_database),
+            CONFIRM_PERSON_FROM_EVIDENCE,
+            seeded,
+            {
+                "assertion_id": seeded["contact_address_assertion_id"],
+                "display_name": "Another Person",
+                "given_name": None,
+                "family_name": None,
+                "organization_id": None,
+            },
+            key=key,
+            digest="6" * 64,
+        )
+
+    assert excinfo.value.code == "contact_point_already_has_a_person"
+    _assert_confirm_person_refusal_wrote_nothing(
+        disposable_database, seeded, idempotency_key=key
+    )
+
+
+@_needs_db
+def test_confirm_person_refuses_a_shared_mailbox(
+    disposable_database, seeded
+) -> None:
+    import psycopg
+
+    address = _make_contact_assertion_named(
+        disposable_database, seeded, "shared-desk"
+    )
+
+    with psycopg.connect(disposable_database, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            """
+            insert into crm.organization (kind, name, confirmation)
+            values ('unknown', %s, 'confirmed')
+            returning id::text
+            """,
+            (f"Shared Mailbox Org {seeded['tag']}",),
+        )
+        organization_id = cur.fetchone()[0]
+        cur.execute(
+            """
+            insert into crm.contact_point
+                (kind, value_norm, value_display, organization_id, usage, confirmation)
+            values ('email', %s, %s, %s, 'shared_mailbox', 'confirmed')
+            """,
+            (address, address, organization_id),
+        )
+
+    key = f"shared-person-{seeded['tag']}"
+    with pytest.raises(CommandRefused) as excinfo:
+        _run(
+            _repo(disposable_database),
+            CONFIRM_PERSON_FROM_EVIDENCE,
+            seeded,
+            {
+                "assertion_id": seeded["contact_address_assertion_id"],
+                "display_name": "Imaginary Owner",
+                "given_name": None,
+                "family_name": None,
+                "organization_id": organization_id,
+            },
+            key=key,
+            digest="7" * 64,
+        )
+
+    assert excinfo.value.code == "shared_mailbox_cannot_become_a_person"
+    _assert_confirm_person_refusal_wrote_nothing(
+        disposable_database, seeded, idempotency_key=key
+    )
+
+
+@_needs_db
+def test_confirm_person_requires_the_known_organization_for_an_attached_address(
+    disposable_database, seeded
+) -> None:
+    import psycopg
+
+    address = _make_contact_assertion_named(
+        disposable_database, seeded, "known-org-owner"
+    )
+
+    with psycopg.connect(disposable_database, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            """
+            insert into crm.organization (kind, name, confirmation)
+            values ('unknown', %s, 'confirmed')
+            returning id::text
+            """,
+            (f"Known Owner Org {seeded['tag']}",),
+        )
+        organization_id = cur.fetchone()[0]
+        cur.execute(
+            """
+            insert into crm.contact_point
+                (kind, value_norm, value_display, organization_id, usage, confirmation)
+            values ('email', %s, %s, %s, 'individual_owner_unknown', 'confirmed')
+            """,
+            (address, address, organization_id),
+        )
+
+    key = f"missing-org-{seeded['tag']}"
+    with pytest.raises(CommandRefused) as excinfo:
+        _run(
+            _repo(disposable_database),
+            CONFIRM_PERSON_FROM_EVIDENCE,
+            seeded,
+            {
+                "assertion_id": seeded["contact_address_assertion_id"],
+                "display_name": "Ari Example",
+                "given_name": "Ari",
+                "family_name": "Example",
+                "organization_id": None,
+            },
+            key=key,
+            digest="8" * 64,
+        )
+
+    assert excinfo.value.code == "organization_required_for_attached_address"
+    _assert_confirm_person_refusal_wrote_nothing(
+        disposable_database, seeded, idempotency_key=key
+    )
+
+
+@_needs_db
+def test_confirm_person_refuses_a_different_organization_for_an_attached_address(
+    disposable_database, seeded
+) -> None:
+    import psycopg
+
+    address = _make_contact_assertion_named(
+        disposable_database, seeded, "wrong-org-owner"
+    )
+
+    with psycopg.connect(disposable_database, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+
+        cur.execute(
+            """
+            insert into crm.organization (kind, name, confirmation)
+            values ('unknown', %s, 'confirmed')
+            returning id::text
+            """,
+            (f"Original Org {seeded['tag']}",),
+        )
+        original_org_id = cur.fetchone()[0]
+
+        cur.execute(
+            """
+            insert into crm.organization (kind, name, confirmation)
+            values ('unknown', %s, 'confirmed')
+            returning id::text
+            """,
+            (f"Other Org {seeded['tag']}",),
+        )
+        other_org_id = cur.fetchone()[0]
+
+        cur.execute(
+            """
+            insert into crm.contact_point
+                (kind, value_norm, value_display, organization_id, usage, confirmation)
+            values ('email', %s, %s, %s, 'individual_owner_unknown', 'confirmed')
+            """,
+            (address, address, original_org_id),
+        )
+
+    key = f"wrong-org-{seeded['tag']}"
+    with pytest.raises(CommandRefused) as excinfo:
+        _run(
+            _repo(disposable_database),
+            CONFIRM_PERSON_FROM_EVIDENCE,
+            seeded,
+            {
+                "assertion_id": seeded["contact_address_assertion_id"],
+                "display_name": "Ari Example",
+                "given_name": "Ari",
+                "family_name": "Example",
+                "organization_id": other_org_id,
+            },
+            key=key,
+            digest="9" * 64,
+        )
+
+    assert excinfo.value.code == "contact_point_attached_elsewhere"
+    _assert_confirm_person_refusal_wrote_nothing(
+        disposable_database, seeded, idempotency_key=key
+    )
+
+
+@_needs_db
+def test_confirm_person_promotes_individual_owner_unknown_to_work_without_duplication(
+    disposable_database, seeded
+) -> None:
+    import psycopg
+
+    address = _make_contact_assertion_named(
+        disposable_database, seeded, "known-individual"
+    )
+
+    with psycopg.connect(disposable_database, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            """
+            insert into crm.organization (kind, name, confirmation)
+            values ('unknown', %s, 'confirmed')
+            returning id::text
+            """,
+            (f"Promotion Org {seeded['tag']}",),
+        )
+        organization_id = cur.fetchone()[0]
+
+        cur.execute(
+            """
+            insert into crm.contact_point
+                (kind, value_norm, value_display, organization_id, usage, confirmation)
+            values ('email', %s, %s, %s, 'individual_owner_unknown', 'confirmed')
+            returning id::text
+            """,
+            (address, address, organization_id),
+        )
+        contact_point_id = cur.fetchone()[0]
+
+    result = _run(
+        _repo(disposable_database),
+        CONFIRM_PERSON_FROM_EVIDENCE,
+        seeded,
+        {
+            "assertion_id": seeded["contact_address_assertion_id"],
+            "display_name": "Ari Example",
+            "given_name": "Ari",
+            "family_name": "Example",
+            "organization_id": organization_id,
+        },
+        key=f"promote-owner-{seeded['tag']}",
+        digest="a" * 64,
+    )
+
+    assert result["created"] == ["person", "affiliation"]
+    assert result["contact_point_id"] == contact_point_id
+    assert result["organization_id"] == organization_id
+
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select count(*)
+              from crm.contact_point
+             where kind = 'email' and value_norm = %s
+            """,
+            (address,),
+        )
+        assert cur.fetchone()[0] == 1
+
+        cur.execute(
+            """
+            select person_id::text, organization_id::text, usage, confirmation
+              from crm.contact_point
+             where id = %s
+            """,
+            (contact_point_id,),
+        )
+        assert cur.fetchone() == (
+            result["person_id"],
+            organization_id,
+            "work",
+            "confirmed",
+        )
+
+        cur.execute(
+            """
+            select count(*)
+              from crm.affiliation
+             where person_id = %s
+               and organization_id = %s
+               and valid_to is null
+            """,
+            (result["person_id"], organization_id),
+        )
+        assert cur.fetchone()[0] == 1
+
+        cur.execute(
+            """
+            select resolution, resolved_kind, resolved_id::text
+              from evidence.assertion
+             where id = %s
+            """,
+            (seeded["contact_address_assertion_id"],),
+        )
+        assert cur.fetchone() == ("promoted", "person", result["person_id"])
