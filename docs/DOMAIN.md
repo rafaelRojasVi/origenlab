@@ -350,10 +350,17 @@ supersession rules are owned by [`WORKFLOWS.md`](WORKFLOWS.md) §W3a–W3b.
 **[V2 DECISION]**, approved 2026-09-22. **Built 2026-09-22** by
 `supabase/migrations/20260922170000_slice3_crm_commercial_case.sql`: the three
 tables, their constraints, guards, grants and RLS policies exist and are proven
-by `supabase/tests/062_constraints_crm_commercial_case.sql`. **No command
-writes them yet** — the boundary and its `crm.domain_event` types arrive with
-their own migration, and every table below is empty
-([`STATUS.md`](STATUS.md) §2.7.16).
+by `supabase/tests/062_constraints_crm_commercial_case.sql`.
+
+**Six commands write them, as of 2026-09-22** —
+`20260922200000_slice3_commercial_case_commands.sql` added the audit vocabulary
+they emit and the stage machine as a trigger, and
+`apps/api/src/origenlab_api/v2/case_command*.py` is the boundary
+([`WORKFLOWS.md`](WORKFLOWS.md) §W2, [`STATUS.md`](STATUS.md) §2.7.17). **They
+are not reachable from a browser**: `apps/dashboard-proxy` allows no POST under
+`/v2`, every button in the operator workspace is `disabled`, and the routes are
+mounted only behind `ORIGENLAB_V2_COMMANDS_ENABLED`. Every table below is still
+empty, because nothing real has been decided.
 
 **The commercial case *is* `crm.opportunity`.** *Caso comercial* is the
 operator-facing Spanish name for the row this schema calls an opportunity. It
@@ -454,9 +461,12 @@ Hielscher equipment*. On such a case Hielscher appears as
   relationship for it, and confers no marketing permission on any of its
   addresses (§3.6.4).
 - **(impl)** a CHECK cannot consult the brand list, so the rule is enforced
-  twice: the command refuses `set_requesting_institution` for an organization
-  holding a current `manufacturer` or `supplier` relationship, and a trigger
-  repeats the refusal in the database.
+  twice: `add_case_organization` refuses `requesting_institution` for an
+  organization holding a current `manufacturer` or `supplier` relationship
+  (`supplier_exception_required`, 422), and a trigger repeats the refusal in the
+  database. An exception sent where none was needed is refused too
+  (`supplier_exception_is_not_needed`): recording one nobody needed would read
+  later as a supplier OrigenLab sold to.
 **The supplier exception.** **[V2 DECISION]**, approved 2026-09-22. §3.1
 already allows roles to coexist, and worked example 5 is a real distributor
 that both sells to and buys from OrigenLab, so the refusal above is
@@ -582,6 +592,23 @@ together with a confirmed `requesting_institution` row, *qualified* and
 *quoted* now both mean **an operator decided who is asking**. Nothing else can
 satisfy them. A case may sit at `lead` indefinitely; §3.4 guarantees that
 sitting there never closes it.
+
+**A case that never found its requester must still be closable.** Corrected
+2026-09-22 by `20260922200000_slice3_commercial_case_commands.sql`. The
+constraint above read `stage IN ('lead', 'qualifying')`, which caught `lost` and
+`abandoned` as well — and those are exits available from `lead` itself
+([`WORKFLOWS.md`](WORKFLOWS.md) §1.1), not stages "onward" from `qualified`. As
+shipped, an unanswered enquiry from an unknown institution could be opened and
+then never closed: its only reachable states were `lead` and `qualifying`,
+forever. The rule now names the two exits explicitly. `won` keeps the
+requirement — a case is not won without a customer.
+
+**A case is opened at `lead` and at no other stage**, and a terminal stage is
+never revived. **(impl)** `crm.opportunity_stage_guard`, a trigger carrying the
+§1.1 transition table; `advance_case_stage` refuses the same moves first, by
+name. Optimistic concurrency stays a boundary contract rather than a trigger:
+every case command reads `version`, shows it to the operator and writes back
+under `WHERE version = %s`.
 
 ## 4. Products, manufacturers and suppliers
 
@@ -749,12 +776,15 @@ outside this count and outside this inventory.
 Counts by the first 33: `crm` 16, `comms` 4, `outbound` 6, `evidence` 2,
 `catalog` 2, `procurement` 1, `platform` 2 — **33**.
 
-### 7.1 The commercial case (§3.6) — built
+### 7.1 The commercial case (§3.6) — built, and written by six commands
 
 Approved and built 2026-09-22. Three tables, all in `crm`, numbered 34–36.
 `supabase/tests/010_inventory.sql` and `supabase/scripts/verify_chain.sh`
 assert **36** and `crm` **19**, moved in the same change as the migration that
-creates them. They are **empty**, and stay empty until a command writes one.
+creates them. The commands that write them arrived on 2026-09-22 and added **no
+table**: the inventory is unchanged at 36. All three are still **empty**,
+because the boundary is unreachable from any browser and nothing real has been
+decided through it.
 
 | # | Schema.table | Unique responsibility | Key invariant |
 |---|---|---|---|

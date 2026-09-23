@@ -49,6 +49,22 @@ change · durable evidence · failure behaviour**. Three rules apply everywhere:
 `closed_at` set. Reopening is a **new** opportunity that references the old
 one; a terminal stage is never revived. Only the API role may update `stage`.
 
+**This table is a trigger as of 2026-09-22**
+(`crm.opportunity_stage_guard`, `20260922200000_slice3_commercial_case_commands.sql`),
+not only a table in this document: a case is opened at `lead` and at no other
+stage, moves only along the rows above, and once terminal is refused every
+target including another terminal one. `advance_case_stage` refuses the same
+moves first, with a sentence naming the rule, so an operator reads prose and a
+stray `UPDATE` still meets the rule.
+
+**`lost` and `abandoned` are reachable from `lead`**, which the shipped
+`opportunity_organization_required_from_qualified` CHECK accidentally
+prevented for a case with no institution — corrected in the same migration
+([`DOMAIN.md`](DOMAIN.md) §3.6.5). **`won` is not reachable from the command
+boundary at all**: a case is won against a specific quote revision, and no V2
+command creates a quote, so `advance_case_stage` refuses it by name
+(`won_requires_a_quote`) rather than letting it end in a constraint violation.
+
 **`abandoned` requires an operator and a motive** ([`DOMAIN.md`](DOMAIN.md)
 §3.4, 2026-09-22). `abandon_opportunity(opportunity, reason)` is an operator
 command; `close_reason` must be non-blank, and **no timer, cron job, queue
@@ -275,14 +291,35 @@ unresolved contact point. It may not reach `qualified`, and no quote may
 exist, without an organization. Participants are the only record of who is
 involved; the opportunity row names no person and no channel.
 
-The commercial-case tables ([`DOMAIN.md`](DOMAIN.md) §3.6) exist as of
-2026-09-22, and **their commands do not**. When written,
-`set_requesting_institution` replaces step 6: it writes `organization_id` and a
-confirmed `crm.opportunity_organization` row in one transaction, and further
-commands cover the other case organizations, interests and evidence links.
-Until then the steps above are the whole workflow, and the three tables stay
-empty — the schema refuses a machine-written requesting institution, so nothing
-can fill them behind an operator's back.
+#### W2b — the commercial case, as six commands (2026-09-22)
+
+The commercial-case tables ([`DOMAIN.md`](DOMAIN.md) §3.6) and their commands
+both exist as of 2026-09-22. The steps above describe the participant-centred
+path, which has no command boundary; the path below does, and it is the one a
+case actually takes. `crm.person` is empty and no command creates a
+participant, so steps 3–5 above remain unimplemented.
+
+| Step | Actor · command | Preconditions | State change | Durable evidence | Failure |
+|---|---|---|---|---|---|
+| 1 | operator · `open_commercial_case` | an `evidence.source_record` that exists and is not quarantined | `crm.opportunity` at `stage = lead`, `organization_id` NULL, **and** its `origin` evidence link, in one transaction | `opportunity.created`, `case_evidence.linked` | no such record → 404; quarantined → 409 |
+| 2 | operator · `link_case_evidence` | exactly one typed subject, which must already exist; the case is open | `crm.opportunity_evidence` row | `case_evidence.linked` | the same `(case, subject, relation)` twice → `evidence_already_linked`; a subject that does not exist → 404 |
+| 3 | operator · `add_case_organization` | the case and the institution at the versions shown; the part is not already current | `crm.opportunity_organization` row, `confirmed` with the operator named; for `requesting_institution`, `crm.opportunity.organization_id` in the same transaction | `case_organization.added` (+ `opportunity.organization_set`) | a second requester → `case_already_has_a_requesting_institution`; a registered supplier/manufacturer as requester without a motive → `supplier_exception_required`; a motive nobody needed → `supplier_exception_is_not_needed` |
+| 4 | operator · `set_case_organization_role` | the row is current and belongs to this case | a `machine_proposed` row is confirmed in place; **or** the current row is closed (`valid_to`) and a new part is opened, both in one transaction | `case_organization.role_confirmed`, or `case_organization.ended` + `case_organization.added` | already confirmed in that part → `case_organization_role_unchanged`; taking the requester away from a case at `qualified` or later → refused |
+| 5 | operator · `record_case_interest` | ≥1 of product, manufacturer, model text; product and manufacturer agree; quantity > 0 | `crm.opportunity_interest` row, `confirmed` | `case_interest.added` | a manufacturer the catalogue contradicts → refused; a price field → 422 (the request forbids unknown fields) |
+| 6 | operator · `advance_case_stage` | the transition is in §1.1; from `qualified` on, a human-confirmed requesting institution exists; `lost`/`abandoned` carry a motive | `stage`, `closed_at`, `close_reason`, `version + 1` | `opportunity.staged` (+ `opportunity.closed`) | `stage_transition_not_allowed`, `stage_requires_a_confirmed_requesting_institution`, `closing_a_case_needs_a_motive`, `won_requires_a_quote`, `case_is_closed` |
+
+Every command carries the case it is about, the `version` of it the operator
+was shown, a non-blank reason and an `Idempotency-Key`; the operator comes from
+the verified identity and never from the body. Each runs in **one transaction**
+with its receipt and its events, so a refusal anywhere leaves the database
+byte-identical and the key free. None of them touches `outbound.*`, creates a
+person, opens an `organization_relationship`, or confers any marketing
+permission (§3.6.4) — a database-backed test counts thirteen such tables before
+and after every command in the vocabulary.
+
+**Nothing has been decided through them.** `apps/dashboard-proxy` allows no
+POST under `/v2`, every button in the operator workspace is `disabled`, and the
+three tables are empty.
 
 ### W3 — Opportunity → quotation → approval → send → outcome
 

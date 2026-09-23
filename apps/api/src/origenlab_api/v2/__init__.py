@@ -5,10 +5,13 @@ allowlisted `/operations/*` command path. This package adds a *separate*, read-o
 over the **V2** durable core, so the operator dashboard can be moved off the rebuildable
 legacy mirrors one card at a time without disturbing anything V1 serves today.
 
-The package holds **two** surfaces, split so that each one's guarantee is checkable in one
+The package holds **three** surfaces, split so that each one's guarantee is checkable in one
 file. `routes.py` + `repository.py` are the read boundary; `command_routes.py` +
 `command_repository.py` are the human-review command boundary that records durable decisions
-about staged evidence. Four properties hold by construction:
+about staged evidence; `case_command_routes.py` + `case_command_repository.py` are the
+commercial-case command boundary, which runs the case that follows one. The two write
+boundaries share `command_core.py` — one transaction, one receipt, one event stream, one
+dispatch — rather than a copy of it. Four properties hold by construction:
 
 * **The read boundary cannot write.** Every query in `repository.py` runs inside `begin read
   only` as `origenlab_api`, a role with no membership in `origenlab_owner`, and a test over
@@ -28,6 +31,10 @@ about staged evidence. Four properties hold by construction:
 
 from __future__ import annotations
 
+from origenlab_api.v2.case_command_repository import V2CaseCommandRepository
+from origenlab_api.v2.case_command_routes import case_command_router
+from origenlab_api.v2.case_commands import CASE_COMMAND_NAMES
+from origenlab_api.v2.command_core import CommandTransaction
 from origenlab_api.v2.command_repository import V2CommandRepository
 from origenlab_api.v2.command_routes import command_router
 from origenlab_api.v2.commands import COMMAND_NAMES, CommandRefused
@@ -45,17 +52,21 @@ from origenlab_api.v2.repository import V2Repository, clamp_limit
 from origenlab_api.v2.routes import router
 
 __all__ = [
+    "CASE_COMMAND_NAMES",
     "COMMAND_NAMES",
     "CommandRefused",
+    "CommandTransaction",
     "IdentityMisconfigured",
     "IdentityPort",
     "IdentityRefused",
     "JwksVerifier",
     "LocalDevIdentity",
     "OperatorIdentity",
+    "V2CaseCommandRepository",
     "V2CommandRepository",
     "V2Repository",
     "build_identity_port",
+    "case_command_router",
     "clamp_limit",
     "command_router",
     "is_loopback_dsn",

@@ -546,6 +546,25 @@ it fails rather than being discovered later by `verify`. It needs
 `cleanroom_db.sh api-login` to have been run, because it deliberately does not run as
 `postgres`. It records nothing: after it, `verify` still passes at 41 probes.
 
+**Simulating a whole commercial case.** The six case commands (docs/STATUS.md §2.7.17) are
+easier to argue about as a finished case than as six rule lists. This runs one end to end —
+a requesting institution, Hielscher as supplier *and* manufacturer on the same case, one
+evidence link and one equipment interest — and prints it:
+
+```bash
+apps/api/.venv/bin/python supabase/scripts/simulate_commercial_case.py
+```
+
+Every fixture in it is **invented** (reserved `.invalid` domains; the only real name is
+Hielscher, which is on the public approved-brand list and is there precisely to show that an
+approved supplier is never turned into a customer by appearing on a case). Every row it
+writes goes into a disposable `origenlab_test_<hex>` database it creates and drops, and the
+commands run there as `origenlab_api`. It reads nothing from any real database. It
+fingerprints `origenlab_clean` before and after, read only, and fails loudly if the two
+differ — so "this did not happen in the clean room" is measured rather than promised. Like
+the rehearsal, it needs `cleanroom_db.sh api-login`. `--keep` leaves the disposable database
+for inspection.
+
 **The database name is a literal.** `build --force` drops a database, so the name comes from
 the `OL_CLEAN_DBNAME` constant in `supabase/scripts/lib/local_target.sh` and from nowhere else
 — not an argument, not an environment variable, not a config file. The guard refuses to

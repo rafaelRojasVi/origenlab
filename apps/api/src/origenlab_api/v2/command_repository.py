@@ -25,15 +25,19 @@ obeys four rules, and each is structural rather than remembered:
 
 The role is `origenlab_api`, with no membership in `origenlab_owner`, so RLS and the per-verb
 grants constrain these writes exactly as they will in production.
+
+The four mechanisms above are not implemented here. They are `CommandTransaction` in
+`command_core.py`, shared with the commercial-case commands, because two implementations of
+"a refused command writes nothing at all" is one more than can be kept honest. This module is
+the evidence-review *meaning*: which rows a command reads, what it refuses, and what it
+writes.
 """
 
 from __future__ import annotations
 
-import json
-from collections.abc import Iterator
-from contextlib import contextmanager
 from typing import Any
 
+from origenlab_api.v2.command_core import CommandTransaction, json_payload
 from origenlab_api.v2.commands import (
     ATTACH_CONTACT_ADDRESS,
     ATTRIBUTE_SENDER_ORGANIZATION,
@@ -48,138 +52,14 @@ from origenlab_api.v2.commands import (
 )
 from origenlab_api.v2.identity import OperatorIdentity
 
-#: Evidence review reads a handful of rows and writes a handful. A command that has not
-#: finished in this long is stuck on a lock, and failing is better than holding one.
-DEFAULT_COMMAND_TIMEOUT_MS = 15_000
-
 #: Source-record states a command will act on. A `reviewed` or `promoted` record has already
 #: been decided and a `rejected` one was thrown out; re-deciding either silently would bury
 #: the earlier decision instead of contradicting it out loud.
 ACTIONABLE_REVIEW_STATUSES: tuple[str, ...] = ("pending",)
 
 
-def _json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
-
-
-class V2CommandRepository:
-    """The four evidence-review commands, each in one transaction."""
-
-    def __init__(
-        self,
-        connect: Any,
-        dsn: str,
-        statement_timeout_ms: int = DEFAULT_COMMAND_TIMEOUT_MS,
-    ) -> None:
-        self._connect = connect
-        self._dsn = dsn
-        self._statement_timeout_ms = statement_timeout_ms
-
-    # ------------------------------------------------------------------ the transaction
-
-    @contextmanager
-    def _write(self) -> Iterator[Any]:
-        """One read-write transaction, committed only if the whole command succeeded.
-
-        The commit and the rollback are both explicit. Relying on the driver's context
-        manager to commit on the way out would make "what happens when a handler raises"
-        depend on which driver is installed, and that is precisely the behaviour rule 1
-        above is about.
-        """
-        with self._connect(self._dsn, autocommit=False) as conn:
-            with conn.cursor() as cur:
-                cur.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
-                try:
-                    yield cur
-                except BaseException:
-                    conn.rollback()
-                    raise
-                conn.commit()
-
-    def _row(self, cur: Any) -> dict[str, Any] | None:
-        row = cur.fetchone()
-        if row is None:
-            return None
-        return dict(zip([d[0] for d in cur.description], row, strict=True))
-
-    # ------------------------------------------------------------------ idempotency
-
-    def _claim_receipt(
-        self,
-        cur: Any,
-        operator: OperatorIdentity,
-        idempotency_key: str,
-        command_name: str,
-        digest: str,
-    ) -> tuple[str, dict[str, Any] | None]:
-        """Claim the key, or hand back what the first call already answered.
-
-        `insert ... on conflict do nothing` is the claim, and it is atomic: two concurrent
-        requests carrying one key cannot both proceed, because exactly one of them inserts.
-        The loser reads the existing receipt and gets one of three answers — the stored
-        response (a replay), a 409 because the key was reused for a *different* request, or
-        a 409 because the first call is still running.
-        """
-        cur.execute(
-            """
-            insert into platform.command_receipt
-                (operator_id, idempotency_key, command_name, request_digest, status)
-            values (%s, %s, %s, %s, 'in_progress')
-            on conflict (operator_id, idempotency_key) do nothing
-            returning id::text as id
-            """,
-            (operator.operator_id, idempotency_key, command_name, digest),
-        )
-        claimed = self._row(cur)
-        if claimed is not None:
-            return claimed["id"], None
-
-        cur.execute(
-            """
-            select id::text as id, command_name, request_digest, status, response_body
-              from platform.command_receipt
-             where operator_id = %s and idempotency_key = %s
-            """,
-            (operator.operator_id, idempotency_key),
-        )
-        existing = self._row(cur)
-        if existing is None:  # pragma: no cover - the conflict says the row is there
-            raise CommandRefused(409, "idempotency_conflict", "the idempotency key is in use")
-
-        if existing["command_name"] != command_name or existing["request_digest"] != digest:
-            raise CommandRefused(
-                409,
-                "idempotency_key_reused",
-                "this Idempotency-Key was already used for a different request; "
-                "a new decision needs a new key",
-            )
-        if existing["status"] == "completed":
-            body = existing["response_body"]
-            if isinstance(body, str):  # pragma: no cover - driver-dependent jsonb decoding
-                body = json.loads(body)
-            return existing["id"], {**body, "replayed": True}
-        if existing["status"] == "in_progress":
-            raise CommandRefused(
-                409,
-                "command_in_progress",
-                "a command with this Idempotency-Key is still running",
-            )
-        raise CommandRefused(
-            409,
-            "command_already_failed",
-            "a command with this Idempotency-Key failed; retry with a new key",
-        )
-
-    def _complete_receipt(self, cur: Any, receipt_id: str, response: dict[str, Any]) -> None:
-        cur.execute(
-            """
-            update platform.command_receipt
-               set status = 'completed', response_status = 200,
-                   response_body = %s::jsonb, completed_at = now()
-             where id = %s
-            """,
-            (_json(response), receipt_id),
-        )
+class V2CommandRepository(CommandTransaction):
+    """The five evidence-review commands, each in one transaction."""
 
     # ------------------------------------------------------------------ shared reads
 
@@ -256,75 +136,7 @@ class V2CommandRepository:
             )
         return assertion
 
-    def _live_organization(self, cur: Any, organization_id: str) -> dict[str, Any]:
-        cur.execute(
-            """
-            select id::text as id, name, kind, confirmation, version,
-                   merged_into_organization_id::text as merged_into_organization_id
-              from crm.organization
-             where id = %s
-               for update
-            """,
-            (organization_id,),
-        )
-        organization = self._row(cur)
-        if organization is None:
-            raise CommandRefused(404, "organization_not_found", "no such organization")
-        if organization["merged_into_organization_id"] is not None:
-            raise CommandRefused(
-                409,
-                "organization_merged",
-                "that organization has been merged into another; decide against the survivor",
-            )
-        return organization
-
     # ------------------------------------------------------------------ the audit stream
-
-    def _append_event(
-        self,
-        cur: Any,
-        *,
-        aggregate_kind: str,
-        aggregate_id: str,
-        event_type: str,
-        payload: dict[str, Any],
-        operator: OperatorIdentity,
-        receipt_id: str,
-    ) -> str:
-        """One row on `crm.domain_event`, with the next sequence for its aggregate.
-
-        `seq` is computed in the same statement that inserts it. If two transactions ever
-        reach the same aggregate at once, the unique `(aggregate_kind, aggregate_id, seq)`
-        makes one of them fail rather than letting both claim the same position in the
-        stream — an audit trail with a duplicated position is not an audit trail.
-        """
-        cur.execute(
-            """
-            insert into crm.domain_event
-                (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload,
-                 actor_kind, actor_operator_id, command_receipt_id)
-            values (
-                %(aggregate_kind)s, %(aggregate_id)s,
-                (select coalesce(max(seq), 0) + 1
-                   from crm.domain_event
-                  where aggregate_kind = %(aggregate_kind)s and aggregate_id = %(aggregate_id)s),
-                %(event_type)s, 1, %(payload)s::jsonb,
-                'operator', %(operator_id)s, %(receipt_id)s
-            )
-            returning id::text as id
-            """,
-            {
-                "aggregate_kind": aggregate_kind,
-                "aggregate_id": aggregate_id,
-                "event_type": event_type,
-                "payload": _json(payload),
-                "operator_id": operator.operator_id,
-                "receipt_id": receipt_id,
-            },
-        )
-        row = self._row(cur)
-        assert row is not None  # noqa: S101 - `returning` on a successful insert
-        return row["id"]
 
     def _resolve_assertion(
         self,
@@ -1001,32 +813,3 @@ class V2CommandRepository:
         ATTACH_CONTACT_ADDRESS: _attach_contact_address,
         ATTRIBUTE_SENDER_ORGANIZATION: _attribute_sender_organization,
     }
-
-    # ------------------------------------------------------------------ the entry point
-
-    def execute(
-        self,
-        *,
-        command_name: str,
-        operator: OperatorIdentity,
-        fields: dict[str, Any],
-        idempotency_key: str,
-        digest: str,
-    ) -> dict[str, Any]:
-        """Run one command, or replay the one this key already ran."""
-        handler = self._HANDLERS.get(command_name)
-        if handler is None:  # pragma: no cover - the router names the command, not the client
-            raise CommandRefused(404, "unknown_command", f"no such command '{command_name}'")
-
-        with self._write() as cur:
-            receipt_id, replay = self._claim_receipt(
-                cur, operator, idempotency_key, command_name, digest
-            )
-            if replay is not None:
-                return replay
-            response = handler(self, cur, operator, fields, receipt_id)
-            response["idempotency_key"] = idempotency_key
-            response["command_receipt_id"] = receipt_id
-            response["replayed"] = False
-            self._complete_receipt(cur, receipt_id, response)
-            return response

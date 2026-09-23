@@ -969,19 +969,33 @@ describe("V2 durable read boundary allowlist", () => {
     }
   });
 
-  it("keeps the five real V2 command routes unreachable through this Worker", async () => {
-    // The command boundary now EXISTS in apps/api: POST /v2/commands/* records durable human
-    // decisions about staged evidence. Building it and letting a browser reach it are two
-    // separate decisions, and only the first has been taken. Until the second is taken
-    // deliberately, the Worker forwards neither the method nor the path -- so the dashboard's
-    // review workspace stays a preview by construction rather than by discipline.
+  it("keeps the eleven real V2 command routes unreachable through this Worker", async () => {
+    // The command boundary EXISTS in apps/api: POST /v2/commands/* records durable human
+    // decisions -- five about staged evidence, and six about a commercial case, which now
+    // include opening one, naming who is asking, and moving it through its stages. Building
+    // that boundary and letting a browser reach it are two separate decisions, and only the
+    // first has been taken. Until the second is taken deliberately, the Worker forwards
+    // neither the method nor the path -- so the operator workspace stays a preview by
+    // construction rather than by discipline.
+    //
+    // The list is written out in full on purpose. A route added to apps/api and forgotten
+    // here would be forgotten silently; a route added here that does not exist costs one
+    // redundant assertion, which is the cheaper mistake.
     const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
     for (const path of [
+      // evidence review
       "/v2/commands/keep-evidence-pending",
       "/v2/commands/confirm-organization",
       "/v2/commands/create-organization",
       "/v2/commands/attach-contact-address",
       "/v2/commands/attribute-sender-organization",
+      // the commercial case
+      "/v2/commands/open-commercial-case",
+      "/v2/commands/link-case-evidence",
+      "/v2/commands/add-case-organization",
+      "/v2/commands/set-case-organization-role",
+      "/v2/commands/record-case-interest",
+      "/v2/commands/advance-case-stage",
     ]) {
       expect(isAllowedPostPath(path)).toBe(false);
       expect(isAllowedUpstreamPath(path)).toBe(false);

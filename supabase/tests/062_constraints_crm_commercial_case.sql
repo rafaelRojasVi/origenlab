@@ -18,7 +18,7 @@ create extension if not exists pgtap with schema extensions;
 -- Fixture (rolled back): the owner may call pgTAP for the duration of this transaction.
 grant usage on schema extensions to origenlab_owner;
 set role origenlab_owner;
-select plan(63);
+select plan(69);
 
 -- ── fixtures ───────────────────────────────────────────────────────────────────────────────
 insert into platform.operator (id, auth_user_id, email_norm, display_name, role, status) values
@@ -87,10 +87,19 @@ select throws_ok($$ insert into crm.opportunity_organization
   (opportunity_id, organization_id, role, valid_from, confirmation, confirmed_by_operator_id)
   values ('10000000-0000-4000-8000-0000000000b1', '10000000-0000-4000-8000-0000000000a3', 'funder', '2026-01-01', 'guessed', '10000000-0000-4000-8000-000000000001') $$,
   '23514', null, 'opportunity_organization: confirmation ∈ {machine_proposed, confirmed}');
-select throws_ok($$ insert into crm.opportunity_organization
+-- valid_to >= valid_from, relaxed from `>` by 20260922200000: a reading opened and withdrawn
+-- the same day is a true sentence, and until then it was unrepresentable — which made
+-- §3.6.1's own correction procedure ("close valid_to and open the right row") impossible on
+-- the day a row was created, which is when almost every correction happens. The zero-length
+-- daterange overlaps nothing, so the exclusion constraint is unaffected either way.
+select lives_ok($$ insert into crm.opportunity_organization
   (opportunity_id, organization_id, role, valid_from, valid_to, confirmation, confirmed_by_operator_id)
   values ('10000000-0000-4000-8000-0000000000b1', '10000000-0000-4000-8000-0000000000a3', 'funder', '2026-01-01', '2026-01-01', 'confirmed', '10000000-0000-4000-8000-000000000001') $$,
-  '23514', null, 'opportunity_organization: valid_to > valid_from');
+  'opportunity_organization: a reading may be opened and withdrawn on the same day');
+select throws_ok($$ insert into crm.opportunity_organization
+  (opportunity_id, organization_id, role, valid_from, valid_to, confirmation, confirmed_by_operator_id)
+  values ('10000000-0000-4000-8000-0000000000b1', '10000000-0000-4000-8000-0000000000a3', 'purchasing_agent', '2026-01-01', '2025-12-31', 'confirmed', '10000000-0000-4000-8000-000000000001') $$,
+  '23514', null, 'opportunity_organization: valid_to >= valid_from');
 
 -- Several concurrent roles for one institution on one case; the same role may not overlap itself.
 select lives_ok($$ insert into crm.opportunity_organization
@@ -152,14 +161,40 @@ select throws_ok($$
    where id = '10000000-0000-4000-8000-0000000000b3';
   set constraints all immediate;
 $$, 'P0001', null, 'agreement: the case customer and the requesting institution are the same institution');
+-- Since 20260922200000 a case is *opened* at `lead` and at no other stage, so the `qualified`
+-- rules below are reached by moving a case rather than by inserting one already there — which
+-- is also the only way a real case ever reaches them.
+select throws_ok($$ insert into crm.opportunity (title, stage, owner_operator_id, organization_id)
+  values ('Calificado de nacimiento', 'qualified', '10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-0000000000a1') $$,
+  'P0001', null, 'opportunity: a case is opened at `lead` and never at a later stage');
 select throws_ok($$
-  insert into crm.opportunity (title, stage, owner_operator_id, organization_id)
-    values ('Calificado sin solicitante', 'qualified', '10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-0000000000a1');
+  update crm.opportunity set organization_id = '10000000-0000-4000-8000-0000000000a1'
+   where id = '10000000-0000-4000-8000-0000000000b3';
+  update crm.opportunity set stage = 'qualifying' where id = '10000000-0000-4000-8000-0000000000b3';
+  update crm.opportunity set stage = 'qualified' where id = '10000000-0000-4000-8000-0000000000b3';
   set constraints all immediate;
 $$, 'P0001', null, 'agreement: a case cannot reach qualified without a confirmed requesting institution');
-select throws_ok($$ insert into crm.opportunity (title, stage, owner_operator_id)
-  values ('Calificado sin institución', 'qualified', '10000000-0000-4000-8000-000000000001') $$,
-  '23514', null, 'opportunity: the shipped organization-required-from-qualified rule is untouched');
+-- b1 has institutions on it (mentioned, supplier, manufacturer) and no requesting one, so its
+-- organization_id is null: the state §3.6.5 says `lead` and `qualifying` may sit in forever.
+select lives_ok($$ update crm.opportunity set stage = 'qualifying'
+  where id = '10000000-0000-4000-8000-0000000000b1' $$,
+  'opportunity: a case with no requesting institution may still be qualifying');
+select throws_ok($$ update crm.opportunity set stage = 'qualified'
+  where id = '10000000-0000-4000-8000-0000000000b1' $$,
+  '23514', null, 'opportunity: the organization-required-from-qualified rule still refuses qualified');
+-- ...and the two exits stay reachable, which before 20260922200000 they were not: the same
+-- CHECK caught `lost` and `abandoned`, so a case that never found out who was asking could be
+-- opened and then never closed.
+select lives_ok($$ update crm.opportunity
+  set stage = 'abandoned', closed_at = now(), close_reason = 'nunca respondieron'
+  where id = '10000000-0000-4000-8000-0000000000b1' $$,
+  'opportunity: a case that never found its requester can still be abandoned');
+select throws_ok($$ update crm.opportunity
+  set stage = 'lead', closed_at = null, close_reason = null
+  where id = '10000000-0000-4000-8000-0000000000b1' $$,
+  'P0001', null, 'opportunity: a terminal case is never revived');
+select throws_ok($$ delete from crm.opportunity where id = '10000000-0000-4000-8000-0000000000b1' $$,
+  'P0001', null, 'opportunity: a case is never deleted');
 select lives_ok($$
   update crm.opportunity_organization set valid_to = '2026-03-01'
    where opportunity_id = '10000000-0000-4000-8000-0000000000b2' and role = 'requesting_institution';

@@ -89,8 +89,9 @@ select set_eq(
         'crm.opportunity_organization_exception_immutable',
         'crm.opportunity_requesting_institution_agrees',
         'crm.opportunity_interest_manufacturer_agrees',
-        'crm.opportunity_evidence_link_immutable'],
-  'exactly the three Slice 0 helper functions and the five commercial-case guards exist');
+        'crm.opportunity_evidence_link_immutable',
+        'crm.opportunity_stage_guard'],
+  'exactly the three Slice 0 helper functions, the five commercial-case guards and the stage guard exist');
 
 -- `public` holds nothing.
 select is(

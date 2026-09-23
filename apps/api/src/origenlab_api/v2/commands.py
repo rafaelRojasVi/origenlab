@@ -160,24 +160,36 @@ class CommandRefused(Exception):
         self.message = message
 
 
-def _uuid(value: str, what: str) -> str:
+def as_uuid(value: str, what: str) -> str:
+    """A UUID, or a refusal that names the field rather than the exception.
+
+    Public because the commercial-case commands parse the same way. One parser means one
+    answer to "what does this boundary do with a malformed id", in every command.
+    """
     try:
         return str(uuid.UUID(value))
     except (ValueError, AttributeError, TypeError):
         raise CommandRefused(422, "malformed_identifier", f"{what} is not a UUID") from None
 
 
-class _CommandBody(BaseModel):
-    """What every command says, whatever it decides.
+_uuid = as_uuid
+
+
+class DecisionBody(BaseModel):
+    """What every durable decision says, whatever it is about.
 
     `note` is required and non-blank on purpose. A durable decision whose reason is "" is a
-    decision nobody can audit later, and this queue exists precisely because the machine
+    decision nobody can audit later, and this boundary exists precisely because the machine
     could not justify itself.
+
+    `extra="forbid"` is load-bearing rather than tidy. It is why no command in this package
+    can be handed a price, an amount, a currency, a consent flag or a campaign id by a caller
+    who guessed a field name: an unknown key is a 422, not a value that is quietly dropped
+    and quietly assumed to have been honoured.
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    source_record_id: str
     note: Annotated[str, Field(min_length=1, max_length=2000)]
 
     @field_validator("note")
@@ -186,6 +198,12 @@ class _CommandBody(BaseModel):
         if not value.strip():
             raise ValueError("note must not be blank")
         return value
+
+
+class _CommandBody(DecisionBody):
+    """What every evidence-review command says: the record it is about, and why."""
+
+    source_record_id: str
 
 
 class KeepEvidencePendingBody(_CommandBody):
@@ -338,7 +356,7 @@ def require_idempotency_key(raw: str | None) -> str:
     return key
 
 
-def request_digest(command_name: str, body: _CommandBody) -> str:
+def request_digest(command_name: str, body: BaseModel) -> str:
     """A stable SHA-256 over the command and its request.
 
     Canonical JSON — sorted keys, no incidental whitespace — so the same request digests the

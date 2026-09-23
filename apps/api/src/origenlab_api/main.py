@@ -112,13 +112,22 @@ def _mount_v2_command_boundary(app: FastAPI, settings: Settings, dsn: str) -> No
 
     import psycopg
 
+    from origenlab_api.v2.case_command_repository import V2CaseCommandRepository
+    from origenlab_api.v2.case_command_routes import case_command_router
     from origenlab_api.v2.command_repository import V2CommandRepository
     from origenlab_api.v2.command_routes import command_router
 
     app.state.v2_command_repository = V2CommandRepository(
         psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
+    # The commercial-case commands run on the same database, as the same role, behind the
+    # same switch. A second repository rather than a second connection pool: both are
+    # `CommandTransaction`, and neither knows anything the other does not.
+    app.state.v2_case_command_repository = V2CaseCommandRepository(
+        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
     app.include_router(command_router)
+    app.include_router(case_command_router)
 
 
 app = create_app()

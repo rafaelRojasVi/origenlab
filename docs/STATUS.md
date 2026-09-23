@@ -1114,7 +1114,7 @@ justified).
 | The requesting institution | at most one current per case (partial unique index), always `confirmed` with the operator named (CHECK), and it must equal `crm.opportunity.organization_id` in **both directions** — a DEFERRABLE INITIALLY DEFERRED constraint trigger on both tables, so one command may write the pair in either order. `qualified` therefore now means *an operator decided who is asking*, enforced by the database rather than by the code |
 | The supplier exception | a registered supplier or manufacturer is **refused** as requesting institution by a trigger, overridable only by the all-or-none triple (operator, non-blank motive, timestamp), which is confined to that role and **can never be rewritten or erased**. It opens no `prospect` or `customer` relationship and touches no marketing permission |
 | Marketing separation | no foreign key runs between the three tables and `outbound.*` in either direction, and none of them carries a consent, opt-in, subscription, audience or campaign column. Both are asserted, not assumed |
-| Commands | **none.** No boundary writes these tables, and no `crm.domain_event` type was added: an event nothing can emit would be a promise, not a contract |
+| Commands | **none in this change**, by the stated rule that an event nothing can emit is a promise rather than a contract. Six commands and the five event types they emit landed the same day — §2.7.17 |
 | Rows | **zero in all three, and zero anywhere.** No case, institution, interest, evidence link or exception was inserted — the clean room's three new probes assert it on every build |
 
 | Evidence | Result |
@@ -1123,9 +1123,84 @@ justified).
 | Guards are load-bearing | each of the eight new rules was re-checked by dropping it in a rolled-back transaction and watching the previously-refused statement succeed. A guard nobody has made fail is a guard nobody has tested |
 | `verify_chain.sh --database postgres` | all checks pass: 36 tables, `crm=19`, 139 policies, 0 foreign keys without a covering index, 0 `SECURITY DEFINER` |
 | `supabase db lint` / `db advisors` | lint clean; advisors report 122 findings, **all `INFO`** (unused index on an empty database), `--fail-on warn` exits 0 |
-| Clean room | **rebuilt from nothing, twice in succession**, both runs ending at **41 probes, all exact** — migrations 23, head `20260922170000`, the three new tables `0`, and every historical count unchanged (`crm.organization` 1,812, `crm.contact_point` 9,460, `crm.domain_event` 22,544, `assertion` 11,485, `contact_control` 10,588) |
+| Clean room | **rebuilt from nothing, twice in succession**, both runs ending at **41 probes, all exact** — migrations 23, head `20260922170000`, the three new tables `0`, and every historical count unchanged (`crm.organization` 1,812, `crm.contact_point` 9,460, `crm.domain_event` 22,544, `assertion` 11,485, `contact_control` 10,588). The declared baseline in `supabase/cleanroom/expected_counts.json` moved to migrations 24, head `20260922200000` with §2.7.17, and no count changed because that migration adds no table — **the rebuild that would confirm it has not been run on this branch**; `verify` was not re-run either, and the clean room was only read |
 | `cleanroom_failure_tests.sh` | 29 passed, 0 failed |
 | Untouched | `origenlab_dev` (quarantined, never opened) and the hosted project (frozen, §2.8). The Slice 0 audit baseline `supabase/audit/baselines/slice0.json` deliberately stays at 33 tables: it describes the frozen hosted foundation, not this branch's head |
+
+### 2.7.17 The commercial case, as six commands — built 2026-09-22, unwired
+
+The tables of §2.7.16 could hold a case and nothing could write one. These are the six
+commands that do, and the two database rules they are not allowed to be the only enforcer of.
+
+| Item | Value |
+|---|---|
+| Migration | `supabase/migrations/20260922200000_slice3_commercial_case_commands.sql` — **no table, no column**; the inventory stays at **36** and `crm` at 19 |
+| Boundary | `apps/api/src/origenlab_api/v2/case_commands.py` (the request shapes and their refusals), `case_command_repository.py` (the transactional half), `case_command_routes.py` (six `POST /v2/commands/*`) |
+| Shared, not copied | `command_core.py` — the transaction, the receipt, the event stream and the dispatch were extracted from `command_repository.py` and are now one implementation for both command families. Two copies of *"a refused command writes nothing at all"* is one more than can be kept honest |
+
+**The six commands.**
+
+| Command | What it records | The refusal it turns on |
+|---|---|---|
+| `open_commercial_case` | a case at `lead`, **and** the document that is the reason it exists, in one transaction | a case with nothing behind it is not refused by a check — the origin record is a required field, so it is unrequestable |
+| `link_case_evidence` | one typed subject (record, assertion, message or notice) and what it means for the case, `contradicts` included | `evidence_already_linked`; a subject that does not exist is a 404, because this command creates no evidence |
+| `add_case_organization` | an institution and its part on this case; for `requesting_institution`, `crm.opportunity.organization_id` moves with it | `supplier_exception_required` — and `supplier_exception_is_not_needed` for a motive nobody needed, which would read later as a supplier OrigenLab sold to |
+| `set_case_organization_role` | a `machine_proposed` reading confirmed in place, **or** the current reading closed and a new part opened — both in one transaction | `role` is not in the runtime role's UPDATE grant, so a part **cannot** be edited even by this code; `case_organization_role_unchanged` refuses a confirmation that decides nothing |
+| `record_case_interest` | what the case is seeking: product, manufacturer, model text, a quantity | a manufacturer the catalogue contradicts; and `extra="forbid"` makes a request carrying `unit_price` or `currency` a 422 rather than a dropped field |
+| `advance_case_stage` | the move, with `closed_at` and the motive when it ends the case | `stage_requires_a_confirmed_requesting_institution`, `closing_a_case_needs_a_motive`, `won_requires_a_quote`, `case_is_closed` |
+
+**Two rules the database now holds too.**
+
+| Rule | Why it is not only in Python |
+|---|---|
+| The stage machine ([`WORKFLOWS.md`](WORKFLOWS.md) §1.1) | it was a table in a document and a Slice 0 note saying *Slice 2 command trigger*. `crm.opportunity_stage_guard` carries it: a case is opened at `lead` and at no other stage, moves only along the table, and once terminal is refused every target. `advance_case_stage` refuses first, by name. A test reads the transition table **out of the migration** and compares it pair by pair with the Python one, so the two statements of one rule cannot disagree quietly |
+| The audit vocabulary | `crm.domain_event` has a closed `aggregate_kind` list, a closed `event_type` list and a validator tying one to the other. Three aggregate kinds and **five** event types were added — `case_organization.added` / `.role_confirmed` / `.ended`, `case_interest.added`, `case_evidence.linked` — and not one more: `case_interest.withdrawn` and `case_evidence.unlinked` stay out because no command writes them. The four `opportunity.*` types are reused rather than duplicated into a `case.*` family, because a case **is** an opportunity |
+
+**Optimistic concurrency stayed at the boundary.** A trigger requiring `version` to advance on
+every `crm.opportunity` UPDATE was written and then removed: it would have put the owner,
+every migration and every future data repair under an application's bookkeeping rule. Every
+case command reads a version, shows it, and writes under `WHERE version = %s`; a test drives
+two **live, overlapping transactions** at one case and asserts exactly one wins.
+
+<a id="m-status-abandon-defect"></a>
+**A defect found by running the commands, not by reading the constraint.**
+`opportunity_organization_required_from_qualified` read `stage IN ('lead', 'qualifying') OR
+organization_id IS NOT NULL` — which caught `lost` and `abandoned` too. Those are exits
+available from `lead` itself, not stages onward from `qualified`, and a case that never found
+out who was asking is precisely the case an operator abandons. **As shipped, such a case
+could be opened and then never closed**: its only reachable states were `lead` and
+`qualifying`, forever. Nothing had noticed because nothing had ever moved a case. The rule
+now names the two exits; `won` keeps the requirement. Corrected in the same migration, with
+the failing move as a test.
+
+**A second correction, smaller and in the same family.**
+`opportunity_organization_validity` demanded `valid_to > valid_from`, so a role row opened
+today could not be closed today — and §3.6.1's own correction procedure is *close `valid_to`
+and open the right row*, which an operator almost always performs within the hour. The bound
+is now `>=`. A zero-length `daterange` overlaps nothing, so the exclusion constraint is
+unaffected, and the withdrawn reading stays readable forever.
+
+| Evidence | Result |
+|---|---|
+| `apps/api` pytest | **1,333 passed, 183 skipped** in `validate.sh` mode; **206 passed** for the two V2 boundary modules with a migrated disposable database, of which **92** are the new case suite (**31** of them database-backed) |
+| Slice 0 evidence suite ([`OPERATIONS.md`](OPERATIONS.md) §4.1) | run whole on a fresh `supabase db reset --local`: **pgTAP 530 across 13 files, all pass**; `verify_direct_logins.sh` **51 passed, 0 failed**; `replay_evidence.sh` — two resets reproduce identical schema, catalogue and migration list (7 schemas, 36 tables, 139 policies); `evidence_tool_failure_tests.sh` **30 passed, 0 failed**; `db lint` clean; `db advisors --fail-on warn` exits 0 with no `warn` or `error`; `cleanroom_failure_tests.sh` **29 passed, 0 failed** |
+| pgTAP, by file | the new `063_commercial_case_commands.sql` at **47**; `062` 63 → **69**; `060` 105 → **107**; `010` unchanged at 29. The three older files moved because two shipped rules changed under them, not because an assertion was weakened — each edit replaced a statement the new triggers now refuse first with one that exercises the same CHECK by moving a case instead of inserting one already at that stage |
+| `verify_chain.sh --database postgres` | all checks pass: ledger matches all **24** migrations, 36 tables, `crm=19`, **139** policies, 0 foreign keys without a covering index, **0 SECURITY DEFINER**, and the trigger inventory now names `crm.opportunity.opportunity_stage_guard` and `opportunity_never_deleted` |
+| `slice0_audit.sh --mode local` | **LOCAL_FAIL, unchanged in kind.** It blocks on a04, a05, a08, a09, a10 — tables 33 vs 36, policies 127 vs 139, foreign keys 102 vs 118, functions now 9 vs 3. This is the **deliberate** drift §2.7.16 recorded: `supabase/audit/baselines/slice0.json` describes the frozen hosted foundation, not this branch's head. This change moves only a05, from 8 to 9, inside a check that was already blocking. `audit_failure_tests.sh` (76/4) fails only its two LOCAL_PASS controls, for the same reason |
+| Guards are load-bearing | each of the five new or corrected rules was re-checked by dropping it in a rolled-back transaction and watching the previously-refused statement succeed: the stage guard (a terminal case revives), the never-deleted trigger (a case deletes), the corrected organization rule (under the **old** text, a case with no institution could not be abandoned), the relaxed validity bound (under the old bound, a same-day close was refused), and the event validator (a case event files under the wrong aggregate) |
+| `apps/dashboard` vitest | 1,250 passed across 127 files — **unchanged**; no dashboard code was touched |
+| `apps/dashboard-proxy` vitest | 132 passed. The allowlist test now names **all eleven** V2 command paths and asserts the Worker forwards neither the method nor the path |
+| Atomicity, proven | a test makes `open_commercial_case`'s **second** half fail and asserts the case the first half would have created does not exist, and the key is still free. A second test forces a refusal in a two-write command and asserts the row count, the event count, the receipt count, `organization_id` and `version` are all byte-identical |
+| Marketing separation, measured | a test counts **thirteen** tables — `outbound.campaign`, `campaign_recipient`, `contact_control`, `send_attempt`, `crm.person`, `affiliation`, `organization_relationship`, `organization_domain`, `contact_point`, `quote`, `task`, `activity`, `opportunity_participant` — before and after running every command in the vocabulary, and asserts none moved. A second test reads the repository source and asserts it never names `outbound.` at all |
+| Simulation | `supabase/scripts/simulate_commercial_case.py` — one whole case in a disposable database: a fictitious university as requesting institution, **Hielscher as supplier *and* manufacturer on the same case and never its customer**, an `origin` link plus a `supports_interest` link, one `UP200Ht` at quantity 1 with no price, a `mentioned` institution later corrected to `purchasing_agent`, ending at `qualified`. **10 receipts, 13 events, 1 refusal** (`supplier_exception_required`). The clean room was fingerprinted before and after, read only: **unchanged** |
+
+**What is still not decided.** No command has been run against real evidence.
+`crm.opportunity`, `crm.opportunity_organization`, `crm.opportunity_interest` and
+`crm.opportunity_evidence` are **empty**, `platform.command_receipt` is empty, all 31 staged
+records are `pending`. `apps/dashboard-proxy` allows no POST under `/v2`, every button is
+`disabled`, and the routes are mounted only behind `ORIGENLAB_V2_COMMANDS_ENABLED`. Nothing
+touched `origenlab_dev` (quarantined, never opened), `origenlab_clean` (read only, fingerprint
+unchanged), the hosted project (frozen, §2.8), Gmail, Drive, any campaign or any send.
 
 ### 2.7.5 Local V2 — the reconciled picture, 2026-09-21
 

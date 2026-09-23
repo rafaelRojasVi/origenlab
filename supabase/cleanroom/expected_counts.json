@@ -19,12 +19,12 @@
   ],
   "probes": {
     "migrations.count": {
-      "expect": 23,
+      "expect": 24,
       "why": "every file in supabase/migrations/, applied and recorded in the ledger. This baseline was left at 21 when the 22nd migration landed, so the first rebuild after it would have failed here rather than silently: that is the check working. origenlab_dev carries 20 recorded with the 21st's DDL already present, which is exactly the drift a clean room exists to avoid."
     },
     "migrations.head": {
-      "expect": "20260922170000",
-      "why": "slice3_crm_commercial_case, the newest migration on this branch — the three commercial-case tables."
+      "expect": "20260922200000",
+      "why": "slice3_commercial_case_commands, the newest migration on this branch — the audit vocabulary the case commands write, the stage machine as a trigger, and the corrected organization rule that had made `lost` and `abandoned` unreachable for a case with no institution. It adds no table, so every count below is unchanged by it."
     },
 
     "source_record.total": {

@@ -19,8 +19,6 @@ not a cleanup convention that could be forgotten.
 
 from __future__ import annotations
 
-import os
-import pathlib
 import uuid
 
 import pytest
@@ -690,93 +688,22 @@ def test_an_attribution_digests_differently_from_its_two_halves() -> None:
 # — and it is also why `crm.domain_event` being append-only, which refuses even the owner a
 # DELETE, costs nothing here.
 
-from protected_databases import (  # noqa: E402
-    assert_connection_is_disposable,
-    assert_not_protected,
+from v2_command_harness import (  # noqa: E402
+    RUNTIME_ROLE,
+    build_disposable_database,
+    needs_db as _needs_db,
+    runtime_dsn as _runtime_dsn,
 )
-
-_TEST_DSN = assert_not_protected(
-    os.environ.get("ORIGENLAB_V2_TEST_DSN", "").strip(),
-    variable="ORIGENLAB_V2_TEST_DSN",
-)
-_needs_db = pytest.mark.skipif(
-    not (_TEST_DSN and os.environ.get("ORIGENLAB_V2_API_TEST_DSN", "").strip()),
-    reason="ORIGENLAB_V2_TEST_DSN and ORIGENLAB_V2_API_TEST_DSN are both required",
-)
-
-#: The commands under test run as `origenlab_api`, the role a deployment actually uses, so
-#: the per-verb grants and the RLS policies are the ones being exercised. It cannot be
-#: reached by `set role`: the maintenance role holds `origenlab_api` with `set_option =
-#: false` on purpose, which is exactly the separation that makes this worth proving. So the
-#: suite needs its login, and without one the database-backed commands skip rather than
-#: quietly running as a role that can do anything.
-#:
-#: Locally that DSN is the one `supabase/scripts/dev_db.sh api-login` writes, outside Git.
-#: Only its database name is replaced; the host, role and password are used as given.
-RUNTIME_ROLE = "origenlab_api"
-_API_DSN = assert_not_protected(
-    os.environ.get("ORIGENLAB_V2_API_TEST_DSN", "").strip(),
-    variable="ORIGENLAB_V2_API_TEST_DSN",
-)
-
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
-MIGRATIONS = REPO_ROOT / "supabase" / "migrations"
-
-#: A hosted Supabase project provides `extensions` and its trusted extensions before any
-#: migration runs. A database we create ourselves does not, so the first migration's
-#: `create extension btree_gist with schema extensions` needs this first — the same platform
-#: emulation `supabase/scripts/dev_db.sh` performs, and deliberately not part of the chain.
-BOOTSTRAP = """
-create schema if not exists extensions authorization postgres;
-create extension if not exists btree_gist with schema extensions;
-"""
-
-
-def _swap_database(dsn: str, database: str) -> str:
-    base, _, _ = dsn.rpartition("/")
-    return f"{base}/{database}"
 
 
 @pytest.fixture(scope="module")
 def disposable_database():
-    """Create `origenlab_test_<hex>`, migrate it, hand it over, drop it.
+    """This module's own `origenlab_test_<hex>`, migrated and dropped around it.
 
-    Module-scoped because building the schema costs more than any test in it. Each test
-    still creates its own evidence, so they do not share state beyond an empty schema.
+    Module-scoped because building the schema costs more than any test in it. Each test still
+    creates its own evidence, so they do not share state beyond an empty schema.
     """
-    import psycopg
-
-    name = f"origenlab_test_{uuid.uuid4().hex[:8]}"
-    if not MIGRATIONS.is_dir():  # pragma: no cover - the repository always has these
-        pytest.skip("supabase/migrations is missing")
-
-    with psycopg.connect(_TEST_DSN, autocommit=True) as conn, conn.cursor() as cur:
-        cur.execute(f"create database {name}")
-
-    dsn = _swap_database(_TEST_DSN, name)
-    try:
-        with psycopg.connect(dsn, autocommit=True) as conn:
-            # Ask the server, before any statement runs, which database this actually is.
-            # The migration chain is applied below WITHOUT writing ledger rows, which is
-            # correct for a throwaway database and corrupting for a real one — on 2026-09-22
-            # `origenlab_dev` ended up carrying a migration's DDL with no ledger row to
-            # match. A name computed by string surgery is not evidence; this is.
-            reached = assert_connection_is_disposable(conn)
-            assert reached == name, (
-                f"expected to reach the disposable database {name!r}, reached {reached!r}"
-            )
-            with conn.cursor() as cur:
-                cur.execute(BOOTSTRAP)
-                for path in sorted(MIGRATIONS.glob("*.sql")):
-                    cur.execute(path.read_text(encoding="utf-8"))
-        yield dsn
-    finally:
-        with psycopg.connect(_TEST_DSN, autocommit=True) as conn, conn.cursor() as cur:
-            cur.execute(
-                "select pg_terminate_backend(pid) from pg_stat_activity where datname = %s",
-                (name,),
-            )
-            cur.execute(f"drop database if exists {name}")
+    yield from build_disposable_database()
 
 
 @pytest.fixture
@@ -840,11 +767,6 @@ def seeded(disposable_database):
             )
             state[f"{kind}_assertion_id"] = cur.fetchone()[0]
     return state
-
-
-def _runtime_dsn(disposable_database: str) -> str:
-    """The `origenlab_api` login, pointed at the disposable database."""
-    return _swap_database(_API_DSN, disposable_database.rpartition("/")[2])
 
 
 def _repo(disposable_database: str):
