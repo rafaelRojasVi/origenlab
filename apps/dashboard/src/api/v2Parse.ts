@@ -40,6 +40,8 @@ import type {
   V2Confirmation,
   V2Opportunity,
   V2Organization,
+  V2OrganizationCase,
+  V2OrganizationCaseRole,
   V2Page,
   V2Quote,
   V2ReviewSummary,
@@ -746,3 +748,35 @@ export function parseV2CommercialCaseCard(value: unknown): V2CommercialCaseCard 
 
 export const parseV2CasesPage = (value: unknown): V2Page<V2CommercialCase> =>
   parsePage(value, parseV2CommercialCase);
+
+function parseOrganizationCaseRole(value: unknown): V2OrganizationCaseRole {
+  const row = asRecord(value);
+  return {
+    opportunity_organization_id: str(row.opportunity_organization_id),
+    role: caseRole(row.role),
+    confirmation: confirmation(row.confirmation),
+    valid_from: optionalStr(row.valid_from),
+    valid_to: optionalStr(row.valid_to),
+    /*
+      Derived from `valid_to` rather than trusted from the payload. The server sends both
+      and they agree, but if they ever did not, the date is the fact and the boolean is a
+      convenience — and a part shown as current when its row has closed is the one error
+      this screen must not make.
+    */
+    is_current: optionalStr(row.valid_to) === null,
+    note: optionalStr(row.note),
+    supplier_exception_reason: optionalStr(row.supplier_exception_reason),
+  };
+}
+
+export function parseV2OrganizationCase(value: unknown): V2OrganizationCase {
+  const row = asRecord(value);
+  return {
+    ...parseV2CommercialCase(row),
+    roles: list(row.roles).map(parseOrganizationCaseRole),
+  };
+}
+
+export const parseV2OrganizationCasesPage = (
+  value: unknown,
+): V2Page<V2OrganizationCase> => parsePage(value, parseV2OrganizationCase);

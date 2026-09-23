@@ -14,6 +14,7 @@ import {
   parseV2CasesPage,
   parseV2CommercialCaseCard,
   parseV2OrganizationCard,
+  parseV2OrganizationCasesPage,
   parseV2OpportunitiesPage,
   parseV2OrganizationsPage,
   parseV2QuotesPage,
@@ -28,6 +29,7 @@ import type {
   V2EvidenceItem,
   V2EvidenceRecord,
   V2OrganizationCard,
+  V2OrganizationCase,
   V2Opportunity,
   V2Organization,
   V2Page,
@@ -61,6 +63,10 @@ export function v2ContactCardPath(contactPointId: string): string {
 
 export function v2OrganizationCardPath(organizationId: string): string {
   return `${V2_ORGANIZATIONS_PATH}/${encodeURIComponent(organizationId)}`;
+}
+
+export function v2OrganizationCasesPath(organizationId: string): string {
+  return `${v2OrganizationCardPath(organizationId)}/cases`;
 }
 
 export function v2CaseCardPath(opportunityId: string): string {
@@ -239,6 +245,26 @@ export function fetchV2Cases(
       offset: params.offset ?? 0,
     }),
   ).then(parseV2CasesPage);
+}
+
+/**
+ * Every case this institution is part of, whatever part it holds.
+ *
+ * Not a filter over `fetchV2Cases`: that list carries only the requesting institution, so
+ * crossing it in the browser would find an institution's cases only where it is the one
+ * asking, and silently drop the ones where it supplies or manufactures. The server reads
+ * `crm.opportunity_organization`, which is where participation is actually recorded.
+ */
+export function fetchV2OrganizationCases(
+  organizationId: string,
+  params: { limit?: number; offset?: number } = {},
+): Promise<V2Page<V2OrganizationCase>> {
+  return fetchJsonGet<unknown>(
+    operatorApiUrl(v2OrganizationCasesPath(organizationId), {
+      limit: params.limit ?? DEFAULT_LIMIT,
+      offset: params.offset ?? 0,
+    }),
+  ).then(parseV2OrganizationCasesPage);
 }
 
 export function fetchV2CaseCard(opportunityId: string): Promise<V2CommercialCaseCard> {

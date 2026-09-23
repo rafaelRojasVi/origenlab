@@ -418,6 +418,36 @@ export interface V2CommercialCase {
   evidence_count: number;
 }
 
+/**
+ * One part an institution holds on one case — a row of `crm.opportunity_organization`
+ * read from the institution's side rather than the case's.
+ *
+ * A closed row keeps `is_current: false` instead of disappearing: a part that ended is
+ * history, and a screen that hid it would make the audit trail invisible exactly where an
+ * operator is asking what this institution used to be on this deal.
+ */
+export interface V2OrganizationCaseRole {
+  opportunity_organization_id: string;
+  role: V2CaseOrganizationRole;
+  confirmation: V2Confirmation;
+  valid_from: string | null;
+  valid_to: string | null;
+  is_current: boolean;
+  note: string | null;
+  supplier_exception_reason: string | null;
+}
+
+/**
+ * A case an institution is part of, with the part — **plural** — it holds on it.
+ *
+ * `roles` is a list because one institution routinely holds more than one part on one
+ * case: supplier and manufacturer together is the ordinary shape of a distributed
+ * instrument deal, not an edge case. A single label would have to pick one and be wrong.
+ */
+export interface V2OrganizationCase extends V2CommercialCase {
+  roles: V2OrganizationCaseRole[];
+}
+
 export interface V2CaseOrganization {
   opportunity_organization_id: string;
   organization_id: string;

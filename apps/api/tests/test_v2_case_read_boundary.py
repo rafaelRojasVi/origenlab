@@ -49,9 +49,18 @@ from origenlab_api.v2.identity import OperatorIdentity
 def test_the_case_routes_are_get_and_nothing_else() -> None:
     """The read router stays a read router. A POST here would be a second writer."""
     case_routes = [r for r in routes.router.routes if "/cases" in getattr(r, "path", "")]
-    assert len(case_routes) == 2
+    # Three since 2026-09-23: the global list, one case, and every case one institution is
+    # part of.
+    assert len(case_routes) == 3
     for route in case_routes:
         assert set(route.methods) == {"GET"}
+    # The invariant the count above stands in for: nothing anywhere under `/v2` is
+    # anything but a GET. A new route arriving with a POST fails here, not in review.
+    assert all(
+        set(route.methods) == {"GET"}
+        for route in routes.router.routes
+        if hasattr(route, "methods")
+    )
 
 
 class _StubRepo:
@@ -324,6 +333,56 @@ def test_the_list_names_the_institution_that_is_asking(disposable_database, worl
     assert row["requesting_confirmation"] == "confirmed"
     assert row["owner_display_name"] == "Pytest Operador"
     assert row["origin_source_kind"] == "gmail_message"
+
+
+@_needs_db
+def test_an_institutions_cases_carry_every_part_it_holds_open_and_closed(
+    disposable_database, world, built_case
+):
+    """The institution's own list, and the plural it exists for.
+
+    `built_case` opened the university as `mentioned` and then changed it to
+    `requesting_institution`, which closes one row and opens another. Both come back, and
+    the closed one comes back marked — a screen that saw only the current row would show a
+    reading with no history, exactly where the audit trail matters.
+    """
+    page = _read_repo(disposable_database).organization_cases(
+        world["university_id"], limit=50, offset=0
+    )
+    assert page is not None
+    row = next(r for r in page.items if r["opportunity_id"] == built_case["opportunity_id"])
+    parts = {(p["role"], p["is_current"]) for p in row["roles"]}
+    assert ("requesting_institution", True) in parts
+    assert ("mentioned", False) in parts
+    # The list row is the same shape `/v2/cases` serves, so one card renders both.
+    assert row["requesting_organization_id"] == world["university_id"]
+
+
+@_needs_db
+def test_an_institution_named_nowhere_on_a_case_is_in_no_cases(
+    disposable_database, world, built_case
+):
+    """Participation is a part row and nothing else.
+
+    The vendor manufactures the very product this case is interested in, and it is not on
+    the case: nobody recorded it as a part. Returning it here would be the route inferring
+    a commercial relationship from a catalogue row.
+    """
+    page = _read_repo(disposable_database).organization_cases(
+        world["vendor_id"], limit=50, offset=0
+    )
+    assert page is not None
+    assert page.total == 0
+    assert page.items == []
+
+
+@_needs_db
+def test_the_cases_of_an_organization_that_does_not_exist_are_none(disposable_database):
+    absent = "00000000-0000-4000-8000-0000deadbeef"
+    assert (
+        _read_repo(disposable_database).organization_cases(absent, limit=50, offset=0)
+        is None
+    )
 
 
 @_needs_db

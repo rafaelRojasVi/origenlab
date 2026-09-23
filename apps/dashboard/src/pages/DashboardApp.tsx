@@ -6,6 +6,8 @@ import type { DashboardSection } from "../lib/dashboardNav";
 import { CatalogPage } from "./CatalogPage";
 import { ProspectosPage } from "./ProspectosPage";
 import { ContactsPage } from "./ContactsPage";
+import { Contact360Page } from "./Contact360Page";
+import { Institution360Page } from "./Institution360Page";
 import { CommercialCasePage } from "./CommercialCasePage";
 import { CrmV2Page } from "./CrmV2Page";
 import { EvidenceReviewPage } from "./EvidenceReviewPage";
@@ -61,6 +63,10 @@ function DashboardSectionView({
       return <PaymentsLogisticsPage />;
     case "contacts":
       return <ContactsPage />;
+    case "contactos":
+      return <Contact360Page />;
+    case "instituciones":
+      return <Institution360Page />;
     case "crm-v2":
       return <CrmV2Page />;
     case "revision":

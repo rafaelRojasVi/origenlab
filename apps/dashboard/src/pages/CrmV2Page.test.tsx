@@ -8,15 +8,11 @@ vi.mock("../api/v2Client", () => ({
   fetchV2Organizations: vi.fn(),
   fetchV2Prospects: vi.fn(),
   fetchV2Evidence: vi.fn(),
-  fetchV2ContactCard: vi.fn(),
-  fetchV2OrganizationCard: vi.fn(),
 }));
 
 import {
-  fetchV2ContactCard,
   fetchV2Contacts,
   fetchV2Evidence,
-  fetchV2OrganizationCard,
   fetchV2Organizations,
   fetchV2Prospects,
 } from "../api/v2Client";
@@ -58,6 +54,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  window.location.hash = "";
   vi.clearAllMocks();
 });
 
@@ -125,84 +122,24 @@ describe("CrmV2Page", () => {
     });
   });
 
-  it("opens a contact card and explains every absence rather than leaving it blank", async () => {
-    vi.mocked(fetchV2ContactCard).mockResolvedValue({
-      ...CONTACT,
-      channel_kind: "email",
-      updated_at: null,
-      organization_kind: null,
-      origin_source_kind: "migration_manifest",
-      origin_source_uri: null,
-      origin_review_status: "pending",
-      sibling_contact_points: [],
-      affiliations: [],
-      evidence: [
-        {
-          assertion_id: "a1",
-          kind: "contacted_address",
-          value_norm: "compras@uni.example",
-          resolution: "promoted",
-          resolved_kind: "contact_point",
-          ambiguity_note: null,
-          observed_at: null,
-          source_kind: "migration_manifest",
-          source_uri: null,
-          source_review_status: "pending",
-          source_is_quarantined: false,
-        },
-      ],
-      marketing: [],
-      address_controls: [],
-      counts: { evidence: 1 },
-    } as never);
-
+  it("sends a contact to Contacto 360 rather than opening a second, smaller card", async () => {
+    // The console stopped carrying its own drawer: one screen owns a contact, and it is the
+    // one that can also show the cases, the quotes and the marketing state.
     render(<CrmV2Page />);
     fireEvent.click(await screen.findByText("compras@uni.example"));
-    const drawer = await screen.findByTestId("v2-card-drawer");
-    expect(drawer.textContent).toContain("buzón de rol");
-    expect(drawer.textContent).toContain("pista de ruteo");
-    expect(screen.getAllByTestId("v2-card-evidence-row")).toHaveLength(1);
+    expect(window.location.hash).toBe(
+      "#/contactos?id=96301691-af05-51ea-82e3-05f5fae40837",
+    );
+    expect(screen.queryByTestId("v2-card-drawer")).toBeNull();
   });
 
-  it("opens an organization card and reports the true channel count, not the visible one", async () => {
-    vi.mocked(fetchV2OrganizationCard).mockResolvedValue({
-      ...ORGANIZATION,
-      legal_name: null,
-      note: null,
-      version: 1,
-      updated_at: null,
-      parent_organization_name: null,
-      merged_into_organization_id: null,
-      merged_into_organization_name: null,
-      origin_source_kind: "migration_manifest",
-      origin_source_uri: null,
-      origin_review_status: "pending",
-      contact_points: [
-        {
-          contact_point_id: "c1",
-          address: "compras@uni.example",
-          channel_kind: "email",
-          usage: "shared_mailbox",
-          confirmation: "machine_proposed",
-          person_display_name: null,
-        },
-      ],
-      people: [],
-      domains: [],
-      relationships: [],
-      child_organizations: [],
-      evidence: [],
-      counts: { contact_points: 4321 },
-    } as never);
-
+  it("sends an institution to Institución 360", async () => {
     render(<CrmV2Page />);
     await screen.findByText("compras@uni.example");
     fireEvent.click(screen.getByText("Organizaciones"));
     fireEvent.click(await screen.findByText("Universidad Ejemplo"));
-    const drawer = await screen.findByTestId("v2-card-drawer");
-    // The server capped the list at its child limit; the heading must still say 4.321.
-    expect(drawer.textContent).toContain("4.321");
-    expect(drawer.textContent).toContain("Tipo sin clasificar");
+    expect(window.location.hash).toContain("#/instituciones?id=");
+    expect(screen.queryByTestId("v2-card-drawer")).toBeNull();
   });
 
   it("surfaces a load failure instead of rendering an empty table as if it were data", async () => {

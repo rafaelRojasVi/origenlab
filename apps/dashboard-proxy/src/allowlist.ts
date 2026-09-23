@@ -67,6 +67,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // path it cannot name, and no sub-resource under a card is reachable.
   /^\/v2\/contacts\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   /^\/v2\/organizations\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  // The one sub-resource under a card, named rather than matched: every case an
+  // institution is part of. `/v2/organizations/<uuid>/.+` would have reached whatever
+  // else is ever hung under an organization, so the literal `/cases` tail is spelled out.
+  /^\/v2\/organizations\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/cases$/,
   // Commercial cases: the list and one case. Read-only, like everything above it.
   //
   // The V2 command boundary now *does* exist upstream -- six case commands under

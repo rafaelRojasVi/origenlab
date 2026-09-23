@@ -925,6 +925,12 @@ describe("V2 durable read boundary allowlist", () => {
     expect(isAllowedUpstreamPath(`/v2/cases/${id}/organizations`)).toBe(false);
     expect(isAllowedUpstreamPath(`/v2/cases/${id}/stage`)).toBe(false);
     expect(isAllowedUpstreamPath(`/v2/cases/${id.toUpperCase()}`)).toBe(false);
+    // The one named sub-resource under an organization, and only that one.
+    expect(isAllowedUpstreamPath(`/v2/organizations/${id}/cases`)).toBe(true);
+    expect(isAllowedUpstreamPath(`/v2/organizations/${id}/cases?limit=50`)).toBe(true);
+    expect(isAllowedUpstreamPath(`/v2/organizations/${id}/quotes`)).toBe(false);
+    expect(isAllowedUpstreamPath(`/v2/organizations/${id}/cases/${id}`)).toBe(false);
+    expect(isAllowedUpstreamPath(`/v2/organizations/${id.toUpperCase()}/cases`)).toBe(false);
   });
 
   it("allows the listed paths with a query string", async () => {

@@ -13,6 +13,7 @@ Five endpoints the operator asked for, plus the two the four CRM cards need:
 | `GET /v2/quotes/followup` | sent quote revisions not yet superseded |
 | `GET /v2/contacts/{id}` | one channel, its identity, its evidence and its marketing history |
 | `GET /v2/organizations/{id}` | one organization, its channels, people, domains and evidence |
+| `GET /v2/organizations/{id}/cases` | every case that institution is part of, with the part it holds on each |
 | `GET /v2/evidence` | the evidence trail, each row carrying its own provenance |
 | `GET /v2/evidence/records` | the same trail grouped by source record, with its `crm.*` matches |
 | `GET /v2/cases` | commercial cases — `crm.opportunity` with its institutions, interests and evidence counted |
@@ -160,6 +161,37 @@ def organization_card(
     if card is None:
         raise HTTPException(status_code=404, detail="no such organization")
     return card
+
+
+@router.get("/organizations/{organization_id}/cases")
+def organization_cases(
+    _: Operator,
+    repo: Repo,
+    organization_id: str,
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    """Every case this institution is part of, with the part it holds on each.
+
+    `GET /v2/cases` cannot answer this. It pages every case and carries only the
+    requesting institution, so crossing it in a browser finds an organization's cases
+    only where that organization is the one asking — a supplier or a manufacturer
+    reads as uninvolved in the very deals it is named on. This route reads
+    `crm.opportunity_organization` directly, so participation is a row rather than a
+    guess, and it returns the **roles**, plural: supplier and manufacturer on the same
+    case is the ordinary shape.
+
+    A missing organization is 404, not an empty page. "No such institution" and "this
+    institution is in no cases" are different answers and must not look alike.
+    """
+    page = repo.organization_cases(
+        _uuid_path_param(organization_id, "organization"),
+        limit=clamp_limit(limit),
+        offset=offset,
+    )
+    if page is None:
+        raise HTTPException(status_code=404, detail="no such organization")
+    return _page_response(page)
 
 
 @router.get("/prospects")

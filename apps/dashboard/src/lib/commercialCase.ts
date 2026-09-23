@@ -47,6 +47,23 @@ export const CASE_ROLE_LABELS: Record<V2CaseOrganizationRole, string> = {
   mentioned: "Mencionada",
 };
 
+/**
+ * The parts in the order a screen reads them, mirroring the API's `CASE_ROLE_ORDER`.
+ *
+ * Who asks first, who will use it second, the rest after, and `mentioned` last — the one
+ * part a machine may propose sits at the end rather than in the middle of the human
+ * decisions. Alphabetical order would put it third.
+ */
+export const CASE_ROLE_ORDER: readonly V2CaseOrganizationRole[] = [
+  "requesting_institution",
+  "end_user_institution",
+  "purchasing_agent",
+  "funder",
+  "supplier",
+  "manufacturer",
+  "mentioned",
+];
+
 export function caseRoleLabel(role: V2CaseOrganizationRole): string {
   return CASE_ROLE_LABELS[role] ?? role;
 }
@@ -229,4 +246,91 @@ export function stageRequirements(
     );
   }
   return requirements;
+}
+
+// --------------------------------------------------------------- the summary
+
+/**
+ * The six things an operator reads about a case before deciding whether to open it.
+ *
+ * Deliberately a *reading*, not a projection of every column: a case screen that reprints
+ * the schema teaches the schema, and the operator was asking who is asking, for what, from
+ * whom, and what happened last.
+ *
+ * Each field is nullable and each null is a state with a name, never a blank: "nobody has
+ * said who is asking" is the single most important thing this model records on purpose.
+ */
+export interface CaseSummary {
+  title: string;
+  stage: V2CaseStage;
+  stageLabel: string;
+  closed: boolean;
+  /** Null means nobody has said who is asking — legitimate up to «Calificado». */
+  requesting: V2CaseOrganization | null;
+  /** What the case is seeking, in words. Empty when nothing is recorded yet. */
+  interests: string[];
+  /** Current supplier parts, by name. */
+  suppliers: string[];
+  /** Current manufacturer parts plus the manufacturers named on open interests. */
+  manufacturers: string[];
+  /** The most recent thing that happened to the case, or null when only its creation has. */
+  lastActivityAt: string | null;
+  lastActivityLabel: string | null;
+}
+
+function namesForRole(
+  organizations: readonly V2CaseOrganization[],
+  role: V2CaseOrganizationRole,
+): string[] {
+  return currentOrganizations(organizations)
+    .filter((row) => row.role === role)
+    .map((row) => row.name);
+}
+
+function latest(values: readonly (string | null)[]): string | null {
+  let best: string | null = null;
+  let bestMs = Number.NEGATIVE_INFINITY;
+  for (const value of values) {
+    if (!value) {
+      continue;
+    }
+    const ms = new Date(value).getTime();
+    if (!Number.isNaN(ms) && ms > bestMs) {
+      bestMs = ms;
+      best = value;
+    }
+  }
+  return best;
+}
+
+export function caseSummary(card: V2CommercialCaseCard): CaseSummary {
+  const open = openInterests(card.interests);
+  const linked = linkedEvidence(card.evidence);
+  const lastLink = latest(linked.map((row) => row.linked_at));
+  // `updated_at` moves on every durable write, so it is the floor for "something happened".
+  // The evidence link is preferred when it is newer because it is the one an operator can
+  // actually read; a bare timestamp with no document behind it says nothing.
+  const lastActivityAt = latest([lastLink, card.updated_at]);
+  return {
+    title: card.title,
+    stage: card.stage,
+    stageLabel: caseStageLabel(card.stage),
+    closed: isCaseClosed(card),
+    requesting: requestingInstitution(card.organizations),
+    interests: open.map(interestHeadline),
+    suppliers: namesForRole(card.organizations, "supplier"),
+    manufacturers: [
+      ...namesForRole(card.organizations, "manufacturer"),
+      ...open
+        .map((row) => row.manufacturer_organization_name)
+        .filter((name): name is string => name !== null),
+    ].filter((name, index, all) => all.indexOf(name) === index),
+    lastActivityAt,
+    lastActivityLabel:
+      lastLink && lastLink === lastActivityAt
+        ? "documento vinculado"
+        : lastActivityAt
+          ? "última escritura del caso"
+          : null,
+  };
 }

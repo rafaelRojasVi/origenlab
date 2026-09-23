@@ -1050,6 +1050,119 @@ class V2Repository(OperatorLookup):
         with self._read() as cur:
             return self._page(cur, sql, count_sql, tuple(params), limit, offset)
 
+    def organization_cases(
+        self, organization_id: str, *, limit: int, offset: int
+    ) -> Page | None:
+        """Every case an institution is part of, and what it is on each one.
+
+        `/v2/cases` answers "what is in play". This answers the question an institution
+        screen actually asks — *where does this organization appear at all* — and the two
+        are not the same list. A case carries up to seven parts (`CASE_ROLE_ORDER`), so
+        reading only `requesting_institution`, as a browser-side join over one page of
+        `/v2/cases` must, hides every case where an institution supplies, manufactures,
+        pays or is merely named. A manufacturer would read as uninvolved in its own deals.
+
+        The join is `crm.opportunity_organization.organization_id` — a recorded part row
+        and nothing else. No name match, no mail domain, no inference: a domain is a
+        routing hint and never an identity key (`docs/DOMAIN.md` §2.2).
+
+        **Every part comes back, current and closed, as a list.** One institution routinely
+        holds more than one part on one case — supplier *and* manufacturer is the ordinary
+        shape, not an edge case — so a single label per case would have to pick one and be
+        wrong. A closed row (`valid_to` set) is history rather than a mistake and is
+        returned carrying `is_current: false`, on the same principle as `case_card`.
+
+        Returns `None` when no such organization exists, so the route answers 404 rather
+        than an empty page that would read as "this institution is in no cases".
+        """
+        with self._read() as cur:
+            cur.execute(
+                "select 1 from crm.organization where id = %s::uuid", (organization_id,)
+            )
+            if cur.fetchone() is None:
+                return None
+
+            sql = """
+                select op.id::text        as opportunity_id,
+                       op.title           as title,
+                       op.stage           as stage,
+                       op.version         as version,
+                       op.closed_at       as closed_at,
+                       op.close_reason    as close_reason,
+                       op.created_at      as created_at,
+                       op.updated_at      as updated_at,
+                       owner.id::text     as owner_operator_id,
+                       owner.display_name as owner_display_name,
+                       sr.id::text        as origin_source_record_id,
+                       sr.kind            as origin_source_kind,
+                       sr.source_uri      as origin_source_uri,
+                       req_org.id::text   as requesting_organization_id,
+                       req_org.name       as requesting_organization_name,
+                       req.confirmation   as requesting_confirmation,
+                       (select count(*) from crm.opportunity_organization oo
+                         where oo.opportunity_id = op.id and oo.valid_to is null)
+                                          as organization_count,
+                       (select count(*) from crm.opportunity_interest oi
+                         where oi.opportunity_id = op.id and oi.withdrawn_at is null)
+                                          as interest_count,
+                       (select count(*) from crm.opportunity_evidence oe
+                         where oe.opportunity_id = op.id and oe.unlinked_at is null)
+                                          as evidence_count,
+                       (select jsonb_agg(
+                                 jsonb_build_object(
+                                   'opportunity_organization_id', mine.id::text,
+                                   'role', mine.role,
+                                   'confirmation', mine.confirmation,
+                                   'valid_from', mine.valid_from,
+                                   'valid_to', mine.valid_to,
+                                   'is_current', mine.valid_to is null,
+                                   'note', mine.note,
+                                   'supplier_exception_reason',
+                                     mine.supplier_exception_reason)
+                                 order by (mine.valid_to is null) desc,
+                                          array_position(%s::text[], mine.role),
+                                          mine.valid_from desc)
+                          from crm.opportunity_organization mine
+                         where mine.opportunity_id = op.id
+                           and mine.organization_id = %s::uuid)
+                                          as roles
+                  from crm.opportunity op
+                  join platform.operator owner on owner.id = op.owner_operator_id
+                  left join evidence.source_record sr on sr.id = op.origin_source_record_id
+                  left join crm.opportunity_organization req
+                         on req.opportunity_id = op.id
+                        and req.role = 'requesting_institution'
+                        and req.valid_to is null
+                  left join crm.organization req_org on req_org.id = req.organization_id
+                 where exists (
+                         select 1 from crm.opportunity_organization part
+                          where part.opportunity_id = op.id
+                            and part.organization_id = %s::uuid)
+                 order by op.updated_at desc, op.id
+                 limit %s offset %s
+            """
+            count_sql = """
+                select count(*)
+                  from crm.opportunity op
+                 where exists (
+                         select 1 from crm.opportunity_organization part
+                          where part.opportunity_id = op.id
+                            and part.organization_id = %s::uuid)
+            """
+            total = self._scalar(cur, count_sql, (organization_id,))
+            items = self._rows(
+                cur,
+                sql,
+                (
+                    list(self.CASE_ROLE_ORDER),
+                    organization_id,
+                    organization_id,
+                    limit,
+                    offset,
+                ),
+            )
+        return Page(items=items, total=total, limit=limit, offset=offset)
+
     def case_card(self, opportunity_id: str) -> dict[str, Any] | None:
         """One commercial case: who asks, what it seeks, and why it believes any of it.
 

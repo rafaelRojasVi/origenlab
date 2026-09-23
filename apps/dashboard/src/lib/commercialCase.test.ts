@@ -8,6 +8,7 @@ import {
 } from "./__fixtures__/commercialCase";
 import {
   caseGaps,
+  caseSummary,
   caseRelationLabel,
   caseRoleLabel,
   caseStageLabel,
@@ -211,5 +212,92 @@ describe("stage requirements", () => {
     });
     expect(stageRequirements(quiet, "qualified")).toEqual([]);
     expect(stageRequirements(quiet, "lost")).toEqual([]);
+  });
+});
+
+describe("the six lines an operator reads before opening a case", () => {
+  it("says nobody has named the institution, rather than picking one", () => {
+    const summary = caseSummary(
+      card({
+        organizations: [organization({ role: "mentioned", name: "Alguna Institución" })],
+      }),
+    );
+    expect(summary.requesting).toBeNull();
+  });
+
+  it("leaves withdrawn interests out of what the case is seeking", () => {
+    const summary = caseSummary(
+      card({
+        interests: [
+          interest({ opportunity_interest_id: "oi-open", model_text: "Centrífuga CX-0" }),
+          interest({
+            opportunity_interest_id: "oi-gone",
+            model_text: "Agitador AX-1",
+            withdrawn_at: "2026-09-22T00:00:00Z",
+            withdraw_reason: "El cliente lo descartó",
+          }),
+        ],
+      }),
+    );
+    expect(summary.interests).toEqual(["Centrífuga CX-0"]);
+  });
+
+  it("reads supplier and manufacturer from the current parts only", () => {
+    const summary = caseSummary(
+      card({
+        organizations: [
+          organization({
+            opportunity_organization_id: "oo-1",
+            role: "supplier",
+            name: "Proveedor Ficticio Ltda.",
+          }),
+          organization({
+            opportunity_organization_id: "oo-2",
+            role: "manufacturer",
+            name: "Fabricante Antiguo S.A.",
+            is_current: false,
+            valid_to: "2026-09-01",
+          }),
+        ],
+      }),
+    );
+    expect(summary.suppliers).toEqual(["Proveedor Ficticio Ltda."]);
+    expect(summary.manufacturers).toEqual([]);
+  });
+
+  it("also counts a manufacturer named on an open interest, without duplicating it", () => {
+    const summary = caseSummary(
+      card({
+        organizations: [
+          organization({ role: "manufacturer", name: "Fabricante Ficticio S.A." }),
+        ],
+        interests: [
+          interest({ manufacturer_organization_name: "Fabricante Ficticio S.A." }),
+        ],
+      }),
+    );
+    expect(summary.manufacturers).toEqual(["Fabricante Ficticio S.A."]);
+  });
+
+  it("prefers the newest evidence link as the last thing that happened", () => {
+    const summary = caseSummary(
+      card({
+        updated_at: "2026-09-10T00:00:00Z",
+        evidence: [evidence({ linked_at: "2026-09-20T00:00:00Z" })],
+      }),
+    );
+    expect(summary.lastActivityAt).toBe("2026-09-20T00:00:00Z");
+    expect(summary.lastActivityLabel).toBe("documento vinculado");
+  });
+
+  it("falls back to the case's own write when the evidence is older", () => {
+    const summary = caseSummary(
+      card({
+        updated_at: "2026-09-21T00:00:00Z",
+        evidence: [evidence({ linked_at: "2026-09-02T00:00:00Z" })],
+      }),
+    );
+    expect(summary.lastActivityAt).toBe("2026-09-21T00:00:00Z");
+    expect(summary.lastActivityLabel).toBe("última escritura del caso");
   });
 });

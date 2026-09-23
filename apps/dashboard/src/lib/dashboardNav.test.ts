@@ -9,17 +9,29 @@ import {
 } from "./dashboardNav";
 
 describe("dashboardNav", () => {
-  it("exposes exactly the 8-item Cotizaciones-first primary IA, in order", () => {
+  it("exposes the Cotizaciones-first primary IA, in order, with the two 360 surfaces", () => {
     expect(DASHBOARD_TOP_NAV_ITEMS.map((item) => item.label)).toEqual([
       "Cotizaciones",
       "Licitaciones",
       "Ventas",
       "Clientes",
+      "Contactos",
+      "Instituciones",
       "Prospectos",
       "Correos",
       "Catálogo",
       "Sistema",
     ]);
+  });
+
+  it("keeps «Clientes» beside Contactos rather than replacing it", () => {
+    // `contacts` reads the V1 lead-intel mirror and `contactos` reads the durable V2 core.
+    // They hold different rows until the V1 durable migration lands, so retiring the first
+    // for the second would silently drop data an operator is relying on today.
+    const topIds = new Set(DASHBOARD_TOP_NAV_IDS as readonly string[]);
+    expect(topIds.has("contacts")).toBe(true);
+    expect(topIds.has("contactos")).toBe(true);
+    expect(topIds.has("instituciones")).toBe(true);
   });
 
   it("defaults to Cotizaciones as the landing section", () => {
@@ -58,8 +70,8 @@ describe("dashboardNav", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("still resolves the full 15-id registry (nothing deleted, only reordered/relabeled)", () => {
-    expect(DASHBOARD_NAV_ITEMS).toHaveLength(15);
+  it("still resolves the full 17-id registry (nothing deleted, only added)", () => {
+    expect(DASHBOARD_NAV_ITEMS).toHaveLength(17);
   });
 
   it("keeps the commercial-case workspace deep-linkable and out of the sidebar", () => {
@@ -77,6 +89,11 @@ describe("dashboardNav", () => {
     expect(DASHBOARD_NAV_ITEMS.some((item) => item.id === "revision")).toBe(true);
     expect(DASHBOARD_TOP_NAV_IDS).not.toContain("revision");
     expect(dashboardSectionLabel("revision")).toBe("Revisión de evidencia");
+  });
+
+  it("keeps the two 360 surfaces resolvable by id for deep links", () => {
+    expect(dashboardSectionLabel("contactos")).toBe("Contactos");
+    expect(dashboardSectionLabel("instituciones")).toBe("Instituciones");
   });
 
   it("keeps the V2 CRM browser out of the primary sidebar while still resolving its title", () => {

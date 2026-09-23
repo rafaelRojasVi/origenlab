@@ -27,7 +27,7 @@ of truth*). Any PR that changes what is built, applied or deployed updates this
 file — including the `Last verified` line — **in the same PR**. A PR that only
 changes design, rules or targets does not touch it.
 
-Last verified: **2026-09-22**, against `origin/main` @ `a3961aa4` plus this branch, measured from the
+Last verified: **2026-09-23**, against `origin/main` @ `a3961aa4` plus this branch, measured from the
 local PostgreSQL 17 carrying the Slice 0 migrations. §2.5's hosted facts are measurements taken by the
 Slice 0 audit itself on 2026-09-21, over the reviewed Supavisor session route inside a server-
 confirmed read-only transaction, together with authenticated control-plane reads; the earlier
@@ -535,7 +535,7 @@ Slice 0 had "zero consumers"; it now has one.
 | Item | Value |
 |---|---|
 | Location | `apps/api/src/origenlab_api/v2/` — a separate surface inside the V1 operator API, not a new service |
-| Routes | **11** `GET` — the seven listings (`/v2/contacts`, `/v2/organizations`, `/v2/prospects`, `/v2/opportunities/active`, `/v2/tasks/due`, `/v2/review/summary`, `/v2/quotes/followup`), `/v2/evidence`, the two card reads `/v2/contacts/{id}` and `/v2/organizations/{id}` (§2.7.6), and `/v2/evidence/records` (§2.7.7) |
+| Routes | **14** `GET` — the seven listings (`/v2/contacts`, `/v2/organizations`, `/v2/prospects`, `/v2/opportunities/active`, `/v2/tasks/due`, `/v2/review/summary`, `/v2/quotes/followup`), `/v2/evidence`, the two card reads `/v2/contacts/{id}` and `/v2/organizations/{id}` (§2.7.6), `/v2/evidence/records` (§2.7.7), the two case reads `/v2/cases` and `/v2/cases/{id}` (§2.7.18), and `/v2/organizations/{id}/cases` (§2.7.20). The count said 11 while the two case routes were already shipped and is corrected here |
 | Write routes | **zero on the read router**, asserted by a test over its own methods. The four commands of §2.7.8 live on a separate router and are not mounted unless switched on |
 | Mounted when | **only** if `ORIGENLAB_V2_DATABASE_URL` is set. Unset, the router is absent entirely and `/v2/*` is a 404 |
 | Connection role | `origenlab_api` — no membership in `origenlab_owner`, so RLS constrains these reads as it will in production |
@@ -543,7 +543,7 @@ Slice 0 had "zero consumers"; it now has one.
 | Identity | one port, two adapters — a JWKS verifier (the target; **present and unconfigured**) and a local development adapter that **refuses to construct** unless the V2 DSN is a literal loopback address. JWKS wins whenever configured |
 | Authorization | every route requires a resolved, **active** `platform.operator` with role `viewer`, `sales` or `admin`; no identity is 401 |
 | Paging | every listing bounded — default 50, maximum 200. Every child list on a card is bounded too, at 100, and the card reports the true count beside each capped list |
-| Tests | **51** — `apps/api/tests/test_v2_read_boundary.py`; 12 are database-backed and skip unless `ORIGENLAB_V2_TEST_DSN` is set. The command boundary has its own 64 (§2.7.8) |
+| Tests | **57** — `apps/api/tests/test_v2_read_boundary.py`; 14 are database-backed and skip unless `ORIGENLAB_V2_TEST_DSN` is set. The case reads add **26** in `test_v2_case_read_boundary.py`, 3 of which (§2.7.20) build their own disposable database. The command boundary has its own 64 (§2.7.8) |
 | Measured against the local database | `/v2/contacts` 9,460 · `/v2/organizations` 1,812 · `/v2/review/summary` 4 ambiguous, 172 unresolved, 1,812 + 9,460 machine-proposed |
 | Returning zero today | `/v2/prospects`, `/v2/opportunities/active`, `/v2/tasks/due`, `/v2/quotes/followup` — see below |
 
@@ -1250,6 +1250,113 @@ institution picker, no stage selector — because wiring inputs to previews that
 would be building the half that is cheap and leaving the decision that is expensive. Nothing
 touched `origenlab_dev` (quarantined, never opened), the hosted project (frozen, §2.8), Gmail,
 Drive, any campaign or any send.
+
+### 2.7.19 Contacto 360 e Institución 360 — the operator surface, 2026-09-23
+
+§2.7.18's `#/casos` proved the commercial-case model renders. It was not an operating CRM:
+the case was the centre of the screen and roughly half the surface was the six blocked
+commands, their request bodies and their audit explanations. This change is **UI only** —
+no migration, no command, no API route, no proxy path — and it moves the entry point to the
+contact and the institution.
+
+| Item | Value |
+|---|---|
+| Migration | **none**. Inventory stays at **36** tables, `crm` at 19, ledger at **24** migrations, head `20260922200000` |
+| API | **unchanged**. No route added, none altered. The joins these screens show are composed in the browser from `GET /v2/cases` and `GET /v2/quotes/followup` — **superseded the next day by §2.7.20**, which replaced the case half of that with a real read route, because the browser-side join could only ever find the cases an institution was *asking* in |
+| Proxy | **unchanged**. Still no POST under `/v2`; the allowlist was not touched — §2.7.20 later added one GET path to it |
+| New sections | `contactos` (`#/contactos`) and `instituciones` (`#/instituciones`), each with a `?id=<uuid>` detail view. **Both are in the sidebar**, which therefore goes from 8 items to 10 — an owner decision of 2026-09-23 |
+| New dashboard files | `pages/Contact360Page.tsx`, `pages/Institution360Page.tsx`, `lib/crm360.ts`, `lib/v2DeepLink.ts`, `lib/useV2Relations.ts` (replaced by `useV2FollowUpQuotes.ts` + `useV2OrganizationCases.ts` in §2.7.20), `components/v2/{V2Chip,V2Panel,V2TechnicalDetails,V2CaseSummaryCard}.tsx` |
+| Rewritten | `pages/CommercialCasePage.tsx` — a six-line summary card per case, with the six command previews, the request bodies, "qué registraría", the stage machine and the raw ids moved into one closed «Detalles técnicos» drawer |
+| `crm-v2` | kept as the technical console, minus its card drawer: every contact and organization name in it now navigates to the corresponding 360 screen instead of opening a second, smaller copy of the card |
+| `contacts` ("Clientes") | **untouched and still in the sidebar.** It reads the V1 lead-intel mirror and holds rows the V2 core will not carry until the V1 durable migration lands |
+
+**A channel with no recorded owner renders as a pending channel.** The heading of such a card
+is the address itself, under an amber «canal pendiente · nadie identificado todavía» band and
+the reason no person is named. Deriving a name from a local part would be an identity
+inference drawn as a fact, and this is the screen where that would be easiest to do by
+accident.
+
+**Nothing on these screens reports marketing permission, because nothing records one.**
+`outbound.contact_control` holds blocks, cooldowns and the fact of prior contact and no
+permission at all, so the neutral state is *sin permiso registrado* and never *se puede
+contactar*; prior contact is shown with the sentence that says it is not consent. The state
+is labelled as belonging to the **address**, not to the person.
+
+**The browser-side joins claim only what a row supports.** Cases attach to a contact or an
+institution through `requesting_organization_id`; quotes attach through `opportunity_id`
+alone, never by matching an institution name. Both lists page and neither endpoint accepts an
+institution filter, so when one page does not cover the total the screen says so rather than
+letting a short list read as "none". A case card drawn without the case's own card reports
+the list's counts instead of asserting absences it never measured.
+
+**The case half of that was wrong, and §2.7.20 replaced it.** `requesting_organization_id`
+is the *only* institution `/v2/cases` carries, so the join found an institution's cases only
+where it was the one asking — a supplier or a manufacturer read as uninvolved in the very
+deals it was named on. The quote half stands: it is joined on a real key and its coverage is
+still declared.
+
+| Evidence | Result |
+|---|---|
+| `apps/dashboard` `npm run validate` | **1,371 passed across 134 files**, build clean (was 1,319 across 130) |
+| New unit suites | `crm360.test.ts` **16**, `v2DeepLink.test.ts` **5**; `commercialCase.test.ts` grew 19 → **25** for the summary |
+| New page suites | `Contact360Page.test.tsx` **11**, `Institution360Page.test.tsx` **9** |
+| Rewritten page suites | `CommercialCasePage.test.tsx` **15** (was 12) — including that the drawer holding the six commands starts closed and contains all of them; `CrmV2Page.test.tsx` **8**, now asserting navigation to the 360 screens and the absence of the drawer |
+| `apps/dashboard-proxy` `npm run validate` | **132 passed**, unchanged — nothing in the allowlist moved |
+| Fixtures | `lib/__fixtures__/crm360.ts`, all invented, every address under the reserved `.invalid` TLD. No real address is in Git |
+| Local run | the six screens were driven against `origenlab_clean` through a local `apps/api` and `vite`, and screenshotted. Every `/v2/*` request returned 200; the only errors in that run were V1 mirror endpoints the V1 data provider calls, which this environment does not serve |
+
+**What is still not decided, and what was not touched.** No command became reachable: the
+proxy still admits no POST under `/v2`, and the six previews remain disabled. `crm.quote` is
+still empty, so every "cotizaciones" panel reads zero and says why. Nothing touched
+`origenlab_dev` (quarantined), the hosted project (frozen, §2.8), Gmail, Drive, any campaign
+or any send, and no row was written to the clean room.
+
+### 2.7.20 An institution's own cases, and the V1 chrome above a V2 screen — 2026-09-23
+
+Two defects found by looking at §2.7.19's screens rather than at its tests.
+
+**1. Institución 360 showed only the cases an institution was asking in.** The screen
+crossed one page of `GET /v2/cases` in the browser on `requesting_organization_id`, which is
+the only institution that list carries. An institution that *supplies*, *manufactures*,
+*pays* or is *named* on a case appeared in none of them: on the clean room's one real case,
+Universidad Austral de Chile showed the case and Hielscher Ultrasonics — its supplier **and**
+its manufacturer on that same case — showed "no aparece pidiendo en ningún caso". That is a
+false negative about a commercial relationship, produced by a join that could not have
+answered the question.
+
+**2. The shell's V1 status chrome sat above the V2 screens.** "Estado: BLOQUEADO" is the V1
+daily core run's verdict and "SQLite local" is which store the V1 operator mirror is served
+from. Neither is a fact about a page that reads the durable core over `/v2`, and this local
+stack serves no V1 mirror at all — so an operator read *BLOQUEADO* above a screen that was
+working exactly as designed.
+
+| Item | Value |
+|---|---|
+| Migration | **none**. Inventory stays at **36** tables, ledger at **24**, head `20260922200000` |
+| Data | **none written anywhere.** No command, no POST, no Gmail, no Drive, nothing touched `origenlab_dev` (quarantined) or the hosted project (frozen, §2.8) |
+| New API route | **one** `GET` — `/v2/organizations/{id}/cases`. Read boundary routes **11 → 14** in §2.7.2 (the count there had also not been updated for the two case routes of §2.7.18) |
+| What it reads | `crm.opportunity_organization` by `organization_id` — a recorded part row and nothing else. No name match and no mail domain: a domain is a routing hint, never an identity key ([`DOMAIN.md`](DOMAIN.md) §2.2) |
+| Shape | one row per case, in `/v2/cases`' own shape, plus `roles` — **a list**, current and closed, each carrying `role`, `confirmation`, `valid_from`, `valid_to` and `is_current`. One institution routinely holds two parts on one case; a single label would have to pick one and be wrong |
+| Missing organization | **404**, not an empty page. "No such institution" and "this institution is in no cases" send an operator in opposite directions |
+| Proxy | **one GET path added** — `/^\/v2\/organizations\/<uuid>\/cases$/`, spelled out rather than widened to `/<uuid>/.+`. Still **no POST under `/v2`**, and the case commands remain unreachable from the browser |
+| Dashboard | `lib/useV2Relations.ts` split into `lib/useV2OrganizationCases.ts` (the new route) and `lib/useV2FollowUpQuotes.ts` (quotes only, still a browser-side join on `opportunity_id`, still declaring its coverage) |
+| Applied to | Institución 360 **and** Contacto 360 — the contact screen reached its cases through its institution and carried the same defect |
+| V2 chrome | `isV2ReadOnlySection` in `lib/dashboardNav.ts`. On `contactos`, `instituciones`, `casos`, `crm-v2` and `revision` the shell drops the verdict chip, the backend chip and the "Actualizar" button (it reloads the V1 payload, which none of these pages read) and shows «Datos locales de revisión» and «Sólo lectura». On every V1 section the chrome is unchanged |
+
+| Evidence | Result |
+|---|---|
+| `apps/api` full suite | **1,349 passed, 195 skipped** |
+| `test_v2_read_boundary.py` | **57** (was 51): a 404 for an unknown institution, the bounded page, and a malformed id that never reaches a query |
+| `test_v2_case_read_boundary.py` | **26** (was 23), including **3 database-backed** ones that build their own `origenlab_test_<hex>`, drive the **real commands**, and then read back: that a case where the institution was first `mentioned` and then made `requesting_institution` returns **both** parts with the closed one marked; that an institution which merely manufactures the catalogued product is in **zero** cases; and that an absent id is `None` |
+| `apps/dashboard` `npm run validate` | **1,380 passed across 134 files**, build clean (was 1,371) |
+| Suites grown | `crm360.test.ts` 16 → **19**, `Institution360Page.test.tsx` 9 → **13**, `DashboardApp.test.tsx` 15 → **17** (the chrome is asserted present on a V1 section and absent on all three V2 ones) |
+| `apps/dashboard-proxy` `npm run validate` | **132 passed**; the new path is asserted allowed, and `/quotes`, a nested id and an uppercase id are asserted refused |
+| Against the clean room | Hielscher Ultrasonics now returns the case with `roles` = `supplier` + `manufacturer`, both current; UACh returns the same case as `requesting_institution`. Verified through the API **and** through the dev proxy, then screenshotted at 1440 px and at 390 px |
+
+**Pre-existing and not touched.** Below roughly 700 px the shell's sidebar does not collapse
+by itself, so the content column is squeezed to about 130 px on any section — V1 and V2
+alike, and identically before this change. Collapsing the sidebar by hand renders correctly.
+That is a shell IA decision, not part of either defect above.
 
 ### 2.7.5 Local V2 — the reconciled picture, 2026-09-21
 

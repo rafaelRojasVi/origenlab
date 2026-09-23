@@ -279,12 +279,21 @@ class _StubRepo:
         self.organization = organization
         self.evidence_calls: list[dict] = []
         self.record_calls: list[dict] = []
+        self.organization_case_calls: list[dict] = []
 
     def contact_card(self, contact_point_id: str):
         return self.contact
 
     def organization_card(self, organization_id: str):
         return self.organization
+
+    def organization_cases(self, organization_id: str, **kwargs):
+        from origenlab_api.v2.repository import Page
+
+        self.organization_case_calls.append({"organization_id": organization_id, **kwargs})
+        if self.organization is None:
+            return None
+        return Page(items=[], total=0, limit=kwargs["limit"], offset=kwargs["offset"])
 
     def evidence(self, **kwargs):
         from origenlab_api.v2.repository import Page
@@ -357,6 +366,37 @@ def test_an_organization_card_that_does_not_exist_is_a_404() -> None:
 
 def test_an_organization_identifier_that_is_not_a_uuid_is_a_404() -> None:
     assert _client(_StubRepo()).get("/v2/organizations/12345").status_code == 404
+
+
+def test_the_cases_of_an_organization_that_does_not_exist_are_a_404_not_an_empty_page() -> None:
+    """The two answers must not look alike.
+
+    "No such institution" and "this institution is in no cases" send an operator in
+    opposite directions, and an empty page for a mistyped id reads as the second.
+    """
+    response = _client(_StubRepo(organization=None)).get(
+        "/v2/organizations/00000000-0000-4000-8000-000000000002/cases"
+    )
+    assert response.status_code == 404
+
+
+def test_the_cases_of_an_organization_are_a_bounded_page() -> None:
+    repo = _StubRepo(organization={"organization_id": "x"})
+    path = "/v2/organizations/00000000-0000-4000-8000-000000000002/cases"
+    assert _client(repo).get(path, params={"limit": 500}).status_code == 422
+    body = _client(repo).get(path, params={"limit": 200}).json()
+    assert body["limit"] == 200
+    assert repo.organization_case_calls[-1]["organization_id"] == (
+        "00000000-0000-4000-8000-000000000002"
+    )
+
+
+def test_the_cases_of_an_organization_refuse_a_malformed_identifier() -> None:
+    repo = _StubRepo(organization={"organization_id": "x"})
+    assert _client(repo).get("/v2/organizations/12345/cases").status_code == 404
+    # The repository was never reached: a path segment that names nothing must not become
+    # a query the driver then rejects as a 500.
+    assert repo.organization_case_calls == []
 
 
 def test_the_card_routes_require_an_operator() -> None:
@@ -458,6 +498,48 @@ def test_an_organization_card_reads_its_channels_and_counts_them_truthfully() ->
         assert isinstance(card[key], list)
         assert len(card[key]) <= V2Repository.CARD_CHILD_LIMIT
         assert card["counts"][key] >= len(card[key])
+
+
+@_needs_db
+def test_an_organizations_cases_are_every_case_it_is_part_of_with_its_parts() -> None:
+    """Participation is a row, and the parts come back plural.
+
+    The point of this route is the cases an institution is in *without* being the one
+    asking. So the assertion is not "some cases came back" — it is that every case that
+    came back carries at least one part row naming this institution, and that the roles
+    list is a list rather than a single label.
+    """
+    import psycopg
+
+    from origenlab_api.v2.repository import V2Repository
+
+    repo = V2Repository(psycopg.connect, _TEST_DSN)
+    first = repo.organizations(q=None, limit=1, offset=0)
+    if first.total == 0:
+        pytest.skip("the target database holds no organizations")
+    organization_id = first.items[0]["organization_id"]
+    page = repo.organization_cases(organization_id, limit=50, offset=0)
+    assert page is not None
+    assert page.total >= len(page.items)
+    for row in page.items:
+        assert isinstance(row["roles"], list) and row["roles"]
+        for part in row["roles"]:
+            assert part["role"] in V2Repository.CASE_ROLE_ORDER
+            assert part["is_current"] == (part["valid_to"] is None)
+        # The same shape `/v2/cases` returns, so one card renders both.
+        assert "requesting_organization_id" in row
+        assert row["organization_count"] >= 0
+
+
+@_needs_db
+def test_the_cases_of_an_organization_that_does_not_exist_are_none() -> None:
+    import psycopg
+
+    from origenlab_api.v2.repository import V2Repository
+
+    repo = V2Repository(psycopg.connect, _TEST_DSN)
+    absent = "00000000-0000-4000-8000-0000deadbeef"
+    assert repo.organization_cases(absent, limit=50, offset=0) is None
 
 
 @_needs_db

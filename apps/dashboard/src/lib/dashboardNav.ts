@@ -14,11 +14,19 @@
  * is a reading surface like the other two and belongs in the registry rather than the
  * sidebar until that changes.
  *
- * None of the three is in `DASHBOARD_TOP_NAV_IDS`. The eight-item Cotizaciones-first
- * sidebar is an accepted IA decision, and a surface whose cards are still read-only
- * has not earned a slot in it. Like `today`, `deals`, `suppliers` and
- * `payments-logistics`, it lives in the registry — so a deep link renders with a correct
- * page title — and is reached from the review card on Inicio.
+ * None of the three is in `DASHBOARD_TOP_NAV_IDS`. The Cotizaciones-first sidebar is an
+ * accepted IA decision, and a technical surface whose cards are still read-only has not
+ * earned a slot in it. Like `today`, `deals`, `suppliers` and `payments-logistics`, each
+ * lives in the registry — so a deep link renders with a correct page title — and is
+ * reached from the review card on Inicio.
+ *
+ * `contactos` and `instituciones` are the exception, and they are in the sidebar by an
+ * owner decision of 2026-09-23. They are not another console over the same rows: they are
+ * the Contacto 360 / Institución 360 surfaces, which are where an operator starts rather
+ * than where a developer checks a table. They sit **beside** `contacts` ("Clientes") and do
+ * not replace it: `contacts` reads the V1 lead-intel mirror and still carries rows the V2
+ * durable core will not hold until the V1 durable migration lands, so retiring it now would
+ * silently drop data the operator relies on.
  */
 
 export type DashboardSection =
@@ -33,6 +41,8 @@ export type DashboardSection =
   | "tenders"
   | "payments-logistics"
   | "contacts"
+  | "contactos"
+  | "instituciones"
   | "crm-v2"
   | "revision"
   | "casos"
@@ -125,6 +135,22 @@ export const DASHBOARD_NAV_ITEMS: DashboardNavItem[] = [
     iconName: "catalog",
   },
   {
+    id: "contactos",
+    label: "Contactos",
+    shortLabel: "Contactos",
+    description:
+      "Personas y canales del núcleo durable V2: cómo contactarles, en qué casos están y qué se les puede enviar",
+    iconName: "contacts",
+  },
+  {
+    id: "instituciones",
+    label: "Instituciones",
+    shortLabel: "Instit.",
+    description:
+      "Instituciones del núcleo durable V2: sus canales, sus casos, sus cotizaciones y su papel comercial",
+    iconName: "crm",
+  },
+  {
     id: "crm-v2",
     label: "CRM V2",
     shortLabel: "CRM V2",
@@ -177,12 +203,18 @@ export const DASHBOARD_NAV_ITEMS: DashboardNavItem[] = [
   },
 ];
 
-/** The flat, ordered top-level nav — exactly the 8 primary sections, Cotizaciones-first. */
+/**
+ * The flat, ordered top-level nav: Cotizaciones-first, with the two V2 360 surfaces beside
+ * «Clientes». Ten items since 2026-09-23; it was eight before Contacto 360 and
+ * Institución 360 were promoted into it.
+ */
 export const DASHBOARD_TOP_NAV_IDS: readonly DashboardSection[] = [
   "cotizaciones",
   "tenders",
   "pipeline",
   "contacts",
+  "contactos",
+  "instituciones",
   "prospectos",
   "inbox",
   "catalogo",
@@ -199,6 +231,31 @@ export const DASHBOARD_EMPHASIZED_NAV_IDS: ReadonlySet<DashboardSection> = new S
   "tenders",
   "pipeline",
 ]);
+
+/**
+ * The V2 surfaces, which read the durable core and write nothing.
+ *
+ * The shell's status chrome — the operator verdict ("Estado: BLOQUEADO") and the mirror
+ * backend ("SQLite local") — is about the **V1** read path: the daily core run and which
+ * store the operator mirror is being served from. None of it describes these three pages,
+ * which read PostgreSQL through `/v2` and never touch that mirror. Showing it above them
+ * told an operator their screen was blocked when nothing about it was, so these sections
+ * get a header that says what is actually true of them instead.
+ *
+ * `crm-v2` and `revision` are the technical consoles over the same rows and are reached
+ * from Inicio; they are listed here for the same reason.
+ */
+export const V2_READ_ONLY_SECTIONS: ReadonlySet<DashboardSection> = new Set([
+  "contactos",
+  "instituciones",
+  "casos",
+  "crm-v2",
+  "revision",
+]);
+
+export function isV2ReadOnlySection(section: DashboardSection): boolean {
+  return V2_READ_ONLY_SECTIONS.has(section);
+}
 
 export const DEFAULT_DASHBOARD_SECTION: DashboardSection = "cotizaciones";
 
