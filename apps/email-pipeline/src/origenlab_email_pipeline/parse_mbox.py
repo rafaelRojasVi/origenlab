@@ -187,6 +187,15 @@ def _decode_filename(raw: str | None) -> str | None:
         return raw
 
 
+def _walk_with_parent(msg: Message, parent_ctype: str | None = None):
+    """Yield (part, parent content type) in the same order as ``msg.walk()``."""
+    yield msg, parent_ctype
+    if msg.is_multipart():
+        ctype = (msg.get_content_type() or "").lower()
+        for sub in msg.get_payload():
+            yield from _walk_with_parent(sub, ctype)
+
+
 def walk_attachments(msg: Message) -> list[dict]:
     """
     Collect attachment-like MIME parts with metadata.
@@ -196,19 +205,25 @@ def walk_attachments(msg: Message) -> list[dict]:
       * Content-Disposition contains 'attachment', OR
       * filename is present, OR
       * content-type is a typical document/binary (pdf, office, spreadsheets, archives, etc.).
-    - Treat as likely inline if:
-      * Content-Disposition contains 'inline', OR
-      * Content-ID present (embedded image / cid:), OR
-      * image referenced from HTML (best-effort via heuristics).
+    - Collect as inline-like if Content-Disposition mentions 'inline', a
+      Content-ID is present, or the part is an image (unchanged row set).
+    - is_inline, from the disposition *type* first:
+      * disposition type 'attachment' -> not inline, even with a Content-ID
+        (Gmail stamps a Content-ID on every attachment it sends);
+      * disposition type 'inline' -> inline;
+      * no disposition: inline if it has a Content-ID inside
+        multipart/related (a cid: body image), else inline only when no
+        attachment signal fired.
     - Never treat main text/plain or text/html body parts as attachments.
     """
     out: list[dict] = []
     part_index = 0
 
-    for part in msg.walk():
+    for part, parent_ctype in _walk_with_parent(msg):
         ctype = (part.get_content_type() or "").lower()
         disp_raw = part.get("Content-Disposition") or ""
         disp = disp_raw.lower()
+        disp_type = part.get_content_disposition()
         cid = part.get("Content-ID")
         filename_raw = part.get_filename()
         filename = _decode_filename(filename_raw)
@@ -219,7 +234,6 @@ def walk_attachments(msg: Message) -> list[dict]:
 
         # Decide attachment vs inline.
         is_attachment = False
-        is_inline: bool | None = None
 
         # Strong attachment signals.
         if "attachment" in disp:
@@ -242,15 +256,19 @@ def walk_attachments(msg: Message) -> list[dict]:
         ):
             is_attachment = True
 
-        # Inline signals.
-        if "inline" in disp or cid:
-            is_inline = True
-        elif ctype.startswith("image/") and not is_attachment:
-            is_inline = True
-
-        # If we never flagged as attachment and also not inline, skip.
-        if not is_attachment and is_inline is not True:
+        # Collect the same parts as before: attachment signals, plus anything
+        # inline-looking (inline disposition, Content-ID, bare image).
+        if not is_attachment and not ("inline" in disp or cid or ctype.startswith("image/")):
             continue
+
+        if disp_type == "attachment":
+            is_inline = False
+        elif disp_type == "inline":
+            is_inline = True
+        elif cid and parent_ctype == "multipart/related":
+            is_inline = True
+        else:
+            is_inline = not is_attachment
 
         payload = part.get_payload(decode=True)
         size_bytes = len(payload) if isinstance(payload, (bytes, bytearray)) else 0
@@ -269,7 +287,7 @@ def walk_attachments(msg: Message) -> list[dict]:
                 "content_disposition": disp_raw or None,
                 "size_bytes": size_bytes,
                 "content_id": cid or None,
-                "is_inline": bool(is_inline),
+                "is_inline": is_inline,
                 "sha256": sha256,
                 "saved_path": None,
             }
