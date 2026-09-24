@@ -5,14 +5,14 @@ Five endpoints the operator asked for, plus the two the four CRM cards need:
 | Route | Reads |
 |---|---|
 | `GET /v2/contacts` | `crm.contact_point` + `crm.person` |
-| `GET /v2/organizations` | `crm.organization` |
+| `GET /v2/organizations` | `crm.organization`, most connected first, with case/interest/quote/activity counts |
 | `GET /v2/prospects` | `crm.opportunity` at `lead` / `qualifying` |
 | `GET /v2/opportunities/active` | `crm.opportunity` not closed |
 | `GET /v2/tasks/due` | `crm.task` open and due |
 | `GET /v2/review/summary` | the operator review queue |
 | `GET /v2/quotes/followup` | sent quote revisions not yet superseded |
-| `GET /v2/contacts/{id}` | one channel, its identity, its evidence and its marketing history |
-| `GET /v2/organizations/{id}` | one organization, its channels, people, domains and evidence |
+| `GET /v2/contacts/{id}` | one channel, its identity, its evidence, its marketing history, and the cases its participant rows reach |
+| `GET /v2/organizations/{id}` | one organization, its channels, people, domains, evidence, marketing controls, and its cases with their interests, quotes and activities |
 | `GET /v2/organizations/{id}/cases` | every case that institution is part of, with the part it holds on each |
 | `GET /v2/evidence` | the evidence trail, each row carrying its own provenance |
 | `GET /v2/evidence/records` | the same trail grouped by source record, with its `crm.*` matches |

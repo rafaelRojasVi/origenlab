@@ -137,28 +137,109 @@ class V2Repository(OperatorLookup):
     # ------------------------------------------------------------- organizations
 
     def organizations(self, *, q: str | None, limit: int, offset: int) -> Page:
+        """Organizations, most connected to OrigenLab first, each with truthful counts.
+
+        "Connected" is read only through durable foreign keys: a case reaches an organization
+        through `crm.opportunity.organization_id` (the confirmed requesting institution) or a
+        **current** `crm.opportunity_organization` row (`valid_to is null`), whatever its role.
+        No name match and no mail domain — a domain is a routing hint and never an identity
+        key (`docs/DOMAIN.md` §2.2).
+
+        The metrics are aggregated once per organization in CTEs rather than as correlated
+        subqueries per row, because ordering by connectedness needs them for every row before
+        the page is cut. The `union` in `org_case` is what makes every sum count a case once
+        even when an organization holds two parts on it, or both the column and a part row.
+        Interests exclude withdrawn ones; the people count is current confirmed affiliations.
+        """
         where = "where o.merged_into_organization_id is null"
         params: tuple[Any, ...] = ()
         if q:
             where += " and lower(o.name) like %s"
             params = (f"%{q.strip().lower()}%",)
         sql = f"""
+            with org_case as (
+                select op.organization_id, op.id as opportunity_id
+                  from crm.opportunity op
+                 where op.organization_id is not null
+                union
+                select oo.organization_id, oo.opportunity_id
+                  from crm.opportunity_organization oo
+                 where oo.valid_to is null
+            ),
+            case_metrics as (
+                select oc.organization_id,
+                       count(*)                                     as case_count,
+                       count(*) filter (where op.closed_at is null) as open_case_count,
+                       coalesce(sum(ic.n), 0)                       as interest_count,
+                       coalesce(sum(qc.n), 0)                       as quote_count,
+                       coalesce(sum(ac.n), 0)                       as activity_count,
+                       max(ac.last_at)                              as last_activity_at
+                  from org_case oc
+                  join crm.opportunity op on op.id = oc.opportunity_id
+                  left join (select opportunity_id, count(*) as n
+                               from crm.opportunity_interest
+                              where withdrawn_at is null
+                              group by opportunity_id) ic
+                         on ic.opportunity_id = oc.opportunity_id
+                  left join (select opportunity_id, count(*) as n
+                               from crm.quote
+                              group by opportunity_id) qc
+                         on qc.opportunity_id = oc.opportunity_id
+                  left join (select opportunity_id, count(*) as n, max(occurred_at) as last_at
+                               from crm.activity
+                              group by opportunity_id) ac
+                         on ac.opportunity_id = oc.opportunity_id
+                 group by oc.organization_id
+            ),
+            channel_metrics as (
+                select organization_id, count(*) as n
+                  from crm.contact_point
+                 where organization_id is not null
+                 group by organization_id
+            ),
+            people_metrics as (
+                select organization_id, count(distinct person_id) as n
+                  from crm.affiliation
+                 where confirmation = 'confirmed' and valid_to is null
+                 group by organization_id
+            )
             select o.id::text       as organization_id,
                    o.name           as name,
                    o.kind           as kind,
                    o.confirmation   as confirmation,
                    o.parent_organization_id::text as parent_organization_id,
-                   (select count(*) from crm.contact_point cp
-                     where cp.organization_id = o.id) as contact_point_count,
+                   coalesce(ch.n, 0)                as contact_point_count,
+                   coalesce(pe.n, 0)                as confirmed_people_count,
+                   coalesce(cm.case_count, 0)       as case_count,
+                   coalesce(cm.open_case_count, 0)  as open_case_count,
+                   coalesce(cm.interest_count, 0)   as interest_count,
+                   coalesce(cm.quote_count, 0)      as quote_count,
+                   coalesce(cm.activity_count, 0)   as activity_count,
+                   cm.last_activity_at              as last_activity_at,
                    o.created_at     as created_at
               from crm.organization o
+              left join case_metrics cm    on cm.organization_id = o.id
+              left join channel_metrics ch on ch.organization_id = o.id
+              left join people_metrics pe  on pe.organization_id = o.id
               {where}
-             order by lower(o.name)
+             order by coalesce(cm.case_count, 0) desc,
+                      coalesce(cm.open_case_count, 0) desc,
+                      cm.last_activity_at desc nulls last,
+                      coalesce(pe.n, 0) desc,
+                      coalesce(ch.n, 0) desc,
+                      lower(o.name),
+                      o.id
              limit %s offset %s
         """
         count_sql = f"select count(*) from crm.organization o {where}"
         with self._read() as cur:
-            return self._page(cur, sql, count_sql, params, limit, offset)
+            # psycopg ints come back as int already; `sum()` over bigint is numeric, so the
+            # three summed metrics are normalised here rather than leaking Decimal to JSON.
+            page = self._page(cur, sql, count_sql, params, limit, offset)
+        for item in page.items:
+            for key in ("interest_count", "quote_count", "activity_count"):
+                item[key] = int(item[key])
+        return page
 
     # ------------------------------------------------- prospects, leads, opportunities
 
@@ -339,6 +420,11 @@ class V2Repository(OperatorLookup):
         `evidence` is the provenance the operator needs to act. Every fact on this card
         traces to an `evidence.source_record`, and the card reports that record's kind, URI
         and review status rather than asserting the fact on its own authority.
+
+        Cases reach a channel only through a current `crm.opportunity_participant` row that
+        names it, or names the durable person `crm.contact_point.person_id` records for it;
+        interests, quotes and activities are then read through those cases
+        (`_case_connections` over `_CONTACT_CASES`).
         """
         with self._read() as cur:
             head = self._rows(
@@ -481,8 +567,16 @@ class V2Repository(OperatorLookup):
                 (address_norm, self.CARD_CHILD_LIMIT),
             )
 
+            connections = self._case_connections(
+                cur,
+                self._CONTACT_CASES,
+                self._CONTACT_CASE_ROLES,
+                {"subject": contact_point_id, "person": person_id},
+            )
+
             return {
                 **row,
+                **connections,
                 "sibling_contact_points": siblings,
                 "affiliations": affiliations,
                 "evidence": evidence,
@@ -524,12 +618,258 @@ class V2Repository(OperatorLookup):
                 },
             }
 
+    # ---------------------------------------------------- what a card reaches through cases
+
+    #: The cases an organization is connected to: the confirmed requesting institution on
+    #: `crm.opportunity.organization_id`, or any **current** part row in
+    #: `crm.opportunity_organization`, whatever its role. Closed part rows are history and
+    #: stay on the case card; they do not make an institution "connected" today.
+    _ORGANIZATION_CASES = """
+        with connected_cases as (
+            select op.id
+              from crm.opportunity op
+             where op.organization_id = %(subject)s::uuid
+            union
+            select oo.opportunity_id
+              from crm.opportunity_organization oo
+             where oo.organization_id = %(subject)s::uuid
+               and oo.valid_to is null
+        )
+    """
+
+    #: The parts one organization holds on each case, in `CASE_ROLE_ORDER`.
+    _ORGANIZATION_CASE_ROLES = """
+        array(select oo.role
+                from crm.opportunity_organization oo
+               where oo.opportunity_id = op.id
+                 and oo.organization_id = %(subject)s::uuid
+                 and oo.valid_to is null
+               order by array_position(%(role_order)s::text[], oo.role))
+    """
+
+    #: The cases a contact point is connected to: a **current** `crm.opportunity_participant`
+    #: row naming this contact point, or naming the durable person it belongs to. The person
+    #: branch is taken only when `crm.contact_point.person_id` is set — never from the
+    #: address, its local part or its domain.
+    _CONTACT_CASES = """
+        with connected_cases as (
+            select opp.opportunity_id as id
+              from crm.opportunity_participant opp
+             where opp.valid_to is null
+               and (opp.contact_point_id = %(subject)s::uuid
+                    or opp.person_id = %(person)s::uuid)
+        )
+    """
+
+    _CONTACT_CASE_ROLES = """
+        array(select distinct opp.role
+                from crm.opportunity_participant opp
+               where opp.opportunity_id = op.id
+                 and opp.valid_to is null
+                 and (opp.contact_point_id = %(subject)s::uuid
+                      or opp.person_id = %(person)s::uuid)
+               order by opp.role)
+    """
+
+    def _case_connections(
+        self, cur: Any, cases_cte: str, roles_sql: str, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Cases, interests, quotes, activities and case evidence reached from one subject.
+
+        Every list is bounded by `CARD_CHILD_LIMIT` and every count in `connection_summary`
+        is computed over the same `connected_cases` set without that bound, so a list of 100
+        beside a count of 340 tells the truth. Interests exclude withdrawn ones; a quote
+        reports its **latest** revision only (highest `revision_no`, the same reading as
+        `quotes_to_follow_up`), and a quote with no revision yet is still listed, with nulls,
+        so the list and its count agree; case evidence is the links that are still linked.
+        """
+        bound = {**params, "role_order": list(self.CASE_ROLE_ORDER),
+                 "limit": self.CARD_CHILD_LIMIT}
+
+        cases = self._rows(
+            cur,
+            cases_cte
+            + f"""
+            select op.id::text          as opportunity_id,
+                   op.title             as title,
+                   op.stage             as stage,
+                   op.closed_at         as closed_at,
+                   op.close_reason      as close_reason,
+                   op.created_at        as created_at,
+                   op.updated_at        as updated_at,
+                   req_org.id::text     as requesting_organization_id,
+                   req_org.name         as requesting_organization_name,
+                   {roles_sql}          as roles
+              from connected_cases cc
+              join crm.opportunity op on op.id = cc.id
+              left join crm.organization req_org on req_org.id = op.organization_id
+             order by (op.closed_at is null) desc, op.updated_at desc, op.id
+             limit %(limit)s
+            """,
+            bound,
+        )
+
+        interests = self._rows(
+            cur,
+            cases_cte
+            + """
+            select oi.id::text           as opportunity_interest_id,
+                   oi.opportunity_id::text as opportunity_id,
+                   op.title              as opportunity_title,
+                   oi.product_id::text   as product_id,
+                   p.model_number        as product_model_number,
+                   coalesce(p.name, p.model_number) as product_name,
+                   oi.manufacturer_organization_id::text as manufacturer_organization_id,
+                   m.name                as manufacturer_organization_name,
+                   oi.model_text         as model_text,
+                   oi.description        as description,
+                   oi.quantity           as quantity,
+                   oi.quantity_unit      as quantity_unit,
+                   oi.confirmation       as confirmation,
+                   oi.created_at         as created_at
+              from connected_cases cc
+              join crm.opportunity_interest oi on oi.opportunity_id = cc.id
+              join crm.opportunity op on op.id = oi.opportunity_id
+              left join catalog.product p on p.id = oi.product_id
+              left join crm.organization m on m.id = oi.manufacturer_organization_id
+             where oi.withdrawn_at is null
+             order by oi.created_at desc, oi.id
+             limit %(limit)s
+            """,
+            bound,
+        )
+
+        quotes = self._rows(
+            cur,
+            cases_cte
+            + """
+            select q.id::text             as quote_id,
+                   q.quote_number         as quote_number,
+                   q.opportunity_id::text as opportunity_id,
+                   op.title               as opportunity_title,
+                   latest.revision_no     as latest_revision_no,
+                   latest.status          as latest_status,
+                   latest.quote_currency  as quote_currency,
+                   latest.grand_total     as grand_total,
+                   latest.valid_until     as valid_until,
+                   latest.sent_at         as sent_at,
+                   (select count(*) from crm.quote_revision r where r.quote_id = q.id)
+                                          as revision_count,
+                   coalesce(latest.updated_at, q.updated_at) as updated_at
+              from connected_cases cc
+              join crm.quote q on q.opportunity_id = cc.id
+              join crm.opportunity op on op.id = q.opportunity_id
+              left join lateral (
+                  select r.revision_no, r.status, r.quote_currency, r.grand_total,
+                         r.valid_until, r.sent_at, r.updated_at
+                    from crm.quote_revision r
+                   where r.quote_id = q.id
+                   order by r.revision_no desc
+                   limit 1
+              ) latest on true
+             order by coalesce(latest.updated_at, q.updated_at) desc, q.id
+             limit %(limit)s
+            """,
+            bound,
+        )
+
+        activities = self._rows(
+            cur,
+            cases_cte
+            + """
+            select act.id::text             as activity_id,
+                   act.opportunity_id::text as opportunity_id,
+                   op.title                 as opportunity_title,
+                   act.kind                 as kind,
+                   act.occurred_at          as occurred_at,
+                   act.summary              as summary,
+                   act.message_id::text     as message_id,
+                   recorder.display_name    as recorded_by_display_name
+              from connected_cases cc
+              join crm.activity act on act.opportunity_id = cc.id
+              join crm.opportunity op on op.id = act.opportunity_id
+              join platform.operator recorder on recorder.id = act.recorded_by_operator_id
+             order by act.occurred_at desc, act.id
+             limit %(limit)s
+            """,
+            bound,
+        )
+
+        case_evidence = self._rows(
+            cur,
+            cases_cte
+            + """
+            select oe.id::text             as opportunity_evidence_id,
+                   oe.opportunity_id::text as opportunity_id,
+                   oe.relation             as relation,
+                   case
+                     when oe.source_record_id is not null then 'source_record'
+                     when oe.assertion_id     is not null then 'assertion'
+                     when oe.message_id       is not null then 'message'
+                     else 'notice'
+                   end                     as subject_kind,
+                   coalesce(oe.source_record_id, oe.assertion_id,
+                            oe.message_id, oe.notice_id)::text as subject_id,
+                   coalesce(sr.kind, asr.kind)             as source_kind,
+                   coalesce(sr.source_uri, asr.source_uri) as source_uri,
+                   oe.linked_at            as linked_at
+              from connected_cases cc
+              join crm.opportunity_evidence oe on oe.opportunity_id = cc.id
+              left join evidence.source_record sr on sr.id = oe.source_record_id
+              left join evidence.assertion a on a.id = oe.assertion_id
+              left join evidence.source_record asr on asr.id = a.source_record_id
+             where oe.unlinked_at is null
+             order by oe.linked_at desc, oe.id
+             limit %(limit)s
+            """,
+            bound,
+        )
+
+        summary = self._rows(
+            cur,
+            cases_cte
+            + """
+            select
+              (select count(*) from connected_cases) as cases,
+              (select count(*) from connected_cases cc
+                 join crm.opportunity op on op.id = cc.id
+                where op.closed_at is null) as open_cases,
+              (select count(*) from connected_cases cc
+                 join crm.opportunity_interest oi on oi.opportunity_id = cc.id
+                where oi.withdrawn_at is null) as interests,
+              (select count(*) from connected_cases cc
+                 join crm.quote q on q.opportunity_id = cc.id) as quotes,
+              (select count(*) from connected_cases cc
+                 join crm.activity act on act.opportunity_id = cc.id) as activities,
+              (select count(*) from connected_cases cc
+                 join crm.opportunity_evidence oe on oe.opportunity_id = cc.id
+                where oe.unlinked_at is null) as case_evidence,
+              (select max(act.occurred_at) from connected_cases cc
+                 join crm.activity act on act.opportunity_id = cc.id) as last_activity_at
+            """,
+            params,
+        )[0]
+
+        return {
+            "cases": cases,
+            "interests": interests,
+            "quotes": quotes,
+            "activities": activities,
+            "case_evidence": case_evidence,
+            "connection_summary": summary,
+        }
+
     def organization_card(self, organization_id: str) -> dict[str, Any] | None:
         """One organization, its channels, its people, its domains and its provenance.
 
         A domain is a routing hint and never an identity key (`docs/DOMAIN.md` §2.2), so the
         domains listed here are the ones somebody recorded against this organization — not
         every address that happens to share a mail domain with it.
+
+        The commercial picture — `cases`, `interests`, `quotes`, `activities`,
+        `case_evidence` and their `connection_summary` — comes from `_case_connections` over
+        `_ORGANIZATION_CASES`, the same predicate `organizations()` counts with, so the
+        numbers on a list row and on the card it opens agree.
         """
         with self._read() as cur:
             head = self._rows(
@@ -670,15 +1010,105 @@ class V2Repository(OperatorLookup):
                 (organization_id, self.CARD_CHILD_LIMIT),
             )
 
+            connections = self._case_connections(
+                cur,
+                self._ORGANIZATION_CASES,
+                self._ORGANIZATION_CASE_ROLES,
+                {"subject": organization_id},
+            )
+            connections["connection_summary"]["confirmed_people"] = self._scalar(
+                cur,
+                "select count(distinct person_id) from crm.affiliation "
+                "where organization_id = %s::uuid and confirmation = 'confirmed' "
+                "and valid_to is null",
+                (organization_id,),
+            )
+
+            #: Marketing state is reached through this organization's own durable rows only:
+            #: address controls on the email contact points recorded against it, domain
+            #: controls on the domains recorded against it (`crm.organization_domain`), and
+            #: campaign membership of those contact points. Never a domain parsed out of an
+            #: address — that would attach another institution's suppression to this one.
+            address_controls_from = """
+                  from outbound.contact_control cc
+                 where cc.scope = 'address'
+                   and cc.value_norm in (select cp.value_norm from crm.contact_point cp
+                                          where cp.organization_id = %s::uuid
+                                            and cp.kind = 'email')
+            """
+            domain_controls_from = """
+                  from outbound.contact_control cc
+                 where cc.scope = 'domain'
+                   and cc.value_norm in (select d.domain_norm from crm.organization_domain d
+                                          where d.organization_id = %s::uuid)
+            """
+            marketing_from = """
+                  from outbound.campaign_recipient r
+                  join outbound.campaign c on c.id = r.campaign_id
+                  join crm.contact_point cp on cp.id = r.contact_point_id
+                 where cp.organization_id = %s::uuid
+            """
+            control_columns = """
+                select cc.value_norm   as value_norm,
+                       cc.kind         as control_kind,
+                       cc.purpose      as purpose,
+                       cc.scope        as scope,
+                       cc.reason       as reason,
+                       cc.source       as source,
+                       cc.until_at     as until_at,
+                       cc.needs_review as needs_review,
+                       cc.created_at   as created_at
+            """
+            address_controls = self._rows(
+                cur,
+                control_columns + address_controls_from
+                + " order by cc.created_at desc, cc.id limit %s",
+                (organization_id, self.CARD_CHILD_LIMIT),
+            )
+            domain_controls = self._rows(
+                cur,
+                control_columns + domain_controls_from
+                + " order by cc.created_at desc, cc.id limit %s",
+                (organization_id, self.CARD_CHILD_LIMIT),
+            )
+            marketing = self._rows(
+                cur,
+                """
+                select cp.id::text       as contact_point_id,
+                       cp.value_display  as address,
+                       c.name            as campaign_name,
+                       c.status          as campaign_status,
+                       r.state           as recipient_state,
+                       r.attempt_count   as attempt_count,
+                       r.created_at      as created_at
+                """
+                + marketing_from
+                + " order by r.created_at desc, r.id limit %s",
+                (organization_id, self.CARD_CHILD_LIMIT),
+            )
+
             return {
                 **row,
+                **connections,
                 "contact_points": contact_points,
                 "people": people,
                 "domains": domains,
                 "relationships": relationships,
                 "child_organizations": children,
                 "evidence": evidence,
+                "address_controls": address_controls,
+                "domain_controls": domain_controls,
+                "marketing": marketing,
                 "counts": {
+                    "address_controls": self._scalar(
+                        cur, "select count(*)" + address_controls_from, (organization_id,)
+                    ),
+                    "domain_controls": self._scalar(
+                        cur, "select count(*)" + domain_controls_from, (organization_id,)
+                    ),
+                    "marketing": self._scalar(
+                        cur, "select count(*)" + marketing_from, (organization_id,)
+                    ),
                     "contact_points": self._scalar(
                         cur,
                         "select count(*) from crm.contact_point where organization_id = %s::uuid",

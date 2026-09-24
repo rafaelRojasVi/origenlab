@@ -27,7 +27,7 @@ of truth*). Any PR that changes what is built, applied or deployed updates this
 file — including the `Last verified` line — **in the same PR**. A PR that only
 changes design, rules or targets does not touch it.
 
-Last verified: **2026-09-23**, against `origin/main` @ `a3961aa4` plus this branch, measured from the
+Last verified: **2026-09-24**, against `origin/main` @ `a3961aa4` plus this branch, measured from the
 local PostgreSQL 17 carrying the Slice 0 migrations. §2.5's hosted facts are measurements taken by the
 Slice 0 audit itself on 2026-09-21, over the reviewed Supavisor session route inside a server-
 confirmed read-only transaction, together with authenticated control-plane reads; the earlier
@@ -543,7 +543,7 @@ Slice 0 had "zero consumers"; it now has one.
 | Identity | one port, two adapters — a JWKS verifier (the target; **present and unconfigured**) and a local development adapter that **refuses to construct** unless the V2 DSN is a literal loopback address. JWKS wins whenever configured |
 | Authorization | every route requires a resolved, **active** `platform.operator` with role `viewer`, `sales` or `admin`; no identity is 401 |
 | Paging | every listing bounded — default 50, maximum 200. Every child list on a card is bounded too, at 100, and the card reports the true count beside each capped list |
-| Tests | **57** — `apps/api/tests/test_v2_read_boundary.py`; 14 are database-backed and skip unless `ORIGENLAB_V2_TEST_DSN` is set. The case reads add **26** in `test_v2_case_read_boundary.py`, 3 of which (§2.7.20) build their own disposable database. The command boundary has its own 64 (§2.7.8) |
+| Tests | **57** — `apps/api/tests/test_v2_read_boundary.py`; 14 are database-backed and skip unless `ORIGENLAB_V2_TEST_DSN` is set. The case reads add **26** in `test_v2_case_read_boundary.py`, 3 of which (§2.7.20) build their own disposable database. The durable connections of §2.7.21 add **10** in `test_v2_crm_connections_read.py`, all database-backed on their own disposable database. The command boundary has its own 64 (§2.7.8) |
 | Measured against the local database | `/v2/contacts` 9,460 · `/v2/organizations` 1,812 · `/v2/review/summary` 4 ambiguous, 172 unresolved, 1,812 + 9,460 machine-proposed |
 | Returning zero today | `/v2/prospects`, `/v2/opportunities/active`, `/v2/tasks/due`, `/v2/quotes/followup` — see below |
 
@@ -1357,6 +1357,32 @@ working exactly as designed.
 by itself, so the content column is squeezed to about 130 px on any section — V1 and V2
 alike, and identically before this change. Collapsing the sidebar by hand renders correctly.
 That is a shell IA decision, not part of either defect above.
+
+### 2.7.21 Durable connections on the organization list and the two cards — 2026-09-24
+
+The two 360 cards now reach the whole commercial picture through the durable core, and the
+organization list is ranked by it. **Every connection is a foreign key someone recorded** — no
+name match and no mail domain, because a domain is a routing hint and never an identity key
+([`DOMAIN.md`](DOMAIN.md) §2.2).
+
+| Item | Value |
+|---|---|
+| Migration | **none**. Inventory stays at **36** tables, ledger at **24**, head `20260922200000` |
+| Data | **none written anywhere.** Read-only code; no Gmail, no Drive, nothing touched `origenlab_dev`, `origenlab_clean` or the hosted project (frozen, §2.8) |
+| New routes | **none**. The shapes of `GET /v2/organizations`, `/v2/organizations/{id}` and `/v2/contacts/{id}` grew; the proxy allowlist is unchanged |
+| An organization reaches a case through | `crm.opportunity.organization_id` (the confirmed requesting institution) **or** a *current* `crm.opportunity_organization` row (`valid_to is null`), whatever its role. A closed part row is history on the case card and does not count as a connection today. One organization holding two parts on one case, or both the column and a part row, is **one** case |
+| A contact point reaches a case through | a *current* `crm.opportunity_participant` row naming that contact point, **or** naming the durable person `crm.contact_point.person_id` records for it. Never from the address, its local part or its domain |
+| Organization list ranking | `GET /v2/organizations` is ordered by case count, then open cases, then latest case activity (nulls last), then confirmed people, then channels, then name and id. Each row now carries `confirmed_people_count`, `case_count`, `open_case_count`, `interest_count`, `quote_count`, `activity_count` and `last_activity_at` beside the existing `contact_point_count`. It was ordered by name only |
+| Organization card | adds `cases` (each with the `roles` this organization holds on it), `interests` (withdrawn ones excluded; catalogued product and maker where recorded), `quotes` (the **latest** revision only, plus `revision_count`; a quote with no revision is still listed), `activities`, `case_evidence` (still-linked links only) and a `connection_summary`. It also adds `address_controls` (on the email contact points recorded against it), `domain_controls` (on the domains in `crm.organization_domain`, not domains parsed out of addresses) and `marketing` (the campaign-recipient rows of its own contact points) |
+| Contact card | adds the same `cases` / `interests` / `quotes` / `activities` / `case_evidence` / `connection_summary` block, with the participant `roles` per case |
+| Bounded lists, truthful counts | every new list is capped at `CARD_CHILD_LIMIT` (**100**); every count in `connection_summary` and in `counts` is computed over the same connection set **without** the cap, so a list of 100 beside a count of 340 tells the truth. The list row and the card it opens use the same predicate, so their numbers agree |
+
+| Evidence | Result |
+|---|---|
+| `test_v2_crm_connections_read.py` | **10 passed**, all database-backed, in their own `origenlab_test_<hex>` (created, migrated and dropped by `v2_command_harness`), read as the `origenlab_api` login. The fixture holds one institution, a decoy with the same name stem and the same mail domain, a maker, a withdrawn interest, a closed part row, a two-revision quote (void then draft) and a draft campaign with two recipients. They assert that the institution ranks first with the right counts, that the decoy, the maker and an address on the institution's domain but recorded against no organization reach nothing of the institution's, that **marketing is non-empty** for the institution's desk and empty for the decoy, and that reading every card changes no table (content digest before and after) |
+| Focused V2 read suites | `test_v2_crm_connections_read.py` + `test_v2_read_boundary.py` + `test_v2_case_read_boundary.py`: **84 passed, 9 skipped**. The 9 skips are `test_v2_read_boundary.py` checks that need a populated target database, not the disposable one |
+| `apps/api` `scripts/validate.sh` | **1,353 passed, 215 skipped**, with `ORIGENLAB_POSTGRES_URL`, `ORIGENLAB_V2_DATABASE_URL`, `ALEMBIC_DATABASE_URL` and both test DSNs unset. The new suite skips there without its DSNs |
+| Not covered yet | marketing is covered by one draft campaign with `snapshotted` recipients only — no sent, bounced or replied state. No fixture yet holds a list longer than the cap, so the "list ≤ cap ≤ count" rule is asserted structurally. The dashboard has not been changed to show the new fields |
 
 ### 2.7.5 Local V2 — the reconciled picture, 2026-09-21
 
