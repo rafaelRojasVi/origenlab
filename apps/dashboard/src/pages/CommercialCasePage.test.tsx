@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CommercialCasePage } from "./CommercialCasePage";
@@ -141,8 +141,8 @@ describe("the case list", () => {
     // And it asserts no absence it never measured. The list row carries counts, not roles,
     // so "sin proveedor en el caso" would be the card inventing a fact it cannot see.
     expect(summary.textContent).toContain("3 institución(es)");
-    expect(summary.textContent).not.toContain("Sin proveedor en el caso");
-    expect(summary.textContent).not.toContain("Sin fabricante en el caso");
+    expect(summary.textContent).not.toContain("Sin proveedor");
+    expect(summary.textContent).not.toContain("Sin fabricante");
   });
 
   it("reports a failed load instead of rendering an empty list", async () => {
@@ -157,6 +157,84 @@ describe("the case list", () => {
     });
     expect(screen.queryByTestId("v2-empty-state")).toBeNull();
     expect(screen.queryAllByTestId("case-summary-card")).toHaveLength(0);
+  });
+});
+
+describe("the case list filters", () => {
+  const lastCall = () => {
+    const calls = vi.mocked(fetchV2Cases).mock.calls;
+    return calls[calls.length - 1][0];
+  };
+
+  it("sends the prospect preset as two stages, and each other filter", async () => {
+    vi.mocked(fetchV2Cases).mockResolvedValue(page([listedCase()]));
+    vi.mocked(fetchV2CaseCard).mockResolvedValue(card());
+    render(<CommercialCasePage />);
+    await screen.findByTestId("case-filters");
+
+    fireEvent.change(screen.getByLabelText("Etapa"), { target: { value: "prospects" } });
+    await waitFor(() => expect(lastCall()).toMatchObject({ stage: ["lead", "qualifying"] }));
+
+    fireEvent.change(screen.getByLabelText("Cotización"), { target: { value: "none" } });
+    fireEvent.change(screen.getByLabelText("Actividad reciente"), { target: { value: "90" } });
+    fireEvent.change(screen.getByPlaceholderText("nombre"), { target: { value: "Austral" } });
+    fireEvent.change(screen.getByPlaceholderText("modelo, producto…"), {
+      target: { value: "centrífuga" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Filtrar" }));
+    await waitFor(() =>
+      expect(lastCall()).toMatchObject({
+        stage: ["lead", "qualifying"],
+        quoteState: "none",
+        activeWithinDays: 90,
+        organizationQ: "Austral",
+        interestQ: "centrífuga",
+      }),
+    );
+  });
+
+  it("says nothing recorded matches rather than that no case exists", async () => {
+    vi.mocked(fetchV2Cases).mockResolvedValue(page([]));
+    render(<CommercialCasePage />);
+    await screen.findByTestId("case-filters");
+    fireEvent.change(screen.getByLabelText("Cotización"), { target: { value: "sent" } });
+    expect(await screen.findByText("Ningún caso registrado cumple estos filtros")).toBeTruthy();
+    expect(screen.getByText(/no significa que no exista/)).toBeTruthy();
+  });
+
+  it("reads every current part, its origin, its quote state and its last activity from the row", async () => {
+    vi.mocked(fetchV2Cases).mockResolvedValue(
+      page([
+        listedCase({
+          requesting_organization_id: "org-r",
+          requesting_organization_name: "Universidad Ficticia",
+          evidence_count: 2,
+          participants: [
+            { organization_id: "org-r", name: "Universidad Ficticia", role: "requesting_institution", confirmation: "confirmed" },
+            { organization_id: "org-s", name: "Proveedor Ficticio", role: "supplier", confirmation: "confirmed" },
+            { organization_id: "org-s", name: "Proveedor Ficticio", role: "manufacturer", confirmation: "confirmed" },
+            { organization_id: "org-f", name: "Fondo Ficticio", role: "funder", confirmation: "confirmed" },
+            { organization_id: "org-m", name: "Mencionada Ficticia", role: "mentioned", confirmation: "machine_proposed" },
+          ],
+          interest_labels: ["Centrífuga CX-1"],
+          quote_count: 1,
+          latest_quote_status: "draft",
+          last_activity_at: "2026-09-20T10:00:00Z",
+        }),
+      ]),
+    );
+    vi.mocked(fetchV2CaseCard).mockRejectedValue(new Error("card not needed"));
+    render(<CommercialCasePage />);
+    const summary = await screen.findByTestId("case-summary-card");
+    expect(summary.textContent).toContain("Universidad Ficticia");
+    expect(summary.textContent).toContain("Centrífuga CX-1");
+    expect(summary.textContent).toContain("Proveedor Ficticio");
+    const others = within(summary).getByTestId("case-summary-other-roles");
+    expect(others.textContent).toContain("Financia: Fondo Ficticio");
+    expect(others.textContent).toContain("Mencionada: Mencionada Ficticia");
+    expect(summary.textContent).toContain("2 documentos vinculados");
+    expect(summary.textContent).toContain("1 cotización · última: Borrador");
+    expect(summary.textContent).toContain("actividad registrada");
   });
 });
 

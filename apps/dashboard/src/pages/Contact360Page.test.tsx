@@ -19,7 +19,11 @@ import {
 import {
   addressControl,
   cardEvidence,
+  connectedCase,
+  connectedQuote,
   contactCard,
+  emptyConnectionSummary,
+  listedContact,
   listedQuote,
   organizationCaseWithRoles,
 } from "../lib/__fixtures__/crm360";
@@ -39,17 +43,11 @@ beforeEach(() => {
   vi.mocked(fetchV2Contacts).mockResolvedValue(
     page(
       [
-        {
-          contact_point_id: CONTACT_ID,
-          address: "compras@instituto.invalid",
-          usage: "shared_mailbox" as const,
-          confirmation: "machine_proposed" as const,
-          person_id: null,
-          person_display_name: null,
+        listedContact({
+          usage: "shared_mailbox",
           organization_id: ORG_ID,
           organization_name: "Instituto Ficticio de Metrología",
-          created_at: null,
-        },
+        }),
       ],
       9460,
     ) as never,
@@ -65,11 +63,66 @@ afterEach(() => {
 });
 
 describe("the contact list", () => {
-  it("shows a channel with no owner as a pending channel rather than as a name", async () => {
+  it("shows a channel with no owner as its address and its recorded identity, never a name", async () => {
     render(<Contact360Page />);
-    const row = await screen.findByText("Canal pendiente");
-    expect(row).toBeTruthy();
-    expect(screen.getByText("sin persona")).toBeTruthy();
+    const table = await screen.findByTestId("contact-360-table");
+    expect(within(table).getByText("compras@instituto.invalid")).toBeTruthy();
+    expect(within(table).getByText("Buzón de institución")).toBeTruthy();
+    expect(within(table).getByText("Instituto Ficticio de Metrología")).toBeTruthy();
+  });
+
+  it("tells a confirmed person, an institution's mailbox and an unattributed address apart", async () => {
+    vi.mocked(fetchV2Contacts).mockResolvedValue(
+      page([
+        listedContact({
+          contact_point_id: "c-1",
+          address: "maria@instituto.invalid",
+          person_id: "p-1",
+          person_display_name: "María Ficticia",
+          organization_id: ORG_ID,
+          organization_name: "Instituto Ficticio de Metrología",
+          case_count: 2,
+        }),
+        listedContact({
+          contact_point_id: "c-2",
+          address: "otro@instituto.invalid",
+          address_control_count: 1,
+        }),
+      ]) as never,
+    );
+    render(<Contact360Page />);
+    const table = await screen.findByTestId("contact-360-table");
+    const rows = within(table).getAllByRole("listitem");
+    expect(rows[0].textContent).toContain("María Ficticia");
+    expect(rows[0].textContent).toContain("Persona confirmada");
+    expect(rows[0].textContent).toContain("2 casos");
+    // Same domain as the institution, and still nobody's: nothing is read from the domain.
+    expect(rows[1].textContent).toContain("Dirección sin atribuir");
+    expect(rows[1].textContent).toContain("Sin institución registrada");
+    expect(rows[1].textContent).toContain("1 control");
+  });
+
+  it("sends the identity filter, the case toggle and the search to the server", async () => {
+    render(<Contact360Page />);
+    await screen.findByTestId("contact-360-table");
+    fireEvent.click(screen.getByRole("button", { name: "Persona confirmada" }));
+    await waitFor(() => {
+      const calls = vi.mocked(fetchV2Contacts).mock.calls;
+      expect(calls[calls.length - 1][0]).toMatchObject({ identity: "person" });
+    });
+    fireEvent.click(screen.getByLabelText("Sólo con participación en casos"));
+    fireEvent.change(screen.getByPlaceholderText("correo, persona o institución"), {
+      target: { value: "Instituto" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
+    await waitFor(() => {
+      const calls = vi.mocked(fetchV2Contacts).mock.calls;
+      expect(calls[calls.length - 1][0]).toMatchObject({
+        identity: "person",
+        withCases: true,
+        q: "Instituto",
+      });
+    });
   });
 
   it("counts from the server total, not from the rows on screen", async () => {
@@ -79,8 +132,14 @@ describe("the contact list", () => {
 
   it("opens a contact as a deep link, so the screen can be shared and reopened", async () => {
     render(<Contact360Page />);
-    fireEvent.click(await screen.findByText("Canal pendiente"));
+    fireEvent.click(await screen.findByText("compras@instituto.invalid"));
     expect(window.location.hash).toBe(`#/contactos?id=${CONTACT_ID}`);
+    // Let the detail the hash opened mount inside this test, so its fetches never run
+    // after the mocks are reset.
+    await screen.findByTestId("contact-360-detail");
+    // The institution's cases are fetched only once the card has loaded; wait for that
+    // too, or under load it starts after `vi.resetAllMocks()` and reads `undefined`.
+    await waitFor(() => expect(fetchV2OrganizationCases).toHaveBeenCalled());
   });
 });
 
@@ -95,7 +154,8 @@ describe("Contacto 360", () => {
     await open();
     const note = screen.getByTestId("contact-360-pending-note");
     expect(note.textContent).toContain("buzón de rol");
-    expect(screen.getByText(/Canal pendiente/)).toBeTruthy();
+    expect(screen.getByText("Nadie identificado todavía")).toBeTruthy();
+    expect(screen.getByText("Buzón de institución")).toBeTruthy();
   });
 
   it("never claims marketing permission from having received mail", async () => {
@@ -129,7 +189,7 @@ describe("Contacto 360", () => {
     ).toBeTruthy();
   });
 
-  it("attaches every case its institution is part of, with the part it holds", async () => {
+  it("lists its institution's cases apart, with the part the institution holds", async () => {
     vi.mocked(fetchV2OrganizationCases).mockResolvedValue(
       page([organizationCaseWithRoles([{ role: "supplier" }])]) as never,
     );
@@ -138,19 +198,42 @@ describe("Contacto 360", () => {
     await waitFor(() => {
       expect(screen.getByTestId("case-summary-card")).toBeTruthy();
     });
-    expect(within(screen.getByTestId("contact-360-cases")).getByText("Caso ficticio 1")).toBeTruthy();
+    const orgCases = screen.getByTestId("contact-360-organization-cases");
+    expect(within(orgCases).getByText("Caso ficticio 1")).toBeTruthy();
     // The institution supplies here and asks in nothing. The old browser-side join over
     // `/v2/cases` showed this contact no cases at all.
     expect(screen.getByTestId("contact-360-case-role").textContent).toContain("Proveedor");
     expect(vi.mocked(fetchV2OrganizationCases).mock.calls[0][0]).toBe(ORG_ID);
-    expect(within(screen.getByTestId("contact-360-quotes")).getByText(/1235/)).toBeTruthy();
+    // The contact's own participation is a different fact, said as not recorded yet.
+    expect(screen.getByTestId("contact-360-cases").textContent).toContain(
+      "No hay participación registrada todavía",
+    );
+  });
+
+  it("shows the cases it participates in with the person's part, even with no requesting institution", async () => {
+    vi.mocked(fetchV2ContactCard).mockResolvedValue(
+      contactCard({
+        organization_id: null,
+        organization_name: null,
+        cases: [connectedCase({ roles: ["technical", "quote_recipient"] })],
+        quotes: [connectedQuote()],
+        connection_summary: emptyConnectionSummary({ cases: 1, open_cases: 1, quotes: 1 }),
+      }),
+    );
+    await open();
+    const cases = screen.getByTestId("contact-360-cases");
+    expect(cases.textContent).toContain("Caso ficticio 1");
+    expect(cases.textContent).toContain("Contacto técnico");
+    expect(cases.textContent).toContain("Recibe la cotización");
+    expect(cases.textContent).toContain("Pide: no registrado todavía");
+    expect(cases.textContent).not.toContain("No hay participación");
+    expect(screen.queryByTestId("contact-360-organization-cases")).toBeNull();
+    expect(screen.getByTestId("contact-360-quotes").textContent).toContain("1235 · rev. 2 · Enviada");
   });
 
   it("says a zero quote count is unmigrated history, not an absence of business", async () => {
     await open();
-    expect(screen.getByTestId("contact-360-quotes").textContent).toContain(
-      "todavía no se migra",
-    );
+    expect(screen.getByTestId("contact-360-quotes").textContent).toContain("aún no se migra");
   });
 
   it("keeps ids, vocabulary and provenance in a drawer that starts closed", async () => {
@@ -180,7 +263,7 @@ describe("Contacto 360", () => {
       }),
     );
     await open();
-    const rows = within(screen.getByTestId("contact-360-activity")).getAllByRole("listitem");
+    const rows = within(screen.getByTestId("contact-360-evidence")).getAllByRole("listitem");
     expect(rows[0].textContent).toContain("la observación reciente");
     expect(rows[1].textContent).toContain("la observación antigua");
   });

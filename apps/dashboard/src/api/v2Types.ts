@@ -45,8 +45,24 @@ export interface V2Contact {
   organization_id: string | null;
   organization_name: string | null;
   created_at: string | null;
+  /** Cases a current participant row connects this channel (or its person) to. */
+  case_count: number;
+  /** Address-scope rows in `outbound.contact_control` for this address. */
+  address_control_count: number;
 }
 
+/**
+ * How a channel's owner is *recorded* — read from its two foreign keys, never its address.
+ *
+ * `person`: a durable person is recorded. `organization_mailbox`: an institution is recorded
+ * and no person. `unattributed`: neither. The API filters by the same three words.
+ */
+export type V2ContactIdentity = "person" | "organization_mailbox" | "unattributed";
+
+/**
+ * One organization, ranked by durable connectedness, with counts read through recorded
+ * foreign keys only (`GET /v2/organizations`). The counts agree with the card it opens.
+ */
 export interface V2Organization {
   organization_id: string;
   name: string;
@@ -55,8 +71,52 @@ export interface V2Organization {
   confirmation: V2Confirmation;
   parent_organization_id: string | null;
   contact_point_count: number;
+  confirmed_people_count: number;
+  case_count: number;
+  open_case_count: number;
+  interest_count: number;
+  quote_count: number;
+  activity_count: number;
+  last_activity_at: string | null;
+  /**
+   * Distinct cases on which the organization holds each part now (current
+   * `crm.opportunity_organization` rows; asking also counts `opportunity.organization_id`).
+   * Two parts on one case count once in `case_count` and once in each part here.
+   */
+  cases_as_requesting_institution: number;
+  cases_as_end_user_institution: number;
+  cases_as_purchasing_agent: number;
+  cases_as_funder: number;
+  cases_as_supplier: number;
+  cases_as_manufacturer: number;
+  cases_as_mentioned: number;
+  /** Current roles for OrigenLab (`crm.organization_relationship`), not per case. */
+  relationship_roles: string[];
   created_at: string | null;
 }
+
+/**
+ * The commercial side `GET /v2/organizations?segment=` keeps. Segments may overlap: a
+ * recorded distributor that also buys sits in both `customers` and `suppliers`.
+ */
+export type V2OrganizationSegment = "customers" | "suppliers" | "others";
+
+/** Row counts per segment under the list's other filters; `all` ignores the segment. */
+export type V2OrganizationFacets = Record<V2OrganizationSegment | "all", number>;
+
+export interface V2OrganizationsPage extends V2Page<V2Organization> {
+  /** Null when the response carried none (an older API); never guessed. */
+  facets: V2OrganizationFacets | null;
+}
+
+/** The list filters `GET /v2/organizations?has=` accepts; each must hold. */
+export type V2OrganizationFilter =
+  | "contacts"
+  | "people"
+  | "cases"
+  | "open_cases"
+  | "interests"
+  | "quotes";
 
 export interface V2Opportunity {
   opportunity_id: string;
@@ -235,6 +295,9 @@ export interface V2Affiliation {
 }
 
 export interface V2CardMarketing {
+  /** Present on an organization card, which lists several of its channels' rows. */
+  contact_point_id: string | null;
+  address: string | null;
   campaign_name: string;
   campaign_status: string;
   recipient_state: string;
@@ -250,6 +313,8 @@ export interface V2CardMarketing {
  * The card shows these beside the channel for exactly that reason.
  */
 export interface V2AddressControl {
+  /** The address or domain controlled. Present on an organization card, which lists several. */
+  value_norm: string | null;
   control_kind: string;
   purpose: string;
   scope: string;
@@ -263,7 +328,105 @@ export interface V2AddressControl {
 /** How many there really are, when a list is capped at the card's child limit. */
 export type V2CardCounts = Record<string, number>;
 
-export interface V2ContactCard {
+// ------------------------------------------- what a card reaches through recorded cases
+
+/**
+ * A case a card reaches, with the part(s) its subject holds on it.
+ *
+ * For an organization, `roles` are its current `crm.opportunity_organization` parts. For a
+ * contact, they are its current `crm.opportunity_participant` roles (`technical`,
+ * `end_user`…) — a person's part on a case, which is not an institution's.
+ */
+export interface V2ConnectedCase {
+  opportunity_id: string;
+  title: string;
+  stage: V2CaseStage;
+  closed_at: string | null;
+  close_reason: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  requesting_organization_id: string | null;
+  requesting_organization_name: string | null;
+  roles: string[];
+}
+
+export interface V2ConnectedInterest {
+  opportunity_interest_id: string;
+  opportunity_id: string;
+  opportunity_title: string;
+  product_id: string | null;
+  product_model_number: string | null;
+  product_name: string | null;
+  manufacturer_organization_id: string | null;
+  manufacturer_organization_name: string | null;
+  model_text: string | null;
+  description: string | null;
+  quantity: number | null;
+  quantity_unit: string | null;
+  confirmation: V2Confirmation;
+  created_at: string | null;
+}
+
+/** A quote and its **latest** revision only. A quote with no revision yet has nulls. */
+export interface V2ConnectedQuote {
+  quote_id: string;
+  quote_number: string | null;
+  opportunity_id: string;
+  opportunity_title: string;
+  latest_revision_no: number | null;
+  latest_status: string | null;
+  quote_currency: string | null;
+  grand_total: number | null;
+  valid_until: string | null;
+  sent_at: string | null;
+  revision_count: number;
+  updated_at: string | null;
+}
+
+export interface V2ConnectedActivity {
+  activity_id: string;
+  opportunity_id: string;
+  opportunity_title: string;
+  kind: string;
+  occurred_at: string | null;
+  summary: string | null;
+  recorded_by_display_name: string | null;
+}
+
+export interface V2ConnectedCaseEvidence {
+  opportunity_evidence_id: string;
+  opportunity_id: string;
+  relation: V2CaseEvidenceRelation;
+  subject_kind: "source_record" | "assertion" | "message" | "notice";
+  subject_id: string;
+  source_kind: string | null;
+  source_uri: string | null;
+  linked_at: string | null;
+}
+
+/** Uncapped counts over the same connected-case set the capped lists are drawn from. */
+export interface V2ConnectionSummary {
+  cases: number;
+  open_cases: number;
+  interests: number;
+  quotes: number;
+  activities: number;
+  case_evidence: number;
+  last_activity_at: string | null;
+  /** Organization cards only: current confirmed affiliations. */
+  confirmed_people: number | null;
+}
+
+export interface V2CardConnections {
+  cases: V2ConnectedCase[];
+  interests: V2ConnectedInterest[];
+  quotes: V2ConnectedQuote[];
+  activities: V2ConnectedActivity[];
+  case_evidence: V2ConnectedCaseEvidence[];
+  connection_summary: V2ConnectionSummary;
+}
+
+export interface V2ContactCard extends V2CardConnections {
   contact_point_id: string;
   channel_kind: string;
   address: string;
@@ -328,7 +491,7 @@ export interface V2OrganizationCardChild {
   confirmation: V2Confirmation;
 }
 
-export interface V2OrganizationCard {
+export interface V2OrganizationCard extends V2CardConnections {
   organization_id: string;
   name: string;
   legal_name: string | null;
@@ -351,6 +514,11 @@ export interface V2OrganizationCard {
   relationships: V2OrganizationRelationship[];
   child_organizations: V2OrganizationCardChild[];
   evidence: V2CardEvidence[];
+  /** Controls on the email addresses of the channels recorded against it. */
+  address_controls: V2AddressControl[];
+  /** Controls on the domains recorded against it — never a domain parsed from an address. */
+  domain_controls: V2AddressControl[];
+  marketing: V2CardMarketing[];
   counts: V2CardCounts;
 }
 
@@ -416,7 +584,35 @@ export interface V2CommercialCase {
   organization_count: number;
   interest_count: number;
   evidence_count: number;
+  /**
+   * The four list-only facts below come from `GET /v2/cases` alone. They are **null** where
+   * the row came from another route that does not carry them (an institution's cases), so
+   * "no parts" is never shown for a case whose parts were simply not asked for.
+   */
+  participants: V2CaseParticipant[] | null;
+  interest_labels: string[] | null;
+  quote_count: number | null;
+  latest_quote_status: string | null;
+  last_activity_at: string | null;
 }
+
+/** One current part on a case, as the case list carries it. */
+export interface V2CaseParticipant {
+  organization_id: string;
+  name: string;
+  role: V2CaseOrganizationRole;
+  confirmation: V2Confirmation;
+}
+
+/** `GET /v2/cases?quote_state=` — whether a quote exists, or its latest revision's status. */
+export type V2CaseQuoteState =
+  | "none"
+  | "any"
+  | "draft"
+  | "in_review"
+  | "approved"
+  | "sent"
+  | "void";
 
 /**
  * One part an institution holds on one case — a row of `crm.opportunity_organization`

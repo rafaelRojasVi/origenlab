@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from origenlab_api.v2.identity import OperatorIdentity, OperatorLookup
@@ -38,6 +38,9 @@ class Page:
     total: int
     limit: int
     offset: int
+    #: Row counts for sibling views of the same list (e.g. one per organization segment),
+    #: counted under the same filters as `total`. None when the list has no such views.
+    facets: dict[str, int] | None = None
 
 
 class V2Repository(OperatorLookup):
@@ -101,18 +104,64 @@ class V2Repository(OperatorLookup):
 
     # ------------------------------------------------------------------ contacts
 
-    def contacts(self, *, q: str | None, limit: int, offset: int) -> Page:
+    #: How a channel's owner is recorded, read from its two durable foreign keys and nothing
+    #: else: a person (`person_id`), an institution's mailbox with no person
+    #: (`organization_id` only), or neither. Never from the address, its local part or its
+    #: domain.
+    CONTACT_IDENTITIES: tuple[str, ...] = ("person", "organization_mailbox", "unattributed")
+
+    _CONTACT_IDENTITY_PREDICATES: dict[str, str] = {
+        "person": "cp.person_id is not null",
+        "organization_mailbox": "cp.person_id is null and cp.organization_id is not null",
+        "unattributed": "cp.person_id is null and cp.organization_id is null",
+    }
+
+    def contacts(
+        self,
+        *,
+        q: str | None,
+        limit: int,
+        offset: int,
+        identity: str | None = None,
+        with_cases: bool = False,
+    ) -> Page:
         """Contacts, which in V2 means contact points and the persons they resolve to.
 
         A contact point with no person is not an error and not a gap to be filled in: it is
         the honest state of a channel whose owner is unknown. The response says so with
         `usage` and `confirmation` rather than hiding it.
+
+        `q` matches the address, the recorded person's name or the recorded institution's
+        name — each through the row's own foreign key, so typing an institution's name finds
+        the channels *recorded* against it and never an address that merely shares its
+        domain. `identity` is one of `CONTACT_IDENTITIES`.
+
+        Recorded identities come first (a person, then an institution's mailbox, then the
+        unattributed backlog), so the few channels somebody has established are not buried
+        under nine thousand addresses in alphabetical order. `case_count` is the number of
+        cases a *current* `crm.opportunity_participant` row connects the channel to — the
+        same predicate the contact card uses — and `address_control_count` the address-scope
+        rows in `outbound.contact_control` for it.
         """
-        where = "where cp.kind = 'email'"
-        params: tuple[Any, ...] = ()
+        clauses = ["cp.kind = 'email'"]
+        params: list[Any] = []
         if q:
-            where += " and cp.value_norm like %s"
-            params = (f"%{q.strip().lower()}%",)
+            needle = f"%{q.strip().lower()}%"
+            clauses.append(
+                "(cp.value_norm like %s or lower(p.display_name) like %s "
+                "or lower(o.name) like %s)"
+            )
+            params.extend([needle, needle, needle])
+        if identity is not None:
+            clauses.append(self._CONTACT_IDENTITY_PREDICATES[identity])
+        if with_cases:
+            clauses.append(f"exists ({self._CONTACT_PARTICIPATION})")
+        where = "where " + " and ".join(clauses)
+        joins = """
+              from crm.contact_point cp
+              left join crm.person p       on p.id = cp.person_id
+              left join crm.organization o on o.id = cp.organization_id
+        """
         sql = f"""
             select cp.id::text            as contact_point_id,
                    cp.value_display       as address,
@@ -122,21 +171,83 @@ class V2Repository(OperatorLookup):
                    p.display_name         as person_display_name,
                    o.id::text             as organization_id,
                    o.name                 as organization_name,
-                   cp.created_at          as created_at
-              from crm.contact_point cp
-              left join crm.person p       on p.id = cp.person_id
-              left join crm.organization o on o.id = cp.organization_id
+                   cp.created_at          as created_at,
+                   (select count(distinct opp.opportunity_id)
+                      from crm.opportunity_participant opp
+                     where opp.valid_to is null
+                       and (opp.contact_point_id = cp.id
+                            or (cp.person_id is not null and opp.person_id = cp.person_id)))
+                                          as case_count,
+                   (select count(*) from outbound.contact_control cc
+                     where cc.scope = 'address' and cc.value_norm = cp.value_norm)
+                                          as address_control_count
+              {joins}
               {where}
-             order by cp.value_norm
+             order by (cp.person_id is not null) desc,
+                      (cp.organization_id is not null) desc,
+                      cp.value_norm
              limit %s offset %s
         """
-        count_sql = f"select count(*) from crm.contact_point cp {where}"
+        count_sql = f"select count(*) {joins} {where}"
         with self._read() as cur:
-            return self._page(cur, sql, count_sql, params, limit, offset)
+            return self._page(cur, sql, count_sql, tuple(params), limit, offset)
+
+    #: A current participant row for the channel `cp`, directly or through its person.
+    _CONTACT_PARTICIPATION = """
+        select 1 from crm.opportunity_participant opp
+         where opp.valid_to is null
+           and (opp.contact_point_id = cp.id
+                or (cp.person_id is not null and opp.person_id = cp.person_id))
+    """
 
     # ------------------------------------------------------------- organizations
 
-    def organizations(self, *, q: str | None, limit: int, offset: int) -> Page:
+    #: The list filters an operator can combine on `organizations()`. Each is a threshold on
+    #: a metric the row already reports, so a filtered row and its card never disagree.
+    ORGANIZATION_FILTERS: dict[str, str] = {
+        "contacts": "coalesce(ch.n, 0) > 0",
+        "people": "coalesce(pe.n, 0) > 0",
+        "cases": "coalesce(cm.case_count, 0) > 0",
+        "open_cases": "coalesce(cm.open_case_count, 0) > 0",
+        "interests": "coalesce(cm.interest_count, 0) > 0",
+        "quotes": "coalesce(cm.quote_count, 0) > 0",
+    }
+
+    #: The commercial side an organization is listed on. Read from what it is on cases
+    #: (current `crm.opportunity_organization` rows, plus the requesting pointer) and what it
+    #: is to OrigenLab (current `crm.organization_relationship` rows) — never from its name,
+    #: its kind or a mail domain. Segments may overlap: an institution that both supplies
+    #: OrigenLab and asks it for equipment is shown in both, because roles coexist.
+    ORGANIZATION_SEGMENTS: dict[str, str] = {
+        "customers": (
+            "(coalesce(rm.as_requesting, 0) > 0 "
+            "or 'customer' = any(coalesce(rl.roles, '{}'::text[])))"
+        ),
+        "suppliers": (
+            "(coalesce(rm.as_supply_side, 0) > 0 "
+            "or coalesce(rl.roles, '{}'::text[]) && array['supplier', 'manufacturer'])"
+        ),
+        "others": "coalesce(rm.as_other, 0) > 0",
+    }
+
+    #: What each segment sorts by first, before the shared connectedness order.
+    _ORGANIZATION_SEGMENT_LEAD: dict[str, str] = {
+        "all": "coalesce(rm.as_requesting, 0)",
+        "customers": "coalesce(rm.as_requesting, 0)",
+        "suppliers": "coalesce(rm.as_supply_side, 0)",
+        "others": "coalesce(rm.as_other, 0)",
+    }
+
+    def organizations(
+        self,
+        *,
+        q: str | None,
+        limit: int,
+        offset: int,
+        having: tuple[str, ...] = (),
+        active_within_days: int | None = None,
+        segment: str | None = None,
+    ) -> Page:
         """Organizations, most connected to OrigenLab first, each with truthful counts.
 
         "Connected" is read only through durable foreign keys: a case reaches an organization
@@ -150,13 +261,38 @@ class V2Repository(OperatorLookup):
         the page is cut. The `union` in `org_case` is what makes every sum count a case once
         even when an organization holds two parts on it, or both the column and a part row.
         Interests exclude withdrawn ones; the people count is current confirmed affiliations.
+
+        `having` names `ORGANIZATION_FILTERS` that must all hold, and `active_within_days`
+        keeps organizations whose latest case activity (`crm.activity.occurred_at`) falls in
+        that window. Both filter on the same CTE metrics the row reports, and the total is
+        counted over the same joins, so "12 instituciones con cotización" is twelve rows.
+
+        Every row carries what the organization is **on cases**, one count per part
+        (`cases_as_<role>`, distinct cases over current part rows; `requesting_institution`
+        also counts the `crm.opportunity.organization_id` pointer), and the roles it holds
+        **for OrigenLab** (`relationship_roles`, current `crm.organization_relationship`
+        rows). `segment` is one of `ORGANIZATION_SEGMENTS` and keeps one commercial side:
+        a supplier named on a case is never listed as a customer, and an organization that is
+        both — a recorded exception — appears in both segments rather than being forced into
+        one. `facets` counts every segment under the same `q`/`having`/window filters. The
+        order leads with the segment's own count, so the institutions that ask OrigenLab for
+        equipment come first by default rather than whoever is named on the most cases.
         """
-        where = "where o.merged_into_organization_id is null"
-        params: tuple[Any, ...] = ()
+        clauses = ["o.merged_into_organization_id is null"]
+        params: list[Any] = []
         if q:
-            where += " and lower(o.name) like %s"
-            params = (f"%{q.strip().lower()}%",)
-        sql = f"""
+            clauses.append("lower(o.name) like %s")
+            params.append(f"%{q.strip().lower()}%")
+        for name in having:
+            clauses.append(self.ORGANIZATION_FILTERS[name])
+        if active_within_days is not None:
+            clauses.append("cm.last_activity_at >= now() - make_interval(days => %s)")
+            params.append(active_within_days)
+        base_where = "where " + " and ".join(clauses)
+        where = base_where
+        if segment is not None:
+            where += " and " + self.ORGANIZATION_SEGMENTS[segment]
+        metrics = """
             with org_case as (
                 select op.organization_id, op.id as opportunity_id
                   from crm.opportunity op
@@ -202,7 +338,59 @@ class V2Repository(OperatorLookup):
                   from crm.affiliation
                  where confirmation = 'confirmed' and valid_to is null
                  group by organization_id
+            ),
+            org_case_role as (
+                select op.organization_id, op.id as opportunity_id,
+                       'requesting_institution'::text as role
+                  from crm.opportunity op
+                 where op.organization_id is not null
+                union
+                select oo.organization_id, oo.opportunity_id, oo.role
+                  from crm.opportunity_organization oo
+                 where oo.valid_to is null
+            ),
+            role_metrics as (
+                select organization_id,
+                       count(distinct opportunity_id)
+                         filter (where role = 'requesting_institution') as as_requesting,
+                       count(distinct opportunity_id)
+                         filter (where role = 'end_user_institution')   as as_end_user,
+                       count(distinct opportunity_id)
+                         filter (where role = 'purchasing_agent')       as as_purchasing_agent,
+                       count(distinct opportunity_id)
+                         filter (where role = 'funder')                 as as_funder,
+                       count(distinct opportunity_id)
+                         filter (where role = 'supplier')               as as_supplier,
+                       count(distinct opportunity_id)
+                         filter (where role = 'manufacturer')           as as_manufacturer,
+                       count(distinct opportunity_id)
+                         filter (where role = 'mentioned')              as as_mentioned,
+                       count(distinct opportunity_id)
+                         filter (where role in ('supplier', 'manufacturer')) as as_supply_side,
+                       count(distinct opportunity_id)
+                         filter (where role in ('end_user_institution', 'purchasing_agent',
+                                                'funder', 'mentioned'))   as as_other
+                  from org_case_role
+                 group by organization_id
+            ),
+            relationship_metrics as (
+                select organization_id, array_agg(distinct role order by role) as roles
+                  from crm.organization_relationship
+                 where valid_to is null
+                 group by organization_id
             )
+        """
+        joins = """
+              from crm.organization o
+              left join case_metrics cm    on cm.organization_id = o.id
+              left join channel_metrics ch on ch.organization_id = o.id
+              left join people_metrics pe  on pe.organization_id = o.id
+              left join role_metrics rm    on rm.organization_id = o.id
+              left join relationship_metrics rl on rl.organization_id = o.id
+        """
+        lead = self._ORGANIZATION_SEGMENT_LEAD[segment or "all"]
+        sql = f"""
+            {metrics}
             select o.id::text       as organization_id,
                    o.name           as name,
                    o.kind           as kind,
@@ -216,13 +404,19 @@ class V2Repository(OperatorLookup):
                    coalesce(cm.quote_count, 0)      as quote_count,
                    coalesce(cm.activity_count, 0)   as activity_count,
                    cm.last_activity_at              as last_activity_at,
+                   coalesce(rm.as_requesting, 0)       as cases_as_requesting_institution,
+                   coalesce(rm.as_end_user, 0)         as cases_as_end_user_institution,
+                   coalesce(rm.as_purchasing_agent, 0) as cases_as_purchasing_agent,
+                   coalesce(rm.as_funder, 0)           as cases_as_funder,
+                   coalesce(rm.as_supplier, 0)         as cases_as_supplier,
+                   coalesce(rm.as_manufacturer, 0)     as cases_as_manufacturer,
+                   coalesce(rm.as_mentioned, 0)        as cases_as_mentioned,
+                   coalesce(rl.roles, '{{}}'::text[])  as relationship_roles,
                    o.created_at     as created_at
-              from crm.organization o
-              left join case_metrics cm    on cm.organization_id = o.id
-              left join channel_metrics ch on ch.organization_id = o.id
-              left join people_metrics pe  on pe.organization_id = o.id
+              {joins}
               {where}
-             order by coalesce(cm.case_count, 0) desc,
+             order by {lead} desc,
+                      coalesce(cm.case_count, 0) desc,
                       coalesce(cm.open_case_count, 0) desc,
                       cm.last_activity_at desc nulls last,
                       coalesce(pe.n, 0) desc,
@@ -231,15 +425,24 @@ class V2Repository(OperatorLookup):
                       o.id
              limit %s offset %s
         """
-        count_sql = f"select count(*) from crm.organization o {where}"
+        count_sql = f"{metrics} select count(*) {joins} {where}"
+        facet_columns = ",\n".join(
+            f"count(*) filter (where {predicate}) as {name}"
+            for name, predicate in self.ORGANIZATION_SEGMENTS.items()
+        )
+        facet_sql = f"{metrics} select count(*) as \"all\", {facet_columns} {joins} {base_where}"
         with self._read() as cur:
             # psycopg ints come back as int already; `sum()` over bigint is numeric, so the
             # three summed metrics are normalised here rather than leaking Decimal to JSON.
-            page = self._page(cur, sql, count_sql, params, limit, offset)
+            page = self._page(cur, sql, count_sql, tuple(params), limit, offset)
+            cur.execute(facet_sql, tuple(params))
+            facet_row = cur.fetchone()
+            facets = {d[0]: int(v) for d, v in zip(cur.description, facet_row, strict=True)}
         for item in page.items:
             for key in ("interest_count", "quote_count", "activity_count"):
                 item[key] = int(item[key])
-        return page
+            item["relationship_roles"] = list(item["relationship_roles"])
+        return replace(page, facets=facets)
 
     # ------------------------------------------------- prospects, leads, opportunities
 
@@ -1416,7 +1619,26 @@ class V2Repository(OperatorLookup):
         "mentioned",
     )
 
-    def cases(self, *, stage: str | None, open_only: bool, limit: int, offset: int) -> Page:
+    #: Quote filters on the case list. `none` and `any` ask whether a `crm.quote` row exists
+    #: at all; the rest name the status of a quote's **latest** revision (highest
+    #: `revision_no`, the reading the cards use), from `quote_revision_status_check`.
+    QUOTE_STATES: tuple[str, ...] = (
+        "none", "any", "draft", "in_review", "approved", "sent", "void",
+    )
+
+    def cases(
+        self,
+        *,
+        stage: str | tuple[str, ...] | None,
+        open_only: bool,
+        limit: int,
+        offset: int,
+        organization_id: str | None = None,
+        organization_q: str | None = None,
+        interest_q: str | None = None,
+        quote_state: str | None = None,
+        active_within_days: int | None = None,
+    ) -> Page:
         """Commercial cases, each with the institution that is asking and nothing inferred.
 
         The requesting institution is read from the **current** `crm.opportunity_organization`
@@ -1428,14 +1650,73 @@ class V2Repository(OperatorLookup):
 
         `counts` are computed with the same predicates the card uses, so a case that reads
         "1 institución" here does not open into two.
+
+        Each row also carries its **current** parts (`participants`: every institution with
+        the exact role it holds, in `CASE_ROLE_ORDER`), up to three labels for what it seeks,
+        its quote count and the status of its most recently updated quote's latest revision,
+        and the time of its latest `crm.activity` — so the list answers the four business
+        questions without one card request per row.
+
+        Filters: `stage` (one or several), `organization_id` (any current part, whatever the
+        role), `organization_q` (the name of an institution holding a current part — a
+        search the operator typed, matched against recorded part rows only), `interest_q`
+        (product name or model number, model text, description of a non-withdrawn interest),
+        `quote_state` (`QUOTE_STATES`), and `active_within_days` (latest activity inside the
+        window).
         """
         clauses = ["true"]
         params: list[Any] = []
-        if stage is not None:
-            clauses.append("op.stage = %s")
-            params.append(stage)
+        stages = (stage,) if isinstance(stage, str) else tuple(stage or ())
+        if stages:
+            clauses.append("op.stage = any(%s::text[])")
+            params.append(list(stages))
         if open_only:
             clauses.append("op.closed_at is null")
+        if organization_id is not None:
+            clauses.append(
+                "exists (select 1 from crm.opportunity_organization f "
+                "where f.opportunity_id = op.id and f.valid_to is null "
+                "and f.organization_id = %s::uuid)"
+            )
+            params.append(organization_id)
+        if organization_q:
+            clauses.append(
+                "exists (select 1 from crm.opportunity_organization f "
+                "join crm.organization fo on fo.id = f.organization_id "
+                "where f.opportunity_id = op.id and f.valid_to is null "
+                "and lower(fo.name) like %s)"
+            )
+            params.append(f"%{organization_q.strip().lower()}%")
+        if interest_q:
+            needle = f"%{interest_q.strip().lower()}%"
+            clauses.append(
+                "exists (select 1 from crm.opportunity_interest fi "
+                "left join catalog.product fp on fp.id = fi.product_id "
+                "where fi.opportunity_id = op.id and fi.withdrawn_at is null "
+                "and (lower(coalesce(fi.model_text, '')) like %s "
+                "or lower(coalesce(fi.description, '')) like %s "
+                "or lower(coalesce(fp.name, '')) like %s "
+                "or lower(coalesce(fp.model_number, '')) like %s))"
+            )
+            params.extend([needle, needle, needle, needle])
+        if quote_state == "none":
+            clauses.append("not exists (select 1 from crm.quote fq where fq.opportunity_id = op.id)")
+        elif quote_state == "any":
+            clauses.append("exists (select 1 from crm.quote fq where fq.opportunity_id = op.id)")
+        elif quote_state is not None:
+            clauses.append(
+                "exists (select 1 from crm.quote fq "
+                "where fq.opportunity_id = op.id "
+                "and (select r.status from crm.quote_revision r where r.quote_id = fq.id "
+                "order by r.revision_no desc limit 1) = %s)"
+            )
+            params.append(quote_state)
+        if active_within_days is not None:
+            clauses.append(
+                "exists (select 1 from crm.activity fa where fa.opportunity_id = op.id "
+                "and fa.occurred_at >= now() - make_interval(days => %s))"
+            )
+            params.append(active_within_days)
         where = "where " + " and ".join(clauses)
 
         sql = f"""
@@ -1463,7 +1744,38 @@ class V2Repository(OperatorLookup):
                                       as interest_count,
                    (select count(*) from crm.opportunity_evidence oe
                      where oe.opportunity_id = op.id and oe.unlinked_at is null)
-                                      as evidence_count
+                                      as evidence_count,
+                   coalesce((select jsonb_agg(
+                                      jsonb_build_object(
+                                        'organization_id', po.id::text,
+                                        'name', po.name,
+                                        'role', part.role,
+                                        'confirmation', part.confirmation)
+                                      order by array_position(%s::text[], part.role), po.name)
+                               from crm.opportunity_organization part
+                               join crm.organization po on po.id = part.organization_id
+                              where part.opportunity_id = op.id and part.valid_to is null),
+                            '[]'::jsonb)
+                                      as participants,
+                   array(select coalesce(ip.name, ip.model_number, li.model_text, li.description)
+                           from crm.opportunity_interest li
+                           left join catalog.product ip on ip.id = li.product_id
+                          where li.opportunity_id = op.id and li.withdrawn_at is null
+                            and coalesce(ip.name, ip.model_number, li.model_text,
+                                         li.description) is not null
+                          order by li.created_at, li.id
+                          limit 3)    as interest_labels,
+                   (select count(*) from crm.quote q where q.opportunity_id = op.id)
+                                      as quote_count,
+                   (select r.status
+                      from crm.quote q
+                      join crm.quote_revision r on r.quote_id = q.id
+                     where q.opportunity_id = op.id
+                     order by r.updated_at desc, r.revision_no desc
+                     limit 1)         as latest_quote_status,
+                   (select max(a.occurred_at) from crm.activity a
+                     where a.opportunity_id = op.id)
+                                      as last_activity_at
               from crm.opportunity op
               join platform.operator owner on owner.id = op.owner_operator_id
               left join evidence.source_record sr on sr.id = op.origin_source_record_id
@@ -1478,7 +1790,12 @@ class V2Repository(OperatorLookup):
         """
         count_sql = f"select count(*) from crm.opportunity op {where}"
         with self._read() as cur:
-            return self._page(cur, sql, count_sql, tuple(params), limit, offset)
+            cur.execute(count_sql, tuple(params))
+            total = int(cur.fetchone()[0])
+            items = self._rows(
+                cur, sql, (list(self.CASE_ROLE_ORDER), *params, limit, offset)
+            )
+        return Page(items=items, total=total, limit=limit, offset=offset)
 
     def organization_cases(
         self, organization_id: str, *, limit: int, offset: int

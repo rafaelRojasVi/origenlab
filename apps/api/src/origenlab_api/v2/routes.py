@@ -101,13 +101,26 @@ def _uuid_path_param(raw: str, what: str) -> str:
         raise HTTPException(status_code=404, detail=f"no such {what}") from None
 
 
+def _uuid_query_param(raw: str | None, name: str) -> str | None:
+    """A malformed filter id is a 422: unlike a path, the resource itself was not named."""
+    if raw is None:
+        return None
+    try:
+        return str(uuid.UUID(raw))
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"{name} must be a UUID") from None
+
+
 def _page_response(page: Any) -> dict[str, Any]:
-    return {
+    response = {
         "items": page.items,
         "total": page.total,
         "limit": page.limit,
         "offset": page.offset,
     }
+    if getattr(page, "facets", None) is not None:
+        response["facets"] = page.facets
+    return response
 
 
 @router.get("/contacts")
@@ -115,10 +128,32 @@ def list_contacts(
     _: Operator,
     repo: Repo,
     q: str | None = Query(default=None, max_length=200),
+    identity: str | None = Query(default=None),
+    with_cases: bool = Query(default=False),
     limit: int | None = Query(default=None, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
-    return _page_response(repo.contacts(q=q, limit=clamp_limit(limit), offset=offset))
+    """Contact points, recorded identities first.
+
+    `q` matches the address, the recorded person's name or the recorded institution's name.
+    `identity` is `person`, `organization_mailbox` or `unattributed` — read from the
+    channel's own foreign keys, never from its address. `with_cases` keeps channels a current
+    participant row connects to a case.
+    """
+    if identity is not None and identity not in repo.CONTACT_IDENTITIES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"identity must be one of {', '.join(repo.CONTACT_IDENTITIES)}",
+        )
+    return _page_response(
+        repo.contacts(
+            q=q,
+            identity=identity,
+            with_cases=with_cases,
+            limit=clamp_limit(limit),
+            offset=offset,
+        )
+    )
 
 
 @router.get("/contacts/{contact_point_id}")
@@ -144,10 +179,46 @@ def list_organizations(
     _: Operator,
     repo: Repo,
     q: str | None = Query(default=None, max_length=200),
+    has: list[str] = Query(default=[]),
+    active_within_days: int | None = Query(default=None, ge=1, le=3650),
+    segment: str | None = Query(default=None),
     limit: int | None = Query(default=None, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
-    return _page_response(repo.organizations(q=q, limit=clamp_limit(limit), offset=offset))
+    """Organizations, most connected first.
+
+    `segment` keeps one commercial side — `customers` (asks OrigenLab for equipment on a
+    case, or a recorded customer), `suppliers` (supplier or manufacturer on a case, or
+    recorded as one) or `others` (end user, purchasing agent, funder or mentioned). Omitted
+    means every organization. `facets` in the response counts each segment under the same
+    filters, so the tabs can say how many rows each holds.
+
+    `has` may repeat and names what every row must have — `contacts`, `people`, `cases`,
+    `open_cases`, `interests`, `quotes`. `active_within_days` keeps organizations whose
+    latest case activity is inside the window. An unknown `has` value is a 422, not an empty
+    page that reads like "no institution has that".
+    """
+    unknown = [name for name in has if name not in repo.ORGANIZATION_FILTERS]
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail=f"has must be among {', '.join(repo.ORGANIZATION_FILTERS)}",
+        )
+    if segment is not None and segment not in repo.ORGANIZATION_SEGMENTS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"segment must be one of {', '.join(repo.ORGANIZATION_SEGMENTS)}",
+        )
+    return _page_response(
+        repo.organizations(
+            q=q,
+            having=tuple(dict.fromkeys(has)),
+            active_within_days=active_within_days,
+            segment=segment,
+            limit=clamp_limit(limit),
+            offset=offset,
+        )
+    )
 
 
 @router.get("/organizations/{organization_id}")
@@ -337,8 +408,13 @@ def list_evidence(
 def list_cases(
     _: Operator,
     repo: Repo,
-    stage: str | None = Query(default=None),
+    stage: list[str] = Query(default=[]),
     open_only: bool = Query(default=False),
+    organization_id: str | None = Query(default=None),
+    organization_q: str | None = Query(default=None, max_length=200),
+    interest_q: str | None = Query(default=None, max_length=200),
+    quote_state: str | None = Query(default=None),
+    active_within_days: int | None = Query(default=None, ge=1, le=3650),
     limit: int | None = Query(default=None, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
@@ -346,20 +422,37 @@ def list_cases(
 
     `/v2/opportunities/active` and `/v2/prospects` already page the same table by stage,
     and they stay: they answer "what is in play" and this answers "what does this case
-    say". A case row here carries the institution that is asking, what the case is seeking
-    and how much evidence stands behind it — the three tables slice 3 added — which the
-    stage-filtered lists know nothing about.
+    say". A case row here carries the institution that is asking, every institution with
+    the part it holds, what the case is seeking, its quote state, its latest activity and
+    how much evidence stands behind it.
 
-    `stage` is validated against the schema's own vocabulary, so a typo is a 422 rather
-    than an empty page that reads like "there are no cases".
+    `stage` may repeat (`stage=lead&stage=qualifying` is the prospect view) and is validated
+    against the schema's own vocabulary, as is `quote_state`, so a typo is a 422 rather than
+    an empty page that reads like "there are no cases". `organization_id` keeps cases where
+    that institution holds any current part; `organization_q` and `interest_q` are searches
+    over recorded part rows and non-withdrawn interests.
     """
-    if stage is not None and stage not in CASE_STAGES:
+    unknown = [value for value in stage if value not in CASE_STAGES]
+    if unknown:
         raise HTTPException(
             status_code=422, detail=f"stage must be one of {', '.join(CASE_STAGES)}"
         )
+    if quote_state is not None and quote_state not in repo.QUOTE_STATES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"quote_state must be one of {', '.join(repo.QUOTE_STATES)}",
+        )
     return _page_response(
         repo.cases(
-            stage=stage, open_only=open_only, limit=clamp_limit(limit), offset=offset
+            stage=tuple(dict.fromkeys(stage)),
+            open_only=open_only,
+            organization_id=_uuid_query_param(organization_id, "organization_id"),
+            organization_q=organization_q or None,
+            interest_q=interest_q or None,
+            quote_state=quote_state,
+            active_within_days=active_within_days,
+            limit=clamp_limit(limit),
+            offset=offset,
         )
     )
 

@@ -193,6 +193,24 @@ Every gate below was run on this date, at `origin/main` @ `3c8dbf78` plus this b
   There is still **no write path**: every durable V2 write is a migration tool, never an
   application.
 - **The eight privileged send/quote functions** of [`ARCHITECTURE.md`](ARCHITECTURE.md) §6.2.
+- **Historical CRM data — measured 2026-09-24, read-only.** V2 holds **no historical
+  quote and no V1 CRM row**. In `origenlab_clean`: `crm.quote` 0, `crm.person` 0,
+  `crm.affiliation` 0, `crm.external_identifier` 0, `comms.message` 0, `crm.opportunity`
+  1 (the single case opened on 2026-09-22); the 9,460 `crm.contact_point` rows carry **0**
+  `organization_id` and **0** `person_id`, because they come from one migration manifest
+  with no per-row contact→organization pairing. `evidence.source_record` holds 31
+  `gmail_message` rows (keyed by Gmail API id, no RFC 822 Message-ID) and 4 migration
+  manifests. **The V1 `commercial.*` dump the migration needs does not exist locally**:
+  no `pg_dump` of `commercial.*` was found under `~/data`, the home directory or the
+  Windows Downloads/Documents folders, `~/data/origenlab-prod-backups/` is empty, and
+  the Wave 1A/1B bundles carry no `commercial` table. The only exact contact→organization
+  key (`commercial.contact.organization_id`) and every V1 quote/opportunity identifier
+  therefore remain unreachable. Historical quote material exists only outside V2 and
+  unreconciled: 1,663 `document_master` quote documents in `emails.sqlite` (each with an
+  attachment SHA-256, none with extracted text or a saved file), 4,598 files in the local
+  `cotizaciones` folder (a 5-file sample matched no attachment hash) and the Drive
+  workspaces. Nothing is imported or inferred from names, domains, filenames or subjects;
+  a reconciliation design awaits the owner, and no importer exists.
 - **A consumer for the imported rows.** §2.7's importer now maps the *full* Wave
   1A/Wave 1B safety baseline and all three historical campaigns; both schema
   blockers its first dry run measured were decided and closed on 2026-09-20
@@ -1382,7 +1400,22 @@ name match and no mail domain, because a domain is a routing hint and never an i
 | `test_v2_crm_connections_read.py` | **10 passed**, all database-backed, in their own `origenlab_test_<hex>` (created, migrated and dropped by `v2_command_harness`), read as the `origenlab_api` login. The fixture holds one institution, a decoy with the same name stem and the same mail domain, a maker, a withdrawn interest, a closed part row, a two-revision quote (void then draft) and a draft campaign with two recipients. They assert that the institution ranks first with the right counts, that the decoy, the maker and an address on the institution's domain but recorded against no organization reach nothing of the institution's, that **marketing is non-empty** for the institution's desk and empty for the decoy, and that reading every card changes no table (content digest before and after) |
 | Focused V2 read suites | `test_v2_crm_connections_read.py` + `test_v2_read_boundary.py` + `test_v2_case_read_boundary.py`: **84 passed, 9 skipped**. The 9 skips are `test_v2_read_boundary.py` checks that need a populated target database, not the disposable one |
 | `apps/api` `scripts/validate.sh` | **1,353 passed, 215 skipped**, with `ORIGENLAB_POSTGRES_URL`, `ORIGENLAB_V2_DATABASE_URL`, `ALEMBIC_DATABASE_URL` and both test DSNs unset. The new suite skips there without its DSNs |
-| Not covered yet | marketing is covered by one draft campaign with `snapshotted` recipients only — no sent, bounced or replied state. No fixture yet holds a list longer than the cap, so the "list ≤ cap ≤ count" rule is asserted structurally. The dashboard has not been changed to show the new fields |
+| Not covered yet | marketing is covered by one draft campaign with `snapshotted` recipients only — no sent, bounced or replied state. No fixture yet holds a list longer than the cap, so the "list ≤ cap ≤ count" rule is asserted structurally. The dashboard has not been changed to show the new fields (done in §2.7.22) |
+
+### 2.7.22 List filters, and the dashboard reads the connections — 2026-09-24
+
+The three V2 lists can be narrowed on the server, and `#/instituciones`, `#/contactos` and
+`#/casos` now show what §2.7.21 made the API return. Still read-only; still no name or domain
+inference.
+
+| Item | Value |
+|---|---|
+| Migration / data / new routes | **none** / **none written** / **none**. Only query parameters on existing paths, so the proxy allowlist (exact paths) is unchanged |
+| `GET /v2/organizations` | `has` (repeatable: `contacts`, `people`, `cases`, `open_cases`, `interests`, `quotes`; every one must hold) and `active_within_days`. Both filter the same CTE metrics the row reports, and the total is counted over the same joins. Unknown `has` → 422. **Commercial side**: `segment` = `customers` (requesting institution on a case, or a current `customer` relationship), `suppliers` (supplier or manufacturer on a case, or a current `supplier`/`manufacturer` relationship), `others` (end user, purchasing agent, funder or mentioned); omitted = all; unknown → 422. Segments overlap when roles coexist. Rows gain `cases_as_<role>` for all seven case roles (distinct cases, current part rows; asking also counts `opportunity.organization_id`) and `relationship_roles`; the response gains `facets` (count per segment under the same filters). Order leads with the segment's own count, requesting cases under "all" |
+| `GET /v2/contacts` | `q` now matches the address **or** the recorded person's name **or** the recorded institution's name, each through the row's own foreign key. `identity` = `person` / `organization_mailbox` / `unattributed` (from `person_id` and `organization_id` only) and `with_cases`. Rows gain `case_count` (current participant rows, the card's predicate) and `address_control_count`. Order: recorded person first, then an institution's mailbox, then unattributed, then address |
+| `GET /v2/cases` | `stage` repeatable (`lead`+`qualifying` is the prospect view), `organization_id` (any current part), `organization_q`, `interest_q` (non-withdrawn interests: product name or model number, model text, description), `quote_state` (`none`, `any`, or the latest revision's status), `active_within_days`. Rows gain `participants` (every current part with its exact role), `interest_labels`, `quote_count`, `latest_quote_status`, `last_activity_at` |
+| Dashboard | Instituciones opens on **Clientes / instituciones solicitantes**, with tabs for *Proveedores y fabricantes*, *Otras instituciones participantes* and *Todas*, each with its server count; each card shows "Papel en casos" (Pide, Proveedor, Fabricante, Financia, Mencionada — plus end user / purchasing agent when held — and total) and any recorded relationship. Ranked cards with initials avatar (no logo lookup), kind, confirmation, seven counts, last activity, filter chips. Institución 360: people and affiliations, requested equipment, durable quotes (latest revision), commercial activity, case evidence, address/domain controls and campaigns. Contactos: identity tabs, search across person/institution, case and control counts. Contacto 360: cases it *participates* in (the person's role) kept apart from its institution's cases, so an absent requesting institution never reads as "no cases". Casos: filter bar; the summary card shows every part by exact role (incl. `mentioned`), origin, durable quote state and last activity. Empty states say "not recorded yet" |
+| Evidence | `test_v2_crm_connections_read.py` **18 passed** (8 new: each filter, the segments — a supplier/manufacturer never listed as a customer, a recorded supplier-and-customer in both, facets — per-role counts over current parts only, the contact search refusing a shared domain, row counts, case row fields, and filtered reads writing nothing) in a disposable database. `apps/api` `scripts/validate.sh`: **1,458 passed, 217 skipped**. `apps/dashboard` `npm run validate`: **1,425 passed, 0 failed**, build ok. The three `DashboardApp` shell suites (29 tests) had failed since `3acac9c9` because the Google-login `AuthGate` rendered *No se pudo verificar la sesión*: they did not answer `/auth/session`. They now stub that one request as a signed-in operator (`src/test/mockAuthSession.ts`); every other request still reaches the suite's own mocks, and neither `AuthGate` nor the Google login changed. Re-measured 2026-09-24 against `origenlab_clean` (read-only session): `/v2/organizations` 1,813 (2 with a case: 1 customer — Universidad Austral de Chile — and 1 supplier-and-manufacturer, 0 others), `/v2/contacts` 9,460 (0 confirmed persons), `/v2/cases` 1; interests, quotes and activity are 0 |
 
 ### 2.7.5 Local V2 — the reconciled picture, 2026-09-21
 

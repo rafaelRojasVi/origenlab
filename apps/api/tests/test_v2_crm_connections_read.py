@@ -483,3 +483,229 @@ def test_reading_every_card_writes_nothing(disposable_database, repo, world) -> 
     for cp in (world["cp_ana"], world["cp_desk"], world["cp_decoy"]):
         repo.contact_card(cp)
     assert _snapshot(disposable_database) == before
+
+
+# ------------------------------------------------------------------ list filters
+
+
+def test_organization_filters_keep_only_rows_whose_own_metrics_qualify(repo, world) -> None:
+    def ids(**kwargs) -> set[str]:
+        page = repo.organizations(q=f"{world['tag']}", limit=50, offset=0, **kwargs)
+        assert page.total == len(page.items)
+        return {row["organization_id"] for row in page.items}
+
+    everyone = {world["uni"], world["other"], world["vendor"]}
+    assert ids() == everyone
+    assert ids(having=("cases",)) == {world["uni"], world["other"]}
+    assert ids(having=("contacts",)) == {world["uni"]}  # the decoy address is nobody's
+    assert ids(having=("people",)) == {world["uni"]}
+    assert ids(having=("interests",)) == {world["uni"], world["other"]}
+    assert ids(having=("quotes", "contacts")) == {world["uni"]}
+    # A product's manufacturer holds no case part, so no filter reaches it through cases.
+    assert world["vendor"] not in ids(having=("open_cases",))
+    # The fixture's activities are dated 2026-03/04, so a window reaching back to them keeps
+    # both institutions with cases and one of a day keeps none.
+    assert ids(active_within_days=3650) == {world["uni"], world["other"]}
+    assert ids(active_within_days=1) == set()
+
+
+@pytest.fixture(scope="module")
+def segments_world(disposable_database, world):
+    """A customer, a supplier-and-manufacturer, a funder, a recorded supplier and a distributor
+    that is both — each on its own tag so the counts below are the whole segment."""
+    import psycopg
+
+    tag = f"seg{uuid.uuid4().hex[:8]}"
+    w: dict[str, str] = {"tag": tag}
+    op_id, sr = world["operator_id"], world["source_record_id"]
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+
+        def org(name: str) -> str:
+            return _insert(
+                cur,
+                "insert into crm.organization (kind, name, confirmation) "
+                "values ('unknown', %s, 'confirmed')",
+                (f"{name} {tag}",),
+            )
+
+        def part(case_id, organization_id, role, **extra) -> None:
+            columns = ", ".join(extra)
+            cur.execute(
+                "insert into crm.opportunity_organization (opportunity_id, organization_id, "
+                f"role, valid_from, confirmation, confirmed_by_operator_id"
+                f"{', ' + columns if columns else ''}) "
+                f"values (%s, %s, %s, '2026-02-01', 'confirmed', %s"
+                f"{', %s' * len(extra)})",
+                (case_id, organization_id, role, op_id, *extra.values()),
+            )
+
+        customer = w["customer"] = org("Universidad Solicitante")
+        maker = w["maker"] = org("Fabricante Ultrasonidos")
+        funder = w["funder"] = org("Fondo Concursable")
+        recorded = w["recorded_supplier"] = org("Distribuidora Registrada")
+        both = w["both"] = org("Distribuidora que también compra")
+
+        case = _insert(
+            cur,
+            "insert into crm.opportunity (organization_id, title, stage, owner_operator_id, "
+            "origin_source_record_id) values (%s, %s, 'lead', %s, %s)",
+            (customer, f"Sonicador {tag}", op_id, sr),
+        )
+        part(case, customer, "requesting_institution")
+        part(case, maker, "supplier")
+        part(case, maker, "manufacturer")
+        part(case, funder, "funder")
+        # Only a relationship to OrigenLab, no case part: still a supplier, never a customer.
+        cur.execute(
+            "insert into crm.organization_relationship (organization_id, role, valid_from) "
+            "values (%s, 'supplier', '2025-01-01')",
+            (recorded,),
+        )
+        # A recorded supplier that is also a recorded customer sits in both segments.
+        for role in ("supplier", "customer"):
+            cur.execute(
+                "insert into crm.organization_relationship (organization_id, role, valid_from) "
+                "values (%s, %s, '2025-01-01')",
+                (both, role),
+            )
+        conn.commit()
+    return w
+
+
+def test_a_supplier_on_a_case_is_never_listed_as_a_customer(repo, segments_world) -> None:
+    w = segments_world
+
+    def page(segment=None):
+        return repo.organizations(q=w["tag"], limit=50, offset=0, segment=segment)
+
+    def ids(segment=None) -> set[str]:
+        return {row["organization_id"] for row in page(segment).items}
+
+    assert ids("customers") == {w["customer"], w["both"]}
+    assert ids("suppliers") == {w["maker"], w["recorded_supplier"], w["both"]}
+    assert ids("others") == {w["funder"]}
+    assert page().facets == {"all": 5, "customers": 2, "suppliers": 3, "others": 1}
+    # Facets are counted under the same filters as the list, whichever segment is open.
+    assert page("suppliers").facets == page().facets
+
+    rows = {row["organization_id"]: row for row in page().items}
+    maker = rows[w["maker"]]
+    assert maker["case_count"] == 1  # two parts on one case is one case
+    assert maker["cases_as_supplier"] == 1
+    assert maker["cases_as_manufacturer"] == 1
+    assert maker["cases_as_requesting_institution"] == 0
+    assert rows[w["customer"]]["cases_as_requesting_institution"] == 1
+    assert rows[w["funder"]]["cases_as_funder"] == 1
+    assert rows[w["recorded_supplier"]]["relationship_roles"] == ["supplier"]
+    assert rows[w["both"]]["relationship_roles"] == ["customer", "supplier"]
+
+    # The default order puts the institution that asks first, not whoever holds most parts.
+    assert page().items[0]["organization_id"] == w["customer"]
+    assert page("suppliers").items[0]["organization_id"] == w["maker"]
+
+
+def test_role_counts_read_only_current_parts(repo, world) -> None:
+    rows = {
+        row["organization_id"]: row
+        for row in repo.organizations(q=world["tag"], limit=50, offset=0).items
+    }
+    # Case 2 is the university's as end user and (machine-proposed) mention; case 3's funder
+    # part is closed, so it is history and counts nowhere.
+    uni = rows[world["uni"]]
+    assert uni["cases_as_requesting_institution"] == 1
+    assert uni["cases_as_end_user_institution"] == 1
+    assert uni["cases_as_mentioned"] == 1
+    assert uni["cases_as_funder"] == 0
+
+
+def test_contact_search_reaches_recorded_names_and_never_a_shared_domain(repo, world) -> None:
+    def ids(**kwargs) -> set[str]:
+        page = repo.contacts(limit=50, offset=0, **kwargs)
+        assert page.total == len(page.items)
+        return {row["contact_point_id"] for row in page.items}
+
+    # The institution's name finds the channels recorded against it, not the decoy address
+    # that merely sits on its domain.
+    assert ids(q=f"Universidad Ficticia {world['tag']}") == {world["cp_ana"], world["cp_desk"]}
+    assert ids(q="ana ficticia") == {world["cp_ana"]}
+    assert ids(q=world["domain"]) == {world["cp_ana"], world["cp_desk"], world["cp_decoy"]}
+
+    assert ids(q=world["domain"], identity="person") == {world["cp_ana"]}
+    assert ids(q=world["domain"], identity="organization_mailbox") == {world["cp_desk"]}
+    assert ids(q=world["domain"], identity="unattributed") == {world["cp_decoy"]}
+    assert ids(q=world["domain"], with_cases=True) == {world["cp_ana"], world["cp_decoy"]}
+
+
+def test_contact_rows_carry_participation_and_control_counts(repo, world) -> None:
+    page = repo.contacts(q=world["domain"], limit=50, offset=0)
+    rows = {row["contact_point_id"]: row for row in page.items}
+    assert rows[world["cp_ana"]]["case_count"] == 2  # the channel's row and its person's
+    assert rows[world["cp_desk"]]["case_count"] == 0
+    assert rows[world["cp_desk"]]["address_control_count"] == 1
+    assert rows[world["cp_decoy"]]["case_count"] == 1
+    # Recorded identities first: the person, then the institution's mailbox, then the rest.
+    assert [row["contact_point_id"] for row in page.items] == [
+        world["cp_ana"], world["cp_desk"], world["cp_decoy"],
+    ]
+
+
+def test_case_rows_carry_every_current_part_quote_state_and_last_activity(repo, world) -> None:
+    page = repo.cases(stage=None, open_only=False, limit=50, offset=0,
+                      organization_q=world["tag"])
+    rows = {row["opportunity_id"]: row for row in page.items}
+
+    c1 = rows[world["case_requesting"]]
+    assert [(p["organization_id"], p["role"]) for p in c1["participants"]] == [
+        (world["uni"], "requesting_institution"),
+    ]
+    assert c1["interest_labels"] == ["Centrífuga de prueba"]  # the withdrawn one is not
+    assert c1["quote_count"] == 1
+    assert c1["latest_quote_status"] == "draft"
+    assert c1["last_activity_at"].isoformat().startswith("2026-03-05T10:00")
+
+    c2 = rows[world["case_end_user"]]
+    assert [p["role"] for p in c2["participants"]] == ["end_user_institution", "mentioned"]
+    assert c2["requesting_organization_id"] is None
+    assert c2["quote_count"] == 0 and c2["latest_quote_status"] is None
+
+    # The closed funder part is history: the case is listed, holding no current part.
+    everything = repo.cases(stage=None, open_only=False, limit=50, offset=0)
+    closed = {row["opportunity_id"]: row for row in everything.items}[world["case_closed_part"]]
+    assert closed["participants"] == []
+    assert world["case_closed_part"] not in rows  # organization_q reads current parts only
+
+
+def test_case_filters(repo, world) -> None:
+    def ids(**kwargs) -> set[str]:
+        base = {"stage": None, "open_only": False, "limit": 50, "offset": 0}
+        page = repo.cases(**{**base, **kwargs})
+        assert page.total == len(page.items)
+        return {row["opportunity_id"] for row in page.items}
+
+    mine = {world["case_requesting"], world["case_end_user"], world["case_closed_part"],
+            world["case_other"]}
+    assert mine <= ids(stage=("lead", "qualifying"))
+    assert ids(organization_id=world["uni"]) == {world["case_requesting"], world["case_end_user"]}
+    assert ids(organization_id=world["vendor"]) == set()
+    assert ids(organization_q="Sede Norte") >= {world["case_other"]}
+    assert ids(interest_q=f"kit {world['tag']}") == {world["case_end_user"]}
+    assert ids(interest_q="modelo retirado") & mine == set()  # withdrawn interests don't match
+    assert ids(interest_q=f"cx-{world['tag']}") == {world["case_requesting"]}
+    assert ids(quote_state="draft") & mine == {world["case_requesting"]}
+    assert ids(quote_state="void") & mine == set()  # revision 1 is not the latest
+    assert ids(quote_state="any") & mine == {world["case_requesting"], world["case_other"]}
+    assert world["case_requesting"] not in ids(quote_state="none")
+    assert ids(active_within_days=1) & mine == set()
+
+
+def test_filtered_reads_write_nothing(disposable_database, repo, world) -> None:
+    before = _snapshot(disposable_database)
+    repo.organizations(q=None, limit=50, offset=0, having=("cases", "quotes"),
+                       active_within_days=30)
+    repo.organizations(q=None, limit=50, offset=0, segment="suppliers")
+    repo.contacts(q=world["domain"], limit=50, offset=0, identity="person", with_cases=True)
+    repo.cases(stage=("lead",), open_only=True, limit=50, offset=0,
+               organization_id=world["uni"], interest_q="kit", quote_state="any",
+               active_within_days=30)
+    assert _snapshot(disposable_database) == before
