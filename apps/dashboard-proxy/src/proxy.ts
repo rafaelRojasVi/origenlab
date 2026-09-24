@@ -1,3 +1,5 @@
+import { filterAuthCookieHeader, forwardsSessionCookie } from "./auth";
+
 export const API_AUTH_HEADER = "X-OriginLab-API-Key";
 export const OPERATOR_EMAIL_HEADER = "X-OriginLab-Operator-Email";
 export const IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
@@ -22,7 +24,11 @@ export function buildUpstreamUrl(
   return `${base}${path}${search}`;
 }
 
-export function buildUpstreamHeaders(env: ProxyEnv, incoming: Headers): Headers {
+export function buildUpstreamHeaders(
+  env: ProxyEnv,
+  incoming: Headers,
+  upstreamPath?: string,
+): Headers {
   const headers = new Headers();
   headers.set("Accept", incoming.get("Accept") || "application/json");
 
@@ -54,6 +60,15 @@ export function buildUpstreamHeaders(env: ProxyEnv, incoming: Headers): Headers 
 
   if (authenticatedOperator) {
     headers.set(OPERATOR_EMAIL_HEADER, authenticatedOperator);
+  }
+
+  // The dashboard session cookie, and nothing else from the browser's cookie jar, reaches
+  // the paths that resolve an operator from it (see auth.ts).
+  if (upstreamPath !== undefined && forwardsSessionCookie(upstreamPath)) {
+    const cookie = filterAuthCookieHeader(incoming.get("Cookie"));
+    if (cookie) {
+      headers.set("Cookie", cookie);
+    }
   }
 
   const token = env.ORIGENLAB_API_AUTH_TOKEN?.trim();

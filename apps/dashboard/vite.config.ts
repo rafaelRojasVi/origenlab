@@ -43,6 +43,11 @@ export default defineConfig(({ command }) => {
         // entry the V2 pages 404 in `npm run dev` while working in production, which is the
         // worst shape a routing gap can take.
         "/v2": { target: apiTarget, changeOrigin: true, configure: proxyConfigure },
+        // Dashboard sign-in. Same origin as the page, so the API's HttpOnly session cookie
+        // lands on localhost:5173 and is sent back on every /v2 call. The redirect to Google
+        // and back passes through unchanged; register the resulting redirect URI,
+        // http://localhost:5173/auth/google/callback, in Google Cloud Console.
+        "/auth": { target: apiTarget, changeOrigin: true, configure: proxyConfigure },
       },
     },
     test: {

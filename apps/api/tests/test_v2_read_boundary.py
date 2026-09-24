@@ -100,9 +100,19 @@ def test_jwks_wins_whenever_it_is_configured() -> None:
     assert isinstance(port, JwksVerifier)
 
 
-def test_the_dev_adapter_is_chosen_only_when_no_jwks_url_exists() -> None:
-    port = build_identity_port(jwks_url=None, database_url=LOOPBACK, lookup=_Lookup(_operator()))
+def test_the_dev_adapter_is_chosen_only_when_explicitly_enabled() -> None:
+    port = build_identity_port(
+        jwks_url=None, database_url=LOOPBACK, lookup=_Lookup(_operator()), dev_login_enabled=True
+    )
     assert isinstance(port, LocalDevIdentity)
+
+
+def test_no_identity_switched_on_is_a_startup_failure_not_a_dev_default() -> None:
+    # Before Google sign-in the header adapter was the silent default whenever JWKS was
+    # absent. It is now opt-in: with nothing enabled the boundary refuses to build.
+    with pytest.raises(IdentityMisconfigured) as excinfo:
+        build_identity_port(jwks_url=None, database_url=LOOPBACK, lookup=_Lookup(_operator()))
+    assert "ORIGENLAB_DEV_LOGIN_ENABLED" in str(excinfo.value)
 
 
 def test_jwks_without_a_url_refuses_at_construction() -> None:

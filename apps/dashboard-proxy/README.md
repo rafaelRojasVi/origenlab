@@ -32,6 +32,8 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/operations/work-queue`, `/operations/sales-opportunities/sales_<32hex>[/activities\|/tasks\|/quotes]`, `/operations/customer-quotes/quote_<32hex>`, `/operations/opportunities/o_<32hex>/[state\|activities\|tasks]` | Durable CRM reads |
 | `/operations/customer-quotes` | Global durable customer-quote list across all sales opportunities (Cotizaciones) |
 | `/mirror/*` | Postgres mirror reads |
+| `/v2/*` (named paths only — see `src/allowlist.ts`) | V2 durable reads |
+| `/auth/google/login`, `/auth/google/callback`, `/auth/session` | Dashboard Google Workspace sign-in (see *Sign-in exceptions* below) |
 
 **POST** (the only human write path — trusted operator identity, `Idempotency-Key`, optimistic concurrency; each ID format is regex-constrained, no wildcard route):
 
@@ -43,6 +45,7 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/operations/activities`, `/operations/tasks`, `/operations/tasks/task_<32hex>/[complete\|cancel]` | Durable activities/tasks |
 | `/operations/sales-opportunities/sales_<32hex>/quotes`, `/operations/customer-quotes/quote_<32hex>/drive-workspace` | CRM-Q1 customer-quote create + Drive workspace retry |
 | `/operator/procurement/tenders/<code>/annex-bundle/[preview\|import]` | Explicit tender annex evidence upload |
+| `/auth/logout` | Clears the dashboard session cookie; writes no commercial state |
 
 All other POST requests, and all `PUT`, `PATCH`, and `DELETE` requests, return **405**.
 
@@ -56,6 +59,23 @@ The Worker is deliberately stricter than a generic pass-through proxy:
 - Responses include `X-OriginLab-Proxy: dashboard-proxy`; forwarded upstream responses also include `X-OriginLab-Upstream-Status`.
 
 This keeps Cloudflare Access redirects/cookies and upstream CORS policy from leaking through `/api/*`.
+
+### Sign-in exceptions
+
+Google Workspace sign-in ([`apps/api/docs/PRODUCTION_AUTH.md`](../api/docs/PRODUCTION_AUTH.md#google-workspace-login-dashboard-v2-boundary))
+needs cookies and redirects, so `src/auth.ts` makes three exceptions and no others:
+
+- **Cookies upstream:** on `/auth/*` and `/v2/*` only, and only `__Host-origenlab_session` and
+  `__Host-origenlab_signin`. Every other browser cookie — Access's `CF_Authorization`
+  included — is dropped. No other path receives a `Cookie` header.
+- **`Set-Cookie` back:** from `/auth/*` only, and only those two names.
+- **Redirects:** `GET /auth/google/login` may redirect to
+  `https://accounts.google.com/o/oauth2/v2/auth` only; `GET /auth/google/callback` may redirect
+  to this dashboard's own root only, optionally with `?login_error=<code>`. Every other
+  upstream 3xx is still a 502.
+
+The operator header is still deleted and rebuilt from Cloudflare Access on every path; the
+API's V2 boundary ignores it in production.
 
 ## Environment
 

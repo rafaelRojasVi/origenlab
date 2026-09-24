@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import PrivateAttr
+from pydantic import PrivateAttr, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ApiBackend = Literal["sqlite", "postgres"]
@@ -204,6 +204,33 @@ class Settings(BaseSettings):
     it off the command router is absent entirely and every /v2/commands/* path is a 404.
     """
     v2_commands_enabled: bool = False
+
+    # --- Dashboard login -----------------------------------------------------
+    # Google Workspace sign-in for the V2 boundary (apps/api/docs/PRODUCTION_AUTH.md,
+    # "Google Workspace login"). Every field fails closed: with the switch off no /auth/google
+    # route exists, and with it on the process refuses to start unless every value below is
+    # present and sane. The authenticated address is mapped to `platform.operator`, so this
+    # needs `ORIGENLAB_V2_DATABASE_URL` as well.
+    """When true, mount GET /auth/google/login and /auth/google/callback."""
+    google_auth_enabled: bool = False
+    """OAuth 2.0 Web application client ID from Google Cloud Console."""
+    google_client_id: str | None = None
+    """OAuth 2.0 client secret. Secret store only; never committed."""
+    google_client_secret: SecretStr | None = None
+    """The only Google Workspace domain whose accounts may sign in."""
+    google_workspace_domain: str = "origenlab.cl"
+    """Browser-visible base URL under which /auth/* is reached (e.g. https://dashboard.origenlab.cl/api)."""
+    auth_public_base_url: str | None = None
+    """HMAC key for the session and sign-in cookies; at least 32 characters. Secret store only."""
+    auth_session_secret: SecretStr | None = None
+    """Lifetime of a dashboard session, in seconds."""
+    auth_session_ttl_seconds: int = 8 * 60 * 60
+    """Local development only: resolve the V2 operator from X-OriginLab-Operator-Email.
+
+    Default **false**. Refused at startup when ORIGENLAB_ENV=production, and the adapter it
+    enables still refuses any non-loopback database. Never set it in a deployed environment.
+    """
+    dev_login_enabled: bool = False
     """Comma-separated browser origins for dashboard static site (no wildcards)."""
     api_cors_origins: str | None = None
     """Comma-separated Host header values allowed in production (e.g. api.origenlab.cl)."""

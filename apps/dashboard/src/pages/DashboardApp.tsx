@@ -1,3 +1,4 @@
+import { AuthGate } from "../components/auth/AuthGate";
 import { DashboardDataProvider } from "../context/DashboardDataContext";
 import { DashboardShell } from "../components/layout/DashboardShell";
 import { useDashboardSection } from "../lib/dashboardHashRoute";
@@ -83,11 +84,15 @@ function DashboardSectionView({
 export function DashboardApp() {
   const [section, navigate] = useDashboardSection();
 
+  // The gate sits outside the data provider so no operator data is requested before the
+  // session is known.
   return (
-    <DashboardDataProvider>
-      <DashboardShell section={section} onNavigate={navigate}>
-        <DashboardSectionView section={section} navigate={navigate} />
-      </DashboardShell>
-    </DashboardDataProvider>
+    <AuthGate>
+      <DashboardDataProvider>
+        <DashboardShell section={section} onNavigate={navigate}>
+          <DashboardSectionView section={section} navigate={navigate} />
+        </DashboardShell>
+      </DashboardDataProvider>
+    </AuthGate>
   );
 }

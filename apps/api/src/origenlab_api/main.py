@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI
+from pydantic import SecretStr
 
 from origenlab_api.backends.factory import validate_api_settings
 from origenlab_api.errors import register_exception_handlers
@@ -74,11 +75,14 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     points this app at the V2 durable core, which is the only safe default while the hosted
     phase is frozen (`docs/OPERATIONS.md` §1.1).
     """
+    _refuse_unsafe_login_settings(settings)
     if not settings.v2_configured():
         return
 
     import psycopg
 
+    from origenlab_api.v2.auth_routes import auth_router, google_auth_router
+    from origenlab_api.v2.google_oidc import build_google_auth_config
     from origenlab_api.v2.identity import build_identity_port
     from origenlab_api.v2.repository import V2Repository
     from origenlab_api.v2.routes import router as v2_router
@@ -88,14 +92,56 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
         psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
     app.state.v2_repository = repository
+    google = build_google_auth_config(
+        enabled=settings.google_auth_enabled,
+        client_id=settings.google_client_id,
+        client_secret=_secret(settings.google_client_secret),
+        workspace_domain=settings.google_workspace_domain,
+        public_base_url=settings.auth_public_base_url,
+        session_secret=_secret(settings.auth_session_secret),
+        session_ttl_seconds=settings.auth_session_ttl_seconds,
+        production=settings.production_mode(),
+    )
+    app.state.v2_google_auth = google
     # Constructing the port here, at startup, is deliberate: a misconfigured identity must
     # fail the process rather than surface as a per-request error that looks like a bad
     # credential.
     app.state.v2_identity = build_identity_port(
-        jwks_url=settings.v2_jwks_url, database_url=dsn, lookup=repository
+        jwks_url=settings.v2_jwks_url,
+        database_url=dsn,
+        lookup=repository,
+        google=google,
+        dev_login_enabled=settings.dev_login_enabled,
+        production=settings.production_mode(),
     )
     app.include_router(v2_router)
+    app.include_router(auth_router)
+    if google is not None:
+        app.include_router(google_auth_router)
     _mount_v2_command_boundary(app, settings, dsn)
+
+
+def _secret(value: SecretStr | None) -> str | None:
+    return value.get_secret_value() if value is not None else None
+
+
+def _refuse_unsafe_login_settings(settings: Settings) -> None:
+    """Refuse login settings that are unsafe whether or not the V2 boundary is mounted.
+
+    Google sign-in maps the address to `platform.operator`, which only the V2 database holds,
+    so switching it on without one would mount nothing and look like it worked. The
+    development header login is refused in production even where it would have no effect,
+    so that a deployed environment carrying it is caught at the first start.
+    """
+    if settings.production_mode() and settings.dev_login_enabled:
+        raise ValueError(
+            "ORIGENLAB_DEV_LOGIN_ENABLED is refused when ORIGENLAB_ENV=production"
+        )
+    if settings.google_auth_enabled and not settings.v2_configured():
+        raise ValueError(
+            "ORIGENLAB_GOOGLE_AUTH_ENABLED requires ORIGENLAB_V2_DATABASE_URL: the signed-in "
+            "address is mapped to platform.operator in the V2 database"
+        )
 
 
 def _mount_v2_command_boundary(app: FastAPI, settings: Settings, dsn: str) -> None:

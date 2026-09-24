@@ -81,6 +81,12 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // decision with its own review.
   /^\/v2\/cases$/,
   /^\/v2\/cases\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  // Dashboard sign-in (Google Workspace, `apps/api` v2/auth_routes.py). Three exact GET
+  // paths. The cookie and redirect exceptions they need live in `auth.ts`, and apply to
+  // these paths only.
+  /^\/auth\/google\/login$/,
+  /^\/auth\/google\/callback$/,
+  /^\/auth\/session$/,
 ];
 
 /**
@@ -145,10 +151,21 @@ export function isAllowedCommercialOperationsPostPath(
   );
 }
 
+/**
+ * Sign-out. Clears the session cookie upstream and writes nothing else; listed apart from
+ * the commercial commands so it can never inherit their headers or be mistaken for one.
+ */
+export const AUTH_LOGOUT_POST_PATH_RE = /^\/auth\/logout$/;
+
+export function isAllowedAuthPostPath(pathname: string): boolean {
+  return AUTH_LOGOUT_POST_PATH_RE.test(pathname.split("?")[0]);
+}
+
 export function isAllowedPostPath(pathname: string): boolean {
   return (
     isAllowedPostUploadPath(pathname) ||
-    isAllowedCommercialOperationsPostPath(pathname)
+    isAllowedCommercialOperationsPostPath(pathname) ||
+    isAllowedAuthPostPath(pathname)
   );
 }
 
