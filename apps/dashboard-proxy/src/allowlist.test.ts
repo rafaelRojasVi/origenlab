@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { isAllowedPostUploadPath, isAllowedUpstreamPath, stripApiPrefix } from "../src/allowlist";
+import {
+  isAllowedPostPath,
+  isAllowedPostUploadPath,
+  isAllowedUpstreamPath,
+  stripApiPrefix,
+} from "../src/allowlist";
 import { buildUpstreamUrl } from "../src/proxy";
 
 describe("allowlist", () => {
@@ -19,11 +24,20 @@ describe("allowlist", () => {
     "/operator/procurement/queues/retender_review",
     "/operator/procurement/tenders/745712-14-LE26",
     "/operator/procurement/tenders/745712-14-LE26/attachment-navigation",
+  ];
+
+  // V1 surfaces with no role model and no redaction upstream. The Worker refuses them so
+  // that V2 is the only browser path to CRM, contact and evidence data.
+  const V1_BLOCKED_PATHS = [
+    "/contacts/a@b.co",
+    "/contacts/user%40example.com",
+    "/contacts/anything",
     "/mirror/catalog/products",
     "/mirror/leads/summary",
     "/mirror/leads/prospects",
     "/mirror/audits/gmail-interactions",
     "/mirror/commercial/deals",
+    "/mirror/x",
   ];
 
   it("stripApiPrefix maps /api/* to upstream paths", () => {
@@ -42,8 +56,6 @@ describe("allowlist", () => {
     expect(isAllowedUpstreamPath("/health")).toBe(true);
     expect(isAllowedUpstreamPath("/operator/status")).toBe(true);
     expect(isAllowedUpstreamPath("/cases/warm")).toBe(true);
-    expect(isAllowedUpstreamPath("/contacts/a@b.co")).toBe(true);
-    expect(isAllowedUpstreamPath("/mirror/commercial/deals")).toBe(true);
     expect(isAllowedUpstreamPath("/emails")).toBe(false);
     expect(isAllowedUpstreamPath("/operator/send")).toBe(false);
   });
@@ -51,6 +63,50 @@ describe("allowlist", () => {
   it.each(PRODUCTION_SMOKE_PATHS)("allows production smoke path %s", (path) => {
     expect(isAllowedUpstreamPath(path)).toBe(true);
     expect(isAllowedUpstreamPath(`${path}?limit=20`)).toBe(true);
+  });
+
+  it.each(V1_BLOCKED_PATHS)("refuses the V1 path %s on every method list", (path) => {
+    expect(isAllowedUpstreamPath(path)).toBe(false);
+    expect(isAllowedUpstreamPath(`${path}?limit=20`)).toBe(false);
+    expect(isAllowedPostPath(path)).toBe(false);
+  });
+
+  it("keeps the unexposed V2 workspace and cockpit reads refused", () => {
+    // Built upstream, GET-only and redacting, but not yet a browser surface: exposing either
+    // prefix is a separate decision. Each path is refused for every method.
+    const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
+    const sha = "a".repeat(64);
+    for (const path of [
+      "/v2/workspace/overview",
+      "/v2/workspace/pipeline",
+      "/v2/workspace/providers",
+      "/v2/workspace/marketing",
+      "/v2/workspace/drive",
+      "/v2/workspace/review",
+      "/v2/cockpit/kpis",
+      "/v2/cockpit/work-queue",
+      "/v2/cockpit/opportunities",
+      `/v2/cockpit/opportunities/${uuid}`,
+      `/v2/cockpit/opportunities/${uuid}/timeline`,
+      "/v2/cockpit/quotations",
+      `/v2/cockpit/quotations/${uuid}`,
+      `/v2/cockpit/evidence/${uuid}`,
+      "/v2/cockpit/search",
+      "/v2/cockpit/case-archive",
+      "/v2/cockpit/import-review",
+      `/v2/cockpit/import-review/documents/${sha}`,
+    ]) {
+      expect(isAllowedUpstreamPath(path)).toBe(false);
+      expect(isAllowedPostPath(path)).toBe(false);
+    }
+  });
+
+  it("refuses the bare V1 prefixes and does not confuse them with their V2 namesakes", () => {
+    for (const path of ["/contacts", "/contacts/", "/mirror", "/mirror/"]) {
+      expect(isAllowedUpstreamPath(path)).toBe(false);
+    }
+    expect(isAllowedUpstreamPath("/v2/contacts")).toBe(true);
+    expect(isAllowedUpstreamPath("/v2/mirror/commercial/deals")).toBe(false);
   });
 
   it("allows the PR3 machine-opportunity intake list and detail reads only", () => {

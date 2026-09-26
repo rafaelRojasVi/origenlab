@@ -79,12 +79,32 @@ def test_the_two_providers_map_to_the_two_new_source_kinds() -> None:
     assert PROVIDER_SOURCE_KIND == {"gmail": "gmail_message", "drive": "drive_file"}
 
 
-def test_a_gmail_record_may_not_assert_a_document_reference() -> None:
+def test_a_gmail_document_reference_by_filename_is_refused() -> None:
     bad = _manifest()
     bad["records"][0]["observations"] = [
         {"kind": "document_reference", "value": "cotizacion.pdf"}
     ]
-    with pytest.raises(ManifestRefused, match="contact_address, organization_name"):
+    with pytest.raises(ManifestRefused, match="exact bytes"):
+        parse_manifest(bad)
+
+
+def test_a_gmail_document_reference_must_name_an_attachment_the_message_carries() -> None:
+    digest = "ab" * 32
+    bad = _manifest()
+    bad["records"][0]["observations"] = [{"kind": "document_reference", "value": f"sha256:{digest}"}]
+    with pytest.raises(ManifestRefused, match="payload.documents"):
+        parse_manifest(bad)
+    good = _manifest()
+    good["records"][0]["payload"]["documents"] = [{"sha256": digest, "filename": "c.pdf"}]
+    good["records"][0]["observations"] = [{"kind": "document_reference", "value": f"sha256:{digest}"}]
+    record = parse_manifest(good).records[0]
+    assert record.observations[0].value_norm == f"sha256:{digest}"
+
+
+def test_a_gmail_record_may_not_assert_a_postal_address() -> None:
+    bad = _manifest()
+    bad["records"][0]["observations"] = [{"kind": "postal_address", "value": "Calle 1"}]
+    with pytest.raises(ManifestRefused, match="contact_address, document_reference, organization_name"):
         parse_manifest(bad)
 
 

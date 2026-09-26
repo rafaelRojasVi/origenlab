@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WarmCasesResponse } from "../api/commercialTypes";
 import type { TodayPanelData } from "../api/operatorTypes";
 import { DashboardApp } from "./DashboardApp";
+import { stubSignedInAuthSession } from "../test/mockAuthSession";
 
 const panel: TodayPanelData = {
   health: {
@@ -184,11 +185,13 @@ describe("Dashboard UX polish (Phase 7B.3 ES)", () => {
   beforeEach(() => {
     window.location.hash = "#/";
     mockAll();
+    stubSignedInAuthSession();
   });
 
   afterEach(() => {
     window.location.hash = "";
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("mantiene marca solo en sidebar sin logo duplicado en header", async () => {

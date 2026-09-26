@@ -12,6 +12,8 @@ dependencies = [
     "pydantic-settings>=2.14.2",
     # Imported at app startup by /mirror route dependencies.
     "psycopg[binary]>=3.2",
+    # RS256 signature check of Google ID tokens against Google's JWKS (v2/google_jwks.py).
+    "cryptography>=43",
 ]
 
 [dependency-groups]

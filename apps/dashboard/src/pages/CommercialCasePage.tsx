@@ -26,6 +26,7 @@ import type {
   V2CaseInterest,
   V2CaseOrganization,
   V2CommercialCase,
+  V2CaseQuoteState,
   V2CommercialCaseCard,
   V2Page,
   V2Quote,
@@ -56,6 +57,11 @@ import {
   linkedEvidence,
 } from "../lib/commercialCase";
 import { formatDate, quotesForCases, sourceKindLabel } from "../lib/crm360";
+import {
+  CASE_STAGE_PRESETS,
+  QUOTE_STATE_FILTER_LABELS,
+  RECENT_ACTIVITY_WINDOWS,
+} from "../lib/crmConnections";
 import { formatMirrorLoadError } from "../lib/humanizeApiError";
 import { closeV2Detail, openV2Detail, useV2DetailId } from "../lib/v2DeepLink";
 
@@ -327,6 +333,11 @@ function CaseDetail({ opportunityId }: { opportunityId: string }) {
     organization_count: current.length,
     interest_count: card.interests.length,
     evidence_count: linked.length,
+    participants: null,
+    interest_labels: null,
+    quote_count: null,
+    latest_quote_status: null,
+    last_activity_at: null,
   };
 
   return (
@@ -471,9 +482,154 @@ function CaseDetail({ opportunityId }: { opportunityId: string }) {
   );
 }
 
+interface CaseFilters {
+  stagePreset: string;
+  openOnly: boolean;
+  organizationQ: string;
+  interestQ: string;
+  quoteState: V2CaseQuoteState | "";
+  activeWithinDays: number | null;
+}
+
+const NO_CASE_FILTERS: CaseFilters = {
+  stagePreset: "all",
+  openOnly: false,
+  organizationQ: "",
+  interestQ: "",
+  quoteState: "",
+  activeWithinDays: null,
+};
+
+function isNarrowed(filters: CaseFilters): boolean {
+  return JSON.stringify(filters) !== JSON.stringify(NO_CASE_FILTERS);
+}
+
+const FIELD = "mt-1 rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-900";
+
+function CaseFilterBar({
+  applied,
+  onApply,
+}: {
+  applied: CaseFilters;
+  onApply: (next: CaseFilters) => void;
+}) {
+  const [draft, setDraft] = useState<CaseFilters>(applied);
+  useEffect(() => setDraft(applied), [applied]);
+  // Selects and the checkbox apply at once; the two text fields apply on submit.
+  const applyNow = (patch: Partial<CaseFilters>) => {
+    const next = { ...draft, ...patch };
+    setDraft(next);
+    onApply(next);
+  };
+  return (
+    <form
+      className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-[var(--color-card)] p-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onApply({ ...draft, organizationQ: draft.organizationQ.trim(), interestQ: draft.interestQ.trim() });
+      }}
+      data-testid="case-filters"
+    >
+      <label className="flex flex-col text-xs text-[var(--color-muted)]">
+        Etapa
+        <select
+          value={draft.stagePreset}
+          onChange={(event) => applyNow({ stagePreset: event.target.value })}
+          className={FIELD}
+          aria-label="Etapa"
+        >
+          {CASE_STAGE_PRESETS.map((preset) => (
+            <option key={preset.id} value={preset.id}>
+              {preset.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="flex flex-col text-xs text-[var(--color-muted)]">
+        Institución (cualquier papel)
+        <input
+          type="search"
+          value={draft.organizationQ}
+          onChange={(event) => setDraft({ ...draft, organizationQ: event.target.value })}
+          placeholder="nombre"
+          className={`${FIELD} w-48`}
+        />
+      </label>
+      <label className="flex flex-col text-xs text-[var(--color-muted)]">
+        Equipo o interés
+        <input
+          type="search"
+          value={draft.interestQ}
+          onChange={(event) => setDraft({ ...draft, interestQ: event.target.value })}
+          placeholder="modelo, producto…"
+          className={`${FIELD} w-48`}
+        />
+      </label>
+      <label className="flex flex-col text-xs text-[var(--color-muted)]">
+        Cotización
+        <select
+          value={draft.quoteState}
+          onChange={(event) => applyNow({ quoteState: event.target.value as V2CaseQuoteState | "" })}
+          className={FIELD}
+          aria-label="Cotización"
+        >
+          <option value="">Cualquiera</option>
+          {(Object.keys(QUOTE_STATE_FILTER_LABELS) as V2CaseQuoteState[]).map((state) => (
+            <option key={state} value={state}>
+              {QUOTE_STATE_FILTER_LABELS[state]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="flex flex-col text-xs text-[var(--color-muted)]">
+        Actividad reciente
+        <select
+          value={draft.activeWithinDays ?? ""}
+          onChange={(event) =>
+            applyNow({ activeWithinDays: event.target.value ? Number(event.target.value) : null })
+          }
+          className={FIELD}
+          aria-label="Actividad reciente"
+        >
+          <option value="">Cualquiera</option>
+          {RECENT_ACTIVITY_WINDOWS.map((days) => (
+            <option key={days} value={days}>
+              Últimos {days} días
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="flex items-center gap-2 pb-1 text-sm text-slate-700">
+        <input
+          type="checkbox"
+          checked={draft.openOnly}
+          onChange={(event) => applyNow({ openOnly: event.target.checked })}
+        />
+        Sólo abiertos
+      </label>
+      <button
+        type="submit"
+        className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white"
+      >
+        Filtrar
+      </button>
+      {isNarrowed(applied) ? (
+        <button
+          type="button"
+          onClick={() => onApply(NO_CASE_FILTERS)}
+          className="px-2 py-1 text-xs text-slate-600 underline"
+        >
+          Limpiar
+        </button>
+      ) : null}
+    </form>
+  );
+}
+
 function CaseList() {
   const [page, setPage] = useState<V2Page<V2CommercialCase> | null>(null);
   const [offset, setOffset] = useState(0);
+  const [filters, setFilters] = useState<CaseFilters>(NO_CASE_FILTERS);
   const [summaries, setSummaries] = useState<Record<string, V2CommercialCaseCard>>({});
   const [quotes, setQuotes] = useState<V2Quote[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -483,7 +639,18 @@ function CaseList() {
     setLoading(true);
     setError(null);
     try {
-      const loaded = await fetchV2Cases({ limit: PAGE_SIZE, offset });
+      const stages =
+        CASE_STAGE_PRESETS.find((preset) => preset.id === filters.stagePreset)?.stages ?? [];
+      const loaded = await fetchV2Cases({
+        stage: stages.length > 0 ? stages : undefined,
+        openOnly: filters.openOnly,
+        organizationQ: filters.organizationQ || undefined,
+        interestQ: filters.interestQ || undefined,
+        quoteState: filters.quoteState || undefined,
+        activeWithinDays: filters.activeWithinDays ?? undefined,
+        limit: PAGE_SIZE,
+        offset,
+      });
       setPage(loaded);
       // Each card is settled on its own: one failing case must not blank the other
       // nineteen, and a row without its card still renders from the list fields.
@@ -503,7 +670,7 @@ function CaseList() {
     } finally {
       setLoading(false);
     }
-  }, [offset]);
+  }, [offset, filters]);
 
   useEffect(() => {
     void load();
@@ -546,11 +713,26 @@ function CaseList() {
       ) : null}
       {loading ? <p className="text-sm text-[var(--color-muted)]">Cargando…</p> : null}
 
+      <CaseFilterBar
+        applied={filters}
+        onApply={(next) => {
+          setOffset(0);
+          setFilters(next);
+        }}
+      />
+
       {page && cases.length === 0 && !loading ? (
-        <V2EmptyState
-          title="Ningún caso comercial todavía"
-          description="Un caso sólo existe cuando una persona lo abre desde un documento. Cero casos es el estado correcto, no una falla."
-        />
+        isNarrowed(filters) ? (
+          <V2EmptyState
+            title="Ningún caso registrado cumple estos filtros"
+            description="Que no esté registrado todavía no significa que no exista: el histórico de V1 aún no se migra a casos."
+          />
+        ) : (
+          <V2EmptyState
+            title="Ningún caso comercial todavía"
+            description="Un caso sólo existe cuando una persona lo abre desde un documento. Cero casos es el estado correcto, no una falla."
+          />
+        )
       ) : null}
 
       {cases.length > 0 ? (

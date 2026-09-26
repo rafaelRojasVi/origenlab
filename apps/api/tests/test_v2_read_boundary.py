@@ -100,9 +100,19 @@ def test_jwks_wins_whenever_it_is_configured() -> None:
     assert isinstance(port, JwksVerifier)
 
 
-def test_the_dev_adapter_is_chosen_only_when_no_jwks_url_exists() -> None:
-    port = build_identity_port(jwks_url=None, database_url=LOOPBACK, lookup=_Lookup(_operator()))
+def test_the_dev_adapter_is_chosen_only_when_explicitly_enabled() -> None:
+    port = build_identity_port(
+        jwks_url=None, database_url=LOOPBACK, lookup=_Lookup(_operator()), dev_login_enabled=True
+    )
     assert isinstance(port, LocalDevIdentity)
+
+
+def test_no_identity_switched_on_is_a_startup_failure_not_a_dev_default() -> None:
+    # Before Google sign-in the header adapter was the silent default whenever JWKS was
+    # absent. It is now opt-in: with nothing enabled the boundary refuses to build.
+    with pytest.raises(IdentityMisconfigured) as excinfo:
+        build_identity_port(jwks_url=None, database_url=LOOPBACK, lookup=_Lookup(_operator()))
+    assert "ORIGENLAB_DEV_LOGIN_ENABLED" in str(excinfo.value)
 
 
 def test_jwks_without_a_url_refuses_at_construction() -> None:
@@ -794,3 +804,26 @@ def test_a_domain_organization_is_only_ever_a_registered_domain() -> None:
         for row in page.items:
             if row["domain_organization"] is not None:
                 assert row["domain_organization"]["organization_id"]
+
+
+@_needs_db
+def test_a_name_only_search_cannot_discover_an_address() -> None:
+    """The viewer's search scope, proven on real rows: an address is never what matched."""
+    import psycopg
+
+    from origenlab_api.v2.repository import V2Repository
+
+    repo = V2Repository(psycopg.connect, _TEST_DSN)
+    first = repo.contacts(q=None, limit=1, offset=0)
+    if first.total == 0:
+        pytest.skip("the target database holds no contact points")
+    address = first.items[0]["address"]
+    local_part = address.split("@", 1)[0].lower()
+    page = repo.contacts(q=local_part, limit=200, offset=0, search_addresses=False)
+    for item in page.items:
+        names = " ".join(
+            filter(None, [item.get("person_display_name"), item.get("organization_name")])
+        ).lower()
+        assert local_part in names, f"matched on something other than a name: {item}"
+    # And the full address, which no recorded name should carry, finds nothing by name.
+    assert repo.contacts(q=address, limit=10, offset=0, search_addresses=False).total == 0

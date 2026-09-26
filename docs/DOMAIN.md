@@ -344,6 +344,18 @@ are lineage, never the rendering authority. A quote never carries an outcome;
 the opportunity records which revision won. Currency, FX, margin, snapshot and
 supersession rules are owned by [`WORKFLOWS.md`](WORKFLOWS.md) §W3a–W3b.
 
+**Historical quotations** — **[V2 DECISION]**, owner gates G1–G5/2026-09-25.1; schema in
+migration `20260925200000`. A quotation OrigenLab sent before V2 existed is recorded as found,
+never re-authored. `crm.quote.number_origin` says where the number came from: `minted` (V2's
+own serial, unique across the CRM) or `printed_historical` (the number exactly as printed on the
+document — never padded, suffixed or renumbered — unique **per opportunity**, because the same
+serial really was printed for two different clients). Its revisions carry
+`origin = 'historical_import'`: the document hash, the time it was sent and the evidence record
+of the message that carried it are required; totals, approval, party snapshot and currency may
+be absent because nobody parsed them. A historical revision is immutable; its only moves are a
+supersession (the owner's canonical version) and `sent → void`, the append-only rollback. It is
+written only by the `record_historical_quotation` command.
+
 <a id="m-dom-case"></a>
 ### 3.6 The commercial case
 
@@ -750,8 +762,8 @@ outside this count and outside this inventory.
 | 9 | `crm.task` | follow-up with a due date | `done ⇔ completed_at IS NOT NULL` |
 | 10 | `crm.activity` | operator-relevant interaction, optional message link | append-only; `(message_id, opportunity_id)` unique |
 | 11 | `crm.domain_event` | the single audit stream | closed `event_type`; `payload_version`; validated payload; no UPDATE, no DELETE |
-| 12 | `crm.quote` | numbered offer for one opportunity | number unique; the opportunity has an organization |
-| 13 | `crm.quote_revision` | immutable priced snapshot with its party snapshot | frozen once approved, party snapshot included; one open revision per quote; stored totals reconcile; snapshot NOT NULL and validated from `approved` |
+| 12 | `crm.quote` | numbered offer for one opportunity | a minted number is unique; a printed historical number is unique per opportunity (§3.5); the opportunity has an organization |
+| 13 | `crm.quote_revision` | immutable priced snapshot with its party snapshot | frozen once approved, party snapshot included; one open revision per quote; stored totals reconcile; snapshot NOT NULL and validated from `approved`; a `historical_import` revision is one document, immutable, sent or void (§3.5) |
 | 14 | `crm.quote_line` | items, logistics, fees, discounts with their own currency and FX | at most one principal item; a logistics allocation target is an item line |
 | 15 | `comms.mailbox` | provider account, permissions, sync cursor | address unique; at most one production sender |
 | 16 | `comms.message` | provider message evidence | `(mailbox_id, provider_message_id)` unique; `send_attempt_id` unique |

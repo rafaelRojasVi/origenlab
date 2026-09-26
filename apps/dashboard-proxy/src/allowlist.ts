@@ -13,7 +13,11 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/operator\/procurement\/tenders\/[A-Za-z0-9-]+$/,
   /^\/operator\/procurement\/tenders\/[A-Za-z0-9-]+\/attachment-navigation$/,
   /^\/cases\/warm$/,
-  /^\/contacts\/[^/]+$/,
+  // V1 `/contacts/*` and `/mirror/*` are deliberately absent. Upstream they are gated only by
+  // the shared API key -- no operator identity, no role, no redaction -- so anyone past
+  // Cloudflare Access would read contact addresses unmasked. V2 (`/v2/*` below) is the only
+  // browser surface for CRM, contacts and evidence. Re-listing either prefix needs a role
+  // model upstream first; `src/allowlist.test.ts` pins both as refused.
   // PR3 machine-proposed opportunity intake (read-only list + detail) — the
   // review surface whose human decisions flow through /operations/* below.
   /^\/opportunities\/commercial$/,
@@ -46,7 +50,6 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/operations\/opportunities\/o_[0-9a-f]{32}\/state$/,
   /^\/operations\/opportunities\/o_[0-9a-f]{32}\/activities$/,
   /^\/operations\/opportunities\/o_[0-9a-f]{32}\/tasks$/,
-  /^\/mirror\/.+/,
   // V2 durable read boundary. Exact paths only -- deliberately NOT /^\/v2\/.+/, so a
   // route added upstream is never reachable through this Worker until it is listed here
   // by name. Every one of these is GET-only and read-only upstream; the V2 command
@@ -81,6 +84,12 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // decision with its own review.
   /^\/v2\/cases$/,
   /^\/v2\/cases\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  // Dashboard sign-in (Google Workspace, `apps/api` v2/auth_routes.py). Three exact GET
+  // paths. The cookie and redirect exceptions they need live in `auth.ts`, and apply to
+  // these paths only.
+  /^\/auth\/google\/login$/,
+  /^\/auth\/google\/callback$/,
+  /^\/auth\/session$/,
 ];
 
 /**
@@ -145,10 +154,21 @@ export function isAllowedCommercialOperationsPostPath(
   );
 }
 
+/**
+ * Sign-out. Clears the session cookie upstream and writes nothing else; listed apart from
+ * the commercial commands so it can never inherit their headers or be mistaken for one.
+ */
+export const AUTH_LOGOUT_POST_PATH_RE = /^\/auth\/logout$/;
+
+export function isAllowedAuthPostPath(pathname: string): boolean {
+  return AUTH_LOGOUT_POST_PATH_RE.test(pathname.split("?")[0]);
+}
+
 export function isAllowedPostPath(pathname: string): boolean {
   return (
     isAllowedPostUploadPath(pathname) ||
-    isAllowedCommercialOperationsPostPath(pathname)
+    isAllowedCommercialOperationsPostPath(pathname) ||
+    isAllowedAuthPostPath(pathname)
   );
 }
 

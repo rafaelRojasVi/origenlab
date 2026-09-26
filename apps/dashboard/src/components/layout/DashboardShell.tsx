@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { getOperatorApiBaseUrl } from "../../api/operatorClient";
+import { useAuthSession } from "../../context/AuthSessionContext";
 import { useDashboardData } from "../../context/DashboardDataContext";
 import {
   dashboardSectionLabel,
@@ -32,6 +33,7 @@ export function DashboardShell({
     setContactEmail,
   } = useDashboardData();
 
+  const { session, signOut } = useAuthSession();
   const pageTitle = dashboardSectionLabel(section);
   const verdict = data?.operator.verdict;
   const apiBase = getOperatorApiBaseUrl() || "(proxy Vite)";
@@ -70,6 +72,29 @@ export function DashboardShell({
               </h1>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              {session.kind === "signed_in" ? (
+                <span
+                  className="inline-flex items-center gap-2 rounded-full bg-slate-50 py-0.5 pl-2.5 pr-1 text-xs text-slate-700 ring-1 ring-inset ring-slate-200"
+                  data-testid="auth-operator-chip"
+                  title={`${session.operator.displayName} · ${session.operator.role}`}
+                >
+                  <span className="max-w-[16rem] truncate">{session.operator.email}</span>
+                  {session.method === "dev_header" ? (
+                    <span className="rounded-full bg-amber-100 px-1.5 text-[10px] font-semibold text-amber-800">
+                      desarrollo
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void signOut()}
+                      className="rounded-full px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-200 hover:text-slate-900"
+                      data-testid="auth-logout-button"
+                    >
+                      Cerrar sesión
+                    </button>
+                  )}
+                </span>
+              ) : null}
               {v2ReadOnly ? (
                 <>
                   <span

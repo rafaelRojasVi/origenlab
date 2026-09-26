@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { AuthSessionContext } from "../context/AuthSessionContext";
 import { CrmV2Page } from "./CrmV2Page";
 
 vi.mock("../api/v2Client", () => ({
@@ -46,6 +47,24 @@ const ORGANIZATION = {
   created_at: null,
 };
 
+
+function asRole(role: string, node: React.ReactNode) {
+  return (
+    <AuthSessionContext.Provider
+      value={{
+        session: {
+          kind: "signed_in",
+          method: "google_session",
+          operator: { operatorId: "op-1", email: "op@ejemplo.invalid", displayName: "Op", role },
+        },
+        signOut: async () => undefined,
+      }}
+    >
+      {node}
+    </AuthSessionContext.Provider>
+  );
+}
+
 beforeEach(() => {
   vi.mocked(fetchV2Contacts).mockResolvedValue(page([CONTACT], 9460) as never);
   vi.mocked(fetchV2Organizations).mockResolvedValue(page([ORGANIZATION], 1812) as never);
@@ -87,6 +106,25 @@ describe("CrmV2Page", () => {
         expect.objectContaining({ q: "ejemplo" }),
       );
     });
+  });
+
+  it("does not tell a viewer they can search by address — the API only searches names for them", async () => {
+    render(asRole("viewer", <CrmV2Page />));
+    await screen.findByText(/Contactos/);
+    const box = screen.getByRole("searchbox") as HTMLInputElement;
+    expect(box.placeholder).toBe("nombre de persona o institución");
+    expect(box.placeholder).not.toMatch(/direcci/i);
+
+    fireEvent.click(screen.getByText("Evidencia"));
+    await waitFor(() => expect(vi.mocked(fetchV2Evidence)).toHaveBeenCalled());
+    const evidenceBox = screen.getByRole("searchbox") as HTMLInputElement;
+    expect(evidenceBox.placeholder).toBe("valor observado (sin direcciones)");
+  });
+
+  it("keeps the address placeholder for sales and admin, whose search does reach addresses", async () => {
+    render(asRole("sales", <CrmV2Page />));
+    await screen.findByText("compras@uni.example");
+    expect(screen.getByPlaceholderText("dirección o valor")).toBeTruthy();
   });
 
   it("says why prospects are empty instead of showing a bare zero", async () => {

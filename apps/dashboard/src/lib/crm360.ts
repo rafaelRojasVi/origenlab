@@ -153,6 +153,17 @@ export function controlSourceLabel(source: string): string {
   return CONTROL_SOURCE_LABELS[source] ?? source;
 }
 
+const CONTROL_KIND_LABELS: Record<string, string> = {
+  block: "Bloqueo",
+  cooldown: "En espera",
+  prior_contact: "Contacto previo",
+};
+
+/** `outbound.contact_control.kind` in words. None of them is a permission. */
+export function controlKindLabel(kind: string): string {
+  return CONTROL_KIND_LABELS[kind] ?? kind;
+}
+
 /**
  * What may be sent to this address, from the controls recorded against it.
  *

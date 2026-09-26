@@ -113,14 +113,14 @@ select is(
 -- (d) The census. A foreign key added without updating this count fails here even when it is
 --     covered, so new relations are reviewed rather than absorbed silently.
 select is(
-  (select count(*)::int from ol_fk), 118,
-  'the seven application schemas declare 118 foreign keys');
+  (select count(*)::int from ol_fk), 119,
+  'the seven application schemas declare 119 foreign keys');
 select is(
   (select count(*)::int from ol_fk_coverage where coverage = 'full'), 86,
   '86 foreign keys are covered by an unconditional index');
 select is(
-  (select count(*)::int from ol_fk_coverage where coverage = 'implied-partial'), 32,
-  '32 foreign keys are covered by a partial index whose predicate the lookup implies');
+  (select count(*)::int from ol_fk_coverage where coverage = 'implied-partial'), 33,
+  '33 foreign keys are covered by a partial index whose predicate the lookup implies');
 
 -- (e) Regression against the advisor false negative this gate exists to catch: an index partial on
 --     a column outside the constraint must not count, so crm.task.owner_operator_id needs — and now

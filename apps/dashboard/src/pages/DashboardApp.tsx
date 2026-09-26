@@ -1,3 +1,6 @@
+import { AuthGate } from "../components/auth/AuthGate";
+import { CrmApp } from "../crm/CrmApp";
+import { useIsCrmHash } from "../crm/crmRoute";
 import { DashboardDataProvider } from "../context/DashboardDataContext";
 import { DashboardShell } from "../components/layout/DashboardShell";
 import { useDashboardSection } from "../lib/dashboardHashRoute";
@@ -11,6 +14,8 @@ import { Institution360Page } from "./Institution360Page";
 import { CommercialCasePage } from "./CommercialCasePage";
 import { CrmV2Page } from "./CrmV2Page";
 import { EvidenceReviewPage } from "./EvidenceReviewPage";
+import { QuoteImportReviewPage } from "./QuoteImportReviewPage";
+import { CaseArchivePage } from "./CaseArchivePage";
 import { DealsPage } from "./DealsPage";
 import { InboxTriagePage } from "./InboxTriagePage";
 import { PaymentsLogisticsPage } from "./PaymentsLogisticsPage";
@@ -73,6 +78,10 @@ function DashboardSectionView({
       return <EvidenceReviewPage />;
     case "casos":
       return <CommercialCasePage />;
+    case "importacion":
+      return <QuoteImportReviewPage />;
+    case "archivo":
+      return <CaseArchivePage />;
     case "system":
       return <SystemPage />;
     default:
@@ -82,12 +91,27 @@ function DashboardSectionView({
 
 export function DashboardApp() {
   const [section, navigate] = useDashboardSection();
+  const crm = useIsCrmHash();
 
+  // The CRM workspace shares the sign-in gate and nothing else: it reads `/v2` only, so it
+  // does not mount the V1 data provider.
+  if (crm) {
+    return (
+      <AuthGate>
+        <CrmApp />
+      </AuthGate>
+    );
+  }
+
+  // The gate sits outside the data provider so no operator data is requested before the
+  // session is known.
   return (
-    <DashboardDataProvider>
-      <DashboardShell section={section} onNavigate={navigate}>
-        <DashboardSectionView section={section} navigate={navigate} />
-      </DashboardShell>
-    </DashboardDataProvider>
+    <AuthGate>
+      <DashboardDataProvider>
+        <DashboardShell section={section} onNavigate={navigate}>
+          <DashboardSectionView section={section} navigate={navigate} />
+        </DashboardShell>
+      </DashboardDataProvider>
+    </AuthGate>
   );
 }
