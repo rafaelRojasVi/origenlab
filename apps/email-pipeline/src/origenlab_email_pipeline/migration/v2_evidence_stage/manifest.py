@@ -14,6 +14,7 @@ merge instruction, because a staging pass is not allowed to decide any of those.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,11 +50,19 @@ PROVIDER_SOURCE_KIND: dict[str, str] = {
 #: address or a contacted-address fact: an affiliation is a relationship nobody wrote down
 #: in a message header, and `contacted_address` is a claim about *our own* outbound history
 #: that only the send ledger may make.
+#:
+#: A Gmail message may also assert a `document_reference`, but only to an attachment it
+#: carries and only by the attachment's exact bytes: `sha256:<64 hex>`. A filename, a subject
+#: or a quote number is not a document reference — two different PDFs share filenames all the
+#: time — so anything but the digest form is refused (see `GMAIL_DOCUMENT_REFERENCE`).
 PROVIDER_ASSERTION_KINDS: dict[str, frozenset[str]] = {
-    "gmail": frozenset({"contact_address", "organization_name"}),
+    "gmail": frozenset({"contact_address", "organization_name", "document_reference"}),
     "drive": frozenset({"document_reference", "organization_name"}),
 }
 
+
+#: The only shape a Gmail `document_reference` may take: the SHA-256 of an attachment.
+GMAIL_DOCUMENT_REFERENCE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 #: Intake classes a Gmail record may declare. Anything else is inventory, not evidence:
 #: `primary_evidence` is Inbox/Sent, `archived` is an operator-approved replay batch.
@@ -263,6 +272,22 @@ def parse_manifest(raw: Any, *, source_path: str = "<memory>") -> Manifest:
             value = obs.get("value")
             _require(isinstance(value, str), f"{obs_where}: value must be a string")
             value_norm = _normalize(kind, value)
+            if provider == "gmail" and kind == "document_reference":
+                _require(
+                    GMAIL_DOCUMENT_REFERENCE.match(value_norm) is not None,
+                    f"{obs_where}: a Gmail document_reference names an attachment by its exact "
+                    "bytes, 'sha256:<64 hex>' — never by filename, subject or number",
+                )
+                payload_docs = {
+                    str(d.get("sha256", "")).lower()
+                    for d in payload.get("documents", [])
+                    if isinstance(d, dict)
+                }
+                _require(
+                    value_norm.removeprefix("sha256:") in payload_docs,
+                    f"{obs_where}: the referenced document is not among payload.documents; a "
+                    "message may only reference an attachment it carries",
+                )
             if provider == "gmail" and kind == "contact_address":
                 local_part = value_norm.split("@", 1)[0]
                 _require(
