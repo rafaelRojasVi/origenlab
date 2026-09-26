@@ -11,18 +11,14 @@ What this module decides, and why each rule is here rather than trusted to Googl
   exactly in `@<domain>`, and the `hd` claim must equal `<domain>`. The second check is the one
   that matters: a consumer Google account can be created with an `@origenlab.cl` address, and
   only a Workspace account carries `hd`.
-* **The ID token signature is not verified locally, and that is the OIDC-sanctioned choice
-  for this flow.** The token is received directly from Google's token endpoint over TLS, in
-  exchange for the authorization code *and* this client's secret *and* the PKCE verifier; it
-  never passes through the browser. OpenID Connect Core §3.1.3.7 (6) allows TLS server
-  validation to stand in for the signature check in exactly that case, and Google documents
-  the same. Every claim is still checked: `iss`, `aud`, `azp`, `exp`, `iat`, `nonce`,
-  `email_verified`, the address domain, and `hd`. Verifying the signature would add a JWKS
-  fetch and a crypto dependency to the API image for no gain in this flow; if the ID token
-  ever arrives any other way (a front-channel or implicit flow), that changes and this
-  module must not be reused as-is.
+* **The ID token signature is verified against Google's JWKS** (`google_jwks.py`), before
+  any claim is read, even though the token arrives over the back channel — OpenID Connect
+  Core §3.1.3.7 (6) would allow TLS to stand in for it, and the owner asked for the check as
+  production hardening. Every claim is then checked too: `iss`, `aud`, `azp`, `exp`, `iat`,
+  `nonce`, `email_verified`, the address domain, and `hd`. An unreachable key set refuses
+  the sign-in; nothing falls back to the unverified claims.
 * **Google's endpoints are constants.** No discovery document is fetched at runtime, so
-  nothing reachable over the network can redirect the token exchange.
+  nothing reachable over the network can redirect the token exchange or the key fetch.
 """
 
 from __future__ import annotations
@@ -256,7 +252,7 @@ def exchange_code(*, code: str, verifier: str, config: GoogleAuthConfig) -> dict
 
 
 def decode_id_token(id_token: Any) -> dict[str, Any]:
-    """Decode the claims segment of a JWT (see the module docstring on signatures)."""
+    """Decode the claims segment of a JWT whose signature `google_jwks.verify_signature` checked."""
     if not isinstance(id_token, str) or id_token.count(".") != 2:
         raise ClaimsRefused("invalid_token", "id_token is not a compact JWT")
     segment = id_token.split(".")[1]

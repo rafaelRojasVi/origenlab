@@ -3,7 +3,7 @@
 | Route | Mounted when | Does |
 |---|---|---|
 | `GET /auth/google/login` | Google sign-in is on | sets the sign-in cookie (state, nonce, PKCE verifier) and redirects to Google |
-| `GET /auth/google/callback` | Google sign-in is on | checks state, exchanges the code, checks the claims, maps the address to `platform.operator`, sets the session cookie |
+| `GET /auth/google/callback` | Google sign-in is on | checks state, exchanges the code, verifies the ID token's RS256 signature against Google's JWKS, checks the claims, maps the address to `platform.operator`, sets the session cookie |
 | `GET /auth/session` | the V2 boundary is mounted | who the current request resolves to, through the same identity port every `/v2` read uses |
 | `POST /auth/logout` | the V2 boundary is mounted | clears the session cookie |
 
@@ -28,6 +28,12 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 from origenlab_api.v2.auth_session import TRANSACTION_TTL_SECONDS, CookieRefused, read_cookie
+from origenlab_api.v2.google_jwks import (
+    GoogleJwks,
+    JwksUnavailable,
+    SignatureRefused,
+    verify_signature,
+)
 from origenlab_api.v2.google_oidc import (
     DEFAULT_TOKEN_EXCHANGER,
     ClaimsRefused,
@@ -152,6 +158,19 @@ def google_callback(request: Request) -> Response:
         tokens = exchanger(code=code, verifier=transaction["verifier"], config=config)
     except TokenExchangeFailed as exc:
         return _refuse(config, "token_exchange_failed", str(exc))
+
+    # The signature is checked before any claim is read: an ID token that Google's current
+    # keys did not sign is refused whatever it says (`google_jwks.py`). There is no fallback
+    # when the key set is unavailable — the sign-in fails closed.
+    jwks: GoogleJwks | None = getattr(request.app.state, "v2_google_jwks", None)
+    if jwks is None:
+        return _refuse(config, "signature_unverified", "no Google JWKS is configured")
+    try:
+        verify_signature(tokens.get("id_token"), jwks)
+    except SignatureRefused as exc:
+        return _refuse(config, "invalid_token", str(exc))
+    except JwksUnavailable as exc:
+        return _refuse(config, "signature_unverified", f"Google JWKS unavailable: {exc}")
 
     try:
         account = validate_claims(

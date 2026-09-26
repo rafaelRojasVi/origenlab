@@ -215,7 +215,7 @@ Recorded so it is not mistaken for completeness:
 
 | Role | May |
 |---|---|
-| `viewer` | read everything the dashboard exposes |
+| `viewer` | read everything the dashboard exposes **except contact addresses**: every email address and phone channel in a `/v2` answer is masked (`***@dominio`) by the API's route class (`contact_redaction.py`), the answer carries `X-OrigenLab-Redaction: contact-addresses`, a quotation PDF is refused (403) because a file cannot be masked, and `q=` on `/v2/contacts` searches only the recorded person's and institution's names — never the address — so a masked hit cannot confirm what the mask hides |
 | `sales` | run every CRM command: create and advance opportunities, edit and submit quote revisions, create tasks and activities, promote evidence, freeze a campaign audience |
 | `admin` | everything `sales` may, plus: change send control, approve quote revisions and campaigns, grant recontact overrides, revoke blocks, resolve ambiguous attempts, authorize retries, merge identities, and manage operators |
 
@@ -224,6 +224,31 @@ Recorded so it is not mistaken for completeness:
 - **Admin commands require `aal2`** — a second factor in the current session.
 - **[OPEN]** whether the approver of a quote revision must differ from its
   author. Recommended default: required once two `sales` operators exist.
+
+### 2.1 V1 read routes are closed to the browser
+
+The roles above exist only in V2. The V1 read routes `/contacts/*` and `/mirror/*` on
+`apps/api` have no operator identity, no role and no redaction: upstream they are gated by
+the shared `X-OriginLab-API-Key` alone, so anyone past Cloudflare Access would read every
+contact address as recorded, whatever their role. **The dashboard proxy therefore refuses
+both prefixes** — `apps/dashboard-proxy/src/allowlist.ts` no longer lists them, a request
+answers **403 `path_not_allowed`** and is never forwarded (POST answers 405). V2 `/v2/*` is
+the only browser surface for CRM, contacts and evidence.
+
+- **What stops working in the V1 panel:** every screen fed by the mirror (Catálogo,
+  Proveedores, Prospectos, the lead-intel "Clientes" list, the commercial-deals and Gmail
+  interaction audits) and the V1 contact drilldown panel. They show a load error; nothing
+  else in the V1 panel changes (`/operator/*`, `/cases/warm`, `/opportunities/*`,
+  `/operations/*` stay listed).
+- **The API routes themselves still exist** and still answer a caller holding the API key
+  directly. Closing them in the proxy is a browser-boundary decision, not a decommission.
+- **Stays closed until** either V1 is decommissioned ([`MIGRATION.md`](MIGRATION.md) §5) or
+  the V1 routes are migrated behind the V2 role model (resolved operator, `viewer` masking).
+  Re-listing a prefix without one of the two reopens the unmasked read and is refused in
+  review; `src/allowlist.test.ts` and `src/index.test.ts` pin both prefixes as refused.
+- **Not exposed either:** `/v2/workspace/*` and `/v2/cockpit/*` are built and redacting in
+  `apps/api` but are not in the allowlist; exposing them is a separate decision, and the
+  proxy suite pins every one of their paths as refused.
 
 ## 3. Deployment
 

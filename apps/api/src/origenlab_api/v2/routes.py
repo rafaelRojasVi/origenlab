@@ -43,6 +43,11 @@ from origenlab_api.v2.case_commands import (
     STAGES_REQUIRING_A_REQUESTING_INSTITUTION,
     TERMINAL_STAGES,
 )
+from origenlab_api.v2.contact_redaction import (
+    ContactRedactingRoute,
+    remember_operator,
+    sees_contact_addresses,
+)
 from origenlab_api.v2.identity import (
     IdentityPort,
     IdentityRefused,
@@ -50,7 +55,9 @@ from origenlab_api.v2.identity import (
 )
 from origenlab_api.v2.repository import V2Repository, clamp_limit
 
-router = APIRouter(prefix="/v2", tags=["v2"])
+# Every answer is masked for an operator who may not see contact addresses
+# (`contact_redaction.py`): the route class does it, so no read route can forget.
+router = APIRouter(prefix="/v2", tags=["v2"], route_class=ContactRedactingRoute)
 
 
 def get_repository(request: Request) -> V2Repository:
@@ -78,11 +85,13 @@ def current_operator(
     (`docs/OPERATIONS.md` §2).
     """
     try:
-        return port.resolve(dict(request.headers)).require_active().require_role(
+        operator = port.resolve(dict(request.headers)).require_active().require_role(
             "viewer", "sales", "admin"
         )
     except IdentityRefused as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+    # Recorded for the route class, which masks contact addresses by role.
+    return remember_operator(request, operator)
 
 
 Operator = Annotated[OperatorIdentity, Depends(current_operator)]
@@ -125,7 +134,7 @@ def _page_response(page: Any) -> dict[str, Any]:
 
 @router.get("/contacts")
 def list_contacts(
-    _: Operator,
+    operator: Operator,
     repo: Repo,
     q: str | None = Query(default=None, max_length=200),
     identity: str | None = Query(default=None),
@@ -135,10 +144,13 @@ def list_contacts(
 ) -> dict[str, Any]:
     """Contact points, recorded identities first.
 
-    `q` matches the address, the recorded person's name or the recorded institution's name.
-    `identity` is `person`, `organization_mailbox` or `unattributed` — read from the
-    channel's own foreign keys, never from its address. `with_cases` keeps channels a current
-    participant row connects to a case.
+    `q` matches the recorded person's name or the recorded institution's name, and for an
+    operator who may read contact addresses (`sales`, `admin`) the address as well. A
+    `viewer` gets masked addresses, so their search must not reach the address either: a
+    masked hit for `persona@` would confirm what the mask hides. `identity` is `person`,
+    `organization_mailbox` or `unattributed` — read from the channel's own foreign keys,
+    never from its address. `with_cases` keeps channels a current participant row connects
+    to a case.
     """
     if identity is not None and identity not in repo.CONTACT_IDENTITIES:
         raise HTTPException(
@@ -150,6 +162,7 @@ def list_contacts(
             q=q,
             identity=identity,
             with_cases=with_cases,
+            search_addresses=sees_contact_addresses(operator.role),
             limit=clamp_limit(limit),
             offset=offset,
         )
@@ -369,7 +382,7 @@ def list_evidence_records(
 
 @router.get("/evidence")
 def list_evidence(
-    _: Operator,
+    operator: Operator,
     repo: Repo,
     q: str | None = Query(default=None, max_length=200),
     resolution: str | None = Query(default=None),
@@ -382,6 +395,10 @@ def list_evidence(
     `/v2/review/summary` counts what is waiting; this says which rows they are. Both
     filters are validated against the database's own closed vocabularies, so a value the
     schema cannot hold is a 422 rather than an empty page that looks like an answer.
+
+    `q` searches every assertion value for an operator who may read contact addresses
+    (`sales`, `admin`). A `viewer` gets masked addresses, so their search must not reach the
+    address kinds either: a masked hit for `persona@` would confirm what the mask hides.
     """
     if resolution is not None and resolution not in repo.EVIDENCE_RESOLUTIONS:
         raise HTTPException(
@@ -398,6 +415,7 @@ def list_evidence(
             q=q,
             resolution=resolution,
             source_kind=source_kind,
+            search_addresses=sees_contact_addresses(operator.role),
             limit=clamp_limit(limit),
             offset=offset,
         )

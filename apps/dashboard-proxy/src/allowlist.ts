@@ -13,7 +13,11 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/operator\/procurement\/tenders\/[A-Za-z0-9-]+$/,
   /^\/operator\/procurement\/tenders\/[A-Za-z0-9-]+\/attachment-navigation$/,
   /^\/cases\/warm$/,
-  /^\/contacts\/[^/]+$/,
+  // V1 `/contacts/*` and `/mirror/*` are deliberately absent. Upstream they are gated only by
+  // the shared API key -- no operator identity, no role, no redaction -- so anyone past
+  // Cloudflare Access would read contact addresses unmasked. V2 (`/v2/*` below) is the only
+  // browser surface for CRM, contacts and evidence. Re-listing either prefix needs a role
+  // model upstream first; `src/allowlist.test.ts` pins both as refused.
   // PR3 machine-proposed opportunity intake (read-only list + detail) — the
   // review surface whose human decisions flow through /operations/* below.
   /^\/opportunities\/commercial$/,
@@ -46,7 +50,6 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/operations\/opportunities\/o_[0-9a-f]{32}\/state$/,
   /^\/operations\/opportunities\/o_[0-9a-f]{32}\/activities$/,
   /^\/operations\/opportunities\/o_[0-9a-f]{32}\/tasks$/,
-  /^\/mirror\/.+/,
   // V2 durable read boundary. Exact paths only -- deliberately NOT /^\/v2\/.+/, so a
   // route added upstream is never reachable through this Worker until it is listed here
   // by name. Every one of these is GET-only and read-only upstream; the V2 command

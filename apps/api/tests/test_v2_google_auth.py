@@ -16,12 +16,15 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from fastapi.testclient import TestClient
 
 from origenlab_api.commercial_operator_identity import OPERATOR_EMAIL_HEADER
 from origenlab_api.main import create_app
 from origenlab_api.v2 import google_oidc
 from origenlab_api.v2.auth_session import CookieRefused, CookieSigner
+from origenlab_api.v2.google_jwks import GoogleJwks
 from origenlab_api.v2.google_oidc import (
     ClaimsRefused,
     GoogleAuthMisconfigured,
@@ -70,11 +73,35 @@ class _Repo:
         return Page(items=[], total=0, limit=kwargs["limit"], offset=kwargs["offset"])
 
 
-def _jwt(claims: dict[str, Any]) -> str:
-    def seg(obj: dict[str, Any]) -> str:
-        return base64.urlsafe_b64encode(json.dumps(obj).encode()).rstrip(b"=").decode()
+#: The test stand-in for Google's signing key. Generated once per test session.
+_GOOGLE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+_KID = "test-google-kid"
 
-    return f"{seg({'alg': 'RS256', 'typ': 'JWT'})}.{seg(claims)}.c2lnbmF0dXJl"
+
+def _b64(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def _jwk(private_key: rsa.RSAPrivateKey, kid: str) -> dict[str, Any]:
+    numbers = private_key.public_key().public_numbers()
+    return {"kty": "RSA", "alg": "RS256", "use": "sig", "kid": kid,
+            "n": _b64(numbers.n.to_bytes((numbers.n.bit_length() + 7) // 8, "big")),
+            "e": _b64(numbers.e.to_bytes(3, "big"))}
+
+
+def _google_jwks(*keys: dict[str, Any]) -> GoogleJwks:
+    body = {"keys": list(keys) or [_jwk(_GOOGLE_KEY, _KID)]}
+    return GoogleJwks(fetcher=lambda: (body, 3600))
+
+
+def _jwt(claims: dict[str, Any], *, key: rsa.RSAPrivateKey = _GOOGLE_KEY,
+         header: dict[str, Any] | None = None) -> str:
+    def seg(obj: dict[str, Any]) -> str:
+        return _b64(json.dumps(obj).encode())
+
+    signing_input = f"{seg(header or {'alg': 'RS256', 'kid': _KID, 'typ': 'JWT'})}.{seg(claims)}"
+    signature = key.sign(signing_input.encode(), padding.PKCS1v15(), hashes.SHA256())
+    return f"{signing_input}.{_b64(signature)}"
 
 
 def _claims(nonce: str, /, **overrides: Any) -> dict[str, Any]:
@@ -141,13 +168,15 @@ class _Harness:
         self.exchanges: list[dict[str, Any]] = []
         self.claims_override: dict[str, Any] = {}
         self.app.state.v2_token_exchanger = self._exchange
+        self.app.state.v2_google_jwks = _google_jwks()
+        self.token_factory = _jwt
         secure = urlsplit(env.get("base", LOCAL_BASE)).scheme == "https"
         self.client = TestClient(self.app, base_url="https://testserver" if secure else "http://testserver")
         self.headers = {"X-OriginLab-API-Key": "proxy-token-for-tests"} if env.get("production") else {}
 
     def _exchange(self, *, code: str, verifier: str, config: Any) -> dict[str, Any]:
         self.exchanges.append({"code": code, "verifier": verifier})
-        return {"id_token": _jwt(_claims(self.nonce, **self.claims_override)),
+        return {"id_token": self.token_factory(_claims(self.nonce, **self.claims_override)),
                 "access_token": "discarded"}
 
     def login(self) -> Any:
@@ -814,3 +843,101 @@ def test_a_malformed_neighbour_cookie_does_not_hide_the_session() -> None:
     assert read_cookie({"Cookie": header}, "origenlab_session") == "abc.def"
     assert read_cookie({"cookie": "a=1"}, "origenlab_session") is None
     assert read_cookie({}, "origenlab_session") is None
+
+
+# ------------------------------------------------------------------ ID-token signature
+
+
+def test_the_app_wires_a_google_jwks_when_google_sign_in_is_on(monkeypatch) -> None:
+    _env(monkeypatch)
+    assert isinstance(create_app().state.v2_google_jwks, GoogleJwks)
+
+
+def test_a_token_signed_by_another_key_is_refused(monkeypatch) -> None:
+    h = _Harness(monkeypatch)
+    attacker = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    h.token_factory = lambda claims: _jwt(claims, key=attacker)
+    response = h.sign_in()
+    assert _login_error(response) == "invalid_token"
+    assert not _session_cookie_set(response)
+    assert h.repo.calls == []  # refused before the operator is even looked up
+
+
+def test_a_token_whose_claims_were_edited_after_signing_is_refused(monkeypatch) -> None:
+    h = _Harness(monkeypatch)
+
+    def tampered(claims: dict[str, Any]) -> str:
+        header, _, signature = _jwt({**claims, "email": "someone@else.cl"}).split(".")
+        forged = base64.urlsafe_b64encode(json.dumps(claims).encode()).rstrip(b"=").decode()
+        return f"{header}.{forged}.{signature}"
+
+    h.token_factory = tampered
+    response = h.sign_in()
+    assert _login_error(response) == "invalid_token"
+    assert not _session_cookie_set(response)
+
+
+@pytest.mark.parametrize("header", [
+    {"alg": "none", "kid": _KID},
+    {"alg": "HS256", "kid": _KID},
+    {"alg": "RS512", "kid": _KID},
+    {"alg": "RS256"},
+    {"alg": "RS256", "kid": _KID, "crit": ["exp"]},
+])
+def test_an_algorithm_or_header_google_does_not_use_is_refused(monkeypatch, header) -> None:
+    h = _Harness(monkeypatch)
+    h.token_factory = lambda claims: _jwt(claims, header=header)
+    response = h.sign_in()
+    assert _login_error(response) == "invalid_token"
+    assert not _session_cookie_set(response)
+
+
+def test_an_unsigned_token_is_refused(monkeypatch) -> None:
+    h = _Harness(monkeypatch)
+    h.token_factory = lambda claims: _jwt(claims).rsplit(".", 1)[0] + "."
+    assert _login_error(h.sign_in()) == "invalid_token"
+
+
+def test_an_unreachable_jwks_fails_closed(monkeypatch) -> None:
+    from origenlab_api.v2.google_jwks import JwksUnavailable
+
+    h = _Harness(monkeypatch)
+
+    def down() -> Any:
+        raise JwksUnavailable("URLError")
+
+    h.app.state.v2_google_jwks = GoogleJwks(fetcher=down)
+    response = h.sign_in()
+    assert _login_error(response) == "signature_unverified"
+    assert not _session_cookie_set(response)
+
+
+def test_no_jwks_on_the_app_fails_closed(monkeypatch) -> None:
+    h = _Harness(monkeypatch)
+    h.app.state.v2_google_jwks = None
+    response = h.sign_in()
+    assert _login_error(response) == "signature_unverified"
+    assert not _session_cookie_set(response)
+
+
+def test_a_rotated_key_is_picked_up_by_one_refetch(monkeypatch) -> None:
+    h = _Harness(monkeypatch)
+    rotated = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    bodies = [{"keys": [_jwk(_GOOGLE_KEY, _KID)]},
+              {"keys": [_jwk(_GOOGLE_KEY, _KID), _jwk(rotated, "rotated")]}]
+    fetches: list[int] = []
+
+    def fetch() -> Any:
+        fetches.append(1)
+        return bodies[min(len(fetches) - 1, 1)], 3600
+
+    clock = iter(range(0, 10_000, 100))
+    jwks = GoogleJwks(fetcher=fetch, clock=lambda: float(next(clock)))
+    jwks.key_for(_KID)  # the cache holds the pre-rotation set
+    h.app.state.v2_google_jwks = jwks
+    h.token_factory = lambda claims: _jwt(claims, key=rotated,
+                                          header={"alg": "RS256", "kid": "rotated"})
+    response = h.sign_in()
+    assert _login_error(response) is None
+    assert _session_cookie_set(response)
+    assert len(fetches) == 2

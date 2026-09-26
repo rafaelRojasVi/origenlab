@@ -7,11 +7,11 @@ export interface AuthSessionContextValue {
 }
 
 /**
- * Outside an `AuthGate` (component tests, the placeholder shell) the dashboard behaves as if
- * sign-in were not configured: no operator chip, no logout button.
+ * Outside an `AuthGate` (component tests, the placeholder shell) there is no confirmed
+ * session: no operator chip, no logout button.
  */
 const DEFAULT_VALUE: AuthSessionContextValue = {
-  session: { kind: "not_configured" },
+  session: { kind: "loading" },
   signOut: async () => undefined,
 };
 

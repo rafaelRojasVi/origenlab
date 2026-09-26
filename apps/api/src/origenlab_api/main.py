@@ -103,6 +103,11 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
         production=settings.production_mode(),
     )
     app.state.v2_google_auth = google
+    if google is not None:
+        from origenlab_api.v2.google_jwks import GoogleJwks
+
+        # One cached copy of Google's signing keys per process; fetched on first sign-in.
+        app.state.v2_google_jwks = GoogleJwks()
     # Constructing the port here, at startup, is deliberate: a misconfigured identity must
     # fail the process rather than surface as a per-request error that looks like a bad
     # credential.

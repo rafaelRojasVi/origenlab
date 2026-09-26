@@ -14,6 +14,25 @@
   --color-card: #ffffff;
   --color-muted: #64748b;
   --color-border: #e2e8f0;
+
+  /* CRM workspace (#/crm/*): warm neutrals, one teal accent, status colours that always
+     travel with text. Every status text colour reaches WCAG AA on its own -bg. */
+  --color-canvas: #fafaf9;
+  --color-canvas-raised: #ffffff;
+  --color-canvas-sunken: #f5f5f4;
+  --color-line: #e7e5e4;
+  --color-line-strong: #d6d3d1;
+  --color-ink: #1c1917;
+  --color-ink-muted: #57534e;
+  --color-ink-faint: #78716c;
+  --color-good: #15803d;
+  --color-good-bg: #f0fdf4;
+  --color-warn: #735a09;
+  --color-warn-bg: #faf3cd;
+  --color-bad: #b91c1c;
+  --color-bad-bg: #fef2f2;
+  --color-info: #1d4ed8;
+  --color-info-bg: #eff6ff;
 }
 
 body {

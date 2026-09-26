@@ -124,6 +124,7 @@ class V2Repository(OperatorLookup):
         offset: int,
         identity: str | None = None,
         with_cases: bool = False,
+        search_addresses: bool = False,
     ) -> Page:
         """Contacts, which in V2 means contact points and the persons they resolve to.
 
@@ -131,10 +132,14 @@ class V2Repository(OperatorLookup):
         the honest state of a channel whose owner is unknown. The response says so with
         `usage` and `confirmation` rather than hiding it.
 
-        `q` matches the address, the recorded person's name or the recorded institution's
-        name — each through the row's own foreign key, so typing an institution's name finds
-        the channels *recorded* against it and never an address that merely shares its
-        domain. `identity` is one of `CONTACT_IDENTITIES`.
+        `q` matches the recorded person's name or the recorded institution's name — each
+        through the row's own foreign key, so typing an institution's name finds the channels
+        *recorded* against it and never an address that merely shares its domain. It reaches
+        the address itself only when `search_addresses` is true, which the route sets from the
+        operator's role (`contact_redaction.sees_contact_addresses`): a viewer's answer is
+        masked, and a search that could confirm a masked address exists would be an oracle
+        around that mask. The default is the narrow scope, so a caller that does not say who
+        is asking gets the viewer's search. `identity` is one of `CONTACT_IDENTITIES`.
 
         Recorded identities come first (a person, then an institution's mailbox, then the
         unattributed backlog), so the few channels somebody has established are not buried
@@ -147,11 +152,11 @@ class V2Repository(OperatorLookup):
         params: list[Any] = []
         if q:
             needle = f"%{q.strip().lower()}%"
-            clauses.append(
-                "(cp.value_norm like %s or lower(p.display_name) like %s "
-                "or lower(o.name) like %s)"
-            )
-            params.extend([needle, needle, needle])
+            predicates = ["lower(p.display_name) like %s", "lower(o.name) like %s"]
+            if search_addresses:
+                predicates.insert(0, "cp.value_norm like %s")
+            clauses.append("(" + " or ".join(predicates) + ")")
+            params.extend([needle] * len(predicates))
         if identity is not None:
             clauses.append(self._CONTACT_IDENTITY_PREDICATES[identity])
         if with_cases:
@@ -1361,6 +1366,14 @@ class V2Repository(OperatorLookup):
         "v1_historical_quote_candidate", "gmail_message", "drive_file",
     )
 
+    #: `evidence.assertion.kind` values whose `value_norm` is a contact or postal address.
+    #: A viewer's search never compares these (`evidence(search_addresses=False)`): the
+    #: answer masks addresses, and a search that could confirm one exists is an oracle
+    #: around that mask.
+    EVIDENCE_ADDRESS_KINDS: tuple[str, ...] = (
+        "contact_address", "contacted_address", "postal_address",
+    )
+
     def evidence(
         self,
         *,
@@ -1369,6 +1382,7 @@ class V2Repository(OperatorLookup):
         source_kind: str | None,
         limit: int,
         offset: int,
+        search_addresses: bool = False,
     ) -> Page:
         """The evidence trail, newest first, each row carrying its own provenance.
 
@@ -1376,12 +1390,29 @@ class V2Repository(OperatorLookup):
         are waiting and this says which. Unresolved and ambiguous rows are the actionable
         ones; promoted rows are kept visible because "where did this contact come from" is
         the question the whole evidence schema exists to answer.
+
+        `q` is a substring search over `value_norm`. It reaches the address kinds
+        (`EVIDENCE_ADDRESS_KINDS`) only when `search_addresses` is true, which the route sets
+        from the operator's role (`contact_redaction.sees_contact_addresses`); otherwise the
+        search is confined to the other kinds *and* to values without an `@`, so a name-kind
+        row that happens to hold an address cannot answer for it either. The default is the
+        narrow scope, so a caller that does not say who is asking gets the viewer's search.
+        The scope narrows the search, not the listing: without `q` every row is returned,
+        masked by the route class for a viewer.
         """
         where = "where true"
         params: tuple[Any, ...] = ()
         if q:
-            where += " and a.value_norm like %s"
-            params = (*params, f"%{q.strip().lower()}%")
+            if search_addresses:
+                where += " and a.value_norm like %s"
+                params = (*params, f"%{q.strip().lower()}%")
+            else:
+                where += (
+                    " and a.kind <> all(%s)"
+                    " and position('@' in a.value_norm) = 0"
+                    " and a.value_norm like %s"
+                )
+                params = (*params, list(self.EVIDENCE_ADDRESS_KINDS), f"%{q.strip().lower()}%")
         if resolution:
             where += " and a.resolution = %s"
             params = (*params, resolution)

@@ -27,13 +27,13 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/operator/status`, `/operator/automation-status` | Operator panels |
 | `/operator/procurement/*` | W1 institution/tender queues + T1 term detail |
 | `/cases/warm` | Warm cases |
-| `/contacts/*` | Contact drilldown |
 | `/opportunities/commercial`, `/opportunities/commercial/o_<32hex>` | PR3 machine-proposed opportunity intake (read-only) |
 | `/operations/work-queue`, `/operations/sales-opportunities/sales_<32hex>[/activities\|/tasks\|/quotes]`, `/operations/customer-quotes/quote_<32hex>`, `/operations/opportunities/o_<32hex>/[state\|activities\|tasks]` | Durable CRM reads |
 | `/operations/customer-quotes` | Global durable customer-quote list across all sales opportunities (Cotizaciones) |
-| `/mirror/*` | Postgres mirror reads |
 | `/v2/*` (named paths only — see `src/allowlist.ts`) | V2 durable reads |
 | `/auth/google/login`, `/auth/google/callback`, `/auth/session` | Dashboard Google Workspace sign-in (see *Sign-in exceptions* below) |
+
+**Refused on purpose** (403 `path_not_allowed`, never forwarded): V1 `/contacts/*` and `/mirror/*`. Upstream they are gated only by the shared API key — no operator identity, no role, no redaction — so V2 `/v2/*` is the only browser surface for CRM, contacts and evidence. `/v2/workspace/*` and `/v2/cockpit/*` are not listed either. See `docs/OPERATIONS.md`.
 
 **POST** (the only human write path — trusted operator identity, `Idempotency-Key`, optimistic concurrency; each ID format is regex-constrained, no wildcard route):
 

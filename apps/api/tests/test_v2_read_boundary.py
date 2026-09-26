@@ -804,3 +804,26 @@ def test_a_domain_organization_is_only_ever_a_registered_domain() -> None:
         for row in page.items:
             if row["domain_organization"] is not None:
                 assert row["domain_organization"]["organization_id"]
+
+
+@_needs_db
+def test_a_name_only_search_cannot_discover_an_address() -> None:
+    """The viewer's search scope, proven on real rows: an address is never what matched."""
+    import psycopg
+
+    from origenlab_api.v2.repository import V2Repository
+
+    repo = V2Repository(psycopg.connect, _TEST_DSN)
+    first = repo.contacts(q=None, limit=1, offset=0)
+    if first.total == 0:
+        pytest.skip("the target database holds no contact points")
+    address = first.items[0]["address"]
+    local_part = address.split("@", 1)[0].lower()
+    page = repo.contacts(q=local_part, limit=200, offset=0, search_addresses=False)
+    for item in page.items:
+        names = " ".join(
+            filter(None, [item.get("person_display_name"), item.get("organization_name")])
+        ).lower()
+        assert local_part in names, f"matched on something other than a name: {item}"
+    # And the full address, which no recorded name should carry, finds nothing by name.
+    assert repo.contacts(q=address, limit=10, offset=0, search_addresses=False).total == 0

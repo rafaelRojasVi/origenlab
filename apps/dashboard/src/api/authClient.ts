@@ -31,11 +31,10 @@ export type AuthSessionState =
       detail: string | null;
     }
   /**
-   * The API has no sign-in surface: it is the V1 deployment, or a V2 API behind a proxy
-   * that does not list `/auth/*` yet. The dashboard behaves exactly as it did before
-   * sign-in existed, behind Cloudflare Access.
+   * The session could not be confirmed. The gate fails closed on this: 403, 404, 5xx, a
+   * malformed body and a network failure all land here, and none of them renders the
+   * dashboard. There is deliberately no "sign-in not configured, render anyway" state.
    */
-  | { kind: "not_configured" }
   | { kind: "error"; message: string };
 
 function asString(value: unknown): string | null {
@@ -74,16 +73,16 @@ export function parseAuthSessionResponse(status: number, body: unknown): AuthSes
     };
   }
   if (status === 404) {
-    return { kind: "not_configured" };
+    return {
+      kind: "error",
+      message: "Este entorno no expone la verificación de sesión (HTTP 404). El panel no se abre sin una sesión verificada.",
+    };
   }
-  // The production Worker answers an unlisted path with 403 `path_not_allowed` before the
-  // API is ever asked: a proxy deployed before this dashboard means "no sign-in here yet".
-  const error = (data.error && typeof data.error === "object" ? data.error : {}) as Record<
-    string,
-    unknown
-  >;
-  if (status === 403 && error.code === "path_not_allowed") {
-    return { kind: "not_configured" };
+  if (status === 403) {
+    return {
+      kind: "error",
+      message: "El acceso a la verificación de sesión fue rechazado (HTTP 403). El panel no se abre sin una sesión verificada.",
+    };
   }
   return { kind: "error", message: `No se pudo verificar la sesión (HTTP ${status})` };
 }

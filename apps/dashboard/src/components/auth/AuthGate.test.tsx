@@ -70,13 +70,12 @@ describe("parseAuthSessionResponse", () => {
     });
   });
 
-  it("treats 404 and the proxy's path_not_allowed as no sign-in surface", () => {
-    expect(parseAuthSessionResponse(404, { detail: "Not Found" })).toEqual({
-      kind: "not_configured",
-    });
-    expect(
-      parseAuthSessionResponse(403, { error: { code: "path_not_allowed" } }),
-    ).toEqual({ kind: "not_configured" });
+  it("fails closed on 404 and on the proxy's path_not_allowed 403", () => {
+    expect(parseAuthSessionResponse(404, { detail: "Not Found" }).kind).toBe("error");
+    expect(parseAuthSessionResponse(403, { error: { code: "path_not_allowed" } }).kind).toBe(
+      "error",
+    );
+    expect(parseAuthSessionResponse(403, {}).kind).toBe("error");
   });
 
   it("treats any other answer as an error, never as signed in", () => {
@@ -178,14 +177,22 @@ describe("AuthGate", () => {
     expect(await screen.findByTestId("dashboard")).toHaveTextContent("signed_in");
   });
 
-  it("renders the dashboard unchanged where the API has no sign-in surface", async () => {
-    fetchMock.mockResolvedValue(jsonResponse(404, { detail: "Not Found" }));
+  it.each([
+    [404, { detail: "Not Found" }],
+    [403, { error: { code: "path_not_allowed" } }],
+    [403, { error: { code: "forbidden" } }],
+    [500, {}],
+    [502, null],
+    [200, { authenticated: true }],
+  ])("does not render the dashboard when /auth/session answers %i", async (status, body) => {
+    fetchMock.mockResolvedValue(jsonResponse(status, body));
     render(
       <AuthGate>
         <Probe />
       </AuthGate>,
     );
-    expect(await screen.findByTestId("dashboard")).toHaveTextContent("not_configured");
+    expect(await screen.findByTestId("auth-error")).toBeInTheDocument();
+    expect(screen.queryByTestId("dashboard")).toBeNull();
   });
 
   it("does not render the dashboard when the session cannot be checked", async () => {
