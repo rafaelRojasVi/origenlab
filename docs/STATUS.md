@@ -1432,6 +1432,7 @@ project. `crm.quote` is still **0** in every persistent database: the import its
 | Commands | `record_historical_quotation`, `void_historical_quote_revision` (`apps/api/src/origenlab_api/v2/quote_import_*.py`). **Unwired**: no route, no proxy entry |
 | Evidence staging | `stage_gmail_drive_evidence.py` now accepts a Gmail `document_reference`, only as `sha256:<hex>` of an attachment listed in the record's own payload |
 | Import planner | `apps/api/scripts/quote_crm_import.py` — dry run by default; `--apply` refuses every database but `origenlab_test_<8 hex>` |
+| Cockpit reads | nine `GET /v2/cockpit/*` routes (KPIs, work queue, opportunities, quotations, timeline, evidence drawer, search). Mounted in `apps/api`; **not** in the proxy allowlist, no dashboard screen yet |
 | Evidence | pgTAP **548 / 14 files** pass (new `064_historical_quotation_import.sql`); `verify_chain.sh` and `verify_direct_logins.sh` (51) pass on the CLI cluster; `apps/api` `validate.sh` **1,748 passed, 243 skipped**; with test DSNs set, the V2 DB-backed suites pass |
 | Rehearsal | against a disposable copy of `origenlab_clean` only, with **simulated** organization confirmations: 344 commands, 583 events; the second dry run predicts 0 writes and the second apply replays all 344 with 0 new events |
 
@@ -1447,7 +1448,21 @@ Built locally, **committed locally, not pushed**. No schema change: the design r
 | Archiver | `apps/api/src/origenlab_api/v2/quote_case_archive.py` — one folder per case keyed by `origenlab_case_key`, one file per document keyed by `origenlab_document_sha256`; Drive checksum + fresh-download verification; journal for retries; run stamp for exact rollback (trash, never delete); legacy parents refused; wrong account refused; `OverlayDrive` check mode. CRM status and archive status are separate types; archive status never feeds the lifecycle label |
 | Legacy reconciliation + migration planner | `v2/quote_drive_legacy_migration.py` + `scripts/quote_drive_case_migration_dryrun.py` — dry run only. 238 legacy items: 93 confirmed PDFs → 55 cases; 20 blocked (13 owner-blocked, 2 confirmed only at email level and **missing from the import plan**, 4 unreviewed, 1 unknown); 14 not archived (brochures, spreadsheets, 1 reject); 7 number collisions. A further 45 confirmed PDFs are in **no** Drive folder (Gmail only) |
 | Executor | `scripts/quote_drive_case_archive.py` — `--step legacy|gmail|all`, check mode by default (reads live Drive, writes in memory). **Step A executed 2026-09-26 12:58Z (owner-approved)**, run `legacy-20260926T125804Z`: 55 case folders + 93 PDFs (148 writes, nothing else), every file fresh-download verified, legacy fingerprints identical to the pre-run inventory, idempotency rerun 0 writes. `Casos` now holds **59** case folders. Step B (45 Gmail-only PDFs) **not run**; CRM links recorded only in a local `archive_links.jsonl`, not in the CRM |
+| Case workspace | `v2/quote_case_workspace.py` + `GET /v2/cockpit/case-archive` (mounted only with `ORIGENLAB_V2_CASE_ARCHIVE_DIR`; files only, no DB); dashboard `#/archivo` (registry only, not sidebar; not in the proxy allowlist) |
 | Evidence | new tests: archive 54, legacy migration 17, workspace 10, dashboard lib 4 + nav 1. `apps/api` `validate.sh` **1,919 passed, 244 skipped**; `apps/dashboard` `npm run validate` **1,436 passed**, build ok |
+
+### 2.7.25 CRM workspace — read-only dashboard over the imported CRM, built 2026-09-26
+
+Built locally, **committed locally, not pushed**, read only. Nothing here writes the CRM, Drive or Gmail.
+
+| Item | Value |
+|---|---|
+| `origenlab_clean`, measured read-only 2026-09-26 after the quotation import | `crm.opportunity` **44** (43 `quoting`, 1 `lead`), `crm.quote` **65** (all `printed_historical`), `crm.quote_revision` **69** (all `sent`), `crm.organization` 1,821 (9 confirmed), `crm.contact_point` 9,460 (0 linked to an organization or person), `crm.person` / `affiliation` / `task` / `activity` / `external_identifier` / `comms.message` / `catalog.product` / `outbound.campaign_reply` **0**, `outbound.campaign` 3 |
+| API | `v2/crm_workspace.py` + `crm_workspace_routes.py`: six `GET /v2/workspace/*` routes (overview, pipeline, providers, marketing, drive, review); viewer role or above, read-only transaction. Each counted entity carries a provenance (`imported` / `partial` / `not_imported` / `no_write_path`) so zero is never shown as "empty" when it means "not imported" |
+| Drive links | not in the CRM. `ORIGENLAB_V2_DRIVE_ARCHIVE_LEDGERS` names the executed archive runs' `archive_links.jsonl` (and the first run's verified upload report); matched to revisions by exact `pdf_sha256` only; two ledgers disagreeing about one document refuse startup. Measured: **69 / 69** CRM revisions resolve to a Drive file; 144 archived PDFs, 75 not in the CRM |
+| Dashboard | `#/crm/*` (`apps/dashboard/src/crm/`): Resumen, Oportunidades (cards, board, drawer with revision history + Drive/Gmail links), Organizaciones, Personas, Proveedores, Archivo Drive, Marketing, Revisión. Shares only `AuthGate` with the V1 panel; every write control is rendered disabled |
+| Proxy | `/v2/workspace/*` and `/v2/cockpit/*` are **not** in the dashboard-proxy allowlist — local review through the Vite dev proxy only |
+| Evidence | `apps/api` 18 new tests, `validate.sh` **2,014 passed, 245 skipped**; `apps/dashboard` 12 new tests, `npm run validate` **1,448 passed**, build ok |
 
 ### 2.7.26 V1 read routes closed in the dashboard proxy, 2026-09-26
 

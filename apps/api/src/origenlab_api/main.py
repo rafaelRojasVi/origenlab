@@ -82,6 +82,8 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     import psycopg
 
     from origenlab_api.v2.auth_routes import auth_router, google_auth_router
+    from origenlab_api.v2.cockpit_repository import CockpitRepository
+    from origenlab_api.v2.cockpit_routes import cockpit_router
     from origenlab_api.v2.google_oidc import build_google_auth_config
     from origenlab_api.v2.identity import build_identity_port
     from origenlab_api.v2.repository import V2Repository
@@ -92,6 +94,9 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
         psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
     app.state.v2_repository = repository
+    app.state.cockpit_repository = CockpitRepository(
+        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
     google = build_google_auth_config(
         enabled=settings.google_auth_enabled,
         client_id=settings.google_client_id,
@@ -120,6 +125,37 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
         production=settings.production_mode(),
     )
     app.include_router(v2_router)
+    app.include_router(cockpit_router)
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository, load_drive_ledgers
+    from origenlab_api.v2.crm_workspace_routes import workspace_router
+
+    ledgers = [p.strip() for p in (settings.v2_drive_archive_ledgers or "").split(",") if p.strip()]
+    app.state.crm_workspace = CrmWorkspaceRepository(
+        psycopg.connect,
+        dsn,
+        drive=load_drive_ledgers(ledgers),
+        statement_timeout_ms=settings.v2_statement_timeout_ms,
+    )
+    app.include_router(workspace_router)
+    if settings.v2_import_review_plan_dir:
+        from origenlab_api.v2.quote_import_review import QuoteImportReviewRepository, load_plan
+        from origenlab_api.v2.quote_import_review_routes import import_review_router
+
+        app.state.import_review = (
+            load_plan(settings.v2_import_review_plan_dir),
+            QuoteImportReviewRepository(
+                psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+            ),
+            settings.v2_import_review_documents_root,
+        )
+        app.include_router(import_review_router)
+    if settings.v2_case_archive_dir:
+        from origenlab_api.v2.quote_case_workspace import load_inputs
+        from origenlab_api.v2.quote_case_workspace_routes import case_archive_router
+
+        reports = [r.strip() for r in (settings.v2_case_archive_upload_reports or "").split(",") if r.strip()]
+        app.state.case_archive = load_inputs(settings.v2_case_archive_dir, reports)
+        app.include_router(case_archive_router)
     app.include_router(auth_router)
     if google is not None:
         app.include_router(google_auth_router)

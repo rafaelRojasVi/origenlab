@@ -7,9 +7,13 @@ import json
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from origenlab_api.v2 import quote_case_archive as qa
 from origenlab_api.v2 import quote_case_workspace as w
+from origenlab_api.v2.cockpit_routes import _current_operator
+from origenlab_api.v2.quote_case_workspace_routes import case_archive_router
 
 SA, SB, SC, SP, SX = (hashlib.sha256(t.encode()).hexdigest() for t in ("a", "b", "c", "pending", "legacy-x"))
 
@@ -171,3 +175,15 @@ def test_a_changed_manifest_refuses_to_load(tmp_path: Path) -> None:
     (d / "migration_manifest.json").write_text("{}")
     with pytest.raises(w.WorkspaceRefused, match="SHA256SUMS"):
         w.load_inputs(d)
+
+
+def test_route_is_get_only_and_serves_the_view(tmp_path: Path) -> None:
+    d = _write_dir(tmp_path)
+    app = FastAPI()
+    app.state.case_archive = w.load_inputs(d)
+    app.include_router(case_archive_router)
+    app.dependency_overrides[_current_operator] = lambda: object()
+    client = TestClient(app)
+    body = client.get("/v2/cockpit/case-archive").json()
+    assert body["counts"]["cases"] == 3
+    assert client.post("/v2/cockpit/case-archive").status_code == 405

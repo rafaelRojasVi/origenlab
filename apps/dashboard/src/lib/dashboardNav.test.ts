@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isV2ReadOnlySection,
   DASHBOARD_NAV_ITEMS,
   DASHBOARD_TOP_NAV_ITEMS,
   DASHBOARD_TOP_NAV_IDS,
@@ -70,8 +71,20 @@ describe("dashboardNav", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("still resolves the full 17-id registry (nothing deleted, only added)", () => {
-    expect(DASHBOARD_NAV_ITEMS).toHaveLength(17);
+  it("still resolves the full 19-id registry (nothing deleted, only added)", () => {
+    expect(DASHBOARD_NAV_ITEMS).toHaveLength(19);
+  });
+
+  it("keeps the case archive deep-linkable, read-only and out of the sidebar", () => {
+    expect(DASHBOARD_NAV_ITEMS.some((item) => item.id === "archivo")).toBe(true);
+    expect((DASHBOARD_TOP_NAV_IDS as readonly string[]).includes("archivo")).toBe(false);
+    expect(isV2ReadOnlySection("archivo")).toBe(true);
+  });
+
+  it("keeps the quotation import review deep-linkable, read-only and out of the sidebar", () => {
+    expect(DASHBOARD_NAV_ITEMS.some((item) => item.id === "importacion")).toBe(true);
+    expect((DASHBOARD_TOP_NAV_IDS as readonly string[]).includes("importacion")).toBe(false);
+    expect(isV2ReadOnlySection("importacion")).toBe(true);
   });
 
   it("keeps the commercial-case workspace deep-linkable and out of the sidebar", () => {

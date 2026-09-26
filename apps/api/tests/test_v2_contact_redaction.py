@@ -171,13 +171,40 @@ class _Repo:
 
 def _app(role: str | None) -> TestClient:
     """The real `/v2` routers over stub repositories: no database, real route classes."""
+    from origenlab_api.v2.cockpit_routes import cockpit_router
+    from origenlab_api.v2.crm_workspace_routes import workspace_router
     from origenlab_api.v2.routes import router as v2_router
 
     app = FastAPI()
     app.state.v2_identity = _Port(_operator(role) if role else None)
     app.state.v2_repository = _Repo()
+    app.state.crm_workspace = _Repo()
+    app.state.cockpit_repository = _Repo()
     app.include_router(v2_router)
+    app.include_router(cockpit_router)
+    app.include_router(workspace_router)
     return TestClient(app)
+
+
+@pytest.mark.parametrize("path", ["/v2/workspace/pipeline"])
+def test_a_viewer_reads_the_same_shape_without_the_addresses(path: str) -> None:
+    response = _app("viewer").get(path)
+    assert response.status_code == 200
+    assert response.headers[REDACTION_HEADER] == "contact-addresses"
+    body = response.json()
+    assert body["total"] == 2
+    assert body["items"][0]["address"] == "***@ejemplo.invalid"
+    assert body["items"][1]["address"] == "***"
+    assert body["sender"] == "Persona <***@ejemplo.invalid>"
+    assert "persona@" not in response.text
+
+
+@pytest.mark.parametrize("role", ["sales", "admin"])
+def test_sales_and_admin_read_the_addresses_as_recorded(role: str) -> None:
+    response = _app(role).get("/v2/workspace/pipeline")
+    assert response.status_code == 200
+    assert REDACTION_HEADER not in response.headers
+    assert response.json() == SAMPLE
 
 
 def test_the_contact_list_is_redacted_for_a_viewer() -> None:
@@ -185,6 +212,12 @@ def test_the_contact_list_is_redacted_for_a_viewer() -> None:
     assert response.status_code == 200
     assert "persona@" not in response.text
     assert response.headers[REDACTION_HEADER] == "contact-addresses"
+
+
+def test_an_unresolved_caller_is_still_401_not_a_redacted_200() -> None:
+    response = _app(None).get("/v2/workspace/pipeline")
+    assert response.status_code == 401
+    assert REDACTION_HEADER not in response.headers
 
 
 def test_a_route_that_recorded_no_operator_is_redacted_all_the_same() -> None:
@@ -207,18 +240,26 @@ def test_a_route_that_recorded_no_operator_is_redacted_all_the_same() -> None:
 
 def test_every_v2_read_router_is_built_on_the_redacting_route_class() -> None:
     """A router added under `/v2` without the route class is a leak waiting to happen."""
+    from origenlab_api.v2.cockpit_routes import cockpit_router
+    from origenlab_api.v2.crm_workspace_routes import workspace_router
+    from origenlab_api.v2.quote_case_workspace_routes import case_archive_router
+    from origenlab_api.v2.quote_import_review_routes import import_review_router
     from origenlab_api.v2.routes import router as v2_router
 
-    for router in (v2_router,):
+    for router in (v2_router, cockpit_router, workspace_router, case_archive_router, import_review_router):
         assert router.route_class is ContactRedactingRoute, router.prefix
         for route in router.routes:
             assert isinstance(route, ContactRedactingRoute), getattr(route, "path", route)
 
 
 def test_every_v2_read_router_is_get_only() -> None:
+    from origenlab_api.v2.cockpit_routes import cockpit_router
+    from origenlab_api.v2.crm_workspace_routes import workspace_router
+    from origenlab_api.v2.quote_case_workspace_routes import case_archive_router
+    from origenlab_api.v2.quote_import_review_routes import import_review_router
     from origenlab_api.v2.routes import router as v2_router
 
-    for router in (v2_router,):
+    for router in (v2_router, cockpit_router, workspace_router, case_archive_router, import_review_router):
         for route in router.routes:
             methods = set(getattr(route, "methods", set()))
             assert methods <= {"GET", "HEAD", "OPTIONS"}, f"{route.path}: {methods}"
@@ -260,6 +301,65 @@ def test_the_app_mounts_every_v2_get_route_on_the_redacting_route_class(
     assert v2_get_routes, "no /v2 GET route mounted"
     for route in v2_get_routes:
         assert isinstance(route, ContactRedactingRoute), route.path
+
+
+def test_the_dev_header_viewer_is_redacted_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Through the real identity port: the dev header names a viewer, the answer is masked."""
+    import secrets
+
+    from origenlab_api.main import create_app
+    from origenlab_api.v2.identity import OperatorLookup
+
+    class _Lookup(OperatorLookup):
+        def by_email(self, email_norm: str) -> OperatorIdentity | None:
+            return _operator("viewer")
+
+    monkeypatch.setenv("ORIGENLAB_DISABLE_DOTENV", "1")
+    monkeypatch.setenv("ORIGENLAB_V2_DATABASE_URL", "postgresql://u:p@127.0.0.1:54332/unused")
+    monkeypatch.delenv("ORIGENLAB_V2_JWKS_URL", raising=False)
+    monkeypatch.setenv("ORIGENLAB_GOOGLE_AUTH_ENABLED", "false")
+    monkeypatch.setenv("ORIGENLAB_DEV_LOGIN_ENABLED", "true")
+    monkeypatch.setenv("ORIGENLAB_AUTH_SESSION_SECRET", secrets.token_urlsafe(48))
+    monkeypatch.delenv("ORIGENLAB_ENV", raising=False)
+    app = create_app()
+    from origenlab_api.v2.identity import build_identity_port
+
+    app.state.v2_identity = build_identity_port(
+        jwks_url=None,
+        database_url="postgresql://u:p@127.0.0.1:54332/unused",
+        lookup=_Lookup(),
+        dev_login_enabled=True,
+    )
+    app.state.crm_workspace = _Repo()
+    client = TestClient(app)
+    response = client.get("/v2/workspace/pipeline", headers={OPERATOR_EMAIL_HEADER: "viewer@example.invalid"})
+    assert response.status_code == 200
+    assert "persona@" not in response.text
+    assert response.headers[REDACTION_HEADER] == "contact-addresses"
+
+
+# ------------------------------------------------------------------ the PDF route
+
+
+def _import_review_app(role: str) -> TestClient:
+    from origenlab_api.v2.quote_import_review_routes import import_review_router
+
+    app = FastAPI()
+    app.state.v2_identity = _Port(_operator(role))
+    # No `import_review` state on purpose: the role is checked before the state is needed.
+    app.include_router(import_review_router)
+    return TestClient(app)
+
+
+def test_a_viewer_may_not_open_a_quotation_pdf() -> None:
+    """A file cannot be masked, so an operator without the role is refused outright."""
+    response = _import_review_app("viewer").get(f"/v2/cockpit/import-review/documents/{'a' * 64}")
+    assert response.status_code == 403
+
+
+def test_the_pdf_role_check_comes_before_anything_else() -> None:
+    response = _import_review_app("sales").get(f"/v2/cockpit/import-review/documents/{'a' * 64}")
+    assert response.status_code == 503  # past the role check; the review is not configured here
 
 
 # ------------------------------------------------------------------ the search oracle

@@ -204,6 +204,29 @@ class Settings(BaseSettings):
     it off the command router is absent entirely and every /v2/commands/* path is a 404.
     """
     v2_commands_enabled: bool = False
+    """Local review only: a quote_crm_import dry-run directory (intent.json + intent.sha256).
+
+    When set, GET /v2/cockpit/import-review compares that plan with the V2 database. The plan is
+    hash-checked at startup; unset (the default), the route does not exist.
+    """
+    v2_import_review_plan_dir: str | None = None
+    """Directory the plan's ``stored_path`` PDF entries are relative to (the audits root)."""
+    v2_import_review_documents_root: str | None = None
+    """Local review only: a case migration dry-run directory (migration_manifest.json + SHA256SUMS).
+
+    When set, GET /v2/cockpit/case-archive shows each case with its quotations, revisions, Drive
+    files and Gmail evidence, CRM status (from the import plan) apart from archive status. Inputs are
+    hash-checked at startup; unset (the default), the route does not exist.
+    """
+    v2_case_archive_dir: str | None = None
+    """Comma-separated Drive upload reports whose verified files count as download-hash verified."""
+    v2_case_archive_upload_reports: str | None = None
+    """Local review only: comma-separated ``archive_links.jsonl`` ledgers from executed case archive
+    runs. They give GET /v2/workspace/* the Drive file and folder of each archived quotation PDF,
+    matched to CRM revisions by exact SHA-256 only. Loaded once at startup; a missing or
+    contradictory ledger fails the process. Unset, the workspace answers without Drive links.
+    """
+    v2_drive_archive_ledgers: str | None = None
 
     # --- Dashboard login -----------------------------------------------------
     # Google Workspace sign-in for the V2 boundary (apps/api/docs/PRODUCTION_AUTH.md,
