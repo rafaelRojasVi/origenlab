@@ -1435,6 +1435,20 @@ project. `crm.quote` is still **0** in every persistent database: the import its
 | Evidence | pgTAP **548 / 14 files** pass (new `064_historical_quotation_import.sql`); `verify_chain.sh` and `verify_direct_logins.sh` (51) pass on the CLI cluster; `apps/api` `validate.sh` **1,748 passed, 243 skipped**; with test DSNs set, the V2 DB-backed suites pass |
 | Rehearsal | against a disposable copy of `origenlab_clean` only, with **simulated** organization confirmations: 344 commands, 583 events; the second dry run predicts 0 writes and the second apply replays all 344 with 0 new events |
 
+### 2.7.24 Case-first Drive archive for quotations — built 2026-09-26; step A executed, step B not run
+
+Built locally, **committed locally, not pushed**. No schema change: the design reuses `crm.external_identifier`
+(`drive_folder`), `evidence.source_record` (`drive_file`) and `evidence.assertion`
+(`document_reference` → `quote_revision`). The CRM still holds **0** quotations; nothing here writes it.
+
+| Item | Value |
+|---|---|
+| Drive, measured 2026-09-26 (read-only inventory) | `Cotizaciones/Casos` exists with **4** case folders / 4 PDFs (the 2026-09-25 Gmail tail, uploaded and hash-verified by the owner-approved case upload). Legacy `Pendientes` (20 items) and `Enviadas` (218 items: 107 folders, 111 PDFs) **untouched** — recursive fingerprints identical before/after every run |
+| Archiver | `apps/api/src/origenlab_api/v2/quote_case_archive.py` — one folder per case keyed by `origenlab_case_key`, one file per document keyed by `origenlab_document_sha256`; Drive checksum + fresh-download verification; journal for retries; run stamp for exact rollback (trash, never delete); legacy parents refused; wrong account refused; `OverlayDrive` check mode. CRM status and archive status are separate types; archive status never feeds the lifecycle label |
+| Legacy reconciliation + migration planner | `v2/quote_drive_legacy_migration.py` + `scripts/quote_drive_case_migration_dryrun.py` — dry run only. 238 legacy items: 93 confirmed PDFs → 55 cases; 20 blocked (13 owner-blocked, 2 confirmed only at email level and **missing from the import plan**, 4 unreviewed, 1 unknown); 14 not archived (brochures, spreadsheets, 1 reject); 7 number collisions. A further 45 confirmed PDFs are in **no** Drive folder (Gmail only) |
+| Executor | `scripts/quote_drive_case_archive.py` — `--step legacy|gmail|all`, check mode by default (reads live Drive, writes in memory). **Step A executed 2026-09-26 12:58Z (owner-approved)**, run `legacy-20260926T125804Z`: 55 case folders + 93 PDFs (148 writes, nothing else), every file fresh-download verified, legacy fingerprints identical to the pre-run inventory, idempotency rerun 0 writes. `Casos` now holds **59** case folders. Step B (45 Gmail-only PDFs) **not run**; CRM links recorded only in a local `archive_links.jsonl`, not in the CRM |
+| Evidence | new tests: archive 54, legacy migration 17, workspace 10, dashboard lib 4 + nav 1. `apps/api` `validate.sh` **1,919 passed, 244 skipped**; `apps/dashboard` `npm run validate` **1,436 passed**, build ok |
+
 ### 2.7.26 V1 read routes closed in the dashboard proxy, 2026-09-26
 
 Local only, **committed locally, not pushed, not deployed** — the Worker in Cloudflare still forwards both
