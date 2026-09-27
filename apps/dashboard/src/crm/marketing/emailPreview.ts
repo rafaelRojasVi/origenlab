@@ -52,9 +52,10 @@ function isAllowedImageUrl(raw: string): boolean {
   }
 }
 
+/** A link target that could run code: `javascript:`, `vbscript:`, or any `data:` URL (an SVG or HTML payload). */
 function isScriptUrl(raw: string): boolean {
   const cleaned = raw.replace(/[\u0000- ]/g, "").toLowerCase();
-  return cleaned.startsWith("javascript:") || cleaned.startsWith("vbscript:") || cleaned.startsWith("data:text/html");
+  return cleaned.startsWith("javascript:") || cleaned.startsWith("vbscript:") || cleaned.startsWith("data:");
 }
 
 /** Replace every `url(...)` in CSS that is not an allowed image with `none`. */

@@ -62,6 +62,16 @@ describe("buildPreviewDocument", () => {
     expect(b.getAttribute("href")).toBe("#");
     expect(b.getAttribute("title")).toBeNull();
   });
+
+  it("treats every data: link as a script URL, not only data:text/html", () => {
+    const doc = parse(
+      '<a href="data:image/svg+xml,&lt;svg onload=alert(1)&gt;">a</a><a href=" DATA:text/plain,x">b</a>',
+    );
+    for (const a of doc.querySelectorAll("a")) {
+      expect(a.getAttribute("href")).toBe("#");
+      expect(a.getAttribute("title")).toBeNull();
+    }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────── templates
