@@ -1,5 +1,5 @@
 import {
-  MARKETING_COMMAND_MAX_BYTES,
+  marketingCommandMaxBytes,
   isAllowedMarketingCommandPostPath,
   isAllowedPostPath,
   isAllowedPostUploadPath,
@@ -108,7 +108,8 @@ export function marketingCommandRefusal(request: Request): { status: number; cod
     return { status: 400, code: "idempotency_key_required" };
   }
   const length = Number(request.headers.get("Content-Length") || "0");
-  if (!Number.isFinite(length) || length > MARKETING_COMMAND_MAX_BYTES) {
+  const upstreamPath = stripApiPrefix(new URL(request.url).pathname) ?? "";
+  if (!Number.isFinite(length) || length > marketingCommandMaxBytes(upstreamPath)) {
     return { status: 413, code: "payload_too_large" };
   }
   return null;
@@ -177,7 +178,7 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
   if (
     body !== undefined &&
     isAllowedMarketingCommandPostPath(upstreamPath as string) &&
-    body.byteLength > MARKETING_COMMAND_MAX_BYTES
+    body.byteLength > marketingCommandMaxBytes(upstreamPath as string)
   ) {
     // A body larger than its declared Content-Length, or one sent without it.
     return jsonError(request, 413, "payload_too_large");

@@ -99,7 +99,7 @@ describe("allowlist", () => {
     }
   });
 
-  it("forwards exactly the six Marketing reads, GET only, and nothing near them", async () => {
+  it("forwards exactly the seven Marketing reads, GET only, and nothing near them", async () => {
     const { isAllowedMarketingCommandPostPath } = await import("./allowlist");
     const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
     for (const path of [
@@ -109,6 +109,7 @@ describe("allowlist", () => {
       `/v2/workspace/marketing/campaigns/${uuid}`,
       `/v2/workspace/marketing/campaigns/${uuid}/freeze-preview`,
       `/v2/workspace/marketing/campaigns/${uuid}/recipients`,
+      `/v2/workspace/marketing/campaigns/${uuid}/archive`,
     ]) {
       expect(isAllowedUpstreamPath(path), path).toBe(true);
       expect(isAllowedPostPath(path), path).toBe(false);
@@ -121,6 +122,11 @@ describe("allowlist", () => {
       `/v2/workspace/marketing/campaigns/${uuid}/recipients/x`,
       `/v2/workspace/marketing/campaigns/${uuid}/send`,
       "/v2/workspace/marketing/audience/export",
+      `/v2/workspace/marketing/campaigns/${uuid}/archive/`,
+      `/v2/workspace/marketing/campaigns/${uuid}/archive/html`,
+      `/v2/workspace/marketing/campaigns/${uuid}/archive.html`,
+      "/v2/workspace/marketing/campaigns/archive",
+      "/v2/workspace/marketing/calendar",
     ]) {
       expect(isAllowedUpstreamPath(path), path).toBe(false);
       expect(isAllowedPostPath(path), path).toBe(false);
@@ -1100,12 +1106,13 @@ describe("V2 durable read boundary allowlist", () => {
     }
   });
 
-  it("allows exactly the three Marketing commands as POST, and no send, approve or activate", async () => {
+  it("allows exactly the four Marketing commands as POST, and no send, approve, schedule or activate", async () => {
     const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
     for (const path of [
       "/v2/commands/create-campaign-draft",
       "/v2/commands/save-campaign-draft",
       "/v2/commands/freeze-campaign-audience",
+      "/v2/commands/set-campaign-planning",
     ]) {
       expect(isAllowedPostPath(path), path).toBe(true);
       expect(isAllowedUpstreamPath(path), path).toBe(false); // never GET-readable
@@ -1118,6 +1125,13 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/grant-recontact-override",
       "/v2/commands/freeze-campaign-audience/",
       "/v2/commands/freeze-campaign-audience-and-send",
+      "/v2/commands/set-campaign-planning/",
+      "/v2/commands/set-campaign-planning-and-send",
+      "/v2/commands/schedule-campaign",
+      "/v2/commands/schedule-campaign-send",
+      "/v2/commands/enqueue-campaign",
+      "/v2/commands/clear-campaign-planning",
+      "/v2/commands/SET-CAMPAIGN-PLANNING",
     ]) {
       expect(isAllowedPostPath(path), path).toBe(false);
     }

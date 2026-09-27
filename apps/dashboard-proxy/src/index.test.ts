@@ -1537,6 +1537,128 @@ describe("Marketing commands (draft create/save, audience freeze)", () => {
   });
 });
 
+describe("Campaign planning command and the sent-HTML archive read", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const PLAN = "https://proxy.test/api/v2/commands/set-campaign-planning";
+  const BODY = JSON.stringify({
+    campaign_id: "96301691-af05-41ea-82e3-05f5fae40837",
+    expected_planning_version: 0,
+    planned_for_date: "2027-03-14",
+    planned_for_time: "09:30",
+  });
+  const plan = (extra: Record<string, string> = {}, body = BODY, method = "POST") =>
+    requestWithOrigin(PLAN, {
+      method,
+      body: method === "GET" || method === "HEAD" ? undefined : body,
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": "plan-9b1c7d2e-4f3a-4c1b-8e2d",
+        "Sec-Fetch-Site": "same-origin",
+        Cookie: "__Host-origenlab_session=s1; CF_Authorization=leak",
+        ...extra,
+      },
+    });
+
+  it("forwards a same-origin JSON planning command with its key and only the session cookie", async () => {
+    stubUpstreamFetch();
+    const res = await handleRequest(plan(), TEST_ENV);
+    expect(res.status).toBe(200);
+    const upstream = vi.mocked(fetch).mock.calls[0][0] as Request;
+    expect(new URL(upstream.url).pathname).toBe("/v2/commands/set-campaign-planning");
+    expect(upstream.method).toBe("POST");
+    expect(upstream.headers.get("Idempotency-Key")).toBe("plan-9b1c7d2e-4f3a-4c1b-8e2d");
+    expect(upstream.headers.get("Cookie")).toBe("__Host-origenlab_session=s1");
+    expect(await upstream.text()).toBe(BODY);
+  });
+
+  it.each([
+    [
+      "a foreign Origin",
+      requestWithOrigin(PLAN, {
+        method: "POST",
+        body: BODY,
+        origin: "https://evil.test",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": "plan-9b1c7d2e-4f3a-4c1b-8e2d" },
+      }),
+      403,
+      "origin_not_allowed",
+    ],
+    [
+      "no Origin",
+      requestWithOrigin(PLAN, {
+        method: "POST",
+        body: BODY,
+        origin: "",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": "plan-9b1c7d2e-4f3a-4c1b-8e2d" },
+      }),
+      403,
+      "origin_not_allowed",
+    ],
+    ["a cross-site fetch", plan({ "Sec-Fetch-Site": "cross-site" }), 403, "cross_site_request"],
+    ["a form post", plan({ "Content-Type": "application/x-www-form-urlencoded" }), 415, "unsupported_media_type"],
+    ["no key", plan({ "Idempotency-Key": "" }), 400, "idempotency_key_required"],
+    ["a declared body over 4 kB", plan({ "Content-Length": "4097" }), 413, "payload_too_large"],
+  ])("refuses %s before anything is forwarded", async (_label, req, status, code) => {
+    stubUpstreamFetch();
+    const res = await handleRequest(req, TEST_ENV);
+    expect(res.status).toBe(status);
+    expect(await res.json()).toEqual({ error: { code } });
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("refuses a planning body over 4 kB even when Content-Length understates it", async () => {
+    stubUpstreamFetch();
+    const res = await handleRequest(plan({}, JSON.stringify({ pad: "x".repeat(5_000) })), TEST_ENV);
+    expect(res.status).toBe(413);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it.each(["PATCH", "PUT", "DELETE"])("refuses %s on the planning path", async (method) => {
+    stubUpstreamFetch();
+    const res = await handleRequest(plan({}, BODY, method), TEST_ENV);
+    expect(res.status).toBe(405);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("does not make the planning command GET-readable", async () => {
+    stubUpstreamFetch();
+    const res = await handleRequest(plan({}, BODY, "GET"), TEST_ENV);
+    expect(res.status).toBe(403);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("keeps the 3.5 MB limit for the draft commands", async () => {
+    stubUpstreamFetch();
+    const req = requestWithOrigin("https://proxy.test/api/v2/commands/save-campaign-draft", {
+      method: "POST",
+      body: JSON.stringify({ body_html: "x".repeat(10_000) }),
+      headers: { "Content-Type": "application/json", "Idempotency-Key": "draft-9b1c7d2e-4f3a" },
+    });
+    const res = await handleRequest(req, TEST_ENV);
+    expect(res.status).toBe(200);
+  });
+
+  it("forwards the archive read as GET and refuses a write to it", async () => {
+    stubUpstreamFetch();
+    const archive = "https://proxy.test/api/v2/workspace/marketing/campaigns/96301691-af05-41ea-82e3-05f5fae40837/archive";
+    const read = await handleRequest(requestWithOrigin(archive, { method: "GET" }), TEST_ENV);
+    expect(read.status).toBe(200);
+    const write = await handleRequest(
+      requestWithOrigin(archive, {
+        method: "POST",
+        body: "{}",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": "archive-9b1c7d2e" },
+      }),
+      TEST_ENV,
+    );
+    expect(write.status).toBe(405);
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("CRM card reads (supplier directory, observed equipment interests)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

@@ -46,7 +46,7 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/operations/sales-opportunities/sales_<32hex>/quotes`, `/operations/customer-quotes/quote_<32hex>/drive-workspace` | CRM-Q1 customer-quote create + Drive workspace retry |
 | `/operator/procurement/tenders/<code>/annex-bundle/[preview\|import]` | Explicit tender annex evidence upload |
 | `/auth/logout` | Clears the dashboard session cookie; writes no commercial state |
-| `/v2/commands/{create-campaign-draft,save-campaign-draft,freeze-campaign-audience}` | CRM Marketing — see *Marketing commands* below. Nothing here approves or sends |
+| `/v2/commands/{create-campaign-draft,save-campaign-draft,freeze-campaign-audience,set-campaign-planning}` | CRM Marketing — see *Marketing commands* below. Nothing here approves, schedules or sends |
 
 All other POST requests, and all `PUT`, `PATCH`, and `DELETE` requests, return **405**.
 
@@ -71,15 +71,17 @@ Exact paths only (`src/allowlist.ts`; UUIDs lower-case):
 
 | Method | Upstream path | Upstream behaviour |
 |---|---|---|
-| GET | `/v2/workspace/marketing` | campaigns, contact-control counts, `authoring.{drafts_enabled,freeze_enabled}` |
+| GET | `/v2/workspace/marketing` | campaigns (with planning, origin, real send batches), contact-control counts, `authoring.{drafts_enabled,freeze_enabled,planning_enabled}` |
 | GET | `/v2/workspace/marketing/taxonomy` | the six brands, six families, models and verified images |
 | GET | `/v2/workspace/marketing/audience` | people and institutions with evidenced interest; eligibility separate |
 | GET | `/v2/workspace/marketing/campaigns/<uuid>` | one campaign's content and freeze facts |
 | GET | `/v2/workspace/marketing/campaigns/<uuid>/freeze-preview` | the snapshot a freeze would write, every reason, what stops it; writes nothing |
 | GET | `/v2/workspace/marketing/campaigns/<uuid>/recipients` | a frozen campaign's recipient snapshot |
+| GET | `/v2/workspace/marketing/campaigns/<uuid>/archive` | the frozen (sent) content, only when its fingerprint recomputes; real send batches; «not archived» otherwise |
 | POST | `/v2/commands/create-campaign-draft` | new `draft` row; event `campaign.draft_created` |
 | POST | `/v2/commands/save-campaign-draft` | compare-and-set on `expected_version`; event `campaign.draft_content_saved` per change |
 | POST | `/v2/commands/freeze-campaign-audience` | `confirmed: true`, `expected_version`, `expected_preview_sha256`; write-once snapshot in `outbound.campaign` + `outbound.campaign_recipient`; event `campaign.audience_frozen`; refused `audience_changed` if the audience moved since the preview |
+| POST | `/v2/commands/set-campaign-planning` | `expected_planning_version`; set, change or clear an unsent campaign's internal planned day; events `campaign.planning_set` / `campaign.planning_cleared`; body limit 4 KB. Schedules nothing |
 
 **Roles.** Reads: any active operator; contact addresses are masked upstream for `viewer`
 (`contact_redaction.py`). Commands: an active `sales` or `admin` operator only, resolved
@@ -88,11 +90,11 @@ this Worker rewrites into the operator header — a browser-sent operator header
 dropped). Nothing in a body names the actor.
 
 **Session and CSRF.** The session cookie is `__Host-origenlab_session` (HttpOnly, Secure,
-SameSite=Lax); only the two sign-in cookies ever reach upstream. For the three commands the
+SameSite=Lax); only the two sign-in cookies ever reach upstream. For the four commands the
 Worker also refuses, before forwarding: a missing or unlisted `Origin` (403
 `origin_not_allowed`), `Sec-Fetch-Site: cross-site` (403 `cross_site_request`), any
 `Content-Type` other than `application/json` (415 — a cross-site form cannot send one without
-a preflight, which is answered only for listed origins), a body over 3.5 MB declared or actual
+a preflight, which is answered only for listed origins), a body over 3.5 MB (4 KB for `set-campaign-planning`) declared or actual
 (413). CORS advertises `POST` and `Idempotency-Key` only on these and the V1 commercial
 command paths.
 
