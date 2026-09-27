@@ -28,8 +28,9 @@
 --   2. Permanence. An unsubscribe block — and any block an unsubscribe request was linked to — is
 --      never updated or deleted, by anyone below superuser. Its evidence (the source record and
 --      the assertion) is never updated or deleted, and can only be created by the function above;
---      the only change ever made to it is that function deciding a held request once: confirmed
---      (resolved to its control) or dismissed (rejected, with the decision in its own event).
+--      the only change ever made to it is that function deciding a held request: confirmed
+--      (resolved to its control) or dismissed (rejected, with the decision in its own event) — and
+--      a dismissed request may still be confirmed later, because that only ever adds suppression.
 --      Re-subscribing does not exist, and neither does dismissing anything but a pending hold.
 --   3. `outbound.marketing_contact_refusals(campaign_recipient_id)` — the send-time contract for
 --      WORKFLOWS.md §2 clauses 4-6, evaluated against the *live* contact controls and review
@@ -127,11 +128,13 @@ begin
 
   -- evidence.source_record / evidence.assertion: unsubscribe evidence is created only inside
   -- outbound.add_contact_control (whose current_user is its owner) and never changed afterwards —
-  -- with one exception, also only inside that function: a request held for review is decided
-  -- exactly once. Confirmed, it resolves to the control it created or joined (and its record goes
-  -- from pending to promoted); dismissed, it becomes rejected with no target (and its record goes
-  -- from pending to reviewed). Every other column stays as it was received. Nothing else moves:
-  -- a decided request is never decided again, and a confirmed one never becomes rejected.
+  -- with one exception, also only inside that function: a request held for review is decided.
+  -- Confirmed, it resolves to the control it created or joined (and its record goes to
+  -- promoted); dismissed, it becomes rejected with no target (and its record goes from pending to
+  -- reviewed). A dismissed request may later be confirmed — rejected to promoted/linked, reviewed
+  -- to promoted — because that only adds suppression; the dismissal stays in its own event.
+  -- Every other column stays as it was received. Nothing else moves: a confirmed request is final
+  -- and never becomes rejected, and nothing returns to unresolved or pending.
   if tg_op = 'INSERT' then
     if current_user <> 'origenlab_owner' then
       raise exception '%.%: unsubscribe evidence is written only by outbound.add_contact_control', tg_table_schema, tg_table_name
@@ -142,7 +145,7 @@ begin
   -- (Nested IFs: each branch names only the columns of its own table.)
   if tg_op = 'UPDATE' and current_user = 'origenlab_owner' then
     if tg_table_name = 'assertion' then
-      if old.kind = 'unsubscribe_request' and old.resolution = 'unresolved'
+      if old.kind = 'unsubscribe_request' and old.resolution in ('unresolved', 'rejected')
          and new.resolution in ('promoted', 'linked') and new.resolved_kind = 'contact_control'
          and (to_jsonb(new) - array['resolution', 'resolved_kind', 'resolved_id', 'resolved_at', 'resolved_by_operator_id', 'updated_at'])
            = (to_jsonb(old) - array['resolution', 'resolved_kind', 'resolved_id', 'resolved_at', 'resolved_by_operator_id', 'updated_at']) then
@@ -156,7 +159,8 @@ begin
         return new;
       end if;
     elsif tg_table_name = 'source_record' then
-      if old.review_status = 'pending' and new.review_status in ('promoted', 'reviewed')
+      if ((old.review_status = 'pending' and new.review_status in ('promoted', 'reviewed'))
+          or (old.review_status = 'reviewed' and new.review_status = 'promoted'))
          and (to_jsonb(new) - array['review_status', 'updated_at']) = (to_jsonb(old) - array['review_status', 'updated_at']) then
         return new;
       end if;
@@ -168,7 +172,7 @@ end;
 $$;
 
 comment on function outbound.unsubscribe_permanent() is
-  'Trigger guard (WORKFLOWS.md §W10): an unsubscribe block, and any block an unsubscribe request is linked to, is never updated or deleted; unsubscribe evidence is inserted only by outbound.add_contact_control and never changed, except that a request held for review is decided once, inside that function: resolved to its control, or dismissed (rejected, no target). SECURITY INVOKER.';
+  'Trigger guard (WORKFLOWS.md §W10): an unsubscribe block, and any block an unsubscribe request is linked to, is never updated or deleted; unsubscribe evidence is inserted only by outbound.add_contact_control and never changed, except that a request held for review is decided inside that function: resolved to its control, or dismissed (rejected, no target) — and a dismissed request may still be resolved to its control later, never the reverse. SECURITY INVOKER.';
 
 revoke all on function outbound.unsubscribe_permanent() from public, anon, authenticated, service_role;
 
@@ -223,7 +227,9 @@ create trigger assertion_unsubscribe_delete
 --                     address — and no contact_control is written until an operator reviews it.
 --   review_confirmed  an operator reviewed a pending request (assertion_id, note): the control is
 --                     created or linked and the request resolved to it. Confirming again is a
---                     no-op.
+--                     no-op. A request an admin dismissed may still be confirmed (a mistaken
+--                     dismissal is corrected toward suppression); its event says it overrides the
+--                     dismissal, whose own event stays.
 --   review_dismissed  an *admin* reviewed a pending request and found it a false positive
 --                     (assertion_id, review_sha256, explanation): the request becomes rejected, its
 --                     record reviewed, and one assertion.unsubscribe_review_dismissed event records
@@ -398,8 +404,10 @@ begin
       return jsonb_build_object('outcome', 'already_resolved', 'contact_control_id', v_request.resolved_id,
                                 'assertion_id', v_request.id, 'source_record_id', v_request.source_record_id);
     end if;
-    if v_request.resolution <> 'unresolved' then
-      raise exception 'outbound.add_contact_control: the request is %, not pending', v_request.resolution using errcode = 'P0001';
+    -- A dismissed (rejected) request may still be confirmed: it only adds suppression.
+    if v_request.resolution not in ('unresolved', 'rejected') then
+      raise exception 'outbound.add_contact_control: the request is %, neither pending nor dismissed', v_request.resolution
+        using errcode = 'P0001';
     end if;
     v_source_id := v_request.source_record_id;
   else
@@ -551,7 +559,7 @@ begin
            resolved_by_operator_id = p_operator_id
      where id = v_request.id;
     update evidence.source_record set review_status = 'promoted'
-     where id = v_source_id and review_status = 'pending';
+     where id = v_source_id and review_status in ('pending', 'reviewed');
     v_assertion_id := v_request.id;
   else
     insert into evidence.assertion
@@ -585,6 +593,8 @@ begin
             'source_record_id', v_source_id, 'assertion_id', v_assertion_id,
             'lineage_message_id', v_lineage_id,
             'review_note', v_note,
+            'resolution_from', v_request.resolution,
+            'overrides_dismissal', case when v_request.resolution = 'rejected' then true end,
             'message_id_sha256', coalesce(p_evidence->>'message_id_sha256', v_request.value->>'message_id_sha256'),
             'observed_at', coalesce(v_observed_at, (v_request.value->>'observed_at')::timestamptz),
             'grammar_version', coalesce(p_evidence->>'grammar_version', v_request.value->>'grammar_version'),
@@ -601,7 +611,7 @@ end;
 $$;
 
 comment on function outbound.add_contact_control(text, text, text, text, uuid, uuid, jsonb) is
-  'ARCHITECTURE.md §6.2 closed list — the privileged writer of outbound.contact_control and the owner of the complete unsubscribe transaction. Implemented for (block, marketing, unsubscribe) only: records the reply as immutable evidence, then the permanent suppression (a known address, or proven outbound lineage to this exact recipient), or an unresolved request that holds the address for review, or the confirmation of such a review, or an admin''s dismissal of a pending one (never of a confirmed unsubscribe) — and exactly one crm.domain_event, atomically. session_user must be origenlab_api. SECURITY DEFINER, search_path = pg_catalog, no dynamic SQL.';
+  'ARCHITECTURE.md §6.2 closed list — the privileged writer of outbound.contact_control and the owner of the complete unsubscribe transaction. Implemented for (block, marketing, unsubscribe) only: records the reply as immutable evidence, then the permanent suppression (a known address, or proven outbound lineage to this exact recipient), or an unresolved request that holds the address for review, or the confirmation of such a review (also of one an admin dismissed), or an admin''s dismissal of a pending one (never of a confirmed unsubscribe) — and exactly one crm.domain_event, atomically. session_user must be origenlab_api. SECURITY DEFINER, search_path = pg_catalog, no dynamic SQL.';
 
 revoke all on function outbound.add_contact_control(text, text, text, text, uuid, uuid, jsonb)
   from public, anon, authenticated, service_role;
