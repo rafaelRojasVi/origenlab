@@ -234,6 +234,16 @@ class Settings(BaseSettings):
     metadata: it approves, freezes, schedules, enqueues and sends nothing, and nothing reads it.
     """
     v2_campaign_planning_enabled: bool = False
+    """Mount POST /v2/commands/block-campaign and /unblock-campaign (WORKFLOWS.md §W13).
+
+    Default **false**. On, an active *admin* may place a campaign safety block (one campaign or
+    every campaign) and lift one, each with a reason, an Idempotency-Key and a compare-and-set
+    token. Sales and viewers are refused. A block enqueues, sends and rewrites nothing; it only
+    refuses. Off, existing blocks — including the migration-seeded September wave-2 incident
+    hold — are still shown and still enforced by the database; only placing and lifting are
+    unavailable.
+    """
+    v2_campaign_blocks_enabled: bool = False
     """Mount POST /v2/commands/apply-unsubscribe-replies (WORKFLOWS.md §W10 step 3).
 
     Default **false**. On, a sales/admin operator may apply a previewed batch of already-fetched
@@ -397,6 +407,9 @@ class Settings(BaseSettings):
 
     def v2_campaign_planning_configured(self) -> bool:
         return self.v2_configured() and bool(self.v2_campaign_planning_enabled)
+
+    def v2_campaign_blocks_configured(self) -> bool:
+        return self.v2_configured() and bool(self.v2_campaign_blocks_enabled)
 
     def v2_unsubscribe_apply_configured(self) -> bool:
         return self.v2_configured() and bool(self.v2_unsubscribe_apply_enabled)

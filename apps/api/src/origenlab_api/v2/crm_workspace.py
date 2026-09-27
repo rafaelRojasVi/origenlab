@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from origenlab_api.v2.audience_freeze import SEND_TIME_REFUSAL_LABEL
+from origenlab_api.v2.campaign_blocks import campaign_hold, read_campaign_holds
 from origenlab_api.v2.campaign_history import (
     RecipientQuery,
     immutability_enforced,
@@ -815,9 +816,11 @@ class CrmWorkspaceRepository:
             totals = read_all_totals(cur)
             cur.execute("select kind, scope, count(*) from outbound.contact_control group by 1, 2 order by 1, 2")
             controls = [{"kind": r[0], "scope": r[1], "count": int(r[2])} for r in cur.fetchall()]
+            holds = read_campaign_holds(cur)
             cur.execute("select current_database()")
             database = cur.fetchone()[0]
         for c in campaigns:
+            c["hold"] = campaign_hold(holds, c["campaign_id"])
             c["recipients_by_state"] = recip.get(c["campaign_id"], {})
             c["send_attempts"] = attempts.get(c["campaign_id"], [])
             c["replies_recorded"] = replies.get(c["campaign_id"], 0)
@@ -830,6 +833,7 @@ class CrmWorkspaceRepository:
             c["subject_state"] = _subject_state(c)
         return {
             "campaigns": campaigns,
+            "holds": {k: v for k, v in holds.items() if k != "by_campaign"},
             "contact_controls": controls,
             "replies_note": ENTITY_NOTES["campaign_replies"]["note"],
             "storage": {"table": "outbound.campaign", "database": database},
@@ -854,7 +858,10 @@ class CrmWorkspaceRepository:
                 (campaign_id,),
             )
             rows = self._rows(cur)
-        return rows[0] if rows else None
+            if not rows:
+                return None
+            rows[0]["hold"] = campaign_hold(read_campaign_holds(cur), campaign_id)
+        return rows[0]
 
     def campaign_archive(self, campaign_id: str) -> dict[str, Any] | None:
         """What was sent (or frozen to be sent), exactly as stored — never the editable draft.
@@ -1010,8 +1017,18 @@ class CrmWorkspaceRepository:
             rows = self._rows(cur)
             if not rows:
                 return None
+            cur.execute("select outbound.campaign_hold_refusals(%s)", (campaign_id,))
+            rows[0]["hold_refusals"] = list(cur.fetchone()[0])
             inputs = read_marketing_audience_inputs(cur)
         return plan_freeze(load_taxonomy(), inputs, rows[0], criteria, recontact_review=recontact_review)
+
+    def campaign_blocks(self) -> dict[str, Any]:
+        """Every active campaign safety block, the latest lifted ones, and each target's version."""
+        with self._read() as cur:
+            holds = read_campaign_holds(cur)
+            cur.execute("select current_database()")
+            database = cur.fetchone()[0]
+        return {**holds, "storage": {"table": "outbound.campaign_block", "database": database}}
 
     def frozen_recipients(self, campaign_id: str) -> dict[str, Any] | None:
         """A frozen campaign's recipient snapshot, exactly as stored."""

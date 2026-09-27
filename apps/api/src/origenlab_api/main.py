@@ -177,6 +177,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     _mount_campaign_drafts(app, settings, dsn)
     _mount_audience_freeze(app, settings, dsn)
     _mount_campaign_planning(app, settings, dsn)
+    _mount_campaign_blocks(app, settings, dsn)
     _mount_unsubscribe(app, settings, dsn)
 
 
@@ -231,6 +232,27 @@ def _mount_campaign_planning(app: FastAPI, settings: Settings, dsn: str) -> None
         psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
     app.include_router(campaign_planning_router)
+
+
+def _mount_campaign_blocks(app: FastAPI, settings: Settings, dsn: str) -> None:
+    """Mount the admin block/unblock commands only behind their own switch.
+
+    Enforcement lives in the database and the read of the current holds is a workspace route,
+    so an existing block is shown and refused whether or not this switch is on.
+    """
+    app.state.campaign_blocks_enabled = settings.v2_campaign_blocks_configured()
+    if not app.state.campaign_blocks_enabled:
+        return
+
+    import psycopg
+
+    from origenlab_api.v2.campaign_block_routes import campaign_block_router
+    from origenlab_api.v2.campaign_blocks import V2CampaignBlockRepository
+
+    app.state.campaign_block_repository = V2CampaignBlockRepository(
+        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.include_router(campaign_block_router)
 
 
 def _mount_campaign_drafts(app: FastAPI, settings: Settings, dsn: str) -> None:
