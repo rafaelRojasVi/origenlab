@@ -304,13 +304,42 @@ projects in the `origenlab.cl` organization). Console section names are those of
 | `ORIGENLAB_AUTH_SESSION_SECRET` | when enabled, and always in production with V2 — **secret**, ≥ 32 chars (it also keys `address_ref`) | own random value (unset: a random per-process ref key) | own random value — startup refuses it missing |
 | `ORIGENLAB_AUTH_SESSION_TTL_SECONDS` | no — default `28800` (8 h) | | |
 | `ORIGENLAB_DEV_LOGIN_ENABLED` | no — default `false` | `true` only for the header login | **never** (startup refuses it) |
-| `ORIGENLAB_V2_DATABASE_URL` | yes — the operator lookup needs it | loopback DSN from `api-login` | blocked: loopback only today |
+| `ORIGENLAB_V2_DATABASE_URL` | yes — the operator lookup needs it — **secret** | loopback DSN from `api-login` | `postgresql://origenlab_api:…@<host>:<port>/<db>` — no query string |
+| `ORIGENLAB_V2_DATABASE_REMOTE` | no — default `false` (loopback only) | unset | `true` |
+| `ORIGENLAB_V2_DATABASE_EXPECTED_HOST` | when remote | unset | the exact host name in the DSN |
+| `ORIGENLAB_V2_DATABASE_SSLROOTCERT` | when remote | unset | absolute path of the provider's CA PEM (Render secret file, `/etc/secrets/…`) |
 
 Generate a session secret with
 `python -c 'import secrets; print(secrets.token_urlsafe(48))'`. Rotating it signs every
 operator out. The API refuses to start on a missing client ID or secret, a secret shorter than
 32 characters, an `http://` base URL anywhere but loopback, an `http://` base URL at all in
-production, a consumer domain such as `gmail.com`, or Google login without a V2 database.
+production, a production base URL whose path is not exactly `/api`, a consumer domain such as
+`gmail.com`, or Google login without a V2 database.
+
+**The exact URLs.** The Worker route is `dashboard.origenlab.cl/api*` and it strips `/api`
+before forwarding to `https://api.origenlab.cl` (`apps/dashboard-proxy/src/allowlist.ts`,
+`stripApiPrefix`). So:
+
+| | Production | Local (Vite proxies `/auth` with no prefix) |
+|---|---|---|
+| `ORIGENLAB_AUTH_PUBLIC_BASE_URL` | `https://dashboard.origenlab.cl/api` | `http://localhost:5173` |
+| Redirect URI registered in Google | `https://dashboard.origenlab.cl/api/auth/google/callback` | `http://localhost:5173/auth/google/callback` |
+| Path the API receives | `/auth/google/callback` | `/auth/google/callback` |
+| Where the browser lands after sign-in | `https://dashboard.origenlab.cl/` | `http://localhost:5173/` |
+
+### Remote V2 database
+
+Off by default: `ORIGENLAB_V2_DATABASE_URL` must be a literal loopback address unless
+`ORIGENLAB_V2_DATABASE_REMOTE=true` (`src/origenlab_api/v2/remote_database.py`). Remote, the API
+refuses to start unless the DSN names exactly `ORIGENLAB_V2_DATABASE_EXPECTED_HOST` (a DNS name),
+carries no query string or fragment, logs in as `origenlab_api` (or the pooler spelling
+`origenlab_api.<project-ref>`), and `ORIGENLAB_V2_DATABASE_SSLROOTCERT` is a readable CA PEM with
+no private key. Every connection then uses `sslmode=verify-full` with that CA, passed as keyword
+arguments so neither the DSN nor a `PGSSLMODE` in the environment can weaken it. Before serving,
+one read-only session must prove it is `origenlab_api` on the named database, holds no
+SUPERUSER/BYPASSRLS/CREATEROLE/CREATEDB/REPLICATION, and is not a member of `origenlab_owner`,
+`origenlab_migrator` or `postgres`. The development header login still refuses a remote
+database, and the import/rehearsal tools keep their own loopback-only guards.
 
 With `ORIGENLAB_V2_DATABASE_URL` set, **either** Google login **or** the development header
 login must be switched on; with neither, the API refuses to start rather than serving a `/v2`
@@ -336,8 +365,12 @@ invalid or expired session is refused — it is never rescued by the header.
 
 ### Production activation (not yet possible)
 
-1. The hosted V2 project is adopted and `ORIGENLAB_V2_DATABASE_URL` accepts it (blocked).
-2. Every operator who should sign in has an `active` `platform.operator` row.
+1. A remote V2 database is chosen and adopted (an owner decision), `origenlab_api` has a
+   password there, and the remote variables above are set (code ready, not exercised against
+   any real host).
+2. Every operator who should sign in has an `active` `platform.operator` row — via
+   `scripts/operator_roster.py`: review the plan, then `--apply --confirm-changes <N>` with the
+   N that plan printed.
 3. Set the production column above as Render secrets on `origenlab-api`.
 4. Deploy `apps/dashboard-proxy`: it already lists `/auth/*` and passes exactly the two
    `__Host-` cookies and the two checked redirects (`apps/dashboard-proxy/src/auth.ts`).

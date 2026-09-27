@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import FastAPI
 from pydantic import SecretStr
 
@@ -89,7 +91,15 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     from origenlab_api.v2.repository import V2Repository
     from origenlab_api.v2.routes import router as v2_router
 
-    dsn = settings.require_v2_database_url()
+    target = settings.v2_database_target()
+    dsn = target.dsn
+    # Every repository connects through this: a remote target binds verify-full TLS here.
+    connect = target.connect_factory(psycopg.connect)
+    if target.remote:
+        from origenlab_api.v2.remote_database import verify_runtime_connection
+
+        # Prove the role and the TLS from inside one session before serving anything.
+        verify_runtime_connection(target, psycopg.connect)
     session_secret = _secret(settings.auth_session_secret)
     if not (session_secret or "").strip() and settings.production_mode():
         # Whatever the identity adapter, production needs one stable address-ref key shared
@@ -105,11 +115,11 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
         # each process keeps its own random key (refs then only join within one process).
         configure_address_ref_key(session_secret)
     repository = V2Repository(
-        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
     app.state.v2_repository = repository
     app.state.cockpit_repository = CockpitRepository(
-        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
     google = build_google_auth_config(
         enabled=settings.google_auth_enabled,
@@ -145,7 +155,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
 
     ledgers = [p.strip() for p in (settings.v2_drive_archive_ledgers or "").split(",") if p.strip()]
     app.state.crm_workspace = CrmWorkspaceRepository(
-        psycopg.connect,
+        connect,
         dsn,
         drive=load_drive_ledgers(ledgers),
         statement_timeout_ms=settings.v2_statement_timeout_ms,
@@ -158,7 +168,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
         app.state.import_review = (
             load_plan(settings.v2_import_review_plan_dir),
             QuoteImportReviewRepository(
-                psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+                connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
             ),
             settings.v2_import_review_documents_root,
         )
@@ -173,31 +183,29 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     app.include_router(auth_router)
     if google is not None:
         app.include_router(google_auth_router)
-    _mount_v2_command_boundary(app, settings, dsn)
-    _mount_campaign_drafts(app, settings, dsn)
-    _mount_audience_freeze(app, settings, dsn)
-    _mount_campaign_planning(app, settings, dsn)
-    _mount_campaign_blocks(app, settings, dsn)
-    _mount_unsubscribe(app, settings, dsn)
+    _mount_v2_command_boundary(app, settings, dsn, connect)
+    _mount_campaign_drafts(app, settings, dsn, connect)
+    _mount_audience_freeze(app, settings, dsn, connect)
+    _mount_campaign_planning(app, settings, dsn, connect)
+    _mount_campaign_blocks(app, settings, dsn, connect)
+    _mount_unsubscribe(app, settings, dsn, connect)
 
 
-def _mount_unsubscribe(app: FastAPI, settings: Settings, dsn: str) -> None:
+def _mount_unsubscribe(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> None:
     """W10: the preview is a read and always mounted with V2; the apply command has its own switch."""
-    import psycopg
-
     from origenlab_api.v2.unsubscribe_commands import V2UnsubscribeRepository
     from origenlab_api.v2.unsubscribe_routes import unsubscribe_apply_router, unsubscribe_preview_router
 
     app.state.unsubscribe_apply_enabled = settings.v2_unsubscribe_apply_configured()
     app.state.unsubscribe_repository = V2UnsubscribeRepository(
-        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
     app.include_router(unsubscribe_preview_router)
     if app.state.unsubscribe_apply_enabled:
         app.include_router(unsubscribe_apply_router)
 
 
-def _mount_audience_freeze(app: FastAPI, settings: Settings, dsn: str) -> None:
+def _mount_audience_freeze(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> None:
     """Mount the audience-freeze command only behind its own switch; W12 rides on it."""
     app.state.audience_freeze_enabled = settings.v2_audience_freeze_configured()
     # The preview and the command read the same flag, so they plan under the same policy.
@@ -205,36 +213,32 @@ def _mount_audience_freeze(app: FastAPI, settings: Settings, dsn: str) -> None:
     if not app.state.audience_freeze_enabled:
         return
 
-    import psycopg
-
     from origenlab_api.v2.audience_freeze import V2AudienceFreezeRepository
     from origenlab_api.v2.audience_freeze_routes import audience_freeze_router
 
     app.state.audience_freeze_repository = V2AudienceFreezeRepository(
-        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms,
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms,
         recontact_review_enabled=app.state.recontact_review_enabled,
     )
     app.include_router(audience_freeze_router)
 
 
-def _mount_campaign_planning(app: FastAPI, settings: Settings, dsn: str) -> None:
+def _mount_campaign_planning(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> None:
     """Mount the planning command only behind its own switch. It schedules nothing."""
     app.state.campaign_planning_enabled = settings.v2_campaign_planning_configured()
     if not app.state.campaign_planning_enabled:
         return
 
-    import psycopg
-
     from origenlab_api.v2.campaign_planning import V2CampaignPlanningRepository
     from origenlab_api.v2.campaign_planning_routes import campaign_planning_router
 
     app.state.campaign_planning_repository = V2CampaignPlanningRepository(
-        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
     app.include_router(campaign_planning_router)
 
 
-def _mount_campaign_blocks(app: FastAPI, settings: Settings, dsn: str) -> None:
+def _mount_campaign_blocks(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> None:
     """Mount the admin block/unblock commands only behind their own switch.
 
     Enforcement lives in the database and the read of the current holds is a workspace route,
@@ -244,30 +248,26 @@ def _mount_campaign_blocks(app: FastAPI, settings: Settings, dsn: str) -> None:
     if not app.state.campaign_blocks_enabled:
         return
 
-    import psycopg
-
     from origenlab_api.v2.campaign_block_routes import campaign_block_router
     from origenlab_api.v2.campaign_blocks import V2CampaignBlockRepository
 
     app.state.campaign_block_repository = V2CampaignBlockRepository(
-        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
     app.include_router(campaign_block_router)
 
 
-def _mount_campaign_drafts(app: FastAPI, settings: Settings, dsn: str) -> None:
+def _mount_campaign_drafts(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> None:
     """Mount the two campaign-draft commands only behind their own switch."""
     app.state.campaign_drafts_enabled = settings.v2_campaign_drafts_configured()
     if not app.state.campaign_drafts_enabled:
         return
 
-    import psycopg
-
     from origenlab_api.v2.campaign_draft_routes import campaign_draft_router
     from origenlab_api.v2.campaign_drafts import V2CampaignDraftRepository
 
     app.state.campaign_draft_repository = V2CampaignDraftRepository(
-        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
     app.include_router(campaign_draft_router)
 
@@ -295,7 +295,9 @@ def _refuse_unsafe_login_settings(settings: Settings) -> None:
         )
 
 
-def _mount_v2_command_boundary(app: FastAPI, settings: Settings, dsn: str) -> None:
+def _mount_v2_command_boundary(
+    app: FastAPI, settings: Settings, dsn: str, connect: Any
+) -> None:
     """Mount `POST /v2/commands/*` only when it has been switched on deliberately.
 
     Configuring a V2 database says "read this". It does not say "record durable human
@@ -307,21 +309,19 @@ def _mount_v2_command_boundary(app: FastAPI, settings: Settings, dsn: str) -> No
     if not settings.v2_commands_configured():
         return
 
-    import psycopg
-
     from origenlab_api.v2.case_command_repository import V2CaseCommandRepository
     from origenlab_api.v2.case_command_routes import case_command_router
     from origenlab_api.v2.command_repository import V2CommandRepository
     from origenlab_api.v2.command_routes import command_router
 
     app.state.v2_command_repository = V2CommandRepository(
-        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
     # The commercial-case commands run on the same database, as the same role, behind the
     # same switch. A second repository rather than a second connection pool: both are
     # `CommandTransaction`, and neither knows anything the other does not.
     app.state.v2_case_command_repository = V2CaseCommandRepository(
-        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
     app.include_router(command_router)
     app.include_router(case_command_router)

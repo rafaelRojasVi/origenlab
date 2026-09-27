@@ -1555,9 +1555,17 @@ them.
   `@origenlab.cl` account — and none of the three requested individual accounts.
 - **Not changed:** the proxy (see the separate proxy branch), the API routes, any database.
 
-### 2.7.29 Campaign drafts and equipment-interest audiences, 2026-09-27 — built locally, not deployed
+### 2.7.28 Remote V2 database connection, 2026-09-27 — code only, not deployed
 
-Numbered after the hosting branch's 2.7.28, which is not merged here.
+| | |
+|---|---|
+| What | `apps/api` can open a remote V2 database, **only** with `ORIGENLAB_V2_DATABASE_REMOTE=true` plus an exact expected host and a CA file (`v2/remote_database.py`, `apps/api/docs/PRODUCTION_AUTH.md` → *Remote V2 database*). `sslmode=verify-full` always; login must be `origenlab_api`; a startup probe refuses any other session role, any elevated attribute and membership in owner/migrator/`postgres` |
+| Unchanged | loopback-only is still the default; the development header login and the import/rehearsal tools stay loopback-only |
+| OAuth | production `ORIGENLAB_AUTH_PUBLIC_BASE_URL` must be exactly `https://<dashboard>/api`; callback `https://dashboard.origenlab.cl/api/auth/google/callback` |
+| Evidence | `test_v2_remote_database.py` 38 passed, 4 of them against a disposable PostgreSQL 17 serving a throwaway-CA certificate (right CA passes; wrong CA and wrong host name refused by libpq; superuser session refused by the probe) |
+| Not done | no remote database chosen or provisioned, no credential set, nothing deployed |
+
+### 2.7.29 Campaign drafts and equipment-interest audiences, 2026-09-27 — built locally, not deployed
 
 | | |
 |---|---|

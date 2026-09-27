@@ -8,11 +8,14 @@ from dataclasses import dataclass
 from functools import lru_cache
 from ipaddress import ip_address
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlsplit
 
 from pydantic import PrivateAttr, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+if TYPE_CHECKING:
+    from origenlab_api.v2.remote_database import V2DatabaseTarget
 
 ApiBackend = Literal["sqlite", "postgres"]
 
@@ -193,6 +196,16 @@ class Settings(BaseSettings):
     # request. No hosted credential is added while the hosted phase is frozen.
     """DSN of the V2 durable database; the /v2 router is not mounted without it."""
     v2_database_url: str | None = None
+    """Opt-in: open `v2_database_url` as a remote database (`v2/remote_database.py`).
+
+    Default **false**, and the loopback-only rule applies. True requires the two values below
+    and connects only with `sslmode=verify-full` as the `origenlab_api` runtime role.
+    """
+    v2_database_remote: bool = False
+    """The exact host name a remote `v2_database_url` must name (reviewed configuration)."""
+    v2_database_expected_host: str | None = None
+    """Absolute path of the PEM CA file the remote server certificate must chain to."""
+    v2_database_sslrootcert: str | None = None
     """Supabase Auth JWKS URL. When set, JWKS verification is used and the local development identity adapter is never constructed."""
     v2_jwks_url: str | None = None
     v2_statement_timeout_ms: int = 15_000
@@ -428,7 +441,29 @@ class Settings(BaseSettings):
             )
         # Fail closed on a target this API will not open. Raised here rather than at the
         # connection, so a misconfigured process never starts serving /v2 at all.
-        return assert_v2_target_is_local(url)
+        return self.v2_database_target().dsn
+
+    def v2_database_target(self) -> "V2DatabaseTarget":
+        """The validated V2 target: loopback by default, remote only when opted into."""
+        from origenlab_api.v2.remote_database import V2DatabaseTarget, validate_remote_target
+
+        url = (self.v2_database_url or "").strip()
+        if not url:
+            raise ValueError(
+                "ORIGENLAB_V2_DATABASE_URL is required to mount the /v2 read boundary"
+            )
+        if self.v2_database_remote:
+            return validate_remote_target(
+                url,
+                expected_host=self.v2_database_expected_host,
+                ca_file=self.v2_database_sslrootcert,
+            )
+        if (self.v2_database_expected_host or "").strip() or (self.v2_database_sslrootcert or "").strip():
+            raise V2TargetRefused(
+                "ORIGENLAB_V2_DATABASE_EXPECTED_HOST / _SSLROOTCERT are set but "
+                "ORIGENLAB_V2_DATABASE_REMOTE is not; set it deliberately or remove them"
+            )
+        return V2DatabaseTarget(dsn=assert_v2_target_is_local(url), remote=False)
 
     def require_postgres_url(self) -> str:
         url = (self.postgres_url or "").strip()
