@@ -1,12 +1,18 @@
 import { useMemo, useRef, useState } from "react";
 import { useAuthSession } from "../../context/AuthSessionContext";
-import type { CampaignSummary } from "../crmTypes";
+import type { CampaignSummary, TotalKey } from "../crmTypes";
 import { Badge, Panel, ResourceGate, Segmented, Skeleton, fmtInt } from "../ui";
 import { useResource } from "../useResource";
 import { PLANNING_LABEL, fmtLongDay, relativeDay, santiagoTime, todayInSantiago } from "./calendar";
+import { CampaignAudit } from "./CampaignAudit";
+import { CampaignRecipients } from "./CampaignRecipients";
+import { CampaignReplies } from "./CampaignReplies";
+import { FILTER_TOTALS, TOTAL_HINT, TOTAL_LABEL, repliesUnknown } from "./campaignTotals";
 import { EmailFrame } from "./EmailFrame";
 import { fetchCampaignArchive, newIdempotencyKey, refusalOf, setCampaignPlanning } from "./marketingApi";
-import type { CampaignArchive } from "./marketingTypes";
+import type { CampaignArchive, EquipmentTaxonomy } from "./marketingTypes";
+
+export type DetailTab = "resumen" | "html" | "destinatarios" | "respuestas" | "auditoria";
 
 const STATUS_LABEL: Record<string, string> = {
   archived: "Archivada",
@@ -50,72 +56,187 @@ const HTML_STATE: Record<Exclude<CampaignArchive["html_state"], "archived_verifi
 type PreviewMode = "desktop" | "mobile" | "raw";
 
 /**
- * One campaign's history: its immutable sent (or frozen) content, the real send batches, and —
- * while it is unsent — its internal planning. Never the editable draft presented as sent.
+ * One campaign: Resumen, HTML, Destinatarios, Respuestas and Auditoría, all read from PostgreSQL.
+ * A historical (archived) campaign offers no edit, reopen, resend or planning action; its figures
+ * are the recorded ones and every total opens the rows behind it.
  */
 export function CampaignDetail({
   summary,
   planningEnabled,
+  taxonomy = null,
+  initialTab = "resumen",
+  initialTotal = "audience",
   onBack,
   onEdit,
   onPlanned,
 }: {
   summary: CampaignSummary;
   planningEnabled: boolean;
+  taxonomy?: EquipmentTaxonomy | null;
+  initialTab?: DetailTab;
+  initialTotal?: TotalKey;
   onBack: () => void;
   onEdit: (campaignId: string) => void;
   onPlanned: () => void;
 }) {
   const [state, reload] = useResource(() => fetchCampaignArchive(summary.campaign_id), [summary.campaign_id]);
+  const [tab, setTab] = useState<DetailTab>(initialTab);
+  const [total, setTotal] = useState<TotalKey>(initialTotal);
+  const openTotal = (k: TotalKey) => {
+    setTotal(k);
+    setTab(k === "responses" && repliesUnknown(summary.replies, summary.totals) ? "respuestas" : "destinatarios");
+  };
+  const editable = summary.status === "draft" || summary.status === "audience_frozen";
   return (
     <div className="space-y-3" data-testid="campaign-detail">
       <button type="button" onClick={onBack} className="text-xs font-medium text-brand-700 hover:underline">
         ← Volver
       </button>
-      <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={4} />}>
-        {(a) => (
-          <>
-            <header className="flex flex-wrap items-start gap-3 rounded-lg border border-line bg-canvas-raised p-4">
-              <div className="min-w-0 flex-1">
-                <h2 className="text-lg font-semibold tracking-tight text-ink">{a.name}</h2>
-                <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                  <Badge glyph={false} tone={a.status === "draft" ? "info" : "neutral"}>
-                    {STATUS_LABEL[a.status] ?? a.status}
-                  </Badge>
-                  {a.origin === "imported_v1" ? (
-                    <Badge tone="warn" title="Cargada desde el registro de envíos de V1; sin contenido archivado.">
-                      Histórica importada (V1)
-                    </Badge>
-                  ) : (
-                    <Badge tone="brand" glyph={false}>
-                      Nativa del CRM
-                    </Badge>
-                  )}
+      <header className="flex flex-wrap items-start gap-3 rounded-lg border border-line bg-canvas-raised p-4">
+        <div className="min-w-0 flex-1">
+          <h2 className="text-lg font-semibold tracking-tight text-ink">{summary.name}</h2>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <Badge glyph={false} tone={summary.status === "draft" ? "info" : "neutral"}>
+              {STATUS_LABEL[summary.status] ?? summary.status}
+            </Badge>
+            {summary.origin === "imported_v1" ? (
+              <Badge tone="warn" title="Cargada desde el registro de envíos de V1.">
+                Histórica importada (V1)
+              </Badge>
+            ) : (
+              <Badge tone="brand" glyph={false}>
+                Nativa del CRM
+              </Badge>
+            )}
+            {summary.status === "archived" ? (
+              <Badge tone="neutral" title="Una campaña histórica no se edita, reabre, reenvía ni planifica.">
+                Cerrada · solo lectura
+              </Badge>
+            ) : null}
+          </div>
+        </div>
+        {editable ? (
+          <button
+            type="button"
+            onClick={() => onEdit(summary.campaign_id)}
+            className="h-7 rounded-md border border-line px-3 text-xs font-medium text-ink hover:bg-canvas-sunken"
+          >
+            {summary.status === "draft" ? "Editar borrador" : "Abrir campaña"}
+          </button>
+        ) : null}
+      </header>
+      <div className="max-w-full overflow-x-auto">
+        <Segmented
+          label="Pestañas de la campaña"
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: "resumen", label: "Resumen" },
+            { value: "html", label: "HTML" },
+            { value: "destinatarios", label: "Destinatarios", count: summary.totals?.audience },
+            { value: "respuestas", label: "Respuestas" },
+            { value: "auditoria", label: "Auditoría" },
+          ]}
+        />
+      </div>
+      {tab === "destinatarios" ? (
+        <CampaignRecipients
+          campaignId={summary.campaign_id}
+          totals={summary.totals ?? undefined}
+          initialTotal={total}
+          taxonomy={taxonomy}
+          repliesNotSynced={repliesUnknown(summary.replies, summary.totals)}
+        />
+      ) : tab === "respuestas" ? (
+        <CampaignReplies campaignId={summary.campaign_id} />
+      ) : tab === "auditoria" ? (
+        <CampaignAudit campaignId={summary.campaign_id} />
+      ) : (
+        <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={4} />}>
+          {(a) =>
+            tab === "html" ? (
+              <SentHtml archive={a} />
+            ) : (
+              <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_22rem]">
+                <div className="min-w-0 space-y-3">
+                  <TotalsPanel archive={a} onOpen={openTotal} />
+                  <AttemptsPanel archive={a} />
+                </div>
+                <div className="min-w-0 space-y-3">
+                  <SendRecord archive={a} />
+                  {editable ? <PlanningEditor summary={summary} planningEnabled={planningEnabled} onSaved={onPlanned} /> : null}
                 </div>
               </div>
-              {a.status === "draft" || a.status === "audience_frozen" ? (
-                <button
-                  type="button"
-                  onClick={() => onEdit(a.campaign_id)}
-                  className="h-7 rounded-md border border-line px-3 text-xs font-medium text-ink hover:bg-canvas-sunken"
-                >
-                  {a.status === "draft" ? "Editar borrador" : "Abrir campaña"}
-                </button>
-              ) : null}
-            </header>
-            <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_22rem]">
-              <SentHtml archive={a} />
-              <div className="space-y-3">
-                <SendRecord archive={a} />
-                {a.status === "draft" || a.status === "audience_frozen" ? (
-                  <PlanningEditor summary={summary} planningEnabled={planningEnabled} onSaved={onPlanned} />
-                ) : null}
-              </div>
-            </div>
-          </>
-        )}
-      </ResourceGate>
+            )
+          }
+        </ResourceGate>
+      )}
     </div>
+  );
+}
+
+/** Every recipient total, each a button to the rows behind it. */
+function TotalsPanel({ archive: a, onOpen }: { archive: CampaignArchive; onOpen: (k: TotalKey) => void }) {
+  const t = a.totals;
+  if (!t) return null;
+  const unknownReplies = repliesUnknown(a.replies, t);
+  return (
+    <Panel title="Destinatarios" note="cada cifra abre sus filas" bodyClassName="p-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" data-testid="detail-totals">
+        {FILTER_TOTALS.map((k) => (
+          <button
+            key={k}
+            type="button"
+            title={TOTAL_HINT[k]}
+            onClick={() => onOpen(k)}
+            className="rounded-md border border-line bg-canvas-raised px-3 py-2 text-left hover:border-line-strong hover:bg-canvas-sunken/60"
+            data-testid={`detail-total-${k}`}
+          >
+            <span className="block text-[11px] text-ink-faint">{TOTAL_LABEL[k]}</span>
+            <span className="block text-lg font-semibold tabular-nums text-ink">
+              {k === "responses" && unknownReplies ? <span className="text-sm font-medium text-ink-faint">No sincronizadas</span> : fmtInt(t[k])}
+            </span>
+          </button>
+        ))}
+      </div>
+      <p className="mt-2 text-[11px] text-ink-faint">
+        Destinatarios, no intentos: una persona con dos intentos cuenta una vez. «Enviados» son destinatarios con un envío aceptado por
+        Gmail; aceptado no es entregado.
+      </p>
+    </Panel>
+  );
+}
+
+function AttemptsPanel({ archive: a }: { archive: CampaignArchive }) {
+  const x = a.attempt_totals;
+  if (!x) return null;
+  return (
+    <Panel title="Intentos de envío" note="outbound.send_attempt" bodyClassName="px-3 py-2">
+      <dl className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 text-xs" data-testid="attempt-totals">
+        <dt className="text-ink-muted">Intentos registrados</dt>
+        <dd className="text-right font-semibold tabular-nums text-ink">{fmtInt(x.attempts)}</dd>
+        <dt className="text-ink-muted">Aceptados por Gmail</dt>
+        <dd className="text-right font-semibold tabular-nums text-ink">{fmtInt(x.accepted)}</dd>
+        <dt className="text-ink-muted">Rechazados</dt>
+        <dd className="text-right font-semibold tabular-nums text-ink">
+          {fmtInt(x.rejected)}
+          {x.rejected_undated ? <span className="ml-1 font-normal text-ink-faint">({fmtInt(x.rejected_undated)} sin fecha registrada)</span> : null}
+        </dd>
+        <dt className="text-ink-muted">Entrega confirmada</dt>
+        <dd className="text-right tabular-nums text-ink">
+          {x.delivery_confirmed ? fmtInt(x.delivery_confirmed) : <span className="text-ink-faint">Ninguna confirmación registrada</span>}
+        </dd>
+        <dt className="text-ink-muted">Rebotes en el intento</dt>
+        <dd className="text-right tabular-nums text-ink">
+          {x.delivery_bounced ? fmtInt(x.delivery_bounced) : <span className="text-ink-faint">Registrados sólo por destinatario</span>}
+        </dd>
+      </dl>
+      <p className="mt-2 text-[11px] text-ink-faint">
+        {x.delivery_confirmed === 0 && x.accepted > 0
+          ? "El CRM no recibió confirmaciones de entrega: cada envío aceptado figura como pendiente de confirmación."
+          : null}
+      </p>
+    </Panel>
   );
 }
 
@@ -195,6 +316,7 @@ function SendRecord({ archive: a }: { archive: CampaignArchive }) {
   const attempts = a.send_attempts.reduce((n, s) => n + s.count, 0);
   const recipients = Object.entries(a.recipients_by_state).sort((x, y) => y[1] - x[1]);
   const unavailable = <span className="text-ink-faint">No disponible</span>;
+  const notImported = <span className="text-ink-faint">No importado desde V1</span>;
   return (
     <Panel title="Registro de envío" bodyClassName="px-3 py-2">
       <dl className="grid grid-cols-[8.5rem_minmax(0,1fr)] gap-x-2 gap-y-1.5 text-xs" data-testid="send-record">
@@ -219,9 +341,9 @@ function SendRecord({ archive: a }: { archive: CampaignArchive }) {
           {a.sender_address ? `${a.sender_name ? `${a.sender_name} · ` : ""}${a.sender_address}` : unavailable}
         </dd>
         <dt className="text-ink-faint">Asunto</dt>
-        <dd className="text-ink">{a.subject ?? unavailable}</dd>
+        <dd className="text-ink" data-testid="subject-state">{a.subject ?? (a.subject_state === "not_imported" ? notImported : unavailable)}</dd>
         <dt className="text-ink-faint">Preheader</dt>
-        <dd className="text-ink">{a.preheader ?? unavailable}</dd>
+        <dd className="text-ink">{a.preheader ?? (a.preheader_state === "not_imported" ? notImported : unavailable)}</dd>
         <dt className="text-ink-faint">Versión de campaña</dt>
         <dd className="tabular-nums text-ink">v{a.version}</dd>
         <dt className="text-ink-faint">Huella del contenido</dt>

@@ -14,6 +14,7 @@ import { OperatorApiError, fetchJsonGet, operatorApiUrl } from "../../api/operat
 import type {
   AudienceQuery,
   AudienceResponse,
+  AuditResponse,
   CampaignArchive,
   CampaignContent,
   DraftSaveResult,
@@ -23,7 +24,10 @@ import type {
   FreezeResult,
   FrozenSnapshot,
   PlanningResult,
+  RecipientPage,
+  RecipientQuery,
   RecontactDecision,
+  RepliesResponse,
   ReviewDecision,
   SuppressionsResponse,
 } from "./marketingTypes";
@@ -35,6 +39,9 @@ export const MARKETING_PATHS = {
   freezePreview: (id: string) => `/v2/workspace/marketing/campaigns/${encodeURIComponent(id)}/freeze-preview`,
   recipients: (id: string) => `/v2/workspace/marketing/campaigns/${encodeURIComponent(id)}/recipients`,
   archive: (id: string) => `/v2/workspace/marketing/campaigns/${encodeURIComponent(id)}/archive`,
+  historyRecipients: (id: string) => `/v2/workspace/marketing/campaigns/${encodeURIComponent(id)}/history/recipients`,
+  historyReplies: (id: string) => `/v2/workspace/marketing/campaigns/${encodeURIComponent(id)}/history/replies`,
+  historyAudit: (id: string) => `/v2/workspace/marketing/campaigns/${encodeURIComponent(id)}/history/audit`,
   suppressions: "/v2/workspace/marketing/suppressions",
 } as const;
 
@@ -51,6 +58,23 @@ export const fetchCampaign = (id: string) => fetchJsonGet<CampaignContent>(opera
 export const fetchSuppressions = () => fetchJsonGet<SuppressionsResponse>(operatorApiUrl(MARKETING_PATHS.suppressions));
 export const fetchCampaignArchive = (id: string) =>
   fetchJsonGet<CampaignArchive>(operatorApiUrl(MARKETING_PATHS.archive(id)));
+
+/** One page of a campaign's recorded recipients, under the predicate of the total clicked. */
+export function fetchCampaignRecipients(campaignId: string, query: RecipientQuery): Promise<RecipientPage> {
+  return fetchJsonGet<RecipientPage>(
+    operatorApiUrl(MARKETING_PATHS.historyRecipients(campaignId), {
+      total: query.total,
+      reason: query.reason || undefined,
+      identity: query.identity || undefined,
+      q: query.q?.trim() || undefined,
+      page: query.page,
+      page_size: query.page_size,
+    }),
+  );
+}
+export const fetchCampaignReplies = (id: string) =>
+  fetchJsonGet<RepliesResponse>(operatorApiUrl(MARKETING_PATHS.historyReplies(id)));
+export const fetchCampaignAudit = (id: string) => fetchJsonGet<AuditResponse>(operatorApiUrl(MARKETING_PATHS.historyAudit(id)));
 
 export function fetchAudience(query: AudienceQuery): Promise<AudienceResponse> {
   const params: Record<string, string | string[] | undefined> = {

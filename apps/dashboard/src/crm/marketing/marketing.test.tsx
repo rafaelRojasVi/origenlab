@@ -207,11 +207,11 @@ describe("MarketingPage", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows a sandboxed thumbnail for stored HTML and «Contenido no importado» when there is none", async () => {
+  it("shows a sandboxed thumbnail for stored HTML and «HTML enviado no archivado» when there is none", async () => {
     stubApi(false);
     render(<MarketingPage />);
     const cards = await screen.findAllByTestId("campaign-card");
-    expect(within(cards[1]).getByTestId("thumb-not-imported")).toHaveTextContent("Contenido no importado");
+    expect(within(cards[1]).getByTestId("thumb-not-imported")).toHaveTextContent("HTML enviado no archivado");
     const thumb = await within(cards[0]).findByTestId("thumb");
     const frame = within(thumb).getByTestId("email-frame");
     expect(frame.getAttribute("sandbox")).toBe("");

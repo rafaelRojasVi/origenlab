@@ -1,5 +1,7 @@
 /** Shapes of `/v2/workspace/marketing/*` and the two campaign-draft commands. */
 
+import type { AttemptTotals, CampaignTotals, ContentState, RepliesState, TotalKey } from "../crmTypes";
+
 export interface TaxonomyImage {
   url: string;
   alt: string;
@@ -442,6 +444,144 @@ export interface CampaignArchive {
   send_batches: { day: string; accepted: number; first_accepted_at: string; last_accepted_at: string }[];
   metrics: { opens: number | null; clicks: number | null; note: string };
   storage: { table: string; database: string };
+  totals?: CampaignTotals;
+  attempt_totals?: AttemptTotals;
+  replies?: RepliesState;
+  subject_state?: ContentState;
+  preheader_state?: ContentState;
+  immutable?: boolean;
+  immutable_enforced_by_database?: boolean;
+}
+
+export interface HistoryRecipient {
+  recipient_id: string;
+  /** As recorded for sales/admin; `***@dominio` for a viewer. */
+  address: string;
+  identity: "crm_person" | "historical_address";
+  person_id: string | null;
+  person_name: string | null;
+  organization_id: string | null;
+  organization_name: string | null;
+  state: string;
+  outcome: "sent" | "bounced" | "excluded" | "rejected" | "unsent";
+  exclusion_reasons: { code: string; label: string }[];
+  attempts: number;
+  accepted_attempts: number;
+  rejected_attempts: number;
+  delivery_confirmed: boolean;
+  sent_at: string | null;
+  first_sent_at: string | null;
+  rejection: string | null;
+  bounce: "bounced" | null;
+  bounce_class: string | null;
+  gmail_url: string | null;
+  replies: number;
+  last_reply_at: string | null;
+  baja: "registered" | "pending_review" | null;
+  interests?: AudienceInterest[];
+}
+
+export interface RecipientPage {
+  campaign_id: string;
+  name: string;
+  status: string;
+  rows: HistoryRecipient[];
+  page: number;
+  page_size: number;
+  total_rows: number;
+  pages: number;
+  totals: CampaignTotals;
+  filters: {
+    total: TotalKey;
+    reason: string | null;
+    identity: "crm_person" | "historical_address" | null;
+    q: string | null;
+    search_scope: "address_and_names" | "names_only";
+  };
+  interests_available: boolean;
+  storage: { table: string; database: string };
+}
+
+export interface RecipientQuery {
+  total: TotalKey;
+  reason?: string;
+  identity?: "crm_person" | "historical_address";
+  q?: string;
+  page: number;
+  page_size: number;
+}
+
+export interface ReplyItem {
+  id: string;
+  kind: "reply" | "baja" | "baja_pending_review";
+  class: string;
+  class_label: string;
+  classified_by: string;
+  received_at: string | null;
+  association: "recipient" | "send_lineage" | "address_match";
+  recipient_id: string | null;
+  address: string | null;
+  person_name: string | null;
+  organization_name: string | null;
+  excerpt: string | null;
+  gmail_url: string | null;
+  resolution?: string;
+  review_reason?: string | null;
+}
+
+export interface RepliesResponse {
+  campaign_id: string;
+  name: string;
+  status: string;
+  items: ReplyItem[];
+  counts: { reply: number; baja: number; baja_pending_review: number };
+  sync: RepliesState;
+  baja_by_address: { recipients: number; label: string };
+  unassociated: { baja_without_campaign_lineage: number; label: string };
+  excerpts: string;
+  gmail_called: false;
+  storage: { table: string; database: string };
+}
+
+export interface AuditEvent {
+  seq: number;
+  event_type: string;
+  recorded_at: string | null;
+  actor_kind: string;
+  actor_name: string | null;
+  payload: Record<string, unknown>;
+}
+
+export interface AuditResponse {
+  campaign_id: string;
+  name: string;
+  status: string;
+  version: number;
+  row: {
+    created_at: string | null;
+    updated_at: string | null;
+    approved_at: string | null;
+    content_frozen_at: string | null;
+    audience_frozen_at: string | null;
+  };
+  origin: {
+    kind: "imported_v1" | "native_v2";
+    source_record_id: string | null;
+    source_kind: string | null;
+    dedupe_key: string | null;
+    manifest_name: string | null;
+    payload_sha256: string | null;
+    acquired_at: string | null;
+    review_status: string | null;
+  };
+  events: AuditEvent[];
+  attempt_events: { event_type: string; count: number }[];
+  events_note: string | null;
+  immutable: boolean;
+  immutable_enforced_by_database: boolean;
+  immutable_note: string | null;
+  actions: [] | null;
+  storage: { tables: string[]; database: string };
 }
 
 export interface PlanningResult {
