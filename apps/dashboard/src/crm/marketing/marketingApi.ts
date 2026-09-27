@@ -26,6 +26,7 @@ import type {
   RecontactDecision,
   ReviewDecision,
   SuppressionsResponse,
+  UnsubscribeReviewResult,
 } from "./marketingTypes";
 
 export const MARKETING_PATHS = {
@@ -177,6 +178,26 @@ export function setCampaignPlanning(
   idempotencyKey: string = newIdempotencyKey(),
 ): Promise<PlanningResult> {
   return postCommand<PlanningResult>(CAMPAIGN_COMMAND_PATHS.plan, body, idempotencyKey);
+}
+
+/** W10 review of a «BAJA» held for review: confirm (sales/admin) or dismiss (admin only). */
+export const UNSUBSCRIBE_REVIEW_PATHS = {
+  resolve: "/v2/commands/resolve-unsubscribe-review",
+  dismiss: "/v2/commands/dismiss-unsubscribe-review",
+} as const;
+
+export function resolveUnsubscribeReview(
+  body: { assertion_id: string; expected_address: string; note: string },
+  idempotencyKey: string = newIdempotencyKey(),
+): Promise<UnsubscribeReviewResult> {
+  return postCommand<UnsubscribeReviewResult>(UNSUBSCRIBE_REVIEW_PATHS.resolve, body, idempotencyKey);
+}
+
+export function dismissUnsubscribeReview(
+  body: { assertion_id: string; expected_address: string; expected_review_sha256: string; explanation: string },
+  idempotencyKey: string = newIdempotencyKey(),
+): Promise<UnsubscribeReviewResult> {
+  return postCommand<UnsubscribeReviewResult>(UNSUBSCRIBE_REVIEW_PATHS.dismiss, body, idempotencyKey);
 }
 
 export { newIdempotencyKey };

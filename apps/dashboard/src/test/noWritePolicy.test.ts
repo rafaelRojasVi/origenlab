@@ -32,10 +32,12 @@ describe("dashboard read-only policy", () => {
 
   // The dashboard records no commercial decision. Two modules may issue a mutating request:
   //  - authClient.ts's POST to `/auth/logout`, which clears the session cookie upstream;
-  //  - marketingApi.ts's POST to exactly the four campaign commands: the two *draft* commands,
+  //  - marketingApi.ts's POST to exactly six marketing commands: the two *draft* commands,
   //    which write email copy to a draft `outbound.campaign` row, the audience *freeze*, which
-  //    writes an immutable recipient snapshot, and *planning*, which notes an intended send day
-  //    on an unsent campaign. None approves, schedules or sends anything.
+  //    writes an immutable recipient snapshot, *planning*, which notes an intended send day on
+  //    an unsent campaign, and the two W10 *review* decisions on a «BAJA» held for review
+  //    (confirm it as a permanent unsubscribe; an admin dismisses a false positive). None
+  //    approves, schedules or sends anything, and none lifts a confirmed unsubscribe.
   // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";
   const CAMPAIGN_DRAFT_FILE = "../crm/marketing/marketingApi.ts";
@@ -44,6 +46,8 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/save-campaign-draft",
     "/v2/commands/freeze-campaign-audience",
     "/v2/commands/set-campaign-planning",
+    "/v2/commands/resolve-unsubscribe-review",
+    "/v2/commands/dismiss-unsubscribe-review",
   ];
 
   it("allows only the logout POST and the campaign-command POST", () => {

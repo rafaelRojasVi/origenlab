@@ -391,6 +391,17 @@ export interface PendingUnsubscribeReview {
   policy_version: string | null;
   observed_at: string | null;
   recorded_at: string;
+  /** The review's version; a dismissal must quote it (a stale screen is refused). */
+  review_sha256?: string;
+}
+
+/** The answer to a W10 review decision (confirm or dismiss). */
+export interface UnsubscribeReviewResult {
+  command: string;
+  assertion_id: string;
+  was: string;
+  outcome: string;
+  replayed: boolean;
 }
 
 export interface SuppressionsResponse {

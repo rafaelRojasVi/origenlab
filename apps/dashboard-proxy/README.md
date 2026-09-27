@@ -33,7 +33,7 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/v2/*` (named paths only — see `src/allowlist.ts`) | V2 durable reads |
 | `/auth/google/login`, `/auth/google/callback`, `/auth/session` | Dashboard Google Workspace sign-in (see *Sign-in exceptions* below) |
 
-**Refused on purpose** (403 `path_not_allowed`, never forwarded): V1 `/contacts/*` and `/mirror/*`. Upstream they are gated only by the shared API key — no operator identity, no role, no redaction — so V2 `/v2/*` is the only browser surface for CRM, contacts and evidence. `/v2/cockpit/*` and every `/v2/workspace/*` path other than the eight Marketing reads and the two CRM card reads below are not listed either. The W10 unsubscribe tooling (`POST /v2/unsubscribe/preview`, `POST /v2/commands/apply-unsubscribe-replies`, `POST /v2/commands/resolve-unsubscribe-review`, `POST /v2/commands/dismiss-unsubscribe-review`) is API-only and never listed. See `docs/OPERATIONS.md`.
+**Refused on purpose** (403 `path_not_allowed`, never forwarded): V1 `/contacts/*` and `/mirror/*`. Upstream they are gated only by the shared API key — no operator identity, no role, no redaction — so V2 `/v2/*` is the only browser surface for CRM, contacts and evidence. `/v2/cockpit/*` and every `/v2/workspace/*` path other than the eight Marketing reads and the two CRM card reads below are not listed either. The W10 unsubscribe tooling that carries message bodies (`POST /v2/unsubscribe/preview`, `POST /v2/commands/apply-unsubscribe-replies`) is API-only and never listed. See `docs/OPERATIONS.md`.
 
 **POST** (the only human write path — trusted operator identity, `Idempotency-Key`, optimistic concurrency; each ID format is regex-constrained, no wildcard route):
 
@@ -46,7 +46,7 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/operations/sales-opportunities/sales_<32hex>/quotes`, `/operations/customer-quotes/quote_<32hex>/drive-workspace` | CRM-Q1 customer-quote create + Drive workspace retry |
 | `/operator/procurement/tenders/<code>/annex-bundle/[preview\|import]` | Explicit tender annex evidence upload |
 | `/auth/logout` | Clears the dashboard session cookie; writes no commercial state |
-| `/v2/commands/{create-campaign-draft,save-campaign-draft,freeze-campaign-audience,set-campaign-planning}` | CRM Marketing — see *Marketing commands* below. Nothing here approves, schedules or sends |
+| `/v2/commands/{create-campaign-draft,save-campaign-draft,freeze-campaign-audience,set-campaign-planning,resolve-unsubscribe-review,dismiss-unsubscribe-review}` | CRM Marketing — see *Marketing commands* below. Nothing here approves, schedules or sends |
 
 All other POST requests, and all `PUT`, `PATCH`, and `DELETE` requests, return **405**.
 
@@ -83,6 +83,8 @@ Exact paths only (`src/allowlist.ts`; UUIDs lower-case):
 | POST | `/v2/commands/save-campaign-draft` | compare-and-set on `expected_version`; event `campaign.draft_content_saved` per change |
 | POST | `/v2/commands/freeze-campaign-audience` | `confirmed: true`, `expected_version`, `expected_preview_sha256`; write-once snapshot in `outbound.campaign` + `outbound.campaign_recipient`; event `campaign.audience_frozen`; refused `audience_changed` if the audience moved since the preview |
 | POST | `/v2/commands/set-campaign-planning` | `expected_planning_version`; set, change or clear an unsent campaign's internal planned day; events `campaign.planning_set` / `campaign.planning_cleared`; body limit 4 KB. Schedules nothing |
+| POST | `/v2/commands/resolve-unsubscribe-review` | confirm one «BAJA» held for review (or one an admin dismissed) as the permanent unsubscribe; a note; body limit 8 KB |
+| POST | `/v2/commands/dismiss-unsubscribe-review` | **admin only**: dismiss one *pending* hold as a false positive; `expected_review_sha256` and an explanation; never a confirmed unsubscribe; body limit 8 KB |
 
 **Roles.** Reads: any active operator; contact addresses are masked upstream for `viewer`
 (`contact_redaction.py`). Commands: an active `sales` or `admin` operator only, resolved

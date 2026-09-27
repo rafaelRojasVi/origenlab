@@ -1685,8 +1685,6 @@ describe("W10 suppression status", () => {
 
   it.each([
     "/v2/commands/apply-unsubscribe-replies",
-    "/v2/commands/resolve-unsubscribe-review",
-    "/v2/commands/dismiss-unsubscribe-review",
     "/v2/unsubscribe/preview",
   ])(
     "never forwards the unsubscribe tooling %s, whatever the method",
@@ -1708,6 +1706,78 @@ describe("W10 suppression status", () => {
       expect(vi.mocked(fetch)).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("W10 review decisions (confirm / dismiss a held «BAJA»)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const BODY = JSON.stringify({
+    assertion_id: "96301691-af05-41ea-82e3-05f5fae40837",
+    expected_address: "remitente@lab.invalid",
+    expected_review_sha256: "c".repeat(64),
+    explanation: "Respondió BAJA a otro boletín",
+  });
+  const review = (path: string, extra: Record<string, string> = {}, body = BODY, method = "POST") =>
+    requestWithOrigin(`https://proxy.test/api${path}`, {
+      method,
+      body: method === "GET" || method === "HEAD" ? undefined : body,
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": "review-9b1c7d2e-4f3a-4c1b-8e2d",
+        "Sec-Fetch-Site": "same-origin",
+        Cookie: "__Host-origenlab_session=s1; CF_Authorization=leak",
+        ...extra,
+      },
+    });
+  const PATHS = ["/v2/commands/resolve-unsubscribe-review", "/v2/commands/dismiss-unsubscribe-review"];
+
+  it.each(PATHS)("forwards a same-origin JSON %s with its key and only the session cookie", async (path) => {
+    stubUpstreamFetch();
+    const res = await handleRequest(review(path), TEST_ENV);
+    expect(res.status).toBe(200);
+    const upstream = vi.mocked(fetch).mock.calls[0][0] as Request;
+    expect(new URL(upstream.url).pathname).toBe(path);
+    expect(upstream.method).toBe("POST");
+    expect(upstream.headers.get("Idempotency-Key")).toBe("review-9b1c7d2e-4f3a-4c1b-8e2d");
+    expect(upstream.headers.get("Cookie")).toBe("__Host-origenlab_session=s1");
+    expect(await upstream.text()).toBe(BODY);
+  });
+
+  it.each(PATHS.flatMap((path) => [
+    [path, "a foreign Origin", { Origin: "https://evil.test" }, 403, "origin_not_allowed"],
+    [path, "a cross-site fetch", { "Sec-Fetch-Site": "cross-site" }, 403, "cross_site_request"],
+    [path, "a form post", { "Content-Type": "application/x-www-form-urlencoded" }, 415, "unsupported_media_type"],
+    [path, "no key", { "Idempotency-Key": "" }, 400, "idempotency_key_required"],
+    [path, "a declared body over 8 kB", { "Content-Length": "8193" }, 413, "payload_too_large"],
+  ] as const))("%s: refuses %s before anything is forwarded", async (path, _label, extra, status, code) => {
+    stubUpstreamFetch();
+    const req = "Origin" in extra
+      ? requestWithOrigin(`https://proxy.test/api${path}`, {
+          method: "POST", body: BODY, origin: extra.Origin,
+          headers: { "Content-Type": "application/json", "Idempotency-Key": "review-9b1c7d2e-4f3a-4c1b-8e2d" },
+        })
+      : review(path, extra as Record<string, string>);
+    const res = await handleRequest(req, TEST_ENV);
+    expect(res.status).toBe(status);
+    expect(await res.json()).toEqual({ error: { code } });
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it.each(PATHS)("refuses a %s body over 8 kB even when Content-Length understates it", async (path) => {
+    stubUpstreamFetch();
+    const res = await handleRequest(review(path, {}, JSON.stringify({ pad: "x".repeat(9_000) })), TEST_ENV);
+    expect(res.status).toBe(413);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it.each(PATHS)("does not make %s GET-readable", async (path) => {
+    stubUpstreamFetch();
+    const res = await handleRequest(review(path, {}, BODY, "GET"), TEST_ENV);
+    expect(res.status).toBe(403);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
 });
 
 describe("CRM card reads (supplier directory, observed equipment interests)", () => {

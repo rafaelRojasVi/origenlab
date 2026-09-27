@@ -101,11 +101,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/v2\/workspace\/marketing\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/archive$/,
   // W10 suppression status: which addresses asked for «BAJA», since when, and how many frozen
   // recipients it refuses today. A read, masked for a `viewer` upstream, never a message body.
-  // The unsubscribe preview (`POST /v2/unsubscribe/preview`), apply
-  // (`POST /v2/commands/apply-unsubscribe-replies`), review confirmation
-  // (`POST /v2/commands/resolve-unsubscribe-review`) and review dismissal
-  // (`POST /v2/commands/dismiss-unsubscribe-review`) are deliberately NOT listed: they carry
-  // message bodies or decide a suppression, and stay operator tooling on the API.
+  // The unsubscribe preview (`POST /v2/unsubscribe/preview`) and apply
+  // (`POST /v2/commands/apply-unsubscribe-replies`) are deliberately NOT listed anywhere: they
+  // carry message bodies and stay operator tooling on the API. The two review decisions are
+  // POST-only marketing commands (MARKETING_COMMAND_POST_PATHS), never GET-readable.
   /^\/v2\/workspace\/marketing\/suppressions$/,
   // CRM card reads (`apps/api` v2/crm_workspace_routes.py): the supplier directory with its
   // machine candidates, and the observed equipment interests per line, institution and
@@ -203,6 +202,12 @@ export const MARKETING_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/save-campaign-draft$/,
   /^\/v2\/commands\/freeze-campaign-audience$/,
   /^\/v2\/commands\/set-campaign-planning$/,
+  // W10 review of a «BAJA» held for review. Upstream: confirm needs an active sales/admin
+  // operator, dismiss an active admin plus the review's review_sha256; both a note or
+  // explanation, and the database re-checks every one of those. Neither lifts a confirmed
+  // unsubscribe; nothing here applies replies or reads a mailbox.
+  /^\/v2\/commands\/resolve-unsubscribe-review$/,
+  /^\/v2\/commands\/dismiss-unsubscribe-review$/,
 ];
 
 /** Larger than the API's 512 kB HTML limit plus the freeze's 5,000 decisions of 500 characters. */
@@ -213,11 +218,17 @@ export const CAMPAIGN_PLANNING_MAX_BYTES = 4_096;
 
 const CAMPAIGN_PLANNING_PATH_RE = /^\/v2\/commands\/set-campaign-planning$/;
 
+/** A review decision is a UUID, an address, a hash and at most 1,000 characters of text. */
+export const UNSUBSCRIBE_REVIEW_MAX_BYTES = 8_192;
+
+const UNSUBSCRIBE_REVIEW_PATH_RE = /^\/v2\/commands\/(resolve|dismiss)-unsubscribe-review$/;
+
 /** The body limit for one marketing command path. */
 export function marketingCommandMaxBytes(pathname: string): number {
-  return CAMPAIGN_PLANNING_PATH_RE.test(pathname.split("?")[0])
-    ? CAMPAIGN_PLANNING_MAX_BYTES
-    : MARKETING_COMMAND_MAX_BYTES;
+  const pathOnly = pathname.split("?")[0];
+  if (CAMPAIGN_PLANNING_PATH_RE.test(pathOnly)) return CAMPAIGN_PLANNING_MAX_BYTES;
+  if (UNSUBSCRIBE_REVIEW_PATH_RE.test(pathOnly)) return UNSUBSCRIBE_REVIEW_MAX_BYTES;
+  return MARKETING_COMMAND_MAX_BYTES;
 }
 
 export function isAllowedMarketingCommandPostPath(pathname: string): boolean {

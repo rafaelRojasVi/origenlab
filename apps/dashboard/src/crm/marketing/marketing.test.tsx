@@ -2,12 +2,13 @@ import "@testing-library/jest-dom";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import taxonomyJson from "../../../../api/src/origenlab_api/v2/equipment_taxonomy.json";
+import { AuthSessionContext } from "../../context/AuthSessionContext";
 import { MarketingPage } from "../pages/MarketingPage";
 import type { MarketingResponse } from "../crmTypes";
 import { destinationsOf, recipientList, selectAllEligible, toggle } from "./audienceSelection";
 import { PREVIEW_CSP, buildPreviewDocument } from "./emailPreview";
 import { TEMPLATES, imageUrlsIn, renderTemplate } from "./emailTemplates";
-import { CAMPAIGN_COMMAND_PATHS } from "./marketingApi";
+import { CAMPAIGN_COMMAND_PATHS, UNSUBSCRIBE_REVIEW_PATHS } from "./marketingApi";
 import type { AudiencePerson, AudienceResponse, CampaignContent, EquipmentTaxonomy, FreezePreview, FreezeRow } from "./marketingTypes";
 
 // Every institution, address and campaign below is invented; the repository is public.
@@ -687,5 +688,112 @@ describe("Bajas (W10)", () => {
     expect(screen.queryByRole("button", { name: /enviar|aplicar|sincronizar|suscrib|confirmar|descartar/i })).toBeNull();
     expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
     expect(panel.textContent).not.toMatch(/[a-z0-9]+@(uni|lab)\.test/);
+  });
+
+  // ── review actions: only with the API switch on, and only for the roles the API admits ──
+  const HELD = {
+    assertion_id: "a0000000-0000-4000-8000-0000000000a1", address: "remitente@lab.test", review_reason: "recipient_mismatch",
+    review_reason_label: "El remitente no es el destinatario del correo enviado al que responde",
+    grammar_version: "baja-reply/2026-09-27.v2", policy_version: "unsubscribe-sender/2026-09-27.v2",
+    observed_at: "2026-09-26T18:20:00Z", recorded_at: "2026-09-27T12:05:00Z", review_sha256: "c".repeat(64),
+  };
+
+  function renderBajas(role: string | null, { applyEnabled = true, commandStatus = 200 } = {}) {
+    const calls: { path: string; method: string; body: unknown; key: string | null }[] = [];
+    let held = [HELD];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, "http://localhost");
+        const method = init?.method ?? "GET";
+        const headers = new Headers(init?.headers);
+        calls.push({ path: url.pathname, method, body: init?.body ? JSON.parse(String(init.body)) : null,
+                     key: headers.get("Idempotency-Key") });
+        if (method === "POST") {
+          if (commandStatus !== 200) {
+            return jsonResponse({ detail: { code: "review_not_pending", message: "this request is rejected, not pending" } }, commandStatus);
+          }
+          held = [];
+          return jsonResponse({ command: "x", assertion_id: HELD.assertion_id, was: "unresolved", outcome: "added", replayed: false });
+        }
+        if (url.pathname.endsWith("/v2/workspace/marketing")) return jsonResponse(marketing(true));
+        if (url.pathname.endsWith("/v2/workspace/marketing/taxonomy")) return jsonResponse(taxonomy);
+        if (url.pathname.endsWith("/v2/workspace/marketing/suppressions")) {
+          return jsonResponse({ ...SUPPRESSIONS, apply_enabled: applyEnabled, pending_reviews: held,
+                                summary: { ...SUPPRESSIONS.summary, pending_reviews: held.length } });
+        }
+        return jsonResponse({ detail: "not found" }, 404);
+      }),
+    );
+    const session = role === null
+      ? { kind: "loading" as const }
+      : { kind: "signed_in" as const, method: "dev_header",
+          operator: { operatorId: "o1", email: "op@example.invalid", displayName: "Op", role } };
+    render(
+      <AuthSessionContext.Provider value={{ session, signOut: async () => undefined }}>
+        <MarketingPage />
+      </AuthSessionContext.Provider>,
+    );
+    return calls;
+  }
+
+  async function openBajas() {
+    await screen.findAllByTestId("campaign-card");
+    fireEvent.click(screen.getByRole("button", { name: "Bajas" }));
+    return screen.findAllByTestId("pending-review-row");
+  }
+
+  it.each([["viewer"], [null]])("offers no review action to %s", async (role) => {
+    const calls = renderBajas(role);
+    const [row] = await openBajas();
+    expect(within(row).queryAllByRole("button")).toHaveLength(0);
+    expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
+  });
+
+  it("offers no review action while the API switch is off, even to an admin", async () => {
+    renderBajas("admin", { applyEnabled: false });
+    const [row] = await openBajas();
+    expect(within(row).queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("lets sales confirm a hold with a note, one Idempotency-Key, then reloads — and never dismiss", async () => {
+    const calls = renderBajas("sales");
+    const [row] = await openBajas();
+    expect(within(row).queryByRole("button", { name: /descartar/i })).toBeNull();
+    fireEvent.click(within(row).getByRole("button", { name: "Confirmar BAJA" }));
+    const form = screen.getByTestId("confirm-review-form");
+    expect(form).toHaveTextContent("No se puede deshacer");
+    const submit = within(form).getByRole("button", { name: "Confirmar BAJA permanente" });
+    expect(submit).toBeDisabled();
+    fireEvent.change(within(form).getByLabelText("Nota de la revisión"), { target: { value: "   " } });
+    expect(submit).toBeDisabled();
+    fireEvent.change(within(form).getByLabelText("Nota de la revisión"), { target: { value: "Sí pidió la baja" } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(screen.queryAllByTestId("pending-review-row")).toHaveLength(0));
+    const posts = calls.filter((c) => c.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(posts[0].path).toBe(UNSUBSCRIBE_REVIEW_PATHS.resolve);
+    expect(posts[0].body).toEqual({ assertion_id: HELD.assertion_id, expected_address: HELD.address, note: "Sí pidió la baja" });
+    expect(posts[0].key).toMatch(/.{8,}/);
+  });
+
+  it("lets an admin dismiss a false positive quoting the review version, and shows a refusal", async () => {
+    const calls = renderBajas("admin", { commandStatus: 409 });
+    const [row] = await openBajas();
+    expect(within(row).getByRole("button", { name: "Confirmar BAJA" })).toBeInTheDocument();
+    fireEvent.click(within(row).getByRole("button", { name: "Descartar (falso positivo)" }));
+    const form = screen.getByTestId("dismiss-review-form");
+    expect(form).toHaveTextContent("podrá confirmarse después");
+    fireEvent.change(within(form).getByLabelText("Explicación del descarte"), { target: { value: "Respondió BAJA a otro boletín" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Descartar retención" }));
+    expect(await within(form).findByRole("alert")).toHaveTextContent("review_not_pending");
+    fireEvent.click(within(form).getByRole("button", { name: "Descartar retención" }));  // a retry reuses the key
+    await waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(2));
+    const posts = calls.filter((c) => c.method === "POST");
+    expect(posts[0].path).toBe(UNSUBSCRIBE_REVIEW_PATHS.dismiss);
+    expect(posts[0].body).toEqual({ assertion_id: HELD.assertion_id, expected_address: HELD.address,
+                                    expected_review_sha256: "c".repeat(64), explanation: "Respondió BAJA a otro boletín" });
+    expect(posts[1].key).toBe(posts[0].key);
+    expect(screen.getAllByTestId("pending-review-row")).toHaveLength(1);
   });
 });
