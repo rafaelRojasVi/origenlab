@@ -6,7 +6,7 @@ import taxonomyJson from "../../../../api/src/origenlab_api/v2/equipment_taxonom
 import { AuthSessionContext } from "../../context/AuthSessionContext";
 import type { CampaignSummary, CampaignTotals } from "../crmTypes";
 import { MarketingPage } from "../pages/MarketingPage";
-import { cardTotals } from "./campaignTotals";
+import { cardTotals, neverSent } from "./campaignTotals";
 import type { AuditResponse, HistoryRecipient, RecipientPage, RepliesResponse } from "./marketingTypes";
 
 // Every campaign, address and figure below is invented; the repository is public.
@@ -89,7 +89,12 @@ function withRole(role: string, node: ReactNode) {
   return <AuthSessionContext.Provider value={{ session, signOut: async () => undefined }}>{node}</AuthSessionContext.Provider>;
 }
 
-function stub({ role = "sales", database = "origenlab_clean", replies = REPLIES }: { role?: string; database?: string; replies?: RepliesResponse } = {}) {
+function stub({
+  role = "sales",
+  database = "origenlab_clean",
+  replies = REPLIES,
+  campaign = HISTORICAL,
+}: { role?: string; database?: string; replies?: RepliesResponse; campaign?: CampaignSummary } = {}) {
   const calls: URL[] = [];
   vi.stubGlobal(
     "fetch",
@@ -98,7 +103,7 @@ function stub({ role = "sales", database = "origenlab_clean", replies = REPLIES 
       calls.push(url);
       const json = (b: unknown) => Promise.resolve(new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } }));
       if (url.pathname.endsWith("/v2/workspace/marketing")) {
-        return json({ campaigns: [HISTORICAL], contact_controls: [], replies_note: "", authoring: {}, storage: { table: "outbound.campaign", database } });
+        return json({ campaigns: [campaign], contact_controls: [], replies_note: "", authoring: {}, storage: { table: "outbound.campaign", database } });
       }
       if (url.pathname.endsWith("/v2/workspace/marketing/taxonomy")) return json(taxonomyJson);
       if (url.pathname.endsWith("/history/recipients")) return json(page(url, role === "viewer"));
@@ -109,9 +114,9 @@ function stub({ role = "sales", database = "origenlab_clean", replies = REPLIES 
           campaign_id: ID, name: HISTORICAL.name, status: "archived", subject: null, preheader: null, version: 1, content_sha256: null,
           content_frozen_at: null, audience_frozen_at: null, audience_sha256: null, audience_policy_version: null, created_at: null,
           origin: "imported_v1", sender_address: null, sender_name: null, html: null, html_state: "not_archived",
-          recipients_by_state: HISTORICAL.recipients_by_state, send_attempts: HISTORICAL.send_attempts, send_batches: [],
+          recipients_by_state: campaign.recipients_by_state, send_attempts: campaign.send_attempts, send_batches: [],
           metrics: { opens: null, clicks: null, note: "" }, storage: { table: "outbound.campaign", database },
-          totals: TOTALS, attempt_totals: HISTORICAL.attempt_totals, replies: HISTORICAL.replies, subject_state: "not_imported",
+          totals: campaign.totals, attempt_totals: campaign.attempt_totals, replies: campaign.replies, subject_state: "not_imported",
           preheader_state: "not_imported", immutable: true, immutable_enforced_by_database: true,
         });
       }
@@ -172,6 +177,53 @@ describe("campaign card totals", () => {
     fireEvent.click(within(card).getByTestId("open-history"));
     expect(await screen.findByText("Cerrada · solo lectura")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Editar|Abrir campaña|Reenviar|Reabrir/ })).toBeNull();
+  });
+});
+
+// An archived campaign whose whole audience was excluded before any send: zero attempts.
+const NEVER_SENT: CampaignSummary = {
+  ...HISTORICAL,
+  name: "Centrífugas (nunca enviada, ficticia)",
+  first_sent_at: null,
+  last_sent_at: null,
+  recipients_by_state: { excluded: 12 },
+  send_attempts: [],
+  send_batches: [],
+  totals: { audience: 12, included: 0, sent: 0, excluded: 12, blocked: 0, unsent: 0, rejected: 0, bounced: 0, responses: 0 },
+  attempt_totals: {
+    attempts: 0, accepted: 0, rejected: 0, other: 0, delivery_confirmed: 0, delivery_pending: 0, delivery_bounced: 0,
+    rejected_undated: 0, with_provider_id: 0, first_accepted_at: null, last_accepted_at: null,
+  },
+};
+
+describe("an archived campaign that was never sent", () => {
+  it("is «Nunca enviada» only when archived with zero attempts", () => {
+    expect(neverSent(NEVER_SENT)).toBe(true);
+    expect(neverSent(HISTORICAL)).toBe(false);
+    expect(neverSent({ ...NEVER_SENT, status: "draft" })).toBe(false);
+    expect(neverSent({ ...NEVER_SENT, attempt_totals: null })).toBe(true);
+    expect(neverSent({ ...NEVER_SENT, attempt_totals: null, send_attempts: [{ submission_state: "rejected", delivery_state: "none", count: 1 }] })).toBe(false);
+  });
+
+  it("the card, the detail header and the send record say «Nunca enviada»", async () => {
+    stub({ campaign: NEVER_SENT });
+    render(withRole("admin", <MarketingPage />));
+    const card = await screen.findByTestId("campaign-card");
+    expect(within(card).getByTestId("never-sent")).toHaveTextContent("Nunca enviada");
+    fireEvent.click(within(card).getByTestId("open-history"));
+    expect(await screen.findByTestId("detail-never-sent")).toHaveTextContent("Nunca enviada");
+    expect(await screen.findByTestId("send-dates")).toHaveTextContent("Nunca enviada");
+    expect(screen.queryByRole("button", { name: /Editar|Abrir campaña|Reenviar|Reabrir|Planificar/ })).toBeNull();
+  });
+
+  it("a sent historical campaign never carries the label", async () => {
+    stub();
+    render(withRole("admin", <MarketingPage />));
+    const card = await screen.findByTestId("campaign-card");
+    expect(within(card).queryByTestId("never-sent")).toBeNull();
+    fireEvent.click(within(card).getByTestId("open-history"));
+    await screen.findByText("Cerrada · solo lectura");
+    expect(screen.queryByText("Nunca enviada")).toBeNull();
   });
 });
 

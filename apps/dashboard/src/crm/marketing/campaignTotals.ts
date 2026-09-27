@@ -50,3 +50,17 @@ export function cardTotals(c: CampaignSummary): { key: TotalKey; value: number |
     value: key === "responses" && repliesUnknown(c.replies, t) ? null : t[key],
   }));
 }
+
+/** The literal label for an archived campaign with no send attempt at all. */
+export const NEVER_SENT_LABEL = "Nunca enviada";
+
+/**
+ * Whether a campaign is historical and was never sent: archived, and not one send attempt
+ * (accepted, rejected or otherwise) recorded. A draft with no attempts is not "never sent" — it
+ * simply has not been sent yet.
+ */
+export function neverSent(c: Pick<CampaignSummary, "status" | "send_attempts" | "attempt_totals">): boolean {
+  if (c.status !== "archived") return false;
+  const attempts = c.attempt_totals ? c.attempt_totals.attempts : c.send_attempts.reduce((n, a) => n + a.count, 0);
+  return attempts === 0;
+}

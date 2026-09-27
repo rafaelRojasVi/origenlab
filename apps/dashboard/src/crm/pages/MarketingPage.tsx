@@ -10,7 +10,7 @@ import { MarketingOverview } from "../marketing/MarketingOverview";
 import { SuppressionStatus } from "../marketing/SuppressionStatus";
 import { PLANNING_LABEL, fmtShortDay, relativeDay, santiagoTime, todayInSantiago } from "../marketing/calendar";
 import { EmailFrame } from "../marketing/EmailFrame";
-import { TOTAL_HINT, TOTAL_LABEL, cardTotals } from "../marketing/campaignTotals";
+import { NEVER_SENT_LABEL, TOTAL_HINT, TOTAL_LABEL, cardTotals, neverSent } from "../marketing/campaignTotals";
 import { fetchCampaign, fetchTaxonomy } from "../marketing/marketingApi";
 import type { CampaignContent, EquipmentTaxonomy } from "../marketing/marketingTypes";
 import {
@@ -363,6 +363,11 @@ function CampaignCard({
             <Badge tone="warn" title="Cargada desde el registro de envíos de V1">
               Histórica V1
             </Badge>
+          ) : null}
+          {neverSent(c) ? (
+            <span data-testid="never-sent">
+              <Badge tone="neutral" title="Archivada sin ningún intento de envío registrado.">{NEVER_SENT_LABEL}</Badge>
+            </span>
           ) : null}
         </div>
       </div>

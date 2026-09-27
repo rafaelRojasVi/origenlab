@@ -7,7 +7,7 @@ import { PLANNING_LABEL, fmtLongDay, relativeDay, santiagoTime, todayInSantiago 
 import { CampaignAudit } from "./CampaignAudit";
 import { CampaignRecipients } from "./CampaignRecipients";
 import { CampaignReplies } from "./CampaignReplies";
-import { FILTER_TOTALS, TOTAL_HINT, TOTAL_LABEL, repliesUnknown } from "./campaignTotals";
+import { FILTER_TOTALS, NEVER_SENT_LABEL, TOTAL_HINT, TOTAL_LABEL, neverSent, repliesUnknown } from "./campaignTotals";
 import { EmailFrame } from "./EmailFrame";
 import { fetchCampaignArchive, newIdempotencyKey, refusalOf, setCampaignPlanning } from "./marketingApi";
 import type { CampaignArchive, EquipmentTaxonomy } from "./marketingTypes";
@@ -112,6 +112,11 @@ export function CampaignDetail({
               <Badge tone="neutral" title="Una campaña histórica no se edita, reabre, reenvía ni planifica.">
                 Cerrada · solo lectura
               </Badge>
+            ) : null}
+            {neverSent(summary) ? (
+              <span data-testid="detail-never-sent">
+                <Badge tone="neutral" title="Archivada sin ningún intento de envío registrado.">{NEVER_SENT_LABEL}</Badge>
+              </span>
             ) : null}
           </div>
         </div>
@@ -323,7 +328,7 @@ function SendRecord({ archive: a }: { archive: CampaignArchive }) {
         <dt className="text-ink-faint">Fecha de envío</dt>
         <dd className="text-ink" data-testid="send-dates">
           {a.send_batches.length === 0 ? (
-            <span className="text-ink-faint">Sin envíos registrados</span>
+            <span className="text-ink-faint">{neverSent(a) ? NEVER_SENT_LABEL : "Sin envíos registrados"}</span>
           ) : (
             <ul className="space-y-0.5">
               {a.send_batches.map((b, i) => (
