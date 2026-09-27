@@ -33,7 +33,7 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/v2/*` (named paths only — see `src/allowlist.ts`) | V2 durable reads |
 | `/auth/google/login`, `/auth/google/callback`, `/auth/session` | Dashboard Google Workspace sign-in (see *Sign-in exceptions* below) |
 
-**Refused on purpose** (403 `path_not_allowed`, never forwarded): V1 `/contacts/*` and `/mirror/*`. Upstream they are gated only by the shared API key — no operator identity, no role, no redaction — so V2 `/v2/*` is the only browser surface for CRM, contacts and evidence. `/v2/cockpit/*` and every `/v2/workspace/*` path other than the eight Marketing reads and the two CRM card reads below are not listed either. The W10 unsubscribe tooling (`POST /v2/unsubscribe/preview`, `POST /v2/commands/apply-unsubscribe-replies`, `POST /v2/commands/resolve-unsubscribe-review`) is API-only and never listed. See `docs/OPERATIONS.md`.
+**Refused on purpose** (403 `path_not_allowed`, never forwarded): V1 `/contacts/*` and `/mirror/*`. Upstream they are gated only by the shared API key — no operator identity, no role, no redaction — so V2 `/v2/*` is the only browser surface for CRM, contacts and evidence. `/v2/cockpit/*` and every `/v2/workspace/*` path other than the eight Marketing reads and the two CRM card reads below are not listed either. The W10 unsubscribe tooling (`POST /v2/unsubscribe/preview`, `POST /v2/commands/apply-unsubscribe-replies`, `POST /v2/commands/resolve-unsubscribe-review`, `POST /v2/commands/dismiss-unsubscribe-review`) is API-only and never listed. See `docs/OPERATIONS.md`.
 
 **POST** (the only human write path — trusted operator identity, `Idempotency-Key`, optimistic concurrency; each ID format is regex-constrained, no wildcard route):
 

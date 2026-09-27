@@ -1141,6 +1141,7 @@ describe("V2 durable read boundary allowlist", () => {
       // W10: the unsubscribe preview and apply are API-only operator tooling, never the browser's.
       "/v2/commands/apply-unsubscribe-replies",
       "/v2/commands/resolve-unsubscribe-review",
+      "/v2/commands/dismiss-unsubscribe-review",
       "/v2/unsubscribe/preview",
       "/v2/commands/resubscribe",
       "/v2/commands/revoke-block",
