@@ -5,8 +5,8 @@
  *
  * The POSTs target exactly `CAMPAIGN_COMMAND_PATHS` (pinned by `src/test/noWritePolicy.test.ts`).
  * None approves or sends anything: the API has no such command, and there is no Send button.
- * Behind the production Worker they are refused (the proxy allows no POST under `/v2`), which
- * the editor and the freeze screen report as "not enabled here".
+ * The Worker forwards exactly these three POSTs; each still mounts upstream only behind its own
+ * API switch, and a switched-off command is reported as "not enabled here".
  */
 
 import { OperatorApiError, fetchJsonGet, operatorApiUrl } from "../../api/operatorClient";

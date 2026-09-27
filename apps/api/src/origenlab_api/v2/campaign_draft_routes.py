@@ -5,9 +5,9 @@ switch from `ORIGENLAB_V2_COMMANDS_ENABLED`, because letting an operator write e
 letting them record commercial decisions are different permissions to grant a deployment.
 
 Same requirements as every command: an active `sales` or `admin` operator (from the verified
-identity, never the body) and an `Idempotency-Key`. `apps/dashboard-proxy` allows no POST under
-`/v2`, so behind the production Worker these paths are unreachable; locally the Vite dev proxy
-reaches them.
+identity, never the body) and an `Idempotency-Key`. `apps/dashboard-proxy` lists these two exact
+paths as POST and refuses them before forwarding without an allowed `Origin`, a JSON body and a
+well-formed `Idempotency-Key`; the role check is here, upstream.
 """
 
 from __future__ import annotations

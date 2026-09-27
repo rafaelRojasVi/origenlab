@@ -5,8 +5,8 @@ its own. Same requirements as every command: an active `sales` or `admin` operat
 verified identity, never the body), an `Idempotency-Key`, and here also the final confirmation
 (`confirmed: true`) and the `preview_sha256` of the audience the operator was shown.
 
-`apps/dashboard-proxy` allows no POST under `/v2`, so behind the production Worker this path is
-unreachable; locally the Vite dev proxy reaches it.
+`apps/dashboard-proxy` lists this exact path as POST behind the same Origin / JSON /
+`Idempotency-Key` guard as the draft commands; the role check is here, upstream.
 """
 
 from __future__ import annotations

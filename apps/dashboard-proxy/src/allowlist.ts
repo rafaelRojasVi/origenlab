@@ -84,6 +84,17 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // decision with its own review.
   /^\/v2\/cases$/,
   /^\/v2\/cases\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  // CRM Marketing reads (`apps/api` v2/crm_workspace_routes.py). Exact paths only: the
+  // campaign list, the equipment taxonomy, the interest audience, one campaign's content, the
+  // audience-freeze preview and a frozen campaign's recipient snapshot. Addresses in them are
+  // masked for a `viewer` upstream (contact_redaction.py). Nothing else under
+  // `/v2/workspace/*` is listed.
+  /^\/v2\/workspace\/marketing$/,
+  /^\/v2\/workspace\/marketing\/taxonomy$/,
+  /^\/v2\/workspace\/marketing\/audience$/,
+  /^\/v2\/workspace\/marketing\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  /^\/v2\/workspace\/marketing\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/freeze-preview$/,
+  /^\/v2\/workspace\/marketing\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/recipients$/,
   // Dashboard sign-in (Google Workspace, `apps/api` v2/auth_routes.py). Three exact GET
   // paths. The cookie and redirect exceptions they need live in `auth.ts`, and apply to
   // these paths only.
@@ -155,6 +166,33 @@ export function isAllowedCommercialOperationsPostPath(
 }
 
 /**
+ * CRM Marketing commands: create and save a campaign draft, and freeze a draft's audience into
+ * an immutable recipient snapshot. Three exact paths; none approves or sends anything, and no
+ * send, approve or activate command exists upstream to list.
+ *
+ * Upstream each requires an active `sales` or `admin` operator (resolved from the verified
+ * session or Cloudflare Access identity, never the body), an `Idempotency-Key`, and a
+ * compare-and-set `expected_version` (save, freeze); the freeze also requires `confirmed: true`
+ * and the preview fingerprint the operator was shown. Each mounts only behind its own API
+ * switch. Every request here must also pass `marketingCommandRefusal` in index.ts: an allowed
+ * `Origin`, no cross-site `Sec-Fetch-Site`, a JSON body within `MARKETING_COMMAND_MAX_BYTES`,
+ * and a well-formed `Idempotency-Key` — the CSRF and replay guard for cookie sessions.
+ */
+export const MARKETING_COMMAND_POST_PATHS: readonly RegExp[] = [
+  /^\/v2\/commands\/create-campaign-draft$/,
+  /^\/v2\/commands\/save-campaign-draft$/,
+  /^\/v2\/commands\/freeze-campaign-audience$/,
+];
+
+/** Larger than the API's 512 kB HTML limit plus the freeze's 5,000 decisions of 500 characters. */
+export const MARKETING_COMMAND_MAX_BYTES = 3_500_000;
+
+export function isAllowedMarketingCommandPostPath(pathname: string): boolean {
+  const pathOnly = pathname.split("?")[0];
+  return MARKETING_COMMAND_POST_PATHS.some((pattern) => pattern.test(pathOnly));
+}
+
+/**
  * Sign-out. Clears the session cookie upstream and writes nothing else; listed apart from
  * the commercial commands so it can never inherit their headers or be mistaken for one.
  */
@@ -168,6 +206,7 @@ export function isAllowedPostPath(pathname: string): boolean {
   return (
     isAllowedPostUploadPath(pathname) ||
     isAllowedCommercialOperationsPostPath(pathname) ||
+    isAllowedMarketingCommandPostPath(pathname) ||
     isAllowedAuthPostPath(pathname)
   );
 }

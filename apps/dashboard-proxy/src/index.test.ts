@@ -1451,3 +1451,88 @@ describe("CRM-2 sales-opportunity lifecycle proxy", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe("Marketing commands (draft create/save, audience freeze)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const FREEZE = "https://proxy.test/api/v2/commands/freeze-campaign-audience";
+  const good = (extra: Record<string, string> = {}, body = JSON.stringify({ confirmed: true })) =>
+    requestWithOrigin(FREEZE, {
+      method: "POST",
+      body,
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": "9b1c7d2e-4f3a-4c1b-8e2d-1a2b3c4d5e6f",
+        "Sec-Fetch-Site": "same-site",
+        Cookie: "__Host-origenlab_session=s1; CF_Authorization=leak",
+        ...extra,
+      },
+    });
+
+  it("forwards a same-site JSON command with its key and only the session cookie", async () => {
+    stubUpstreamFetch();
+    const res = await handleRequest(good(), TEST_ENV);
+    expect(res.status).toBe(200);
+    const upstream = vi.mocked(fetch).mock.calls[0][0] as Request;
+    expect(new URL(upstream.url).pathname).toBe("/v2/commands/freeze-campaign-audience");
+    expect(upstream.method).toBe("POST");
+    expect(upstream.headers.get("Idempotency-Key")).toBe("9b1c7d2e-4f3a-4c1b-8e2d-1a2b3c4d5e6f");
+    expect(upstream.headers.get("Cookie")).toBe("__Host-origenlab_session=s1");
+    expect(await upstream.text()).toBe(JSON.stringify({ confirmed: true }));
+  });
+
+  it.each([
+    ["no Origin", good({}), { origin: "" }, 403, "origin_not_allowed"],
+    ["a foreign Origin", good({}), { origin: "https://evil.test" }, 403, "origin_not_allowed"],
+    ["a cross-site fetch", good({ "Sec-Fetch-Site": "cross-site" }), {}, 403, "cross_site_request"],
+    ["a form post", good({ "Content-Type": "application/x-www-form-urlencoded" }), {}, 415, "unsupported_media_type"],
+    ["text/plain", good({ "Content-Type": "text/plain" }), {}, 415, "unsupported_media_type"],
+    ["no key", good({ "Idempotency-Key": "" }), {}, 400, "idempotency_key_required"],
+    ["a malformed key", good({ "Idempotency-Key": "short" }), {}, 400, "idempotency_key_required"],
+    ["a declared oversize body", good({ "Content-Length": "9999999" }), {}, 413, "payload_too_large"],
+  ])("refuses %s before anything is forwarded", async (_label, base, over, status, code) => {
+    stubUpstreamFetch();
+    const headers = new Headers(base.headers);
+    if ((over as { origin?: string }).origin !== undefined) {
+      const origin = (over as { origin: string }).origin;
+      if (origin) headers.set("Origin", origin);
+      else headers.delete("Origin");
+    }
+    const req = new Request(base.url, { method: "POST", headers, body: JSON.stringify({ confirmed: true }) });
+    const res = await handleRequest(req, TEST_ENV);
+    expect(res.status).toBe(status);
+    expect(await res.json()).toEqual({ error: { code } });
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("refuses an actual body larger than the limit even when Content-Length understates it", async () => {
+    stubUpstreamFetch();
+    const res = await handleRequest(good({}, "x".repeat(3_500_001)), TEST_ENV);
+    expect(res.status).toBe(413);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("advertises POST and Idempotency-Key on the preflight for allowed origins only", async () => {
+    const pre = await handleRequest(requestWithOrigin(FREEZE, { method: "OPTIONS" }), TEST_ENV);
+    expect(pre.headers.get("Access-Control-Allow-Methods")).toContain("POST");
+    expect(pre.headers.get("Access-Control-Allow-Headers")).toContain("Idempotency-Key");
+    const foreign = await handleRequest(requestWithOrigin(FREEZE, { method: "OPTIONS", origin: "https://evil.test" }), TEST_ENV);
+    expect(foreign.headers.get("Access-Control-Allow-Origin")).toBeNull();
+  });
+
+  it("does not let the Marketing reads accept a write", async () => {
+    stubUpstreamFetch();
+    const res = await handleRequest(
+      requestWithOrigin("https://proxy.test/api/v2/workspace/marketing", {
+        method: "POST",
+        body: "{}",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": "9b1c7d2e-4f3a-4c1b" },
+      }),
+      TEST_ENV,
+    );
+    expect(res.status).toBe(405);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+});

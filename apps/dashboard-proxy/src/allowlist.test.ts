@@ -80,12 +80,6 @@ describe("allowlist", () => {
       "/v2/workspace/overview",
       "/v2/workspace/pipeline",
       "/v2/workspace/providers",
-      "/v2/workspace/marketing",
-      "/v2/workspace/marketing/taxonomy",
-      "/v2/workspace/marketing/audience",
-      `/v2/workspace/marketing/campaigns/${uuid}`,
-      `/v2/workspace/marketing/campaigns/${uuid}/freeze-preview`,
-      `/v2/workspace/marketing/campaigns/${uuid}/recipients`,
       "/v2/workspace/drive",
       "/v2/workspace/review",
       "/v2/cockpit/kpis",
@@ -104,6 +98,35 @@ describe("allowlist", () => {
       expect(isAllowedUpstreamPath(path)).toBe(false);
       expect(isAllowedPostPath(path)).toBe(false);
     }
+  });
+
+  it("forwards exactly the six Marketing reads, GET only, and nothing near them", async () => {
+    const { isAllowedMarketingCommandPostPath } = await import("./allowlist");
+    const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
+    for (const path of [
+      "/v2/workspace/marketing",
+      "/v2/workspace/marketing/taxonomy",
+      "/v2/workspace/marketing/audience",
+      `/v2/workspace/marketing/campaigns/${uuid}`,
+      `/v2/workspace/marketing/campaigns/${uuid}/freeze-preview`,
+      `/v2/workspace/marketing/campaigns/${uuid}/recipients`,
+    ]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(true);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+    for (const path of [
+      "/v2/workspace/marketing/",
+      "/v2/workspace/marketing/campaigns",
+      "/v2/workspace/marketing/campaigns/not-a-uuid",
+      `/v2/workspace/marketing/campaigns/${uuid.toUpperCase()}`,
+      `/v2/workspace/marketing/campaigns/${uuid}/recipients/x`,
+      `/v2/workspace/marketing/campaigns/${uuid}/send`,
+      "/v2/workspace/marketing/audience/export",
+    ]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+    expect(isAllowedMarketingCommandPostPath("/v2/commands/freeze-campaign-audience?x=1")).toBe(true);
   });
 
   it("refuses the bare V1 prefixes and does not confuse them with their V2 namesakes", () => {
@@ -1049,6 +1072,29 @@ describe("V2 durable read boundary allowlist", () => {
     }
   });
 
+  it("allows exactly the three Marketing commands as POST, and no send, approve or activate", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    for (const path of [
+      "/v2/commands/create-campaign-draft",
+      "/v2/commands/save-campaign-draft",
+      "/v2/commands/freeze-campaign-audience",
+    ]) {
+      expect(isAllowedPostPath(path), path).toBe(true);
+      expect(isAllowedUpstreamPath(path), path).toBe(false); // never GET-readable
+    }
+    for (const path of [
+      "/v2/commands/send-campaign",
+      "/v2/commands/approve-campaign",
+      "/v2/commands/activate-campaign",
+      "/v2/commands/dry-run-campaign",
+      "/v2/commands/grant-recontact-override",
+      "/v2/commands/freeze-campaign-audience/",
+      "/v2/commands/freeze-campaign-audience-and-send",
+    ]) {
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+
   it("keeps the eleven real V2 command routes unreachable through this Worker", async () => {
     // The command boundary EXISTS in apps/api: POST /v2/commands/* records durable human
     // decisions -- five about staged evidence, and six about a commercial case, which now
@@ -1076,11 +1122,6 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/set-case-organization-role",
       "/v2/commands/record-case-interest",
       "/v2/commands/advance-case-stage",
-      // campaign drafts
-      "/v2/commands/create-campaign-draft",
-      "/v2/commands/save-campaign-draft",
-      // audience freeze
-      "/v2/commands/freeze-campaign-audience",
     ]) {
       expect(isAllowedPostPath(path)).toBe(false);
       expect(isAllowedUpstreamPath(path)).toBe(false);
