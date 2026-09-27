@@ -354,14 +354,36 @@ Run one sign-in setup at a time.
 Off by default: `ORIGENLAB_V2_DATABASE_URL` must be a literal loopback address unless
 `ORIGENLAB_V2_DATABASE_REMOTE=true` (`src/origenlab_api/v2/remote_database.py`). Remote, the API
 refuses to start unless the DSN names exactly `ORIGENLAB_V2_DATABASE_EXPECTED_HOST` (a DNS name),
-carries no query string or fragment, logs in as `origenlab_api` (or the pooler spelling
-`origenlab_api.<project-ref>`), and `ORIGENLAB_V2_DATABASE_SSLROOTCERT` is a readable CA PEM with
+carries no query string or fragment, does not name port 6543 (Supavisor transaction mode, refused
+by name as the Slice 0 audit route refuses it — the reviewed route is the session pooler or the
+direct connection, both on 5432; `docs/OPERATIONS.md` §4.2), logs in as `origenlab_api` (or the
+pooler spelling `origenlab_api.<project-ref>`), and `ORIGENLAB_V2_DATABASE_SSLROOTCERT` is a readable CA PEM with
 no private key. Every connection then uses `sslmode=verify-full` with that CA, passed as keyword
 arguments so neither the DSN nor a `PGSSLMODE` in the environment can weaken it. Before serving,
 one read-only session must prove it is `origenlab_api` on the named database, holds no
 SUPERUSER/BYPASSRLS/CREATEROLE/CREATEDB/REPLICATION, and is not a member of `origenlab_owner`,
-`origenlab_migrator` or `postgres`. The development header login still refuses a remote
-database, and the import/rehearsal tools keep their own loopback-only guards.
+`origenlab_migrator`, `postgres`, or any role holding one of those attributes (a hosted project
+has roles the list cannot name — `service_role` holds BYPASSRLS). The development header login
+still refuses a remote database, and the import/rehearsal tools keep their own loopback-only
+guards.
+
+**Transaction behaviour.** Every repository opens one connection per unit of work, and every
+setting it makes is transaction-local (`set transaction read only`, `set local
+statement_timeout`, `set constraints all immediate`); nothing relies on session state, advisory
+locks, `LISTEN` or temporary tables. Session mode is still the selected route because it is the
+one reviewed end to end, and because psycopg's automatic server-side prepared statements are
+not a guaranteed fit for a transaction pooler.
+
+**What is proven where.** Against an ordinary PostgreSQL 17 (a throwaway container with a
+throwaway CA — the `ORIGENLAB_V2_TLS_TEST_*` tests): verify-full refuses a wrong CA and a wrong
+host name, the probe accepts the plain runtime role, refuses a superuser session, and refuses
+membership in an unnamed BYPASSRLS role. **Not proven by anything in this repository: the API
+path against a real hosted pooler** — that the pooler login `origenlab_api.<ref>` reaches
+`current_user = origenlab_api`, that verify-full passes against the pooler's certificate with the
+CA the provider actually uses (the Slice 0 audit's first hosted run stopped exactly there), that
+`origenlab_api` on the hosted project passes the membership probe, and that nothing between the
+pooler and the database is covered by this TLS check at all — verify-full authenticates the
+client-to-pooler hop only.
 
 With `ORIGENLAB_V2_DATABASE_URL` set, **either** Google login **or** the development header
 login must be switched on; with neither, the API refuses to start rather than serving a `/v2`
