@@ -301,7 +301,7 @@ projects in the `origenlab.cl` organization). Console section names are those of
 | `ORIGENLAB_GOOGLE_CLIENT_SECRET` | when enabled — **secret** | local client's secret | production client's secret |
 | `ORIGENLAB_GOOGLE_WORKSPACE_DOMAIN` | no — default `origenlab.cl` | `origenlab.cl` | `origenlab.cl` |
 | `ORIGENLAB_AUTH_PUBLIC_BASE_URL` | when enabled | `http://localhost:5173` | `https://dashboard.origenlab.cl/api` |
-| `ORIGENLAB_AUTH_SESSION_SECRET` | when enabled — **secret**, ≥ 32 chars | own random value | own random value |
+| `ORIGENLAB_AUTH_SESSION_SECRET` | when enabled, and always in production with V2 — **secret**, ≥ 32 chars (it also keys `address_ref`) | own random value (unset: a random per-process ref key) | own random value — startup refuses it missing |
 | `ORIGENLAB_AUTH_SESSION_TTL_SECONDS` | no — default `28800` (8 h) | | |
 | `ORIGENLAB_DEV_LOGIN_ENABLED` | no — default `false` | `true` only for the header login | **never** (startup refuses it) |
 | `ORIGENLAB_V2_DATABASE_URL` | yes — the operator lookup needs it | loopback DSN from `api-login` | blocked: loopback only today |

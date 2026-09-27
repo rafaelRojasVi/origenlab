@@ -91,7 +91,14 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
 
     dsn = settings.require_v2_database_url()
     session_secret = _secret(settings.auth_session_secret)
-    if session_secret:
+    if not (session_secret or "").strip() and settings.production_mode():
+        # Whatever the identity adapter, production needs one stable address-ref key shared
+        # by every worker; a random per-process key is a development convenience only.
+        raise ValueError(
+            "ORIGENLAB_AUTH_SESSION_SECRET is required when ORIGENLAB_ENV=production and "
+            "ORIGENLAB_V2_DATABASE_URL is set"
+        )
+    if (session_secret or "").strip():
         from origenlab_api.v2.marketing_audience import configure_address_ref_key
 
         # Pins the key of the opaque address refs viewers join reads by; without the secret
