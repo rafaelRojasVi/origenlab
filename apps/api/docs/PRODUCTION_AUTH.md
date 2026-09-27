@@ -281,7 +281,7 @@ projects in the `origenlab.cl` organization). Console section names are those of
    | | Production — `OrigenLab Dashboard (production)` | Local — `OrigenLab Dashboard (local)` |
    |---|---|---|
    | Authorized JavaScript origins | `https://dashboard.origenlab.cl` | `http://localhost:5173` |
-   | Authorized redirect URIs | `https://dashboard.origenlab.cl/api/auth/google/callback` | `http://localhost:5173/auth/google/callback` |
+   | Authorized redirect URIs | `https://dashboard.origenlab.cl/api/auth/google/callback` | `http://localhost:5173/auth/google/callback`, plus one per other local port actually used (below) |
 
    The redirect URI must equal `ORIGENLAB_AUTH_PUBLIC_BASE_URL` + `/auth/google/callback`
    byte for byte. Production goes through the dashboard's own origin because the browser
@@ -326,6 +326,28 @@ before forwarding to `https://api.origenlab.cl` (`apps/dashboard-proxy/src/allow
 | Redirect URI registered in Google | `https://dashboard.origenlab.cl/api/auth/google/callback` | `http://localhost:5173/auth/google/callback` |
 | Path the API receives | `/auth/google/callback` | `/auth/google/callback` |
 | Where the browser lands after sign-in | `https://dashboard.origenlab.cl/` | `http://localhost:5173/` |
+
+**Which local callback each setup supports.** The callback is not a property of the dashboard
+code: it is whatever origin the browser uses, plus `/auth/google/callback`, and it works only
+when three things agree — the Vite process proxies `/auth` to the API that will receive it,
+that API's `ORIGENLAB_AUTH_PUBLIC_BASE_URL` is that origin, and the URI is registered on the
+local Google client. `apps/dashboard/vite.config.ts` pins `server.port: 5173` with
+`strictPort` and proxies `/auth` (and `/v2`) with no prefix; it has no `preview` block, so
+`vite preview` inherits the same proxy (Vite 8 `preview.proxy ?? server.proxy`) on its own
+default port.
+
+| Setup | How it is started | `ORIGENLAB_AUTH_PUBLIC_BASE_URL` on the API it proxies to | Redirect URI to register |
+|---|---|---|---|
+| Documented default | `npm run dev` → `:5173`, proxy to `:8001` | `http://localhost:5173` | `http://localhost:5173/auth/google/callback` |
+| Current local preview (clean room) | `ORIGENLAB_DEV_API_TARGET=http://127.0.0.1:8051 npx vite --port 5251 --strictPort` — the dev server on another port, not `vite preview` | `http://localhost:5251` on the `:8051` API | `http://localhost:5251/auth/google/callback` |
+| Built bundle | `npm run build && npm run preview` → `:4173` | `http://localhost:4173` | `http://localhost:4173/auth/google/callback` |
+
+The `:5173` callback does **not** serve the `:5251` preview: Google would send the browser to
+`:5173`, which is a different Vite process proxying to a different API (or nothing). Browser
+cookies are scoped to the host, not the port, and local (`http://`) cookies carry no `__Host-`
+prefix, so two local dashboards on `localhost` share one cookie jar; a session from one API is
+refused by the other (different session secret), and signing in on one signs the other out.
+Run one sign-in setup at a time.
 
 ### Remote V2 database
 
