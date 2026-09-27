@@ -33,7 +33,7 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/v2/*` (named paths only — see `src/allowlist.ts`) | V2 durable reads |
 | `/auth/google/login`, `/auth/google/callback`, `/auth/session` | Dashboard Google Workspace sign-in (see *Sign-in exceptions* below) |
 
-**Refused on purpose** (403 `path_not_allowed`, never forwarded): V1 `/contacts/*` and `/mirror/*`. Upstream they are gated only by the shared API key — no operator identity, no role, no redaction — so V2 `/v2/*` is the only browser surface for CRM, contacts and evidence. `/v2/cockpit/*` and every `/v2/workspace/*` path other than the six Marketing reads below are not listed either. See `docs/OPERATIONS.md`.
+**Refused on purpose** (403 `path_not_allowed`, never forwarded): V1 `/contacts/*` and `/mirror/*`. Upstream they are gated only by the shared API key — no operator identity, no role, no redaction — so V2 `/v2/*` is the only browser surface for CRM, contacts and evidence. `/v2/cockpit/*` and every `/v2/workspace/*` path other than the six Marketing reads and the two CRM card reads below are not listed either. See `docs/OPERATIONS.md`.
 
 **POST** (the only human write path — trusted operator identity, `Idempotency-Key`, optimistic concurrency; each ID format is regex-constrained, no wildcard route):
 
@@ -49,6 +49,21 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/v2/commands/{create-campaign-draft,save-campaign-draft,freeze-campaign-audience}` | CRM Marketing — see *Marketing commands* below. Nothing here approves or sends |
 
 All other POST requests, and all `PUT`, `PATCH`, and `DELETE` requests, return **405**.
+
+## CRM card reads
+
+Two exact GET paths (`src/allowlist.ts`), nothing under or beside them:
+
+| Method | Upstream path | Upstream behaviour |
+|---|---|---|
+| GET | `/v2/workspace/providers` | the six catalogue brands as the supplier directory, then the machine-detected candidates (hints only, never promoted) |
+| GET | `/v2/workspace/equipment-interests` | observed equipment interests per line, institution and destination; CRM people apart from address-only evidence |
+
+Same guarantees as every V2 read: the session cookie is the only cookie forwarded, a
+browser-sent operator header is dropped (the Cloudflare Access email replaces it), addresses are
+masked upstream for `viewer`, and masked destinations carry only an opaque keyed `address_ref`
+(an HMAC scoped to the API, never a plain hash of the address). Any other method is **405**;
+a neighbouring path is **403** `path_not_allowed`.
 
 ## Marketing commands
 

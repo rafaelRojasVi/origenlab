@@ -246,9 +246,12 @@ the only browser surface for CRM, contacts and evidence.
   the V1 routes are migrated behind the V2 role model (resolved operator, `viewer` masking).
   Re-listing a prefix without one of the two reopens the unmasked read and is refused in
   review; `src/allowlist.test.ts` and `src/index.test.ts` pin both prefixes as refused.
-- **Not exposed either:** `/v2/workspace/*` and `/v2/cockpit/*` are built and redacting in
-  `apps/api` but are not in the allowlist; exposing them is a separate decision, and the
-  proxy suite pins every one of their paths as refused.
+- **Not exposed either:** `/v2/cockpit/*` and the rest of `/v2/workspace/*` are built and
+  redacting in `apps/api` but are not in the allowlist; exposing them is a separate decision,
+  and the proxy suite pins every one of their paths as refused. The exceptions are listed by
+  exact path, GET only: the six Marketing reads under `/v2/workspace/marketing*`, and the two
+  CRM card reads `/v2/workspace/providers` and `/v2/workspace/equipment-interests`
+  (`apps/dashboard-proxy/README.md`).
 
 ## 3. Deployment
 

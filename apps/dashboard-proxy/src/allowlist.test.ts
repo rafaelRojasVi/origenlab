@@ -79,8 +79,6 @@ describe("allowlist", () => {
     for (const path of [
       "/v2/workspace/overview",
       "/v2/workspace/pipeline",
-      "/v2/workspace/providers",
-      "/v2/workspace/equipment-interests",
       "/v2/workspace/drive",
       "/v2/workspace/review",
       "/v2/cockpit/kpis",
@@ -128,6 +126,35 @@ describe("allowlist", () => {
       expect(isAllowedPostPath(path), path).toBe(false);
     }
     expect(isAllowedMarketingCommandPostPath("/v2/commands/freeze-campaign-audience?x=1")).toBe(true);
+  });
+
+  it("forwards exactly the two CRM card reads, GET only, and nothing near them", () => {
+    for (const path of ["/v2/workspace/providers", "/v2/workspace/equipment-interests"]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(true);
+      expect(isAllowedUpstreamPath(`${path}?x=1`), path).toBe(true);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+    for (const path of [
+      "/v2/workspace",
+      "/v2/workspace/",
+      "/v2/workspace/providers/",
+      "/v2/workspace/providers/directory",
+      "/v2/workspace/provider",
+      "/v2/workspace/providersx",
+      "/v2/workspace/Providers",
+      "/v2/workspace/equipment-interests/",
+      "/v2/workspace/equipment-interests/persons",
+      "/v2/workspace/equipment-interest",
+      "/v2/workspace/equipment_interests",
+      "/v2/workspace/equipment-interests.json",
+      "/v2/workspace/equipment-interests%2F..%2Fpipeline",
+      "/workspace/providers",
+      "/v2/providers",
+      "/v2/equipment-interests",
+    ]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
   });
 
   it("refuses the bare V1 prefixes and does not confuse them with their V2 namesakes", () => {

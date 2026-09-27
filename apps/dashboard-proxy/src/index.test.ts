@@ -1536,3 +1536,90 @@ describe("Marketing commands (draft create/save, audience freeze)", () => {
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 });
+
+describe("CRM card reads (supplier directory, observed equipment interests)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const READS = ["/v2/workspace/providers", "/v2/workspace/equipment-interests"];
+
+  it.each(READS)("forwards GET %s with only the session cookie and no forged operator", async (path) => {
+    // What a viewer receives upstream: the address masked, an opaque ref to join by.
+    const masked = JSON.stringify({ persons: [{ address: "***@uni.invalid", address_ref: "0123456789abcdef01234567" }] });
+    stubUpstreamFetch(masked);
+    const res = await handleRequest(
+      requestWithOrigin(`https://proxy.test/api${path}`, {
+        headers: {
+          Cookie: "CF_Authorization=edge; __Host-origenlab_session=s1; other=1",
+          "X-OriginLab-Operator-Email": "admin@origenlab.cl",
+        },
+      }),
+      TEST_ENV,
+    );
+    expect(res.status).toBe(200);
+    const upstream = vi.mocked(fetch).mock.calls[0][0] as Request;
+    expect(new URL(upstream.url).pathname).toBe(path);
+    expect(upstream.method).toBe("GET");
+    expect(upstream.headers.get("Cookie")).toBe("__Host-origenlab_session=s1");
+    // The browser cannot name the operator (and so cannot pick an unredacted role).
+    expect(upstream.headers.get("X-OriginLab-Operator-Email")).toBeNull();
+    // The upstream answer, masked for a viewer, is passed through untouched.
+    expect(await res.text()).toBe(masked);
+  });
+
+  it.each(READS)("replaces a forged operator header with the Cloudflare Access identity on %s", async (path) => {
+    stubUpstreamFetch();
+    await handleRequest(
+      requestWithOrigin(`https://proxy.test/api${path}`, {
+        headers: {
+          "X-OriginLab-Operator-Email": "admin@origenlab.cl",
+          "Cf-Access-Authenticated-User-Email": "Viewer@OrigenLab.cl",
+        },
+      }),
+      TEST_ENV,
+    );
+    const upstream = vi.mocked(fetch).mock.calls[0][0] as Request;
+    expect(upstream.headers.get("X-OriginLab-Operator-Email")).toBe("viewer@origenlab.cl");
+  });
+
+  it.each(
+    READS.flatMap((path) => ["POST", "PUT", "PATCH", "DELETE"].map((method) => [method, path] as const)),
+  )("refuses %s %s with 405 before anything is forwarded", async (method, path) => {
+    stubUpstreamFetch();
+    const res = await handleRequest(
+      requestWithOrigin(`https://proxy.test/api${path}`, {
+        method,
+        body: "{}",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "9b1c7d2e-4f3a-4c1b-8e2d-1a2b3c4d5e6f",
+          Cookie: "__Host-origenlab_session=s1",
+        },
+      }),
+      TEST_ENV,
+    );
+    expect(res.status).toBe(405);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "/v2/workspace/overview",
+    "/v2/workspace/pipeline",
+    "/v2/workspace/drive",
+    "/v2/workspace/review",
+    "/v2/workspace/providers/directory",
+    "/v2/workspace/equipment-interests/persons",
+    "/v2/workspace/equipment-interest",
+    "/v2/workspace/providers/",
+  ])("refuses the neighbouring GET %s with 403", async (path) => {
+    stubUpstreamFetch();
+    const res = await handleRequest(
+      requestWithOrigin(`https://proxy.test/api${path}`, { headers: { Cookie: "__Host-origenlab_session=s1" } }),
+      TEST_ENV,
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: { code: "path_not_allowed" } });
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+});

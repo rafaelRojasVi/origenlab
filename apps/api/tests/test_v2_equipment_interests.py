@@ -266,3 +266,28 @@ def test_the_app_pins_the_ref_key_from_its_session_secret(monkeypatch: pytest.Mo
     assert address_ref("ana@uni.test") == pinned
     # Domain-separated: the session-cookie key and the ref key are different keys.
     assert pinned != hmac.new(secret.encode(), b"ana@uni.test", hashlib.sha256).hexdigest()[:24]
+
+
+# ──────────────────────────────────────── the two reads the dashboard-proxy forwards ──
+
+PROXIED = ("/v2/workspace/providers", "/v2/workspace/equipment-interests")
+
+
+@pytest.mark.parametrize("path", PROXIED)
+def test_a_proxied_card_read_is_get_only_and_redacts_for_a_viewer(path: str) -> None:
+    from origenlab_api.v2.contact_redaction import ContactRedactingRoute
+    from origenlab_api.v2.crm_workspace_routes import workspace_router
+
+    [route] = [r for r in workspace_router.routes if getattr(r, "path", None) == path]
+    assert route.methods == {"GET"} and isinstance(route, ContactRedactingRoute)
+    viewer = _client("viewer")
+    assert viewer.get(path).status_code == 200
+    assert "ana@uni.test" not in viewer.get(path).text
+    for method in ("post", "put", "patch", "delete"):
+        assert getattr(viewer, method)(path).status_code == 405, method
+    assert _client(None).get(path).status_code == 401
+
+
+@pytest.mark.parametrize("path", [f"{p}/x" for p in PROXIED] + ["/v2/workspace/equipment-interest"])
+def test_nothing_is_mounted_beside_a_proxied_card_read(path: str) -> None:
+    assert _client("admin").get(path).status_code == 404

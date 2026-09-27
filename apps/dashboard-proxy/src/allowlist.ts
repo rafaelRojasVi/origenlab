@@ -95,6 +95,13 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/v2\/workspace\/marketing\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   /^\/v2\/workspace\/marketing\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/freeze-preview$/,
   /^\/v2\/workspace\/marketing\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/recipients$/,
+  // CRM card reads (`apps/api` v2/crm_workspace_routes.py): the supplier directory with its
+  // machine candidates, and the observed equipment interests per line, institution and
+  // destination. Two literal paths, GET-only upstream; addresses are masked for a `viewer`
+  // upstream and masked destinations join only by an opaque keyed `address_ref`. The rest of
+  // `/v2/workspace/*` (overview, pipeline, drive, review) stays unlisted.
+  /^\/v2\/workspace\/providers$/,
+  /^\/v2\/workspace\/equipment-interests$/,
   // Dashboard sign-in (Google Workspace, `apps/api` v2/auth_routes.py). Three exact GET
   // paths. The cookie and redirect exceptions they need live in `auth.ts`, and apply to
   // these paths only.
