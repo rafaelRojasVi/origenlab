@@ -1,7 +1,7 @@
 # OrigenLab — Dashboard (React)
 
 The operator CRM. One shell, one navigation, one Google Workspace sign-in, over the V2
-durable core. It talks only to **`apps/api`**, and — apart from sign-out and campaign drafts — only through GET:
+durable core. It talks only to **`apps/api`**, and — apart from sign-out and the Marketing commands — only through GET:
 
 | Route | Use |
 |-------|-----|
@@ -10,6 +10,7 @@ durable core. It talks only to **`apps/api`**, and — apart from sign-out and c
 | `GET /v2/contacts` · `GET /v2/organizations` | Personas and Organizaciones search |
 | `POST /v2/commands/create-campaign-draft` · `POST /v2/commands/save-campaign-draft` | Marketing: create and save a campaign **draft**; mounted only with `ORIGENLAB_V2_CAMPAIGN_DRAFTS_ENABLED`, refused by the production proxy |
 | `POST /v2/commands/freeze-campaign-audience` | Marketing: freeze a draft's audience into an immutable recipient snapshot, sent only from the final confirmation screen; mounted only with `ORIGENLAB_V2_AUDIENCE_FREEZE_ENABLED`, refused by the production proxy. Sends nothing |
+| `POST /v2/commands/set-campaign-planning` | Marketing: set, change or clear an unsent campaign's internal planned day («Planificación interna · no programa el envío»); sales/admin; mounted only with `ORIGENLAB_V2_CAMPAIGN_PLANNING_ENABLED`. Schedules and sends nothing |
 
 The browser does not open a database, CSV files, or `apps/email-pipeline` modules. In
 production every request passes the `apps/dashboard-proxy` method+path allowlist. Canonical
@@ -63,6 +64,18 @@ App.tsx → pages/DashboardApp.tsx → components/auth/AuthGate.tsx (one Google 
   needs an explicit acknowledgement. **There is no Send button**, and a BAJA blocker is shown on
   every freeze and snapshot screen: unsubscribe processing does not exist. A frozen campaign
   opens read-only; «Nueva versión» starts a new draft to freeze separately.
+- **Resumen y Calendario** (`crm/marketing/MarketingOverview.tsx`, `CampaignCalendar.tsx`,
+  `calendar.ts`). On top: «Último envío: hace N días», «Próxima campaña: en N días» and counts of
+  sent, draft, frozen and planned campaigns — no opens, clicks or replies, none are imported. The
+  calendar puts every event on a recorded date, displayed in America/Santiago: each real send
+  batch (a campaign sent over two days shows two), the freeze, the last draft save, and the
+  internal planned day. Month grid on desktop, agenda list on phones; status and line filters;
+  imported V1 campaigns are marked.
+- **Historial de campaña** (`crm/marketing/CampaignDetail.tsx`). The frozen content the campaign
+  was sent with — never the editable draft — in desktop, mobile and read-only raw HTML, under the
+  same sandbox and sanitizer; «HTML enviado no archivado» when the record has none. The planning
+  panel («Planificación interna · no programa el envío») is editable by sales/admin only, where
+  `authoring.planning_enabled` says the API mounts the command.
 
 The earlier operator panel (Today, Ventas, Cotizaciones, Catálogo, Licitaciones, the V2
 consoles) was removed on 2026-09-26; git history holds it. The V1 API routes it read are
