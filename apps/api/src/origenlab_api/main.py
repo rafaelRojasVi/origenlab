@@ -160,6 +160,24 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     if google is not None:
         app.include_router(google_auth_router)
     _mount_v2_command_boundary(app, settings, dsn)
+    _mount_campaign_drafts(app, settings, dsn)
+
+
+def _mount_campaign_drafts(app: FastAPI, settings: Settings, dsn: str) -> None:
+    """Mount the two campaign-draft commands only behind their own switch."""
+    app.state.campaign_drafts_enabled = settings.v2_campaign_drafts_configured()
+    if not app.state.campaign_drafts_enabled:
+        return
+
+    import psycopg
+
+    from origenlab_api.v2.campaign_draft_routes import campaign_draft_router
+    from origenlab_api.v2.campaign_drafts import V2CampaignDraftRepository
+
+    app.state.campaign_draft_repository = V2CampaignDraftRepository(
+        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.include_router(campaign_draft_router)
 
 
 def _secret(value: SecretStr | None) -> str | None:

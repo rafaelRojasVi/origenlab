@@ -204,6 +204,13 @@ class Settings(BaseSettings):
     it off the command router is absent entirely and every /v2/commands/* path is a 404.
     """
     v2_commands_enabled: bool = False
+    """Mount POST /v2/commands/{create,save}-campaign-draft (writes outbound.campaign drafts).
+
+    Default **false** and separate from `v2_commands_enabled`: writing email copy and recording
+    commercial decisions are different permissions. Neither switch can freeze an audience,
+    approve or send a campaign — no such command exists.
+    """
+    v2_campaign_drafts_enabled: bool = False
     """Local review only: a quote_crm_import dry-run directory (intent.json + intent.sha256).
 
     When set, GET /v2/cockpit/import-review compares that plan with the V2 database. The plan is
@@ -352,6 +359,9 @@ class Settings(BaseSettings):
         letting it record durable human decisions is a separate one.
         """
         return self.v2_configured() and bool(self.v2_commands_enabled)
+
+    def v2_campaign_drafts_configured(self) -> bool:
+        return self.v2_configured() and bool(self.v2_campaign_drafts_enabled)
 
     def require_v2_database_url(self) -> str:
         url = (self.v2_database_url or "").strip()

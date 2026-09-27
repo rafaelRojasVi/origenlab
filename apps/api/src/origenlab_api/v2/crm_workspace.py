@@ -28,7 +28,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 GMAIL_MESSAGE_URL = "https://mail.google.com/mail/u/0/#all/{}"
 DRIVE_FOLDER_URL = "https://drive.google.com/drive/folders/{}"
@@ -529,6 +529,10 @@ def compose_drive_archive(
 # ─────────────────────────────────────────────────────────────── repository ──
 
 
+if TYPE_CHECKING:
+    from origenlab_api.v2.marketing_audience import AudienceInputs
+
+
 class CrmWorkspaceRepository:
     """Read queries for ``/v2/workspace/*``. Same ``(connect, dsn)`` wiring as the cockpit."""
 
@@ -727,8 +731,9 @@ class CrmWorkspaceRepository:
         with self._read() as cur:
             cur.execute(
                 """
-                select c.id::text as campaign_id, c.name, c.status, c.subject,
-                       c.approved_at::text, c.created_at::text,
+                select c.id::text as campaign_id, c.name, c.status, c.subject, c.preheader,
+                       c.body_html is not null as has_html, c.version,
+                       c.approved_at::text, c.created_at::text, c.updated_at::text,
                        (select min(s.accepted_at)::text from outbound.send_attempt s where s.campaign_id = c.id) as first_sent_at,
                        (select max(s.accepted_at)::text from outbound.send_attempt s where s.campaign_id = c.id) as last_sent_at
                   from outbound.campaign c
@@ -755,6 +760,8 @@ class CrmWorkspaceRepository:
             replies = {r[0]: int(r[1]) for r in cur.fetchall()}
             cur.execute("select kind, scope, count(*) from outbound.contact_control group by 1, 2 order by 1, 2")
             controls = [{"kind": r[0], "scope": r[1], "count": int(r[2])} for r in cur.fetchall()]
+            cur.execute("select current_database()")
+            database = cur.fetchone()[0]
         for c in campaigns:
             c["recipients_by_state"] = recip.get(c["campaign_id"], {})
             c["send_attempts"] = attempts.get(c["campaign_id"], [])
@@ -763,7 +770,194 @@ class CrmWorkspaceRepository:
             "campaigns": campaigns,
             "contact_controls": controls,
             "replies_note": ENTITY_NOTES["campaign_replies"]["note"],
+            "storage": {"table": "outbound.campaign", "database": database},
         }
+
+    def campaign(self, campaign_id: str) -> dict[str, Any] | None:
+        """One campaign's content, exactly as stored. `body_html` is null when never imported."""
+        with self._read() as cur:
+            cur.execute(
+                """
+                select c.id::text as campaign_id, c.name, c.status, c.subject, c.preheader,
+                       c.body_html, c.body_text is not null as has_text, c.version,
+                       c.max_sends, c.recontact_interval_days,
+                       c.created_at::text, c.updated_at::text,
+                       o.display_name as created_by, current_database() as database
+                  from outbound.campaign c
+                  left join platform.operator o on o.id = c.created_by_operator_id
+                 where c.id = %s
+                """,
+                (campaign_id,),
+            )
+            rows = self._rows(cur)
+        return rows[0] if rows else None
+
+    # -- marketing audience
+
+    def marketing_audience_inputs(self) -> "AudienceInputs":
+        """Everything `marketing_audience.compose` reads, in one read-only transaction."""
+        from origenlab_api.v2.marketing_audience import AudienceInputs, CaseFacts, EligibilityFacts
+
+        with self._read() as cur:
+            cur.execute(
+                """
+                select o.id::text as opportunity_id, o.title, o.stage, o.created_at, o.closed_at,
+                       org.id::text as organization_id, org.name as organization_name,
+                       (select min(qr.sent_at) from crm.quote q
+                          join crm.quote_revision qr on qr.quote_id = q.id
+                         where q.opportunity_id = o.id and qr.sent_at is not null) as first_sent_at,
+                       coalesce((select array_agg(distinct q.quote_number order by q.quote_number)
+                                   from crm.quote q where q.opportunity_id = o.id), '{}') as quote_numbers
+                  from crm.opportunity o
+                  left join crm.organization org on org.id = coalesce(
+                        o.organization_id,
+                        (select oo.organization_id from crm.opportunity_organization oo
+                          where oo.opportunity_id = o.id and oo.role = 'requesting_institution'
+                            and (oo.valid_to is null or oo.valid_to > current_date)
+                          order by oo.valid_from desc limit 1))
+                """
+            )
+            cases = {r["opportunity_id"]: CaseFacts(**r) for r in self._rows(cur)}
+
+            cur.execute(
+                """
+                select i.id::text as interest_id, i.opportunity_id::text as opportunity_id,
+                       i.confirmation, i.created_at, i.origin_source_record_id::text as origin_source_record_id,
+                       array_remove(array[i.model_text, i.description, p.name, p.model_number,
+                                          mo.name], null) as texts
+                  from crm.opportunity_interest i
+                  left join catalog.product p on p.id = i.product_id
+                  left join crm.organization mo
+                         on mo.id = coalesce(i.manufacturer_organization_id, p.manufacturer_organization_id)
+                 where i.withdrawn_at is null
+                """
+            )
+            interests = self._rows(cur)
+            cur.execute(
+                """
+                select op.opportunity_id::text as opportunity_id, cp.value_norm as address
+                  from crm.opportunity_participant op
+                  join crm.contact_point cp
+                    on cp.id = op.contact_point_id
+                    or (op.contact_point_id is null and cp.person_id = op.person_id and cp.kind = 'email')
+                 where cp.kind = 'email' and (op.valid_to is null or op.valid_to > current_date)
+                """
+            )
+            participants: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for r in self._rows(cur):
+                participants[r["opportunity_id"]].append({"address": r["address"]})
+            for row in interests:
+                row["participants"] = participants.get(row["opportunity_id"], [])
+
+            # A sent quotation's Gmail message, reached through the revision recorded from it or
+            # through an evidence link on the case.
+            cur.execute(
+                """
+                select distinct on (s.id, link.opportunity_id)
+                       s.id::text as source_record_id, link.opportunity_id::text as opportunity_id,
+                       s.payload->>'subject_raw' as subject,
+                       array(select d->>'filename'
+                               from jsonb_array_elements(case when jsonb_typeof(s.payload->'documents') = 'array'
+                                                              then s.payload->'documents' else '[]'::jsonb end) d
+                              where d->>'filename' is not null) as filenames,
+                       coalesce(link.sent_at::text, s.payload->>'sent_at') as sent_at,
+                       s.payload->>'recipients' as recipients
+                  from evidence.source_record s
+                  join (
+                        select qr.origin_source_record_id as source_record_id, q.opportunity_id, qr.sent_at
+                          from crm.quote_revision qr join crm.quote q on q.id = qr.quote_id
+                         where qr.origin_source_record_id is not null
+                        union all
+                        select e.source_record_id, e.opportunity_id, null::timestamptz
+                          from crm.opportunity_evidence e where e.source_record_id is not null
+                       ) link on link.source_record_id = s.id
+                 where s.kind = 'gmail_message'
+                 order by s.id, link.opportunity_id, link.sent_at nulls last
+                """
+            )
+            evidence = self._rows(cur)
+
+            facts = EligibilityFacts()
+            cur.execute(
+                """
+                select cp.id::text as id, cp.value_norm as address, cp.usage,
+                       cp.person_id::text as person_id, cp.organization_id::text as organization_id,
+                       pe.display_name as person_name
+                  from crm.contact_point cp
+                  left join crm.person pe on pe.id = cp.person_id
+                 where cp.kind = 'email'
+                """
+            )
+            facts.contact_points = {r["address"]: r for r in self._rows(cur)}
+            cur.execute(
+                """
+                select scope, value_norm, kind from outbound.contact_control
+                 where kind = 'prior_contact'
+                    or (kind = 'block' and purpose in ('all', 'marketing'))
+                    or (kind = 'cooldown' and until_at > now())
+                """
+            )
+            for scope, value, kind in cur.fetchall():
+                if kind == "block":
+                    (facts.blocked_addresses if scope == "address" else facts.blocked_domains).add(value)
+                elif kind == "cooldown":
+                    facts.cooldown_addresses.add(value)
+                else:
+                    facts.prior_contact_addresses.add(value)
+            cur.execute(
+                """
+                select address_norm from outbound.send_attempt
+                 where error_class = 'invalid_address' or bounce_class = 'hard'
+                union
+                select address_norm from outbound.campaign_recipient
+                 where 'invalid_address' = any(exclusion_reasons)
+                """
+            )
+            facts.invalid_addresses = {r[0] for r in cur.fetchall()}
+            cur.execute(
+                """
+                select organization_id::text from crm.organization_relationship
+                 where role in ('supplier', 'manufacturer')
+                   and (valid_to is null or valid_to > current_date)
+                union
+                select organization_id::text from crm.opportunity_organization
+                 where role in ('supplier', 'manufacturer')
+                   and (valid_to is null or valid_to > current_date)
+                """
+            )
+            facts.supplier_organization_ids = {r[0] for r in cur.fetchall()}
+            cur.execute(
+                """
+                select d.domain_norm from crm.organization_domain d
+                 where d.scope = 'exclusive' and d.organization_id::text = any(%s)
+                """,
+                (list(facts.supplier_organization_ids),),
+            )
+            facts.supplier_domains = {r[0] for r in cur.fetchall()}
+            cur.execute(
+                """
+                select value_norm from evidence.assertion
+                 where kind = 'supplier_candidate' and resolution in ('unresolved', 'ambiguous')
+                """
+            )
+            facts.candidate_supplier_domains = {r[0] for r in cur.fetchall()}
+            cur.execute(
+                """
+                select kind || ':' || resolution, count(*) from evidence.assertion
+                 where resolution in ('unresolved', 'ambiguous')
+                   and kind in ('organization_name', 'contact_address', 'affiliation', 'supplier_candidate')
+                 group by 1
+                """
+            )
+            review_queue = {k: int(n) for k, n in cur.fetchall()}
+
+        return AudienceInputs(
+            cases=cases,
+            interests=interests,
+            quotation_evidence=evidence,
+            eligibility=facts,
+            review_queue=review_queue,
+        )
 
     # -- drive archive
 

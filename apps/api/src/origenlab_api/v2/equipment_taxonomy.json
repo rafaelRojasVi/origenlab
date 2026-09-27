@@ -1,0 +1,546 @@
+{
+  "source": "apps/web/src/data/{brands,equipmentScope,brandModels,products,productImages}.ts — regenerate with apps/api/scripts/export_equipment_taxonomy.mjs",
+  "site_base_url": "https://origenlab.cl",
+  "families": [
+    {
+      "id": "pesaje-humedad",
+      "name": "Pesaje y análisis de humedad",
+      "color": "#7d5310"
+    },
+    {
+      "id": "dispersion-homogeneizacion",
+      "name": "Dispersión y homogeneización",
+      "color": "#6b3f96"
+    },
+    {
+      "id": "sonicacion",
+      "name": "Sonicación y procesamiento ultrasónico",
+      "color": "#1d4f7c"
+    },
+    {
+      "id": "centrifugacion",
+      "name": "Centrifugación y separación",
+      "color": "#115e59"
+    },
+    {
+      "id": "osmometria",
+      "name": "Osmometría",
+      "color": "#15697f"
+    },
+    {
+      "id": "electroforesis",
+      "name": "Electroforesis",
+      "color": "#8f2f4f"
+    }
+  ],
+  "brands": [
+    {
+      "id": "hielscher",
+      "name": "Hielscher Ultrasonics",
+      "family_id": "sonicacion",
+      "page_url": "https://origenlab.cl/marcas/hielscher/",
+      "aliases": [
+        "Hielscher"
+      ]
+    },
+    {
+      "id": "ortoalresa",
+      "name": "Ortoalresa",
+      "family_id": "centrifugacion",
+      "page_url": "https://origenlab.cl/marcas/ortoalresa/",
+      "aliases": [
+        "Ortoalresa",
+        "Orto Alresa"
+      ]
+    },
+    {
+      "id": "ika",
+      "name": "IKA",
+      "family_id": "dispersion-homogeneizacion",
+      "page_url": "https://origenlab.cl/marcas/ika/",
+      "aliases": [
+        "IKA",
+        "Ultra-Turrax",
+        "Ultraturrax"
+      ]
+    },
+    {
+      "id": "adam-equipment",
+      "name": "Adam Equipment",
+      "family_id": "pesaje-humedad",
+      "page_url": "https://origenlab.cl/marcas/adam-equipment/",
+      "aliases": [
+        "Adam Equipment"
+      ]
+    },
+    {
+      "id": "loeser",
+      "name": "Löser Messtechnik",
+      "family_id": "osmometria",
+      "page_url": "https://origenlab.cl/marcas/loeser-messtechnik/",
+      "aliases": [
+        "Löser",
+        "Loeser",
+        "Loser Messtechnik"
+      ]
+    },
+    {
+      "id": "serva",
+      "name": "SERVA Electrophoresis",
+      "family_id": "electroforesis",
+      "page_url": "https://origenlab.cl/marcas/serva-electrophoresis/",
+      "aliases": [
+        "SERVA"
+      ]
+    }
+  ],
+  "models": [
+    {
+      "id": "adam-highland",
+      "brand_id": "adam-equipment",
+      "family_id": "pesaje-humedad",
+      "name": "Highland",
+      "code": null,
+      "kind": "serie",
+      "page_url": "https://origenlab.cl/marcas/adam-equipment/",
+      "image": {
+        "url": "https://origenlab.cl/products/adam-equipment/highland.png",
+        "alt": "Balanza de precisión portátil Adam Equipment Highland con cubierta cortavientos, imagen representativa de la familia Highland",
+        "scope": "familia-representativa",
+        "format": "png"
+      },
+      "aliases": [
+        "Highland"
+      ]
+    },
+    {
+      "id": "adam-pmb",
+      "brand_id": "adam-equipment",
+      "family_id": "pesaje-humedad",
+      "name": "PMB",
+      "code": null,
+      "kind": "serie",
+      "page_url": "https://origenlab.cl/marcas/adam-equipment/",
+      "image": {
+        "url": "https://origenlab.cl/products/adam-equipment/pmb.png",
+        "alt": "Analizador de humedad Adam Equipment PMB con la tapa abierta, imagen representativa de la familia",
+        "scope": "familia-representativa",
+        "format": "png"
+      },
+      "aliases": [
+        "PMB"
+      ]
+    },
+    {
+      "id": "adam-solis",
+      "brand_id": "adam-equipment",
+      "family_id": "pesaje-humedad",
+      "name": "Solis",
+      "code": null,
+      "kind": "serie",
+      "page_url": "https://origenlab.cl/marcas/adam-equipment/",
+      "image": {
+        "url": "https://origenlab.cl/products/adam-equipment/solis.jpg",
+        "alt": "Balanza analítica Adam Equipment Solis SAB 225i con cámara de pesaje cerrada, imagen representativa de la familia Solis",
+        "scope": "familia-representativa",
+        "format": "jpg"
+      },
+      "aliases": [
+        "Solis"
+      ]
+    },
+    {
+      "id": "hielscher-uip2000hdt",
+      "brand_id": "hielscher",
+      "family_id": "sonicacion",
+      "name": "UIP2000hdT",
+      "code": null,
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/marcas/hielscher/",
+      "image": {
+        "url": "https://origenlab.cl/products/hielscher/uip2000hdt.jpg",
+        "alt": "Procesador ultrasónico industrial Hielscher UIP2000hdT: transductor y generador",
+        "scope": "modelo-exacto",
+        "format": "jpg"
+      },
+      "aliases": [
+        "UIP2000hdT"
+      ]
+    },
+    {
+      "id": "hielscher-up100h",
+      "brand_id": "hielscher",
+      "family_id": "sonicacion",
+      "name": "UP100H",
+      "code": null,
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/marcas/hielscher/",
+      "image": {
+        "url": "https://origenlab.cl/products/hielscher/up100h.jpg",
+        "alt": "Sonicador de mano Hielscher UP100H con sonotrodo",
+        "scope": "modelo-exacto",
+        "format": "jpg"
+      },
+      "aliases": [
+        "UP100H"
+      ]
+    },
+    {
+      "id": "hielscher-up200st",
+      "brand_id": "hielscher",
+      "family_id": "sonicacion",
+      "name": "UP200St",
+      "code": null,
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/marcas/hielscher/",
+      "image": {
+        "url": "https://origenlab.cl/products/hielscher/up200st.png",
+        "alt": "Sonicador de laboratorio Hielscher UP200St: transductor en soporte sobre un vaso de muestra y generador con pantalla",
+        "scope": "modelo-exacto",
+        "format": "png"
+      },
+      "aliases": [
+        "UP200St"
+      ]
+    },
+    {
+      "id": "hielscher-up400st",
+      "brand_id": "hielscher",
+      "family_id": "sonicacion",
+      "name": "UP400St",
+      "code": null,
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/marcas/hielscher/",
+      "image": {
+        "url": "https://origenlab.cl/products/hielscher/up400st.jpg",
+        "alt": "Sonicador Hielscher UP400St montado en soporte con sonotrodo S24d22D sobre un vaso de muestra",
+        "scope": "modelo-exacto",
+        "format": "jpg"
+      },
+      "aliases": [
+        "UP400St"
+      ]
+    },
+    {
+      "id": "ika-t10-basic",
+      "brand_id": "ika",
+      "family_id": "dispersion-homogeneizacion",
+      "name": "T 10 basic ULTRA-TURRAX",
+      "code": "0003737000",
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/marcas/ika/",
+      "image": {
+        "url": "https://origenlab.cl/products/ika/t-10-basic.png",
+        "alt": "Dispersor de mano IKA T 10 basic ULTRA-TURRAX con eje dispersor",
+        "scope": "modelo-exacto",
+        "format": "png"
+      },
+      "aliases": [
+        "T 10 basic ULTRA-TURRAX",
+        "T 10 basic",
+        "T10",
+        "0003737000"
+      ]
+    },
+    {
+      "id": "ika-t18-digital",
+      "brand_id": "ika",
+      "family_id": "dispersion-homogeneizacion",
+      "name": "T 18 digital ULTRA-TURRAX",
+      "code": "0003720000",
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/marcas/ika/",
+      "image": {
+        "url": "https://origenlab.cl/products/ika/t-18-digital.png",
+        "alt": "Dispersor IKA T 18 digital ULTRA-TURRAX con pantalla de revoluciones y eje dispersor",
+        "scope": "modelo-exacto",
+        "format": "png"
+      },
+      "aliases": [
+        "T 18 digital ULTRA-TURRAX",
+        "T 18 digital",
+        "T18",
+        "0003720000"
+      ]
+    },
+    {
+      "id": "ika-t25-digital",
+      "brand_id": "ika",
+      "family_id": "dispersion-homogeneizacion",
+      "name": "T 25 digital ULTRA-TURRAX",
+      "code": "0003725000",
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/marcas/ika/",
+      "image": {
+        "url": "https://origenlab.cl/products/ika/t-25-digital.png",
+        "alt": "Dispersor IKA T 25 digital ULTRA-TURRAX con pantalla de revoluciones y eje dispersor",
+        "scope": "modelo-exacto",
+        "format": "png"
+      },
+      "aliases": [
+        "T 25 digital ULTRA-TURRAX",
+        "T 25 digital",
+        "T25",
+        "0003725000"
+      ]
+    },
+    {
+      "id": "loeser-i-cryometer",
+      "brand_id": "loeser",
+      "family_id": "osmometria",
+      "name": "i Cryometer",
+      "code": null,
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/marcas/loeser-messtechnik/",
+      "image": {
+        "url": "https://origenlab.cl/products/loeser/i-cryometer.jpg",
+        "alt": "Criómetro automático Löser Messtechnik i Cryometer",
+        "scope": "modelo-exacto",
+        "format": "jpg"
+      },
+      "aliases": [
+        "i Cryometer"
+      ]
+    },
+    {
+      "id": "loeser-i-osmometer",
+      "brand_id": "loeser",
+      "family_id": "osmometria",
+      "name": "i Osmometer",
+      "code": null,
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/marcas/loeser-messtechnik/",
+      "image": {
+        "url": "https://origenlab.cl/products/loeser/i-osmometer.jpg",
+        "alt": "Osmómetro automático Löser Messtechnik i Osmometer con impresora y lector integrados",
+        "scope": "modelo-exacto",
+        "format": "jpg"
+      },
+      "aliases": [
+        "i Osmometer"
+      ]
+    },
+    {
+      "id": "loeser-i-osmometer-basic",
+      "brand_id": "loeser",
+      "family_id": "osmometria",
+      "name": "i Osmometer basic",
+      "code": null,
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/marcas/loeser-messtechnik/",
+      "image": {
+        "url": "https://origenlab.cl/products/loeser/i-osmometer-basic.jpg",
+        "alt": "Osmómetro automático Löser Messtechnik i Osmometer basic",
+        "scope": "modelo-exacto",
+        "format": "jpg"
+      },
+      "aliases": [
+        "i Osmometer basic"
+      ]
+    },
+    {
+      "id": "loeser-osmometer-basic",
+      "brand_id": "loeser",
+      "family_id": "osmometria",
+      "name": "Osmometer basic",
+      "code": null,
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/marcas/loeser-messtechnik/",
+      "image": {
+        "url": "https://origenlab.cl/products/loeser/osmometer-basic.jpg",
+        "alt": "Osmómetro crioscópico Löser Messtechnik Osmometer basic",
+        "scope": "modelo-exacto",
+        "format": "jpg"
+      },
+      "aliases": [
+        "Osmometer basic"
+      ]
+    },
+    {
+      "id": "ortoalresa-biocen-22",
+      "brand_id": "ortoalresa",
+      "family_id": "centrifugacion",
+      "name": "Biocen 22",
+      "code": null,
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/productos/centrifugas/biocen-22/",
+      "image": {
+        "url": "https://origenlab.cl/products/ortoalresa/biocen-22-480.webp",
+        "alt": "Microcentrífuga Ortoalresa Biocen 22",
+        "scope": "modelo-exacto",
+        "format": "webp"
+      },
+      "aliases": [
+        "Biocen 22"
+      ]
+    },
+    {
+      "id": "ortoalresa-biocen-22-r",
+      "brand_id": "ortoalresa",
+      "family_id": "centrifugacion",
+      "name": "Biocen 22 R",
+      "code": null,
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/productos/centrifugas/biocen-22-r/",
+      "image": {
+        "url": "https://origenlab.cl/products/ortoalresa/biocen-22-r-480.webp",
+        "alt": "Microcentrífuga refrigerada Ortoalresa Biocen 22 R",
+        "scope": "modelo-exacto",
+        "format": "webp"
+      },
+      "aliases": [
+        "Biocen 22 R",
+        "Biocen 22R"
+      ]
+    },
+    {
+      "id": "ortoalresa-consul-22",
+      "brand_id": "ortoalresa",
+      "family_id": "centrifugacion",
+      "name": "Consul 22",
+      "code": null,
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/productos/centrifugas/consul-22/",
+      "image": {
+        "url": "https://origenlab.cl/products/ortoalresa/consul-22-480.webp",
+        "alt": "Centrífuga Ortoalresa Consul 22",
+        "scope": "modelo-exacto",
+        "format": "webp"
+      },
+      "aliases": [
+        "Consul 22"
+      ]
+    },
+    {
+      "id": "ortoalresa-digicen-22",
+      "brand_id": "ortoalresa",
+      "family_id": "centrifugacion",
+      "name": "Digicen 22",
+      "code": null,
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/productos/centrifugas/digicen-22/",
+      "image": {
+        "url": "https://origenlab.cl/products/ortoalresa/digicen-22-480.webp",
+        "alt": "Centrífuga Ortoalresa Digicen 22",
+        "scope": "modelo-exacto",
+        "format": "webp"
+      },
+      "aliases": [
+        "Digicen 22"
+      ]
+    },
+    {
+      "id": "ortoalresa-digicen-22-r",
+      "brand_id": "ortoalresa",
+      "family_id": "centrifugacion",
+      "name": "Digicen 22 R",
+      "code": null,
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/productos/centrifugas/digicen-22-r/",
+      "image": {
+        "url": "https://origenlab.cl/products/ortoalresa/digicen-22-r-480.webp",
+        "alt": "Centrífuga refrigerada Ortoalresa Digicen 22 R",
+        "scope": "modelo-exacto",
+        "format": "webp"
+      },
+      "aliases": [
+        "Digicen 22 R",
+        "Digicen 22R"
+      ]
+    },
+    {
+      "id": "serva-bluemarine-100",
+      "brand_id": "serva",
+      "family_id": "electroforesis",
+      "name": "BlueMarine 100",
+      "code": "BM-100",
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/marcas/serva-electrophoresis/",
+      "image": {
+        "url": "https://origenlab.cl/products/serva/bluemarine-100.jpg",
+        "alt": "Cámara submarina de agarosa SERVA Electrophoresis BlueMarine 100 con sus cables de electrodo",
+        "scope": "modelo-exacto",
+        "format": "jpg"
+      },
+      "aliases": [
+        "BlueMarine 100",
+        "BM-100"
+      ]
+    },
+    {
+      "id": "serva-bluepower",
+      "brand_id": "serva",
+      "family_id": "electroforesis",
+      "name": "BluePower",
+      "code": null,
+      "kind": "serie",
+      "page_url": "https://origenlab.cl/marcas/serva-electrophoresis/",
+      "image": {
+        "url": "https://origenlab.cl/products/serva/bluepower-600-prime.jpg",
+        "alt": "Fuente de alimentación SERVA Electrophoresis BluePower 600 PRIME, imagen representativa de la familia BluePower",
+        "scope": "familia-representativa",
+        "format": "jpg"
+      },
+      "aliases": [
+        "BluePower"
+      ]
+    },
+    {
+      "id": "serva-blueslick-42500",
+      "brand_id": "serva",
+      "family_id": "electroforesis",
+      "name": "BlueSlick",
+      "code": "42500.01",
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/productos/undefined/blueslick-42500/",
+      "image": {
+        "url": "https://origenlab.cl/products/serva/blueslick-42500.jpg",
+        "alt": "Pulverizador de reactivo SERVA Electrophoresis BlueSlick de 250 ml en uso",
+        "scope": "modelo-exacto",
+        "format": "jpg"
+      },
+      "aliases": [
+        "BlueSlick",
+        "42500.01"
+      ]
+    },
+    {
+      "id": "serva-bluevertical-prime",
+      "brand_id": "serva",
+      "family_id": "electroforesis",
+      "name": "BlueVertical PRiME",
+      "code": "BV-104.01",
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/marcas/serva-electrophoresis/",
+      "image": {
+        "url": "https://origenlab.cl/products/serva/bluevertical-prime.jpg",
+        "alt": "Cubeta vertical para minigeles SERVA Electrophoresis BlueVertical PRiME",
+        "scope": "modelo-exacto",
+        "format": "jpg"
+      },
+      "aliases": [
+        "BlueVertical PRiME",
+        "BV-104.01"
+      ]
+    },
+    {
+      "id": "serva-hpe-bluehorizon",
+      "brand_id": "serva",
+      "family_id": "electroforesis",
+      "name": "HPE BlueHorizon",
+      "code": "HPE-BH.01",
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/marcas/serva-electrophoresis/",
+      "image": {
+        "url": "https://origenlab.cl/products/serva/hpe-bluehorizon.jpg",
+        "alt": "Cámara horizontal de lecho plano SERVA Electrophoresis HPE BlueHorizon con su fuente de alimentación",
+        "scope": "modelo-exacto",
+        "format": "jpg"
+      },
+      "aliases": [
+        "HPE BlueHorizon",
+        "HPE-BH.01"
+      ]
+    }
+  ]
+}

@@ -10,13 +10,16 @@ these paths to ``apps/dashboard-proxy`` is a separate, deliberate decision.
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from origenlab_api.v2.cockpit_routes import Operator
 from origenlab_api.v2.contact_redaction import ContactRedactingRoute
 from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+from origenlab_api.v2.equipment_taxonomy import load_taxonomy
+from origenlab_api.v2.marketing_audience import BASES, AudienceFilter, apply_filter, compose
 
 workspace_router = APIRouter(prefix="/v2/workspace", tags=["workspace"], route_class=ContactRedactingRoute)
 
@@ -49,8 +52,61 @@ def get_providers(_: Operator, repo: Repo) -> Any:
 
 
 @workspace_router.get("/marketing")
-def get_marketing(_: Operator, repo: Repo) -> Any:
-    return repo.marketing()
+def get_marketing(_: Operator, repo: Repo, request: Request) -> Any:
+    body = repo.marketing()
+    # Whether this API records drafts at all: the dashboard must never imply a save it cannot do.
+    body["authoring"] = {"drafts_enabled": bool(getattr(request.app.state, "campaign_drafts_enabled", False))}
+    return body
+
+
+@workspace_router.get("/marketing/taxonomy")
+def get_marketing_taxonomy(_: Operator) -> Any:
+    """Families, brands, models and verified product images, from the public website catalogue."""
+    return load_taxonomy().public()
+
+
+@workspace_router.get("/marketing/campaigns/{campaign_id}")
+def get_marketing_campaign(campaign_id: UUID, _: Operator, repo: Repo) -> Any:
+    row = repo.campaign(str(campaign_id))
+    if row is None:
+        raise HTTPException(status_code=404, detail="no such campaign")
+    return row
+
+
+@workspace_router.get("/marketing/audience")
+def get_marketing_audience(
+    _: Operator,
+    repo: Repo,
+    family_id: str | None = None,
+    brand_id: str | None = None,
+    model_id: str | None = None,
+    organization_id: UUID | None = None,
+    basis: Annotated[list[str] | None, Query()] = None,
+    recorded: Literal["crm", "evidence"] | None = None,
+    q: Annotated[str | None, Query(max_length=120)] = None,
+) -> Any:
+    """People and institutions with evidenced equipment interest, and who may be written to.
+
+    Relevance and sending eligibility are separate fields; no score is computed.
+    """
+    taxonomy = load_taxonomy()
+    for value, known, name in (
+        (family_id, taxonomy.families, "family_id"),
+        (brand_id, taxonomy.brands, "brand_id"),
+        (model_id, taxonomy.models, "model_id"),
+    ):
+        if value is not None and value not in known:
+            raise HTTPException(status_code=422, detail=f"unknown {name}")
+    bases = tuple(basis or ())
+    if any(b not in BASES for b in bases):
+        raise HTTPException(status_code=422, detail="unknown basis")
+    composed = compose(taxonomy, repo.marketing_audience_inputs())
+    flt = AudienceFilter(
+        family_id=family_id, brand_id=brand_id, model_id=model_id,
+        organization_id=str(organization_id) if organization_id else None,
+        bases=bases, recorded=recorded, q=q,
+    )
+    return {**apply_filter(composed, flt), "coverage": composed["coverage"]}
 
 
 @workspace_router.get("/drive")
