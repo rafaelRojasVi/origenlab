@@ -12,6 +12,8 @@ durable core. It talks only to **`apps/api`**, and — apart from sign-out and t
 | `POST /v2/commands/freeze-campaign-audience` | Marketing: freeze a draft's audience into an immutable recipient snapshot, sent only from the final confirmation screen; mounted only with `ORIGENLAB_V2_AUDIENCE_FREEZE_ENABLED`, refused by the production proxy. Sends nothing |
 | `POST /v2/commands/set-campaign-planning` | Marketing: set, change or clear an unsent campaign's internal planned day («Planificación interna · no programa el envío»); sales/admin; mounted only with `ORIGENLAB_V2_CAMPAIGN_PLANNING_ENABLED`. Schedules and sends nothing |
 
+Marketing «Bajas» is read-only (`GET /v2/workspace/marketing/suppressions`): which addresses answered «BAJA», since when, and which frozen recipients that refuses today. It states that Gmail replies are not synchronized automatically; the dashboard has no unsubscribe, re-subscribe, Gmail or Send action.
+
 The browser does not open a database, CSV files, or `apps/email-pipeline` modules. In
 production every request passes the `apps/dashboard-proxy` method+path allowlist. Canonical
 V2 architecture: [`../../docs/README.md`](../../docs/README.md); what is built and deployed:

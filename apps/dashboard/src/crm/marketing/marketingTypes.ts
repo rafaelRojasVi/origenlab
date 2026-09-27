@@ -347,6 +347,10 @@ export interface FrozenRecipient {
   content_sha256: string;
   policy_version: string;
   lifecycle_state: string;
+  /** Today's refusals from the live send-time contract (`outbound.marketing_contact_refusals`). */
+  send_time_refusals?: { code: string; label: string }[];
+  /** Frozen as included, refused today: the snapshot predates a «BAJA» or another control. */
+  suppressed_since_freeze?: boolean;
 }
 
 export interface FrozenSnapshot {
@@ -359,8 +363,43 @@ export interface FrozenSnapshot {
   content_sha256: string | null;
   audience_sha256: string | null;
   recipients: FrozenRecipient[];
+  suppressed_since_freeze?: number;
+  unsubscribed_since_freeze?: number;
   storage: { table: string; database: string };
   send_blockers: SendBlocker[];
+}
+
+/** `GET /v2/workspace/marketing/suppressions` — W10 unsubscribes, read-only. Masked for a viewer. */
+export interface SuppressionEntry {
+  contact_control_id: string;
+  address: string;
+  purpose: "all" | "marketing";
+  reason: string;
+  source: string;
+  recorded_at: string;
+  baja_messages: number;
+  last_observed_at: string | null;
+}
+
+export interface SuppressionsResponse {
+  summary: { unsubscribed_addresses: number; baja_messages: number; last_recorded_at: string | null };
+  entries: SuppressionEntry[];
+  truncated: boolean;
+  frozen_campaigns: {
+    campaign_id: string;
+    name: string;
+    status: string;
+    unsubscribed_since_freeze: number;
+    refused_since_freeze: number;
+    included_at_freeze: number;
+  }[];
+  blocks_by_purpose: { kind: string; purpose: string; count: number }[];
+  gmail_sync: { automatic: boolean; label: string };
+  grammar: { version: string; accepted: string[]; rule: string };
+  apply_enabled: boolean;
+  permanent: boolean;
+  resubscribe_supported: boolean;
+  storage: { table: string; database: string };
 }
 
 /** `GET /v2/workspace/marketing/campaigns/{id}/archive` — what was (or will be) sent, as stored. */

@@ -25,6 +25,7 @@ import type {
   PlanningResult,
   RecontactDecision,
   ReviewDecision,
+  SuppressionsResponse,
 } from "./marketingTypes";
 
 export const MARKETING_PATHS = {
@@ -34,6 +35,7 @@ export const MARKETING_PATHS = {
   freezePreview: (id: string) => `/v2/workspace/marketing/campaigns/${encodeURIComponent(id)}/freeze-preview`,
   recipients: (id: string) => `/v2/workspace/marketing/campaigns/${encodeURIComponent(id)}/recipients`,
   archive: (id: string) => `/v2/workspace/marketing/campaigns/${encodeURIComponent(id)}/archive`,
+  suppressions: "/v2/workspace/marketing/suppressions",
 } as const;
 
 export const CAMPAIGN_COMMAND_PATHS = {
@@ -45,6 +47,8 @@ export const CAMPAIGN_COMMAND_PATHS = {
 
 export const fetchTaxonomy = () => fetchJsonGet<EquipmentTaxonomy>(operatorApiUrl(MARKETING_PATHS.taxonomy));
 export const fetchCampaign = (id: string) => fetchJsonGet<CampaignContent>(operatorApiUrl(MARKETING_PATHS.campaign(id)));
+/** W10 suppression status — a read. There is no unsubscribe command in the dashboard. */
+export const fetchSuppressions = () => fetchJsonGet<SuppressionsResponse>(operatorApiUrl(MARKETING_PATHS.suppressions));
 export const fetchCampaignArchive = (id: string) =>
   fetchJsonGet<CampaignArchive>(operatorApiUrl(MARKETING_PATHS.archive(id)));
 

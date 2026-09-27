@@ -7,6 +7,7 @@ import { CampaignCalendar } from "../marketing/CampaignCalendar";
 import { CampaignDetail } from "../marketing/CampaignDetail";
 import { CampaignEditor, type EditorSeed } from "../marketing/CampaignEditor";
 import { MarketingOverview } from "../marketing/MarketingOverview";
+import { SuppressionStatus } from "../marketing/SuppressionStatus";
 import { PLANNING_LABEL, fmtShortDay, relativeDay, santiagoTime, todayInSantiago } from "../marketing/calendar";
 import { EmailFrame } from "../marketing/EmailFrame";
 import { fetchCampaign, fetchTaxonomy } from "../marketing/marketingApi";
@@ -50,7 +51,7 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled: "Cancelada",
 };
 
-type Tab = "campanas" | "calendario" | "audiencias";
+type Tab = "campanas" | "calendario" | "audiencias" | "bajas";
 type View =
   | { kind: "list" }
   | { kind: "editor"; seed: EditorSeed; key: string }
@@ -97,16 +98,16 @@ export function MarketingPage() {
     <div className="space-y-4">
       <PageHeader
         title="Marketing"
-        subtitle="Campañas de correo en el CRM y audiencias por interés en equipos. Sólo cifras registradas; nada estimado. Nada se envía desde aquí: el envío está bloqueado mientras no exista procesamiento de BAJA."
+        subtitle="Campañas de correo en el CRM y audiencias por interés en equipos. Sólo cifras registradas; nada estimado. Nada se envía desde aquí: el envío está bloqueado mientras las respuestas BAJA no se sincronicen automáticamente desde Gmail."
         actions={
-          tab !== "audiencias" && view.kind === "list" ? (
+          tab !== "audiencias" && tab !== "bajas" && view.kind === "list" ? (
             <button type="button" onClick={openNew} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black">
               Nueva campaña
             </button>
           ) : null
         }
       />
-      {state.kind === "ready" && view.kind === "list" && tab !== "audiencias" ? (
+      {state.kind === "ready" && view.kind === "list" && tab !== "audiencias" && tab !== "bajas" ? (
         <MarketingOverview campaigns={state.data.campaigns} onOpen={openDetail} />
       ) : null}
       <Segmented
@@ -120,6 +121,7 @@ export function MarketingPage() {
           { value: "campanas", label: "Campañas" },
           { value: "calendario", label: "Calendario" },
           { value: "audiencias", label: "Audiencias por equipo" },
+          { value: "bajas", label: "Bajas" },
         ]}
       />
       {openError ? (
@@ -127,7 +129,9 @@ export function MarketingPage() {
           No se pudo abrir la campaña: {openError}
         </p>
       ) : null}
-      {tab === "audiencias" ? (
+      {tab === "bajas" ? (
+        <SuppressionStatus />
+      ) : tab === "audiencias" ? (
         taxonomy ? <AudienceBuilder taxonomy={taxonomy} /> : <TaxonomyGate state={taxonomyState} />
       ) : view.kind === "detail" ? (
         detailSummary ? (
