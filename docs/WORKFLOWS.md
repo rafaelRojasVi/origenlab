@@ -216,7 +216,8 @@ whose "applies to" column covers the attempt's purpose — never a subset of it.
 
 **Clauses 4-6 as built (2026-09-27).** `outbound.marketing_contact_refusals(campaign_recipient_id)`
 is a read-only `SECURITY INVOKER` function returning the refusals of clauses 4 (applicable address
-block, split into `unsubscribe` and `block`, and a block on the domain or a parent domain), 5
+block, split into `unsubscribe` and `block`, plus `unsubscribe_pending_review` for a «BAJA» held for
+review on that exact address (§W10), and a block on the domain or a parent domain), 5
 (`prior_contact` without the recipient's W12 override) and 6 (active `cooldown`), plus
 `not_snapshotted` / `recipient_unknown`, against the live controls. An empty array means those
 clauses hold; it is not `dispatch_allowed`, which still needs clauses 1-3 and 7.
@@ -589,31 +590,51 @@ fetched is previewed (`POST /v2/unsubscribe/preview`, a read) and then applied
 `input_sha256` and `plan_sha256` — a changed batch or outcome is refused — behind `ORIGENLAB_V2_UNSUBSCRIBE_APPLY_ENABLED`, default off). Nothing reads,
 labels or answers a mailbox; synchronizing Gmail replies automatically is **not built**.
 
-- **Grammar** (`baja-reply/2026-09-27.v1`, body only, never the subject): the reply's own text —
+- **Grammar** (`baja-reply/2026-09-27.v2`, body only, never the subject): the reply's own text —
   cut before quoted history (`>`, «El … escribió:», «On … wrote:», «-----Mensaje original-----»,
-  an Outlook rule or `De:`/`From:` header) or a `--` signature — trimmed, NFKC-normalized and
-  case-folded must be exactly `baja` or `baja.`. Anything else (`BAJA!`, «dar de baja», «BAJA por
-  favor», a name or «Enviado desde mi iPhone» after it, an unrecognized attribution) is **not** an
-  instruction and is left for a human; it writes nothing.
-- **Who**: the sender must be exactly one well-formed address that OrigenLab already knows (a
-  contact control, a campaign recipient or a CRM email contact point), not an OrigenLab mailbox.
-  Any malformed record refuses the whole batch.
+  an Outlook rule or `De:`/`From:` header) or a `--` signature — trimmed, with zero-width
+  characters removed, NFKC-normalized and case-folded, must be exactly `baja`, `baja.`, `remover`
+  or `remover.`. `REMOVER` is the word the V1 templates asked for (v2 added it; v1 was `BAJA` only).
+  Anything else (`BAJA!`, `REMOVER!`, «dar de baja», «favor remover mi correo», «BAJA por favor», a
+  name or «Enviado desde mi iPhone» after it, an unrecognized attribution) is **not** an
+  instruction and is left for a human; it writes nothing. The grammar version that accepted a
+  reply is stored with its evidence, its request and its event.
+- **Who** (sender policy `unsubscribe-sender/2026-09-27.v2`, also stored with each record): the
+  sender must be exactly one well-formed address, not an OrigenLab mailbox (those are ignored).
+  Then, in order: an address OrigenLab already knows (a contact control, a campaign recipient or a
+  CRM email contact point) is suppressed; otherwise, when the reply's `In-Reply-To` names a
+  recorded outbound `comms.message` whose to/cc/bcc recipients include exactly that normalized
+  address, it is suppressed on that **outbound lineage**; otherwise — no lineage
+  (`lineage_missing`) or a sender who was not that message's recipient (`recipient_mismatch`) —
+  the «BAJA» is **held for review**. No person, contact point or organization is ever created by
+  this workflow. Any malformed record refuses the whole batch.
 - **What is written**, by `outbound.add_contact_control` ([`ARCHITECTURE.md`](ARCHITECTURE.md)
-  §6.2) and nothing else: the reply as received (`evidence.source_record`, kind `gmail_message`,
-  key `gmail_unsubscribe:<sha256 of the Message-ID>`, body and its hash); the
-  `contact_control(block, purpose = marketing, reason = unsubscribe, source =
-  unsubscribe_handler)`; an `evidence.assertion` (`unsubscribe_request`) resolving the message to
-  that control; one `contact_control.added` event. A later «BAJA» from an already suppressed
-  address — or one already under another marketing block — adds its evidence, links it
-  (`contact_control.evidence_linked`) and changes nothing else. The same message twice is one fact.
+  §6.2) and nothing else, in one transaction: the reply as received (`evidence.source_record`,
+  kind `gmail_message`, key `gmail_unsubscribe:<sha256 of the Message-ID>`, body and its hash);
+  then either the `contact_control(block, purpose = marketing, reason = unsubscribe, source =
+  unsubscribe_handler)`, an `evidence.assertion` (`unsubscribe_request`) resolving the message to
+  that control and one `contact_control.added` event — or, held for review, the evidence with
+  `review_status = pending`, an **unresolved** `unsubscribe_request` and one
+  `assertion.unsubscribe_review_opened` event, and no control. The function re-proves the basis
+  itself (the address is known; or the lineage and the recipient equality hold) and refuses a
+  claimed basis it cannot prove. A later «BAJA» from an already suppressed address — or one
+  already under another marketing block — adds its evidence, links it
+  (`contact_control.evidence_linked`) and changes nothing else. The same message twice is one fact
+  (a held one stays one review item).
+- **Review**: `POST /v2/commands/resolve-unsubscribe-review` (sales/admin, same switch, a note)
+  confirms one held request: the same function creates or links the permanent unsubscribe block and
+  resolves the request to it, once; confirming again answers `already_resolved` and writes nothing.
+  There is no dismissal — a held «BAJA» is never lifted.
 - **Permanence**: an unsubscribe block, and any block a «BAJA» was linked to, is never updated
-  or deleted, and its evidence is immutable (trigger `outbound.unsubscribe_permanent`). Step 5's
+  or deleted, and its evidence is immutable (trigger `outbound.unsubscribe_permanent`) — the one
+  change ever made to it is the review resolving a held request, inside that function. Step 5's
   `revoke_block` does not reach it; **re-subscribing does not exist**.
 - **Enforcement**: the audience preview and the freeze exclude the address (`block` with the
-  note `unsubscribed`); W12 cannot lift it. A snapshot is never permission:
+  note `unsubscribed`, or `unsubscribe_pending_review` while held — the exact address only, never
+  its domain); W12 cannot lift either. A snapshot is never permission:
   `outbound.marketing_contact_refusals(recipient)` evaluates §2 clauses 4-6 against today's
-  controls, so a recipient frozen before its «BAJA» is refused. It is the contract every future
-  send step must call; no send path exists yet.
+  controls and holds, so a recipient frozen before its «BAJA» is refused. It is the contract every
+  future send step must call; no send path exists yet.
 
 **[OPEN]** automatic Gmail reply synchronization, and a `List-Unsubscribe` header with a one-click
 endpoint on FastAPI for when a send path exists.
