@@ -30,9 +30,9 @@ EXPECTED_EXTRA_TABLES = {
 # Functions added after Slice 0, by migration. The audit reports only a count
 # here; which functions they are, and that each is SECURITY INVOKER with
 # search_path = pg_catalog and no EXECUTE for a Data-API-facing role, is pinned
-# by pgTAP (supabase/tests/010_inventory.sql, 063_commercial_case_commands.sql
-# and 064_historical_quotation_import.sql). This file refuses any count other
-# than 3 + len(these).
+# by pgTAP (supabase/tests/010_inventory.sql, 063_commercial_case_commands.sql,
+# 064_historical_quotation_import.sql and 065-068 for the slice-5 campaign
+# triggers). This file refuses any count other than 3 + len(these).
 SLICE0_FUNCTION_COUNT = 3
 
 POST_SLICE0_FUNCTIONS = {
@@ -47,6 +47,15 @@ POST_SLICE0_FUNCTIONS = {
     # 20260925200000_slice3_historical_quotation_import.sql — trigger function
     # behind crm.quote_revision's BEFORE UPDATE OR DELETE row trigger.
     "crm.quote_revision_historical_guard",
+    # 20260927120000_slice5_campaign_draft_authoring.sql
+    "outbound.campaign_content_draft_only",
+    # 20260927180000_slice5_campaign_audience_freeze.sql (the snapshot guard is
+    # replaced, not added, by 20260927200000_slice5_w12_recontact_review.sql)
+    "outbound.campaign_freeze_facts_write_once",
+    "outbound.campaign_recipient_snapshot_guard",
+    # 20260927220000_slice5_campaign_planning.sql
+    "outbound.campaign_planning_guard",
+    "outbound.campaign_planning_absent_at_insert",
 }
 
 EXPECTED_FUNCTION_COUNT = SLICE0_FUNCTION_COUNT + len(POST_SLICE0_FUNCTIONS)
@@ -59,10 +68,23 @@ POST_COMMERCIAL_CASE_FOREIGN_KEYS = {
     # 20260925200000_slice3_historical_quotation_import.sql, covered by the
     # partial index quote_revision_origin_source_record_idx.
     "crm.quote_revision.origin_source_record_id -> evidence.source_record.id",
+    # 20260927180000_slice5_campaign_audience_freeze.sql, covered by the plain
+    # index campaign_recipient_frozen_against_campaign_idx on the same columns.
+    "outbound.campaign_recipient.(campaign_id, content_sha256, policy_version)"
+    " -> outbound.campaign.(id, content_sha256, audience_policy_version)",
 }
 
 EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
     POST_COMMERCIAL_CASE_FOREIGN_KEYS
+)
+
+# Foreign keys covered by a non-partial index. The historical-origin key is
+# covered only by a partial index; the slice-5 freeze key by a plain one.
+COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 86
+POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 1
+EXPECTED_COVERED_UNCONDITIONALLY = (
+    COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
+    + POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
 )
 
 EXPECTED_SUMMARIES = {
@@ -83,7 +105,7 @@ EXPECTED_SUMMARIES = {
     "a10": {
         "foreign_key_count": EXPECTED_FOREIGN_KEY_COUNT,
         "covered_count": EXPECTED_FOREIGN_KEY_COUNT,
-        "covered_unconditionally": 86,
+        "covered_unconditionally": EXPECTED_COVERED_UNCONDITIONALLY,
     },
 }
 
@@ -209,7 +231,7 @@ def main() -> int:
 
     print(
         "ok: current local head differs from frozen Slice 0 only by the "
-        "reviewed commercial-case and historical-quotation schema delta"
+        "reviewed commercial-case, historical-quotation and slice-5 campaign schema delta"
     )
     return 0
 
