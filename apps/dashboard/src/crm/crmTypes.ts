@@ -140,7 +140,7 @@ export interface MarketingResponse {
   replies_note: string;
   /** Where campaigns (and drafts) are stored, as the API reports it. */
   storage?: { table: string; database: string };
-  authoring?: { drafts_enabled: boolean };
+  authoring?: { drafts_enabled: boolean; freeze_enabled?: boolean };
 }
 
 export interface DriveDocument extends DriveLinkRef {

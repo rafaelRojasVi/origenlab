@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { fetchMarketing } from "../crmApi";
 import type { CampaignSummary, MarketingResponse } from "../crmTypes";
 import { AudienceBuilder } from "../marketing/AudienceBuilder";
+import { AudienceFreeze } from "../marketing/AudienceFreeze";
 import { CampaignEditor, type EditorSeed } from "../marketing/CampaignEditor";
 import { EmailFrame } from "../marketing/EmailFrame";
 import { fetchCampaign, fetchTaxonomy } from "../marketing/marketingApi";
@@ -34,10 +35,20 @@ const CONTROL_LABEL: Record<string, string> = {
   "prior_contact:address": "Contacto previo registrado",
 };
 
-const STATUS_LABEL: Record<string, string> = { archived: "Archivada", draft: "Borrador", approved: "Aprobada", sending: "Enviando", cancelled: "Cancelada" };
+const STATUS_LABEL: Record<string, string> = {
+  archived: "Archivada",
+  draft: "Borrador",
+  audience_frozen: "Audiencia congelada",
+  approved: "Aprobada",
+  sending: "Enviando",
+  cancelled: "Cancelada",
+};
 
 type Tab = "campanas" | "audiencias";
-type View = { kind: "list" } | { kind: "editor"; seed: EditorSeed; key: string };
+type View =
+  | { kind: "list" }
+  | { kind: "editor"; seed: EditorSeed; key: string }
+  | { kind: "freeze"; campaign: CampaignContent; key: string };
 
 export function MarketingPage() {
   const [state, reload] = useResource(fetchMarketing);
@@ -47,6 +58,7 @@ export function MarketingPage() {
   const [openError, setOpenError] = useState<string | null>(null);
   const taxonomy = taxonomyState.kind === "ready" ? taxonomyState.data : null;
   const draftsEnabled = state.kind === "ready" && Boolean(state.data.authoring?.drafts_enabled);
+  const freezeEnabled = state.kind === "ready" && Boolean(state.data.authoring?.freeze_enabled);
 
   const openNew = () => setView({ kind: "editor", seed: { stored: null }, key: `new-${Date.now()}` });
   const openStored = useCallback(async (id: string) => {
@@ -58,6 +70,15 @@ export function MarketingPage() {
       setOpenError(err instanceof Error ? err.message : String(err));
     }
   }, []);
+  const openFreeze = useCallback(async (id: string) => {
+    setOpenError(null);
+    try {
+      const content = await fetchCampaign(id);
+      setView({ kind: "freeze", campaign: content, key: `freeze-${id}-${content.version}` });
+    } catch (err) {
+      setOpenError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
   const duplicate = (content: CampaignContent) =>
     setView({ kind: "editor", seed: { stored: null, duplicateOf: content }, key: `dup-${content.campaign_id}-${Date.now()}` });
 
@@ -65,7 +86,7 @@ export function MarketingPage() {
     <div className="space-y-4">
       <PageHeader
         title="Marketing"
-        subtitle="Campañas de correo en el CRM y audiencias por interés en equipos. Sólo cifras registradas; nada estimado. Nada se envía desde aquí."
+        subtitle="Campañas de correo en el CRM y audiencias por interés en equipos. Sólo cifras registradas; nada estimado. Nada se envía desde aquí: el envío está bloqueado mientras no exista procesamiento de BAJA."
         actions={
           tab === "campanas" && view.kind === "list" ? (
             <button type="button" onClick={openNew} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black">
@@ -93,6 +114,31 @@ export function MarketingPage() {
       ) : null}
       {tab === "audiencias" ? (
         taxonomy ? <AudienceBuilder taxonomy={taxonomy} /> : <TaxonomyGate state={taxonomyState} />
+      ) : view.kind === "freeze" ? (
+        <div className="space-y-3">
+          <button
+            type="button"
+            onClick={() => {
+              setView({ kind: "list" });
+              reload();
+            }}
+            className="text-xs font-medium text-brand-700 hover:underline"
+          >
+            ← Volver a campañas
+          </button>
+          {taxonomy ? (
+            <AudienceFreeze
+              key={view.key}
+              campaign={view.campaign}
+              taxonomy={taxonomy}
+              freezeEnabled={freezeEnabled}
+              onFrozen={() => reload()}
+              onNewVersion={duplicate}
+            />
+          ) : (
+            <TaxonomyGate state={taxonomyState} />
+          )}
+        </div>
       ) : view.kind === "editor" ? (
         <div className="space-y-3">
           <button
@@ -105,7 +151,7 @@ export function MarketingPage() {
           >
             ← Volver a campañas
           </button>
-          <CampaignEditor key={view.key} seed={view.seed} taxonomy={taxonomy} draftsEnabled={draftsEnabled} onSaved={() => undefined} onDuplicate={duplicate} />
+          <CampaignEditor key={view.key} seed={view.seed} taxonomy={taxonomy} draftsEnabled={draftsEnabled} onSaved={() => undefined} onDuplicate={duplicate} onFreeze={(id) => void openFreeze(id)} />
         </div>
       ) : (
         <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={3} cards />}>

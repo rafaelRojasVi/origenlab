@@ -32,14 +32,19 @@ describe("dashboard read-only policy", () => {
 
   // The dashboard records no commercial decision. Two modules may issue a mutating request:
   //  - authClient.ts's POST to `/auth/logout`, which clears the session cookie upstream;
-  //  - marketingApi.ts's POST to exactly the two campaign-*draft* commands, which write email
-  //    copy to a draft `outbound.campaign` row and can freeze, approve or send nothing.
+  //  - marketingApi.ts's POST to exactly the three campaign commands: the two *draft* commands,
+  //    which write email copy to a draft `outbound.campaign` row, and the audience *freeze*,
+  //    which writes an immutable recipient snapshot. None approves or sends anything.
   // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";
   const CAMPAIGN_DRAFT_FILE = "../crm/marketing/marketingApi.ts";
-  const CAMPAIGN_DRAFT_PATHS = ["/v2/commands/create-campaign-draft", "/v2/commands/save-campaign-draft"];
+  const CAMPAIGN_DRAFT_PATHS = [
+    "/v2/commands/create-campaign-draft",
+    "/v2/commands/save-campaign-draft",
+    "/v2/commands/freeze-campaign-audience",
+  ];
 
-  it("allows only the logout POST and the campaign-draft POST", () => {
+  it("allows only the logout POST and the campaign-command POST", () => {
     const hits: string[] = [];
     for (const [path, text] of entries) {
       if (!MUTATION_METHOD.test(text) && !FORBIDDEN_FETCH.test(text)) continue;
@@ -69,7 +74,7 @@ describe("dashboard read-only policy", () => {
     expect(hits).toEqual([]);
   });
 
-  it("names no V2 command outside the campaign-draft client", () => {
+  it("names no V2 command outside the campaign client", () => {
     const hits = entries
       .filter(([path, text]) => path !== CAMPAIGN_DRAFT_FILE && /\/v2\/commands\//.test(text))
       .map(([path]) => path);
@@ -118,6 +123,13 @@ describe("dashboard read-only policy", () => {
         hits.push(path);
       }
     }
+    expect(hits).toEqual([]);
+  });
+
+  it("has no send capability: no Gmail client, no send command, no Send button", () => {
+    const hits = entries
+      .filter(([, text]) => /gmail\.googleapis|googleapis\.com\/gmail|\/v2\/commands\/(?:send|approve|activate|dispatch)|>\s*Enviar(?:\s+campaña)?\s*</i.test(text))
+      .map(([path]) => path);
     expect(hits).toEqual([]);
   });
 });

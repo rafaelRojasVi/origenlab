@@ -8,7 +8,8 @@ durable core. It talks only to **`apps/api`**, and — apart from sign-out and c
 | `GET /auth/session` · `GET /auth/google/login` · `POST /auth/logout` | Sign-in state, Google Workspace login, sign-out |
 | `GET /v2/workspace/*` | Every CRM section (Resumen, Oportunidades, Organizaciones, Personas, Proveedores, Archivo Drive, Marketing, Revisión) |
 | `GET /v2/contacts` · `GET /v2/organizations` | Personas and Organizaciones search |
-| `POST /v2/commands/create-campaign-draft` · `POST /v2/commands/save-campaign-draft` | Marketing: create and save a campaign **draft** — the only writes besides logout; mounted only with `ORIGENLAB_V2_CAMPAIGN_DRAFTS_ENABLED`, refused by the production proxy |
+| `POST /v2/commands/create-campaign-draft` · `POST /v2/commands/save-campaign-draft` | Marketing: create and save a campaign **draft**; mounted only with `ORIGENLAB_V2_CAMPAIGN_DRAFTS_ENABLED`, refused by the production proxy |
+| `POST /v2/commands/freeze-campaign-audience` | Marketing: freeze a draft's audience into an immutable recipient snapshot, sent only from the final confirmation screen; mounted only with `ORIGENLAB_V2_AUDIENCE_FREEZE_ENABLED`, refused by the production proxy. Sends nothing |
 
 The browser does not open a database, CSV files, or `apps/email-pipeline` modules. In
 production every request passes the `apps/dashboard-proxy` method+path allowlist. Canonical
@@ -54,6 +55,14 @@ App.tsx → pages/DashboardApp.tsx → components/auth/AuthGate.tsx (one Google 
   and date; no evidence reads «Sin información». Eligibility is separate: suppliers,
   suppressed and invalid destinations cannot be selected, and the recipient list is
   deduplicated by address (`crm/marketing/audienceSelection.ts`). The selection is not saved.
+- **Congelar audiencia** (`crm/marketing/AudienceFreeze.tsx`), from a saved, unchanged draft:
+  criteria → review → final confirmation → freeze. The API computes everything
+  (`/freeze-preview`); the screen shows coverage per canonical line («Sin información» where
+  there is no evidence), every exclusion reason, and the ambiguous identities an operator must
+  decide with a note. The confirmation shows content and policy versions and fingerprints and
+  needs an explicit acknowledgement. **There is no Send button**, and a BAJA blocker is shown on
+  every freeze and snapshot screen: unsubscribe processing does not exist. A frozen campaign
+  opens read-only; «Nueva versión» starts a new draft to freeze separately.
 
 The earlier operator panel (Today, Ventas, Cotizaciones, Catálogo, Licitaciones, the V2
 consoles) was removed on 2026-09-26; git history holds it. The V1 API routes it read are

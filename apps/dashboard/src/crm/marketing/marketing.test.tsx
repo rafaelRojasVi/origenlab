@@ -7,8 +7,8 @@ import type { MarketingResponse } from "../crmTypes";
 import { destinationsOf, recipientList, selectAllEligible, toggle } from "./audienceSelection";
 import { PREVIEW_CSP, buildPreviewDocument } from "./emailPreview";
 import { TEMPLATES, imageUrlsIn, renderTemplate } from "./emailTemplates";
-import { CAMPAIGN_DRAFT_COMMAND_PATHS } from "./marketingApi";
-import type { AudiencePerson, AudienceResponse, CampaignContent, EquipmentTaxonomy } from "./marketingTypes";
+import { CAMPAIGN_COMMAND_PATHS } from "./marketingApi";
+import type { AudiencePerson, AudienceResponse, CampaignContent, EquipmentTaxonomy, FreezePreview, FreezeRow } from "./marketingTypes";
 
 // Every institution, address and campaign below is invented; the repository is public.
 const taxonomy = taxonomyJson as EquipmentTaxonomy;
@@ -240,7 +240,7 @@ describe("MarketingPage", () => {
     expect(screen.getByTestId("persistence")).toHaveTextContent("outbound.campaign");
     expect(screen.getByTestId("persistence")).toHaveTextContent("origenlab_test_abcd1234");
     expect(posts).toHaveLength(1);
-    expect(posts[0].path).toBe(CAMPAIGN_DRAFT_COMMAND_PATHS.create);
+    expect(posts[0].path).toBe(CAMPAIGN_COMMAND_PATHS.create);
     expect(posts[0].headers["Idempotency-Key"]).toBeTruthy();
     expect(posts[0].body).toMatchObject({ name: "Sonicadores", max_sends: 40, recontact_interval_days: 90 });
     expect(String((posts[0].body as { body_html: string }).body_html)).toContain("https://origenlab.cl/products/");
@@ -285,5 +285,193 @@ describe("MarketingPage", () => {
     expect(dialog).toHaveTextContent("Pidió cotización");
     expect(dialog).toHaveTextContent("no registrado como interés en el CRM");
     expect(within(dialog).getByRole("link", { name: /Ver caso/ })).toHaveAttribute("href", "#/crm/oportunidades/11111111-1111-4111-8111-111111111111");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────── audience freeze
+
+const LINES = [
+  ["hielscher", "Hielscher", "Sonicación"],
+  ["ortoalresa", "Ortoalresa", "Centrifugación"],
+  ["ika", "IKA", "Dispersión y homogeneización"],
+  ["adam-equipment", "Adam Equipment", "Pesaje y humedad"],
+  ["loeser", "Löser", "Osmometría"],
+  ["serva", "SERVA", "Electroforesis, reactivos y consumibles"],
+] as const;
+
+function freezeRow(key: string, address: string, extra: Partial<FreezeRow> = {}): FreezeRow {
+  return {
+    key, address, display_name: null, organizations: [{ organization_id: "o1", name: "Universidad Ficticia" }], via: ["person_interest"],
+    evidence: [], relevance: "evidenced", evidence_observed_at: "2026-03-12T10:00:00Z", review_codes: [], inclusion: "included",
+    reasons: [], note_labels: [],
+    lines: LINES.map(([brand_id, brand, line]) => ({
+      brand_id, brand, line, status: brand_id === "hielscher" ? "evidenced" : "sin_informacion",
+      label: brand_id === "hielscher" ? "1 evidencia(s)" : "Sin información", bases: [], latest_observed_at: null,
+    })),
+    ...extra,
+  };
+}
+
+const BLOCKERS = [
+  { code: "unsubscribe_processing_unsupported", label: "BAJA / desuscripción no soportada", detail: "No existe un procesador de respuestas entrantes." },
+  { code: "no_send_path", label: "Sin ruta de envío", detail: "Sin cliente de Gmail." },
+];
+
+const PREVIEW: FreezePreview = {
+  campaign_id: DRAFT.campaign_id, policy_version: "marketing-audience/2026-09-27.v1", criteria: { version: 1, brand_id: "hielscher" },
+  preview_sha256: "f".repeat(64),
+  content: { subject: "Dispersores IKA", preheader: null, has_html: true, body_text_chars: 4, content_sha256: "c".repeat(64), campaign_version: 3, promises_baja: true },
+  rows: [
+    freezeRow("cp:1", "ana@uni.test"),
+    freezeRow("addr:2", "nuevo@uni.test", { review_codes: ["no_contact_point"] }),
+    freezeRow("cp:3", "baja@uni.test", { inclusion: "excluded", reasons: [{ code: "block", label: "Dirección bloqueada" }] }),
+  ],
+  review_required: ["addr:2"], review_pending: ["addr:2"], malformed_count: 0,
+  counts: {
+    candidates: 3, rows: 3, included: 2, excluded: 1, malformed_not_stored: 0, review_required: 1,
+    excluded_by_reason: [{ code: "block", label: "Dirección bloqueada", count: 1 }],
+    included_by_line: LINES.map(([brand_id, brand, line]) => ({ brand_id, brand, line, evidenced: brand_id === "hielscher" ? 2 : 0, sin_informacion: brand_id === "hielscher" ? 0 : 2 })),
+  },
+  problems: [{ code: "review_pending", message: "1 destino(s) con identidad ambigua esperan una decisión" }],
+  send_blockers: BLOCKERS, freeze_enabled: true,
+};
+
+function stubFreezeApi({ freezeEnabled, frozen = false }: { freezeEnabled: boolean; frozen?: boolean }) {
+  posts = [];
+  const content = frozen ? { ...DRAFT_CONTENT, status: "audience_frozen" } : DRAFT_CONTENT;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, "http://localhost");
+      const path = url.pathname;
+      if (init?.method === "POST") {
+        posts.push({ path, body: JSON.parse(String(init.body)), headers: init.headers as Record<string, string> });
+        return jsonResponse({
+          campaign_id: DRAFT.campaign_id, status: "audience_frozen", version: 4, frozen_at: "2026-09-27T13:00:00Z",
+          policy_version: PREVIEW.policy_version, content_sha256: "c".repeat(64), audience_sha256: "a".repeat(64),
+          counts: { rows: 3, included: 2, excluded: 1, malformed_not_stored: 0 },
+          storage: { tables: ["outbound.campaign", "outbound.campaign_recipient"], database: "origenlab_test_abcd1234" },
+          send_blockers: BLOCKERS, replayed: false,
+        });
+      }
+      if (path.endsWith("/v2/workspace/marketing")) {
+        const m = marketing(true);
+        return jsonResponse({ ...m, campaigns: [{ ...DRAFT, status: content.status }, ARCHIVED], authoring: { drafts_enabled: true, freeze_enabled: freezeEnabled } });
+      }
+      if (path.endsWith("/v2/workspace/marketing/taxonomy")) return jsonResponse(taxonomy);
+      if (path.endsWith("/freeze-preview")) return jsonResponse({ ...PREVIEW, freeze_enabled: freezeEnabled });
+      if (path.endsWith("/recipients"))
+        return jsonResponse({
+          campaign_id: DRAFT.campaign_id, name: DRAFT.name, status: "audience_frozen", version: 4, audience_frozen_at: "2026-09-27T13:00:00Z",
+          audience_policy_version: PREVIEW.policy_version, content_sha256: "c".repeat(64), audience_sha256: "a".repeat(64),
+          storage: { table: "outbound.campaign_recipient", database: "origenlab_test_abcd1234" }, send_blockers: BLOCKERS,
+          recipients: frozen || posts.length
+            ? [{ recipient_id: "r1", address: "ana@uni.test", organization_name: "Universidad Ficticia", display_name: null, frozen_at: "2026-09-27T13:00:00Z",
+                 inclusion: "included", frozen_reasons: [], frozen_notes: [], relevance: "evidenced", interest_evidence: [{}],
+                 evidence_observed_at: "2026-03-12T10:00:00Z", identity_review: null, campaign_version: 4, content_sha256: "c".repeat(64),
+                 policy_version: PREVIEW.policy_version, lifecycle_state: "snapshotted" }]
+            : [],
+        });
+      if (path.endsWith(`/campaigns/${DRAFT.campaign_id}`)) return jsonResponse(content);
+      return jsonResponse({ detail: "not found" }, 404);
+    }),
+  );
+}
+
+async function openFreeze() {
+  render(<MarketingPage />);
+  const cards = await screen.findAllByTestId("campaign-card");
+  fireEvent.click(within(cards[0]).getByRole("button", { name: "Editar" }));
+  await screen.findByTestId("persistence");
+  fireEvent.click(await screen.findByTestId("open-freeze"));
+  return screen.findByTestId("audience-freeze");
+}
+
+describe("audience freeze", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("shows the BAJA blocker, requires a reviewed identity, and freezes only from the final confirmation", async () => {
+    stubFreezeApi({ freezeEnabled: true });
+    await openFreeze();
+    expect(screen.getByTestId("baja-blocker")).toHaveTextContent("BAJA / desuscripción no soportada");
+    fireEvent.change(screen.getByLabelText("Línea"), { target: { value: "hielscher" } });
+    fireEvent.click(screen.getByTestId("freeze-review"));
+    await screen.findByTestId("freeze-preview");
+
+    const lines = screen.getAllByTestId("line-coverage");
+    expect(lines).toHaveLength(6);
+    expect(lines[5]).toHaveTextContent("SERVA — Electroforesis, reactivos y consumibles");
+    expect(lines[5]).toHaveTextContent("2 Sin información");
+    expect(screen.queryByText(/interés bajo|baja relevancia/i)).toBeNull();
+    expect(screen.getAllByTestId("excluded-row")[0]).toHaveTextContent("Dirección bloqueada");
+
+    const cont = screen.getByTestId("freeze-continue");
+    expect(cont).toBeDisabled(); // the ambiguous identity has no decision yet
+    const review = screen.getByTestId("review-row");
+    fireEvent.click(within(review).getByLabelText("Incluir"));
+    expect(cont).toBeDisabled(); // a decision needs a note
+    fireEvent.change(within(review).getByLabelText("Nota de revisión para nuevo@uni.test"), { target: { value: "Es la jefa de laboratorio" } });
+    expect(cont).toBeEnabled();
+    fireEvent.click(cont);
+
+    const confirm = await screen.findByTestId("freeze-confirmation");
+    expect(confirm).toHaveTextContent("marketing-audience/2026-09-27.v1");
+    expect(screen.getByTestId("baja-in-content")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /enviar/i })).toBeNull();
+    const button = screen.getByTestId("freeze-confirm");
+    expect(button).toBeDisabled();
+    fireEvent.click(screen.getByTestId("freeze-ack"));
+    expect(posts).toEqual([]);
+    fireEvent.click(button);
+
+    await screen.findByTestId("freeze-done");
+    expect(posts).toHaveLength(1);
+    expect(posts[0].path).toBe(CAMPAIGN_COMMAND_PATHS.freeze);
+    expect(posts[0].headers["Idempotency-Key"]).toBeTruthy();
+    expect(posts[0].body).toMatchObject({
+      campaign_id: DRAFT.campaign_id, expected_version: 3, expected_preview_sha256: "f".repeat(64), confirmed: true,
+      criteria: { brand_id: "hielscher", model_id: null, recorded: null, scope: "both" },
+      review_decisions: [{ key: "addr:2", decision: "include", note: "Es la jefa de laboratorio" }], excluded_keys: [],
+    });
+    expect(screen.getByTestId("freeze-done")).toHaveTextContent("Nada fue enviado");
+    expect(await screen.findAllByTestId("frozen-row")).toHaveLength(1);
+  });
+
+  it("an unchecked destination is excluded and the freeze cannot run where it is not enabled", async () => {
+    stubFreezeApi({ freezeEnabled: false });
+    await openFreeze();
+    fireEvent.click(screen.getByTestId("freeze-review"));
+    await screen.findByTestId("freeze-preview");
+    const review = screen.getByTestId("review-row");
+    fireEvent.click(within(review).getByLabelText("Excluir"));
+    fireEvent.change(within(review).getByLabelText("Nota de revisión para nuevo@uni.test"), { target: { value: "No es cliente" } });
+    fireEvent.click(screen.getByLabelText("Incluir ana@uni.test"));
+    expect(screen.getByTestId("freeze-continue")).toBeDisabled(); // nobody left to include
+    fireEvent.click(screen.getByLabelText("Incluir ana@uni.test"));
+    fireEvent.click(screen.getByTestId("freeze-continue"));
+    fireEvent.click(await screen.findByTestId("freeze-ack"));
+    expect(screen.getByTestId("freeze-confirm")).toBeDisabled();
+    expect(screen.getByTestId("freeze-disabled")).toHaveTextContent("no está habilitado");
+    expect(posts).toEqual([]);
+  });
+
+  it("a frozen campaign shows its snapshot read-only and a new version is a new unsaved draft", async () => {
+    stubFreezeApi({ freezeEnabled: true, frozen: true });
+    render(<MarketingPage />);
+    const cards = await screen.findAllByTestId("campaign-card");
+    fireEvent.click(within(cards[0]).getByRole("button", { name: "Abrir" }));
+    expect(await screen.findByTestId("persistence")).toHaveAttribute("data-state", "read_only");
+    fireEvent.click(await screen.findByTestId("open-snapshot"));
+    await screen.findByTestId("frozen-snapshot");
+    expect(screen.getByTestId("baja-blocker")).toBeInTheDocument();
+    expect(await screen.findAllByTestId("frozen-row")).toHaveLength(1);
+    expect(screen.queryByTestId("freeze-review")).toBeNull();
+    fireEvent.click(screen.getByTestId("new-version"));
+    await waitFor(() => expect(screen.getByTestId("persistence")).toHaveAttribute("data-state", "memory"));
+    expect(screen.getByLabelText("Nombre interno")).toHaveValue("Copia de Borrador IKA");
+    expect(posts).toEqual([]);
   });
 });

@@ -97,12 +97,15 @@ export function CampaignEditor({
   draftsEnabled,
   onSaved,
   onDuplicate,
+  onFreeze,
 }: {
   seed: EditorSeed;
   taxonomy: EquipmentTaxonomy | null;
   draftsEnabled: boolean;
   onSaved: (campaignId: string) => void;
   onDuplicate: (content: CampaignContent) => void;
+  /** Open the audience freeze for a saved, unchanged draft, or the snapshot of a frozen one. */
+  onFreeze?: (campaignId: string) => void;
 }) {
   const start = useMemo<DraftFields>(() => {
     if (seed.stored) return fieldsOf(seed.stored);
@@ -282,6 +285,26 @@ export function CampaignEditor({
                 className="h-7 rounded-md border border-line bg-canvas-raised px-2.5 text-xs font-medium text-ink hover:bg-canvas-sunken"
               >
                 Duplicar
+              </button>
+            ) : null}
+            {onFreeze && persistence.kind === "saved" && !dirty ? (
+              <button
+                type="button"
+                onClick={() => onFreeze(persistence.campaignId)}
+                data-testid="open-freeze"
+                className="h-7 rounded-md border border-line bg-canvas-raised px-2.5 text-xs font-medium text-ink hover:bg-canvas-sunken"
+              >
+                Congelar audiencia…
+              </button>
+            ) : null}
+            {onFreeze && persistence.kind === "read_only" && persistence.status !== "archived" && persistence.status !== "cancelled" ? (
+              <button
+                type="button"
+                onClick={() => onFreeze(persistence.campaignId)}
+                data-testid="open-snapshot"
+                className="h-7 rounded-md border border-line bg-canvas-raised px-2.5 text-xs font-medium text-ink hover:bg-canvas-sunken"
+              >
+                Ver audiencia congelada
               </button>
             ) : null}
             {!draftsEnabled && !readOnly ? (
