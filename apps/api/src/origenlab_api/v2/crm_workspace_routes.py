@@ -17,6 +17,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import ValidationError
 
 from origenlab_api.v2.audience_freeze import SEND_BLOCKERS, FreezeCriteria
+from origenlab_api.v2.campaign_calendar import campaign_lines
+from origenlab_api.v2.campaign_planning import PLANNING_TIME_ZONE
 from origenlab_api.v2.cockpit_routes import Operator
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.contact_redaction import ContactRedactingRoute
@@ -75,12 +77,18 @@ def get_equipment_interests(_: Operator, repo: Repo) -> Any:
 @workspace_router.get("/marketing")
 def get_marketing(_: Operator, repo: Repo, request: Request) -> Any:
     body = repo.marketing()
+    taxonomy = load_taxonomy()
+    for c in body["campaigns"]:
+        c["equipment_lines"] = campaign_lines(taxonomy, c)
+        c.pop("audience_criteria", None)
     # Whether this API records drafts at all: the dashboard must never imply a save it cannot do.
     body["authoring"] = {
         "drafts_enabled": bool(getattr(request.app.state, "campaign_drafts_enabled", False)),
         "freeze_enabled": bool(getattr(request.app.state, "audience_freeze_enabled", False)),
         "recontact_review_enabled": bool(getattr(request.app.state, "recontact_review_enabled", False)),
+        "planning_enabled": bool(getattr(request.app.state, "campaign_planning_enabled", False)),
     }
+    body["time_zone"] = PLANNING_TIME_ZONE
     return body
 
 
@@ -96,6 +104,19 @@ def get_marketing_campaign(campaign_id: UUID, _: Operator, repo: Repo) -> Any:
     if row is None:
         raise HTTPException(status_code=404, detail="no such campaign")
     return row
+
+
+@workspace_router.get("/marketing/campaigns/{campaign_id}/archive")
+def get_marketing_campaign_archive(campaign_id: UUID, _: Operator, repo: Repo) -> Any:
+    """The frozen content a campaign was (or will be) sent with, and its real send record.
+
+    `html` is present only when the content is frozen and its fingerprint recomputes; an
+    imported campaign whose HTML was never archived says so (`html_state`). A read.
+    """
+    body = repo.campaign_archive(str(campaign_id))
+    if body is None:
+        raise HTTPException(status_code=404, detail="no such campaign")
+    return body
 
 
 @workspace_router.get("/marketing/campaigns/{campaign_id}/freeze-preview")

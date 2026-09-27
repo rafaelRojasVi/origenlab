@@ -742,12 +742,44 @@ class CrmWorkspaceRepository:
                        c.body_html is not null as has_html, c.version,
                        c.approved_at::text, c.created_at::text, c.updated_at::text,
                        (select min(s.accepted_at)::text from outbound.send_attempt s where s.campaign_id = c.id) as first_sent_at,
-                       (select max(s.accepted_at)::text from outbound.send_attempt s where s.campaign_id = c.id) as last_sent_at
+                       (select max(s.accepted_at)::text from outbound.send_attempt s where s.campaign_id = c.id) as last_sent_at,
+                       c.planned_for_date::text as planned_for_date,
+                       to_char(c.planned_for_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as planned_for_at,
+                       c.planning_version,
+                       c.audience_frozen_at::text, c.content_frozen_at::text, c.content_sha256,
+                       c.audience_criteria,
+                       case when c.origin_source_record_id is not null then 'imported_v1' else 'native_v2' end as origin,
+                       m.address_norm as sender_address, m.display_name as sender_name
                   from outbound.campaign c
+                  left join comms.mailbox m on m.id = c.mailbox_id
                  order by c.created_at desc
                 """
             )
             campaigns = self._rows(cur)
+            # The real send batches: accepted attempts grouped by the day (America/Santiago) they
+            # were accepted on. Never one invented date for a campaign that went out over days.
+            cur.execute(
+                """
+                select campaign_id::text,
+                       (accepted_at at time zone 'America/Santiago')::date::text as day,
+                       count(*),
+                       to_char(min(accepted_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                       to_char(max(accepted_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+                  from outbound.send_attempt
+                 where campaign_id is not null and accepted_at is not null
+                 group by 1, 2 order by 1, 2
+                """
+            )
+            batches: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for cid, day, n, first, last in cur.fetchall():
+                batches[cid].append({"day": day, "accepted": int(n), "first_accepted_at": first, "last_accepted_at": last})
+            cur.execute(
+                """
+                select campaign_id::text, count(*) from outbound.send_attempt
+                 where campaign_id is not null and accepted_at is null group by 1
+                """
+            )
+            undated = {r[0]: int(r[1]) for r in cur.fetchall()}
             cur.execute(
                 "select campaign_id::text, state, count(*) from outbound.campaign_recipient group by 1, 2"
             )
@@ -773,6 +805,8 @@ class CrmWorkspaceRepository:
             c["recipients_by_state"] = recip.get(c["campaign_id"], {})
             c["send_attempts"] = attempts.get(c["campaign_id"], [])
             c["replies_recorded"] = replies.get(c["campaign_id"], 0)
+            c["send_batches"] = batches.get(c["campaign_id"], [])
+            c["attempts_without_date"] = undated.get(c["campaign_id"], 0)
         return {
             "campaigns": campaigns,
             "contact_controls": controls,
@@ -800,6 +834,81 @@ class CrmWorkspaceRepository:
             )
             rows = self._rows(cur)
         return rows[0] if rows else None
+
+    def campaign_archive(self, campaign_id: str) -> dict[str, Any] | None:
+        """What was sent (or frozen to be sent), exactly as stored — never the editable draft.
+
+        The HTML is returned only when it is frozen (`content_frozen_at` set, so the database
+        refuses any later edit) and its stored fingerprint recomputes; otherwise `html` is null
+        and `html_state` says why. Nothing is reconstructed.
+        """
+        from origenlab_api.v2.audience_freeze import content_sha256
+
+        with self._read() as cur:
+            cur.execute(
+                """
+                select c.id::text as campaign_id, c.name, c.status, c.subject, c.preheader,
+                       c.body_text, c.body_html, c.version, c.content_sha256,
+                       c.content_frozen_at::text, c.audience_frozen_at::text, c.audience_sha256,
+                       c.audience_policy_version, c.created_at::text,
+                       case when c.origin_source_record_id is not null then 'imported_v1' else 'native_v2' end as origin,
+                       m.address_norm as sender_address, m.display_name as sender_name,
+                       current_database() as database
+                  from outbound.campaign c
+                  left join comms.mailbox m on m.id = c.mailbox_id
+                 where c.id = %s
+                """,
+                (campaign_id,),
+            )
+            rows = self._rows(cur)
+            if not rows:
+                return None
+            cur.execute(
+                "select state, count(*) from outbound.campaign_recipient where campaign_id = %s group by 1",
+                (campaign_id,),
+            )
+            recipients = {r[0]: int(r[1]) for r in cur.fetchall()}
+            cur.execute(
+                """
+                select submission_state, delivery_state, count(*) from outbound.send_attempt
+                 where campaign_id = %s group by 1, 2 order by 1, 2
+                """,
+                (campaign_id,),
+            )
+            attempts = [{"submission_state": a, "delivery_state": b, "count": int(n)} for a, b, n in cur.fetchall()]
+            cur.execute(
+                """
+                select (accepted_at at time zone 'America/Santiago')::date::text, count(*),
+                       to_char(min(accepted_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                       to_char(max(accepted_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+                  from outbound.send_attempt where campaign_id = %s and accepted_at is not null
+                 group by 1 order by 1
+                """,
+                (campaign_id,),
+            )
+            batches = [{"day": d, "accepted": int(n), "first_accepted_at": a, "last_accepted_at": b}
+                       for d, n, a, b in cur.fetchall()]
+        c = rows[0]
+        body_text, body_html = c.pop("body_text"), c.pop("body_html")
+        if c["content_frozen_at"] is None:
+            html_state = "not_frozen" if c["status"] == "draft" else "not_archived"
+            html = None
+        elif body_html is None:
+            html_state, html = "no_html", None
+        elif c["content_sha256"] != content_sha256(c["subject"] or "", c["preheader"], body_text or "", body_html):
+            html_state, html = "fingerprint_mismatch", None
+        else:
+            html_state, html = "archived_verified", body_html
+        return {
+            **c,
+            "html": html,
+            "html_state": html_state,
+            "recipients_by_state": recipients,
+            "send_attempts": attempts,
+            "send_batches": batches,
+            "metrics": {"opens": None, "clicks": None, "note": "Aperturas y clics no se registran en el CRM."},
+            "storage": {"table": "outbound.campaign", "database": c.pop("database")},
+        }
 
     # -- audience freeze (reads)
 

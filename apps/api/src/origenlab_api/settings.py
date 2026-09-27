@@ -228,6 +228,12 @@ class Settings(BaseSettings):
     active cooldown, and it sends nothing.
     """
     v2_recontact_review_enabled: bool = False
+    """Mount POST /v2/commands/set-campaign-planning (internal planned send day of an unsent campaign).
+
+    Default **false** and separate from the drafts and freeze switches. Planning is calendar
+    metadata: it approves, freezes, schedules, enqueues and sends nothing, and nothing reads it.
+    """
+    v2_campaign_planning_enabled: bool = False
     """Local review only: a quote_crm_import dry-run directory (intent.json + intent.sha256).
 
     When set, GET /v2/cockpit/import-review compares that plan with the V2 database. The plan is
@@ -379,6 +385,9 @@ class Settings(BaseSettings):
 
     def v2_campaign_drafts_configured(self) -> bool:
         return self.v2_configured() and bool(self.v2_campaign_drafts_enabled)
+
+    def v2_campaign_planning_configured(self) -> bool:
+        return self.v2_configured() and bool(self.v2_campaign_planning_enabled)
 
     def v2_audience_freeze_configured(self) -> bool:
         return self.v2_configured() and bool(self.v2_audience_freeze_enabled)

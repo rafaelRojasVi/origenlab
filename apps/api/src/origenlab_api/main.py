@@ -176,6 +176,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     _mount_v2_command_boundary(app, settings, dsn)
     _mount_campaign_drafts(app, settings, dsn)
     _mount_audience_freeze(app, settings, dsn)
+    _mount_campaign_planning(app, settings, dsn)
 
 
 def _mount_audience_freeze(app: FastAPI, settings: Settings, dsn: str) -> None:
@@ -196,6 +197,23 @@ def _mount_audience_freeze(app: FastAPI, settings: Settings, dsn: str) -> None:
         recontact_review_enabled=app.state.recontact_review_enabled,
     )
     app.include_router(audience_freeze_router)
+
+
+def _mount_campaign_planning(app: FastAPI, settings: Settings, dsn: str) -> None:
+    """Mount the planning command only behind its own switch. It schedules nothing."""
+    app.state.campaign_planning_enabled = settings.v2_campaign_planning_configured()
+    if not app.state.campaign_planning_enabled:
+        return
+
+    import psycopg
+
+    from origenlab_api.v2.campaign_planning import V2CampaignPlanningRepository
+    from origenlab_api.v2.campaign_planning_routes import campaign_planning_router
+
+    app.state.campaign_planning_repository = V2CampaignPlanningRepository(
+        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.include_router(campaign_planning_router)
 
 
 def _mount_campaign_drafts(app: FastAPI, settings: Settings, dsn: str) -> None:
