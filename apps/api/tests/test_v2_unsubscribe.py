@@ -39,6 +39,7 @@ from origenlab_api.v2.marketing_audience import AudienceInputs, CaseFacts, Eligi
 from origenlab_api.v2.unsubscribe_replies import (
     APPLY_UNSUBSCRIBE_REPLIES,
     BAJA_GRAMMAR_VERSION,
+    DISMISS_UNSUBSCRIBE_REVIEW,
     RESOLVE_UNSUBSCRIBE_REVIEW,
     UNSUBSCRIBE_POLICY_VERSION,
     ReplyFacts,
@@ -454,6 +455,9 @@ def _client(repo, role="sales", *, apply=True) -> TestClient:
 
 PREVIEW, APPLY = "/v2/unsubscribe/preview", "/v2/commands/apply-unsubscribe-replies"
 RESOLVE = "/v2/commands/resolve-unsubscribe-review"
+DISMISS = "/v2/commands/dismiss-unsubscribe-review"
+DISMISS_BODY = {"assertion_id": "00000000-0000-4000-8000-00000000abcd", "expected_address": "nadie@lab.test",
+                "expected_review_sha256": "c" * 64, "explanation": "Falso positivo: respondió «BAJA» a otra cosa"}
 RESOLVE_BODY = {"assertion_id": "00000000-0000-4000-8000-00000000abcd", "expected_address": "nadie@lab.test",
                 "note": "Revisado: el remitente pidió la baja"}
 APPLY_BODY = {"records": [_record()], "expected_input_sha256": "a" * 64, "expected_plan_sha256": "b" * 64}
@@ -466,6 +470,31 @@ def test_only_sales_and_admin_reach_preview_or_apply(role, status) -> None:
     assert client.post(PREVIEW, json={"records": [_record()]}).status_code == status
     assert client.post(APPLY, json=APPLY_BODY, headers={"Idempotency-Key": "k-1"}).status_code == status
     assert client.post(RESOLVE, json=RESOLVE_BODY, headers={"Idempotency-Key": "k-2"}).status_code == status
+    assert client.post(DISMISS, json=DISMISS_BODY, headers={"Idempotency-Key": "k-3"}).status_code == status
+    assert repo.calls == []
+
+
+def test_only_an_admin_reaches_the_dismissal() -> None:
+    repo = _FakeRepo()
+    r = _client(repo, "sales").post(DISMISS, json=DISMISS_BODY, headers={"Idempotency-Key": "k-1"})
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "role_may_not_dismiss" and repo.calls == []
+    r = _client(repo, "admin").post(DISMISS, json=DISMISS_BODY, headers={"Idempotency-Key": "k-1"})
+    assert r.status_code == 200 and repo.calls[-1]["command_name"] == DISMISS_UNSUBSCRIBE_REVIEW
+    assert repo.calls[-1]["idempotency_key"] == "k-1"
+
+
+def test_dismiss_needs_a_key_the_review_version_the_address_and_an_explanation() -> None:
+    repo = _FakeRepo()
+    client = _client(repo, "admin")
+    assert client.post(DISMISS, json=DISMISS_BODY).status_code == 400
+    for bad in ({**DISMISS_BODY, "assertion_id": "x"}, {**DISMISS_BODY, "explanation": ""},
+                {**DISMISS_BODY, "explanation": "   \n\t "}, {**DISMISS_BODY, "explanation": "x" * 1001},
+                {**DISMISS_BODY, "expected_review_sha256": "abc"},
+                {k: v for k, v in DISMISS_BODY.items() if k != "expected_review_sha256"},
+                {k: v for k, v in DISMISS_BODY.items() if k != "expected_address"},
+                {k: v for k, v in DISMISS_BODY.items() if k != "explanation"},
+                {**DISMISS_BODY, "contact_control_id": "00000000-0000-4000-8000-00000000abcd"}):
+        assert client.post(DISMISS, json=bad, headers={"Idempotency-Key": "k-1"}).status_code == 422
     assert repo.calls == []
 
 
@@ -528,18 +557,18 @@ def test_the_apply_route_exists_only_behind_its_switch_and_preview_always() -> N
                {"v2_database_url": loopback, "v2_audience_freeze_enabled": True},
                {"v2_unsubscribe_apply_enabled": True}):
         enabled, routes = paths(**kw)
-        assert enabled is False and APPLY not in routes and RESOLVE not in routes and PREVIEW in routes
+        assert enabled is False and not {APPLY, RESOLVE, DISMISS} & routes and PREVIEW in routes
     enabled, routes = paths(v2_database_url=loopback, v2_unsubscribe_apply_enabled=True)
-    assert enabled is True and {APPLY, RESOLVE, PREVIEW} <= routes
+    assert enabled is True and {APPLY, RESOLVE, DISMISS, PREVIEW} <= routes
     assert Settings(_env_file=None).v2_unsubscribe_apply_enabled is False
 
 
-def test_the_w10_routers_expose_exactly_three_posts() -> None:
+def test_the_w10_routers_expose_exactly_four_posts() -> None:
     from origenlab_api.v2.unsubscribe_routes import unsubscribe_apply_router, unsubscribe_preview_router
 
     assert [(r.path, set(r.methods)) for r in unsubscribe_preview_router.routes] == [(PREVIEW, {"POST"})]
     assert [(r.path, set(r.methods)) for r in unsubscribe_apply_router.routes] == [
-        (APPLY, {"POST"}), (RESOLVE, {"POST"})]
+        (APPLY, {"POST"}), (RESOLVE, {"POST"}), (DISMISS, {"POST"})]
 
 
 # --------------------------------------------------------------------------- no Gmail, no network, no send
@@ -602,7 +631,7 @@ def world(disposable_database):
     s: dict[str, Any] = {"tag": tag}
     with psycopg.connect(disposable_database, autocommit=True) as conn, conn.cursor() as cur:
         cur.execute("set role origenlab_owner")
-        for key, role in (("op", "sales"), ("viewer", "viewer")):
+        for key, role in (("op", "sales"), ("viewer", "viewer"), ("admin", "admin")):
             cur.execute("insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
                         "values (gen_random_uuid(), %s, %s, %s, 'active') returning id::text",
                         (f"w10-{key}-{tag}@example.test", f"W10 {key}", role))
@@ -653,6 +682,8 @@ def world(disposable_database):
                     (f"prior-{tag}@uni.test", f"wave-{tag}@uni.test", f"wave-{tag}@uni.test"))
     s["operator"] = OperatorIdentity(operator_id=s["op"], email_norm=f"w10-op-{tag}@example.test",
                                      display_name="W10 op", role="sales", status="active")
+    s["admin_identity"] = OperatorIdentity(operator_id=s["admin"], email_norm=f"w10-admin-{tag}@example.test",
+                                           display_name="W10 admin", role="admin", status="active")
     s["viewer_identity"] = OperatorIdentity(operator_id=s["viewer"], email_norm=f"w10-viewer-{tag}@example.test",
                                             display_name="W10 viewer", role="viewer", status="active")
     return s
@@ -1216,7 +1247,7 @@ def test_the_privileged_writer_refuses_forged_bases_operators_and_receipts(dispo
                    parsed.evidence("e" * 64, basis="outbound_lineage"),         # replied, but was not a recipient
                    parsed.evidence("e" * 64, basis="pending_review"),           # a hold without its reason
                    parsed.evidence("e" * 64, basis="pending_review", review_reason="porque_si"),
-                   parsed.evidence("e" * 64, basis="dismissed"),                # no such basis: nothing lifts a hold
+                   parsed.evidence("e" * 64, basis="dismissed"),                # no such basis (it is review_dismissed)
                    {**parsed.evidence("e" * 64, basis="pending_review", review_reason="lineage_missing"),
                     "policy_version": "otra/2026.v9"},                          # versions disagree with the payload
                    {**parsed.evidence("e" * 64, basis="pending_review", review_reason="lineage_missing"),
@@ -1254,6 +1285,8 @@ def test_the_privileged_writer_refuses_forged_bases_operators_and_receipts(dispo
             conn.execute(call, (parsed.address, world["op"], resolve_receipt, json.dumps(confirm)))
         with pytest.raises(psycopg.errors.InvalidParameterValue):
             conn.execute(call, (held_address, world["op"], resolve_receipt, json.dumps({**confirm, "note": "  "})))
+        with pytest.raises(psycopg.errors.InvalidParameterValue):  # whitespace of any kind is blank
+            conn.execute(call, (held_address, world["op"], resolve_receipt, json.dumps({**confirm, "note": " \n\t "})))
         # No direct write reaches the tables the function owns: no grant for the first two, and
         # the api's column grant on assertion resolutions stops at the permanence guard.
         for sql in ("insert into outbound.contact_control (scope, value_norm, kind, purpose, reason, source) "
@@ -1267,6 +1300,170 @@ def test_the_privileged_writer_refuses_forged_bases_operators_and_receipts(dispo
                          "resolved_id = gen_random_uuid(), resolved_at = now() where id = %s", (held_request,))
     after = _counts(disposable_database)
     assert _delta(before, after) == {"platform.command_receipt": 5}
+
+
+def _dismiss(dsn, operator, assertion_id, address, review_sha256, explanation="Falso positivo: pedía la baja de otro boletín",
+             key=None):
+    from origenlab_api.v2.commands import request_digest
+    from origenlab_api.v2.unsubscribe_commands import DismissUnsubscribeReviewBody
+
+    body = DismissUnsubscribeReviewBody(assertion_id=assertion_id, expected_address=address,
+                                        expected_review_sha256=review_sha256, explanation=explanation)
+    return _repo(dsn).execute(command_name=DISMISS_UNSUBSCRIBE_REVIEW, operator=operator,
+                              fields=body.model_dump(mode="json"), idempotency_key=key or uuid.uuid4().hex,
+                              digest=request_digest(DISMISS_UNSUBSCRIBE_REVIEW, body))
+
+
+def _pending(dsn) -> dict[str, list[dict[str, Any]]]:
+    """The suppressions read's held reviews, by address — what an admin would dismiss from."""
+    import psycopg
+
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+
+    held: dict[str, list[dict[str, Any]]] = {}
+    for p in CrmWorkspaceRepository(psycopg.connect, runtime_dsn(dsn)).suppressions(limit=10_000)["pending_reviews"]:
+        held.setdefault(p["address"], []).append(p)
+    return held
+
+
+@needs_db
+def test_an_admin_dismisses_a_pending_false_positive_once_and_nothing_else(disposable_database, world) -> None:
+    import psycopg
+
+    from origenlab_api.v2.commands import CommandRefused
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+
+    tag = world["tag"]
+    dsn = runtime_dsn(disposable_database)
+    false_pos, keeps = f"falso-{tag}@lab.test", f"sigue-{tag}@lab.test"
+    out = _apply(disposable_database, world["operator"], [
+        _record(sender=false_pos, mid=f"<falso-1-{tag}@lab.test>"),
+        _record(sender=keeps, mid=f"<sigue-1-{tag}@lab.test>"),
+    ])
+    assert out["applied"]["pending_review"] == 2
+    [held] = _pending(disposable_database)[false_pos]
+    aid, version = held["assertion_id"], held["review_sha256"]
+    [(value_before, payload_before)] = _db_rows(disposable_database, """
+        select a.value, s.payload from evidence.assertion a join evidence.source_record s on s.id = a.source_record_id
+         where a.id = %s""", (aid,))
+
+    # Refused, and nothing written — not even a receipt: sales, another address, a stale version.
+    before = _counts(disposable_database)
+    with pytest.raises(CommandRefused) as err:
+        _dismiss(disposable_database, world["operator"], aid, false_pos, version)
+    assert err.value.code == "role_may_not_dismiss"
+    with pytest.raises(CommandRefused) as err:
+        _dismiss(disposable_database, world["admin_identity"], aid, keeps, version)
+    assert err.value.code == "review_address_mismatch"
+    with pytest.raises(CommandRefused) as err:
+        _dismiss(disposable_database, world["admin_identity"], str(uuid.uuid4()), false_pos, version)
+    assert err.value.code == "review_not_found"
+    with pytest.raises(psycopg.errors.RaiseException, match="review_sha256 differs"):
+        _dismiss(disposable_database, world["admin_identity"], aid, false_pos, "0" * 64)
+    assert _counts(disposable_database) == before
+
+    key = uuid.uuid4().hex
+    dismissed = _dismiss(disposable_database, world["admin_identity"], aid, false_pos, version, key=key)
+    assert (dismissed["was"], dismissed["outcome"], dismissed["replayed"]) == ("unresolved", "dismissed", False)
+    assert dismissed["suppression"] is None and dismissed["review_sha256"] == version
+    # Exactly one decision event and one receipt: no control, no evidence, no identity.
+    assert _delta(before, _counts(disposable_database)) == {"crm.domain_event": 1, "platform.command_receipt": 1}
+    [(resolution, by, at, value, review_status, payload)] = _db_rows(disposable_database, """
+        select a.resolution, a.resolved_by_operator_id::text, a.resolved_at is not null, a.value, s.review_status, s.payload
+          from evidence.assertion a join evidence.source_record s on s.id = a.source_record_id where a.id = %s""", (aid,))
+    assert (resolution, by, at, review_status) == ("rejected", world["admin"], True, "reviewed")
+    assert (value, payload) == (value_before, payload_before)  # the hold and the reply, exactly as received
+    [(event_type, seq, event, actor, receipt)] = _db_rows(disposable_database, """
+        select event_type, seq, payload, actor_operator_id::text, command_receipt_id::text from crm.domain_event
+         where aggregate_kind = 'assertion' and aggregate_id = %s and event_type <> 'assertion.unsubscribe_review_opened'""",
+        (aid,))
+    assert (event_type, seq, actor, receipt) == (
+        "assertion.unsubscribe_review_dismissed", 2, world["admin"], dismissed["command_receipt_id"])
+    assert event["explanation"] == "Falso positivo: pedía la baja de otro boletín"
+    assert (event["decision"], event["resolution_from"], event["resolution_to"]) == ("dismissed", "unresolved", "rejected")
+    assert event["review_sha256"] == version and false_pos not in json.dumps(event)
+
+    # The same key replays the stored answer; nothing is written again.
+    before = _counts(disposable_database)
+    again = _dismiss(disposable_database, world["admin_identity"], aid, false_pos, version, key=key)
+    assert again["replayed"] is True and {k: v for k, v in again.items() if k != "replayed"} == {
+        k: v for k, v in dismissed.items() if k != "replayed"}
+    assert _counts(disposable_database) == before
+    # A new key finds it decided; confirming it now is refused by the database too.
+    with pytest.raises(CommandRefused) as err:
+        _dismiss(disposable_database, world["admin_identity"], aid, false_pos, version)
+    assert err.value.code == "review_not_pending"
+    with pytest.raises(psycopg.errors.RaiseException, match="not pending"):
+        _resolve(disposable_database, world["operator"], aid, false_pos)
+    assert _counts(disposable_database) == before
+
+    # The hold no longer holds; the other one still does.
+    held_now = _pending(disposable_database)
+    assert false_pos not in held_now and keeps in held_now
+    facts = CrmWorkspaceRepository(psycopg.connect, dsn).marketing_audience_inputs().eligibility
+    assert false_pos not in facts.unsubscribe_pending_addresses and keeps in facts.unsubscribe_pending_addresses
+    assert false_pos not in facts.unsubscribed_addresses
+
+
+@needs_db
+def test_a_confirmed_unsubscribe_is_never_dismissed_and_always_wins(disposable_database, world) -> None:
+    import psycopg
+
+    from origenlab_api.v2.commands import CommandRefused
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+
+    tag = world["tag"]
+    dsn = runtime_dsn(disposable_database)
+    both = f"ambas-{tag}@lab.test"
+    _apply(disposable_database, world["operator"], [_record(sender=both, mid=f"<ambas-1-{tag}@lab.test>"),
+                                                     _record(sender=both, mid=f"<ambas-2-{tag}@lab.test>")])
+    first, second = sorted(_pending(disposable_database)[both], key=lambda p: p["assertion_id"])
+    confirmed = _resolve(disposable_database, world["operator"], first["assertion_id"], both)
+    assert confirmed["outcome"] == "added"
+    # The confirmed request is refused by the command, and by the function if the command is bypassed.
+    with pytest.raises(CommandRefused) as err:
+        _dismiss(disposable_database, world["admin_identity"], first["assertion_id"], both, first["review_sha256"])
+    assert err.value.code == "review_already_confirmed"
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        rid = conn.execute(
+            "insert into platform.command_receipt (operator_id, idempotency_key, command_name, request_digest, status) "
+            "values (%s, %s, 'dismiss-unsubscribe-review', %s, 'in_progress') returning id::text",
+            (world["admin"], uuid.uuid4().hex, "0" * 64)).fetchone()[0]
+        call = "select outbound.add_contact_control('block', 'marketing', %s, 'unsubscribe', %s, %s, %s::jsonb)"
+        dismissal = {"basis": "review_dismissed", "assertion_id": first["assertion_id"],
+                     "review_sha256": first["review_sha256"], "explanation": "x", "policy_version": UNSUBSCRIBE_POLICY_VERSION}
+        with pytest.raises(psycopg.errors.RaiseException, match="confirmed unsubscribe"):
+            conn.execute(call, (both, world["admin"], rid, json.dumps(dismissal)))
+        # A foreign request (another address), a blank explanation, and a sales operator are refused too.
+        pending = {**dismissal, "assertion_id": second["assertion_id"], "review_sha256": second["review_sha256"]}
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            conn.execute(call, (f"otro-{tag}@lab.test", world["admin"], rid, json.dumps(pending)))
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            conn.execute(call, (both, world["admin"], rid, json.dumps({**pending, "explanation": " \n "})))
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            conn.execute(call, (both, world["op"], rid, json.dumps(pending)))
+        sales_rid = conn.execute(
+            "insert into platform.command_receipt (operator_id, idempotency_key, command_name, request_digest, status) "
+            "values (%s, %s, 'dismiss-unsubscribe-review', %s, 'in_progress') returning id::text",
+            (world["op"], uuid.uuid4().hex, "0" * 64)).fetchone()[0]
+        with pytest.raises(psycopg.errors.InsufficientPrivilege, match="only an active admin"):
+            conn.execute(call, (both, world["op"], sales_rid, json.dumps(pending)))
+        resolve_rid = conn.execute(
+            "insert into platform.command_receipt (operator_id, idempotency_key, command_name, request_digest, status) "
+            "values (%s, %s, 'resolve-unsubscribe-review', %s, 'in_progress') returning id::text",
+            (world["admin"], uuid.uuid4().hex, "0" * 64)).fetchone()[0]
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):  # a dismissal needs its own command's receipt
+            conn.execute(call, (both, world["admin"], resolve_rid, json.dumps(pending)))
+    # The second hold on the same address can still be dismissed — and the permanent unsubscribe wins.
+    before = _counts(disposable_database)
+    out = _dismiss(disposable_database, world["admin_identity"], second["assertion_id"], both, second["review_sha256"])
+    assert out["outcome"] == "dismissed"
+    assert _delta(before, _counts(disposable_database)) == {"crm.domain_event": 1, "platform.command_receipt": 1}
+    facts = CrmWorkspaceRepository(psycopg.connect, dsn).marketing_audience_inputs().eligibility
+    assert both in facts.unsubscribed_addresses and both not in facts.unsubscribe_pending_addresses
+    [(reason, n)] = _db_rows(disposable_database, "select reason, count(*) from outbound.contact_control "
+                                                  "where value_norm = %s group by reason", (both,))
+    assert (reason, n) == ("unsubscribe", 1)
 
 
 @needs_db

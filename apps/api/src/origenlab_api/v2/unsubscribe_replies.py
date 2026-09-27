@@ -67,6 +67,15 @@ UNSUBSCRIBE_POLICY_VERSION = "unsubscribe-sender/2026-09-27.v2"
 RECORD_SCHEMA_VERSION = "gmail-reply-staging/2026-09-27.v1"
 APPLY_UNSUBSCRIBE_REPLIES = "apply-unsubscribe-replies"
 RESOLVE_UNSUBSCRIBE_REVIEW = "resolve-unsubscribe-review"
+DISMISS_UNSUBSCRIBE_REVIEW = "dismiss-unsubscribe-review"
+
+#: The version of one «BAJA» held for review, as ``outbound.add_contact_control`` recomputes it
+#: before a dismissal: over the request (alias ``a``) and its reply evidence (alias ``s``). A
+#: dismissal must quote it, so a screen read before the request changed is refused, not applied.
+REVIEW_SHA256_SQL = (
+    "encode(sha256(convert_to(concat_ws('|', 'unsubscribe-review/v1', a.id::text, a.value_norm, a.resolution, "
+    "a.source_record_id::text, coalesce(s.payload_sha256, ''), a.value::text), 'UTF8')), 'hex')"
+)
 
 MAX_RECORDS = 500
 MAX_BODY_CHARS = 20_000

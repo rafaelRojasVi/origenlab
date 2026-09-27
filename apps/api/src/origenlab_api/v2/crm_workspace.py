@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 from origenlab_api.v2.audience_freeze import SEND_TIME_REFUSAL_LABEL
 from origenlab_api.v2.marketing_audience import address_ref, addresses_in
+from origenlab_api.v2.unsubscribe_replies import REVIEW_SHA256_SQL
 
 GMAIL_MESSAGE_URL = "https://mail.google.com/mail/u/0/#all/{}"
 DRIVE_FOLDER_URL = "https://drive.google.com/drive/folders/{}"
@@ -1037,19 +1038,22 @@ class CrmWorkspaceRepository:
             )
             frozen = self._rows(cur)
             # «BAJA» replies held for review: unresolved requests. Each holds its exact address
-            # out of every audience, freeze and send until an operator confirms it.
+            # out of every audience, freeze and send until an operator confirms it (or an admin
+            # dismisses it, quoting its review_sha256).
             cur.execute(
-                """
+                f"""
                 select a.id::text as assertion_id, a.value_norm as address,
                        a.value->>'review_reason' as review_reason,
                        a.value->>'grammar_version' as grammar_version,
                        a.value->>'policy_version' as policy_version,
                        (a.value->>'observed_at')::timestamptz::text as observed_at,
-                       a.created_at::text as recorded_at
+                       a.created_at::text as recorded_at,
+                       {REVIEW_SHA256_SQL} as review_sha256
                   from evidence.assertion a
+                  join evidence.source_record s on s.id = a.source_record_id
                  where a.kind = 'unsubscribe_request' and a.resolution = 'unresolved'
                  order by a.created_at desc, a.value_norm
-                """
+                """  # noqa: S608 - REVIEW_SHA256_SQL is a constant
             )
             pending = self._rows(cur)
             cur.execute(
