@@ -624,10 +624,21 @@ labels or answers a mailbox; synchronizing Gmail replies automatically is **not 
 - **Review**: `POST /v2/commands/resolve-unsubscribe-review` (sales/admin, same switch, a note)
   confirms one held request: the same function creates or links the permanent unsubscribe block and
   resolves the request to it, once; confirming again answers `already_resolved` and writes nothing.
-  There is no dismissal — a held «BAJA» is never lifted.
+- **Dismissal of a false positive**: `POST /v2/commands/dismiss-unsubscribe-review` (**admin
+  only**, same switch, `Idempotency-Key`, the request id, its address, the `review_sha256` the
+  suppressions read served, and a non-blank explanation) dismisses one **pending** hold. The same
+  function sets the request `rejected` (decision time and admin recorded, every other field as
+  received), marks its reply evidence `reviewed`, writes no control, and records one
+  `assertion.unsubscribe_review_dismissed` event carrying the explanation. A confirmed request,
+  a request already decided, another address's request or a stale `review_sha256` is refused;
+  replaying the same key returns the stored answer. Only the dismissed hold stops refusing: a
+  permanent unsubscribe for the same address, or another pending hold, still refuses. Nothing
+  dismisses, weakens, updates or deletes a contact control. Not in the dashboard proxy; the
+  Bajas page stays read-only.
 - **Permanence**: an unsubscribe block, and any block a «BAJA» was linked to, is never updated
   or deleted, and its evidence is immutable (trigger `outbound.unsubscribe_permanent`) — the one
-  change ever made to it is the review resolving a held request, inside that function. Step 5's
+  change ever made to it is the review deciding a held request once (confirmed or dismissed),
+  inside that function. Step 5's
   `revoke_block` does not reach it; **re-subscribing does not exist**.
 - **Enforcement**: the audience preview and the freeze exclude the address (`block` with the
   note `unsubscribed`, or `unsubscribe_pending_review` while held — the exact address only, never
