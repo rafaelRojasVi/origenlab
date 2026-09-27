@@ -1,4 +1,6 @@
 import { useCallback, useState } from "react";
+import type { AuthSessionState } from "../../api/authClient";
+import { useAuthSession } from "../../context/AuthSessionContext";
 import { fetchMarketing } from "../crmApi";
 import type { CampaignSummary, MarketingResponse, TotalKey } from "../crmTypes";
 import { AudienceBuilder } from "../marketing/AudienceBuilder";
@@ -52,6 +54,17 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled: "Cancelada",
 };
 
+/**
+ * Which roles are offered «Nueva campaña». The API refuses the draft commands to any other role
+ * (`Deciding` in `campaign_draft_routes.py`); hiding the button only spares a viewer an editor
+ * whose save would be refused. Fails closed: no confirmed session, no button.
+ */
+export const ROLES_THAT_AUTHOR_CAMPAIGNS: ReadonlySet<string> = new Set(["sales", "admin"]);
+
+export function mayAuthorCampaigns(session: AuthSessionState): boolean {
+  return session.kind === "signed_in" && ROLES_THAT_AUTHOR_CAMPAIGNS.has(session.operator.role);
+}
+
 type Tab = "campanas" | "calendario" | "audiencias" | "bajas";
 type View =
   | { kind: "list" }
@@ -60,6 +73,8 @@ type View =
   | { kind: "detail"; campaignId: string; tab?: DetailTab; total?: TotalKey };
 
 export function MarketingPage() {
+  const { session } = useAuthSession();
+  const mayAuthor = mayAuthorCampaigns(session);
   const [state, reload] = useResource(fetchMarketing);
   const [taxonomyState] = useResource(fetchTaxonomy);
   const [tab, setTab] = useState<Tab>("campanas");
@@ -101,7 +116,7 @@ export function MarketingPage() {
         title="Marketing"
         subtitle="Campañas de correo en el CRM y audiencias por interés en equipos. Sólo cifras registradas; nada estimado. Nada se envía desde aquí: el envío está bloqueado mientras las respuestas BAJA no se sincronicen automáticamente desde Gmail."
         actions={
-          tab !== "audiencias" && tab !== "bajas" && view.kind === "list" ? (
+          mayAuthor && tab !== "audiencias" && tab !== "bajas" && view.kind === "list" ? (
             <button type="button" onClick={openNew} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black">
               Nueva campaña
             </button>

@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AuthSessionContext } from "../../context/AuthSessionContext";
 import taxonomyJson from "../../../../api/src/origenlab_api/v2/equipment_taxonomy.json";
 import { MarketingPage } from "../pages/MarketingPage";
 import type { MarketingResponse } from "../crmTypes";
@@ -200,6 +201,25 @@ function stubApi(draftsEnabled: boolean) {
   );
 }
 
+function renderAs(role: string | null) {
+  const page = <MarketingPage />;
+  if (role === null) return render(page);
+  return render(
+    <AuthSessionContext.Provider
+      value={{
+        session: {
+          kind: "signed_in",
+          method: "google_session",
+          operator: { operatorId: "op-1", email: "operador@ejemplo.invalid", displayName: "Operador", role },
+        },
+        signOut: async () => undefined,
+      }}
+    >
+      {page}
+    </AuthSessionContext.Provider>,
+  );
+}
+
 describe("MarketingPage", () => {
   beforeEach(() => vi.spyOn(window, "confirm").mockReturnValue(true));
   afterEach(() => {
@@ -223,7 +243,7 @@ describe("MarketingPage", () => {
 
   it("a new draft says it exists only in this tab and cannot be saved where drafts are disabled", async () => {
     stubApi(false);
-    render(<MarketingPage />);
+    renderAs("sales");
     fireEvent.click(await screen.findByRole("button", { name: "Nueva campaña" }));
     const banner = await screen.findByTestId("persistence");
     expect(banner).toHaveAttribute("data-state", "memory");
@@ -236,7 +256,7 @@ describe("MarketingPage", () => {
 
   it("saving creates the draft through the draft command and then says where it is stored", async () => {
     stubApi(true);
-    render(<MarketingPage />);
+    renderAs("admin");
     fireEvent.click(await screen.findByRole("button", { name: "Nueva campaña" }));
     await screen.findByTestId("persistence");
     fireEvent.change(screen.getByLabelText("Nombre interno"), { target: { value: "Sonicadores" } });
@@ -295,6 +315,31 @@ describe("MarketingPage", () => {
     expect(dialog).toHaveTextContent("Pidió cotización");
     expect(dialog).toHaveTextContent("no registrado como interés en el CRM");
     expect(within(dialog).getByRole("link", { name: /Ver caso/ })).toHaveAttribute("href", "#/crm/oportunidades/11111111-1111-4111-8111-111111111111");
+  });
+
+  it.each(["sales", "admin"])("offers «Nueva campaña» to %s on Campañas and Calendario", async (role) => {
+    stubApi(true);
+    renderAs(role);
+    expect(await screen.findByRole("button", { name: "Nueva campaña" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Calendario" }));
+    expect(await screen.findByRole("button", { name: "Nueva campaña" })).toBeInTheDocument();
+  });
+
+  it.each([
+    ["a viewer", "viewer"],
+    ["an unknown role", "auditor"],
+    ["no confirmed session", null],
+  ])("hides «Nueva campaña» from %s on every Marketing tab", async (_who, role) => {
+    stubApi(true);
+    renderAs(role);
+    await screen.findAllByTestId("campaign-card");
+    expect(screen.queryByRole("button", { name: "Nueva campaña" })).toBeNull();
+    for (const tab of ["Calendario", "Audiencias por equipo", "Bajas", "Campañas"]) {
+      fireEvent.click(screen.getByRole("button", { name: tab }));
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Nueva campaña" })).toBeNull());
+    }
+    expect(screen.queryByText("Nueva campaña")).toBeNull();
+    expect(posts).toEqual([]);
   });
 });
 
