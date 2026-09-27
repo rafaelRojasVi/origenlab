@@ -100,8 +100,9 @@ select set_eq(
         'outbound.campaign_planning_absent_at_insert',
         'outbound.unsubscribe_permanent',
         'outbound.add_contact_control',
-        'outbound.marketing_contact_refusals'],
-  'exactly the three Slice 0 helper functions, the five commercial-case guards, the stage guard, the historical-revision guard, the campaign-content guard, the two audience-freeze guards, the two campaign-planning guards and the three W10 unsubscribe functions exist');
+        'outbound.marketing_contact_refusals',
+        'outbound.archived_campaign_immutable'],
+  'exactly the three Slice 0 helper functions, the five commercial-case guards, the stage guard, the historical-revision guard, the campaign-content guard, the two audience-freeze guards, the two campaign-planning guards, the three W10 unsubscribe functions and the archived-campaign guard exist');
 
 -- `public` holds nothing.
 select is(

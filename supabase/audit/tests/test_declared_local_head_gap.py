@@ -42,10 +42,10 @@ def current_head_report():
         _check("a13", status="CORROBORATED", required=False),
         _check("a04", "FAIL", {"relation_count": 37},
                ["relations in scope: observed 37, expected 34"]),
-        _check("a05", "FAIL", {"function_count": 18, "security_definer_count": 1}, [
+        _check("a05", "FAIL", {"function_count": 19, "security_definer_count": 1}, [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
             "1 entr(y|ies) are present here and not in the baseline: " + gap.EXPECTED_SECURITY_DEFINER,
-            "functions in scope: observed 18, expected 3"]),
+            "functions in scope: observed 19, expected 3"]),
         _check("a08", "FAIL", {"table_count": 36, "schema_count": 7}, [
             "tables: 3 entr(y|ies) are present here and not in the baseline: "
             + "; ".join(_table(t) for t in TABLES),
@@ -93,7 +93,7 @@ class DeclaredGapTest(unittest.TestCase):
     def test_the_historical_guard_is_a_declared_post_slice0_function(self):
         self.assertIn("crm.quote_revision_historical_guard", gap.POST_SLICE0_FUNCTIONS)
         self.assertEqual(3, gap.SLICE0_FUNCTION_COUNT)
-        self.assertEqual(18, gap.EXPECTED_FUNCTION_COUNT)
+        self.assertEqual(19, gap.EXPECTED_FUNCTION_COUNT)
 
     def test_the_w10_functions_are_declared(self):
         for name in ("outbound.unsubscribe_permanent", "outbound.marketing_contact_refusals",
@@ -112,13 +112,13 @@ class DeclaredGapTest(unittest.TestCase):
         report = current_head_report()
         a05 = check_of(report, "a05")
         a05["summary"]["function_count"] = 15
-        self.assert_refused(report, "a05.function_count: observed 15, expected 18")
+        self.assert_refused(report, "a05.function_count: observed 15, expected 19")
 
-    def test_an_undeclared_nineteenth_function_is_refused(self):
+    def test_an_undeclared_twentieth_function_is_refused(self):
         report = current_head_report()
         a05 = check_of(report, "a05")
-        a05["summary"]["function_count"] = 19
-        self.assert_refused(report, "a05.function_count: observed 19, expected 18")
+        a05["summary"]["function_count"] = 20
+        self.assert_refused(report, "a05.function_count: observed 20, expected 19")
 
     def test_a_second_security_definer_function_is_refused(self):
         report = current_head_report()
