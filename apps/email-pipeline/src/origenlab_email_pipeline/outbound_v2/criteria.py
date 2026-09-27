@@ -3,9 +3,8 @@
 The database checks only that the column is a JSON object carrying version 1; the field
 contract lives here, the same division ``send_attempt.search_evidence`` already uses.
 
-``fingerprint`` is what ties a preview to a freeze: :func:`freeze_campaign` refuses a
-preview whose fingerprint does not match the criteria being frozen, so an audience can
-never be approved against criteria the operator has since edited.
+``fingerprint`` identifies the criteria a preview was built from, so two previews can be
+compared without re-reading their inputs.
 """
 
 from __future__ import annotations

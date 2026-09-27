@@ -119,7 +119,7 @@ class RecipientCandidate:
 
 @dataclass(frozen=True)
 class ContactControlIndex:
-    """``outbound.contact_control`` and the manual sidecar, indexed once per freeze.
+    """``outbound.contact_control`` and the manual sidecar, indexed once per preview.
 
     Built once for a whole audience so evaluation stays pure and O(1) per candidate; never
     queried row by row.
