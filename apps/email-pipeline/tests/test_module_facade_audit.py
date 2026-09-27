@@ -62,6 +62,18 @@ def test_db_pair_classified_reviewed_distinct_domains() -> None:
     assert match["classification"] == "same_basename_distinct_domains"
 
 
+def test_migration_apply_group_is_reviewed_as_three_distinct_stages() -> None:
+    proc = _run_audit("--json")
+    report = json.loads(proc.stdout)
+    match = next(p for p in report["pairs"] if p["basename"] == "apply.py")
+    assert match["classification"] == "same_basename_distinct_domains"
+    assert {str(entry["path"]) for entry in match["paths"]} == {
+        "migration/v2_evidence_stage/apply.py",
+        "migration/v2_import/apply.py",
+        "migration/v2_promote/apply.py",
+    }
+
+
 def test_schemas_classified_same_basename_distinct_domains() -> None:
     proc = _run_audit("--json")
     report = json.loads(proc.stdout)

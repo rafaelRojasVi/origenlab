@@ -117,9 +117,10 @@ describe("the operator's own vendor and security notices", () => {
         subject: "Alerta de seguridad",
       }),
     );
-    expect(verdict.reasons.some((reason) => reason.text.includes("accounts.google.com"))).toBe(
-      true,
-    );
+    expect(verdict.reasons).toContainEqual({
+      kind: "platform_domain",
+      text: "El remitente está en accounts.google.com, bajo google.com — una plataforma que nosotros contratamos: el mensaje habla de nuestra propia herramienta, no de un laboratorio.",
+    });
   });
 
   it("does not turn a counterparty on a consumer mailbox into a notice", () => {
