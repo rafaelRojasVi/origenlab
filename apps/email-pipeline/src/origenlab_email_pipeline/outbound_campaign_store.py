@@ -32,6 +32,28 @@ class CampaignNotFoundError(ValueError):
     pass
 
 
+class CampaignNotActiveError(ValueError):
+    """The campaign's status is not ``active``: nothing is selected, reserved or sent for it.
+
+    ``outbound_campaign.status`` carried ``paused`` from the start and nothing read it, so the
+    2026-09-21 incident had to be contained by blocking recipients one by one. Selection and the
+    sender now refuse any status other than ``active`` — ``paused``, ``completed`` and ``archived``
+    alike — before they read a single recipient.
+    """
+
+    def __init__(self, campaign_id: str, status: str | None) -> None:
+        self.campaign_id = campaign_id
+        self.status = status
+        shown = "desconocida" if status is None else status
+        super().__init__(
+            f"La campaña {campaign_id} no está activa (estado: {shown}); "
+            "no se selecciona, reserva ni envía nada."
+        )
+
+
+REASON_CAMPAIGN_NOT_ACTIVE = "campaign_not_active"
+
+
 def normalize_campaign_email(email: str) -> str:
     s = (email or "").strip()
     if not s:
@@ -103,6 +125,16 @@ def get_campaign(conn: sqlite3.Connection, campaign_id: str) -> CampaignRow | No
     if row is None:
         return None
     return CampaignRow(**dict(zip(_CAMPAIGN_COLS, row)))
+
+
+def require_campaign_active(conn: sqlite3.Connection, campaign_id: str) -> CampaignRow:
+    """The campaign, read now, if and only if its status is ``active``; otherwise refuse."""
+    campaign = get_campaign(conn, campaign_id)
+    if campaign is None:
+        raise CampaignNotActiveError(campaign_id, None)
+    if campaign.status != "active":
+        raise CampaignNotActiveError(campaign_id, campaign.status)
+    return campaign
 
 
 _RECIPIENT_COLS = (
@@ -198,6 +230,9 @@ def reserve_next_batch(
     n: int,
     at_iso: str | None = None,
 ) -> BatchSelectionResult:
+    # A paused (or completed, or archived) campaign reserves nobody and blocks nobody: the
+    # refusal comes before any recipient row is read or written.
+    require_campaign_active(conn, campaign_id)
     ts = at_iso or now_iso()
     batch_id = str(_uuid.uuid4())
     rows = conn.execute(
